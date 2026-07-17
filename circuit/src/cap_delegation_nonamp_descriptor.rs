@@ -12,53 +12,47 @@
 //!     over-grant (a granted bit set where the held bit is clear) fails the submask gate. Both legs are
 //!     emitted from the proved Lean module and both are witnessed behaviourally by the tests below.
 //!
-//! ## ⚠ THE TWO LEGS DO NOT INTERLOCK — the emitted gates bind the WRONG columns (2026-07-15)
+//! ## THE TWO LEGS INTERLOCK — the granted recon and the cap-root recompute bind ONE felt (fixed 2026-07-17)
 //!
-//! This module's header USED to claim: "the per-bit submask gates … over the **SAME `rights` felt** the
-//! recompute hashes into the edge leaf", and "the two legs INTERLOCK on one `rights` felt: tamper it to
-//! dodge the submask gate and the recomputed `cap_root` moves ⇒ UNSAT". **That is false as emitted**, and
-//! the committed JSON is the witness — read the two mask-reconstruction gates:
+//! The per-bit submask gates constrain `granted ⊑ held`, and the granted bits reconstruct the SAME
+//! `rights` felt the recompute hashes into the edge leaf. The two mask-reconstruction gates read:
 //!
 //! ```text
-//! gate 54:  v7 − Σ_{i<8} v(120+i)·2ⁱ     (held mask recon)
-//! gate 55:  v4 − Σ_{i<8} v(128+i)·2ⁱ     (granted mask recon)
+//! gate 54:  v75 − Σ_{i<8} v(120+i)·2ⁱ     (held mask recon,    prmCol 7)
+//! gate 55:  v72 − Σ_{i<8} v(128+i)·2ⁱ     (granted mask recon, prmCol cp.RIGHTS)
 //! ```
 //!
-//! The granted bits reconstruct **column 4**, and the held bits **column 7**. The `rights` felt the
-//! edge-leaf site hashes is **column 72**. Columns 4 and 7 are EFFECT-SELECTOR columns (the selector
-//! block is `0..54`); they are not the rights param and nothing else in the descriptor relates them to it.
+//! Column 72 (`prmCol cp.RIGHTS`) is exactly the felt `siteCapEdgeLeaf` hashes into `cap_root`. So
+//! tampering that felt to confer rights outside the held mask breaks gate 55 ⇒ UNSAT — the interlock is
+//! real. `nonamp_leg_binds_the_hashed_rights_felt` exercises it: the tamper is REFUSED.
 //!
-//! The cause is a param-index/column conflation in the Lean emit. `EffectVmEmitCapReshape.dcol.GRANTED_MASK
-//! := EffectVmEmitCapRoot.cp.RIGHTS`, and `cp.RIGHTS = 4` is a **param INDEX** — the column is
-//! `prmCol 4 = PARAM_BASE + 4 = 72`. But `gMaskRecon` consumes a raw COLUMN (`eCol maskCol`), so the
-//! emitted gate reads `v4`. `dcol.HELD_MASK := 7` has the same shape (intended param 7 = col 75; emitted
-//! `v7`). The mint-flavour `col.HELD_MASK`/`col.SLOT`/`col.TARGET` in the same namespace are built the
-//! same way, so `cap_reshape_descriptor` is very likely to carry the identical defect.
+//! ### The two emit defects this used to carry (both fixed 2026-07-17)
 //!
-//! What survives: `capDeleg_nonAmp_in_circuit` / `capDeleg_rejects_amplify` are PROVED and TRUE — they
-//! quantify over `dcol.grantedBit i` / `dcol.heldBit i`, which really are cols 128+i / 120+i, and the
-//! submask gate really does force `gᵢ ≤ hᵢ` there. `nonamp_submask_gate_refuses_an_amplifying_witness`
-//! witnesses that behaviourally. What does NOT survive is the LINK from those bits to the rights the
-//! recomputed `cap_root` commits. The Lean doc-comment on `capDeleg_nonAmp_in_circuit` asserts that link
-//! ("Since the granted bits reconstruct `cp.RIGHTS` … this binds the very rights the recomputed
-//! `cap_root` commits") and it is not what the emit produces.
+//! **Defect 1 — a param-index/column conflation.** `EffectVmEmitCapReshape.dcol.GRANTED_MASK :=
+//! EffectVmEmitCapRoot.cp.RIGHTS`, and `cp.RIGHTS = 4` is a **param INDEX** — its column is
+//! `prmCol 4 = 72`. `gMaskRecon` consumes a raw COLUMN, so the gate read `v4` (an effect-SELECTOR
+//! column, block `0..54`) and `dcol.HELD_MASK := 7` read `v7`. Nothing related those to the rights
+//! param, so a prover could confer ARBITRARY rights through a perfectly-bound `cap_root`. Fixed by
+//! `prmCol`-wrapping both `gMaskRecon` call sites in `capDelegNonAmpGates`.
 //!
-//! `nonamp_leg_does_not_bind_the_hashed_rights_felt` PINS this behaviourally, so the defect cannot be
-//! silently inherited: it proves an amplifying `rights` felt is ACCEPTED. **That test is designed to go
-//! RED when the emit is fixed** — that red is the signal the fix landed, not a regression.
+//! **Defect 2 — the state-commit's `Digest k` ordinals were never rebased on the prepend.** Site 5
+//! (`digest_col` 88 = `state_commit`) read digests `0,1,2` = cols `102, 87, 98` (edge leaf, cap root,
+//! inter1) where the GROUP-4 chain intends `98, 99, 100`, so `state_after[4..10]` never reached the
+//! commitment and sites 3/4 were dead carriers. Fixed by
+//! `attenuateHashSites.map (shiftSiteDigests capRecomputeSites.length)` at the prepend in
+//! `EffectVmEmitAttenuateA.attenuateGenuineHashSites`. `state_commit_absorbs_group4_chain` asserts it.
 //!
-//! A second, independent emit defect on the same descriptor: its state-commit site's `Digest k` indices
-//! were never rebased when the two cap-root sites were PREPENDED to the site list. Site 5 (`digest_col`
-//! 88 = `state_commit`) reads digests `0,1,2` = cols `102, 87, 98` — the edge leaf, the cap root, and
-//! `hash[state_after[0..3]]` — where the GROUP-4 chain intends cols `98, 99, 100`. So `state_after[4..10]`
-//! (cols 80..86) are NOT committed by `state_commit`, and sites 3/4 (cols 99/100) are dead carriers.
-//! `state_commit_group4_chain_is_misindexed` pins it. All 27 other emitted descriptors index correctly;
-//! this one is unique — the prepend shifted the ordinals and the `Digest k` literals stayed.
+//! Both were found by the Rust differentials below, not by Lean — `capDeleg_nonAmp_in_circuit` /
+//! `capDeleg_rejects_amplify` quantify over the BIT CARRIERS (cols 128+i / 120+i) and were true either
+//! way; only the PROSE claimed the felt link, and `#assert_axioms` cannot see a false sentence. Neither
+//! defect was ever live — nothing routes to this descriptor (see NOT WIRED below), so both were LATENT.
 //!
-//! Neither defect is live: nothing routes to this descriptor (see NOT WIRED below). Both must be fixed in
-//! the Lean emit — `prmCol`-wrapping the mask columns and rebasing the digest ordinals — then re-emitted
-//! (`scripts/emit-descriptors.sh`), re-pinned (`GENUINE_NONAMP_FP`), and drift-gated. That work is Lean-side
-//! and out of scope for the test lane that found it; it is in HORIZONLOG.
+//! ⚠ RESIDUAL — the HELD mask (col 75 = `prmCol dcol.HELD_MASK`) is a FREE PARAM: no hash-site absorbs
+//! it, no PI binds it. The interlock refutes rights-felt FORGERY, but `granted ⊑ held` bounds the
+//! committed rights only by a mask the PROVER CHOSE. Binding col 75 to an opened parent cap is the next
+//! rung (see `EffectVmEmitCapReshape` §4D's RESIDUAL). ⚠ The mint-flavour `capReshapeVmDescriptor`
+//! (a SEPARATE emitted JSON, consumed by `cap_reshape_descriptor.rs`) still carries the identical
+//! Defect-1 conflation on its own `nonAmpGates` — verified, in HORIZONLOG, out of this module's scope.
 //!
 //! ## Provenance (anti-drift, the LAW#1 way)
 //!
@@ -103,7 +97,7 @@ pub const GENUINE_NONAMP_JSON: &str =
 /// SHA-256 cache-freshness pin for the committed bytes (re-pinned by the emit script; NOT a
 /// faithfulness check — the Lean↔JSON gate is generate-fresh `scripts/check-descriptor-drift.sh`).
 pub const GENUINE_NONAMP_FP: &str =
-    "5cdb03f341ed0b0f33af193f15827c536195d929ad94fe3c22a48cfc3c456e58";
+    "0d84e70fd0f9dd6f52d0353c948eeb8b03ffc25f7d777dfcc496bbf3c7b74315";
 
 /// The descriptor name (the canonical wire identity — shared across the six cap-graph effects).
 pub const GENUINE_NONAMP_NAME: &str = "dregg-effectvm-attenuateA-v1-genuine-nonamp";
@@ -116,24 +110,23 @@ pub const MASK_BITS: usize = 8;
 pub const DELEG_HELD_BIT_BASE: usize = 120;
 
 /// The DELEGATION granted-mask bit columns. Mirrors Lean `dcol.grantedBit i = 128 + i`
-/// (`col.GRANTED_BIT_BASE + 2·MASK_BITS = 112 + 16 = 128`).
-///
-/// ⚠ These reconstruct **column 4**, NOT `cp.RIGHTS`'s column. `dcol.GRANTED_MASK := cp.RIGHTS` is a
-/// param INDEX (4) used as a raw column by `gMaskRecon`; the rights felt the edge leaf hashes is
-/// `prmCol 4` = [`DELEG_HASHED_RIGHTS_COL`] = 72. See the module header's ⚠ section.
+/// (`col.GRANTED_BIT_BASE + 2·MASK_BITS = 112 + 16 = 128`). These reconstruct
+/// [`DELEG_GRANTED_MASK_RECON_COL`] = 72 = `prmCol cp.RIGHTS` — the SAME felt the edge leaf hashes, the
+/// load-bearing tie (fixed 2026-07-17; was col 4).
 pub const DELEG_GRANTED_BIT_BASE: usize = 128;
 
-/// The column the granted-mask bit recon ACTUALLY binds (Lean `dcol.GRANTED_MASK` = `cp.RIGHTS` = 4,
-/// consumed as a raw column). This is an effect-SELECTOR column, not a rights param — the defect the
-/// module header names.
-pub const DELEG_GRANTED_MASK_RECON_COL: usize = 4;
+/// The column the granted-mask bit recon binds: `prmCol dcol.GRANTED_MASK` = `prmCol cp.RIGHTS` = 72
+/// (Lean `gMaskRecon (prmCol dcol.GRANTED_MASK) …`). This IS [`DELEG_HASHED_RIGHTS_COL`] — the rights
+/// felt the cap-root edge leaf hashes — so the non-amp leg and the cap-root recompute interlock on one
+/// felt. Until 2026-07-17 this was col 4 (the param INDEX used raw), an effect-selector column.
+pub const DELEG_GRANTED_MASK_RECON_COL: usize = 72;
 
-/// The column the held-mask bit recon ACTUALLY binds (Lean `dcol.HELD_MASK` = 7, consumed as a raw
-/// column rather than `prmCol 7` = 75). Also an effect-selector column.
-pub const DELEG_HELD_MASK_RECON_COL: usize = 7;
+/// The column the held-mask bit recon binds: `prmCol dcol.HELD_MASK` = `prmCol 7` = 75 (fixed
+/// 2026-07-17; was col 7, the index used raw).
+pub const DELEG_HELD_MASK_RECON_COL: usize = 75;
 
 /// The `rights` felt the cap-root edge-leaf site genuinely hashes: `prmCol cp.RIGHTS` = `PARAM_BASE + 4`
-/// = 72. The non-amp leg does NOT reach this column — that absence is the module header's ⚠ finding.
+/// = 72. The granted-mask recon now binds exactly this column ([`DELEG_GRANTED_MASK_RECON_COL`]).
 pub const DELEG_HASHED_RIGHTS_COL: usize = 72;
 
 /// The full EffectVM base trace width — re-exported from the canonical layout
@@ -164,7 +157,7 @@ mod tests {
     //    descriptor's `Var` indices ARE prover column indices — so if the layout ever moves, this
     //    witness builder must move with it, and binding to the constants makes that a compile error
     //    instead of a silently-wrong trace that reds in some unrelated gate.
-    use crate::effect_vm::columns::{NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE};
+    use crate::effect_vm::columns::{PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE};
     /// `STATE_BEFORE_BASE` (= `NUM_EFFECTS` = 54).
     const SB: usize = STATE_BEFORE_BASE;
     /// `PARAM_BASE` (= 68).
@@ -312,9 +305,9 @@ mod tests {
     /// gates load-bearing, the same reason `every_forged_commitment_lane_is_rejected_by_the_fold`
     /// forges each of its 8 lanes separately.
     ///
-    /// SCOPE (see the module header's ⚠): this proves `granted_bit ≤ held_bit` on cols 128+i / 120+i.
-    /// It does NOT prove the granted bits govern the `rights` felt the cap-root commits — they do not;
-    /// `nonamp_leg_does_not_bind_the_hashed_rights_felt` is the honest statement of that gap.
+    /// SCOPE: this proves `granted_bit ≤ held_bit` on cols 128+i / 120+i (the bit carriers). The
+    /// companion `nonamp_leg_binds_the_hashed_rights_felt` exercises the OTHER half — that the granted
+    /// bits reconstruct the `rights` felt the cap-root commits, so the two legs interlock.
     #[test]
     fn nonamp_submask_gate_refuses_an_amplifying_witness() {
         let d = cap_delegation_nonamp_descriptor().expect("descriptor parses");
@@ -390,30 +383,30 @@ mod tests {
         }
     }
 
-    /// **⚠ THE DEFECT PIN — the non-amp leg does NOT bind the `rights` felt the cap-root commits.**
+    /// **THE INTERLOCK TOOTH — the non-amp leg BINDS the `rights` felt the cap-root commits.**
     ///
-    /// This test asserts the CURRENT, WRONG behaviour on purpose, so the gap cannot be re-inherited by
-    /// a reader who trusts the doc. **It is designed to go RED when the Lean emit is fixed** — that red
-    /// is the signal the fix landed. Do not "repair" it by deleting it; delete it when the emit
-    /// `prmCol`-wraps `dcol.GRANTED_MASK`, and the amplify tooth above will then cover this case.
+    /// The dual of `nonamp_submask_gate_refuses_an_amplifying_witness`: that test forges the granted
+    /// BITS; this one forges the `rights` FELT the edge leaf hashes into `cap_root` while leaving the
+    /// granted bits at an honest submask. The two legs now interlock on ONE felt (col 72 =
+    /// `prmCol cp.RIGHTS` = [`DELEG_GRANTED_MASK_RECON_COL`] = [`DELEG_HASHED_RIGHTS_COL`]), so a
+    /// `rights` felt outside the held mask breaks the granted-recon gate ⇒ UNSAT.
     ///
-    /// The claim under test is the module header's original one: "tamper the `rights` felt to dodge the
-    /// submask gate and the recomputed `cap_root` moves ⇒ `state_commit` moves ⇒ UNSAT". The witness
-    /// below does exactly that tamper — sets col 72 (the felt `siteCapEdgeLeaf` hashes) to a mask the
-    /// delegator does NOT hold — while leaving the granted BITS at an honest submask. If the legs
-    /// interlocked, this would be refused. It is ACCEPTED, because the granted bits reconstruct col 4
-    /// and the edge leaf hashes col 72, and no constraint relates the two.
+    /// Until 2026-07-17 this test PINNED THE OPPOSITE: the emit read a raw param INDEX (col 4) instead
+    /// of `prmCol cp.RIGHTS`, so nothing related the granted bits to col 72 and this forgery was
+    /// ACCEPTED — a prover could confer ANY rights through a perfectly-bound `cap_root`. The Lean fix
+    /// (`gMaskRecon (prmCol dcol.GRANTED_MASK) …` in `EffectVmEmitCapReshape.capDelegNonAmpGates`)
+    /// closed it; this test now asserts the REFUSAL.
     ///
-    /// Consequence, stated plainly: were this descriptor wired, a prover could confer ANY rights it
-    /// liked through the cap-root — the in-circuit non-amplification would not touch them. It is not
-    /// wired (see NOT WIRED), so this is a latent defect, not a live hole.
+    /// ⚠ SCOPE: the HELD mask (col 75) is still a free param on this descriptor, so this proves the
+    /// committed rights are a submask of a PROVER-CHOSEN mask — it refutes rights-felt forgery, not
+    /// non-amplification against an opened parent cap. See the module header's RESIDUAL.
     #[test]
-    fn nonamp_leg_does_not_bind_the_hashed_rights_felt() {
+    fn nonamp_leg_binds_the_hashed_rights_felt() {
         let d = cap_delegation_nonamp_descriptor().expect("descriptor parses");
         let held: u32 = 0b0000_0011; // the delegator holds only rights 0 and 1
 
-        // HONEST POLE — the honest witness proves, so an ACCEPT below means "this forgery slipped
-        // through", not "this descriptor accepts anything".
+        // HONEST POLE — the honest witness proves, so a REFUSAL below means "this forgery was caught",
+        // not "this descriptor refuses everything".
         let honest = honest_witness(&d, held, 0b0000_0001);
         must_accept(
             "the honest delegation witness (granted 0b01 ⊑ held 0b11) — this test cannot say \
@@ -421,9 +414,9 @@ mod tests {
             || prove_vm_descriptor(&d, &honest.rows, &honest.pis),
         );
 
-        // Structural premise, asserted rather than assumed: the granted-bit recon binds col 4 and the
-        // edge leaf hashes col 72. If a future emit changes either, this test's reasoning is stale and
-        // it must red rather than quietly test nothing.
+        // Structural premise, asserted rather than assumed: the granted-bit recon binds the SAME column
+        // the edge leaf hashes (col 72). This is the interlock; if a future emit breaks it, this test's
+        // reasoning is stale and it must red rather than quietly test nothing.
         let recon_binds = d.constraints.iter().any(|c| {
             matches!(c, VmConstraint::Gate(LeanExpr::Add(l, _))
                 if matches!(**l, LeanExpr::Var(v) if v == DELEG_GRANTED_MASK_RECON_COL))
@@ -431,8 +424,7 @@ mod tests {
         assert!(
             recon_binds,
             "the granted-mask recon gate no longer binds col {DELEG_GRANTED_MASK_RECON_COL} — the \
-             emit changed. Re-derive this test (and delete it if the recon now binds col \
-             {DELEG_HASHED_RIGHTS_COL})."
+             emit changed. Re-derive this test."
         );
         let leaf = d
             .hash_sites
@@ -443,27 +435,19 @@ mod tests {
                 .contains(&HashInput::Col(DELEG_HASHED_RIGHTS_COL)),
             "the edge-leaf site no longer hashes col {DELEG_HASHED_RIGHTS_COL} — re-derive this test"
         );
-        assert_ne!(
+        assert_eq!(
             DELEG_GRANTED_MASK_RECON_COL, DELEG_HASHED_RIGHTS_COL,
-            "if these are equal the legs DO interlock and this defect pin must be deleted"
+            "the granted recon and the edge-leaf rights felt must be the SAME column — that identity IS \
+             the interlock this test exercises. If they differ, the emit regressed."
         );
-        // And the columns the recon DOES bind are in the effect-SELECTOR block — i.e. the emit is not
-        // merely binding a different rights carrier, it is binding columns that have nothing to do
-        // with rights at all. This is the param-INDEX-as-COLUMN conflation, stated as an assertion.
-        for c in [DELEG_GRANTED_MASK_RECON_COL, DELEG_HELD_MASK_RECON_COL] {
-            assert!(
-                c < NUM_EFFECTS,
-                "col {c} was expected to be inside the effect-selector block (0..{NUM_EFFECTS}) — \
-                 that is what makes this a param-index/column conflation rather than a rights-carrier \
-                 choice. Re-derive this pin against the current emit."
-            );
-        }
         assert!(
             DELEG_HASHED_RIGHTS_COL >= PARAM_BASE,
             "the hashed rights felt must be in the param block — re-derive this pin"
         );
 
         // THE FORGERY: honest granted BITS (⊑ held), but the hashed `rights` felt confers EVERYTHING.
+        // Because the granted bits now reconstruct col 72, setting col 72 = 0xFF while the bits decode
+        // 0b01 makes the granted-recon gate `v72 − Σ bitᵢ·2ⁱ = 0xFF − 1 ≠ 0` — UNSAT.
         let mut w = honest_witness(&d, held, 0b0000_0001);
         for row in &mut w.rows {
             row[DELEG_HASHED_RIGHTS_COL] = bb(0xFF); // all 8 rights, none of them held
@@ -474,38 +458,33 @@ mod tests {
         rechain(&d, &mut w);
 
         match run(&d, &w, "the rights-felt tamper") {
-            // The expected, DEFECTIVE behaviour — see this test's doc. The tamper slips through
-            // because nothing relates col 72 to the granted bits.
-            Outcome::Accepted(_) => {}
-            Outcome::Err(e) => panic!(
-                "the rights-felt tamper was REFUSED ({e}) — the legs INTERLOCK after all. If the \
-                 Lean emit was fixed to bind the granted bits to prmCol(cp.RIGHTS)=\
-                 {DELEG_HASHED_RIGHTS_COL}, DELETE this defect pin and drop the ⚠ section from the \
-                 module header (and from EffectVmEmitCapReshape/EffectVmEmitAttenuateA): the tooth \
-                 is real now."
-            ),
-            Outcome::UnsatPanic(m) => panic!(
-                "the rights-felt tamper violated a constraint ({m}) — the legs INTERLOCK after all. \
-                 If the Lean emit was fixed to bind the granted bits to prmCol(cp.RIGHTS)=\
-                 {DELEG_HASHED_RIGHTS_COL}, DELETE this defect pin and drop the ⚠ section from the \
-                 module header (and from EffectVmEmitCapReshape/EffectVmEmitAttenuateA): the tooth \
-                 is real now."
+            // The tooth: the interlock catches the tamper. A constraint-violation panic (the p3 unsat
+            // marker, already classified by `run`) or a fail-closed self-verify error are both refusals.
+            Outcome::UnsatPanic(_) => {}
+            Outcome::Err(_) => {}
+            Outcome::Accepted(_) => panic!(
+                "the rights-felt tamper was ACCEPTED — the interlock is OPEN. The granted-recon gate \
+                 must bind prmCol(cp.RIGHTS)={DELEG_HASHED_RIGHTS_COL}; if the Lean emit regressed to a \
+                 raw param index this test is meaningless. Check \
+                 EffectVmEmitCapReshape.capDelegNonAmpGates uses `gMaskRecon (prmCol dcol.GRANTED_MASK)`."
             ),
         }
     }
 
-    /// **⚠ THE SECOND DEFECT PIN — the state-commit's GROUP-4 digest indices were never rebased.**
+    /// **THE STATE-COMMIT ABSORBS THE GROUP-4 CHAIN — the prepend-rebased digest ordinals.**
     ///
-    /// Structural, not behavioural, and deliberately so: this pins WHICH sites the state-commit reads,
-    /// which is the thing that is wrong. Site 5 (`digest_col` 88 = `state_commit`) reads digests
-    /// `0,1,2`. On every OTHER emitted descriptor those are the GROUP-4 chain (cols 98/99/100); here
-    /// the two cap-root sites were PREPENDED, so digests `0,1,2` resolve to cols `102, 87, 98` and
-    /// `state_after[4..10]` never reaches the commitment. Sites 3/4 (cols 99/100) became dead carriers.
+    /// Structural: this pins WHICH sites the state-commit reads. Site 5 (`digest_col` 88 =
+    /// `state_commit`) reads digests `2,3,4`, which resolve to the GROUP-4 chain cols `98/99/100` — so
+    /// `state_after[4..10]` reaches the commitment and no site is a dead carrier.
     ///
-    /// Like the pin above, this is EXPECTED to red when the emit is fixed — that red is the fix
-    /// landing. All 27 other descriptors are correct; this descriptor is the only one affected.
+    /// Until 2026-07-17 the state-commit read digests `0,1,2` — the ordinals were never rebased when
+    /// the two cap-root sites were PREPENDED, so they resolved to `102, 87, 98` (edge leaf, cap root,
+    /// inter1) and `state_after[4..10]` never reached the commitment. The Lean fix
+    /// (`attenuateHashSites.map (shiftSiteDigests capRecomputeSites.length)` in
+    /// `EffectVmEmitAttenuateA.attenuateGenuineHashSites`) rebased them; this test now asserts the
+    /// GROUP-4 chain is absorbed.
     #[test]
-    fn state_commit_group4_chain_is_misindexed() {
+    fn state_commit_absorbs_group4_chain() {
         let d = cap_delegation_nonamp_descriptor().expect("descriptor parses");
         let cols: Vec<usize> = d.hash_sites.iter().map(|s| s.digest_col).collect();
         let commit = d
@@ -523,26 +502,21 @@ mod tests {
             })
             .collect();
 
-        // What the GROUP-4 chain intends, and what every other descriptor emits.
+        // The GROUP-4 chain — what every emitted descriptor absorbs into state_commit.
         let intended = vec![98usize, 99, 100];
-        assert_ne!(
-            resolved, intended,
-            "the state-commit now absorbs the GROUP-4 chain {intended:?} — the misindexing is FIXED. \
-             DELETE this defect pin and the corresponding paragraph in the module header."
-        );
         assert_eq!(
+            resolved, intended,
+            "the state-commit must absorb the GROUP-4 chain {intended:?}. If it resolves to \
+             [102, 87, 98] the prepend-rebase regressed — check \
+             EffectVmEmitAttenuateA.attenuateGenuineHashSites shifts the chain's digest ordinals by \
+             capRecomputeSites.length."
+        );
+        // The pre-fix ordinals (edge leaf, cap root, inter1) must NOT be what state_commit reads.
+        assert_ne!(
             resolved,
             vec![102usize, 87, 98],
-            "the state-commit's digest ordinals resolve to an unexpected set — re-derive this pin \
-             against the current emit"
+            "the state-commit resolves to the pre-rebase set — the misindexing regressed"
         );
-        // The concrete consequence: state_after[4..10] is uncommitted, and two sites feed nothing.
-        for dead in [99usize, 100] {
-            assert!(
-                !resolved.contains(&dead),
-                "site with digest_col {dead} now feeds the state-commit — re-derive this pin"
-            );
-        }
     }
 
     /// Re-run the accumulator chain after a per-row edit: each row's `state_before[11]`/`[12]` must be
@@ -659,73 +633,5 @@ mod tests {
             "advance is hash[edge_leaf, old_cap_root]"
         );
         assert_eq!(adv_site.inputs.len(), 2);
-    }
-    /// **THE FIX, PROVEN TO WORK — rebinding the granted recon to `prmCol(cp.RIGHTS)` CLOSES the gap.**
-    ///
-    /// This is the constructive half of `nonamp_leg_does_not_bind_the_hashed_rights_felt`. That test
-    /// shows the tamper is accepted today; on its own it is only a complaint. Here we patch the parsed
-    /// descriptor's granted-recon gate to read col 72 (the felt the edge leaf hashes) instead of col 4
-    /// — exactly what `prmCol`-wrapping `dcol.GRANTED_MASK` in the Lean emit would produce — and show
-    /// the SAME tamper is then REFUSED.
-    ///
-    /// So the diagnosis is not a guess: the one-token emit change is demonstrated sufficient. The
-    /// mechanism is the interlock the module header originally advertised — the tampered `rights` moves
-    /// the edge leaf, which moves `cap_root`, which moves `state_commit`, so the recon gate can no
-    /// longer be satisfied alongside it.
-    ///
-    /// It also guards the guard: if a future descriptor made this patch a no-op (e.g. the recon already
-    /// binds col 72), the `assert_eq!(patched, 1)` reds and sends a reader to the defect pins.
-    #[test]
-    fn rebinding_granted_recon_to_the_hashed_rights_felt_closes_the_gap() {
-        let mut d = cap_delegation_nonamp_descriptor().expect("descriptor parses");
-
-        // Patch ONLY the granted-mask recon gate: `v4 − Σ granted·2ⁱ`  ⇒  `v72 − Σ granted·2ⁱ`.
-        let mut patched = 0;
-        for c in &mut d.constraints {
-            if let VmConstraint::Gate(LeanExpr::Add(l, _)) = c
-                && matches!(**l, LeanExpr::Var(v) if v == DELEG_GRANTED_MASK_RECON_COL)
-            {
-                **l = LeanExpr::Var(DELEG_HASHED_RIGHTS_COL);
-                patched += 1;
-            }
-        }
-        assert_eq!(
-            patched, 1,
-            "expected exactly one granted-recon gate binding col {DELEG_GRANTED_MASK_RECON_COL}. If \
-             this is 0, the emit may already be fixed — check the defect pins."
-        );
-
-        // HONEST POLE under the PATCHED descriptor: an honest delegation still proves. The recon now
-        // binds col 72, so the honest witness must carry rights == granted there — which
-        // `honest_witness` already does (it lays the granted mask in the rights param). Without this
-        // the refusal below would be satisfied by a patch that simply breaks the descriptor.
-        let held: u32 = 0b0000_0011;
-        let honest = honest_witness(&d, held, 0b0000_0001);
-        must_accept(
-            "the honest witness under the FIXED (col-72-bound) recon — the patch must close the gap, \
-             not merely break the circuit",
-            || prove_vm_descriptor(&d, &honest.rows, &honest.pis),
-        );
-
-        // THE SAME TAMPER the defect pin shows is accepted today: honest granted BITS, amplifying
-        // `rights` felt. Under the fixed recon it must be REFUSED.
-        let mut w = honest_witness(&d, held, 0b0000_0001);
-        for row in &mut w.rows {
-            row[DELEG_HASHED_RIGHTS_COL] = bb(0xFF);
-            fill_digests(&d, row);
-        }
-        rechain(&d, &mut w);
-
-        match run(&d, &w, "the rights-felt tamper under the FIXED recon") {
-            Outcome::Accepted(_) => panic!(
-                "the rights-felt tamper was STILL ACCEPTED after rebinding the granted recon to col \
-                 {DELEG_HASHED_RIGHTS_COL} — so `prmCol`-wrapping `dcol.GRANTED_MASK` is NOT a \
-                 sufficient fix, and the closure lane named in the module header is wrong. \
-                 Re-diagnose before changing the Lean emit."
-            ),
-            // The interlock the header advertises, now real: the tampered rights moves the edge leaf
-            // ⇒ cap_root ⇒ state_commit, and the recon gate cannot be satisfied with it.
-            Outcome::Err(_) | Outcome::UnsatPanic(_) => {}
-        }
     }
 }

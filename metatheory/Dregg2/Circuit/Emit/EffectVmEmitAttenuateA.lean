@@ -587,11 +587,31 @@ opaque `gCapMove` — the `cap_root` move is now FORCED by the recompute sites, 
 def attenuateGenuineRowGates : List VmConstraint :=
   [ .gate gBalLoFix, .gate gBalHiFix, .gate gNonceFix, .gate gResFix ] ++ gFieldFixAll
 
+/-- **`shiftInputDigest n`** — rebase a `.digest k` reference by `n` sites. `.col`/`.zero` are
+position-free and pass through. -/
+def shiftInputDigest (n : Nat) : HashInput → HashInput
+  | .digest k => .digest (k + n)
+  | i         => i
+
+/-- **`shiftSiteDigests n s`** — rebase every `.digest k` reference in a site by `n`. `HashInput.digest`
+is a POSITIONAL index into the descriptor's own site list, so PREPENDING `n` sites to a chain must
+rebase the chain's internal cross-references or they silently resolve to the prepended sites. -/
+def shiftSiteDigests (n : Nat) (s : VmHashSite) : VmHashSite :=
+  { s with inputs := s.inputs.map (shiftInputDigest n) }
+
 /-- The genuine GROUP-4 commitment chain, PRECEDED by the two cap-root recompute sites. The recompute
 fires first (`leaf`, then `advance` into `saCol CAP_ROOT`); then GROUP-4 absorbs the recomputed
-`cap_root` into `state_commit` exactly as the transfer keystone absorbs it. -/
+`cap_root` into `state_commit` exactly as the transfer keystone absorbs it.
+
+The GROUP-4 chain is REBASED by `capRecomputeSites.length` = 2. `site3`'s `.digest 0/1/2` name
+`site0/site1/site2` POSITIONALLY; prepending the two recompute sites shifts every ordinal, so without
+the rebase `state_commit` would absorb `[edge_leaf(102), cap_root(87), inter1(98)]` instead of the
+GROUP-4 chain `[inter1(98), inter2(99), inter3(100)]` — leaving `state_after[4..10]` UNCOMMITTED and
+sites 3/4 (cols 99/100) dead carriers. That is exactly the defect this emit carried until 2026-07-17
+(now asserted fixed by `circuit/src/cap_delegation_nonamp_descriptor.rs::state_commit_absorbs_group4_chain`);
+all 27 other emitted descriptors index correctly because none of them prepend. -/
 def attenuateGenuineHashSites : List VmHashSite :=
-  capRecomputeSites ++ attenuateHashSites
+  capRecomputeSites ++ attenuateHashSites.map (shiftSiteDigests capRecomputeSites.length)
 
 /-- **`attenuateVmDescriptorGenuine`** — the GENUINE `attenuateA` circuit: the frame-freeze gates ++
 transition continuity ++ boundary pins, with the recompute sites PREPENDED to the GROUP-4 chain. The
@@ -628,11 +648,17 @@ def attenuateVmDescriptorGenuineNoRecompute : EffectVmDescriptor :=
 
 /-- The no-recompute genuine face DROPS exactly the two `capRecomputeSites` hash-sites (the edge-leaf +
 the col-87 advance) from the genuine face — `site2` still absorbs `saCol CAP_ROOT` into the commitment, so
-the cap-root remains COMMITTED, just not OUTPUT-pinned. Same width, same constraints. -/
+the cap-root remains COMMITTED, just not OUTPUT-pinned. Same width, same constraints.
+
+The genuine face's chain is the no-recompute chain REBASED by the two prepended sites
+(`shiftSiteDigests capRecomputeSites.length`) — the no-recompute face prepends nothing, so it carries the
+GROUP-4 ordinals unshifted. Dropping the sites and dropping the shift go together. -/
 theorem attenuateGenuineNoRecompute_drops_recompute :
     attenuateVmDescriptorGenuineNoRecompute.hashSites = attenuateHashSites
     ∧ attenuateVmDescriptorGenuine.hashSites
-        = capRecomputeSites ++ attenuateVmDescriptorGenuineNoRecompute.hashSites
+        = capRecomputeSites
+            ++ attenuateVmDescriptorGenuineNoRecompute.hashSites.map
+                 (shiftSiteDigests capRecomputeSites.length)
     ∧ attenuateVmDescriptorGenuineNoRecompute.constraints = attenuateVmDescriptorGenuine.constraints
     ∧ attenuateVmDescriptorGenuineNoRecompute.traceWidth = EFFECT_VM_WIDTH :=
   ⟨rfl, rfl, rfl, rfl⟩
@@ -829,45 +855,38 @@ non-amplification: a row may recompute a perfectly-bound root for an edge whose 
 the delegator's held rights. §G.4 closes that: it appends the SHARED `EffectVmEmitCapReshape`
 delegation non-amp gates (`capDelegNonAmpGates`) — the per-bit submask `granted ⊑ held`.
 
-### ⚠ THE INTERLOCK PROSE BELOW WAS FALSE — the emit binds the WRONG columns (2026-07-15)
+### The interlock, and the two emit defects that used to break it (both fixed 2026-07-17)
 
-This header used to continue: "…whose GRANTED mask reconstructs `cp.RIGHTS`, the SAME `rights` felt
-`siteCapEdgeLeaf` hashes into the recomputed root. So on the genuine-non-amp descriptor, the two legs
-INTERLOCK on one `rights` felt." **The emitted descriptor falsifies that**, and the emitted JSON is the
-witness — `emitVmJson attenuateVmDescriptorGenuineNonAmp` produces the two mask-recon gates
+The delegation non-amp gates' GRANTED mask reconstructs `prmCol cp.RIGHTS` = **column 72**, the SAME
+`rights` felt `siteCapEdgeLeaf` hashes into the recomputed root. So on this descriptor the two legs
+INTERLOCK on one felt: an amplifying `rights` either breaks the granted-recon gate, or — if the bits are
+moved to match — breaks the per-bit submask gate. `emitVmJson attenuateVmDescriptorGenuineNonAmp` now
+produces
 
-    v7 − Σ_{i<8} v(120+i)·2ⁱ      (held recon)
-    v4 − Σ_{i<8} v(128+i)·2ⁱ      (granted recon)
+    v75 − Σ_{i<8} v(120+i)·2ⁱ     (held recon,    prmCol 7)
+    v72 − Σ_{i<8} v(128+i)·2ⁱ     (granted recon, prmCol cp.RIGHTS)
 
-so the granted bits reconstruct **column 4** and the held bits **column 7**. The `rights` felt
-`siteCapEdgeLeaf` hashes is **column 72**. Columns 4 and 7 are in the effect-SELECTOR block (`0..54`);
-nothing relates them to the rights param.
+**Defect 1 (was): a param-index/column conflation.** `EffectVmEmitCapReshape.dcol.GRANTED_MASK :=
+cp.RIGHTS`, and `cp.RIGHTS = 4` is a param INDEX; the column is `prmCol 4 = 72`. `gMaskRecon` consumes a
+raw COLUMN, so the gate emitted `v4` — an effect-SELECTOR column — and `dcol.HELD_MASK := 7` emitted
+`v7`. Nothing related those to the rights param, so a prover could confer ARBITRARY rights through a
+perfectly-bound `cap_root`. Fixed by `prmCol`-wrapping both `gMaskRecon` call sites.
 
-**Cause — a param-index/column conflation.** `EffectVmEmitCapReshape.dcol.GRANTED_MASK := cp.RIGHTS`,
-and `cp.RIGHTS = 4` is a param INDEX; the column is `prmCol 4 = PARAM_BASE + 4 = 72`. But `gMaskRecon`
-consumes a raw COLUMN (`gMaskRecon (maskCol : Nat) … := eSub (eCol maskCol) …`), so the emitted gate
-reads `v4`. `dcol.HELD_MASK := 7` has the same shape (intended param 7 = col 75; emitted `v7`). The
-mint-flavour `col.HELD_MASK := cp.RIGHTS` / `col.SLOT := cp.HOLDER` / `col.TARGET := cp.TARGET` in the
-same namespace are built identically, so `capReshapeVmDescriptor` is very likely to carry the same
-defect — NOT yet verified.
+**Defect 2 (was): the GROUP-4 `Digest k` ordinals were never rebased on the prepend.** `attenuateHashSites`
+is now `.map (shiftSiteDigests capRecomputeSites.length)` at the prepend — see `attenuateGenuineHashSites`.
 
-**What survives, exactly.** `capDeleg_nonAmp_in_circuit`, `capDeleg_rejects_amplify`,
-`attenuateGenuineNonAmp_in_circuit` and `attenuateGenuineNonAmp_rejects_amplify` are PROVED and TRUE:
-they quantify over `dcol.grantedBit i` / `dcol.heldBit i` — really cols `128+i` / `120+i` — and the
-submask gate really does force `gᵢ ≤ hᵢ` there. Their STATEMENTS never mention `cp.RIGHTS`. Only the
-PROSE claims the link, and prose is not a proof — `#assert_axioms` cannot see a false sentence. The
-doc-comments on `attenuateGenuineNonAmp_in_circuit` and `capDeleg_nonAmp_in_circuit` still assert it
-("Since the granted bits reconstruct `cp.RIGHTS` …"); they are wrong and are marked below.
+**What was never wrong.** `capDeleg_nonAmp_in_circuit`, `capDeleg_rejects_amplify`,
+`attenuateGenuineNonAmp_in_circuit` and `attenuateGenuineNonAmp_rejects_amplify` quantify over
+`dcol.grantedBit i` / `dcol.heldBit i` (cols `128+i` / `120+i`) and were TRUE under both emits — their
+STATEMENTS never mention `cp.RIGHTS`. Only the PROSE claimed the link, which is why no proof and no
+`#assert_axioms` flagged it: prose is not a proof, and `#assert_axioms` cannot see a false sentence. Both
+defects were found by the Rust differential, not by Lean.
 
-**The fix (not applied here — it changes the emitted bytes):** `prmCol`-wrap `dcol.GRANTED_MASK` and
-`dcol.HELD_MASK` (and audit the mint-flavour `col.*` twins), re-emit via `scripts/emit-descriptors.sh`,
-re-pin `GENUINE_NONAMP_FP`, re-run `scripts/check-descriptor-drift.sh`. Nothing routes to this
-descriptor at HEAD, so the defect is LATENT, not live. The Rust side pins it behaviourally in
-`circuit/src/cap_delegation_nonamp_descriptor.rs::nonamp_leg_does_not_bind_the_hashed_rights_felt`,
-which PROVES an amplifying `rights` felt is accepted and is designed to RED when this is fixed. A
-second, independent defect on this same descriptor (the state-commit's `Digest k` ordinals were never
-rebased when the two cap-root sites were prepended) is pinned by
-`state_commit_group4_chain_is_misindexed`. Both are in HORIZONLOG.
+⚠ RESIDUAL — the HELD mask (`prmCol dcol.HELD_MASK`, col 75) is a FREE PARAM on this descriptor: no
+hash-site absorbs it, no PI binds it. The interlock stops rights-felt FORGERY, but `granted ⊑ held`
+bounds the committed rights only by a mask the PROVER CHOSE. Binding col 75 to an opened parent cap is
+the next rung; see `EffectVmEmitCapReshape` §4D's RESIDUAL. Nothing routes to this descriptor at HEAD,
+so neither defect was ever live, and this residual is likewise latent.
 
 The ARGUS linchpin is additive + width-neutral (the delegation bit carriers are aux columns past the
 GROUP-4 block, all `< EFFECT_VM_WIDTH`, which is 188 — the `186` this comment used to state was stale). -/
@@ -901,13 +920,13 @@ witness satisfying the genuine-non-amp descriptor's constraints FORCES, per bit,
 granted bit ≤ the held bit) over `dcol.grantedBit i` / `dcol.heldBit i` (cols `128+i` / `120+i`).
 Extracted from the shared `capDeleg_nonAmp_in_circuit` (the non-amp gates are a sub-list).
 
-⚠ SCOPE (see §G.4's ⚠ block): this does NOT reach the `rights` felt the recompute binds into `cap_root`.
-This doc-comment used to continue "Since the granted bits reconstruct `cp.RIGHTS` — the `rights` the
-recompute binds into `cap_root` — a verifying proof now genuinely means the delegation did NOT amplify."
-That inference is FALSE as emitted: `gMaskRecon dcol.GRANTED_MASK` reads column 4 (the param INDEX
-`cp.RIGHTS`, used raw) while the edge leaf hashes `prmCol cp.RIGHTS` = column 72. A verifying proof
-means the BIT CARRIERS did not amplify; it says nothing about the conferred rights. The statement below
-is unaffected — it never mentioned `cp.RIGHTS`. -/
+Since the granted bits reconstruct `prmCol cp.RIGHTS` = col 72 — the `rights` the recompute binds into
+`cap_root` — this reaches the CONFERRED rights, not merely the bit carriers.
+
+⚠ SCOPE (see §G.4's RESIDUAL): the held mask (col 75) is a free param here, so a verifying proof means
+"the rights committed into `cap_root` are a submask of a mask the prover supplied". That refutes
+rights-felt forgery; it is NOT yet non-amplification against an opened parent cap. The statement below
+quantifies over the bit carriers only. -/
 theorem attenuateGenuineNonAmp_in_circuit (env : VmRowEnv)
     (hcon : ∀ c ∈ attenuateVmDescriptorGenuineNonAmp.constraints, c.holdsVm env false false)
     (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS)

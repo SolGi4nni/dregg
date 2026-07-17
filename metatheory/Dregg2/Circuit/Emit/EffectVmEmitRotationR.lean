@@ -251,8 +251,25 @@ permutation is injective on its argument list (collision-resistant at full squee
 binding keystone lifts the 1-felt proof unchanged — the chain logic is the same fold, only the
 carrier widened from `ℤ` to `List ℤ`. -/
 
-/-- The WIDE collision-resistance floor: the 8-lane permutation is injective on its input list
-(the same CLASS as `Poseidon2SpongeCR`, at full squeeze width). -/
+/-- ⚠ **BROKEN AS A FLOOR — FALSE AT DEPLOYED PARAMETERS. Do not add consumers; see the teeth.**
+
+The WIDE collision-resistance floor: the 8-lane permutation is injective on its input list (the same
+CLASS as `Poseidon2SpongeCR`, at full squeeze width). That analogy is EXACT — and it travels:
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` proved `Poseidon2SpongeCR` FALSE, and
+`VacuitySweepTeeth.poseidon2WideCR_false_babyBear` proves THIS one false the same way. The deployed
+`single_perm_compress` squeezes 8 BOUNDED BabyBear lanes, so its range is FINITE while `List ℤ` is
+infinite: collisions EXIST by pigeonhole. Collision-resistance means collisions are hard to FIND, never
+that they do not EXIST.
+
+So every consumer conditioned on this predicate — `chainFrom8_inj`, `wireCommitR8_binds`, and the
+seven hypothesis uses downstream (`EffectVmEmitRotationWide`, `CapOpenEmit`, `Market/WideCommitBoundary`,
+`Market/ShieldedRingEndpointDescriptor`, `Deos/SettleEscrowSatWideDescriptor`) — is **VACUOUSLY TRUE at
+real parameters**. `#assert_axioms` is blind to it: the proofs are clean; the HYPOTHESIS is the flaw.
+
+**RE-GROUNDED:** `Circuit.InjectiveFloorRegrounded` §3 — `wireCommitR8_binds_advantage_bound` derives the
+same ~124-bit binding from a REAL collision game on the deployed permutation
+(`FloorGames.HashCRHardQuant (wideFamily D) Eff`) via the extractor `wireCommit8Find` (the chain walk),
+with the `Eff` obligation in the open. KEPT here, untouched, as the historical algebraic form. -/
 def Poseidon2WideCR (permW : List ℤ → List ℤ) : Prop :=
   ∀ xs ys : List ℤ, permW xs = permW ys → xs = ys
 

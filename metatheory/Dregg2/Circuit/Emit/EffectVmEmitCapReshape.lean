@@ -706,31 +706,39 @@ grant cannot confer rights the delegator does not hold — and the very rights i
 The per-bit gate `gᵢ·(1−hᵢ)=0` over `dcol.grantedBit i` / `dcol.heldBit i` is the anti-amplify tooth.
 NO production gate (a delegate is not a mint), NO new width (aux columns < `EFFECT_VM_WIDTH` = 188).
 
-### ⚠ THE WIRING CLAIM BELOW WAS FALSE — a param-INDEX used as a COLUMN (2026-07-15)
+### The wiring that makes this LOAD-BEARING (was a param-INDEX/COLUMN conflation; fixed 2026-07-17)
 
-This header used to claim: "The wiring that makes this LOAD-BEARING (not a free side-check): the GRANTED
-bit decomposition reconstructs `cp.RIGHTS` — the SAME param column `siteCapEdgeLeaf` hashes into the
-cap-edge leaf." The conflation is visible in that sentence: `cp.RIGHTS` is **param 4**, not *column* 4 —
-its column is `prmCol 4 = PARAM_BASE + 4 = 72`. But `gMaskRecon` consumes a raw COLUMN
-(`eSub (eCol maskCol) …`), and `dcol.GRANTED_MASK := cp.RIGHTS`, so the EMITTED gate reads `v4` — an
-effect-SELECTOR column (the selector block is `0..54`). `dcol.HELD_MASK := 7` likewise emits `v7`, not
-`prmCol 7 = 75`.
+The GRANTED bit decomposition reconstructs `prmCol cp.RIGHTS` = **column 72** — the SAME column
+`siteCapEdgeLeaf` hashes into the cap-edge leaf. So tampering the `rights` felt to confer rights the
+delegator does not hold breaks the granted-recon gate; keeping the felt honest leaves the per-bit
+submask gate in force. The two legs read ONE felt, and the "tamper `rights` ⇒ recon breaks (and the
+recomputed root moves ⇒ `state_commit` moves) ⇒ UNSAT" interlock is real.
 
-So the submask gate and the cap-root recompute do **not** read the same felt, and the "tamper `rights`
-to dodge the gate ⇒ root moves ⇒ UNSAT" escape hatch does not exist: nothing constrains col 72 against
-the granted bits at all. The Rust differential
-(`circuit/src/cap_delegation_nonamp_descriptor.rs::nonamp_leg_does_not_bind_the_hashed_rights_felt`)
-PROVES this behaviourally — an amplifying `rights` felt is ACCEPTED by the running prover.
+Until 2026-07-17 it was NOT. `gMaskRecon` consumes a raw COLUMN (`eSub (eCol maskCol) …`) while
+`dcol.GRANTED_MASK := cp.RIGHTS` is a param INDEX, so the emitted gate read `v4` — an effect-SELECTOR
+column (the selector block is `0..54`) — and `dcol.HELD_MASK := 7` emitted `v7`, not `prmCol 7 = 75`.
+Nothing constrained col 72 against the granted bits, so a prover could confer ARBITRARY rights through
+the recomputed `cap_root`. No proof and no `#assert_axioms` ever flagged it: `capDeleg_nonAmp_in_circuit`
+/ `capDeleg_rejects_amplify` quantify over the BIT CARRIERS and were true either way — it was the PROSE
+that was wrong, and the Rust differential
+(`circuit/src/cap_delegation_nonamp_descriptor.rs::nonamp_leg_binds_the_hashed_rights_felt`) is
+what proved the gap behaviourally. The `prmCol`-wrap in `capDelegNonAmpGates` closes it; that test now
+asserts the tamper is REFUSED. The descriptor was never routed, so the defect was LATENT throughout.
 
-`capDeleg_nonAmp_in_circuit` / `capDeleg_rejects_amplify` remain TRUE: they quantify over the bit
-carriers and say nothing about `cp.RIGHTS`. It is the PROSE that was wrong, which is why no proof and no
-`#assert_axioms` check ever flagged it.
+⚠ RESIDUAL — the HELD mask is still a FREE PARAM on this flavour. `prmCol dcol.HELD_MASK` (col 75) is
+read by the recon gate and by NOTHING else: no hash-site absorbs it and no PI binds it. So the tooth
+this leg emits is "the rights committed into `cap_root` are a submask of a mask the PROVER CHOSE" — it
+stops rights-felt forgery, but a prover free to set col 75 = `0xFF` still amplifies. Binding col 75 to
+an OPENED parent cap (the mint flavour's `siteHeldLeaf` shape — `held_leaf = hash[slot,target,held,0]`
+against a membership opening) is the NEXT rung and is NOT done here. Do not read `granted ⊑ held` as
+conferred-rights non-amplification until col 75 is bound.
 
-⚠ The mint-flavour `col.HELD_MASK := cp.RIGHTS` / `col.SLOT := cp.HOLDER` / `col.TARGET := cp.TARGET`
-below are built the SAME way, so `capReshapeVmDescriptor` very likely carries the identical defect —
-NOT yet verified. Fix: `prmCol`-wrap the mask/slot/target columns in BOTH namespaces, re-emit
-(`scripts/emit-descriptors.sh`), re-pin the FPs, re-run `scripts/check-descriptor-drift.sh`, then delete
-the Rust defect pins. Neither descriptor is routed at HEAD, so both defects are LATENT. In HORIZONLOG. -/
+⚠ The mint-flavour `nonAmpGates` (§4.1) carries the IDENTICAL conflation — VERIFIED, not merely
+suspected: `dregg-effectvm-capreshape-v1.json` gates 24/25 read `v4`/`v6` where `prmCol` gives 72/74.
+Its `col.SLOT`/`col.TARGET`/`col.HELD_MASK` uses in `siteHeldLeaf`/`productionGates` are already
+correctly `prmCol`-wrapped, so the fix is the same two call sites. Deliberately NOT fixed here:
+`capReshapeVmDescriptor` is a separate emitted JSON with its own Rust consumer
+(`circuit/src/cap_reshape_descriptor.rs`), out of this lane's file set. In HORIZONLOG. -/
 
 namespace dcol
 /-- The GRANTED rights-mask column for a delegation row: `cp.RIGHTS` (param 4) — the rights the cap-edge
@@ -759,25 +767,34 @@ def gDelegSubmaskBit (i : Nat) : EmittedExpr :=
   .mul (eCol (dcol.grantedBit i)) (eSub (.const 1) (eCol (dcol.heldBit i)))
 
 /-- The delegation NON-AMP gates: boolean each held + granted bit, reconstruct the held mask from its
-bits AND the granted mask from its bits (the granted recon ties to `cp.RIGHTS` = the cap-edge leaf's
-rights), and the per-bit submask gate `granted ⊑ held`. No production gate (a delegate is not a mint). -/
+bits AND the granted mask from its bits, and the per-bit submask gate `granted ⊑ held`. No production
+gate (a delegate is not a mint).
+
+The recon gates read `prmCol dcol.GRANTED_MASK` = **column 72** and `prmCol dcol.HELD_MASK` = **column
+75** — the PARAM COLUMNS, not the param indices. Column 72 is exactly the felt
+`EffectVmEmitCapRoot.siteCapEdgeLeaf` hashes into the cap-edge leaf, which is what makes this leg
+LOAD-BEARING rather than a free side-check: the granted bits reconstruct the very `rights` the
+recomputed `cap_root` commits, so tampering that felt to dodge the submask gate breaks the recon gate
+(and moves the root ⇒ `state_commit` ⇒ UNSAT). `prmCol`-wrapping here is mandatory — `gMaskRecon`
+consumes a raw COLUMN (`eCol maskCol`), while `dcol.*_MASK` are param INDICES; passing an index raw is
+the conflation that made these gates read effect-SELECTOR columns 4/7 (fixed 2026-07-17). -/
 def capDelegNonAmpGates : List VmConstraint :=
   ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gBool (dcol.heldBit i))))
     ++ ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gBool (dcol.grantedBit i))))
     ++ ((List.range MASK_BITS).map (fun i => VmConstraint.gate (gDelegSubmaskBit i)))
-    ++ [ VmConstraint.gate (gMaskRecon dcol.HELD_MASK dcol.heldBit)
-       , VmConstraint.gate (gMaskRecon dcol.GRANTED_MASK dcol.grantedBit) ]
+    ++ [ VmConstraint.gate (gMaskRecon (prmCol dcol.HELD_MASK) dcol.heldBit)
+       , VmConstraint.gate (gMaskRecon (prmCol dcol.GRANTED_MASK) dcol.grantedBit) ]
 
 /-- **`capDeleg_nonAmp_in_circuit` — the per-bit non-amp tooth for the cap-graph family.** A witness
 satisfying the delegation non-amp gates FORCES, for every bit `i < MASK_BITS`, the granted bit ≤ the
 held bit (`gᵢ = 0 ∨ hᵢ = 1`) over `dcol.grantedBit i` / `dcol.heldBit i`.
 
-⚠ SCOPE (see the ⚠ block in §4D's header): this does NOT reach the rights the recomputed `cap_root`
-commits. This doc-comment used to continue "Since the granted bits reconstruct `cp.RIGHTS` (the cap-edge
-leaf's rights, §4D), this binds the very rights the recomputed `cap_root` commits." FALSE as emitted:
-`gMaskRecon dcol.GRANTED_MASK` reads column 4 (the param INDEX `cp.RIGHTS`, used raw) while the edge leaf
-hashes `prmCol cp.RIGHTS` = column 72. The statement below is unaffected — it never mentioned
-`cp.RIGHTS` — but a reader must not infer conferred-rights non-amplification from it. -/
+The granted bits reconstruct `prmCol cp.RIGHTS` = col 72 (the cap-edge leaf's rights, §4D), so this
+reaches the very rights the recomputed `cap_root` commits: a `rights` felt outside the held mask breaks
+the recon gate. ⚠ SCOPE: the statement below quantifies over the BIT CARRIERS only, and the HELD mask
+(col 75) is a free param on this flavour (§4D's RESIDUAL) — so this is not yet conferred-rights
+non-amplification against an OPENED parent cap. It bounds the committed rights by a prover-chosen mask;
+binding that mask is the next rung. -/
 theorem capDeleg_nonAmp_in_circuit (env : VmRowEnv)
     (hcon : ∀ c ∈ capDelegNonAmpGates, c.holdsVm env false false)
     (i : Nat) (hi : i < MASK_BITS)
