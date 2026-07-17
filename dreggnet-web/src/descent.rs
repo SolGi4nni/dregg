@@ -541,10 +541,19 @@ async fn post_submit(
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        // The run still ranks in-process; the on-chain anchor failed (fail-closed).
+                        // The run still ranks in-process; the on-chain anchor FAILED. A node was
+                        // configured (`settles_to_a_node()`), so silence here would read as success —
+                        // surface the failure honestly: flip `settled` false, carry the error, and
+                        // REWRITE `detail` so it does not still claim the anchor landed. The board's
+                        // `ranked` flag is only ever the in-process no-cheat verdict; anchoring is a
+                        // separate leg with its own `settled` flag (which a caller MUST read).
                         crate::metrics::inc_anchor_failure();
                         resp["settled"] = serde_json::json!(false);
                         resp["settle_error"] = serde_json::json!(e.to_string());
+                        resp["detail"] = serde_json::json!(
+                            "re-executed + no-cheat-verified; ranked in-process, but the devnet-node \
+                             anchor FAILED (settled:false) — the run is NOT on the node ledger"
+                        );
                     }
                 }
             }

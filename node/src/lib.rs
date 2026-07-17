@@ -283,6 +283,20 @@ pub enum Command {
         /// off this flag is accepted but inert (the node logs a warning).
         #[arg(long = "deos-program")]
         deos_program: Option<String>,
+
+        /// DEVNET BRING-UP (loopback-only, explicit opt-in): start the cipherclerk
+        /// UNLOCKED with NO passphrase so a local devnet demo anchors turns
+        /// out-of-the-box — no manual `/cipherclerk/unlock` + bearer dance (that
+        /// dance is what made every `/descent/submit` anchor soft-fail 403). This
+        /// EXTENDS the MCP-stdio auto-unlock precedent (single-user, no remote
+        /// attacker) to an EXPLICIT, loopback-gated HTTP mode. It is honored ONLY
+        /// when BOTH hold: the node binds a loopback address (127.0.0.1 / ::1) AND
+        /// no passphrase is already set for the data dir. On a network bind
+        /// (`--bind 0.0.0.0`) or an already-passphrased data dir it is REFUSED (the
+        /// node stays locked and logs why), so a production node is NEVER weakened.
+        /// Also settable via `DREGG_DEV_UNLOCK=1`.
+        #[arg(long = "dev-unlock")]
+        dev_unlock: bool,
     },
 
     /// Initialize the data directory and generate a node keypair.
@@ -614,6 +628,7 @@ pub async fn run(cli: Cli) {
             auto_approve_joins,
             cors_origins,
             deos_program,
+            dev_unlock,
         } => {
             run_node(
                 port,
@@ -639,6 +654,7 @@ pub async fn run(cli: Cli) {
                 auto_approve_joins,
                 cors_origins,
                 deos_program,
+                dev_unlock,
             )
             .await
         }
@@ -801,6 +817,7 @@ pub async fn run(cli: Cli) {
                 auto_approve_joins,
                 Vec::new(),
                 None,
+                false,
             )
             .await
         }
@@ -833,6 +850,7 @@ async fn run_node(
     auto_approve_joins_flag: bool,
     cors_origins_flag: Vec<String>,
     deos_program: Option<String>,
+    dev_unlock: bool,
 ) {
     let data_path = expand_path(data_dir);
 
@@ -1482,6 +1500,51 @@ async fn run_node(
                 "full-turn proving ENABLED: every committed turn produces a \
                  verified full-turn STARK proof on the commit path"
             );
+        }
+
+        // DEVNET BRING-UP: start UNLOCKED with no passphrase so a local devnet
+        // demo anchors turns out of the box — no manual /cipherclerk/unlock +
+        // bearer dance (that dance is exactly what made every /descent/submit
+        // anchor soft-fail 403). This EXTENDS the MCP-stdio auto-unlock precedent
+        // (single-user, no remote attacker) to an EXPLICIT, loopback-gated HTTP
+        // mode. It is REFUSED — the node stays locked and logs why — unless BOTH:
+        //   (1) the operator opted in via --dev-unlock or DREGG_DEV_UNLOCK=1, AND
+        //   (2) the node binds a loopback address (127.0.0.1 / ::1), AND
+        //   (3) the data dir has NO passphrase set.
+        // A network bind (--bind 0.0.0.0) or an already-passphrased data dir keeps
+        // the passphrase requirement intact, so a production node is NEVER
+        // weakened. With no passphrase set, require_auth admits loopback callers
+        // with no bearer, so the same-host web anchors turns with no auth dance.
+        let dev_unlock_env = std::env::var("DREGG_DEV_UNLOCK")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if dev_unlock || dev_unlock_env {
+            let bind_is_loopback = bind
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+            if !bind_is_loopback {
+                tracing::warn!(
+                    bind = %bind,
+                    "--dev-unlock / DREGG_DEV_UNLOCK requested but --bind is not a loopback \
+                     address — REFUSING to auto-unlock a network-exposed node. It stays LOCKED. \
+                     Set a passphrase via /cipherclerk/set-passphrase, or bind 127.0.0.1 for a \
+                     local devnet demo."
+                );
+            } else if s.passphrase_hash.is_some() {
+                tracing::warn!(
+                    "--dev-unlock / DREGG_DEV_UNLOCK requested but this data dir already has a \
+                     passphrase set — leaving it passphrase-gated (bearer required). Dev-unlock \
+                     only applies to a fresh, passphrase-free devnet data dir."
+                );
+            } else {
+                s.unlocked = true;
+                tracing::warn!(
+                    "DEV-UNLOCK: cipherclerk started UNLOCKED with NO passphrase (loopback bind, \
+                     explicit opt-in). Loopback callers may submit turns with no bearer — devnet \
+                     bring-up only. NEVER use this on a network-exposed or production node."
+                );
+            }
         }
 
         // AUTO-UPGRADE: a node configured solo but with PEERS present (a peer

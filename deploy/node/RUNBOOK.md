@@ -223,28 +223,39 @@ re-check `loginctl show-user "$USER" -p Linger` (step 2).
 
 `dregg-web-games-funnel.service` already sets
 `DREGG_NODE_URL=http://127.0.0.1:8420` — the **same loopback address** this unit
-binds — so no unit edit is needed. What broke when the old node died is the
-node-side **one-time bring-up** (unlock + operator-cell materialize); redo it
-against the fresh durable node exactly as
-[`deploy/games/RUNBOOK-FUNNEL.md`](../games/RUNBOOK-FUNNEL.md) step (a) prescribes:
+binds — so no unit edit is needed. The node unit ships **`--dev-unlock`** (see
+`deploy/node/dregg-node.service`), so on boot the cipherclerk is already
+`unlocked:true` with **no passphrase** — the manual `/cipherclerk/unlock` dance
+is GONE, and because no passphrase is ever set the web needs **no
+`DREGG_NODE_BEARER`**. The only node-side **one-time bring-up** that remains is
+the operator-cell materialize (a.3). Confirm the auto-unlock, then materialize:
 
 ```bash
-# on hbox — a.2: is the operator cipherclerk unlocked? (loopback devnet w/ no
-# passphrase needs NO bearer; skip unlock if unlocked:true)
+# on hbox — a.2: the node boots UNLOCKED (--dev-unlock, loopback). Expect
+# unlocked:true with NO manual unlock. (If it shows unlocked:false, the unit is
+# missing --dev-unlock or is not bound to loopback — see the ExecStart.)
 curl -fsS http://127.0.0.1:8420/api/node/identity | jq '{public_key, agent_cell, unlocked, agent_balance}'
 
-# a.3: faucet-materialize the operator cell ONCE (amount 0 = materialize, no drain)
+# a.3: faucet-FUND the operator cell ONCE. Each anchor turn charges a real
+# computron fee (DEFAULT_ANCHOR_FEE ≈ 1000; the node refuses "insufficient
+# balance" if the cell holds less), so `amount:0` (bare materialize) is NOT
+# enough — the cell must carry balance. Fund the faucet max (10000 ≈ ~10 anchors;
+# the faucet caps a single request at 10000 and rate-limits 1/cell/min, so repeat
+# to top up). Verified end-to-end: with balance 0 every /descent/submit anchor
+# soft-fails "insufficient balance … need 1000, have 0"; with balance ≥1000 it
+# returns settled:true and the run lands on /api/receipts.
 ID=$(curl -fsS http://127.0.0.1:8420/api/node/identity)
 CELL=$(echo "$ID" | jq -r .agent_cell)
 PK=$(echo "$ID" | jq -r .public_key)
 curl -fsS -X POST -H 'content-type: application/json' \
-  --data "{\"recipient\":\"$CELL\",\"amount\":0,\"public_key\":\"$PK\"}" \
+  --data "{\"recipient\":\"$CELL\",\"amount\":10000,\"public_key\":\"$PK\"}" \
   http://127.0.0.1:8420/api/faucet | jq .
-# confirm materialized:
-curl -fsS http://127.0.0.1:8420/api/node/identity | jq '.agent_balance'   # non-null
+# confirm funded:
+curl -fsS http://127.0.0.1:8420/api/node/identity | jq '.agent_balance'   # ≥ 1000
 ```
 
-Now a submitted Descent run **anchors** instead of failing `cell not found`.
+Now a submitted Descent run **anchors** instead of failing `cell not found` /
+`insufficient balance`.
 Verify a run lands on the node's ledger (RUNBOOK-FUNNEL step e):
 
 ```bash

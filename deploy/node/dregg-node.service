@@ -77,6 +77,16 @@ ExecStartPre=/bin/sh -c 'test -f %h/.local/state/dregg-node/node.key || %h/dev/b
 #                     EnvironmentFile without editing this unit. Drop it only if
 #                     the box is under build pressure and you want the anchor
 #                     node to stop proving (it will still execute + commit).
+#   --dev-unlock    : DEVNET BRING-UP — start the cipherclerk UNLOCKED with NO
+#                     passphrase so anchoring works OUT OF THE BOX. Without it the
+#                     node boots `unlocked:false` and /turn/submit returns 403, so
+#                     EVERY Descent anchor soft-fails (settled:false) until an
+#                     operator runs a manual /cipherclerk/unlock — the exact bug
+#                     this unit exists to avoid. It is honored ONLY because this
+#                     unit binds LOOPBACK (127.0.0.1); on a network bind the node
+#                     refuses it and stays locked (node/src/lib.rs run_node). No
+#                     passphrase is ever set, so the co-resident web needs NO
+#                     DREGG_NODE_BEARER. Equivalent to DREGG_DEV_UNLOCK=1.
 ExecStart=%h/dev/breadstuffs/target/release/dregg-node run \
     --data-dir %h/.local/state/dregg-node \
     --bind 127.0.0.1 \
@@ -86,7 +96,8 @@ ExecStart=%h/dev/breadstuffs/target/release/dregg-node run \
     --federation-mode solo \
     --consensus blocklace \
     --enable-faucet \
-    --prove-turns
+    --prove-turns \
+    --dev-unlock
 
 WorkingDirectory=%h/dev/breadstuffs
 Environment=RUST_LOG=info
