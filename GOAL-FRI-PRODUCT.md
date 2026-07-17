@@ -8,7 +8,10 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
 - **FRI (me, deep):** re-base the assumed `FriLdtExtractV3` over the ROM query-counting model
   (`docs/reference/FRI-EXTRACTION-FLOOR-DESIGN.md` §5). ✅ A2 `RomQueryLog` (bd2407b31). Stage 1 ✅ DONE (FriVerifierO.lean:
   verifyAlgoO + verifyAlgoO_run_eq faithfulness + permCallCount/QueryBounded; perm threads only via
-  deriveTranscript, compress is separate — honest; 19 keystones clean, additive). Stage 2 FIRING. → Stage 2 (FS terms ε: 2/12 conjuncts
+  deriveTranscript, compress is separate — honest; 19 keystones clean, additive). Stage 2 ✅ DONE (FriVerifierFS.lean, 10 keystones): ExtractBundleSansFS verbatim (10/12,
+  machine-gated) + fs_epsilon_bound REAL ε=(Q+1)deg/|F|+Q/2^pow (BabyBear-grounded, <1 teeth, grinding
+  term a theorem 1st time). ⚑ HONEST NAMED GAP: freshness (fsPt∉S) SUPPLIED not derived — the §4.5
+  QueryLog-erasure carrier, NOT faked. Stage 3 FIRING (Merkle extraction-as-data + discharge the freshness bridge). → Stage 2 (FS terms ε: 2/12 conjuncts
   assumed→proven, `(Q+1)` grinding) → 3 (Merkle extraction-as-data + `birthday_cond`) → 4
   (query-phase `εQuery`, the hard one; `johnsonBits` stops being `by norm_num`) → 5 (apex re-read:
   "bits = query budget where εFri=½"). Each ADDITIVE, sorry-free, `#assert_axioms`-clean, no
