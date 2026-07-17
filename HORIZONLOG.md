@@ -222,6 +222,21 @@ is the most mature ops surface.
   `dregg-node:n5` image build (TODO-7), stale `deploy/hbox/RUNBOOK.md` + `deploy/gateway-ask/` unverified, dangling
   `systemctl restart dregg-gateway` pointers in `redteam/` findings docs (historical, low harm).
 
+## ⚑ CAMPAIGN WAVE 2 — G1 GO, drift already closed, snapshot scaffold (2026-07-17)
+- ✅ **B G1 = GO for d=8.** Groth16 setup peak RSS **14.69 GB** at domain 2^24 (d=8 proxy) — far under the
+  swarm-build 96G cap / hbox 123G. So the proven-122.60 config is AFFORDABLE; the FRI cutover is not
+  memory-blocked. Measurement harness was `chain/gnark/ext_degree_g1_measure_test.go` on hbox (throwaway, not
+  synced local). ⚑ The freeze stays deferred (VK not final) — this only removes the cost objection.
+- ✅ **descriptor-drift ALREADY CLOSED (no fix needed).** The armed-teeth `4/11 FAILED, wire 188 >= 2^15` is the
+  STALE 2026-07-15 measurement, pre-dating the `transferVmDescriptor2R24` `-avail` name + `avail_pad_for_descriptor_name`
+  (→pad 10) routing (both byte-identical at HEAD): the producer now lays the 15-bit weld limbs at cols 188-193 the
+  descriptor declares. Verified on persvati: **7/8 binding-tooth binaries GREEN through real folds, ZERO wire-188
+  failures**; the 8th (custom) OOM-SIGTERM'd on shared-box contention + is another terminal's WIP (not a transfer
+  tooth). Follow-up: armed-teeth.yml's stale measurement comment should be refreshed; confirm custom on a quiet box.
+- ✅ **A Rung 2 SnapshotFeed scaffold** — committed via ember's sweep-up `cf84a9baa` (SnapshotFeed impl of
+  HoldingFeedSource, real snapshot-bank parsing labeled pending/NotYetImplemented, fixture path real; 16 tests).
+  Confirming green on persvati.
+
 ## ⚑ CAMPAIGN WAVE 1 — plan d-d-d-i-breezy-grove (2026-07-17)
 Approved plan: drive the four-track frontier + parallel hardening, focused-steady, persvati/hbox-verified. Freeze
 DE-SCOPED per ember: NO MPC ceremony (we are the only party; VK not final) → eventual freeze = single-party setup +
