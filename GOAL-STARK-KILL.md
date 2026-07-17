@@ -2059,3 +2059,14 @@ the shadow had. Deletable because the harness had been migrated to production im
 named the shadow — **a harness naming the shadow it no longer drives is the mirror lying about itself.**
 Verified orphaned before cutting (only its own tests called it; the type re-export had zero consumers);
 verified GREEN after. **Both species now physically deleted: the MOCK (1fdd4a671) and the MIRROR (a83e50a2b).**
+
+### `d5f6dc999` — fix-forward: dsl_pipeline migrated to PRODUCTION (repairs my a83e50a2b breakage)
+The mirror deletion broke `tests/src/dsl_pipeline.rs` (still imported the deleted shadow fns). **Why I
+missed it: my orphan-check grep excluded `/tests/` — but `tests/src/` is the dregg-tests CRATE, a real
+workspace member, not a test dir.** The same grep-blindness as the 3-dialect miss and the comment-vs-code
+false positives; I had even noted this consumer early and lost it. **A deletions orphan-check is only as
+good as its exclusion patterns.**
+Fixed forward (never restore the mirror): both call sites now use `prove_dsl_p3`/`verify_dsl_p3`; the typed
+`DslP3Proof` is postcard-encoded for `execution_proof` (same as bridge/present.rs:511); the byte-tamper
+tooth preserved. A STRICT UPGRADE — the pipeline test used to prove through the weaker shadow, i.e. it
+validated the shadow; it now validates production. Verified green.
