@@ -35,6 +35,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::resume::{SessionMoveLog, SessionResumeStore};
+use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
 use crate::{
     Action, CollectiveDecision, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, SessionId, Surface, VerifyReport,
@@ -62,6 +63,19 @@ pub enum HostError {
     UnknownOffering(String),
     /// The offering refused to deploy the session (carries the offering's own reason).
     Deploy(OfferingError),
+    /// No live session under this id (a routing miss the `Result`-shaped
+    /// [`advance_signed`](OfferingHost::advance_signed) reports explicitly, where the
+    /// `Option`-shaped verbs answer `None`).
+    UnknownSession {
+        /// The offering key the miss was under.
+        key: String,
+        /// The absent session id.
+        id: SessionId,
+    },
+    /// A [`SignedAction`] failed verification — forged/tampered ([`SignedError::BadSignature`]),
+    /// replayed ([`SignedError::StaleCounter`]), or malformed ([`SignedError::MalformedKey`]).
+    /// Nothing advanced, nothing was recorded (anti-ghost).
+    Signature(SignedError),
 }
 
 impl std::fmt::Display for HostError {
@@ -69,6 +83,10 @@ impl std::fmt::Display for HostError {
         match self {
             HostError::UnknownOffering(k) => write!(f, "no offering registered under key {k:?}"),
             HostError::Deploy(e) => write!(f, "{e}"),
+            HostError::UnknownSession { key, id } => {
+                write!(f, "no live session {:?} under offering {key:?}", id.0)
+            }
+            HostError::Signature(e) => write!(f, "signed advance refused: {e}"),
         }
     }
 }
@@ -277,6 +295,13 @@ pub struct OfferingHost {
     /// advance THROUGH to it, and [`resume_all`](OfferingHost::resume_all) replays every stored log
     /// on boot. The in-process default is `None` (logs live only in memory).
     resume_store: Option<Box<dyn SessionResumeStore>>,
+    /// **The signed-advance replay ledger** — the last consumed [`SignedAction::counter`] per
+    /// `(offering key, session id, signer pubkey hex)`. [`advance_signed`](OfferingHost::advance_signed)
+    /// requires each envelope's counter to be strictly greater than the entry here and consumes it
+    /// on every successful verification (even an executor-refused move burns its counter — a
+    /// verified envelope is single-use, so a captured one can never be re-presented later when the
+    /// session state might have made its move legal). In-memory, like the live sessions it guards.
+    signed_counters: HashMap<(String, SessionId, String), u64>,
 }
 
 impl OfferingHost {
@@ -464,23 +489,118 @@ impl OfferingHost {
         // exactly what replaying it must re-land).
         if let Some(o) = &out {
             if o.landed() {
-                self.record_landed(key, id, input, actor);
+                let attribution = Attribution::from(actor.clone());
+                self.record_landed(key, id, input, actor, attribution);
             }
         }
         out
     }
 
+    /// **Advance session `(key, id)` by one SIGNATURE-VERIFIED turn** — the signed twin of
+    /// [`advance`](OfferingHost::advance), and the consumer the bare-string actor path never had:
+    /// the turn's actor is a **verified Ed25519 public key**, not an asserted label.
+    ///
+    /// Fail-closed, in order — nothing advances and nothing is recorded on any refusal:
+    ///
+    /// 1. the offering must be registered ([`HostError::UnknownOffering`]) and the session live
+    ///    ([`HostError::UnknownSession`]) — the routing gates, before any crypto;
+    /// 2. the envelope must verify ([`crate::signed::verify_signed`]): a forged/tampered/spliced
+    ///    signature is [`SignedError::BadSignature`], a replayed counter is
+    ///    [`SignedError::StaleCounter`] (the host holds the per-`(key, session, pubkey)` ledger and
+    ///    requires strictly-increasing counters), a malformed key is [`SignedError::MalformedKey`]
+    ///    — each surfaced as [`HostError::Signature`];
+    /// 3. on success the verified counter is CONSUMED (single-use even if the executor then
+    ///    refuses the move) and the action delegates to the **existing advance path** with the
+    ///    verified [`DreggIdentity`] (the canonical pubkey hex — the same handle the adapters'
+    ///    cipherclerks derive), so the executor stays the sole referee and a landed move is
+    ///    recorded into the resume log exactly as an unsigned one is — but with
+    ///    [`Attribution::Signed`] provenance instead of `Asserted`.
+    pub fn advance_signed(
+        &mut self,
+        key: &str,
+        id: &SessionId,
+        sa: SignedAction,
+    ) -> Result<Outcome, HostError> {
+        if !self.has(key) {
+            return Err(HostError::UnknownOffering(key.to_string()));
+        }
+        if !self.is_open(key, id) {
+            return Err(HostError::UnknownSession {
+                key: key.to_string(),
+                id: id.clone(),
+            });
+        }
+        // The replay ledger is keyed by the canonical (lowercase) pubkey hex, so a re-cased
+        // presentation of the same key cannot open a second counter lane.
+        let ledger_key = (
+            key.to_string(),
+            id.clone(),
+            sa.actor_pubkey_hex.to_ascii_lowercase(),
+        );
+        let expected = match self.signed_counters.get(&ledger_key) {
+            None => 0,
+            // A consumed u64::MAX leaves NO acceptable next counter — the lane is exhausted;
+            // refuse (fail-closed) rather than overflow into re-admitting a replay.
+            Some(last) => match last.checked_add(1) {
+                Some(n) => n,
+                None => {
+                    return Err(HostError::Signature(SignedError::StaleCounter {
+                        presented: sa.counter,
+                        expected: u64::MAX,
+                    }));
+                }
+            },
+        };
+        let actor = verify_signed(key, id, expected, &sa).map_err(HostError::Signature)?;
+        // Consume the counter NOW: a verified envelope is single-use whether or not the executor
+        // lands the move (see the `signed_counters` field doc for why).
+        self.signed_counters.insert(ledger_key, sa.counter);
+
+        let out = self
+            .slots
+            .get_mut(key)
+            .expect("offering present (checked above)")
+            .advance(id, sa.action.clone(), actor.clone())
+            .ok_or_else(|| HostError::UnknownSession {
+                key: key.to_string(),
+                id: id.clone(),
+            })?;
+        if out.landed() {
+            let attribution = Attribution::Signed {
+                pubkey_hex: actor.0.clone(),
+            };
+            self.record_landed(key, id, sa.action, actor, attribution);
+        }
+        Ok(out)
+    }
+
+    /// The last consumed [`SignedAction::counter`] for `(key, id, pubkey_hex)`, if any signed
+    /// advance has verified there — what a signer reads to pick its next counter (`last + 1`).
+    pub fn signed_counter(&self, key: &str, id: &SessionId, pubkey_hex: &str) -> Option<u64> {
+        self.signed_counters
+            .get(&(key.to_string(), id.clone(), pubkey_hex.to_ascii_lowercase()))
+            .copied()
+    }
+
     /// Append a landed advance to the session's in-memory move-log and mirror it to the durable
-    /// store (if attached). Shared by [`advance`](OfferingHost::advance) /
+    /// store (if attached), carrying its [`Attribution`] trust level. Shared by
+    /// [`advance`](OfferingHost::advance) / [`advance_signed`](OfferingHost::advance_signed) /
     /// [`advance_collective`](OfferingHost::advance_collective).
-    fn record_landed(&mut self, key: &str, id: &SessionId, input: Action, actor: DreggIdentity) {
+    fn record_landed(
+        &mut self,
+        key: &str,
+        id: &SessionId,
+        input: Action,
+        actor: DreggIdentity,
+        attribution: Attribution,
+    ) {
         if let Some(store) = &self.resume_store {
-            store.record_landed(key, id, &input, &actor);
+            store.record_landed_attributed(key, id, &input, &actor, &attribution);
         }
         self.logs
             .entry((key.to_string(), id.clone()))
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()))
-            .record(input, actor);
+            .record_attributed(input, actor, attribution);
     }
 
     /// Advance session `(key, id)` by one real **crowd** turn carrying a [`CollectiveDecision`] (the
@@ -503,7 +623,8 @@ impl OfferingHost {
         // replayed state — a named residual for a richer collective-aware log).
         if let Some(o) = &out {
             if o.landed() {
-                self.record_landed(key, id, input, carrier);
+                let attribution = Attribution::from(carrier.clone());
+                self.record_landed(key, id, input, carrier, attribution);
             }
         }
         out

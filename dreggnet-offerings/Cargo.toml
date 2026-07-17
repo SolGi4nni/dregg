@@ -71,6 +71,13 @@ ugc-dregg = { path = "../ugc-dregg" }
 # world in as each round's universe + a Descent win as a competitor's submission. Consumed,
 # never modified.
 dreggnet-tournament = { path = "../dreggnet-tournament" }
+# THE SIGNING PRIMITIVE — `SigningKey`/`PublicKey`/`Signature` + `sign`/`verify` (Ed25519,
+# `verify_strict`). The SAME primitive the SDK's `AgentCipherclerk` and the adapters'
+# custodial cipherclerks are built on (`SigningKey::from_bytes` = the cipherclerk's
+# `from_key_bytes` derivation), so a `signed::SignedAction` verifies against exactly the
+# public-key-hex identity the discord/telegram/wechat frontends already attribute moves to.
+# Already in this crate's build graph via dungeon-on-dregg's seat-custody keyring.
+dregg-types = { path = "../types" }
 
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent

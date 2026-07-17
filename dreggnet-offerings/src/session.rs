@@ -275,6 +275,15 @@ pub enum PlayRefusal {
         /// The granted turn budget.
         turn_budget: i64,
     },
+    /// HOLDER KEY: the key is bound to a signed holder's public key
+    /// ([`open_session_signed`]) and the turn was driven under a DIFFERENT key. Only the bound
+    /// key drives this delegation ([`SessionKey::play_driven_by`]).
+    WrongHolderKey {
+        /// The public-key hex the turn was driven under.
+        presented: String,
+        /// The public-key hex the session key is bound to.
+        bound: String,
+    },
 }
 
 impl std::fmt::Display for PlayRefusal {
@@ -294,6 +303,10 @@ impl std::fmt::Display for PlayRefusal {
             } => write!(
                 f,
                 "turn over budget: {turns_taken} turns already taken, session grants {turn_budget}"
+            ),
+            PlayRefusal::WrongHolderKey { presented, bound } => write!(
+                f,
+                "turn driven under the wrong holder key: presented {presented}, key is bound to {bound}"
             ),
         }
     }
@@ -317,6 +330,12 @@ pub struct SessionKey {
     /// The committed-turn counter (the RATE meter). Advances only when a turn actually commits;
     /// a refused move does not consume budget (matching `deleg_admit`'s committed-call count).
     turns_taken: i64,
+    /// An optional **signed-holder binding**: the Ed25519 public-key hex (lowercase) this key's
+    /// holder identity IS, when the key was minted for a verified signer
+    /// ([`open_session_signed`]). `None` for every legacy key ([`open_session`] — additive,
+    /// nothing existing changes). When bound, [`SessionKey::play_driven_by`] refuses a turn
+    /// driven under any other key ([`PlayRefusal::WrongHolderKey`]).
+    bound_pubkey_hex: Option<String>,
 }
 
 impl SessionKey {
@@ -328,6 +347,27 @@ impl SessionKey {
     /// The player this key plays for.
     pub fn holder(&self) -> &DreggIdentity {
         &self.holder
+    }
+
+    /// The signed holder's public-key hex this key is bound to ([`open_session_signed`]), or
+    /// `None` for an unbound (legacy) key.
+    pub fn bound_pubkey_hex(&self) -> Option<&str> {
+        self.bound_pubkey_hex.as_deref()
+    }
+
+    /// **Admit the DRIVER of a turn** against the key's signed-holder binding: an unbound key
+    /// admits any driver (the legacy behavior, unchanged); a bound key admits exactly the bound
+    /// public key — anything else is [`PlayRefusal::WrongHolderKey`]. Hex is compared
+    /// case-insensitively (keys canonicalize to lowercase).
+    pub fn admit_driver(&self, driver_pubkey_hex: &str) -> Result<(), PlayRefusal> {
+        match &self.bound_pubkey_hex {
+            None => Ok(()),
+            Some(bound) if bound.eq_ignore_ascii_case(driver_pubkey_hex) => Ok(()),
+            Some(bound) => Err(PlayRefusal::WrongHolderKey {
+                presented: driver_pubkey_hex.to_string(),
+                bound: bound.clone(),
+            }),
+        }
     }
 
     /// Committed turns taken so far under this key.
@@ -449,6 +489,31 @@ impl SessionKey {
             Outcome::Refused(_) => PlayOutcome::ExecutorRefused(outcome),
         }
     }
+
+    /// **Play ONE turn under this key, naming WHO is driving it** — [`SessionKey::play`] with the
+    /// signed-holder binding enforced first: a key bound to a public key
+    /// ([`open_session_signed`]) refuses a turn driven under any other key
+    /// ([`PlayRefusal::WrongHolderKey`] — no advance, no charge, no budget spent, anti-ghost); an
+    /// unbound key admits any driver, exactly as `play` always has. `driver_pubkey_hex` is the
+    /// verified signer of the turn being carried (what
+    /// [`crate::signed::verify_signed`] returned), NOT a frontend assertion — the caller's job is
+    /// to pass the verified key, this key's job is to check it is the bound one.
+    #[allow(clippy::too_many_arguments)] // `play`'s signature + the one driver argument it gates on
+    pub fn play_driven_by<O: Offering, P: Paymaster>(
+        &mut self,
+        driver_pubkey_hex: &str,
+        target: i64,
+        offering: &O,
+        session: &mut O::Session,
+        input: Action,
+        now: i64,
+        paymaster: &P,
+    ) -> PlayOutcome {
+        if let Err(refusal) = self.admit_driver(driver_pubkey_hex) {
+            return PlayOutcome::Refused(refusal);
+        }
+        self.play(target, offering, session, input, now, paymaster)
+    }
 }
 
 /// **Mint a session key from a parent play cap** — the attenuating delegation. Builds the child
@@ -473,7 +538,35 @@ pub fn open_session(
         grant: child,
         holder,
         turns_taken: 0,
+        bound_pubkey_hex: None,
     })
+}
+
+/// **Mint a session key BOUND to a signed holder** — [`open_session`] for a holder whose
+/// identity is a verified Ed25519 public key (what [`crate::signed::verify_signed`] returns /
+/// the adapters' cipherclerk `public_key_hex`). The key's holder identity IS the pubkey hex
+/// (canonicalized lowercase, so it matches the verified identity byte-for-byte), and the key
+/// remembers the binding: [`SessionKey::play_driven_by`] under any OTHER key is refused
+/// ([`PlayRefusal::WrongHolderKey`]). Same non-amplification tooth as `open_session` — a
+/// widening delegation is refused with the named [`Amplification`] leg. Additive: `open_session`
+/// is untouched and keys it mints stay unbound.
+pub fn open_session_signed(
+    parent: &PlayGrant,
+    holder_pubkey_hex: &str,
+    scope: PlayScope,
+    deadline: i64,
+    turn_budget: i64,
+) -> Result<SessionKey, Amplification> {
+    let canonical = holder_pubkey_hex.to_ascii_lowercase();
+    let mut key = open_session(
+        parent,
+        DreggIdentity(canonical.clone()),
+        scope,
+        deadline,
+        turn_budget,
+    )?;
+    key.bound_pubkey_hex = Some(canonical);
+    Ok(key)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

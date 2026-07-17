@@ -72,10 +72,23 @@ pub mod resume;
 /// gasless from the player's view. See [`session`] (the macaroon attenuation model reused for
 /// play; the SDK tool-mandate's `deleg_admit`/`refines` shape, applied to advancing a session).
 pub mod session;
+/// THE SIGNED-ATTRIBUTION SEAM — a turn's actor as a VERIFIED Ed25519 public key instead of an
+/// asserted string, with the trust level of every attribution made visible
+/// ([`signed::Attribution`]: `Signed` vs `Asserted`). A [`signed::SignedAction`] carries the
+/// actor's signature over a canonical domain-separated message binding
+/// `(offering, session, replay counter, action)`;
+/// [`OfferingHost::advance_signed`](host::OfferingHost::advance_signed) verifies it (forged →
+/// `BadSignature`, replayed → `StaleCounter`) before the existing advance path runs, and the
+/// resume log records the `Signed` provenance. Rung 1 of the G1 identity ladder: the verifying
+/// consumer exists; rung 2 (browser/device-held keys) feeds this same verifier. See [`signed`].
+pub mod signed;
 
 pub use host::{HostError, OfferingHost, OfferingInfo, ResumeError};
 pub use resume::{
     FileResumeStore, InMemoryResumeStore, LoggedMove, SessionMoveLog, SessionResumeStore,
+};
+pub use signed::{
+    Attribution, SignedAction, SignedError, TurnSigner, signing_message, verify_signed,
 };
 
 use dregg_app_framework::TurnReceipt;

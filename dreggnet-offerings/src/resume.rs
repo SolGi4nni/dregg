@@ -43,6 +43,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::signed::Attribution;
 use crate::{Action, DreggIdentity, SessionConfig, SessionId};
 
 /// **One recorded LANDED advance** — the reproducible public input of a single committed turn: the
@@ -57,12 +58,35 @@ pub struct LoggedMove {
     pub action: Action,
     /// The actor the landed turn was attributed to (the collective carrier for a crowd turn).
     pub actor: DreggIdentity,
+    /// **The attribution's trust level** ([`Attribution`]) — was `actor` a VERIFIED signer
+    /// (`Signed`, the [`crate::OfferingHost::advance_signed`] path) or a frontend-asserted label
+    /// (`Asserted`, every legacy path)? Provenance beside the replayed inputs — replay itself
+    /// still re-drives `(action, actor)` only. A log persisted before this field existed decodes
+    /// as `Asserted` (which is exactly what every pre-signed-seam attribution was).
+    pub attribution: Attribution,
 }
 
 impl LoggedMove {
-    /// A logged move — an `action` that landed, attributed to `actor`.
+    /// A logged move — an `action` that landed, attributed to `actor`. The attribution defaults
+    /// to [`Attribution::Asserted`] (the legacy trust level); a verified move is recorded with
+    /// [`LoggedMove::attributed`].
     pub fn new(action: Action, actor: DreggIdentity) -> Self {
-        LoggedMove { action, actor }
+        let attribution = Attribution::from(actor.clone());
+        LoggedMove {
+            action,
+            actor,
+            attribution,
+        }
+    }
+
+    /// A logged move with an explicit [`Attribution`] trust level (the signed-advance path
+    /// records [`Attribution::Signed`] here).
+    pub fn attributed(action: Action, actor: DreggIdentity, attribution: Attribution) -> Self {
+        LoggedMove {
+            action,
+            actor,
+            attribution,
+        }
     }
 }
 
@@ -101,6 +125,18 @@ impl SessionMoveLog {
         self.moves.push(LoggedMove::new(action, actor));
     }
 
+    /// Append a landed advance with an explicit [`Attribution`] trust level (the signed-advance
+    /// path records [`Attribution::Signed`]).
+    pub fn record_attributed(
+        &mut self,
+        action: Action,
+        actor: DreggIdentity,
+        attribution: Attribution,
+    ) {
+        self.moves
+            .push(LoggedMove::attributed(action, actor, attribution));
+    }
+
     /// The number of landed advances recorded (the replayable turns; genesis is implicit in `cfg`).
     pub fn len(&self) -> usize {
         self.moves.len()
@@ -130,6 +166,24 @@ pub trait SessionResumeStore {
     /// Append a LANDED advance to `(key, id)`'s log (called after each `Outcome::Landed`). A refused
     /// move records nothing (it committed nothing).
     fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity);
+
+    /// Append a LANDED advance **with its [`Attribution`] trust level** — the provenance-aware
+    /// twin of [`record_landed`](SessionResumeStore::record_landed), which the host calls so a
+    /// store that understands attribution (the in-memory and file stores here) can persist it.
+    /// **Default: drops the attribution and delegates to `record_landed`** — additive, so an
+    /// existing external implementor keeps compiling and behaving exactly as before (its logs
+    /// simply decode with the legacy `Asserted` level).
+    fn record_landed_attributed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        attribution: &Attribution,
+    ) {
+        let _ = attribution;
+        self.record_landed(key, id, action, actor);
+    }
 
     /// Drop `(key, id)`'s log (on session close) — it will not be resumed on the next boot.
     fn forget(&self, key: &str, id: &SessionId);
@@ -182,13 +236,24 @@ impl SessionResumeStore for InMemoryResumeStore {
     }
 
     fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity) {
+        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()));
+    }
+
+    fn record_landed_attributed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        attribution: &Attribution,
+    ) {
         let mut map = self.inner.borrow_mut();
         let entry = map
             .entry(Self::map_key(key, id))
             // A landed move on a session we never saw opened still establishes a log (default cfg);
             // in practice `record_open` always precedes it (the host opens before it advances).
             .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
-        entry.record(action.clone(), actor.clone());
+        entry.record_attributed(action.clone(), actor.clone(), attribution.clone());
     }
 
     fn forget(&self, key: &str, id: &SessionId) {
@@ -301,12 +366,23 @@ impl SessionResumeStore for FileResumeStore {
     }
 
     fn record_landed(&self, key: &str, id: &SessionId, action: &Action, actor: &DreggIdentity) {
+        self.record_landed_attributed(key, id, action, actor, &Attribution::from(actor.clone()));
+    }
+
+    fn record_landed_attributed(
+        &self,
+        key: &str,
+        id: &SessionId,
+        action: &Action,
+        actor: &DreggIdentity,
+        attribution: &Attribution,
+    ) {
         // A landed move on a session we never saw opened still establishes a file (default cfg);
         // in practice `record_open` always precedes it (the host opens before it advances).
         self.write_header_if_absent(key, id, &SessionConfig::default());
         let path = self.path_for(key, id);
         if let Ok(mut f) = fs::OpenOptions::new().append(true).open(&path) {
-            let _ = writeln!(f, "{}", encode_move(action, actor));
+            let _ = writeln!(f, "{}", encode_move(action, actor, attribution));
         }
     }
 
@@ -378,10 +454,18 @@ fn encode_header(key: &str, id: &SessionId, cfg: &SessionConfig) -> String {
     format!("{}\t{}\t{}", esc(key), esc(&id.0), seed)
 }
 
-/// One landed advance: `label \t turn \t arg \t enabled \t has_text \t text \t actor`.
-fn encode_move(action: &Action, actor: &DreggIdentity) -> String {
+/// One landed advance: `label \t turn \t arg \t enabled \t has_text \t text \t actor \t trust`.
+/// The 8th `trust` column is the [`Attribution`] level — `s` (signed: `actor` is a VERIFIED
+/// pubkey hex) or `a` (asserted). It carries no payload of its own (a signed attribution's
+/// pubkey and an asserted attribution's label are both exactly the `actor` column), so old
+/// 7-column lines decode losslessly as `a` — see [`decode_log`].
+fn encode_move(action: &Action, actor: &DreggIdentity, attribution: &Attribution) -> String {
+    let trust = match attribution {
+        Attribution::Signed { .. } => "s",
+        Attribution::Asserted { .. } => "a",
+    };
     format!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         esc(&action.label),
         esc(&action.turn),
         action.arg,
@@ -389,6 +473,7 @@ fn encode_move(action: &Action, actor: &DreggIdentity) -> String {
         action.text.is_some() as u8,
         esc(action.text.as_deref().unwrap_or("")),
         esc(&actor.0),
+        trust,
     )
 }
 
@@ -416,7 +501,9 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
             continue;
         }
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 7 {
+        // 7 columns = the pre-attribution format (every such log was asserted-only);
+        // 8 columns = the current format with the trailing trust column.
+        if f.len() != 7 && f.len() != 8 {
             return None;
         }
         let label = unesc(f[0]);
@@ -426,11 +513,21 @@ fn decode_log(text: &str) -> Option<SessionMoveLog> {
         let has_text = f[4] == "1";
         let text = unesc(f[5]);
         let actor = DreggIdentity(unesc(f[6]));
+        let attribution = match f.get(7).copied() {
+            // A signed move's actor IS its verified pubkey hex (verify_signed's postcondition).
+            Some("s") => Attribution::Signed {
+                pubkey_hex: actor.0.clone(),
+            },
+            // Explicitly asserted, or the legacy 7-column line (which was always asserted).
+            Some("a") | None => Attribution::from(actor.clone()),
+            // An unknown trust tag is a corrupt file — treat as absent, never mis-labeled.
+            Some(_) => return None,
+        };
         let mut action = Action::new(label, turn, arg, enabled);
         if has_text {
             action = action.with_text(text);
         }
-        log.record(action, actor);
+        log.record_attributed(action, actor, attribution);
     }
     Some(log)
 }
@@ -528,6 +625,62 @@ mod file_store_tests {
         assert_eq!(store.len(), 1, "b forgotten");
         assert!(store.load("dungeon", &b).is_none());
         assert!(store.load("dungeon", &a).is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ATTRIBUTION PROVENANCE round-trips through the file store — a signed move reloads as
+    /// `Signed`, an asserted one as `Asserted` — and a LEGACY 7-column log line (persisted
+    /// before the trust column existed) still decodes, as `Asserted` (which is exactly what
+    /// every pre-signed-seam attribution was). The existing wire format is never broken.
+    #[test]
+    fn attribution_round_trips_and_legacy_seven_column_lines_still_decode() {
+        let dir = scratch_dir("attribution");
+        let store = FileResumeStore::open(&dir).expect("open store");
+        let id = SessionId::new("s");
+        let cfg = SessionConfig::with_seed(11);
+        let pubkey_hex = "ab".repeat(32); // a 64-char stand-in pubkey hex
+        store.record_open("dungeon", &id, &cfg);
+        store.record_landed_attributed(
+            "dungeon",
+            &id,
+            &Action::new("m", "choose", 1, true),
+            &DreggIdentity(pubkey_hex.clone()),
+            &Attribution::Signed {
+                pubkey_hex: pubkey_hex.clone(),
+            },
+        );
+        store.record_landed(
+            "dungeon",
+            &id,
+            &Action::new("m", "choose", 2, true),
+            &DreggIdentity("web:alice".into()),
+        );
+        let log = store.load("dungeon", &id).expect("log persisted");
+        assert_eq!(
+            log.moves[0].attribution,
+            Attribution::Signed {
+                pubkey_hex: pubkey_hex.clone()
+            },
+            "a signed move reloads as Signed"
+        );
+        assert!(
+            !log.moves[1].attribution.is_signed(),
+            "a plain record_landed reloads as Asserted"
+        );
+
+        // A LEGACY file: header + one 7-column move line (no trust column) decodes as Asserted.
+        let legacy = "dungeon\told-sess\t42\npress on\tchoose\t3\t1\t0\t\tweb:bob\n";
+        let old = decode_log(legacy).expect("a pre-attribution log still decodes");
+        assert_eq!(old.moves.len(), 1);
+        assert_eq!(old.moves[0].actor.0, "web:bob");
+        assert_eq!(
+            old.moves[0].attribution,
+            Attribution::Asserted {
+                label: "web:bob".into()
+            },
+            "a legacy line is honestly Asserted"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
