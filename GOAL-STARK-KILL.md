@@ -1984,3 +1984,27 @@ or its perf. Report what the CODE does TODAY, not what a doc/proof claims. Then:
 + an honest SDK-readiness verdict (expose what is deployed, name what is research).
 NOTE (CLAUDE.md updated): `cv workflow <session> <run> --results` now renders FULL per-agent returns +
 `cv show/export <agent-id>` resolves workflow sub-agents — use it to harvest (not hand-grep).
+
+## ⚑ fhegg SDK-READINESS VERDICT (analysis wup1pv94u) — NOT ready; expose nothing yet
+Honest answer to ember: **fhegg is NOT SDK-ready.** High-quality research, real crypto, honest envelope docs
+— but not a callable third-party surface.
+- **fhe_clear (TFHE)**: REAL homomorphic clearing (tfhe 1.6, ≥128-bit), but MINUTES-slow (46s @N=32/K=64 …
+  ~30min @N=512/K=256), SINGLE-KEY (caller decrypts EVERYTHING — the "no-viewer" threshold decrypt is a
+  comment, ABSENT in code), NO key mgmt / serialization / wire types. The end-to-end "nobody sees the
+  curves" property = prose + a modeled seam (the BFV→TFHE scheme-switch is a named unbuilt residual).
+- **reference_clear (plaintext)**: CORRECT uniform-price rule, but returns only (p*,V*)+curves — NO
+  per-order allocation/fill, no serde, no tick mapping. Can't settle a market from its output.
+- **verify-not-find (solver + Cert-F)**: the plaintext loop (solve→emit Cert-F→native check) is REAL +
+  tested + honest — the ONE thing SDK-exposable TODAY, labeled EXPERIMENTAL/plaintext/demo-scale/
+  untrusted-solver-self-checkable. BUT the "Lean-verified/STARK" trust story works for exactly ONE
+  hardcoded toy program (ring-3, ε=0); real batches fail closed. Not exposable as "verified clearing."
+- fhegg-rtl = FPGA scaffolding, NOT SDK-relevant.
+**RECOMMENDATION**: do NOT surface fhegg in sdk/sdk-ts/sdk-py yet. The nearest real target is the
+`fhegg_clear` plaintext CLI shape as an EXPERIMENTAL engine, which still needs: (1) allocation/fill rule +
+serde-stable versioned Order/Outcome, (2) generalize Cert-F beyond ring-3 (per-program Lean-proof/emit/
+byte-pin pipeline), (3) re-measure the current FheUint32 circuit. `FheggSdkReadinessResidual`.
+DOC-RESIDUAL (not yet fixed): the "measured" FHE envelope (§3.1/§6) cites LITERATURE numbers while the
+repo's OWN better measurements (MEASURED-ENVELOPE.md, OUTPUT-BOUNDARY-MPC.md) sit UNCITED, and the table is
+on the superseded FheUint16 circuit (current FheUint32 is ~2-3× slower). The doc also UNDERSTATES proven
+work (ledger-realization half-discharged, FhEggRustDenotation closes 5 residuals) — drift in the SAFE
+direction. `FheggEnvelopeDocResidual`.
