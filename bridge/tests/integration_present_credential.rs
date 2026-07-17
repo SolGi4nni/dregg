@@ -145,9 +145,18 @@ fn wrong_issuer_key_rejected_by_membership_check() {
         &UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound(),
         &req,
     );
-    assert!(
-        result.is_err(),
-        "forged (unregistered) issuer key must be rejected by issuer membership check"
+    let err = result
+        .expect_err("forged (unregistered) issuer key must be rejected by issuer membership check");
+    // The rejection must be the ISSUER-MEMBERSHIP tooth specifically — the forged
+    // key's synthetic Merkle path does not hash into the federation root — not an
+    // incidental auth-trace denial (`Denied`), empty state (`EmptyState`), or a
+    // malformed request (`InvalidRequest`). A test that accepted any `Err` would
+    // pass even if the membership check were removed and the rejection came from
+    // an unrelated cause.
+    assert_eq!(
+        err,
+        dregg_bridge::AuthError::IssuerNotInFederation,
+        "expected IssuerNotInFederation (the membership tooth), got {err:?}"
     );
 }
 
@@ -182,9 +191,14 @@ fn expired_credential_denied() {
         &UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound(),
         &req,
     );
-    assert!(
-        result.is_err(),
-        "credential with past expiry must be denied"
+    // The rejection must be the AUTH-TRACE denial (`Conclusion::Deny` on the past
+    // `valid_until` caveat), not an incidental membership miss / empty state /
+    // malformed request. A bare `is_err()` would stay green even if the expiry
+    // gate were removed and the Err came from an unrelated cause.
+    assert_eq!(
+        result.unwrap_err(),
+        dregg_bridge::AuthError::Denied,
+        "credential with past expiry must be denied by the authorization trace"
     );
 }
 
@@ -219,8 +233,13 @@ fn credential_wrong_app_denied() {
         &UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound(),
         &req,
     );
-    assert!(
-        result.is_err(),
+    // The rejection must be the AUTH-TRACE denial (`Conclusion::Deny` — the request
+    // app is not authorized), not an incidental membership miss / empty state /
+    // malformed request. A bare `is_err()` would stay green even if the app gate
+    // were removed and the Err came from an unrelated cause.
+    assert_eq!(
+        result.unwrap_err(),
+        dregg_bridge::AuthError::Denied,
         "credential restricted to 'dashboard' must be denied for 'admin-panel'"
     );
 }
@@ -308,32 +327,37 @@ fn credential_wrong_user_denied() {
         &UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound(),
         &req,
     );
-    assert!(
-        result.is_err(),
+    // The rejection must be the AUTH-TRACE denial (`Conclusion::Deny` — the
+    // `confine_user(alice)` caveat rejects request user `bob`), not an incidental
+    // membership miss / empty state / malformed request. A bare `is_err()` would
+    // stay green even if the user-confinement gate were removed.
+    assert_eq!(
+        result.unwrap_err(),
+        dregg_bridge::AuthError::Denied,
         "credential confined to 'alice' must be denied for user 'bob'"
     );
 }
 
+/// The builder's synthetic issuer-membership root must agree with the reference
+/// recompute — was `debug_matching_root`, a pure-`println!` scratch test that
+/// asserted nothing. Now it pins the synthetic Merkle-path construction (leaf →
+/// position/sibling indexing → Poseidon2 fold) against two independent
+/// recomputes, so a regression in `build_issuer_membership_poseidon2_synthetic`
+/// (wrong position, sibling order, or hash) goes red here rather than surfacing
+/// only through the deeper `valid_credential_accepted` round trip.
 #[test]
-fn debug_matching_root() {
+fn synthetic_membership_root_matches_the_reference_recompute() {
     let key = issuer_key();
-    let computed = matching_root_bb(&key);
     let builder = builder_for_key(key);
     let issuer_hash = dregg_bridge::present::bytes_to_babybear(&key);
 
-    // Try to build issuer membership directly
-    let result = builder.build_issuer_membership_poseidon2(issuer_hash);
-    println!("computed root bb = {}", computed.0);
-    match &result {
-        Ok(w) => println!(
-            "build_issuer_membership_poseidon2 OK, expected_root = {}",
-            w.expected_root.0
-        ),
-        Err(e) => println!("build_issuer_membership_poseidon2 ERR = {:?}", e),
-    }
+    let witness = builder
+        .build_issuer_membership_poseidon2(issuer_hash)
+        .expect("synthetic membership must build for a matching-root builder");
 
-    // Manually compute what build_issuer_membership_poseidon2_synthetic computes
-    let mut current = issuer_hash;
+    // Recompute the folded root two independent ways.
+    let helper_root = matching_root_bb(&key);
+    let mut manual = issuer_hash;
     for i in 0..8 {
         let position = (i % 4) as u8;
         let siblings = [
@@ -341,7 +365,20 @@ fn debug_matching_root() {
             dregg_circuit::BabyBear::new(dregg_bridge::present::hash_index(i, 1, &key)),
             dregg_circuit::BabyBear::new(dregg_bridge::present::hash_index(i, 2, &key)),
         ];
-        current = dregg_circuit::merkle_air::compute_parent_poseidon2(current, position, &siblings);
+        manual = dregg_circuit::merkle_air::compute_parent_poseidon2(manual, position, &siblings);
     }
-    println!("manual recomputed root bb = {}", current.0);
+
+    assert_eq!(
+        witness.expected_root, helper_root,
+        "builder synthetic membership root must equal the test-helper recompute"
+    );
+    assert_eq!(
+        witness.expected_root, manual,
+        "builder synthetic membership root must equal the inline recompute"
+    );
+    // Non-vacuity: the fold actually did work (the root is not the bare leaf).
+    assert_ne!(
+        witness.expected_root, issuer_hash,
+        "the 8-level folded root must differ from the raw issuer leaf"
+    );
 }
