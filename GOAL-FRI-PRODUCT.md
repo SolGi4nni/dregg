@@ -86,6 +86,30 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
 
 - **fhegg-perf ✅** (cf84a9baa+81cdaae11): Tier-0 confidential value path now TENS OF MS (was minutes) — BFV fold 10⁵× sub-10ms + output-boundary MPC crossing 0.9-7ms (both already landed) + THIS lane closed the last un-built seam: masked-decrypt-to-shares (only decrypt opens a OTP value; production needs NO new decrypt primitive; a2b_mod_t→Beaver crossing). KAT-equal to plaintext (pad-exactness by enumeration). MEASURED AGG→p* 17-76ms vs 12-17s. Proposed: wire real threshold-decrypt, tournament-argmax round-depth, PDHG matvec on additive carrier; FPGA deprioritized for Tier-0.
 
+
+## ⚑⚑ FRI STAGE 5 — HONEST CAPSTONE (5e451fc88, FriVerifierCompose.lean, 22 keystones, sorry-free)
+ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
+- SEAM CLOSED via hit_cond (BCS16 lazy-sampling: fresh-at-moment-of-own-query, NO freshness hyp,
+  holds for honest prover; OracleComp's query tree IS the ordered model — no new data structure).
+- ⚑ CAUGHT OUR OWN VACUITY: Stages 2/3's fsPt∉queriedFinset was the WRONG predicate — REFUTABLE
+  (an FS challenge IS a query; the hyp excluded exactly the adversaries the floor is about).
+  hit_cond replaces it + strictly strengthens.
+- εFri COMPOSED over ONE shared oracle for ONE Q-query adversary (epsFri_compose, no independence);
+  3/4 legs discharged NO supplied ε (FS+grind via hit_cond, Merkle via birthday_cond); L=1 radius,
+  Johnson NOT assumed, 112.6 NOT read out.
+- friLdtExtractV3_rom STATED not proven; 2 blockers named IN LEAN: (a) word↔proof bridge
+  (DeployedFriEmbedding decode, hyp-structure); (b) ⚑ NEW DEPLOYED-CODE FINDING — qidx=squeeze%2^logN
+  PROVABLY NON-UNIFORM (|F|=2013265921 odd ⇒ 2^logN∤|F| at every logN; biased sampler, no in-tree term).
+- APEX re-reads probabilistically: GroundedApex = "…except w.p. ≤ #nodes·εFri(Q) for any Q-query adv";
+  tree side DONE (nodes_union_bound + apex_probabilistic_nodeCarrier), gap ENTIRELY per-node.
+- ⚑ BITS MEAN SOMETHING? NO, stated in Lean: epsClosedLegs (3 legs) IS a real Q-growing adversary bound
+  (huge move from calculator) but εFri=epsClosedLegs+εQuery, εQuery≥1/|F|>0 → reading budget off closed
+  legs alone = laundering, REFUSED. Permanent honest carriers named: ROM α-pin (Poseidon2-random) +
+  Johnson correlated-agreement (not assumed).
+- ⚠ CAVEAT: committed on lane's cited-green + my sorry-free/theorem-presence check; a from-scratch
+  build-verify (like the ArkLib gold-standard) is warranted before any external claim.
+- ⚑ TWO FINDINGS FOR EMBER: (1) the refutable predicate (our own), (2) the deployed non-uniform sampler.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
