@@ -39,14 +39,30 @@ only when the move's abstract image `μ rm` is admitted by the governor at the r
 `absAdmissible w am := absFloor (astep w am)` is the governor's own admit-predicate (the `genGovStep`
 guard). So `wrapper_sound` says exactly: *the wrapper forwards only governor-admitted moves.*
 
-## The transfer theorem
+## The transfer theorems
 
-`transfer_safety`: from a real start whose abstract read satisfies the floor, any trajectory of the
-TRUSTED server under the wrapper keeps `realFloor` at every tick. The proof is the membrane square +
-the governor's admit guard + `floor_sound`. The controller is never inspected (it is the cell on the
-dregg side, fully arbitrary). The TRUSTED SURFACE is the membrane `(α, the wrapper, the server-as-
-oracle)`, NOT the agent: the `∀`-controller result of `SafetyGame`/`PolisGovernorTheory` already
-covers the agent, and this file shows it lifts across the membrane onto a real, un-modelled server.
+`transfer_safety` (§3): from a real start whose abstract read satisfies the floor, any trajectory of
+the TRUSTED server under the wrapper keeps `realFloor` at every tick — *given* `hacc`, that every move
+the controller proposes is forwarded. The proof is the membrane square + the governor's admit guard +
+`floor_sound`.
+
+Read `hacc` honestly and it is a hypothesis **on the controller**: it says the cell never proposes a
+floor-breaking move. Against the obvious adversary it is simply FALSE, and the theorem then says
+nothing (`demo_adversary_not_accepted`) — while the conclusion it would have given is FALSE too
+(`demo_adversary_breaks_unshielded`). `hacc` was standing in for a shield this file did not model.
+
+`shielded_transfer_safety` (§4b) DISCHARGES it. `shieldedStep` transports the abstract governor's own
+shield (`genGovStep` = admit-iff-floor-else-stay-put) across the membrane onto the real wire: the
+trusted server is stepped iff the governor at the read-off state admits the move, and REFUSED
+otherwise. Safety then holds at every tick for EVERY controller with no acceptance hypothesis — and
+the shield is proven GENTLE (`shield_admits_benign` / `shield_refuses_only_harmful`), so it is not the
+vacuous refuse-everything shield. The one new obligation is `WrapperIsGovernor`, a condition on the
+MEMBRANE (definitional for the canonical wrapper, discharged by `rfl` on the demo instance) — not on
+the agent.
+
+So the TRUSTED SURFACE is the membrane `(α, the wrapper, the server-as-oracle)`, NOT the agent: the
+`∀`-controller result of `SafetyGame`/`PolisGovernorTheory` already covers the agent, and this file
+lifts it across the membrane onto a real, un-modelled server.
 
 ## The irreducible boundary
 
@@ -205,6 +221,112 @@ theorem canonical_wrapper_sound
     (h : canonicalAccepts RState AState RealMove AbsMove α μ astep absFloor r rm) :
     absFloor (astep (α r) (μ rm)) := h
 
+/-! ## §4b. THE SHIELD — the real-wire governor, and the DISCHARGE of the acceptance hypothesis.
+
+`transfer_safety` (§3) is conditional on `hacc`: *every move the controller proposes is forwarded by
+the wrapper*. Read honestly, that is a hypothesis **on the CONTROLLER** — it says the cell never
+proposes a floor-breaking move. But the controller is exactly the thing we refuse to trust, and §3's
+prose claim that it is "never inspected, fully arbitrary" is only true of the quantifier: `hacc`
+constrains it anyway, and against a controller that *does* propose a bad move the hypothesis is FALSE
+and `transfer_safety` says NOTHING (`demo_adversary_not_accepted`, §5). The hypothesis was standing in
+for a shield that this file never modelled.
+
+On the abstract side we never do this. `genGovStep` MODELS the shield (`if floor (step w m) then step
+w m else w`), so `genGov_safe` holds for EVERY controller with no acceptance hypothesis. This section
+transports that shield across the membrane onto the real wire and DISCHARGES `hacc`.
+
+`shieldedStep` consults the governor at the read-off abstract state and forwards to the trusted server
+iff it admits; otherwise it REFUSES — the server is never stepped and the real state stays put.
+`shielded_transfer_safety` then holds for EVERY controller, acceptance hypothesis GONE. What remains
+is a condition on the MEMBRANE, not on the adversary: `WrapperIsGovernor` — §4's prose ("the wrapper
+IS the governor on the real wire") finally stated as a proposition, and definitional for the canonical
+wrapper. That is the whole point of the membrane discipline: obligations live on the trust surface,
+never on the agent.
+-/
+
+/-- **`WrapperIsGovernor`** — §4's prose as a proposition: the wrapper forwards a move EXACTLY when
+the governor at the read-off abstract state admits it. This is a condition on the MEMBRANE (the named
+trust surface), never on the controller. -/
+def WrapperIsGovernor : Prop :=
+  ∀ r rm, A.wrapperAccepts r rm ↔ absAdmissible A (A.α r) (A.μ rm)
+
+/-- The only NEW obligation in `WrapperIsGovernor` is **completeness** (the wrapper does not refuse a
+move the governor would admit): soundness is already a membrane field (`wrapper_sound`). So the shield
+below costs the membrane exactly one condition beyond what §1 already demands. -/
+theorem wrapperIsGovernor_iff_complete :
+    WrapperIsGovernor A ↔ ∀ r rm, absAdmissible A (A.α r) (A.μ rm) → A.wrapperAccepts r rm :=
+  ⟨fun h r rm => (h r rm).mpr, fun h r rm => ⟨A.wrapper_sound r rm, h r rm⟩⟩
+
+/-- **`shieldedStep`** — `genGovStep` transported across the membrane: the real-wire governor. Consult
+the governor at the read-off abstract state `α r`; forward `rm` to the TRUSTED server iff the governor
+admits its image; otherwise REFUSE — the server is not stepped, the real state stays put. Computable
+(the abstract floor is decidable — that is what `absFloorDec` is for). -/
+def shieldedStep (r : A.RState) (rm : A.RealMove) : A.RState :=
+  if A.absFloor (A.astep (A.α r) (A.μ rm)) then A.rstep r rm else r
+
+/-- A **shielded episode**: the cell (an opaque, fully arbitrary controller) proposes a real move at
+each tick; the SHIELD decides whether the trusted server ever sees it. No acceptance hypothesis: the
+refusal branch is modelled, so an adversarial controller is inside the theory rather than assumed
+away. -/
+def shieldedTraj (ctrl : A.RState → A.RealMove) (r0 : A.RState) : Nat → A.RState
+  | 0 => r0
+  | n + 1 => shieldedStep A (shieldedTraj ctrl r0 n) (ctrl (shieldedTraj ctrl r0 n))
+
+/-- **`shield_preserves_abs`** — one shielded step keeps the abstract floor of the membrane read, for
+ANY proposed move: either the governor admits (and the square carries its guard onto the read of the
+stepped server state) or it refuses (and the read is unchanged, so the floor already held). This is
+`genGov_preserves` across the membrane. -/
+theorem shield_preserves_abs (hgov : WrapperIsGovernor A) (r : A.RState) (rm : A.RealMove)
+    (h : A.absFloor (A.α r)) : A.absFloor (A.α (shieldedStep A r rm)) := by
+  unfold shieldedStep
+  by_cases hp : A.absFloor (A.astep (A.α r) (A.μ rm))
+  · -- Admitted: the wrapper forwards it (completeness), so the square applies.
+    rw [if_pos hp, A.step_sim r rm ((hgov r rm).mpr hp)]
+    exact hp
+  · -- Refused: the server never stepped; the read is the old one, whose floor we already have.
+    rw [if_neg hp]; exact h
+
+/-- **`shielded_transfer_safety`** — THE MEMBRANE TRANSFER THEOREM, WITH THE SHIELD MODELLED. Given a
+membrane whose wrapper IS the governor, and a real start whose membrane read satisfies the abstract
+floor, the TRUSTED server's shielded trajectory keeps `realFloor` at EVERY tick — for EVERY
+controller, with **no acceptance hypothesis**. This is `transfer_safety` with `hacc` DISCHARGED: the
+assumption that the cell never proposes a bad move is replaced by a shield that refuses the bad move.
+
+The controller is now genuinely never inspected (it is universally quantified and unconstrained — see
+`demo_adversary_shielded_safe`, where an adversary that proposes a floor-breaking move at every tick
+is held safe forever). The trusted surface is the membrane `(α, wrapper, rstep)` alone — exactly what
+§1 names, and nothing about the agent. This is `genGov_safe` on the real wire. -/
+theorem shielded_transfer_safety (hgov : WrapperIsGovernor A)
+    (ctrl : A.RState → A.RealMove) (r0 : A.RState) (h0 : A.absFloor (A.α r0)) :
+    ∀ n, A.realFloor (shieldedTraj A ctrl r0 n) := by
+  -- The abstract floor of the read is the invariant; `floor_sound` reads off the real floor.
+  suffices H : ∀ n, A.absFloor (A.α (shieldedTraj A ctrl r0 n)) from fun n => A.floor_sound _ (H n)
+  intro n
+  induction n with
+  | zero => exact h0
+  | succ k ih => exact shield_preserves_abs A hgov _ _ ih
+
+/-! ### The shield is GENTLE — it is not the refuse-everything shield.
+
+A shield that refused every move would also keep the floor forever, and `shielded_transfer_safety`
+would be worthless. These two say the shield refuses exactly the harmful moves — the mirror of
+`genGov_admits_benign` / `genGov_refuses_only_harmful`. -/
+
+/-- **`shield_admits_benign`** — a move whose abstract image keeps the floor is forwarded to the
+trusted server UNCHANGED. The shield does not obstruct benign play. -/
+theorem shield_admits_benign (r : A.RState) (rm : A.RealMove)
+    (hb : A.absFloor (A.astep (A.α r) (A.μ rm))) : shieldedStep A r rm = A.rstep r rm := by
+  unfold shieldedStep; rw [if_pos hb]
+
+/-- **`shield_refuses_only_harmful`** — every refusal is a genuine floor-breaking move: if the shield
+did anything other than pass the move through, the move's abstract image would have broken the floor. -/
+theorem shield_refuses_only_harmful (r : A.RState) (rm : A.RealMove)
+    (h : shieldedStep A r rm ≠ A.rstep r rm) : ¬ A.absFloor (A.astep (A.α r) (A.μ rm)) := by
+  unfold shieldedStep at h
+  by_cases hb : A.absFloor (A.astep (A.α r) (A.μ rm))
+  · rw [if_pos hb] at h; exact absurd rfl h
+  · exact hb
+
 /-! ## §5. A concrete membrane — non-vacuity, both polarities, over the sandbox world.
 
 We exhibit a small but non-trivial membrane and check that it does real work. The trusted "server"
@@ -318,6 +440,87 @@ theorem demo_transfer_holds :
       ∧ demoAccepts (demoRealTraj cellPlusOne ⟨0, 0⟩ 4)
           (cellPlusOne (demoRealTraj cellPlusOne ⟨0, 0⟩ 4)) := by decide
 
+/-! ### §5b. THE ADVERSARY — what `hacc` was hiding, and what the shield buys.
+
+`cellPlusNine` proposes `+9` at every tick: from `dist = 0` that lands at `9 > 5`, breaking the floor.
+This is a legitimate cell — nothing in §1 forbids it, and the controller is supposed to be arbitrary.
+Three facts, all decidable, that together show `hacc` was a LAUNDERED ASSUMPTION and the shield
+discharges it:
+
+  (a) `demo_adversary_not_accepted` — the wrapper does NOT accept this cell's move at tick `0`. So
+      `transfer_safety`'s `hacc` is FALSE for this controller and the theorem is VACUOUS here: it
+      says nothing at all about the most obvious adversary in the model.
+  (b) `demo_adversary_breaks_unshielded` — and `hacc` was doing REAL work: strip it, and the
+      conclusion is FALSE. Unshielded, this cell drives the trusted server to `dist = 9` at tick 1,
+      violating `realFloorDemo`. So (a) is not a technicality — the hypothesis is exactly what was
+      holding the theorem up.
+  (c) `demo_adversary_shielded_safe` — the shield holds the floor against this same adversary at
+      EVERY tick, via the general `shielded_transfer_safety`, with NO hypothesis on the cell. The
+      server is simply never stepped; the real state never leaves `⟨0,0⟩` (`demo_shield_really_refuses`
+      — even the server's private nonce never bumps, because the server never ran).
+
+And the shield is not trivially refusing everything: `demo_shield_admits_benign_cell` shows the `+1`
+cell is forwarded every tick and the server really advances (`dist = 3`, nonce `= 21`). -/
+
+/-- An ADVERSARIAL cell: always propose `+9` — a floor-breaking move from the start. -/
+def cellPlusNine : RServer → Nat := fun _ => 9
+
+/-- (a) The old `transfer_safety` is UNUSABLE against this adversary: its acceptance hypothesis is
+false already at tick `0`, so the theorem yields nothing. -/
+theorem demo_adversary_not_accepted :
+    ¬ demoAccepts (demoRealTraj cellPlusNine ⟨0, 0⟩ 0)
+        (cellPlusNine (demoRealTraj cellPlusNine ⟨0, 0⟩ 0)) := by decide
+
+/-- (b) And the hypothesis was LOAD-BEARING, not decorative: without a shield, this adversary really
+does break the real floor on the trusted server at tick `1` (`dist = 9 > 5`). Drop `hacc` from
+`transfer_safety` and the statement becomes FALSE — which is precisely why modelling the shield, and
+not assuming acceptance, is the honest route. -/
+theorem demo_adversary_breaks_unshielded :
+    ¬ realFloorDemo (demoRealTraj cellPlusNine ⟨0, 0⟩ 1) := by decide
+
+/-- A concrete shielded trajectory on transparent types (definitionally `shieldedTraj demoMembrane`). -/
+def demoShieldedTraj (ctrl : RServer → Nat) (r0 : RServer) : Nat → RServer
+  | 0 => r0
+  | n + 1 =>
+      if absFloorDemo (aDemoStep (αDemo (demoShieldedTraj ctrl r0 n)) (ctrl (demoShieldedTraj ctrl r0 n)))
+      then rDemoStep (demoShieldedTraj ctrl r0 n) (ctrl (demoShieldedTraj ctrl r0 n))
+      else demoShieldedTraj ctrl r0 n
+
+theorem demoShieldedTraj_eq (ctrl : RServer → Nat) (r0 : RServer) (n : Nat) :
+    demoShieldedTraj ctrl r0 n = shieldedTraj demoMembrane ctrl r0 n := by
+  induction n with
+  | zero => rfl
+  | succ k ih => simp only [demoShieldedTraj, shieldedTraj, shieldedStep, ih]; rfl
+
+/-- The demo membrane's wrapper IS the governor: `demoAccepts` is literally `absAdmissible`, so
+`WrapperIsGovernor` — the shield's ONLY membrane obligation beyond §1 — holds by reflexivity. The
+condition is discharged on a real instance, not left as a named open. -/
+theorem demoMembrane_wrapperIsGovernor : WrapperIsGovernor demoMembrane :=
+  fun _ _ => Iff.rfl
+
+/-- (c) **THE PAYOFF.** The shield keeps the real floor against the `+9` adversary at EVERY tick — by
+the general `shielded_transfer_safety`, with no hypothesis whatsoever on the cell. Compare (a): the
+old theorem could not speak about this controller at all. -/
+theorem demo_adversary_shielded_safe :
+    ∀ n, realFloorDemo (demoShieldedTraj cellPlusNine ⟨0, 0⟩ n) := by
+  intro n
+  rw [demoShieldedTraj_eq]
+  exact shielded_transfer_safety demoMembrane demoMembrane_wrapperIsGovernor cellPlusNine ⟨0, 0⟩
+    (by decide) n
+
+-- The shield REALLY refuses: the server never ran, so even its private nonce never bumped.
+#guard decide (demoShieldedTraj cellPlusNine ⟨0, 0⟩ 3 = ⟨0, 0⟩)
+-- … and it is GENTLE: the benign `+1` cell is forwarded every tick, server advances (nonce bumps 7/tick).
+#guard decide (demoShieldedTraj cellPlusOne ⟨0, 0⟩ 3 = ⟨3, 21⟩)
+
+/-- **Both polarities of the SHIELD, concretely.** Against the `+9` adversary the server is never
+stepped (state pinned at `⟨0,0⟩`, private nonce never bumped — a genuine refusal); under the benign
+`+1` cell every move is forwarded and the server really advances to `⟨3, 21⟩`. So the shield
+discriminates: it is neither the identity nor the refuse-everything shield. -/
+theorem demo_shield_both_polarity :
+    demoShieldedTraj cellPlusNine ⟨0, 0⟩ 3 = ⟨0, 0⟩
+      ∧ demoShieldedTraj cellPlusOne ⟨0, 0⟩ 3 = ⟨3, 21⟩ := by decide
+
 end Demo
 
 /-! ## Axiom hygiene — the membrane keystones. -/
@@ -325,6 +528,11 @@ end Demo
 #print axioms membrane_step_sound
 #print axioms transfer_safety
 #print axioms canonical_wrapper_sound
+#print axioms shielded_transfer_safety
+#print axioms shield_preserves_abs
+#print axioms shield_refuses_only_harmful
+#print axioms demo_adversary_shielded_safe
+#print axioms demo_adversary_breaks_unshielded
 
 /-!
 The membrane, in one breath:
@@ -332,9 +540,11 @@ The membrane, in one breath:
   1. The sandbox World is a PROJECTION (`α`) of an irreducible TRUSTED server (`rstep` — Minecraft).
   2. Three auditable conditions on the membrane — `floor_sound`, `step_sim`, `wrapper_sound` — are the
      WHOLE trust surface beyond the server itself.
-  3. `transfer_safety` lifts the abstract governor's `∀`-controller floor guarantee across the
-     membrane onto the real, un-modelled server: the trusted surface is `(α, wrapper, server)`, NOT
-     the agent/cell — that was already covered by `genGov_safe`.
+  3. `shielded_transfer_safety` lifts the abstract governor's `∀`-controller floor guarantee across
+     the membrane onto the real, un-modelled server: the trusted surface is `(α, wrapper, server)`,
+     NOT the agent/cell — that was already covered by `genGov_safe`. The shield is MODELLED, not
+     assumed: `transfer_safety`'s acceptance hypothesis was a condition on the controller, and it is
+     now discharged into `WrapperIsGovernor`, a condition on the membrane.
   4. The honest limit: if `α` mis-reads or the square fails to commute, the guarantee does not reach
      reality. That line — between verification and trust — is exactly the membrane.
 -/
