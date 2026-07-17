@@ -71,6 +71,13 @@ jobs:
             test -f "$f" || { echo "ERROR: referenced file missing: $f"; exit 1; }
           done
           echo "Both manifests valid; all bundled scripts present."
+      # A STRICTER superset of the file-existence check above (walks the manifests' full
+      # reference set, not a fixed list) PLUS permission-drift detection: every `chrome.<api>`
+      # used in src/ must have its MV3 permission declared in BOTH manifests (#7, #8). Runs
+      # after Build so dist/ exists. The inline step above is kept for the two checks this
+      # does not cover: manifest_version==3 and the no-module-background Firefox-compat rule.
+      - name: Validate package (permission + full manifest-reference drift)
+        run: npm run validate:extension-package
 
   package:
     name: Build WASM + package store artifacts (.zip / .xpi)
