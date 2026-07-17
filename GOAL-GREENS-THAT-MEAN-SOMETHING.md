@@ -50,6 +50,11 @@ off only clearly-mine-and-verified pieces; do NOT force a wholesale integration.
   it never gets done. [[feedback-swarm-delegate-identified-work-immediately]]
 
 ## Done log
+- 13:2x — **Tree-wide ⊤-class defect re-grounded** (`7beec0c6e`, pushed, main green 9743): the 6 earlier
+  `*Regrounded` files that rested on bare `CollisionResistant` (= `HashCRHardQuant F ⊤`, false at any
+  compressing family) now condition on `HashCRHardQuant F Eff` with explicit undischarged `Eff` — via
+  `_eff` siblings routing the finder-advantage=game-advantage identity, canaried. Surfaced 1 more site
+  (`WireAkeRegrounded:99`, same class, 1-line pattern) → DISPATCHED immediately (aea6ebd lane).
 - 05:3x — **FINDING-2 sweep: ~18 injective-hash floor carriers re-grounded** (`0b0f0de37` cluster1 ·
   `a3668c8f0` cluster2 · `81e55f69f`/`c4294734c`/`974a9fb31`/`7cdf3f8a9` cluster3; all pushed, main
   green 9743 jobs). Each: proved FALSE-as-named at deployed BabyBear params (counting core), consumer
