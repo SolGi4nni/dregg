@@ -167,8 +167,8 @@ wishes it had durably, and it kills the exact class that cost 15 hours.
 hooks* — that an agent edits only its claimed path glob and doesn't thrash shared
 build dirs (INTEGRATIONS.md Principle P1: "each agent claims a path glob, never
 edits outside"). A smarter model can satisfy the hook's *mechanism* while
-violating the *intent* (the RSH advisory-vs-deterministic problem,
-`docs/RSH_SCALING.md:32-43`). (b) builders.dev runs untrusted agent code in
+violating the *intent* (the RSH advisory-vs-deterministic problem, per the
+RSH-scaling notes). (b) builders.dev runs untrusted agent code in
 sandbox backends (CF Containers / Fly / Hetzner / local Docker, the
 `workspace-image-builder` + `builder-agent` workers) and needs real OS
 confinement, not a path-glob promise.

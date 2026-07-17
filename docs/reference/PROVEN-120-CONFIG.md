@@ -498,7 +498,7 @@ configuration that clears 120 on every shipped config with margin.**
 >   `0a4a554`) matches `proof.ext_degree` over **`1 | 2 | 4 | 5`** and errors on everything else —
 >   **`8` is not in it.** Each arm is a monomorphized turbofish ⟹ **~20 new lines.** And
 >   `poseidon2_config_for_air_builder<D>` (`circuit-prover/src/batch_stark_prover/poseidon2.rs:1611`)
->   returns `None` at d=8: there is no `BABY_BEAR_D8_W16` (`circuit/src/ops/poseidon2_perm/config.rs:56-78`
+>   returns `None` at d=8: there is no `BABY_BEAR_D8_W16` (`p3_circuit::ops::Poseidon2Config`
 >   has only D1_W16, D4_W16, D4_W24), so d=8 follows the **d=5 precedent** — route through the
 >   base-field `BABY_BEAR_D1_W16` challenger (`fri.rs:192`, `new_d5`). **~1 week. Because the crate is
 >   already ours, this is an edit, not a fork.**

@@ -383,7 +383,7 @@ pg-dregg is deliberately a standalone workspace (out of the parent `members` lis
 its `cargo-pgrx` cdylib build does not pull postgres bindings into the shared
 `./target` during concurrent lanes / the VK rotation. That is correct, but it is a
 **seam in the handoff bar** (stranger-usable, fresh-clone, no tribal knowledge). Build
-the on-ramp closure: a single `pg-dregg/scripts/setup.sh` that checks for
+the on-ramp closure: a single `setup.sh` (to add under `pg-dregg/scripts/`) that checks for
 `cargo-pgrx` + a managed pg18, prints the exact `brew`/`cargo install`/`cargo pgrx
 init` commands if absent, installs the extension, sets the dev issuer key, and runs
 `e2e-live.sh` — so "clone, run one script, see it work" holds without ember in the

@@ -408,7 +408,7 @@ CosmWasm has no per-instruction CU cap like Solana; `--gas auto` sizes the gas
 
 - **B2 — No CLI for the custom Solana `Settle` instruction.** `solana program
   deploy` puts the program on-chain, but `Init`/`Settle`/`AssertProvenRoot` need a
-  ~40-line client. **Do first:** add `solana-settlement/examples/deploy_settle.rs`
+  ~40-line client. **Do first:** add a `deploy_settle.rs` example under `solana-settlement/examples/`
   lifting the instruction builders from `solana-settlement/tests/settle_flow.rs` (L148–L204) and
   prepending the CU-limit ix. (Deploy alone is one command and needs no client.)
 

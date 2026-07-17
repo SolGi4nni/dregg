@@ -351,7 +351,8 @@ attestation) is the native desktop's F1/F2, out of reach in a vanilla tab.
 `TurnExecutor` (W1/W2), differential-anchored to the Lean producer but not *the
 verified artifact itself*. The closure is **compiling `execFullForestG` to
 wasm32** — and this is a build in flight, not a vacancy:
-`web/spike/build-executor-wasm.sh` links the v4.30 Lean-emitted `Exec/FFI.c`
+the executor-wasm build spike (untracked — `/web` is gitignored, so it lives only
+on the dev box) links the v4.30 Lean-emitted `Exec/FFI.c`
 (`@[export] dregg_exec_full_forest_auth`) + its full transitive C closure
 (Dregg2 + mathlib + batteries + aesop) against a wasm32 Lean runtime
 (`build-wasm-runtime.sh`'s emscripten leanrt/stdlib), with `--gc-sections + -flto`
@@ -508,9 +509,10 @@ build in flight in `web/spike/`.
   float/tile/stack compositor, the protected console) — the *exact* model S2 ports
   to the DOM. The browser compositor is starbridge-v2's `Shell::compose` with a
   `<canvas>` backend instead of gpui.
-- **The executor-in-wasm attempt** — `web/spike/build-executor-wasm.sh` +
-  `build-wasm-runtime.sh`: the live F2 build linking the real Lean executor to
-  wasm32. The frontier is in flight, not blank.
+- **The executor-in-wasm attempt** — the executor-wasm + wasm-runtime build
+  spikes (untracked; `/web` is gitignored, so they live only on the dev box):
+  the live F2 build linking the real Lean executor to wasm32. The frontier is in
+  flight, not blank.
 
 **How it fits the larger dregg picture:**
 

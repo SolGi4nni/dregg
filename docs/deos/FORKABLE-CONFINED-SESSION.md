@@ -3,7 +3,7 @@
 A grain's mind is a committed cell you own, so everything proven about cells
 becomes true of the mind: it **checkpoints** (fold to one root), it **forks**
 (one checkpoint → two diverging lives), and a write to one life never touches the
-other (`grain-fork`, `docs/GRAIN-FORK.md`). A **confined** session is a jailed
+other (`grain-fork`, `grain-fork/README.md`). A **confined** session is a jailed
 agent body driven behind the grain's `AgentBrain` seam
 (`grain-jail::ConfinedBrain`, `docs/deos/GRAIN-CONFINED-BODY.md`): its every
 tool-call is cap-gated, metered against a prepaid budget, and receipted, and its

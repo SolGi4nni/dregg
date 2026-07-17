@@ -410,7 +410,7 @@ each lane names where it actually shipped.
 
 ### L2 — The Predicate/Caveat Composer `[needs L1]` → shipped: `predicate_composer.rs`
 **Build:** the `StateConstraint`/`SimpleStateConstraint`/`Pred`/`WitnessedPredicate` builder (slice 3 + slice 12's constraint half): `Constraint Composer` (value gadget over the 50+ atoms), the `SRC(tree)` + `IV(cost/coordination §8 classifier)` + `Trace(eval)` presentations, the anti-strip `AnyOfBound` safety checker, and the live `evaluate_simple_constraint` test-harness verifier gadget.
-**Reuses:** `cell/src/program.rs` + `cell/src/predicate.rs` (the real evaluators — gadget `validate()` calls them), `cell/src/witness.rs`. The "lamesauce language uplift" the Refinement Epoch memory names.
+**Reuses:** `cell/src/program/eval.rs` + `cell/src/predicate.rs` (the real evaluators — gadget `validate()` calls them; the witnessed-predicate types live in `predicate.rs`). The "lamesauce language uplift" the Refinement Epoch memory names.
 **Primitive needed:** L1's `Gadget`/`SubGadget`/`List` field kinds (predicates are recursively composed). **Pure-additive?** Mostly — it adds new gadgets/presentations; the only shared primitive is the recursive `SubGadget`. Highest value: the richest entirely-`None` surface, and the one the project's vision (`project-dregg3-campaign`, "one Pred algebra") most wants legible.
 
 ### L3 — The Effect/CallForest/Turn Builder `[needs L1; partially exists]` → shipped: `turn_builder.rs`

@@ -368,7 +368,7 @@ resolved Base game, fixtures captured from mainnet
   extraData = 692 bytes (`pad32(48306960) ‖ parent ‖ 20 intermediate roots`,
   last = rootClaim)
 
-**What the test corpus covers** (`tests/base_fault_proof.rs`, evidence classes
+**What the test corpus covers** (`eth-lightclient/tests/base_fault_proof.rs`, evidence classes
 named in its header):
 1. **REAL-EXTERNAL fixtures** — every `eth_getProof` a real node answer under a
    real finalized L1 block: ASR slots `[blacklist-mapping key, 1, 6]`, DGF slot

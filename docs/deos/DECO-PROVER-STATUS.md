@@ -109,13 +109,13 @@ binding — server pinning (`api.stripe.com`), notary pinning, the presentation 
 It is exercised end-to-end by a **real tlsn-format fixture** (an authenticated
 `GET api.stripe.com/v1/payment_intents/{id}` transcript that redacts the
 `Authorization: Bearer sk_live_…` secret), which mints the conserved amount through the
-REAL `stripe_deco` verifier (`tests/roundtrip.rs::tlsn_presentation_binds_into_layer2_and_mints`).
+REAL `stripe_deco` verifier (`deco-prove/tests/roundtrip.rs::tlsn_presentation_binds_into_layer2_and_mints`).
 ⚑ This module alone is the interface+adapter over a fixture; the live MPC-TLS run is
 Layer 2c. Full design: `docs/deos/TLSN-INTEGRATION.md`.
 
 ### Layer 2c — the REAL MPC-TLS run, live-local (`tlsn-live` feature)
 
-`deco-prove/src/tlsn_live.rs`, exercised by `tests/tlsn_live_roundtrip.rs`. The genuine
+`deco-prove/src/tlsn_live.rs`, exercised by `deco-prove/tests/tlsn_live_roundtrip.rs`. The genuine
 vendored tlsn stack runs live-local: a real `tlsn` Prover + a real local Notary perform
 the **MPC-TLS 2PC** handshake against a test HTTPS server (the Notary co-derives the
 session keys and sees no plaintext), the Prover selectively discloses the Stripe payment

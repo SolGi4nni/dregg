@@ -98,7 +98,7 @@ Resource→`Monotonic`, Identity→`WriteOnce`, Invariant→`FieldLteOther`, Col
 default-deny on unknown methods) deployed on a real `WorldCell` (`game.rs`: `SchemaGame::deploy`,
 `Turn` builder `.set(component, value).commit() -> Result<TurnReceipt, GameError>`). Worked
 example: `dregg-schema/src/lib.rs:65 descent_schema()`. **You never hand-write a StateConstraint,
-slot index, or heap key.** Driven: `dregg-schema/tests/allocator.rs`, `tests/refinement.rs` (fast, non-vacuous).
+slot index, or heap key.** Driven: `dregg-schema/tests/allocator.rs`, `dregg-schema/tests/refinement.rs` (fast, non-vacuous).
 
 ### `spween-dregg` — the WorldCell everything runs on (deployed)
 `spween-dregg/src/world.rs: WorldCell` — `deploy_compiled(story, seed)` (`:168`),
@@ -139,7 +139,7 @@ via `membership_leaf_for_play`; `AutomataflMatch::leaves` via `build_d1_honest`;
 range gadget); leg 2 `prove_match -> MatchProof` folds via `prove_turn_chain_recursive` and
 SELF-ATTESTS through `dregg_lightclient::verify_history_bytes`; leg 3 `GameBoard::submit` verifies
 O(1) and ranks — `stores_no_moves()` is the private-strategy property; leg 4 `ProvingService`
-queues the slow fold on a background worker. The full crown is `tests/end_to_end.rs` (`#[ignore]`
+queues the slow fold on a background worker. The full crown is `dreggnet-game-board/tests/end_to_end.rs` (`#[ignore]`
 SLOW). `dreggnet-prove-service` generalizes leg 4 (bounded queue, N workers, GPU dispatch with
 bit-exact CPU fallback) — scaffold, not on the live play path: **the live demo verifies by REPLAY,
 not STARK**; the portable proof is the labeled Phase-3 upgrade.
@@ -187,7 +187,7 @@ tooth discipline (idioms (a) and (b) in one game); `surface.rs: AutomataflOfferi
 board as a `ViewNode::CoordGrid` with legal-move highlighting and sealed-move fog. Lean spec:
 `metatheory/Dregg2/Games/Automatafl.lean` (pure `applyTurn`, invariants proven no-sorry; the
 concrete Rust-AIR↔Lean `Refines` tie is the open leg). Real leaf→fold→light-client-accept:
-`tests/prove_fold.rs` (`#[ignore]` SLOW).
+`dregg-automatafl/tests/prove_fold.rs` (`#[ignore]` SLOW).
 
 **Game-adjacent extras** (one line each): `mud-dregg` — multiplayer MUD where divergent player
 timelines are branch-stitched configs (playable binary); `interactive-fiction-demo` — crowd-voted

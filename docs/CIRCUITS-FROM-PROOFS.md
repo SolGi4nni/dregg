@@ -213,18 +213,21 @@ reason in `GOAL-STARK-KILL.md`.
 
 ## Named residuals (the horizon, labeled)
 
-- **`ivc.rs`** (14 sites — the `IvcAir`/`StateTransitionAir` family): reachable through
-  shipped public SDK surface — `CipherClerk::export_state_proof`
-  (`sdk/src/cipherclerk.rs:2290`) calls `IvcBuilder::finalize_with_air`
-  (`circuit/src/ivc.rs:1092`) → `prove_ivc` (`:637`), so an SDK consumer that calls
-  `enable_ivc` proves through the hand-authored `IvcAir` constraint path; no in-tree
-  binary calls `export_state_proof` outside tests. Left deliberately: its emitter
-  exists, but Lean *proves it insufficient* (`ivc_anchor_insufficient`: no copy-forward
-  gate, every `old_hash` at i>0 is a free column) — cutting this path onto a descriptor
-  proved weaker would trade a stronger check for a weaker one. Named, not forced.
-- **`dsl/fold.rs::FoldAir`** (15 closure-dialect sites): scaffolding reached from the
-  same `prove_ivc` family and from `PresentationAir`
-  (`circuit/src/presentation.rs:472`); held in the baseline with its reason.
+- **`circuit/src/ivc.rs`** (14 sites): **test-only** — no production path reaches them.
+  The `IvcAir` family this bullet once described as SDK-reachable is GONE: the mock-proof
+  purge (`1fdd4a671`) deleted the simulated IVC engine outright — `prove_ivc` / `verify_ivc`,
+  `IvcProof`, `IvcBuilder` (+ `finalize_with_air`), `IvcAir`, and the `CipherClerk::export_state_proof`
+  → `enable_ivc` path that was its only indirect consumer (zero callers). `StateTransitionAir`
+  followed (2026-07-17): it was a bare unit struct implementing no `Air` at all. What remains in
+  the file is the REAL Poseidon2 hash-chain + the state-transition trace layout
+  (`circuit/src/ivc.rs:19-25`, `:167-178`). The residual stays because its emitter is one Lean
+  *proves insufficient* (`ivc_anchor_insufficient`: no copy-forward gate, every `old_hash` at i>0
+  is a free column), so cutting onto that descriptor would trade a stronger check for a weaker
+  one. The real turn-chain recursion is `circuit-prove/src/ivc_turn_chain.rs`.
+- **`circuit/src/dsl/fold.rs::FoldAir`** (15 closure-dialect sites): **test-only** scaffolding
+  (`circuit/src/tests.rs`, `bridge/src/tests.rs`). It was previously reached from the `prove_ivc`
+  family; that family is deleted, so tests are now its whole reachability. `PresentationAir`
+  (`circuit/src/presentation.rs:472`) is a separate, live surface carrying 1 baseline site.
 - **Drift-detectors** (`dsl/derivation.rs`, `dsl/note_spending.rs`): remaining by
   design, as the source the emitted paths compare against — retiring them removes the
   build-time drift refusal, so they stay until their consumers do.

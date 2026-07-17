@@ -115,7 +115,7 @@ The honest boundary, endpoint by endpoint:
 - Default build (`cargo test -p dregg-zkoracle-prove`): the Anthropic suite (no regression),
   `endpoints::github::tests::*`, `endpoints::price::tests::*` — each endpoint verifies and
   every forgery/mismatch is refused, all through the real verifier.
-- `--features tlsn-live` (`tests/tlsn_live_roundtrip.rs`): the real local MPC-TLS roundtrip
+- `--features tlsn-live` (`deco-prove/tests/tlsn_live_roundtrip.rs`): the real local MPC-TLS roundtrip
   for Anthropic, GitHub, and Coinbase — authentic body → CFG cert → fact, tamper refused.
   The durable notary trust root is exercised hermetically in `zkoracle-prove/tests/notary_durable_key.rs`.
 - Live-host runs (need network): `cargo run -p dregg-zkoracle-prove --example coinbase_live

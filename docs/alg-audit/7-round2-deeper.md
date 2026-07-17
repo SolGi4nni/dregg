@@ -69,7 +69,7 @@ with an O(votes²) `Vec` dedup, run 2–3× per verification.
   reached by `preflight/src/checks/blocklace.rs` today (not a hot loop). `causal_past` (`:908`) is an
   uncached BFS rebuilt per call — fine as a primitive, an O(N²) hazard only if looped
   (`is_predecessor` at `:972` calls it fresh; no live loop caller found).
-- **`federation/src/node.rs:355`** `collected_votes.iter().any(v.voter==…)` — per-reconfig-round vote dedup,
+- **the federation reconfig node** `collected_votes.iter().any(v.voter==…)` — per-reconfig-round vote dedup,
   committee-bounded. `federation/src/epoch.rs:220,366,499` member scans — committee-bounded. Low.
 - **`starbridge-apps/polis` `CouncilCharter::validate`** — O(n²) `members[..i].contains` dedup at
   `:498,:515` (copy-pasted twice) — `MAX_MEMBERS`-capped, build-time only. Skip in practice; `HashSet`

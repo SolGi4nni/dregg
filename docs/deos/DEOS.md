@@ -123,7 +123,7 @@ affordances, and rehydration.
   pass. `DeosCell::{project_gated_for, fire_gated_through_executor}` read the cell's LIVE
   state from `EmbeddedExecutor::cell_state` (the author threads no `(old, new)`); the
   state-tooth refusal is `FireError::StateConditionUnmet`, in-band, before any dispatch.
-  The exemplar is `examples/deos_council_board.rs` (+ `tests/deos_council_board.rs`): a
+  The exemplar is `app-framework/examples/deos_council_board.rs` (+ `app-framework/tests/deos_council_board.rs`): a
   council approval board where the `approve` button lights only for an approver AND only
   while PENDING, goes DARK the instant the proposal RESOLVES (the htmx tooth — same
   viewer, the surface reacts to the cell), an unauthorized fire is refused by the cap

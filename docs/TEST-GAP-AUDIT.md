@@ -45,8 +45,8 @@ been built from it is in the status block below.
   anti-replay GROWTH lever, bomb #6, SLACK=4.0/EXPONENT=1.2), and `circuit/tests/perf_growth.rs`
   (bombs #7 sorted-leaf position scan and #8 lookup-table re-scan).
 - **Still open:** GAP-2 (no seq≠topo lagging-creator lace test), GAP-4 (no live adversary against a
-  running node's differential), and the node-side `node/tests/finality_perf_growth.rs`
-  (`compute_order`) lever of Part B — the one Part-B lever not yet built.
+  running node's differential), and the node-side `finality_perf_growth.rs` (`compute_order`) lever of
+  Part B, to land in `node/tests/` — the one Part-B lever not yet built.
 - **GAP-5:** the matrix test's height-0 control closes the height-gated-vacuity instance; the
   mutation/non-vacuity pass over the other load-bearing differentials remains a standing
   discipline, not a shipped sweep.
@@ -196,7 +196,7 @@ and lift every `if height != 0 { assert }` to run at a height where the branch i
 
 ---
 
-# PART B — PERF-REGRESSION HARNESS DESIGN (four levers implemented: `{blocklace,turn,coord,circuit}/tests/perf_growth.rs`; the node-side lever is unbuilt)
+# PART B — PERF-REGRESSION HARNESS DESIGN (four levers implemented: `blocklace/tests/perf_growth.rs`, `turn/tests/perf_growth.rs`, `coord/tests/perf_growth.rs`, `circuit/tests/perf_growth.rs`; the node-side lever is unbuilt)
 
 **The core defect this closes.** Criterion benches *record* timings; they never *assert*. `bench.yml`
 is `workflow_dispatch`-only, uploads artifacts, and does not even list `dregg-perf`. So today: (a) the
@@ -262,7 +262,7 @@ Robustness rules the harness must follow (or it self-flakes):
 which is the whole point (criterion can't fail a build and isn't in the gate). Concretely:
 `blocklace/tests/perf_growth.rs` (finality), `turn/tests/perf_growth.rs` (submit/ledger),
 `coord/tests/perf_growth.rs`, and `circuit/tests/perf_growth.rs` — all existing — plus
-`node/tests/finality_perf_growth.rs` (not yet built — the node-side `compute_order` lever),
+`finality_perf_growth.rs` in `node/tests/` (not yet built — the node-side `compute_order` lever),
 each a `#[test]` that runs the ladder in-process and
 asserts the ratio bound. Keep the sizes modest (N=2000, not 100k) so the
 test adds seconds, not minutes, to the suite — the ratio catches the asymptotic without needing huge N.
@@ -274,14 +274,14 @@ run `dregg-perf` and the ratio check made available as `cargo test -p dregg-perf
 
 | # | bomb | file:line | grows with | the check that catches it |
 |---|------|-----------|-----------|---------------------------|
-| 1 | **throughput** — `poll_finalized_blocks` clones whole DAG 2–3×/poll | `blocklace_sync.rs:962,1101,1270` | DAG N | `node/tests/finality_perf_growth.rs`: `compute_order` ratio over N={100,500,2000} — the per-poll O(N) clone shows as t(2000)/t(500) ≈ 4 ×(clone count); the fix must keep the *order* ratio flat, so a re-added full clone pushes the ratio over bound. |
+| 1 | **throughput** — `poll_finalized_blocks` clones whole DAG 2–3×/poll | `blocklace_sync.rs:962,1101,1270` | DAG N | the unbuilt `finality_perf_growth.rs` in `node/tests/`: `compute_order` ratio over N={100,500,2000} — the per-poll O(N) clone shows as t(2000)/t(500) ≈ 4 ×(clone count); the fix must keep the *order* ratio flat, so a re-added full clone pushes the ratio over bound. |
 | 2 | **SWAP** — committed_height inversion | `lean_apply.rs` producer / `finality_gate` | — (not perf) | **GAP-1** (Part A), NOT perf: the height-parametrized producer differential asserting `lean_root == rust_root` at `block_height ∈ {0,1,7,2^20}`. This is a *correctness* gate; the bomb was a divergence, not a slowdown. |
 | 3 | **tau-equivocator** — `has_equivocation_in_past` unmemoized | `ordering.rs:167` | DAG N | `blocklace/tests/perf_growth.rs`: `tau` ratio over N={100,500,2000}. O(waves·P·N²) → t-ratio ≈ 16× ≫ 5.3× bound → **fails**. Also caught by the large-N *correctness* smoke (GAP-3): a 2000-block `tau` that was O(n²) times out. |
 | 4 | **catch-up** — `present_set(lace)` rebuilt per block | `catchup.rs:276` | DAG N | A `catchup` ratio lever (sync B blocks into a lace of N): O(B·N) rebuild → super-linear in N per synced block → ratio bound fails. (Add `catchup` as a 5th lever in B.1.) |
 | 5 | **pubkey-index** — pubkey ledger scan in bearer auth | `authorize.rs:1308` | ledger M cells | per-turn submit lever at M={100,1k,10k} cells with a bearer-cap turn: O(M)/turn scan → t(10k)/t(1k) ≈ 10× vs a HashMap index's ~1× → fails. |
 | 6 | **coord-budget** — `debits: Vec` as anti-replay set | `budget.rs:140,460` | session debits | a coord-session lever that records D debits then checks: O(D²) → ratio over D={100,500,2000} fails. |
 | 7 | **binary-search** — linear `position` on sorted leaves | `heap_root.rs:260`, `cap_root.rs:522` | heap size | a heap-op lever over heap sizes {100,500,2000}: O(n) position vs O(log n) → the linear scan's ratio ≈ 4× vs binary-search's ≈ log-ratio; with EXPONENT 1.2 the linear O(n) *inside a per-op loop that is itself O(n)* → O(n²) op → fails. (For a single O(n)→O(log n) the ratio gap is subtler; pair it with a correctness assertion that the result is found in `log2(n)` compares via an instrumented counter.) |
-| 8 | **DSL-lookup** — re-scans lookup table per trace row | `circuit/src/dsl/circuit.rs:493` | table rows (2^16) | a prove-path lever over table sizes {2^10,2^12,2^14}: O(rows·entries) → the row×entry product makes t-ratio quadratic in the size step → fails. (Lives in `circuit`, so a `circuit/tests/dsl_perf_growth.rs`.) |
+| 8 | **DSL-lookup** — re-scans lookup table per trace row | `circuit/src/dsl/circuit.rs:493` | table rows (2^16) | a prove-path lever over table sizes {2^10,2^12,2^14}: O(rows·entries) → the row×entry product makes t-ratio quadratic in the size step → fails. (Lives in `circuit`, so a `dsl_perf_growth.rs` under `circuit/tests/`.) |
 | 9 | **api-clone** — full-ledger `template.clone()` ×2 per submit | `api.rs:2994,3300`, `lean_apply.rs:1125` | ledger M cells | per-turn submit lever at M={100,1k,10k} cells: O(M)/turn clone → t(10k)/t(1k) ≈ 10× vs the touched-cell-delta fix's ~1× → **fails**. This is the same lever as #5, different symptom — both surface as "per-turn cost scales with total ledger size, which it must not." |
 
 **The unifying invariant the harness encodes:** *per-poll finality cost must not grow with total DAG

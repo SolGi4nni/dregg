@@ -98,15 +98,15 @@ header lines 58-65): it needs (i) an interactive-machine / probabilistic executi
 module of its own** — the single biggest new piece of the whole program.
 
 **Ordered pieces for Pillar 1:**
-1. `Metatheory/UC/Model.lean` — a computational execution model: PPT machines as a resource
+1. `UC/Model.lean` (proposed, under `metatheory/`) — a computational execution model: PPT machines as a resource
    bound, ensembles indexed by security parameter `λ`, `≈` as negligible advantage. This is
    the greenfield core. *Reuse:* the `System`/`Context` structure of `PerfectUC.lean` is the
    deterministic skeleton to generalize; keep `⊑` as the `λ→∞` perfect specialization so the
    existing wired `F_disclosure` result survives as the perfect corner.
-2. `Metatheory/UC/Composition.lean` — the computational composition theorem
+2. `UC/Composition.lean` (proposed, under `metatheory/`) — the computational composition theorem
    (`compUC_composition`) via a hybrid argument. *Reuse:* `perfectUC_composition` is the base
    case (advantage 0); the hybrid is the inductive step over `ρ`.
-3. `Metatheory/UC/FCapability.lean`, `FTurn.lean`, `FLedger.lean`, `FPayment.lean` — the four
+3. `UC/FCapability.lean`, `FTurn.lean`, `FLedger.lean`, `FPayment.lean` (proposed, under `metatheory/`) — the four
    realizations, each copying the `Disclosure` section of `PerfectUC.lean`. *Reuse:* the named
    correctness leg per row of the table in §1a is the soundness half of each simulator.
 4. Wire the STARK's simulation-soundness/ZK as the floor the simulator rests on (a new Prop
@@ -232,7 +232,7 @@ HMAC/AEAD/DLog (PortalFloor kernels), `PostGSTProgress`. Two "soft spots" alread
 stated**, and the dregg-specific-parked residuals are hunted to zero.
 
 **Ordered pieces:**
-1. `docs/reference/TCB.md` (a machine-linked TCB manifest) — one row per carrier: the standard
+1. a machine-linked TCB manifest (proposed `TCB.md` under `docs/reference/`) — one row per carrier: the standard
    assumption it equals (EUF-CMA / collision-resistance / FRI-soundness / DLog), the reduction
    theorem name, and whether it is standard vs dregg-specific. *Reuse:* `TRUST-BASE-CENSUS.md §1`
    is 90% of this already — promote it to a maintained, gate-linked artifact.
@@ -263,7 +263,7 @@ falsifiable-when-the-guard-breaks**, enforced in CI like the drift gate.
 **Ordered pieces:**
 1. A `@[security_property]` attribute + a registry (mirror `@[load_bearing_keystone]`,
    `AssuranceCase.lean`) tagging every security-property apex.
-2. A meta-check (extend `Claims.lean` + a new `scripts/nonvacuity-gate.sh`) that fails CI if a
+2. A meta-check (extend `Claims.lean` + a new `nonvacuity-gate.sh` under `scripts/`) that fails CI if a
    `@[security_property]` decl lacks a paired `*_teeth` (a proof the property FAILS when its
    guard is broken — the `amplifying_grant_rejected` / `dilution_rejected` / `replay_rejected`
    shape). *Reuse:* the pattern already exists per-keystone; the gate makes it *total*.

@@ -552,7 +552,7 @@ A tractable dry-run proved **hbox can host both demos**, bound to `127.0.0.1` on
 
 - **drex-web** (`serve.mjs`, `PORT=18781`, staged `~/dregg-testnet-demo/`):
   `GET /` → **HTTP 200**, 10139 bytes, `<title>DrEX · Dragon's EXchange</title>`;
-  `GET /wasm/dregg_wasm.js` → 200, 273621 bytes, `text/javascript`;
+  `GET` on the `/wasm/` `dregg_wasm.js` route → 200, 273621 bytes, `text/javascript`;
   `GET /wasm/dregg_wasm_bg.wasm` → 200, **50256008 bytes**, `application/wasm` (the
   real extension wasm served whole). `ss` confirmed `LISTEN 127.0.0.1:18781` — not
   `0.0.0.0`.

@@ -118,7 +118,7 @@ tiny (4 states, 4 symbols — `dfa_routing.rs:537-547`), so this is cheap *today
 The question is whether it stays cheap, and that is exactly a question about state
 explosion.
 
-> The standalone `tests/src/dfa_circuit.rs` AIR and `air.rs`
+> The standalone `dfa/src/air.rs` AIR and `air.rs`
 > (`AirTraceRow{step,state,byte,next_state}`, the flat-table lookup variant)
 > are the same shape minus the route-commitment chain. `air.rs::verify_acceptance`
 > is the out-of-circuit re-check the cell-side `DfaAcceptanceVerifier`

@@ -5,8 +5,8 @@ replica. Surfaced *because* the orchestrator was made loud (it had been silent).
 
 ## The mechanism
 
-DreggNet's provider settles metered rent with
-`bridge/src/node_client.rs::submit_transfer` — a plain `Transfer { from: lease,
+DreggNet's provider settles metered rent with its node-client `submit_transfer`
+path — a plain `Transfer { from: lease,
 to: provider }` submitted to `POST /api/turns/submit`. The node signs every
 thin-path turn as its **own operator cell** (confused-deputy hardening) and
 executes it. A `Transfer` moving value *from* a cell requires that cell's

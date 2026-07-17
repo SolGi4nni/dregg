@@ -39,7 +39,7 @@ So what *is* the real value? Two things, and only these:
    body" (`dregg-oracle/src/lib.rs:9`, and the three asserted legs `authentic` / `well-formed` /
    `injection-free` at `dregg-oracle/src/lib.rs:173-182`) — the honest guarantee is that the disclosed field
    **cannot perturb the surrounding committed structure**. That is *slot-confinement*, and it is already a
-   proven theorem: `ZkHandlebars.slot_confinement` (`metatheory/Dregg2/Crypto/ZkHandlebars.lean:164`) shows a
+   proven theorem: `SlotConfinement.slot_confinement` (`metatheory/Dregg2/Crypto/SlotConfinement.lean:190`) shows a
    `{{`-free field bound into a template preserves the template's control-token structure verbatim. This
    property is *real and worth keeping* — it is about an attested field not corrupting a committed frame, not
    about defending an LLM.
@@ -83,20 +83,21 @@ framing**, and the *right* one:
   API, `Handlebars.lean:326`), and per-hole `NoDoubleBrace` misses a `{{` that forms at a hole/literal *seam*
   (`Handlebars.lean:337`). Its `RustTwin` (`Handlebars.lean:359`) pins agreement with `zkoracle-prove/src/injection.rs`.
 
-**`metatheory/Dregg2/Crypto/ZkHandlebars.lean`** (PRE-EXISTING, Jul 10) — the **delimiter/control-token
-framing**, the *older* one:
+**`metatheory/Dregg2/Crypto/SlotConfinement.lean`** (the older module, PRE-EXISTING as `ZkHandlebars.lean`
+since Jul 10; rehomed under this name by `7396df797` — §2.2's plan, landed) — the **delimiter/control-token
+framing**:
 
-- A template is segments + slots; `render` (`ZkHandlebars.lean:65`) interpolates player bindings.
-- `controlTokens w` (`ZkHandlebars.lean:47`) reads the sublist of `{{` frames; `slot_confinement`
-  (`ZkHandlebars.lean:164`) proves a `{{`-free binding preserves the literal segments' control structure
-  verbatim, with the counting corollary `slot_confinement_count` (`ZkHandlebars.lean:186`) and both polarities
-  of non-vacuity (`benign_preserves` / `malicious_injects`, `ZkHandlebars.lean:232`/`247`).
-- `derives_injection_iff` (`ZkHandlebars.lean:96`) proves the zkOracle `injectionTemplate` fires iff `w`
+- A template is segments + slots; `render` (`SlotConfinement.lean:91`) interpolates the bindings.
+- `controlTokens w` (`SlotConfinement.lean:69`) reads the sublist of `{{` frames; `slot_confinement`
+  (`SlotConfinement.lean:190`) proves a `{{`-free binding preserves the literal segments' control structure
+  verbatim, with the counting corollary `slot_confinement_count` (`SlotConfinement.lean:212`) and both
+  polarities of non-vacuity (`benign_preserves` / `malicious_injects`, `SlotConfinement.lean:258`/`273`).
+- `derives_injection_iff` (`SlotConfinement.lean:122`) proves the zkOracle `injectionTemplate` fires iff `w`
   contains a control token, tying the `{{`-free hypothesis to `ZkOracle.InjectionFree`.
 
 They **overlap** on the central object (a template = literal segments + holes/slots, and a "no `{{`"
 condition on hole data) but diverge on what is proven: `Handlebars.lean` proves *membership in a grammar
-language* (structural, circuit-backed); `ZkHandlebars.lean` proves *control-token count preservation*
+language* (structural, circuit-backed); `SlotConfinement.lean` proves *control-token count preservation*
 (delimiter-structural, matcher-backed via `Crypto/Deriv`).
 
 ### 2.2 Recommendation — `Handlebars.lean` is authoritative; one lemma survives from `ZkHandlebars.lean`
@@ -113,7 +114,12 @@ cannot alter committed control structure — and it is genuinely *not* subsumed 
 interpolation*, whereas `render_mem_language` is a statement about *the whole output landing in a language*.
 They are different theorems about the same setup and both are true.
 
-**Concrete reconciliation plan (PROPOSED):**
+**Concrete reconciliation plan (LANDED, `7396df797`)** — recorded below as it was decided; the rename and
+the rescoped header are in the tree. One correction the execution forced: the "re-prove `slot_confinement`
+over `Tok`" step suggested below is **false** and was not taken — a `NoDoubleBrace` hole may contain a single
+brace that `render` counts, so brace-count preservation does not hold over `Tok`, and the two supports
+(`derives_injection_iff`, `injectionFree_forall`) are theorems about the `List Value` `InjectionFree` with no
+`Tok` analogue. The two views are kept honestly distinct instead of faked into one.
 
 - **STAYS (rehomed):** rename `ZkHandlebars.lean` → `metatheory/Dregg2/Crypto/SlotConfinement.lean`, scoped to
   *exactly* the narrow property, with a header that states §1's honesty (structured-Messages, not
@@ -466,8 +472,9 @@ the library surface) is wiring `CfgCompact` machinery that already ships.
 
 - `metatheory/Dregg2/Crypto/Handlebars.lean` (BUILT `d68fd6f8f`) — CFG-membership framing; `render_mem_language`
   (`:283`), `injectionFree_of_verify` (`:308`), residuals (`:319`).
-- `metatheory/Dregg2/Crypto/ZkHandlebars.lean` (BUILT, Jul 10) — `slot_confinement` (`:164`), the surviving
-  narrow lemma to rehome as `SlotConfinement.lean`.
+- `metatheory/Dregg2/Crypto/SlotConfinement.lean` (BUILT; rehomed from `ZkHandlebars.lean` by `7396df797`) —
+  `slot_confinement` (`:190`), the surviving narrow lemma, with `slot_confinement_count` (`:212`) and
+  `attested_field_confined` (`:226`).
 - `metatheory/Dregg2/Crypto/Cfg.lean` — `cfg_bridge` (`:113`, the floor), `CfgVerifierKernel` (`:144`),
   `cfg_verify_sound` (`:160`, the ceiling).
 - `metatheory/Dregg2/Crypto/CfgCompact.lean` — `Replay` (`:48`), `replay_derives` (`:67`), `compact_sound`

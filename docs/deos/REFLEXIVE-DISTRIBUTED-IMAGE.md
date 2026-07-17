@@ -172,7 +172,7 @@ substrate underneath. Concretely, from the tree:
   storage in place.
 - **OpenSession** — the harness-neutral interchange format the IR is the reference
   implementation of, whose central heresy is *"cwd is metadata, not identity"*
-  (`cv:docs/OPENSESSION.md`). A session is "an ordered list of messages plus provenance";
+  (the cv OpenSession design note). A session is "an ordered list of messages plus provenance";
   threading is an optional `parentId` DAG.
 - **An event catalog — what a session *did*, not just said.** Every `ToolUse`/`ToolResult`
   is distilled into a normalized `Event{kind, tool, target, detail}` row in SQLite

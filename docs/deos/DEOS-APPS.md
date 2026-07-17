@@ -234,8 +234,8 @@ and the app-framework rebuild is BUILT. Kept below with the built items relabele
      affordances + caps.
   2. **DONE (mechanism) — the live-`TurnExecutor` fire path is closed.**
      `DeosCell::fire_gated_through_executor` runs a real verified turn through the
-     `EmbeddedExecutor` (exemplar: `examples/deos_council_board.rs` +
-     `tests/deos_council_board.rs` — the `approve` button lights IFF caps AND state pass,
+     `EmbeddedExecutor` (exemplar: `app-framework/examples/deos_council_board.rs` +
+     `app-framework/tests/deos_council_board.rs` — the `approve` button lights IFF caps AND state pass,
      a both-pass fire runs a real verified turn). Remaining forward: lift the fog-of-war
      game itself onto this path + pg-dregg durable state + the web-of-cells lobby, so the
      skirmish is a multi-node integrated deos app, not a single-process model.

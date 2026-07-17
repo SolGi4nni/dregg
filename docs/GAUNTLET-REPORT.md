@@ -81,9 +81,9 @@ Broader than the coordinator's single named `ir2_umem` test. Whether the
 genuine open path is exactly what the geometry lane must resolve when it lands
 the OWED completer. NOT thin-context-fixed here.
 
-Also compile-broken (pre-existing, NOT today): 2 integration targets
-`circuit/tests/note_spend_full_width_binding.rs` and
-`circuit/tests/garbled_private_joint_settlement.rs` import
+Also compile-broken (pre-existing, NOT today): 2 integration targets under
+`circuit/tests/` (a note-spend full-width binding test and a garbled private
+joint-settlement test, both since removed) imported
 `dregg_circuit::dsl::{note_spending::prove_note_spend_dsl, garbled::prove_private_threshold_dsl, …}`
 — symbols DELETED by `f04b2dd1e` "stark-kill" (2026-07-09). The failing lines
 blame to before stark-kill and were never updated. Same stark-kill debt class as

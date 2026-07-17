@@ -188,7 +188,7 @@ so this rung is what makes the faithfulness gate load-bearing.
 
 ### Rung D2 — the bare-clone keystone gate (the falsifier for "works on my machine")
 
-Add a `reproducible-build` workflow job (mirrored by a local `scripts/bare-clone-gate.sh`): on a clean
+Add a `reproducible-build` workflow job (mirrored by a local `bare-clone-gate.sh` under `scripts/`): on a clean
 runner with `HOME` set to an empty temp dir and no sibling `~/dev`, `git clone` the repo fresh, then
 `cargo metadata --locked` + `cargo build --workspace --locked` (fetch allowed, sibling paths not). The job
 must NOT restore the shared `rust-cache`. It builds the `default-members` set first (the light

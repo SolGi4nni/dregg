@@ -58,7 +58,7 @@ Beyond the threshold, the entire Solana provenance/rooting/rotation model is
 hand-authored Rust with **no Lean at all**: stake-table derivation + completeness
 floor, authorized-voter binding, rooted-vs-exact-slot finality, weak-subjectivity
 rotation. This is THE trustless-bridge accept path (value release).
-**Port:** author `metatheory/Dregg2/Bridge/SolanaProvenance.lean` (stake table +
+**Port:** author `SolanaProvenance.lean` under `metatheory/Dregg2/Bridge/` (stake table +
 authorized-voter map + rooted-tally decider reusing Cluster A's intersection
 theorems + `rotate_preserves_anchor_trust`), `@[export]` the deciders, route
 `verify_lock_proof_consensus_anchored` through them. Wire decoders

@@ -146,10 +146,10 @@ members entry, plus this doc:
 - **`src/tests.rs`** — 20 tests covering the four teeth (fog-of-war, the enum gate, the verified
   turn, cap-gating) plus reproducibility and a full match to a knockout. `cargo test -p starbridge-tussle`
   is green.
-- **`tests/deos_seam.rs`** — the deos-native `commit → reveal → resolve` verbs fired through the
+- **the app's `deos_seam.rs`** — the deos-native `commit → reveal → resolve` verbs fired through the
   REAL executor against the full figure `CellProgram`, proving the verified caveats bite in the fire
   path itself (an illegal joint reveal is a real executor refusal, not a `program.evaluate`-only check).
-- **`tests/reexpress_deos_app.rs`** + **`manifest.json`** — the deos-app re-expression (the app as a
+- **the app's `reexpress_deos_app.rs`** + **`manifest.json`** — the deos-app re-expression (the app as a
   first-class deos citizen with its manifest).
 - **`examples/tussle_match.rs`** — a runnable headless match
   (`cargo run -p starbridge-tussle --example tussle_match`): a scripted bout printing each frame's

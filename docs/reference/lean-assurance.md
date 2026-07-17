@@ -195,7 +195,7 @@ admission/coverage boundary of the running system (`AssuranceCase.lean:946-999`)
 1. **The prover partition** — the Lean-emitted descriptor prover (`EffectVmDescriptorAir`) is the
    default for the graduated turn shapes (`sdk/src/full_turn_proof.rs` `CUTOVER_READY_SELECTORS`);
    other shapes fall back, logged, to the legacy hand-written AIR
-   (`circuit/src/effect_vm_p3_full_air.rs`) — for those, circuit⟺kernel agreement is test-attested,
+   (`circuit-prove/src/effect_vm_p3_air.rs`) — for those, circuit⟺kernel agreement is test-attested,
    not theorem-attested (`:956-966`).
 2. **`ShadowHostCtx` host-fed admission inputs** — five values the host supplies
    (`exec-lean/src/lean_shadow.rs`); the IF–THEN is discharged by `Exec.HostCorrespondence`

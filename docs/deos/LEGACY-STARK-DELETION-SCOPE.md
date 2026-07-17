@@ -10,8 +10,8 @@ downgrade tax; the Lean-emitted version is strictly *better* (see §Even-better)
 
 Architectural law #1 (REORIENT): *"ZERO Rust-authored constraints or AIRs, ever. All
 circuits and constraint semantics are EMITTED FROM LEAN, formally represented. Rust only
-interprets Lean-emitted byte-pinned artifacts."* The hand `circuit/src/stark.rs` engine
-and every `circuit/src/**/*_air.rs` / `dsl/predicates/*.rs` are the standing violation —
+interprets Lean-emitted byte-pinned artifacts."* The hand STARK engine (formerly
+`stark.rs` under `circuit/src/`, since deleted) and every `circuit/src/**/*_air.rs` / `dsl/predicates/*.rs` were the standing violation —
 the pre-emit-law legacy the enforcement sweep never reached.
 
 ## The diagnosis: two layers, one lawful
@@ -125,7 +125,7 @@ inventories, emit plans, consumer lists) in workflow `wf_edf51f70-602`.
 3. **Fan-out:** the families are independent files — a swarm, one lane per family, main
    loop integrating + owning the shared descriptor registry regen. T0→T1→T2, T3 last.
 4. **Delete the engine:** when `grep -r "circuit::stark::\(prove\|try_prove\|verify\)"` over
-   non-vendored prod code is empty, `git rm circuit/src/stark.rs`. (The seL4 floor has its
+   non-vendored prod code is empty, `git rm` the `stark.rs` engine (since done). (The seL4 floor has its
    OWN vendored copy — decoupled, not a blocker. wasm uses `MerkleStarkAir` prove/verify —
    it rides the membership/T0 emit + a compile-check that p3-uni-stark fits wasm, which the
    already-patched-in p3-recursion tower strongly implies.)

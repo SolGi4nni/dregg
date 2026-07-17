@@ -261,7 +261,7 @@ raw PTY bytes ride binary frames, `:40-65`), across two ends:
   (`starbridge-v2/web/Cargo.toml:14-17`).
 - **wasm** (`cfg(wasm32)`): `WsTransport` (`:385-`) — a `web_sys::WebSocket` to
   that server, speaking the SAME wire, that the gpui-web terminal pane dials
-  (`:20-24`). The e2e test (`tests/pty_ws_e2e.rs`) is a native WS client against
+  (`:20-24`). The e2e test (`starbridge-v2/web/tests/pty_ws_e2e.rs`) is a native WS client against
   the same server, proving the wire.
 
 The default `starbridge-web` build (`WebImage`, JSON/atlas skin) carries only the

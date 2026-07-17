@@ -2,16 +2,43 @@
 # Runs scripts/check-doc-refs.sh, which fails when docs reference files that
 # no longer exist.
 #
-# MANUAL-ONLY for now: the current tree carries ~468 pre-existing dead refs
-# (mostly churn in the audit/ + SUPERSEDED/ campaign docs), so a pull_request
-# trigger would red every docs PR against drift a given PR did not introduce.
-# Re-enable the pull_request trigger (paths: docs/** site/**
-# scripts/check-doc-refs.sh) once the dead-ref cleanup pass lands and this runs
-# green on main -- then it ratchets from green.
+# ARMED on pull_request as of 2026-07-17. The previous manual-only rationale
+# cited "~468 pre-existing dead refs" -- that figure was an ARTIFACT of the
+# linter's extraction regex, which matched a PREFIX of a longer extension
+# (`.ts` inside `.tsv`, `.js` inside `.json`) and invented ~250 fake DEAD refs.
+# The word-boundary guard fixed that. The REAL non-excluded dead-ref set was
+# then 60 (stale code refs after moves/deletes: crate-relative prose qualified
+# to repo-rooted paths, the ZkHandlebars -> SlotConfinement rehome repointed,
+# deleted AIRs repointed to their successors or reworded, and proposed-but-
+# unbuilt files reworded so they no longer read as live citations). All 60 are
+# fixed; this runs green on main, so the gate ratchets from green.
+#
+# WHY THE EXPLICIT FILE LIST (not a bare invocation):
+#   docs/audit/** and docs/SUPERSEDED/** are deliberate CHURN RECORDS -- they
+#   describe a tree that has since moved on, and their dead refs are the point of
+#   the document, not rot to fix. The linter has no exclude flag, so the
+#   exclusion lives here, in the caller. Everything else (445 files, ~5900
+#   resolvable refs) is gated.
+#
+# WHY LC_ALL=C IS PINNED:
+#   The extractor is a single awk pass. Under a UTF-8 locale, BSD awk (and any
+#   awk that decodes multibyte) hits a `towc` conversion failure on em-dash
+#   prose punctuation and TRUNCATES the scan mid-stream -- silently
+#   under-reporting (locally this dropped 8073 real refs to ~1300 and hid dead
+#   refs). The extraction regex is pure ASCII and needs no multibyte awareness,
+#   so LC_ALL=C forces byte-mode: the FULL, correct scan, identical on the mac
+#   dev box and on ubuntu CI (mawk/gawk). Do not remove this pin -- an unpinned
+#   UTF-8 run can green vacuously by scanning only part of the corpus.
 name: docs-refs
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - 'scripts/check-doc-refs.sh'
+      - '.github/workflows/docs-refs.yml'
 
 permissions:
   contents: read
@@ -19,7 +46,22 @@ permissions:
 jobs:
   check-doc-refs:
     runs-on: ubuntu-latest
+    env:
+      LC_ALL: C
     steps:
       - uses: actions/checkout@v4
       - name: Check documentation references
-        run: bash scripts/check-doc-refs.sh
+        run: |
+          set -o pipefail
+          mapfile -t docs < <(
+            find docs site -type f -name '*.md' \
+              -not -path 'docs/SUPERSEDED/*' \
+              -not -path 'docs/audit/*' \
+              2>/dev/null | sort
+          )
+          if [ "${#docs[@]}" -eq 0 ]; then
+            echo "no markdown files matched -- the exclusion globs or doc tree moved" >&2
+            exit 1
+          fi
+          echo "scanning ${#docs[@]} markdown files (docs/audit + docs/SUPERSEDED excluded)"
+          bash scripts/check-doc-refs.sh "${docs[@]}"

@@ -123,7 +123,7 @@ Test depth is real where it's claimed: governed-namespace ~56, nameservice ~51,
 subscription ~46, sealed-auction/swarm ~30 each. The FULL apps' teeth genuinely
 bite on the verified commit path (a swapped sealed submission, an over-budget
 bid, a rewound phase are real executor refusals — see each app's
-`tests/deos_seam.rs` / `tests/factory_birth.rs`).
+`deos_seam.rs` / `factory_birth.rs`).
 
 **Verdict on full-featuredness:** as *individual* apps, this is a strong
 collection — not toy demos. Each FULL app is a verified lifecycle with biting

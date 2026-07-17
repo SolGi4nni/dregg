@@ -154,7 +154,7 @@ Only at the abstract Prop-portal level.
 
 The Lean receipt predicate is opaque: `Ed25519ReceiptVerifies` is a named `Prop`, not an AIR gate (`metatheory/Dregg2/Crypto/DualSchemeAuthority.lean:123-125`). The dual-scheme proof derives the proven-mode forcing without any ed25519 premise (`DualSchemeAuthority.lean:299-310`) and the file is clean-pinned (`DualSchemeAuthority.lean:352-361`). If ML-DSA replaces the opaque receipt predicate with the same abstract shape, the Lean proof skeleton can survive.
 
-That does not mean the system swap is one-line or end-to-end proof-preserving. Rust has ed25519 in multiple authorization carriers: ordinary action signatures (`turn/src/action.rs:216-217`), CapTP delivery signatures (`turn/src/action.rs:251-257`), stealth authorization (`turn/src/action.rs:394-410`), Biscuit issuer keys (`turn/src/action.rs:449-454`), and signed delegations (`turn/src/action.rs:520-524`). The in-circuit turn-auth source also states the deployed signature is ed25519 off-circuit and the in-circuit proving path is BabyBear^8 Schnorr, with Ed25519 AIR or rebinding as the named remaining gap (`circuit/src/turn_auth_signature_air.rs:1-41`).
+That does not mean the system swap is one-line or end-to-end proof-preserving. Rust has ed25519 in multiple authorization carriers: ordinary action signatures (`turn/src/action.rs:216-217`), CapTP delivery signatures (`turn/src/action.rs:251-257`), stealth authorization (`turn/src/action.rs:394-410`), Biscuit issuer keys (`turn/src/action.rs:449-454`), and signed delegations (`turn/src/action.rs:520-524`). The in-circuit turn-auth source also states the deployed signature is ed25519 off-circuit and the in-circuit proving path is BabyBear^8 Schnorr (`circuit/src/schnorr_sig.rs`), with Ed25519 AIR or rebinding as the named remaining gap.
 
 So: proof-shape preserving for the abstract off-circuit receipt predicate; not yet proof-shape preserving for the deployed wire formats, account identities, token issuers, signature sizes, key commitments, and light-client-visible authorization path.
 
@@ -194,7 +194,7 @@ The highest-value missing pieces I see:
 
 6. "ed25519 -> ML-DSA is just a carrier swap."
 
-   It is a carrier swap only for the opaque Lean receipt predicate. The deployed Rust and light-client authorization surface contains multiple ed25519-shaped carriers and an explicit in-circuit signature gap (`turn/src/action.rs:216-217`, `251-257`, `394-410`, `449-454`, `520-524`; `circuit/src/turn_auth_signature_air.rs:25-41`).
+   It is a carrier swap only for the opaque Lean receipt predicate. The deployed Rust and light-client authorization surface contains multiple ed25519-shaped carriers and an explicit in-circuit signature gap (`turn/src/action.rs:216-217`, `251-257`, `394-410`, `449-454`, `520-524`; the in-AIR Schnorr verifier is `circuit/src/schnorr_sig.rs`).
 
 ## Bottom Line
 

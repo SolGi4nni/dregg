@@ -154,7 +154,7 @@ by absolute path.
 
 ### 2.6 p0 / DeFi / launchpad / trading in DreggNet
 **None.** No launchpad, DEX, AMM, orderbook, bonding-curve, or token-sale code. "launchpad" appears
-only as competitive framing in `docs/PERMISSIONLESS-CLOUD-PLAN.md:27-42` (a described *future*
+only as competitive framing in the permissionless-cloud plan notes (a described *future*
 "couple a token launch to a real hosted site" differentiator). The monetary primitives are
 **usage-billing/settlement** (leases, metering, `xop_settle.rs`, invoices, Stripe→mint in `demo/`),
 not trading. → **The launchpad/trading half of p0 does NOT exist in DreggNet; it exists in
@@ -169,7 +169,7 @@ sovereign operated-graph substrate. ~94,500 LOC, last commit 07-12.
 
 ### 3.1 DNS / gateway / TLS — essentially ABSENT
 DreggCloud ships **no reverse proxy, TLS terminator, or DNS/subdomain config**. It binds a raw HTTP
-port and expects an external TLS proxy in front (`docs/SELF-HOSTING.md` says so explicitly). The only
+port and expects an external TLS proxy in front (`docs/deos/SELF-HOSTING-LOOP.md` says so explicitly). The only
 "domain" config is `DREGGCLOUD_PUBLIC_ENDPOINT` (canonical URL pinned at first boot; mismatch refuses
 startup). "Gateway" here means the *service-economy `ToolGateway`*, not HTTP ingress. → **DreggCloud
 is NOT a source for the DNS/gateway pull-forward.** The one transferable idea is the
@@ -182,7 +182,7 @@ public-endpoint-pinning discipline.
 - `/Users/ember/dev/DreggCloud/Dockerfile` (multi-stage: builds Lean FFI + plonky3 recursion +
   `dreggcloud-house`, `EXPOSE 8787`), `compose.yaml` (`read_only:true`, tmpfs, requires
   `DREGGCLOUD_PUBLIC_ENDPOINT` + `DREGGCLOUD_OPERATOR_TOKEN`), `deploy/dreggcloud-hardened.user.service`
-  (loopback 8787, `ProtectSystem=strict`), `deploy/ops.toml.example`.
+  (loopback 8787, `ProtectSystem=strict`), and an `ops.toml.example` under `deploy/`.
 - **Classification: OPERATIONAL.** The Python ops/rollback engine is a reusable staging-swap-rollback
   pattern (complements our RUNBOOKs, which are prose-only today).
 

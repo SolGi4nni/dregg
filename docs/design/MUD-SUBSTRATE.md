@@ -39,12 +39,12 @@ Files:
 
 | file | object |
 |---|---|
-| `src/realm.rs` | `Realm` — the persistent shared world (a durable cell) |
-| `src/instance.rs` | `Instance` — a scoped, disposable child of a realm |
-| `src/identity.rs` | `CanonicalIdentity`, `SurfaceRef`, `Surface` — the durable principal + per-surface refs |
-| `src/catalog.rs` | `RulesetCatalog` — a realm's committed active-ruleset-root set |
-| `src/world.rs` | `RealmWorld` — the admission gate where the three decisions meet, over one `Ledger`, plus the ordered receipt chain |
-| `tests/driven.rs` | the driven prototype (persistence, cross-instance identity, catalog-as-law, membrane) |
+| `realm-model/src/realm.rs` | `Realm` — the persistent shared world (a durable cell) |
+| `realm-model/src/instance.rs` | `Instance` — a scoped, disposable child of a realm |
+| `realm-model/src/identity.rs` | `CanonicalIdentity`, `SurfaceRef`, `Surface` — the durable principal + per-surface refs |
+| `realm-model/src/catalog.rs` | `RulesetCatalog` — a realm's committed active-ruleset-root set |
+| `realm-model/src/world.rs` | `RealmWorld` — the admission gate where the three decisions meet, over one `Ledger`, plus the ordered receipt chain |
+| `realm-model/tests/driven.rs` | the driven prototype (persistence, cross-instance identity, catalog-as-law, membrane) |
 
 ---
 

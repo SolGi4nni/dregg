@@ -54,12 +54,12 @@ cell program, with kernel semantics **proven in
   current device key set) and a `NEXT_KEYS_DIGEST_SLOT` — a commitment to the
   *next, unexposed* key set (`sdk/src/identity.rs:47-51`).
 - Rotation is the `KeyRotationGate` state constraint
-  (`cell/src/program.rs:1331`). To rotate, a turn must **exhibit the preimage**
+  (`cell/src/program/types.rs`). To rotate, a turn must **exhibit the preimage**
   of the pre-committed next-keys digest, **install** the new key set, **commit a
   fresh next digest** (the forward chain), and **wait out a cooling window**
-  (`cell/src/program.rs:3090-3145`).
+  (`cell/src/program/eval.rs`).
 - **The current keys are powerless.** The gate *never reads* the current key
-  set (`cell/src/program.rs:1325-1328`). This is the proven theorem
+  set (`cell/src/program/eval.rs`). This is the proven theorem
   `rotate_current_keys_irrelevant` (it is `rfl` — `PreRotation.lean:170`) and
   its consequence `rotate_compromise_resistant` (`:180`): **a thief holding
   every current signing key still cannot rotate the identity.** Only the holder

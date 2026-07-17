@@ -463,7 +463,7 @@ tooth — BUILT** in `turn/src/reversible.rs`. What shipped, the smallest end-to
 reversible loop:
 
 1. **`Effect::invert(pre)`** — in `turn/src/reversible.rs` (NOT the anticipated
-   `turn/src/invert.rs`), covering the *clean + contextual* effects — Transfer,
+   `invert.rs`), covering the *clean + contextual* effects — Transfer,
    SetField, grant↔revoke, seal↔unseal, EmitEvent, CreateCell — and returning
    `Committed(reason)` for Destroy/Burn/NoteSpend/IncrementNonce. This is the
    `Patch::invert` shape (`dregg-doc/src/patch.rs`) lifted to the protocol Effect set.

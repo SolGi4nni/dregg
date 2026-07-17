@@ -131,7 +131,7 @@ facts and nothing else:
 ## 4. The first real slice (in-tree, green) — what it IS and IS NOT
 
 **Crate:** `deco-prove/` extended with `src/tlsn_attest.rs` (+ `lib.rs` re-exports, +
-the `notary.rs` swap-point pointer, + `tests/roundtrip.rs` e2e). No new crate; Layer 1
+the `notary.rs` swap-point pointer, + `deco-prove/tests/roundtrip.rs` e2e). No new crate; Layer 1
 and the bridge verifier unchanged.
 
 **IS — a real, non-vacuous adapter over a real tlsn-format fixture:**
@@ -147,7 +147,7 @@ and the bridge verifier unchanged.
   not silently defaulted), the **`succeeded`** gate, and fact parsing.
 - End-to-end: the extracted facts feed the DECO attestation and mint the **conserved**
   amount through the **REAL** `stripe_deco` verifier; a forged selective disclosure is
-  refused before any mint (`tests/roundtrip.rs::tlsn_presentation_binds_into_layer2_and_mints`).
+  refused before any mint (`deco-prove/tests/roundtrip.rs::tlsn_presentation_binds_into_layer2_and_mints`).
 
 **IS NOT — a live trustless MPC-TLS run.** The signature curve is modeled as ed25519 (the
 in-tree curve; tlsn's real notary uses secp256k1/p256 — a config detail). The 2PC
@@ -160,7 +160,7 @@ stands in for a verified presentation. This modeled slice is the **default build
 ## 4b. THE REAL slice (in-tree, green, feature `tlsn-live`) — vendored tlsn, live-local MPC-TLS
 
 **Crate/feature:** `deco-prove` gains the `tlsn-live` cargo feature and
-`src/tlsn_live.rs` (+ `tests/tlsn_live_roundtrip.rs`). The heavy `mpz` 2PC / tokio /
+`src/tlsn_live.rs` (+ `deco-prove/tests/tlsn_live_roundtrip.rs`). The heavy `mpz` 2PC / tokio /
 rustls backend is an **optional build feature** — with it off, the default build compiles
 none of it and stays light (the no-reflexive-features rule targets *runtime* toggles; an
 optional heavy crypto backend behind a *build* feature is the sanctioned use).
@@ -200,7 +200,7 @@ the attestation surface as `tlsn::attestation`.
   response transcript, gated on `status == succeeded`, and handed to Layer 1 unchanged →
   `DecoPaymentAttestation` → **conserved mint** through the REAL `stripe_deco` verifier.
 
-**Proven (green, non-vacuous), `tests/tlsn_live_roundtrip.rs`:**
+**Proven (green, non-vacuous), `deco-prove/tests/tlsn_live_roundtrip.rs`:**
 - the honest roundtrip mints the conserved amount (2500) through the real bridge verifier;
 - the `Authorization` secret is **hidden** (absent from the authenticated sent transcript);
 - a **tampered `Presentation`** is refused by the real `presentation.verify()` (real

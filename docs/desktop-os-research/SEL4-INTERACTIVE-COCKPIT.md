@@ -104,9 +104,9 @@ Use **virtio-input** for both keyboard and mouse. Reasons grounded in the tree:
 
 - The keyboard already IS virtio-input (`keyboard.rs`), proven booting. PS/2
   would be a second, foreign driver (i8042) for no benefit.
-- `net/` establishes the exact reusable pattern: one PD is the SOLE holder of a
-  virtio-mmio slot + DMA region + IRQ, probes with `MmioTransport`
-  (`net/src/main.rs:44-71`), and drives a `virtio_drivers` device. The keyboard
+- `sel4/dregg-pd/net/` establishes the exact reusable pattern: one PD is the SOLE
+  holder of a virtio-mmio slot + DMA region + IRQ, probes with `MmioTransport`
+  (`sel4/dregg-pd/net/src/main.rs:44-71`), and drives a `virtio_drivers` device. The keyboard
   follows it verbatim (`keyboard.rs:1-12` says so explicitly).
 - QEMU ships `virtio-tablet-device` and `virtio-mouse-device` for `virtio-mmio`,
   and `virtio_drivers`' `VirtIOInput` already decodes their evdev streams
@@ -206,9 +206,9 @@ in-VM executor runs a real turn, mutates a cell, and the focused cell re-paints.
   channels yet** (`executor-pd/src/main.rs:57-65`: "No channels to service yet …
   the handler will accept a `turn_in` page, run it, and write the receipt to
   `receipt_out`"). That handler is the seam.
-- **The cross-PD live loop pattern already exists**, fully, in `net.system`: two
+- **The cross-PD live loop pattern already exists**, fully, in `sel4/net.system`: two
   PDs share DMA regions (`virtio_net_*`), the driver `notify()`s the client over
-  a `<channel>` (`net.system:64-72`, `net/src/main.rs:79` `notify_client`), and
+  a `<channel>` (`sel4/net.system:64-72`, `sel4/dregg-pd/net/src/main.rs:79` `notify_client`), and
   the client's IRQ handler reacts. This IS the executor→viewer loop topology,
   one device swapped for a turn queue.
 

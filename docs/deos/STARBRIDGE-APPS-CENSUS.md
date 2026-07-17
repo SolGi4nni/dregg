@@ -61,8 +61,8 @@ substrate), **compose-with** (other apps + the flagship crates
 - **power-now:** Heavily load-bearing — the richest of its batch. Full
   5-axis template plus a real crash-recovery + exactly-once + light-client
   audit engine. Extensive `src/lib.rs::tests` + `starbridge-apps/agent-orchestration/tests/orchestration_teeth.rs`,
-  `tests/service.rs`, `tests/deos_surface.rs` (mounted axum),
-  `starbridge-apps/agent-orchestration/tests/mcp_binding.rs`, `tests/userspace_verify.rs`. Factory-birth via
+  `starbridge-apps/agent-orchestration/tests/service.rs`, `starbridge-apps/agent-orchestration/tests/deos_surface.rs` (mounted axum),
+  `starbridge-apps/agent-orchestration/tests/mcp_binding.rs`, `starbridge-apps/agent-orchestration/tests/userspace_verify.rs`. Factory-birth via
   `EmbeddedExecutor`. **Not** seeded.
 - **make-it-stronger:** The mandate is a fixed 2-worker shape
   (`SPENT_A`/`SPENT_B`) — generalize to N workers over a real
@@ -480,7 +480,7 @@ substrate), **compose-with** (other apps + the flagship crates
 - **power-now:** Load-bearing; the `SenderAuthorized` authority tooth is REAL
   on the green path (`EmbeddedExecutor` defaults to the STARK-backed
   `MerkleMembershipStarkVerifier`; a non-member issuer is refused even with a
-  genuine proof for its own pk, `tests/deos_seam.rs` tooth d). **SEEDED**
+  genuine proof for its own pk, the app's `deos_seam.rs` tooth d). **SEEDED**
   (`starbridge_seed.rs:480`). `credential_set_commitment` (`:1129`) reduces
   `(issuer,schema)` to an `AuthorizedSet::CredentialSet` other apps bake into
   `SenderAuthorized`.

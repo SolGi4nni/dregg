@@ -78,7 +78,7 @@ Then paste the **real signatures and absolute paths** into any subagent prompt. 
 
 ## Known-bogus artifacts (deleted 2026-07-09, listed so they are not resurrected)
 `Crypto/EffectVmSemantics.lean` (an additive counter over `ZMod 5` called "the deployed effect-VM"),
-`Circuit/CircuitSoundCompose.lean` (`circuit_sound` instantiated at `ZMod 5`, `|L|=4`, error `1/5`),
+`CircuitSoundCompose.lean` (`circuit_sound` instantiated at `ZMod 5`, `|L|=4`, error `1/5`),
 `Crypto/CapWeld.lean` (`capMap c := c.rights`, definitional), `Crypto/ParameterSecurity.lean` +
 `Crypto/LatticeEstimate.lean` (λ = `by decide` on ℕ, **no `∀ adversary`**, unsourced constants — `192` is the
 NIST Category-3 *label*, not quantum core-SVP).

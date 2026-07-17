@@ -279,7 +279,7 @@ an attenuated view).
 ### 3.3 The embed's commitment binds the *pointer*, not the child's bytes
 
 A subtle, load-bearing soundness point. The parent's commitment
-(`dregg-doc/src/commit.rs` / `substrate.rs`) must bind the embed-atom — but it
+(`dregg-doc/src/composition.rs`) must bind the embed-atom — but it
 binds the **`ChildRef` (cell id + pin) + role + provenance**, *not* the child's
 content. The child's content is committed in the *child's own* `heap_root`. This
 is correct and necessary:

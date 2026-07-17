@@ -206,10 +206,10 @@ Ground truth for the slice (all BUILT):
 
 **First-slice build plan (the smallest thing that proves the optimizer pattern as a *validated* pass):**
 
-1. **New module `metatheory/Dregg2/Circuit/Emit/LayoutOptimize.lean` (PROPOSED).** Define
+1. **New module `LayoutOptimize.lean` under `metatheory/Dregg2/Circuit/Emit/` (PROPOSED — not in the tree).** Define
    `structure OptResult` = a proposed `d'` + the witness map `φ` + the *proof obligation* it must close, and
    the general `def Optimizes (d d' : EffectVmDescriptor2) : Prop`. This is the validator's typed contract.
-2. **New module `metatheory/Dregg2/Circuit/Emit/LayoutOptimizeTransfer.lean` (PROPOSED).** Instantiate the
+2. **New module `LayoutOptimizeTransfer.lean` under `metatheory/Dregg2/Circuit/Emit/` (PROPOSED — not in the tree).** Instantiate the
    pass for transfer: prove `tv_refines transferVmDescriptor transferV3 φ` for the graduation `φ` by
    **assembling the two directions from what exists** — ⟹ from `rotV3Frozen_sound_v1`, and ⟸
    (completeness-preservation) from the realizable-witness side (`descriptorComplete`'s constructor for the
