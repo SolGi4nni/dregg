@@ -848,6 +848,8 @@ jobs:
             Dregg2.Verify.LoadBearingAuditBroad
             Dregg2.Verify.LoadBearingAuditKey
             Dregg2.Verify.LoadBearingLint
+            Dregg2.Circuit.Emit.DyckStackRefine
+            Dregg2.Circuit.Emit.DyckStackReplay
         run: bash scripts/axiom-hygiene-guard.sh
 
   descriptor-drift:
