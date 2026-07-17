@@ -192,9 +192,6 @@ async fn handle_open(
     opts: &[serenity::all::ResolvedOption<'_>],
 ) {
     let channel = command.channel_id.get();
-    // A re-open deploys a FRESH council cell — say so, rather than silently discarding the
-    // chain the channel had been building.
-    let replaced = offering::is_open::<CouncilOffering>(channel);
 
     // The electorate: the invoker plus every named member, de-duplicated by derived key.
     let mut discord_ids = vec![command.user.id.get()];
@@ -228,6 +225,52 @@ async fn handle_open(
         _ => default_quorum(members.len()),
     };
 
+    // The roster line names the members by their real dregg identity (the electorate is
+    // cryptographic — this is exactly what a vote is checked against).
+    let roster = discord_ids
+        .iter()
+        .map(|id| {
+            let ident = identity_of(state, *id);
+            format!(
+                "<@{id}> `{}…`",
+                &ident.as_str()[..16.min(ident.as_str().len())]
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // REFUSE-WITH-CONFIRM (backlog #32): a live council must not be silently wiped by a
+    // re-open — its chain (proposals, ballots, enactments) is process-local and unrecoverable.
+    // The replacement open is stashed behind an explicit Confirm press.
+    if offering::is_open::<CouncilOffering>(channel) {
+        let status = offering::with_live::<CouncilOffering, _>(channel, |live| {
+            live.offering.status_line(&live.session)
+        });
+        let cfg = SessionConfig::with_seed(channel);
+        let roster_field = offering::truncate(&roster, 1000);
+        crate::commands::open_guard::refuse_with_confirm(
+            ctx,
+            command,
+            CouncilOffering::KEY,
+            status,
+            Box::new(move || {
+                offering::open_in(
+                    channel,
+                    move || CouncilOffering::new(members, catalog, quorum),
+                    cfg,
+                )
+                .map_err(|e| e.to_string())?;
+                offering::with_live::<CouncilOffering, _>(channel, |live| {
+                    offering::surface_of::<CouncilOffering>(live)
+                })
+                .map(|(embed, rows)| (embed.field("The electorate", roster_field, false), rows))
+                .ok_or_else(|| "the fresh session did not render".to_string())
+            }),
+        )
+        .await;
+        return;
+    }
+
     if let Err(e) = offering::open_in(
         channel,
         move || CouncilOffering::new(members, catalog, quorum),
@@ -251,34 +294,13 @@ async fn handle_open(
         return;
     }
 
-    // The roster line names the members by their real dregg identity (the electorate is
-    // cryptographic — this is exactly what a vote is checked against).
-    let roster = discord_ids
-        .iter()
-        .map(|id| {
-            let ident = identity_of(state, *id);
-            format!(
-                "<@{id}> `{}…`",
-                &ident.as_str()[..16.min(ident.as_str().len())]
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
     let rendered = offering::with_live::<CouncilOffering, _>(channel, |live| {
         offering::surface_of::<CouncilOffering>(live)
     });
     let Some((embed, rows)) = rendered else {
         return;
     };
-    let mut embed = embed.field("The electorate", offering::truncate(&roster, 1000), false);
-    if replaced {
-        embed = embed.field(
-            "Note",
-            "This channel's previous council was replaced — a fresh council cell, an empty chain.",
-            false,
-        );
-    }
+    let embed = embed.field("The electorate", offering::truncate(&roster, 1000), false);
     let _ = command
         .create_response(
             &ctx.http,
@@ -363,7 +385,11 @@ mod tests {
 
         // The buttons are real Discord rows, and each id round-trips back to its typed action.
         let rows = offering::action_rows::<CouncilOffering>(&actions);
-        assert_eq!(rows.len(), 1, "three affordances fit one action row");
+        assert_eq!(
+            rows.len(),
+            2,
+            "three affordances fit one action row, plus the standing ⛓ re-verify row"
+        );
         for a in &actions {
             let id = fire_id(CouncilOffering::KEY, &a.turn, a.arg);
             assert_eq!(

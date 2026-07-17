@@ -415,8 +415,6 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     match state.devnet.get_cell_details(&cell_id).await {
         Ok(cell) => {
-            let explorer_url =
-                format!("{}/cell/{}", state.devnet.explorer_base_url(), cell.cell_id);
             let short_id = truncate(&cell.cell_id, 16);
             let short_vk = cell
                 .program_vk
@@ -444,14 +442,19 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
                         .unwrap_or_else(|| "Direct".to_string()),
                     true,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field(
+                    "Explorer",
+                    crate::explorer_link::view_link("cell", &cell.cell_id, "View"),
+                    false,
+                );
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Cell Lookup Failed", &e.to_string());
+            let embed =
+                embeds::error_embed("Cell Lookup Failed", &e.user_message("look up the cell"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -467,11 +470,6 @@ async fn handle_turn(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     match state.devnet.get_turn_details(&turn_hash).await {
         Ok(turn) => {
-            let explorer_url = format!(
-                "{}/turn/{}",
-                state.devnet.explorer_base_url(),
-                turn.turn_hash
-            );
             let short_hash = truncate(&turn.turn_hash, 16);
             let short_signer = truncate(&turn.signer, 16);
 
@@ -498,14 +496,24 @@ async fn handle_turn(ctx: &Context, command: &CommandInteraction, state: &BotSta
                     },
                     false,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field(
+                    "Explorer",
+                    crate::explorer_link::view_link("turn", &turn.turn_hash, "View"),
+                    false,
+                )
+                .field(
+                    "Turn hash (full, copyable)",
+                    format!("```\n{}\n```", turn.turn_hash),
+                    false,
+                );
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Turn Lookup Failed", &e.to_string());
+            let embed =
+                embeds::error_embed("Turn Lookup Failed", &e.user_message("look up the turn"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -528,11 +536,6 @@ async fn handle_block(ctx: &Context, command: &CommandInteraction, state: &BotSt
 
     match state.devnet.get_block_details(height).await {
         Ok(block) => {
-            let explorer_url = format!(
-                "{}/block/{}",
-                state.devnet.explorer_base_url(),
-                block.height
-            );
             let short_root = truncate(&block.root_hash, 16);
 
             let tx_list: String = if block.transactions.is_empty() {
@@ -557,14 +560,19 @@ async fn handle_block(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     format!("{} total: {}", block.transactions.len(), tx_list),
                     false,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field(
+                    "Explorer",
+                    crate::explorer_link::view_link("block", &block.height.to_string(), "View"),
+                    false,
+                );
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Block Lookup Failed", &e.to_string());
+            let embed =
+                embeds::error_embed("Block Lookup Failed", &e.user_message("look up the block"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -949,8 +957,23 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
     match resp.json::<TurnProofWire>().await {
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
-            let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), hash);
-            let embed = embeds::dregg_embed("Turn Proof Artifact")
+            // VERIFY the fetched artifact right here (the audited `verify_full_turn`), and
+            // report the verdict — never an "Attached ✅" trust-me (backlog Tier-2 #11).
+            let check = crate::commands::proof_verify::check_proof_hex_blocking(
+                proof.proof_hex.clone(),
+                hash.clone(),
+            )
+            .await;
+            let verified_ok = matches!(&check, Ok(c) if c.verified);
+            let base = if verified_ok {
+                embeds::dregg_embed("Turn Proof Artifact — verifies")
+            } else {
+                embeds::error_embed(
+                    "Turn Proof Artifact — DOES NOT VERIFY",
+                    "The fetched bytes failed the bot's own re-check.",
+                )
+            };
+            let embed = base
                 .field(
                     "Turn",
                     format!("`{}...`", truncate(&proof.turn_hash, 16)),
@@ -961,13 +984,29 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     format!("{} bytes ({kib:.1} KiB)", proof.proof_len),
                     true,
                 )
-                .field("Attached", "\u{2705} yes", true)
                 .field(
                     "Proof (head)",
                     format!("`{}...`", truncate(&proof.proof_hex, 32)),
                     false,
                 )
-                .field("Explorer", format!("[View turn]({explorer_url})"), false);
+                .field(
+                    "Verification",
+                    crate::commands::proof_verify::verdict_text(&check),
+                    false,
+                )
+                .field(
+                    "Re-check it yourself",
+                    crate::commands::proof_verify::offline_recheck_text(
+                        &state.config.devnet_url,
+                        &hash,
+                    ),
+                    false,
+                )
+                .field(
+                    "Explorer",
+                    crate::explorer_link::view_link("turn", &hash, "View turn"),
+                    false,
+                );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -1039,16 +1078,11 @@ async fn handle_search(ctx: &Context, command: &CommandInteraction, state: &BotS
 
             let mut description = String::new();
             for result in results.iter().take(10) {
-                let short_id = truncate(&result.id, 16);
-                let explorer_url = format!(
-                    "{}/{}/{}",
-                    state.devnet.explorer_base_url(),
-                    result.kind,
-                    result.id
-                );
                 description.push_str(&format!(
-                    "**{}** [`{short_id}...`]({explorer_url})\n{}\n\n",
-                    result.kind, result.summary
+                    "**{}** {}\n{}\n\n",
+                    result.kind,
+                    crate::explorer_link::short_ref(&result.kind, &result.id, 16),
+                    result.summary
                 ));
             }
 
@@ -1173,9 +1207,11 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
                     event.event_type, event.summary
                 ));
                 if let Some(tx) = &event.tx_hash {
-                    let short = truncate(tx, 12);
+                    // Linked when DREGG_EXPLORER_BASE is configured; plain copyable
+                    // full hash otherwise — never a dead link.
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{tx})\n"
+                        "  {}\n",
+                        crate::explorer_link::short_ref("tx", tx, 12)
                     ));
                 }
             }
@@ -1189,7 +1225,10 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Recent Activity Error", &e.to_string());
+            let embed = embeds::error_embed(
+                "Recent Activity Error",
+                &e.user_message("read recent activity"),
+            );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

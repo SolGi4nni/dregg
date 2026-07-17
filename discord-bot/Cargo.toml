@@ -210,11 +210,38 @@ dreggnet-surfaces = { path = "../dreggnet-surfaces" }
 # the closure — its deps (spween-dregg, dungeon-on-dregg, blake3) are already here, plus
 # procgen-dregg (the committed verifiable-seed pipeline).
 ugc-dregg = { path = "../ugc-dregg" }
+# 👑 THE CROWN (`src/commands/crown.rs`) — fold a played `/play tug|automatafl` match into ONE
+# succinct `WholeChainProof` and rank it on the proof-carrying board. `dreggnet-game-board` is
+# the play→fold→board bridge (`GameBoard`, `match_anchor`, the O(1) accept path over
+# `verify_history_bytes`, `has_moves() == false`); `dreggnet-prove-service` is the bounded
+# background worker pool the minutes-long recursive fold runs on, OFF the interaction path
+# (`DREGG_MATCH_PROVE_WORKERS` / `_QUEUE_DEPTH`). Root workspace members, consumed (never
+# modified); their heavy deps (circuit-prove, dregg-lightclient) are already in this graph via
+# the game crates' fold modules.
+dreggnet-game-board = { path = "../dreggnet-game-board" }
+dreggnet-prove-service = { path = "../dreggnet-prove-service" }
 # THE DAILY BEACON behind `/descent` — the committed verifiable-seed pipeline. `procgen-dregg`
 # supplies today's `DailyBeacon` (a BLS-pairing-verified drand `quicknet` reveal) and `daily_seed`
 # (the fold from beacon output → `CommittedSeed`), so `/descent` plays a real beacon-seeded day.
 # Already in the closure via ugc-dregg; named directly for `beacon::DailyBeacon` / `daily_seed`.
 procgen-dregg = { path = "../procgen-dregg" }
+# THE IPFS TRANSPORT behind `/gallery publish pin:true` + the shown CID (`src/commands/
+# gallery_ipfs.rs`): `KuboClient`/`StdHttpPost` push the canonical payload to the operator's
+# node, and `MockIpfs` derives the (content-pure) CID offline. Already in the closure via
+# ugc-dregg's `ipfs` module; named directly for the client types. A root workspace member.
+dregg-ipfs = { path = "../dregg-ipfs" }
+# GEAR + TALENTS on `/play` (`src/commands/gear.rs`): `LoadoutOffering` (equip = a KERNEL
+# cross-cell ownership predicate) and `TalentTreeOffering` (class-gated, prereq-chained,
+# respec-capable) — both already `impl Offering`; the bot adds only the two `DiscordOffering`
+# blocks. A root workspace member, consumed (never modified).
+dreggnet-gear = { path = "../dreggnet-gear" }
+# The soulbound cheevo ledger — `commands::rpg_world` earns the player's REAL achievements
+# (CheevoLedger::earn over their persisted /descent completions) for the /play cheevos surface.
+dreggnet-cheevo = { path = "../dreggnet-cheevo" }
+# The composed-proof wire type (`composition::ComposedProof`) the bot deserializes a fetched
+# full-turn STARK into before running the audited `dregg_sdk::verify_full_turn` (backlog #11).
+# Already resolved in the lock via dregg-sdk; named directly for the type.
+dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 
 [dev-dependencies]
 # `ServiceExt::oneshot` drives the admin webportal router in tests without

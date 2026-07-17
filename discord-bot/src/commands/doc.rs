@@ -127,7 +127,32 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 /// derived dregg identity holds the region's edit cap), and post the surface.
 async fn handle_open(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let channel = command.channel_id.get();
-    let replaced = offering::is_open::<DocOffering>(channel);
+    // REFUSE-WITH-CONFIRM (backlog #32): a live shared document must not be silently wiped by
+    // a re-open; the replacement waits behind an explicit Confirm press.
+    if offering::is_open::<DocOffering>(channel) {
+        let status = offering::with_live::<DocOffering, _>(channel, |live| {
+            live.offering.status_line(&live.session)
+        });
+        let opener = identity_of(state, command.user.id.get());
+        crate::commands::open_guard::refuse_with_confirm(
+            ctx,
+            command,
+            DocOffering::KEY,
+            status,
+            Box::new(move || {
+                offering::open_in(channel, DocOffering::new, SessionConfig::with_seed(channel))
+                    .map_err(|e| e.to_string())?;
+                // The opener is the fresh document's first editor, exactly as a direct open.
+                offering::with_live::<DocOffering, _>(channel, move |live| {
+                    live.session.invite(opener, Role::Editor);
+                    offering::surface_of::<DocOffering>(live)
+                })
+                .ok_or_else(|| "the fresh session did not render".to_string())
+            }),
+        )
+        .await;
+        return;
+    }
     if let Err(e) = offering::open_in(channel, DocOffering::new, SessionConfig::with_seed(channel))
     {
         let _ = command
@@ -151,16 +176,9 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, state: &BotSta
     let rendered = offering::with_live::<DocOffering, _>(channel, |live| {
         offering::surface_of::<DocOffering>(live)
     });
-    let Some((mut embed, rows)) = rendered else {
+    let Some((embed, rows)) = rendered else {
         return;
     };
-    if replaced {
-        embed = embed.field(
-            "Note",
-            "This channel's previous document was replaced — a fresh document, an empty chain.",
-            false,
-        );
-    }
     let _ = command
         .create_response(
             &ctx.http,

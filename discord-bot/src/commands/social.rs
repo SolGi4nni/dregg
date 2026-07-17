@@ -139,9 +139,48 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
                 ));
             }
 
-            let embed = embeds::dregg_embed("Leaderboard").description(description);
+            // The board sums the bot's LOCAL ledger — say so, and hand over the chain
+            // press: the most recent recorded receipts get a re-check button each, so the
+            // totals' underlying transfers are spot-checkable against the live node
+            // (backlog Tier-2 #13).
+            let recent = state
+                .db
+                .get_recent_transactions(10)
+                .await
+                .unwrap_or_default();
+            let hashes: Vec<&str> = recent.iter().map(|t| t.tx_hash.as_str()).collect();
+            let rows = crate::commands::tx_recheck::recheck_rows(&hashes, 5);
+            let mut receipt_lines = String::new();
+            for tx in recent
+                .iter()
+                .filter(|t| crate::commands::tx_recheck::checkable(&t.tx_hash))
+                .take(5)
+            {
+                receipt_lines.push_str(&format!(
+                    "{} DEC — {}\n",
+                    tx.amount,
+                    crate::commands::tx_recheck::receipt_ref(&tx.tx_hash),
+                ));
+            }
+
+            let mut embed = embeds::dregg_embed("Leaderboard")
+                .description(description)
+                .field(
+                    "What this is",
+                    "Totals summed from the bot's local ledger. Every transfer behind them \
+                     committed as a real turn and recorded its chain receipt — the recent ones \
+                     are below, each with a **⛓ re-check** press that asks the live node, not \
+                     this bot's database.",
+                    false,
+                );
+            if !receipt_lines.is_empty() {
+                embed = embed.field("Recent receipts", receipt_lines, false);
+            }
             let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new().embed(embed).components(rows),
+                )
                 .await;
         }
         Err(e) => {
@@ -163,7 +202,7 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
     if !state.db.user_exists(&discord_id).await.unwrap_or(false) {
         let embed = embeds::warning_embed(
             "No Cipherclerk",
-            "You need a cclerk to view history. Use `/cipherclerk create` first.",
+            "You need a wallet to view history. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
         );
         let _ = command
             .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -199,12 +238,41 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
                     };
                     format!("\u{1f4e5} Received {} DEC from {from_display}", tx.amount)
                 };
-                description.push_str(&format!("{direction}\n<t:{}:R>\n\n", tx.timestamp));
+                // Every transfer row carries its committed turn's receipt reference — the
+                // chain hash the transfer path recorded, not just the bot's bookkeeping
+                // (backlog Tier-2 #13). Faucet rows have no chain receipt and say nothing.
+                let receipt = if crate::commands::tx_recheck::checkable(&tx.tx_hash) {
+                    format!(
+                        " · receipt {}",
+                        crate::commands::tx_recheck::receipt_ref(&tx.tx_hash)
+                    )
+                } else {
+                    String::new()
+                };
+                description.push_str(&format!("{direction}\n<t:{}:R>{receipt}\n\n", tx.timestamp));
             }
 
-            let embed = embeds::dregg_embed("Transaction History").description(description);
+            // The re-check presses: each button asks the LIVE node whether the recorded
+            // hash is a committed turn on its receipt chain — the row's escape from
+            // trust-the-bot's-sqlite (`commands::tx_recheck`).
+            let hashes: Vec<&str> = txs.iter().map(|t| t.tx_hash.as_str()).collect();
+            let rows = crate::commands::tx_recheck::recheck_rows(&hashes, 5);
+
+            let mut embed = embeds::dregg_embed("Transaction History").description(description);
+            if !rows.is_empty() {
+                embed = embed.field(
+                    "Verify it yourself",
+                    "These rows render from the bot's local ledger — press **⛓ re-check** and \
+                     the bot asks the live node whether that receipt is a committed turn on \
+                     the chain, in front of you.",
+                    false,
+                );
+            }
             let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+                .edit_response(
+                    &ctx.http,
+                    EditInteractionResponse::new().embed(embed).components(rows),
+                )
                 .await;
         }
         Err(e) => {

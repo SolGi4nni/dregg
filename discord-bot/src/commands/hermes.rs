@@ -118,7 +118,33 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 /// The channel id is the deterministic session seed (so `verify`'s replay re-derives it).
 async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotState) {
     let channel = command.channel_id.get();
-    let replaced = offering::is_open::<HermesOffering>(channel);
+    // REFUSE-WITH-CONFIRM (backlog #32): a live agent session's chain must not be silently
+    // wiped by a re-open; the replacement waits behind an explicit Confirm press.
+    if offering::is_open::<HermesOffering>(channel) {
+        let status = offering::with_live::<HermesOffering, _>(channel, |live| {
+            live.offering.status_line(&live.session)
+        });
+        crate::commands::open_guard::refuse_with_confirm(
+            ctx,
+            command,
+            HermesOffering::KEY,
+            status,
+            Box::new(move || {
+                offering::open_in(
+                    channel,
+                    HermesOffering::new,
+                    SessionConfig::with_seed(channel),
+                )
+                .map_err(|e| e.to_string())?;
+                offering::with_live::<HermesOffering, _>(channel, |live| {
+                    offering::surface_of::<HermesOffering>(live)
+                })
+                .ok_or_else(|| "the fresh session did not render".to_string())
+            }),
+        )
+        .await;
+        return;
+    }
     if let Err(e) = offering::open_in(
         channel,
         HermesOffering::new,
@@ -146,16 +172,9 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotSt
     let rendered = offering::with_live::<HermesOffering, _>(channel, |live| {
         offering::surface_of::<HermesOffering>(live)
     });
-    let Some((mut embed, rows)) = rendered else {
+    let Some((embed, rows)) = rendered else {
         return;
     };
-    if replaced {
-        embed = embed.field(
-            "Note",
-            "This channel's previous agent was replaced — a fresh confined session, an empty chain.",
-            false,
-        );
-    }
     let _ = command
         .create_response(
             &ctx.http,

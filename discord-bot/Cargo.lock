@@ -2271,7 +2271,6 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-commit",
- "dregg-macaroon",
  "dregg-token",
  "dregg-trace",
  "serde",
@@ -2333,6 +2332,8 @@ dependencies = [
  "dregg-circuit",
  "dregg-dfa",
  "dregg-dice",
+ "dregg-dsl-runtime",
+ "dregg-ipfs",
  "dregg-multiway-tug",
  "dregg-narrator",
  "dregg-pay",
@@ -2340,14 +2341,18 @@ dependencies = [
  "dregg-storage",
  "dregg-turn",
  "dregg-types",
+ "dreggnet-cheevo",
  "dreggnet-compute",
  "dreggnet-council",
  "dreggnet-doc",
+ "dreggnet-game-board",
+ "dreggnet-gear",
  "dreggnet-grain",
  "dreggnet-hermes",
  "dreggnet-market",
  "dreggnet-names",
  "dreggnet-offerings",
+ "dreggnet-prove-service",
  "dreggnet-surfaces",
  "dungeon-on-dregg",
  "ed25519-dalek",
@@ -3034,6 +3039,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-game-board"
+version = "0.1.0"
+dependencies = [
+ "dregg-automatafl",
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-lightclient",
+ "dregg-multiway-tug",
+ "game-turn-slice",
+ "ugc-dregg",
+]
+
+[[package]]
 name = "dreggnet-gear"
 version = "0.1.0"
 dependencies = [
@@ -3146,6 +3165,15 @@ dependencies = [
  "dregg-types",
  "dungeon-on-dregg",
  "starbridge-v2",
+]
+
+[[package]]
+name = "dreggnet-prove-service"
+version = "0.1.0"
+dependencies = [
+ "dregg-circuit-prove",
+ "dreggnet-game-board",
+ "tracing",
 ]
 
 [[package]]

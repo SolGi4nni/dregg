@@ -8,7 +8,7 @@
 //! 2. A **payment poll** ([`PayState::poll_and_credit`]) polls the [`Watcher`] for that address and
 //!    credits run-credits via [`CreditLedger::credit`], **idempotent** by the payment reference (a
 //!    re-poll never double-credits).
-//! 3. **`/balance`** reads [`CreditLedger::balance`] (persisted in sqlite, so it survives restart).
+//! 3. **`/credits`** reads [`CreditLedger::balance`] (persisted in sqlite, so it survives restart).
 //! 4. A **paid `/dungeon` run** ([`PayState::try_paid_run`]) debits ONE credit
 //!    ([`CreditLedger::debit`]) and routes to **real Bedrock** ([`dregg_narrator::metered_converse`])
 //!    under a **PER-RUN USD budget** — a fresh [`BudgetLedger`] capped at `usd_per_run` at a unique
@@ -395,6 +395,19 @@ impl PayState {
     /// The caller's persisted run-credit balance.
     pub fn balance(&self, discord_id: &str) -> u64 {
         self.ledger.balance(&UserId::from(discord_id))
+    }
+
+    /// The caller's persisted run-credit balance **as a `Result`** — the display-honest read.
+    ///
+    /// [`PayState::balance`] rides the sync [`CreditStore`] trait, whose sqlite impl maps a
+    /// storage failure to `0` ([`SqliteCreditStore::balance`] `unwrap_or(0)`). That is the right
+    /// degradation for the GATE (a run it cannot price falls back to the free tier) but a lie on
+    /// a DISPLAY surface: "you have 0 credits" and "the ledger could not be read" are different
+    /// facts, and a user who just paid real `$DREGG` must never be shown the first when the truth
+    /// is the second. `/credits` and `/buy-credits` read through here and render a read failure
+    /// as "unavailable right now — not a zero", never as `0`.
+    pub async fn balance_checked(&self, discord_id: &str) -> Result<u64, sqlx::Error> {
+        self.db.pay_credit_balance(discord_id).await
     }
 
     /// Spend ONE run-credit ([`CreditLedger::debit`]); the balance remaining, or an error when the

@@ -65,17 +65,17 @@ use serenity::all::{
 
 use dreggnet_offerings::character::CharacterStore;
 use dreggnet_offerings::daily_descent::{
-    CORRIDOR_ON, DailyDescentOffering, DailyRun, GATE_FALL, GATE_HEAL, GATE_MEASURED, GATE_PRESS,
-    GATE_RECKLESS, HOARD_FORCE, HOARD_GOLD, HOARD_SEIZE, KEY_TAKE, daily_scene,
+    DailyDescentOffering, DailyRun, GATE_FALL, GATE_HEAL, GATE_MEASURED, GATE_PRESS, GATE_RECKLESS,
+    daily_scene,
 };
 use dreggnet_offerings::{DreggIdentity, OfferingError, Outcome};
 use dungeon_on_dregg::progression::{MAGE, ROGUE, WARRIOR};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::beacon::DailyBeacon;
-use ugc_dregg::{Completion, Registry, RejectReason, Universe, UniverseId, record_playthrough};
+use ugc_dregg::{Completion, Registry, Universe, UniverseId, record_playthrough};
 
 use crate::BotState;
-use crate::character_store::SqliteCharacterStore;
+use crate::commands::ack;
 use crate::commands::offering::identity_of;
 
 /// The Descent brand colour (a deep permadeath crimson-violet, distinct from `/dungeon`'s teal).
@@ -452,8 +452,9 @@ fn open_core<S: CharacterStore>(
 }
 
 /// **Advance the run by one move; settle a terminal outcome.** Applies `choice` as one real turn;
-/// on a landed move that ENDED the run it SAVES the character (persisting earned XP / a hardcore
-/// death) and, iff the run WON, submits a [`ugc_dregg::Completion`] to the no-cheat `board`.
+/// EVERY landed move SAVES the character (persisting earned XP / a hardcore death mid-run, so a
+/// restart never rewinds a sheet), and a landed move that ENDED the run additionally, iff the run
+/// WON, submits a [`ugc_dregg::Completion`] to the no-cheat `board`.
 fn advance_core<S: CharacterStore>(
     off: &mut DailyDescentOffering<S>,
     run: &mut DailyRun,
@@ -471,11 +472,15 @@ fn advance_core<S: CharacterStore>(
             view: RunView::of(run),
         },
         Outcome::Landed { ended, .. } => {
+            // Persist the character after EVERY landed move, not only the terminal one — so a
+            // mid-run bot restart cannot roll the character back to its pre-run sheet. (Before
+            // this, progress saved only on the terminal move, so a doomed hardcore run could
+            // dodge its death by simply waiting out a redeploy — backlog #34. The run session
+            // itself is still in-process, a named seam; what is durable is the character.)
+            off.save(run);
             let mut rank = None;
             let mut board_note = String::new();
             if ended {
-                // Persist the character (earned XP / a hardcore death carries to the next day).
-                off.save(run);
                 if run.is_won() {
                     match off.completion(run, BOARD_AUTHOR, player) {
                         Ok(completion) => {
@@ -509,24 +514,34 @@ fn advance_core<S: CharacterStore>(
     }
 }
 
-/// A `Send` view of today's leaderboard — the ranked entries (player + turns-to-win).
+/// A `Send` view of today's leaderboard — the ranked entries (player + turns-to-win), plus a
+/// per-entry `(rank, completion_id_hex)` handle the **Re-verify #N** buttons carry (backlog
+/// Tier-2 #9: the claimed replay-verification becomes a press anyone can make).
 #[derive(Clone, Debug)]
 struct BoardView {
     day_title: String,
     entries: Vec<(usize, String, usize)>,
+    /// `(rank, completion_id hex)` per ranked entry, in rank order — the re-verify handles.
+    reverify: Vec<(usize, String)>,
 }
 
 /// The current no-cheat leaderboard for today's world.
 fn board_core(board: &Registry, universe_id: UniverseId, day_title: &str) -> BoardView {
-    let entries = board
-        .leaderboard(universe_id)
+    let ranked = board.leaderboard(universe_id);
+    let entries = ranked
         .iter()
         .enumerate()
         .map(|(i, e)| (i + 1, short_player(&e.player), e.turns))
         .collect();
+    let reverify = ranked
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (i + 1, hex32(&e.completion_id)))
+        .collect();
     BoardView {
         day_title: day_title.to_string(),
         entries,
+        reverify,
     }
 }
 
@@ -739,7 +754,7 @@ pub fn load_board(store: &dyn DescentBoardStore) -> Registry {
 /// path the live offering uses. Returns `None` if the seed is malformed, the world does not author,
 /// or — the tooth — the recomputed content address no longer matches the stored `id_hex` (a tampered
 /// seed). Such a row is simply dropped.
-fn reconstruct_universe(su: &StoredDescentUniverse) -> Option<Universe> {
+pub(crate) fn reconstruct_universe(su: &StoredDescentUniverse) -> Option<Universe> {
     let seed = CommittedSeed::from_bytes(decode_hex32(&su.seed_hex)?);
     let day = daily_scene(&seed);
     let universe = day.universe(&su.author).ok()?;
@@ -905,6 +920,72 @@ fn store() -> &'static DescentStore {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Board reads for the breadth surfaces — the weekly tournament's earned entry list
+// (`commands::tournament`) and the NFT export's earned-ness source (`commands::export_nft`).
+// Both read the LIVE board on the store thread: the board only ever holds entries the
+// no-cheat gate re-executed to the win, so presence here IS the verified qualification.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Every distinct player holding a VERIFIED win on the live no-cheat board (any published
+/// day), with their best verified turns-to-win — ascending by merit (fewest turns first,
+/// name as the stable tie-break). The weekly tournament seeds its bracket by this order.
+pub fn verified_players_by_merit() -> Vec<(String, usize)> {
+    store().run(|w| {
+        let mut best: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for u in w.board.universes() {
+            for e in w.board.leaderboard(u.id()) {
+                let cur = best.entry(e.player.clone()).or_insert(e.turns);
+                if e.turns < *cur {
+                    *cur = e.turns;
+                }
+            }
+        }
+        let mut rows: Vec<(String, usize)> = best.into_iter().collect();
+        rows.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        rows
+    })
+}
+
+/// A player's BEST verified board win — what `/export` mints as a 1-of-1 SPL NFT. The
+/// `completion_id` is the board's content address of the re-executed run (the commitment
+/// the NFT memo carries).
+pub struct VerifiedWin {
+    /// The day-universe content address (hex) the win is on.
+    pub universe_id_hex: String,
+    /// The day-universe's display name.
+    pub universe_name: String,
+    /// The board's completion id — a 32-byte commitment to (player, playthrough).
+    pub completion_id: [u8; 32],
+    /// The verified turns-to-win.
+    pub turns: usize,
+}
+
+/// The player's best (fewest-turns) VERIFIED win across every published day, or `None`
+/// if they hold no verified board entry.
+pub fn verified_win_of(player: &str) -> Option<VerifiedWin> {
+    let player = player.to_string();
+    store().run(move |w| {
+        let mut best: Option<VerifiedWin> = None;
+        for u in w.board.universes() {
+            for e in w.board.leaderboard(u.id()) {
+                if e.player != player {
+                    continue;
+                }
+                if best.as_ref().is_none_or(|b| e.turns < b.turns) {
+                    best = Some(VerifiedWin {
+                        universe_id_hex: id_hex(&u.id()),
+                        universe_name: u.name().to_string(),
+                        completion_id: e.completion_id,
+                        turns: e.turns,
+                    });
+                }
+            }
+        }
+        best
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration + slash routing.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -934,6 +1015,11 @@ pub fn register() -> CreateCommand {
         )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
+            "room",
+            "Re-show your current room + fresh move buttons (recovers a lost room message)",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
             "verify",
             "Re-verify your current run's committed chain by replay",
         ))
@@ -947,6 +1033,9 @@ pub fn register() -> CreateCommand {
             "today",
             "Describe today's dungeon — its beacon-verified reveal + how it plays",
         ))
+        // The weekly verify-gated bracket over the board's VERIFIED winners (backlog #16);
+        // the handler lives in its own module (`crate::commands::tournament`).
+        .add_option(crate::commands::tournament::register_option())
 }
 
 /// Route `/descent` subcommands.
@@ -956,9 +1045,11 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     };
     match sub.name.as_str() {
         "play" => handle_play(ctx, command, state).await,
+        "room" => handle_room(ctx, command).await,
         "verify" => handle_verify(ctx, command, state).await,
         "board" => handle_board(ctx, command, state).await,
         "today" => handle_today(ctx, command).await,
+        "tournament" => crate::commands::tournament::handle(ctx, command, state).await,
         _ => {}
     }
 }
@@ -1005,6 +1096,31 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
         }
     });
 
+    // ACK inside Discord's 3s window BEFORE anything commits or narrates (the narrator alone can
+    // take ~20s) — the room lands as an EDIT of this deferred response.
+    ack::defer_slash(ctx, command, false).await;
+
+    // A LIVE run is never silently abandoned by a re-open: re-show its current room instead
+    // (the recovery affordance — a lost/failed room message no longer costs the run).
+    let live_view: Option<RunView> = store().run(move |w| {
+        w.slots
+            .get(&user_id)
+            .filter(|s| !s.run.is_ended())
+            .map(|s| RunView::of(&s.run))
+    });
+    if let Some(view) = live_view {
+        let (narration, kind) = current_narration(user_id, &view);
+        let embed = room_embed(&view, &narration, kind).field(
+            "Your descent continues",
+            "You already have a live run today — here is your current room, with fresh move \
+             buttons (a re-open never abandons a live permadeath run). `/descent room` re-shows \
+             it any time.",
+            false,
+        );
+        ack::edit_slash(ctx, command, embed, move_rows(user_id, &view.options)).await;
+        return;
+    }
+
     let store_clone = state.characters.clone();
     let beacon = resolve_todays_beacon();
 
@@ -1040,7 +1156,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
                 "Today's descent did not open",
                 &format!("The beacon-seeded world failed to deploy: {why}"),
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
             return;
         }
     };
@@ -1057,15 +1173,53 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     let embed = room_embed(&view, &narration, kind);
     let rows = move_rows(user_id, &view.options);
-    respond(ctx, command, embed, rows, false).await;
+    ack::edit_slash(ctx, command, embed, rows).await;
+}
+
+// ─── /descent room — re-show the current room (the recovery affordance) ─────────
+
+/// **Re-render the invoker's current room** with fresh move buttons — the recovery path when a
+/// room message was lost (a narration hiccup, a deleted message, a scrolled-away channel).
+/// Read-only: no turn is committed, the run is untouched, the last narration is reused.
+async fn handle_room(ctx: &Context, command: &CommandInteraction) {
+    let user_id = command.user.id.get();
+    let view: Option<RunView> =
+        store().run(move |w| w.slots.get(&user_id).map(|s| RunView::of(&s.run)));
+    match view {
+        None => {
+            let embed = warn_embed(
+                "No descent open",
+                "You have no run open. Begin one with `/descent play`.",
+            );
+            respond(ctx, command, embed, vec![], true).await;
+        }
+        Some(view) if view.ended => {
+            let embed = result_embed(&view, None, "This descent has already ended.");
+            respond(ctx, command, embed, vec![], true).await;
+        }
+        Some(view) => {
+            let (narration, kind) = current_narration(user_id, &view);
+            let embed = room_embed(&view, &narration, kind);
+            let rows = move_rows(user_id, &view.options);
+            respond(ctx, command, embed, rows, false).await;
+        }
+    }
 }
 
 // ─── the move buttons (a press advances the presser's OWN run) ──────────────────
 
-/// Route a `descent:` component press. custom_id: `descent:move:<userId>:<choiceIndex>`.
+/// Route a `descent:` component press. custom_ids:
+/// * `descent:move:<userId>:<choiceIndex>` — advance the presser's OWN run by one real turn;
+/// * `descent:rv:<completion_id hex>` — **Re-verify #N**: ANY presser (deliberately no owner
+///   gate — a stranger's re-run is the point) re-executes a ranked entry through the live
+///   no-cheat gate, in front of the channel (backlog Tier-2 #9).
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let id = component.data.custom_id.clone();
     let parts: Vec<&str> = id.split(':').collect();
+    if parts.len() == 3 && parts[1] == "rv" {
+        handle_reverify(ctx, component, parts[2]).await;
+        return;
+    }
     if parts.len() != 4 || parts[1] != "move" {
         return;
     }
@@ -1096,6 +1250,12 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         return;
     }
 
+    // ACK the press inside Discord's 3s window BEFORE the turn commits or the narrator runs
+    // (the narrator alone can take ~20s). The re-render lands as an EDIT of this deferred
+    // update — a slow narration can no longer present a committed permadeath move as
+    // "This interaction failed".
+    ack::ack_component(ctx, component).await;
+
     let store_clone = state.characters.clone();
     let player = short_player(&identity_of(state, owner).0);
     let result = store().run(move |w| {
@@ -1116,18 +1276,14 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 
     match result {
         MoveResult::NoRun => {
-            let _ = component
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(
-                                "Your descent has expired — run `/descent play` to begin anew.",
-                            )
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
+            // The press was already ACKed (deferred update), so this rides a followup — the
+            // stale room message is left as-is, the presser gets the pointer privately.
+            ack::followup_ephemeral(
+                ctx,
+                component,
+                "Your descent has expired — run `/descent play` to begin anew.",
+            )
+            .await;
         }
         MoveResult::Refused { why, view } => {
             // A real executor refusal: the room is unchanged, no receipt committed (anti-ghost).
@@ -1168,22 +1324,16 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     }
 }
 
+/// EDIT the pressed room message into the post-turn render. The press was ACKed with a
+/// deferred update BEFORE the turn committed ([`handle_component`]), so this edit is what
+/// lands the outcome — however long the narrator took.
 async fn update_message(
     ctx: &Context,
     component: &ComponentInteraction,
     embed: CreateEmbed,
     rows: Vec<CreateActionRow>,
 ) {
-    let _ = component
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::UpdateMessage(
-                CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .components(rows),
-            ),
-        )
-        .await;
+    ack::edit_component(ctx, component, embed, rows).await;
 }
 
 /// Record how the current room was narrated (a brief job on the store thread).
@@ -1261,7 +1411,7 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction, state: &BotS
 
 // ─── /descent board ───────────────────────────────────────────────────────────
 
-async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+async fn handle_board(ctx: &Context, command: &CommandInteraction, _state: &BotState) {
     // Today's board id is derived from the beacon-drawn world (published on any `/descent play`).
     // Compute it purely (no state needed) so the board renders even before this process's first run.
     let beacon = resolve_todays_beacon();
@@ -1273,8 +1423,23 @@ async fn handle_board(ctx: &Context, command: &CommandInteraction, state: &BotSt
             return;
         }
     };
+    // The exact PUBLIC inputs a stranger needs to verify OUTSIDE the bot (backlog #9): the
+    // day-universe's content address + the committed beacon seed the world regenerates from.
+    let universe_hex = id_hex(&uid);
+    let seed_hex_str = beacon
+        .seed()
+        .map(|s| hex32(s.as_bytes()))
+        .unwrap_or_else(|_| "(the beacon did not verify)".to_string());
     let view = store().run(move |w| board_core(&w.board, uid, &day_title));
-    respond(ctx, command, board_embed(&view), vec![], false).await;
+    let rows = reverify_rows(&view.reverify);
+    respond(
+        ctx,
+        command,
+        board_embed(&view, &universe_hex, &seed_hex_str),
+        rows,
+        false,
+    )
+    .await;
 }
 
 // ─── /descent today ─────────────────────────────────────────────────────────────
@@ -1289,9 +1454,10 @@ async fn handle_today(ctx: &Context, command: &CommandInteraction) {
          reveal (round {round}). Everyone plays the byte-identical world; a different day's \
          verified round gives a different dungeon.\n\n\
          Every move is one cap-bounded turn the verified executor admits:\n\
-         • **the warden** — a blow you could not survive is refused (`FieldGte(hp,1)`)\n\
-         • **the field-dressing** — a one-shot heal (`FieldLte(heals_used,1)`)\n\
-         • **the sealed hoard-door** — opens only with the key (`FieldGte(has_key,1)`)\n\
+         • **the warden** — a blow you could not survive is refused: the executor will not \
+         let your HP fall below 1\n\
+         • **the field-dressing** — a one-shot heal; a second use is refused\n\
+         • **the sealed hoard-door** — opens only if you actually hold the key\n\
          • **defeat is real** — a reckless line falls into a committed DEFEAT, and (hardcore) \
          your persistent character PERISHES, un-undoably\n\n\
          Your character (level / class / earned XP / a hardcore death) carries across days. A WON \
@@ -1424,7 +1590,7 @@ fn result_embed(view: &RunView, rank: Option<usize>, board_note: &str) -> Create
 }
 
 /// The no-cheat leaderboard embed.
-fn board_embed(view: &BoardView) -> CreateEmbed {
+fn board_embed(view: &BoardView, universe_hex: &str, seed_hex_str: &str) -> CreateEmbed {
     let body = if view.entries.is_empty() {
         "No verified survivors yet today. Be the first — `/descent play`.".to_string()
     } else {
@@ -1434,13 +1600,177 @@ fn board_embed(view: &BoardView) -> CreateEmbed {
         }
         format!("```{}```", truncate(&lines, 1800))
     };
-    base_embed(&format!("{} — today's no-cheat board", view.day_title))
+    let mut embed = base_embed(&format!("{} — today's no-cheat board", view.day_title))
         .description(format!(
             "Ranked by turns-to-win (lower is better). A run ranks ONLY if its recorded receipt \
              chain re-executes to the WIN on an independent re-run — a forged or incomplete run is \
              refused.\n\n{body}"
         ))
-        .footer(footer(NarratorKind::Scripted))
+        // The public inputs a STRANGER needs to verify a run outside the bot (backlog #9):
+        // regenerate the day-world byte-for-byte from the committed seed, check it hashes to
+        // the content address, then replay any entry's recorded moves through the same gate.
+        .field(
+            "Day universe (content address)",
+            format!("```{universe_hex}```"),
+            false,
+        )
+        .field(
+            "Committed beacon seed",
+            format!("```{seed_hex_str}```"),
+            false,
+        );
+    if !view.reverify.is_empty() {
+        embed = embed.field(
+            "Verify it yourself",
+            "Press **Re-verify #N** and the bot re-executes that entry's recorded moves on a \
+             FRESH world regenerated from the committed seed — live, in front of you. Or do it \
+             outside the bot: `procgen_dregg::daily_scene(seed)` → \
+             `ugc_dregg::record_playthrough` → `Registry::submit` (the same gate).",
+            false,
+        );
+    }
+    embed.footer(footer(NarratorKind::Scripted))
+}
+
+/// The **Re-verify #N** buttons for today's ranked entries (top ten, five per row) — the
+/// press anyone can make; `descent:rv:<completion_id hex>` routes to [`handle_reverify`].
+fn reverify_rows(reverify: &[(usize, String)]) -> Vec<CreateActionRow> {
+    let shown = &reverify[..reverify.len().min(10)];
+    let mut rows: Vec<CreateActionRow> = Vec::new();
+    for chunk in shown.chunks(5) {
+        let buttons: Vec<CreateButton> = chunk
+            .iter()
+            .map(|(rank, cid_hex)| {
+                CreateButton::new(format!("descent:rv:{cid_hex}"))
+                    .label(format!("Re-verify #{rank}"))
+                    .style(ButtonStyle::Secondary)
+            })
+            .collect();
+        rows.push(CreateActionRow::Buttons(buttons));
+    }
+    rows
+}
+
+/// **The Re-verify press** (backlog Tier-2 #9, live — the same [`Registry::reverify_entry`]
+/// the crate's test ran now runs for anyone, on demand). Resolves the pressed completion on
+/// the live board, re-executes its recorded moves on a fresh identically-seeded world through
+/// the real no-cheat gate, and posts the honest result PUBLICLY with the exact public inputs
+/// (day-universe content address + committed seed) a stranger needs to repeat the check
+/// outside the bot. Deliberately no owner gate: a stranger's re-run is the point.
+async fn handle_reverify(ctx: &Context, component: &ComponentInteraction, cid_hex: &str) {
+    let Some(cid) = decode_hex32(cid_hex) else {
+        return;
+    };
+    let cid_hex_owned = cid_hex.to_string();
+    let started = std::time::Instant::now();
+
+    /// The `Send` result of a re-verify job.
+    enum Rv {
+        Gone,
+        Checked {
+            universe_hex: String,
+            player: String,
+            rank: usize,
+            result: Result<usize, String>,
+        },
+    }
+
+    let outcome = store().run(move |w| {
+        // Resolve which published universe holds this completion (owned data out, then act).
+        let ids: Vec<UniverseId> = w.board.universes().map(|u| u.id()).collect();
+        let mut found: Option<(UniverseId, String, usize)> = None;
+        for uid in ids {
+            if let Some((i, e)) = w
+                .board
+                .leaderboard(uid)
+                .iter()
+                .enumerate()
+                .find(|(_, e)| hex32(&e.completion_id) == cid_hex_owned)
+            {
+                found = Some((uid, e.player.clone(), i + 1));
+                break;
+            }
+        }
+        let Some((uid, player, rank)) = found else {
+            return Rv::Gone;
+        };
+        Rv::Checked {
+            universe_hex: id_hex(&uid),
+            player,
+            rank,
+            result: w
+                .board
+                .reverify_entry(uid, &cid)
+                .map_err(|e| format!("{e}")),
+        }
+    });
+
+    let elapsed_ms = started.elapsed().as_millis();
+
+    let embed = match outcome {
+        Rv::Gone => warn_embed(
+            "This entry is no longer on the live board",
+            "The board re-verifies from its durable store on every boot and each day plays a \
+             new world — an entry from an earlier day (or a row that failed boot replay) has \
+             no live handle to re-execute. Today's board: `/descent board`.",
+        ),
+        Rv::Checked {
+            universe_hex,
+            player,
+            rank,
+            result,
+        } => {
+            // The committed seed, from the durable store's reproducible descriptor (the same
+            // row boot replay regenerates the world from).
+            let seed_line = DESCENT_STORE
+                .get()
+                .and_then(|s| s.list_universes().ok())
+                .and_then(|us| us.into_iter().find(|u| u.id_hex == universe_hex))
+                .map(|u| u.seed_hex)
+                .unwrap_or_else(|| "(no durable store row — in-process board only)".to_string());
+            match result {
+                Ok(turns) => base_embed("✓ Re-verified — the run re-executes to the WIN")
+                    .description(format!(
+                        "**Re-executed {turns} moves on a fresh world** regenerated from the \
+                         committed seed, reached the WIN — checked just now, in front of you \
+                         ({elapsed_ms} ms). Board entry **#{rank} · {player}** is not taken on \
+                         trust; it was re-run through the same no-cheat gate that admitted it.",
+                    ))
+                    .field(
+                        "Day universe (content address)",
+                        format!("```{universe_hex}```"),
+                        false,
+                    )
+                    .field("Committed seed", format!("```{seed_line}```"), false)
+                    .field(
+                        "Repeat this outside the bot",
+                        "`procgen_dregg::daily_scene(seed)` regenerates the world; \
+                         `ugc_dregg::record_playthrough(universe, moves)` replays; \
+                         `Registry::submit` is the gate. Same inputs, same verdict.",
+                        false,
+                    )
+                    .footer(footer(NarratorKind::Scripted)),
+                Err(why) => error_embed(
+                    "✗ Re-verification FAILED — this entry does not re-execute",
+                    &format!(
+                        "Board entry **#{rank} · {player}** did NOT survive an independent \
+                         re-run just now ({elapsed_ms} ms): `{why}`. A board row that fails \
+                         its own replay deserves zero trust — this is the check working, \
+                         not a cosmetic error.",
+                    ),
+                ),
+            }
+        }
+    };
+
+    let _ = component
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new().embed(embed),
+            ),
+        )
+        .await;
 }
 
 /// The move buttons for the current room, chunked into Discord action rows of five. A locked
@@ -1618,7 +1948,10 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use dreggnet_offerings::character::InMemoryCharacterStore;
-    use dreggnet_offerings::daily_descent::daily_scene;
+    use dreggnet_offerings::daily_descent::{
+        CORRIDOR_ON, HOARD_FORCE, HOARD_GOLD, HOARD_SEIZE, KEY_TAKE, daily_scene,
+    };
+    use ugc_dregg::RejectReason;
 
     fn player(name: &str) -> DreggIdentity {
         DreggIdentity(name.to_string())
@@ -1876,6 +2209,50 @@ mod tests {
         );
         // Non-vacuous: the honest run is accepted on the same board.
         assert!(board.submit(honest).is_ok(), "the honest run is accepted");
+    }
+
+    /// **The Re-verify press has a live handle for every ranked entry** (backlog #9): the
+    /// board view carries a `(rank, completion_id hex)` per entry, the minted buttons ride the
+    /// documented `descent:rv:<hex>` wire, and the handle round-trips — decoding it and calling
+    /// the SAME `Registry::reverify_entry` the press runs re-executes the run to the WIN.
+    #[test]
+    fn the_board_view_carries_pressable_reverify_handles_that_round_trip() {
+        let mut off = DailyDescentOffering::new(InMemoryCharacterStore::new());
+        let mut board = Registry::new();
+        let (mut run, uid) = open_core(
+            &off,
+            &mut board,
+            player("player-press"),
+            &resolve_todays_beacon(),
+            None,
+        )
+        .expect("open");
+        drive_win(&mut off, &mut run, &mut board, uid, "presser");
+
+        let view = board_core(&board, uid, "today");
+        assert_eq!(view.entries.len(), 1, "the win ranks");
+        assert_eq!(
+            view.reverify.len(),
+            1,
+            "every entry gets a re-verify handle"
+        );
+        let (rank, cid_hex) = &view.reverify[0];
+        assert_eq!(*rank, 1);
+
+        // The buttons ride the documented wire the component router dispatches on.
+        let rows = reverify_rows(&view.reverify);
+        let json = serde_json::to_value(&rows).expect("rows serialize");
+        assert!(
+            json.to_string().contains(&format!("descent:rv:{cid_hex}")),
+            "{json}"
+        );
+
+        // The handle round-trips into the SAME live re-execution the press runs.
+        let cid = decode_hex32(cid_hex).expect("the handle decodes");
+        let turns = board
+            .reverify_entry(uid, &cid)
+            .expect("the pressed entry re-executes to the WIN on a fresh world");
+        assert!(turns > 0, "a real re-executed move count comes back");
     }
 
     /// Drive a real win on today's world and return the run (won) + its board id, over the given

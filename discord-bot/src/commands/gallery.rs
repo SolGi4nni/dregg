@@ -916,7 +916,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "publish",
-                "Publish a procgen universe (signed by your cclerk), optionally a remix",
+                "Publish a procgen universe (signed by your wallet key), optionally a remix",
             )
             .add_sub_option(
                 CreateCommandOption::new(
@@ -930,6 +930,11 @@ pub fn register() -> CreateCommand {
                 CommandOptionType::String,
                 "parent",
                 "Remix: parent universe id (a prefix of its content address)",
+            ))
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::Boolean,
+                "pin",
+                "Also pin the canonical payload to the configured IPFS node (durable across gateways)",
             )),
         )
         .add_option(
@@ -1033,6 +1038,24 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
         return;
     };
 
+    // The transport address (#19): the payload CID — content-derived (no network), shown so
+    // a stranger can fetch + re-verify the universe off any gateway
+    // (`ugc_dregg::ipfs::fetch_universe` re-derives the id; a lying gateway is refused).
+    let ipfs_note: Option<String> = {
+        let published = {
+            let reg = registry().lock().expect("universe registry lock");
+            find_universe(&reg, &needle).and_then(|id| reg.universe(id).cloned())
+        };
+        match published {
+            Some(u) => {
+                tokio::task::spawn_blocking(move || crate::commands::gallery_ipfs::show_note(&u))
+                    .await
+                    .ok()
+            }
+            None => None,
+        }
+    };
+
     let mut board = String::new();
     if view.board.is_empty() {
         board.push_str(
@@ -1081,11 +1104,14 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
             false,
         );
     }
-    let embed = embed
+    let mut embed = embed
         .field("Win condition", view.win, false)
         .field("Passages", view.passages.to_string(), true)
         .field("Ranked", view.board.len().to_string(), true)
         .field("No-cheat leaderboard", board, false);
+    if let Some(note) = ipfs_note {
+        embed = embed.field("IPFS", note, false);
+    }
     let _ = command
         .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
         .await;
@@ -1094,6 +1120,9 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
 async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let seed_text = string_option(command, "seed").unwrap_or_default();
     let parent_needle = string_option(command, "parent");
+    // The IPFS join (#19): `pin:true` additionally pins the canonical payload to the
+    // configured node; the CID is shown either way (it is content-derived).
+    let pin = bool_option(command, "pin").unwrap_or(false);
     let author = command.user.name.clone();
     let user_id = command.user.id.get();
     defer_ephemeral(ctx, command).await;
@@ -1127,12 +1156,14 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                 .universe(id)
                 .map(|u| StoredUniverse::daily_desc(id, &author, &epoch, u));
             let view = show_universe(&reg, &id_hex(&id));
-            (stored, view)
+            // A clone for the IPFS join — the CID derives (and a pin encodes) OFF the lock.
+            let published = reg.universe(id).cloned();
+            (stored, view, published)
         })
     };
 
     match result {
-        Ok((stored, Some(view))) => {
+        Ok((stored, Some(view), published)) => {
             // Durable: the published universe survives a restart (re-derived from its
             // seed-epoch, its author attestation + lineage re-verified on boot).
             if let Some(stored) = stored {
@@ -1150,7 +1181,7 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                 embed = embed.field(
                     "Verified author",
                     format!(
-                        "ed25519 `{}…` — signed by your cclerk and bound into the content \
+                        "ed25519 `{}…` — signed by your wallet key and bound into the content \
                          address, so this authorship is unforgeable.",
                         &key[..16.min(key.len())]
                     ),
@@ -1182,11 +1213,22 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                     ),
                     false,
                 );
+            // The IPFS join (#19): derive the CID (pure) and, on `pin:true`, pin the payload
+            // to the configured node — blocking IO off the async loop; the note reports the
+            // node's own refusal honestly.
+            if let Some(u) = published {
+                let note = tokio::task::spawn_blocking(move || {
+                    crate::commands::gallery_ipfs::publish_note(&u, pin)
+                })
+                .await
+                .unwrap_or_else(|e| format!("the IPFS task did not complete: {e}"));
+                embed = embed.field("IPFS", note, false);
+            }
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
         }
-        Ok((_, None)) => {
+        Ok((_, None, _)) => {
             let embed = embeds::error_embed(
                 "Publish Failed",
                 "The published universe could not be shown.",
@@ -1221,7 +1263,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You need a cclerk to submit a run. Use `/cipherclerk create` first.",
+                "You need a wallet to submit a run. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -1282,7 +1324,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
                     true,
                 )
                 .field(
-                    "Signed by your cclerk",
+                    "Signed by your wallet key",
                     format!("`{}`", &signature[..16.min(signature.len())]),
                     false,
                 );
@@ -1325,6 +1367,18 @@ fn string_option(command: &CommandInteraction, name: &str) -> Option<String> {
         .find(|o| o.name == name)
         .and_then(|o| match &o.value {
             CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
+}
+
+fn bool_option(command: &CommandInteraction, name: &str) -> Option<bool> {
+    let CommandDataOptionValue::SubCommand(opts) = &command.data.options.first()?.value else {
+        return None;
+    };
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::Boolean(b) => Some(*b),
             _ => None,
         })
 }

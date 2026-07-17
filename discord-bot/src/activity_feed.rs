@@ -128,9 +128,11 @@ fn batch_events(events: &[RecentEvent]) -> Vec<CreateEmbed> {
                     event.event_type, event.summary
                 ));
                 if let Some(hash) = &event.tx_hash {
-                    let short = if hash.len() > 12 { &hash[..12] } else { hash };
+                    // Linked when DREGG_EXPLORER_BASE is configured; plain copyable
+                    // full hash otherwise — never a dead link.
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{hash})\n"
+                        "  {}\n",
+                        crate::explorer_link::short_ref("tx", hash, 12)
                     ));
                 }
                 description.push('\n');

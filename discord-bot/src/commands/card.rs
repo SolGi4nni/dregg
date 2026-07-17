@@ -13,7 +13,7 @@
 
 use serenity::all::{
     CommandInteraction, Context, CreateCommand, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    CreateInteractionResponseMessage, EditInteractionResponse,
 };
 
 use crate::BotState;
@@ -29,6 +29,17 @@ pub fn register() -> CreateCommand {
 
 /// Handle `/card` — render + post the user's tally card with its live affordance buttons.
 pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    // ACK inside Discord's 3s window FIRST (backlog #31: /card never deferred — a slow render
+    // or gateway hiccup showed "This interaction failed"); the card lands as an edit.
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
+
     let user_id = command.user.id.get();
     let cclerk =
         UserCipherclerk::derive(&state.config.bot_secret, user_id, state.federation_id_bytes);
@@ -37,14 +48,11 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     let embed = render_with_footer(&rendered);
 
     let _ = command
-        .create_response(
+        .edit_response(
             &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new()
-                    .embed(embed)
-                    .components(rendered.card.components)
-                    .ephemeral(true),
-            ),
+            EditInteractionResponse::new()
+                .embed(embed)
+                .components(rendered.card.components),
         )
         .await;
 }

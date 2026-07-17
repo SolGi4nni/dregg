@@ -55,8 +55,8 @@ use std::sync::mpsc::{SyncSender, sync_channel};
 use serenity::all::{
     ActionRowComponent, ButtonStyle, CommandInteraction, ComponentInteraction, Context,
     CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateInputText,
-    CreateInteractionResponse, CreateInteractionResponseMessage, CreateModal, InputTextStyle,
-    ModalInteraction,
+    CreateInteractionResponse, CreateInteractionResponseMessage, CreateModal,
+    EditInteractionResponse, InputTextStyle, ModalInteraction,
 };
 
 use dreggnet_offerings::{
@@ -66,6 +66,7 @@ use dreggnet_offerings::{
 
 use crate::BotState;
 use crate::cipherclerk::UserCipherclerk;
+use crate::commands::ack;
 
 /// The custom-id namespace every offering component press lives in (`main.rs` routes on it).
 pub const PREFIX: &str = "offering";
@@ -204,6 +205,13 @@ where
     /// [`Action::label`]. Default: none (the offering is all fixed-arg buttons).
     fn text_prompt(_turn: &str) -> Option<TextPrompt> {
         None
+    }
+
+    /// The EXACT invocation that opens a fresh session of this offering — the hint a stale
+    /// press gets. `/play`-mounted offerings override this (`/play offering:<key>`); bespoke
+    /// commands keep the `/<key> open` default.
+    fn open_hint() -> String {
+        format!("/{} open", Self::KEY)
     }
 
     /// Whether this offering runs as a **collective ballot** — many write-once voters per round,
@@ -778,6 +786,13 @@ pub fn action_rows<O: DiscordOffering>(actions: &[Action]) -> Vec<CreateActionRo
         }
         rows.push(CreateActionRow::Buttons(buttons));
     }
+    // The standing verify-don't-trust affordance (backlog Tier-2 #10): every offering
+    // surface carries the "⛓ re-verify chain" press (`commands::verify_chain`); a press
+    // re-derives the session's receipt hash-chain live. Skipped only when the surface
+    // already fills Discord's 5-row cap.
+    if rows.len() < 5 {
+        rows.push(crate::commands::verify_chain::row(O::KEY));
+    }
     rows
 }
 
@@ -861,7 +876,13 @@ pub fn outcome_note(outcome: &Outcome) -> String {
             } else {
                 ""
             };
-            format!("**A verified turn landed.** `turn_hash {h}…`{tail}")
+            format!(
+                "**A verified turn landed.** `turn_hash {h}…`{tail}\n> This hash seals the \
+                 move into the session's hash-linked receipt chain — every later turn commits \
+                 to it, so mutating ANY past move changes every hash after it. Press ⛓ \
+                 **re-verify chain** and the bot recomputes the whole chain from the move \
+                 history in front of you."
+            )
         }
         Outcome::Refused(why) => format!(
             "**Refused — nothing committed, no receipt.**\n> The executor refused the move: {why}"
@@ -1056,15 +1077,43 @@ pub async fn handle_component<O: DiscordOffering>(
     let channel = component.channel_id.get();
     let actor = identity_of(state, component.user.id.get());
 
-    // COLLECTIVE MODE: a press is a write-once VOTE, not an immediate turn. Cast the ballot for
-    // the pressed option's arg and ack it ephemerally; the plurality winner is resolved later by
-    // a round close ([`handle_close`]). Direct offerings fall through to the 1-press-1-turn path.
+    // COLLECTIVE MODE: a press is a write-once VOTE, not an immediate turn. ACK inside the 3s
+    // window BEFORE the ballot records, then follow up ephemerally; the plurality winner is
+    // resolved later by a round close ([`handle_close`]). Direct offerings fall through to the
+    // 1-press-1-turn path.
     if O::collective() {
-        if let Some(Press::Fire { arg, .. }) = parse_press(&component.data.custom_id) {
-            let cast = cast_vote::<O>(channel, actor, arg);
-            component_ephemeral(ctx, component, &cast_note(cast)).await;
+        match parse_press(&component.data.custom_id) {
+            Some(Press::Fire { arg, .. }) => {
+                ack::ack_component(ctx, component).await;
+                let cast = cast_vote::<O>(channel, actor, arg);
+                ack::followup_ephemeral(ctx, component, &cast_note(cast)).await;
+            }
+            // Never a silent drop: a non-ballot press on a collective surface says so.
+            _ => {
+                component_ephemeral(
+                    ctx,
+                    component,
+                    "This surface runs in collective mode — that press is not one of the \
+                     round's ballot options.",
+                )
+                .await;
+            }
         }
         return;
+    }
+
+    // DEFER-SAFETY on the direct path: a committing press is ACKed INSIDE the 3s window,
+    // BEFORE the store-thread turn resolves (a slow offering can no longer blow the window
+    // on a move that permanently landed). A modal must be the FIRST response, so the shapes
+    // that open one are decided here — mirroring `drive`'s own dispatch — and left un-ACKed.
+    let will_commit = match parse_press(&component.data.custom_id) {
+        Some(Press::Fire { key, .. }) => key == O::KEY,
+        Some(Press::Ask { key, turn }) => key == O::KEY && O::value_prompt(&turn).is_none(),
+        Some(Press::AskText { key, turn, .. }) => key == O::KEY && O::text_prompt(&turn).is_none(),
+        _ => false,
+    };
+    if will_commit {
+        ack::ack_component(ctx, component).await;
     }
 
     match drive::<O>(channel, &component.data.custom_id, actor.clone()) {
@@ -1085,12 +1134,38 @@ pub async fn handle_component<O: DiscordOffering>(
                 .await;
         }
         Driven::Fired(outcome) => {
-            update_surface::<O>(ctx, component, channel, &actor, &outcome_note(&outcome)).await;
+            update_surface::<O>(
+                ctx,
+                component,
+                channel,
+                &actor,
+                &outcome_note(&outcome),
+                will_commit,
+            )
+            .await;
+            // 👑 THE CROWN: the moment a crowned game's match ENDS on a landed turn, offer to
+            // fold the whole match into ONE proof (`commands::crown` — the proof-carrying board).
+            if matches!(&outcome, Outcome::Landed { ended: true, .. })
+                && crate::commands::crown::foldable_key(O::KEY)
+            {
+                crate::commands::crown::offer_fold(ctx, component.channel_id, O::KEY).await;
+            }
         }
         Driven::NoSession => {
-            component_ephemeral(ctx, component, &no_session_text::<O>()).await;
+            if will_commit {
+                ack::followup_ephemeral(ctx, component, &no_session_text::<O>()).await;
+            } else {
+                component_ephemeral(ctx, component, &no_session_text::<O>()).await;
+            }
         }
-        Driven::NotOurs => {}
+        Driven::NotOurs => {
+            component_ephemeral(
+                ctx,
+                component,
+                "That button belongs to a stale or different surface — nothing was fired.",
+            )
+            .await;
+        }
     }
 }
 
@@ -1251,13 +1326,32 @@ async fn update_surface<O: DiscordOffering>(
     channel: u64,
     viewer: &DreggIdentity,
     note: &str,
+    acked: bool,
 ) {
     let viewer = viewer.clone();
     let rendered = with_live::<O, _>(channel, move |live| surface_for::<O>(live, &viewer));
     let Some((embed, rows)) = rendered else {
-        component_ephemeral(ctx, component, &no_session_text::<O>()).await;
+        if acked {
+            ack::followup_ephemeral(ctx, component, &no_session_text::<O>()).await;
+        } else {
+            component_ephemeral(ctx, component, &no_session_text::<O>()).await;
+        }
         return;
     };
+    if acked {
+        // The press was deferred inside the 3s window ([`ack_component`]); EDIT the pressed
+        // message into the post-turn render (carrying the honest outcome note).
+        let _ = component
+            .edit_response(
+                &ctx.http,
+                EditInteractionResponse::new()
+                    .content(truncate(note, 1900))
+                    .embed(embed)
+                    .components(rows),
+            )
+            .await;
+        return;
+    }
     let _ = component
         .create_response(
             &ctx.http,
@@ -1273,9 +1367,10 @@ async fn update_surface<O: DiscordOffering>(
 
 fn no_session_text<O: DiscordOffering>() -> String {
     format!(
-        "No {} session is open in this channel. Start one with `/{} open`.",
+        "No {} session is open in this channel — sessions live in bot memory and do NOT \
+         survive a bot restart. Start a fresh one with `{}`.",
         O::KEY,
-        O::KEY
+        O::open_hint()
     )
 }
 
@@ -1336,6 +1431,12 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// Dispatch an `offering:` component press to the offering that owns the key.
 pub async fn route_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let Some(key) = key_of(&component.data.custom_id) else {
+        component_ephemeral(
+            ctx,
+            component,
+            "That button is from a stale surface this bot build no longer decodes.",
+        )
+        .await;
         return;
     };
     match key.as_str() {
@@ -1368,37 +1469,49 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         k if k == <dreggnet_compute::ComputeOffering as DiscordOffering>::KEY => {
             handle_component::<dreggnet_compute::ComputeOffering>(ctx, component, state).await
         }
-        k if k == <dreggnet_surfaces::TradeOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::TradeOffering>(ctx, component, state).await
+        // ── The eight RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
+        //    (`commands::rpg_world`): the press is one real turn in the PRESSER's own
+        //    sqlite-persisted world (backlog #15/#24), not a per-channel demo store. ──
+        k if crate::commands::rpg_world::is_rpg_key(k) => {
+            crate::commands::rpg_world::handle_component(ctx, component, state).await
         }
-        k if k == <dreggnet_surfaces::InventoryOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::InventoryOffering>(ctx, component, state).await
+        // ── gear/talents (`commands::gear`) + the overworld (`commands::overworld`) — backlog #20/#23. ──
+        k if k == <dreggnet_gear::LoadoutOffering as DiscordOffering>::KEY => {
+            handle_component::<dreggnet_gear::LoadoutOffering>(ctx, component, state).await
         }
-        k if k == <dreggnet_surfaces::CheevoShowcase as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::CheevoShowcase>(ctx, component, state).await
+        k if k == <dreggnet_gear::TalentTreeOffering as DiscordOffering>::KEY => {
+            handle_component::<dreggnet_gear::TalentTreeOffering>(ctx, component, state).await
         }
-        k if k == <dreggnet_surfaces::GuildPage as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::GuildPage>(ctx, component, state).await
+        k if k == <crate::commands::overworld::OverworldPlay as DiscordOffering>::KEY => {
+            handle_component::<crate::commands::overworld::OverworldPlay>(ctx, component, state)
+                .await
         }
-        k if k == <dreggnet_surfaces::CraftOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::CraftOffering>(ctx, component, state).await
+        _ => {
+            component_ephemeral(
+                ctx,
+                component,
+                &format!("No offering with key `{key}` is mounted in this bot build."),
+            )
+            .await;
         }
-        k if k == <dreggnet_surfaces::CompanionOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::CompanionOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_surfaces::TavernOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::TavernOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_surfaces::PartyOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_surfaces::PartyOffering>(ctx, component, state).await
-        }
-        _ => {}
     }
 }
 
 /// Dispatch an `offering:` modal submit to the offering that owns the key.
 pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotState) {
     let Some(key) = key_of(&modal.data.custom_id) else {
+        let _ = modal
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(
+                            "That form is from a stale surface this bot build no longer decodes.",
+                        )
+                        .ephemeral(true),
+                ),
+            )
+            .await;
         return;
     };
     match key.as_str() {
@@ -1441,7 +1554,30 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
         k if k == <dreggnet_surfaces::PartyOffering as DiscordOffering>::KEY => {
             handle_modal::<dreggnet_surfaces::PartyOffering>(ctx, modal, state).await
         }
-        _ => {}
+        // ── gear/talents (`commands::gear`) + the overworld (`commands::overworld`) — backlog #20/#23. ──
+        k if k == <dreggnet_gear::LoadoutOffering as DiscordOffering>::KEY => {
+            handle_modal::<dreggnet_gear::LoadoutOffering>(ctx, modal, state).await
+        }
+        k if k == <dreggnet_gear::TalentTreeOffering as DiscordOffering>::KEY => {
+            handle_modal::<dreggnet_gear::TalentTreeOffering>(ctx, modal, state).await
+        }
+        k if k == <crate::commands::overworld::OverworldPlay as DiscordOffering>::KEY => {
+            handle_modal::<crate::commands::overworld::OverworldPlay>(ctx, modal, state).await
+        }
+        _ => {
+            let _ = modal
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(format!(
+                                "No offering with key `{key}` is mounted in this bot build."
+                            ))
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+        }
     }
 }
 

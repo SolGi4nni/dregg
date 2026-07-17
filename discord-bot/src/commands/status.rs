@@ -364,8 +364,26 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
             let preview = short(&proof.proof_hex, 32);
-            let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), turn_hash);
-            let embed = embeds::success_embed("Proof Artifact")
+            // VERIFY the fetched artifact right here — the bot runs the same audited
+            // Plonky3 verifier a remote peer would, and reports the verdict rather than
+            // "Attached ✅" trust-me (backlog Tier-2 #11).
+            let check = crate::commands::proof_verify::check_proof_hex_blocking(
+                proof.proof_hex.clone(),
+                turn_hash.clone(),
+            )
+            .await;
+            let verified_ok = matches!(&check, Ok(c) if c.verified);
+            let title = if verified_ok {
+                "Proof Artifact — verifies"
+            } else {
+                "Proof Artifact — DOES NOT VERIFY"
+            };
+            let base = if verified_ok {
+                embeds::success_embed(title)
+            } else {
+                embeds::error_embed(title, "The fetched bytes failed the bot's own re-check.")
+            };
+            let embed = base
                 .field(
                     "Turn",
                     format!("`{}...`", short(&proof.turn_hash, 16)),
@@ -376,9 +394,25 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
                     format!("{} bytes ({kib:.1} KiB)", proof.proof_len),
                     true,
                 )
-                .field("Attached", "\u{2705} yes", true)
                 .field("Proof (head)", format!("`{preview}...`"), false)
-                .field("Explorer", format!("[View turn]({explorer_url})"), false);
+                .field(
+                    "Verification",
+                    crate::commands::proof_verify::verdict_text(&check),
+                    false,
+                )
+                .field(
+                    "Re-check it yourself",
+                    crate::commands::proof_verify::offline_recheck_text(
+                        &state.config.devnet_url,
+                        &turn_hash,
+                    ),
+                    false,
+                )
+                .field(
+                    "Explorer",
+                    crate::explorer_link::view_link("turn", &turn_hash, "View turn"),
+                    false,
+                );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

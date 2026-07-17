@@ -70,6 +70,10 @@ pub mod bot_reactor;
 mod devnet;
 pub mod discord_caps;
 mod embeds;
+// The shared DREGG_EXPLORER_BASE link helper — every former fg-goose.online URL site
+// now renders a link only when the operator configured a base, and the full id
+// (copyable) otherwise. One pattern, all surfaces (`explorer_link`).
+pub mod explorer_link;
 pub mod orchestration;
 pub mod reveal_cron;
 // The sqlite-backed `commands::gallery::GalleryStore` — the durable backing of the
@@ -87,6 +91,10 @@ pub mod character_store;
 // module then loads + re-verifies the live board from it (regenerating each day-world from its
 // committed seed and replaying every winning run through the no-cheat gate). See [`descent_board_store`].
 pub mod descent_board_store;
+// The durable sqlite SessionResumeStore behind the per-identity `/play` RPG worlds
+// (`commands::rpg_world`): session opens + landed advances persist as reproducible
+// public input and reopen by replay (never a trusted state blob).
+pub mod rpg_store;
 // $DREGG-paid, real-AI dungeon runs: the sqlite-backed `dregg_pay::CreditStore`, the per-user
 // deposit-address provider, the credit ledger, the payment poll, and the `/dungeon` gate that
 // debits one earned credit and routes to real Bedrock (`dregg_narrator`) under a PER-RUN budget.
@@ -203,11 +211,17 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     //     (the games automatafl + tug, names + compute, and the eight RPG feature surfaces) through
     //     the SAME generic adapter — Discord reaches web offering parity (`commands::portfolio`) ─
     "play",
-    // ─── $DREGG-paid real-AI runs: buy run-credits, check balance ────────────────
+    // ─── $DREGG-paid real-AI runs: buy run-credits, check credits ────────────────
     "buy-credits",
-    "balance",
+    "credits",
     // ─── the game treasury: two-balance fuel/pile + proven cross-chain holdings ───
     "treasury",
+    // ─── 👑 THE CROWN: fold a finished match to ONE proof; stranger re-verify in O(1) ───
+    "crown",
+    // ─── export a VERIFIED Descent win as a 1-of-1 SPL NFT (proof memo; commands::export_nft) ─
+    "export",
+    // ─── prove ownership of an externally-linked cell (Ed25519 challenge; commands::link_proof) ─
+    "link-prove",
 ];
 
 #[cfg(test)]
@@ -257,7 +271,7 @@ pub struct BotState {
         std::sync::Mutex<std::collections::HashMap<u64, hermes_channel::ChannelHermes>>,
     /// $DREGG earning state: the sqlite-backed per-user run-credit ledger, the deterministic
     /// deposit-address provider, the payment watcher, and the paid real-AI narrator. Powers
-    /// `/buy-credits`, `/balance`, the payment poll, and the `/dungeon` credit gate. Devnet/mock by
+    /// `/buy-credits`, `/credits`, the payment poll, and the `/dungeon` credit gate. Devnet/mock by
     /// default; mainnet is an operator env flip (`PayConfig::from_env`). See [`crate::pay`].
     pub pay: pay::PayState,
     /// Persistent, LEVELING characters — the durable [`character_store::SqliteCharacterStore`]
@@ -313,6 +327,7 @@ impl EventHandler for Handler {
             commands::federation::register_setup(),
             commands::federation::register_link(),
             commands::federation::register_unlink(),
+            commands::link_proof::register(),
             // ─── Canonical CapTP handoff (§4.7) ─────────────────────────────
             commands::handoff::register(),
             commands::handoff::register_redeem(),
@@ -351,6 +366,10 @@ impl EventHandler for Handler {
             commands::pay::register_buy(),
             commands::pay::register_balance(),
             commands::pay::register_treasury(),
+            // ─── 👑 THE CROWN: fold a finished match to ONE proof (`commands::crown`) ───
+            commands::crown::register(),
+            // ─── export a VERIFIED Descent win as a 1-of-1 SPL NFT (`commands::export_nft`) ───
+            commands::export_nft::register(),
         ];
         debug_assert_eq!(commands.len(), REGISTERED_COMMAND_NAMES.len());
 
@@ -463,6 +482,7 @@ impl EventHandler for Handler {
                 "unlink-cipherclerk" => {
                     commands::federation::handle_unlink(&ctx, &command, &self.state).await
                 }
+                "link-prove" => commands::link_proof::handle(&ctx, &command, &self.state).await,
                 // ─── New reads + organ actions (wired this integration) ──────
                 "federation-status" => {
                     commands::federation::handle_status(&ctx, &command, &self.state).await
@@ -505,8 +525,10 @@ impl EventHandler for Handler {
                 "doc" => commands::doc::handle(&ctx, &command, &self.state).await,
                 "play" => commands::portfolio::handle(&ctx, &command, &self.state).await,
                 "buy-credits" => commands::pay::handle_buy(&ctx, &command, &self.state).await,
-                "balance" => commands::pay::handle_balance(&ctx, &command, &self.state).await,
+                "credits" => commands::pay::handle_balance(&ctx, &command, &self.state).await,
                 "treasury" => commands::pay::handle_treasury(&ctx, &command, &self.state).await,
+                "crown" => commands::crown::handle(&ctx, &command, &self.state).await,
+                "export" => commands::export_nft::handle(&ctx, &command, &self.state).await,
                 _ => {
                     tracing::warn!("Unknown command: {name}");
                 }
@@ -542,6 +564,18 @@ impl EventHandler for Handler {
                 // a landed `TurnReceipt` or a real executor `Refused` — and re-renders the
                 // offering's own deos surface. `<key>` selects `/council` vs `/market`.
                 commands::offering::route_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("crown:") {
+                // 👑 A crown button — fold a finished match to ONE proof, poll the background
+                // fold, or stranger-re-verify the proof-carrying board entry (`commands::crown`).
+                commands::crown::handle_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("verifychain:") {
+                // The standing "⛓ re-verify chain" press on every offering surface
+                // (`commands::verify_chain`, backlog Tier-2 #10/#12).
+                commands::verify_chain::handle_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("txcheck:") {
+                // A `/history`/`/leaderboard` ledger row's re-check-against-the-chain press
+                // (`commands::tx_recheck`, backlog Tier-2 #13).
+                commands::tx_recheck::handle_component(&ctx, &component, &self.state).await;
             } else {
                 commands::dashboard::handle_component(&ctx, &component, &self.state).await;
             }

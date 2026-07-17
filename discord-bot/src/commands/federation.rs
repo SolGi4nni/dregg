@@ -258,9 +258,23 @@ pub async fn handle_link(ctx: &Context, command: &CommandInteraction, state: &Bo
     {
         Ok(()) => {
             let embed = embeds::success_embed("External Link Pending")
-                .description("Your Discord account recorded this external identity, but it is not active until ownership is proven.")
+                .description(
+                    "Your Discord account recorded this external identity. It activates when \
+                     you prove ownership with `/link-prove` — until then the bot will not sign \
+                     for it (and commands needing a signable identity treat it as pending; \
+                     `/unlink-cipherclerk` backs out any time).",
+                )
                 .field("Cell ID", format!("`{}...`", &address[..16]), true)
-                .field("Challenge", format!("```\n{challenge}\n```"), false);
+                .field(
+                    "Challenge (sign EXACTLY these bytes)",
+                    format!("```\n{challenge}\n```"),
+                    false,
+                )
+                .field(
+                    "Next step",
+                    crate::commands::link_proof::how_to_prove(),
+                    false,
+                );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

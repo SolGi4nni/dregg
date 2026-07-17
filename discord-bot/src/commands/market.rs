@@ -136,9 +136,33 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 /// its surface. The channel id is the deterministic seed, so the listing's cell id re-derives.
 async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotState) {
     let channel = command.channel_id.get();
-    // A re-open deploys a FRESH auction — say so, rather than silently discarding the chain
-    // (and any sealed bids) the channel had been building.
-    let replaced = offering::is_open::<MarketOffering>(channel);
+    // REFUSE-WITH-CONFIRM (backlog #32): a live auction (its listing + sealed bids) must not
+    // be silently wiped by a re-open; the replacement waits behind an explicit Confirm press.
+    if offering::is_open::<MarketOffering>(channel) {
+        let status = offering::with_live::<MarketOffering, _>(channel, |live| {
+            live.offering.status_line(&live.session)
+        });
+        crate::commands::open_guard::refuse_with_confirm(
+            ctx,
+            command,
+            MarketOffering::KEY,
+            status,
+            Box::new(move || {
+                offering::open_in(
+                    channel,
+                    MarketOffering::new,
+                    SessionConfig::with_seed(channel),
+                )
+                .map_err(|e| e.to_string())?;
+                offering::with_live::<MarketOffering, _>(channel, |live| {
+                    offering::surface_of::<MarketOffering>(live)
+                })
+                .ok_or_else(|| "the fresh session did not render".to_string())
+            }),
+        )
+        .await;
+        return;
+    }
     if let Err(e) = offering::open_in(
         channel,
         MarketOffering::new,
@@ -164,16 +188,9 @@ async fn handle_open(ctx: &Context, command: &CommandInteraction, _state: &BotSt
     let rendered = offering::with_live::<MarketOffering, _>(channel, |live| {
         offering::surface_of::<MarketOffering>(live)
     });
-    let Some((mut embed, rows)) = rendered else {
+    let Some((embed, rows)) = rendered else {
         return;
     };
-    if replaced {
-        embed = embed.field(
-            "Note",
-            "This channel's previous market was replaced — a fresh auction, an empty chain.",
-            false,
-        );
-    }
     let _ = command
         .create_response(
             &ctx.http,
@@ -267,7 +284,8 @@ mod tests {
                 turn: TURN_LIST.into()
             })
         );
-        assert_eq!(offering::action_rows::<MarketOffering>(&actions).len(), 1);
+        // One affordance row + the standing ⛓ re-verify chain row (backlog Tier-2 #10).
+        assert_eq!(offering::action_rows::<MarketOffering>(&actions).len(), 2);
 
         match offering::drive::<MarketOffering>(
             channel,

@@ -621,11 +621,42 @@ pub async fn on_message(
     // OWN ported-in provider key when one is set — metered + permissioned by the
     // dregg gateway. Tool-verb messages (read/search/…) keep the existing
     // cap-gated classifier path below.
+    //
+    // KEYLESS chat is answered with a plain pointer to `/key` and NO turn: the
+    // old fallthrough burned a cap-gated `chat` turn and replied with a receipt
+    // hash — a metered non-answer, right after the tour said "just type."
     if classify(content).kind == ToolKind::Chat {
-        if let Ok(Some(rec)) = state.db.get_llm_key(&owner.to_string()).await {
-            llm_brain_message(ctx, msg, state, owner, seed, deadline, now, content, rec).await;
-            return;
+        match state.db.get_llm_key(&owner.to_string()).await {
+            Ok(Some(rec)) => {
+                llm_brain_message(ctx, msg, state, owner, seed, deadline, now, content, rec).await;
+            }
+            Ok(None) => {
+                let _ = msg
+                    .channel_id
+                    .say(
+                        &ctx.http,
+                        "I don't have an LLM key for you yet, so I can't answer chat — \
+                         no turn was spent on this message. Run `/key set` to port in \
+                         your own provider key (it opens a private form; the key is \
+                         encrypted at rest and metered). Tool verbs — `read` / `search` \
+                         / `fetch` / `run` / `write` — work without one.",
+                    )
+                    .await;
+            }
+            Err(e) => {
+                let _ = msg
+                    .channel_id
+                    .say(
+                        &ctx.http,
+                        format!(
+                            "⚠️ Couldn't check your key store right now ({e}) — nothing \
+                             was spent. Try again in a moment."
+                        ),
+                    )
+                    .await;
+            }
         }
+        return;
     }
 
     // Drive the owner's session synchronously; the std lock is never held across

@@ -9,6 +9,10 @@
 //! governed-namespace, nameservice) or to bot-local features (presence,
 //! captp, queue, federation, cclerk, transfer, status, social).
 
+// Deferred-ACK helpers for every path that COMMITS a turn: ACK inside Discord's 3s window,
+// commit, then EDIT the deferred response after narration — a slow narrator can no longer
+// present a committed permadeath move as "This interaction failed" (backlog Tier-1 #1).
+pub mod ack;
 // `/channel` — claim a semi-private DreggNet Cloud channel to drive your Hermes
 // (`crate::channels` + `crate::hermes_channel`).
 pub mod channel;
@@ -44,6 +48,19 @@ pub mod deos;
 // through the verified executor.
 pub mod coordinate;
 pub mod federation;
+// `/link-prove` — the ownership-proof step that closes `/link-cipherclerk`'s dead-end: sign the
+// challenge with the external cell's Ed25519 key, submit here, the pending link promotes to
+// verified (backlog #4).
+pub mod link_proof;
+// Public governance proposal cards + vote buttons + the Proposals list — voting no longer needs
+// the proposer's ephemeral 64-hex root (backlog #5). Routed via `dashboard::handle_component`.
+pub mod governance_card;
+// The subscription DM dispatcher — publish now fans the body out to subscribers, making the
+// panel's "You will receive DMs" true (backlog #6).
+pub mod subscription_dispatch;
+// The live-session wipe guard — every offering `open` refuses-with-confirm when a live session
+// exists (backlog #32). Routed via `dashboard::handle_component`.
+pub mod open_guard;
 // `/dungeon` — a whole channel plays a shared, AI-narrated, on-chain dungeon: buttons are
 // write-once ballots (attributed to each voter's derived dregg identity), the plurality winner
 // resolves through the attested `GameSession`, and `/dungeon verify` re-checks the hash chain.
@@ -83,11 +100,52 @@ pub mod doc;
 pub mod grain;
 pub mod hermes;
 pub mod offering;
+// The standing "⛓ re-verify chain" press on every offering surface: `verifychain:<key>` →
+// the REAL `Offering::verify` re-derives the session's receipt hash-chain in front of the
+// presser (backlog Tier-2 #10; also what makes the surfaced `turn_hash` meaningful, #12).
+pub mod verify_chain;
+// `/proof turn` / `/explorer proof` actually VERIFY the fetched full-turn STARK against its
+// VK (the audited `dregg_sdk::verify_full_turn`) instead of presenting size + hex trust-me
+// (backlog Tier-2 #11).
+pub mod proof_verify;
+// The "⛓ re-check against the chain" press on `/history` + `/leaderboard` ledger rows:
+// `txcheck:<turn_hash>` asks the LIVE node whether the recorded hash is a committed turn on
+// its receipt chain (backlog Tier-2 #13).
+pub mod tx_recheck;
 // `/play <offering>` — the FULL-PORTFOLIO reach: the twelve offerings that had no bespoke slash
 // command (the two games automatafl + tug, names + compute, and the eight RPG feature surfaces),
 // mounted through the SAME generic `offering` adapter, so Discord reaches web offering parity.
 pub mod portfolio;
-// `/buy-credits` + `/balance` — the $DREGG earning surface: issue the caller's deterministic
+// `/play gear` + `/play talents` — the dreggnet-gear progression surfaces (equip = a KERNEL
+// cross-cell ownership predicate; talents = class-gated prereq-chained claims with real respec),
+// mounted on the same generic adapter (backlog #20).
+pub mod gear;
+// `/play overworld` — the region map above dungeon + character: travel is executor-gated on
+// VERIFIED dungeon clears (backlog #23, the 13th `/play` key).
+pub mod overworld;
+// `/descent tournament` — the weekly verify-gated bracket over the board's VERIFIED winners
+// (backlog #16); mounted as a `/descent` subcommand.
+pub mod tournament;
+// `/export` — mint your best VERIFIED Descent win as a 1-of-1 SPL NFT carrying the proof memo
+// (backlog #17): the earned-ness travels; nothing self-asserted reaches the mint.
+pub mod export_nft;
+// The `/gallery` ↔ IPFS join (backlog #19): CID derivation (pure, offline) + `pin:true`
+// pinning to the configured Kubo node, over `ugc_dregg::ipfs`'s verify-don't-trust bridge.
+pub mod gallery_ipfs;
+// The PER-IDENTITY PERSISTENT RPG world behind the eight `/play` feature-surface keys
+// (trade/craft/inventory/guild/cheevos/companion/tavern/party): one `OfferingHost` per player's
+// derived dregg identity, mounted via `dreggnet_surfaces::register_surfaces` (ONE shared world
+// across craft/inventory/trade — the saga composition), persisted by replay through the sqlite
+// resume store (`crate::rpg_store`), with the player's REAL earned cheevos over their persisted
+// /descent completions (backlog #15 + #24).
+pub mod rpg_world;
+// 👑 `/crown` — THE CROWN: fold a finished `/play tug|automatafl` match into ONE succinct
+// `WholeChainProof` on a background prover pool, rank it on the proof-carrying game board
+// (O(1) verify, NO moves stored), attach the proof envelope, and let ANY user press
+// Re-verify and watch the O(1) light-client re-check run. "Prove you won without revealing
+// how" — the one flow no other Discord bot can do. See `crate::commands::crown`.
+pub mod crown;
+// `/buy-credits` + `/credits` — the $DREGG earning surface: issue the caller's deterministic
 // deposit address + price, and show their persisted run-credit balance. A paid /dungeon run
 // spends one credit for a real-AI (Bedrock) narration. See `crate::pay`.
 #[allow(dead_code)]

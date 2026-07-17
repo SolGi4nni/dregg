@@ -58,6 +58,7 @@ use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
 use crate::BotState;
 use crate::character_store::{award_run_outcome, xp_reward};
 use crate::cipherclerk::UserCipherclerk;
+use crate::commands::ack;
 use crate::commands::offering::{
     Cast, CollectiveClose, CollectiveRound, Live, close_in, close_round, open_in, with_live,
 };
@@ -425,12 +426,14 @@ async fn respond(
 async fn handle_list(ctx: &Context, command: &CommandInteraction) {
     let desc = format!(
         "**{KEEP_NAME}** — a dungeon hosted on the REAL dregg executor.\n\n\
-         Every move is one cap-bounded turn the verified executor admits; every rule is an \
-         executor-enforced `StateConstraint`, not app bookkeeping:\n\
-         • **the gate-warden** — a killing blow past the HP floor is refused (`FieldGte`)\n\
-         • **the reliquary crown** — the first hand to close on it holds it; a rival re-claim is refused (`WriteOnce`)\n\
-         • **the collapsing stair** — descent is one-way; climbing back is refused (`Monotonic`)\n\
-         • **the sealing ward** — will is a finite budget; an over-spend is refused (`FieldLteField`)\n\n\
+         Every move is one cap-bounded turn the verified executor admits; every rule below is \
+         enforced by the executor itself, not app bookkeeping:\n\
+         • **the gate-warden** — a killing blow past the HP floor is refused\n\
+         • **the reliquary crown** — the first hand to close on it holds it; a rival re-claim \
+         is refused (that slot writes once, ever)\n\
+         • **the collapsing stair** — descent is one-way; climbing back is refused (depth only \
+         ever grows)\n\
+         • **the sealing ward** — will is a finite budget; an over-spend is refused\n\n\
          Open it with `/dungeon start`. Each button is a write-once ballot (one vote per \
          dregg identity); `/dungeon close` applies the party's plurality choice as a real \
          turn; `/dungeon verify` re-verifies the receipt chain by replay."
@@ -512,6 +515,12 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
         return;
     }
 
+    // ACK inside Discord's 3s window BEFORE the slow work (the thread spin is a Discord API
+    // call; the narrator can take ~20s) — everything below lands as an EDIT of this deferred
+    // response. The fail-closed deploy gate above stayed pre-defer: it is local + fast and
+    // answers ephemerally.
+    ack::defer_slash(ctx, command, false).await;
+
     // THE CHANNEL-SPIN SEAM, WIRED. Spin a per-run thread iff gating allows; otherwise
     // (DM, or a perms-poor guild) `orchestrated_key` stays `None` and the run plays in
     // the invoking channel exactly as before. A spin failure mid-flight also falls back.
@@ -557,7 +566,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             "The Keep did not deploy",
             &format!("The world-cell deploy failed: {e}"),
         );
-        respond(ctx, command, embed, vec![], true).await;
+        ack::edit_slash(ctx, command, embed, vec![]).await;
         return;
     }
     meta().lock().unwrap_or_else(|e| e.into_inner()).insert(
@@ -599,7 +608,8 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
 
     if target_channel != invoking_channel {
         // The run lives in its OWN thread: post the room + ballot there and point the
-        // invoker to it (an ephemeral pointer, so the parent channel is not spammed).
+        // invoker to it (the deferred response, edited into a single pointer — visible, so
+        // the whole channel can find the thread the party plays in).
         let posted = ChannelId::new(target_channel)
             .send_message(
                 &ctx.http,
@@ -615,7 +625,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
                      `/dungeon close` and `/dungeon verify` from inside the thread."
                 ))
                 .footer(footer(kind));
-            respond(ctx, command, ping, vec![], true).await;
+            ack::edit_slash(ctx, command, ping, vec![]).await;
             return;
         }
         // Posting into the thread failed — re-key the (pre-turn) session under the invoking
@@ -640,13 +650,20 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
 
     let embed = round_embed(&snap, &narration, kind);
     let rows = ballot_rows(&snap.options, snap.round);
-    respond(ctx, command, embed, rows, false).await;
+    ack::edit_slash(ctx, command, embed, rows).await;
 }
 
 // ─── /dungeon close — resolve the plurality winner as a REAL turn ─────────────
 
 async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let channel = command.channel_id.get();
+
+    // ACK inside Discord's 3s window BEFORE the round resolves — `close_round` COMMITS the
+    // party's plurality choice as a real turn, and the narrator that follows can take ~20s.
+    // Every outcome below (including the no-session/no-moves warnings) lands as an EDIT of
+    // this deferred response, so a slow narration can never present a committed crowd turn
+    // as "This interaction failed".
+    ack::defer_slash(ctx, command, false).await;
 
     enum CloseRender {
         NoSession,
@@ -779,14 +796,14 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 "No session",
                 "This channel has no dungeon open. Start one with `/dungeon start`.",
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
         }
         CloseRender::Empty => {
             let embed = warn_embed(
                 "No moves",
                 "There is nothing to vote on. Try `/dungeon verify` or `/dungeon start` a new run.",
             );
-            respond(ctx, command, embed, vec![], true).await;
+            ack::edit_slash(ctx, command, embed, vec![]).await;
         }
         CloseRender::Resolved {
             resolution,
@@ -820,11 +837,11 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     channel,
                 );
                 let rows = ballot_rows(&snap.options, snap.round);
-                respond(ctx, command, embed, rows, false).await;
+                ack::edit_slash(ctx, command, embed, rows).await;
             }
             None => {
                 let embed = with_adventurers(resolution_final_embed(&resolution), channel);
-                respond(ctx, command, embed, vec![], false).await;
+                ack::edit_slash(ctx, command, embed, vec![]).await;
                 // The run ended: if it had its own spun thread, TEAR IT DOWN — archive the
                 // surface, unlink the queue, and revoke every capability cell it held. A
                 // best-effort archive: a failure here does not un-end the run.
@@ -1036,6 +1053,11 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         },
     }
 
+    // ACK the press inside Discord's 3s window BEFORE the ballot records (and before the
+    // character-store load below) — the tally re-render lands as an EDIT of this deferred
+    // update; the non-recorded cases ride ephemeral followups.
+    ack::ack_component(ctx, component).await;
+
     let reply = match cast_ballot(channel, voter, round, option) {
         BallotCast::NoSession => Reply::Ephemeral(
             "There is no dungeon open in this channel. Start one with `/dungeon start`."
@@ -1081,16 +1103,9 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 
     match reply {
         Reply::Ephemeral(text) => {
-            let _ = component
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(text)
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
+            // The press was already ACKed (deferred update): the ballot message is left
+            // untouched and the presser gets the note privately, as a followup.
+            ack::followup_ephemeral(ctx, component, &text).await;
         }
         Reply::Update {
             snapshot,
@@ -1104,16 +1119,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             };
             let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
             let rows = ballot_rows(&snapshot.options, snapshot.round);
-            let _ = component
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::UpdateMessage(
-                        CreateInteractionResponseMessage::new()
-                            .embed(embed)
-                            .components(rows),
-                    ),
-                )
-                .await;
+            ack::edit_component(ctx, component, embed, rows).await;
         }
     }
 }

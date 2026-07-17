@@ -39,16 +39,18 @@ const MINTABLE_SERVICES: &[&str] = &["dns", "storage", "compute", "http", "secre
 /// Register the /cipherclerk command with all subcommands.
 pub fn register() -> CreateCommand {
     CreateCommand::new("cipherclerk")
-        .description("Manage your dregg cclerk")
+        .description(
+            "Manage your dregg wallet: identity, keys, and tokens (a.k.a. the cipherclerk)",
+        )
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "create",
-            "Create a new dregg cclerk",
+            "Create your dregg wallet (a real cell + keys)",
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "balance",
-            "Check your cclerk balance",
+            "Check your wallet's on-network DEC balance",
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
@@ -249,7 +251,12 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> serenity:
     };
 
     match state.devnet.get_balance(&cell_id).await {
-        Ok(balance) => embeds::dregg_embed("Your Balance")
+        Ok(balance) => embeds::dregg_embed("Your Wallet Balance (DEC)")
+            .description(
+                "**DEC** is the on-network devnet currency your wallet holds (top up with \
+                 `/faucet`, spend with `/send`). Real-AI dungeon run-credits bought with \
+                 **$DREGG** are a different balance — see `/credits`.",
+            )
             .field("Balance", format!("{balance} DEC"), true)
             .field("Cell ID", format!("`{}...`", &cell_id[..16]), true),
         Err(e) => {
@@ -273,7 +280,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You don't have a cclerk yet. Use `/cipherclerk create` first.",
+                "You don't have a wallet yet. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
             );
             respond_ephemeral(ctx, command, embed).await;
             return;
@@ -285,13 +292,16 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
         }
     };
 
-    let embed = embeds::dregg_embed("Your Cell Address")
-        .field("Cell ID", format!("```\n{cell_id}\n```"), false)
-        .field(
-            "Explorer",
-            format!("[View](https://devnet.dregg.fg-goose.online/explorer/cell/{cell_id})"),
-            false,
-        );
+    let mut embed = embeds::dregg_embed("Your Cell Address").field(
+        "Cell ID",
+        format!("```\n{cell_id}\n```"),
+        false,
+    );
+    // Explorer link only when DREGG_EXPLORER_BASE is configured — the full,
+    // copyable Cell ID above is the always-works reference; never a dead link.
+    if let Some(url) = crate::explorer_link::explorer_url("cell", &cell_id) {
+        embed = embed.field("Explorer", format!("[View]({url})"), false);
+    }
 
     respond_ephemeral(ctx, command, embed).await;
 }
@@ -305,7 +315,7 @@ async fn handle_export(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(false) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You don't have a cclerk yet. Use `/cipherclerk create` first.",
+                "You don't have a wallet yet. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
             );
             respond_ephemeral(ctx, command, embed).await;
             return;

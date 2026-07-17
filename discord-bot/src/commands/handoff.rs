@@ -20,13 +20,16 @@ use crate::BotState;
 use crate::cipherclerk::UserCipherclerk;
 use crate::db::IdentityMode;
 use crate::embeds;
+use dregg_cell::permissions::AuthRequired;
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
 /// Register `/handoff <cell-id> <@user>`.
 pub fn register() -> CreateCommand {
     CreateCommand::new("handoff")
-        .description("Mint a real signed CapTP handoff certificate for a Discord user")
+        .description(
+            "Mint an Ed25519-SIGNED CapTP handoff certificate (bot-local token: /cap-delegate)",
+        )
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
@@ -247,6 +250,23 @@ pub async fn handle_redeem(ctx: &Context, command: &CommandInteraction, state: &
 
     defer_ephemeral(ctx, command).await;
 
+    // CROSS-DETECT the OTHER handoff artifact (backlog #30): `dregg-handoff-<hex>` (dash) is a
+    // bot-local delegation TOKEN minted by `/cap-delegate` — its redeemer is `/cap-accept`,
+    // not the canonical certificate validator here. Name the right next step instead of
+    // failing on a base58 parse.
+    if compact.starts_with("dregg-handoff-") {
+        return reply_warn(
+            ctx,
+            command,
+            "That Is A Bot-Local Delegation TOKEN",
+            "`dregg-handoff-<hex>` (dash) is the bot-local BLAKE3-MAC token `/cap-delegate` \
+             mints. **Redeem it with `/cap-accept uri:<paste>`.**\n\nThis command \
+             (`/handoff-redeem`) validates the OTHER artifact: the canonical signed \
+             `dregg-handoff:<base58>` (colon) certificate `/handoff` mints.",
+        )
+        .await;
+    }
+
     // The redeemer must be the hosted user whose key matches the certificate's
     // named recipient — we derive their seed from the custodial root.
     let invoker_id = command.user.id.get();
@@ -305,7 +325,7 @@ pub async fn handle_redeem(ctx: &Context, command: &CommandInteraction, state: &
                     "Canonical `validate_handoff` accepted the presentation. You now hold a real soft-federation routing grant for the cell.",
                 )
                 .field("Cell", format!("`{}`", short(&hex::encode(acceptance.cell_id.0))), true)
-                .field("Permissions", format!("{:?}", acceptance.permissions), true)
+                .field("Turns need", permissions_label(&acceptance.permissions), true)
                 .field(
                     "Routing token",
                     format!("`{}`", &hex::encode(acceptance.routing_token)[..16]),
@@ -331,6 +351,19 @@ fn string_opt(command: &CommandInteraction, name: &str) -> Option<String> {
             CommandDataOptionValue::String(s) => Some(s.clone()),
             _ => None,
         })
+}
+
+/// Plain-language rendering of a redeemed grant's authorization requirement —
+/// user copy, not a `{:?}` of the permissions struct.
+fn permissions_label(p: &AuthRequired) -> &'static str {
+    match p {
+        AuthRequired::None => "nothing — open, no authorization required",
+        AuthRequired::Signature => "your signature (your key signs each turn)",
+        AuthRequired::Proof => "a ZK proof (each turn carries one)",
+        AuthRequired::Either => "your signature or a ZK proof",
+        AuthRequired::Impossible => "impossible — permanently locked, no turn can exercise this",
+        AuthRequired::Custom { .. } => "an app-defined proof (custom verifier)",
+    }
 }
 
 fn short(s: &str) -> String {

@@ -285,6 +285,18 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let id = component.data.custom_id.as_str();
 
+    // Presses that main.rs routes here as the unprefixed fallback but belong to sibling
+    // modules: the public governance proposal cards (vote buttons + Proposals list) and the
+    // live-session wipe guard's Confirm/Cancel.
+    if id.starts_with(crate::commands::governance_card::PREFIX) {
+        crate::commands::governance_card::handle_component(ctx, component, state).await;
+        return;
+    }
+    if id.starts_with(crate::commands::open_guard::PREFIX) {
+        crate::commands::open_guard::handle_component(ctx, component).await;
+        return;
+    }
+
     if id == ID_APP_SELECT {
         if let ComponentInteractionDataKind::StringSelect { values } = &component.data.kind {
             if let Some(value) = values.first() {
@@ -351,10 +363,31 @@ pub async fn handle_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSt
         ID_NAME_RESOLVE => submit_name_resolve(modal, state).await,
         ID_CRED_ISSUE => submit_credential_issue(modal, state).await,
         ID_CRED_VERIFY => submit_credential_verify(modal, state).await,
-        ID_GOV_PROPOSE => submit_gov_propose(modal, state).await,
+        ID_GOV_PROPOSE => {
+            // A successful proposal ALSO posts a PUBLIC card with vote buttons — the surface
+            // that makes voting possible for anyone but the proposer (backlog #5).
+            let (embed, card) = submit_gov_propose(modal, state).await;
+            if let Some(card) = card {
+                crate::commands::governance_card::post_public_card(ctx, modal.channel_id, &card)
+                    .await;
+            }
+            embed
+        }
         ID_GOV_VOTE => submit_gov_vote(modal, state).await,
         ID_SUB_CREATE => submit_subscription_create(modal, state).await,
-        ID_SUB_PUBLISH => submit_subscription_publish(modal, state).await,
+        ID_SUB_PUBLISH => {
+            // A successful publish fans the body out as DMs to the queue's subscribers —
+            // the delivery the panel promises (backlog #6). The receipt reports the count.
+            let (embed, fanout) = submit_subscription_publish(modal, state).await;
+            match fanout {
+                Some(fanout) => {
+                    let note =
+                        crate::commands::subscription_dispatch::fan_out(ctx, state, fanout).await;
+                    embed.field("Delivery", note, false)
+                }
+                None => embed,
+            }
+        }
         ID_SUB_SUBSCRIBE => submit_subscription_subscribe(modal, state).await,
         _ => embeds::warning_embed(
             "Unknown Form",
@@ -508,7 +541,12 @@ async fn names_embed(guild_id: Option<u64>, state: &BotState) -> CreateEmbed {
 
 fn governance_embed(guild_id: Option<u64>) -> CreateEmbed {
     embeds::dregg_embed("Governed Namespace")
-        .description("Create proposal cards and cast votes for route-table or parameter changes.")
+        .description(
+            "Propose route-table changes and vote on them. **New Proposal** posts a PUBLIC card \
+             with vote buttons — anyone with a hosted cipherclerk can vote without ever typing a \
+             root. **Proposals** lists the recent ones (with their roots, for the manual Vote \
+             modal).",
+        )
         .field(
             "Guild Federation",
             guild_id
@@ -525,7 +563,12 @@ fn governance_embed(guild_id: Option<u64>) -> CreateEmbed {
 
 fn subscription_embed(guild_id: Option<u64>) -> CreateEmbed {
     embeds::dregg_embed("Subscription")
-        .description("Create, publish to, and subscribe to Discord-mounted Starbridge queues.")
+        .description(
+            "Create, publish to, and subscribe to Discord-mounted Starbridge queues. A publish \
+             commits the message HASH on the node queue and this bot DMs the body to every \
+             subscriber. Delivery is bot-local: a publish made while the bot is down is not \
+             replayed, and closed DMs are reported as undelivered.",
+        )
         .field(
             "Mount Prefix",
             guild_id
@@ -575,6 +618,11 @@ fn governance_components() -> Vec<CreateActionRow> {
         app_select(),
         CreateActionRow::Buttons(vec![
             button(ID_GOV_PROPOSE, "New Proposal", ButtonStyle::Success),
+            button(
+                crate::commands::governance_card::ID_LIST,
+                "Proposals",
+                ButtonStyle::Primary,
+            ),
             button(ID_GOV_VOTE, "Vote", ButtonStyle::Primary),
             button(ID_HOME, "Home", ButtonStyle::Secondary),
         ]),
@@ -688,8 +736,12 @@ fn gov_vote_modal() -> CreateModal {
             short_input("namespace_cell", "Namespace cell id", "64 hex chars").max_length(64),
         ),
         short_row(
-            short_input("prior_proposal_root", "Prior proposal root", "64 hex chars")
-                .max_length(64),
+            short_input(
+                "prior_proposal_root",
+                "Prior proposal root",
+                "64 hex — copy it from a proposal card / the Proposals list",
+            )
+            .max_length(64),
         ),
         short_row(short_input("vote", "Vote", "yes or no").max_length(8)),
     ])
@@ -951,11 +1003,23 @@ async fn submit_credential_verify(modal: &ModalInteraction, state: &BotState) ->
     )
 }
 
-async fn submit_gov_propose(modal: &ModalInteraction, state: &BotState) -> CreateEmbed {
+/// Submit a proposal. On acceptance, ALSO records the durable `governance/propose` activity
+/// row and hands back the [`crate::commands::governance_card::ProposalCard`] the caller posts
+/// publicly — the vote buttons a non-proposer needs (backlog #5).
+async fn submit_gov_propose(
+    modal: &ModalInteraction,
+    state: &BotState,
+) -> (
+    CreateEmbed,
+    Option<crate::commands::governance_card::ProposalCard>,
+) {
     let Some(guild_id) = modal.guild_id.map(|id| id.get()) else {
-        return embeds::warning_embed(
-            "Guild Required",
-            "Governance proposals must be made in a server.",
+        return (
+            embeds::warning_embed(
+                "Guild Required",
+                "Governance proposals must be made in a server.",
+            ),
+            None,
         );
     };
     let namespace_cell_hex = modal_value(modal, "namespace_cell");
@@ -963,23 +1027,26 @@ async fn submit_gov_propose(modal: &ModalInteraction, state: &BotState) -> Creat
     let dispute_window_height = match modal_value(modal, "dispute_window_height").parse::<u64>() {
         Ok(value) => value,
         Err(_) => {
-            return embeds::warning_embed(
-                "Invalid Dispute Window",
-                "Dispute window height must be an unsigned integer.",
+            return (
+                embeds::warning_embed(
+                    "Invalid Dispute Window",
+                    "Dispute window height must be an unsigned integer.",
+                ),
+                None,
             );
         }
     };
     let description = modal_value(modal, "description");
     if let Err(embed) = hosted_user_cell(modal.user.id.get(), state).await {
-        return embed;
+        return (embed, None);
     }
     let namespace_cell = match parse_cell_id(&namespace_cell_hex) {
         Ok(cell) => cell,
-        Err(embed) => return embed,
+        Err(embed) => return (embed, None),
     };
     let route_table = match parse_route_table(&routes_json) {
         Ok(table) => table,
-        Err(embed) => return embed,
+        Err(embed) => return (embed, None),
     };
     let cclerk = UserCipherclerk::derive(
         &state.config.bot_secret,
@@ -1003,24 +1070,74 @@ async fn submit_gov_propose(modal: &ModalInteraction, state: &BotState) -> Creat
         )
         .await
     {
-        Ok(result) if result.accepted => embeds::success_embed("Proposal Submitted")
-            .field("Namespace", short_cell(&namespace_cell_hex), true)
-            .field(
-                "Proposed Root",
-                format!("`{}`", hex_encode_32(&proposed_root)),
-                false,
-            )
-            .field("Dispute Window", dispute_window_height.to_string(), true)
-            .field("Description", truncate(&description, 900), false)
-            .field("Turn", turn_hash_field(result.turn_hash), false),
-        Ok(result) => embeds::error_embed(
-            "Proposal Rejected",
-            result
-                .error
-                .as_deref()
-                .unwrap_or("node rejected the signed governance action"),
+        Ok(result) if result.accepted => {
+            let proposed_root_hex = hex_encode_32(&proposed_root);
+            let turn_hash = result.turn_hash.clone();
+            let activity_id = state
+                .db
+                .record_starbridge_activity(
+                    "governance",
+                    "propose",
+                    &modal.user.id.get().to_string(),
+                    Some(&guild_id.to_string()),
+                    Some(&proposed_root_hex),
+                    "accepted",
+                    serde_json::json!({
+                        "namespace_cell": namespace_cell_hex,
+                        "proposed_root": proposed_root_hex,
+                        "dispute_window": dispute_window_height,
+                        "description": description,
+                        "turn_hash": turn_hash,
+                    }),
+                )
+                .await
+                .ok();
+            let embed = embeds::success_embed("Proposal Submitted")
+                .field("Namespace", short_cell(&namespace_cell_hex), true)
+                .field("Proposed Root", format!("`{proposed_root_hex}`"), false)
+                .field("Dispute Window", dispute_window_height.to_string(), true)
+                .field("Description", truncate(&description, 900), false)
+                .field("Turn", turn_hash_field(result.turn_hash.clone()), false)
+                .field(
+                    "Voting",
+                    match activity_id {
+                        Some(_) => "A PUBLIC proposal card with vote buttons was posted to the \
+                                    channel — anyone with a hosted cipherclerk can vote."
+                            .to_string(),
+                        None => "The public card could not be recorded — voters can still use \
+                                 the Vote modal with the root above."
+                            .to_string(),
+                    },
+                    false,
+                );
+            let card =
+                activity_id.map(
+                    |activity_id| crate::commands::governance_card::ProposalCard {
+                        activity_id,
+                        namespace_cell_hex: namespace_cell_hex.clone(),
+                        proposed_root_hex,
+                        description: description.clone(),
+                        dispute_window: dispute_window_height,
+                        proposer: modal.user.id.get(),
+                        turn_hash,
+                    },
+                );
+            (embed, card)
+        }
+        Ok(result) => (
+            embeds::error_embed(
+                "Proposal Rejected",
+                result
+                    .error
+                    .as_deref()
+                    .unwrap_or("node rejected the signed governance action"),
+            ),
+            None,
         ),
-        Err(e) => embeds::error_embed("Node Unreachable", &e.to_string()),
+        Err(e) => (
+            embeds::error_embed("Node Unreachable", &e.to_string()),
+            None,
+        ),
     }
 }
 
@@ -1171,11 +1288,23 @@ async fn submit_subscription_create(modal: &ModalInteraction, state: &BotState) 
     }
 }
 
-async fn submit_subscription_publish(modal: &ModalInteraction, state: &BotState) -> CreateEmbed {
+/// Publish to a queue. On acceptance, ALSO hands back the
+/// [`crate::commands::subscription_dispatch::PublishFanout`] the caller DMs to subscribers —
+/// the delivery the panel promises (backlog #6).
+async fn submit_subscription_publish(
+    modal: &ModalInteraction,
+    state: &BotState,
+) -> (
+    CreateEmbed,
+    Option<crate::commands::subscription_dispatch::PublishFanout>,
+) {
     let Some(guild_id) = modal.guild_id.map(|id| id.get()) else {
-        return embeds::warning_embed(
-            "Guild Required",
-            "Queue publishing must happen in a server.",
+        return (
+            embeds::warning_embed(
+                "Guild Required",
+                "Queue publishing must happen in a server.",
+            ),
+            None,
         );
     };
     let name = modal_value(modal, "name");
@@ -1184,12 +1313,20 @@ async fn submit_subscription_publish(modal: &ModalInteraction, state: &BotState)
     let queue = match state.db.get_starbridge_queue(&namespace_path).await {
         Ok(Some(queue)) => queue,
         Ok(None) => {
-            return embeds::warning_embed(
-                "Queue Not Found",
-                &format!("No queue is mounted at `{namespace_path}`. Create it first."),
+            return (
+                embeds::warning_embed(
+                    "Queue Not Found",
+                    &format!("No queue is mounted at `{namespace_path}`. Create it first."),
+                ),
+                None,
             );
         }
-        Err(e) => return embeds::error_embed("Queue State Error", &e.to_string()),
+        Err(e) => {
+            return (
+                embeds::error_embed("Queue State Error", &e.to_string()),
+                None,
+            );
+        }
     };
     let message_hash = message_hash_hex(&message);
     let body = serde_json::json!({
@@ -1225,13 +1362,28 @@ async fn submit_subscription_publish(modal: &ModalInteraction, state: &BotState)
                 )
                 .await;
 
-            embeds::success_embed("Published")
-                .field("Queue", name, true)
+            let embed = embeds::success_embed("Published")
+                .field("Queue", name.clone(), true)
                 .field("Position", result.position.to_string(), true)
-                .field("Message", format!("`{}`", truncate(&message, 100)), false)
+                .field("Message", format!("`{}`", truncate(&message, 100)), false);
+            let fanout = crate::commands::subscription_dispatch::PublishFanout {
+                namespace_path,
+                queue_name: name,
+                message,
+                message_hash,
+                position: result.position,
+                publisher: actor,
+            };
+            (embed, Some(fanout))
         }
-        Ok(resp) => embeds::error_embed("Publish Failed", &response_text(resp).await),
-        Err(e) => embeds::error_embed("Node Unreachable", &e.to_string()),
+        Ok(resp) => (
+            embeds::error_embed("Publish Failed", &response_text(resp).await),
+            None,
+        ),
+        Err(e) => (
+            embeds::error_embed("Node Unreachable", &e.to_string()),
+            None,
+        ),
     }
 }
 
@@ -1280,7 +1432,10 @@ async fn submit_subscription_subscribe(modal: &ModalInteraction, state: &BotStat
                 "Already Subscribed"
             })
             .description(format!(
-                "You will receive DMs when new messages arrive in **{name}**."
+                "This bot will DM you each message published to **{name}** through it (allow \
+                 DMs from server members, or deliveries fail). The node queue commits each \
+                 message's hash; the body rides the bot's DM — publishes made while the bot is \
+                 offline are not replayed."
             ))
             .field("Queue", name, true)
             .field("Path", format!("`{namespace_path}`"), true)

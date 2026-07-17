@@ -950,9 +950,12 @@ impl DevnetClient {
         Ok(resp.json().await?)
     }
 
-    /// Get the explorer base URL for building links.
-    pub fn explorer_base_url(&self) -> &'static str {
-        "https://devnet.dregg.fg-goose.online/explorer"
+    /// The explorer base URL for building links — `DREGG_EXPLORER_BASE`, or `None`
+    /// when unset. Callers must render a plain copyable id in the `None` case,
+    /// never a dead link (the old hardcoded `devnet.dregg.fg-goose.online` no
+    /// longer routes anywhere); prefer [`crate::explorer_link`]'s helpers.
+    pub fn explorer_base_url(&self) -> Option<String> {
+        crate::explorer_link::explorer_base()
     }
 
     // ─── Cipherclerk / transfer endpoints ───────────────────────────────────────────

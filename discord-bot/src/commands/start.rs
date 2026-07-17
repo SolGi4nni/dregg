@@ -179,7 +179,7 @@ pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> 
     vec![
         CreateActionRow::Buttons(vec![
             button(ID_FAUCET, "Get test DEC", ButtonStyle::Success),
-            button(ID_BALANCE, "Balance", ButtonStyle::Primary),
+            button(ID_BALANCE, "Wallet (DEC)", ButtonStyle::Primary),
             button(ID_SEND, "Send", ButtonStyle::Primary),
             button(ID_CHANNEL, "Claim my channel", ButtonStyle::Primary),
         ]),
@@ -195,7 +195,17 @@ pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> 
 fn help_embed() -> CreateEmbed {
     embeds::dregg_embed("Using the DreggNet bot")
         .description(
-            "This bot is built to be light. There are really only two commands to remember:",
+            "This bot is built to be light. The fun front door is the games — every move in \
+             every one is a real, receipted dregg turn — and there are really only two \
+             commands to remember besides them:",
+        )
+        .field(
+            "\u{1f3b2} Play",
+            "`/descent` — the daily beacon-seeded roguelike (permadeath the executor itself \
+             enforces) · `/dungeon` — the party dungeon crawl · `/play` — quick games \
+             (tug, automatafl, …) · `/gallery` — publish + remix procgen worlds · \
+             `/market` — sealed-bid auctions.",
+            false,
         )
         .field(
             "/start",
@@ -213,15 +223,22 @@ fn help_embed() -> CreateEmbed {
         )
         .field(
             "Buttons do the rest",
-            "Get test DEC · Balance · Send · Set your LLM key · Node status · Apps (Identity, \
+            "Get test DEC · Wallet (DEC) · Send · Set your LLM key · Node status · Apps (Identity, \
              Names, Governance, Subscription).",
+            false,
+        )
+        .field(
+            "The three monies",
+            "**DEC** — the on-network devnet currency your wallet holds (faucet, `/send`, fees). \
+             **$DREGG** — the token; buys `/credits` for real-AI dungeon runs. \
+             **computrons** — the metered unit of compute a turn consumes.",
             false,
         )
         .field(
             "Power users",
             "Advanced surfaces are still slash commands: `/dregg` (app dashboard), `/explorer`, \
-             `/cipherclerk` (keychain), `/cap-*` (CapTP), `/handoff`, `/coordinate`, `/deos`, \
-             `/card`, `/proof`, federation + polis commands.",
+             `/cipherclerk` (your wallet's power-user face: keys + tokens), `/cap-*` (CapTP), \
+             `/handoff`, `/coordinate`, `/deos`, `/card`, `/proof`, federation + polis commands.",
             false,
         )
 }
@@ -444,15 +461,26 @@ fn send_modal() -> CreateModal {
     ])
 }
 
-fn key_modal() -> CreateModal {
+/// The shared set-key modal — opened by the `/start` Key button AND by
+/// `/key set` / `/key rotate` (the key NEVER travels as a visible slash
+/// option). Only the key itself is required: blank fields keep the existing
+/// stored values, so a rotate is "paste the new key, submit" (see
+/// [`submit_key`]).
+pub(crate) fn key_modal() -> CreateModal {
     CreateModal::new(ID_MODAL_KEY, "Set your LLM key").components(vec![
         text_row(
             "provider",
-            "Provider",
+            "Provider (blank = keep current / anthropic)",
             "anthropic / openai / openrouter / kimi / deepseek",
         ),
         text_row("key", "API key (sealed at rest, never echoed)", "sk-..."),
-        text_row("model", "Model (optional)", "provider default"),
+        text_row(
+            "model",
+            "Model (blank = keep current / default)",
+            "provider default",
+        ),
+        text_row("budget", "Token budget (blank = keep current)", "200000"),
+        text_row("rate", "Calls per window (blank = keep current)", "100"),
     ])
 }
 
@@ -502,10 +530,22 @@ async fn submit_send(state: &BotState, modal: &ModalInteraction) -> CreateEmbed 
 
 async fn submit_key(state: &BotState, modal: &ModalInteraction) -> CreateEmbed {
     let owner = modal.user.id.get();
+    // Blank fields fall back to the EXISTING stored record — so `/key rotate`
+    // is "paste the new key, leave the rest blank" — then to defaults.
+    let existing = state
+        .db
+        .get_llm_key(&owner.to_string())
+        .await
+        .ok()
+        .flatten();
+
     let provider_raw = modal_value(modal, "provider");
     let provider = match Provider::parse(&provider_raw) {
         Some(p) => p,
-        None if provider_raw.trim().is_empty() => Provider::Anthropic,
+        None if provider_raw.trim().is_empty() => existing
+            .as_ref()
+            .and_then(|r| Provider::parse(&r.provider))
+            .unwrap_or(Provider::Anthropic),
         None => {
             return embeds::warning_embed(
                 "Unknown Provider",
@@ -517,26 +557,47 @@ async fn submit_key(state: &BotState, modal: &ModalInteraction) -> CreateEmbed {
     if key.is_empty() {
         return embeds::warning_embed("Empty Key", "The API key must not be empty.");
     }
+    // A stored model is kept only while the provider is unchanged — switching
+    // providers falls back to the NEW provider's default.
+    let same_provider = existing
+        .as_ref()
+        .map(|r| r.provider == provider.as_str())
+        .unwrap_or(false);
     let model = {
         let m = modal_value(modal, "model");
-        if m.trim().is_empty() {
-            provider.default_model().to_string()
-        } else {
+        if !m.trim().is_empty() {
             m
+        } else if same_provider {
+            existing
+                .as_ref()
+                .map(|r| r.model.clone())
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or_else(|| provider.default_model().to_string())
+        } else {
+            provider.default_model().to_string()
         }
     };
+    let budget = match parse_policy_field(&modal_value(modal, "budget"), "budget") {
+        Ok(Some(b)) => b,
+        Ok(None) => existing
+            .as_ref()
+            .map(|r| r.token_budget)
+            .unwrap_or(DEFAULT_TOKEN_BUDGET)
+            .max(1),
+        Err(embed) => return embed,
+    };
+    let rate = match parse_policy_field(&modal_value(modal, "rate"), "rate") {
+        Ok(Some(r)) => r,
+        Ok(None) => existing
+            .as_ref()
+            .map(|r| r.rate_limit)
+            .unwrap_or(DEFAULT_RATE_LIMIT)
+            .max(1),
+        Err(embed) => return embed,
+    };
 
-    // The SAME sealing path the `/key set` slash command uses.
-    match crate::commands::key::store_key(
-        state,
-        owner,
-        provider,
-        &model,
-        &key,
-        DEFAULT_TOKEN_BUDGET,
-        DEFAULT_RATE_LIMIT,
-    )
-    .await
+    // The SAME sealing path for the `/start` Key button and `/key set|rotate`.
+    match crate::commands::key::store_key(state, owner, provider, &model, &key, budget, rate).await
     {
         Ok(fingerprint) => {
             crate::commands::key::reset_session(state, owner);
@@ -549,8 +610,27 @@ async fn submit_key(state: &BotState, modal: &ModalInteraction) -> CreateEmbed {
                 .field("Provider", format!("`{}`", provider.as_str()), true)
                 .field("Model", format!("`{model}`"), true)
                 .field("Key", format!("`{fingerprint}`"), true)
+                .field("Token budget", budget.to_string(), true)
+                .field("Rate / window", rate.to_string(), true)
         }
         Err(msg) => embeds::warning_embed("Could Not Store Key", &msg),
+    }
+}
+
+/// Parse an optional positive-integer policy field from the modal. Blank →
+/// `Ok(None)` (the caller falls back to the stored value / default);
+/// non-numeric or non-positive → a warning embed naming the field.
+fn parse_policy_field(raw: &str, name: &str) -> Result<Option<i64>, CreateEmbed> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match trimmed.parse::<i64>() {
+        Ok(n) if n >= 1 => Ok(Some(n)),
+        _ => Err(embeds::warning_embed(
+            "Invalid Policy",
+            &format!("`{trimmed}` is not a positive whole number for `{name}`."),
+        )),
     }
 }
 
@@ -607,7 +687,7 @@ fn text_row(id: &str, label: &str, placeholder: &str) -> CreateActionRow {
     CreateActionRow::InputText(
         CreateInputText::new(InputTextStyle::Short, label, id)
             .placeholder(placeholder)
-            .required(id != "model")
+            .required(!matches!(id, "model" | "provider" | "budget" | "rate"))
             .max_length(256),
     )
 }

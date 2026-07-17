@@ -193,22 +193,15 @@ pub(crate) async fn execute_transfer(
                 .map(|b| format!("{b} DEC"))
                 .unwrap_or_else(|| "—".to_string());
 
-            let receipt_link = format!(
-                "[view on explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                tx_hash
-            );
+            // Explorer link when DREGG_EXPLORER_BASE is configured + the FULL turn
+            // hash in a copyable block (the always-works verify-it-yourself handle).
+            let receipt = crate::explorer_link::receipt_field("turn", &tx_hash, "view on explorer");
 
             embeds::success_embed("Transfer Sent")
                 .field("To", format!("<@{recipient_id}>"), true)
                 .field("Amount", format!("{amount} DEC"), true)
                 .field("Your Balance", remaining, true)
-                .field(
-                    "Tx Hash",
-                    format!("`{}...`", &tx_hash[..16.min(tx_hash.len())]),
-                    true,
-                )
-                .field("Receipt", receipt_link, false)
+                .field("Receipt (turn hash)", receipt, false)
         }
         Err(e) => embeds::error_embed("Transfer Failed", &e.user_message("submit the transfer")),
     }
@@ -310,10 +303,10 @@ pub(crate) async fn execute_first_payment(
                 )
                 .await;
 
-            let explorer = format!(
-                "[view the receipt on the explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                tx_hash
+            let explorer = crate::explorer_link::receipt_field(
+                "turn",
+                &tx_hash,
+                "view the receipt on the explorer",
             );
             let portal = format!(
                 "[verify your cell in your own browser](https://portal.dregg.studio/cell.html?id={sender_cell})"

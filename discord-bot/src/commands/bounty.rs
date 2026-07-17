@@ -526,16 +526,13 @@ fn turn_field(turn_hash: Option<String>) -> String {
         .unwrap_or_else(|| "`unknown`".to_string())
 }
 
-/// Append an explorer receipt link to an embed when a turn hash is available.
-fn with_receipt(embed: CreateEmbed, state: &BotState, turn_hash: Option<String>) -> CreateEmbed {
+/// Append an explorer receipt (link when `DREGG_EXPLORER_BASE` is configured, plus
+/// the full copyable turn hash — never a dead link) when a turn hash is available.
+fn with_receipt(embed: CreateEmbed, _state: &BotState, turn_hash: Option<String>) -> CreateEmbed {
     match turn_hash {
         Some(hash) => embed.field(
-            "Receipt",
-            format!(
-                "[view on explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                hash
-            ),
+            "Receipt (turn hash)",
+            crate::explorer_link::receipt_field("turn", &hash, "view on explorer"),
             false,
         ),
         None => embed,

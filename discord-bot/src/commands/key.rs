@@ -8,16 +8,17 @@
 //! (only a redacted fingerprint).
 //!
 //! Subcommands:
-//! * `set` — store a key for a provider (with optional model / budget / rate);
-//! * `rotate` — replace the stored key (keeps the existing provider + policy);
+//! * `set` — open a private modal to store a key (provider / model / budget /
+//!   rate) — the key NEVER travels as a visible slash option;
+//! * `rotate` — open the same modal to replace the stored key (blank fields
+//!   keep the existing provider + policy);
 //! * `revoke` — delete the stored key (nothing recoverable afterward);
 //! * `status` — show the configured provider / model / budget + a redacted
 //!   fingerprint of the stored key.
 
 use serenity::all::{
-    CommandDataOptionValue, CommandInteraction, CommandOptionType, Context, CreateCommand,
-    CreateCommandOption, CreateInteractionResponse, CreateInteractionResponseMessage,
-    EditInteractionResponse,
+    CommandInteraction, CommandOptionType, Context, CreateCommand, CreateCommandOption,
+    CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
 };
 
 use crate::BotState;
@@ -25,74 +26,25 @@ use crate::embeds;
 use crate::key_vault::{self, PlaintextKey};
 use crate::llm_provider::Provider;
 
-const DEFAULT_TOKEN_BUDGET: i64 = 200_000;
-const DEFAULT_RATE_LIMIT: i64 = 100;
-
 /// Register `/key`.
+///
+/// Neither `set` nor `rotate` takes the key as a slash option — a slash option
+/// sits VISIBLE in the composer (and the client's command history). Both open
+/// the same private modal the `/start` Key button uses
+/// ([`crate::commands::start::key_modal`]).
 pub fn register() -> CreateCommand {
-    let provider_opt = || {
-        let mut opt = CreateCommandOption::new(
-            CommandOptionType::String,
-            "provider",
-            "Which provider this key is for",
-        )
-        .required(true);
-        for p in Provider::ALL {
-            opt = opt.add_string_choice(p.display_name(), p.as_str());
-        }
-        opt
-    };
-
     CreateCommand::new("key")
         .description("Port in your OWN LLM provider key (encrypted, metered, revocable)")
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::SubCommand,
-                "set",
-                "Store an API key for a provider",
-            )
-            .add_sub_option(provider_opt())
-            .add_sub_option(
-                CreateCommandOption::new(CommandOptionType::String, "key", "Your provider API key")
-                    .required(true),
-            )
-            .add_sub_option(CreateCommandOption::new(
-                CommandOptionType::String,
-                "model",
-                "Model to use (optional; provider default otherwise)",
-            ))
-            .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::Integer,
-                    "budget",
-                    "Token budget for the session window (optional)",
-                )
-                .min_int_value(1),
-            )
-            .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::Integer,
-                    "rate",
-                    "Max LLM calls per window (optional)",
-                )
-                .min_int_value(1),
-            ),
-        )
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::SubCommand,
-                "rotate",
-                "Replace your stored key (keeps provider + policy)",
-            )
-            .add_sub_option(
-                CreateCommandOption::new(
-                    CommandOptionType::String,
-                    "key",
-                    "Your NEW provider API key",
-                )
-                .required(true),
-            ),
-        )
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "set",
+            "Open a private form to store an API key",
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "rotate",
+            "Open a private form to replace your stored key",
+        ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "revoke",
@@ -130,108 +82,46 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     }
 }
 
-async fn handle_set(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    defer(ctx, command).await;
-    let owner = command.user.id.get();
-
-    let provider = match sub_string(command, "provider")
-        .as_deref()
-        .and_then(Provider::parse)
-    {
-        Some(p) => p,
-        None => {
-            return edit_warn(
-                ctx,
-                command,
-                "Unknown Provider",
-                "Pick one of the listed providers.",
-            )
-            .await;
-        }
-    };
-    let key = PlaintextKey::new(sub_string(command, "key").unwrap_or_default());
-    if key.is_empty() {
-        return edit_warn(ctx, command, "Empty Key", "The key must not be empty.").await;
-    }
-    let model = sub_string(command, "model")
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or_else(|| provider.default_model().to_string());
-    let budget = sub_integer(command, "budget")
-        .unwrap_or(DEFAULT_TOKEN_BUDGET)
-        .max(1);
-    let rate = sub_integer(command, "rate")
-        .unwrap_or(DEFAULT_RATE_LIMIT)
-        .max(1);
-
-    match store_key(state, owner, provider, &model, &key, budget, rate).await {
-        Ok(fingerprint) => {
-            reset_session(state, owner);
-            let embed = embeds::dregg_embed("Key Stored")
-                .description(format!(
-                    "Your **{}** key is sealed (encrypted at rest, never logged).",
-                    provider.display_name()
-                ))
-                .field("Provider", format!("`{}`", provider.as_str()), true)
-                .field("Model", format!("`{model}`"), true)
-                .field("Key", format!("`{fingerprint}`"), true)
-                .field("Token budget", budget.to_string(), true)
-                .field("Rate / window", rate.to_string(), true)
-                .field(
-                    "Use it",
-                    "Just chat in this channel — conversational messages are routed through your keyed LLM, metered + receipted.",
-                    false,
-                );
-            edit(ctx, command, embed).await;
-        }
-        Err(msg) => edit_warn(ctx, command, "Could Not Store Key", &msg).await,
-    }
+/// `/key set` — open the shared private modal
+/// ([`crate::commands::start::key_modal`]). The modal MUST be the interaction's
+/// FIRST response, so no defer; the submission routes through
+/// `start::handle_modal` (custom-id `start:modal:key`), the same sealing path.
+async fn handle_set(ctx: &Context, command: &CommandInteraction, _state: &BotState) {
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Modal(crate::commands::start::key_modal()),
+        )
+        .await;
 }
 
+/// `/key rotate` — open the SAME modal, after confirming there is a key to
+/// rotate. Blank modal fields keep the stored provider / model / policy, so a
+/// rotate is "paste the new key, submit".
 async fn handle_rotate(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    defer(ctx, command).await;
-    let owner = command.user.id.get();
-
-    let existing = match state.db.get_llm_key(&owner.to_string()).await {
-        Ok(Some(r)) => r,
+    match state
+        .db
+        .get_llm_key(&command.user.id.get().to_string())
+        .await
+    {
+        Ok(Some(_)) => {
+            let _ = command
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Modal(crate::commands::start::key_modal()),
+                )
+                .await;
+        }
         Ok(None) => {
-            return edit_warn(
+            reply_warn(
                 ctx,
                 command,
                 "No Key Set",
                 "Use `/key set` first — there is nothing to rotate.",
             )
-            .await;
+            .await
         }
-        Err(e) => return edit_warn(ctx, command, "Database Error", &e.to_string()).await,
-    };
-    let provider = Provider::parse(&existing.provider).unwrap_or(Provider::Anthropic);
-    let key = PlaintextKey::new(sub_string(command, "key").unwrap_or_default());
-    if key.is_empty() {
-        return edit_warn(ctx, command, "Empty Key", "The new key must not be empty.").await;
-    }
-
-    match store_key(
-        state,
-        owner,
-        provider,
-        &existing.model,
-        &key,
-        existing.token_budget,
-        existing.rate_limit,
-    )
-    .await
-    {
-        Ok(fingerprint) => {
-            reset_session(state, owner);
-            let embed = embeds::dregg_embed("Key Rotated")
-                .description(format!(
-                    "Your **{}** key was replaced. The old ciphertext is gone.",
-                    provider.display_name()
-                ))
-                .field("Key", format!("`{fingerprint}`"), true);
-            edit(ctx, command, embed).await;
-        }
-        Err(msg) => edit_warn(ctx, command, "Could Not Rotate Key", &msg).await,
+        Err(e) => reply_warn(ctx, command, "Database Error", &e.to_string()).await,
     }
 }
 
@@ -333,33 +223,7 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-// ─── option + response helpers (ephemeral) ──────────────────────────────────
-
-fn sub_string(command: &CommandInteraction, name: &str) -> Option<String> {
-    let sub = command.data.options.first()?;
-    let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
-        return None;
-    };
-    opts.iter()
-        .find(|o| o.name == name)
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
-}
-
-fn sub_integer(command: &CommandInteraction, name: &str) -> Option<i64> {
-    let sub = command.data.options.first()?;
-    let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
-        return None;
-    };
-    opts.iter()
-        .find(|o| o.name == name)
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::Integer(i) => Some(*i),
-            _ => None,
-        })
-}
+// ─── response helpers (ephemeral) ────────────────────────────────────────────
 
 async fn defer(ctx: &Context, command: &CommandInteraction) {
     let _ = command

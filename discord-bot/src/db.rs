@@ -739,6 +739,45 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // ─── The per-identity RPG world sessions (commands::rpg_world SessionResumeStore) ──
+        // The durable backing of each player's PERSISTENT `/play` RPG world (trade / craft /
+        // inventory / guild / companion / tavern / party / cheevos). Like the descent board it
+        // stores ONLY the reproducible PUBLIC input: a session's open (its seed) and its ordered
+        // LANDED advances — never a trusted state blob. On the player's first touch after boot
+        // the host REPLAYS these logs through the real executor (a tampered row is refused on
+        // re-drive and the session fails closed rather than reopening to a forged state).
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS rpg_sessions (
+                player     TEXT NOT NULL,
+                key        TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                seed       TEXT NOT NULL,
+                PRIMARY KEY (player, key, session_id)
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS rpg_session_moves (
+                player     TEXT NOT NULL,
+                key        TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                idx        INTEGER NOT NULL,
+                label      TEXT NOT NULL,
+                turn       TEXT NOT NULL,
+                arg        INTEGER NOT NULL,
+                enabled    INTEGER NOT NULL,
+                has_text   INTEGER NOT NULL,
+                text       TEXT NOT NULL,
+                actor      TEXT NOT NULL,
+                trust      TEXT NOT NULL,
+                PRIMARY KEY (player, key, session_id, idx)
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
     }
 
@@ -1115,6 +1154,163 @@ impl Database {
                 player: row.get("player"),
                 moves_json: row.get("moves_json"),
                 claimed_turns: row.get("claimed_turns"),
+            })
+            .collect())
+    }
+
+    // ─── The per-identity RPG world sessions (commands::rpg_world SessionResumeStore) ────
+
+    /// Record a player's RPG session OPEN — its replay seed (`"-"` for the offering default).
+    /// Idempotent by PK (`INSERT OR IGNORE`), so a re-open keeps the recorded advances.
+    pub async fn rpg_session_open(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+        seed: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO rpg_sessions (player, key, session_id, seed)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .bind(seed)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Append one LANDED advance to a player's RPG session log. `idx` is assigned as the current
+    /// move count (the writer is a single dedicated host thread per process, so the append is
+    /// sequential; the PK still refuses a duplicate index if it ever were not).
+    pub async fn rpg_session_record_move(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+        m: &RpgMoveRow,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO rpg_session_moves
+                (player, key, session_id, idx, label, turn, arg, enabled, has_text, text, actor, trust)
+             VALUES (?, ?, ?,
+                (SELECT COUNT(*) FROM rpg_session_moves
+                 WHERE player = ? AND key = ? AND session_id = ?),
+                ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .bind(&m.label)
+        .bind(&m.turn)
+        .bind(m.arg)
+        .bind(m.enabled)
+        .bind(m.has_text)
+        .bind(&m.text)
+        .bind(&m.actor)
+        .bind(&m.trust)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Drop a player's RPG session log (open + moves) — it will not be resumed on the next boot.
+    pub async fn rpg_session_forget(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM rpg_sessions WHERE player = ? AND key = ? AND session_id = ?")
+            .bind(player)
+            .bind(key)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "DELETE FROM rpg_session_moves WHERE player = ? AND key = ? AND session_id = ?",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// A player's recorded RPG session opens (key + session id + seed), for boot replay.
+    pub async fn rpg_sessions_of(&self, player: &str) -> Result<Vec<RpgSessionRow>, sqlx::Error> {
+        let rows = sqlx::query("SELECT key, session_id, seed FROM rpg_sessions WHERE player = ?")
+            .bind(player)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| RpgSessionRow {
+                key: row.get("key"),
+                session_id: row.get("session_id"),
+                seed: row.get("seed"),
+            })
+            .collect())
+    }
+
+    /// One RPG session's recorded open, if any.
+    pub async fn rpg_session_of(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+    ) -> Result<Option<RpgSessionRow>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT key, session_id, seed FROM rpg_sessions
+             WHERE player = ? AND key = ? AND session_id = ?",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|row| RpgSessionRow {
+            key: row.get("key"),
+            session_id: row.get("session_id"),
+            seed: row.get("seed"),
+        }))
+    }
+
+    /// One RPG session's ordered landed advances.
+    pub async fn rpg_session_moves(
+        &self,
+        player: &str,
+        key: &str,
+        session_id: &str,
+    ) -> Result<Vec<RpgMoveRow>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT label, turn, arg, enabled, has_text, text, actor, trust
+             FROM rpg_session_moves
+             WHERE player = ? AND key = ? AND session_id = ?
+             ORDER BY idx ASC",
+        )
+        .bind(player)
+        .bind(key)
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| RpgMoveRow {
+                label: row.get("label"),
+                turn: row.get("turn"),
+                arg: row.get("arg"),
+                enabled: row.get("enabled"),
+                has_text: row.get("has_text"),
+                text: row.get("text"),
+                actor: row.get("actor"),
+                trust: row.get("trust"),
             })
             .collect())
     }
@@ -1797,6 +1993,40 @@ impl Database {
         Ok(row.0)
     }
 
+    /// The subscribers of ONE queue path — the DM fan-out list a publish delivers to
+    /// (`commands::subscription_dispatch`).
+    pub async fn list_starbridge_queue_subscribers(
+        &self,
+        namespace_path: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT discord_id FROM starbridge_queue_subscriptions
+             WHERE namespace_path = ?
+             ORDER BY subscribed_at DESC, discord_id",
+        )
+        .bind(namespace_path)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|row| row.get("discord_id")).collect())
+    }
+
+    /// One activity row by id — the durable backing of a public governance proposal card's
+    /// vote buttons (`commands::governance_card`).
+    pub async fn get_starbridge_activity(
+        &self,
+        id: i64,
+    ) -> Result<Option<StarbridgeActivity>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT id, app, action, actor_discord_id, guild_id, subject, status, details_json, timestamp
+             FROM starbridge_activity
+             WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(activity_from_row))
+    }
+
     // ─── CapTP durable handoffs ───────────────────────────────────────────
 
     pub async fn create_captp_handoff(
@@ -2462,6 +2692,32 @@ pub struct DescentCompletionRow {
     pub player: String,
     pub moves_json: String,
     pub claimed_turns: i64,
+}
+
+/// A persisted RPG session open row — the plain DB shape of one `/play` world session's replay
+/// root (its seed, `"-"` for the offering default). `rpg_store::SqliteRpgResumeStore` translates
+/// this to/from `dreggnet_offerings::resume::SessionMoveLog` (kept out of the DB layer so `db`
+/// stays free of the offerings types).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpgSessionRow {
+    pub key: String,
+    pub session_id: String,
+    pub seed: String,
+}
+
+/// A persisted RPG session landed-advance row — one committed turn's reproducible public input
+/// (the typed action + the attributed actor + its attribution trust tag `s`/`a`). The columns
+/// mirror `dreggnet_offerings::resume`'s wire fields exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpgMoveRow {
+    pub label: String,
+    pub turn: String,
+    pub arg: i64,
+    pub enabled: i64,
+    pub has_text: i64,
+    pub text: String,
+    pub actor: String,
+    pub trust: String,
 }
 
 /// One published dungeon world in the community library. The `source` is authoritative (loaders

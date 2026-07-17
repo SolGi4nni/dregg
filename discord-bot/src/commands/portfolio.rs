@@ -19,13 +19,14 @@
 //! the buttons, a press is ONE real `advance` attributed to the presser's derived dregg identity, and
 //! the press re-render is projected FOR the presser ([`crate::commands::offering::surface_for`]).
 //!
-//! HONEST SCOPE: `trade`/`inventory`/`craft` each open over their OWN demo `SharedWorld` here (the
-//! per-type Discord session store admits no cross-offering shared handle the way
-//! `dreggnet_surfaces::register_surfaces` mounts one world across the three) — so the craft→inventory→
-//! trade composition the web demo shows is not preserved on this surface; each is individually
-//! reachable + drivable, which is the parity bar. A board offering (automatafl, tug) is a `CoordGrid`
-//! that the Discord card renderer paints in full (the most complete renderer of the three chat
-//! surfaces).
+//! ROUTING: the eight RPG feature-surface keys open in the invoker's **per-identity persistent
+//! world** ([`crate::commands::rpg_world`]) — one `OfferingHost` per derived dregg identity,
+//! mounted via `dreggnet_surfaces::register_surfaces` (ONE shared world across craft/inventory/
+//! trade, so a forged item IS in your inventory IS tradeable), sqlite-persisted by replay, with
+//! the player's REAL earned cheevos. The four remaining keys (the two games + names/compute)
+//! keep the per-channel generic-adapter stores below. A board offering (automatafl, tug) is a
+//! `CoordGrid` that the Discord card renderer paints in full (the most complete renderer of the
+//! three chat surfaces).
 
 use std::sync::OnceLock;
 
@@ -44,10 +45,11 @@ use dreggnet_offerings::{
 };
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
-    SharedWorld, TavernOffering, TradeOffering,
+    TavernOffering, TradeOffering,
 };
 
 use crate::BotState;
+use crate::commands::ack;
 use crate::commands::offering::{self, DiscordOffering, Store, identity_of};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,6 +179,11 @@ impl DiscordOffering for SeatedTug {
     fn store() -> &'static Store<Self> {
         seat_of_store!(SeatedTug)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -191,6 +198,11 @@ impl DiscordOffering for AutomataflOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(AutomataflOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -203,6 +215,11 @@ impl DiscordOffering for NamesOffering {
     const TAGLINE: &'static str = "an identity / naming service · register · transfer · resolve";
     fn store() -> &'static Store<Self> {
         seat_of_store!(NamesOffering)
+    }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -217,6 +234,11 @@ impl DiscordOffering for ComputeOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(ComputeOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -229,6 +251,11 @@ impl DiscordOffering for TradeOffering {
     const TAGLINE: &'static str = "a player market · list · settle an atomic asset swap";
     fn store() -> &'static Store<Self> {
         seat_of_store!(TradeOffering)
+    }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -243,6 +270,11 @@ impl DiscordOffering for InventoryOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(InventoryOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -256,6 +288,11 @@ impl DiscordOffering for CheevoShowcase {
     fn store() -> &'static Store<Self> {
         seat_of_store!(CheevoShowcase)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -268,6 +305,11 @@ impl DiscordOffering for GuildPage {
     const TAGLINE: &'static str = "the roster + the aggregate verified-clears leaderboard";
     fn store() -> &'static Store<Self> {
         seat_of_store!(GuildPage)
+    }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -283,6 +325,11 @@ impl DiscordOffering for CraftOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(CraftOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -295,6 +342,11 @@ impl DiscordOffering for CompanionOffering {
     const TAGLINE: &'static str = "hatch a fair-drawn companion · raise it through XP-gated turns";
     fn store() -> &'static Store<Self> {
         seat_of_store!(CompanionOffering)
+    }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
@@ -309,6 +361,11 @@ impl DiscordOffering for TavernOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(TavernOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -322,17 +379,51 @@ impl DiscordOffering for PartyOffering {
     fn store() -> &'static Store<Self> {
         seat_of_store!(PartyOffering)
     }
+    // The REAL invocation that opens this offering (backlog #29): the stale-session hint
+    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE CROWN SEAM (`commands::crown`) — the played tug match as a fold job.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The channel's finished, WON tug match as the whole-match fold's job: the WINNER's dealt
+/// hidden hand (`(card_id, nonce)` pairs, exactly as committed at open), their ordered plays,
+/// and the terminal win facts — read through `TugSession`'s owner-facing match-record seam.
+/// Lives HERE because only this module can reach the seated session's inner round. `None`
+/// until the round has scored a winner.
+///
+/// The record never leaves the fold path: the resulting proof's public inputs are
+/// `[blinded_leaf, hand_root]` per play — the card ids are not among them.
+pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMatch> {
+    offering::with_live::<SeatedTug, _>(channel, |live| {
+        let s = &live.session.inner;
+        let (winner, charm) = s.win_facts()?;
+        let seat = if winner == 1 { Player::A } else { Player::B };
+        Some(dreggnet_prove_service::PlayedMatch::Tug(
+            dreggnet_prove_service::TugMatch {
+                hand: s.dealt_hand(seat),
+                plays: s.plays_of(seat),
+                win: Some(dreggnet_prove_service::TugWin { charm, winner }),
+            },
+        ))
+    })
+    .flatten()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The `/play` command — open any portfolio offering by key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The twelve `/play` offering keys (the games + non-game + RPG surfaces this module mounts).
-pub const PLAY_KEYS: [&str; 12] = [
+/// The fifteen `/play` offering keys (the games + non-game + RPG surfaces this module mounts,
+/// plus gear/talents (`commands::gear`) and the overworld (`commands::overworld`)).
+pub const PLAY_KEYS: [&str; 15] = [
     "automatafl",
     "tug",
     "names",
@@ -345,6 +436,9 @@ pub const PLAY_KEYS: [&str; 12] = [
     "companion",
     "tavern",
     "party",
+    "gear",
+    "talents",
+    "overworld",
 ];
 
 /// Register `/play <offering>` — open any of the twelve full-portfolio offerings in this channel.
@@ -363,27 +457,61 @@ pub fn register() -> CreateCommand {
             "Open a DreggNet Cloud offering — a game or a feature surface — in this channel",
         )
         .add_option(option)
+        // `/play <offering> action:verify` — re-verify the channel's live session chain (the
+        // SAME `offering::handle_verify` `/council verify` runs; backlog Tier-2 #10 — the
+        // flagship games were the least verifiable surfaces). Default (absent) = open.
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "action",
+                "What to do (default: open) — verify re-checks the live session's chain",
+            )
+            .add_string_choice("verify", "verify")
+            .required(false),
+        )
 }
 
 /// Route `/play <offering>` — open the chosen offering + post its surface (projected for the opener).
 pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let key = command
-        .data
-        .options
-        .first()
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let string_opt = |name: &str| -> Option<String> {
+        command
+            .data
+            .options
+            .iter()
+            .find(|o| o.name == name)
+            .and_then(|o| match &o.value {
+                CommandDataOptionValue::String(s) => Some(s.clone()),
+                _ => None,
+            })
+    };
+    let key = string_opt("offering").unwrap_or_default();
+
+    // `/play <offering> action:verify` — re-verify the channel's live session chain through
+    // the SAME generic verifier every bespoke offering command exposes (backlog Tier-2 #10).
+    // Runs BEFORE the deferred ACK: `offering::handle_verify` creates its own response.
+    if string_opt("action").as_deref() == Some("verify") {
+        handle_play_verify(ctx, command, &key).await;
+        return;
+    }
+
     let channel = command.channel_id.get();
     let viewer = identity_of(state, command.user.id.get());
     let cfg = SessionConfig::with_seed(channel);
 
-    // The world-backed surfaces (trade/inventory/craft) each build their own per-open demo
-    // `SharedWorld` INSIDE their factory — the world is `Rc`-shared and not `Send`, so it is born
-    // on the offering store's own thread and never crosses; see the module HONEST SCOPE note
-    // (each opens over its own world on this per-type surface).
+    // ACK inside Discord's 3s window BEFORE the open runs — a world-backed open deploys a real
+    // world-cell on the offering store's thread; the surface (or an honest refusal) lands as an
+    // EDIT of this deferred response.
+    ack::defer_slash(ctx, command, false).await;
+
+    // The eight RPG feature surfaces open in the invoker's PER-IDENTITY PERSISTENT world
+    // (`commands::rpg_world`): ONE shared craft/inventory/trade ledger per player (the saga
+    // composition), sqlite-persisted by replay, real earned cheevos — never a throwaway
+    // per-channel demo world. `handle_play` edits the response this handler already deferred.
+    if crate::commands::rpg_world::is_rpg_key(&key) {
+        crate::commands::rpg_world::handle_play(ctx, command, state, &key).await;
+        return;
+    }
+
     let opened: Result<(), OfferingError> = match key.as_str() {
         "tug" => open_and_post::<SeatedTug>(ctx, command, SeatedTug::new, &viewer, cfg).await,
         "automatafl" => {
@@ -396,65 +524,81 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "compute" => {
             open_and_post::<ComputeOffering>(ctx, command, ComputeOffering::new, &viewer, cfg).await
         }
-        "trade" => {
-            open_and_post::<TradeOffering>(
+        "gear" => {
+            open_and_post::<dreggnet_gear::LoadoutOffering>(
                 ctx,
                 command,
-                || TradeOffering::in_world(SharedWorld::demo("Adventurer")),
+                dreggnet_gear::LoadoutOffering::new,
                 &viewer,
                 cfg,
             )
             .await
         }
-        "inventory" => {
-            open_and_post::<InventoryOffering>(
+        "talents" => {
+            open_and_post::<dreggnet_gear::TalentTreeOffering>(
                 ctx,
                 command,
-                || InventoryOffering::in_world(SharedWorld::demo("Adventurer")),
+                dreggnet_gear::TalentTreeOffering::new,
                 &viewer,
                 cfg,
             )
             .await
         }
-        "cheevos" => {
-            open_and_post::<CheevoShowcase>(ctx, command, CheevoShowcase::demo, &viewer, cfg).await
-        }
-        "guild" => {
-            open_and_post::<GuildPage>(
+        "overworld" => {
+            open_and_post::<crate::commands::overworld::OverworldPlay>(
                 ctx,
                 command,
-                || GuildPage::demo("The Iron Wardens"),
+                crate::commands::overworld::OverworldPlay::new,
                 &viewer,
                 cfg,
             )
             .await
         }
-        "craft" => {
-            open_and_post::<CraftOffering>(
-                ctx,
-                command,
-                || CraftOffering::in_world(SharedWorld::demo("Adventurer")),
-                &viewer,
-                cfg,
-            )
-            .await
+        other => {
+            let embed = CreateEmbed::new()
+                .title("Unknown offering")
+                .description(format!(
+                    "`{other}` is not in the portfolio — pick one of the `/play` choices."
+                ))
+                .color(0xE63946);
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+            return;
         }
-        "companion" => {
-            open_and_post::<CompanionOffering>(ctx, command, CompanionOffering::demo, &viewer, cfg)
-                .await
+    };
+
+    if let Err(e) = opened {
+        let embed = CreateEmbed::new()
+            .title("The offering was not opened")
+            .description(format!("The executor refused to open the session: {e}"))
+            .color(0xE63946);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+    }
+}
+
+/// `/play <offering> action:verify` — dispatch the generic chain re-verifier for the chosen
+/// offering key (the SAME [`offering::handle_verify`] behind `/council verify` et al.), so the
+/// twelve portfolio offerings — the flagship games included — answer verify-don't-trust with a
+/// command, not a shrug (backlog Tier-2 #10).
+async fn handle_play_verify(ctx: &Context, command: &CommandInteraction, key: &str) {
+    match key {
+        "tug" => offering::handle_verify::<SeatedTug>(ctx, command).await,
+        "automatafl" => offering::handle_verify::<AutomataflOffering>(ctx, command).await,
+        "names" => offering::handle_verify::<NamesOffering>(ctx, command).await,
+        "compute" => offering::handle_verify::<ComputeOffering>(ctx, command).await,
+        "trade" => offering::handle_verify::<TradeOffering>(ctx, command).await,
+        "inventory" => offering::handle_verify::<InventoryOffering>(ctx, command).await,
+        "cheevos" => offering::handle_verify::<CheevoShowcase>(ctx, command).await,
+        "guild" => offering::handle_verify::<GuildPage>(ctx, command).await,
+        "craft" => offering::handle_verify::<CraftOffering>(ctx, command).await,
+        "companion" => offering::handle_verify::<CompanionOffering>(ctx, command).await,
+        "tavern" => offering::handle_verify::<TavernOffering>(ctx, command).await,
+        "party" => offering::handle_verify::<PartyOffering>(ctx, command).await,
+        "gear" => offering::handle_verify::<dreggnet_gear::LoadoutOffering>(ctx, command).await,
+        "talents" => {
+            offering::handle_verify::<dreggnet_gear::TalentTreeOffering>(ctx, command).await
         }
-        "tavern" => {
-            open_and_post::<TavernOffering>(
-                ctx,
-                command,
-                || TavernOffering::demo("The Salted Tankard"),
-                &viewer,
-                cfg,
-            )
-            .await
-        }
-        "party" => {
-            open_and_post::<PartyOffering>(ctx, command, PartyOffering::new, &viewer, cfg).await
+        "overworld" => {
+            offering::handle_verify::<crate::commands::overworld::OverworldPlay>(ctx, command).await
         }
         other => {
             let _ = command
@@ -467,28 +611,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                     ),
                 )
                 .await;
-            return;
         }
-    };
-
-    if let Err(e) = opened {
-        let _ = command
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .embed(
-                            CreateEmbed::new()
-                                .title("The offering was not opened")
-                                .description(format!(
-                                    "The executor refused to open the session: {e}"
-                                ))
-                                .color(0xE63946),
-                        )
-                        .ephemeral(true),
-                ),
-            )
-            .await;
     }
 }
 
@@ -503,23 +626,50 @@ async fn open_and_post<O: DiscordOffering>(
     viewer: &DreggIdentity,
     cfg: SessionConfig,
 ) -> Result<(), OfferingError> {
+    // REFUSE-WITH-CONFIRM (backlog #32): a live session (a mid-game board, claimed seats, a
+    // built chain) must not be silently wiped by a re-open; the replacement open is stashed
+    // behind an explicit Confirm press (`commands::open_guard`).
+    if offering::is_open::<O>(command.channel_id.get()) {
+        let channel = command.channel_id.get();
+        let status =
+            offering::with_live::<O, _>(channel, |live| live.offering.status_line(&live.session));
+        let viewer = viewer.clone();
+        crate::commands::open_guard::refuse_with_confirm(
+            ctx,
+            command,
+            O::KEY,
+            status,
+            Box::new(move || {
+                offering::open_in(channel, make, cfg).map_err(|e| e.to_string())?;
+                offering::with_live::<O, _>(channel, move |live| {
+                    offering::surface_for::<O>(live, &viewer)
+                })
+                .ok_or_else(|| "the fresh session did not render".to_string())
+            }),
+        )
+        .await;
+        return Ok(());
+    }
     offering::open_in(command.channel_id.get(), make, cfg)?;
     let channel = command.channel_id.get();
     let viewer = viewer.clone();
     let rendered = offering::with_live::<O, _>(channel, move |live| {
         offering::surface_for::<O>(live, &viewer)
     });
-    if let Some((embed, rows)) = rendered {
-        let _ = command
-            .create_response(
-                &ctx.http,
-                CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .embed(embed)
-                        .components(rows),
-                ),
-            )
-            .await;
+    match rendered {
+        Some((embed, rows)) => ack::edit_slash(ctx, command, embed, rows).await,
+        // The session opened but vanished before the render read it (a concurrent close): say
+        // so instead of leaving the deferred response spinning forever (no silent drop).
+        None => {
+            let embed = CreateEmbed::new()
+                .title("The offering opened but did not render")
+                .description(
+                    "The session was not there to render (it may have been closed the same \
+                     instant). Run the command again.",
+                )
+                .color(0xE63946);
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+        }
     }
     Ok(())
 }
@@ -535,6 +685,10 @@ mod tests {
     use crate::commands::offering::{
         Driven, close_in, drive, fire_id, is_open, surface_for, with_live,
     };
+    // The tests still drive the generic per-type adapter path for all twelve keys (the adapter
+    // mechanics); the LIVE `/play` route for the eight RPG keys is the per-identity persistent
+    // world (`commands::rpg_world`), whose own tests cover composition + persistence.
+    use dreggnet_surfaces::SharedWorld;
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -626,7 +780,7 @@ mod tests {
         let _ = ch; // the macro's channel cursor past the last offering
     }
 
-    /// **The twelve `/play` keys are exactly `PLAY_KEYS`** — the `handle` dispatch + the `register`
+    /// **The fifteen `/play` keys are exactly `PLAY_KEYS`** — the `handle` dispatch + the `register`
     /// choices + the route arms agree (so every offering is reachable, none stranded).
     #[test]
     fn the_play_keys_cover_the_twelve_portfolio_offerings() {
@@ -643,10 +797,24 @@ mod tests {
             "companion",
             "tavern",
             "party",
+            "gear",
+            "talents",
+            "overworld",
         ] {
             assert!(PLAY_KEYS.contains(&want), "`{want}` is a /play key");
         }
-        assert_eq!(PLAY_KEYS.len(), 12);
+        assert_eq!(PLAY_KEYS.len(), 15);
+    }
+
+    /// `/play` registers the `action:verify` choice (backlog Tier-2 #10) — the twelve
+    /// portfolio offerings, the flagship games included, expose the chain re-verifier as a
+    /// pressable command, not test-only capability.
+    #[test]
+    fn play_registers_the_verify_action() {
+        let cmd = serde_json::to_value(register()).expect("the command serializes");
+        let text = cmd.to_string();
+        assert!(text.contains("\"action\""), "{text}");
+        assert!(text.contains("\"verify\""), "{text}");
     }
 
     /// **automatafl is REACHABLE + DRIVABLE on Discord** — the board renders a non-empty surface and

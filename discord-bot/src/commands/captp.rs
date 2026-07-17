@@ -18,7 +18,7 @@ use crate::embeds;
 /// Register `/cap-share <cell-id>`.
 pub fn register_share() -> CreateCommand {
     CreateCommand::new("cap-share")
-        .description("Export a sturdy ref and share it as an embed")
+        .description("Share a cell as a capability link (a sturdy ref) others can accept")
         .add_option(
             CreateCommandOption::new(CommandOptionType::String, "cell-id", "Cell ID to export")
                 .required(true),
@@ -28,7 +28,7 @@ pub fn register_share() -> CreateCommand {
 /// Register `/cap-accept <dregg-uri>`.
 pub fn register_accept() -> CreateCommand {
     CreateCommand::new("cap-accept")
-        .description("Enliven a shared dregg URI or redeem a handoff token")
+        .description("Accept a shared dregg:// capability link, or redeem a handoff token")
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
@@ -42,7 +42,7 @@ pub fn register_accept() -> CreateCommand {
 /// Register `/cap-delegate <cell> <@user>`.
 pub fn register_delegate() -> CreateCommand {
     CreateCommand::new("cap-delegate")
-        .description("Create a handoff cert for a Discord user")
+        .description("Mint a bot-local delegation token for a user (signed certificate: /handoff)")
         .add_option(
             CreateCommandOption::new(CommandOptionType::String, "cell-id", "Cell ID to delegate")
                 .required(true),
@@ -137,6 +137,25 @@ pub async fn handle_accept(ctx: &Context, command: &CommandInteraction, state: &
         .unwrap_or_default();
 
     defer_ephemeral(ctx, command).await;
+
+    // CROSS-DETECT the OTHER handoff artifact (backlog #30): `dregg-handoff:<base58>` (colon)
+    // is a canonical SIGNED HandoffCertificate minted by `/handoff` — its verifier is the
+    // canonical `validate_handoff` behind `/handoff-redeem`, not this bot-local table. Name
+    // the right next step instead of mis-parsing it as a dregg:// URI.
+    if uri_or_token.starts_with("dregg-handoff:") {
+        let embed = embeds::warning_embed(
+            "That Is A Signed Handoff CERTIFICATE",
+            "`dregg-handoff:<base58>` (colon) is a canonical signed CapTP `HandoffCertificate` \
+             from `/handoff`. Redeem it with `/handoff-redeem certificate:<paste> \
+             introducer-pk:<the 64-hex key shown when it was minted>`.\n\nThis command \
+             (`/cap-accept`) redeems the OTHER artifact: a bot-local `dregg-handoff-<hex>` \
+             (dash) delegation token from `/cap-delegate`, or enlivens a `dregg://` URI.",
+        );
+        let _ = command
+            .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+            .await;
+        return;
+    }
 
     if uri_or_token.starts_with("dregg-handoff-") {
         handle_handoff_redeem(ctx, command, state, &uri_or_token).await;
@@ -261,9 +280,13 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
             };
             let short_sig = truncate(&record.local_signature, 32);
 
-            let embed = embeds::success_embed("Capability Delegated")
+            let embed = embeds::success_embed("Capability Delegated (bot-local token)")
                 .description(format!(
-                    "Local CapTP handoff created for <@{target_id}>. They can redeem it with `/cap-accept`."
+                    "A **bot-local delegation token** (BLAKE3-MAC, held in this bot's table — \
+                     not a signed certificate) was minted for <@{target_id}>.\n**Next step:** \
+                     they run `/cap-accept uri:<the token below>`.\nFor a portable, \
+                     Ed25519-SIGNED CapTP `HandoffCertificate` use `/handoff` instead \
+                     (redeemed with `/handoff-redeem`)."
                 ))
                 .field("Cell", format!("`{}`", truncate(&record.cell_id, 16)), true)
                 .field("Status", record.status.as_str(), true)
@@ -407,7 +430,7 @@ pub async fn handle_revoke(ctx: &Context, command: &CommandInteraction, state: &
     match state.captp.revoke_cap(&state.db, &cell_id).await {
         Ok(()) => {
             let embed = embeds::success_embed("Capability Revoked").description(format!(
-                "Cell `{}` has been revoked. The local sturdy ref is no longer accepted by the bot.",
+                "Cell `{}` has been revoked. Its shared capability link (sturdy ref) is no longer accepted by the bot.",
                 cell_id
             ));
             let _ = command
@@ -472,7 +495,7 @@ pub async fn handle_peer(ctx: &Context, command: &CommandInteraction, state: &Bo
         .field("Held (live refs)", held.to_string(), true)
         .field("Exported", exports.to_string(), true)
         .field("Local Handoffs", handoffs.to_string(), true)
-        .field("Live Swiss Entries", swiss.to_string(), true);
+        .field("Redeemable handoffs (swiss table)", swiss.to_string(), true);
     let _ = command
         .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
         .await;
@@ -577,9 +600,22 @@ async fn ensure_user_can_manage_cell(
         {
             Ok(())
         }
+        Ok(Some(identity))
+            if identity.cell_id == cell_id && identity.mode == IdentityMode::ExternalPending =>
+        {
+            Err(embeds::warning_embed(
+                "External Link Pending — Prove It",
+                "This link is waiting on its ownership proof. Sign the challenge shown by \
+                 `/link-cipherclerk` with your cell's Ed25519 key and submit it with \
+                 `/link-prove` — or `/unlink-cipherclerk` and `/cipherclerk create` a hosted \
+                 cell the bot CAN manage capabilities for.",
+            ))
+        }
         Ok(Some(identity)) if identity.cell_id == cell_id => Err(embeds::warning_embed(
-            "External Identity Pending",
-            "The bot cannot export, delegate, or revoke capabilities for an external identity until holder proof is implemented and verified.",
+            "External Identity — The Bot Cannot Sign For It",
+            "Ownership is proven, but this is an EXTERNAL cell: you hold its key, the bot does \
+             not, so it cannot export, delegate, or revoke on your behalf. Drive it from your \
+             own peer, or `/cipherclerk create` a hosted cell for bot-managed capabilities.",
         )),
         Ok(Some(_)) => Err(embeds::error_embed(
             "Capability Not Held",
