@@ -453,7 +453,11 @@ mod tests {
         let g = st.graph();
         let bob_atom = g
             .atoms()
-            .find(|a| a.content.contains("bob's take"))
+            .find(|a| {
+                a.content
+                    .as_text()
+                    .is_some_and(|s| s.contains("bob's take"))
+            })
             .expect("bob's atom is retained in the graph (provenance, not deletion)");
         assert!(
             !bob_atom.is_alive(),

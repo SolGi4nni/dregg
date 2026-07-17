@@ -432,7 +432,7 @@ mod tests {
         let root = desktop_commit(&scene, &ws, Author(1));
         assert_ne!(
             root,
-            dregg_cell::empty_heap_root(),
+            dregg_cell::empty_heap_root().to_bytes32(),
             "a populated live desktop commits non-empty"
         );
 
