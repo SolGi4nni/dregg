@@ -43,7 +43,8 @@ Last hand-verified against code: 2026-07-17.
 | Leg | Status | Reality |
 |---|---|---|
 | Identity | **MODELED** (custodial) | Real ed25519 keys, but derived from `BOT_SECRET` — the bot can sign as any user; compromise of the secret = every user's identity. By design (custodial handles); the non-custodial upgrade is the same signed seam. |
-| Payments | **MODELED** (MockWatcher) | Both `PayState` constructors build `MockWatcher` even under a `Mainnet` config — real deposit addresses are watched by nobody. The go-live flip is one line (`pay.rs:481`); PAYMENTS-GO-LIVE runbook written, unfired. |
+| Payments | **REAL-selection** (`e91222144`) | `select_watcher` now returns a real `SolanaWatcher`+`RpcAccountFetcher` on a real-network config and REFUSES the mock on mainnet (`WatcherSelectError::MockOnMainnet`); an empty RPC is a loud `RpcMissing`. Watch-only, no seed. Mainnet arming + seed-custody split stay ember-gated. |
+| **No live-path mocks** | **REAL / verified 2026-07-17** | Adversarial audit across discord-bot/telegram/wechat traced every mock/stub/fixture: all are `#[cfg(test)]`-confined, honestly-gated (`HERMES_LIVE_LLM=1`, the free-tier scripted narrator self-reports "scripted (free)"), or not-deployed-gaps (telegram/wechat are lib-only). The live LLM path produces only real HTTP/Bedrock/ollama/on-box `LocalBrain` completions. Verdict: **the live bot paths reach no mock.** |
 | Rule enforcement / boards | **REAL** | Real executor turns, replay-verified boards, BLS-verified beacon (same pinned fallback as above). |
 | Hosting | **fragile** | Runs on the tailnet-exit box (DO-NOT-STOP) from a ~2-week-old unreproducible image; re-home to persvati is a deferred ops lane. |
 
