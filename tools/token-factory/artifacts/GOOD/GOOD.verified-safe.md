@@ -1,6 +1,6 @@
 # VERIFIED-SAFE token artifact — Good Capped Token (`GOOD`)
 
-Pipeline: `tools/token-factory/token-factory` · Generated: 2026-07-14T23:53:21Z
+Pipeline: `tools/token-factory/token-factory` · Generated: 2026-07-17T06:19:10Z
 Spec: `/Users/ember/dev/breadstuffs/tools/token-factory/specs/good-capped-token.json`
 Emitted contract: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/GOOD/GOOD.sol`  ·  template: **fv-safe**
 Audit report: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/GOOD/GOOD.audit.md`
@@ -41,6 +41,36 @@ disclosed one-shot `mint` (a `function mint` exists) — and it is allowed
 *only* because the cap is Halmos-proven and the one-shot latch is detected,
 so no second mint and no over-cap mint can occur. No owner role, seize,
 pause, blacklist, selfdestruct, proxy, or fee door exists. Proven-safe.
+
+## The deploy gate (capability arm)
+
+The fresh audit report's sha256 was **registered** in the deployer-gate
+audit registry and a real deploy capability (a `dregg-macaroon`, `Audit`
+arm, scoped to this spec's launch params, 24h expiry) was **issued and
+authorized** (deploy-time re-check of scope + expiry + registry membership):
+
+- report hash: `6d62ff7d54383d74238439781591d43d824e1eab037df7c9d66e41e2419b49a5`
+- capability (macaroon, truncated): `em2_lJPcACDMkVc_LhN8fszyQcz7zNvMrszFzM9_zKPMs1NZVMyyZMyjzO_M4szX…`
+- authorize: **AUTHORIZED**
+
+_The registry/state is the PoC operator file (`deploy-gate.state`,
+gitignored — it holds the issuing root key). The on-chain twin of this
+gate is the landed `DreggLaunchpad.registerLaunch` hook
+(`DeployerNotGated`)._
+
+## Deploy (EMBER-GATED — proposed, NOT executed)
+
+This factory does **not** deploy. The deploy-ready invocation, to be run
+deliberately (ember-gated) once a target chain + launchpad minter address
+exist, presenting the capability above to the launchpad gate:
+
+```sh
+forge create tools/token-factory/artifacts/GOOD/GOOD.sol:GoodCappedTokenLaunch \
+  --constructor-args $LAUNCHPAD_MINTER_ADDR \
+  --rpc-url $RPC_URL --private-key $DEPLOYER_KEY
+# then: DreggLaunchpad.registerLaunch(...) — the landed on-chain gate
+# reverts DeployerNotGated unless the deploy capability clears.
+```
 
 ## The full audit report
 

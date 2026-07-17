@@ -1,8 +1,11 @@
 Compiling 21 files with Solc 0.8.30
-Solc 0.8.30 finished in 2.40s
+Solc 0.8.30 finished in 15.86s
 Compiler run successful!
 
-Running 2 tests for test/GenFV.t.sol:GenFV
-[PASS] check_cap_singleCall(address,uint8,address,address,address,uint256) (paths: 13, time: 0.08s, bounds: [])
-[PASS] check_cap_twoMints(address,address,address,uint256,address,address,uint256) (paths: 13, time: 0.08s, bounds: [])
-Symbolic test result: 2 passed; 0 failed; time: 0.17s
+Running 5 tests for test/GenFV.t.sol:GenFV
+[PASS] check_cap_singleCall(address,uint8,address,address,address,uint256) (paths: 14, time: 0.97s, bounds: [])
+[PASS] check_cap_twoMints(address,address,address,uint256,address,address,uint256) (paths: 14, time: 0.62s, bounds: [])
+[PASS] check_noReentrancyDrain(address,address,uint8,address,address,uint256) (paths: 12, time: 0.30s, bounds: [])
+[PASS] check_noUnauthorizedDrain(address,address,uint256,uint8,address,address,address,uint256) (paths: 27, time: 1.40s, bounds: [])
+[PASS] check_privilegedOpsAuthorized(address,address,address,uint256) (paths: 4, time: 0.07s, bounds: [])
+Symbolic test result: 5 passed; 0 failed; time: 3.39s

@@ -9,23 +9,32 @@
 # template and runs the DREGG-kernel audit as the GATE — every token that leaves the
 # factory is proven-safe, and a rug-y spec is caught before it ships.
 #
-# Pipeline (spec -> FV'd-emit -> auto-audit -> verified-safe-or-caught):
+# Pipeline (spec -> FV'd-emit -> auto-audit -> gate -> capability -> deploy-ready):
 #   1. EMIT   emit_token.py turns the spec into a concrete launch-token contract.
-#             A safe spec (mint_authority "launchpad-oneshot") emits the FV'd template
-#             (chain/contracts/launchpad/DreggLaunchToken.sol parameterized: hard cap
-#             baked as a literal, one-shot mint, no other door). A rug-y spec emits the
-#             variant it implies.
+#             A safe spec (mint_authority "launchpad-oneshot") is DERIVED from the
+#             FV'd template (chain/contracts/launchpad/DreggLaunchToken.sol is read
+#             at emit time; count-checked substitutions bake the hard cap as a
+#             literal; every function body carried byte-for-byte and re-verified —
+#             see emit_token.py). A rug-y spec emits the variant it implies.
 #   2. AUDIT  tools/dregg-audit/dregg-audit runs on the emitted contract:
-#             Stage A rug-forensics (the 9 doors), Stage B Halmos hard-cap proof.
-#             (Stage C codex is off by default — the GATE is the machine-decided A+B;
-#             pass --codex for the deep LLM triage pass.)
-#   3. GATE   VERIFIED-SAFE iff Halmos PROVES the cap AND no dangerous rug door is
-#             present (the disclosed one-shot `mint` is the only allowed door, and it
-#             is allowed only because the cap is proven and the one-shot latch is
-#             detected). Otherwise REJECTED — not shipped.
-#   4. ARTIFACT  A "verified-safe token" bundle (emitted contract + audit report +
-#             the proof: rug-doors-absent + cap-proven) ready for the anti-rug
-#             launchpad — or a rejection artifact citing the counterexample/flag.
+#             Stage A rug-forensics (the 9 doors), Stage B Halmos symbolic proofs
+#             (INV-CAP + INV-NODRAIN + INV-REENTRANCY + INV-ACCESS-CONTROL when the
+#             shape exposes them). (Stage C codex is off by default — the GATE is
+#             the machine-decided A+B; pass --codex for the deep LLM triage pass.)
+#   3. GATE   VERIFIED-SAFE iff Halmos PROVES the invariants AND no dangerous rug
+#             door is present (the disclosed one-shot `mint` is the only allowed
+#             door, and it is allowed only because the cap is proven and the
+#             one-shot latch is detected). Otherwise REJECTED — not shipped.
+#   4. GATE-WIRE  On VERIFIED-SAFE the fresh audit report's sha256 is REGISTERED in
+#             the deployer-gate's audit registry and a real deploy capability (a
+#             dregg-macaroon, Audit arm) is ISSUED + AUTHORIZED via the deploy-gate
+#             CLI (tools/deployer-gate). On REJECTED the hash is never registered
+#             and issuance is demonstrated REFUSED (NotGated). Skipped with an
+#             honest note if the deploy-gate binary is not built.
+#   5. ARTIFACT  A "verified-safe token" bundle (emitted contract + audit report +
+#             the proof + the capability + the EMBER-GATED deploy invocation,
+#             proposed NOT executed) — or a rejection artifact citing the
+#             counterexample/flag. The factory NEVER deploys.
 #
 # HONEST SCOPE: the FV'd token and the audit pipeline are REAL (not mock). "Proven-
 # safe" is genuine — the emitted token's cap is Halmos-proven over symbolic inputs
@@ -57,10 +66,91 @@ def log(msg):
     sys.stderr.write(f"\033[1;35m[token-factory]\033[0m {msg}\n")
 
 
+def find_gate_bin(explicit):
+    """Locate the deploy-gate CLI (tools/deployer-gate). Honest None if unbuilt."""
+    if explicit:
+        return explicit if os.path.isfile(explicit) else None
+    for profile in ("release", "debug"):
+        p = os.path.join(REPO, "target", profile, "deploy-gate")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def run_gate(gate_bin, *argv):
+    """Run a deploy-gate subcommand; return (rc, stdout, stderr)."""
+    r = subprocess.run([gate_bin, *argv], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def gate_wire(gate_bin, out_dir, safe, spec_path, report_path, deployer):
+    """Stage 4 GATE-WIRE — the audit-registry -> capability arm, both polarities.
+
+    VERIFIED-SAFE: register the fresh report's sha256 in the operator's audit
+    registry, ISSUE a real dregg-macaroon deploy capability on the Audit arm, and
+    AUTHORIZE it (deploy-time re-check). REJECTED: the hash is never registered —
+    demonstrate that issuance for it is REFUSED (NotGated).
+
+    Returns a dict for the artifact/JSON. The state file is the PoC operator's
+    file-backed registry (gitignored — it holds the issuing root key); the
+    committed evidence is the artifact's record of this run.
+    """
+    state = os.path.join(out_dir, "deploy-gate.state")
+    if not os.path.isfile(state):
+        rc, _, err = run_gate(gate_bin, "init", state)
+        if rc != 0:
+            return {"wired": False, "note": f"deploy-gate init failed: {err}"}
+    import hashlib
+    report_hash = hashlib.sha256(open(report_path, "rb").read()).hexdigest()
+    result = {"wired": True, "report_hash": report_hash, "registered": False,
+              "capability": None, "authorized": False, "refusal": None}
+    if safe:
+        rc, out, err = run_gate(gate_bin, "register-audit", state, report_path)
+        if rc != 0:
+            return {"wired": False, "note": f"register-audit failed: {err}"}
+        result["registered"] = True
+        rc, token, err = run_gate(
+            gate_bin, "issue", state, "--deployer", deployer,
+            "--launch-params", spec_path, "--report-hash", report_hash,
+            "--ttl", "86400")
+        if rc != 0:
+            return {"wired": False, "note": f"issue failed unexpectedly: {err}"}
+        result["capability"] = token
+        rc, out, err = run_gate(
+            gate_bin, "authorize", state, "--deployer", deployer,
+            "--launch-params", spec_path, "--capability", token)
+        result["authorized"] = (rc == 0 and out == "AUTHORIZED")
+        if not result["authorized"]:
+            result["refusal"] = err or out
+    else:
+        # Negative polarity: the unregistered hash must refuse issuance.
+        rc, out, err = run_gate(
+            gate_bin, "issue", state, "--deployer", deployer,
+            "--launch-params", spec_path, "--report-hash", report_hash,
+            "--ttl", "86400")
+        if rc == 0:
+            # This would be a gate hole — surface it loudly in the artifact.
+            result["refusal"] = "GATE HOLE: issuance SUCCEEDED for an unregistered audit hash"
+        else:
+            result["refusal"] = err
+    return result
+
+
+def contract_name(sol_path):
+    m = re.search(r"^contract\s+([A-Za-z_]\w*)", open(sol_path).read(), re.M)
+    return m.group(1) if m else "Token"
+
+
 def parse_audit_report(text):
     """Extract the machine-decided verdicts from a dregg-audit report."""
     fv_proven = "**Result: PROVEN.**" in text
-    fv_counterexample = "HALMOS FOUND A COUNTEREXAMPLE" in text
+    # dregg-audit writes "HALMOS FOUND <n> COUNTEREXAMPLE(S)" since the
+    # multi-invariant upgrade (and wrote "... A COUNTEREXAMPLE" before it);
+    # match both so the artifact cites the machine counterexample, not just
+    # "not proven".
+    fv_counterexample = bool(
+        re.search(r"HALMOS FOUND (?:A|\d+) COUNTEREXAMPLE", text)
+    )
     latch_detected = "_Mint mitigation detected_" in text
     present = []
     for m in re.finditer(r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*\*\*PRESENT\*\*", text, re.M):
@@ -81,6 +171,10 @@ def main():
     ap.add_argument("--codex", action="store_true",
                     help="also run the codex adversarial stage (slow, triage-required)")
     ap.add_argument("--audit", default=DEFAULT_AUDIT, help="path to the dregg-audit script")
+    ap.add_argument("--gate-bin", default=None,
+                    help="path to the deploy-gate CLI (default: target/{release,debug}/deploy-gate)")
+    ap.add_argument("--deployer", default="token-factory-demo-deployer",
+                    help="deployer handle the capability is issued to (opaque, hashed)")
     args = ap.parse_args()
 
     if not os.path.isfile(args.spec):
@@ -133,7 +227,26 @@ def main():
     if v["present_doors"] and not v["latch_detected"] and "mintable supply (mint fn)" in v["present_doors"]:
         reasons.append("a mint fn without a one-shot latch")
 
-    # ---- 4. ARTIFACT -------------------------------------------------------
+    # ---- 4. GATE-WIRE (audit registry -> capability, both polarities) -------
+    gate_bin = find_gate_bin(args.gate_bin)
+    if gate_bin:
+        log("Gate-wire: deployer-gate audit arm (register -> issue -> authorize)")
+        gate = gate_wire(gate_bin, args.out, safe, os.path.abspath(args.spec),
+                         report_path, args.deployer)
+        if gate.get("wired"):
+            if safe:
+                log(f"Gate-wire: report {gate['report_hash'][:16]}… registered; "
+                    f"capability {'AUTHORIZED' if gate['authorized'] else 'REFUSED: ' + str(gate['refusal'])}")
+            else:
+                log(f"Gate-wire: unregistered hash correctly refused — {gate['refusal']}")
+        else:
+            log(f"Gate-wire: {gate.get('note')}")
+    else:
+        gate = {"wired": False,
+                "note": "deploy-gate not built — run: cargo build -p dregg-deployer-gate --bins"}
+        log(f"Gate-wire skipped: {gate['note']}")
+
+    # ---- 5. ARTIFACT -------------------------------------------------------
     verdict = "VERIFIED-SAFE" if safe else "REJECTED"
     art_name = f"{symbol}.verified-safe.md" if safe else f"{symbol}.rejected.md"
     artifact = os.path.join(workdir, art_name)
@@ -191,6 +304,52 @@ def main():
         lines.append("token. The audit — not a human's read of the spec — is the gate, and it")
         lines.append("caught this by proof/flag.")
     lines.append("")
+    lines.append("## The deploy gate (capability arm)")
+    lines.append("")
+    if not gate.get("wired"):
+        lines.append(f"_Gate wire skipped: {gate.get('note')}_")
+    elif safe:
+        lines.append("The fresh audit report's sha256 was **registered** in the deployer-gate")
+        lines.append("audit registry and a real deploy capability (a `dregg-macaroon`, `Audit`")
+        lines.append("arm, scoped to this spec's launch params, 24h expiry) was **issued and")
+        lines.append("authorized** (deploy-time re-check of scope + expiry + registry membership):")
+        lines.append("")
+        lines.append(f"- report hash: `{gate['report_hash']}`")
+        lines.append(f"- capability (macaroon, truncated): `{(gate.get('capability') or '')[:64]}…`")
+        lines.append(f"- authorize: **{'AUTHORIZED' if gate.get('authorized') else 'REFUSED — ' + str(gate.get('refusal'))}**")
+        lines.append("")
+        lines.append("_The registry/state is the PoC operator file (`deploy-gate.state`,")
+        lines.append("gitignored — it holds the issuing root key). The on-chain twin of this")
+        lines.append("gate is the landed `DreggLaunchpad.registerLaunch` hook")
+        lines.append("(`DeployerNotGated`)._")
+    else:
+        lines.append("This token's audit-report hash was **never registered**, and the")
+        lines.append("deployer-gate demonstrably **refuses to issue** a capability for it:")
+        lines.append("")
+        lines.append(f"- report hash (unregistered): `{gate['report_hash']}`")
+        lines.append(f"- issue attempt: **REFUSED** — `{gate.get('refusal')}`")
+        lines.append("")
+        lines.append("No capability exists for a rejected token; the launchpad's")
+        lines.append("`DeployerNotGated` arm has nothing to accept.")
+    lines.append("")
+    lines.append("## Deploy (EMBER-GATED — proposed, NOT executed)")
+    lines.append("")
+    if safe:
+        cname = contract_name(emitted)
+        lines.append("This factory does **not** deploy. The deploy-ready invocation, to be run")
+        lines.append("deliberately (ember-gated) once a target chain + launchpad minter address")
+        lines.append("exist, presenting the capability above to the launchpad gate:")
+        lines.append("")
+        lines.append("```sh")
+        lines.append(f"forge create {os.path.relpath(emitted, REPO)}:{cname} \\")
+        lines.append("  --constructor-args $LAUNCHPAD_MINTER_ADDR \\")
+        lines.append("  --rpc-url $RPC_URL --private-key $DEPLOYER_KEY")
+        lines.append("# then: DreggLaunchpad.registerLaunch(...) — the landed on-chain gate")
+        lines.append("# reverts DeployerNotGated unless the deploy capability clears.")
+        lines.append("```")
+    else:
+        lines.append("Nothing to deploy: the token was rejected and holds no capability.")
+    lines.append("")
     lines.append("## The full audit report")
     lines.append("")
     lines.append(f"See `{os.path.relpath(report_path, REPO)}` (rug-forensics table + Halmos log).")
@@ -208,6 +367,9 @@ def main():
         "verdict": verdict, "symbol": symbol, "template": kind,
         "fv_proven": v["fv_proven"], "fv_counterexample": v["fv_counterexample"],
         "present_doors": v["present_doors"], "artifact": artifact,
+        "gate_wired": bool(gate.get("wired")),
+        "report_hash": gate.get("report_hash"),
+        "capability_authorized": bool(gate.get("authorized")),
     }))
     sys.exit(0 if safe else 1)
 

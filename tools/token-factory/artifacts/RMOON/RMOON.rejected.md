@@ -1,6 +1,6 @@
 # REJECTED token artifact — Refillable Moon Token (`RMOON`)
 
-Pipeline: `tools/token-factory/token-factory` · Generated: 2026-07-14T23:53:32Z
+Pipeline: `tools/token-factory/token-factory` · Generated: 2026-07-17T06:19:44Z
 Spec: `/Users/ember/dev/breadstuffs/tools/token-factory/specs/rugpull-refillable.json`
 Emitted contract: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/RMOON/RMOON.sol`  ·  template: **unsafe-variant**
 Audit report: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/RMOON/RMOON.audit.md`
@@ -40,6 +40,21 @@ Audit report: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/RMOON/
 The differentiator, demonstrated: a rug-y spec does not become a shipped
 token. The audit — not a human's read of the spec — is the gate, and it
 caught this by proof/flag.
+
+## The deploy gate (capability arm)
+
+This token's audit-report hash was **never registered**, and the
+deployer-gate demonstrably **refuses to issue** a capability for it:
+
+- report hash (unregistered): `931f5072c54ca15499429d00f6b5801356f61cf76098a9148d763bab8d6d20f2`
+- issue attempt: **REFUSED** — `deploy-gate: issuance refused: deployer is not gated for the requested arm (issuance refused)`
+
+No capability exists for a rejected token; the launchpad's
+`DeployerNotGated` arm has nothing to accept.
+
+## Deploy (EMBER-GATED — proposed, NOT executed)
+
+Nothing to deploy: the token was rejected and holds no capability.
 
 ## The full audit report
 

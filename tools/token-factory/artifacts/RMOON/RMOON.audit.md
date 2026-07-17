@@ -1,6 +1,6 @@
 # DREGG-kernel contract audit — `RMOON.sol`
 
-Pipeline: `tools/dregg-audit/dregg-audit` · Generated: 2026-07-14T23:53:32Z
+Pipeline: `tools/dregg-audit/dregg-audit` · Generated: 2026-07-17T06:19:44Z
 Target: `/Users/ember/dev/breadstuffs/tools/token-factory/artifacts/RMOON/RMOON.sol`
 
 > **Assisted-audit tool, not a certification.** Stages A (rug-forensics) and
@@ -36,26 +36,45 @@ prove or refute the hard cap symbolically.
 ## B. Formal verification — Halmos symbolic proof
 
 Auto-generated symbolic harness (`fv-workspace/test/GenFV.t.sol`) proving the
-**hard-cap** invariant (INV-CAP: `totalSupply <= cap` after any call, and over a
-two-mint sequence) against the real compiled bytecode, all inputs symbolic. This
-is the EVM twin of the Lean supply theorem `execMintA_iff_spec`
-(`metatheory/Dregg2/Verify/KeystoneAuditSupply.lean:124`).
+standard anti-rug invariants against the real compiled bytecode, all inputs
+symbolic: **INV-CAP** (`totalSupply<=cap`, EVM twin of the Lean supply theorem
+`execMintA_iff_spec`, `metatheory/Dregg2/Verify/KeystoneAuditSupply.lean:124`),
+and — when the shape exposes them — **INV-NODRAIN** (owner-drain/seize),
+**INV-REENTRANCY** (ETH-conservation guard) and **INV-ACCESS-CONTROL** (mint
+confined to its `minter`/`owner` role). The deep both-polarity re-entry proof is
+the hand-written spec `chain/formal-verification/DreggReentrancyFV.t.sol`.
 
 ```
-Running 2 tests for test/GenFV.t.sol:GenFV
+Running 5 tests for test/GenFV.t.sol:GenFV
 Counterexample: 
-[FAIL] check_cap_singleCall(uint8,address,address,address,uint256) (paths: 12, time: 0.08s, bounds: [])
+[FAIL] check_cap_singleCall(uint8,address,address,address,uint256) (paths: 12, time: 0.29s, bounds: [])
 Counterexample: 
 Counterexample: 
 Counterexample: 
-[FAIL] check_cap_twoMints(address,address,uint256,address,address,uint256) (paths: 13, time: 0.10s, bounds: [])
-Symbolic test result: 0 passed; 2 failed; time: 0.19s
+[FAIL] check_cap_twoMints(address,address,uint256,address,address,uint256) (paths: 14, time: 0.23s, bounds: [])
+[PASS] check_noReentrancyDrain(address,uint8,address,address,uint256) (paths: 10, time: 0.11s, bounds: [])
+[PASS] check_noUnauthorizedDrain(address,uint256,uint8,address,address,address,uint256) (paths: 13, time: 0.32s, bounds: [])
+[PASS] check_privilegedOpsAuthorized(address,address,uint256) (paths: 3, time: 0.03s, bounds: [])
+Symbolic test result: 3 passed; 2 failed; time: 1.00s
 ```
 
-**Result: HALMOS FOUND A COUNTEREXAMPLE — the hard cap is NOT enforced.**
-Symbolic execution reached a state where `totalSupply > cap`. This is a
-machine-proved mintable-supply defect (CONFIRMED-REAL, no human triage needed
-— it is a proof, not a heuristic).
+| Invariant | Check | Verdict |
+|-----------|-------|---------|
+| INV-CAP — hard cap `totalSupply<=cap` (door #2, mintable supply) | `check_cap_singleCall` | **COUNTEREXAMPLE** |
+| INV-CAP — hard cap `totalSupply<=cap` (door #2, mintable supply) | `check_cap_twoMints` | **COUNTEREXAMPLE** |
+| INV-REENTRANCY — no external call drains held ETH (reentrancy, ETH-conservation form) | `check_noReentrancyDrain` | PROVEN |
+| INV-NODRAIN — no unauthorized balance drain (door #8, owner-drain/seize) | `check_noUnauthorizedDrain` | PROVEN |
+| INV-ACCESS-CONTROL — privileged op confined to its role (door #1, owner/admin) | `check_privilegedOpsAuthorized` | PROVEN |
+
+**Result: HALMOS FOUND 2 COUNTEREXAMPLE(S).** The invariant(s)
+below are machine-DISPROVEN (CONFIRMED-REAL, no human triage — it is a proof):
+- INV-CAP — hard cap `totalSupply<=cap` (door #2, mintable supply)
+- INV-CAP — hard cap `totalSupply<=cap` (door #2, mintable supply)
+
+Still PROVEN (hold over all inputs, bounded): check_noReentrancyDrain check_noUnauthorizedDrain check_privilegedOpsAuthorized .
+(A door can pass one invariant and fail another — e.g. a mint that respects
+the cap but is missing its access-check passes INV-CAP and fails
+INV-ACCESS-CONTROL.)
 
 ## C. Adversarial audit — codex hostile pass (TRIAGE-REQUIRED)
 
@@ -66,7 +85,7 @@ _Skipped (`--no-codex`)._
 | Source | Finding | Verdict | Severity | Proposed fix |
 |--------|---------|---------|----------|--------------|
 | A (auto) | Rug doors present: owner/admin role mintable supply (mint fn) | **REVIEW** | High | Remove/constrain each present door; see §A |
-| B (auto/proof) | Hard-cap invariant | COUNTEREXAMPLE (invariant violated) | Critical | If COUNTEREXAMPLE: add one-shot latch + `amount<=cap` guard (see `DreggLaunchToken.mint`) |
+| B (auto/proof) | Hard-cap invariant | COUNTEREXAMPLE (2 invariant(s) violated) | Critical | If COUNTEREXAMPLE: add one-shot latch + `amount<=cap` guard (see `DreggLaunchToken.mint`) |
 | C (codex) | see §C | **TRIAGE-REQUIRED** | per-finding | per-finding; human confirms vs source |
 
 **Verdict legend.** Stage A/B rows are machine-decided. Stage C rows require a
