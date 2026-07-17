@@ -131,6 +131,19 @@ ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
 
 - **RecycleFlywheel LEAN CORE ✅** (RecycleFlywheel.lean, 20 keystones, sorry-free): the ASSURANCE layer — flywheel properties PROVEN ∀-adversary (not tested): recycle_insertion_futile + recycle_reorder_invariant (sandwich UNCONSTRUCTABLE via uniform_price_no_arbitrage + order-invariance), split_enforced (deviation rejected), recycle_conserves (composed Priced/Liquidity towers), recycle_recheckable (verify-not-find). Welds NAMED as theorems (welds_named_not_proved): price-binding=Attested (withhold-not-misprice), .sol-denotation=Deployed (un-mechanized). Reused only STABLE clearing lemmas → NO codex reconcile owed. So 'dregg surpasses CIRC' = a THEOREM (proven core) + measured .sol deployment + named welds. Open: the model↔.sol denotation binding (like FhEggRustDenotation).
 
+
+## ⚑ LESSON — the $CIRC-flywheel line was mostly worthless (deleted)
+A competitor's tweet drove a marketing-demo tangent: I chased "beat $CIRC's flywheel" and built a
+sealed-bid BATCH AUCTION, then compared it to an AMM MARKET-BUY and called "0 MEV vs 1.78 ETH" a win.
+ember caught it: that's a MECHANISM SWAP, not a strict improvement — the auction never touches an AMM
+pool, needs its own seller liquidity, doesn't deepen an LP. The "front-run immunity" is real for a
+batch auction but tautological vs a swap (an auction has no swap to sandwich). RIGGED comparison.
+Deleted the whole line (contracts/mock/A-B/one-pager/analysis/Lean-core/gnark-circuit-debt). KEPT only
+the real fallout: the launchpad gas-opt (graduate 925k->333k, EIP-1167 clone, tested).
+RULES: (1) don't let a $60K token set the agenda — the real value is the verified deep work
+(FRI/Market/fhegg). (2) never compare a DIFFERENT mechanism as a better-SAME one — like-for-like or
+don't compare. (3) circuits are Lean-authored; a hand-written gnark/Go circuit is debt, not a foundation.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
