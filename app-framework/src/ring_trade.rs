@@ -134,10 +134,13 @@ pub struct CoordinationReceipt {
     pub verified_post: WideLedger,
 }
 
-/// Why a coordination round refused. Every variant is ATOMIC: on `NoMatch` and
-/// `NotConserving` ZERO app state changed (the refusal is before any
-/// [`RingParticipant::settle_leg`]); on `ParticipantFailed` every leg already
-/// applied was rolled back, restoring the pre-round state.
+/// Why a coordination round refused. `NoMatch` and `NotConserving` are ATOMIC:
+/// ZERO app state changed (the refusal is before any
+/// [`RingParticipant::settle_leg`]). `ParticipantFailed` is also atomic — every
+/// leg already applied was rolled back CLEANLY, restoring the pre-round state.
+/// `PartialSettlementUnrecoverable` is the case where atomicity itself BROKE: an
+/// app refused a leg AND at least one compensating rollback also failed, leaving
+/// the ledger in a partial state the coordinator could not restore.
 #[derive(Clone, Debug)]
 pub enum CoordinationError {
     /// The posted intents do not compose into any atomic ring (no cycle whose
@@ -148,7 +151,8 @@ pub enum CoordinationError {
     /// the verified gate runs BEFORE any app is touched.
     NotConserving(VerifiedSettleError),
     /// An app could not honor a leg the solver assigned it. Every leg already
-    /// applied in this round was rolled back; no partial settlement remains.
+    /// applied in this round was rolled back SUCCESSFULLY; no partial settlement
+    /// remains — the pre-round state is fully restored.
     ParticipantFailed {
         /// Index of the failing leg within the ring's settlements.
         leg_index: usize,
@@ -156,6 +160,25 @@ pub enum CoordinationError {
         settlement: Settlement,
         /// The app's rendered error.
         detail: String,
+    },
+    /// An app refused a leg AND the compensating rollback of one or more
+    /// already-applied legs ALSO failed. The all-or-none guarantee is broken:
+    /// the ledger is left in a partial, non-atomic state the coordinator could
+    /// not undo. Distinguished from [`CoordinationError::ParticipantFailed`]
+    /// (which is a CLEAN abort) so a caller can escalate — quarantine the ring,
+    /// alert an operator — instead of assuming the pre-state was restored.
+    PartialSettlementUnrecoverable {
+        /// Index of the leg the app originally refused (what triggered the
+        /// rollback attempt).
+        leg_index: usize,
+        /// The settlement the app refused.
+        settlement: Settlement,
+        /// The app's rendered error for the original refusal.
+        detail: String,
+        /// Each already-applied leg whose rollback ALSO failed: its index within
+        /// the ring's settlements paired with the app's rendered rollback error.
+        /// Non-empty by construction of this variant.
+        rollback_failures: Vec<(usize, String)>,
     },
 }
 
@@ -167,6 +190,16 @@ impl std::fmt::Display for CoordinationError {
             Self::ParticipantFailed {
                 leg_index, detail, ..
             } => write!(f, "app refused leg {leg_index}: {detail}"),
+            Self::PartialSettlementUnrecoverable {
+                leg_index,
+                detail,
+                rollback_failures,
+                ..
+            } => write!(
+                f,
+                "app refused leg {leg_index}: {detail}; UNRECOVERABLE — {} rollback(s) also failed: {rollback_failures:?}",
+                rollback_failures.len()
+            ),
         }
     }
 }
@@ -206,7 +239,10 @@ impl RingCoordinator {
     ///    runs BEFORE any app is touched).
     /// 4. Drive each touched app's [`RingParticipant::settle_leg`]. If any app
     ///    refuses, roll back every leg already applied this round (reverse order)
-    ///    and return [`CoordinationError::ParticipantFailed`] — all-or-none.
+    ///    and return [`CoordinationError::ParticipantFailed`] — all-or-none. If a
+    ///    rollback ITSELF fails the round cannot restore the pre-state, so it
+    ///    returns [`CoordinationError::PartialSettlementUnrecoverable`] naming
+    ///    every leg whose rollback errored.
     ///
     /// On success returns a [`CoordinationReceipt`] carrying the matched ring and
     /// the verified post-ledger.
@@ -259,13 +295,28 @@ impl RingCoordinator {
                     Ok(()) => applied.push((li, pi)),
                     Err(detail) => {
                         // Roll back everything applied this round, newest first.
+                        // A rollback that ITSELF errors means the ledger cannot
+                        // be restored — collect those so the caller learns the
+                        // round left a partial state rather than a clean abort.
+                        let mut rollback_failures: Vec<(usize, String)> = Vec::new();
                         for &(lj, pj) in applied.iter().rev() {
-                            let _ = participants[pj].1.rollback_leg(&ring.settlements[lj]);
+                            if let Err(rb) = participants[pj].1.rollback_leg(&ring.settlements[lj])
+                            {
+                                rollback_failures.push((lj, rb));
+                            }
                         }
-                        return Err(CoordinationError::ParticipantFailed {
+                        if rollback_failures.is_empty() {
+                            return Err(CoordinationError::ParticipantFailed {
+                                leg_index: li,
+                                settlement: settlement.clone(),
+                                detail,
+                            });
+                        }
+                        return Err(CoordinationError::PartialSettlementUnrecoverable {
                             leg_index: li,
                             settlement: settlement.clone(),
                             detail,
+                            rollback_failures,
                         });
                     }
                 }

@@ -148,6 +148,58 @@ impl RingTradeParticipant for Patron {
     }
 }
 
+// ---------------------------------------------------------------------------
+// App A' — a gallery whose ROLLBACK fails. Settles its leg fine, but cannot
+// undo it (e.g. the slot was already consumed downstream). Used to prove the
+// coordinator distinguishes a CLEAN abort from an UNRECOVERABLE partial.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+#[allow(dead_code)]
+enum RollbackFailGalleryError {
+    OutOfSlots,
+    RollbackImpossible,
+}
+
+struct RollbackFailGallery {
+    id: CommitmentId,
+    slots: u64,
+    credits: u64,
+}
+
+impl RingTradeParticipant for RollbackFailGallery {
+    type Error = RollbackFailGalleryError;
+
+    fn exchange_offers(&self) -> Vec<ExchangeSpec> {
+        vec![ExchangeSpec {
+            offer_asset: GALLERY_SLOT,
+            offer_amount: 1,
+            want_asset: CREDIT,
+            want_min_amount: SLOT_PRICE,
+            min_rate: None,
+            max_rate: None,
+        }]
+    }
+
+    fn settle_leg(&mut self, s: &Settlement) -> Result<(), RollbackFailGalleryError> {
+        if s.from == self.id && s.asset == GALLERY_SLOT {
+            self.slots = self
+                .slots
+                .checked_sub(s.amount)
+                .ok_or(RollbackFailGalleryError::OutOfSlots)?;
+        }
+        if s.to == self.id && s.asset == CREDIT {
+            self.credits += s.amount;
+        }
+        Ok(())
+    }
+
+    fn rollback_leg(&mut self, _s: &Settlement) -> Result<(), RollbackFailGalleryError> {
+        // The compensating action is impossible — the ledger stays mutated.
+        Err(RollbackFailGalleryError::RollbackImpossible)
+    }
+}
+
 // Distinct first bytes → distinct verified-ledger cells (the verified leg gate
 // requires from != to).
 fn gallery_id() -> CommitmentId {
@@ -287,6 +339,68 @@ fn participant_failure_rolls_back_all_legs_no_partial_settlement() {
     assert_eq!(gallery.credits, 0, "gallery received nothing");
     assert_eq!(patron.slots, 0, "patron's slot credit was rolled back");
     assert_eq!(patron.credits, 50, "patron's wallet is untouched");
+}
+
+// ---------------------------------------------------------------------------
+// 3b. A rollback that ITSELF fails is surfaced as UNRECOVERABLE — not laundered
+//     into the same clean `ParticipantFailed` a successful rollback produces.
+//     The gallery settles its slot leg (applied first), the patron then fails
+//     its credit leg, the coordinator tries to roll the gallery back — and that
+//     rollback errors. The ledger is left partial (the gallery's slot debit
+//     stands), so the round MUST report `PartialSettlementUnrecoverable`.
+//
+//     Falsifier for the discarded-`Result` defect: the old code did
+//     `let _ = rollback_leg(...)`, so this exact scenario returned a plain
+//     `ParticipantFailed` — indistinguishable from a clean abort — while the
+//     gallery's `slots` stayed decremented. This test reds against that.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn failed_rollback_reports_unrecoverable_not_clean_abort() {
+    let mut gallery = RollbackFailGallery {
+        id: gallery_id(),
+        slots: 1,
+        credits: 0,
+    };
+    // Posts a 100-credit offer but holds only 50 → its settle_leg will fail,
+    // triggering the rollback of the gallery's already-applied slot leg.
+    let mut patron = Patron {
+        id: patron_id(),
+        credits: 50,
+        slots: 0,
+        bid: SLOT_PRICE,
+    };
+
+    let coordinator = RingCoordinator::new(4, 1_000);
+    let outcome = {
+        let mut participants: Vec<CoordinatedParticipant<'_>> = vec![
+            (gallery.id, &mut gallery as &mut dyn RingParticipant),
+            (patron.id, &mut patron as &mut dyn RingParticipant),
+        ];
+        coordinator.coordinate(&mut participants)
+    };
+
+    match outcome {
+        Err(CoordinationError::PartialSettlementUnrecoverable {
+            rollback_failures, ..
+        }) => {
+            assert!(
+                !rollback_failures.is_empty(),
+                "the failed rollback must be named"
+            );
+        }
+        other => panic!(
+            "a failed rollback must be UNRECOVERABLE, not a clean ParticipantFailed \
+             (or success); got {other:?}"
+        ),
+    }
+
+    // Ground truth: the ledger really IS left partial — the gallery's slot debit
+    // could not be undone. This is the state the caller now gets warned about.
+    assert_eq!(
+        gallery.slots, 0,
+        "the gallery's slot debit stands — the round could not restore it"
+    );
 }
 
 // ---------------------------------------------------------------------------
