@@ -6,8 +6,9 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
 
 ## Live threads (verify each landing → integrate → fire the next)
 - **FRI (me, deep):** re-base the assumed `FriLdtExtractV3` over the ROM query-counting model
-  (`docs/reference/FRI-EXTRACTION-FLOOR-DESIGN.md` §5). ✅ A2 `RomQueryLog` (bd2407b31). Stage 1
-  `verifyAlgoO`+faithfulness BUILDING (a14a924b). → Stage 2 (FS terms ε: 2/12 conjuncts
+  (`docs/reference/FRI-EXTRACTION-FLOOR-DESIGN.md` §5). ✅ A2 `RomQueryLog` (bd2407b31). Stage 1 ✅ DONE (FriVerifierO.lean:
+  verifyAlgoO + verifyAlgoO_run_eq faithfulness + permCallCount/QueryBounded; perm threads only via
+  deriveTranscript, compress is separate — honest; 19 keystones clean, additive). Stage 2 FIRING. → Stage 2 (FS terms ε: 2/12 conjuncts
   assumed→proven, `(Q+1)` grinding) → 3 (Merkle extraction-as-data + `birthday_cond`) → 4
   (query-phase `εQuery`, the hard one; `johnsonBits` stops being `by norm_num`) → 5 (apex re-read:
   "bits = query budget where εFri=½"). Each ADDITIVE, sorry-free, `#assert_axioms`-clean, no
