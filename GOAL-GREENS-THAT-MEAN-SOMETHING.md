@@ -83,6 +83,14 @@ fix — NOT a blind rewrite.
   it never gets done. [[feedback-swarm-delegate-identified-work-immediately]]
 
 ## Done log
+- 14:1x — **28-red Emit-refine campaign: 25/28 REPAIRED + pushed** (`c6d6556ee`,`59b10638b`,`e0e6a7e50`,
+  `7d1cf1136`,`3dd04f611`,`4ee46579d`,`5563d2b5a`): root cause = denotations drifted ℤ`=0`→BabyBear
+  congruence `≡0 [ZMOD p]` + `factCommitLookup` arity-2→arity-4 blinded, invisible because the modules are
+  outside the `Dregg2` glob (built nowhere). Faithful mod-p fix, kernel-green, `#assert_axioms`-clean,
+  mutation-canaried. ⚑ FOUND: a COMMITTED MERGE CONFLICT on main (`PredicatesRelationalCompoundRefine.lean`
+  18 markers + `Rung2Full` 12) from `ddd2408c5` (07-15 fresh-cut), sat broken for days (dark orphan). →
+  resolve-lane a4ec7a4d (conflict + mod-p, completes 28/28). The now-wired `Dregg2.Claims`/76-module gate
+  catches this class going forward.
 - 14:0x — **Rust soundness harvest** (falsifier-first, all pushed): **#1 fail-OPEN consensus hole FIXED**
   (`a3ea501ec` — solo now keys on RAW admitted count, fail-closed on collapsed PQ-projection; falsifier on
   the EXECUTION path RED→GREEN + liveness companion + canary). **#6 overflow FIXED** both sites
