@@ -2051,3 +2051,11 @@ over-reported 3 of 4 — the honest count is ONE real gap (MAX_FOLD_DEPTH), now 
 - tree_capacity_guard (7 passed) — deployed sorted-Merkle depth + capacity guard pinned.
 The swarms rig phase was cut short by the limit wall, not fruitless — the work existed untracked, one
 `git clean` from gone.
+
+### `a83e50a2b` — the MIRROR is DELETED (868 lines) — DuplicateDslP3AirResidual CLOSED
+The canonical mirror: a SECOND `DslP3Air` (same name, weaker — no `Hash`, row-0-only boundary) that the
+DIFFERENTIAL HARNESS drove instead of production, silently skipping membership coverage for a limitation only
+the shadow had. Deletable because the harness had been migrated to production imports while its DOC still
+named the shadow — **a harness naming the shadow it no longer drives is the mirror lying about itself.**
+Verified orphaned before cutting (only its own tests called it; the type re-export had zero consumers);
+verified GREEN after. **Both species now physically deleted: the MOCK (1fdd4a671) and the MIRROR (a83e50a2b).**
