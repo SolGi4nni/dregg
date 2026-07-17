@@ -2229,3 +2229,12 @@ Everything remaining is DERIVED work — the board sweep (`wdghv87w4`, 6 lanes) 
   the RIGHT end state; it just can't land into a tree 3 other lanes are actively editing. `DenyFlipReapplyResidual`.
   KEY FINDING TO KEEP regardless: **the lint cage covered only half the workspace** — whoever lands the
   opt-in must cover all 207, and settle chain/deos-hermes/dreggnet-web/grain-turn (Lane A skipped them dirty).
+
+### GATING DISCIPLINE (2026-07-17) — STOP harvesting mid-swarm
+The board sweep (`wdghv87w4`) is STILL LIVE: lanes B (constraint_prover), E (dead-pub-api), F (assumption-
+rigging) are actively editing the tree. Lane D (doc citations, DONE) overlaps files with them —
+`constraint_prover.rs` is dirty from Lane B's in-flight prover->VALIDATOR rename, NOT from D. Committing D
+(or anything) now would gate a half-written tree. **Lesson re-applied: lanes that "commit nothing" pile
+their work into ONE dirty tree; per-lane gating is only clean AFTER the swarm completes and the tree stops
+moving.** Committed only the isolated, COMPLETE lane (C, 5dbeadf2d). HOLD: A (manifest tangle), D (doc, done
+but tree-overlapped), B/E/F (running). Holistic harvest when `wdghv87w4` completes.
