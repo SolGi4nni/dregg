@@ -2172,3 +2172,18 @@ NAMED not claimed: `DslComparisonRangeSoundnessResidual`.
 with the file gone but `mod gen_plonky3;` still declared → **HEAD did not compile** until `43b930241`.
 Prior: `1cdc7fe66` swept the CheckPolicy rewrite (same break); and I myself `git checkout`-discarded a
 ratchet edit. **On a shared tree: commit NAMED files; never `-A`; never `checkout <file>` to "look".**
+
+## ⚡ BOARD SWEEP swarm (`wdghv87w4`, 6 lanes) — ember: "we need to be swarming over these other things on the board"
+Right call — I was serializing single threads while the ledger sat. Lanes (each verifies + appends TESTQALOG,
+commits nothing): **A** unexpected_cfgs warn->DENY (only vendored hits remain; targeted allow for
+pathfinder_simd, NOT a workspace retreat) · **B** constraint_prover fate (last mock-ish engine: legit
+row-validator vs anything treating a trace digest as a PROOF; rename to VALIDATOR if it survives) ·
+**C** DslComparisonRangeSoundness (the claim that died with gen_plonky3 — is gen_air s <=/>= lowering
+field-wrap sound? build the decisive test: if a wrapped negative difference is ACCEPTED that is a REAL
+soundness bug; if rejected, rig it permanently) · **D** the 629 stale docs/*.md citations (citation-to-a-corpse) ·
+**E** the 328 zero-use pub items (with the method-warning: re-exports are not consumers, tests/src IS a crate) ·
+**F** rig the remaining assumption surface (prefer TREE-WIDE invariants like "every ed25519 site is strict" —
+catches the NEXT drift, not just today s).
+Each lane carries the session s hard rules: verify from CODE not comments; never weaken a gate; prove teeth
+bite by mutation; if a premise is false SAY SO; never git add -A (3 casualties tonight); never checkout to
+"look"; skip files other lanes hold dirty.
