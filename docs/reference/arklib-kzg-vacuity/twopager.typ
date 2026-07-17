@@ -1,5 +1,5 @@
-// Two-panel research summary of PAPER.md (this directory).
-// One A3-landscape page = two A4-sized panels side by side, screenshot-ready as a spread.
+// Two-panel research summary: the ArkLib KZG.binding vacuity, its repair, and the
+// mechanized generic-group bound. One A3-landscape page = two panels, screenshot-ready.
 // Compile: typst compile twopager.typ twopager.pdf
 
 #let accent = rgb("#1e5f74")
@@ -37,14 +37,14 @@
 #block(width: 100%)[
   #grid(columns: (1fr, auto), column-gutter: 8mm, align: (left + bottom, right + bottom),
     [
-      #text(font: sans, size: 21pt, weight: "bold", fill: luma(15))[Vacuity and Repair]
+      #text(font: sans, size: 21pt, weight: "bold", fill: luma(15))[A Vacuous Binding Theorem, and Its Repair]
       #h(3.5mm)
-      #text(font: sans, size: 12.5pt, fill: inkdim)[the generic-group security of KZG evaluation binding, from a mechanized formalization-soundness finding]
+      #text(font: sans, size: 12.5pt, fill: inkdim)[the generic-group security of KZG evaluation binding, mechanized in Lean]
     ],
     [
       #text(font: sans, size: 8pt, fill: inkdim, align(right)[
         ArkLib #raw("d72f8392") · Lean v4.31.0 \
-        two independent checkers · summary of #raw("PAPER.md")
+        all Lean claims `sorry`-free against upstream
       ])
     ],
   )
@@ -52,11 +52,11 @@
   #line(length: 100%, stroke: 1.4pt + accent)
   #v(1.3mm)
   #text(size: 9.9pt)[
-    ArkLib's KZG evaluation-binding theorem is axiom-clean *and* carries no information at any parameter: its `t`-SDH assumption quantifies over an unrestricted adversary type, which a `Classical.choice` trapdoor extractor inhabits with success probability exactly 1. We mechanize the refutation, the extraction-shaped repair that provably survives the exact attack, and the generic-group security bound — now mechanized *end to end, in both standard generic-group models*: Maurer (explicit equality) wired to ArkLib's real `tSdhExperiment`, Shoup (random encoding) standalone at the identical bound, side-conditions named per model.
+    ArkLib — the Ethereum Foundation's Lean 4 library of succinct-argument building blocks — proves evaluation binding for the KZG polynomial commitment conditionally on a `t`-SDH hardness assumption. As stated, that assumption is unconditionally false: it quantifies over adversaries with *no resource bound*, and an adversary definable with `Classical.choice` reads the trapdoor out of the public reference string and wins with probability 1 — so the binding theorem holds vacuously and carries no information at any parameter. Lean's axiom check reports it clean regardless: axiom-cleanliness never inspects whether a theorem's hypotheses are satisfiable. This spread presents the mechanized refutation, an unconditional restatement of the reduction that no longer rests on the false assumption, and a generic-group-model security bound for KZG evaluation binding, proved in both standard formulations of the model at the identical bound.
   ]
   #v(1mm)
   #text(font: sans, size: 8pt, fill: inkdim)[
-    Research note — internal, not filed, not a security advisory: a *formalization-soundness* issue in a public, in-development library, not a vulnerability in any deployed system. KZG, `t`-SDH, and the reduction are sound as normally stated — the issue is a Lean quantifier.
+    Research note — a *formalization-soundness* finding in a public, in-development library, not a vulnerability in any deployed system. KZG, `t`-SDH, and the reduction between them are sound as normally stated; the issue is a Lean quantifier.
   ]
 ]
 #v(2.2mm)
@@ -66,11 +66,14 @@
 
 // ═══ LEFT PANEL — the finding ═══
 [
-= I · The finding: axiom-clean, and empty
+= I · The finding: a theorem that proves nothing
 
-== The mechanism
-KZG evaluation binding is proved in ArkLib by a correct, constructive reduction to the `t`-SDH assumption — whose adversary is a *plain, unrestricted function type*:
+== KZG and its binding theorem
+Fix prime-order groups $G_1, G_2, G_T$ (order $p$) with a bilinear pairing $e : G_1 times G_2 arrow G_T$ and generators $g_1, g_2$. The KZG polynomial commitment publishes a *structured reference string* (SRS) generated from a secret trapdoor $tau$:
+$ "srs" = ((g_1, g_1^tau, ..., g_1^(tau^D)), space (g_2, g_2^tau)). $
+A polynomial $f$ of degree $lt.eq D$ is committed as $C = g_1^(f(tau))$, computable from the SRS without knowing $tau$; an opening of $C$ at a point $z$ to a value $v$ is checked by one pairing equation. *Evaluation binding* — no adversary can open one commitment at one point to two different values — is what a verifier relies on, and it is classically proved by reduction to the `t`-Strong Diffie–Hellman (`t`-SDH) assumption: given $(g, g^tau, ..., g^(tau^D))$, it is hard to output a pair $(c, g^(1\/(tau+c)))$. ArkLib mechanizes this reduction in `KZG.CommitmentScheme.binding`, and the reduction itself is constructive and algebraically sound. The problem is the assumption it consumes.
 
+== An assumption with no resource bound
 ```lean
 abbrev tSdhAdversary (D : ℕ) :=
   Vector G₁ (D+1) × Vector G₂ 2 → StateT unifSpec.QueryCache ProbComp (Option (ZMod p × G₁))
@@ -78,72 +81,75 @@ abbrev tSdhAdversary (D : ℕ) :=
 def tSdhAssumption (D : ℕ) (error : ℝ≥0) : Prop :=
   ∀ (adversary : tSdhAdversary D), tSdhExperiment D adversary ≤ error
 ```
+The adversary is a *plain function type*. `ProbComp` is a free monad over oracle queries: only `query` nodes cost anything, and pure computation is unmetered. Nothing bounds running time, and the function body may be any term of the right type — including a noncomputable one built with `Classical.choice`.
 
-`ProbComp` is a free monad over oracle queries: only `query` nodes cost anything; pure computation is free and no resource bound is imposed anywhere. The SRS includes the verifier leg $(g_2, g_2^tau)$, which determines $tau$ whenever $g_2 eq.not 1$, and ArkLib's own `exists_zmod_power_of_generator` (`Algebra.lean:105`) makes the discrete log `Classical.choice`-definable. The adversary reads $g_2^tau$, recovers $tau$, and returns the `t`-SDH solution #box($(c = 0, g_1^(1\/tau))$) — zero oracle queries, success probability exactly 1.
+== The adversary that empties it
+The SRS hands the adversary the verifier leg $g_2^tau$, which determines $tau$ whenever $g_2 eq.not 1$; and the discrete logarithm in a prime-order group is `Classical.choice`-definable, via ArkLib's own lemma `exists_zmod_power_of_generator`. So an adversary recovers $tau$ and returns the `t`-SDH solution at offset zero:
 
 ```lean
 noncomputable def tauExtractingAdversary (hg₂ : g₂ ≠ 1) (D : ℕ) : tSdhAdversary D :=
   fun srs => pure (some (0, g₁ ^ (1 / dlogOf hg₂ srs.2[1]).val))
 
 theorem tSdhExperiment_tauExtractingAdversary : tSdhExperiment D (…) = 1
-theorem not_tSdhAssumption      (herr : error < 1) : ¬ tSdhAssumption D error
-theorem tSdhAssumption_trivial_of_one_le (1 ≤ error) : tSdhAssumption D error
 ```
 
+It wins with probability *exactly* 1 — the trapdoor sampler avoids $0$, so $tau + 0 eq.not 0$ on the whole support — and it makes *zero* oracle queries: all of its work happens under `pure`, so any query-counting resource bound constrains something it never does. A canary confirms the experiment discriminates: the adversary that returns `none` scores exactly 0.
+
 == No content at any parameter
-Below 1 the assumption is refuted; at $gt.eq 1$ its conclusion is the triviality "a probability is $lt.eq 1$." `binding` consumes the assumption in the last step of its `calc`, and its hypothesis `hpair : pairing g₁ g₂ ≠ 0` *forces* $g_2 eq.not 1$ (a bilinear map kills the identity) — exactly what the extractor needs. So `binding`'s hypotheses are jointly unsatisfiable for any error below 1 (`binding_hypotheses_unsatisfiable`), and its conclusion is free at $gt.eq 1$. The sibling ARSDH assumption falls identically, taking `function_binding` with it. A canary — the giving-up adversary scores exactly 0 — confirms the experiment discriminates. The reduction itself is fully constructive and algebraically correct; the vacuity lives entirely in the assumption's quantifier.
+```lean
+theorem not_tSdhAssumption               (herr : error < 1) : ¬ tSdhAssumption D error
+theorem tSdhAssumption_trivial_of_one_le (1 ≤ error)        : tSdhAssumption D error
+```
+Below 1 the assumption is refuted; at $gt.eq 1$ its conclusion is the triviality "a probability is $lt.eq 1$." And `binding` cannot dodge the hypothesis the extractor needs: its own premise `hpair : pairing g₁ g₂ ≠ 0` *forces* $g_2 eq.not 1$, because a bilinear map kills the identity. So `binding`'s hypotheses are jointly unsatisfiable for any error below 1 (`binding_hypotheses_unsatisfiable`), and its conclusion is free at $gt.eq 1$: the theorem says nothing at any parameter. The sibling ARSDH assumption behind `function_binding` has the identical unrestricted quantifier and falls identically. Nor is the shape specific to `t`-SDH: a `q`-strong-DLOG assumption stated in the same idiom — recover $tau$ from the power SRS — is voided by the same extraction (`not_qDlogAssumption`).
 
-== The pattern, not a typo
-Reducing to a *different* base assumption does not escape. The natural `q`-DLOG assumption, stated in ArkLib's own unrestricted-adversary idiom, is equally false below 1 (`not_qDlogAssumption`, same extraction, own canary). And ArkLib's algebraic-group-model scaffolding confirms the disease from the other side: `AGM/Basic.lean` is a stub (its adversary's `run` is literally `sorry`; zero theorems; orphaned) and is *unsound as written* — the adversary is a `ReaderT` over the concrete group table, so its outputs can still depend on discrete logs. Its author flags the open problem verbatim: #quote[TODO: need to be sure this definition is correct]; #quote[How to make the adversary truly independent of the group description? It could have had `G` hardwired.] Any concrete-group assumption of the shape $forall "unrestricted adversary", "Pr"["win"] lt.eq epsilon < 1$ is `Classical.choice`-false in this idiom.
-
-== The methodological point: axiom checks are blind to vacuity
-`binding`, the refutation, and the winning adversary all print the *same* clean axiom closure:
+== Axiom checks cannot see this
+The vacuous theorem, the winning adversary, and the refutation all print the *same* clean axiom closure:
 
 ```lean
 #print axioms not_tSdhAssumption   -- [propext, Classical.choice, Quot.sound]
 ```
 
-No `sorryAx`, nothing any `#print axioms` / `#assert_axioms` gate would flag. *Axiom-clean and vacuous coexist.* The blindness is structural: an axiom check reports a proof term's closure; it never asks whether the theorem's *hypotheses* are jointly satisfiable, and any `def FooHard : Prop` used as a hypothesis is an assumption no axiom check inspects. Query-based bounds (`IsQueryBoundP`) do not help either — the winning adversary makes zero queries. The only reliable test is adversarial: try to *inhabit the assumption's negation* — prove the floor false at its deployed parameters. We found the identical pattern in our own hardness floors first, in several places, before ever looking at ArkLib; we present this as a field lesson, not a dunk.
+No `sorryAx`, no custom axiom — nothing a `#print axioms` gate would flag. *Axiom-clean and vacuous coexist.* The blindness is structural: an axiom check reports the axioms in a proof term's *closure*; it never asks whether the theorem's *hypotheses* are jointly satisfiable, and a theorem with an unsatisfiable hypothesis is axiom-clean and content-free at once. The point generalizes: any named hard-problem `def Foo : Prop` used as a *hypothesis* is an assumption no axiom check ever inspects. The reliable test is adversarial — try to inhabit the assumption's *negation*, which is precisely what `tauExtractingAdversary` does.
 ],
 
-// ═══ RIGHT PANEL — the repair + the end-to-end theorem ═══
+// ═══ RIGHT PANEL — the repair + the bound ═══
 [
-= II · The repair, the number — both standard GGM models, mechanized
+= II · The repair, and the bound that grounds it
 
-== The mergeable de-vacuation (mechanized)
-ArkLib's reduction is already constructive and the assumption is consumed at exactly one `calc` step — so split there: the unconditional prefix becomes the primary theorem, the original `binding` a one-line corollary.
+== The unconditional restatement
+ArkLib's binding proof is a five-step `calc`: four unconditional steps rewrite the binding-game success probability into the `t`-SDH success probability of an *explicitly constructed* reduction adversary, and only the fifth applies the assumption. Splitting at that one step gives the primary theorem:
 
 ```lean
 theorem binding_reduces_to_tSdh … (adversary : KzgBindingAdversary …) :
     bindingExperiment … adversary ≤ tSdhExperiment g₁ g₂ n (bindingReduction … adversary)
 ```
 
-No assumption `Prop`: both sides are concrete probabilities, true at every parameter — nothing for `Classical.choice` to inhabit (+41/−14 in one file; whole tree builds, 2994 jobs; axiom-clean). It *provably survives the exact attack* (`repair_survives_attack`): in one `sorry`-free closure, the trapdoor adversary still refutes `tSdhAssumption` below 1 *and* the repaired bound holds regardless — premise removed, reduction kept, the one obligation a sound assumption class must discharge isolated.
+This takes *no hardness assumption*: both sides are concrete probabilities and the inequality holds at every parameter — there is nothing for `Classical.choice` to inhabit. The change is small (+41/−14 in one file), the original reduction is preserved verbatim, and the assumption-form `binding` survives as a one-line corollary. The restatement *provably coexists with the attack* (`repair_survives_attack`): in a single `sorry`-free closure, the trapdoor-extracting adversary still refutes `tSdhAssumption` below 1, while the restated bound holds regardless. What remains is exactly one obligation — bound the success of the constructed reduction adversary — and the generic-group model supplies its number.
 
-== The number: the generic bilinear group bound
-Group elements become opaque handles carrying *ordinary* polynomials in $ZZ_p [X]$ — *not Laurent*: group inversion negates the exponent, it never introduces $X^(-1)$. A winning $1\/(X+c)$ is therefore unrepresentable, and a "win" forces the nonzero, degree-$lt.eq D+1$ polynomial $F_ell dot (X+c) - 1$ to vanish at the random $tau$. Simulation (identical-until-bad) plus Schwartz–Zippel yield Boneh–Boyen's Theorem 12, verified line by line against the source:
-$ epsilon space lt.eq space (q_G + D + 3)^2 (D+1) / (p-1) space = space O((q_G + D)^2 dot D \/ p) $
-*Not* a clean $q^2\/p$: the bound is cubic in the SRS degree $D$, and at production parameters the $D^3\/p$ term is the one to watch (Corollary 13's $q < O(p^(1\/3))$ side condition). Naive AGM is no shortcut — a `Classical.choice` adversary returns a *valid* representation too (validity is not independence); it relocates the same content onto `q`-DLog's generic hardness.
+== The generic-group model, and why $1\/(X+c)$ is out of reach
+In the generic-group model the adversary never sees a group element: it holds opaque *handles* and combines them only through oracles. Behind each handle the model keeps an *ordinary polynomial* in $ZZ_p [X]$, with $X$ the formal trapdoor: the SRS seeds $1, X, ..., X^D$, and the group operation adds or subtracts exponent polynomials — inversion *negates* the exponent, it never introduces $X^(-1)$, so the exponent ring is $ZZ_p [X]$, not Laurent. A `t`-SDH win needs a handle whose exponent equals $1\/(X+c)$ — not a polynomial, hence unrepresentable. The best a generic adversary can do is output some polynomial $f$ of degree $lt.eq D$ that happens to satisfy $f(tau) dot (tau+c) = 1$ at the specific random $tau$: every winning $tau$ is a root of the *nonzero*, degree-$lt.eq D+1$ polynomial $f dot (X+c) - 1$, so Schwartz–Zippel caps the winning trapdoors at $D+1$ out of $p-1$. Adding the standard collision bad event — two formally distinct handle polynomials evaluating equal at $tau$, handled by an identical-until-bad simulation — yields the full bound.
 
-== Both standard GGM models, end to end #text(size: 8.4pt, fill: inkdim, font: sans)[(mechanized, `sorry`-free, no `sorryAx`)]
-The two standard formalizations of "the adversary cannot see group elements" differ only in *how it learns equalities of held handles*; both are mechanized at the identical bound, a genuine $< 1$ when $binom("fuel"+D+4, 2) dot D + (D+1) < p-1$.
+== One bound, both standard models — mechanized
+The literature fixes two standard formulations of "the adversary cannot see group elements," differing only in *how it learns equalities among the handles it holds*. Both are mechanized, `sorry`-free, at the identical bound: for an adversary running at most $q$ generic steps against a degree-$D$ SRS,
+$ Pr["break"] space lt.eq space (binom(q+D+4, 2) dot D + (D+1)) / (p-1) $
+— a genuine $< 1$ whenever the numerator is below $p-1$.
 
-*Maurer (explicit equality) — wired to ArkLib.* The capstone `GgmEndToEnd.tSdh_ggm_sound` is about ArkLib's *own* `Groups.tSdhExperiment`, restated nowhere — for every generic strategy `strat` and query budget `fuel`:
+*Maurer (explicit equality) — connected to ArkLib.* `GgmEndToEnd.tSdh_ggm_sound` bounds ArkLib's *own* `Groups.tSdhExperiment` — the very experiment of Panel I, restated nowhere — for every generic strategy embedded into ArkLib's adversary type:
 
 ```lean
-tSdh_ggm_sound : tSdhExperiment D (embed strat) ≤ (C(fuel+D+4, 2)·D + (D+1)) / (p − 1)
+tSdh_ggm_sound : tSdhExperiment D (embed strat) ≤ (C(q+D+4, 2)·D + (D+1)) / (p − 1)
 ```
 
-Equality costs an explicit query (`Move.query`), so only queried pairs can collide — the all-pairs count on the right is a sound *over-count* here. *Why it escapes the vacuity:* it quantifies not over the full `tSdhAdversary` type — provably *false* there (Panel I) — but over the *image of the generic embedding* `embed`: a strategy receives only equality booleans, never a group element, so it realizes only $g_1^(f(tau))$ with $"deg" f lt.eq D$. *Side-conditions, named:* $1 lt.eq D$ (genuinely *false* at $D = 0$: with no pairing, a $G_1$ adversary cannot form $g_1^tau$); $2 lt.eq p$; $"orderOf" g_1 = p$ (with $g_1, g_2 eq.not 1$); ArkLib's own `SampleableType` instance.
+In this model the adversary learns an equality only by spending an explicit query (`Move.query`), so only queried pairs can collide — the all-pairs collision count on the right is a sound *over-count*. Side-conditions, inline: $1 lt.eq D$ (at $D = 0$ the statement is genuinely false — a pairing-free $G_1$ adversary cannot form $g_1^tau$), $2 lt.eq p$, $"orderOf" g_1 = p$ (a prime-order generator, with $g_1, g_2 eq.not 1$), and ArkLib's own `SampleableType` instance.
 
-*Shoup (random encoding) — standalone.* `GgmShoup.shoup_ggm_sound`: the adversary sees random encodings under an injection $sigma : ZZ_p arrow.hook E$ and compares *all* held pairs *for free* — no `query` move, the full equality matrix (`eqPattern`) at every step — so every held pair is a live collision candidate and the *same* all-pairs count is *tight*. The matrix-valued identical-until-bad (`runShoup_congr_off_bad`) is *proven*, degree invariants discharged; $sigma$ never enters (injectivity folds it away, as $a arrow.bar g_1^a$ does in the Maurer embed). *Side-conditions:* $1 lt.eq D$, $2 lt.eq p$, `Fact (Nat.Prime p)` — nothing else (it never touches the group experiment, so no generator or `SampleableType`). Wiring Shoup into ArkLib would be optional and redundant — Maurer is the wired track. Earlier versions of this spread labelled the wired capstone "Shoup random-encoding": that name belongs here, to the standalone theorem — the capstone is Maurer. `#print axioms` on both, full spines: `[propext, Classical.choice, Quot.sound]`.
+*Shoup (random encodings) — standalone.* `GgmShoup.shoup_ggm_sound`: the adversary sees random *encodings* of group elements under an injection $sigma : ZZ_p arrow.hook E$ and compares any two held encodings *for free* — no query move; it observes the full pairwise-equality matrix at every step — so every held pair is a live collision candidate and the same all-pairs count is *tight*. This is a standalone theorem about the symbolic experiment (it does not touch ArkLib's group experiment), with side-conditions only $1 lt.eq D$, $2 lt.eq p$, and `Fact (Nat.Prime p)`; the encoding $sigma$ folds away by injectivity, just as $a arrow.bar g_1^a$ folds away on the Maurer side.
 
-== The mechanized spine #text(size: 8.4pt, fill: inkdim, font: sans)[(all `sorry`-free, axioms `[propext, Classical.choice, Quot.sound]`)]
-- *Vacuity refutations* — `t`-SDH, ARSDH, `q`-DLOG, each with a discriminating canary, against genuine ArkLib; the repair and its survival, `binding_reduces_to_tSdh` / `repair_survives_attack`.
-- *The counting bounds* — static core `ggm_tSdh_sound`: $epsilon lt.eq (D+1)\/(p-1)$ over the *entire* committed-generic type (the trapdoor extractor is untypable here; as far as our census found, the first generic-group security theorem in Lean); Maurer explicit-equality `adaptive_ggm_sound` (identical-until-bad *proven by induction*, not assumed); the shared all-pairs counting core `rand_encoding_bound` (bad event and table size are theorems; over-count in Maurer, tight in Shoup; its $delta = D$ specialization feeds both).
-- *Degree discharge + wiring, on the ACTUAL oracle* — ArkLib's `tSdhAdversary` is granted *no pairing map*, so the oracle is purely linear: `hdeg_out_of_run` / `hdeg_handles_of_run` prove $"natDegree" lt.eq D$ by induction on the *real* `runAux`/`runTable` recursion — the $delta = D$ bound hypothesis-free. `embed_run_correspondence` (the group run in lockstep with the symbolic run); `experiment_eq_count` (ArkLib's game collapses to $("winSet.card")\/(p-1)$); `groupWinSet_eq_realWinSet` (the win predicate *is* ArkLib's real `tSdhCondition`, by prime-order injectivity).
-- *Off the critical path* (optional — gates nothing) — the pairing-aware $delta = 2D$ ceiling (`degree_invariant_paired`; naive flat $2D$ claim *refuted*, $X^4$ at $D=1$); re-typing `bindingReduction` as a `Strat` — the bound already covers the whole `embed` image.
+*Why the bound escapes the vacuity.* It quantifies over a *constructed* generic adversary class — strategies that receive only equality booleans and never a group element, so they can realize only $g_1^(f(tau))$ with $deg f lt.eq D$. The trapdoor-extracting adversary of Panel I *cannot even be expressed* in this class; over the full unrestricted type, the same statement is provably false. The restriction is where the number comes from.
 
+== What is mechanized #text(size: 8.4pt, fill: inkdim, font: sans)[(all `sorry`-free; axiom closure exactly `[propext, Classical.choice, Quot.sound]`)]
+- *The refutations* — `t`-SDH, ARSDH, and `q`-DLOG, each with a discriminating canary, against genuine upstream ArkLib (imported, nothing redefined; whole tree builds).
+- *The restatement* — `binding_reduces_to_tSdh` and its coexistence with the attack, `repair_survives_attack`.
+- *The two-model bound, full spine* — the Schwartz–Zippel root count; the identical-until-bad simulation, *proven by induction, not assumed*, in both the explicit-query and free-comparison forms; the all-pairs collision count with the handle-table size a theorem; degree bounds proved on the *actual* oracle (ArkLib's `t`-SDH adversary is granted no pairing map, so the oracle is linear and every exponent stays degree $lt.eq D$); the field-to-group transport onto ArkLib's real win condition `tSdhCondition`, by prime-order injectivity; the probability-monad threading that collapses ArkLib's game to a `Finset` count; and the embedding of generic strategies into ArkLib's adversary type.
 ],
 )
 
@@ -152,7 +158,7 @@ Equality costs an explicit query (`Move.query`), so only queried pairs can colli
 #line(length: 100%, stroke: 0.6pt + luma(200))
 #v(1.2mm)
 #text(size: 7.2pt, fill: inkdim, font: sans)[
-  *Artifacts* (all `sorry`-free against ArkLib `d72f8392`): #raw("KzgVacuity.lean") · #raw("binding-repair.patch") · #raw("RepairSurvives.lean") · #raw("candidates/{GgmCandidate, GgmAdaptive, GgmRandomEncoding, GgmShoup, GgmDegreeInvariant, GgmDegreeDischarge, GgmArkLibTransport, GgmProbThreading, GgmEmbed, GgmEndToEnd, KzgQDlogVacuity}.lean") — Maurer capstone (wired): #raw("GgmEndToEnd.tSdh_ggm_sound") · Shoup (standalone): #raw("GgmShoup.shoup_ggm_sound").
-  *Reproduce:* drop #raw("KzgVacuity.lean") into #raw("ArkLib/Scratch/"), #raw("lake build"), #raw("#print axioms").
-  *References:* [KZG10] Kate–Zaverucha–Goldberg · [BB04/BB08] Boneh–Boyen (Thm 12, Cor 13) · [Sho97] Shoup · [Mau05] Maurer · [FKL18] Fuchsbauer–Kiltz–Loss · [CGKY25] Chiesa–Guan–Knabenhans–Yu.
+  *Artifacts* (this directory; all `sorry`-free against ArkLib #raw("d72f8392")): #raw("KzgVacuity.lean") (the refutations) · #raw("binding-repair.patch") (#raw("binding_reduces_to_tSdh")) · #raw("RepairSurvives.lean") · #raw("candidates/GgmEndToEnd.lean") (Maurer bound on ArkLib's experiment, #raw("tSdh_ggm_sound")) · #raw("candidates/GgmShoup.lean") (Shoup bound, standalone, #raw("shoup_ggm_sound")) · supporting spine #raw("candidates/Ggm{Candidate, Adaptive, RandomEncoding, DegreeDischarge, ArkLibTransport, ProbThreading, Embed}.lean") · #raw("candidates/KzgQDlogVacuity.lean").
+  *Reproduce the vacuity:* drop #raw("KzgVacuity.lean") into #raw("ArkLib/Scratch/"), #raw("lake build"), #raw("#print axioms").
+  *References:* [KZG10] Kate–Zaverucha–Goldberg · [BB04/BB08] Boneh–Boyen · [Sho97] Shoup · [Mau05] Maurer · [FKL18] Fuchsbauer–Kiltz–Loss · [CGKY25] Chiesa–Guan–Knabenhans–Yu.
 ]
