@@ -182,22 +182,68 @@ fn wrong_public_key_is_rejected() {
 
 #[test]
 fn wrong_subject_is_refused() {
-    // The subject is a CHECKED fact (stronger than an advisory annotation): a
-    // token issued to `ci-bot` cannot be presented as some other agent — the
-    // Verifier binds the subject from the token, so the subject gate is honest,
-    // but if a forger rebuilt the chain with a different subject caveat the
-    // signature would not verify. Here we confirm the subject is recovered and
-    // gated, not ignored.
+    // The subject is SIGNATURE-BOUND, not merely an advisory annotation. At
+    // `admit` the subject gate is self-referential (the Verifier binds the
+    // subject FROM the token, then the `subject == …` caveat checks it against
+    // that same recovered value — so on its own the caveat cannot fail). The real
+    // integrity of the agent identity is therefore the SIGNATURE over the caveat
+    // chain: a forger who rewrites the subject to a different agent breaks the
+    // binding and the credential no longer verifies. This test forges exactly
+    // that — a token issued to `ci-bot` re-stamped to `cx-bot` — and proves it is
+    // REFUSED (not silently admitted under the forged identity).
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
     let polis = Policy::generate();
     let token = polis
         .issue(Grant::to("ci-bot").tool("read").until(FRIDAY))
         .unwrap()
         .encode();
     let gate = Verifier::new(polis.public_key_hex());
+
+    // Non-vacuity: the honest token admits and its subject is recovered from the
+    // signed chain (the checked fact, held).
+    assert!(gate.admit(&token, &Call::tool("read").at(T0)).admitted());
     let (_, subject) = gate.parse(&token).unwrap();
     assert_eq!(subject.as_deref(), Some("ci-bot"));
-    // And the gate passes for the bound subject (it is checked, and it holds).
-    assert!(gate.admit(&token, &Call::tool("read").at(T0)).admitted());
+
+    // FORGE a different agent identity: rewrite the `subject` bytes inside the
+    // signed postcard payload (same length, so the framing stays valid) from
+    // "ci-bot" to "cx-bot".
+    let payload_b64 = token.strip_prefix("dga1_").expect("credential wire prefix");
+    let mut bytes = URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .expect("token payload is base64url");
+    let needle = b"ci-bot";
+    let replacement = b"cx-bot";
+    let pos = bytes
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("the subject bytes appear in the signed payload");
+    bytes[pos..pos + needle.len()].copy_from_slice(replacement);
+    let forged = format!("dga1_{}", URL_SAFE_NO_PAD.encode(&bytes));
+
+    // The forged token still PARSES and now carries a DIFFERENT subject — proving
+    // the subject caveat is not ignored: a forger who swaps the identity really
+    // does get `cx-bot` recovered out of the chain.
+    let (_, forged_subject) = gate
+        .parse(&forged)
+        .expect("the tampered token still parses structurally (same-length swap)");
+    assert_eq!(
+        forged_subject.as_deref(),
+        Some("cx-bot"),
+        "the forge installed a different subject caveat"
+    );
+
+    // ...but admission is REFUSED: rewriting the subject broke the credential
+    // chain's signature binding, so `Credential::verify` fails. The agent
+    // identity cannot be swapped without invalidating the token.
+    let v = gate.admit(&forged, &Call::tool("read").at(T0));
+    assert!(
+        !v.admitted(),
+        "a token presented under a forged subject must be refused (signature-bound): {}",
+        v.reason()
+    );
 }
 
 #[test]
