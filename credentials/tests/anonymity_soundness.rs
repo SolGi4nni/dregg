@@ -292,6 +292,115 @@ fn relabelled_predicate_proof_rejected() {
     );
 }
 
+// ── (b') CROSS-CREDENTIAL predicate FORGERY — the live hole ───────────────────
+//
+// `relabelled_predicate_proof_rejected` above only bites on a THRESHOLD MISMATCH
+// (a clearance `Gte(1)` proof relabelled onto an `age Gte(18)` request → the
+// `predicate != expected.predicate` guard fires FIRST). It gives ZERO assurance
+// against a SAME-THRESHOLD, DIFFERENT-CREDENTIAL attach, which this test exposes.
+//
+// THE HOLE (verification.rs, step (iii)): each predicate proof is verified with
+// the BARE `verify_predicate_proof(&p.proof, p.proof.fact_commitment)` — against
+// the proof's OWN commitment. That equality is `x == x`, vacuous. Nothing binds
+// the commitment to (i) THIS presentation's credential / `final_state_root` or
+// (ii) the requested attribute beyond the holder-controlled
+// `NamedPredicateProof.attribute` string. The predicate STARK proves only "SOME
+// fact with this commitment satisfies the predicate" — for a commitment the
+// prover supplied.
+//
+// FORGERY: a holder owns a legit credential X (age 32) and mints a GENUINE
+// `Gte(18)` proof from it. They then present a DIFFERENT credential A (age 15,
+// which FAILS `age >= 18`), attach X's genuine proof under `attribute = "age"`
+// (same threshold), and `verify()` ACCEPTS — handing the verifier a
+// `VerifiedPresentation` asserting A's holder is >= 18. A predicate forgery
+// across credentials.
+//
+// #[ignore]d because the SOUND fix is a multi-part ripple not yet wired:
+//   1. the presentation STARK must expose a `facts_root` PUBLIC INPUT — a proven
+//      Merkle root over the token's REAL fact set (not just disclosed facts);
+//   2. the producer (presentation.rs) must attach a
+//      `dregg_bridge::present::BridgeFactAttestation` to each predicate proof
+//      (Merkle membership of the predicate fact under that facts_root), via
+//      `prove_predicate_for_fact_attested` instead of `prove_predicate_for_fact`;
+//   3. `verify()` must route through
+//      `dregg_bridge::present::verify_predicate_proof_third_party(&p.proof,
+//      facts_root, final_state_root)` — facts_root taken from (1), NOT from the
+//      proof.
+// Until (1)–(3) land, running this test with `--ignored` FAILS at the final
+// assert (verify returns Ok — the forgery). That failure IS the executable proof
+// of the live hole; un-ignore it when the binding lands.
+#[test]
+#[ignore = "LIVE credential-forgery hole: a predicate proof is verified against its OWN \
+            commitment (x==x), never bound to this presentation's credential/attribute. A genuine \
+            same-threshold proof from a DIFFERENT credential is accepted. Un-ignore once the \
+            presentation STARK exposes facts_root + producer attaches a BridgeFactAttestation + \
+            verify() routes through verify_predicate_proof_third_party. See module note (b')."]
+fn cross_credential_predicate_forgery_rejected() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+
+    // Credential X: age 32 — legitimately satisfies `age >= 18`.
+    let cred_x = issue(
+        &issuer,
+        &schema,
+        [0x11u8; 32],
+        CredentialAttributes::new()
+            .with("age", AttrValue::Integer(32))
+            .with("department", AttrValue::Text("Engineering".into()))
+            .with("clearance_level", AttrValue::Integer(3))
+            .with("active", AttrValue::Bool(true)),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    // Credential A: age 15 — FAILS `age >= 18`. A DIFFERENT credential (different
+    // holder, different attributes ⇒ different fold-chain `final_state_root`).
+    let cred_a = issue(
+        &issuer,
+        &schema,
+        [0x22u8; 32],
+        CredentialAttributes::new()
+            .with("age", AttrValue::Integer(15))
+            .with("department", AttrValue::Text("Interns".into()))
+            .with("clearance_level", AttrValue::Integer(0))
+            .with("active", AttrValue::Bool(true)),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    // A GENUINE `age >= 18` proof, minted from X (age 32).
+    let x_opts =
+        PresentationOptions::new().predicate(PredicateRequest::new("age", Predicate::Gte(18)));
+    let x_pres = present(&cred_x, &fixture_request(), &x_opts).unwrap();
+    assert_eq!(x_pres.predicate_proofs.len(), 1);
+    let stolen = x_pres.predicate_proofs[0].clone();
+    assert_eq!(stolen.attribute, "age");
+    assert_eq!(stolen.proof.predicate, Predicate::Gte(18));
+
+    // Present A with NO predicate of its own, then ATTACH X's genuine proof. The
+    // threshold matches exactly (both `Gte(18)`), so the `PredicateMismatch`
+    // guard that `relabelled_predicate_proof_rejected` relies on does NOT fire.
+    let mut a_pres = present(&cred_a, &fixture_request(), &PresentationOptions::new()).unwrap();
+    assert!(a_pres.predicate_proofs.is_empty());
+    a_pres.predicate_proofs.push(stolen);
+
+    // Verifier asks: does A's holder satisfy `age >= 18`? A is 15 — the true
+    // answer is NO.
+    let verify_opts = VerificationOptions {
+        expected_predicates: vec![PredicateRequest::new("age", Predicate::Gte(18))],
+        ..Default::default()
+    };
+    let result = verify(&a_pres, &verify_opts);
+    assert!(
+        result.is_err(),
+        "SOUNDNESS: a predicate proof minted from a DIFFERENT credential must NOT satisfy this \
+         presentation's predicate — credential A (age 15) is not >= 18. Today verify() ACCEPTS \
+         (the forgery); this assert is exactly what the facts_root binding must make hold."
+    );
+}
+
 #[test]
 fn matching_predicate_proof_accepted() {
     // Positive control: a genuine `age >= 18` proof for the matching request

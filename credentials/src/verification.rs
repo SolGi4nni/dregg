@@ -254,10 +254,30 @@ fn verify_inner(
             });
         }
 
-        // (iii) Cryptographically verify the STARK. We verify against the
-        // proof's own `fact_commitment`; the predicate STARK binds that
-        // commitment to the witnessed value, so a forged or weakened proof
-        // (e.g. a name-only spoof carrying random bytes) fails verification.
+        // (iii) Cryptographically verify the predicate STARK. This proves the
+        // WITNESSED STATEMENT — "some fact with commitment `c` satisfies the
+        // predicate" — and rejects a name-only spoof carrying random bytes.
+        //
+        // ⚠ SOUNDNESS HOLE (LIVE — see the cross_credential_predicate_forgery_rejected
+        // falsifier in credentials/tests/anonymity_soundness.rs, module note (b')):
+        // the expected commitment passed here is the proof's OWN `fact_commitment`,
+        // so the equality gate inside `verify_predicate_proof` is `x == x` — vacuous.
+        // NOTHING binds `c` to (i) THIS presentation's credential / `final_state_root`
+        // or (ii) the requested attribute beyond the holder-controlled
+        // `candidate.attribute` string. A holder can therefore mint a genuine
+        // `Gte(18)` proof from credential X (age 32) and attach it under
+        // `attribute = "age"` to a presentation of credential A (age 15) — the STARK
+        // verifies against its own `c` and the forgery is accepted.
+        //
+        // The SOUND replacement is `verify_predicate_proof_third_party(&candidate.proof,
+        // facts_root, final_state_root)`, which manufactures the expected commitment
+        // from a `BridgeFactAttestation` proving Merkle membership under a `facts_root`
+        // the verifier independently trusts. That routing is BLOCKED on machinery not
+        // yet wired: the presentation STARK exposes no `facts_root` public input, and
+        // the producer (presentation.rs) attaches no attestation. Wiring both is a
+        // circuit-level change tracked by the falsifier above; do NOT drop in the
+        // third-party call before the producer attaches attestations (it would
+        // fail-closed on every legitimate predicate presentation).
         if !dregg_bridge::present::verify_predicate_proof(
             &candidate.proof,
             candidate.proof.fact_commitment,
@@ -309,12 +329,4 @@ fn verify_inner(
     })
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    const LUT: &[u8; 16] = b"0123456789abcdef";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(LUT[(b >> 4) as usize] as char);
-        s.push(LUT[(b & 0x0f) as usize] as char);
-    }
-    s
-}
+use crate::hex_encode;

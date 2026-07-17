@@ -467,7 +467,14 @@ pub fn verify_fulfillment_with_key(
 ///
 /// - The intent creator learns only that the predicates hold (yes/no).
 /// - The exact values remain private (never transmitted).
-/// - The proofs are bound to the fulfiller's attested state root, preventing fabrication.
+///
+/// ⚠ SOUNDNESS: the proofs are NOT yet bound to the verifier's trusted state root.
+/// `verify_predicate_requirement` checks each proof against its OWN
+/// `fact_commitment` (`x == x`) and ignores the `state_root` parameter, so a proof
+/// bound to a foreign/fabricated state root is accepted — see the falsifier
+/// `test_verify_fulfillment_rejects_cross_state_predicate_forgery`. The sound fix
+/// (a `BridgeFactAttestation` + `verify_predicate_proof_third_party`) is not yet
+/// wired; do not rely on this type for cross-trust-boundary predicate binding.
 #[derive(Clone, Debug)]
 pub struct FulfillmentWithPredicates {
     /// The base fulfillment (capability satisfaction).
@@ -600,8 +607,21 @@ fn verify_predicate_requirement(
         )));
     }
 
-    // Cryptographically verify against the proof's committed fact commitment. This is
-    // fail-closed for every operator except `Gte` (no descriptor → rejection).
+    // Cryptographically verify the predicate STARK. This proves "some fact with
+    // commitment `c` satisfies the predicate" and is fail-closed for every operator
+    // except `Gte` (no descriptor → rejection).
+    //
+    // ⚠ SOUNDNESS HOLE (LIVE — see the falsifier
+    // `test_verify_fulfillment_rejects_cross_state_predicate_forgery`): the expected
+    // commitment is the proof's OWN `fact_commitment`, so this gate is `x == x`. The
+    // trusted `state_root` threaded into `verify_fulfillment_with_predicates_and_key`
+    // is NEVER enforced here, so a proof bound to a foreign/fabricated state root
+    // passes. The sound replacement is `verify_predicate_proof_third_party(proof,
+    // facts_root, trusted_state_root)` with a `BridgeFactAttestation` on the proof;
+    // that machinery (a `facts_root` the verifier independently trusts + a producer
+    // that attaches attestations) is not yet wired. Do NOT drop in the third-party
+    // call before the producer attaches attestations — it would fail-closed on every
+    // legitimate fulfillment.
     if !verify_predicate_proof(proof, proof.fact_commitment) {
         return Err(FulfillmentError::PredicateProofFailed(
             "predicate proof cryptographic verification failed (no descriptor for this \
@@ -2326,6 +2346,123 @@ mod tests {
             result.is_ok(),
             "valid predicate fulfillment should pass: {:?}",
             result.err()
+        );
+    }
+
+    // CROSS-STATE predicate FORGERY — the live hole on the fulfillment path.
+    //
+    // `verify_fulfillment_with_predicates_and_key` receives the `state_root` the
+    // verifier TRUSTS as a parameter, but `verify_predicate_requirement` checks the
+    // proof with the BARE `verify_predicate_proof(proof, proof.fact_commitment)` —
+    // against the proof's OWN commitment. The trusted `state_root` is IGNORED. So a
+    // predicate proof bound (via its blinded fact commitment) to a FOREIGN state
+    // root the verifier does not trust — a different account's state, or a state the
+    // attacker fabricated — is accepted as though it spoke about the trusted state.
+    // The `FulfillmentWithPredicates` doc even claims the proofs are "bound to the
+    // fulfiller's attested state root, preventing fabrication"; they are not.
+    //
+    // (The sibling `test_verify_fulfillment_with_valid_predicate_proofs` already
+    // exhibits the symptom: it builds a proof under state_root 99999 and passes
+    // verification with a trusted state_root of `BabyBear::ZERO`.)
+    //
+    // #[ignore]d for the SAME multi-part ripple as the credentials hole: the proof
+    // must carry a `BridgeFactAttestation` (Merkle membership under a `facts_root`
+    // the verifier independently trusts) and verification must route through
+    // `dregg_bridge::present::verify_predicate_proof_third_party(proof, facts_root,
+    // trusted_state_root)`. Running this with `--ignored` FAILS at the final assert
+    // today (verify returns Ok — the forgery), proving the live hole.
+    #[test]
+    #[ignore = "LIVE fulfillment predicate-forgery hole: verify_predicate_requirement checks the \
+                proof against its OWN fact_commitment (x==x) and IGNORES the trusted state_root \
+                parameter, so a proof bound to a FOREIGN/attacker-chosen state root is accepted. \
+                Un-ignore once the proof carries a BridgeFactAttestation and verification routes \
+                through verify_predicate_proof_third_party(proof, facts_root, trusted_state_root)."]
+    fn test_verify_fulfillment_rejects_cross_state_predicate_forgery() {
+        use dregg_bridge::present::{FactTerms, prove_predicate_for_fact};
+        use dregg_circuit::predicate_arith_witness::Blinding;
+
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None,
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "balance".into(),
+                predicate_type: "gte".into(),
+                threshold: 1000,
+                upper_bound: None,
+                state_root_freshness: 100,
+            }],
+            strict_resource_matching: false,
+        };
+        let pred_intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        // A GENUINE `balance >= 1000` proof — but bound to a FOREIGN state root the
+        // verifier does NOT trust (a different/fabricated account's state).
+        let foreign_state_root = BabyBear::new(99999);
+        let fact = FactTerms {
+            predicate_sym: BabyBear::new(42),
+            term1: BabyBear::ZERO,
+            term2: BabyBear::ZERO,
+        }
+        .bind(foreign_state_root);
+        let predicate_proof = prove_predicate_for_fact(
+            5000,
+            fact,
+            Blinding(BabyBear::new(0xB11D1)),
+            &BridgePredicate::Gte(1000),
+        )
+        .expect("gte predicate proof should be produced");
+
+        let token = source_token();
+        let matched = Match {
+            intent_id: pred_intent.id,
+            satisfier: CommitmentId([0xBB; 32]),
+            proof: None,
+            mode: VerificationMode::Trusted,
+        };
+        let options = FulfillOptions {
+            mode: VerificationMode::Trusted,
+            root_key: Some(test_root_key()),
+            ..Default::default()
+        };
+        let base = fulfill(
+            &pred_intent,
+            &matched,
+            &token,
+            CommitmentId([0xBB; 32]),
+            &options,
+        )
+        .unwrap();
+
+        // NOTE: the fulfillment advertises the foreign root it was built against;
+        // the point is the VERIFIER's trusted root differs and is never enforced.
+        let fulfillment_with_preds = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![(0, predicate_proof)],
+            state_root: foreign_state_root,
+            state_root_block: 950,
+        };
+
+        // The verifier trusts a DIFFERENT state root (the real settled state).
+        let trusted_state_root = BabyBear::new(12345);
+        let key = test_root_key();
+        let result = verify_fulfillment_with_predicates_and_key(
+            &fulfillment_with_preds,
+            &pred_intent,
+            trusted_state_root,
+            1000,
+            Some(&key),
+        );
+        assert!(
+            result.is_err(),
+            "SOUNDNESS: a predicate proof bound to a state root the verifier does NOT trust \
+             (foreign 99999 vs trusted 12345) must be REJECTED — nothing ties the proof's \
+             commitment to the trusted state. Today it is ACCEPTED (the forgery)."
         );
     }
 
