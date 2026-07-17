@@ -852,8 +852,9 @@ fn kind_label(kind: WitnessedPredicateKind) -> String {
 }
 
 /// **Deprecated.** Use [`WitnessedProofVerifier`] (canonical registry
-/// dispatch). `MockProofVerifier` retained only for legacy tests that
-/// have not yet migrated.
+/// dispatch). No live code path or test instantiates `MockProofVerifier`;
+/// it remains only as the named accept-any-structurally-valid reference the
+/// doc comments elsewhere in this module point at, pending removal.
 ///
 /// The verifier accepts any non-empty proof that passes the structural
 /// consistency check ([`check_submission_structure`]). It does not
