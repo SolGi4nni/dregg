@@ -78,3 +78,10 @@ orb/conformance/h2c-host/h2c-host
 *.png.skip
 wasm/pkg-mwt/
 orb/conformance/h2c-host/h2c-host
+
+# session / agent scratch + logs — ephemeral, never codebase (2026-07-17 sweep)
+scratchpad/
+tmp/
+.codex/
+*.log
+cosmos-settlement/artifacts/
