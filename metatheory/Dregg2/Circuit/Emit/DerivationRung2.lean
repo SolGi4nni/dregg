@@ -182,9 +182,10 @@ theorem derivation_sat_imp_authentic {hash : List ℤ → ℤ} {DbMember : DbMem
     (hSound : ChipTableSound hash (t.tf .poseidon2))
     (hMem : BodyMembershipSound DbMember (envAt t 0))
     (hlen : 2 ≤ t.rows.length)
-    (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t) :
+    (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
+    (hcanon : DerivationCanon t) :
     DerivationStepAuthentic hash DbMember (envAt t 0) :=
-  { derivation_sat_imp_valid hSound hlen hsat with bodyFactsMembers := hMem }
+  { derivation_sat_imp_valid hSound hlen hsat hcanon with bodyFactsMembers := hMem }
 
 /-! ## §2b — The C6b export: the descriptor now BINDS body atom 0's fact hash to `pi[5]`, and that
 export DISCHARGES the slot-0 membership carrier from a single external fact. -/
@@ -198,7 +199,7 @@ theorem der_body_fact_exported {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     {maddrs : List ℤ} {t : VmTrace}
     (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t) :
-    (envAt t 0).loc (bodyHash 0) = t.pub 5 :=
+    (envAt t 0).loc (bodyHash 0) ≡ t.pub 5 [ZMOD 2013265921] :=
   der_pi0 hlen hsat (lift_c6b (by simp [c6b, pin]))
 
 /-- **`der_carrier_slot0_discharged_by_pi` — the composition-level discharge of the P0 leg.** The
@@ -213,10 +214,13 @@ theorem der_carrier_slot0_discharged_by_pi {DbMember : DbMembership} {hash : Lis
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
+    -- the deployed membership relation is Merkle set-membership over the Poseidon2 field-hash, so it
+    -- respects field congruence in the leaf argument (a leaf and its residue are the SAME field cell).
+    (hResp : ∀ a b : ℤ, a ≡ b [ZMOD 2013265921] → DbMember (t.pub 0) a → DbMember (t.pub 0) b)
     (hpi : DbMember (t.pub 0) (t.pub 5)) :
     DbMember ((envAt t 0).pub 0) ((envAt t 0).loc (bodyHash 0)) := by
   show DbMember (t.pub 0) ((envAt t 0).loc (bodyHash 0))
-  rw [der_body_fact_exported hlen hsat]; exact hpi
+  exact hResp (t.pub 5) ((envAt t 0).loc (bodyHash 0)) (der_body_fact_exported hlen hsat).symm hpi
 
 /-! ## §3 — The carrier is LOAD-BEARING (non-vacuous): it discriminates honest from forged. -/
 
@@ -273,7 +277,7 @@ authentic relation is satisfiable (not a constant-false conclusion), and the who
 theorem witTrace_authentic :
     DerivationStepAuthentic (fun _ => (0 : ℤ)) honestMember (envAt witTrace 0) :=
   derivation_sat_imp_authentic witTf_chipSound honest_satisfies_membership (by decide)
-    witTrace_satisfies
+    witTrace_satisfies witTrace_canon
 
 /-! ## §5 — THE AUDIT REGRESSION: the C6c export closes the MULTI-ATOM body-fact forgery.
 
@@ -310,7 +314,8 @@ theorem der_body_facts_further_exported {hash : List ℤ → ℤ} {minit : ℤ �
     {maddrs : List ℤ} {t : VmTrace}
     (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t) :
-    ∀ j, j < MAX_BODY_ATOMS - 1 → (envAt t 0).loc (bodyHash (j + 1)) = t.pub (6 + j) := by
+    ∀ j, j < MAX_BODY_ATOMS - 1 →
+      (envAt t 0).loc (bodyHash (j + 1)) ≡ t.pub (6 + j) [ZMOD 2013265921] := by
   intro j hj
   exact der_pi0 hlen hsat (lift_c6c (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))
 
@@ -324,11 +329,13 @@ theorem der_carrier_further_discharged {DbMember : DbMembership} {hash : List �
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
+    -- as in slot 0: the deployed Merkle-over-field membership respects field congruence in the leaf.
+    (hResp : ∀ a b : ℤ, a ≡ b [ZMOD 2013265921] → DbMember (t.pub 0) a → DbMember (t.pub 0) b)
     (hpi : ∀ j, j < MAX_BODY_ATOMS - 1 → DbMember (t.pub 0) (t.pub (6 + j))) :
     ∀ j, j < MAX_BODY_ATOMS - 1 → DbMember (t.pub 0) ((envAt t 0).loc (bodyHash (j + 1))) := by
   intro j hj
-  rw [der_body_facts_further_exported hlen hsat j hj]
-  exact hpi j hj
+  exact hResp (t.pub (6 + j)) ((envAt t 0).loc (bodyHash (j + 1)))
+    (der_body_facts_further_exported hlen hsat j hj).symm (hpi j hj)
 
 /-- The regression forge: a FURTHER body atom (slot 1) is activated with a FABRICATED fact hash
 `bodyHash 1 = -1` (a non-member the prover does not hold), its C2 inverse `bodyInv 1 = -1` keeping the

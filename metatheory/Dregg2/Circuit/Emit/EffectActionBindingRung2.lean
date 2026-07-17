@@ -78,16 +78,20 @@ set_option autoImplicit false
 /-! ## §1 — The PUBLIC-INPUT balance-conservation spec (the genuine no-forgery object). -/
 
 /-- **`BurnPublicSemantics t`** — the u64 balance conservation the `Burn` schema asserts of its
-PUBLISHED inputs: the COMBINED two-limb subtraction `new_balance + amount = old_balance`
-(`balance := lo + 2^32·hi`) on the disclosed public columns, and the `was_burn` disclosure pinned.
-The borrow (column 16) is a PRIVATE aux column, not a public input (`piCount = 16`), so it is
-correctly absent here — the public no-forgery claim is about the disclosed balance and flag only. -/
+PUBLISHED inputs: the COMBINED two-limb identity `new_balance + amount ≡ old_balance`
+(`balance := lo + 2^32·hi`) on the disclosed public columns, and the `was_burn` disclosure pinned —
+all as BabyBear-field congruences (`≡ [ZMOD p]`), the field-faithful denotation the deployed
+`assert_zero` gates enforce and the exact resolution the base `BurnSemantics` states the row-local
+identity at (a single field congruence cannot carry a 2^64 combined-balance ℤ equality without the
+borrow-chain canonicality lift, which the base does not take). The borrow (column 16) is a PRIVATE aux
+column, not a public input (`piCount = 16`), so it is correctly absent here — the public no-forgery
+claim is about the disclosed balance and flag only. -/
 def BurnPublicSemantics (t : VmTrace) : Prop :=
   (t.pub B_NEW_LO + TWO_POW_32 * t.pub B_NEW_HI)
       + (t.pub B_AMT_LO + TWO_POW_32 * t.pub B_AMT_HI)
-    = t.pub B_OLD_LO + TWO_POW_32 * t.pub B_OLD_HI
-  ∧ t.pub B_WASBURN_LO = 1
-  ∧ t.pub B_WASBURN_HI = 0
+    ≡ t.pub B_OLD_LO + TWO_POW_32 * t.pub B_OLD_HI [ZMOD 2013265921]
+  ∧ t.pub B_WASBURN_LO ≡ 1 [ZMOD 2013265921]
+  ∧ t.pub B_WASBURN_HI ≡ 0 [ZMOD 2013265921]
 
 /-! ## §2 — THE RUNG-2 DISCHARGE: a satisfying trace with an active row conserves the PUBLIC balance. -/
 
@@ -107,19 +111,29 @@ theorem burn_public_conserves
   -- the active-row arithmetic identity (local row env at row 0)
   obtain ⟨hbal, _, hwlo, hwhi⟩ :=
     burn_satisfied2_conserves hash minit mfin maddrs t h 0 h0pos h0ne
-  -- the whole-descriptor binding: row 0's columns 0..15 equal the published inputs
+  -- the whole-descriptor binding: row 0's columns 0..15 are congruent (mod p) to the published inputs
   have hbind := burn_satisfied2_binds hash minit mfin maddrs t h 0 h0pos
-  have b : ∀ c, c < 16 → (envAt t 0).loc c = t.pub c := by
+  have b : ∀ c, c < 16 → (envAt t 0).loc c ≡ t.pub c [ZMOD 2013265921] := by
     intro c hc
-    show (t.rows.getD 0 zeroAsg) c = t.pub c
+    show (t.rows.getD 0 zeroAsg) c ≡ t.pub c [ZMOD 2013265921]
     exact hbind c hc
   refine ⟨?_, ?_, ?_⟩
-  · rw [← b B_NEW_LO (by decide), ← b B_NEW_HI (by decide),
-        ← b B_AMT_LO (by decide), ← b B_AMT_HI (by decide),
-        ← b B_OLD_LO (by decide), ← b B_OLD_HI (by decide)]
-    exact hbal
-  · rw [← b B_WASBURN_LO (by decide)]; exact hwlo
-  · rw [← b B_WASBURN_HI (by decide)]; exact hwhi
+  · -- transport the combined mod-p balance identity from row 0's cells onto the public inputs, by
+    -- congruence: `pubComb ≡ locComb` (binding.symm) `≡ locOld` (hbal) `≡ pubOld` (binding).
+    have hcomb :
+        ((envAt t 0).loc B_NEW_LO + TWO_POW_32 * (envAt t 0).loc B_NEW_HI)
+            + ((envAt t 0).loc B_AMT_LO + TWO_POW_32 * (envAt t 0).loc B_AMT_HI)
+          ≡ (t.pub B_NEW_LO + TWO_POW_32 * t.pub B_NEW_HI)
+              + (t.pub B_AMT_LO + TWO_POW_32 * t.pub B_AMT_HI) [ZMOD 2013265921] :=
+      ((b B_NEW_LO (by decide)).add ((Int.ModEq.refl TWO_POW_32).mul (b B_NEW_HI (by decide)))).add
+        ((b B_AMT_LO (by decide)).add ((Int.ModEq.refl TWO_POW_32).mul (b B_AMT_HI (by decide))))
+    have hold :
+        (envAt t 0).loc B_OLD_LO + TWO_POW_32 * (envAt t 0).loc B_OLD_HI
+          ≡ t.pub B_OLD_LO + TWO_POW_32 * t.pub B_OLD_HI [ZMOD 2013265921] :=
+      (b B_OLD_LO (by decide)).add ((Int.ModEq.refl TWO_POW_32).mul (b B_OLD_HI (by decide)))
+    exact hcomb.symm.trans (hbal.trans hold)
+  · exact (b B_WASBURN_LO (by decide)).symm.trans hwlo
+  · exact (b B_WASBURN_HI (by decide)).symm.trans hwhi
 
 #assert_axioms burn_public_conserves
 
@@ -167,7 +181,8 @@ theorem cheatBurnTrace_satisfied2 :
         rw [contGate_holdsAt]; intro hl; exact absurd hl (by decide)
       · obtain ⟨c', _, rfl⟩ := List.mem_map.mp hpi
         rw [piGate_holdsAt]; intro _
-        simp only [envAt, cheatBurnTrace, List.getD_cons_zero]
+        -- pub = the row itself, so `loc c' ≡ pub c'` is reflexive (both are `badBurnRow c'`).
+        rfl
     · fin_cases hburn <;>
         (rw [baseGate_holdsAt]; intro hl; exact absurd hl (by decide))
   · intro i hi; trivial
@@ -184,10 +199,8 @@ theorem cheatBurnTrace_satisfied2 :
 does NOT conserve, so no `Satisfied2`-only theorem could conclude `BurnPublicSemantics`. -/
 theorem cheat_public_forged : ¬ BurnPublicSemantics cheatBurnTrace := by
   intro h
-  have hbal := h.1
-  simp only [cheatBurnTrace, badBurnRow, B_NEW_LO, B_NEW_HI, B_AMT_LO, B_AMT_HI, B_OLD_LO, B_OLD_HI,
-    TWO_POW_32] at hbal
-  norm_num at hbal
+  -- the forged published balance `601 + 400 = 1001 ≢ 1000 [ZMOD p]` (differs by 1, and `p ∤ 1`).
+  exact absurd h.1 (by decide)
 
 /-! ### Shape pins. -/
 

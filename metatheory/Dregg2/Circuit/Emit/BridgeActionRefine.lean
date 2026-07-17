@@ -46,6 +46,7 @@ trips a boundary pin, and a mismatched padding row trips a transition gate.
 has no hash sites / ranges / map ops, so no Poseidon2 CR enters. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.BridgeActionEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.BridgeActionRefine
 
@@ -56,6 +57,7 @@ open Dregg2.Circuit.DescriptorIR2
    TableId envAt zeroAsg memOpsOf mapOpsOf memLog mapLog opRow memCheck_nil)
 open Dregg2.Circuit.Emit.BridgeActionEmit
   (bridgeActionDesc contBody cont_body_zero_iff piPins windowGates BRIDGE_ACTION_WIDTH)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
 
@@ -79,26 +81,40 @@ def BridgeAction.decodeAt (a : Assignment) : BridgeAction :=
   , amountLo       := a 24
   , amountHi       := a 25 }
 
-/-- A row BINDS the published tuple: every one of the 26 typed columns equals the published input.
-The identity-layout face of "this row carries exactly the bridge-action tuple in the PIs". -/
+/-- A row BINDS the published tuple: every one of the 26 typed columns is congruent (mod `p`, the
+deployed BabyBear field constraint) to the published input. The identity-layout face of "this row
+carries exactly the bridge-action tuple in the PIs". This is the field-faithful denotation the emitted
+`piBinding`/`window_gate` `assert_zero`s enforce; it matches the green sibling binding AIR
+`EffectActionBindingRefine.EffectActionBinds`. The binding AIR range-checks nothing (no range teeth),
+so there is no deployed canonicality envelope to lift the congruence to an ℤ equality — the congruence
+IS the faithful statement. -/
 def BridgeRowBinds (row pub : Assignment) : Prop :=
-  ∀ c, c < BRIDGE_ACTION_WIDTH → row c = pub c
+  ∀ c, c < BRIDGE_ACTION_WIDTH → row c ≡ pub c [ZMOD 2013265921]
 
 /-- **`BridgeActionBinds t`** — THE whole-trace semantic relation the binding AIR computes: every row
 of the trace binds the published 26-limb bridge-action tuple. -/
 def BridgeActionBinds (t : VmTrace) : Prop :=
   ∀ i, i < t.rows.length → BridgeRowBinds (t.rows.getD i zeroAsg) t.pub
 
-/-- The typed face of `BridgeRowBinds`: a binding row DECODES to the same `BridgeAction` as the
-published inputs — the functional-correctness statement made explicit over the typed tuple. -/
+/-- Componentwise field congruence of two decoded bridge-action tuples (the typed face of
+`BridgeRowBinds`, at the same mod-`p` resolution). -/
+def BridgeAction.ModEq (x y : BridgeAction) : Prop :=
+  (∀ j : Fin 8, x.nullifier j ≡ y.nullifier j [ZMOD 2013265921])
+  ∧ (∀ j : Fin 8, x.recipient j ≡ y.recipient j [ZMOD 2013265921])
+  ∧ (∀ j : Fin 8, x.destFederation j ≡ y.destFederation j [ZMOD 2013265921])
+  ∧ x.amountLo ≡ y.amountLo [ZMOD 2013265921]
+  ∧ x.amountHi ≡ y.amountHi [ZMOD 2013265921]
+
+/-- The typed face of `BridgeRowBinds`: a binding row DECODES to a `BridgeAction` congruent (mod `p`,
+componentwise) to the published inputs — the functional-correctness statement made explicit over the
+typed tuple. -/
 theorem carriesTuple_decode (row pub : Assignment) (h : BridgeRowBinds row pub) :
-    BridgeAction.decodeAt row = BridgeAction.decodeAt pub := by
+    BridgeAction.ModEq (BridgeAction.decodeAt row) (BridgeAction.decodeAt pub) := by
   simp only [BridgeRowBinds, BRIDGE_ACTION_WIDTH] at h
-  simp only [BridgeAction.decodeAt, BridgeAction.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
-  · funext j; exact h j.val (by have := j.isLt; omega)
-  · funext j; exact h (8 + j.val) (by have := j.isLt; omega)
-  · funext j; exact h (16 + j.val) (by have := j.isLt; omega)
+  · intro j; exact h j.val (by have := j.isLt; omega)
+  · intro j; exact h (8 + j.val) (by have := j.isLt; omega)
+  · intro j; exact h (16 + j.val) (by have := j.isLt; omega)
   · exact h 24 (by omega)
   · exact h 25 (by omega)
 
@@ -108,17 +124,20 @@ theorem carriesTuple_decode (row pub : Assignment) (h : BridgeRowBinds row pub) 
 theorem base_piPin_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (c : Nat) :
     (VmConstraint2.base (VmConstraint.piBinding VmRow.first c c)).holdsAt hash tf env isFirst isLast
-      ↔ (isFirst = true → env.loc c = env.pub c) := Iff.rfl
+      ↔ (isFirst = true → env.loc c ≡ env.pub c [ZMOD 2013265921]) := Iff.rfl
 
-/-- A continuity gate's per-row denotation IS "off the last row, this column chains" — via the
-Rung-0 tooth `cont_body_zero_iff`. -/
+/-- A continuity gate's per-row denotation IS "off the last row, this column chains (mod `p`)" — the
+`window_gate` asserts `nxt c − loc c ≡ 0 [ZMOD p]`, i.e. the two field cells agree mod `p`. -/
 theorem windowGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (c : Nat) :
     (VmConstraint2.windowGate ⟨contBody c, true⟩).holdsAt hash tf env isFirst isLast
-      ↔ (isLast = false → env.nxt c = env.loc c) := by
+      ↔ (isLast = false → env.nxt c ≡ env.loc c [ZMOD 2013265921]) := by
+  simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true]
   constructor
-  · intro h hl; exact (cont_body_zero_iff env c).mp (h hl)
-  · intro h hl; exact (cont_body_zero_iff env c).mpr (h hl)
+  · intro h hl
+    exact (gate_modEq_iff (by simp only [contBody, WindowExpr.eval]; ring)).mp (h hl)
+  · intro h hl
+    exact (gate_modEq_iff (by simp only [contBody, WindowExpr.eval]; ring)).mpr (h hl)
 
 /-! ## §3 — The two constraint families' membership in the descriptor. -/
 
@@ -166,15 +185,16 @@ theorem bridgeAction_satisfied2_binds
     intro hi c hc
     have hk := ih (by omega) c hc
     have hs := step k hi c hc
-    rw [hs, hk]
+    exact hs.trans hk
 
-/-- **The typed corollary:** every row of a satisfying trace DECODES to the same `BridgeAction` as
-the public inputs — functional correctness of the binding AIR, over the typed tuple. -/
+/-- **The typed corollary:** every row of a satisfying trace DECODES to a `BridgeAction` congruent
+(mod `p`, componentwise) to the public inputs — functional correctness of the binding AIR, over the
+typed tuple. -/
 theorem bridgeAction_satisfied2_decodes
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (h : Satisfied2 hash bridgeActionDesc minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
-    BridgeAction.decodeAt (t.rows.getD i zeroAsg) = BridgeAction.decodeAt t.pub :=
+    BridgeAction.ModEq (BridgeAction.decodeAt (t.rows.getD i zeroAsg)) (BridgeAction.decodeAt t.pub) :=
   carriesTuple_decode _ _ (bridgeAction_satisfied2_binds hash minit mfin maddrs t h i hi)
 
 /-! ## §5 — Completeness (SEM ⟹ SAT) over binding traces, and the full IFF. -/
@@ -225,7 +245,7 @@ theorem bridgeAction_binds_satisfied2 (t : VmTrace)
       have hk := hbind i (by omega) c' hcw
       have hk1 := hbind (i + 1) hi1 c' hcw
       simp only [envAt]
-      rw [hk1, hk]
+      exact hk1.trans hk.symm
   · -- rowHashes: no hash sites
     intro i hi; trivial
   · -- rowRanges: no ranges
@@ -276,9 +296,11 @@ theorem demoTrace_satisfied2 :
 theorem demoTrace_binds_via_bridge : BridgeActionBinds demoTrace :=
   bridgeAction_satisfied2_binds _ _ _ _ demoTrace demoTrace_satisfied2
 
-/-- The typed conclusion, concretely: row 0 of the satisfying trace decodes to the published tuple. -/
+/-- The typed conclusion, concretely: row 0 of the satisfying trace decodes congruently to the
+published tuple. -/
 theorem demoTrace_decode0 :
-    BridgeAction.decodeAt (demoTrace.rows.getD 0 zeroAsg) = BridgeAction.decodeAt demoTrace.pub :=
+    BridgeAction.ModEq (BridgeAction.decodeAt (demoTrace.rows.getD 0 zeroAsg))
+      (BridgeAction.decodeAt demoTrace.pub) :=
   bridgeAction_satisfied2_decodes _ _ _ _ demoTrace demoTrace_satisfied2 0 (by decide)
 
 /-- A forged row-0 whose limb 0 (`999`) does NOT match the published input (`0`). -/
@@ -294,7 +316,11 @@ theorem brokenBound_rejects :
   have hpin := h.rowConstraints 0 (by decide) _ (piPin_mem 0 (by decide))
   rw [base_piPin_holdsAt] at hpin
   have hbad := hpin rfl
-  simp [envAt, brokenBoundTrace, brokenBoundRow, demoPub] at hbad
+  -- field-faithful reject: `999 ≢ 0 [ZMOD p]` because `0 < 999 < p`, so `p ∤ 999`.
+  have hl : (envAt brokenBoundTrace 0).loc 0 = 999 := rfl
+  have hp : (envAt brokenBoundTrace 0).pub 0 = 0 := rfl
+  rw [Int.modEq_iff_dvd, hl, hp] at hbad
+  omega
 
 /-- A trace whose padding row (row 1) carries a DIFFERENT limb 0 (`999`) than row 0 (`0`). -/
 def brokenPadRow : Assignment := fun c => if c = 0 then 999 else (c : ℤ)
@@ -310,7 +336,11 @@ theorem brokenPad_rejects :
   have hgate := h.rowConstraints 0 (by decide) _ (windowGate_mem 0 (by decide))
   rw [windowGate_holdsAt] at hgate
   have hbad := hgate (by decide)
-  simp [envAt, brokenPadTrace, brokenPadRow, demoPub] at hbad
+  -- field-faithful reject: the padding row's limb `999 ≢ 0 [ZMOD p]`.
+  have hn : (envAt brokenPadTrace 0).nxt 0 = 999 := rfl
+  have hl : (envAt brokenPadTrace 0).loc 0 = 0 := rfl
+  rw [Int.modEq_iff_dvd, hn, hl] at hbad
+  omega
 
 /-! ### Shape pins. -/
 

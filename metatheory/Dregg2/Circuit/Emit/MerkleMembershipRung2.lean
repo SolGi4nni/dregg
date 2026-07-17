@@ -72,7 +72,9 @@ open Dregg2.Circuit.Emit.MerkleMembershipEmit
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1
    LEVEL0_LANES LEVEL1_LANES ROOT_PI)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine
-  (merkleFold2 MerkleMembers2 lookupChip4 firstPi activeGateZero)
+  (merkleFold2 MerkleMembers2 lookupChip4 firstPi activeGateZero
+   Canon eq_of_modEq_canon MerkleCanon)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
 
@@ -85,14 +87,15 @@ local macro "mm_mem" : tactic =>
 
 /-! ## §1 — the last-row extractor + the every-row level-tie (the fix's teeth). -/
 
-/-- A declared `.boundary VmRow.last` body vanishes on the LAST row — the counterpart to
-`activeGateZero` (which reads the transition rows). This is the leg the fix adds. -/
+/-- A declared `.boundary VmRow.last` body vanishes (mod `p`, the deployed field constraint) on the
+LAST row — the counterpart to `activeGateZero` (which reads the transition rows). This is the leg the
+fix adds. -/
 theorem lastBoundaryZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t)
     (j : Nat) (hj : j < t.rows.length) (hlast : (j + 1 == t.rows.length) = true)
     (body : EmittedExpr)
     (hmem : VmConstraint2.base (.boundary VmRow.last body) ∈ merkleMembershipDesc.constraints) :
-    body.eval (envAt t j).loc = 0 := by
+    body.eval (envAt t j).loc ≡ 0 [ZMOD 2013265921] := by
   have h := hsat.rowConstraints j hj _ hmem
   rw [hlast] at h
   simp only [VmConstraint2.holdsAt, holdsVm_boundaryLast_true] at h
@@ -104,17 +107,22 @@ if row 0 IS the last row (`height = 1`, the forgery's case) the new `continuityL
 way the levels chain — so `CUR1` is no longer free on a height-1 trace. -/
 theorem contAtRow0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hpos : 0 < t.rows.length)
-    (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t) :
+    (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t)
+    (hc : MerkleCanon t) :
     (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 := by
+  -- The continuity gate binds `CUR1 − PARENT0 ≡ 0 [ZMOD p]`; both cells are canonical, so it lifts to
+  -- the genuine ℤ equality (`CUR1` is re-hashed into the level-1 digest, where mod-`p` cannot thread).
   by_cases hlast : (0 + 1 == t.rows.length) = true
   · -- row 0 is the last row (height 1): the last-row boundary continuity fix fires.
-    exact (continuity_body_zero_iff (envAt t 0).loc).mp
-      (lastBoundaryZero hsat 0 hpos hlast contBody (by mm_mem))
+    exact eq_of_modEq_canon hc.cur1 hc.parent0
+      ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+        (lastBoundaryZero hsat 0 hpos hlast contBody (by mm_mem)))
   · -- row 0 is a transition row (height > 1): the transition continuity gate fires.
     have hf : (0 + 1 == t.rows.length) = false := by
       simp only [Bool.not_eq_true] at hlast; exact hlast
-    exact (continuity_body_zero_iff (envAt t 0).loc).mp
-      (activeGateZero hsat 0 hpos hf contBody (by mm_mem))
+    exact eq_of_modEq_canon hc.cur1 hc.parent0
+      ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+        (activeGateZero hsat 0 hpos hf contBody (by mm_mem)))
 
 /-! ## §2 — the strengthened whole-descriptor bridge (no-forgery, any non-empty height). -/
 
@@ -127,7 +135,8 @@ theorem merkleMembership_no_forgery {hash : List ℤ → ℤ} {t : VmTrace} {min
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hpos : 0 < t.rows.length)
     (hsat : Satisfied2 hash merkleMembershipDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hc : MerkleCanon t) :
     MerkleMembers2 hash
       ((envAt t 0).loc LEAF) ((envAt t 0).loc SIB0A) ((envAt t 0).loc SIB0B) ((envAt t 0).loc SIB0C)
       ((envAt t 0).loc SIB1A) ((envAt t 0).loc SIB1B) ((envAt t 0).loc SIB1C)
@@ -140,9 +149,10 @@ theorem merkleMembership_no_forgery {hash : List ℤ → ℤ} {t : VmTrace} {min
       = hash [(envAt t 0).loc CUR1, (envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B,
               (envAt t 0).loc SIB1C] :=
     lookupChip4 hsat hChip 0 hpos CUR1 SIB1A SIB1B SIB1C PARENT1 LEVEL1_LANES (by mm_mem)
-  have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 := contAtRow0 hpos hsat
+  have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 := contAtRow0 hpos hsat hc
+  -- root pin: PARENT1 ≡ root PI [ZMOD p] on the first row, lifted to ℤ by canonicality of both cells.
   have hroot : (envAt t 0).loc PARENT1 = t.pub ROOT_PI :=
-    firstPi hsat hpos PARENT1 ROOT_PI (by mm_mem)
+    eq_of_modEq_canon hc.parent1 hc.root (firstPi hsat hpos PARENT1 ROOT_PI (by mm_mem))
   unfold MerkleMembers2 merkleFold2
   rw [← hroot, hp1, hcont, hp0]
 
@@ -254,20 +264,25 @@ theorem forge_was_accepted_now_rejected :
 /-! ## §4 — non-vacuity TRUE half: the fix ACCEPTS a genuine height-1 honest witness, and the
 strengthened bridge FIRES on it (deriving real membership the Rung-1 `1 < height` bridge could not). -/
 
-/-- The honest height-1 row: leaf `1`, level-0 siblings `2,3,4`, `PARENT0 = fHash[1,2,3,4] = 1020304`,
-the chained input `CUR1 = 1020304` (= PARENT0, honest), level-1 siblings `5,6,7`, top parent
-`PARENT1 = fHash[1020304,5,6,7] = 1020304050607`. -/
+/-- The honest witness rides a base-10 digit hash (like `MerkleMembershipRefine.cHash`): every digest
+stays CANONICAL (`< p`), so the deployed range-check envelope `MerkleCanon` is inhabited (the base-100
+forge hash `fHash` overflows the BabyBear prime, so it cannot). `hHash [a,b,c,d] = 10·(10·(10·a+b)+c)+d`. -/
+private def hHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 10 + x) 0
+
+/-- The honest height-1 row: leaf `1`, level-0 siblings `2,3,4`, `PARENT0 = hHash[1,2,3,4] = 1234`,
+the chained input `CUR1 = 1234` (= PARENT0, honest), level-1 siblings `5,6,7`, top parent
+`PARENT1 = hHash[1234,5,6,7] = 1234567` — all canonical (`< p`). -/
 private def hRow : Assignment := fun c =>
   if c = LEAF then 1 else if c = SIB0A then 2 else if c = SIB0B then 3 else if c = SIB0C then 4
-  else if c = PARENT0 then 1020304
-  else if c = CUR1 then 1020304 else if c = SIB1A then 5 else if c = SIB1B then 6
-  else if c = SIB1C then 7 else if c = PARENT1 then 1020304050607 else 0
+  else if c = PARENT0 then 1234
+  else if c = CUR1 then 1234 else if c = SIB1A then 5 else if c = SIB1B then 6
+  else if c = SIB1C then 7 else if c = PARENT1 then 1234567 else 0
 
-private def hPub : Assignment := fun k => if k = ROOT_PI then 1020304050607 else 0
+private def hPub : Assignment := fun k => if k = ROOT_PI then 1234567 else 0
 
 private def hTbl : List (List ℤ) :=
-  [chipRow fHash [1, 2, 3, 4] (List.replicate 7 0),
-   chipRow fHash [1020304, 5, 6, 7] (List.replicate 7 0)]
+  [chipRow hHash [1, 2, 3, 4] (List.replicate 7 0),
+   chipRow hHash [1234, 5, 6, 7] (List.replicate 7 0)]
 
 /-- The genuine HEIGHT-1 honest trace (`rows = [hRow]`) — the case the fix makes provable. -/
 private def hTrace : VmTrace :=
@@ -275,19 +290,25 @@ private def hTrace : VmTrace :=
     tf := fun tid => match tid with | .poseidon2 => hTbl | _ => [] }
 
 /-- The honest chip table is SOUND. -/
-theorem hTf_chipSound : ChipTableSound fHash (hTrace.tf .poseidon2) := by
+theorem hTf_chipSound : ChipTableSound hHash (hTrace.tf .poseidon2) := by
   intro r hr
   simp only [hTrace, hTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with h | h
   · exact ⟨[1, 2, 3, 4], List.replicate 7 0, by decide, by decide, h⟩
-  · exact ⟨[1020304, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[1234, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
+
+/-- **The canonicality envelope is INHABITED for the honest height-1 witness** — the level-tie cells
+(`CUR1`/`PARENT0 = 1234`) and the root cell / PI (`PARENT1`/`ROOT_PI = 1234567`) are all small
+canonical field values (`< p`). So `merkleMembership_no_forgery` fires here non-vacuously. -/
+theorem hTrace_canon : MerkleCanon hTrace :=
+  ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
 
 /-- **The honest height-1 trace `Satisfied2`s the FIXED descriptor** — all five constraints hold on the
 single row: both chip lookups land, the transition gate is vacuous (last row), the root pin closes, and
 the new `continuityLastFix` closes because `CUR1 = PARENT0 = 1020304` (honest chaining). So the fix does
 NOT over-constrain: honest height-1 membership is still accepted. -/
 theorem hTrace_satisfied2 :
-    Satisfied2 fHash merkleMembershipDesc (fun _ => 0) (fun _ => (0, 0)) [] hTrace := by
+    Satisfied2 hHash merkleMembershipDesc (fun _ => 0) (fun _ => (0, 0)) [] hTrace := by
   have hmemlog : memLog merkleMembershipDesc hTrace = [] := rfl
   have hmaplog : mapLog merkleMembershipDesc hTrace = [] := rfl
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
@@ -313,19 +334,19 @@ theorem hTrace_satisfied2 :
 hypotheses (`0 < height`, `Satisfied2`, `ChipTableSound`) hold, and membership is DERIVED — the Rung-1
 bridge could not even state this (it needs `1 < height`). Non-vacuous: the antecedent is inhabited. -/
 theorem honest_height1_fires :
-    MerkleMembers2 fHash
+    MerkleMembers2 hHash
       ((envAt hTrace 0).loc LEAF) ((envAt hTrace 0).loc SIB0A) ((envAt hTrace 0).loc SIB0B)
       ((envAt hTrace 0).loc SIB0C) ((envAt hTrace 0).loc SIB1A) ((envAt hTrace 0).loc SIB1B)
       ((envAt hTrace 0).loc SIB1C) (hTrace.pub ROOT_PI) :=
-  merkleMembership_no_forgery (by decide) hTrace_satisfied2 hTf_chipSound
+  merkleMembership_no_forgery (by decide) hTrace_satisfied2 hTf_chipSound hTrace_canon
 
-/-- The fired witness IS the closed-form true instance `1020304050607 = fHash[fHash[1,2,3,4],5,6,7]`. -/
+/-- The fired witness IS the closed-form true instance `1234567 = hHash[hHash[1,2,3,4],5,6,7]`. -/
 theorem honest_height1_is_member :
-    (MerkleMembers2 fHash
+    (MerkleMembers2 hHash
         ((envAt hTrace 0).loc LEAF) ((envAt hTrace 0).loc SIB0A) ((envAt hTrace 0).loc SIB0B)
         ((envAt hTrace 0).loc SIB0C) ((envAt hTrace 0).loc SIB1A) ((envAt hTrace 0).loc SIB1B)
         ((envAt hTrace 0).loc SIB1C) (hTrace.pub ROOT_PI))
-      ↔ MerkleMembers2 fHash 1 2 3 4 5 6 7 1020304050607 := Iff.rfl
+      ↔ MerkleMembers2 hHash 1 2 3 4 5 6 7 1234567 := Iff.rfl
 
 /-! ## §5 — shape pins + axiom hygiene. -/
 
@@ -336,7 +357,7 @@ theorem honest_height1_is_member :
 -- the forged leaf's TRUE root differs from the committed root (the forgery is real):
 #guard merkleFold2 fHash 99 1 1 1 5 6 7 != 1020304050607
 -- the honest leaf's TRUE root IS the committed root (the accepted witness is real):
-#guard merkleFold2 fHash 1 2 3 4 5 6 7 == 1020304050607
+#guard merkleFold2 hHash 1 2 3 4 5 6 7 == 1234567
 
 #assert_axioms lastBoundaryZero
 #assert_axioms contAtRow0
@@ -347,6 +368,7 @@ theorem honest_height1_is_member :
 #assert_axioms forge_rejected
 #assert_axioms forge_was_accepted_now_rejected
 #assert_axioms hTf_chipSound
+#assert_axioms hTrace_canon
 #assert_axioms hTrace_satisfied2
 #assert_axioms honest_height1_fires
 

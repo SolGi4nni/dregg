@@ -59,10 +59,11 @@ field; every other field of the content-addressed record is preserved (`setBalan
 def applyCellDelta (d : CellDelta) (v : Value) : Value :=
   setBalance v (balOf v + d.balanceChange)
 
-/-- A delta-applied cell is never the record default `Value.record []` (so the sparse `insertNZ` accepts it —
-the same `setBalance_ne_default` the committed `finTransfer` rides). -/
+/-- A delta-applied cell is never the `cell` map default `Value.int 0` (so the sparse `insertNZ` accepts it —
+the same `setBalance_ne_default` the committed `finTransfer` rides; the map default is `Value.int 0`,
+`FinKernelState.cell : CanonMap CellId Value (Value.int 0)`). -/
 theorem applyCellDelta_ne_default (d : CellDelta) (v : Value) :
-    applyCellDelta d v ≠ Value.record [] := setBalance_ne_default _ _
+    applyCellDelta d v ≠ Value.int 0 := setBalance_ne_default _ _
 
 /-- **`applyDeltaRec`** — fold a `(CellId × CellDelta)` list into a `RecordKernelState`, each step a
 `Function.update` of the total `cell` function (the Rust `for (id, delta) in updated` loop, `ledger.rs:718`). -/

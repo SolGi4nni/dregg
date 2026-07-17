@@ -41,8 +41,9 @@ structure CellUpdate where
   key : CellId
   /-- the NEW record value (computed from the pre-state). -/
   val : Value
-  /-- `val` is not the field default — the sparse-map obligation `insertNZ` needs (proof-irrelevant). -/
-  ne  : val ≠ Value.record []
+  /-- `val` is not the field default — the sparse-map obligation `insertNZ` needs (proof-irrelevant).
+  The `cell` map's default is `Value.int 0` (`FinKernelState.cell : CanonMap CellId Value (Value.int 0)`). -/
+  ne  : val ≠ Value.int 0
 
 /-- **`applyUpdatesFin`** — fold the update-list into a `FinKernelState`, each step a `CanonMap.insertNZ`. -/
 def applyUpdatesFin : List CellUpdate → FinKernelState → FinKernelState
