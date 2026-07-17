@@ -66,6 +66,25 @@ jobs:
       # app-framework/turn/sdk it pulls are dev-deps already built by --workspace), so
       # this reuses the warm target dir above. Mirrors the dregg-chain matrix directly.
       - run: cargo test -p starbridge-polis --features deos
+      # dregg-doc has NO `default` key in [features], so — exactly like dregg-chain
+      # above — `cargo test --workspace` compiles it FEATURELESS: its 3 ungated test
+      # files run, and the 35 tests behind `substrate` compile NOWHERE. That population
+      # is the economic-safety surface: tests/staked_bond_slash.rs (a conviction slashes
+      # exactly the bond, conservingly; a second slash is refused one-shot; the slash
+      # conserves the total across all parties), tests/conviction_unforgeable.rs (the
+      # unforgeability gate — Conviction's fields are private and ConvictionEvidence is
+      # #[non_exhaustive], so a SlashOutcome can only come from a genuine
+      # CiAssurance::evaluate detection), tests/nullifier_root_federation.rs,
+      # tests/literate_executor_weld.rs, plus 22 in-src unit tests (pull_request.rs
+      # mod landing/required_checks/ci_run_checks, review.rs mod thread).
+      # CHEAP: every dep the feature turns on (dregg-turn, dregg-commit, dregg-circuit,
+      # dregg-blocklace, ed25519-dalek, serde) is an in-workspace path dep the
+      # --workspace lane already builds. No prover, no network, no service.
+      # ⚠ NOT compile-verified locally when landed (the local cargo target lock was held
+      # by a co-tenant build); the evidence is manifest+source read, same basis as the
+      # dregg-chain matrix. If this reds on a compile error, that IS the finding — a test
+      # population that had never been built. Fix the drift; do not delete the step.
+      - run: cargo test -p dregg-doc --features substrate
 
   # solana-lock is a DELIBERATE standalone workspace (keeps the Solana/SBF dep
   # tree out of the main one — see solana-lock/Cargo.toml). That isolation also
@@ -651,6 +670,143 @@ jobs:
       - name: Crypto linking-seam gauntlet (SignCoreSpec/EncapsCoreSpec/AcvpKats — outside the default aggregator)
         working-directory: metatheory
         run: lake build Dregg2.Crypto.CryptoVerifyAll
+
+      # THE CORPUS-WIDE AXIOM-HYGIENE LEDGER, ARMED (2026-07-17, wiring hunt round 2).
+      # `Dregg2/Claims.lean` is THE `#assert_axioms` net: 202 per-decl pins +
+      # 51 `#assert_namespace_axioms` (~1500 theorems) that each FAIL THE BUILD unless
+      # the pinned decl's full axiom set is {propext, Classical.choice, Quot.sound}.
+      # Its own header calls it "the comprehensive, corpus-wide #assert_axioms net" and
+      # names ~190 pins as "the UNIQUE location of those per-keystone kernel-clean
+      # certifications" — and NOTHING BUILT IT. It is imported by zero modules (verified:
+      # `grep -rl '^import Dregg2.Claims'` = 0 hits) and is not reachable from the
+      # `Dregg2.lean` root, and the `Dregg2` lean_lib has NO globs (lakefile.toml) — so
+      # `lake build` never touched it. scripts/axiom-hygiene-guard.sh's header describes a
+      # "two-layer" guard whose layer (b) IS this ledger; layer (b) was running NOWHERE.
+      # The textual layer (a) above catches a literal `sorry`; ONLY this layer catches a
+      # TRANSITIVELY-INHERITED sorryAx or a keystone that silently grew a new axiom.
+      #
+      # COST: it imports ONLY the root `Dregg2` — already built by the zero-sorry step above
+      # — so this elaborates the pins against a warm corpus and nothing else. Measured on a
+      # warm tree: ~2m53s wall / ~90s CPU. A red here is a REAL axiom leak in a keystone the
+      # corpus advertises as proved: read the named decl, do not delete the pin.
+      - name: Corpus-wide axiom-hygiene ledger (Dregg2.Claims — 253 pins, imported by nothing)
+        working-directory: metatheory
+        run: lake build Dregg2.Claims
+
+      # THE ORPHAN GATE (2026-07-17, wiring hunt round 2). The `Dregg2` lean_lib has NO
+      # `globs` (metatheory/lakefile.toml), so `lake build` compiles `Dregg2.lean` + its
+      # transitive imports ONLY. 103 modules under metatheory/Dregg2/** are NOT reachable
+      # from that root, NOT named by any CI step, and NOT pulled in by the descriptor-drift
+      # gate's emitters — they were compiled by NOTHING. Same hole class as CryptoVerifyAll
+      # above; this is its siblings. The 76 listed here are the ones VERIFIED GREEN at HEAD
+      # (built locally on a warm corpus, 2026-07-17) and they assert real things:
+      #   * Bridge/*        — the Eth/MPT/Tendermint light clients + proof-of-holdings
+      #                       (~210 theorems, 173 #assert_axioms) — the chain-participation floor.
+      #   * Games/*         — Automatafl + MultiwayTug and their AIRs (the DEPLOYED games'
+      #                       move-legality proofs; 63 theorems, 36 #guard).
+      #   * Verify/LoadBearing* — the @[load_bearing] linter. NOTE: proof-integrity-canary.yml's
+      #                       header claims this linter "runs every push in ci.yml's
+      #                       metatheory-no-sorry job". That was FALSE — it ran only inside the
+      #                       DAILY canary (LoadBearingAuditBroad is a mutation target), and
+      #                       LoadBearingAuditKey ran nowhere at all. This step makes the
+      #                       canary's claim TRUE.
+      #   * Circuit/AlgoStarkSound*, Fri*, Ood/Fin/Kernel* — the STARK/FRI soundness tower.
+      #   * Circuit/Emit/*Refine, *Rung2 — the emit refinement ladder (the green half).
+      #
+      # ⚠ 28 dark modules are DELIBERATELY NOT LISTED because they are RED AT HEAD — the rot
+      # this hole hid. Do NOT add them here to "complete the list"; fix them, then add:
+      #   * Circuit.DeltaProto + Circuit.EffectsAsDataProto — de-risk PROTOTYPES (their verdict
+      #     is recorded in their own header); rotted against Circuit/FinKernelStep.lean drift.
+      #   * 26 Circuit.Emit.{Predicates*,NonRevocation*,QuantifiedAbsence*,NoteSpendingLeaf*,
+      #     TemporalPredicate*,BridgeAction,MerkleMembership,MultiStepChain,Derivation,
+      #     EffectActionBinding}{Refine,Rung2*} — each fails with a Type mismatch that
+      #     induces sorryAx, and each one's *Emit upstream is CI-covered and GREEN. i.e. the
+      #     refinement proofs drifted away from the emitters they refine, invisibly, because
+      #     nothing built them. Un-gate: repair the module, move its name into the list above.
+      #
+      # COST: every module here is a LEAF on the corpus the zero-sorry step already built
+      # (measured: the 18 non-Circuit ones take 32s warm; the whole 76 ~7 min wall). This runs
+      # last so it reuses that warm build. A red here is a rotted proof, not infra flake.
+      - name: Orphan gate (76 modules reachable from no CI target — the CryptoVerifyAll siblings)
+        working-directory: metatheory
+        run: |
+          lake build \
+            Dregg2.Apps.ColonistJob \
+            Dregg2.Bridge.HoldingFoldRecursive \
+            Dregg2.Bridge.HoldingWeightedTally \
+            Dregg2.Bridge.InterchainAdapterDecision \
+            Dregg2.Bridge.LightClientEth \
+            Dregg2.Bridge.LightClientMpt \
+            Dregg2.Bridge.LightClientTendermint \
+            Dregg2.Bridge.ProofOfHoldings \
+            Dregg2.Bridge.ProofOfHoldingsGeneric \
+            Dregg2.Bridge.VerifiedLightClient \
+            Dregg2.Circuit.AcceptanceDischarge \
+            Dregg2.Circuit.AlgoStarkSoundFanoutMemFree \
+            Dregg2.Circuit.AlgoStarkSoundFanoutMemory \
+            Dregg2.Circuit.AlgoStarkSoundFanoutSetField \
+            Dregg2.Circuit.AlgoStarkSoundGeneral \
+            Dregg2.Circuit.AlgoStarkSoundKernel \
+            Dregg2.Circuit.AlgoStarkSoundKernelAvail \
+            Dregg2.Circuit.BlindedMembershipBindingFromFold \
+            Dregg2.Circuit.CustomLeafEncoding \
+            Dregg2.Circuit.Emit.AccumulatorNonRevocationRefine \
+            Dregg2.Circuit.Emit.AdjacencyMembershipRefine \
+            Dregg2.Circuit.Emit.AdjacencyMembershipRefineAudit \
+            Dregg2.Circuit.Emit.AdjacencyMembershipRung2 \
+            Dregg2.Circuit.Emit.AvailWideMembersNarrow \
+            Dregg2.Circuit.Emit.BilateralAggregationEmit \
+            Dregg2.Circuit.Emit.BilateralAggregationRefine \
+            Dregg2.Circuit.Emit.BilateralAggregationRung2 \
+            Dregg2.Circuit.Emit.BlindedMembershipRung2 \
+            Dregg2.Circuit.Emit.BoundPresentationRefine \
+            Dregg2.Circuit.Emit.BoundPresentationRung2 \
+            Dregg2.Circuit.Emit.CommittedThresholdEmit \
+            Dregg2.Circuit.Emit.CommittedThresholdRefine \
+            Dregg2.Circuit.Emit.DerivationRefine \
+            Dregg2.Circuit.Emit.DfaRoutingGeneralEmit \
+            Dregg2.Circuit.Emit.DfaRoutingRefine \
+            Dregg2.Circuit.Emit.DfaRoutingRung2 \
+            Dregg2.Circuit.Emit.EffectActionBindingEmit \
+            Dregg2.Circuit.Emit.EffectActionBindingRefine \
+            Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition \
+            Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRefine \
+            Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2 \
+            Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2Full \
+            Dregg2.Circuit.Emit.EmitGraduate \
+            Dregg2.Circuit.Emit.FoldEmit \
+            Dregg2.Circuit.Emit.FoldRefine \
+            Dregg2.Circuit.Emit.FoldRung2 \
+            Dregg2.Circuit.Emit.GarbledEvalEmit \
+            Dregg2.Circuit.Emit.GarbledEvalRefine \
+            Dregg2.Circuit.Emit.GarbledEvalRung2 \
+            Dregg2.Circuit.Emit.MembershipAuthRootEdge \
+            Dregg2.Circuit.Emit.MembershipDepthGeneralRung2 \
+            Dregg2.Circuit.Emit.MultiStepChainEmit \
+            Dregg2.Circuit.Emit.PredicatesRelationalCompoundEmit \
+            Dregg2.Circuit.Emit.RotatedLayout \
+            Dregg2.Circuit.Emit.RotatedLayoutBridge \
+            Dregg2.Circuit.FinBindsKernel \
+            Dregg2.Circuit.FinInjectivityCollapse \
+            Dregg2.Circuit.FriCorrelatedAgreementSharp \
+            Dregg2.Circuit.FriLdtJohnsonList \
+            Dregg2.Circuit.FriProximityGapListDecoding \
+            Dregg2.Circuit.FriProximityGapWitness \
+            Dregg2.Circuit.FriVerifierOracle \
+            Dregg2.Circuit.KernelConfigSoundness \
+            Dregg2.Circuit.KernelConfigSoundnessAvail \
+            Dregg2.Circuit.OodColumnLayout \
+            Dregg2.Circuit.PresentationBindingFromFold \
+            Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow \
+            Dregg2.Circuit.WrapSafetyStaticAnalyzer \
+            Dregg2.Exec.FFIDirect \
+            Dregg2.Games.Automatafl \
+            Dregg2.Games.AutomataflAir \
+            Dregg2.Games.MultiwayTug \
+            Dregg2.Games.MultiwayTugAir \
+            Dregg2.Verify.LoadBearingAuditBroad \
+            Dregg2.Verify.LoadBearingAuditKey \
+            Dregg2.Verify.LoadBearingLint
 
   descriptor-drift:
     name: Descriptor Lean↔JSON drift gate

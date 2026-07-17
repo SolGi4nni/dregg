@@ -1,7 +1,11 @@
 name: Proof-integrity mutation canary
 
 # The FALSIFIABILITY gate that complements the @[load_bearing] linter (which runs every push in
-# ci.yml's metatheory-no-sorry job). The linter catches a spec becoming a gate-copy or losing its
+# ci.yml's metatheory-no-sorry job — TRUE only since 2026-07-17. The Verify/LoadBearing* modules are
+# ORPHANS: not reachable from the Dregg2.lean root, and the Dregg2 lean_lib has no globs, so until that
+# job's "Orphan gate" step named them explicitly, this sentence was FALSE. The linter ran ONLY here, in
+# this daily canary, and only incidentally — LoadBearingAuditBroad is an AUTH_GRAPH/LEDGER_SPEC mutation
+# target, while LoadBearingAuditKey ran nowhere at all.) The linter catches a spec becoming a gate-copy or losing its
 # non-vacuity witness (structural). This canary catches the orthogonal regression: a proof that
 # stays GREEN when its implementation is mutated — i.e. a load-bearing proof decaying to decorative.
 # It MUTATES the kernel source + rebuilds the keystone modules (several lake builds), so it runs on a

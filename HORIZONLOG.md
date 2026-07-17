@@ -1,5 +1,42 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑ THE LEAN ORPHAN GATE — 103 modules built by NOTHING; 28 of them ROTTED (2026-07-17)
+The `Dregg2` lean_lib has NO `globs` (metatheory/lakefile.toml), so `lake build` compiles `Dregg2.lean`
++ its transitive imports ONLY. 103 modules under `metatheory/Dregg2/**` are unreachable from that root,
+unnamed by any CI step, and not pulled in by the descriptor-drift emitters — compiled by nothing, on any
+machine but a dev laptop. Same class as `CryptoVerifyAll` (wired 2026-07-17); these are its siblings.
+
+WIRED (ci.yml `metatheory-no-sorry`, both reuse the warm corpus the zero-sorry step already builds):
+  * `Dregg2.Claims` — THE corpus-wide `#assert_axioms` net (202 per-decl + 51 namespace pins, ~1500
+    theorems). Its own header calls it "the comprehensive, corpus-wide #assert_axioms net" whose ~190
+    pins are "the UNIQUE location of those per-keystone kernel-clean certifications", and
+    `scripts/axiom-hygiene-guard.sh` documents it as layer (b) of a "two-layer" guard. Layer (b) ran
+    NOWHERE. Imports only the root `Dregg2`; verified green, ~2m53s wall on a warm tree.
+  * The 76 dark modules VERIFIED GREEN at HEAD (Bridge light clients Eth/MPT/Tendermint +
+    proof-of-holdings; Games Automatafl/MultiwayTug + AIRs; Verify/LoadBearing*; Circuit AlgoStarkSound*/
+    Fri*/Ood/Fin/Kernel*; the green half of the Emit refine ladder). ~7 min wall, warm.
+  * Corrected `proof-integrity-canary.yml`'s header, which asserted the @[load_bearing] linter "runs
+    every push in ci.yml's metatheory-no-sorry job" — FALSE until this landed. It ran only inside the
+    DAILY canary (LoadBearingAuditBroad as a mutation target); LoadBearingAuditKey ran nowhere at all.
+
+⚠ THE FOLLOW-UP — 28 dark modules are RED AT HEAD, deliberately NOT in the gate list (do not add them
+to "complete the list"; repair, then add):
+  * `Circuit.DeltaProto` + `Circuit.EffectsAsDataProto` — de-risk PROTOTYPES whose measured verdict is
+    recorded in their own headers; rotted against `Circuit/FinKernelStep.lean` drift.
+  * 26 × `Circuit.Emit.{Predicates{Lt,Le,Gt,Neq,InRange,Arithmetic,RelationalCompound},NonRevocation*,
+    QuantifiedAbsence*,NoteSpendingLeaf*,TemporalPredicate*,BridgeAction,MerkleMembership,MultiStepChain,
+    Derivation,EffectActionBinding}{Refine,Rung2*}` — each fails with a Type mismatch that induces
+    `sorryAx` (the module's own `#assert_axioms` then reports the leak). THE SHAPE: every one of these
+    refines an `*Emit` upstream that IS CI-covered and GREEN. The refinement proofs drifted away from the
+    emitters they refine, invisibly, because nothing ever built them. This is the rot the hole hid.
+
+⚠ SEPARATE, LIVE, NOT THIS LANE'S: `Dregg2.AssuranceCaseGrounded` is RED at HEAD (line 376
+`hermine_rushing`, Type mismatch → sorryAx in `broader_crypto_reduction_suite` +
+`grounded_assurance_with_crypto_of_core`). It IS in the `Dregg2` root closure, so the EXISTING
+zero-sorry gate covers it — main's metatheory job is red until it is fixed. Introduced by `ea14cb028`
+("hardquant repair: the floors now name their problem"), which changed the floor statements without
+rebuilding this consumer. The "per-file green hides a red umbrella" class.
+
 ## ⚑ PAGES DEPLOY BLOCKED ON THE V3 LIGHT-CLIENT ENVELOPE (2026-07-16)
 The paper route is assembled correctly, but the exact reuse-mode Pages build remains red after
 that step: `site/light-client/history.json` carries proof-envelope version 3 while the current
