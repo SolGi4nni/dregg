@@ -53,6 +53,62 @@ function effectBody(effect: Effect): string {
       return `increment the nonce of cell ${hx32(effect.cell)}`;
     case "createCell":
       return `create a new cell (owner 0x${hx32(effect.publicKey)}, token 0x${hx32(effect.tokenId)}) with balance ${effect.balance}`;
+    case "setPermissions":
+      return `replace the permission table of cell ${hx32(effect.cell)} (applied LAST in the action; checks use the pre-action snapshot)`;
+    case "setVerificationKey":
+      return effect.newVk !== undefined
+        ? `install verification key 0x${hx32(effect.newVk.hash)} (${effect.newVk.data.length} bytes) on cell ${hx32(effect.cell)} (applied LAST)`
+        : `clear the verification key of cell ${hx32(effect.cell)} (applied LAST)`;
+    case "setProgram":
+      return `re-program cell ${hx32(effect.cell)} (${effect.program.kind} program; applied LAST, ownership-gated)`;
+    case "noteSpend":
+      return `spend a note: reveal nullifier 0x${hx32(effect.nullifier)} against tree root 0x${hx32(effect.noteTreeRoot)}, releasing ${effect.value} of asset ${effect.assetType}${effect.valueCommitment ? " (committed-value path)" : ""}`;
+    case "noteCreate":
+      return `create a note: commitment 0x${hx32(effect.commitment)} locking ${effect.value} of asset ${effect.assetType}${effect.valueCommitment ? " (committed-value path)" : ""}`;
+    case "spawnWithDelegation":
+      return `spawn child cell (owner 0x${hx32(effect.childPublicKey)}, token 0x${hx32(effect.childTokenId)}) with a delegation snapshot (max staleness ${effect.maxStaleness}s)`;
+    case "refreshDelegation":
+      return `refresh the delegation snapshot of child cell ${hx32(effect.child)} to 0x${hx32(effect.snapshot)}`;
+    case "revokeDelegation":
+      return `revoke delegation to child cell ${hx32(effect.child)} (parent epoch bump)`;
+    case "bridgeMint":
+      return `bridge-mint a note from a remote federation: nullifier 0x${hx32(effect.portableProof.nullifier)}, minting commitment 0x${hx32(effect.portableProof.destinationCommitment)} worth ${effect.portableProof.value} of asset ${effect.portableProof.assetType}`;
+    case "introduce":
+      return `introduce cell ${hx32(effect.recipient)} to cell ${hx32(effect.target)} (introducer ${hx32(effect.introducer)})`;
+    case "pipelinedSend":
+      return `pipelined send to output slot ${effect.target.outputSlot} of pending turn 0x${hx32(effect.target.sourceTurn)}`;
+    case "exerciseViaCapability":
+      return `exercise capability slot ${effect.capSlot} performing ${effect.innerEffects.length} inner effect(s)`;
+    case "makeSovereign":
+      return `transition cell ${hx32(effect.cell)} to SOVEREIGN mode (federation keeps only a 32-byte commitment)`;
+    case "createCellFromFactory":
+      return `create a cell from factory 0x${hx32(effect.factoryVk)} (owner 0x${hx32(effect.ownerPubkey)}, token 0x${hx32(effect.tokenId)}, ${effect.params.initialFields.length} initial field(s), ${effect.params.initialCaps.length} initial cap(s))`;
+    case "refusal":
+      return `record a REFUSAL by cell ${hx32(effect.cell)} of offered action 0x${hx32(effect.offeredActionCommitment)} (reason: ${effect.refusalReason.kind}; witness #${effect.proofWitnessIndex})`;
+    case "cellSeal":
+      return `SEAL cell ${hx32(effect.target)} (reason commitment 0x${hx32(effect.reason)}; reversible)`;
+    case "cellUnseal":
+      return `UNSEAL cell ${hx32(effect.target)}`;
+    case "cellDestroy":
+      return `permanently DESTROY cell ${hx32(effect.target)} (death certificate at height ${effect.certificate.destroyedAtHeight}, reason: ${effect.certificate.reason.kind})`;
+    case "burn":
+      return `BURN ${effect.amount} from slot ${effect.slot} of cell ${hx32(effect.target)} (supply provably reduced; no destination credit)`;
+    case "attenuateCapability":
+      return `narrow capability slot ${effect.slot} of cell ${hx32(effect.cell)} (monotone attenuation; widening rejected)`;
+    case "receiptArchive":
+      return `archive the receipt-chain prefix of the target cell through height ${effect.prefixEndHeight}`;
+    case "promise":
+      return `PROMISE: cell ${hx32(effect.cell)} commits to run a held turn when its ${effect.resolutionCondition.kind} condition resolves (expires at height ${effect.timeoutHeight})`;
+    case "notify":
+      return `NOTIFY: cell ${hx32(effect.from)} deposits a promise-hole in cell ${hx32(effect.to)} (condition: ${effect.resolutionCondition.kind}; expires at height ${effect.timeoutHeight})`;
+    case "react":
+      return `REACT: spend promise-hole 0x${hx32(effect.pendingId)} (one-shot nullifier spend) by discharging a ${effect.condition.kind} condition`;
+    case "mint":
+      return `MINT ${effect.amount} into slot ${effect.slot} of cell ${hx32(effect.target)} (issuer-well debited; EFFECT_MINT authority required)`;
+    case "shieldedTransfer":
+      return `SHIELDED transfer: spend ${effect.payload.inputs.length} hidden note(s), mint ${effect.payload.outputLegs.length} hidden output(s) (values and owners blind; nullifiers revealed)`;
+    case "custom":
+      return `custom-program transition of sovereign cell ${hx32(effect.cell)} under VK 0x${hx32(effect.programVkHash)} (adjudicated by a registered STARK sub-proof)`;
     default: {
       // Exhaustiveness tooth: a new Effect variant without a reading is a
       // compile error here, mirroring the Rust no-default-arm match.

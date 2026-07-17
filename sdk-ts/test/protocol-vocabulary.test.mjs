@@ -14,12 +14,13 @@
 // the real Rust codec, rebuilt by the `pretest` hook on every run. That closes
 // mis-encoding for what it compares.
 //
-// It cannot close what it does not compare. Rust's `Effect` has 34 variants; the
-// TS union models 7. A 35th variant, a renamed field, or a new field on a
-// modeled variant is INVISIBLE to a byte comparison over 7 hand-built fixtures.
-// That is the remaining silent channel, and this file closes it — the way sdk-py
-// closes it: by reading the protocol's own source at test time and refusing to
-// pass when the vocabulary has moved.
+// It cannot close what it does not compare. Rust's `Effect` has 34 variants;
+// as of 2026-07-17 the TS union models ALL 34 (each driven through the oracle
+// by `wire-effects.test.mjs`). A 35th variant, a renamed field, or a new field
+// on a modeled variant is still INVISIBLE to a byte comparison over hand-built
+// fixtures. That is the remaining silent channel, and this file closes it — the
+// way sdk-py closes it: by reading the protocol's own source at test time and
+// refusing to pass when the vocabulary has moved.
 //
 // ## THE DIVISION OF LABOUR (why the pair is airtight)
 //
@@ -75,6 +76,68 @@ const MODELED = [
   { ts: "emitEvent", rust: "EmitEvent", fields: ["cell", "event"] },
   { ts: "incrementNonce", rust: "IncrementNonce", fields: ["cell"] },
   { ts: "createCell", rust: "CreateCell", fields: ["public_key", "token_id", "balance"] },
+  // ── 2026-07-17: the remaining 27 variants modeled (per-variant byte+hash
+  //    differential in wire-effects.test.mjs drives each through the wasm
+  //    oracle). Sub-shape gaps that remain UNMODELED inside a modeled variant
+  //    (refused loudly by `UnmodeledWireError`, never encoded wrongly):
+  //      * SetProgram: `CellProgram::Cases` (TransitionCase guards);
+  //      * React: `ConditionProof::Receipt` (a full TurnReceipt);
+  //      * nested `wake` Turns are the default-proof-bundle shape only.
+  { ts: "setPermissions", rust: "SetPermissions", fields: ["cell", "new_permissions"] },
+  { ts: "setVerificationKey", rust: "SetVerificationKey", fields: ["cell", "new_vk"] },
+  { ts: "setProgram", rust: "SetProgram", fields: ["cell", "program"] },
+  {
+    ts: "noteSpend",
+    rust: "NoteSpend",
+    fields: ["nullifier", "note_tree_root", "value", "asset_type", "spending_proof", "value_commitment"],
+  },
+  {
+    ts: "noteCreate",
+    rust: "NoteCreate",
+    fields: ["commitment", "value", "asset_type", "encrypted_note", "value_commitment", "range_proof"],
+  },
+  {
+    ts: "spawnWithDelegation",
+    rust: "SpawnWithDelegation",
+    fields: ["child_public_key", "child_token_id", "max_staleness"],
+  },
+  { ts: "refreshDelegation", rust: "RefreshDelegation", fields: ["child", "snapshot"] },
+  { ts: "revokeDelegation", rust: "RevokeDelegation", fields: ["child"] },
+  { ts: "bridgeMint", rust: "BridgeMint", fields: ["portable_proof"] },
+  { ts: "introduce", rust: "Introduce", fields: ["introducer", "recipient", "target", "permissions"] },
+  { ts: "pipelinedSend", rust: "PipelinedSend", fields: ["target", "action"] },
+  { ts: "exerciseViaCapability", rust: "ExerciseViaCapability", fields: ["cap_slot", "inner_effects"] },
+  { ts: "makeSovereign", rust: "MakeSovereign", fields: ["cell"] },
+  {
+    ts: "createCellFromFactory",
+    rust: "CreateCellFromFactory",
+    fields: ["factory_vk", "owner_pubkey", "token_id", "params"],
+  },
+  {
+    ts: "refusal",
+    rust: "Refusal",
+    fields: ["cell", "offered_action_commitment", "refusal_reason", "proof_witness_index"],
+  },
+  { ts: "cellSeal", rust: "CellSeal", fields: ["target", "reason"] },
+  { ts: "cellUnseal", rust: "CellUnseal", fields: ["target"] },
+  { ts: "cellDestroy", rust: "CellDestroy", fields: ["target", "certificate"] },
+  { ts: "burn", rust: "Burn", fields: ["target", "slot", "amount"] },
+  {
+    ts: "attenuateCapability",
+    rust: "AttenuateCapability",
+    fields: ["cell", "slot", "narrower_permissions", "narrower_effects", "narrower_expiry"],
+  },
+  { ts: "receiptArchive", rust: "ReceiptArchive", fields: ["prefix_end_height", "checkpoint"] },
+  { ts: "promise", rust: "Promise", fields: ["cell", "resolution_condition", "wake", "timeout_height"] },
+  {
+    ts: "notify",
+    rust: "Notify",
+    fields: ["from", "to", "wake", "resolution_condition", "timeout_height"],
+  },
+  { ts: "react", rust: "React", fields: ["pending_id", "condition", "resolution_proof", "wake"] },
+  { ts: "mint", rust: "Mint", fields: ["target", "slot", "amount"] },
+  { ts: "shieldedTransfer", rust: "ShieldedTransfer", fields: ["payload"] },
+  { ts: "custom", rust: "Custom", fields: ["cell", "program_vk_hash", "proof_commitment"] },
 ];
 
 /** The `Event` struct the `emitEvent` case inlines. */
@@ -86,35 +149,12 @@ const EVENT_FIELDS = ["topic", "data"];
  * out loud which subset of the protocol it speaks. A variant that is neither here
  * nor in MODELED turns this file RED by name.
  */
-const UNMODELED = {
-  SetPermissions: "cell authority surface (dregg_cell::Permissions); no TS codec for the Permissions tree",
-  SetVerificationKey: "cell authority surface (Option<VerificationKey>); VK custody is not a client concern",
-  SetProgram: "installs a dregg_cell::CellProgram (caveat table); the program codec lives in pg.ts, not the turn codec",
-  NoteSpend: "carries a serialized STARK spending proof; proving is not a TS-client capability",
-  NoteCreate: "pairs with NoteSpend (Pedersen commitment + range proof)",
-  SpawnWithDelegation: "delegation-snapshot lifecycle; no client surface yet",
-  RefreshDelegation: "delegation-snapshot lifecycle; no client surface yet",
-  RevokeDelegation: "delegation-snapshot lifecycle; no client surface yet",
-  BridgeMint: "carries a PortableNoteProof across federations; not client-constructible",
-  Introduce: "three-party introduction (dregg_cell::AuthRequired); no client surface yet",
-  PipelinedSend: "recursive Box<Action> against an EventualRef; promise pipelining is unmodeled in TS",
-  ExerciseViaCapability: "recursive Vec<Effect> — modeling it forces the FULL effect codec into TS",
-  MakeSovereign: "sovereign-mode transition; agent-side state custody, not a client action",
-  CreateCellFromFactory: "factory constraint params; the factory route is a node-side concern",
-  Refusal: "executor-issued evidence of absence, not a client-constructible effect",
-  CellSeal: "cell lifecycle; no client surface yet",
-  CellUnseal: "cell lifecycle; no client surface yet",
-  CellDestroy: "cell lifecycle; no client surface yet",
-  Burn: "supply operation; privileged, not a client action",
-  AttenuateCapability: "capability attenuation; no client surface yet",
-  ReceiptArchive: "receipt-chain maintenance; node-side",
-  Promise: "guarded-hole / partial-turn machinery; unmodeled in TS",
-  Notify: "guarded-hole / partial-turn machinery; unmodeled in TS",
-  React: "guarded-hole / partial-turn machinery; unmodeled in TS",
-  Mint: "supply operation; privileged, not a client action",
-  ShieldedTransfer: "hidden STARK + Pedersen payload; proving is not a TS-client capability",
-  Custom: "the Custom-VK door; requires a paired CustomProgramProof the client cannot produce",
-};
+// 2026-07-17: EMPTY — every Effect variant is now modeled (34/34; each proven
+// byte-identical to the Rust postcard AND hash-identical to Effect::hash by
+// the per-variant oracle differential in wire-effects.test.mjs). The gate
+// keeps the empty ledger so a 35th Rust variant still turns this file RED by
+// name until someone models it or declares it here WITH a reason.
+const UNMODELED = {};
 
 /** Authorization variants the TS codec writes, and their Rust names. */
 const MODELED_AUTH = [

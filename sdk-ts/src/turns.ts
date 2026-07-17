@@ -33,7 +33,28 @@
 import type { AgentRuntime } from "./client";
 import { Receipt } from "./receipt";
 import { explainAction } from "./explain";
-import type { Action, Bytes32, CapabilityRef, CellId, Effect, Turn } from "./internal/wire";
+import type {
+  Action,
+  ArchivalAttestation,
+  AuthRequired,
+  Bytes32,
+  CapabilityRef,
+  CellId,
+  CellProgram,
+  ConditionProof,
+  DeathCertificate,
+  Effect,
+  EventualRef,
+  FactoryCreationParams,
+  Permissions,
+  PortableNoteProof,
+  ProofCondition,
+  RefusalReason,
+  ResolutionCondition,
+  ShieldedTransferPayload,
+  Turn,
+  VerificationKey,
+} from "./internal/wire";
 import { fieldFromU64, unsignedActionNamed } from "./internal/wire";
 
 /** The canonical `Payable` `pay` method name (mirrors `dregg_payable::PAY_METHOD`). */
@@ -141,6 +162,234 @@ export class TurnBuilder {
   /** Bump the acting cell's nonce (a deliberate no-op state advance). */
   incrementNonce(): this {
     this.effectList.push({ kind: "incrementNonce", cell: this.actingCell() });
+    return this;
+  }
+
+  /** Revoke the capability in `slot` of the acting cell. */
+  revokeCapability(slot: number): this {
+    this.effectList.push({ kind: "revokeCapability", cell: this.actingCell(), slot });
+    return this;
+  }
+
+  /** Emit an event (receipt-logged, state-neutral) from the acting cell. */
+  emitEvent(topic: Bytes32, data: Bytes32[] = []): this {
+    this.effectList.push({ kind: "emitEvent", cell: this.actingCell(), topic, data });
+    return this;
+  }
+
+  /** Replace the acting cell's permission table (executor applies it LAST). */
+  setPermissions(newPermissions: Permissions): this {
+    this.effectList.push({ kind: "setPermissions", cell: this.actingCell(), newPermissions });
+    return this;
+  }
+
+  /** Install (or with `undefined` clear) the acting cell's verification key. */
+  setVerificationKey(newVk?: VerificationKey): this {
+    this.effectList.push({ kind: "setVerificationKey", cell: this.actingCell(), newVk });
+    return this;
+  }
+
+  /** Re-program the acting cell's caveat table (ordered, ownership-gated). */
+  setProgram(program: CellProgram): this {
+    this.effectList.push({ kind: "setProgram", cell: this.actingCell(), program });
+    return this;
+  }
+
+  /** Spend a note by revealing its nullifier (STARK spending proof carried). */
+  noteSpend(fields: {
+    nullifier: Bytes32;
+    noteTreeRoot: Bytes32;
+    value: number | bigint;
+    assetType: number | bigint;
+    spendingProof: Uint8Array;
+    valueCommitment?: Bytes32;
+  }): this {
+    this.effectList.push({ kind: "noteSpend", ...fields });
+    return this;
+  }
+
+  /** Create a note (commitment added to the note tree). */
+  noteCreate(fields: {
+    commitment: Bytes32;
+    value: number | bigint;
+    assetType: number | bigint;
+    encryptedNote: Uint8Array;
+    valueCommitment?: Bytes32;
+    rangeProof?: Uint8Array;
+  }): this {
+    this.effectList.push({ kind: "noteCreate", ...fields });
+    return this;
+  }
+
+  /** Spawn a child cell with a snapshot+refresh delegation. */
+  spawnWithDelegation(childPublicKey: Bytes32, childTokenId: Bytes32, maxStaleness: number | bigint): this {
+    this.effectList.push({ kind: "spawnWithDelegation", childPublicKey, childTokenId, maxStaleness });
+    return this;
+  }
+
+  /** Refresh a child cell's delegation snapshot (self-refresh). */
+  refreshDelegation(child: CellId, snapshot: Bytes32): this {
+    this.effectList.push({ kind: "refreshDelegation", child, snapshot });
+    return this;
+  }
+
+  /** Revoke delegation to a child (parent epoch bump). */
+  revokeDelegation(child: CellId): this {
+    this.effectList.push({ kind: "revokeDelegation", child });
+    return this;
+  }
+
+  /** Bridge-mint a note from another federation via a portable proof. */
+  bridgeMint(portableProof: PortableNoteProof): this {
+    this.effectList.push({ kind: "bridgeMint", portableProof });
+    return this;
+  }
+
+  /** Three-party introduction of `recipient` to `target`. */
+  introduce(recipient: CellId, target: CellId, permissions: AuthRequired): this {
+    this.effectList.push({
+      kind: "introduce",
+      introducer: this.actingCell(),
+      recipient,
+      target,
+      permissions,
+    });
+    return this;
+  }
+
+  /** Pipelined send: dispatch `action` to the result of a pending turn. */
+  pipelinedSend(target: EventualRef, action: Action): this {
+    this.effectList.push({ kind: "pipelinedSend", target, action });
+    return this;
+  }
+
+  /** Exercise a held capability, performing `innerEffects` atomically. */
+  exerciseViaCapability(capSlot: number, innerEffects: Effect[]): this {
+    this.effectList.push({ kind: "exerciseViaCapability", capSlot, innerEffects });
+    return this;
+  }
+
+  /** Transition the acting cell to sovereign mode. */
+  makeSovereign(): this {
+    this.effectList.push({ kind: "makeSovereign", cell: this.actingCell() });
+    return this;
+  }
+
+  /** Create a cell from a deployed factory. */
+  createCellFromFactory(
+    factoryVk: Bytes32,
+    ownerPubkey: Bytes32,
+    tokenId: Bytes32,
+    params: FactoryCreationParams,
+  ): this {
+    this.effectList.push({ kind: "createCellFromFactory", factoryVk, ownerPubkey, tokenId, params });
+    return this;
+  }
+
+  /** Record a proof-backed refusal (evidence of non-action). */
+  refusal(offeredActionCommitment: Bytes32, refusalReason: RefusalReason, proofWitnessIndex: number): this {
+    this.effectList.push({
+      kind: "refusal",
+      cell: this.actingCell(),
+      offeredActionCommitment,
+      refusalReason,
+      proofWitnessIndex,
+    });
+    return this;
+  }
+
+  /** Seal the acting cell (reversible; reason committed). */
+  sealCell(reason: Bytes32): this {
+    this.effectList.push({ kind: "cellSeal", target: this.actingCell(), reason });
+    return this;
+  }
+
+  /** Unseal the acting cell. */
+  unsealCell(): this {
+    this.effectList.push({ kind: "cellUnseal", target: this.actingCell() });
+    return this;
+  }
+
+  /** Permanently destroy the acting cell under a death certificate. */
+  destroyCell(certificate: DeathCertificate): this {
+    this.effectList.push({ kind: "cellDestroy", target: this.actingCell(), certificate });
+    return this;
+  }
+
+  /** Burn `amount` from the acting cell's balance slot (supply reduced). */
+  burn(amount: number | bigint, slot = 0): this {
+    this.effectList.push({ kind: "burn", target: this.actingCell(), slot, amount });
+    return this;
+  }
+
+  /** Monotonically narrow a held capability (widening is rejected). */
+  attenuateCapability(fields: {
+    slot: number;
+    narrowerPermissions: AuthRequired;
+    narrowerEffects?: number;
+    narrowerExpiry?: number | bigint;
+  }): this {
+    this.effectList.push({ kind: "attenuateCapability", cell: this.actingCell(), ...fields });
+    return this;
+  }
+
+  /** Archive the acting cell's receipt-chain prefix under an attestation. */
+  receiptArchive(prefixEndHeight: number | bigint, checkpoint: ArchivalAttestation): this {
+    this.effectList.push({ kind: "receiptArchive", prefixEndHeight, checkpoint });
+    return this;
+  }
+
+  /** Commit to run `wake` when `resolutionCondition` resolves (promise-hole). */
+  promise(resolutionCondition: ResolutionCondition, wake: Turn, timeoutHeight: number | bigint): this {
+    this.effectList.push({
+      kind: "promise",
+      cell: this.actingCell(),
+      resolutionCondition,
+      wake,
+      timeoutHeight,
+    });
+    return this;
+  }
+
+  /** Deposit a promise-hole in `to`'s registry (wake on condition). */
+  notify(
+    to: CellId,
+    wake: Turn,
+    resolutionCondition: ResolutionCondition,
+    timeoutHeight: number | bigint,
+  ): this {
+    this.effectList.push({
+      kind: "notify",
+      from: this.actingCell(),
+      to,
+      wake,
+      resolutionCondition,
+      timeoutHeight,
+    });
+    return this;
+  }
+
+  /** Discharge a promise-hole (one-shot nullifier spend). */
+  react(pendingId: Bytes32, condition: ProofCondition, resolutionProof: ConditionProof, wake: Turn): this {
+    this.effectList.push({ kind: "react", pendingId, condition, resolutionProof, wake });
+    return this;
+  }
+
+  /** Mint `amount` into the acting cell's balance slot (EFFECT_MINT-gated). */
+  mint(amount: number | bigint, slot = 0): this {
+    this.effectList.push({ kind: "mint", target: this.actingCell(), slot, amount });
+    return this;
+  }
+
+  /** Shielded transfer (values and owners blind; nullifiers revealed). */
+  shieldedTransfer(payload: ShieldedTransferPayload): this {
+    this.effectList.push({ kind: "shieldedTransfer", payload });
+    return this;
+  }
+
+  /** Custom-program transition of a sovereign cell (STARK-adjudicated). */
+  customTransition(programVkHash: Bytes32, proofCommitment: Bytes32): this {
+    this.effectList.push({ kind: "custom", cell: this.actingCell(), programVkHash, proofCommitment });
     return this;
   }
 

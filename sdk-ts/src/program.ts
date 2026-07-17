@@ -298,24 +298,32 @@ function writeConstraint(w: W, c: StateConstraint): void {
     case "monotonic":
       w.varint(8).u8(c.index);
       break;
+    // Variant indexes verified against the CURRENT `cell/src/program/types.rs`
+    // declaration order (2026-07-17): the enum appended `MonotonicSequence`
+    // (27) through `Custom` (42) over time, which pushed everything after
+    // `PreimageGate` (26) — the stale indexes previously written here (21 /
+    // 26 / 38..41) DECODED AS DIFFERENT CONSTRAINTS on the Rust side (21 =
+    // RateBound, 26 = PreimageGate, 38 = AffineLe, …). Proven against the
+    // real Rust decode by `test/wire-effects.test.mjs` (setProgram predicate
+    // differential through the wasm oracle).
     case "preimageGate":
-      w.varint(21).u8(c.commitmentIndex).varint(hashKindIndex(c.hashKind));
+      w.varint(26).u8(c.commitmentIndex).varint(hashKindIndex(c.hashKind));
       break;
     case "anyOf":
-      w.varint(26).varint(c.variants.length);
+      w.varint(31).varint(c.variants.length);
       for (const v of c.variants) writeSimple(w, v);
       break;
     case "senderIs":
-      w.varint(38).bytes(c.pk);
+      w.varint(43).bytes(c.pk);
       break;
     case "senderInSlot":
-      w.varint(39).u8(c.index);
+      w.varint(44).u8(c.index);
       break;
     case "balanceGte":
-      w.varint(40).varint(c.min);
+      w.varint(45).varint(c.min);
       break;
     case "balanceLte":
-      w.varint(41).varint(c.max);
+      w.varint(46).varint(c.max);
       break;
   }
 }
