@@ -1947,3 +1947,21 @@ uncommitted ratchet edit (removing the 3 purged preflight entries). This is the 
 ("never checkout/restore to revert without git diff first — shared worktree, uncommitted changes are real
 work"). Recovered by re-applying the edit (I had the diff). Lesson re-paid: on a shared tree, `git checkout
 <file>` is as dangerous as `git add -A`.
+
+### "is it actually deleted or not? :joy:" (ember) — NO MORE HEDGING, the code goes
+ember caught "functionally purged" for the soft-fiction it was — the exact language this session exists to
+kill. The mock was wired OUT of production but the DEAD ENGINE still sat in the tree. Deleting it (Fable,
+after I traced the full keep-vs-delete):
+- DELETE from `circuit/src/ivc.rs`: prove_ivc, verify_ivc, verify_ivc_with_roots, create_test_chain,
+  finalize_ivc, fold_and_accumulate, IvcBuilder, IvcProof, AccumulatedProof, simulated_proof_size_bytes,
+  IvcVerification.
+- DELETE the HIDDEN DEAD RIDER I nearly missed: `sdk/cipherclerk.rs`'s ivc_builder path — `export_state_proof`
+  returns a mock IvcProof, but `enable_ivc` (its only setup) has ZERO callers → ivc_builder always None →
+  the whole path is dead. (This is why "functionally purged" was a lie: I'd have left a mock-proof EXPORT
+  method in the production sdk.)
+- DELETE soundness.rs's 4 mock tests, circuit/tests.rs's mock test, the demo-agent mock example.
+- KEEP (verified independent of the mock): extend/initial_accumulated_hash (REAL hash primitives used by the
+  emitted-descriptor tests + dsl-runtime), StateTransitionAir (separate test-only), commit's DIFFERENT
+  FoldDelta. constraint_prover.rs is a separate follow-up (a validator with other consumers).
+The lesson ember's laugh taught: "wired out of production" ≠ "deleted". The dead code is still a lie waiting
+to be re-called (export_state_proof was one keystroke from being a live mock-proof export).
