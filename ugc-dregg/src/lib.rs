@@ -18,6 +18,11 @@
 //!   chain) + a claimed turns-to-win. The board **verifies** it and only then
 //!   accepts + ranks.
 //!
+//! A published universe also travels over **IPFS** ([`ipfs`]): its canonical payload
+//! pins under a CID (the transport address), and a fetch **re-derives the
+//! [`UniverseId`] from the fetched content** through the real publish validation —
+//! the two addresses and their distinct jobs are documented in that module's header.
+//!
 //! ## The no-cheat tooth (why the board cannot be gamed)
 //!
 //! [`verify_completion`] is the whole guarantee, and it is spween-dregg's audited
@@ -101,6 +106,8 @@
 //! universes + a remix-royalty split** over the `$DREGG` rails, and **anti-sybil**
 //! (staking / rate-limiting a publish or a submission). The no-cheat property — *a
 //! ranked completion provably reaches the win* — holds regardless of those.
+
+pub mod ipfs;
 
 use std::collections::BTreeMap;
 use std::fmt;

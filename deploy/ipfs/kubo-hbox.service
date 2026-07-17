@@ -1,0 +1,75 @@
+# kubo (go-ipfs) daemon on hbox — the IPFS transport for the dregg join.
+#
+# ⚠ NOT YET RUN LIVE. This unit is written to the same discipline as the verified
+#   reference unit (deploy/games/dregg-web-games-funnel.service — user unit + linger
+#   + loopback bind + hardening) but has not itself survived an install + reboot.
+#   RUNBOOK-IPFS.md carries the install steps and the smoke checks that retire this
+#   banner.
+#
+# Topology:
+#   • RPC API   127.0.0.1:5001  — LOOPBACK ONLY. The Kubo RPC is unauthenticated and
+#     can pin/unpin/reconfigure; it must never leave the box. dreggnet surfaces on
+#     hbox reach it via DREGG_IPFS_API=http://127.0.0.1:5001 (the std-only
+#     `StdHttpPost` transport in dregg-ipfs is plain-HTTP loopback by design).
+#   • Gateway   127.0.0.1:8080  — LOOPBACK ONLY. The local trustless-gateway read
+#     (`?format=raw`) for on-box verified fetches. Public exposure, if ever wanted,
+#     is a separate ember-gated decision (`tailscale funnel 8080`), same as the games
+#     demo — nothing here is public.
+#   • Swarm     enabled (that is the point: pinned CIDs become fetchable from OTHER
+#     nodes/gateways), but bounded by a basic ConnMgr so the daemon cannot soak the
+#     box — hbox is ALSO the build/prove box and a co-tenant HOL build lives there.
+#     The RUNBOOK's `ipfs config` steps set the ConnMgr; the unit's MemoryMax is the
+#     backstop.
+#
+# Repo: %h/dregg-ipfs (IPFS_PATH). Init it FIRST (RUNBOOK step 2) — the unit refuses
+# to start on an uninitialized repo rather than auto-initializing with defaults you
+# did not choose.
+#
+# hbox discipline (deploy/hbox/RUNBOOK.md): a USER unit under
+# ~/.config/systemd/user/, `loginctl enable-linger hbox` so it survives logout,
+# `%h`-relative paths, WantedBy=default.target.
+[Unit]
+Description=kubo IPFS daemon (dregg join: loopback RPC :5001, loopback gateway :8080)
+After=network-online.target
+Wants=network-online.target
+# Restart-storm brake (same discipline as the games units). A hard crash loop stops
+# the unit instead of pegging the box; `systemctl --user reset-failed kubo-hbox`
+# re-arms it after a fix.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=notify
+# Kubo's repo lives here; created by `ipfs init` per the RUNBOOK.
+Environment=IPFS_PATH=%h/dregg-ipfs
+# Refuse to start on an uninitialized repo (no silent default-config init).
+ExecStartPre=/usr/bin/test -f %h/dregg-ipfs/config
+# --migrate=false: a kubo upgrade never rewrites the repo unattended; migrations are
+# an operator action. --enable-gc: bound the repo by GC against StorageMax (set in
+# the RUNBOOK) instead of growing without limit.
+ExecStart=%h/.local/bin/ipfs daemon --migrate=false --enable-gc
+Restart=always
+RestartSec=5
+
+# Security hardening (user-unit-safe subset, mirroring
+# deploy/games/dregg-web-games-funnel.service — no ProtectHome, the binary and the
+# repo both live under $HOME).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h/dregg-ipfs
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits — kubo is a well-behaved but chatty p2p daemon; bound it well below
+# hbox's capacity so it can never starve the co-resident builds/prover/HOL job. The
+# ConnMgr (RUNBOOK) bounds the swarm; these bound the process.
+LimitNOFILE=65536
+MemoryHigh=2G
+MemoryMax=3G
+TasksMax=2048
+CPUWeight=50
+
+[Install]
+WantedBy=default.target

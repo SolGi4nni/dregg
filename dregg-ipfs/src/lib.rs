@@ -40,7 +40,15 @@
 //! - [`unixfs`] — **chunked content**: a UnixFS/dag-pb file DAG builder
 //!   ([`build_file_dag`] / [`pin_file`]) and the verified DAG-walk read
 //!   ([`fetch_cat`]) that re-witnesses every block against its own CID. Closes the
-//!   single-block-only hole.
+//!   single-block-only hole. Plus **directories**: [`build_dir_dag`] / [`pin_dir`]
+//!   (one dag-pb `Type=Directory` node over named file entries, links canonically
+//!   name-sorted) and the verified [`fetch_dir`] that re-witnesses the directory
+//!   node + every file block and returns the named entries.
+//! - [`car`] — **CAR v1** export/import ([`export_car`] / [`import_car`] /
+//!   [`import_car_into`]): a root + its block closure as one byte stream, every
+//!   block re-witnessed against its CID on import (plus root-presence + dag-pb
+//!   closure checks) — a tampered CAR is a named refusal, never a partial ingest.
+//!   The fixed-shape header dag-cbor is hand-encoded (documented in the module).
 //! - [`bridge`] — [`pin_blob`] (single-block, size-guarded) / [`fetch_verified`] (the
 //!   trustless flat fetch) / [`fetch_authorized`] (both halves in code: the
 //!   owner-receipt [`ReceiptCheck`] AND content-addressing) / [`delta_cid`].
@@ -50,16 +58,22 @@
 //! Real + tested in-process: the CID↔commitment bridge (incl. strict base32 + CIDv0
 //! parse), the `IpfsClient` seam, the `MockIpfs` round-trip + tamper-refusal, the
 //! UnixFS chunker + verified DAG walk (multi-level round-trip, tamper + missing-block
-//! refusal), the receipt-composed [`fetch_authorized`], and the network clients' RPC
-//! formatting (Kubo add/get/pin/block-put, gateway raw read, pinning-service add) —
-//! each exercised over a recording transport. Reviewed-go (ops, not code): a *live*
-//! round-trip against a running daemon / gateway / pinning provider, TLS (supplied by
-//! an injected reqwest transport), and **byte-exact CID parity** with a live `ipfs
-//! add`'s default chunker/layout (this builder emits a valid, self-consistent,
-//! fully-verifiable blake3 UnixFS DAG that [`fetch_cat`] round-trips; matching
-//! go-ipfs's exact block boundaries is a deployment-time concern behind the same seam).
+//! refusal), the directory builder + verified [`fetch_dir`] (same polarities), the
+//! CAR v1 codec (round-trip; exhaustive single-byte-tamper refusal; root-presence +
+//! closure refusals), the receipt-composed [`fetch_authorized`], and the network
+//! clients' RPC formatting (Kubo add/get/pin/block-put, gateway raw read,
+//! pinning-service add) — each exercised over a recording transport. Reviewed-go
+//! (ops, not code): a *live* round-trip against a running daemon / gateway / pinning
+//! provider, TLS (supplied by an injected reqwest transport), **byte-exact CID
+//! parity** with a live `ipfs add`'s default chunker/layout (this builder emits a
+//! valid, self-consistent, fully-verifiable blake3 UnixFS DAG that [`fetch_cat`]
+//! round-trips; matching go-ipfs's exact block boundaries is a deployment-time
+//! concern behind the same seam), and likewise byte-exact parity of a CAR with `ipfs
+//! dag export` (this CAR is a valid v1 stream per the spec; go's exact block order is
+//! not canonicalized by the spec).
 
 pub mod bridge;
+pub mod car;
 pub mod cid;
 pub mod client;
 pub mod unixfs;
@@ -68,6 +82,7 @@ pub use bridge::{
     CommittedCids, MAX_SINGLE_BLOCK, ReceiptCheck, blob_cid, delta_cid, fetch_authorized,
     fetch_verified, pin_blob,
 };
+pub use car::{CarContents, CarError, export_car, import_car, import_car_into};
 pub use cid::{
     BLAKE3_LEN, CODEC_DAG_CBOR, CODEC_DAG_PB, CODEC_RAW, Cid, CidError, MH_BLAKE3, MH_SHA2_256,
 };
@@ -75,4 +90,6 @@ pub use client::{
     GatewayClient, HttpPost, HttpRequest, HttpResponse, IpfsClient, IpfsError, KuboClient,
     MockIpfs, PinStatus, PinningServiceClient, StdHttpPost,
 };
-pub use unixfs::{Block, FileDag, build_file_dag, fetch_cat, pin_file};
+pub use unixfs::{
+    Block, DirDag, FileDag, build_dir_dag, build_file_dag, fetch_cat, fetch_dir, pin_dir, pin_file,
+};

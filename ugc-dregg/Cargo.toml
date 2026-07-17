@@ -69,3 +69,10 @@ dregg-lightclient = { path = "../lightclient" }
 dregg-circuit-prove = { path = "../circuit-prove" }
 # `BabyBear` — the field the attested state anchors (genesis/win roots) are vectors of.
 dregg-circuit = { path = "../circuit" }
+# THE IPFS JOIN (`ipfs` module): a published universe's canonical payload pins to
+# IPFS and fetches back verify-don't-trust — the CID re-witnesses the BYTES
+# (dregg-ipfs's verified walk), and the UniverseId is RE-DERIVED from the fetched
+# content through the real publish validation (parse/compile/deploy/attestation), so
+# the transport is never trusted for identity. Both crates are dependency-light; the
+# join adds no network closure (the `IpfsClient` seam stays injected).
+dregg-ipfs = { path = "../dregg-ipfs" }

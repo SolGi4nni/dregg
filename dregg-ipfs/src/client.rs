@@ -44,6 +44,12 @@ pub enum IpfsError {
     ChunkedDagRoot(String),
     /// A dag-pb / UnixFS node could not be parsed during the verified DAG walk.
     BadDagNode(String),
+    /// A UnixFS **directory** shape was violated: a duplicate / empty entry name at
+    /// build time, a directory read as a file (or vice versa), a nested directory
+    /// (out of this bridge's single-level scope), or a directory node that would
+    /// exceed one block. Named distinctly from [`BadDagNode`](IpfsError::BadDagNode)
+    /// (a malformed node) — the node here is well-formed but the wrong shape.
+    InvalidDirectory(String),
     /// The verified DAG walk exceeded its link-depth bound (a defense against a
     /// maliciously deep or cyclic DAG served by a lying node).
     DagTooDeep { max_depth: usize },
@@ -90,6 +96,7 @@ impl fmt::Display for IpfsError {
                 )
             }
             IpfsError::BadDagNode(e) => write!(f, "malformed dag-pb/unixfs node: {e}"),
+            IpfsError::InvalidDirectory(e) => write!(f, "invalid unixfs directory: {e}"),
             IpfsError::DagTooDeep { max_depth } => {
                 write!(f, "DAG walk exceeded the max depth of {max_depth}")
             }

@@ -294,8 +294,9 @@ impl fmt::Display for CidError {
 impl std::error::Error for CidError {}
 
 // -- unsigned LEB128 varint (the multiformats varint) -------------------------
+// (pub(crate): the CAR v1 framing in `crate::car` uses the same multiformats varint.)
 
-fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+pub(crate) fn put_varint(out: &mut Vec<u8>, mut v: u64) {
     loop {
         let mut byte = (v & 0x7f) as u8;
         v >>= 7;
@@ -309,7 +310,7 @@ fn put_varint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-fn take_varint(bytes: &[u8], pos: &mut usize) -> Result<u64, CidError> {
+pub(crate) fn take_varint(bytes: &[u8], pos: &mut usize) -> Result<u64, CidError> {
     let mut result: u64 = 0;
     let mut shift = 0u32;
     loop {

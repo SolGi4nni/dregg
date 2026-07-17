@@ -1,5 +1,5 @@
-//! `unixfs` — **chunked content**: a real UnixFS/dag-pb file DAG builder + the
-//! verified DAG-walk read.
+//! `unixfs` — **chunked content**: a real UnixFS/dag-pb file DAG builder, a
+//! **directory** builder over named file entries, and the verified DAG-walk reads.
 //!
 //! The single-block bridge ([`crate::pin_blob`] / [`crate::fetch_verified`]) is exact
 //! but only reaches content that fits in one IPFS block. Larger content is what IPFS
@@ -18,6 +18,13 @@
 //!   (leaf and interior) against its own CID before using it, then concatenating the
 //!   leaves in order. A lying node that flips any byte moves that block's hash and is
 //!   refused. The reassembled length is checked against the UnixFS `filesize`.
+//! - [`build_dir_dag`] / [`pin_dir`] / [`fetch_dir`] — **directories**: one `dag-pb`
+//!   node (`UnixFS Type=Directory`) whose links carry entry **names** over per-entry
+//!   file DAGs, and the verified inverse that re-witnesses the directory node + every
+//!   file block and returns the named entries. Single-level (a flat dir of files —
+//!   no nesting, no HAMT sharding); a nested directory is a named refusal, and a
+//!   directory node that would exceed one block ([`DEFAULT_CHUNK_SIZE`]) is refused
+//!   at build time rather than silently sharded.
 //!
 //! Because [`fetch_cat`] follows links generically (a link to a `dag-pb` child is
 //! walked recursively), it reads a multi-level DAG produced by a stock `ipfs add
@@ -184,9 +191,17 @@ fn walk<C: IpfsClient>(
         }
         CODEC_DAG_PB => {
             let node = parse_pb_node(&block)?;
+            // A directory node cannot be `cat`ed into file bytes — that is
+            // `fetch_dir`'s job. Refuse rather than concatenating entries silently.
+            if node.data_type == Some(UNIXFS_TYPE_DIRECTORY) {
+                return Err(IpfsError::InvalidDirectory(format!(
+                    "{} is a UnixFS directory, not a file (use fetch_dir)",
+                    cid.to_string_cid()
+                )));
+            }
             let start = out.len();
             for link in &node.links {
-                let child = Cid::from_bytes(link)
+                let child = Cid::from_bytes(&link.hash)
                     .map_err(|e| IpfsError::BadDagNode(format!("bad link CID: {e}")))?;
                 walk(client, &child, depth + 1, out)?;
             }
@@ -206,6 +221,176 @@ fn walk<C: IpfsClient>(
             "codec 0x{other:x} is not a UnixFS file DAG"
         ))),
     }
+}
+
+// -- directories: a dag-pb dir node over named file entries --------------------
+
+/// A built UnixFS **directory** DAG: the directory root CID, every block to pin
+/// (entry file blocks + the directory node), and the per-entry file roots.
+#[derive(Clone, Debug)]
+pub struct DirDag {
+    /// The directory root CID (always a `dag-pb` node, `UnixFS Type=Directory`).
+    pub root: Cid,
+    /// All blocks (entry file DAGs' blocks, then the directory node last), safe to pin
+    /// in order (children before the directory node).
+    pub blocks: Vec<Block>,
+    /// The `(name, file-root CID)` of each entry, in the directory's canonical
+    /// (name-sorted) order.
+    pub entries: Vec<(String, Cid)>,
+}
+
+/// Build a UnixFS **directory** over named file `entries` with the default chunk
+/// size + fan-out. See [`build_dir_dag_with`].
+pub fn build_dir_dag(entries: &[(&str, &[u8])]) -> Result<DirDag, IpfsError> {
+    build_dir_dag_with(entries, DEFAULT_CHUNK_SIZE, DEFAULT_MAX_LINKS)
+}
+
+/// Build a UnixFS directory: each entry's content becomes a file DAG
+/// ([`build_file_dag_with`]) and one `dag-pb` node (`UnixFS Type=Directory`) links
+/// them by **name**. Links are canonically **sorted by name** (the go-ipfs directory
+/// order), so the same entry set always roots at the same CID regardless of the
+/// caller's ordering.
+///
+/// Refusals ([`IpfsError::InvalidDirectory`]): an empty entry name, a name containing
+/// `/` or NUL (this is a single-level directory — no path smuggling), a duplicate
+/// name; and a directory node that would exceed one block ([`DEFAULT_CHUNK_SIZE`]) —
+/// this builder does not HAMT-shard, it refuses honestly.
+pub fn build_dir_dag_with(
+    entries: &[(&str, &[u8])],
+    chunk_size: usize,
+    max_links: usize,
+) -> Result<DirDag, IpfsError> {
+    // Validate names before hashing anything.
+    let mut seen = std::collections::HashSet::new();
+    for (name, _) in entries {
+        if name.is_empty() {
+            return Err(IpfsError::InvalidDirectory("empty entry name".into()));
+        }
+        if name.contains('/') || name.contains('\0') {
+            return Err(IpfsError::InvalidDirectory(format!(
+                "entry name `{name}` contains a path separator or NUL"
+            )));
+        }
+        if !seen.insert(*name) {
+            return Err(IpfsError::InvalidDirectory(format!(
+                "duplicate entry name `{name}`"
+            )));
+        }
+    }
+
+    // Canonical order: sort entries by name so the dir CID is order-independent.
+    let mut sorted: Vec<&(&str, &[u8])> = entries.iter().collect();
+    sorted.sort_by_key(|(name, _)| *name);
+
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut dir_entries: Vec<(String, Cid)> = Vec::new();
+    let mut node = Vec::new();
+    for (name, content) in sorted {
+        let file = build_file_dag_with(content, chunk_size, max_links);
+        // Tsize = the cumulative serialized size of the entry's whole file DAG.
+        let tsize: u64 = file.blocks.iter().map(|b| b.bytes.len() as u64).sum();
+        let link = encode_pb_link_named(&file.root.to_bytes(), name, tsize);
+        pb_field_bytes(&mut node, 2, &link);
+        dir_entries.push((name.to_string(), file.root.clone()));
+        blocks.extend(file.blocks);
+    }
+    // Data (field 1): UnixFS Type=Directory, nothing else.
+    let mut unixfs_data = Vec::new();
+    pb_field_varint(&mut unixfs_data, 1, UNIXFS_TYPE_DIRECTORY);
+    pb_field_bytes(&mut node, 1, &unixfs_data);
+
+    // A directory node must fit in one block — this builder does not HAMT-shard.
+    if node.len() > DEFAULT_CHUNK_SIZE {
+        return Err(IpfsError::InvalidDirectory(format!(
+            "directory node is {} bytes, over the {DEFAULT_CHUNK_SIZE}-byte single-block \
+             limit (HAMT sharding is out of scope)",
+            node.len()
+        )));
+    }
+
+    let root = Cid::from_blake3_digest(CODEC_DAG_PB, *blake3::hash(&node).as_bytes());
+    blocks.push(Block {
+        cid: root.clone(),
+        bytes: node,
+    });
+    Ok(DirDag {
+        root,
+        blocks,
+        entries: dir_entries,
+    })
+}
+
+/// Build a UnixFS directory over named `entries` and pin every block to `client`,
+/// returning the directory root CID. Children are pinned before the directory node.
+pub fn pin_dir<C: IpfsClient>(client: &C, entries: &[(&str, &[u8])]) -> Result<Cid, IpfsError> {
+    let dag = build_dir_dag(entries)?;
+    for block in &dag.blocks {
+        client.put_block(&block.cid, &block.bytes)?;
+    }
+    Ok(dag.root)
+}
+
+/// **The verified directory read.** Fetch the directory node addressed by `root`,
+/// re-witness it against its CID, and read every named entry through the verified
+/// file walk ([`fetch_cat`]) — every block (directory node, interior nodes, leaves)
+/// is re-hashed against its own CID before use. Returns the `(name, content)` pairs
+/// in the directory's stored (canonical) order.
+///
+/// Refuses: a tampered block ([`IpfsError::CidMismatch`]); a non-directory node read
+/// as a directory, an unnamed / empty-named / duplicate-named link, or a nested
+/// directory entry ([`IpfsError::InvalidDirectory`] — single-level scope, matching
+/// [`build_dir_dag`]); plus everything the file walk refuses.
+pub fn fetch_dir<C: IpfsClient>(
+    client: &C,
+    root: &Cid,
+) -> Result<Vec<(String, Vec<u8>)>, IpfsError> {
+    if !root.is_blake3() {
+        return Err(IpfsError::NotVerifiableByFlatHash(root.to_string_cid()));
+    }
+    if !root.is_dag_pb() {
+        return Err(IpfsError::InvalidDirectory(format!(
+            "{} is not a dag-pb node (a directory root always is)",
+            root.to_string_cid()
+        )));
+    }
+    let block = client.get(root)?;
+    // Re-witness the directory node itself before trusting any of its links.
+    let recomputed = *blake3::hash(&block).as_bytes();
+    if recomputed.as_slice() != root.digest.as_slice() {
+        return Err(IpfsError::CidMismatch {
+            requested: root.to_string_cid(),
+            got: Cid::from_blake3_digest(root.codec, recomputed).to_string_cid(),
+        });
+    }
+    let node = parse_pb_node(&block)?;
+    if node.data_type != Some(UNIXFS_TYPE_DIRECTORY) {
+        return Err(IpfsError::InvalidDirectory(format!(
+            "{} is not a UnixFS directory node (use fetch_cat for a file)",
+            root.to_string_cid()
+        )));
+    }
+    let mut out = Vec::with_capacity(node.links.len());
+    let mut seen = std::collections::HashSet::new();
+    for link in &node.links {
+        let name = link.name.clone().unwrap_or_default();
+        if name.is_empty() {
+            return Err(IpfsError::InvalidDirectory(
+                "directory link has no name".into(),
+            ));
+        }
+        if !seen.insert(name.clone()) {
+            return Err(IpfsError::InvalidDirectory(format!(
+                "duplicate entry name `{name}`"
+            )));
+        }
+        let child = Cid::from_bytes(&link.hash)
+            .map_err(|e| IpfsError::BadDagNode(format!("bad link CID: {e}")))?;
+        // The verified file walk re-witnesses every block of the entry; a nested
+        // directory entry is refused inside it (single-level scope).
+        let content = fetch_cat(client, &child)?;
+        out.push((name, content));
+    }
+    Ok(out)
 }
 
 // -- the balanced-tree parent builder -----------------------------------------
@@ -251,6 +436,9 @@ fn build_parent(children: &[Node]) -> (Node, Vec<u8>) {
 /// UnixFS `DataType::File` (= 2).
 const UNIXFS_TYPE_FILE: u64 = 2;
 
+/// UnixFS `DataType::Directory` (= 1).
+const UNIXFS_TYPE_DIRECTORY: u64 = 1;
+
 /// Encode the UnixFS `Data` message for a file node: `Type=File`, `filesize`, and the
 /// per-child `blocksizes`. (No inline `Data` — the bytes live in the raw leaves.)
 fn encode_unixfs_file(filesize: u64, blocksizes: &[u64]) -> Vec<u8> {
@@ -272,17 +460,36 @@ fn encode_pb_link(hash: &[u8], tsize: u64) -> Vec<u8> {
     out
 }
 
-/// A parsed dag-pb node: the ordered child link CIDs (raw bytes) + the UnixFS
-/// `filesize` if the `Data` field carried one.
+/// Encode a **named** dag-pb `PBLink` (a directory entry): `Hash` (field 1) + `Name`
+/// (field 2) + `Tsize` (field 3).
+fn encode_pb_link_named(hash: &[u8], name: &str, tsize: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    pb_field_bytes(&mut out, 1, hash); // Hash
+    pb_field_bytes(&mut out, 2, name.as_bytes()); // Name
+    pb_field_varint(&mut out, 3, tsize); // Tsize
+    out
+}
+
+/// A parsed dag-pb `PBLink`: the child CID bytes + the entry name, if any (a file
+/// DAG's links are unnamed; a directory's carry the entry name).
+struct PbLink {
+    hash: Vec<u8>,
+    name: Option<String>,
+}
+
+/// A parsed dag-pb node: the ordered child links, the UnixFS `Type` (file /
+/// directory), and the UnixFS `filesize` if the `Data` field carried one.
 struct PbNode {
-    links: Vec<Vec<u8>>,
+    links: Vec<PbLink>,
+    data_type: Option<u64>,
     filesize: Option<u64>,
 }
 
-/// Parse a dag-pb `PBNode`: collect every `Links` (field 2) `Hash`, and read the
-/// UnixFS `filesize` from the `Data` (field 1) message.
+/// Parse a dag-pb `PBNode`: collect every `Links` (field 2) entry, and read the
+/// UnixFS `Type` + `filesize` from the `Data` (field 1) message.
 fn parse_pb_node(bytes: &[u8]) -> Result<PbNode, IpfsError> {
     let mut links = Vec::new();
+    let mut data_type = None;
     let mut filesize = None;
     let mut p = 0usize;
     while p < bytes.len() {
@@ -295,40 +502,75 @@ fn parse_pb_node(bytes: &[u8]) -> Result<PbNode, IpfsError> {
             }
             // Data (field 1): the UnixFS Data message.
             (1, 2) => {
-                filesize = parse_unixfs_filesize(as_bytes(val)?)?;
+                let (ty, fs) = parse_unixfs_data(as_bytes(val)?)?;
+                data_type = ty;
+                filesize = fs;
             }
             _ => {}
         }
     }
-    Ok(PbNode { links, filesize })
+    Ok(PbNode {
+        links,
+        data_type,
+        filesize,
+    })
 }
 
-/// Parse a `PBLink`, returning the `Hash` (field 1) bytes.
-fn parse_pb_link(bytes: &[u8]) -> Result<Vec<u8>, IpfsError> {
+/// Parse a `PBLink`: `Hash` (field 1, required) + `Name` (field 2, optional).
+fn parse_pb_link(bytes: &[u8]) -> Result<PbLink, IpfsError> {
     let mut p = 0usize;
     let mut hash = None;
+    let mut name = None;
     while p < bytes.len() {
         let (field, wire, val) = pb_read_field(bytes, &mut p)?;
-        if field == 1 && wire == 2 {
-            hash = Some(as_bytes(val)?.to_vec());
+        match (field, wire) {
+            (1, 2) => hash = Some(as_bytes(val)?.to_vec()),
+            (2, 2) => {
+                let raw = as_bytes(val)?;
+                name = Some(
+                    std::str::from_utf8(raw)
+                        .map_err(|_| IpfsError::BadDagNode("non-utf8 link name".into()))?
+                        .to_string(),
+                );
+            }
+            _ => {}
         }
     }
-    hash.ok_or_else(|| IpfsError::BadDagNode("PBLink had no Hash".into()))
+    Ok(PbLink {
+        hash: hash.ok_or_else(|| IpfsError::BadDagNode("PBLink had no Hash".into()))?,
+        name,
+    })
 }
 
-/// Read the UnixFS `filesize` (field 3) from a `Data` message, if present.
-fn parse_unixfs_filesize(bytes: &[u8]) -> Result<Option<u64>, IpfsError> {
+/// Read the UnixFS `Type` (field 1) and `filesize` (field 3) from a `Data` message.
+fn parse_unixfs_data(bytes: &[u8]) -> Result<(Option<u64>, Option<u64>), IpfsError> {
     let mut p = 0usize;
+    let mut data_type = None;
     let mut filesize = None;
     while p < bytes.len() {
         let (field, wire, val) = pb_read_field(bytes, &mut p)?;
-        if field == 3 && wire == 0 {
-            if let PbVal::Varint(v) = val {
-                filesize = Some(v);
+        if let PbVal::Varint(v) = val {
+            match (field, wire) {
+                (1, 0) => data_type = Some(v),
+                (3, 0) => filesize = Some(v),
+                _ => {}
             }
         }
     }
-    Ok(filesize)
+    Ok((data_type, filesize))
+}
+
+/// The dag-pb child link CIDs of a serialized node — used by [`crate::car`] to check
+/// a CAR's block closure (every link a dag-pb block makes must resolve inside the CAR).
+pub(crate) fn dag_pb_links(bytes: &[u8]) -> Result<Vec<Cid>, IpfsError> {
+    parse_pb_node(bytes)?
+        .links
+        .iter()
+        .map(|l| {
+            Cid::from_bytes(&l.hash)
+                .map_err(|e| IpfsError::BadDagNode(format!("bad link CID: {e}")))
+        })
+        .collect()
 }
 
 // -- protobuf wire primitives -------------------------------------------------
@@ -509,6 +751,159 @@ mod tests {
         assert!(matches!(
             fetch_cat(&node, &dag.root),
             Err(IpfsError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dir_round_trips_including_a_multi_block_file() {
+        let node = MockIpfs::new();
+        // One small file + one file large enough to chunk into a multi-block DAG.
+        let big: Vec<u8> = (0..500u32).map(|i| (i * 13 % 251) as u8).collect();
+        let entries: [(&str, &[u8]); 3] = [
+            ("manifest.txt", b"hello manifest"),
+            ("universe.bin", &big),
+            ("a.txt", b"first by name"),
+        ];
+        let dag = build_dir_dag_with(&entries, 64, 3).unwrap();
+        assert!(dag.root.is_dag_pb());
+        // Canonical order is name-sorted regardless of the caller's order.
+        let names: Vec<&str> = dag.entries.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["a.txt", "manifest.txt", "universe.bin"]);
+        // The big entry really is a multi-block file DAG (its root is dag-pb).
+        assert!(dag.entries[2].1.is_dag_pb());
+        for b in &dag.blocks {
+            node.put_block(&b.cid, &b.bytes).unwrap();
+        }
+        let fetched = fetch_dir(&node, &dag.root).unwrap();
+        assert_eq!(fetched.len(), 3);
+        assert_eq!(fetched[0], ("a.txt".to_string(), b"first by name".to_vec()));
+        assert_eq!(
+            fetched[1],
+            ("manifest.txt".to_string(), b"hello manifest".to_vec())
+        );
+        assert_eq!(fetched[2], ("universe.bin".to_string(), big));
+    }
+
+    #[test]
+    fn dir_cid_is_order_independent() {
+        let a: [(&str, &[u8]); 2] = [("x", b"one"), ("y", b"two")];
+        let b: [(&str, &[u8]); 2] = [("y", b"two"), ("x", b"one")];
+        assert_eq!(
+            build_dir_dag(&a).unwrap().root,
+            build_dir_dag(&b).unwrap().root
+        );
+    }
+
+    #[test]
+    fn a_tampered_dir_block_is_refused() {
+        let node = MockIpfs::new();
+        let big: Vec<u8> = (0..500u32).map(|i| i as u8).collect();
+        let entries: [(&str, &[u8]); 2] = [("small", b"tiny"), ("big", &big)];
+        let dag = build_dir_dag_with(&entries, 64, 3).unwrap();
+        for b in &dag.blocks {
+            node.put_block(&b.cid, &b.bytes).unwrap();
+        }
+        // Tamper the DIRECTORY node itself (the last block).
+        let dir_block = dag.blocks.last().unwrap();
+        node.tamper(&dir_block.cid, b"not the directory you committed");
+        assert!(matches!(
+            fetch_dir(&node, &dag.root).unwrap_err(),
+            IpfsError::CidMismatch { .. }
+        ));
+        // Restore, then tamper a LEAF of an entry's file DAG instead.
+        node.put_block(&dir_block.cid, &dir_block.bytes).unwrap();
+        node.tamper(&dag.blocks[0].cid, b"evil leaf");
+        assert!(matches!(
+            fetch_dir(&node, &dag.root).unwrap_err(),
+            IpfsError::CidMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn a_missing_dir_block_is_not_found() {
+        let node = MockIpfs::new();
+        let big: Vec<u8> = (0..500u32).map(|i| i as u8).collect();
+        let entries: [(&str, &[u8]); 2] = [("small", b"tiny"), ("big", &big)];
+        let dag = build_dir_dag_with(&entries, 64, 3).unwrap();
+        for b in dag.blocks.iter().skip(1) {
+            node.put_block(&b.cid, &b.bytes).unwrap();
+        }
+        node.forget(&dag.blocks[0].cid);
+        assert!(matches!(
+            fetch_dir(&node, &dag.root),
+            Err(IpfsError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn dir_build_refuses_bad_names() {
+        let dup: [(&str, &[u8]); 2] = [("same", b"a"), ("same", b"b")];
+        assert!(matches!(
+            build_dir_dag(&dup),
+            Err(IpfsError::InvalidDirectory(_))
+        ));
+        let empty: [(&str, &[u8]); 1] = [("", b"a")];
+        assert!(matches!(
+            build_dir_dag(&empty),
+            Err(IpfsError::InvalidDirectory(_))
+        ));
+        let pathy: [(&str, &[u8]); 1] = [("a/b", b"a")];
+        assert!(matches!(
+            build_dir_dag(&pathy),
+            Err(IpfsError::InvalidDirectory(_))
+        ));
+    }
+
+    #[test]
+    fn fetch_cat_refuses_a_directory_and_fetch_dir_refuses_a_file() {
+        let node = MockIpfs::new();
+        let entries: [(&str, &[u8]); 1] = [("f", b"content")];
+        let dir_root = pin_dir(&node, &entries).unwrap();
+        // cat on a directory is a named refusal, not a silent concatenation.
+        assert!(matches!(
+            fetch_cat(&node, &dir_root).unwrap_err(),
+            IpfsError::InvalidDirectory(_)
+        ));
+        // fetch_dir on a (chunked) FILE root is a named refusal too.
+        let content: Vec<u8> = (0..300u32).map(|i| i as u8).collect();
+        let file = build_file_dag_with(&content, 64, DEFAULT_MAX_LINKS);
+        for b in &file.blocks {
+            node.put_block(&b.cid, &b.bytes).unwrap();
+        }
+        assert!(matches!(
+            fetch_dir(&node, &file.root).unwrap_err(),
+            IpfsError::InvalidDirectory(_)
+        ));
+        // And fetch_dir on a raw leaf is refused as not-a-dag-pb-node.
+        let raw = node.put_raw(b"just a blob").unwrap();
+        assert!(matches!(
+            fetch_dir(&node, &raw).unwrap_err(),
+            IpfsError::InvalidDirectory(_)
+        ));
+    }
+
+    #[test]
+    fn nested_directory_entries_are_refused_on_fetch() {
+        // Hand-build a directory whose entry links to ANOTHER directory: the verified
+        // read refuses it (single-level scope) rather than cat-ing it.
+        let node = MockIpfs::new();
+        let inner: [(&str, &[u8]); 1] = [("leaf", b"inner content")];
+        let inner_dag = build_dir_dag(&inner).unwrap();
+        for b in &inner_dag.blocks {
+            node.put_block(&b.cid, &b.bytes).unwrap();
+        }
+        // Outer dir node linking the inner DIRECTORY by name.
+        let mut outer = Vec::new();
+        let link = encode_pb_link_named(&inner_dag.root.to_bytes(), "nested", 1);
+        pb_field_bytes(&mut outer, 2, &link);
+        let mut data = Vec::new();
+        pb_field_varint(&mut data, 1, UNIXFS_TYPE_DIRECTORY);
+        pb_field_bytes(&mut outer, 1, &data);
+        let outer_cid = Cid::from_blake3_digest(CODEC_DAG_PB, *blake3::hash(&outer).as_bytes());
+        node.put_block(&outer_cid, &outer).unwrap();
+        assert!(matches!(
+            fetch_dir(&node, &outer_cid).unwrap_err(),
+            IpfsError::InvalidDirectory(_)
         ));
     }
 
