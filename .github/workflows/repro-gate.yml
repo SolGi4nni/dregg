@@ -54,11 +54,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           # Matches ci.yml:39-41 (rolling `nightly`, resolved from rust-toolchain.toml).
-          # NOTE (pending, REPRODUCIBLE-BUILD-AND-FREEZE.md §2.2 / Rung D0): the toolchain
-          # is a ROLLING nightly, not date-pinned, so this gate can still red on a day
-          # with zero code changes. Date-pinning it is D0's job, not D2's; when D0 lands,
-          # change this and the repo pin together.
-          toolchain: nightly
+          # D0 LANDED (REPRODUCIBLE-BUILD-AND-FREEZE.md §2.2 / Rung D0): the toolchain is now
+          # DATE-PINNED to match the repo pin (rust-toolchain.toml `nightly-2026-06-21`), so
+          # this gate no longer reds on a toolchain roll with zero code changes. Bump both
+          # together, deliberately, never let either roll.
+          toolchain: nightly-2026-06-21
       # DELIBERATELY NO Swatinem/rust-cache: restoring the shared cache would let a
       # cached git dep or sibling artifact mask an escape. The gate must fetch cold.
       - name: Canary — prove the gate can go RED
@@ -95,7 +95,7 @@ jobs:
           df -h /
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - name: Gate — bare clone, FULL --workspace build (debuginfo off, no cache)
         # debuginfo off slashes on-disk object footprint + link memory so the whole-tree
         # link fits the hosted runner (ci.yml:122-123).

@@ -44,7 +44,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
       # FEATURE-MATRIX GATES (2026-07-16, Lane 2 config-space audit): `dregg-chain`
@@ -72,7 +72,7 @@ jobs:
           lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: solana-lock
@@ -110,7 +110,7 @@ jobs:
           lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
@@ -181,7 +181,7 @@ jobs:
           df -h /
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
       # macOS links the full workspace (incl. deos-zed's windowed gpui editor) via
       # ld64 — green, so keep it whole.
@@ -241,7 +241,7 @@ jobs:
           lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (dregg-agent, live-brain)
         run: cargo test -p dregg-agent --features live-brain
@@ -281,7 +281,7 @@ jobs:
           lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
           components: rustfmt
       # If this fails, format-drift landed. The local pre-commit hook formats every staged .rs at
       # its crate's edition so this stays green automatically — install it once with
@@ -348,7 +348,7 @@ jobs:
           lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-06-21
       - uses: Swatinem/rust-cache@v2
 
       - name: Is a seed release published? (reads dregg-lean-ffi/lean-seed.pin)

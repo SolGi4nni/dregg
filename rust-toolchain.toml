@@ -4,7 +4,12 @@
 # (stabilized after 2026-01-01). starbridge-v2/deos-* already pin rolling `nightly` for this;
 # unifying makes it the repo-wide pin. binius (`--features binius`, NOT a default dep) still
 # builds — array_try_map/array_try_from_fn remain available on nightly.
-channel = "nightly"
+#
+# D0 reproducibility: date-PINNED (was rolling `nightly`). `2026-06-21` is the nightly the
+# tree was building on when the pin landed (`rustc 1.98.0-nightly (91fe22da8 2026-06-21)`);
+# it is >= the 2026-02-14 floor above. Bump deliberately, never let it roll — a moving
+# toolchain makes "works on my machine" a toolchain-drift a bare-clone gate cannot catch.
+channel = "nightly-2026-06-21"
 profile = "default"
 
 components = ["cargo", "clippy", "rust-analyzer", "rustc", "rustfmt"]
