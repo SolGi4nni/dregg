@@ -2008,3 +2008,13 @@ repo's OWN better measurements (MEASURED-ENVELOPE.md, OUTPUT-BOUNDARY-MPC.md) si
 on the superseded FheUint16 circuit (current FheUint32 is ~2-3× slower). The doc also UNDERSTATES proven
 work (ledger-realization half-discharged, FhEggRustDenotation closes 5 residuals) — drift in the SAFE
 direction. `FheggEnvelopeDocResidual`.
+
+## ⚑⚑⚑ THE MOCK IVC ENGINE IS DELETED (2026-07-16) — `1fdd4a671`
+"is it actually deleted or not? :joy:" (ember) → YES. `circuit/src/ivc.rs` 1600 -> 797 lines; prove_ivc/
+verify_ivc/create_test_chain/finalize_ivc/IvcBuilder/IvcProof/AccumulatedProof/simulated_proof_size_bytes
+GONE. The hidden dead rider deleted too: `sdk/cipherclerk.rs::export_state_proof` (a mock-proof EXPORT on
+the production SDK, provably dead — enable_ivc had zero callers). soundness.rs's 4 mock tests + the demo
+example gone. KEPT the real hash primitives (extend/initial_accumulated_hash) + StateTransitionAir + commit's
+different FoldDelta. VERIFIED green (persvati: circuit+sdk+tests Finished). constraint_prover = separate pass.
+**MOCK-PURGE COMPLETE: 7/7 surfaces wired to real, ratchet enforced, engine DELETED.** The lesson banked:
+"wired out of production" != "deleted"; dead mock code is a lie waiting to be re-called.
