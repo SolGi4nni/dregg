@@ -1134,12 +1134,146 @@ impl World {
             })
             .collect();
 
+        // Will this commit attempt a DURABLE dual-write? (Only a `Full`-mode turn
+        // on a persistent image does — a symbolic turn defers its witness and a
+        // fork/ephemeral world has no store.) If so, snapshot the pre-turn ledger
+        // BEFORE the engine mutates it, so a durable-write failure can UNWIND the
+        // in-RAM apply to a byte-identical pre-turn image (below). The clone is the
+        // price of a snapshot-based unwind; it is bounded to the durable path
+        // (whose commit cost is already dominated by the redb txn + fsync), and the
+        // executor's own journal already rolls back a turn that FAILS admission —
+        // this snapshot handles the distinct case of a turn that COMMITTED cleanly
+        // in RAM but could not be durably recorded.
+        let will_dual_write = self.persist.is_some() && !self.witness_mode.is_symbolic();
+        let ledger_snapshot: Option<Ledger> = if will_dual_write {
+            Some(self.engine.ledger().clone())
+        } else {
+            None
+        };
+        // `execute_turn` (below) advances the executor's per-agent receipt-chain
+        // head IN-LINE (`TurnExecutor::execute` inserts the new head), so the
+        // ledger snapshot alone does not unwind it. Capture the pre-turn head for
+        // the acting agent (`None` if this is their first turn) to restore on a
+        // durable-write failure — otherwise `chain_head(agent)` leads a receipt
+        // the disk never recorded.
+        let head_snapshot: Option<[u8; 32]> = if will_dual_write {
+            self.engine.executor().get_last_receipt_hash(&turn.agent)
+        } else {
+            None
+        };
+
         // Run the turn through the REAL embedded engine (the SDK's DreggEngine,
         // which owns the executor+ledger borrow internally).
         match self.engine.execute_turn(&turn) {
             Ok(receipt) => {
-                // Advance the engine's per-agent chain head (DreggEngine's
-                // execute_turn does not rebind it; do it here as the live path).
+                // THE DURABLE DUAL-WRITE (M4, A.2) — O(change), and it GATES the
+                // in-RAM advance. The engine's `execute_turn` above already mutated
+                // the ledger, but NOTHING else has advanced yet: the per-agent chain
+                // head, the replay tape, the height, and the receipts log are all
+                // still at their pre-turn values. We attempt the durable write FIRST,
+                // so a failure UNWINDS the single mutation that did happen (the
+                // ledger) and returns `Rejected` meaning *nothing happened* — never a
+                // half-applied turn (`receipts.len() == height` stays invariant and
+                // the image root stays consistent). Only on a durable SUCCESS (or an
+                // ephemeral/symbolic world that never durably writes) do we advance
+                // the in-RAM head below.
+                //
+                // FAIL-CLOSED (A.2.1, *Green Or Bust*): a durable-write error is NOT
+                // swallowed — the World refuses a commit it could not durably record,
+                // keeping RAM and disk in lock-step (the node's discipline), AND drops
+                // the store to ephemeral (loud, not silent).
+                //
+                // SYMBOLIC EXECUTION: a deferred-witness turn has NO real post-state
+                // root to durably record (its receipt carries the deferred sentinel),
+                // so it is NOT durably written here (`will_dual_write` is false). It
+                // becomes durable only after `collapse` re-derives the real witness.
+                if will_dual_write {
+                    // The height this turn WOULD take (we have not incremented yet).
+                    let height = self.height + 1;
+                    // THE DURABLE OVERLAY'S CHANGE-SET MUST BE COMPLETE (CORE-AUDIT.md
+                    // finding 1). `touched` is a SYNTACTIC over-approximation of the
+                    // input turn that misses cells an effect resolves at runtime (a
+                    // burn's issuer well, a create's newborn, a factory birth, the
+                    // metered agent) — recording the correct root over an incomplete
+                    // overlay makes recovery refuse a valid image (or silently truncate
+                    // a committed turn). The executor's journal write-set is EXACT and
+                    // complete; union it with `touched` (belt-and-suspenders — a
+                    // false-positive unchanged cell in the overlay reconstructs
+                    // identically; only a MISSING cell is the bug).
+                    let mut write_set = touched.clone();
+                    for id in self.engine.executor().last_write_set() {
+                        if !write_set.contains(&id) {
+                            write_set.push(id);
+                        }
+                    }
+                    // Split the borrows: take `persist` out, write through the
+                    // disjoint `engine` borrow, then put it back (or drop it on a
+                    // durable failure — the loud degrade-to-ephemeral path).
+                    let mut p = self.persist.take().expect("checked is_some");
+                    // TEST FAULT-INJECTION: exercise the UNWIND path deterministically (a
+                    // real redb write failure is not reproducible from a unit test).
+                    // Native-test only — on wasm there is no `dregg_persist` and the
+                    // durable path is dead (a wasm image is always ephemeral). Compiled out
+                    // of every non-test build — zero production cost.
+                    #[cfg(all(test, not(target_arch = "wasm32")))]
+                    let result = if take_injected_dual_write_failure() {
+                        Err(dregg_persist::StoreError::Integrity(
+                            "injected durable-write failure (test: commit_turn unwind)".to_string(),
+                        ))
+                    } else {
+                        p.dual_write(height, self.engine.ledger(), &write_set, &receipt, &turn)
+                    };
+                    #[cfg(not(all(test, not(target_arch = "wasm32"))))]
+                    let result =
+                        p.dual_write(height, self.engine.ledger(), &write_set, &receipt, &turn);
+                    match result {
+                        Ok(()) => self.persist = Some(p),
+                        Err(e) => {
+                            // FULL UNWIND — restore the pre-turn image so `Rejected`
+                            // means NOTHING happened. `execute_turn` advanced TWO
+                            // things in RAM: the engine ledger AND the executor's
+                            // per-agent receipt-chain head (the tape / height /
+                            // receipts are advanced only below, after a durable
+                            // success, so they are still at their pre-turn values).
+                            // Restore BOTH — the ledger from its snapshot and the
+                            // head to its captured prior value — so the world is
+                            // byte-identical to pre-turn: `receipts.len() == height`
+                            // holds and the image root is consistent again. `p` is
+                            // dropped (NOT put back) → the image degrades to
+                            // ephemeral, loudly named.
+                            if let Some(snapshot) = ledger_snapshot {
+                                *self.engine.ledger_mut() = snapshot;
+                            }
+                            self.engine
+                                .executor()
+                                .restore_last_receipt_hash(turn.agent, head_snapshot);
+                            // The witness tooth (height, receipt-head, ledger) is back
+                            // to its pre-turn value; bust the memo so a stale advanced
+                            // entry can never be served.
+                            self.state_root_memo.set(None);
+                            let reason = format!(
+                                "durable image write failed (image no longer durable): {e}"
+                            );
+                            self.dynamics.emit(WorldEvent::TurnRejected {
+                                agent: turn.agent,
+                                reason: reason.clone(),
+                            });
+                            return CommitOutcome::Rejected {
+                                reason,
+                                at_action: vec![],
+                            };
+                        }
+                    }
+                }
+
+                // DURABLY RECORDED (or ephemeral / symbolic — nothing to durably
+                // record): NOW advance the in-RAM head, so it can never lead a state
+                // the disk does not carry.
+                //
+                // Re-assert the engine's per-agent chain head. `execute_turn`
+                // already advanced it in RAM (see the head snapshot above), so on
+                // the durable-success path this is an idempotent re-set to the same
+                // receipt hash — kept as the explicit, auditable live-path advance.
                 self.engine
                     .executor()
                     .set_last_receipt_hash(receipt.agent, receipt.receipt_hash());
@@ -1164,64 +1298,6 @@ impl World {
                     );
                 }
                 self.height += 1;
-
-                // THE DURABLE DUAL-WRITE (M4, A.2) — O(change). When the image is
-                // durable, record this turn into the redb commit log (post-state of
-                // the touched cells + the canonical post-state root, ONE ACID txn)
-                // and persist the input turn (A.4, for rewind). FAIL-CLOSED (A.2.1,
-                // *Green Or Bust*): a durable-write error is NOT swallowed — the
-                // World refuses a commit it could not durably record, keeping RAM
-                // and disk in lock-step (the node's discipline). The in-RAM engine
-                // already advanced, so on a durable failure we surface it as a hard
-                // rejection AND drop the store to ephemeral (loud, not silent).
-                // SYMBOLIC EXECUTION: a deferred-witness turn has NO real
-                // post-state root to durably record (its receipt carries the
-                // deferred sentinel), so it is NOT durably written here. It
-                // becomes durable only after `collapse` re-derives the real
-                // witness. (A durable world should stay in `Full` for the live
-                // commit path; symbolic is a local/ephemeral fast path.)
-                if self.persist.is_some() && !self.witness_mode.is_symbolic() {
-                    let height = self.height;
-                    // THE DURABLE OVERLAY'S CHANGE-SET MUST BE COMPLETE (CORE-AUDIT.md
-                    // finding 1). `touched` is a SYNTACTIC over-approximation of the
-                    // input turn that misses cells an effect resolves at runtime (a
-                    // burn's issuer well, a create's newborn, a factory birth, the
-                    // metered agent) — recording the correct root over an incomplete
-                    // overlay makes recovery refuse a valid image (or silently truncate
-                    // a committed turn). The executor's journal write-set is EXACT and
-                    // complete; union it with `touched` (belt-and-suspenders — a
-                    // false-positive unchanged cell in the overlay reconstructs
-                    // identically; only a MISSING cell is the bug).
-                    let mut write_set = touched.clone();
-                    for id in self.engine.executor().last_write_set() {
-                        if !write_set.contains(&id) {
-                            write_set.push(id);
-                        }
-                    }
-                    // Split the borrows: take `persist` out, write through the
-                    // disjoint `engine` borrow, then put it back (or drop it on a
-                    // durable failure — the loud degrade-to-ephemeral path).
-                    let mut p = self.persist.take().expect("checked is_some");
-                    let result =
-                        p.dual_write(height, self.engine.ledger(), &write_set, &receipt, &turn);
-                    match result {
-                        Ok(()) => self.persist = Some(p),
-                        Err(e) => {
-                            // `p` dropped → image degraded to ephemeral, loudly named.
-                            let reason = format!(
-                                "durable image write failed (image no longer durable): {e}"
-                            );
-                            self.dynamics.emit(WorldEvent::TurnRejected {
-                                agent: turn.agent,
-                                reason: reason.clone(),
-                            });
-                            return CommitOutcome::Rejected {
-                                reason,
-                                at_action: vec![],
-                            };
-                        }
-                    }
-                }
 
                 let mut events = Vec::new();
                 events.push(WorldEvent::TurnCommitted {
@@ -2433,6 +2509,36 @@ impl SemihostCockpit {
     }
 }
 
+// TEST-ONLY durable-write fault injection (compiled out of every non-test build,
+// and absent on wasm where there is no `dregg_persist` durable path). A real redb
+// write failure is not reproducible from a unit test, so the UNWIND path in
+// `commit_turn` is exercised by arming this one-shot flag: the next `commit_turn`
+// that would dual-write instead observes an injected `Err`, running the exact
+// rollback code an on-disk failure would trigger.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+thread_local! {
+    static FAIL_NEXT_DUAL_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arm a one-shot injected durable-write failure: the NEXT `commit_turn` that
+/// attempts a durable dual-write will observe an `Err` (and unwind) instead of
+/// writing to the store. Consumed by that one attempt.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn arm_next_dual_write_failure() {
+    FAIL_NEXT_DUAL_WRITE.with(|c| c.set(true));
+}
+
+/// Read-and-clear the one-shot injected-failure flag. Returns `true` at most once
+/// per `arm_next_dual_write_failure()`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn take_injected_dual_write_failure() -> bool {
+    FAIL_NEXT_DUAL_WRITE.with(|c| {
+        let armed = c.get();
+        c.set(false);
+        armed
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2497,6 +2603,139 @@ mod tests {
         assert_eq!(w.ledger().get(&b).unwrap().state.balance(), 0);
         assert_eq!(w.receipts().len(), 0);
         assert_eq!(w.height(), 0);
+    }
+
+    /// ADVERSARIAL (durable-write no-rollback correctness bug): a `commit_turn`
+    /// whose in-RAM apply SUCCEEDS but whose durable dual-write FAILS must UNWIND
+    /// completely — `Rejected` has to mean *nothing happened*. Before the fix the
+    /// engine ledger was mutated, the height/history/chain-head advanced, and the
+    /// receipt was NOT pushed, so `receipts.len() == height - 1` (invariant break)
+    /// and the image root went inconsistent. This asserts the post-failure state
+    /// is BYTE-IDENTICAL to the pre-turn state on every axis, and that a subsequent
+    /// honest turn commits cleanly off the (un-advanced) head.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn durable_write_failure_fully_unwinds_the_commit() {
+        // A unique throwaway redb path (no `tempfile` dep — mirrors the persistence
+        // test harness).
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("sbv2-durwrite-unwind-{pid}-{nanos}.redb"));
+
+        let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+            .expect("fresh open of an empty store");
+        assert!(w.is_durable(), "an opened world is durable");
+
+        // Genesis a payer + payee, then land ONE honest durable transfer so the
+        // pre-turn state is non-trivial (chain head is `Some`, height is 1).
+        let a = w.genesis_cell(1, 1_000);
+        let b = w.genesis_cell(2, 0);
+        let t1 = w.turn(a, vec![transfer(a, b, 100)]);
+        assert!(
+            w.commit_turn(t1).is_committed(),
+            "the first durable transfer must commit"
+        );
+
+        // --- capture the pre-turn image on EVERY axis the invariant touches ------
+        let pre_height = w.height();
+        let pre_receipts = w.receipts().len();
+        let pre_head = w.chain_head(&a);
+        let pre_root = w.state_root();
+        let pre_ledger_root = crate::persistence::canonical_ledger_root(w.engine.ledger());
+        let pre_a = w.ledger().get(&a).unwrap().state.balance();
+        let pre_b = w.ledger().get(&b).unwrap().state.balance();
+        // Sanity: the invariant HOLDS before the failed turn.
+        assert_eq!(
+            pre_receipts as u64, pre_height,
+            "receipts.len() == height pre-turn"
+        );
+        assert!(pre_head.is_some(), "the payer has a committed chain head");
+
+        // --- inject a durable-write failure on the NEXT commit -------------------
+        arm_next_dual_write_failure();
+        let t2 = w.turn(a, vec![transfer(a, b, 250)]);
+        let outcome = w.commit_turn(t2);
+        assert!(
+            !outcome.is_committed(),
+            "a durable-write failure must reject the commit"
+        );
+        assert!(
+            matches!(&outcome, CommitOutcome::Rejected { reason, .. } if reason.contains("durable")),
+            "the rejection names the durable-image failure, got {outcome:?}"
+        );
+
+        // --- the UNWIND: post-failure state is BYTE-IDENTICAL to pre-turn --------
+        assert_eq!(w.height(), pre_height, "height must be un-advanced");
+        assert_eq!(w.receipts().len(), pre_receipts, "no receipt was appended");
+        assert_eq!(
+            w.receipts().len() as u64,
+            w.height(),
+            "THE INVARIANT: receipts.len() == height must hold after the unwind"
+        );
+        assert_eq!(
+            w.chain_head(&a),
+            pre_head,
+            "the chain head must be restored"
+        );
+        assert_eq!(
+            w.ledger().get(&a).unwrap().state.balance(),
+            pre_a,
+            "the payer balance must be restored"
+        );
+        assert_eq!(
+            w.ledger().get(&b).unwrap().state.balance(),
+            pre_b,
+            "the payee balance must be restored"
+        );
+        assert_eq!(
+            crate::persistence::canonical_ledger_root(w.engine.ledger()),
+            pre_ledger_root,
+            "the whole ledger must be byte-identical to pre-turn"
+        );
+        // The image root is consistent again (memo BUSTED, recompute matches).
+        assert_eq!(w.state_root(), pre_root, "the image root must be restored");
+        assert_eq!(
+            w.compute_state_root(),
+            pre_root,
+            "the recomputed image root must match (no memo/height/receipt skew)"
+        );
+        // The store degraded to ephemeral, loudly (the preserved fail-closed behavior).
+        assert!(
+            !w.is_durable(),
+            "a durable-write failure degrades the image to ephemeral"
+        );
+
+        // --- a subsequent honest turn commits cleanly off the un-advanced head ---
+        let t3 = w.turn(a, vec![transfer(a, b, 250)]);
+        assert!(
+            w.commit_turn(t3).is_committed(),
+            "an honest turn must commit cleanly off the restored head"
+        );
+        assert_eq!(
+            w.height(),
+            pre_height + 1,
+            "the honest turn advances height by one"
+        );
+        assert_eq!(
+            w.receipts().len() as u64,
+            w.height(),
+            "the invariant holds across the clean re-commit"
+        );
+        assert_eq!(
+            w.ledger().get(&b).unwrap().state.balance(),
+            pre_b + 250,
+            "the transfer applied EXACTLY once (no double-apply off a phantom head)"
+        );
+        assert_ne!(
+            w.chain_head(&a),
+            pre_head,
+            "the chain head advances for the successful re-commit"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

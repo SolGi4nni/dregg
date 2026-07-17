@@ -1028,7 +1028,7 @@ pub struct TurnExecutor {
     /// mutability reason as the other executor side-tables (`&self`
     /// execution path).
     pub consumed_cap_witnesses: Mutex<Vec<crate::turn::ConsumedCapWitness>>,
-    /// THE EXECUTOR-STATE BRIDGE flag (`docs/UNIVERSAL-MAP-ROTATION.md` §2.3 — the
+    /// THE EXECUTOR-STATE BRIDGE flag (`.docs-history-noclaude/UNIVERSAL-MAP-ROTATION.md` §2.3 — the
     /// universal-memory witness lane, recursion-gated like the umem circuit leg): when
     /// set, `execute()` snapshots the universal-map projection (`crate::umem`) around
     /// the forest journal window and emits the turn's Blum op trace into
@@ -1724,6 +1724,28 @@ impl TurnExecutor {
             .insert(agent, hash);
     }
 
+    /// Restore an agent's receipt-chain head to a prior value — insert if the
+    /// agent HAD a head (`Some`), remove the entry if it did not (`None`). The
+    /// exact inverse of the advance `execute` performs, so a caller that must
+    /// UNWIND a turn whose in-RAM effects landed but whose durable write failed
+    /// can put the head back byte-identically (a plain `set` cannot restore the
+    /// "no prior head" state of an agent's first turn). See
+    /// `starbridge-v2::World::commit_turn`'s durable-write-failure unwind.
+    pub fn restore_last_receipt_hash(&self, agent: CellId, prev: Option<[u8; 32]>) {
+        let mut map = self
+            .last_receipt_hash
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match prev {
+            Some(h) => {
+                map.insert(agent, h);
+            }
+            None => {
+                map.remove(&agent);
+            }
+        }
+    }
+
     /// Clear the per-agent receipt-chain head (for tests and resets).
     pub fn reset_receipt_chain(&self) {
         self.last_receipt_hash
@@ -1850,7 +1872,7 @@ impl TurnExecutor {
     /// cell in the SAME asset class as its holders (its `token_id` matches), a
     /// negative-capable `−supply` account.
     ///
-    /// SUPPLY-MODEL Stage 1 (`docs/SUPPLY-MODEL.md`): this is the lazy
+    /// SUPPLY-MODEL Stage 1 (`.docs-history-noclaude/SUPPLY-MODEL.md`): this is the lazy
     /// per-asset well that makes burn a CONSERVING move (holder→well) for any
     /// asset, not just the registered default — closing the
     /// non-conserving-`destroy` hole. The genesis well registration (via
