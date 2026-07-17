@@ -70,6 +70,12 @@ pub mod seated;
 /// sprite (`dreggnet-sprite`), served at `GET /sprite/{kind}/{ref}`, painted onto an asset-bearing
 /// deos `Tile`, and shown in a `GET /gallery`. See [`sprite`].
 pub mod sprite;
+/// THE TELEGRAM MINI APP surface (`/tg` scope): initData HMAC-validated Telegram identity → the
+/// SAME derived dregg identity the in-chat bot uses (`dreggnet_telegram::cipherclerk`) → turns
+/// landing with **verified `Attribution::Signed`** provenance via an atomic custodial sign +
+/// `advance_signed` on the host thread. Mounted iff `TELEGRAM_BOT_TOKEN` is set. See
+/// [`telegram_miniapp`] and `docs/TELEGRAM-MINIAPP-DESIGN.md`.
+pub mod telegram_miniapp;
 
 pub use descent::{DescentState, descent_router, run_share_path};
 
@@ -2453,6 +2459,13 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
         .merge(catalog_router(Arc::clone(&catalog)))
         .merge(descent_router(descent))
         .merge(sprite::sprite_router());
+    // THE TELEGRAM MINI APP surface — mounted iff `TELEGRAM_BOT_TOKEN` is set (the same ops gate
+    // as the bot itself; `tg_miniapp_from_env` logs one line either way). It drives the SAME
+    // catalog host, but through initData-verified identities landing Signed turns.
+    let app = match telegram_miniapp::tg_miniapp_from_env(Arc::clone(&catalog)) {
+        Some(tg) => app.merge(tg),
+        None => app,
+    };
     (app, catalog)
 }
 

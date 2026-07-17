@@ -168,6 +168,10 @@ pub struct TelegramHost<T: Transport> {
     /// Which offering each chat's session is currently playing (or [`MENU_KEY`] while browsing).
     /// Keyed by the chat-scoped [`SessionId`]; a press routes to this offering.
     active: HashMap<SessionId, String>,
+    /// The Mini App base URL (the public funnel), when the deploy arms the `web_app` launch
+    /// tier ([`Self::with_webapp_base`]). `None` = launch buttons off; the inline-button tier
+    /// is unaffected either way.
+    webapp_base: Option<String>,
 }
 
 impl<T: Transport> TelegramHost<T> {
@@ -190,6 +194,7 @@ impl<T: Transport> TelegramHost<T> {
             host,
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
+            webapp_base: None,
         }
     }
 
@@ -205,7 +210,26 @@ impl<T: Transport> TelegramHost<T> {
             host: HostThread::spawn(build),
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
+            webapp_base: None,
         }
+    }
+
+    /// **Arm the Mini App launch tier**: `base` is the public HTTPS funnel the web `/tg` Mini
+    /// App routes are served from ([`crate::webapp::webapp_base_from_env`] resolves it in the
+    /// bin). With a base set, a DM's presented offering surface carries a trailing
+    /// "🕹 Play in the app" `web_app` row deep-linking THAT offering + session, and
+    /// [`present_play_menu`](Self::present_play_menu) (the `/play` command) works. An empty
+    /// base disarms. Group chats never get `web_app` buttons — Telegram refuses them there
+    /// ([`crate::webapp::web_app_allowed`]); the inline-button tier is their (full) surface.
+    pub fn with_webapp_base(mut self, base: impl Into<String>) -> Self {
+        let base = base.into().trim().trim_end_matches('/').to_string();
+        self.webapp_base = (!base.is_empty()).then_some(base);
+        self
+    }
+
+    /// The armed Mini App base URL, if any.
+    pub fn webapp_base(&self) -> Option<&str> {
+        self.webapp_base.as_deref()
     }
 
     /// The registered offerings (the catalog listing) — key + title + live-session count.
@@ -265,6 +289,36 @@ impl<T: Transport> TelegramHost<T> {
         sid
     }
 
+    /// **Present the `/play` Mini App launch menu** in `chat_id` — one `web_app` button per
+    /// registered offering, each opening the rich web surface for that offering at this chat's
+    /// session id ([`crate::webapp::build_play_menu_request`]). A control message OUTSIDE the
+    /// session-slot bookkeeping (`web_app` buttons produce no callbacks to match), so the
+    /// chat's active offering / presented keyboard are untouched. `Err` carries the honest
+    /// human reply when the tier cannot serve here: no base armed, a non-private chat
+    /// (Telegram refuses `web_app` inline buttons in groups), or a transport failure.
+    pub fn present_play_menu(&mut self, chat_id: ChatId, topic: Option<i64>) -> Result<(), String> {
+        let Some(base) = self.webapp_base.clone() else {
+            return Err(
+                "The Mini App tier is not configured on this deploy — the inline buttons \
+                 (/offerings) still play everything."
+                    .to_string(),
+            );
+        };
+        if !crate::webapp::web_app_allowed(chat_id, topic) {
+            return Err(format!(
+                "Mini App buttons only work in a private chat (Telegram's rule) — DM me and \
+                 send /play. The web surface lives at {base}/tg."
+            ));
+        }
+        let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let offerings = self.list_offerings();
+        let req = crate::webapp::build_play_menu_request(chat_id, topic, &base, &sid, &offerings);
+        self.frontend
+            .send_raw(&req)
+            .map(|_| ())
+            .map_err(|e| format!("Could not send the play menu: {e}"))
+    }
+
     /// **Open an offering session for `(key, chat)`** — ensure a host session is live under the
     /// chat-scoped [`SessionId`] (seeded deterministically from it) and present the offering's
     /// current [`Surface`] as the chat's inline keyboard, projected FOR the opening user `uid` (the
@@ -317,7 +371,18 @@ impl<T: Transport> TelegramHost<T> {
                 .run(move |h| (h.render_for(&k, &s, &v), h.actions_for(&k, &s, &v)))
         };
         if let (Some(surface), Some(actions)) = (surface, actions) {
-            self.frontend.present(sid, &surface, &actions);
+            // The Mini App launch tier: in a DM (the only place Telegram honors `web_app`
+            // inline buttons), a trailing "Play in the app" row deep-links the rich web
+            // surface for THIS offering + session. Never an offering Action — it is not
+            // recorded among the presented affordances, so no press can route through it.
+            let play = self.webapp_base.as_deref().and_then(|base| {
+                let (chat_id, topic) = TelegramFrontend::<T>::chat_of(sid)?;
+                crate::webapp::web_app_allowed(chat_id, topic)
+                    .then(|| crate::webapp::play_button(base, key, sid))
+            });
+            let extra: &[crate::api::InlineKeyboardButton] =
+                play.as_ref().map(std::slice::from_ref).unwrap_or(&[]);
+            self.frontend.present_with(sid, &surface, &actions, extra);
             self.active.insert(sid.clone(), key.to_string());
         }
     }

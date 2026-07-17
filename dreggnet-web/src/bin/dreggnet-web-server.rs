@@ -20,6 +20,14 @@
 //!   backstops). All unset → today's unbounded behavior. With a session dir, eviction is lossless
 //!   (evicted sessions resume from the store on next touch); without one, arming any limit opts
 //!   into honest lossy shedding of the coldest sessions;
+//! - Telegram Mini App: `TELEGRAM_BOT_TOKEN` set (on the FUNNEL unit — the same variable the bot
+//!   unit carries) mounts the `/tg` surface: initData HMAC-validated Telegram identities landing
+//!   turns with verified `Signed` provenance (`dreggnet_web::telegram_miniapp`,
+//!   docs/TELEGRAM-MINIAPP-DESIGN.md). Set an explicit `TELEGRAM_BOT_SECRET` (64 hex) in BOTH the
+//!   bot and web units so a token rotation does not rotate every derived identity — both
+//!   processes resolve the secret through the ONE `master_secret_from_env`.
+//!   `TELEGRAM_INITDATA_MAX_AGE_SECS` tunes the initData freshness window (default 86400). Token
+//!   unset → the `/tg` routes are not mounted and the catalog serves exactly as before;
 //! - log level: the standard `RUST_LOG` env (`tracing_subscriber` env-filter), default `info`.
 //!
 //! ## Honest scope (the deploy scout's Phase-0)

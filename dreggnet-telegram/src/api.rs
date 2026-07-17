@@ -40,15 +40,58 @@ pub fn decode_callback(data: &str) -> Option<(String, i64)> {
 /// tooth shown, not hidden. The button is still pressable; the executor refuses it on `advance`.
 pub const LOCK_GLYPH: &str = "🔒 ";
 
-/// One **inline keyboard button** — the Bot API `InlineKeyboardButton` (the fields we use). Its
-/// `callback_data` carries the affordance `{turn, arg}`; a press delivers it back verbatim in a
-/// `CallbackQuery`.
+/// A **Mini App launch descriptor** — the Bot API `WebAppInfo`: the HTTPS URL Telegram opens in
+/// its in-app web-view when the carrying button is pressed. The Telegram wire type behind the
+/// "Play in the app" tier ([`crate::webapp`]) — the rich web surface beside the inline-button
+/// fallback, both driving the SAME offering substrate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebAppInfo {
+    /// The HTTPS URL of the Mini App page (the funnel base + the `/tg` offering/session path).
+    pub url: String,
+}
+
+/// One **inline keyboard button** — the Bot API `InlineKeyboardButton` (the fields we use).
+/// Exactly ONE of the optional actions is set per button (Telegram's own rule): a
+/// `callback_data` press button carries the affordance `{turn, arg}` and delivers it back
+/// verbatim in a `CallbackQuery`; a `web_app` launch button opens a Mini App instead (and never
+/// produces a callback). An empty `callback_data` is OMITTED from the wire, so a
+/// [`web_app`](Self::web_app) button serializes with only its `web_app` field — the shape the
+/// Bot API accepts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InlineKeyboardButton {
     /// The button label (the affordance's human text; a `!enabled` one is [`LOCK_GLYPH`]-prefixed).
     pub text: String,
-    /// The affordance `{turn, arg}`, [`encode_callback`]-encoded — echoed back on a press.
+    /// The affordance `{turn, arg}`, [`encode_callback`]-encoded — echoed back on a press. Empty
+    /// (and omitted on the wire) for a [`web_app`](Self::web_app) launch button.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
     pub callback_data: String,
+    /// The Mini App this button launches instead of a callback press (`None` for an ordinary
+    /// press button). Telegram only honors `web_app` inline buttons in PRIVATE chats — the
+    /// caller gates on that ([`crate::webapp::web_app_allowed`]).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub web_app: Option<WebAppInfo>,
+}
+
+impl InlineKeyboardButton {
+    /// An ordinary **press button**: `callback_data` echoed back in a `CallbackQuery`.
+    pub fn callback(text: impl Into<String>, callback_data: impl Into<String>) -> Self {
+        InlineKeyboardButton {
+            text: text.into(),
+            callback_data: callback_data.into(),
+            web_app: None,
+        }
+    }
+
+    /// A **Mini App launch button**: pressing it opens `url` in Telegram's in-app web-view
+    /// (no callback is ever produced). Private chats only — Telegram's rule for `web_app`
+    /// inline buttons.
+    pub fn web_app(text: impl Into<String>, url: impl Into<String>) -> Self {
+        InlineKeyboardButton {
+            text: text.into(),
+            callback_data: String::new(),
+            web_app: Some(WebAppInfo { url: url.into() }),
+        }
+    }
 }
 
 /// An **inline keyboard** — the Bot API `InlineKeyboardMarkup`: a grid of [`InlineKeyboardButton`]
@@ -104,10 +147,10 @@ pub fn build_present_request(
                 } else {
                     format!("{LOCK_GLYPH}{}", a.label)
                 };
-                vec![InlineKeyboardButton {
-                    text: label,
-                    callback_data: encode_callback(&a.turn, a.arg),
-                }]
+                vec![InlineKeyboardButton::callback(
+                    label,
+                    encode_callback(&a.turn, a.arg),
+                )]
             })
             .collect();
         Some(InlineKeyboardMarkup {

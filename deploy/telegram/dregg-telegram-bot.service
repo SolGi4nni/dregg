@@ -27,7 +27,12 @@ StartLimitBurst=10
 [Service]
 Type=simple
 # The ops-gated secrets + knobs (TELEGRAM_BOT_TOKEN required; optional TELEGRAM_BOT_SECRET,
-# TELEGRAM_SESSION_DIR, TELEGRAM_COUNCIL_UIDS, TELEGRAM_API_BASE). Placed by ember, chmod 600.
+# TELEGRAM_SESSION_DIR, TELEGRAM_COUNCIL_UIDS, TELEGRAM_API_BASE, TELEGRAM_WEBAPP_BASE — the
+# public funnel the Mini App "Play in the app" buttons deep-link, default
+# https://hbox-dregg.skunk-emperor.ts.net). Placed by ember, chmod 600.
+# ⚠ Identity parity: set the SAME TELEGRAM_BOT_SECRET here and in the dreggnet-web unit — the
+# Mini App validator derives the same custodial identities from it (shared-credential
+# co-tenancy, docs/TELEGRAM-MINIAPP-DESIGN.md §2).
 EnvironmentFile=%h/.config/dregg/telegram-bot.env
 Environment=RUST_LOG=info
 # Durable game sessions: per-(offering,chat) move-logs, resumed by replay on every restart

@@ -23,6 +23,40 @@ use zeroize::Zeroizing;
 /// user-id spaces from ever colliding onto one dregg identity.
 pub const TELEGRAM_SEED_DOMAIN: &str = "dregg-telegram-bot-v1";
 
+/// The BLAKE3 derive-key domain the identity **master secret** falls back to when
+/// `TELEGRAM_BOT_SECRET` is unset: `master = BLAKE3_derive_key(this, bot_token)`. Pinned — a
+/// changed domain (or a rotated token on the fallback path) rotates EVERY derived identity.
+pub const MASTER_SECRET_DOMAIN: &str = "dregg-telegram-bot identity master secret v1";
+
+/// **Resolve the 32-byte identity master secret** — `explicit` (the `TELEGRAM_BOT_SECRET` env
+/// value: 64 hex chars) when present and non-empty, else BLAKE3-derived from the token under
+/// [`MASTER_SECRET_DOMAIN`]. The PURE core of [`master_secret_from_env`], separable for tests.
+pub fn master_secret_from(token: &str, explicit: Option<&str>) -> Result<[u8; 32], String> {
+    match explicit {
+        Some(hexed) if !hexed.trim().is_empty() => {
+            let bytes = hex::decode(hexed.trim())
+                .map_err(|e| format!("TELEGRAM_BOT_SECRET is not hex: {e}"))?;
+            <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+                format!(
+                    "TELEGRAM_BOT_SECRET needs exactly 32 bytes (64 hex chars), got {}",
+                    bytes.len()
+                )
+            })
+        }
+        _ => Ok(blake3::derive_key(MASTER_SECRET_DOMAIN, token.as_bytes())),
+    }
+}
+
+/// The identity master secret from the environment: explicit `TELEGRAM_BOT_SECRET` (64 hex
+/// chars) when set, else token-derived under the pinned [`MASTER_SECRET_DOMAIN`]. **The ONE
+/// implementation both custodial processes call** — the bot binary and `dreggnet-web`'s Mini App
+/// surface MUST resolve the same secret, or the "same" Telegram user forks into two dregg
+/// identities. (Deploy corollary: set an explicit `TELEGRAM_BOT_SECRET` in BOTH unit files so a
+/// BotFather token rotation does not silently rotate every custodial identity.)
+pub fn master_secret_from_env(token: &str) -> Result<[u8; 32], String> {
+    master_secret_from(token, std::env::var("TELEGRAM_BOT_SECRET").ok().as_deref())
+}
+
 /// The deterministic 32-byte custodial seed for a Telegram user — `seed =
 /// BLAKE3_derive_key("dregg-telegram-bot-v1", bot_secret || telegram_user_id_le)`. This seed IS the
 /// Ed25519 secret handed to `AgentCipherclerk::from_key_bytes`, so the identity is reproducible

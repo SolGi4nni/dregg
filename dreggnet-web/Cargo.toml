@@ -90,6 +90,23 @@ serde_json = "1"
 # a stable DreggIdentity via blake3) + a deterministic session seed from a session id.
 blake3 = "1"
 
+# THE TELEGRAM MINI APP surface (src/telegram_miniapp.rs) — the /tg scope validates Telegram
+# initData server-side and lands turns with verified Signed provenance:
+#  - dreggnet-telegram: the ONE uid→identity derivation (`cipherclerk::{seed_for,
+#    TelegramCipherclerk, master_secret_from_env}`) — CALLED, never mirrored, so the Mini App
+#    player is byte-for-byte the in-chat player (the lib dep graph stays acyclic; telegram's
+#    dev-dep on this crate is the cargo-legal reverse edge);
+#  - hmac + sha2: the pinned initData validation chain (secret = HMAC-SHA256("WebAppData",
+#    token); expected = HMAC-SHA256(secret, data-check-string));
+#  - subtle: constant-time hash comparison (never a timing oracle on the HMAC gate);
+#  - zeroize: wipe the transient custodial seed handed to `TurnSigner::from_seed` (the same
+#    hygiene the telegram cipherclerk applies).
+dreggnet-telegram = { path = "../dreggnet-telegram" }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
+
 # OBSERVABILITY — the SAME crate + versions node/Cargo.toml uses (workspace-consistent), so the
 # web surface's `GET /metrics` (src/metrics.rs) speaks the same Prometheus exposition the
 # deploy/observability stack already scrapes from the nodes. The `metrics` macros are no-ops

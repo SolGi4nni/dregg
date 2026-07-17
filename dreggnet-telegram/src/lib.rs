@@ -41,12 +41,16 @@ pub mod reqwest_transport;
 pub mod runtime;
 pub mod seated;
 pub mod transport;
+pub mod webapp;
 
 use std::collections::HashMap;
 
 use dreggnet_offerings::{Action, DreggIdentity, Frontend, SessionId, Surface};
 
-use crate::api::{build_present_request, decode_callback};
+use crate::api::{
+    InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest, build_present_request,
+    decode_callback,
+};
 use crate::cipherclerk::TelegramCipherclerk;
 use crate::transport::{MessageId, Transport, TransportError};
 
@@ -235,9 +239,36 @@ impl<T: Transport> TelegramFrontend<T> {
         surface: &Surface,
         actions: &[Action],
     ) -> Result<MessageId, TransportError> {
+        self.present_result_with(session, surface, actions, &[])
+    }
+
+    /// [`present_result`](Self::present_result) plus **trailing launch rows**: each
+    /// `extra_buttons` entry is appended as its own keyboard row AFTER the affordance rows.
+    /// These are frontend-level launch controls (the Mini App [`crate::webapp::play_button`]) —
+    /// NOT offering [`Action`]s: they are not recorded among the session's `presented`
+    /// affordances, so [`collect`](Frontend::collect) never matches one and the executor is
+    /// never reached through them (a `web_app` button produces no callback at all).
+    pub fn present_result_with(
+        &mut self,
+        session: &SessionId,
+        surface: &Surface,
+        actions: &[Action],
+        extra_buttons: &[InlineKeyboardButton],
+    ) -> Result<MessageId, TransportError> {
         let (chat_id, topic) = Self::chat_of(session)
             .ok_or_else(|| TransportError(format!("not a telegram session id: {}", session.0)))?;
-        let req = build_present_request(chat_id, topic, surface, actions);
+        let mut req = build_present_request(chat_id, topic, surface, actions);
+        if !extra_buttons.is_empty() {
+            let markup = req
+                .reply_markup
+                .get_or_insert_with(|| InlineKeyboardMarkup {
+                    inline_keyboard: Vec::new(),
+                });
+            for b in extra_buttons {
+                markup.inline_keyboard.push(vec![b.clone()]);
+            }
+        }
+        let req = req;
         // A RE-present EDITS the session's existing message in place (`editMessageText`) instead
         // of spamming a new one; the first present sends. A transport that cannot edit falls back
         // to sending (the [`Transport::edit_message`] default), so `MockTransport`-driven behavior
@@ -261,6 +292,28 @@ impl<T: Transport> TelegramFrontend<T> {
         slot.presented = actions.to_vec();
         self.last_send_error = None;
         Ok(message_id)
+    }
+
+    /// The infallible form of [`present_result_with`](Self::present_result_with) — mirrors the
+    /// trait [`present`](Frontend::present): a transport error is recorded in
+    /// [`last_send_error`](Self::last_send_error) instead of returned.
+    pub fn present_with(
+        &mut self,
+        session: &SessionId,
+        surface: &Surface,
+        actions: &[Action],
+        extra_buttons: &[InlineKeyboardButton],
+    ) {
+        if let Err(e) = self.present_result_with(session, surface, actions, extra_buttons) {
+            self.last_send_error = Some(e);
+        }
+    }
+
+    /// Send a **control message** through the injected transport, bypassing the session-slot
+    /// bookkeeping — for messages that are not a session's presented surface (the `/play` Mini
+    /// App launch menu, whose `web_app` buttons produce no callbacks to match).
+    pub fn send_raw(&mut self, req: &SendMessageRequest) -> Result<MessageId, TransportError> {
+        self.transport.send_message(req)
     }
 }
 

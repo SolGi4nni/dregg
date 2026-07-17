@@ -21,6 +21,9 @@
 //! - `TELEGRAM_COUNCIL_UIDS` (optional) — comma-separated Telegram user ids registered as the
 //!   council electorate (their derived identities can really vote).
 //! - `TELEGRAM_API_BASE` (optional) — override the Bot API host (a self-hosted server).
+//! - `TELEGRAM_WEBAPP_BASE` (optional) — the public HTTPS base the Mini App (`dreggnet-web`'s
+//!   `/tg` routes) is served from. Default: `https://hbox-dregg.skunk-emperor.ts.net` (the hbox
+//!   funnel). DMs get "Play in the app" `web_app` buttons + the `/play` menu deep-linking it.
 //!
 //! Deploy: `deploy/telegram/dregg-telegram-bot.service` + `deploy/telegram/RUNBOOK-TELEGRAM.md`.
 
@@ -48,7 +51,9 @@ fn main() {
     };
 
     // 2. The identity master secret — explicit hex, or derived from the token (see module doc).
-    let bot_secret = match bot_secret_from_env(&token) {
+    //    Resolved through the ONE lib impl (`cipherclerk::master_secret_from_env`) the web Mini
+    //    App validator also calls — parity by construction, never by convention.
+    let bot_secret = match dreggnet_telegram::cipherclerk::master_secret_from_env(&token) {
         Ok(s) => s,
         Err(why) => {
             eprintln!("TELEGRAM_BOT_SECRET is malformed: {why}");
@@ -113,11 +118,16 @@ fn main() {
         }
     }
 
-    // 7. The host: full shared catalog over the durable store, resumed on this boot.
+    // 7. The host: full shared catalog over the durable store, resumed on this boot — with the
+    //    Mini App launch tier armed at the funnel base (env `TELEGRAM_WEBAPP_BASE`, defaulting
+    //    to the hbox funnel): DMs get "🕹 Play in the app" web_app buttons + /play.
+    let webapp_base = dreggnet_telegram::webapp::webapp_base_from_env();
+    eprintln!("mini-app launch tier armed at {webapp_base} (TELEGRAM_WEBAPP_BASE overrides)");
     let dir_for_host = session_dir.clone();
     let mut host = TelegramHost::with_host(bot_secret, transport, move || {
         durable_telegram_host(Some(dir_for_host), members)
-    });
+    })
+    .with_webapp_base(webapp_base);
 
     // 8. The long-poll loop, with the consumed-updates offset persisted beside the sessions so a
     //    restart does not re-route already-answered presses.
@@ -135,21 +145,4 @@ fn main() {
             eprintln!("WARN: cannot persist update offset: {e}");
         }
     });
-}
-
-/// The 32-byte identity master secret: `TELEGRAM_BOT_SECRET` (64 hex chars) when set, else
-/// BLAKE3-derived from the token under a fixed domain (deterministic across restarts as long as
-/// the token is unrotated — see the module doc's warning).
-fn bot_secret_from_env(token: &str) -> Result<[u8; 32], String> {
-    match std::env::var("TELEGRAM_BOT_SECRET") {
-        Ok(hexed) if !hexed.trim().is_empty() => {
-            let bytes = hex::decode(hexed.trim()).map_err(|e| format!("not hex: {e}"))?;
-            <[u8; 32]>::try_from(bytes.as_slice())
-                .map_err(|_| format!("need exactly 32 bytes (64 hex chars), got {}", bytes.len()))
-        }
-        _ => Ok(blake3::derive_key(
-            "dregg-telegram-bot identity master secret v1",
-            token.as_bytes(),
-        )),
-    }
 }

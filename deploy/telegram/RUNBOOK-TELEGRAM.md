@@ -33,6 +33,10 @@ real run is ops-gated on ember minting one. Nothing else is missing.
    # TELEGRAM_BOT_SECRET=<64 hex chars, e.g. `openssl rand -hex 32`>
    # Optional: comma-separated Telegram user ids seated as the council electorate.
    # TELEGRAM_COUNCIL_UIDS=1001,1002
+   # Optional: the public HTTPS base the Mini App (dreggnet-web /tg routes) is served from —
+   # the "🕹 Play in the app" buttons + /play deep-link {base}/tg/offerings/{key}/session/{id}.
+   # Default: the hbox funnel.
+   # TELEGRAM_WEBAPP_BASE=https://hbox-dregg.skunk-emperor.ts.net
    ```
 
 3. **Build**: `cargo build --release -p dreggnet-telegram` (on hbox: wrap in `swarm-build`).
@@ -51,6 +55,30 @@ real run is ops-gated on ember minting one. Nothing else is missing.
   move on replay); the file is kept on disk as evidence, everything else resumes.
 - **Unwritable session dir** → loud warning, sessions degrade to in-memory (bot still runs).
 - **Network flap** → the loop backs off 5s and re-polls; sessions are unaffected.
+
+## The Mini App tier (the rich web surface beside the chat buttons)
+
+In a DM, every presented offering surface carries a trailing **"🕹 Play in the app"** `web_app`
+button, and `/play` presents a per-offering launch menu — each deep-links
+`{TELEGRAM_WEBAPP_BASE}/tg/offerings/{key}/session/{id}` (dreggnet-web's Mini App routes,
+docs/TELEGRAM-MINIAPP-DESIGN.md). Groups never get `web_app` buttons (Telegram refuses them
+outside private chats); the inline-button tier remains every chat's full, lightweight surface.
+
+Ops steps to arm it fully:
+
+1. **BotFather**: `/setmenubutton` (or `/newapp`) on the bot, registering the Mini App URL
+   `https://hbox-dregg.skunk-emperor.ts.net/tg` — this also whitelists the domain for the
+   `web_app` buttons.
+2. **Identity parity**: set the SAME `TELEGRAM_BOT_SECRET` (and `TELEGRAM_BOT_TOKEN`) in this
+   unit's env file AND the dreggnet-web server's — the web validator derives each Telegram
+   user's custodial identity through the same `master_secret_from_env`; different secrets fork
+   every user into two identities. This is shared-credential co-tenancy (design §2): both
+   processes are ONE trust domain on the box.
+3. `TELEGRAM_WEBAPP_BASE` only needs setting when the funnel base moves.
+
+A Mini App's `sendData` round-trip (`web_app_data` updates) is routed like any press: payloads
+in the affordance codec face the same presented-affordance gate + executor refereeing; anything
+else is acknowledged and dropped (client data never names an identity).
 
 ## Identity note
 

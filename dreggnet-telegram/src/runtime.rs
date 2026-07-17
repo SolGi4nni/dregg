@@ -9,9 +9,10 @@
 //!   client's spinner stops), plain-text `sendMessage` replies, `getMe` (the startup token
 //!   check). Same shape as [`crate::transport::RawBotApi`]: pure URL/body composition over an
 //!   injected [`HttpPost`].
-//! - **[`parse_updates`]** — the pure `Update[]` → [`BotEvent`] decoder (a button callback or a
-//!   text command), plus the next long-poll offset. Driven directly in the tests with the real
-//!   Bot API JSON shapes — no network needed to prove the routing.
+//! - **[`parse_updates`]** — the pure `Update[]` → [`BotEvent`] decoder (a button callback, a
+//!   text command, or a Mini App `web_app_data` round-trip), plus the next long-poll offset.
+//!   Driven directly in the tests with the real Bot API JSON shapes — no network needed to
+//!   prove the routing.
 //! - **[`route_callback`] / [`route_text`]** — one press / one command → the ONE router
 //!   ([`TelegramHost::press`] / [`TelegramHost::open`]), including the RESTART path: a press in a
 //!   chat whose session was durably resumed but not yet rebound ([`TelegramHost::resume_chat`])
@@ -34,7 +35,7 @@ use serde_json::{Value, json};
 
 use dreggnet_offerings::{FileResumeStore, OfferingHost, Outcome, VerifyReport};
 
-use crate::api::encode_callback;
+use crate::api::{decode_callback, encode_callback};
 use crate::host::{HostPress, TURN_VERIFY, TelegramHost, telegram_default_host};
 use crate::transport::{HttpPost, Transport, TransportError};
 use crate::{CallbackQuery, ChatId, TelegramFrontend, TelegramUserId};
@@ -50,6 +51,7 @@ const CALLBACK_ANSWER_MAX: usize = 200;
 pub const HELP_TEXT: &str = "DreggNet Cloud — every move is a real, verifiable executor turn.\n\
     /offerings — list the catalog (press a button to open one)\n\
     /open <key> — open an offering in this chat (e.g. /open dungeon)\n\
+    /play — Mini App launch buttons: the rich web surface, per offering (DMs only)\n\
     /verify — re-verify this chat's committed chain by replay\n\
     /act <turn> <arg> — fire a value-taking turn (e.g. /act bid 500)\n\
     /help — this text\n\
@@ -179,6 +181,23 @@ pub enum BotEvent {
         /// The message text.
         text: String,
     },
+    /// Data a Mini App sent back through `Telegram.WebApp.sendData` (`message.web_app_data`) —
+    /// a service message from a KEYBOARD-launched web-view. Routed by [`route_web_app_data`]:
+    /// a payload in the ONE affordance codec routes as a synthetic press (the executor stays
+    /// the sole referee); anything else is acknowledged, never trusted — a client string can
+    /// never name an identity or bypass the presented-affordance gate.
+    WebAppData {
+        /// The chat the service message landed in.
+        chat_id: ChatId,
+        /// The forum-topic thread, if any.
+        topic: Option<i64>,
+        /// The Telegram user whose web-view sent the data.
+        uid: TelegramUserId,
+        /// The raw `web_app_data.data` payload (client-authored — untrusted).
+        data: String,
+        /// The `web_app_data.button_text` — the keyboard button's label, display only.
+        button_text: Option<String>,
+    },
 }
 
 /// **Decode a `getUpdates` `result` array** into the events the shell routes, plus the NEXT poll
@@ -223,23 +242,42 @@ pub fn parse_updates(result: &Value) -> (Vec<BotEvent>, Option<i64>) {
                 },
             });
         } else if let Some(m) = u.get("message") {
-            let (Some(chat_id), Some(uid), Some(text)) = (
+            let (Some(chat_id), Some(uid)) = (
                 m.get("chat")
                     .and_then(|c| c.get("id"))
                     .and_then(Value::as_i64),
                 m.get("from")
                     .and_then(|f| f.get("id"))
                     .and_then(Value::as_u64),
-                m.get("text").and_then(Value::as_str),
             ) else {
                 continue;
             };
-            events.push(BotEvent::Text {
-                chat_id,
-                topic: m.get("message_thread_id").and_then(Value::as_i64),
-                uid,
-                text: text.to_string(),
-            });
+            let topic = m.get("message_thread_id").and_then(Value::as_i64);
+            // A Mini App's `sendData` round-trip arrives as a `web_app_data` service message
+            // (no `text`), so it is checked FIRST — the same skip-not-crash posture for
+            // anything partial.
+            if let Some(wad) = m.get("web_app_data") {
+                let Some(data) = wad.get("data").and_then(Value::as_str) else {
+                    continue;
+                };
+                events.push(BotEvent::WebAppData {
+                    chat_id,
+                    topic,
+                    uid,
+                    data: data.to_string(),
+                    button_text: wad
+                        .get("button_text")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                });
+            } else if let Some(text) = m.get("text").and_then(Value::as_str) {
+                events.push(BotEvent::Text {
+                    chat_id,
+                    topic,
+                    uid,
+                    text: text.to_string(),
+                });
+            }
         }
     }
     (events, next)
@@ -301,6 +339,13 @@ pub fn route_text<T: Transport>(
             host.present_offerings_menu(chat_id, topic);
             None
         }
+        // The Mini App launch tier: a menu of `web_app` buttons opening the rich web surface,
+        // one per offering. `Err` is the honest human reply (tier unarmed / group chat —
+        // Telegram only honors `web_app` inline buttons in DMs / a transport failure).
+        "/play" | "/webapp" => match host.present_play_menu(chat_id, topic) {
+            Ok(()) => None, // the launch menu IS the reply
+            Err(why) => Some(why),
+        },
         "/open" => {
             if rest.is_empty() {
                 return Some("Usage: /open <key> — see /offerings for the catalog.".to_string());
@@ -340,6 +385,40 @@ pub fn route_text<T: Transport>(
             ))
         }
         _ => None,
+    }
+}
+
+/// **Route a `web_app_data` payload** — what a Mini App sent back via
+/// `Telegram.WebApp.sendData`. The payload is CLIENT-AUTHORED and untrusted: it can never name
+/// an identity (the acting identity derives from the Telegram `uid` the update itself
+/// attributes, exactly as a button press) and never bypasses a gate. A payload in the ONE
+/// affordance codec (`turn:arg` — [`decode_callback`]) is routed as a synthetic press through
+/// [`route_callback`], so it faces the same presented-affordance check + the same executor
+/// refereeing as any button; anything else is acknowledged honestly and dropped. Returns the
+/// human reply.
+pub fn route_web_app_data<T: Transport>(
+    host: &mut TelegramHost<T>,
+    chat_id: ChatId,
+    topic: Option<i64>,
+    uid: TelegramUserId,
+    data: &str,
+) -> String {
+    if decode_callback(data).is_some() {
+        route_callback(
+            host,
+            CallbackQuery {
+                chat_id,
+                message_thread_id: topic,
+                from_user_id: uid,
+                data: data.to_string(),
+            },
+        )
+    } else {
+        format!(
+            "Mini App sent {} byte(s) — no affordance decoded, nothing landed. State-changing \
+             turns land through the app's own verified channel.",
+            data.len()
+        )
     }
 }
 
@@ -482,6 +561,18 @@ pub fn run_update_loop<T: Transport, H: HttpPost>(
                         if let Err(e) = api.send_text(chat_id, topic, &reply) {
                             eprintln!("sendMessage failed: {e}");
                         }
+                    }
+                }
+                BotEvent::WebAppData {
+                    chat_id,
+                    topic,
+                    uid,
+                    data,
+                    ..
+                } => {
+                    let reply = route_web_app_data(host, chat_id, topic, uid, &data);
+                    if let Err(e) = api.send_text(chat_id, topic, &reply) {
+                        eprintln!("sendMessage (web_app_data reply) failed: {e}");
                     }
                 }
             }
