@@ -78,6 +78,7 @@ import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DecideSatisfied2
 import Dregg2.Crypto.CfgCompact
+import Dregg2.Circuit.Emit.DyckStackEmit
 
 namespace Dregg2.Circuit.Emit.DyckStackRefine
 
@@ -786,6 +787,115 @@ theorem dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     norm_num at hw
     exact lift_nl ((gate_modEq_iff (by ring)).mp hw)
 
+/-! ## §4.2 — THE EMIT TIE: the refinement is now keyed to the BYTE-PINNED descriptor.
+
+The header's "second named gap" recorded that `dyckDesc` (§2) was a HAND transcription, faithful by
+reading but mechanically UNTIED to the deployed circuit. This section ends that gap.
+
+`dyckDesc` is the parse-semantic PROJECTION of `DyckStackEmit.dyckParseDesc` — the descriptor
+BYTE-PINNED by `DyckStackEmit`'s `#guard emitVmJson2` and re-derived onto
+`circuit/descriptors/by-name/dyck-parse.json`. The two are NOT equal (and `dyckDesc = dyckParseDesc`
+is FALSE): `dyckParseDesc` is 38 columns wide and additionally carries the `ENTRY_HASH`/`RUNNING_HASH`
+Poseidon2 commitment chain (the two chip lookups, the `ACC` copy-forward, the seed pin, the
+route-commitment PI), which `dyckDesc` transcribes OUT as orthogonal to parse semantics. But the two
+lists share EVERY builder — `cg`/`gGate`/`gVanishOnGrid`/… reduce to the same `VmConstraint2` terms
+and the column indices are equal — so `dyckDesc.constraints` is a machine-checked SUBSET of
+`dyckParseDesc.constraints` (`dyckDesc_constraints_subset`), the omitted five being exactly the
+hash-chain carrier. Dropping constraints only WEAKENS the accept-set, so SAT of the byte-pinned
+`dyckParseDesc` IMPLIES SAT of `dyckDesc` (`sat_emit_imp_sat_dyck`); every SAT⇒SEM theorem of this
+file therefore transports to the emitted descriptor for free (`parse_dyck_sat_imp_row_valid`, and in
+`DyckStackReplay` the whole-parse `parse_sat_imp_replay_emit`). The chain now proves about the SAME
+object the `#guard` pins, not a faithful-by-reading twin. -/
+
+/-- Membership in the byte-pinned emit list: unfold its structure to a flat cons list, then the
+head/tail search closes each goal (cross-namespace builders reduce to the same `VmConstraint2`
+terms, so the elements unify by defeq). `VmConstraint2` carries function-typed `MapOp` lanes and
+has no `DecidableEq`, so this cannot be a `decide`. -/
+macro "emit_mem" : tactic =>
+  `(tactic| (simp only [DyckStackEmit.dyckParseDesc, DyckStackEmit.dyckConstraints,
+               DyckStackEmit.laneFixes, DyckStackEmit.bracketOverflowGuards,
+               DyckStackEmit.occupancyTooth, DyckStackEmit.bracketPushWindows,
+               DyckStackEmit.popShiftWindows, DyckStackEmit.holdStackWindows,
+               List.cons_append, List.nil_append, List.append_assoc]
+             repeat' first | exact List.Mem.head _ | apply List.Mem.tail))
+
+set_option maxRecDepth 100000 in
+set_option maxHeartbeats 4000000 in
+/-- **`dyckDesc_constraints_subset`** — every parse-semantic constraint of `dyckDesc` is a constraint
+of the byte-pinned `DyckStackEmit.dyckParseDesc`. Machine-checked over all 63 constraints; the ones
+`dyckParseDesc` carries that `dyckDesc` does not are exactly the hash-chain carrier it transcribes
+out (the two lookups, the `ACC` copy-forward, the seed pin, the route-commitment PI). -/
+theorem dyckDesc_constraints_subset :
+    ∀ c ∈ dyckDesc.constraints, c ∈ DyckStackEmit.dyckParseDesc.constraints := by
+  intro c hc
+  simp only [dyckDesc, dyckConstraints] at hc
+  fin_cases hc <;> emit_mem
+
+/-- `dyckDesc` declares no memory / map ops (pure parse arithmetic + windows), so both its `memLog`
+and `mapLog` are empty on every trace — the memory legs of `Satisfied2` are vacuous for it. The same
+holds of `dyckParseDesc` (its hash chain is chip LOOKUPS, not mem/map ops). -/
+theorem dyckDesc_memOps : memOpsOf dyckDesc = [] := by rfl
+theorem dyckParseDesc_memOps : memOpsOf DyckStackEmit.dyckParseDesc = [] := by rfl
+theorem dyckDesc_mapOps : mapOpsOf dyckDesc = [] := by rfl
+theorem dyckParseDesc_mapOps : mapOpsOf DyckStackEmit.dyckParseDesc = [] := by rfl
+
+/-- A descriptor with no mem ops has an empty memory log on every trace. -/
+theorem memLog_nil_of {d : EffectVmDescriptor2} (hm : memOpsOf d = []) (t : VmTrace) :
+    memLog d t = [] := by
+  simp only [memLog, hm, List.filterMap_nil]
+  induction t.rows with
+  | nil => rfl
+  | cons a l ih => simp only [List.flatMap_cons, List.nil_append, ih]
+
+/-- A descriptor with no map ops has an empty map-ops log on every trace. -/
+theorem mapLog_nil_of {d : EffectVmDescriptor2} (hm : mapOpsOf d = []) (t : VmTrace) :
+    mapLog d t = [] := by
+  simp only [mapLog, hm, List.filterMap_nil]
+  induction t.rows with
+  | nil => rfl
+  | cons a l ih => simp only [List.flatMap_cons, List.nil_append, ih]
+
+/-- **`sat_emit_imp_sat_dyck` — SAT of the BYTE-PINNED descriptor implies SAT of the projection.** A
+trace satisfying the deployed, emit-authored `DyckStackEmit.dyckParseDesc` satisfies the
+parse-semantic projection `dyckDesc`: the constraint leg transfers by the subset, and the memory /
+range / hash legs are vacuous on both sides (`hashSites = ranges = []`, and both memory / map logs are
+empty). This is the projection that ends the hand-transcription gap — the refinement's SAT hypothesis
+is now DISCHARGEABLE from the object the `#guard` pins, not merely faithful to it. -/
+theorem sat_emit_imp_sat_dyck {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash DyckStackEmit.dyckParseDesc minit mfin maddrs t) :
+    Satisfied2 hash dyckDesc minit mfin maddrs t := by
+  have hmd : memLog dyckDesc t = [] := memLog_nil_of dyckDesc_memOps t
+  have hme : memLog DyckStackEmit.dyckParseDesc t = [] := memLog_nil_of dyckParseDesc_memOps t
+  have hpd : mapLog dyckDesc t = [] := mapLog_nil_of dyckDesc_mapOps t
+  have hpe : mapLog DyckStackEmit.dyckParseDesc t = [] := mapLog_nil_of dyckParseDesc_mapOps t
+  refine
+    { rowConstraints := ?_, rowHashes := ?_, rowRanges := ?_, memAddrsNodup := ?_,
+      memClosed := ?_, memDisciplined := ?_, memBalanced := ?_, memTableFaithful := ?_,
+      mapTableFaithful := ?_ }
+  · intro i hi c hc
+    exact h.rowConstraints i hi c (dyckDesc_constraints_subset c hc)
+  · intro i _; exact True.intro
+  · intro i _ r hr; exact absurd hr List.not_mem_nil
+  · exact h.memAddrsNodup
+  · intro op hop; rw [hmd] at hop; exact absurd hop List.not_mem_nil
+  · have hx := h.memDisciplined; rw [hme] at hx; rw [hmd]; exact hx
+  · have hx := h.memBalanced; rw [hme] at hx; rw [hmd]; exact hx
+  · have hx := h.memTableFaithful; rw [hme] at hx; rw [hmd]; exact hx
+  · have hx := h.mapTableFaithful; rw [hpe] at hx; rw [hpd]; exact hx
+
+/-- **`parse_dyck_sat_imp_row_valid` — the per-row bridge, keyed on the BYTE-PINNED descriptor.** The
+headline of §4.1 (`dyck_sat_imp_row_valid`) transported through `sat_emit_imp_sat_dyck`: a trace
+satisfying the deployed, emit-authored `DyckStackEmit.dyckParseDesc` (whose wire form the `#guard`
+byte-pins) witnesses the genuine per-row pushdown relation `DyckRowValid` on every transition row —
+no longer a theorem about a hand transcription. -/
+theorem parse_dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash DyckStackEmit.dyckParseDesc minit mfin maddrs t)
+    (hcanon : DyckCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    DyckRowValid (envAt t i) :=
+  dyck_sat_imp_row_valid (sat_emit_imp_sat_dyck hsat) hcanon i hi
+
 /-! ## §5 — Non-vacuity of the per-row bridge: a CONCRETE satisfying trace, and a rejecting one.
 
 `dyck_sat_imp_row_valid` is worthless if its `Satisfied2` hypothesis is UNSATISFIABLE. §5 refutes
@@ -1203,6 +1313,9 @@ close `parse_sat_imp_replay` by composing the two halves above. -/
 #assert_axioms occupied_of_sat
 #assert_axioms witTrace_depth_derived
 #assert_axioms dyck_sat_imp_row_valid
+#assert_axioms dyckDesc_constraints_subset
+#assert_axioms sat_emit_imp_sat_dyck
+#assert_axioms parse_dyck_sat_imp_row_valid
 #assert_axioms witTrace_satisfies
 #assert_axioms witTrace_canon
 #assert_axioms witTrace_row_valid

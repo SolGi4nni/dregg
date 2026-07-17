@@ -662,6 +662,30 @@ theorem parse_sat_imp_replay {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mf
   rw [← hdrun] at hres
   exact hres
 
+/-- **`parse_sat_imp_replay_emit` — THE GENERAL SOUNDNESS THEOREM, keyed on the BYTE-PINNED
+descriptor.** Identical to `parse_sat_imp_replay` but its acceptance hypothesis is SAT of the
+deployed, emit-authored `DyckStackEmit.dyckParseDesc` — the descriptor `DyckStackEmit`'s
+`#guard emitVmJson2` byte-pins and `circuit/descriptors/by-name/dyck-parse.json` carries — rather than
+the hand-transcribed projection `dyckDesc`. It is `parse_sat_imp_replay` composed with the projection
+`DyckStackRefine.sat_emit_imp_sat_dyck` (SAT of the emitted descriptor ⇒ SAT of `dyckDesc`, sound
+because `dyckDesc` merely DROPS the orthogonal hash-chain constraints). With this, the whole
+parse-as-derivation chain — a satisfying trace IS an accepting Dyck replay — is a theorem about the
+SAME object the byte-pin fixes. -/
+theorem parse_sat_imp_replay_emit {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace} (word : List Brk)
+    (hsat : Satisfied2 hash DyckStackEmit.dyckParseDesc minit mfin maddrs t) (hcanon : DyckCanon t)
+    (n : Nat) (hn : n + 1 < t.rows.length)
+    (hpi : t.pub PI_INITIAL = SYM_S)
+    (hdone : (envAt t n).loc IS_DONE = 1)
+    (hlive : ∀ i, i < n → (envAt t i).loc IS_DONE = 0)
+    (hword : ∀ i, i < n → (envAt t i).loc IS_TERM = 1 → ∃ x : Brk,
+      (envAt t i).loc (stk 0) = symId x ∧
+      word.drop ((envAt t i).loc INPUT_POS).toNat
+        = x :: word.drop ((envAt t (i + 1)).loc INPUT_POS).toNat)
+    (hfin_inp : word.drop ((envAt t n).loc INPUT_POS).toNat = []) :
+    ReplayAccepts dyck (rulesOf (decodeRun word t (n + 1))) word :=
+  parse_sat_imp_replay word (sat_emit_imp_sat_dyck hsat) hcanon n hn hpi hdone hlive hword hfin_inp
+
 /-! ## §5 — THE GENERAL THEOREM IS CLOSED; the concrete case is now an INSTANCE of it.
 
 The §4.6 residual is discharged. `parse_sat_imp_replay` above is the fully-general bridge:
@@ -726,6 +750,7 @@ theorem witTrace_replays_via_general :
 #assert_axioms decode_step
 #assert_axioms mrun_from
 #assert_axioms parse_sat_imp_replay
+#assert_axioms parse_sat_imp_replay_emit
 #assert_axioms witTrace_replays_via_general
 #assert_axioms decode_witTrace
 #assert_axioms witTrace_replays
