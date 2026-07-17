@@ -58,7 +58,7 @@
 //!
 //! The main loop wires a sqlite [`GalleryStore`] to the bot `Database` (see the wiring note
 //! below); tests here drive the whole persist → reload → re-verify cycle against the
-//! [`InMemoryGalleryStore`], including the tampered-row rejections.
+//! `InMemoryGalleryStore`, including the tampered-row rejections.
 //!
 //! ## Honest scope
 //!
@@ -338,7 +338,7 @@ impl StoredCompletion {
 
 /// The durable gallery store. Sync (interior mutability, `&self`) so the live cache can be
 /// backed by it without an async boundary — exactly the shape of `dregg-pay`'s
-/// `CreditStore`. The main loop supplies a sqlite impl; tests use [`InMemoryGalleryStore`].
+/// `CreditStore`. The main loop supplies a sqlite impl; tests use `InMemoryGalleryStore`.
 /// Persist methods MUST be idempotent by PK (`INSERT OR IGNORE`), so a double write / a
 /// double load never duplicates a universe or a board entry.
 pub trait GalleryStore {
@@ -352,19 +352,23 @@ pub trait GalleryStore {
     fn list_completions(&self) -> Result<Vec<StoredCompletion>, String>;
 }
 
-/// A thread-safe in-memory [`GalleryStore`] for tests and single-process runs. Idempotent
-/// by PK, matching the sqlite impl's `INSERT OR IGNORE`.
+/// A thread-safe in-memory [`GalleryStore`] — the tests' store (the running bot always
+/// supplies the sqlite impl). Idempotent by PK, matching the sqlite impl's
+/// `INSERT OR IGNORE`.
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryGalleryStore {
     inner: Mutex<InMemGallery>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct InMemGallery {
     universes: Vec<StoredUniverse>,
     completions: Vec<StoredCompletion>,
 }
 
+#[cfg(test)]
 impl InMemoryGalleryStore {
     /// A fresh empty store.
     pub fn new() -> InMemoryGalleryStore {
@@ -385,6 +389,7 @@ impl InMemoryGalleryStore {
     }
 }
 
+#[cfg(test)]
 impl GalleryStore for InMemoryGalleryStore {
     fn persist_universe(&self, u: &StoredUniverse) -> Result<(), String> {
         let mut g = self.inner.lock().expect("gallery store lock");

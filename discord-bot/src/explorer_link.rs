@@ -56,7 +56,14 @@ fn view_link_with_base(base: Option<&str>, kind: &str, id: &str, label: &str) ->
     }
 }
 
-fn short_ref_with_base(base: Option<&str>, kind: &str, id: &str, short_len: usize) -> String {
+/// [`short_ref`]'s pure core, base explicit — for callers (and tests) that thread
+/// the base themselves (e.g. `cards.rs`' card builders).
+pub(crate) fn short_ref_with_base(
+    base: Option<&str>,
+    kind: &str,
+    id: &str,
+    short_len: usize,
+) -> String {
     match base {
         Some(b) => {
             let short = if id.len() > short_len {

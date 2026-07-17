@@ -14,9 +14,6 @@ use crate::devnet::SubmitSignedTurnResult;
 pub struct CredentialIssueResult {
     pub credential_id: String,
     pub schema: String,
-    pub issued_at: i64,
-    pub encoded_credential: String,
-    pub attributes_json: String,
     pub turn: SubmitSignedTurnResult,
 }
 
@@ -64,7 +61,7 @@ pub async fn issue_from_discord_input(
             Some(format!("discord:identity:issue:{}", schema.name)),
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.user_message("issue the credential"))?;
 
     if !turn.accepted {
         return Err(turn
@@ -73,12 +70,31 @@ pub async fn issue_from_discord_input(
             .unwrap_or_else(|| "node rejected the signed credential turn".to_string()));
     }
 
+    // Persist the holder's copy into the identity holder store
+    // (`identity_held_credentials`) — the row a later selective-disclosure proof reads
+    // its `attributes_json` from. Non-fatal: the turn is already committed on the node;
+    // a store failure loses only the local holder copy.
+    if let Err(e) = state
+        .db
+        .store_held_credential(
+            &user_id.to_string(),
+            cclerk.cell_id_hex(),
+            issuer_cell_hex,
+            &credential_id,
+            &schema.name,
+            issued_at,
+            turn.turn_hash.as_deref(),
+            &encoded_credential,
+            &attributes_json,
+        )
+        .await
+    {
+        tracing::warn!("held-credential store failed for {credential_id}: {e}");
+    }
+
     Ok(CredentialIssueResult {
         credential_id,
         schema: schema.name,
-        issued_at,
-        encoded_credential,
-        attributes_json,
         turn,
     })
 }

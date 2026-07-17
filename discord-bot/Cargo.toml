@@ -201,6 +201,14 @@ dregg-multiway-tug = { path = "../dregg-multiway-tug" }
 dreggnet-names = { path = "../dreggnet-names" }
 dreggnet-compute = { path = "../dreggnet-compute" }
 dreggnet-surfaces = { path = "../dreggnet-surfaces" }
+# THE ONE catalog registrar (docs/BOT-SHARED-BACKEND-DESIGN.md): the shared statement of what
+# the 18-offering DreggNet portfolio IS. Discord sources its offering SET from
+# `dreggnet_catalog::CATALOG_KEYS` (the `/play` keys are derived from it, and the routers'
+# mounted set is parity-tested against the LIVE `full_catalog_host`), and the seat-claiming
+# tug adapter is the shared `dreggnet_catalog::seated::SeatedTug` — the fourth byte-peer copy
+# (formerly in `commands/portfolio.rs`) is gone. A root workspace member, consumed never
+# modified; adds nothing new to the closure (its deps are the offering crates already here).
+dreggnet-catalog = { path = "../dreggnet-catalog" }
 # THE UGC REGISTRY behind `/gallery` — the real `Registry` (publish a content-addressed
 # `Universe`, submit a `Completion`) and its NO-CHEAT leaderboard: a completion is ranked
 # ONLY if its recorded receipt chain re-verifies to the declared WIN on a stranger's

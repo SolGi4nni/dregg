@@ -648,7 +648,7 @@ impl StoredDescentCompletion {
 
 /// The durable /descent board store. Sync (`&self`) so the dedicated board thread can be backed by
 /// it without an async boundary — exactly the shape of `commands::gallery`'s `GalleryStore`. The
-/// main loop supplies a sqlite impl; tests use [`InMemoryDescentBoardStore`]. Persist methods MUST
+/// main loop supplies a sqlite impl; tests use `InMemoryDescentBoardStore`. Persist methods MUST
 /// be idempotent by PK, so a double write / a double load never duplicates a universe or an entry.
 pub trait DescentBoardStore {
     /// Persist a published day-universe (idempotent by `id_hex`).
@@ -661,19 +661,22 @@ pub trait DescentBoardStore {
     fn list_completions(&self) -> Result<Vec<StoredDescentCompletion>, String>;
 }
 
-/// A thread-safe in-memory [`DescentBoardStore`] for tests and single-process runs. Idempotent by
-/// PK, matching the sqlite impl's `INSERT OR IGNORE`.
+/// A thread-safe in-memory [`DescentBoardStore`] — the tests' store (the running bot always
+/// supplies the sqlite impl). Idempotent by PK, matching the sqlite impl's `INSERT OR IGNORE`.
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryDescentBoardStore {
     inner: std::sync::Mutex<InMemBoard>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct InMemBoard {
     universes: Vec<StoredDescentUniverse>,
     completions: Vec<StoredDescentCompletion>,
 }
 
+#[cfg(test)]
 impl InMemoryDescentBoardStore {
     /// A fresh empty store.
     pub fn new() -> InMemoryDescentBoardStore {
@@ -696,6 +699,7 @@ impl InMemoryDescentBoardStore {
     }
 }
 
+#[cfg(test)]
 impl DescentBoardStore for InMemoryDescentBoardStore {
     fn persist_universe(&self, u: &StoredDescentUniverse) -> Result<(), String> {
         let mut g = self.inner.lock().expect("descent board store lock");

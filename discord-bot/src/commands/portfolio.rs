@@ -7,9 +7,9 @@
 //! market, hermes, grain, doc). This adds the rest via one uniform `/play` command:
 //!
 //! * **the two portfolio games** — `automatafl` (the simultaneous-move board) and `tug`
-//!   (multiway-tug, wrapped in the seat-claiming [`SeatedTug`] adapter — the byte-peer of the web
-//!   `seated` module — so a Discord user's derived identity can claim a seat and see their OWN
-//!   hidden hand through the viewer-aware render path);
+//!   (multiway-tug, wrapped in the seat-claiming [`SeatedTug`] adapter — the ONE shared
+//!   `dreggnet_catalog::seated` copy every frontend uses — so a Discord user's derived identity
+//!   can claim a seat and see their OWN hidden hand through the viewer-aware render path);
 //! * **the two remaining non-game offerings** — `names` and `compute`;
 //! * **the eight do-once RPG feature surfaces** — `trade`, `inventory`, `cheevos`, `guild`, `craft`,
 //!   `companion`, `tavern`, `party` (`dreggnet-surfaces`).
@@ -36,13 +36,10 @@ use serenity::all::{
 };
 
 use dregg_automatafl::AutomataflOffering;
-use dregg_multiway_tug::{Player, TugOffering, TugSession};
+use dregg_multiway_tug::Player;
 use dreggnet_compute::ComputeOffering;
 use dreggnet_names::NamesOffering;
-use dreggnet_offerings::{
-    Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
-    VerifyReport,
-};
+use dreggnet_offerings::{DreggIdentity, Offering, OfferingError, SessionConfig};
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
     TavernOffering, TradeOffering,
@@ -53,105 +50,19 @@ use crate::commands::ack;
 use crate::commands::offering::{self, DiscordOffering, Store, identity_of};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SeatedTug — the seat-claiming adapter (byte-peer of `dreggnet_web::seated`).
+// SeatedTug — THE shared seat-claiming adapter (`dreggnet_catalog::seated`).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The multiway-tug offering with **Discord-claimable seats**. `TugOffering` names its two seats by
-/// fixed canonical strings while a Discord user's [`DreggIdentity`] is a derived key — this adapter
-/// claims a seat for the first two distinct identities that act (A then B), rewriting the actor to
-/// the canonical seat identity before delegating; a third identity is a spectator (refused). It
-/// changes NOTHING in `dregg-multiway-tug`, and `render_for` maps a viewer to their seat so the
-/// hidden-hand fog reaches the right player.
-pub struct SeatedTug {
-    inner: TugOffering,
-}
-
-impl SeatedTug {
-    pub fn new() -> Self {
-        SeatedTug { inner: TugOffering }
-    }
-}
-
-impl Default for SeatedTug {
-    fn default() -> Self {
-        SeatedTug::new()
-    }
-}
-
-/// A live tug round plus its seat claims (which Discord identity holds seat A / seat B).
-pub struct SeatedTugSession {
-    inner: TugSession,
-    seats: [Option<DreggIdentity>; 2],
-}
-
-impl SeatedTugSession {
-    fn seat_of(&self, who: &DreggIdentity) -> Option<Player> {
-        for p in [Player::A, Player::B] {
-            if self.seats[p.idx()].as_ref() == Some(who) {
-                return Some(p);
-            }
-        }
-        None
-    }
-
-    fn claim(&mut self, who: &DreggIdentity) -> Option<Player> {
-        if let Some(p) = self.seat_of(who) {
-            return Some(p);
-        }
-        for p in [Player::A, Player::B] {
-            if self.seats[p.idx()].is_none() {
-                self.seats[p.idx()] = Some(who.clone());
-                return Some(p);
-            }
-        }
-        None
-    }
-}
-
-impl Offering for SeatedTug {
-    type Session = SeatedTugSession;
-
-    fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
-        Ok(SeatedTugSession {
-            inner: self.inner.open(cfg)?,
-            seats: [None, None],
-        })
-    }
-
-    fn actions(&self, session: &Self::Session) -> Vec<Action> {
-        self.inner.actions(&session.inner)
-    }
-
-    fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome {
-        let Some(seat) = session.claim(&actor) else {
-            return Outcome::Refused("both seats are taken — you are a spectator".to_string());
-        };
-        self.inner
-            .advance(&mut session.inner, input, TugOffering::seat_identity(seat))
-    }
-
-    fn verify(&self, session: &Self::Session) -> VerifyReport {
-        self.inner.verify(&session.inner)
-    }
-
-    fn render(&self, session: &Self::Session) -> Surface {
-        self.inner.render(&session.inner)
-    }
-
-    /// The per-viewer surface — a claimed seat sees its OWN hand; anyone else sees the public fog.
-    fn render_for(&self, session: &Self::Session, viewer: &DreggIdentity) -> Surface {
-        match session.seat_of(viewer) {
-            Some(seat) => self
-                .inner
-                .render_for(&session.inner, &TugOffering::seat_identity(seat)),
-            None => self.inner.render(&session.inner),
-        }
-    }
-
-    fn price(&self, input: &Action) -> RunCost {
-        self.inner.price(input)
-    }
-}
+/// The multiway-tug offering with **claimable seats** — the ONE shared adapter from
+/// `dreggnet-catalog` (docs/BOT-SHARED-BACKEND-DESIGN.md collapsed the four byte-peer copies;
+/// this module held the fourth). `TugOffering` names its two seats by fixed canonical strings
+/// while a Discord user's [`DreggIdentity`] is a derived key — the adapter claims a seat for the
+/// first two distinct identities that act (A then B) and `render_for` maps a viewer to their seat
+/// so the hidden-hand fog reaches the right player. Re-exported so every existing consumer
+/// (`offering::route_component`, `verify_chain`, the crown) keeps its `portfolio::SeatedTug` path;
+/// the [`DiscordOffering`] impl below is the Discord-specific mounting, which stays here. (The
+/// session type is `dreggnet_catalog::seated::SeatedTugSession`; no Discord code names it.)
+pub use dreggnet_catalog::seated::SeatedTug;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DiscordOffering impls — each mounts its offering on the generic adapter.
@@ -403,7 +314,7 @@ impl DiscordOffering for PartyOffering {
 /// `[blinded_leaf, hand_root]` per play — the card ids are not among them.
 pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMatch> {
     offering::with_live::<SeatedTug, _>(channel, |live| {
-        let s = &live.session.inner;
+        let s = live.session.inner();
         let (winner, charm) = s.win_facts()?;
         let seat = if winner == 1 { Player::A } else { Player::B };
         Some(dreggnet_prove_service::PlayedMatch::Tug(
@@ -421,25 +332,32 @@ pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMa
 // The `/play` command — open any portfolio offering by key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The fifteen `/play` offering keys (the games + non-game + RPG surfaces this module mounts,
-/// plus gear/talents (`commands::gear`) and the overworld (`commands::overworld`)).
-pub const PLAY_KEYS: [&str; 15] = [
-    "automatafl",
-    "tug",
-    "names",
-    "compute",
-    "trade",
-    "inventory",
-    "cheevos",
-    "guild",
-    "craft",
-    "companion",
-    "tavern",
-    "party",
-    "gear",
-    "talents",
-    "overworld",
-];
+/// The catalog keys served by their own **bespoke slash commands** (`/dungeon`, `/council`,
+/// `/market`, `/doc`, `/grain`, `/hermes`) rather than `/play` — the complement of `/play`'s
+/// reach within the shared catalog. Each name is asserted registered in
+/// `REGISTERED_COMMAND_NAMES` by the parity test below.
+pub const BESPOKE_COMMAND_KEYS: [&str; 6] =
+    ["dungeon", "council", "market", "doc", "grain", "hermes"];
+
+/// The **Discord-only `/play` extras** beyond the shared catalog: gear/talents
+/// (`commands::gear`) and the overworld (`commands::overworld`) are not (yet) registered in
+/// `dreggnet-catalog`, so they are declared here explicitly instead of riding the derived list.
+pub const DISCORD_EXTRA_PLAY_KEYS: [&str; 3] = ["gear", "talents", "overworld"];
+
+/// The `/play` offering keys — **derived from the shared catalog**
+/// ([`dreggnet_catalog::CATALOG_KEYS`], the ONE statement of what the DreggNet portfolio is)
+/// minus the [`BESPOKE_COMMAND_KEYS`], plus the [`DISCORD_EXTRA_PLAY_KEYS`]. Registering a new
+/// offering in `dreggnet_catalog::build_full_catalog` automatically extends `/play`'s slash
+/// choices; the dispatch parity tests (here and in `commands::offering`) then fail until the
+/// press route exists, so a catalog offering can never be silently absent from Discord.
+pub fn play_keys() -> Vec<&'static str> {
+    dreggnet_catalog::CATALOG_KEYS
+        .iter()
+        .copied()
+        .filter(|k| !BESPOKE_COMMAND_KEYS.contains(k))
+        .chain(DISCORD_EXTRA_PLAY_KEYS)
+        .collect()
+}
 
 /// Register `/play <offering>` — open any of the twelve full-portfolio offerings in this channel.
 pub fn register() -> CreateCommand {
@@ -449,7 +367,7 @@ pub fn register() -> CreateCommand {
         "Which portfolio offering to open in this channel",
     )
     .required(true);
-    for key in PLAY_KEYS {
+    for key in play_keys() {
         option = option.add_string_choice(key, key);
     }
     CreateCommand::new("play")
@@ -688,6 +606,7 @@ mod tests {
     // The tests still drive the generic per-type adapter path for all twelve keys (the adapter
     // mechanics); the LIVE `/play` route for the eight RPG keys is the per-identity persistent
     // world (`commands::rpg_world`), whose own tests cover composition + persistence.
+    use dreggnet_offerings::{Outcome, Surface};
     use dreggnet_surfaces::SharedWorld;
 
     fn actor(tag: &str) -> DreggIdentity {
@@ -780,10 +699,31 @@ mod tests {
         let _ = ch; // the macro's channel cursor past the last offering
     }
 
-    /// **The fifteen `/play` keys are exactly `PLAY_KEYS`** — the `handle` dispatch + the `register`
-    /// choices + the route arms agree (so every offering is reachable, none stranded).
+    /// **The `/play` keys are the shared catalog's, by derivation** — every
+    /// `dreggnet_catalog::CATALOG_KEYS` entry is reachable on Discord (a bespoke `/<key>`
+    /// command or a `/play` choice), `/play` adds exactly the declared Discord extras beyond
+    /// the catalog, and the fifteen keys the old hand-list carried are all still served (no
+    /// regression in the derivation).
     #[test]
-    fn the_play_keys_cover_the_twelve_portfolio_offerings() {
+    fn the_play_keys_are_derived_from_the_shared_catalog() {
+        let keys = play_keys();
+        for k in dreggnet_catalog::CATALOG_KEYS {
+            assert!(
+                BESPOKE_COMMAND_KEYS.contains(&k) || keys.contains(&k),
+                "catalog offering `{k}` must be reachable: a bespoke command or a /play key"
+            );
+            assert!(
+                !(BESPOKE_COMMAND_KEYS.contains(&k) && keys.contains(&k)),
+                "`{k}` must not be served twice (bespoke AND /play)"
+            );
+        }
+        for k in &keys {
+            assert!(
+                dreggnet_catalog::CATALOG_KEYS.contains(k) || DISCORD_EXTRA_PLAY_KEYS.contains(k),
+                "/play key `{k}` is neither a catalog offering nor a declared Discord extra"
+            );
+        }
+        // The former hand-maintained list, preserved by the derivation (the regression pin).
         for want in [
             "automatafl",
             "tug",
@@ -801,9 +741,31 @@ mod tests {
             "talents",
             "overworld",
         ] {
-            assert!(PLAY_KEYS.contains(&want), "`{want}` is a /play key");
+            assert!(keys.contains(&want), "`{want}` is a /play key");
         }
-        assert_eq!(PLAY_KEYS.len(), 15);
+        assert_eq!(
+            keys.len(),
+            dreggnet_catalog::CATALOG_KEYS.len() - BESPOKE_COMMAND_KEYS.len()
+                + DISCORD_EXTRA_PLAY_KEYS.len()
+        );
+    }
+
+    /// **The bespoke-command catalog keys are registered slash commands** — the offering SET is
+    /// the shared catalog's, and `REGISTERED_COMMAND_NAMES` (main.rs) stays consistent with it:
+    /// every catalog key `/play` does NOT serve has its own `/<key>` command, and `/play` itself
+    /// is registered.
+    #[test]
+    fn the_bespoke_catalog_commands_are_registered() {
+        for key in BESPOKE_COMMAND_KEYS {
+            assert!(
+                crate::REGISTERED_COMMAND_NAMES.contains(&key),
+                "catalog offering `{key}` is claimed bespoke but `/{key}` is not registered"
+            );
+        }
+        assert!(
+            crate::REGISTERED_COMMAND_NAMES.contains(&"play"),
+            "`/play` (the derived-catalog reach) must be registered"
+        );
     }
 
     /// `/play` registers the `action:verify` choice (backlog Tier-2 #10) — the twelve

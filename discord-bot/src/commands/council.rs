@@ -16,6 +16,11 @@
 //!   AND has a passing decision, and every UNENACTED proposal's slot is still `0` (the
 //!   below-quorum tooth — no phantom effect).
 //!
+//! * **`/council open weighted:true`** opens a **standing-weighted** council on the engine's
+//!   VERIFIED weighted path (backlog #22): every vote press is a `cast_weighted` turn (the
+//!   member's whole granted weight on ONE nullifier), quorum is a WEIGHT threshold, and the
+//!   surface names the weight source honestly — see [`crate::commands::council_weighted`].
+//!
 //! The electorate is **cryptographic, not social**: a member is a derived dregg public key
 //! (`UserCipherclerk::derive(bot_secret, discord_user_id, federation)`), the same derivation
 //! `/dungeon` attributes its ballots to. A press by a Discord user outside the electorate is a
@@ -32,6 +37,7 @@ use dreggnet_council::{CandidateProposal, CouncilOffering, CouncilSession, MAX_C
 use dreggnet_offerings::SessionConfig;
 
 use crate::BotState;
+use crate::commands::council_weighted;
 use crate::commands::offering::{
     self, DiscordOffering, Store, ValuePrompt, identity_of, public_key_of,
 };
@@ -91,8 +97,13 @@ impl DiscordOffering for CouncilOffering {
     }
 
     fn status_line(&self, session: &CouncilSession) -> String {
+        let weighted = if session.is_weighted() {
+            " · weighted ballots (verified cast_weighted)"
+        } else {
+            ""
+        };
         format!(
-            "{} proposals · {} verified turns",
+            "{} proposals · {} verified turns{weighted}",
             session.proposal_count(),
             session.committed_turns()
         )
@@ -141,6 +152,11 @@ pub fn register() -> CreateCommand {
                 CommandOptionType::String,
                 "proposals",
                 "Comma-separated candidate proposals (default: the standard three)",
+            ))
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::Boolean,
+                "weighted",
+                "Weight ballots by standing (1 + run-credits) on the verified weighted engine",
             )),
         )
         .add_option(CreateCommandOption::new(
@@ -212,6 +228,20 @@ async fn handle_open(
         .map(|id| public_key_of(state, *id))
         .collect();
 
+    // WEIGHTED mode (backlog #22): each member arrives with a standing-derived ballot
+    // weight (1 + run-credits at open — the honest source is spelled out on the surface),
+    // and every vote press lands on the VERIFIED weighted engine
+    // (`collective_choice::cast_weighted`), never the plain cast.
+    let weighted = matches!(
+        opts.iter().find(|o| o.name == "weighted").map(|o| &o.value),
+        Some(ResolvedValue::Boolean(true))
+    );
+    let weights: Option<Vec<u64>> = if weighted {
+        Some(council_weighted::standing_weights(state, &discord_ids).await)
+    } else {
+        None
+    };
+
     let catalog = match opts
         .iter()
         .find(|o| o.name == "proposals")
@@ -220,24 +250,45 @@ async fn handle_open(
         Some(ResolvedValue::String(s)) => catalog_from(s),
         _ => default_catalog(),
     };
+    // A weighted council's quorum is a WEIGHT threshold (defaults to a majority of the
+    // total granted weight); an unweighted one counts members.
     let quorum = match opts.iter().find(|o| o.name == "quorum").map(|o| &o.value) {
-        Some(ResolvedValue::Integer(n)) => (*n as u64).clamp(1, members.len() as u64),
-        _ => default_quorum(members.len()),
+        Some(ResolvedValue::Integer(n)) => match &weights {
+            Some(ws) => {
+                (*n as u64).clamp(1, ws.iter().fold(0u64, |a, w| a.saturating_add(*w)).max(1))
+            }
+            None => (*n as u64).clamp(1, members.len() as u64),
+        },
+        _ => match &weights {
+            Some(ws) => council_weighted::default_weight_quorum(ws),
+            None => default_quorum(members.len()),
+        },
     };
 
     // The roster line names the members by their real dregg identity (the electorate is
-    // cryptographic — this is exactly what a vote is checked against).
+    // cryptographic — this is exactly what a vote is checked against), plus each member's
+    // granted ballot weight when the council is weighted.
     let roster = discord_ids
         .iter()
-        .map(|id| {
+        .enumerate()
+        .map(|(i, id)| {
             let ident = identity_of(state, *id);
+            let weight_note = weights
+                .as_ref()
+                .map(|ws| format!(" · weight {}", ws[i]))
+                .unwrap_or_default();
             format!(
-                "<@{id}> `{}…`",
+                "<@{id}> `{}…`{weight_note}",
                 &ident.as_str()[..16.min(ident.as_str().len())]
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // The honest weight-source line rides WITH the roster (where the weights are shown).
+    let roster = match &weights {
+        Some(_) => format!("{roster}\n{}", council_weighted::WEIGHT_SOURCE_NOTE),
+        None => roster,
+    };
 
     // REFUSE-WITH-CONFIRM (backlog #32): a live council must not be silently wiped by a
     // re-open — its chain (proposals, ballots, enactments) is process-local and unrecoverable.
@@ -256,7 +307,7 @@ async fn handle_open(
             Box::new(move || {
                 offering::open_in(
                     channel,
-                    move || CouncilOffering::new(members, catalog, quorum),
+                    move || council_weighted::make_council(members, weights, catalog, quorum),
                     cfg,
                 )
                 .map_err(|e| e.to_string())?;
@@ -273,7 +324,7 @@ async fn handle_open(
 
     if let Err(e) = offering::open_in(
         channel,
-        move || CouncilOffering::new(members, catalog, quorum),
+        move || council_weighted::make_council(members, weights, catalog, quorum),
         SessionConfig::with_seed(channel),
     ) {
         let _ = command

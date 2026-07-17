@@ -1428,6 +1428,61 @@ pub fn truncate(s: &str, max: usize) -> String {
 // The routers — `main.rs` sends every `offering:` press/modal here; we dispatch on the key.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// **THE one Discord mounting table** — every offering the generic per-type adapter serves.
+/// Both routers ([`route_component`] / [`route_modal`]) and [`generic_offering_keys`] expand
+/// from THIS list, so "which offerings the routers dispatch" is one statement that cannot
+/// drift into three (the old shape: two hand-maintained 15-ish-arm matches plus a folklore
+/// count). The offering SET itself is pinned to the shared registrar: the parity test below
+/// checks this table (plus the rpg-world route and the bespoke `/dungeon` crowd surface)
+/// serves exactly the LIVE `dreggnet_catalog::full_catalog_host` — the same 18 web, Telegram,
+/// and WeChat register (docs/BOT-SHARED-BACKEND-DESIGN.md).
+///
+/// Component presses for the eight RPG feature-surface keys never reach this table's arms
+/// (they are intercepted for the per-identity persistent world, `commands::rpg_world`); their
+/// rows here serve the modal router and the key census. Offerings whose affordances are all
+/// fixed-arg buttons never mint a modal, so their modal arms are inert — present for
+/// uniformity, and so a value-taking turn added later is routed the day it exists.
+macro_rules! for_each_generic_offering {
+    ($per:ident) => {
+        $per!(dreggnet_council::CouncilOffering);
+        $per!(dreggnet_market::MarketOffering);
+        $per!(dreggnet_hermes::HermesOffering);
+        $per!(dreggnet_grain::GrainOffering);
+        $per!(dreggnet_doc::DocOffering);
+        $per!(crate::commands::portfolio::SeatedTug);
+        $per!(dregg_automatafl::AutomataflOffering);
+        $per!(dreggnet_names::NamesOffering);
+        $per!(dreggnet_compute::ComputeOffering);
+        $per!(dreggnet_surfaces::TradeOffering);
+        $per!(dreggnet_surfaces::InventoryOffering);
+        $per!(dreggnet_surfaces::CheevoShowcase);
+        $per!(dreggnet_surfaces::GuildPage);
+        $per!(dreggnet_surfaces::CraftOffering);
+        $per!(dreggnet_surfaces::CompanionOffering);
+        $per!(dreggnet_surfaces::TavernOffering);
+        $per!(dreggnet_surfaces::PartyOffering);
+        $per!(dreggnet_gear::LoadoutOffering);
+        $per!(dreggnet_gear::TalentTreeOffering);
+        $per!(crate::commands::overworld::OverworldPlay);
+    };
+}
+
+/// The keys the generic adapter's routers dispatch — expanded from the ONE mounting table
+/// ([`for_each_generic_offering`]), never a second hand-kept list. The catalog parity test
+/// pins this census to the live shared registrar. (Runtime-unused until the Phase-C host
+/// bridge routes by key string — docs/BOT-SHARED-BACKEND-DESIGN.md; today the tests consume it.)
+#[allow(dead_code)]
+pub fn generic_offering_keys() -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    macro_rules! push_key {
+        ($ty:ty) => {
+            keys.push(<$ty as DiscordOffering>::KEY);
+        };
+    }
+    for_each_generic_offering!(push_key);
+    keys
+}
+
 /// Dispatch an `offering:` component press to the offering that owns the key.
 pub async fn route_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let Some(key) = key_of(&component.data.custom_id) else {
@@ -1439,62 +1494,28 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         .await;
         return;
     };
-    match key.as_str() {
-        k if k == <dreggnet_council::CouncilOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_council::CouncilOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_market::MarketOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_market::MarketOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_hermes::HermesOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_hermes::HermesOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_grain::GrainOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_grain::GrainOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_doc::DocOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_doc::DocOffering>(ctx, component, state).await
-        }
-        // ── The full-portfolio offerings (`commands::portfolio`): the two games + names/compute +
-        //    the eight RPG feature surfaces, reaching web parity through the SAME generic adapter. ──
-        k if k == <crate::commands::portfolio::SeatedTug as DiscordOffering>::KEY => {
-            handle_component::<crate::commands::portfolio::SeatedTug>(ctx, component, state).await
-        }
-        k if k == <dregg_automatafl::AutomataflOffering as DiscordOffering>::KEY => {
-            handle_component::<dregg_automatafl::AutomataflOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_names::NamesOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_names::NamesOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_compute::ComputeOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_compute::ComputeOffering>(ctx, component, state).await
-        }
-        // ── The eight RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
-        //    (`commands::rpg_world`): the press is one real turn in the PRESSER's own
-        //    sqlite-persisted world (backlog #15/#24), not a per-channel demo store. ──
-        k if crate::commands::rpg_world::is_rpg_key(k) => {
-            crate::commands::rpg_world::handle_component(ctx, component, state).await
-        }
-        // ── gear/talents (`commands::gear`) + the overworld (`commands::overworld`) — backlog #20/#23. ──
-        k if k == <dreggnet_gear::LoadoutOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_gear::LoadoutOffering>(ctx, component, state).await
-        }
-        k if k == <dreggnet_gear::TalentTreeOffering as DiscordOffering>::KEY => {
-            handle_component::<dreggnet_gear::TalentTreeOffering>(ctx, component, state).await
-        }
-        k if k == <crate::commands::overworld::OverworldPlay as DiscordOffering>::KEY => {
-            handle_component::<crate::commands::overworld::OverworldPlay>(ctx, component, state)
-                .await
-        }
-        _ => {
-            component_ephemeral(
-                ctx,
-                component,
-                &format!("No offering with key `{key}` is mounted in this bot build."),
-            )
-            .await;
-        }
+    // ── The eight RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
+    //    (`commands::rpg_world`): the press is one real turn in the PRESSER's own
+    //    sqlite-persisted world (backlog #15/#24), not a per-channel demo store. ──
+    if crate::commands::rpg_world::is_rpg_key(&key) {
+        crate::commands::rpg_world::handle_component(ctx, component, state).await;
+        return;
     }
+    // ── Everything else: the ONE mounting table, in order. ──
+    macro_rules! try_component {
+        ($ty:ty) => {
+            if key == <$ty as DiscordOffering>::KEY {
+                return handle_component::<$ty>(ctx, component, state).await;
+            }
+        };
+    }
+    for_each_generic_offering!(try_component);
+    component_ephemeral(
+        ctx,
+        component,
+        &format!("No offering with key `{key}` is mounted in this bot build."),
+    )
+    .await;
 }
 
 /// Dispatch an `offering:` modal submit to the offering that owns the key.
@@ -1514,71 +1535,29 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
             .await;
         return;
     };
-    match key.as_str() {
-        k if k == <dreggnet_council::CouncilOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_council::CouncilOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_market::MarketOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_market::MarketOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_hermes::HermesOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_hermes::HermesOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_doc::DocOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_doc::DocOffering>(ctx, modal, state).await
-        }
-        // ── The full-portfolio offerings that take a typed value/text modal (`commands::portfolio`).
-        //    Offerings whose affordances are all fixed-arg buttons never mint a modal, so their arms
-        //    here are inert — but present for uniformity + future value-taking turns. ──
-        k if k == <dregg_automatafl::AutomataflOffering as DiscordOffering>::KEY => {
-            handle_modal::<dregg_automatafl::AutomataflOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_names::NamesOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_names::NamesOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_compute::ComputeOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_compute::ComputeOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_surfaces::TradeOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_surfaces::TradeOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_surfaces::InventoryOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_surfaces::InventoryOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_surfaces::CraftOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_surfaces::CraftOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_surfaces::TavernOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_surfaces::TavernOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_surfaces::PartyOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_surfaces::PartyOffering>(ctx, modal, state).await
-        }
-        // ── gear/talents (`commands::gear`) + the overworld (`commands::overworld`) — backlog #20/#23. ──
-        k if k == <dreggnet_gear::LoadoutOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_gear::LoadoutOffering>(ctx, modal, state).await
-        }
-        k if k == <dreggnet_gear::TalentTreeOffering as DiscordOffering>::KEY => {
-            handle_modal::<dreggnet_gear::TalentTreeOffering>(ctx, modal, state).await
-        }
-        k if k == <crate::commands::overworld::OverworldPlay as DiscordOffering>::KEY => {
-            handle_modal::<crate::commands::overworld::OverworldPlay>(ctx, modal, state).await
-        }
-        _ => {
-            let _ = modal
-                .create_response(
-                    &ctx.http,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(format!(
-                                "No offering with key `{key}` is mounted in this bot build."
-                            ))
-                            .ephemeral(true),
-                    ),
-                )
-                .await;
-        }
+    // The ONE mounting table again — a modal-less offering's arm is inert (it never mints a
+    // modal), but a forged/stale submit id still resolves to the honest adapter path (the
+    // substrate is the sole referee) instead of a misleading "not mounted".
+    macro_rules! try_modal {
+        ($ty:ty) => {
+            if key == <$ty as DiscordOffering>::KEY {
+                return handle_modal::<$ty>(ctx, modal, state).await;
+            }
+        };
     }
+    for_each_generic_offering!(try_modal);
+    let _ = modal
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(format!(
+                        "No offering with key `{key}` is mounted in this bot build."
+                    ))
+                    .ephemeral(true),
+            ),
+        )
+        .await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1643,6 +1622,50 @@ mod tests {
             assert_eq!(parse_submit(id), None, "{id} must not decode as a submit");
         }
         assert_eq!(key_of("fiction:vote:0:1"), None);
+    }
+
+    /// **BOTH-POLARITY catalog parity** (the Discord half of `dreggnet-catalog`'s contract —
+    /// docs/BOT-SHARED-BACKEND-DESIGN.md): every offering the LIVE shared registrar
+    /// (`full_catalog_host`, the same builder web/Telegram/WeChat register through) serves is
+    /// reachable on Discord — through the ONE mounting table, the rpg-world route, or the
+    /// bespoke `/dungeon` crowd surface — and every mounted key is either a catalog offering
+    /// or a declared Discord extra. Registering a new catalog offering fails this test until
+    /// its Discord route exists; mounting a phantom key fails it too.
+    #[test]
+    fn the_mounted_offerings_are_exactly_the_shared_catalog() {
+        let host = dreggnet_catalog::full_catalog_host(&dreggnet_catalog::CatalogConfig::default());
+        let live: Vec<String> = host.list_offerings().into_iter().map(|o| o.key).collect();
+        assert_eq!(
+            live.len(),
+            dreggnet_catalog::CATALOG_KEYS.len(),
+            "the live registrar serves the full catalog"
+        );
+
+        let mounted = generic_offering_keys();
+        // No duplicate mounting (two table rows claiming one key would shadow each other).
+        let unique: std::collections::BTreeSet<_> = mounted.iter().copied().collect();
+        assert_eq!(unique.len(), mounted.len(), "mounted keys are unique");
+
+        for key in &live {
+            let served = mounted.contains(&key.as_str())
+                || crate::commands::rpg_world::is_rpg_key(key)
+                // `dungeon` is served by the bespoke `/dungeon` crowd surface
+                // (`commands::fiction`, its own `fiction:` custom-id namespace); its
+                // generic-adapter mounting is the staged `commands::dungeon_offering`.
+                || key == "dungeon";
+            assert!(
+                served,
+                "catalog offering `{key}` must be reachable on Discord"
+            );
+        }
+        for key in &mounted {
+            let known = dreggnet_catalog::CATALOG_KEYS.contains(key)
+                || crate::commands::portfolio::DISCORD_EXTRA_PLAY_KEYS.contains(key);
+            assert!(
+                known,
+                "mounted key `{key}` is neither a catalog offering nor a declared Discord extra"
+            );
+        }
     }
 
     #[test]

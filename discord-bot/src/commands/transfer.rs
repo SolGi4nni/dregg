@@ -308,8 +308,12 @@ pub(crate) async fn execute_first_payment(
                 &tx_hash,
                 "view the receipt on the explorer",
             );
-            let portal = format!(
-                "[verify your cell in your own browser](https://portal.dregg.studio/cell.html?id={sender_cell})"
+            // The shared explorer-link rule (never a hardcoded maybe-dead URL): a cell
+            // link when DREGG_EXPLORER_BASE is configured, the copyable cell id otherwise.
+            let portal = crate::explorer_link::view_link(
+                "cell",
+                &sender_cell,
+                "verify your cell in your own browser",
             );
 
             embeds::success_embed("\u{1f389} You just did a real, paid, verifiable thing")
@@ -318,7 +322,7 @@ pub(crate) async fn execute_first_payment(
                      **conserving** (Σδ=0), cap-gated dregg turn — signed by your own custodial key \
                      and verified by the node end-to-end. The same path `/send` uses.\n\n\
                      The **receipt** below is the proof it committed. Open it on the explorer, or open \
-                     your cell on the portal and let the in-browser light client re-verify your \
+                     your cell there and let the in-browser light client re-verify your \
                      history — trusting no server.",
                 ))
                 .field(

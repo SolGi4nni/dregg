@@ -86,6 +86,9 @@ pub mod intent;
 // surfaced honestly). `/council` and `/market` are its first two consumers; `/dungeon`
 // (`fiction`) still carries its own bespoke ballot frontend and could adopt this next.
 pub mod council;
+// `/council open weighted:true` — standing-weighted ballots on the VERIFIED weighted
+// engine (`collective_choice::cast_weighted`), weight source declared honestly.
+pub mod council_weighted;
 // `/dungeon` ADOPTS the generic collective adapter (CONSERVATIVE): `DungeonOffering` implements
 // `DiscordOffering` in collective mode (write-once ballots → plurality → `advance_collective`) —
 // driven end-to-end here — while the LIVE `/dungeon` command keeps its bespoke paid-narrator flow

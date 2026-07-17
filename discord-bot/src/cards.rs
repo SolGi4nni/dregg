@@ -41,30 +41,10 @@ fn button(label: impl Into<String>, turn: impl Into<String>, arg: i64) -> ViewNo
 // (1) THE ACTIVITY FEED — a devnet event, authored as a card (routed LIVE).
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The explorer base URL the activity cards link into — `DREGG_EXPLORER_BASE` (e.g.
-/// `https://explorer.dregg.net`), trailing slash tolerated. Default OFF: with no base configured
-/// the cards render the id as plain (non-link) code text rather than a dead link. (The old
-/// hardcoded `devnet.dregg.fg-goose.online` no longer routes anywhere.)
-fn explorer_base() -> Option<String> {
-    std::env::var("DREGG_EXPLORER_BASE")
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// A shortened `` `id...` `` code span, linked into the explorer at `base` when one is
-/// configured — plain text otherwise (never a dead link).
-fn explorer_ref(base: Option<&str>, kind: &str, id: &str, short_len: usize) -> String {
-    let short = if id.len() > short_len {
-        &id[..short_len]
-    } else {
-        id
-    };
-    match base {
-        Some(b) => format!("[`{short}...`]({b}/explorer/{kind}/{id})"),
-        None => format!("`{short}...`"),
-    }
-}
+/// The shared explorer reference builder ([`crate::explorer_link`]) — one rule for every
+/// surface: `DREGG_EXPLORER_BASE` configured → a `[`id...`](…/explorer/{kind}/{id})` link;
+/// no base → the FULL id as copyable code (never a dead link, never a truncated dead end).
+use crate::explorer_link::{explorer_base, short_ref_with_base as explorer_ref};
 
 /// A devnet activity event, authored as a `ViewNode` card and rendered to a Discord embed.
 ///
@@ -215,8 +195,9 @@ mod tests {
         );
     }
 
-    /// With NO explorer base configured (the default), the ids render as plain code text — a
-    /// non-link — never the dead hardcoded fg-goose URL a browser can't reach.
+    /// With NO explorer base configured (the default), the ids render as plain copyable code
+    /// text — the FULL id, a non-link — never the dead hardcoded fg-goose URL a browser can't
+    /// reach (the shared `explorer_link` rule: copy-paste must work when the link is absent).
     #[test]
     fn without_an_explorer_base_the_ids_are_plain_text_not_dead_links() {
         let event = RecentEvent {
@@ -237,8 +218,8 @@ mod tests {
                 "the dead domain is gone: {value}"
             );
         }
-        assert_eq!(fields[0]["value"], "`abcdef0123456789...`");
-        assert_eq!(fields[1]["value"], "`deadbeefcafe...`");
+        assert_eq!(fields[0]["value"], "`abcdef0123456789abcdef`");
+        assert_eq!(fields[1]["value"], "`deadbeefcafef00d`");
 
         // A configured base turns the same ids into real links.
         assert_eq!(

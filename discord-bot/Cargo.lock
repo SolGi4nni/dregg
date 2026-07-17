@@ -2341,6 +2341,7 @@ dependencies = [
  "dregg-storage",
  "dregg-turn",
  "dregg-types",
+ "dreggnet-catalog",
  "dreggnet-cheevo",
  "dreggnet-compute",
  "dreggnet-council",
@@ -2967,6 +2968,23 @@ dependencies = [
  "dregg-cell",
  "dregg-schema",
  "zeroize",
+]
+
+[[package]]
+name = "dreggnet-catalog"
+version = "0.1.0"
+dependencies = [
+ "dregg-automatafl",
+ "dregg-multiway-tug",
+ "dreggnet-compute",
+ "dreggnet-council",
+ "dreggnet-doc",
+ "dreggnet-grain",
+ "dreggnet-hermes",
+ "dreggnet-market",
+ "dreggnet-names",
+ "dreggnet-offerings",
+ "dreggnet-surfaces",
 ]
 
 [[package]]
