@@ -16,6 +16,11 @@ pub mod derivation_descriptor;
 pub mod effect_vm;
 pub mod federation;
 pub mod intents;
+// THE ONE REAL TURN MINTER + shared honest whole-chain fold: every IVC check
+// (sovereign, composition, backends, proofs) mints through this module and
+// verifies with `ivc_turn_chain::verify_whole_chain_proof_bytes` — the mock
+// `dregg_circuit::ivc` simulation is purged from the promotion gate.
+pub mod ivc_real;
 pub mod lean_marshal;
 pub mod nameservice;
 pub mod node;

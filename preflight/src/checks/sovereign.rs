@@ -10,14 +10,12 @@ use dregg_cell::{
     FieldConstraint, Ledger, Permissions,
 };
 use dregg_circuit_prove::ivc_turn_chain::{
-    FinalizedTurn, RecursionVk, WholeChainProofBytes, prove_turn_chain_recursive,
-    verify_whole_chain_proof_bytes,
+    RecursionVk, WholeChainProofBytes, prove_turn_chain_recursive, verify_whole_chain_proof_bytes,
 };
-use dregg_circuit_prove::joint_turn_aggregation::DescriptorParticipant;
 use dregg_turn::builder::ActionBuilder;
-use dregg_turn::rotation_witness::mint_rotated_participant_leg;
 use dregg_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
+use crate::checks::ivc_real::mint_real_turn;
 use crate::report::{CheckResult, run_check};
 
 fn test_key(name: &str) -> [u8; 32] {
@@ -324,52 +322,9 @@ fn check_multi_party_atomic() -> Result<(), String> {
     Ok(())
 }
 
-/// The transfer actor cell at `(balance, nonce)` with open permissions — the
-/// before/after `Cell` the rotated producer-witness path runs over (the same
-/// producer shape `lightclient/src/bin/produce_history_envelope.rs` ships).
-fn ivc_producer_cell(balance: i64, nonce: u64) -> Cell {
-    let mut pk = [0u8; 32];
-    pk[0] = 7;
-    let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
-    cell.permissions = open_permissions();
-    for _ in 0..nonce {
-        let _ = cell.state.increment_nonce();
-    }
-    cell
-}
-
-/// Mint ONE REAL finalized turn on the production descriptor path: the rotated
-/// multi-table batch proof from `dregg_turn::rotation_witness`, self-verified at
-/// mint. This is the SAME producer recipe the light-client history envelope uses
-/// — no fabricated fold deltas, no synthetic chain.
-fn mint_real_turn(balance: u64, nonce: u32, amount: u64) -> Result<FinalizedTurn, String> {
-    use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
-
-    let state = CellState::new(balance, nonce);
-    let effects = vec![VmEffect::Transfer {
-        amount,
-        direction: 1,
-    }];
-    // The rotated transfer DEBIT: balance decreases by `amount`; the rotated
-    // trace welds the nonce bump from the v1 sub-trace.
-    let before_cell = ivc_producer_cell(balance as i64, nonce as u64);
-    let after_cell = ivc_producer_cell((balance as i64) - (amount as i64), nonce as u64);
-    let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
-    let leg = mint_rotated_participant_leg(
-        &state,
-        &effects,
-        &before_cell,
-        &after_cell,
-        &nullifier_root,
-        &commitments_root,
-        &receipt_log,
-        None,
-    )
-    .map_err(|e| format!("rotated turn leg failed to mint: {e}"))?;
-    Ok(FinalizedTurn::new(DescriptorParticipant::rotated(leg)))
-}
+// The real turn minter (`mint_real_turn`) lives in `crate::checks::ivc_real` —
+// ONE minter shared by every preflight IVC check (sovereign, composition,
+// backends, proofs), so the producer recipe cannot drift per-file.
 
 /// IVC history compression through the REAL whole-chain recursive prover.
 ///

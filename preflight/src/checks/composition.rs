@@ -15,10 +15,13 @@
 //! composite, each bound to the shared committed `state_root` by its own pi[0] pin. The
 //! in-circuit accumulated-hash chaining ACROSS steps is NOT re-proven by these checks; that
 //! is the honest residual of the migration (the deleted multi-step AIR had no emitted twin).
-//! The IVC fold-chain check is unaffected — `prove_ivc`/`verify_ivc` survived intact.
+//!
+//! The IVC fold-chain check was PURGED of the simulated IVC (2026-07-16): it now verifies
+//! the REAL whole-chain recursive fold over genuinely minted rotated turns
+//! (`crate::checks::ivc_real` + `ivc_turn_chain::verify_whole_chain_proof_bytes`), not the
+//! forgeable BLAKE3 hash-chain in `dregg_circuit::ivc`.
 
 use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
 use dregg_circuit::multi_step_witness::ALLOW_PREDICATE;
 use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit::{BabyBear, BodyFactMerkleProof};
@@ -125,41 +128,39 @@ fn check_compose_two_derivations() -> Result<(), String> {
     Ok(())
 }
 
+/// IVC chaining through the REAL whole-chain recursive prover: the shared honest
+/// 2-turn fold (real rotated turn legs, minted by `crate::checks::ivc_real`)
+/// verifies through `verify_whole_chain_proof_bytes`, and the CHAIN-LENGTH claim
+/// is genuinely bound — an envelope relabeled to claim a different number of
+/// folded turns must be REFUSED (the old simulated check's `step_count`
+/// assertion, now with a verifier behind it).
 fn check_ivc_chain() -> Result<(), String> {
-    use dregg_circuit::dsl::fold::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit_prove::ivc_turn_chain::{
+        WholeChainProofBytes, verify_whole_chain_proof_bytes,
+    };
 
-    let initial_root = BabyBear::new(50000);
+    use crate::checks::ivc_real::honest_chain_proof;
 
-    let deltas: Vec<FoldDelta> = (0..3)
-        .map(|i| {
-            let fold = FoldWitness {
-                old_root: BabyBear::new(50000 + i),
-                new_root: BabyBear::new(50000 + i + 1),
-                removed_facts: vec![],
-                num_added_checks: 1,
-                added_checks_commitment: compute_test_checks_commitment(1),
-            };
-            FoldDelta::new(fold)
-        })
-        .collect();
-
-    let proof = prove_ivc(initial_root, deltas).ok_or("IVC chain proof failed")?;
-
-    if proof.step_count != 3 {
-        return Err(format!("expected 3 steps, got {}", proof.step_count));
+    let chain = honest_chain_proof()?;
+    if chain.num_turns != 2 {
+        return Err(format!("expected 2 folded turns, got {}", chain.num_turns));
     }
 
-    let verification = verify_ivc(&proof, Some(initial_root));
-    match verification {
-        IvcVerification::Valid => {}
-        other => return Err(format!("IVC chain verification failed: {:?}", other)),
-    }
+    // REAL verification of the honest whole-chain byte envelope.
+    verify_whole_chain_proof_bytes(&chain.bytes, &chain.vk)
+        .map_err(|e| format!("verifier rejected an HONEST whole-chain proof: {e}"))?;
 
-    if proof.final_root != BabyBear::new(50003) {
-        return Err(format!(
-            "expected final_root=50003, got {:?}",
-            proof.final_root
-        ));
+    // ── TOOTH: the folded-turn COUNT is a bound public. An envelope relabeled
+    // to claim a 3-turn history over the same 2-turn proof must be refused.
+    let mut relabeled = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    relabeled.num_turns += 1;
+    if verify_whole_chain_proof_bytes(&relabeled.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain envelope claiming the WRONG number of \
+             folded turns was ACCEPTED — the chain-length claim is not bound to the proof"
+                .into(),
+        );
     }
 
     Ok(())

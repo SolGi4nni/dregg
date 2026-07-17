@@ -122,29 +122,37 @@ fn check_forged_conclusion_refused() -> Result<(), String> {
     forged_conclusion_is_refused(&step)
 }
 
+/// IVC recursion through the REAL whole-chain recursive prover (the simulated
+/// `dregg_circuit::ivc` hash-chain was PURGED from this check 2026-07-16): the
+/// shared honest 2-turn fold over genuinely minted rotated turns verifies
+/// through `verify_whole_chain_proof_bytes`, and the recursion's ordered-history
+/// DIGEST is genuinely bound — a tampered `chain_digest` lane (claiming a
+/// different middle history between the same endpoints) must be REFUSED.
 fn check_ivc_recursive() -> Result<(), String> {
-    use dregg_circuit::dsl::fold::{FoldWitness, compute_test_checks_commitment};
-    use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+    use dregg_circuit_prove::ivc_turn_chain::{
+        WholeChainProofBytes, verify_whole_chain_proof_bytes,
+    };
 
-    let initial_root = BabyBear::new(99999);
-    let deltas: Vec<FoldDelta> = (0..2)
-        .map(|i| {
-            let fold = FoldWitness {
-                old_root: BabyBear::new(99999 + i),
-                new_root: BabyBear::new(99999 + i + 1),
-                removed_facts: vec![],
-                num_added_checks: 1,
-                added_checks_commitment: compute_test_checks_commitment(1),
-            };
-            FoldDelta::new(fold)
-        })
-        .collect();
+    use crate::checks::ivc_real::honest_chain_proof;
 
-    let proof = prove_ivc(initial_root, deltas).ok_or("recursive IVC proof failed")?;
-    let verification = verify_ivc(&proof, Some(initial_root));
-    match verification {
-        IvcVerification::Valid => {}
-        other => return Err(format!("recursive verification failed: {:?}", other)),
+    let chain = honest_chain_proof()?;
+
+    // REAL verification of the honest whole-chain byte envelope.
+    verify_whole_chain_proof_bytes(&chain.bytes, &chain.vk)
+        .map_err(|e| format!("verifier rejected an HONEST whole-chain proof: {e}"))?;
+
+    // ── TOOTH: the 8-felt ordered-history digest is a bound public of the
+    // recursive fold. An envelope claiming a different chain digest over the
+    // same proof must be refused.
+    let mut tampered = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    tampered.chain_digest[0] ^= 1;
+    if verify_whole_chain_proof_bytes(&tampered.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain envelope with a TAMPERED ordered-history \
+             digest was ACCEPTED — the recursion's chain digest is not bound to the proof"
+                .into(),
+        );
     }
 
     Ok(())

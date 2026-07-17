@@ -5,7 +5,6 @@ use dregg_bridge::present::{
     BridgePresentationBuilder, bytes_to_babybear, hash_index, verify_presentation_bb,
 };
 use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
 use dregg_circuit::multi_step_witness::ALLOW_PREDICATE;
 use dregg_circuit::poseidon2::hash_fact;
 use dregg_circuit::{BabyBear, BodyFactMerkleProof};
@@ -272,80 +271,70 @@ fn check_effect_vm_proof() -> Result<(), String> {
     Ok(())
 }
 
+/// An HONEST whole-chain proof accepts through the REAL recursive verifier (the
+/// simulated `dregg_circuit::ivc` hash-chain was PURGED from this check
+/// 2026-07-16): the shared honest 2-turn fold over genuinely minted rotated
+/// turns (`crate::checks::ivc_real`) round-trips its wire byte envelope and
+/// verifies via `verify_whole_chain_proof_bytes` against the fold's own VK
+/// fingerprint. The adversarial teeth live in `check_ivc_wrong_initial_root`
+/// below plus the composition/backends/sovereign IVC checks (wrong genesis,
+/// relabeled count, tampered digest, tampered final root, wrong VK, forged
+/// chain).
 fn check_ivc_proof() -> Result<(), String> {
-    // Generate a 3-step IVC proof and verify it.
-    use dregg_circuit::dsl::fold::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit_prove::ivc_turn_chain::verify_whole_chain_proof_bytes;
 
-    let initial_root = BabyBear::new(12345);
+    use crate::checks::ivc_real::honest_chain_proof;
 
-    let deltas: Vec<FoldDelta> = (0..3)
-        .map(|i| {
-            let fold = FoldWitness {
-                old_root: BabyBear::new(12345 + i),
-                new_root: BabyBear::new(12345 + i + 1),
-                removed_facts: vec![],
-                num_added_checks: 1,
-                added_checks_commitment: compute_test_checks_commitment(1),
-            };
-            FoldDelta::new(fold)
-        })
-        .collect();
-
-    let proof = prove_ivc(initial_root, deltas).ok_or("IVC proof generation failed")?;
-
-    if proof.step_count != 3 {
-        return Err(format!("expected 3 IVC steps, got {}", proof.step_count));
+    let chain = honest_chain_proof()?;
+    if chain.num_turns != 2 {
+        return Err(format!("expected 2 folded turns, got {}", chain.num_turns));
     }
-
-    // Verify the IVC proof
-    let verification = verify_ivc(&proof, Some(initial_root));
-    match verification {
-        IvcVerification::Valid => {}
-        other => return Err(format!("IVC verification failed: {:?}", other)),
-    }
-
-    Ok(())
+    verify_whole_chain_proof_bytes(&chain.bytes, &chain.vk)
+        .map_err(|e| format!("verifier rejected an HONEST whole-chain proof: {e}"))
 }
 
-/// Adversarial: IVC proof verified against WRONG initial root must be rejected.
+/// ADVERSARIAL: a whole-chain proof claiming the WRONG initial (genesis) root
+/// must be REJECTED by the REAL recursive verifier. Both a scalar-lane and a
+/// wide-lane forgery are tried: lane 0 is pinned by the Lean-emitted binding
+/// descriptor's scalar publics AND the root-exposed segment; lanes 1..8 are
+/// pinned ONLY by the root-exposed 8-felt segment claim, so the second leg
+/// proves the WIDE anchor binding bites on its own.
 fn check_ivc_wrong_initial_root() -> Result<(), String> {
-    use dregg_circuit::dsl::fold::{FoldWitness, compute_test_checks_commitment};
+    use dregg_circuit_prove::ivc_turn_chain::{
+        WholeChainProofBytes, verify_whole_chain_proof_bytes,
+    };
 
-    let real_root = BabyBear::new(55555);
-    let wrong_root = BabyBear::new(99999);
+    use crate::checks::ivc_real::honest_chain_proof;
 
-    let deltas: Vec<FoldDelta> = (0..2)
-        .map(|i| {
-            let fold = FoldWitness {
-                old_root: BabyBear::new(55555 + i),
-                new_root: BabyBear::new(55555 + i + 1),
-                removed_facts: vec![],
-                num_added_checks: 1,
-                added_checks_commitment: compute_test_checks_commitment(1),
-            };
-            FoldDelta::new(fold)
-        })
-        .collect();
+    let chain = honest_chain_proof()?;
 
-    let proof = prove_ivc(real_root, deltas).ok_or("IVC proof gen failed")?;
+    // With the CORRECT (carried) genesis root the envelope verifies.
+    verify_whole_chain_proof_bytes(&chain.bytes, &chain.vk)
+        .map_err(|e| format!("correct genesis root should verify, got: {e}"))?;
 
-    // Verify with the CORRECT root: should succeed.
-    let good = verify_ivc(&proof, Some(real_root));
-    if !matches!(good, IvcVerification::Valid) {
-        return Err(format!("correct root should verify, got {:?}", good));
+    // WRONG initial root, scalar lane: refused.
+    let mut wrong = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    wrong.genesis_root[0] ^= 1;
+    if verify_whole_chain_proof_bytes(&wrong.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain proof claiming a WRONG genesis root \
+             (scalar lane) was ACCEPTED — the initial-state anchor is not bound"
+                .into(),
+        );
     }
 
-    // Verify with WRONG root: should FAIL.
-    let bad = verify_ivc(&proof, Some(wrong_root));
-    match bad {
-        IvcVerification::Valid => {
-            return Err(
-                "IVC proof should be REJECTED when verified against wrong initial root".into(),
-            );
-        }
-        _ => {
-            // Good: wrong root correctly rejected.
-        }
+    // WRONG initial root, wide lane (untouched by the scalar binding publics):
+    // only the root-exposed 8-felt segment claim can refuse this one.
+    let mut wide = WholeChainProofBytes::from_postcard(&chain.bytes)
+        .map_err(|e| format!("envelope re-decode failed: {e}"))?;
+    wide.genesis_root[7] ^= 1;
+    if verify_whole_chain_proof_bytes(&wide.to_postcard(), &chain.vk).is_ok() {
+        return Err(
+            "MOCK-GRADE verifier: a whole-chain proof claiming a WRONG genesis root \
+             (wide lane 7) was ACCEPTED — the 8-felt genesis anchor is not bound"
+                .into(),
+        );
     }
 
     Ok(())
