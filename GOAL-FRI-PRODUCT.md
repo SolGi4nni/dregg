@@ -24,6 +24,20 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
 ## Landed (autonomous)
 - **DrEX ✅** (4e3d38bdd): reconciled to v2 primary; shielded-clearing + reveal-nothing UX; Cert-F check-grid, proof-receipt card, session receipt ledger ('every move is a receipt' on screen); --check green, honesty preserved (real fhegg_clear cleared, unbuilt→502). Proposed: P1 host, SetField flip, build bins on persvati.
 
+- **⚑ Market audit DONE** (d106782e3, MARKET-METATHEORY-REVIEW.md): FOUNDATIONS genuinely PROVEN
+  (conservation/fairness/optimality/CertF/CertQp/PriceCert/LedgerRealization — non-vacuous,
+  two-polarity teeth, bound to real settleRing/posFills; AggregateBinding = honest Module-SIS floor).
+  BUT 4 sufficient-test FAILURES at the confidential layer: (1) FhIRAdmissible mirror/vacuous
+  (semantic RunnableAt =def= syntactic passes, no bridge); (2) InterchainCustody laundered/vacuous
+  (disjoint-conjunct + rfl-over-constant-refund); (3) CertFDescriptor over-named (ε-optimality
+  unproved, ~2.5/5); (4) ⚑⚑ MpcClearingSecurity MARQUEE over-named — FhEggRustDenotation models
+  mpc reveal as ARGMAX but §2 security arg only covers BALANCE-THRESHOLD → the two core files
+  DISAGREE on what MPC reveals; "optimal"=weak value-neutrality (any volume) NOT volume-max.
+  Rust↔Lean = honest re-authored (NOT laundered) but UN-mechanized (named residuals). Confidentiality
+  = conditional on named HidingFriPcs ZK floor (honest) + proven perfect_hiding.
+  ⚑ PRIORITY REPAIR = #4 (reconcile argmax/balance-threshold split). ⚠ fhegg-clearing lane LIVE on
+  these files → fix AFTER it lands (clobber); flag ember. 9-item ranked plan in the doc.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
