@@ -44,9 +44,30 @@
 #   Env overrides: DRIFT_HBOX_HOST (default: hbox),
 #                  DRIFT_EDGE_SSH  (default: ssh -i /tmp/eic ubuntu@34.224.208.52)
 #
+# SHARED-MACHINE REALITY
+#   hbox is a co-tenant box: this repo is not the only thing deployed on it.
+#   Units whose SOURCE lives in a DIFFERENT repo are legitimately here and must
+#   not read as mysterious UNTRACKED noise — they are reported as EXTERNAL with
+#   their owning repo named. Add prefixes to KNOWN_EXTERNAL below as more repos
+#   share the box. A truly unrecognized unit still lands as UNTRACKED (the wound:
+#   a live service no repo claims at all).
+#
+# KNOWN LIMITATION (v1)
+#   Some deploy/**/*.service files are TEMPLATES that deploy-hbox.sh renders (it
+#   rewrites ExecStart to the deploy dir, etc.), so a rendered-vs-template diff
+#   flags those templated lines even when nothing is wrong. Read the diff and
+#   judge; a v2 should compare against the rendered template or ignore known
+#   templated fields (ExecStart path, WorkingDirectory).
+#
 # Meant to become a scheduled gate (cron / CI-adjacent) once it has a place to
 # report to; today it is run by hand after any box-touching session.
 set -euo pipefail
+
+# Units owned by a DIFFERENT repo on this shared box (prefix -> owning repo).
+# Reported as EXTERNAL, not UNTRACKED. Extend as more repos co-tenant hbox.
+declare -A KNOWN_EXTERNAL=(
+  ["dreggcloud-"]="~/dev/DreggCloud"
+)
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/deploy"
@@ -207,14 +228,24 @@ for i in "${!repo_units[@]}"; do
   fi
 done
 
-# -------------------------------------------- untracked units on the box
+# -------------------------------------------- untracked / external units on the box
 untracked=()
+external=()
 for i in "${!st_names[@]}"; do
   n="${st_names[$i]}"
   [ "${st_inst[$i]}" = "yes" ] || continue
   found=0
   for r in "${repo_units[@]}"; do [ "$r" = "$n" ] && { found=1; break; }; done
-  if [ "$found" -eq 0 ]; then
+  [ "$found" -eq 1 ] && continue
+  # Not in this repo — is it a known-external (a co-tenant repo's unit)?
+  ext_repo=""
+  for pfx in "${!KNOWN_EXTERNAL[@]}"; do
+    case "$n" in "$pfx"*) ext_repo="${KNOWN_EXTERNAL[$pfx]}"; break ;; esac
+  done
+  if [ -n "$ext_repo" ]; then
+    external+=("$n ($ext_repo)")
+    summary_rows+=("$n"$'\t'"yes"$'\t'"${st_active[$i]}"$'\t'"${st_enabled[$i]}"$'\t'"EXTERNAL")
+  else
     untracked+=("$n")
     summary_rows+=("$n"$'\t'"yes"$'\t'"${st_active[$i]}"$'\t'"${st_enabled[$i]}"$'\t'"UNTRACKED")
   fi
@@ -229,8 +260,13 @@ echo "== summary: unit -> installed / active / enabled / repo-match =="
 } | column -t -s $'\t'
 echo
 
+if [ "${#external[@]}" -gt 0 ]; then
+  echo "note: ${#external[@]} EXTERNAL unit(s) on hbox (owned by a co-tenant repo, not a wound):"
+  printf '      %s\n' "${external[@]}"
+  echo
+fi
 if [ "${#untracked[@]}" -gt 0 ]; then
-  echo "WARN: ${#untracked[@]} installed unit(s) on hbox have NO source in deploy/ (land them or name why):"
+  echo "WARN: ${#untracked[@]} installed unit(s) on hbox have NO source in ANY known repo (land them or add to KNOWN_EXTERNAL):"
   printf '      %s\n' "${untracked[@]}"
   echo
 fi
