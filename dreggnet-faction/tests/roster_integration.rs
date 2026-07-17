@@ -298,8 +298,16 @@ fn a_roster_rep_write_down_cannot_ride_a_nonpledge_method() {
     );
 }
 
-/// Standing accrues per faction and the canonical reader reflects it; the threshold gate and the
-/// betrayal seal are executor-refereed on the generated world (non-vacuous, driven both ways).
+/// Standing accrues per faction and the canonical reader reflects it; the threshold gate, the
+/// cross-slot rival cap, and the betrayal seal are all executor-refereed on the generated world
+/// (non-vacuous, driven both ways).
+///
+/// The Embers and the Tide are RIVALS, so the standing you can hold with each is coupled: every
+/// Ember pledge decrements `tide_ceiling`. Reaching the Embers threshold (rep 2) therefore lowers
+/// the Tide's ceiling to 1 — below the Tide's own threshold — so the two rivals cannot BOTH be
+/// maxed on one world. That is the feud, and the executor enforces it. The betrayal-seal leg
+/// therefore runs on the UNALIGNED Grove (no rival, never capped), the only faction that can reach
+/// qualifying standing here and so make "the seal beats the standing bar" a NON-vacuous claim.
 #[test]
 fn standing_accrues_gates_and_seals_on_the_generated_world() {
     let roster = tri_roster();
@@ -327,20 +335,56 @@ fn standing_accrues_gates_and_seals_on_the_generated_world() {
     commit(&world, &scene, el.trial);
     assert!(read_standing(&world, embers).unlocked);
 
-    // Betray a DIFFERENT faction (tide) at qualifying standing → its content seals.
-    let tide = roster.faction("tide").unwrap();
+    // THE RIVAL CAP BITES (driven, non-vacuous): pledging the Embers to rep 2 lowered the Tide's
+    // ceiling from TRUST_CEILING to 1 (each Ember pledge decrements `tide_ceiling`). The Tide will
+    // still take you to rep 1 — but the SECOND Tide pledge, which would push `rep_tide` to 2 over
+    // its now-lowered ceiling of 1, is REFUSED by the cross-slot FieldLteOther(rep_tide <=
+    // tide_ceiling). Rivals cannot BOTH be maxed on one world.
     let tl = roster.lines("tide");
-    commit(&world, &scene, tl.pledge);
-    commit(&world, &scene, tl.pledge);
-    commit(&world, &scene, tl.betray);
-    let ts = read_standing(&world, tide);
-    assert!(ts.betrayed);
+    assert_eq!(
+        world.read_var(&ceiling_var("tide")),
+        1,
+        "the Embers pledges lowered the rival Tide ceiling to 1"
+    );
+    commit(&world, &scene, tl.pledge); // rep_tide 0 -> 1, within the lowered ceiling
+    assert_eq!(
+        world.read_var(&rep_var("tide")),
+        1,
+        "the Tide takes you to rep 1"
+    );
+    let capped = try_apply(&world, &scene, tl.pledge); // rep_tide 1 -> 2 would break the cap
     assert!(
-        !ts.content_available(),
+        matches!(capped, Err(WorldError::Refused(_))),
+        "the rival cap bites: a Tide pledge past the Embers-lowered ceiling is refused; got {capped:?}"
+    );
+    assert_eq!(
+        world.read_var(&rep_var("tide")),
+        1,
+        "anti-ghost: the refused pledge did not raise standing"
+    );
+
+    // Betray the UNALIGNED Grove (no rival, so never capped) AT qualifying standing → its content
+    // seals DESPITE the standing (the seal beats the bar — non-vacuous: the Grove really did reach
+    // available content first).
+    let grove = roster.faction("grove").unwrap();
+    let gl = roster.lines("grove");
+    commit(&world, &scene, gl.pledge);
+    commit(&world, &scene, gl.pledge);
+    let gs = read_standing(&world, grove);
+    assert_eq!(gs.rep, 2);
+    assert!(
+        gs.content_available(),
+        "the unaligned Grove reached qualifying standing, uncapped"
+    );
+    commit(&world, &scene, gl.betray);
+    let gs = read_standing(&world, grove);
+    assert!(gs.betrayed);
+    assert!(
+        !gs.content_available(),
         "a betrayed faction seals despite standing"
     );
     assert!(matches!(
-        try_apply(&world, &scene, tl.trial),
+        try_apply(&world, &scene, gl.trial),
         Err(WorldError::Refused(_))
     ));
 }
