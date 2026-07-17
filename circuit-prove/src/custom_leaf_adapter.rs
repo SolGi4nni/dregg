@@ -60,14 +60,33 @@
 //!
 //! ## Poseidon2 hash sites — the LANE-WITNESSING extension (now mapped)
 //!
-//! `Hash2to1` / `Hash4to1` / `Hash3Cap` / `MerkleHash` lower to `Lookup`s into the
-//! declared Poseidon2 CHIP table (`TID_P2`). One permutation = one 20-wide chip tuple
-//! `[arity, in0..in10, out0, lane1..lane7]`; the chip-table AIR EQUALITY-binds all 8
-//! output lanes to the genuine permutation (`out[i] == perm(ins)[i]`), so a forged
-//! digest OR a forged intermediate lane is UNSAT. The 7 lane columns are ALLOCATED past
-//! the base trace width per site and filled descriptor-side by `fill_chip_lanes`
-//! (the `trace_with_chip_lanes` weld); the digest (lane 0/out0) is the site's own output
-//! column, already filled by the `CellProgram`'s `generate_trace`. `MerkleHash`'s
+//! `Hash2to1` / `Hash4to1` / `Hash3Cap` / `MerkleHash` / `MerkleHash8` lower to `Lookup`s
+//! into the declared Poseidon2 CHIP table (`TID_P2`). One permutation = one 25-wide chip
+//! tuple `[arity, in0..in15 (CHIP_RATE), out0..out7]`; the chip-table AIR EQUALITY-binds all
+//! 8 output lanes to the genuine permutation (`out[i] == perm(ins)[i]`), so a forged
+//! digest OR a forged intermediate lane is UNSAT.
+//!
+//! Sites come in two SHAPES, differing only in who owns the 8 output columns:
+//!
+//! * **SINGLE-output** (`Hash2to1` / `Hash4to1` / `Hash3Cap` / `MerkleHash`) — the program
+//!   squeezes lane 0. The digest (lane 0/out0) is the site's own output column, already
+//!   filled by the `CellProgram`'s `generate_trace`; the 7 remaining lane columns are
+//!   ALLOCATED past the base trace width per site and filled descriptor-side by
+//!   `fill_chip_lanes` (the `trace_with_chip_lanes` weld). The program never reads lanes
+//!   1..7 — they exist only so the AIR equalities pin the permutation. A single-output
+//!   site therefore binds ~31 bits of digest and pays 7 columns to do it.
+//! * **MULTI-output** (`MerkleHash8`) — the native 8-felt `cap_node8(L8, R8)`, which is
+//!   DEFINED as `chip_absorb_all_lanes(CHIP_NODE8_ARITY, L8 ‖ R8)`, i.e. literally ONE
+//!   arity-16 chip absorb. All 8 lanes are PROGRAM-OWNED columns, so the site allocates NO
+//!   lane columns at all and binds the FULL 8-felt (~124-bit) digest. Arity 16 was already
+//!   in the chip AIR's arity set `{0,2,3,4,7,11,16}`, already seeds all 16 permutation lanes
+//!   from genuine inputs, and the chip table already mints node8 rows — the site rides the
+//!   SAME tuple and the SAME `out[i] == perm(ins)[i]` equalities as every narrow site. The
+//!   adapter previously REFUSED this kind purely because its tuple builder hard-coded
+//!   "lane 0 is the output, lanes 1..7 are anonymous witnesses"; that was an adapter
+//!   limitation, never a soundness boundary. A foldable leaf that must FOLD an 8-felt
+//!   Merkle tree (e.g. `dsl::cap_membership`) is therefore no longer forced onto 8 parallel
+//!   domain-separated single-output chains to reach a real collision floor. `MerkleHash`'s
 //! position-ordered child reconstruction is emitted as degree-4 Lagrange-indicator chip
 //! inputs (so the chip absorb's children match the evaluator at every grid position
 //! `{0,1,2,3}`, pinned by the program's own position-validity gate). A Merkle PATH is a
@@ -167,13 +186,21 @@
 //! [`crate::ivc_turn_chain::prove_chain_core_rotated`] mints a DUAL-EXPOSE leg leaf
 //! ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`] — its single `expose_claim` carries
 //! the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed commitment in lanes
-//! `[SEG_WIDTH ..)`) and folds it against THIS custom sub-proof leaf under
-//! [`crate::joint_turn_recursive::prove_custom_binding_node_segmented`], which `connect`s the two
-//! 4-felt commitments in-circuit AND re-exposes the segment so the node folds into `aggregate_tree`
-//! like any segment leaf. A turn whose leg claims a commitment no verifying sub-proof backs is UNSAT
-//! (the `connect` is a conflict — no satisfying partner), so no root exists and a PURE LIGHT CLIENT
-//! verifying the deployed `WholeChainProof` never receives a verifying artifact. The premise of
-//! Lean `CustomBindingFromFold.custom_binding_from_fold` is now TRUE on the deployed path.
+//! `[SEG_WIDTH ..)`) and folds it against a custom sub-proof leaf.
+//!
+//! **THE DEPLOYED PAIR IS THE STATE-BINDING ONE**, not the commitment-only leaf documented above:
+//! `prove_chain_core_rotated` mints [`prove_custom_leaf_with_state_commitment`] (the 24-lane claim)
+//! under [`crate::joint_turn_recursive::prove_custom_binding_node_state_segmented`]. That node
+//! `connect`s the commitments in-circuit AND welds the sub-proof's declared `[old8 ‖ new8]` to the
+//! leg's real rotated roots, then re-exposes the segment so the node folds into `aggregate_tree`
+//! like any segment leaf. TWO turns are UNSAT: one whose leg claims a commitment no verifying
+//! sub-proof backs, and one carrying a verifying sub-proof about a DIFFERENT transition. No root
+//! exists, so a PURE LIGHT CLIENT verifying the deployed `WholeChainProof` never receives a
+//! verifying artifact. The premise of Lean `CustomBindingFromFold.custom_binding_from_fold` is TRUE
+//! on the deployed path.
+//!
+//! [`prove_custom_leaf_with_commitment`] (8-lane) is retained as the MECHANISM tooth and as the
+//! canary the state leg is measured against — it is not on the deployed path.
 //!
 //! The two formerly-blocking threads are landed: (1) the custom sub-proof's re-provable witness
 //! (`CellProgram` + trace witness + PIs) is retained PROVER-SIDE on
@@ -707,6 +734,170 @@ pub fn prove_custom_leaf_with_state_commitment(
         Some(&expose),
     )
     .map_err(|e| format!("custom-leaf state-commitment leaf-wrap failed: {e:?}"))
+}
+
+/// The width of the claim a [`prove_custom_leaf_with_app_root_commitment`] leaf exposes for an
+/// app root of width `app_root_len`: the 24-lane state claim
+/// (`[commitment(8) ‖ old8 ‖ new8]`) followed by the published root `R` (`app_root_len` felts).
+///
+/// ```text
+///   [0  .. 24)                  = the state claim (as prove_custom_leaf_with_state_commitment)
+///   [24 .. 24+app_root_len)     = pis[j .. j+app_root_len] = the published app root R
+/// ```
+pub const fn custom_app_root_claim_len(app_root_len: usize) -> usize {
+    CUSTOM_STATE_CLAIM_LEN + app_root_len
+}
+
+/// **THE IN-CIRCUIT APP-ROOT-BINDING LEG (the keystone leaf half)** — as
+/// [`prove_custom_leaf_with_state_commitment`], but the exposed claim ALSO re-exposes, as bound
+/// public lanes, the published application root `R` the sub-proof's public inputs carry at
+/// `binding.app_root_pi_offset` (width `binding.app_root_len`), per the
+/// [`AppRootBinding`](dregg_circuit::effect_vm::custom_state_binding::AppRootBinding) ABI. The
+/// exposed claim is `[commitment(8) ‖ pis[0..16] ‖ pis[j..j+L]]`.
+///
+/// ## What this buys over the 24-lane state leaf
+///
+/// The state leaf welds `[old8 ‖ new8]` to the leg's real rotated roots, so a light client
+/// witnesses the transition is about THIS cell's commitments. But the sub-proof ALSO publishes an
+/// application root `R` (a board root, an outcome commitment, a winner) which the `new8` commitment
+/// covers only as an opaque preimage — nothing forced `R` to EQUAL the field the cell actually
+/// stores. Re-exposing `R` as its own bound lanes lets
+/// [`crate::joint_turn_recursive::prove_custom_binding_node_app_root_segmented`] `connect` it to
+/// the wide leg's exposed committed value for the declared field key `K`. A sub-proof whose
+/// published `R` is not the cell's real stored field is then a `connect` conflict: UNSAT, no root,
+/// and the light client never receives a verifying artifact.
+///
+/// Because `R`'s lanes are read from the leaf's REAL in-circuit-bound descriptor PI targets (the
+/// same targets the commitment absorbs), a prover cannot expose an `R` that disagrees with the PIs
+/// the leaf actually proves — exposure and execution are welded.
+///
+/// ## Fail-closed
+///
+/// The binding must be well-formed (`R` strictly past the state prefix, nonzero width) and the
+/// sub-program must publish enough PIs to carry both the 16-felt state prefix and `R`. A program
+/// that cannot express the binding is REFUSED here rather than zero-padded into a false root.
+pub fn prove_custom_leaf_with_app_root_commitment(
+    program: &CellProgram,
+    witness_values: &HashMap<String, Vec<BabyBear>>,
+    num_rows: usize,
+    public_inputs: &[BabyBear],
+    binding: &dregg_circuit::effect_vm::custom_state_binding::AppRootBinding,
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+
+    if !binding.is_well_formed() {
+        return Err(format!(
+            "custom app-root leaf: ill-formed AppRootBinding {binding:?} — the published root must \
+             sit strictly past the {CUSTOM_PI_STATE_PREFIX_LEN}-felt state prefix and have nonzero \
+             width (an app root aliasing the state commitments, or of zero width, cannot express \
+             the weld)."
+        ));
+    }
+    let need = binding.app_root_pi_end().max(CUSTOM_PI_STATE_PREFIX_LEN);
+    if public_inputs.len() < need {
+        return Err(format!(
+            "custom app-root leaf: the sub-program publishes {} public input(s), but the app-root \
+             binding {binding:?} needs at least {need} ([old8 ‖ new8] plus R at \
+             [{}..{})). A program that cannot express the binding is refused rather than \
+             zero-padded into a false one.",
+            public_inputs.len(),
+            binding.app_root_pi_offset,
+            binding.app_root_pi_end()
+        ));
+    }
+
+    let lowered = lower_cellprogram(program)?;
+    let desc2 = &lowered.desc;
+
+    let base_trace =
+        augmented_base_trace(&lowered, program, witness_values, num_rows, public_inputs)?;
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        desc2,
+        &base_trace,
+        public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        config,
+    )
+    .map_err(|e| format!("custom-leaf inner IR-v2 prove failed: {e}"))?;
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(desc2, &inner, public_inputs, config)
+            .map_err(|e| format!("custom-leaf verify-triple build failed: {e}"))?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    let backend = create_recursion_backend_with_coeff_lookups();
+
+    let num_pi = public_inputs.len();
+    let j = binding.app_root_pi_offset;
+    let l = binding.app_root_len;
+    let claim_len = custom_app_root_claim_len(l);
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+        let main = apt
+            .first()
+            .expect("custom leaf has a main instance carrying the descriptor PIs");
+        debug_assert!(
+            main.len() >= num_pi,
+            "main instance must carry all {num_pi} descriptor PIs"
+        );
+        let pis: Vec<Target> = (0..num_pi).map(|k| main[k]).collect();
+        let commit = incircuit_custom_pi_commitment(cb, &pis)
+            .expect("in-circuit custom-PI commitment builds for the bound descriptor PIs");
+
+        // `[commitment(8) ‖ pis[0..16] ‖ pis[j..j+L]]` — the state prefix AND the published root R
+        // are the leaf's REAL bound PI targets, so what is exposed IS what is proven.
+        let mut claim: Vec<Target> = Vec::with_capacity(claim_len);
+        claim.extend_from_slice(&commit);
+        claim.extend_from_slice(&pis[..CUSTOM_PI_STATE_PREFIX_LEN]);
+        claim.extend_from_slice(&pis[j..j + l]);
+        debug_assert_eq!(claim.len(), claim_len);
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("custom-leaf app-root-commitment leaf-wrap failed: {e:?}"))
+}
+
+/// Read the published app root `R` (of width `app_root_len`) a
+/// [`prove_custom_leaf_with_app_root_commitment`] leaf exposes — lanes
+/// `[CUSTOM_STATE_CLAIM_LEN .. CUSTOM_STATE_CLAIM_LEN + app_root_len)` of its `expose_claim`.
+/// Returns `None` when the proof carries no claim or exposes fewer than the full
+/// [`custom_app_root_claim_len`] lanes — a truncated / state-only artifact is REFUSED here, never
+/// silently read as a binding it does not carry.
+pub fn read_exposed_app_root(
+    output: &RecursionOutput<DreggRecursionConfig>,
+    app_root_len: usize,
+) -> Option<Vec<BabyBear>> {
+    let want = custom_app_root_claim_len(app_root_len);
+    let claims: Vec<BabyBear> = output
+        .0
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")?
+        .public_values
+        .iter()
+        .map(|&v| BabyBear::new(v.as_canonical_u32()))
+        .collect();
+    if claims.len() < want {
+        return None;
+    }
+    Some(claims[CUSTOM_STATE_CLAIM_LEN..want].to_vec())
 }
 
 /// Read the `[old_commit8, new_commit8]` state prefix a

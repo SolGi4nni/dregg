@@ -154,6 +154,82 @@ pub fn extract_custom_pi_state_roots(
     Some((old, new))
 }
 
+// ============================================================================
+// THE APP-ROOT WELD ABI — the keystone: force an app's PUBLISHED root R to EQUAL
+// the cell's REAL committed field value, visible to a pure light client.
+// ============================================================================
+//
+// The state prefix above ties a custom sub-proof's `[old8 ‖ new8]` PIs to the cell's real
+// rotated roots — so a pure light client witnesses that the transition is about THIS cell's
+// pre/post commitments. But an application (automatafl's board_new_root8, tug's winner,
+// param-compose/entity-compose's outcome_commitment) ALSO publishes an application ROOT `R` in
+// its app PIs (past the state prefix). `R` is BOUND (covered by the sub-proof's PI commitment,
+// which the fold connects, so a prover cannot swap it post-hoc) but it is NOT TIED to what the
+// cell actually STORES: nothing forces `R == the committed field the app wrote it into`. The
+// `new8` commitment commits the WHOLE post-state (every cell field), but it is an opaque hash —
+// the CellProgram constraint vocabulary cannot open it to re-expose one field, and a prover who
+// picks BOTH the field value it writes AND the `R` it publishes makes them agree trivially.
+//
+// The sound GENERAL form is an IN-CIRCUIT TIE at the fold node: the wide effect-VM leg exposes
+// the cell's committed value for a DECLARED field key `K` (a value carried faithfully in the
+// rotated pre-limbs the `new8` commitment absorbs), and the fold `connect`s it, lane by lane, to
+// the sub-proof's published `R` at a DECLARED PI offset `j`. Then `new8` (welded to the leg's
+// real root) commits the field, the leg exposes that same committed field, and the connect forces
+// `R == field[K]` — a property of the ARTIFACT a pure light client verifies, not of an executor's
+// diligence.
+//
+// This module carries the APP-DECLARED half of that ABI: where `R` sits in the sub-proof PIs
+// (`j`, width `L`) and which cell field key `K` it must equal. The leg-side exposure of `field[K]`
+// and the fold connect live in `dregg-circuit-prove` (the prover), the way the state weld's leg
+// exposure and connect do — this floor crate must not pull the prover.
+
+/// An application-root weld declaration: the sub-proof's published root `R` occupies
+/// `pis[app_root_pi_offset .. app_root_pi_offset + app_root_len]` and MUST equal the cell's
+/// committed value at wide-leg field key `field_key`.
+///
+/// `app_root_pi_offset` is an APP PI index (past the state prefix, so `>= CUSTOM_PI_STATE_PREFIX_LEN`
+/// — an app root overlapping the state commitments is refused). `app_root_len` is the root's width
+/// in felts (`1` for a scalar register like tug's `winner`, `8` for an octet root like automatafl's
+/// `board_new_root8` or the compose `outcome_commitment`). `field_key` is opaque to this floor
+/// crate — the prover maps it to the leg's field-exposure PI slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AppRootBinding {
+    /// `j`: the app PI index where the published root `R` begins.
+    pub app_root_pi_offset: usize,
+    /// `L`: the width of `R` in felts.
+    pub app_root_len: usize,
+    /// `K`: the cell field key `R` must equal (the leg exposes its committed value).
+    pub field_key: usize,
+}
+
+impl AppRootBinding {
+    /// Fail-closed validity: the root must sit strictly past the state prefix (never aliasing
+    /// `[old8 ‖ new8]`) and have nonzero width. A binding that violates this cannot express the
+    /// weld and is refused rather than silently welding the wrong lanes.
+    pub fn is_well_formed(&self) -> bool {
+        self.app_root_len > 0 && self.app_root_pi_offset >= CUSTOM_PI_STATE_PREFIX_LEN
+    }
+
+    /// The last PI index (exclusive) the root occupies — the minimum `public_input_count` a
+    /// sub-program carrying this binding must publish.
+    pub fn app_root_pi_end(&self) -> usize {
+        self.app_root_pi_offset + self.app_root_len
+    }
+}
+
+/// Read the published app root `R` a sub-proof's public inputs carry for `binding`. Returns `None`
+/// when the binding is ill-formed or the vector is too short to carry `R` — never zero-padding a
+/// short vector into a false root (the in-circuit mirror refuses the same shape fail-closed).
+pub fn extract_custom_pi_app_root(
+    public_inputs: &[BabyBear],
+    binding: &AppRootBinding,
+) -> Option<Vec<BabyBear>> {
+    if !binding.is_well_formed() || public_inputs.len() < binding.app_root_pi_end() {
+        return None;
+    }
+    Some(public_inputs[binding.app_root_pi_offset..binding.app_root_pi_end()].to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +323,88 @@ mod tests {
         assert_eq!(MAX_TRACE_WIDTH, 1024);
         assert_eq!(MAX_CONSTRAINT_DEGREE, 8);
         assert_eq!(MAX_PUBLIC_INPUTS, 64);
+    }
+
+    /// The app-root binding's well-formedness gate: a root aliasing the state prefix, or of zero
+    /// width, is refused (it cannot express the weld).
+    #[test]
+    fn app_root_binding_well_formedness() {
+        let ok = AppRootBinding {
+            app_root_pi_offset: CUSTOM_PI_STATE_PREFIX_LEN,
+            app_root_len: 8,
+            field_key: 0,
+        };
+        assert!(ok.is_well_formed());
+        assert_eq!(ok.app_root_pi_end(), CUSTOM_PI_STATE_PREFIX_LEN + 8);
+
+        // Aliases the state prefix.
+        let aliased = AppRootBinding {
+            app_root_pi_offset: 8,
+            app_root_len: 8,
+            field_key: 0,
+        };
+        assert!(!aliased.is_well_formed());
+        // Zero width.
+        let empty = AppRootBinding {
+            app_root_pi_offset: CUSTOM_PI_STATE_PREFIX_LEN,
+            app_root_len: 0,
+            field_key: 0,
+        };
+        assert!(!empty.is_well_formed());
+    }
+
+    /// The extractor reads exactly the declared root lanes, and refuses (returns `None`) a vector
+    /// too short to carry it — never zero-padding a short vector into a false root.
+    #[test]
+    fn app_root_extractor_reads_the_declared_lanes_or_refuses() {
+        let old: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(100 + j as u32));
+        let new: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(200 + j as u32));
+        let r: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(300 + j as u32));
+        let mut pis = custom_pi_state_prefix(&old, &new).to_vec();
+        pis.extend_from_slice(&r);
+
+        let b = AppRootBinding {
+            app_root_pi_offset: CUSTOM_PI_STATE_PREFIX_LEN,
+            app_root_len: 8,
+            field_key: 0,
+        };
+        assert_eq!(
+            extract_custom_pi_app_root(&pis, &b).expect("root present"),
+            r.to_vec()
+        );
+
+        // One short of R's end ⇒ None (never zero-padded).
+        let short = &pis[..pis.len() - 1];
+        assert!(extract_custom_pi_app_root(short, &b).is_none());
+        // Ill-formed binding ⇒ None regardless of length.
+        let bad = AppRootBinding {
+            app_root_pi_offset: 0,
+            app_root_len: 8,
+            field_key: 0,
+        };
+        assert!(extract_custom_pi_app_root(&pis, &bad).is_none());
+    }
+
+    /// The published root rides the SAME commitment surface: mutating any lane of R (past the state
+    /// prefix) moves the PI commitment the fold binds — so the app-root weld needs no new hash, only
+    /// the fold connect.
+    #[test]
+    fn app_root_lanes_move_the_commitment() {
+        let old: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(100 + j as u32));
+        let new: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(200 + j as u32));
+        let r: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(300 + j as u32));
+        let mut honest = custom_pi_state_prefix(&old, &new).to_vec();
+        honest.extend_from_slice(&r);
+        let base = custom_proof_pi_commitment_8(&honest);
+        for k in 0..8 {
+            let mut forged = honest.clone();
+            forged[CUSTOM_PI_STATE_PREFIX_LEN + k] += BabyBear::ONE;
+            assert_ne!(
+                custom_proof_pi_commitment_8(&forged),
+                base,
+                "published-root lane {k} must be load-bearing in the PI commitment"
+            );
+        }
     }
 
     /// Every lane of both roots is load-bearing in the commitment: a node binding only

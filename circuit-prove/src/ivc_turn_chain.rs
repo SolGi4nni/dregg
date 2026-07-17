@@ -1349,6 +1349,117 @@ pub fn prove_descriptor_leaf_dual_expose_at(
         .map_err(|e| format!("rotated dual-expose custom leaf-wrap failed: {e}"))
 }
 
+/// **THE MULTI-CLAIM DUAL-EXPOSE LEG LEAF** — [`prove_descriptor_leaf_dual_expose_at`] widened to
+/// append MORE THAN ONE claim slice after the segment. Exposes, through ONE `expose_claim` table:
+///
+///   * the constant-size ordered chain SEGMENT `[first_old8, last_new8, count, acc]` (lanes
+///     `[0 .. SEG_WIDTH)`), bound in-circuit to the descriptor's real rotated roots, and
+///   * each claim slice `claims[i] = (lo_i, len_i)` read from the leaf's FRI-bound descriptor PIs,
+///     concatenated in order after the segment: slice `i` at lanes
+///     `[SEG_WIDTH + Σ_{k<i} len_k .. + len_i)`.
+///
+/// The keystone app-root leg passes `[(CUSTOM_COMMIT_PI_LO, CUSTOM_COMMIT_LEN), (field_pi_lo,
+/// field_len)]` — the claimed `custom_proof_commitment` AND the leg's committed value for the
+/// declared field key `K`. The binding node
+/// ([`crate::joint_turn_recursive::prove_custom_binding_node_app_root_segmented`]) `connect`s the
+/// commitment to the sub-proof's genuine commitment, the leg's real roots to the sub-proof's
+/// declared roots, AND the leg's field to the sub-proof's published root `R`, then re-exposes ONLY
+/// the segment — so the node folds into [`aggregate_tree`] like any segment leaf.
+///
+/// CONSTRAINT (same as [`prove_descriptor_leaf_dual_expose_at`]): on a WIDE descriptor the segment
+/// anchors are sourced from the LAST `2*SEG_ANCHOR_WIDTH` PIs, so every claim slice's PIs MUST sit
+/// at a FIXED offset ahead of `n - 2*SEG_ANCHOR_WIDTH`, never overlapping the rotated-commit anchors.
+pub fn prove_descriptor_leaf_expose_segment_and_claims(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    proof: &Ir2BatchProof<DreggRecursionConfig>,
+    descriptor_pis: &[BabyBear],
+    config: &DreggRecursionConfig,
+    claims: &[(usize, usize)],
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::trace_rotated::{V1_PI_COUNT, WIDE_PI_COUNT};
+
+    if claims.is_empty() {
+        return Err("multi-claim dual-expose requires at least one claim slice".to_string());
+    }
+    let claims: Vec<(usize, usize)> = claims.to_vec();
+    let total_claim_len: usize = claims.iter().map(|&(_, len)| len).sum();
+    let max_hi = claims.iter().map(|&(lo, len)| lo + len).max().unwrap_or(0);
+    if descriptor_pis.len() < max_hi {
+        return Err(format!(
+            "multi-claim dual-expose leg needs >= {max_hi} descriptor PIs to carry every claim \
+             slice, got {}",
+            descriptor_pis.len()
+        ));
+    }
+
+    let n = descriptor_pis.len();
+    let wide = n >= WIDE_PI_COUNT;
+    let old_first = n.saturating_sub(2 * SEG_ANCHOR_WIDTH);
+    let new_first = n.saturating_sub(SEG_ANCHOR_WIDTH);
+
+    let (airs, table_public_inputs, common) =
+        dregg_circuit::descriptor_ir2::ir2_airs_and_common_for_config(
+            desc,
+            proof,
+            descriptor_pis,
+            config,
+        )?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, dregg_circuit::descriptor_ir2::Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    let expose = move |cb: &mut p3_circuit::CircuitBuilder<RecursionChallenge>,
+                       apt: &[Vec<p3_recursion::Target>]| {
+        let main = apt
+            .first()
+            .expect("custom descriptor leaf has a main instance with descriptor PIs");
+        debug_assert!(
+            main.len() >= max_hi.max(V1_PI_COUNT + 2),
+            "descriptor PI vector must carry both the rotated commitments and every claim slice"
+        );
+        // -- The SEGMENT (lanes [0 .. SEG_WIDTH)) — byte-identical to the plain segment leaf.
+        let (first_old8, last_new8): (Vec<p3_recursion::Target>, Vec<p3_recursion::Target>) =
+            if wide {
+                (
+                    (0..SEG_ANCHOR_WIDTH).map(|k| main[old_first + k]).collect(),
+                    (0..SEG_ANCHOR_WIDTH).map(|k| main[new_first + k]).collect(),
+                )
+            } else {
+                (
+                    vec![main[V1_PI_COUNT]; SEG_ANCHOR_WIDTH],
+                    vec![main[V1_PI_COUNT + 1]; SEG_ANCHOR_WIDTH],
+                )
+            };
+        let count = cb.define_const(RecursionChallenge::ONE);
+        let mut acc_inputs = Vec::with_capacity(2 * SEG_ANCHOR_WIDTH);
+        acc_inputs.extend_from_slice(&first_old8);
+        acc_inputs.extend_from_slice(&last_new8);
+        let acc = seg_poseidon_commit(cb, &acc_inputs);
+        let mut claim = Vec::with_capacity(SEG_WIDTH + total_claim_len);
+        claim.extend_from_slice(&first_old8);
+        claim.extend_from_slice(&last_new8);
+        claim.push(count);
+        claim.extend_from_slice(&acc);
+        debug_assert_eq!(claim.len(), SEG_WIDTH);
+        // -- Each CLAIM slice (in order), read from the leaf's own FRI-bound descriptor PIs.
+        for &(lo, len) in &claims {
+            for k in 0..len {
+                claim.push(main[lo + k]);
+            }
+        }
+        debug_assert_eq!(claim.len(), SEG_WIDTH + total_claim_len);
+        cb.expose_as_public_output(&claim);
+    };
+
+    prove_recursion_layer_auto_with_expose(&input, config, Some(&expose))
+        .map_err(|e| format!("rotated multi-claim dual-expose leaf-wrap failed: {e}"))
+}
+
 // ============================================================================
 // The whole-chain IVC artifact (K-fold).
 // ============================================================================
