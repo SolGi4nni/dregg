@@ -74,19 +74,23 @@ ExecStart=%h/dev/breadstuffs/target/release/dreggnet-web-server
 Restart=always
 RestartSec=5
 
-# Security hardening (user-unit-safe subset — no ProtectHome, the binary + sqlite
-# db both live under $HOME).
+# Security hardening — DISABLED on hbox, honestly (discovered 2026-07-17 via the
+# kubo unit): hbox's user manager cannot apply this sandboxing set ("Failed to
+# drop capabilities ... status=218/CAPABILITIES"), and the INSTALLED copy of this
+# very unit runs with the whole block commented out — this repo copy previously
+# showed the aspirational set, which is exactly the repo-vs-box drift we hunt.
+# Keep NoNewPrivileges (works everywhere); re-enable the rest only after
+# observing them start ON THE BOX. Note: without ProtectSystem=strict the
+# ReadWritePaths lines are inert; the session store needs only
+# `mkdir -p ~/dregg-games/sessions` (DREGGNET_WEB_SESSION_DIR).
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=%h/.local/state/dregg-games
-# The session move-log store (DREGGNET_WEB_SESSION_DIR) — must be writable under
-# ProtectSystem=strict or the store degrades to in-memory. `-` = ignore if the
-# directory is missing (create it first: mkdir -p ~/dregg-games/sessions).
-ReadWritePaths=-%h/dregg-games
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
+#hbox ProtectSystem=strict
+#hbox ReadWritePaths=%h/.local/state/dregg-games
+#hbox ReadWritePaths=-%h/dregg-games
+#hbox PrivateTmp=true
+#hbox ProtectKernelTunables=true
+#hbox ProtectKernelModules=true
+#hbox ProtectControlGroups=true
 
 # Resource limits — the games server is a thin in-process web app; bound it well
 # below hbox's capacity so it can never starve the co-resident :8420 node / builds.

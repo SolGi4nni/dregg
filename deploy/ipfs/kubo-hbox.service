@@ -51,16 +51,21 @@ ExecStart=%h/.local/bin/ipfs daemon --migrate=false --enable-gc
 Restart=always
 RestartSec=5
 
-# Security hardening (user-unit-safe subset, mirroring
-# deploy/games/dregg-web-games-funnel.service — no ProtectHome, the binary and the
-# repo both live under $HOME).
+# Security hardening — DISABLED on hbox, deliberately and honestly: hbox's user
+# manager cannot apply the sandboxing set (ProtectKernel*/ProtectControlGroups/
+# ProtectSystem imply capability drops a user unit can't perform there —
+# "Failed to drop capabilities ... status=218/CAPABILITIES" on first start, and
+# the games-funnel unit's installed copy has the same block commented out for
+# the same reason; the repo copy of that unit still shows the aspirational set,
+# a drift this banner refuses to repeat). Keep NoNewPrivileges (works
+# everywhere); re-enable the rest only after observing them start ON THE BOX.
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=%h/dregg-ipfs
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
+#hbox ProtectSystem=strict
+#hbox ReadWritePaths=%h/dregg-ipfs
+#hbox PrivateTmp=true
+#hbox ProtectKernelTunables=true
+#hbox ProtectKernelModules=true
+#hbox ProtectControlGroups=true
 
 # Resource limits — kubo is a well-behaved but chatty p2p daemon; bound it well below
 # hbox's capacity so it can never starve the co-resident builds/prover/HOL job. The
