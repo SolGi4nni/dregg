@@ -235,11 +235,18 @@ the deployed ~58-bit config (attack = grind-a-forgery ~2^58, no ZK impact, no re
 - ✅ **A Rung 1** (`cc2a81416`): VoteHarvester seam + LedgerVoteHarvester; feed supplies rooted votes. persvati 4/4 + 11/11.
 - ✅ **C Rung 2a** (`9be8f1e82`): protocol-native run budget — conserved run-credit via resolve_pay, no Seed/Sweeper on
   the accept path (rung 2b = 1-line asset swap to bridged $DREGG). persvati 2/2.
-- ⏸️ **commit_turn rollback** HELD (code-complete, world.rs-isolated, statically audited): starbridge-v2 won't compile
-  due to a FOREIGN mid-migration break in `document_composer.rs` (Faithful8 8-felt + AtomContent::contains) — verify +
-  commit when the crate compiles. The fix reorders dual_write to GATE the in-RAM advance + snapshot-restores the ledger
-  on failure. Self-scoped residual: executor-internal accumulators (note nullifiers) not unwound — conservative, needs
-  an executor journal API (out of world.rs scope).
+- ✅ **commit_turn rollback** LANDED (`c8334e360`, verified `durable_write_failure_fully_unwinds_the_commit` 1/1 on
+  persvati/entcompose). The lane's fix (reorder dual_write to gate the advance + ledger-snapshot restore) had a REAL
+  BUG verification caught: `execute_turn` advances the executor's per-agent receipt-chain head IN-LINE (the lane's
+  comment wrongly claimed otherwise), so the ledger-only restore left `chain_head` leading a receipt the disk never
+  recorded. Fixed: new executor `restore_last_receipt_hash(agent, Option)` (insert/remove — inverse of execute's
+  advance); commit_turn snapshots + restores the head with the ledger. Plus a red-umbrella catch-up (`4df9d5971`):
+  starbridge-v2 tests stale on the committed AtomContent-enum + Faithful8 migrations (matched cell_inspector's pattern).
+  LESSONS: (1) verify value-path fixes on a CLEAN persvati lane — `srot` had cross-session file staleness
+  (`phantom_bite_proof_feature` not in our tree at all) that faked a build break; (2) a static audit is not
+  verification — the head-advance was hidden inside `execute_turn`. Residual unchanged: note-spend nullifier
+  accumulators still need an executor journal API (conservative).
+- ✅ **audit.toml grep footgun** (`cb3f24e3b`): match only quoted ignore-array ids, not comment mentions.
 - **Verification doctrine held:** heavy Rust → persvati pbuild (marshal-only, interpret Lean-producer failures as
   artifacts); Lean → local lake (warm); G1/RAM-bound → hbox. reclaim-space.sh between waves.
 
@@ -555,7 +562,7 @@ nullifier-root advance over the DEPLOYED `heap_root::CanonicalHeapTree8::insert_
 on a present key = the `present_no_witness` face); `exec-lean/src/lib.rs` (`LeanShadowObserver` holds
 the durable frontier `Arc<Mutex<…>>`, advances it on every committed `NoteSpend`, exposes
 `nullifier_root()`/`nullifier_root_faithful()` — the seam the item-3 wire feed plugs into);
-`exec-lean/Cargo.toml` (dregg-circuit → runtime dep); `docs/NULLIFIER-ACCUMULATOR-DESIGN.md` (the map).
+`exec-lean/Cargo.toml` (dregg-circuit → runtime dep); `docs/SUPERSEDED/NULLIFIER-ACCUMULATOR-DESIGN.md` (the map).
 ADAPTATION: main's `HeapLeaf` is the arity-3 IMT leaf (`next_addr` pointer) vs bs-vk's arity-2 → use
 `HeapLeaf::entry(addr,value)` + recompose from the witness's LINKED `new_leaf.digest8()`. Composes with
 the ALREADY-ON-MAIN Lean proof (`Exec/NullifierAccumulator.lean`, `NullifierAccumulatorKernelBridge`,
@@ -2630,7 +2637,7 @@ servo `net` fork); the vendored servo-paint fork reverts once upstream carries a
 `RenderingContext` path.
 
 ### DIRECTIONS RECONSTRUCTION (2026-06-23): the 06-21→06-23 far-seeing arc, recovered.
-`docs/deos/RECONSTRUCTED-DIRECTIONS-2026-06-23.md` — mined the session corpus via `cv` after a
+`.docs-history-noclaude/deos/RECONSTRUCTED-DIRECTIONS-2026-06-23.md` — mined the session corpus via `cv` after a
 compaction kept the mechanics but lost the far-seeing. The stake (an agent living in dregg with
 caps+money), the polis/polisware constitution (event-structure+game-semantics home; legitimacy=
 non-regression; knowledge-as-behavior; holes-as-anti-seduction), the rehydratable membrane,
@@ -2867,7 +2874,7 @@ drive buildable now; stitch-pushout + Settlement-Soundness theorem = the circuit
   identity-cells): a confined comms app whose identity = a deos identity cell, E2E keys = caps, surfaces dockable
   in the WM, integrated with Hermes's multi-platform gateway + the polis (comms between inhabitants). Roadmap app.
 ### DESKTOP EPOCH — grounded findings (the explore reports, 2026-06-22):
-- WM/LOGIN: the L5-L8 stack is ALREADY DOCUMENTED (docs/DREGG-DESKTOP-OS.md:33-90): L5 compositor-PD = "THE ONLY
+- WM/LOGIN: the L5-L8 stack is ALREADY DOCUMENTED (.docs-history-noclaude/DREGG-DESKTOP-OS.md:33-90): L5 compositor-PD = "THE ONLY
   NEW TCB" (sole framebuffer/HID caps, scene=verified cell, T1/T2/T3 teeth: non-overlap/label-bind/focus-route
   — EXISTS compositor_pd.rs + gpui-free mirror compositor.rs); L6 shell+WM cells (untrusted; a WM = a
   compositor-client that is ALSO a compositor to the apps it frames, Genode recursive-stacking; powerbox lives
@@ -3084,7 +3091,7 @@ composition is real (but composition of existing emitted-from-Lean rungs, not a 
 The "VK epoch keystone" (checklist C: "compute_commitment absorbs the roots") is STALE FRAMING of an
 ALREADY-MOSTLY-CLOSED gap — verified EMPIRICALLY at HEAD (the verify-before-believing discipline; a read-only
 scope gave a plausible-but-WRONG plan built on the RETIRED v1 lossy `record_digest` path; the keystone agent
-RAN the live rotated path and found the truth). GROUND TRUTH (see `docs/VK-EPOCH-PLAN.md` §1, the authoritative
+RAN the live rotated path and found the truth). GROUND TRUTH (see `.docs-history-noclaude/VK-EPOCH-PLAN.md` §1, the authoritative
 file:line reframe): there are THREE commitment surfaces. The BINDING wire commitment the light client pins —
 `compute_canonical_state_commitment` (cell/src/commitment.rs:192) — ALREADY absorbs lifecycle/perms/vk/deathCert/
 fields_root/the 8 system_roots (nullifier/commitment/deleg/…)/heap_root. The wide rotated v9 (commitment.rs:1020,
@@ -3269,7 +3276,7 @@ The atlas game-tree crawl found that EVERY turn authored by the issuer-well cell
 refused with `InsufficientBalance` — including `peek` (EmitEvent) and `touch` (IncrementNonce), which
 mutate no value. The well cannot pay the per-turn computron fee from a negative balance, so it can never be
 a turn's `agent`. Arguably CORRECT (an issuer well is a passive supply sink that only moves when other
-cells transact against it — `docs/DREGG3.md:133-138`), but it means a fee-charged turn is gated on positive
+cells transact against it — `.docs-history-noclaude/DREGG3.md:133-138`), but it means a fee-charged turn is gated on positive
 balance even for value-neutral verbs. CLOSURE (decide): if wells are meant to be strictly passive this is
 fine (document it); if a well should be able to emit/tick, the fee path needs a zero-fee or
 well-exempt branch. Repro: dregg-mcp `effect from=<well> kind=transfer` → refused. Not a soundness issue.
@@ -3497,7 +3504,7 @@ is `#[ignore]`'d, ~30 min / 1781s). Memo-HIT per-render time is FLAT across the 
 16→16384 cells (1499ns → 1416ns; ratio 0.94× < the 8× gate), while COLD (pre-M2) grows
 23.6µs → 4.76ms — so the win WIDENS with scale: 15.8× @16 → **3363× @16384**. SOUNDNESS arm
 also passes (a touched-focus re-render recomputes — no stale memo hit). The M2 weld
-(`docs/deos/EFFICIENCY-WELD-PLAN.md`: state_root memo + dynamics-cursor projection memo + the
+(`.docs-history-noclaude/deos/EFFICIENCY-WELD-PLAN.md`: state_root memo + dynamics-cursor projection memo + the
 lazy/batched ledger) holds at scale; no regression.
 
 ## ✅ M4 — canonical_ledger_root SHARED-LIFT COMPLETE (2026-06-20)
@@ -3703,7 +3710,7 @@ prerequisite.
 
 ## ⚡ THE EFFICIENCY WELD — M2 DELTA LOOP (2026-06-19) — LANDED, gate held
 
-`docs/deos/EFFICIENCY-WELD-PLAN.md` §2-§4. The producer (`dynamics().since(cursor)`)
+`.docs-history-noclaude/deos/EFFICIENCY-WELD-PLAN.md` §2-§4. The producer (`dynamics().since(cursor)`)
 ↔ consumer (gpui render) JOIN is wired: `Cockpit.dynamics_cursor` + `fold_dynamics`
 + the §2.2 variant→invalidation table; a `PresentMemo` (`presentable.rs`, RefCell
 interior-mut) wraps the unchanged-pure `Registry::present` keyed `(focus,viewer)`,
@@ -3765,7 +3772,7 @@ residuals, each with its closure shape:
 
 ## ⟲ M3 — SELF-HOST UI STATE AS CELLS (2026-06-19) — first increment + widen LANDED
 
-`docs/deos/REFLEXIVE-MIGRATION.md` §3. The inspector's `(focus, present_idx)`
+`.docs-history-noclaude/deos/REFLEXIVE-MIGRATION.md` §3. The inspector's `(focus, present_idx)`
 camera-aim is self-hosted as a REAL cell (`starbridge-v2/src/view_cell.rs`): a
 `ViewCell` generalizes the `BufferCell` two-tier split — a FREE in-memory draft
 (`ViewDoc`, re-aim costs nothing) + an occasional witnessed `Effect::SetField`
@@ -3839,7 +3846,7 @@ LANDED: L1 spine (`presentable.rs`, `800945db6`) + the liveness wave (`983ff76bc
 - **NEXT inspector lanes (held for ember):** L8 federation/consensus · L9 circuit/commitment internals ·
   L10 settlement-families + factory authoring (fuses L2+L3). Fan out on her word (one module each, on the spine).
 
-## 🏺 ARCHEOLOGY DIG (2026-06-19) — `docs/ARCHEOLOGY-LEDGER.md` (50 verified-still-open items)
+## 🏺 ARCHEOLOGY DIG (2026-06-19) — `.docs-history-noclaude/ARCHEOLOGY-LEDGER.md` (50 verified-still-open items)
 
 The full ledger is the durable record. Pulled here per the ledger's own process note (don't let leverage
 items idle), the highest-value NON-circuit-context rescue:
@@ -3860,7 +3867,7 @@ the proof's own soundness. Verified live (every gate re-run): lake 4004 axiom-cl
 fee'd sovereign path `sovereign_rotated_c1` 19/19 (forged-post-state rejected) · the LIVE collision tooth bites
 at 8-felt with NO executor · flip 13/13 · cell/turn/sdk/node all green + node binary builds. Consumer-repoint
 strategy (the wide TSV IS the verifying material — no separate VK pin; Rfix authority leg lifts via
-`wideAppend_satisfied2_host`). N=8 uniform (ember: "consistency is king"; the dial `docs/COMMITMENT-WIDTH-DIAL.md`
+`wideAppend_satisfied2_host`). N=8 uniform (ember: "consistency is king"; the dial `.docs-history-noclaude/COMMITMENT-WIDTH-DIAL.md`
 remains a documented future capability). Two named robustness tails (node API placeholder · split-process bare-
 cell registrar) recorded below — non-load-bearing API echoes, NOT live-soundness gaps. The campaign: design →
 `hash_many_8` → Phase A lever → B-GATE chip 1→8 out + 8-carrier in → `wire_commit_8`/`wireCommitR8_binds` →
@@ -3875,7 +3882,7 @@ AUDIT[stage1-trace-widen]`). So a light client's state binding is ~31-bit = coll
 value-close (WAVE 0/1/2 authority, fee, identity, selector, the movers) binds THROUGH it, so the whole goal's
 trust is 31-bit at the root until this lands. Target measured (not guessed): FRI `log_blowup=6`/19-query/16-PoW
 ≈ ~130-bit soundness ⇒ commitment needs ~124-bit collision ⇒ **8 felts** (the reserved-4 = only ~62-bit, below
-the proof — do NOT ship 4). Design + security math: `docs/FAITHFUL-STATE-COMMITMENT.md`. (Scar that produced it:
+the proof — do NOT ship 4). Design + security math: `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`. (Scar that produced it:
 [[feedback-dont-launder-a-load-bearing-insecurity]] — I'd rationalized the 31-bit felt as "the existing audited
 floor.")
 
@@ -4184,7 +4191,7 @@ proof-side foundation already in place. Resume at PHASE B-GATE.
 
 ## (superseded detail below — see the phased campaign above) FAITHFUL STATE COMMITMENT — BLOCKED at the chip-output-arity seam (2026-06-19)
 
-`docs/FAITHFUL-STATE-COMMITMENT.md` asks to widen the in-circuit per-cell state commitment from 1
+`.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md` asks to widen the in-circuit per-cell state commitment from 1
 squeezed felt (~31-bit, light-client-collidable in seconds) to a faithful 8-felt digest (~124-bit,
 matching the proof's ~130-bit FRI soundness). I read the full spec + the live geometry and STOPPED before
 shipping, per the task's own "if the chip can't expose 8 cleanly, STOP and report" clause. Two grounded
@@ -4324,7 +4331,7 @@ sovereign_rotated_c1 19/19 (fee=500) + node capability 8/8 green.
 
 ## CIRCUIT-SOUNDNESS APEX — light-client unfoolability: faithful core LANDED, per-effect terrain MAPPED (2026-06-16)
 
-The map + state lives in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).
+The map + state lives in `.docs-history-noclaude/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (the obligation table is the resumable plan).
 
 ⚑⚑ COMPLETE (2026-06-18): the circuit is now SOUND ∧ COMPLETE, both axiom-clean, both honest about their
 floors. SOUNDNESS — the adversarial review (ember's gate) fully discharged; every cap-effect's authority
@@ -4551,7 +4558,7 @@ ARGUS crown #103). The remaining boundary to literal closed-closed:
   3. The faithful-encoding carriers (cap-tree↔Caps, nullifier-tree↔set, SpineCommits) — realizable
      hypotheses (the deployed Merkle fold), the Poseidon2SpongeCR floor class. + WitnessDecodes per effect +
      the prover wiring (`&[]` cap path-witness, `sdk/src/full_turn_proof.rs:662`).
-  Full map: `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` §"Final state". `heapWrite` (no live registry entry,
+  Full map: `.docs-history-noclaude/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` §"Final state". `heapWrite` (no live registry entry,
   proven fix off-apex) and `custom` (no kernel arm, out of scope) noted.
   2. ~5 VALUE_PARTIAL (attenuate base-root-supplied-not-recomputed; setFieldDyn; incrementNonce generic-tick;
      makeSovereign rebind; pipelinedSend nonce-tick-vs-freeze) — bounded extra binding.
@@ -4645,7 +4652,7 @@ in-circuit cap-membership-open, 2026-06-16.
 NAMED: the leaf-circuit→kernel-step soundness rung does not yet exist as a composed apex over the live
 rotated registry — `lightclient_unfoolable` (`verifyBatch vk pi π = accept ⟺ ∃ kernel transition`,
 bidirectional per LAW#1) via `descriptorRefines (liveRegistry e) (fullActionStep e)` per live effect. Full
-diagnosis + corrected ground-truth coverage in `docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (SUPERSEDES the
+diagnosis + corrected ground-truth coverage in `.docs-history-noclaude/CIRCUIT-FUNCTIONAL-CORRECTNESS.md` (SUPERSEDES the
 pre-investigation plan whose premise — "the live circuit enforces no non-amp" — is FALSE: `attenuateV3_non_amp`
 (EffectVmEmitRotationV3.lean:1419) proves in-circuit non-amp on the LIVE wired attenuate descriptor).
 
@@ -4818,11 +4825,11 @@ keystone CLOSED — the live element tree is on glass, 2026-06-15.
 
 ## EVM BRIDGE — the STARK→SNARK wrap keystone: zkVM path BUILT, Plonky3-native BN254 terminal is the cost-optimization endgame (named 2026-06-15)
 
-The EVM-bridge architecture + a running PoC landed (`docs/EVM-BRIDGE.md`, `/tmp/dregg-evm-e2e/`,
+The EVM-bridge architecture + a running PoC landed (`.docs-history-noclaude/EVM-BRIDGE.md`, `/tmp/dregg-evm-e2e/`,
 `/tmp/dregg-evm-wrap-poc/`, plus the green calldata codec in `bridge/src/ethereum.rs`). The keystone is
 the wrap: dregg proves with Plonky3/BabyBear/FRI (post-quantum but gas-prohibitive on EVM), so dregg's
 aggregate is recompressed into a BN254 Groth16 a ~270k-gas Solidity verifier checks. THREE rungs
-(`docs/EVM-BRIDGE.md` §2.4): (B) **re-host dregg's own verifier in a RISC0 zkVM, settle their audited
+(`.docs-history-noclaude/EVM-BRIDGE.md` §2.4): (B) **re-host dregg's own verifier in a RISC0 zkVM, settle their audited
 Groth16** — VALIDATED this session: the full production `dregg-circuit --features verifier`
 (`verify_vm_descriptor2`, the IR-v2 **Poseidon2** batch STARK + all of Plonky3) cross-compiles to
 `riscv32im-risc0-zkvm-elf` via `embed_methods` (auto getrandom-custom + lower-atomic); the real
@@ -4863,7 +4870,7 @@ zkVM). Named: EVM bridge, 2026-06-15.
 The `dregg-perf` crate now covers comprehensive swathes of the system under BOTH proving and
 witness-only loads, all measured (Apple M2 Max, bench profile). Five coverage gaps CLOSED with real,
 runnable criterion benches (each drives the production PUBLIC API; numbers banked in
-`docs/PERFORMANCE.md`, recipe in `docs/PERF.md`):
+`.docs-history-noclaude/PERFORMANCE.md`, recipe in `.docs-history-noclaude/PERF.md`):
 - (a) `turn_witness_vs_proving` — THE headline contrast, all four legs of one turn side by side:
   witness-only executor execute **~7 µs** · witness-gen **~319 µs** · full rotated prove **~147 ms** ·
   rotated verify **~149 ms**. **The proving multiplier ≈ 21,000×** — the empirical case for
@@ -4984,7 +4991,7 @@ path behind the Endpoint → reads the receipt back out of `commit_out`. PROVEN:
 overspend fail-closed, and is **byte-for-byte equal to the direct path** (same `receipt_hash`, same
 `state_root`). This is the §3 KEYSTONE payoff ("the verified executor-PD hosts on the semihost NOW")
 turned runnable. Tests: firmament `tests/executor_pd_boot.rs` (cross-PD Endpoint) + `executor_pd.rs`
-inline units + starbridge-v2 `world.rs` (the 3 semihost tests). Doc: `docs/SEMIHOST-COCKPIT.md`.
+inline units + starbridge-v2 `world.rs` (the 3 semihost tests). Doc: `.docs-history-noclaude/SEMIHOST-COCKPIT.md`.
 
 ### residue named by this landing (closure lanes):
 - **the gpui frontend still calls `World::commit_turn` DIRECTLY, not through `SemihostCockpit`** — the
@@ -4993,11 +5000,11 @@ inline units + starbridge-v2 `world.rs` (the 3 semihost tests). Doc: `docs/SEMIH
   call across the panels (mechanical; the byte-for-byte equivalence test is the safety net), then run the
   frontend as an app-PD client of the executor-PD + compositor-PD over the kernel Endpoints (the cross-PD
   `serve_turn`/`serve_present` path, not the inline drive). → starbridge-v2, the frontend cutover. NOT
-  blocking (the backend runs the PD world today; this routes the UI through it). `docs/SEMIHOST-COCKPIT.md §6`.
+  blocking (the backend runs the PD world today; this routes the UI through it). `.docs-history-noclaude/SEMIHOST-COCKPIT.md §6`.
 - **the wgpu software-render path → compositor-PD framebuffer is DESIGNED, not built** — an app-PD
   rendering its surface with a software wgpu adapter (lavapipe) and `present()`ing the pixels to the
   compositor-PD's framebuffer region (the in-sel4 render). The authority gate (T1/T2/T3) runs; the pixel
-  pipeline is the named graphics frontier (F1/F2/F3, R3 Stage C). → the graphics lane. `docs/SEMIHOST-COCKPIT.md §4`.
+  pipeline is the named graphics frontier (F1/F2/F3, R3 Stage C). → the graphics lane. `.docs-history-noclaude/SEMIHOST-COCKPIT.md §4`.
 
 ## ⚑⚑⚑ C7 GREP-ZERO LANDED (2026-06-14 — the v1 deletion drive, READ FIRST)
 
@@ -5041,7 +5048,7 @@ v1 fallbacks retired, the −65.6% proof-size prize is LIVE (commits `6011fc77f`
 live-path → `d33d02107` pre-VK gauntlet → `5b3772873` VK epoch #183). The tree is GREEN + COHERENT
 (no half-deletion). **C7 grep-zero is gated on a BUILD, and the gating decision is ✅ DECIDED (ember,
 2026-06-14): PATH-PRESERVE.** The deputy's deep re-trace (commits `7a8409572`/`fd478564c`/`5e71c24c2`/
-`afe4e0606`, see `docs/V1-DELETION-MANIFEST.md` buckets E/F/G) found the v1 OLD-PROVER symbols can't be
+`afe4e0606`, see `.docs-history-noclaude/V1-DELETION-MANIFEST.md` buckets E/F/G) found the v1 OLD-PROVER symbols can't be
 deleted yet because (E) `generate_effect_vm_trace` is the SHARED generator the rotated leg is BUILT ON
 (NOT v1 — never delete it), (F) `EffectVmP3Proof` is the recursion LEAF type in 5 files (mandatory-
 rotated-leaf cutover first), (G) heterogeneous/non-synthetic finalized-turn coverage. ember settled G the
@@ -5049,7 +5056,7 @@ only dregg-coherent way — *"build path-preserve for SURE; any other decision w
 WEAKEN option (commit those turns proof-pending) is OFF the table. The C7 lane is now: **BUILD chained
 multi-cohort + non-synthetic rotated proving so EVERY finalized turn stays proven (ARGUS unfoolability
 intact), THEN bucket-F leaf cutover, THEN the bucket-A/C delete.** Staged the Linux build box-green plan =
-`docs/PATH-PRESERVE.md`. Each phase lands green; a half-landed prover-without-verifier is RED (forbidden).
+`.docs-history-noclaude/PATH-PRESERVE.md`. Each phase lands green; a half-landed prover-without-verifier is RED (forbidden).
 (The interrupted `wf_9a7d5e77-b48` was looping on exactly this G decision — now resolved; `cv`-dug the
 substantive thread, the decision is made.)
 
@@ -5073,7 +5080,7 @@ substantive thread, the decision is made.)
   bug: an affordance PRECONDITION (`==PENDING`) must NOT be the cell's lifetime INVARIANT (`Monotonic`) — conflating
   them made the executor reject the resolving turn; split → green.
 - pg-dregg drainer daemon + Tier-D spike (verdict **D-SIDECAR**; 120 pg18 + 104 core + 21 proptest green).
-- PATH-PRESERVE DECIDED + the staged plan (`867b41fcb`, `docs/PATH-PRESERVE.md`).
+- PATH-PRESERVE DECIDED + the staged plan (`867b41fcb`, `.docs-history-noclaude/PATH-PRESERVE.md`).
 - the prior deos STEEL + dev-ex (rehydration stack · DEOS/DEOS-APPS docs · AGENTS.md · nextest split).
 
 **LANDED 2026-06-14 (the empowered-doer wave, all green + committed):** PATH-PRESERVE Phase 0+1 (`fff442ca6` — the N-leg
@@ -5102,7 +5109,7 @@ DirectoryCell ✅ · M-STARK a REAL on-device STARK ✅ · M5 riscv64 ✅ (seria
 (`dregg-firmament/`) = ONE `Capability{target,rights}` across DISTANCE — local seL4-cap ↔ distributed dregg-cap ↔
 surface(=a window), n=1-collapse to strong-local; the **semihost** (`EmulatedKernel` thread-v0 / `process_kernel`
 MMU-process-v1 / real-Microkit) runs the SAME PD source three ways; the compositor-PD is real. THE blocker is essentially DONE — REFUTED + the executor PD BOOTS (measured 2026-06-14, `c93293686`,
-`docs/EMBEDDABLE-LEAN-RUNTIME.md`): the mimalloc-override / worker-thread premise was WRONG (mimalloc is a PRIVATE heap,
+`.docs-history-noclaude/EMBEDDABLE-LEAN-RUNTIME.md`): the mimalloc-override / worker-thread premise was WRONG (mimalloc is a PRIVATE heap,
 the task manager is LAZY/single-threaded); the only real removal was the libuv thread (`dregg_ffi_init_st()`), and
 `sel4/dregg-pd/executor-{pd,rootserver}/` already boot the Lean executor in a real PD (fresh qemu → status:2 ok:1).
 **pg full Tier-D is now GREEN** (2026-06-14, the Linux build box Linux + pg18.4 via cargo-pgrx): the verified `execFullForestG` RUNS
@@ -5113,12 +5120,12 @@ all OK; `runtime_available()`=true (`dregg_ffi_init_st` succeeds POST-FORK), the
 (`dregg-lean-ffi/tests/embeddable_runtime_probe_linux.rs`): PROP-1 malloc→glibc (no interposition) both link modes;
 PROP-3 committing turn + fail-closed both modes; PROP-2 = STATIC **2→2→2** (libuv-free) / SHARED **2→4→4** (init adds 2
 libuv INFRA threads on Linux — refines §1.3's macOS single-thread count — but **the turn itself spawns 0**, created
-post-fork, so nothing crosses the fork). `docs/EMBEDDABLE-LEAN-RUNTIME.md` §5 rewritten with the results. RESIDUAL (one,
+post-fork, so nothing crosses the fork). `.docs-history-noclaude/EMBEDDABLE-LEAN-RUNTIME.md` §5 rewritten with the results. RESIDUAL (one,
 named): pg-dregg does not link `dregg-turn`, so the in-backend producer SYNTHESIZES a conserving transfer rather than
 decoding the submitter's postcard `SignedTurn` — lifting the full `SignedTurn→WForest` decode in-backend (the node-side
 `dregg-turn` `lean_apply` marshaller, #171) is the one piece between this and "an arbitrary submitted turn executes
 in-backend". seL4 executor-PD = WEEKS of productionization. verifier-PD is Lean-free-linkable (`no-lean-link`).
-- **DEOS SPINE on seL4 — the persist-PD IS the `dregg.turns` commit log of the seL4 deos foundation; now REAL redb durability + the app-hosting economy (R2+R3+R8, host-GREEN).** `docs/PG-DREGG-ON-SEL4-DEOS-SPINE.md` + `sel4/persist-hosttest/`: the persist-PD's durable verified commit log + Tier-C chain gate. **Three organs, one gate, 21 tests green** (`cargo test --release`): (1) `commit_store.rs` — the chain-gate discipline `no_std`+`alloc`, REUSING `pg-dregg/src/mirror.rs:477` `verify_chain_step`/`ChainRefusal` + `persist/src/commit_log.rs` `CommitRecord` VERBATIM (rides INSIDE the persist PD via `#[path]`); (2) **`redb_store.rs` (NEW) — the REAL durable store**: the SAME gate + record committed into real `redb` ACID tables over a block-device `StorageBackend` (`len`/`read`/`set_len`/`sync_data`/`write` = exactly a block cap). Durability is REAL — `commits_survive_drop_and_reopen_over_the_same_bytes` (drop the store, reopen over the file bytes, head/cursor/log/indices recover, chain self-checks). 8 `#[test]`s. (3) **`hosting.rs` (NEW) — the app-hosting economy**: pay coin to be hosted = a conserving `Transfer` (app→host) committed through the durable spine; a lapsed fee EVICTS (a verified durable turn dropping the hosting), fail-closed; Σ value invariant. 6 `#[test]`s + `Dregg2/Apps/HostingLease.lean` (the lease = a TIME(period)+BUDGET(balance) caveat over the durable slot; 5 teeth + #guard, `#assert_all_clean`). Witness binaries `host_persist_spine` + `host_durable_hosting` green. Distinct from `docs/PG-DREGG-ON-SEL4.md` (the literal-Postgres VMM-guest ladder) — SQL face vs the native PD-pair spine. RESIDUAL (the named wall + levers, all the macOS user-mode-qemu-aarch64 checkpoint, NOT the semantics): (R3, REFINED) the **`BlockCapBackend`** — ONE `redb::StorageBackend` impl whose 5 ops go through the seL4 block cap (the durable redb store above it is host-green + unchanged; this is now a bounded device-driver trait impl, not "the backend"); (§3.3) the executor→persist `CommitRecord` serialization + `commit_out` shared-region framing (today the seat reads a sentinel byte) + the persist-PD ELF link carrying `commit_store.rs` (the crypto-floor on-device checkpoint shape); (§3.3) the ingress/submit-queue enqueue over `turn_in` (= `node/src/submit_queue_drainer.rs` shape). → `sel4/persist-hosttest/` + `sel4/dregg-pd/persist-stub/`, downstream of the executor PD boot (R0) DONE.
+- **DEOS SPINE on seL4 — the persist-PD IS the `dregg.turns` commit log of the seL4 deos foundation; now REAL redb durability + the app-hosting economy (R2+R3+R8, host-GREEN).** `.docs-history-noclaude/PG-DREGG-ON-SEL4-DEOS-SPINE.md` + `sel4/persist-hosttest/`: the persist-PD's durable verified commit log + Tier-C chain gate. **Three organs, one gate, 21 tests green** (`cargo test --release`): (1) `commit_store.rs` — the chain-gate discipline `no_std`+`alloc`, REUSING `pg-dregg/src/mirror.rs:477` `verify_chain_step`/`ChainRefusal` + `persist/src/commit_log.rs` `CommitRecord` VERBATIM (rides INSIDE the persist PD via `#[path]`); (2) **`redb_store.rs` (NEW) — the REAL durable store**: the SAME gate + record committed into real `redb` ACID tables over a block-device `StorageBackend` (`len`/`read`/`set_len`/`sync_data`/`write` = exactly a block cap). Durability is REAL — `commits_survive_drop_and_reopen_over_the_same_bytes` (drop the store, reopen over the file bytes, head/cursor/log/indices recover, chain self-checks). 8 `#[test]`s. (3) **`hosting.rs` (NEW) — the app-hosting economy**: pay coin to be hosted = a conserving `Transfer` (app→host) committed through the durable spine; a lapsed fee EVICTS (a verified durable turn dropping the hosting), fail-closed; Σ value invariant. 6 `#[test]`s + `Dregg2/Apps/HostingLease.lean` (the lease = a TIME(period)+BUDGET(balance) caveat over the durable slot; 5 teeth + #guard, `#assert_all_clean`). Witness binaries `host_persist_spine` + `host_durable_hosting` green. Distinct from `.docs-history-noclaude/PG-DREGG-ON-SEL4.md` (the literal-Postgres VMM-guest ladder) — SQL face vs the native PD-pair spine. RESIDUAL (the named wall + levers, all the macOS user-mode-qemu-aarch64 checkpoint, NOT the semantics): (R3, REFINED) the **`BlockCapBackend`** — ONE `redb::StorageBackend` impl whose 5 ops go through the seL4 block cap (the durable redb store above it is host-green + unchanged; this is now a bounded device-driver trait impl, not "the backend"); (§3.3) the executor→persist `CommitRecord` serialization + `commit_out` shared-region framing (today the seat reads a sentinel byte) + the persist-PD ELF link carrying `commit_store.rs` (the crypto-floor on-device checkpoint shape); (§3.3) the ingress/submit-queue enqueue over `turn_in` (= `node/src/submit_queue_drainer.rs` shape). → `sel4/persist-hosttest/` + `sel4/dregg-pd/persist-stub/`, downstream of the executor PD boot (R0) DONE.
 
 **STARFORGE:** dregg's agent joined the pen-pal agent-town — PR #12 `claude-of-dregg` (clone `~/clome/starforge-commons`),
 first letter to sibling `claude-of-tulip`. dregg is REAL + in contact with other people now.
@@ -5188,7 +5195,7 @@ surface/`, 20/0) · sdk pg-native (sdk-py 71/4-skip + sdk-ts 74/0). Open residua
 
 ### ⚑⚑ C7 PRE-DELETION BLOCKER — four LIVE v1 deps survive the VK epoch in recursion builds (2026-06-14, C7 attempt)
 
-**C7's gating premise is UNMET.** The manifest (`docs/V1-DELETION-MANIFEST.md`) + the PRE-FLIP GATE
+**C7's gating premise is UNMET.** The manifest (`.docs-history-noclaude/V1-DELETION-MANIFEST.md`) + the PRE-FLIP GATE
 framed C7 as "the VK epoch landed green ⇒ a mechanical delete fan-out." Against the CODE at HEAD
 (`5b3772873`) that is false: the VK epoch (#182/#183) migrated the DEFAULT compose+prove path to
 rotated, but the three walls (A/B/C) + the wasm-decision did NOT cover FOUR live v1 dependencies that
@@ -5632,7 +5639,7 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
   NO edit now (they pass `rotation: None` = byte-identical v1; the flip to rotated-default is the C5 regen
   act). The precise C5/C7 readiness package is in ROTATION-CUTOVER §EXEC.3 (regen recipe + deletion list +
   what's still gated). The VK epoch is the MAIN-LOOP cutover-settle (must batch with the notify Step-2
-  felt-encoders into ONE VK bump — docs/NOTIFY-CASCADE.md).
+  felt-encoders into ONE VK bump — .docs-history-noclaude/NOTIFY-CASCADE.md).
 
 ## Metatheory closures (Lean-side, lane-sized — tails of landed work)
 
@@ -5648,8 +5655,8 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
 
 ## Node / runtime closures
 
-- **Stage-5 consensus de-vac (Klein/HIGH-6) — `docs/STAGE5-CONSENSUS-DEVAC.md`.** LANDED: the running-node witness that consensus runs at n>1 — `scripts/devnet-n3-ordering.sh` + `node/tests/three_node_ordering_rule.rs` boot 3 REAL nodes in `--federation-mode full` (3-validator genesis, supermajority(3)=3) and assert [A] full-mode multi-party tau path engaged + [B] cross-node block exchange over the real gossip wire (both PASS). Verified: the Lean BFT model is NON-vacuous (`bft_safety` is adversary-parametrized, liveness reduced to a DLS88/HotStuff `Pacemaker`; the empty-adversary inhabitant is only a satisfiability witness) and the tau rule faithfully refines the Rust (`BlocklaceFinality.lean`). **✅ S5-1 CLOSED (`ed35b23b2`, 2026-06-14):** the running node now COMMITS a turn through the rule at n≥2 — `three_node_ordering_rule.rs` green under `DREGG_TEST_REQUIRE_FINALITY=1` (4/4+3/3); `devnet-n3-ordering.sh REQUIRE_FINALITY=1` → [C] CONVERGED `latest_height 1 1 1` at n=3 (supermajority(3)=3, the strongest case). FOUR measured defects closed (the doc named only dissemination): (1) the Dandelion privacy-STEM misroute → `publish_eager` direct full-payload push to all committee peers; (2) a CHAIN-not-round-synchronous DAG (one creator/round → `is_super_ratified` never fired) → round-disciplined production (the exact `build_rounds` shape `tau` finalizes); (3) THE root cause = HALF-DUPLEX connections (gossip read only INBOUND streams → the last-booted node could send but never receive → deadlock under supermajority==n) → spawn `serve_connection` on outbound too (~50%→12/12) + QUIC keep-alive + a `Frontier` liveness nonce + a connectivity gate; (4) a turn-execution double-apply once finality fired (faucet eager-exec → nonce-replay / dest-not-found on peers) → faucet scratch-clone in multi-party mode + `execute_finalized_turn` materializes a missing Transfer dest as a remote stub. FOLLOW-UP (NOT blocking, devnet-correct today): a production-hardening pass on faucet/finalized-execution cell-provisioning semantics → node/api + execute_finalized. Then S5-2 live commit refinement, S5-3 #170 quorum-consumer migration, S5-4 consensus leg of the composed apex, S5-5 equivocator Lean↔Rust differential pin, S5-6 finality-on-demand (`docs/CONSENSUS-FLEX.md`). → net/gossip + blocklace/dissemination + node/blocklace_sync.
-- **pg-dregg Tier-C proof-attest — S1+S3 DONE, only the node producer (S2) remains.** The whole-chain IVC proof now crosses the SQL boundary for real: `circuit::ivc_turn_chain::WholeChainProofBytes` + `verify_turn_chain_recursive_from_blobs` (S1) and pg-dregg's `tier-c` leg wiring the REAL verifier (S3) are LANDED and green — the byte round-trip + tamper teeth pass (`circuit/tests/ivc_turn_chain_rotated.rs::whole_chain_proof_bytes_roundtrip_and_tamper`, 428s real fold), and the pg-dregg admit/refuse polarity is proven (`pg-dregg/tests/tier_c_real_proof.rs`, `--features tier-c`, ignored real fold). The fork (`emberian/plonky3-recursion`) needs NO edit: at the pinned rev `72ffc56` `BatchStarkProof` already derives `Serialize/Deserialize` (`#[serde(bound="")]`) and the binding `Proof<SC>` rides the pinned Plonky3 rev's serde. REMAINS = **S2, the node-side PRODUCER** (named in `pg-dregg/src/attest.rs` + `turn_proofs.rs` + `docs/PG-DREGG.md §10.2`): when finality advances, fold the new finalized turns (`prove_turn_chain_recursive` / `fold_two_turns`) and write the serialized transport + window bounds into `dregg.turn_proofs(lo, hi, genesis_root, final_root, proof bytea, vk)` the SRF reads. A real `tier-c` `ChainFolder` impl replaces `turn_proofs::StandInFolder`. → node + pg-dregg, post-rotation.
+- **Stage-5 consensus de-vac (Klein/HIGH-6) — `.docs-history-noclaude/STAGE5-CONSENSUS-DEVAC.md`.** LANDED: the running-node witness that consensus runs at n>1 — `scripts/devnet-n3-ordering.sh` + `node/tests/three_node_ordering_rule.rs` boot 3 REAL nodes in `--federation-mode full` (3-validator genesis, supermajority(3)=3) and assert [A] full-mode multi-party tau path engaged + [B] cross-node block exchange over the real gossip wire (both PASS). Verified: the Lean BFT model is NON-vacuous (`bft_safety` is adversary-parametrized, liveness reduced to a DLS88/HotStuff `Pacemaker`; the empty-adversary inhabitant is only a satisfiability witness) and the tau rule faithfully refines the Rust (`BlocklaceFinality.lean`). **✅ S5-1 CLOSED (`ed35b23b2`, 2026-06-14):** the running node now COMMITS a turn through the rule at n≥2 — `three_node_ordering_rule.rs` green under `DREGG_TEST_REQUIRE_FINALITY=1` (4/4+3/3); `devnet-n3-ordering.sh REQUIRE_FINALITY=1` → [C] CONVERGED `latest_height 1 1 1` at n=3 (supermajority(3)=3, the strongest case). FOUR measured defects closed (the doc named only dissemination): (1) the Dandelion privacy-STEM misroute → `publish_eager` direct full-payload push to all committee peers; (2) a CHAIN-not-round-synchronous DAG (one creator/round → `is_super_ratified` never fired) → round-disciplined production (the exact `build_rounds` shape `tau` finalizes); (3) THE root cause = HALF-DUPLEX connections (gossip read only INBOUND streams → the last-booted node could send but never receive → deadlock under supermajority==n) → spawn `serve_connection` on outbound too (~50%→12/12) + QUIC keep-alive + a `Frontier` liveness nonce + a connectivity gate; (4) a turn-execution double-apply once finality fired (faucet eager-exec → nonce-replay / dest-not-found on peers) → faucet scratch-clone in multi-party mode + `execute_finalized_turn` materializes a missing Transfer dest as a remote stub. FOLLOW-UP (NOT blocking, devnet-correct today): a production-hardening pass on faucet/finalized-execution cell-provisioning semantics → node/api + execute_finalized. Then S5-2 live commit refinement, S5-3 #170 quorum-consumer migration, S5-4 consensus leg of the composed apex, S5-5 equivocator Lean↔Rust differential pin, S5-6 finality-on-demand (`.docs-history-noclaude/CONSENSUS-FLEX.md`). → net/gossip + blocklace/dissemination + node/blocklace_sync.
+- **pg-dregg Tier-C proof-attest — S1+S3 DONE, only the node producer (S2) remains.** The whole-chain IVC proof now crosses the SQL boundary for real: `circuit::ivc_turn_chain::WholeChainProofBytes` + `verify_turn_chain_recursive_from_blobs` (S1) and pg-dregg's `tier-c` leg wiring the REAL verifier (S3) are LANDED and green — the byte round-trip + tamper teeth pass (`circuit/tests/ivc_turn_chain_rotated.rs::whole_chain_proof_bytes_roundtrip_and_tamper`, 428s real fold), and the pg-dregg admit/refuse polarity is proven (`pg-dregg/tests/tier_c_real_proof.rs`, `--features tier-c`, ignored real fold). The fork (`emberian/plonky3-recursion`) needs NO edit: at the pinned rev `72ffc56` `BatchStarkProof` already derives `Serialize/Deserialize` (`#[serde(bound="")]`) and the binding `Proof<SC>` rides the pinned Plonky3 rev's serde. REMAINS = **S2, the node-side PRODUCER** (named in `pg-dregg/src/attest.rs` + `turn_proofs.rs` + `.docs-history-noclaude/PG-DREGG.md §10.2`): when finality advances, fold the new finalized turns (`prove_turn_chain_recursive` / `fold_two_turns`) and write the serialized transport + window bounds into `dregg.turn_proofs(lo, hi, genesis_root, final_root, proof bytea, vk)` the SRF reads. A real `tier-c` `ChainFolder` impl replaces `turn_proofs::StandInFolder`. → node + pg-dregg, post-rotation.
 - Stale-cap c-list sweep (channels 72d43dc64 residue): epoch-step turn should `RevokeCapability` superseded grants. STILL OPEN — a real verb gap, NOT a quick fix: `member_cap_grants` installs into each MEMBER's c-list, while `RevokeCapability {cell,slot}` removes from a cell's OWN c-list; sweeping a departed member needs cross-cell `Delegate` authority the operator doesn't hold. `RevokeDelegation` epoch bump already DARKENS prior-epoch group caps at admission (R7 `CapabilityStale`) → this is c-list GC (storage), not soundness. Honest closure = a new verb shape (member-initiated self-revoke or group-scoped revoke authority). → node/turn, post-flip.
 - Adjudication: bond cell → program-toothed obligation cell; tau-exclusion via a membership cell (court is the value leg only; 460d4d6bd residues). STILL OPEN — bond is a plain operator cell, not yet deployed via the obligation factory; deferred to AFTER the FLASH-WELL/blueprint `obligation_factory_descriptor` lands+verifies, then `post_bond` deploys via the factory in one slice. (That pattern now landed — unblocked for a future lane.)
 - Storage: erasure coding + dedup-beyond-content-addressing — IN-CRATE half closed (storage/src/availability.rs, 10 tests). REMAINS: the node put/get HTTP route (gated by storage-gateway-mandate cell) can now CALL the in-crate availability route — the "weld to the shell" half. → node, post-flip.
@@ -5664,15 +5671,15 @@ the backbone v1 path is still UNCONDITIONAL per WALL A above.)
 
 ## Product surfaces (post-rotation)
 
-- dregg-query: attested-queries feature only (Q2 of docs/EPISTEMIC-DATALOG.md) — NOT the full Datalog engine.
+- dregg-query: attested-queries feature only (Q2 of .docs-history-noclaude/EPISTEMIC-DATALOG.md) — NOT the full Datalog engine.
 - Flash-well: `BalanceDeltaGte` relative-balance atom collapses the fee-ratchet ladder into one constraint + closes the donation-cushion residue; `Dregg2.Apps.FlashWell` keystones land with it. ✅ The Lean `Exec.Program` twin is now LANDED (`balanceDeltaGe`/`balanceDeltaLe`, axiom-clean, keystones `evalSimpleCtx_balanceDeltaGe_iff`/`_balanceDeltaLe_iff`); REMAINING = the Rust evaluator arm (see the cell-program grammar-atoms Rust-mirror item in Metatheory closures above — both ride the same program.rs cutover-settle) + the donation-cushion app keystone. The blueprint + SDK are AUTHORED (cell/src/blueprint.rs flash-well, sdk/src/flashwell.rs) but sprint-UNVERIFIED.
 - Willow geometry for storage caps (3D area caveats, range reconciliation) — adopted design, not scheduled.
 - range-based set reconciliation (§1.5/§3.2d, Willow shape): the shared primitive behind scalable anti-entropy (O(diff·log) not O(state)) AND storage partial-sync; cap chains as the pluggable authorization. Adopt the geometry, keep our proofs.
 - eclipse hardening at scale (§1.1): peer_score buckets by SocketAddr today; add /24·/48 prefix + AS-diversity bucketing so a single cloud /24 cannot fill the eager set.
 - availability route follow-ons (§3.1): swap XOR-prototype erasure (erasure.rs:11) for real Reed–Solomon; real Merkle-path chunk proof vs manifest.root (erasure.rs:226 is integrity-only).
 - proving-modality dial #169 (§4.1): make prove-on-demand vs checkpoint vs eager a CONFIGURED axis, not hardcoded policy; settlement/pipelining depth (§4.2) parameterized by topology (n=1 = immediate settlement). Owns the PI 202/203 slots.
-- Room-as-OS + delay-tolerant polis (docs/ROOM-AS-OS.md, docs/DELAY-TOLERANT-POLIS.md).
-- **pg-dregg M3** (named 2026-06-13; M2 mirror + Tier-C chain-gate + the §11 write outbox LANDED + live on pg17/pg18; `node/src/pg_mirror.rs` `pg_live::PgSink` writes through over tokio-postgres incl. caps/memory in one txn). UPDATE 2026-06-13 (pg-dregg wide-safe lane, Opus): the **range-attest SRF SHAPE + the federation subscriber RE-VALIDATION are now BUILT** (`pg-dregg/src/attest.rs` + `mirror::revalidate_replicated_chain` + the `dregg_attest_range`/`dregg_attest_explain`/`dregg_install_federation`/`dregg_revalidate_replicated_chain` externs; core green, 50 `cargo test` + 2 new `#[pg_test]`s; docs/PG-DREGG.md §10.2.1 + §15 rewritten). What REMAINS — the genuinely NODE-/CIRCUIT-touching settle items (this lane does NOT touch node/ or circuit/): (a) **the outbox drainer** (§11.4): a node-side tokio task drains `dregg.submit_queue` as `dregg_kernel`, runs the submit gates + `execute_via_producer` (#171), resolves + mirrors back. (b) **the proof-gate circuit-link S1-S3** (§10.2.1): **S1** serialize `circuit::ivc_turn_chain::WholeChainProof` (it holds plonky3 proof objects, NOT serde today — needs derives + a versioned envelope); **S2** node-side proof PRODUCER (fold finalized turns via `prove_turn_chain_recursive`/`fold_two_turns` → write a `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` table the SRF reads); **S3** the `tier-c` feature's `dregg-circuit` dep (`--features verifier`/`recursion`, **Lean-FREE** — §8.1) flips `attest::verify_serialized_proof` from the fail-closed stub to the real `verify_turn_chain_recursive`. Until S1-S3 the SRF attests NOTHING (safe direction, §10.3). Tier D (executor in-backend) stays the north star, gated on the pg/Lean process-model spike. The 4 §6/§13 ember-decisions now carry crisp recommendations (docs/PG-DREGG.md §13.1: instant-revocation default · typed-tables-lead/views-over-memory end-state · C-embed · spike-gated full-D else D-sidecar). UPDATE 2026-06-14 (pg-dregg proof-gate lane, Opus, `pg-dregg/src/` only): **S1 SETTLED + S2 BUILT; S3 reduced to ONE named circuit line.** **S1 (the serde verdict):** `WholeChainProof` is NOT serde as a whole — but its `root` is `RecursionOutput(pub BatchStarkProof, pub Rc<CircuitProverData>)`, and the verifier (`verify_turn_chain_recursive`) reads ONLY `root.0` + `binding_proof` + the 4 publics, NEVER the prover-only `Rc` `root.1` (verified by reading the fn body: it touches `proof.root.0`/`genesis_root`/`final_root`/`num_turns`/`chain_digest`/`binding_proof` and nothing else). `BatchStarkProof` AND `RecursionCompatibleProof` (a uni-STARK `Proof`) BOTH derive `Serialize`/`Deserialize` (`#[serde(bound="")]`). So the verify-sufficient subset IS fully serde → shipped as `attest::SerializedWholeChainProof` (a versioned postcard transport: `[version][root.0 blob][binding blob][3×root bytes][num_turns]`, real encode/decode + 5 fail-closed `cargo test`s). A `WholeChainProof` VALUE can't be rebuilt from bytes (the `Rc` is prover-only) — so the ONE remaining circuit-side line is a ~6-line `verify_turn_chain_recursive_from_parts(&BatchStarkProof, &Proof, publics, &vk)` split of the existing fn (which already uses only those parts). **S2 (BUILT):** `pg-dregg/src/turn_proofs.rs` — `TurnProofProducer<F: ChainFolder>` folds a finalized window into ONE `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` row (DDL `mirror::ddl::turn_proofs()` + `dregg_install_turn_proofs`), with watermark discipline (dense, non-overlapping windows) + an anti-fabrication tooth (a folder can't claim wider coverage than the window) + the `dregg_attest_window`/`dregg_attest_window_explain` externs that look the proof up FROM the table. The circuit fold plugs in behind the `ChainFolder` seam (same discipline as `Producer`/`Projector`), so the default build stays circuit-free; 7 `cargo test`s prove the producer over a stand-in folder. **S3 (the flip):** `attest::verify_serialized_proof` now DECODES the transport in BOTH builds (real, tested), then under `tier-c` calls `verify_turn_chain_recursive_from_parts` (named, the dead-behind-cfg real leg) — off, fail-closed AFTER a successful decode (proven: a WELL-FORMED transport STILL attests nothing, not just garbage). VERIFY: 120 core `cargo test` green (12 new) + clean `cargo check --features "pg18 pg_test"`. The `cargo pgrx test pg18` RUNTIME is environmentally broken on this box (a pre-existing unmodified M1 pg_test fails identically at `framework.rs:217` initdb/locale — NOT this lane). REMAINING for the flip: add `dregg-circuit` (`verifier`/`recursion`, Lean-free) to the `tier-c` feature + the circuit-side `verify_turn_chain_recursive_from_parts` split — both circuit-side, mechanical; the transport decode + publics mapping are live + tested.
+- Room-as-OS + delay-tolerant polis (.docs-history-noclaude/ROOM-AS-OS.md, .docs-history-noclaude/DELAY-TOLERANT-POLIS.md).
+- **pg-dregg M3** (named 2026-06-13; M2 mirror + Tier-C chain-gate + the §11 write outbox LANDED + live on pg17/pg18; `node/src/pg_mirror.rs` `pg_live::PgSink` writes through over tokio-postgres incl. caps/memory in one txn). UPDATE 2026-06-13 (pg-dregg wide-safe lane, Opus): the **range-attest SRF SHAPE + the federation subscriber RE-VALIDATION are now BUILT** (`pg-dregg/src/attest.rs` + `mirror::revalidate_replicated_chain` + the `dregg_attest_range`/`dregg_attest_explain`/`dregg_install_federation`/`dregg_revalidate_replicated_chain` externs; core green, 50 `cargo test` + 2 new `#[pg_test]`s; .docs-history-noclaude/PG-DREGG.md §10.2.1 + §15 rewritten). What REMAINS — the genuinely NODE-/CIRCUIT-touching settle items (this lane does NOT touch node/ or circuit/): (a) **the outbox drainer** (§11.4): a node-side tokio task drains `dregg.submit_queue` as `dregg_kernel`, runs the submit gates + `execute_via_producer` (#171), resolves + mirrors back. (b) **the proof-gate circuit-link S1-S3** (§10.2.1): **S1** serialize `circuit::ivc_turn_chain::WholeChainProof` (it holds plonky3 proof objects, NOT serde today — needs derives + a versioned envelope); **S2** node-side proof PRODUCER (fold finalized turns via `prove_turn_chain_recursive`/`fold_two_turns` → write a `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` table the SRF reads); **S3** the `tier-c` feature's `dregg-circuit` dep (`--features verifier`/`recursion`, **Lean-FREE** — §8.1) flips `attest::verify_serialized_proof` from the fail-closed stub to the real `verify_turn_chain_recursive`. Until S1-S3 the SRF attests NOTHING (safe direction, §10.3). Tier D (executor in-backend) stays the north star, gated on the pg/Lean process-model spike. The 4 §6/§13 ember-decisions now carry crisp recommendations (.docs-history-noclaude/PG-DREGG.md §13.1: instant-revocation default · typed-tables-lead/views-over-memory end-state · C-embed · spike-gated full-D else D-sidecar). UPDATE 2026-06-14 (pg-dregg proof-gate lane, Opus, `pg-dregg/src/` only): **S1 SETTLED + S2 BUILT; S3 reduced to ONE named circuit line.** **S1 (the serde verdict):** `WholeChainProof` is NOT serde as a whole — but its `root` is `RecursionOutput(pub BatchStarkProof, pub Rc<CircuitProverData>)`, and the verifier (`verify_turn_chain_recursive`) reads ONLY `root.0` + `binding_proof` + the 4 publics, NEVER the prover-only `Rc` `root.1` (verified by reading the fn body: it touches `proof.root.0`/`genesis_root`/`final_root`/`num_turns`/`chain_digest`/`binding_proof` and nothing else). `BatchStarkProof` AND `RecursionCompatibleProof` (a uni-STARK `Proof`) BOTH derive `Serialize`/`Deserialize` (`#[serde(bound="")]`). So the verify-sufficient subset IS fully serde → shipped as `attest::SerializedWholeChainProof` (a versioned postcard transport: `[version][root.0 blob][binding blob][3×root bytes][num_turns]`, real encode/decode + 5 fail-closed `cargo test`s). A `WholeChainProof` VALUE can't be rebuilt from bytes (the `Rc` is prover-only) — so the ONE remaining circuit-side line is a ~6-line `verify_turn_chain_recursive_from_parts(&BatchStarkProof, &Proof, publics, &vk)` split of the existing fn (which already uses only those parts). **S2 (BUILT):** `pg-dregg/src/turn_proofs.rs` — `TurnProofProducer<F: ChainFolder>` folds a finalized window into ONE `dregg.turn_proofs(lo,hi,genesis_root,final_root,proof bytea,vk)` row (DDL `mirror::ddl::turn_proofs()` + `dregg_install_turn_proofs`), with watermark discipline (dense, non-overlapping windows) + an anti-fabrication tooth (a folder can't claim wider coverage than the window) + the `dregg_attest_window`/`dregg_attest_window_explain` externs that look the proof up FROM the table. The circuit fold plugs in behind the `ChainFolder` seam (same discipline as `Producer`/`Projector`), so the default build stays circuit-free; 7 `cargo test`s prove the producer over a stand-in folder. **S3 (the flip):** `attest::verify_serialized_proof` now DECODES the transport in BOTH builds (real, tested), then under `tier-c` calls `verify_turn_chain_recursive_from_parts` (named, the dead-behind-cfg real leg) — off, fail-closed AFTER a successful decode (proven: a WELL-FORMED transport STILL attests nothing, not just garbage). VERIFY: 120 core `cargo test` green (12 new) + clean `cargo check --features "pg18 pg_test"`. The `cargo pgrx test pg18` RUNTIME is environmentally broken on this box (a pre-existing unmodified M1 pg_test fails identically at `framework.rs:217` initdb/locale — NOT this lane). REMAINING for the flip: add `dregg-circuit` (`verifier`/`recursion`, Lean-free) to the `tier-c` feature + the circuit-side `verify_turn_chain_recursive_from_parts` split — both circuit-side, mechanical; the transport decode + publics mapping are live + tested.
 
 ### SDK polyglot crypto/binding closures
 
@@ -5714,12 +5721,12 @@ Everything here is judged by "works without ember in the loop.")*
 
 ## PRIVACY/OFFLINE-CELL lane
 
-- **Rust private-participant turn role** (design + Lean model landed: docs/PRIVATE-OFFLINE-CELLS.md + Dregg2/Distributed/PrivateLeg.lean, keystone joint_turn_sound_with_private_legs, #assert_axioms-clean). To SHIP: a private-participant leg type in `coord/src/atomic.rs` — an AtomicForest participant whose contribution is (commitPre, commitPost, proof) not an applied action, with a commit-path verify-gate implementing MixedAdmissible (every private leg's STARK verifies + binds the shared jid); the AIR the `CarrierEncodesPrivLeg` hypothesis names (recKExecAsset + recStateCommit state-root opening, producible offline); state-root continuity across turns (commitPost[i]=commitPre[i+1], mirroring HistoryAggregation.ChainBound). Liveness out of scope (a dark private participant aborts the all-or-none turn). Crypto floor = STARK extractability (no new assumption). → coord/turn, post-flip.
+- **Rust private-participant turn role** (design + Lean model landed: metatheory/docs/PRIVATE-OFFLINE-CELLS.md + Dregg2/Distributed/PrivateLeg.lean, keystone joint_turn_sound_with_private_legs, #assert_axioms-clean). To SHIP: a private-participant leg type in `coord/src/atomic.rs` — an AtomicForest participant whose contribution is (commitPre, commitPost, proof) not an applied action, with a commit-path verify-gate implementing MixedAdmissible (every private leg's STARK verifies + binds the shared jid); the AIR the `CarrierEncodesPrivLeg` hypothesis names (recKExecAsset + recStateCommit state-root opening, producible offline); state-root continuity across turns (commitPost[i]=commitPre[i+1], mirroring HistoryAggregation.ChainBound). Liveness out of scope (a dark private participant aborts the all-or-none turn). Crypto floor = STARK extractability (no new assumption). → coord/turn, post-flip.
 
 ## seL4 / DreggDL lane (design+scoping landed)
 
-*(Scoping docs: docs/SEL4-EMBEDDING.md (bootable-image roadmap; THE blocker = libuv-free/IO-free
-Lean leanrt+GMP on musl/seL4) + docs/CAPDL-POLYGLOT-DX.md (DreggDL = describe the cap graph once,
+*(Scoping docs: .docs-history-noclaude/SEL4-EMBEDDING.md (bootable-image roadmap; THE blocker = libuv-free/IO-free
+Lean leanrt+GMP on musl/seL4) + .docs-history-noclaude/CAPDL-POLYGLOT-DX.md (DreggDL = describe the cap graph once,
 3 SDKs instantiate it). The dregg-deploy parser crate + TS/Py bindings + sel4 verifier-PD scaffold
 ALL LANDED (a7734efcc / a49448d09 / 152e6b3a5). Remaining lanes:)*
 
@@ -5731,7 +5738,7 @@ ALL LANDED (a7734efcc / a49448d09 / 152e6b3a5). Remaining lanes:)*
 
 *(The master interface EMBEDS the real verified executor + runs a live local dregg world natively
 — headless heart gpui-free + `cargo test`-able, 183 lib tests green; the window OPENS via gpui
-`runtime_shaders`. Build-out lanes from docs/STARBRIDGE-V2.md coverage matrix:)*
+`runtime_shaders`. Build-out lanes from .docs-history-noclaude/STARBRIDGE-V2.md coverage matrix:)*
 
 - LANDED (2026-06-13, the fork-seam unblock + 4 capabilities): the `embedded-executor`
   feature now COMPILES (the local plonky3-recursion `[patch]` replicated into
@@ -6658,7 +6665,7 @@ host-trusted authority into a passing light-client proof is now REFUSED.
   delegateAttenWrite/revokeDelegationWrite) are in the STAGED registry but NOT the WIDE registry — the executor
   sovereign verify path can't reach them yet; the SDK light-client path uses the authority-bearing CapOpen family
   (already wired). The write-op binding into the commitment (the ~17-effect descriptor-fix terrain in
-  docs/CIRCUIT-FUNCTIONAL-CORRECTNESS.md) is the next layer. (c) The executor sovereign-witness verify path is
+  .docs-history-noclaude/CIRCUIT-FUNCTIONAL-CORRECTNESS.md) is the next layer. (c) The executor sovereign-witness verify path is
   FULL-NODE (host check_breadstuff + the SDK cap-membership leg on the cap-gated path) — the verdict confirms
   full-node safety, so the light-client `verify_full_turn` path was the load-bearing axis and is now closed.
 
@@ -6973,7 +6980,7 @@ generator · ~65 blind-test hardening · TraceReadout non-vacuity · FloorsNonVa
 
 ## ⚑⚑⚑ POST-COMPACT ORIENTATION (2026-06-21, ~3am) — the TWO-TRACK swarm + integration plan
 GOAL (the /goal hook, two tracks, SAME bar = verified-working not named): TRACK 1 FLOOR (soundness, audited by
-docs/SAFELY-LIVE-CHECKLIST.md — closed+verified OR irreducible-floor-with-non-vacuity-proof, board red-free) +
+.docs-history-noclaude/SAFELY-LIVE-CHECKLIST.md — closed+verified OR irreducible-floor-with-non-vacuity-proof, board red-free) +
 TRACK 2 HOUSE (capacity — grow what an agent needs to LIVE; a capacity counts ONLY genuinely-working end-to-end +
 inheriting the floor's forge-detector bar). Designed-but-unbuilt = a named gap (Law #6).
 
