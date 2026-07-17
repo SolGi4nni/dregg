@@ -2070,3 +2070,31 @@ Fixed forward (never restore the mirror): both call sites now use `prove_dsl_p3`
 `DslP3Proof` is postcard-encoded for `execution_proof` (same as bridge/present.rs:511); the byte-tamper
 tooth preserved. A STRICT UPGRADE — the pipeline test used to prove through the weaker shadow, i.e. it
 validated the shadow; it now validates production. Verified green.
+
+## ⚑ VerifyTcbReentryResidual — INVESTIGATED (gate finally unblocked; 6 → 3; one is REAL)
+My own `dsl_pipeline` breakage was MASKING this gate (dregg-tests wouldn't compile). Now that it runs
+(`d5f6dc999`), the honest picture:
+- **6 → 3**: other lanes fixed `drex_clear`, `dregg-forge`, `dungeon-service`. Remaining:
+  `real-dungeon-service`, `dreggnet-web`(dreggnet-web-server), `dregg-gateway-ask`(gateway-ask).
+- **The rail is REAL, not decorative** (I checked before claiming): the Lean-verified core IS installed in
+  production by `node/src/lib.rs:2450`, `sdk/src/runtime.rs:72`, `starbridge-v2/src/main.rs:85`. Without it,
+  `dregg_pq::ml_dsa_verify` routes to the **unverified `fips204` crate** (a valid FIPS-204 verify, but out of
+  the Lean TCB — it falls back rather than bricking verify).
+- **NONE of the 3 verify LOCALLY** (no ml_dsa/verify calls, no direct verify deps) — they reach the stack
+  transitively. BUT: **`gateway-ask` deps `dregg-auth`, whose `src/credential/pq.rs` DOES ride the PQ verify
+  path** → it plausibly verifies PQ credentials with the UNVERIFIED impl. That one is a REAL TCB hole, not an
+  allowlist candidate. `real-dungeon-service`/`dreggnet-web`'s direct deps show no verify call — needs a
+  deeper per-chain trace.
+
+### ⚖ EMBER DECISION (a genuine engineering tradeoff, not a cleanup)
+Wiring = add a **non-dev `dregg-lean-ffi` dep**, which requires **the Lean archive at build time**
+(`libdregg_lean.a`) — a real build/deploy cost on a lightweight gateway/web binary. That cost is presumably
+WHY `DELEGATES_VERIFY` exists (cf. the existing entry `("dregg-cli", "thin HTTP/CLI client, no local PQ
+verify path")`). So per binary:
+1. **`gateway-ask`** — WIRE it (it has a real PQ verify path via dregg-auth; exemplar
+   `starbridge-v2/src/main.rs:85` / `node/src/lib.rs:2450`), accepting the Lean-archive build dep; OR
+   allowlist ONLY if you know its dregg-auth PQ path is never exercised.
+2. **`real-dungeon-service` / `dreggnet-web`** — likely honest allowlist entries ("no local PQ verify path;
+   links transitively via X"), but that claim should be traced before it's written — an unjustified
+   allowlist entry is exactly the kind of prose-lie this session has been deleting.
+NOT doing it unilaterally: adding a Lean-archive build dep to a deploy artifact is a deployment decision.
