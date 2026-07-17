@@ -56,42 +56,79 @@ theorem memLog_pred (t : VmTrace) : memLog predicateNeqDesc t = [] := by
 theorem mapLog_pred (t : VmTrace) : mapLog predicateNeqDesc t = [] := by
   simp [mapLog, mapOpsOf_pred]
 
+/-! The mod-`p` denotation makes the `≠` half PURELY MODULAR — no range/canonicality is needed for
+it: the nonzero-inverse tooth gives `DIFF · DIFF_INV ≡ 1 [ZMOD p]`, so `p ∤ DIFF`, and the diff/slot
+gates give `DIFF ≡ INPUT − pub [ZMOD p]`, whence `INPUT = pub` would force `p ∣ DIFF` — contradiction,
+so `INPUT ≠ pub` over ℤ. Only the `factBinds` ℤ-equality needs the deployed range-check on the two
+commitment cells; that is `NeqCanon`, inhabited by `neqWitness_canon`. -/
+def NeqCanon (t : VmTrace) : Prop :=
+  (0 ≤ (envAt t 0).loc FACT_COMMITMENT ∧ (envAt t 0).loc FACT_COMMITMENT < 2013265921)
+  ∧ (0 ≤ (envAt t 0).pub PI_FACT_COMMITMENT ∧ (envAt t 0).pub PI_FACT_COMMITMENT < 2013265921)
+
 /-- **`predicateNeq_sat_imp_sem` (RUNG-1).** A satisfying trace computes the genuine `≠` relation on
-row 0 — the nonzero-inverse tooth forces `DIFF = value − threshold ≠ 0`. -/
+row 0 — the nonzero-inverse tooth forces `DIFF = value − threshold ≢ 0 [ZMOD p]`. -/
 theorem predicateNeq_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} {t : VmTrace}
     (hlen : 2 ≤ t.rows.length)
+    (hcanon : NeqCanon t)
     (hsat : Satisfied2 hash predicateNeqDesc minit mfin maddrs t) :
     ArithNeqSem (envAt t 0) := by
+  obtain ⟨⟨hcF0, hcF1⟩, ⟨hcPF0, hcPF1⟩⟩ := hcanon
   have h0 : 0 < t.rows.length := by omega
   have hfirst : ((0 : Nat) == 0) = true := rfl
   have hlast : ((0 : Nat) + 1 == t.rows.length) = false := by
     have : (0 : Nat) + 1 ≠ t.rows.length := by omega
     simpa using this
-  have hc1 : (envAt t 0).loc THRESHOLD = (envAt t 0).pub PI_THRESHOLD := by
-    have h := hsat.rowConstraints 0 h0 c1ThresholdPin mem_c1
-    rw [hfirst] at h
-    simpa only [c1ThresholdPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
+  -- factBinds: the PI pin (mod `p`) lifted to a genuine ℤ equality by canonicality of both cells.
   have hc2 : (envAt t 0).loc FACT_COMMITMENT = (envAt t 0).pub PI_FACT_COMMITMENT := by
     have h := hsat.rowConstraints 0 h0 c2FactPin mem_c2
     rw [hfirst] at h
-    simpa only [c2FactPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
-  have hc3 : (envAt t 0).loc SLOT_A = (envAt t 0).loc INPUT := by
+    have hm : (envAt t 0).loc FACT_COMMITMENT ≡ (envAt t 0).pub PI_FACT_COMMITMENT
+        [ZMOD 2013265921] := by
+      simpa only [c2FactPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
+    rw [Int.modEq_iff_dvd] at hm; obtain ⟨k, hk⟩ := hm; omega
+  -- the threshold PI pin as a divisibility fact.
+  have hc1 : (2013265921 : ℤ) ∣ ((envAt t 0).pub PI_THRESHOLD - (envAt t 0).loc THRESHOLD) := by
+    have h := hsat.rowConstraints 0 h0 c1ThresholdPin mem_c1
+    rw [hfirst] at h
+    have hm : (envAt t 0).loc THRESHOLD ≡ (envAt t 0).pub PI_THRESHOLD [ZMOD 2013265921] := by
+      simpa only [c1ThresholdPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
+    exact (Int.modEq_iff_dvd).mp hm
+  -- the slot gate as a divisibility fact.
+  have hc3 : (2013265921 : ℤ) ∣ ((envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT) := by
     have h := hsat.rowConstraints 0 h0 c3SlotGate mem_c3
     rw [hlast] at h
-    simp only [c3SlotGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    exact (c3_body_zero_iff (envAt t 0).loc).mp h
-  have hc5 : (envAt t 0).loc DIFF = (envAt t 0).loc SLOT_A - (envAt t 0).loc THRESHOLD := by
+    simp only [c3SlotGate, VmConstraint2.holdsAt, holdsVm_gate_false, c3Body, EmittedExpr.eval] at h
+    have hkey : (envAt t 0).loc SLOT_A + -1 * (envAt t 0).loc INPUT
+        = (envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT := by ring
+    rw [hkey, Int.modEq_zero_iff_dvd] at h; exact h
+  -- the diff gate as a divisibility fact.
+  have hc5 : (2013265921 : ℤ) ∣ ((envAt t 0).loc DIFF - (envAt t 0).loc SLOT_A
+      + (envAt t 0).loc THRESHOLD) := by
     have h := hsat.rowConstraints 0 h0 c5DiffGate mem_c5
     rw [hlast] at h
-    simp only [c5DiffGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    exact (c5_body_zero_iff (envAt t 0).loc).mp h
-  have hcnz : (envAt t 0).loc DIFF ≠ 0 := by
+    simp only [c5DiffGate, VmConstraint2.holdsAt, holdsVm_gate_false, c5Body, EmittedExpr.eval] at h
+    rw [Int.modEq_zero_iff_dvd] at h
+    -- `h : p ∣ c5Body-linear`; the body is `DIFF − SLOT_A + THRESHOLD` up to `ring`.
+    have hkey : (envAt t 0).loc DIFF + -1 * (envAt t 0).loc SLOT_A + (envAt t 0).loc THRESHOLD
+        = (envAt t 0).loc DIFF - (envAt t 0).loc SLOT_A + (envAt t 0).loc THRESHOLD := by ring
+    rw [hkey] at h; exact h
+  -- the nonzero-inverse tooth: `DIFF · DIFF_INV ≡ 1 [ZMOD p]`, so `p ∤ DIFF`.
+  have hcnz : ¬ ((2013265921 : ℤ) ∣ (envAt t 0).loc DIFF) := by
     have h := hsat.rowConstraints 0 h0 cNzGate mem_cNz
     rw [hlast] at h
-    simp only [cNzGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    exact cNz_body_zero_imp_ne (envAt t 0).loc h
-  exact ⟨by omega, hc2⟩
+    simp only [cNzGate, VmConstraint2.holdsAt, holdsVm_gate_false, cNzBody, EmittedExpr.eval] at h
+    rw [Int.modEq_zero_iff_dvd] at h
+    -- h : p ∣ (DIFF * DIFF_INV + -1)
+    intro hdvd
+    have hprod : (2013265921 : ℤ) ∣ (envAt t 0).loc DIFF * (envAt t 0).loc DIFF_INV :=
+      Dvd.dvd.mul_right hdvd _
+    have hone : (2013265921 : ℤ) ∣ (1 : ℤ) := by
+      have := Int.dvd_sub hprod h; simpa using this
+    exact absurd (Int.le_of_dvd (by norm_num) hone) (by norm_num)
+  refine ⟨?_, hc2⟩
+  intro heq
+  exact hcnz (by omega)
 
 def rowOf (cols : List ℤ) : Assignment := fun i => cols.getD i 0
 def hash0 : List ℤ → ℤ := fun _ => 0
@@ -105,7 +142,7 @@ arity-2 fact-commitment). -/
 def neqTf : TraceFamily
   | TableId.poseidon2 =>
       [chipRow hash0 [0, 41, 0, 0, 0, FACT_MARK, 1] (List.replicate 7 0),
-       chipRow hash0 [0, 0] (List.replicate 7 0)]
+       chipRow hash0 [0, 0, 0, 0] (List.replicate 7 0)]
   | _ => []
 def neqWitnessTrace : VmTrace := { rows := [neqAsg, neqAsg], pub := neqPub, tf := neqTf }
 
@@ -125,11 +162,11 @@ theorem neqWitness_satisfies :
           .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES⟩ := by
       simp only [Lookup.holdsAt, neqWitnessTrace, neqTf]; decide
     have gpc0 : Lookup.holdsAt neqWitnessTrace.tf (envAt neqWitnessTrace 0)
-        ⟨TableId.poseidon2, chipLookupTuple [.var FACT_HASH, .var STATE_ROOT]
+        ⟨TableId.poseidon2, chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
           FACT_COMMITMENT FACTCOMMIT_LANES⟩ := by
       simp only [Lookup.holdsAt, neqWitnessTrace, neqTf]; decide
     have gpc1 : Lookup.holdsAt neqWitnessTrace.tf (envAt neqWitnessTrace 1)
-        ⟨TableId.poseidon2, chipLookupTuple [.var FACT_HASH, .var STATE_ROOT]
+        ⟨TableId.poseidon2, chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
           FACT_COMMITMENT FACTCOMMIT_LANES⟩ := by
       simp only [Lookup.holdsAt, neqWitnessTrace, neqTf]; decide
     have hi2 : i < 2 := hi
@@ -155,8 +192,11 @@ theorem neqWitness_satisfies :
   memTableFaithful := by rw [memLog_pred]; rfl
   mapTableFaithful := by rw [mapLog_pred]; rfl
 
+theorem neqWitness_canon : NeqCanon neqWitnessTrace := by
+  refine ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
+
 theorem neqWitness_sem : ArithNeqSem (envAt neqWitnessTrace 0) :=
-  predicateNeq_sat_imp_sem (t := neqWitnessTrace) (by decide) neqWitness_satisfies
+  predicateNeq_sat_imp_sem (t := neqWitnessTrace) (by decide) neqWitness_canon neqWitness_satisfies
 
 theorem neqWitness_sem_concrete :
     (envAt neqWitnessTrace 0).pub PI_THRESHOLD = 40
@@ -172,16 +212,21 @@ theorem predicateNeq_fact_opens_to_input {hash : List ℤ → ℤ} {minit : ℤ 
     {maddrs : List ℤ} {t : VmTrace}
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hlen : 2 ≤ t.rows.length)
+    (hcanon : NeqCanon t)
     (hsat : Satisfied2 hash predicateNeqDesc minit mfin maddrs t) :
     (envAt t 0).pub PI_FACT_COMMITMENT
       = hash [hash [(envAt t 0).loc PREDICATE_SYM, (envAt t 0).loc INPUT,
                     (envAt t 0).loc TERM1, (envAt t 0).loc TERM2, 0, FACT_MARK, 1],
-              (envAt t 0).loc STATE_ROOT] := by
+              (envAt t 0).loc STATE_ROOT, (envAt t 0).loc BLINDING, 0] := by
+  obtain ⟨⟨hcF0, hcF1⟩, ⟨hcPF0, hcPF1⟩⟩ := hcanon
   have h0 : 0 < t.rows.length := by omega
   have hc2 : (envAt t 0).loc FACT_COMMITMENT = (envAt t 0).pub PI_FACT_COMMITMENT := by
     have h := hsat.rowConstraints 0 h0 c2FactPin mem_c2
     rw [show ((0 : Nat) == 0) = true from rfl] at h
-    simpa only [c2FactPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
+    have hm : (envAt t 0).loc FACT_COMMITMENT ≡ (envAt t 0).pub PI_FACT_COMMITMENT
+        [ZMOD 2013265921] := by
+      simpa only [c2FactPin, VmConstraint2.holdsAt, holdsVm_piFirst_true] using h
+    rw [Int.modEq_iff_dvd] at hm; obtain ⟨k, hk⟩ := hm; omega
   have hlF := hsat.rowConstraints 0 h0 factHashLookup mem_factHash
   simp only [VmConstraint2.holdsAt, factHashLookup, Lookup.holdsAt] at hlF
   have hfh := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
@@ -191,7 +236,8 @@ theorem predicateNeq_fact_opens_to_input {hash : List ℤ → ℤ} {minit : ℤ 
   have hlC := hsat.rowConstraints 0 h0 factCommitLookup mem_factCommit
   simp only [VmConstraint2.holdsAt, factCommitLookup, Lookup.holdsAt] at hlC
   have hfc := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
-    [.var FACT_HASH, .var STATE_ROOT] FACT_COMMITMENT FACTCOMMIT_LANES (by decide) hlC
+    [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0] FACT_COMMITMENT FACTCOMMIT_LANES
+    (by decide) hlC
   simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hfc
   rw [← hc2, hfc, hfh]
 
@@ -199,19 +245,22 @@ theorem predicateNeq_fact_opens_to_input {hash : List ℤ → ℤ} {minit : ℤ 
 theorem predicateNeq_value_forge_rejected {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} {t : VmTrace}
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hlen : 2 ≤ t.rows.length) (v0 : ℤ)
+    (hlen : 2 ≤ t.rows.length) (hcanon : NeqCanon t) (v0 : ℤ)
     (hcred : (envAt t 0).pub PI_FACT_COMMITMENT
       = hash [hash [(envAt t 0).loc PREDICATE_SYM, v0, (envAt t 0).loc TERM1,
-                    (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT])
+                    (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT,
+              (envAt t 0).loc BLINDING, 0])
     (hinj : ∀ a b : ℤ,
       hash [hash [(envAt t 0).loc PREDICATE_SYM, a, (envAt t 0).loc TERM1,
-                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT]
+                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT,
+            (envAt t 0).loc BLINDING, 0]
         = hash [hash [(envAt t 0).loc PREDICATE_SYM, b, (envAt t 0).loc TERM1,
-                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT] → a = b)
+                  (envAt t 0).loc TERM2, 0, FACT_MARK, 1], (envAt t 0).loc STATE_ROOT,
+                (envAt t 0).loc BLINDING, 0] → a = b)
     (hforge : (envAt t 0).loc INPUT ≠ v0) :
     ¬ Satisfied2 hash predicateNeqDesc minit mfin maddrs t := by
   intro hsat
-  have hopen := predicateNeq_fact_opens_to_input hChip hlen hsat
+  have hopen := predicateNeq_fact_opens_to_input hChip hlen hcanon hsat
   exact hforge (hinj _ _ (hopen.symm.trans hcred))
 
 /-- The concrete Poseidon2 chip table is genuinely SOUND for `hash0`. -/
@@ -220,15 +269,17 @@ theorem neqChipSound : ChipTableSound hash0 (neqWitnessTrace.tf .poseidon2) := b
   simp only [neqWitnessTrace, neqTf, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with h | h
   · exact ⟨[0, 41, 0, 0, 0, FACT_MARK, 1], List.replicate 7 0, by decide, by decide, h⟩
-  · exact ⟨[0, 0], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[0, 0, 0, 0], List.replicate 7 0, by decide, by decide, h⟩
 
 /-- **The value↔fact WELD leg FIRES on the witness (non-vacuously).** -/
 theorem neqWitness_fact_opens :
     (envAt neqWitnessTrace 0).pub PI_FACT_COMMITMENT
       = hash0 [hash0 [(envAt neqWitnessTrace 0).loc PREDICATE_SYM, (envAt neqWitnessTrace 0).loc INPUT,
                 (envAt neqWitnessTrace 0).loc TERM1, (envAt neqWitnessTrace 0).loc TERM2,
-                0, FACT_MARK, 1], (envAt neqWitnessTrace 0).loc STATE_ROOT] :=
-  predicateNeq_fact_opens_to_input (t := neqWitnessTrace) neqChipSound (by decide) neqWitness_satisfies
+                0, FACT_MARK, 1], (envAt neqWitnessTrace 0).loc STATE_ROOT,
+                (envAt neqWitnessTrace 0).loc BLINDING, 0] :=
+  predicateNeq_fact_opens_to_input (t := neqWitnessTrace) neqChipSound (by decide) neqWitness_canon
+    neqWitness_satisfies
 
 /-- The HONEST equal-value attempt: `value = 40 = threshold = 40` (NOT `≠`). The honest diff is `0`
 and no inverse exists (`diff_inv = 0`), so C1/C2/C3/C5 hold but the CNZ tooth `0·0 = 0 ≠ 1` fails. -/
