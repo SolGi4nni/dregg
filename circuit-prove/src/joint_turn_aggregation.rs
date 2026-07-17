@@ -249,6 +249,18 @@ pub struct CustomWitnessBundle {
     /// The custom program's public inputs (the values the in-circuit PI commitment is taken over —
     /// equal, by construction, to the leg's claimed `custom_proof_commitment` preimage).
     pub public_inputs: Vec<BabyBear>,
+    /// **THE APP-ROOT WELD DECLARATION (the deployed keystone opt-in).** `None` = the state-node
+    /// path (byte-identical to before: the fold binds `[commitment ‖ old8 ‖ new8]`, so `R` — a
+    /// published app root in the sub-proof PIs — rides only as an opaque commitment preimage).
+    /// `Some(binding)` = the APP-ROOT node path: the leg additionally exposes its committed field
+    /// value for key `binding.field_key`, and the fold `connect`s the sub-proof's published root
+    /// `R` (at `binding.app_root_pi_offset`, width `binding.app_root_len`) to it — so a sub-proof
+    /// whose `R` disagrees with the cell's real stored field has NO satisfying partner (UNSAT).
+    /// MANDATORY when present: the app-root node REQUIRES the wide field-exposure claim (no
+    /// conditional connect — a forger cannot dodge by minting the narrow state leaf). Requires the
+    /// leg's wide descriptor to publish the field octet as a PI (`generate_rotated_custom_wide`'s
+    /// field-K exposure / Lean `customFieldKExposure`).
+    pub app_root_binding: Option<dregg_circuit::effect_vm::custom_state_binding::AppRootBinding>,
 }
 
 /// FOLD-WIRED (the 7th carrier) bridge-carrier bundle — the prover-side inputs
@@ -604,7 +616,21 @@ impl CustomWitnessBundle {
             witness_values: bound.witness_values.clone()?,
             num_rows: bound.num_rows?,
             public_inputs: bound.public_inputs.clone(),
+            app_root_binding: None,
         })
+    }
+
+    /// Declare the app-root weld for this custom turn (the deployed keystone opt-in). Chaining
+    /// `.with_app_root_binding(b)` routes the turn through
+    /// [`crate::joint_turn_recursive::prove_custom_binding_node_app_root_segmented`] instead of the
+    /// state node — the leg exposes `field[b.field_key]` and the fold forces the sub-proof's
+    /// published root `R` to equal it. See the field docs on [`Self::app_root_binding`].
+    pub fn with_app_root_binding(
+        mut self,
+        binding: dregg_circuit::effect_vm::custom_state_binding::AppRootBinding,
+    ) -> Self {
+        self.app_root_binding = Some(binding);
+        self
     }
 }
 

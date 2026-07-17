@@ -23,11 +23,30 @@
 //!
 //! A prover cannot expose a `holding_hash` that disagrees with the pinned fields:
 //! the First-row pins + the chip-recomputed Poseidon2 chain make a mismatch UNSAT
-//! AT THE LEAF. The leaf's 13-PI tuple is committed by the in-circuit multi-chunk
-//! PI sponge (`prove_custom_leaf_with_commitment`) and `connect`ed to the leg's
-//! published `custom_proof_commitment` (IR2 PI 46..53, the 8-felt flag-day exposure) inside the recursion tree
-//! a PURE LIGHT CLIENT folds (`ivc_turn_chain::prove_chain_core_rotated`, the
+//! AT THE LEAF. The leaf's PI vector is committed by the in-circuit multi-chunk PI
+//! sponge and `connect`ed to the leg's published `custom_proof_commitment` (IR2 PI
+//! 46..53, the 8-felt flag-day exposure) inside the recursion tree a PURE LIGHT
+//! CLIENT folds (`ivc_turn_chain::prove_chain_core_rotated`, the
 //! `CarrierWitness::Custom` arm).
+//!
+//! ## The state-binding ABI (why the PI vector is 29, not 13)
+//!
+//! The deployed Custom arm mints the 24-lane STATE leaf
+//! (`custom_leaf_adapter::prove_custom_leaf_with_state_commitment`) under
+//! `joint_turn_recursive::prove_custom_binding_node_state_segmented`, which also
+//! `connect`s the sub-proof's declared `[old8 ‖ new8]` prefix to the leg's REAL
+//! rotated roots. So this carrier's PIs are
+//! `[old8 ‖ new8 ‖ root0..root7, token, holder, slot, balance, holding_hash]`
+//! ([`MPT_HOLDING_PI_LEN`] = 29), and [`MptHoldingWitness::bundle`] takes the leg's
+//! roots. Without the prefix the carrier is refused fail-closed — as the deployed
+//! EXECUTOR already refused it (`enforce_custom_proof_state_binding`).
+//!
+//! **`root0..root7` is NOT that prefix.** It is the EIP-1186 FOREIGN-chain
+//! `state_root`; `old8`/`new8` are THIS dregg cell's rotated pre/post commitments.
+//! Two different objects — a holding attested under an Eth root, occurring in a turn
+//! that moves a dregg cell from `old8` to `new8`. Binding the two together is the
+//! point: the fold now witnesses that this foreign-chain attestation belongs to THIS
+//! cell's transition, not merely that some verifying sub-proof backs the claim.
 //!
 //! ## What stays OFF-AIR (the named P0 carriers — NEVER present this as full rung 3)
 //!
@@ -45,6 +64,9 @@ use std::collections::HashMap;
 use dregg_circuit::dsl::circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
     ConstraintExpr, PolyTerm,
+};
+use dregg_circuit::effect_vm::custom_state_binding::{
+    CUSTOM_PI_STATE_PREFIX_LEN, custom_pi_state_prefix,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1};
@@ -84,12 +106,33 @@ pub const BALANCE_RANGE_BITS: usize = 30;
 /// The base trace width (fields + inverse + 5 digests + the range bits).
 pub const MPT_HOLDING_BASE_WIDTH: usize = RANGE_BASE + BALANCE_RANGE_BITS;
 
-/// The descriptor PI tuple width: `[root0..root7, token, holder, slot, balance,
-/// holding_hash]` — 13 felts, the plan's 12–16-felt natural tuple, NO pre-hash digest.
-pub const MPT_HOLDING_PI_LEN: usize = 13;
+/// The number of PI lanes the holding tuple itself occupies:
+/// `[root0..root7, token, holder, slot, balance, holding_hash]` — 13 felts, the plan's
+/// 12–16-felt natural tuple, NO pre-hash digest.
+pub const MPT_HOLDING_TUPLE_LEN: usize = 13;
+
+/// Where the holding tuple STARTS in the descriptor PI vector.
+///
+/// The custom carrier's PIs are prefixed by the `custom_state_binding` ABI's
+/// `[old_commit8 ‖ new_commit8]` (16 felts), because the DEPLOYED chain prover
+/// (`ivc_turn_chain::prove_chain_core_rotated`'s Custom arm) mints the 24-lane state leaf under
+/// `prove_custom_binding_node_state_segmented`, which `connect`s that prefix to the leg's real
+/// rotated roots. A carrier that cannot express the prefix is refused fail-closed — as the
+/// deployed EXECUTOR already refused it. So the holding tuple rides AFTER the prefix.
+pub const MPT_HOLDING_TUPLE_BASE: usize = CUSTOM_PI_STATE_PREFIX_LEN;
+
+/// The descriptor PI tuple width: `[old8 ‖ new8 ‖ root0..root7, token, holder, slot, balance,
+/// holding_hash]` — 29 felts.
+///
+/// **The prefix is NOT padding, and NOT the Eth root.** `root0..root7` is the EIP-1186
+/// FOREIGN-chain `state_root` the holding was proven under; `old8`/`new8` are THIS dregg cell's
+/// rotated pre/post commitments. They are different objects — widening the tuple to 16 and
+/// reusing the Eth root as the prefix would satisfy the length check and then fail the fold's
+/// `connect`, which is the correct outcome for a wrong answer but the wrong reason to write it.
+pub const MPT_HOLDING_PI_LEN: usize = MPT_HOLDING_TUPLE_BASE + MPT_HOLDING_TUPLE_LEN;
 
 /// The PI lane of the holding identity (the last lane).
-pub const MPT_HOLDING_HASH_PI: usize = 12;
+pub const MPT_HOLDING_HASH_PI: usize = MPT_HOLDING_PI_LEN - 1;
 
 /// The trace row count the pilot proves over (a small power of two; every row is a
 /// firing row, the First-row pins bind row 0 — the DECO/custom-demo shape).
@@ -99,8 +142,13 @@ pub const MPT_HOLDING_ROWS: usize = 4;
 /// descriptor, `CellProgram::compute_vk_hash`). Pinned so descriptor drift is a hash
 /// mismatch, never a silent divergence (the pilot doc's §3 discipline). Re-derive
 /// with `mpt_holding_program().vk_hash` if the descriptor is DELIBERATELY revised.
+/// RE-PINNED at the state-binding flip (the descriptor DELIBERATELY changed): the PI vector went
+/// 13 → 29 (`[old8 ‖ new8]` ABI prefix ahead of the holding tuple) and every PI pin shifted by
+/// `MPT_HOLDING_TUPLE_BASE`. The prior pin was
+/// `1169e0137298b5b5f9f0028b06d79f5e881cbcc572f52697f7567f657fc7c161`; it is retired, and any
+/// artifact minted under it does not re-enter (nothing holds value at this rung).
 pub const MPT_HOLDING_VK_HASH_HEX: &str =
-    "1169e0137298b5b5f9f0028b06d79f5e881cbcc572f52697f7567f657fc7c161";
+    "8fb9eca413b120dea9d16986776458fa1521d600519821c407494cfe03190867";
 
 /// The HOST-side holding identity — the same Poseidon2 chain the leaf's four chip
 /// sites recompute in-AIR:
@@ -229,19 +277,27 @@ pub fn mpt_holding_program() -> CellProgram {
 
     // First-row PI pins: each pinned field ↔ its descriptor PI (the boundary form —
     // graduates to the row-tagged IR-v2 `PiBinding{First}` in `cellprogram_to_descriptor2`).
-    let mut boundaries: Vec<BoundaryDef> = Vec::with_capacity(MPT_HOLDING_PI_LEN);
+    // Each pin is offset by `MPT_HOLDING_TUPLE_BASE`: the ABI state prefix occupies PI [0..16).
+    //
+    // The prefix lanes are deliberately UNPINNED (no constraint references them). That is the ABI's
+    // design, not an omission: the prefix is a DECLARATION the fold binds, not something this
+    // program computes. Its integrity comes from two places — the leaf's PI commitment hashes the
+    // WHOLE vector (so a forged prefix moves the commitment the leg claims), and the state node
+    // `connect`s the declared prefix to the leg's real roots (so a forged prefix is UNSAT). A
+    // PiBinding here would pin the prefix to a trace column this program has no reason to carry.
+    let mut boundaries: Vec<BoundaryDef> = Vec::with_capacity(MPT_HOLDING_TUPLE_LEN);
     for i in 0..8 {
         boundaries.push(BoundaryDef::PiBinding {
             row: BoundaryRow::First,
             col: COL_ROOT_BASE + i,
-            pi_index: i,
+            pi_index: MPT_HOLDING_TUPLE_BASE + i,
         });
     }
     for (col, pi) in [
-        (COL_TOKEN, 8),
-        (COL_HOLDER, 9),
-        (COL_SLOT, 10),
-        (COL_BALANCE, 11),
+        (COL_TOKEN, MPT_HOLDING_TUPLE_BASE + 8),
+        (COL_HOLDER, MPT_HOLDING_TUPLE_BASE + 9),
+        (COL_SLOT, MPT_HOLDING_TUPLE_BASE + 10),
+        (COL_BALANCE, MPT_HOLDING_TUPLE_BASE + 11),
         (COL_HOLDING_HASH, MPT_HOLDING_HASH_PI),
     ] {
         boundaries.push(BoundaryDef::PiBinding {
@@ -293,10 +349,22 @@ impl MptHoldingWitness {
         )
     }
 
-    /// The HONEST 13-slot descriptor PI tuple:
-    /// `[root0..root7, token, holder, slot, balance, holding_hash]`.
-    pub fn public_inputs(&self) -> Vec<BabyBear> {
-        let mut pis: Vec<BabyBear> = self.state_root.to_vec();
+    /// The HONEST 29-slot descriptor PI vector:
+    /// `[old8 ‖ new8 ‖ root0..root7, token, holder, slot, balance, holding_hash]`.
+    ///
+    /// `old_commit8`/`new_commit8` MUST be the LEG's real rotated roots — its last 16 descriptor
+    /// PIs (`RotatedParticipantLeg::wide_old_root8()` / `wide_new_root8()`), which are the same
+    /// v9 chip commit the executor enforces this prefix against. They are passed in rather than
+    /// derived because this witness describes a FOREIGN-chain holding and has no way to know the
+    /// dregg cell's roots: the caller that has the leg must supply them. A wrong pair does not
+    /// silently pass — it is UNSAT at the fold's state `connect`.
+    pub fn public_inputs(
+        &self,
+        old_commit8: &[BabyBear; 8],
+        new_commit8: &[BabyBear; 8],
+    ) -> Vec<BabyBear> {
+        let mut pis: Vec<BabyBear> = custom_pi_state_prefix(old_commit8, new_commit8).to_vec();
+        pis.extend_from_slice(&self.state_root);
         pis.push(self.token);
         pis.push(self.holder);
         pis.push(self.slot);
@@ -357,13 +425,21 @@ impl MptHoldingWitness {
     /// `CarrierWitness::Custom` arm (`RotatedParticipantLeg::with_custom_witness` /
     /// `mint_custom_wide_from_block_witnesses`) — the Some-witness rung: re-provable,
     /// foldable, NEVER serialized.
-    pub fn bundle(&self) -> CustomWitnessBundle {
+    /// `old_commit8`/`new_commit8` are the LEG's real rotated roots — see
+    /// [`Self::public_inputs`]. The caller must read them off the leg
+    /// (`wide_old_root8()`/`wide_new_root8()`) before building the bundle.
+    pub fn bundle(
+        &self,
+        old_commit8: &[BabyBear; 8],
+        new_commit8: &[BabyBear; 8],
+    ) -> CustomWitnessBundle {
         let (witness_values, num_rows) = self.witness_values();
         CustomWitnessBundle {
             program: mpt_holding_program(),
             witness_values,
             num_rows,
-            public_inputs: self.public_inputs(),
+            public_inputs: self.public_inputs(old_commit8, new_commit8),
+            app_root_binding: None,
         }
     }
 }

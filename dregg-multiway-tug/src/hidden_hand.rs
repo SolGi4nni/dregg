@@ -66,6 +66,7 @@ use dregg_circuit::merkle_types::compute_parent_poseidon2;
 use dregg_circuit::poseidon2::hash_4_to_1;
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
+use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
 use crate::reference::{INFLUENCE, N_GUILDS, Player};
@@ -772,6 +773,9 @@ impl LedgerDeployment {
         teeth.push(StateConstraint::Monotonic {
             index: self.reg("phase"),
         });
+        // GENESIS ONE-SHOT (write-hatch close): freeze the genesis-done sentinel on every
+        // non-genesis case — `Immutable` admits the unchanged key, refuses any reset.
+        teeth.push(genesis_sentinel_freeze());
         teeth
     }
 
@@ -790,11 +794,14 @@ impl LedgerDeployment {
             }
         };
         let cases = vec![
+            // GENESIS ONE-SHOT: the `0 → 1` write on `GENESIS_DONE_EXT_KEY` — admissible exactly
+            // once at deploy, jointly UNSAT for every post-deploy genesis staple. No longer the
+            // permissive `constraints: vec![]` write-hatch.
             TransitionCase {
                 guard: TransitionGuard::MethodIs {
                     method: symbol(GENESIS),
                 },
-                constraints: vec![],
+                constraints: genesis_oneshot_teeth(),
             },
             action_case(self, PLAY),
             action_case(self, COMMIT_PICK),

@@ -268,6 +268,15 @@ pub const NUM_CHAIN_CLAIMS: usize = SEG_DIGEST_FIRST + SEG_DIGEST_WIDTH;
 /// single rotated commit felt across all eight (no entropy gain, structural type-compat only).
 pub const SEG_ANCHOR_WIDTH: usize = 8;
 
+/// **THE WIDE CUSTOM LEG's EXPOSED FIELD-OCTET WIDTH (the app-root weld leg-emit).** The wide
+/// custom descriptor (`customVmDescriptor2R24`) publishes the cell's committed `fields[0..8]`
+/// octet — the faithfully-carried limbs the `new8` commitment absorbs — as 8 PIs positioned
+/// IMMEDIATELY BEFORE the 16 wide anchors, i.e. at leg PIs `[n - 2*SEG_ANCHOR_WIDTH - 8 .. n -
+/// 2*SEG_ANCHOR_WIDTH)`. The app-root arm reads `field[binding.field_key]` from this octet and the
+/// fold connects it to the sub-proof's published root `R`. Pinned to the Lean
+/// `customFieldKExposure` emit / the Rust `generate_rotated_custom_wide` field exposure.
+pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
+
 /// Segment field lanes (the order they are exposed in the `expose_claim` table). The two
 /// 8-felt state anchors come first, then the count, then the multi-felt digest.
 pub const SEG_FIRST_OLD: usize = 0;
@@ -2981,44 +2990,144 @@ fn prove_chain_core_rotated(
                     index: i,
                     reason: format!("custom proof-bind commitment version boundary: {e}"),
                 })?;
-                let dual = prove_descriptor_leaf_dual_expose(
-                    &leg.descriptor,
-                    &leg.proof,
-                    &leg.public_inputs,
-                    &config,
-                )
-                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
-                // THE STATE-BINDING LEAF (the deployed default). The 24-lane claim
-                // `[commitment(8) ‖ pis[0..16]]` — NOT the 8-lane commitment-only leaf. A
-                // sub-program that cannot express the `custom_state_binding` ABI prefix
-                // (< 16 PIs) is REFUSED here, fail-closed, never zero-padded into a false
-                // prefix. That refusal is not new reach: the deployed EXECUTOR already
-                // refuses such a turn at `enforce_custom_proof_state_binding`
-                // (`PublicInputsTooShort`), so a chain the old prover happily minted was
-                // one no executor would accept. The prover now agrees with the verifier.
-                let custom_leaf =
-                    crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment(
-                        &bundle.program,
-                        &bundle.witness_values,
-                        bundle.num_rows,
-                        &bundle.public_inputs,
-                        &config,
-                    )
-                    .map_err(|reason| TurnChainError::TurnProofInvalid {
-                        index: i,
-                        reason: format!(
-                            "custom state-binding sub-proof leaf mint failed: {reason}"
-                        ),
-                    })?;
-                crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
-                    &dual,
-                    &custom_leaf,
-                    &config,
-                )
-                .map_err(|e| TurnChainError::TurnProofInvalid {
-                    index: i,
-                    reason: format!("state-binding custom-binding node failed: {e:?}"),
-                })?
+                // THE ARM RE-POINT (the deployed keystone): a custom turn that DECLARES an
+                // app-root weld (`bundle.app_root_binding = Some(binding)`) mints the APP-ROOT
+                // node + the app-root leaf, NOT the state-only pair. MANDATORY, not a conditional
+                // connect: the app-root node itself REQUIRES the wide field-exposure claim, so a
+                // forging prover cannot dodge the weld by minting the narrow state leaf (a custom
+                // turn with an app-root binding whose published `R != field_K` has NO satisfying
+                // fold — UNSAT, no root). A custom turn with `None` is byte-identical to before
+                // (the state node), so a no-app-root custom turn is UNAFFECTED.
+                match &bundle.app_root_binding {
+                    None => {
+                        let dual = prove_descriptor_leaf_dual_expose(
+                            &leg.descriptor,
+                            &leg.proof,
+                            &leg.public_inputs,
+                            &config,
+                        )
+                        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                        // THE STATE-BINDING LEAF (the deployed default for a no-app-root custom
+                        // turn). The 24-lane claim `[commitment(8) ‖ pis[0..16]]` — NOT the 8-lane
+                        // commitment-only leaf. A sub-program that cannot express the
+                        // `custom_state_binding` ABI prefix (< 16 PIs) is REFUSED here, fail-closed,
+                        // never zero-padded into a false prefix. That refusal is not new reach: the
+                        // deployed EXECUTOR already refuses such a turn at
+                        // `enforce_custom_proof_state_binding` (`PublicInputsTooShort`), so a chain
+                        // the old prover happily minted was one no executor would accept. The prover
+                        // now agrees with the verifier.
+                        let custom_leaf =
+                            crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment(
+                                &bundle.program,
+                                &bundle.witness_values,
+                                bundle.num_rows,
+                                &bundle.public_inputs,
+                                &config,
+                            )
+                            .map_err(|reason| {
+                                TurnChainError::TurnProofInvalid {
+                                    index: i,
+                                    reason: format!(
+                                        "custom state-binding sub-proof leaf mint failed: {reason}"
+                                    ),
+                                }
+                            })?;
+                        crate::joint_turn_recursive::prove_custom_binding_node_state_segmented(
+                            &dual,
+                            &custom_leaf,
+                            &config,
+                        )
+                        .map_err(|e| TurnChainError::TurnProofInvalid {
+                            index: i,
+                            reason: format!("state-binding custom-binding node failed: {e:?}"),
+                        })?
+                    }
+                    Some(binding) => {
+                        if !binding.is_well_formed() {
+                            return Err(TurnChainError::TurnProofInvalid {
+                                index: i,
+                                reason: format!(
+                                    "custom app-root binding {binding:?} is ill-formed (R must sit \
+                                     strictly past the 16-felt state prefix and have nonzero width)"
+                                ),
+                            });
+                        }
+                        // WHERE THE LEG PUBLISHES field_K: the wide custom descriptor exposes the
+                        // cell's committed field octet (the faithfully-carried `fields[0..8]` the
+                        // `new8` commitment absorbs) as PIs immediately BEFORE the 16 wide anchors
+                        // — at `[n - 2*SEG_ANCHOR_WIDTH - CUSTOM_APP_FIELD_OCTET_LEN .. n -
+                        // 2*SEG_ANCHOR_WIDTH)` (the `generate_rotated_custom_wide` field-K exposure
+                        // / Lean `customFieldKExposure`). `field_key` selects the lane within that
+                        // octet; the claim is `L = app_root_len` felts wide starting there.
+                        let n = leg.public_inputs.len();
+                        let octet_lo = n
+                            .checked_sub(2 * SEG_ANCHOR_WIDTH + CUSTOM_APP_FIELD_OCTET_LEN)
+                            .ok_or_else(|| TurnChainError::TurnProofInvalid {
+                                index: i,
+                                reason: format!(
+                                    "custom app-root leg publishes {n} PIs — too few to carry the \
+                                     field octet ahead of the {} wide anchors; the wide custom \
+                                     descriptor must expose field_K (leg-emit not present)",
+                                    2 * SEG_ANCHOR_WIDTH
+                                ),
+                            })?;
+                        if binding.field_key + binding.app_root_len > CUSTOM_APP_FIELD_OCTET_LEN {
+                            return Err(TurnChainError::TurnProofInvalid {
+                                index: i,
+                                reason: format!(
+                                    "custom app-root binding {binding:?}: field_key + app_root_len \
+                                     exceeds the {CUSTOM_APP_FIELD_OCTET_LEN}-felt exposed field \
+                                     octet"
+                                ),
+                            });
+                        }
+                        let field_k_pi_lo = octet_lo + binding.field_key;
+                        let dual = prove_descriptor_leaf_expose_segment_and_claims(
+                            &leg.descriptor,
+                            &leg.proof,
+                            &leg.public_inputs,
+                            &config,
+                            &[
+                                (
+                                    crate::joint_turn_recursive::CUSTOM_COMMIT_PI_LO,
+                                    crate::joint_turn_recursive::CUSTOM_COMMIT_LEN,
+                                ),
+                                (field_k_pi_lo, binding.app_root_len),
+                            ],
+                        )
+                        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                        // THE APP-ROOT LEAF: `[commitment(8) ‖ old8 ‖ new8 ‖ R(L)]` — re-exposes
+                        // the sub-proof's published root R for the fold to connect. Fail-closed on
+                        // a sub-program that cannot carry the binding.
+                        let custom_leaf =
+                            crate::custom_leaf_adapter::prove_custom_leaf_with_app_root_commitment(
+                                &bundle.program,
+                                &bundle.witness_values,
+                                bundle.num_rows,
+                                &bundle.public_inputs,
+                                binding,
+                                &config,
+                            )
+                            .map_err(|reason| {
+                                TurnChainError::TurnProofInvalid {
+                                    index: i,
+                                    reason: format!(
+                                        "custom app-root sub-proof leaf mint failed: {reason}"
+                                    ),
+                                }
+                            })?;
+                        crate::joint_turn_recursive::prove_custom_binding_node_app_root_segmented(
+                            &dual,
+                            &custom_leaf,
+                            &config,
+                            binding.app_root_len,
+                        )
+                        .map_err(|e| TurnChainError::TurnProofInvalid {
+                            index: i,
+                            reason: format!("app-root custom-binding node failed: {e:?}"),
+                        })?
+                    }
+                }
             }
             // THE BRIDGE FOLD ARM (the 7th carrier) — the named residual CLOSED by the
             // felt-domain mint_hash thread: (STEP 1) the executor re-aligned `mint_hash` to

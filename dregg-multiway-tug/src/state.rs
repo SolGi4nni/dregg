@@ -35,6 +35,7 @@ use dregg_app_framework::{
 use dregg_cell::program::{HeapAtom, SimpleStateConstraint};
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
+use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
 use spween_dregg::CompiledStory;
 
 use crate::reference::{ActionKind, N_GUILDS, Player};
@@ -205,6 +206,12 @@ impl Deployment {
                 });
             }
         }
+        // GENESIS ONE-SHOT (the write-hatch close, ported from the committed dregg-schema /
+        // spween-dregg precedent): FREEZE the genesis-done sentinel on every non-genesis case.
+        // `HeapField{Immutable}` admits the unchanged key (no play method ever writes it) but
+        // REFUSES any write — so no stapled move can reset the sentinel to re-open the permissive
+        // `constraints: vec![]` genesis case.
+        teeth.push(genesis_sentinel_freeze());
         teeth
     }
 
@@ -261,12 +268,19 @@ impl Deployment {
         ];
 
         let cases = vec![
-            // Permissive genesis: seeds counts + the heap keys the relational teeth read.
+            // GENESIS: seeds counts + the heap keys the relational teeth read — but NO LONGER a
+            // permissive `constraints: vec![]` write-hatch. It carries the ONE-SHOT teeth (the
+            // `0 → 1` transition on `GENESIS_DONE_EXT_KEY`, `Equals{1} ∧ DeltaEquals{1}`):
+            // admissible EXACTLY once (at deploy, sentinel still field-zero), jointly UNSAT for
+            // every post-deploy genesis staple (`old == 1` forces `Δ == 0 ≠ 1`). The world births
+            // the sentinel at deploy and injects the `0 → 1` write on the genesis method
+            // (`WorldCell::commit`, keyed off this program carrying a `HeapField` over the
+            // sentinel key — `program_requires_genesis_sentinel`).
             TransitionCase {
                 guard: TransitionGuard::MethodIs {
                     method: symbol(GENESIS),
                 },
-                constraints: vec![],
+                constraints: genesis_oneshot_teeth(),
             },
             method_case(ActionKind::Secret.method(), action_extra()),
             method_case(ActionKind::Discard.method(), action_extra()),

@@ -117,6 +117,42 @@ fn full_round_plays_and_matches_reference() {
     assert_eq!(game.read_reg("winner"), expected);
 }
 
+/// **THE GENESIS ONE-SHOT CANARY** (DELIVER #4): the permissive `genesis` write-hatch is
+/// closed. `fresh` already commits the FIRST genesis (the sentinel `0 → 1` write the executor
+/// injects — admitted exactly once, `Equals{1} ∧ DeltaEquals{1}` on `GENESIS_DONE_EXT_KEY`
+/// with the sentinel still field-zero). A SECOND genesis staple re-hits `old == 1`, where the
+/// injected `→ 1` write gives `Δ == 0 ≠ 1` and the two teeth are jointly UNSATISFIABLE — so it
+/// is REFUSED. Without the one-shot teeth (the old `constraints: vec![]`), the re-staple would
+/// commit and silently overwrite the whole board; this pair (admits once, refuses the restage)
+/// is the canary.
+#[test]
+fn genesis_restaple_is_refused_one_shot() {
+    let (game, eng) = fresh(9);
+    // The first genesis already committed inside `fresh`. A post-deploy genesis re-staple —
+    // the universal write-hatch — is now refused at the executor.
+    let restage = eng.projection();
+    let err = game
+        .seed(&restage)
+        .expect_err("a post-deploy genesis re-staple is refused (one-shot genesis)");
+    assert!(
+        format!("{err}").to_lowercase().contains("refus"),
+        "the re-staple refusal is a real WorldError::Refused: {err}"
+    );
+    // NON-VACUOUS: the board still reads the seeded state (the refused re-staple wrote nothing),
+    // and a legal play still commits off it.
+    assert_eq!(
+        game.read_projection(),
+        restage,
+        "the refused re-staple left the board untouched"
+    );
+    let mut eng2 = eng;
+    let mv = eng2.play_next();
+    let proj = eng2.projection();
+    game.commit_projection(mv.action().method(), &proj)
+        .expect("a legal play still commits after the refused re-staple");
+    assert_eq!(game.read_projection(), proj);
+}
+
 #[test]
 fn conservation_break_is_refused_non_vacuously() {
     let (game, mut eng) = fresh(3);
