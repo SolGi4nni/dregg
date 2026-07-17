@@ -107,12 +107,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
          (`peer_transition...`); the module-top import serves that in-crate control. \
          File is uncommitted by another lane — re-audit when it settles.",
     ),
-    (
-        "federation/src/dkg_ceremony.rs",
-        "HELD DIRTY: uncommitted by another lane this session; not touched. GRANDFATHERED \
-         pending settle — DKG transcript signatures under roster keys; audit attacker-key \
-         reachability then convert or justify.",
-    ),
     // ── GRANDFATHERED: un-audited non-strict prod sites (debt, not endorsement) ──
     (
         "deco-prove/src/notary.rs",

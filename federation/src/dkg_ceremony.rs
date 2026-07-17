@@ -54,7 +54,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 use dregg_captp::store_forward::{decrypt_from_sender, encrypt_for_destination};
@@ -314,7 +314,17 @@ impl SignedCeremonyMsg {
                 signer: self.signer,
             })?;
         let transcript = signing_transcript(&self.ceremony, self.signer, &self.msg.to_bytes());
-        vk.verify(&transcript, &Signature::from_bytes(&self.signature))
+        // STRICT (`verify_strict`, RFC 8032 §5.1.7 — NOT the cofactored
+        // `Verifier::verify`): reject small-order/non-canonical keys and `R`.
+        // A roster `auth_pk` is participant-declared data; under a small-order
+        // key `A = identity`, the signature `(R = identity, s = 0)` satisfies
+        // `R == s·B + h·A` for EVERY message, so anyone holding NO SECRET forges
+        // a "signature" that verifies. Since two such forgeries over conflicting
+        // dealings would let a no-secret party mint `EquivocationEvidence` and
+        // SLASH a bonded participant's obligation cell, strictness here is the
+        // difference between an unforgeable and a forgeable slashing witness.
+        // See `federation_dkg_ceremony_smallorder_key_cannot_forge_slashing`.
+        vk.verify_strict(&transcript, &Signature::from_bytes(&self.signature))
             .map_err(|_| CeremonyError::BadSignature {
                 signer: self.signer,
             })
@@ -1241,6 +1251,110 @@ mod tests {
         );
         assert_eq!(view.offenses().len(), 1);
         assert_eq!(view.offenses()[0].offender(), 1);
+    }
+
+    /// SOUNDNESS TOOTH — a small-order roster `auth_pk` must NOT let a party
+    /// holding NO SECRET forge a slashing witness.
+    ///
+    /// The ceremony roster's `auth_pk` is participant-declared data. If a
+    /// participant's slot carries the ed25519 identity point (`y = 1`, a
+    /// canonical, decodable, SMALL-ORDER key), then the signature
+    /// `(R = identity, s = 0)` satisfies `R == s·B + h·A` for EVERY message.
+    /// Under the cofactored `Verifier::verify`, an attacker with no secret can
+    /// therefore mint two "signed" conflicting dealings for that slot, and
+    /// [`EquivocationEvidence::verify`] would CERTIFY them — slashing the
+    /// bonded participant's obligation cell with a witness nobody legitimately
+    /// signed. `verify_strict` (RFC 8032 §5.1.7) denies weak keys and closes
+    /// this. If `SignedCeremonyMsg::verify` is ever re-loosened to `vk.verify`,
+    /// this test goes RED.
+    #[test]
+    fn federation_dkg_ceremony_smallorder_key_cannot_forge_slashing() {
+        let params = DkgParams { n: 3, t: 2 };
+        let ceremony = [11u8; 32];
+        let (roster, secrets) = make_roster(3);
+        let mut view = CeremonyView::new(ceremony, params, roster.clone()).unwrap();
+
+        // Two GENUINE conflicting dealings from dealer 1 → real equivocation
+        // evidence (the honest baseline: real key, real sigs, real conflict).
+        let (_p, first, _) = CeremonyDriver::new(
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
+        )
+        .unwrap();
+        let (_p2, second, _) = CeremonyDriver::new(
+            ceremony,
+            params,
+            1,
+            secrets[0].0,
+            secrets[0].1,
+            roster.clone(),
+        )
+        .unwrap();
+        assert_eq!(view.record(&first).unwrap(), Recorded::Fresh);
+        let Recorded::Equivocation(genuine) = view.record(&second).unwrap() else {
+            panic!("two conflicting dealings must yield evidence");
+        };
+        // CONTROL: genuine evidence under the honest roster convicts — so a
+        // refusal below is caused by the forgery, not a verifier that refuses
+        // everything.
+        assert!(
+            genuine.verify(&ceremony, &roster),
+            "control: genuine equivocation evidence must still convict dealer 1"
+        );
+        assert_ne!(
+            first.msg, second.msg,
+            "premise: the two dealings must actually conflict (distinct bodies)"
+        );
+
+        // The attack: swap dealer 1's roster slot to the SMALL-ORDER identity
+        // key. No secret is used anywhere below.
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        // NON-VACUITY from the library's own authority: this key is well-formed
+        // AND weak — refusal is for WEAKNESS, not malformation.
+        assert!(
+            VerifyingKey::from_bytes(&identity)
+                .expect("identity point is a canonical ed25519 key")
+                .is_weak(),
+            "premise: the identity point is a small-order (weak) key"
+        );
+        let mut forged_roster = roster.clone();
+        forged_roster.get_mut(&1).unwrap().auth_pk = identity;
+
+        // The universal forgery: R = identity, s = 0 — mints under the weak key
+        // for ANY message, holding no secret.
+        let mut forged_sig = [0u8; 64];
+        forged_sig[0] = 1;
+        let forge = |msg: &SignedCeremonyMsg| SignedCeremonyMsg {
+            ceremony,
+            signer: 1,
+            msg: msg.msg.clone(),
+            signature: forged_sig,
+        };
+
+        // A single forged message must NOT verify under the small-order slot.
+        assert!(
+            forge(&first).verify(&ceremony, &forged_roster).is_err(),
+            "SOUNDNESS: a no-secret forgery under a small-order roster key must \
+             NOT verify. A cofactored `Verifier::verify` accepts it."
+        );
+
+        // And the assembled slashing witness must NOT convict — an attacker
+        // holding no secret cannot slash dealer 1's bond.
+        let framed = EquivocationEvidence {
+            dealer: 1,
+            first: forge(&first),
+            second: forge(&second),
+        };
+        assert!(
+            !framed.verify(&ceremony, &forged_roster),
+            "SOUNDNESS: forged equivocation evidence under a small-order key must \
+             NOT convict — else a no-secret party slashes a bonded participant."
+        );
     }
 
     #[test]
