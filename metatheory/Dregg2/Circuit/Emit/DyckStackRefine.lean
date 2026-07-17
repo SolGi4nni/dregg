@@ -56,11 +56,17 @@ SAT⇒SEM direction: fewer modelled constraints ⇒ a WEAKER hypothesis ⇒ a st
 
 As in `DerivationRefine`: gates vanish `≡ 0 [ZMOD p]`, and the ℤ conclusions of `DyckRowValid` are
 recovered from the deployed range-check canonicality carried as the EXPLICIT hypothesis `DyckCanon`
-(§3), inhabited concretely by `witTrace_canon` (§5). `DyckCanon` also carries the DEPTH range check
-`0 ≤ STACK_DEPTH ≤ D` that `docs/DESIGN-parse-as-derivation.md` §2 specifies as a column property —
-and that `dyck_stack.rs` does NOT emit as a constraint (a real gap in the circuit; see the lane
-findings). Without it the `±1`/`+2` depth deltas are only field congruences and a wrapped depth is
-not excluded.
+(§3), inhabited concretely by `witTrace_canon` (§5).
+
+**The depth range is no longer a hypothesis.** `DyckCanon` used to carry `0 ≤ STACK_DEPTH ≤ D` as
+two extra fields — the bound `docs/DESIGN-parse-as-derivation.md` §2 specifies as a column property
+— because `dyck_stack.rs` did not emit it as a constraint. That made this file ASSUME what the
+circuit should have PROVEN: without the bound the `±1`/`+2` depth deltas are only field congruences
+and a wrapped depth is not excluded, so the assumption was load-bearing and unbacked. The circuit
+now emits the range on both depth columns (`dyck_stack.rs::vanishing_on_grid`, byte-pinned through
+`DyckStackEmit.depthRangeBody`), `dyckConstraints` (§2) transcribes it, and `depth_of_sat` /
+`depthNext_of_sat` (§3.1) DERIVE the bound from `Satisfied2` + canonicality via `range_of_gate`.
+`witTrace_depth_derived` (§5) fires the derivation on the concrete witness.
 
 ## Axiom hygiene
 
@@ -196,6 +202,22 @@ def gSubK (a : Nat) (k : ℤ) : EmittedExpr := .add (.var a) (.const (-k))
 /-- `a − b − k`. -/
 def gDiffIs (a b : Nat) (k : ℤ) : EmittedExpr := .add (gSub a b) (.const (-k))
 
+/-- `∏_{v ∈ vs} (col − v)` — the transcription of `dyck_stack.rs::vanishing_on_grid` (and of
+`DyckStackEmit.gVanishOnGrid`, which byte-pins the emitted form). -/
+def gVanishOnGrid (c : Nat) (vs : List ℤ) : EmittedExpr :=
+  match vs with
+  | []      => .const 1
+  | v :: vs => vs.foldl (fun acc w => .mul acc (gSubK c w)) (gSubK c v)
+
+/-- The legal depth grid `{0, …, D}` at `D = 5`. -/
+def depthGrid : List ℤ := [0, 1, 2, 3, 4, 5]
+
+/-- The depth-range body on `STACK_DEPTH` — the constraint that USED to be a hypothesis. -/
+def depthRangeBody : EmittedExpr := gVanishOnGrid STACK_DEPTH depthGrid
+
+/-- The depth-range body on `DEPTH_NEXT`. -/
+def depthNextRangeBody : EmittedExpr := gVanishOnGrid DEPTH_NEXT depthGrid
+
 /-- `next[nc] − local[lc]` as a two-row window body. -/
 def wThread (nc lc : Nat) : WindowExpr := .add (.nxt nc) (.mul (.const (-1)) (.loc lc))
 /-- `local[sel] · e` — the `Gated` wrapper on a window body. -/
@@ -230,6 +252,11 @@ def dyckConstraints : List VmConstraint2 :=
     cg (gGate IS_DONE (gSubK STACK_DEPTH 0)),
     -- input-pointer helper: INPUT_POS_P1 == INPUT_POS + 1
     cg (gDiffIs INPUT_POS_P1 INPUT_POS 1),
+    -- DEPTH RANGE: ∏_{v=0}^{D} (depth − v) == 0 on both depth columns. This is what the deltas
+    -- below need to mean anything over ℤ: they are field congruences, so without the range a
+    -- WRAPPED depth satisfies them all. `depth_of_sat` (§3) reads the bound back OUT of this.
+    cg depthRangeBody,
+    cg depthNextRangeBody,
     -- depth deltas per action
     cg (gGate SEL_BRACKET (gDiffIs DEPTH_NEXT STACK_DEPTH 2)),
     cg (gGate SEL_EMPTY (gDiffIs DEPTH_NEXT STACK_DEPTH (-1))),
@@ -292,17 +319,19 @@ def dyckDesc : EffectVmDescriptor2 :=
   , hashSites   := []
   , ranges      := [] }
 
-/-! ## §3 — The canonicality + depth-range envelope. -/
+/-! ## §3 — The canonicality envelope, and the depth range DISCHARGED from the circuit. -/
 
-/-- **The Dyck envelope**: every cell of every row is the canonical residue (the deployed
-range-check invariant), and the two depth columns lie in `[0, D]` (the design's column property
-`0 ≤ STACK_DEPTH ≤ D`; `dyck_stack.rs` does not yet emit it — see the header). Carried EXPLICITLY:
-the field denotation only pins gates mod `p`. Inhabited concretely by `witTrace_canon` (§5), so it
-is never a vacuous antecedent. -/
+/-- **The Dyck envelope**: every cell of every row is the canonical residue — the deployed
+range-check invariant. Carried EXPLICITLY because the field denotation only pins gates mod `p`.
+Inhabited concretely by `witTrace_canon` (§5), so it is never a vacuous antecedent.
+
+**This structure used to carry two more fields**, `depth` and `depthNext` (`0 ≤ · ≤ D` on the two
+depth columns), as EXPLICIT hypotheses — precisely because `dyck_stack.rs` emitted no range
+constraint and the proof had to assume what the circuit did not enforce. The circuit now emits it
+(`vanishing_on_grid` on both columns, byte-pinned via `DyckStackEmit.depthRangeBody`), so the bound
+is DERIVED instead: see `depth_of_sat` / `depthNext_of_sat` below. -/
 structure DyckCanon (t : VmTrace) : Prop where
   cells : ∀ i c, Canon (t.rows.getD i zeroAsg c)
-  depth : ∀ i, 0 ≤ t.rows.getD i zeroAsg STACK_DEPTH ∧ t.rows.getD i zeroAsg STACK_DEPTH ≤ 5
-  depthNext : ∀ i, 0 ≤ t.rows.getD i zeroAsg DEPTH_NEXT ∧ t.rows.getD i zeroAsg DEPTH_NEXT ≤ 5
 
 theorem canon_loc {t : VmTrace} (h : DyckCanon t) (i c : Nat) : Canon ((envAt t i).loc c) :=
   h.cells i c
@@ -411,11 +440,69 @@ theorem bin_of_gate {a : Assignment} {c : Nat}
   · obtain ⟨k, hk⟩ := hx; left; omega
   · obtain ⟨k, hk⟩ := hx; right; omega
 
+/-- **THE DEPTH-RANGE EXTRACTION** — the lemma that converts the circuit's new range gate into the
+ℤ bound the refinement used to ASSUME.
+
+A CANONICAL cell whose grid-vanishing gate `∏_{v=0}^{5} (x − v)` vanishes mod `p` lies in `[0, 5]`
+over ℤ. The argument is `bin_of_gate`'s, one grid point wider: `p ∣ ∏ (x − v)` and `p` prime force
+`p ∣ (x − v)` for SOME `v`; canonicality (`0 ≤ x < p`) then pins `x − v ∈ (−6, p)`, whose only
+multiple of `p` is `0`, so `x = v ∈ {0, …, 5}`.
+
+This is exactly where the wrap dies: `x = p − 1` is congruent to `−1` and satisfies every depth
+DELTA, but it is not any of the six grid points, so its gate does not vanish. -/
+theorem range_of_gate {a : Assignment} {c : Nat}
+    (h : (gVanishOnGrid c depthGrid).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a c)) :
+    0 ≤ a c ∧ a c ≤ 5 := by
+  simp only [gVanishOnGrid, depthGrid, gSubK, List.foldl, EmittedExpr.eval] at h
+  have hd := Int.modEq_zero_iff_dvd.mp h
+  obtain ⟨hc0, hc1⟩ := hc
+  rcases pPrimeInt.dvd_mul.mp hd with h1 | h1
+  · rcases pPrimeInt.dvd_mul.mp h1 with h2 | h2
+    · rcases pPrimeInt.dvd_mul.mp h2 with h3 | h3
+      · rcases pPrimeInt.dvd_mul.mp h3 with h4 | h4
+        · rcases pPrimeInt.dvd_mul.mp h4 with h5 | h5
+          · obtain ⟨k, hk⟩ := h5; omega
+          · obtain ⟨k, hk⟩ := h5; omega
+        · obtain ⟨k, hk⟩ := h4; omega
+      · obtain ⟨k, hk⟩ := h3; omega
+    · obtain ⟨k, hk⟩ := h2; omega
+  · obtain ⟨k, hk⟩ := h1; omega
+
 /-- Membership plumbing: peel `List.mem_cons` to the named constraint's position. -/
 macro "dyck_mem" : tactic =>
   `(tactic| (show _ ∈ dyckConstraints
              simp only [dyckConstraints]
              repeat' first | exact List.Mem.head _ | apply List.Mem.tail))
+
+/-! ### §3.1 — THE DISCHARGE: the depth bound is now a THEOREM, not a hypothesis. -/
+
+section Discharge
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+
+/-- **`depth_of_sat` — `0 ≤ STACK_DEPTH ≤ D` is PROVEN from the circuit, not assumed.** A trace
+satisfying `dyckDesc` whose cells are canonical has its depth column inside the `D`-cell buffer's
+legal occupancies on every TRANSITION row.
+
+This theorem is the point of the lane. `DyckCanon` previously carried this as a field because
+`dyck_stack.rs` emitted no range constraint; the circuit now emits one, and the bound falls out of
+the deployed accept-set. The `∀ i` of the old field is narrowed to the transition rows where the
+`when_transition` lowering actually binds the gate (`.gate` is `True` on the last row, matching the
+Rust `references_next` driver) — which is exactly the set of rows `dyck_sat_imp_row_valid` consumes
+the bound on, so nothing that used the hypothesis loses anything. -/
+theorem depth_of_sat (hsat : Satisfied2 hash dyckDesc minit mfin maddrs t) (hc : DyckCanon t)
+    (i : Nat) (hi : i + 1 < t.rows.length) :
+    0 ≤ (envAt t i).loc STACK_DEPTH ∧ (envAt t i).loc STACK_DEPTH ≤ 5 :=
+  range_of_gate (dyck_gate hsat i hi (g := depthRangeBody) (by dyck_mem)) (canon_loc hc i _)
+
+/-- **`depthNext_of_sat`** — the same, for the `DEPTH_NEXT` witness column. Pinned by its OWN range
+gate rather than read back through `Transition{STACK_DEPTH ← DEPTH_NEXT}`, which is why the circuit
+emits the tooth on both columns. -/
+theorem depthNext_of_sat (hsat : Satisfied2 hash dyckDesc minit mfin maddrs t) (hc : DyckCanon t)
+    (i : Nat) (hi : i + 1 < t.rows.length) :
+    0 ≤ (envAt t i).loc DEPTH_NEXT ∧ (envAt t i).loc DEPTH_NEXT ≤ 5 :=
+  range_of_gate (dyck_gate hsat i hi (g := depthNextRangeBody) (by dyck_mem)) (canon_loc hc i _)
+
+end Discharge
 
 /-! ### §4.1 — THE PER-ROW BRIDGE (the SAT⇒SEM tooth). -/
 
@@ -437,8 +524,10 @@ theorem dyck_sat_imp_row_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
       b.eval e ≡ 0 [ZMOD 2013265921] := fun hw => dyck_win hsat i hi hw
   have CL : ∀ c, Canon (e.loc c) := fun c => canon_loc hcanon i c
   have CN : ∀ c, Canon (e.nxt c) := fun c => canon_nxt hcanon i c
-  have DB : 0 ≤ e.loc STACK_DEPTH ∧ e.loc STACK_DEPTH ≤ 5 := hcanon.depth i
-  have DNB : 0 ≤ e.loc DEPTH_NEXT ∧ e.loc DEPTH_NEXT ≤ 5 := hcanon.depthNext i
+  -- The depth bounds are DERIVED from the circuit's range gate (they were hypotheses until the
+  -- circuit grew the tooth); `dd` below needs them to lift a delta congruence to a ℤ equation.
+  have DB : 0 ≤ e.loc STACK_DEPTH ∧ e.loc STACK_DEPTH ≤ 5 := depth_of_sat hsat hcanon i hi
+  have DNB : 0 ≤ e.loc DEPTH_NEXT ∧ e.loc DEPTH_NEXT ≤ 5 := depthNext_of_sat hsat hcanon i hi
   have lift_loc : ∀ {a b : Nat}, e.loc a ≡ e.loc b [ZMOD 2013265921] → e.loc a = e.loc b :=
     fun h => eq_of_modEq_canon (CL _) (CL _) h
   have lift_nl : ∀ {a b : Nat}, e.nxt a ≡ e.loc b [ZMOD 2013265921] → e.nxt a = e.loc b :=
@@ -709,12 +798,18 @@ theorem wit_bound (i c : Nat) :
   · rw [wit_rows_ge hi]; exact ⟨le_refl 0, by simp [zeroAsg]⟩
 
 /-- **`witTrace_canon` — the envelope is genuinely INHABITED.** Every cell of the witness is a small
-symbol id and both depth columns are `≤ 3`, so the range-check + depth-range envelope holds
-concretely; the bridge does not rest on a vacuous hypothesis. -/
+symbol id, so the range-check envelope holds concretely; the bridge does not rest on a vacuous
+hypothesis. (The depth bound is no longer part of the envelope — the circuit proves it. See
+`witTrace_depth_derived` for the derivation firing on this very trace.) -/
 theorem witTrace_canon : DyckCanon witTrace where
   cells i c := ⟨(wit_bound i c).1, by have := (wit_bound i c).2; omega⟩
-  depth i := ⟨(wit_bound i STACK_DEPTH).1, by have := (wit_bound i STACK_DEPTH).2; omega⟩
-  depthNext i := ⟨(wit_bound i DEPTH_NEXT).1, by have := (wit_bound i DEPTH_NEXT).2; omega⟩
+
+/-- **`witTrace_depth_derived` — the DISCHARGE fires on the concrete witness.** Row 0's depth bound
+is READ OUT of the satisfied circuit, with no depth hypothesis anywhere in sight: the only thing
+supplied is canonicality of the cells. What used to be an assumption is now a conclusion. -/
+theorem witTrace_depth_derived :
+    0 ≤ (envAt witTrace 0).loc STACK_DEPTH ∧ (envAt witTrace 0).loc STACK_DEPTH ≤ 5 :=
+  depth_of_sat witTrace_satisfies witTrace_canon 0 (by decide)
 
 /-- **`witTrace_row_valid` — the bridge FIRES on the concrete witness (end-to-end non-vacuity).**
 Row 0 of the honest `"[]"` parse is recovered as a genuine `rBracket` pushdown step. -/
@@ -737,6 +832,42 @@ theorem witTraceBad_not_satisfies :
   have hg := h.rowConstraints 1 (by decide) (cg (gGate IS_TERM (gSub (stk 0) INPUT_TOKEN)))
     (by dyck_mem)
   have hlf : (1 + 1 == witTraceBad.rows.length) = false := by decide
+  simp only [cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hlf] at hg
+  revert hg
+  decide
+
+/-! ### The WRAPPED-DEPTH canary: the range tooth is what bites.
+
+The synthetic violation the new constraint exists for, at the exact row the honest witness has a
+`term` on. Row 3 is `term ']'` at depth `1 → 0`; this rewrites it as depth `p − 1` with `DEPTH_NEXT
+= p − 2` — i.e. `−1 → −2`, a stack that has popped its way BELOW empty and wrapped the field.
+
+The pair of theorems below is the whole argument for the constraint's existence:
+`r3Wrapped_delta_still_zero` shows the wrap is INVISIBLE to the depth delta (the tooth that was
+supposed to be pinning depth), and `witTraceWrapped_not_satisfies` shows the range gate REJECTS it
+anyway. Remove the range constraint and the first stays true while the second becomes unprovable —
+which is precisely the state this file documented as a gap before the circuit grew the tooth. -/
+
+/-- Row 3 with the depth columns WRAPPED: `p − 1` (= `−1`) and `p − 2` (= `−2`). -/
+def r3Wrapped : Assignment := ofList
+  [3,0,0,0,0, 2013265920,2013265919, 0,1,0, 0, 3, 1,2, 0,0, 0,0, 0, 2,3,1,0]
+
+def witTraceWrapped : VmTrace := { witTrace with rows := [r0, r1, r2, r3Wrapped, rD, rD, rD, rD] }
+
+/-- **The wrap is INVISIBLE to the depth delta.** The `term` delta `IS_TERM·(DEPTH_NEXT − STACK_DEPTH
++ 1)` evaluates to exactly `0` on the wrapped row: `(p−2) − (p−1) + 1 = 0`. A circuit carrying only
+the deltas cannot see this row is nonsense — this is the field-congruence hole, exhibited. -/
+theorem r3Wrapped_delta_still_zero :
+    (gGate IS_TERM (gDiffIs DEPTH_NEXT STACK_DEPTH (-1))).eval r3Wrapped = 0 := by decide
+
+/-- **THE CANARY: the range gate REJECTS the wrapped depth.** `witTraceWrapped` fails `Satisfied2`,
+and the failure is ISOLATED to `depthRangeBody` at row 3 — the proof extracts that single constraint
+and refutes it, so the reject cannot be credited to a neighbouring tooth. -/
+theorem witTraceWrapped_not_satisfies :
+    ¬ Satisfied2 (fun _ => (0 : ℤ)) dyckDesc (fun _ => 0) (fun _ => (0, 0)) [] witTraceWrapped := by
+  intro h
+  have hg := h.rowConstraints 3 (by decide) (cg depthRangeBody) (by dyck_mem)
+  have hlf : (3 + 1 == witTraceWrapped.rows.length) = false := by decide
   simp only [cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hlf] at hg
   revert hg
   decide
@@ -949,11 +1080,17 @@ So the honest ordering is: land the depth↔occupancy constraint in the CIRCUIT 
 missing tooth, not a proof inconvenience — see the lane findings), then `decode` + the glue lemma
 close `parse_sat_imp_replay` by composing the two halves above. -/
 
+#assert_axioms range_of_gate
+#assert_axioms depth_of_sat
+#assert_axioms depthNext_of_sat
+#assert_axioms witTrace_depth_derived
 #assert_axioms dyck_sat_imp_row_valid
 #assert_axioms witTrace_satisfies
 #assert_axioms witTrace_canon
 #assert_axioms witTrace_row_valid
 #assert_axioms witTraceBad_not_satisfies
+#assert_axioms r3Wrapped_delta_still_zero
+#assert_axioms witTraceWrapped_not_satisfies
 #assert_axioms sem_fails
 #assert_axioms mrun_imp_replay
 #assert_axioms bracketsRows_run
