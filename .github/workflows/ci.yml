@@ -240,11 +240,20 @@ jobs:
             timeout: 45
             test: true
           # self-contained (vendored sqlite via duroxide; no path deps on the
-          # default features) — the full suite runs in seconds.
+          # default features) — the full suite runs in seconds. `--features deploy`
+          # ALSO compiles tests/deploy.rs (`#![cfg(feature = "deploy")]`), the
+          # launchpad seam: it pins a content-addressed microsite + token metadata
+          # and re-witnesses each asset against its CID. That test is fully hermetic
+          # (dregg_ipfs::MockIpfs + tempdir — no daemon, no network) and was compiled
+          # by NOTHING before (default features are `sqlite` only, so plain `cargo
+          # test` skipped the whole file). The `pg` feature's tests/pg_weld.rs stays
+          # out: it needs a live Postgres, same reason pg-dregg is ungated. Verified
+          # green locally: 21+ tests incl. the deploy re-witness, ~2s.
           - dir: durable-workflow
             toolchain: nightly-2026-06-21
             timeout: 30
             test: true
+            testflags: '--features deploy'
           # stable 1.96.1 = continuwuity's pin (rust-toolchain.toml there);
           # check-only: the embed is a full Matrix homeserver over a from-source
           # rocksdb — the long pole is the compile, and compiling it is the gate.
@@ -296,7 +305,10 @@ jobs:
       - name: cargo test --locked (legs whose test binaries link honestly on a hosted runner)
         if: matrix.test
         working-directory: ${{ matrix.dir }}
-        run: cargo test --locked
+        # matrix.testflags is the per-leg feature selection (e.g. durable-workflow's
+        # `--features deploy`, which turns on the otherwise-never-compiled deploy.rs
+        # launchpad test). Empty for legs that only need default features.
+        run: cargo test --locked ${{ matrix.testflags }}
 
   test:
     name: Test (${{ matrix.os }})
