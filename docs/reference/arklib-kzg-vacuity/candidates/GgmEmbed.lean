@@ -304,8 +304,90 @@ theorem embed_run_correspondence {g₁ : G₁} {g₂ : G₂} (hord : orderOf g�
       (seedG_Inv g₁ hord τ D hD)]
   rfl
 
+/-! ## 6. Non-collapse: the embedded adversary class is a genuine non-singleton.
+
+`tSdh_ggm_sound` (GgmEndToEnd) quantifies over the IMAGE of `embed`, NOT over all
+`Groups.tSdhAdversary` (over which the bound is FALSE — a `Classical.choice`-definable adversary
+inverts the encoding and wins with probability 1). A reviewer must therefore see that the
+replacement class is not itself degenerate: if `embed` had a singleton image we would have swapped
+one vacuity for another. `embed_noncollapsing` certifies the image is a genuine non-singleton that
+really exercises the group.
+
+⚑ WHAT THIS WITNESSES (and what it does NOT). It witnesses RICHNESS — the image of `embed` is not a
+single point — which is exactly the property that makes the quantifier `∀ strat, … (embed strat) …`
+non-vacuous. It does NOT claim `embed` is injective: literal injectivity is FALSE, and honestly so.
+Two strategies that differ only on equality-histories the run never actually reaches produce the
+SAME committed adversary — `runEmbed` consults a strategy only along the single branch its own
+realized queries carve out, so off-branch disagreement is invisible. That collapse is fine: a
+meaningful quantifier needs a non-singleton image, not an injective parametrization.
+
+⚑ WHERE `g₁ ≠ 1` LIVES. This hypothesis belongs HERE, not on `tSdh_ggm_sound`. Soundness holds for
+ANY base `g₁` — the counting bound never needs a nontrivial generator, and `tSdh_ggm_sound`
+correctly does not assume one. But the *meaningfulness* of quantifying over `embed`'s image — that
+the class carries a genuinely nontrivial GROUP output (conjunct (ii)), not merely distinct offset
+labels — is what consumes `g₁ ≠ 1`. That asymmetry (soundness free of it, meaningfulness using it)
+is itself the point. The non-singleton conjunct (i) needs even less: only `0 ≠ 1` in `ZMod p`. -/
+
+/-- The constant strategy that immediately commits offset `c` and reads out handle `0`, ignoring the
+equality history. The two instances `stratOffset 0` / `stratOffset 1` are the non-collapse witness. -/
+private def stratOffset (c : ZMod p) : Strat p := fun _ => Sum.inr (c, 0)
+
+/-- `getD 0` of the seed table is the `0`-th SRS G₁ handle (the seed's first segment starts at the
+tower, so position `0` is `srs1[0]`). -/
+lemma seedG_getD_zero (srs1 : List G₁) (D : ℕ) :
+    (seedG srs1 D).getD 0 1 = srs1.getD 0 1 := by
+  rw [seedG, List.getD_append _ _ _ _ (by simp),
+      rangeMap_getD_lt (fun i => srs1.getD i 1) (D + 1) 0 1 (Nat.succ_pos D)]
+
+omit [Group G₂] [PrimeOrderWith G₂ p] in
+/-- A `stratOffset c` run (with at least one unit of fuel) commits `c` and the `0`-th seed handle —
+which is the SRS's `0`-th G₁ element — on ANY SRS, decided with no group machinery. -/
+lemma runEmbed_stratOffset {g₁ : G₁} (D f : ℕ) (c : ZMod p)
+    (srs : Vector G₁ (D + 1) × Vector G₂ 2) :
+    runEmbed g₁ D (f + 1) (stratOffset c) srs = some (c, srs.1.toList.getD 0 1) := by
+  simp only [runEmbed, runEmbedAux, stratOffset, seedG_getD_zero]
+
+omit [PrimeOrderWith G₂ p] in
+/-- **`embed_noncollapsing` — the non-collapse witness.** There are two generic strategies whose
+`embed`-outputs (the deterministic `runEmbed` values, since `embed strat srs = pure (runEmbed …)`)
+are distinct, so the IMAGE of `embed` is a genuine non-singleton:
+
+* (i) On EVERY SRS, `stratOffset 0` and `stratOffset 1` commit distinct offsets (`0 ≠ 1` in
+  `ZMod p`), hence distinct outputs — no group machinery, no nontrivial generator. This is the
+  non-vacuity of `tSdh_ggm_sound`'s quantifier: its range is not one point.
+* (ii) On the real KZG SRS `PowerSrs.generate D τ`, `stratOffset 0`'s committed GROUP element is the
+  base generator `g₁`, which is `≠ 1` by `hg₁`. So the image really exercises the group — its
+  adversaries produce nontrivial group outputs, not only distinct labels. This is the sole consumer
+  of `g₁ ≠ 1`.
+
+Honest non-claim: this does not assert `embed` is injective (it is not — see the section note); it
+asserts the image is not a singleton, which is what a meaningful quantifier requires. -/
+theorem embed_noncollapsing {g₁ : G₁} {g₂ : G₂} (hg₁ : g₁ ≠ 1) (D f : ℕ) :
+    ∃ s₀ s₁ : Strat p,
+      (∀ srs : Vector G₁ (D + 1) × Vector G₂ 2,
+          runEmbed g₁ D (f + 1) s₀ srs ≠ runEmbed g₁ D (f + 1) s₁ srs) ∧
+      (∀ τ : ZMod p,
+          runEmbed g₁ D (f + 1) s₀ (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ)
+            ≠ some (0, 1)) := by
+  have h01 : (0 : ZMod p) ≠ 1 := zero_ne_one
+  refine ⟨stratOffset 0, stratOffset 1, ?_, ?_⟩
+  · -- (i) distinct offsets on every SRS, by `0 ≠ 1`
+    intro srs h
+    rw [runEmbed_stratOffset D f 0 srs, runEmbed_stratOffset D f 1 srs,
+        Option.some.injEq, Prod.mk.injEq] at h
+    exact h01 h.1
+  · -- (ii) the group output on the real SRS is the nontrivial generator `g₁`
+    intro τ h
+    have hval : (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ).1.toList.getD 0 1 = g₁ := by
+      have hsrs1 : (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ).1 = PowerSrs.tower g₁ τ D := rfl
+      rw [hsrs1, tower_toList_getD τ D 0 (Nat.succ_pos D), pow_zero, pow_one]
+    rw [runEmbed_stratOffset D f 0 (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ), hval,
+        Option.some.injEq, Prod.mk.injEq] at h
+    exact hg₁ h.2
+
 #print axioms embed_run_correspondence
 #print axioms embed
 #print axioms runEmbed
+#print axioms embed_noncollapsing
 
 end GgmEmbed
