@@ -45,11 +45,18 @@ fix — NOT a blind rewrite.
   a node to SOLO → finalizes with NO quorum → divergence; genesis-hybrid-unconfigured partitions the whole
   federation. Raw counts computed but never gate. Cited test covers only the vote layer. ⚑ ONE-LINE FIX
   (gate solo on RAW admitted count, fail-closed) → fix lane ac3c117a (falsifier-first). **Land before launch.**
-- **#3 predicate FORGERY, live, 2 sites** (`credentials/verification.rs:261` + `intent/fulfillment.rs:605`)
-  — DEEP-VERIFIED REAL: calls the BARE `verify_predicate_proof` against the proof's OWN commitment (`x==x`),
-  so a genuine `Gte(18)` proof attaches to a DIFFERENT credential. The sound `verify_predicate_proof_third_party`
-  EXISTS; the caller just doesn't use it. Introduced by `bac9e2b95` (closed the disclosure leg, left predicate
-  self-referential). → fix lane af2807ce (persvati; route through the sound fn + falsifier). **High blast.**
+- ⚑⚑⚑ **#3 predicate FORGERY — LIVE, PROVEN, fix NEEDS EMBER (circuit change).** `credentials/verification.rs:261`
+  + `intent/fulfillment.rs:605` call the BARE `verify_predicate_proof` against the proof's OWN commitment
+  (`x==x`) → a genuine `Gte(18)` proof attaches to a DIFFERENT credential; a foreign-state-root proof is
+  accepted. TWO falsifier tests written (`#[ignore]`d, they FAIL today = the forgery is live) + misleading
+  docs corrected — LANDED `214e531a9`. ⚠ THE FULL FIX CANNOT be a one-session drop-in: the sound
+  `verify_predicate_proof_third_party` needs a `facts_root` that DOES NOT EXIST as a presentation STARK
+  public input (`presentation_descriptor_witness.rs:29-80` binds only federation_root/predicate/timestamp/
+  tag/revealed_facts_commitment/height). The fix is a CIRCUIT ripple → VK-changing: (1) expose `facts_root`
+  as a presentation PI over the token's real fact set; (2) producer attaches `BridgeFactAttestation` per
+  predicate; (3) route `verify()`/`verify_predicate_requirement` through the third-party fn. Introduced by
+  `bac9e2b95` (closed the disclosure leg, left predicate self-referential). **Launch-critical; ember's call
+  on the circuit change** — held per be-thoughtful-not-trigger-happy (soundness-critical circuit surgery).
 - **#7 amended-quorum** (`blocklace/ordering.rs:307`) — REAL but LOW: off the live `tau` path (only bites
   `tau_unified` consumers amending ABOVE supermajority). Fix = `max(group.threshold, supermajority(n))`. QUEUED.
 - **#4 value_binding unbound** (`cell-crypto/value_link_zk.rs:470`) — REAL constraint gap but UNWIRED (0
@@ -76,6 +83,14 @@ fix — NOT a blind rewrite.
   it never gets done. [[feedback-swarm-delegate-identified-work-immediately]]
 
 ## Done log
+- 14:0x — **Rust soundness harvest** (falsifier-first, all pushed): **#1 fail-OPEN consensus hole FIXED**
+  (`a3ea501ec` — solo now keys on RAW admitted count, fail-closed on collapsed PQ-projection; falsifier on
+  the EXECUTION path RED→GREEN + liveness companion + canary). **#6 overflow FIXED** both sites
+  (`cff29ccde` — checked_add + falsifiers). **#2 bridge-receipt** = real primitive hole but BOUNDARY-CLOSED
+  (BridgeFinalize retired in dregg3, zero prod callers) → hardened defensively (`cff29ccde`) — my over-alarm,
+  corrected. **#3 predicate forgery** = LIVE, falsifier tests + doc-fix landed (`214e531a9`); full fix = a
+  circuit PI change, flagged for ember (see above). Dispatched next: isolated Tier-2/3 (erasure/doctor/
+  fee_policy/ring_trade).
 - 13:5x — **28-red dark Emit-refine repairs landing** (`c6d6556ee`, `3dd04f611`, pushed): field-faithful
   mod-p migration for the drifted refinement modules + `FinKernelStep` default + the Gt/Lt/Le/Neq predicate
   refines. These modules were unreachable from the `Dregg2` root (built nowhere) — a lane is repairing the
