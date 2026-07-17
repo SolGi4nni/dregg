@@ -48,8 +48,8 @@ pub(crate) async fn execute_faucet(state: &BotState, user_id: u64) -> serenity::
         Ok(Some(id)) => id,
         Ok(None) => {
             return embeds::warning_embed(
-                "No Wallet",
-                "You need a wallet to use the faucet. Use `/start` → **Create my wallet** first.",
+                "No Cipherclerk",
+                "You need a cipherclerk to use the faucet. Use `/start` → **Create my cipherclerk** first.",
             );
         }
         Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
@@ -194,20 +194,35 @@ pub async fn handle_leaderboard(ctx: &Context, command: &CommandInteraction, sta
 
 /// Handle /history interaction.
 pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let discord_id = command.user.id.get().to_string();
-
     defer_ephemeral(ctx, command).await;
+    let (embed, rows) = execute_history(state, command.user.id.get()).await;
+    let _ = command
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new().embed(embed).components(rows),
+        )
+        .await;
+}
+
+/// Build the caller's transaction history (the same read behind `/cipherclerk
+/// history` and the menu's History button): the ledger rows plus their
+/// re-check-against-the-chain press rows.
+pub(crate) async fn execute_history(
+    state: &BotState,
+    user_id: u64,
+) -> (
+    serenity::all::CreateEmbed,
+    Vec<serenity::all::CreateActionRow>,
+) {
+    let discord_id = user_id.to_string();
 
     // Ensure user has a cclerk.
     if !state.db.user_exists(&discord_id).await.unwrap_or(false) {
         let embed = embeds::warning_embed(
             "No Cipherclerk",
-            "You need a wallet to view history. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
+            "You need a cipherclerk to view history. Use `/help` → **Just create my cipherclerk** (or `/cipherclerk create`).",
         );
-        let _ = command
-            .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-            .await;
-        return;
+        return (embed, vec![]);
     }
 
     match state.db.get_user_transactions(&discord_id, 15).await {
@@ -215,10 +230,7 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
             if txs.is_empty() {
                 let embed =
                     embeds::dregg_embed("Transaction History").description("No transactions yet.");
-                let _ = command
-                    .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                    .await;
-                return;
+                return (embed, vec![]);
             }
 
             let mut description = String::new();
@@ -268,19 +280,9 @@ pub async fn handle_history(ctx: &Context, command: &CommandInteraction, state: 
                     false,
                 );
             }
-            let _ = command
-                .edit_response(
-                    &ctx.http,
-                    EditInteractionResponse::new().embed(embed).components(rows),
-                )
-                .await;
+            (embed, rows)
         }
-        Err(e) => {
-            let embed = embeds::error_embed("History Error", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-        }
+        Err(e) => (embeds::error_embed("History Error", &e.to_string()), vec![]),
     }
 }
 
@@ -297,15 +299,20 @@ pub async fn handle_activity(ctx: &Context, command: &CommandInteraction, state:
         )
         .await;
 
+    let embed = execute_activity(state).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
+
+/// Build the recent-committed-activity feed (the same live-node read behind
+/// `/federation activity` and the menus' Live-activity button).
+pub(crate) async fn execute_activity(state: &BotState) -> serenity::all::CreateEmbed {
     match state.devnet.get_recent_events(12, None).await {
-        Ok(events) if events.is_empty() => {
-            let embed = embeds::dregg_embed("Devnet Activity").description(
-                "No committed turns observed yet. Be the first — try `/faucet` or `/send`.",
-            );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-        }
+        Ok(events) if events.is_empty() => embeds::dregg_embed("Devnet Activity").description(
+            "No committed turns observed yet. Be the first — try `/cipherclerk faucet` or \
+             `/cipherclerk send`.",
+        ),
         Ok(events) => {
             let mut description = String::new();
             for event in &events {
@@ -324,23 +331,15 @@ pub async fn handle_activity(ctx: &Context, command: &CommandInteraction, state:
                     event.event_type, event.summary,
                 ));
             }
-            let embed = embeds::dregg_embed("Devnet Activity")
+            embeds::dregg_embed("Devnet Activity")
                 .description(description)
                 .field("Events", events.len().to_string(), true)
-                .field("Source", "Live node `/api/events` (committed turns)", true);
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
+                .field("Source", "Live node `/api/events` (committed turns)", true)
         }
-        Err(e) => {
-            let embed = embeds::error_embed(
-                "Activity Unavailable",
-                &e.user_message("read the activity feed"),
-            );
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-        }
+        Err(e) => embeds::error_embed(
+            "Activity Unavailable",
+            &e.user_message("read the activity feed"),
+        ),
     }
 }
 

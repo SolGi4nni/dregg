@@ -309,45 +309,31 @@ pub async fn handle_delegate(ctx: &Context, command: &CommandInteraction, state:
 /// Handle `/cap-list`.
 pub async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
+    let embed = execute_list(state).await;
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
+}
 
+/// Build the held/exported/handoff capability tally (the same read behind
+/// `/identity cap-list` and the menus' Held-capabilities button).
+pub(crate) async fn execute_list(state: &BotState) -> serenity::all::CreateEmbed {
     let held = match state.captp.list_held(&state.db).await {
         Ok(held) => held,
-        Err(e) => {
-            let embed = embeds::error_embed("List Failed", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("List Failed", &e.to_string()),
     };
     let exports = match state.captp.list_exports(&state.db).await {
         Ok(exports) => exports,
-        Err(e) => {
-            let embed = embeds::error_embed("List Failed", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("List Failed", &e.to_string()),
     };
     let handoffs = match state.captp.list_handoffs(&state.db).await {
         Ok(handoffs) => handoffs,
-        Err(e) => {
-            let embed = embeds::error_embed("List Failed", &e.to_string());
-            let _ = command
-                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-                .await;
-            return;
-        }
+        Err(e) => return embeds::error_embed("List Failed", &e.to_string()),
     };
 
     if held.is_empty() && exports.is_empty() && handoffs.is_empty() {
-        let embed = embeds::dregg_embed("Bot Capabilities")
+        return embeds::dregg_embed("Bot Capabilities")
             .description("No capabilities currently held or exported.");
-        let _ = command
-            .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-            .await;
-        return;
     }
 
     let mut desc = String::new();
@@ -395,15 +381,11 @@ pub async fn handle_list(ctx: &Context, command: &CommandInteraction, state: &Bo
         }
     }
 
-    let embed = embeds::dregg_embed("Bot Capabilities")
+    embeds::dregg_embed("Bot Capabilities")
         .description(desc)
         .field("Held", held.len().to_string(), true)
         .field("Exported", exports.len().to_string(), true)
-        .field("Handoffs", handoffs.len().to_string(), true);
-
-    let _ = command
-        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
-        .await;
+        .field("Handoffs", handoffs.len().to_string(), true)
 }
 
 /// Handle `/cap-revoke`.

@@ -128,7 +128,9 @@ fn short(s: &str, n: usize) -> String {
     }
 }
 
-/// Register the /status command.
+/// Register the /status command. (Retired from the slash surface; the read
+/// lives on behind the `start:status` button every menu carries.)
+#[allow(dead_code)]
 pub fn register_status() -> CreateCommand {
     CreateCommand::new("status").description("Show federation health status")
 }
@@ -164,6 +166,8 @@ pub fn register_metrics() -> CreateCommand {
 }
 
 /// Handle /status interaction — the full node + producer-fidelity surface.
+/// (Retired from the slash surface; `execute_status` carries the read.)
+#[allow(dead_code)]
 pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
     let embed = execute_status(state).await;

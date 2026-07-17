@@ -39,18 +39,16 @@ const MINTABLE_SERVICES: &[&str] = &["dns", "storage", "compute", "http", "secre
 /// Register the /cipherclerk command with all subcommands.
 pub fn register() -> CreateCommand {
     CreateCommand::new("cipherclerk")
-        .description(
-            "Manage your dregg wallet: identity, keys, and tokens (a.k.a. the cipherclerk)",
-        )
+        .description("Your cipherclerk: identity, keys, tokens, and your funds")
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "create",
-            "Create your dregg wallet (a real cell + keys)",
+            "Create your cipherclerk (a real cell + keys)",
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "balance",
-            "Check your wallet's on-network DEC balance",
+            "Check your cipherclerk's on-network DEC balance",
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
@@ -178,7 +176,7 @@ async fn handle_create(ctx: &Context, command: &CommandInteraction, state: &BotS
 }
 
 /// Create the invoker's custodial cell (the real turn behind both the
-/// `/cipherclerk create` slash command and the `/start` "Create my wallet"
+/// `/cipherclerk create` slash command and the `/help` "Create my cipherclerk"
 /// button): derive the per-user cipherclerk, register the cell on the devnet,
 /// and record the hosted identity. Returns the embed to show.
 pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::all::CreateEmbed {
@@ -187,8 +185,8 @@ pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::
     match state.db.user_exists(&discord_id).await {
         Ok(true) => {
             return embeds::warning_embed(
-                "Wallet Exists",
-                "You already have a dregg wallet. Use `/start` → **Balance** to see it.",
+                "Cipherclerk Exists",
+                "You already have a cipherclerk. Use `/cipherclerk balance` to see it.",
             );
         }
         Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
@@ -221,8 +219,8 @@ pub(crate) async fn execute_create(state: &BotState, user_id: u64) -> serenity::
         return embeds::error_embed("Database Error", &e.to_string());
     }
 
-    embeds::success_embed("Wallet Created")
-        .description("Your dregg wallet is ready! Grab some test DEC, then just chat.")
+    embeds::success_embed("Cipherclerk Created")
+        .description("Your cipherclerk is ready! Grab some test DEC, then just chat.")
         .field("Cell ID", format!("`{}`", cclerk.cell_id_short()), true)
         .field("Mode", "Hosted (custodial)", true)
 }
@@ -243,17 +241,17 @@ pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> serenity:
         Ok(Some(id)) => id,
         Ok(None) => {
             return embeds::warning_embed(
-                "No Wallet",
-                "You don't have a wallet yet. Use `/start` → **Create my wallet** first.",
+                "No Cipherclerk",
+                "You don't have a cipherclerk yet. Use `/cipherclerk create` first.",
             );
         }
         Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
     };
 
     match state.devnet.get_balance(&cell_id).await {
-        Ok(balance) => embeds::dregg_embed("Your Wallet Balance (DEC)")
+        Ok(balance) => embeds::dregg_embed("Your Cipherclerk Balance (DEC)")
             .description(
-                "**DEC** is the on-network devnet currency your wallet holds (top up with \
+                "**DEC** is the on-network devnet currency your cipherclerk holds (top up with \
                  `/faucet`, spend with `/send`). Real-AI dungeon run-credits bought with \
                  **$DREGG** are a different balance — see `/credits`.",
             )
@@ -280,7 +278,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You don't have a wallet yet. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
+                "You don't have a cipherclerk yet. Use `/cipherclerk create` (or the `/help` menu).",
             );
             respond_ephemeral(ctx, command, embed).await;
             return;
@@ -315,7 +313,7 @@ async fn handle_export(ctx: &Context, command: &CommandInteraction, state: &BotS
         Ok(false) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You don't have a wallet yet. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
+                "You don't have a cipherclerk yet. Use `/cipherclerk create` (or the `/help` menu).",
             );
             respond_ephemeral(ctx, command, embed).await;
             return;

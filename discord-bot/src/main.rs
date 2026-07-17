@@ -6,12 +6,13 @@
 //! SDK surface — derived deterministically from the bot's secret and
 //! Discord user id.
 //!
-//! Slash commands cover: cclerk management, transfers, gallery
-//! (apps/gallery), credentials (apps/identity), block-explorer browsing,
-//! presence attestation (proof-of-online dischargeable caveats), CapTP
-//! (bot as a capability peer), programmable queues, governance
-//! (apps/governed-namespace), name service (apps/nameservice), and
-//! Discord<->dregg federation linking.
+//! The global slash surface is EXACTLY 13 menu-driven commands (`/dregg` +
+//! 12 — see `REGISTERED_COMMAND_NAMES` and `commands::menus`); every former
+//! flat command (cclerk management, transfers, gallery, credentials,
+//! block-explorer browsing, presence attestation, CapTP, governance, name
+//! service, federation linking, the games…) folds behind one of them as a
+//! subcommand with its old options intact or as a menu button, on its
+//! unchanged handler.
 
 mod activity_feed;
 // DreggNet Cloud — semi-private per-user channels (the visibility plan + name).
@@ -124,7 +125,7 @@ use std::sync::Arc;
 
 use serenity::Client;
 use serenity::all::{
-    Command, Context, EventHandler, GatewayIntents, Guild, Interaction, Message, Presence, Ready,
+    Context, EventHandler, GatewayIntents, Guild, Interaction, Message, Presence, Ready,
 };
 use serenity::async_trait;
 use tokio::sync::Mutex;
@@ -137,91 +138,45 @@ use devnet::DevnetClient;
 use discord_caps::{DiscordCapRegistry, EventBridge};
 use presence::{PresenceStatus, PresenceTracker};
 
-// The slash-command surface after the Telegram-style UX redesign (see
-// `discord-bot/UX-REDESIGN.md`). The front door is `/start` (onboard + a button
-// menu) and `/help`; everything common is now a button or just typing in your
-// channel. Fifteen redundant commands were retired from the registered surface
-// (their capability lives on in the `/dregg` dashboard panels): `tip`
-// (duplicate of `send`), `metrics` (folded into `status`/`dashboard`),
-// `credential` (→ Identity panel), the four `gov-*` (→ Governance panel), the
-// three `name-*` (→ Names panel), and the five `queue-*` (→ Subscription panel).
+// The slash-command surface after the 13-command consolidation: EXACTLY
+// thirteen global commands (`/dregg` + 12), each of which opens a menu or
+// summons a world. Every retired flat command (~53 of them) is folded behind
+// its new home as a subcommand with its old options intact, or as a menu
+// button — the handlers are unchanged; only the front door moved. The fold
+// (registration by serialization + dispatch by re-nesting) lives in
+// `commands::menus`, whose tests assert this list, the registered JSON, and
+// the router agree, and that every old command kept a path.
 const REGISTERED_COMMAND_NAMES: &[&str] = &[
-    // ─── front door (the only commands a newcomer must learn) ───────────────
-    "start",
-    "help",
-    // ─── quick reads + wallet (also surfaced as `/start` buttons) ───────────
-    "explorer",
-    "presence",
-    "cipherclerk",
-    "send",
-    "gallery",
-    "status",
-    "proof",
-    "faucet",
-    "leaderboard",
-    "history",
+    // 1. the HUB — panels + buttons that summon every other surface
+    //    (folds: dashboard → the Ops button, status → the Node-status button)
     "dregg",
-    "cap-share",
-    "cap-accept",
-    "cap-delegate",
-    "cap-list",
-    "cap-revoke",
-    "council-status",
-    "setup-federation",
-    "link-cipherclerk",
-    "unlink-cipherclerk",
-    "handoff",
-    "handoff-redeem",
-    "intent",
-    "bounty",
-    // ─── new reads + organ actions (wired this integration) ─────────────
-    "federation-status",
-    "federation-peers",
-    "council-approve",
-    "activity",
-    "dashboard",
-    "cap-peer",
-    "handoff-status",
-    // ─── deos surface inside Discord (cap-gated affordance buttons + transclusion) ─
-    "deos",
-    // ─── interactive ViewNode card (buttons fire real verified turns) ───────────
-    "card",
-    // ─── two channel-agents coordinate over the promise-pipeline (atomic settle) ─
-    "coordinate",
-    // ─── DreggNet Cloud: claim a semi-private channel to drive your Hermes ───────
-    "channel",
-    // ─── BYO-LLM-keys: port in / rotate / revoke your own provider key ───────────
-    "key",
-    // ─── shared AI-narrated on-chain dungeon (buttons are write-once ballots) ─────
-    "dungeon",
-    // ─── THE DESCENT: today's beacon-seeded permadeath roguelite (character carries) ─
+    // 2. today's beacon-seeded permadeath roguelite WORLD (unchanged)
     "descent",
-    // ─── DreggNet Cloud offerings through the GENERIC offering→Discord adapter
-    //     (`commands::offering`): the offering's cap-gated affordances ARE the
-    //     buttons, a press is ONE real `Offering::advance` attributed to the
-    //     presser's derived dregg identity, and `verify` re-checks the chain.
-    "council",
-    "market",
-    // ─── three further DreggNet Cloud offerings through the SAME generic adapter:
-    //     `/hermes` a confined agent · `/grain` a confined grain · `/doc` a shared doc ─
-    "hermes",
-    "grain",
-    "doc",
-    // ─── the FULL-PORTFOLIO reach: `/play <offering>` opens any of the twelve remaining offerings
-    //     (the games automatafl + tug, names + compute, and the eight RPG feature surfaces) through
-    //     the SAME generic adapter — Discord reaches web offering parity (`commands::portfolio`) ─
+    // 3. the games ARCADE (folds: play → `open`, market; tug/automatafl are
+    //    `open` choices)
     "play",
-    // ─── $DREGG-paid real-AI runs: buy run-credits, check credits ────────────────
-    "buy-credits",
-    "credits",
-    // ─── the game treasury: two-balance fuel/pile + proven cross-chain holdings ───
-    "treasury",
-    // ─── 👑 THE CROWN: fold a finished match to ONE proof; stranger re-verify in O(1) ───
-    "crown",
-    // ─── export a VERIFIED Descent win as a 1-of-1 SPL NFT (proof memo; commands::export_nft) ─
-    "export",
-    // ─── prove ownership of an externally-linked cell (Ed25519 challenge; commands::link_proof) ─
-    "link-prove",
+    // 4. narrative WORLDS (folds: dungeon — the shared AI-narrated crawl)
+    "adventure",
+    // 5. you + your funds (folds: the cipherclerk's own subcommands, plus
+    //    send, history, faucet, credits, buy-credits, treasury)
+    "cipherclerk",
+    // 6. the UGC universe registry (unchanged)
+    "gallery",
+    // 7. the DAO (folds: council, council-status, council-approve, bounty, intent)
+    "govern",
+    // 8. the proof surface (folds: proof, explorer, crown, export, card)
+    "verify",
+    // 9. granting authority (folds: cap-*, handoff*, link-*, key)
+    "identity",
+    // 10. the confined offerings (folds: hermes's own subcommands, grain, doc)
+    "hermes",
+    // 11. the network (folds: federation-status/peers, setup-federation,
+    //     activity, coordinate, channel, presence, deos)
+    "federation",
+    // 12. glory (unchanged)
+    "leaderboard",
+    // 13. onboarding + the tour + the map (folds: start, help)
+    "help",
 ];
 
 #[cfg(test)]
@@ -292,88 +247,26 @@ impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("Bot connected as {}", ready.user.name);
 
-        // Register global slash commands.
-        //
-        // Commands tied to apps deleted from the workspace (AMM `swap`/
-        // `pool`/`lend`, orderbook `order`/`book`/`trades`) were retired
-        // in the post-relocation cleanup; their slash-command names will
-        // disappear from Discord once this set is re-registered.
-        let commands = vec![
-            // ─── Front door (the only commands a newcomer must learn) ────────
-            commands::start::register(),
-            commands::start::register_help(),
-            // ─── Bot core ───────────────────────────────────────────────────
-            commands::explorer::register(),
-            commands::presence::register(),
-            commands::cipherclerk::register(),
-            commands::transfer::register_send(),
-            commands::gallery::register(),
-            commands::status::register_status(),
-            commands::status::register_proof(),
-            commands::social::register_faucet(),
-            commands::social::register_leaderboard(),
-            commands::social::register_history(),
-            commands::dashboard::register(),
-            // ─── CapTP commands ─────────────────────────────────────────────
-            commands::captp::register_share(),
-            commands::captp::register_accept(),
-            commands::captp::register_delegate(),
-            commands::captp::register_list(),
-            commands::captp::register_revoke(),
-            // ─── Polis governance (the retired gov-* / name-* / queue-*
-            //     families now live in the `/dregg` dashboard panels) ─────────
-            commands::polis::register_council_status(),
-            // ─── Federation setup commands ──────────────────────────────────
-            commands::federation::register_setup(),
-            commands::federation::register_link(),
-            commands::federation::register_unlink(),
-            commands::link_proof::register(),
-            // ─── Canonical CapTP handoff (§4.7) ─────────────────────────────
-            commands::handoff::register(),
-            commands::handoff::register_redeem(),
-            commands::intent::register(),
-            // ─── Bounty board (starbridge-bounty-board) ─────────────────────
-            commands::bounty::register(),
-            // ─── New reads + organ actions (wired this integration) ─────────
-            commands::federation::register_status(),
-            commands::federation::register_peers(),
-            commands::polis::register_council_approve(),
-            commands::social::register_activity(),
-            commands::dashboard::register_dashboard(),
-            commands::captp::register_peer(),
-            commands::handoff::register_status(),
-            // ─── deos surface inside Discord ────────────────────────────────
-            commands::deos::register(),
-            // ─── interactive ViewNode card ──────────────────────────────────
-            commands::card::register(),
-            commands::coordinate::register(),
-            // ─── DreggNet Cloud per-user channel ────────────────────────────
-            commands::channel::register(),
-            // ─── BYO-LLM-keys ───────────────────────────────────────────────
-            commands::key::register(),
-            // ─── shared AI-narrated on-chain dungeon ─────────────────────────
-            commands::fiction::register(),
-            // ─── THE DESCENT: today's beacon-seeded permadeath roguelite ─────
-            commands::descent::register(),
-            // ─── DreggNet Cloud offerings (the generic offering→Discord adapter) ─
-            commands::council::register(),
-            commands::market::register(),
-            commands::hermes::register(),
-            commands::grain::register(),
-            commands::doc::register(),
-            commands::portfolio::register(),
-            // ─── $DREGG-paid real-AI runs ────────────────────────────────────
-            commands::pay::register_buy(),
-            commands::pay::register_balance(),
-            commands::pay::register_treasury(),
-            // ─── 👑 THE CROWN: fold a finished match to ONE proof (`commands::crown`) ───
-            commands::crown::register(),
-            // ─── export a VERIFIED Descent win as a 1-of-1 SPL NFT (`commands::export_nft`) ───
-            commands::export_nft::register(),
-        ];
-        debug_assert_eq!(commands.len(), REGISTERED_COMMAND_NAMES.len());
+        // Register the EXACTLY-13 global slash commands (`commands::menus`):
+        // each opens a menu or summons a world, and every retired flat
+        // command rides inside one of them as a subcommand/group with its old
+        // options intact (registration by serialization — the old builders
+        // are folded, never re-typed). Names retired from this set (the ~40
+        // old flat commands) disappear from Discord on re-registration.
+        let commands = commands::menus::global_commands();
+        debug_assert_eq!(
+            commands
+                .iter()
+                .map(|c| c["name"].as_str().unwrap_or_default().to_owned())
+                .collect::<Vec<_>>(),
+            REGISTERED_COMMAND_NAMES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+            "registered commands and REGISTERED_COMMAND_NAMES must agree"
+        );
 
-        match Command::set_global_commands(&ctx.http, commands).await {
+        match ctx.http.create_global_commands(&commands).await {
             Ok(cmds) => info!("Registered {} global slash commands", cmds.len()),
             Err(e) => error!("Failed to register commands: {e}"),
         }
@@ -442,93 +335,28 @@ impl EventHandler for Handler {
             let name = command.data.name.as_str();
 
             match name {
-                // ─── Front door (onboard + button menu, and the map) ────────
-                "start" => commands::start::handle(&ctx, &command, &self.state).await,
-                "help" => commands::start::handle_help(&ctx, &command, &self.state).await,
-                // ─── Bot core ───────────────────────────────────────────────
-                "explorer" => commands::explorer::handle(&ctx, &command, &self.state).await,
-                "presence" => commands::presence::handle(&ctx, &command, &self.state).await,
-                "cipherclerk" => commands::cipherclerk::handle(&ctx, &command, &self.state).await,
-                "send" => commands::transfer::handle(&ctx, &command, &self.state).await,
+                // The 13-command surface: each arm opens a menu or summons a
+                // world; the folded old commands re-nest through
+                // `commands::menus` onto their UNCHANGED handlers.
+                "dregg" => commands::dashboard::handle(&ctx, &command, &self.state).await,
+                "descent" => commands::descent::handle(&ctx, &command, &self.state).await,
+                "play" => commands::menus::handle_play(&ctx, &command, &self.state).await,
+                "adventure" => commands::menus::handle_adventure(&ctx, &command, &self.state).await,
+                "cipherclerk" => {
+                    commands::menus::handle_cipherclerk(&ctx, &command, &self.state).await
+                }
                 "gallery" => commands::gallery::handle(&ctx, &command, &self.state).await,
-                "status" => commands::status::handle_status(&ctx, &command, &self.state).await,
-                "proof" => commands::status::handle_proof(&ctx, &command, &self.state).await,
-                "faucet" => commands::social::handle_faucet(&ctx, &command, &self.state).await,
+                "govern" => commands::menus::handle_govern(&ctx, &command, &self.state).await,
+                "verify" => commands::menus::handle_verify(&ctx, &command, &self.state).await,
+                "identity" => commands::menus::handle_identity(&ctx, &command, &self.state).await,
+                "hermes" => commands::menus::handle_hermes(&ctx, &command, &self.state).await,
+                "federation" => {
+                    commands::menus::handle_federation(&ctx, &command, &self.state).await
+                }
                 "leaderboard" => {
                     commands::social::handle_leaderboard(&ctx, &command, &self.state).await
                 }
-                "history" => commands::social::handle_history(&ctx, &command, &self.state).await,
-                "dregg" => commands::dashboard::handle(&ctx, &command, &self.state).await,
-                // ─── CapTP commands ─────────────────────────────────────────
-                "cap-share" => commands::captp::handle_share(&ctx, &command, &self.state).await,
-                "cap-accept" => commands::captp::handle_accept(&ctx, &command, &self.state).await,
-                "cap-delegate" => {
-                    commands::captp::handle_delegate(&ctx, &command, &self.state).await
-                }
-                "cap-list" => commands::captp::handle_list(&ctx, &command, &self.state).await,
-                "cap-revoke" => commands::captp::handle_revoke(&ctx, &command, &self.state).await,
-                // ─── Polis governance (the gov-* / name-* / queue-* families
-                //     are retired to the `/dregg` dashboard panels) ───────────
-                "council-status" => {
-                    commands::polis::handle_council_status(&ctx, &command, &self.state).await
-                }
-                // ─── Federation setup commands ──────────────────────────────
-                "setup-federation" => {
-                    commands::federation::handle_setup(&ctx, &command, &self.state).await
-                }
-                "link-cipherclerk" => {
-                    commands::federation::handle_link(&ctx, &command, &self.state).await
-                }
-                "unlink-cipherclerk" => {
-                    commands::federation::handle_unlink(&ctx, &command, &self.state).await
-                }
-                "link-prove" => commands::link_proof::handle(&ctx, &command, &self.state).await,
-                // ─── New reads + organ actions (wired this integration) ──────
-                "federation-status" => {
-                    commands::federation::handle_status(&ctx, &command, &self.state).await
-                }
-                "federation-peers" => {
-                    commands::federation::handle_peers(&ctx, &command, &self.state).await
-                }
-                "council-approve" => {
-                    commands::polis::handle_council_approve(&ctx, &command, &self.state).await
-                }
-                "activity" => commands::social::handle_activity(&ctx, &command, &self.state).await,
-                "dashboard" => {
-                    commands::dashboard::handle_dashboard(&ctx, &command, &self.state).await
-                }
-                "cap-peer" => commands::captp::handle_peer(&ctx, &command, &self.state).await,
-                "handoff-status" => {
-                    commands::handoff::handle_status(&ctx, &command, &self.state).await
-                }
-                // ─── Canonical CapTP handoff (§4.7) ─────────────────────────
-                "handoff" => commands::handoff::handle(&ctx, &command, &self.state).await,
-                "handoff-redeem" => {
-                    commands::handoff::handle_redeem(&ctx, &command, &self.state).await
-                }
-                "intent" => commands::intent::handle(&ctx, &command, &self.state).await,
-                "bounty" => commands::bounty::handle(&ctx, &command, &self.state).await,
-                "deos" => commands::deos::handle(&ctx, &command, &self.state).await,
-                "card" => commands::card::handle(&ctx, &command, &self.state).await,
-                "coordinate" => commands::coordinate::handle(&ctx, &command, &self.state).await,
-                "channel" => commands::channel::handle(&ctx, &command, &self.state).await,
-                "key" => commands::key::handle(&ctx, &command, &self.state).await,
-                "dungeon" => commands::fiction::handle(&ctx, &command, &self.state).await,
-                "descent" => commands::descent::handle(&ctx, &command, &self.state).await,
-                // The DreggNet Cloud offerings, both served by the ONE generic
-                // offering→Discord adapter (`commands::offering`).
-                "council" => commands::council::handle(&ctx, &command, &self.state).await,
-                "market" => commands::market::handle(&ctx, &command, &self.state).await,
-                // Three further offerings, all served by the ONE generic adapter.
-                "hermes" => commands::hermes::handle(&ctx, &command, &self.state).await,
-                "grain" => commands::grain::handle(&ctx, &command, &self.state).await,
-                "doc" => commands::doc::handle(&ctx, &command, &self.state).await,
-                "play" => commands::portfolio::handle(&ctx, &command, &self.state).await,
-                "buy-credits" => commands::pay::handle_buy(&ctx, &command, &self.state).await,
-                "credits" => commands::pay::handle_balance(&ctx, &command, &self.state).await,
-                "treasury" => commands::pay::handle_treasury(&ctx, &command, &self.state).await,
-                "crown" => commands::crown::handle(&ctx, &command, &self.state).await,
-                "export" => commands::export_nft::handle(&ctx, &command, &self.state).await,
+                "help" => commands::menus::handle_help(&ctx, &command, &self.state).await,
                 _ => {
                     tracing::warn!("Unknown command: {name}");
                 }
@@ -543,7 +371,12 @@ impl EventHandler for Handler {
             //     cap gate in the deos handler;
             //   everything else is the dashboard's (`dregg:*`).
             let custom_id = &component.data.custom_id;
-            if custom_id.starts_with("start:") {
+            if custom_id.starts_with("menu:") {
+                // A 13-command menu press: `menu:go:*` swaps the menu message in
+                // place; `menu:run:*` fires the module's real `execute_*` read;
+                // `menu:pick:*` answers the arcade select (`commands::menus`).
+                commands::menus::handle_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("start:") {
                 commands::start::handle_component(&ctx, &component, &self.state).await;
             } else if custom_id.starts_with("deosturn:") {
                 viewnode_applet::handle_deosturn_component(&ctx, &component, &self.state).await;

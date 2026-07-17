@@ -160,3 +160,9 @@ pub mod polis;
 // buttons fire the same real cap-gated turns the slash commands did. See
 // `crate::commands::start` + `discord-bot/UX-REDESIGN.md`.
 pub mod start;
+// THE 13-COMMAND SURFACE — the whole global slash registry (`/dregg` + 12
+// menu/world commands), built by folding the modules' EXISTING `register()`
+// builders in as subcommands (registration by serialization) and re-nesting
+// invocations onto their UNCHANGED handlers (dispatch by re-nesting), plus the
+// per-surface button menus and the `menu:` component routes.
+pub mod menus;

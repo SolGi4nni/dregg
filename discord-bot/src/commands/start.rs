@@ -133,8 +133,12 @@ pub async fn handle_help(ctx: &Context, command: &CommandInteraction, _state: &B
 }
 
 /// Build the welcome embed + the button menu, tailored to the user's state
-/// (do they already have a wallet? a ported-in LLM key?).
-async fn home_view(state: &BotState, user_id: u64) -> (CreateEmbed, Vec<CreateActionRow>) {
+/// (do they already have a cipherclerk? a ported-in LLM key?). Also the
+/// second half of the `/help` front door (`commands::menus::handle_help`).
+pub(crate) async fn home_view(
+    state: &BotState,
+    user_id: u64,
+) -> (CreateEmbed, Vec<CreateActionRow>) {
     let discord_id = user_id.to_string();
     let has_wallet = matches!(state.db.get_cell_id(&discord_id).await, Ok(Some(_)));
     let has_key = matches!(state.db.get_llm_key(&discord_id).await, Ok(Some(_)));
@@ -145,7 +149,7 @@ async fn home_view(state: &BotState, user_id: u64) -> (CreateEmbed, Vec<CreateAc
                 "Pick an action below, or **claim your channel and just type** — your messages \
                  become cap-gated, metered, receipted dregg turns under your own cell.",
             )
-            .field("Wallet", "ready", true)
+            .field("Cipherclerk", "ready", true)
             .field("LLM key", if has_key { "set" } else { "not set" }, true)
     } else {
         embeds::dregg_embed("Welcome to DreggNet").description(
@@ -159,13 +163,17 @@ async fn home_view(state: &BotState, user_id: u64) -> (CreateEmbed, Vec<CreateAc
     (embed, home_components(has_wallet, has_key))
 }
 
-/// The button menu. Newcomers (no wallet) see a single clear next step; everyone
+/// The button menu. Newcomers (no cipherclerk) see a single clear next step; everyone
 /// else sees the common actions as an inline keyboard. Pure — unit tested below.
 pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> {
     if !has_wallet {
         return vec![CreateActionRow::Buttons(vec![
             button(ID_TOUR, "Start the 2-minute tour", ButtonStyle::Success),
-            button(ID_CREATE, "Just create my wallet", ButtonStyle::Secondary),
+            button(
+                ID_CREATE,
+                "Just create my cipherclerk",
+                ButtonStyle::Secondary,
+            ),
             button(ID_STATUS, "Node status", ButtonStyle::Secondary),
             button(ID_HELP, "Help", ButtonStyle::Secondary),
         ])];
@@ -179,7 +187,7 @@ pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> 
     vec![
         CreateActionRow::Buttons(vec![
             button(ID_FAUCET, "Get test DEC", ButtonStyle::Success),
-            button(ID_BALANCE, "Wallet (DEC)", ButtonStyle::Primary),
+            button(ID_BALANCE, "Balance (DEC)", ButtonStyle::Primary),
             button(ID_SEND, "Send", ButtonStyle::Primary),
             button(ID_CHANNEL, "Claim my channel", ButtonStyle::Primary),
         ]),
@@ -192,53 +200,52 @@ pub fn home_components(has_wallet: bool, has_key: bool) -> Vec<CreateActionRow> 
     ]
 }
 
-fn help_embed() -> CreateEmbed {
+pub(crate) fn help_embed() -> CreateEmbed {
     embeds::dregg_embed("Using the DreggNet bot")
         .description(
-            "This bot is built to be light. The fun front door is the games — every move in \
-             every one is a real, receipted dregg turn — and there are really only two \
-             commands to remember besides them:",
+            "Thirteen commands, and each one summons a menu or a world — every action behind \
+             them is a real, receipted dregg turn. Start with `/dregg`: its buttons open \
+             everything else.",
         )
         .field(
-            "\u{1f3b2} Play",
-            "`/descent` — the daily beacon-seeded roguelike (permadeath the executor itself \
-             enforces) · `/dungeon` — the party dungeon crawl · `/play` — quick games \
-             (tug, automatafl, …) · `/gallery` — publish + remix procgen worlds · \
-             `/market` — sealed-bid auctions.",
+            "\u{1f3b2} Worlds",
+            "`/descent` — the daily beacon-seeded permadeath roguelite · `/adventure` — the \
+             AI-narrated party dungeon · `/play` — the arcade (tug, automatafl, the market, \
+             …) · `/gallery` — publish + remix procgen worlds · `/leaderboard` — glory.",
             false,
         )
         .field(
-            "/start",
-            "Onboard + the button menu for everything common.",
+            "\u{1f510} You",
+            "`/cipherclerk` — you + your funds (balance, send, history, faucet, credits, \
+             treasury, tokens) · `/identity` — granting authority (caps, handoffs, link \
+             ceremonies, your LLM key).",
             false,
         )
-        .field("/help", "This message.", false)
+        .field(
+            "\u{1f3db}\u{fe0f} The network",
+            "`/govern` — councils, bounties, intents · `/verify` — proofs, the explorer, the \
+             crown · `/federation` — status, peers, presence, coordination · `/hermes` — the \
+             confined agent, grain, and shared doc.",
+            false,
+        )
+        .field(
+            "\u{2302} Hubs",
+            "`/dregg` — the hub · `/help` — this map + the menu below.",
+            false,
+        )
         .field(
             "Just type",
-            "Claim your channel (`/start` → **Claim my channel**), then *type* in it. \
+            "Claim your channel (**Claim my channel** below), then *type* in it. \
              `read <path>`, `search <query>`, `fetch <url>`, `run <cmd>`, `write <path>`, or plain \
              chat (routed through your own LLM key when set). Every message is a cap-gated, \
              metered, receipted dregg turn.",
             false,
         )
         .field(
-            "Buttons do the rest",
-            "Get test DEC · Wallet (DEC) · Send · Set your LLM key · Node status · Apps (Identity, \
-             Names, Governance, Subscription).",
-            false,
-        )
-        .field(
             "The three monies",
-            "**DEC** — the on-network devnet currency your wallet holds (faucet, `/send`, fees). \
-             **$DREGG** — the token; buys `/credits` for real-AI dungeon runs. \
+            "**DEC** — the on-network devnet currency your cipherclerk holds (faucet, send, \
+             fees). **$DREGG** — the token; buys run-credits for real-AI dungeon runs. \
              **computrons** — the metered unit of compute a turn consumes.",
-            false,
-        )
-        .field(
-            "Power users",
-            "Advanced surfaces are still slash commands: `/dregg` (app dashboard), `/explorer`, \
-             `/cipherclerk` (your wallet's power-user face: keys + tokens), `/cap-*` (CapTP), \
-             `/handoff`, `/coordinate`, `/deos`, `/card`, `/proof`, federation + polis commands.",
             false,
         )
 }
@@ -778,7 +785,7 @@ mod tests {
 
     #[test]
     fn newcomer_menu_is_a_single_clear_step() {
-        // No wallet → one row, the tour leading, within Discord's 5-per-row limit.
+        // No cipherclerk → one row, the tour leading, within Discord's 5-per-row limit.
         let rows = home_components(false, false);
         assert_eq!(rows.len(), 1, "newcomers see a single uncluttered row");
         if let CreateActionRow::Buttons(b) = &rows[0] {
@@ -806,7 +813,7 @@ mod tests {
 
     #[test]
     fn returning_user_menu_has_the_common_actions() {
-        // Has wallet → two rows of common actions (8 buttons, all within
+        // Has cipherclerk → two rows of common actions (8 buttons, all within
         // Discord's 5-per-row / 5-row limits).
         let rows = home_components(true, false);
         assert_eq!(rows.len(), 2);

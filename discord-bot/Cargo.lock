@@ -2107,6 +2107,8 @@ dependencies = [
  "solana-stake-interface",
  "solana-vote-interface",
  "subtle",
+ "tar",
+ "zstd",
 ]
 
 [[package]]
@@ -2679,6 +2681,7 @@ dependencies = [
  "curve25519-dalek",
  "dregg-bridge",
  "dregg-governance",
+ "dregg-intent",
  "dregg-payable",
  "dregg-turn",
  "dregg-types",

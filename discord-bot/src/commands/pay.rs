@@ -161,7 +161,14 @@ fn truncate_reason(reason: &str) -> String {
 
 /// `/buy-credits` — issue the caller's deposit address, price, and pay instructions.
 pub async fn handle_buy(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let discord_id = command.user.id.get().to_string();
+    let embed = execute_buy(state, command.user.id.get()).await;
+    respond_ephemeral(ctx, command, embed).await;
+}
+
+/// Build the buy-credits surface (deposit address + price + poll outcome) —
+/// the same read behind `/cipherclerk buy-credits` and the menus' button.
+pub(crate) async fn execute_buy(state: &BotState, user_id: u64) -> CreateEmbed {
+    let discord_id = user_id.to_string();
     let pay = &state.pay;
 
     // Persist the user→deposit-index map (stable address), then reflect any payment already
@@ -182,7 +189,7 @@ pub async fn handle_buy(ctx: &Context, command: &CommandInteraction, state: &Bot
         desc.push_str(&note);
     }
 
-    let embed = CreateEmbed::new()
+    CreateEmbed::new()
         .title("Buy real-AI dungeon credits")
         .description(desc)
         .color(PAY_COLOR)
@@ -190,13 +197,19 @@ pub async fn handle_buy(ctx: &Context, command: &CommandInteraction, state: &Bot
         .field("Your balance", balance_field(&balance), true)
         .footer(CreateEmbedFooter::new(
             "custodial HD-deposit (\"B\") model · devnet/mock by default · mainnet is an operator flip",
-        ));
-    respond_ephemeral(ctx, command, embed).await;
+        ))
 }
 
 /// `/credits` — poll for new payments, then show the caller's run-credit balance.
 pub async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let discord_id = command.user.id.get().to_string();
+    let embed = execute_balance(state, command.user.id.get()).await;
+    respond_ephemeral(ctx, command, embed).await;
+}
+
+/// Build the caller's run-credit balance (poll + checked ledger read) — the
+/// same read behind `/cipherclerk credits` and the menus' button.
+pub(crate) async fn execute_balance(state: &BotState, user_id: u64) -> CreateEmbed {
+    let discord_id = user_id.to_string();
     let pay = &state.pay;
 
     // Three-way poll status + checked ledger read: an RPC outage or a storage failure is
@@ -217,21 +230,20 @@ pub async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: 
         desc.push_str(&note);
     }
 
-    let embed = CreateEmbed::new()
+    CreateEmbed::new()
         .title("Your $DREGG run-credits")
         .description(desc)
         .color(PAY_COLOR)
         .field(
             "The three monies",
-            "**DEC** — the on-network devnet currency your wallet holds (`/start` → \
-             **Wallet (DEC)**). **$DREGG** — the token; buys these run-credits. \
+            "**DEC** — the on-network devnet currency your cipherclerk holds \
+             (`/cipherclerk balance`). **$DREGG** — the token; buys these run-credits. \
              **computrons** — the metered unit of compute a turn consumes.",
             false,
         )
         .footer(CreateEmbedFooter::new(
             "credits persist across restarts (sqlite) · devnet/mock by default",
-        ));
-    respond_ephemeral(ctx, command, embed).await;
+        ))
 }
 
 /// `/treasury` — report the two-balance treasury (the revenue that landed) and the
@@ -245,6 +257,13 @@ pub async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: 
 /// total reflects the facts currently available (none in the interim), while the DECLARED
 /// positions are always shown.
 pub async fn handle_treasury(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let embed = execute_treasury(state).await;
+    respond_ephemeral(ctx, command, embed).await;
+}
+
+/// Build the two-balance treasury report — the same read behind `/cipherclerk
+/// treasury` and the menus' button.
+pub(crate) async fn execute_treasury(state: &BotState) -> CreateEmbed {
     let pay = &state.pay;
 
     let fuel = pay.treasury_fuel();
@@ -274,7 +293,7 @@ pub async fn handle_treasury(ctx: &Context, command: &CommandInteraction, state:
         held.total_amount(),
     ));
 
-    let embed = CreateEmbed::new()
+    CreateEmbed::new()
         .title("Game treasury")
         .description(desc)
         .color(PAY_COLOR)
@@ -282,6 +301,5 @@ pub async fn handle_treasury(ctx: &Context, command: &CommandInteraction, state:
         .field("Pile ($DREGG atomic)", format!("{pile}"), true)
         .footer(CreateEmbedFooter::new(
             "revenue-landing accounting persists across restart (sqlite) · non-custodial cross-chain view · devnet/mock by default",
-        ));
-    respond_ephemeral(ctx, command, embed).await;
+        ))
 }

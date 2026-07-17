@@ -44,6 +44,9 @@ pub fn register() -> CreateCommand {
 }
 
 /// Register `/dashboard` — a live, public node-health dashboard embed.
+/// (Retired from the slash surface; `ops_dashboard_embed` rides the hub's
+/// Ops button.)
+#[allow(dead_code)]
 pub fn register_dashboard() -> CreateCommand {
     CreateCommand::new("dashboard")
         .description("Live devnet health dashboard — producer, consensus, federation, checkpoint")
@@ -127,7 +130,9 @@ async fn dash_get<T: for<'de> serde::Deserialize<'de>>(
         .map_err(|e| format!("parse {route}: {e}"))
 }
 
-/// Handle `/dashboard` — render the live node-health dashboard.
+/// Handle `/dashboard` — render the live node-health dashboard. (Retired from
+/// the slash surface; the read lives on behind the `/dregg` hub's Ops button.)
+#[allow(dead_code)]
 pub async fn handle_dashboard(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let _ = command
         .create_response(
@@ -137,24 +142,29 @@ pub async fn handle_dashboard(ctx: &Context, command: &CommandInteraction, state
             ),
         )
         .await;
+    let embed = ops_dashboard_embed(state).await;
+    let _ = command
+        .edit_response(
+            &ctx.http,
+            serenity::all::EditInteractionResponse::new().embed(embed),
+        )
+        .await;
+}
 
+/// Build the live node-health dashboard (real `/status` + `/api/federations` +
+/// checkpoint reads) — the read behind the retired `/dashboard` command, now
+/// the `/dregg` hub's + `/verify` menu's Ops-dashboard button.
+pub(crate) async fn ops_dashboard_embed(state: &BotState) -> CreateEmbed {
     let status = match dash_get::<DashStatus>(state, "/status").await {
         Ok(status) => status,
         Err(e) => {
-            let embed = embeds::error_embed(
+            return embeds::error_embed(
                 "Node Offline",
                 &format!(
                     "The dashboard could not reach `{}`: {e}",
                     state.config.devnet_url
                 ),
             );
-            let _ = command
-                .edit_response(
-                    &ctx.http,
-                    serenity::all::EditInteractionResponse::new().embed(embed),
-                )
-                .await;
-            return;
         }
     };
 
@@ -263,12 +273,7 @@ pub async fn handle_dashboard(ctx: &Context, command: &CommandInteraction, state
         );
     }
 
-    let _ = command
-        .edit_response(
-            &ctx.http,
-            serenity::all::EditInteractionResponse::new().embed(embed),
-        )
-        .await;
+    embed
 }
 
 pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotState) {
@@ -471,8 +476,11 @@ pub(crate) async fn home_embed(user_id: u64, state: &BotState) -> CreateEmbed {
         .unwrap_or_else(|| "not created".to_string());
     let mode = identity.as_ref().map(|i| i.mode.as_str()).unwrap_or("none");
 
-    embeds::dregg_embed("Starbridge Apps")
-        .description("Pick an app, then use the buttons to open focused Discord forms.")
+    embeds::dregg_embed("The dregg Hub")
+        .description(
+            "Pick a Starbridge app for focused forms, or summon any surface — every button \
+             below opens a menu whose actions are real, receipted dregg turns.",
+        )
         .field("Cell", cell, true)
         .field("Identity Mode", mode, true)
         .field(
@@ -587,6 +595,61 @@ pub(crate) fn home_components() -> Vec<CreateActionRow> {
             button(ID_APP_NAMES, "Names", ButtonStyle::Primary),
             button(ID_APP_GOV, "Governance", ButtonStyle::Primary),
             button(ID_APP_SUBS, "Subscription", ButtonStyle::Primary),
+        ]),
+        // The hub summons every other surface (`commands::menus` routes the
+        // `menu:go:*` presses to that surface's menu, in place).
+        CreateActionRow::Buttons(vec![
+            button("menu:go:play", "\u{1f3ae} Play", ButtonStyle::Secondary),
+            button(
+                "menu:go:descent",
+                "\u{1f573}\u{fe0f} Descent",
+                ButtonStyle::Secondary,
+            ),
+            button(
+                "menu:go:adventure",
+                "\u{1f409} Adventure",
+                ButtonStyle::Secondary,
+            ),
+            button(
+                "menu:go:gallery",
+                "\u{1f5bc}\u{fe0f} Gallery",
+                ButtonStyle::Secondary,
+            ),
+            button(
+                "menu:go:leaderboard",
+                "\u{1f3c6} Glory",
+                ButtonStyle::Secondary,
+            ),
+        ]),
+        CreateActionRow::Buttons(vec![
+            button(
+                "menu:go:cipherclerk",
+                "\u{1f510} Cipherclerk",
+                ButtonStyle::Secondary,
+            ),
+            button(
+                "menu:go:govern",
+                "\u{1f3db}\u{fe0f} Govern",
+                ButtonStyle::Secondary,
+            ),
+            button("menu:go:verify", "\u{2705} Verify", ButtonStyle::Secondary),
+            button(
+                "menu:go:identity",
+                "\u{1fAAA} Identity",
+                ButtonStyle::Secondary,
+            ),
+            button(
+                "menu:go:federation",
+                "\u{1f310} Federation",
+                ButtonStyle::Secondary,
+            ),
+        ]),
+        // The two reads that folded in from the retired /status + /dashboard.
+        CreateActionRow::Buttons(vec![
+            button("start:status", "Node status", ButtonStyle::Primary),
+            button("menu:run:ops", "Ops dashboard", ButtonStyle::Primary),
+            button("menu:go:hermes", "\u{1f4e1} Hermes", ButtonStyle::Secondary),
+            button("menu:go:help", "Help", ButtonStyle::Secondary),
         ]),
     ]
 }

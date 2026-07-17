@@ -332,31 +332,23 @@ pub async fn handle_unlink(ctx: &Context, command: &CommandInteraction, state: &
 /// Handle `/federation-status` — read the real `/api/federations` route.
 pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
+    let embed = execute_status(state).await;
+    edit_embed(ctx, command, embed).await;
+}
 
+/// Build the federation-status read (the same live `/api/federations` read
+/// behind `/federation status` and the menus' button).
+pub(crate) async fn execute_status(state: &BotState) -> CreateEmbed {
     let feds = match fetch_federations(state).await {
         Ok(feds) => feds,
-        Err(msg) => {
-            edit_embed(
-                ctx,
-                command,
-                embeds::error_embed("Federation Unavailable", &msg),
-            )
-            .await;
-            return;
-        }
+        Err(msg) => return embeds::error_embed("Federation Unavailable", &msg),
     };
 
     if feds.is_empty() {
-        edit_embed(
-            ctx,
-            command,
-            embeds::warning_embed(
-                "No Federations",
-                "The node reports no known reference groups yet.",
-            ),
-        )
-        .await;
-        return;
+        return embeds::warning_embed(
+            "No Federations",
+            "The node reports no known reference groups yet.",
+        );
     }
 
     // Lead with the local federation (the one this guild's turns settle on),
@@ -412,37 +404,29 @@ pub async fn handle_status(ctx: &Context, command: &CommandInteraction, state: &
         embed = embed.field(format!("Known Federations ({})", feds.len()), others, false);
     }
 
-    edit_embed(ctx, command, embed).await;
+    embed
 }
 
 /// Handle `/federation-peers` — the live committee membership.
 pub async fn handle_peers(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     defer_ephemeral(ctx, command).await;
+    let embed = execute_peers(state).await;
+    edit_embed(ctx, command, embed).await;
+}
 
+/// Build the committee-membership read (the same live read behind
+/// `/federation peers` and the menus' button).
+pub(crate) async fn execute_peers(state: &BotState) -> CreateEmbed {
     let feds = match fetch_federations(state).await {
         Ok(feds) => feds,
-        Err(msg) => {
-            edit_embed(
-                ctx,
-                command,
-                embeds::error_embed("Federation Unavailable", &msg),
-            )
-            .await;
-            return;
-        }
+        Err(msg) => return embeds::error_embed("Federation Unavailable", &msg),
     };
 
     let Some(local) = feds.iter().find(|f| f.is_local).or_else(|| feds.first()) else {
-        edit_embed(
-            ctx,
-            command,
-            embeds::warning_embed(
-                "No Federations",
-                "The node reports no known reference groups.",
-            ),
-        )
-        .await;
-        return;
+        return embeds::warning_embed(
+            "No Federations",
+            "The node reports no known reference groups.",
+        );
     };
 
     let members = if local.members.is_empty() {
@@ -467,7 +451,7 @@ pub async fn handle_peers(ctx: &Context, command: &CommandInteraction, state: &B
             true,
         )
         .field("Committee", members, false);
-    edit_embed(ctx, command, embed).await;
+    embed
 }
 
 /// Prefer `federation_id`, fall back to `id` (the node sets both equal).

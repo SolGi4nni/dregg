@@ -921,7 +921,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "publish",
-                "Publish a procgen universe (signed by your wallet key), optionally a remix",
+                "Publish a procgen universe (signed by your cipherclerk key), optionally a remix",
             )
             .add_sub_option(
                 CreateCommandOption::new(
@@ -1186,7 +1186,7 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &Bot
                 embed = embed.field(
                     "Verified author",
                     format!(
-                        "ed25519 `{}…` — signed by your wallet key and bound into the content \
+                        "ed25519 `{}…` — signed by your cipherclerk key and bound into the content \
                          address, so this authorship is unforgeable.",
                         &key[..16.min(key.len())]
                     ),
@@ -1268,7 +1268,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
         Ok(None) => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You need a wallet to submit a run. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
+                "You need a cipherclerk to submit a run. Use `/start` → **Just create my cipherclerk** (or `/cipherclerk create`).",
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -1329,7 +1329,7 @@ async fn handle_play(ctx: &Context, command: &CommandInteraction, state: &BotSta
                     true,
                 )
                 .field(
-                    "Signed by your wallet key",
+                    "Signed by your cipherclerk key",
                     format!("`{}`", &signature[..16.min(signature.len())]),
                     false,
                 );

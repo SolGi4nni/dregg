@@ -90,7 +90,7 @@ async fn handle_council(ctx: &Context, command: &CommandInteraction, state: &Bot
         None => {
             let embed = embeds::warning_embed(
                 "No Cipherclerk",
-                "You need a wallet to open a deos surface. Use `/start` → **Just create my wallet** (or `/cipherclerk create`).",
+                "You need a cipherclerk to open a deos surface. Use `/start` → **Just create my cipherclerk** (or `/cipherclerk create`).",
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -211,8 +211,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 ctx,
                 component,
                 embeds::warning_embed(
-                    "No Wallet",
-                    "Create a wallet first: `/start` → **Just create my wallet**.",
+                    "No Cipherclerk",
+                    "Create a cipherclerk first: `/start` → **Just create my cipherclerk**.",
                 ),
             )
             .await;

@@ -750,21 +750,48 @@ mod tests {
         );
     }
 
-    /// **The bespoke-command catalog keys are registered slash commands** — the offering SET is
-    /// the shared catalog's, and `REGISTERED_COMMAND_NAMES` (main.rs) stays consistent with it:
-    /// every catalog key `/play` does NOT serve has its own `/<key>` command, and `/play` itself
-    /// is registered.
+    /// **The bespoke-command catalog keys are reachable on the 13-command surface** — the
+    /// offering SET is the shared catalog's, and the registered surface stays consistent with
+    /// it: every catalog key `/play open` does NOT serve rides as its own top-level command or
+    /// as a fold under one (`commands::menus`), and `/play` itself is registered with `open`.
     #[test]
     fn the_bespoke_catalog_commands_are_registered() {
+        // key → (its top-level home, the subcommand/group name there; None = it IS top-level).
+        let homes: &[(&str, Option<(&str, &str)>)] = &[
+            ("dungeon", Some(("adventure", "dungeon"))),
+            ("council", Some(("govern", "council"))),
+            ("market", Some(("play", "market"))),
+            ("doc", Some(("hermes", "doc"))),
+            ("grain", Some(("hermes", "grain"))),
+            ("hermes", None),
+        ];
         for key in BESPOKE_COMMAND_KEYS {
-            assert!(
-                crate::REGISTERED_COMMAND_NAMES.contains(&key),
-                "catalog offering `{key}` is claimed bespoke but `/{key}` is not registered"
-            );
+            let (_, home) = homes
+                .iter()
+                .find(|(k, _)| *k == key)
+                .unwrap_or_else(|| panic!("bespoke key `{key}` has no declared 13-command home"));
+            match home {
+                None => assert!(
+                    crate::REGISTERED_COMMAND_NAMES.contains(&key),
+                    "catalog offering `{key}` is claimed top-level but `/{key}` is not registered"
+                ),
+                Some((top, sub)) => assert!(
+                    crate::commands::menus::subcommand_names(top)
+                        .iter()
+                        .any(|s| s == sub),
+                    "catalog offering `{key}` should be reachable as `/{top} {sub}`"
+                ),
+            }
         }
         assert!(
             crate::REGISTERED_COMMAND_NAMES.contains(&"play"),
             "`/play` (the derived-catalog reach) must be registered"
+        );
+        assert!(
+            crate::commands::menus::subcommand_names("play")
+                .iter()
+                .any(|s| s == "open"),
+            "`/play open` (the portfolio opener) must be registered"
         );
     }
 

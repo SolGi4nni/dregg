@@ -129,8 +129,8 @@ pub(crate) async fn execute_transfer(
         }
         Ok(None) => {
             return embeds::warning_embed(
-                "No Wallet",
-                "You don't have a wallet yet. Use `/start` → **Create my wallet** first.",
+                "No Cipherclerk",
+                "You don't have a cipherclerk yet. Use `/start` → **Create my cipherclerk** first.",
             );
         }
         Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
@@ -141,9 +141,9 @@ pub(crate) async fn execute_transfer(
         Ok(Some(id)) => id,
         Ok(None) => {
             return embeds::warning_embed(
-                "Recipient Has No Wallet",
+                "Recipient Has No Cipherclerk",
                 &format!(
-                    "<@{recipient_id}> does not have a dregg wallet yet. They need to `/start` → **Create my wallet** first."
+                    "<@{recipient_id}> does not have a dregg cipherclerk yet. They need to `/start` → **Create my cipherclerk** first."
                 ),
             );
         }
@@ -242,12 +242,12 @@ pub(crate) async fn execute_first_payment(
         Ok(Some(_)) => {
             return embeds::warning_embed(
                 "External Signing Required",
-                "Your linked identity is external; the bot can't sign its turns yet. Create a hosted wallet with `/start` → the tour first.",
+                "Your linked identity is external; the bot can't sign its turns yet. Create a hosted cipherclerk with `/start` → the tour first.",
             );
         }
         Ok(None) => {
             return embeds::warning_embed(
-                "No Wallet Yet",
+                "No Cipherclerk Yet",
                 "Do the first two steps first: `/start` → **Create my identity**, then **Get test DEC**.",
             );
         }
