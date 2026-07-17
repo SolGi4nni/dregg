@@ -70,13 +70,15 @@ const BASELINE: &[(&str, usize)] = &[
         // any forger. Tamper-refusal rests on the voucher/re-addressing consistency checks, and
         // the crate's docs now say exactly what those are NOT.
         // ── WIRE-FEASIBLE (real data trivially available here) ──
-        ("preflight/src/checks/proofs.rs", 5),       // promotion gate self-testing the SIMULATION and reporting green.
-        ("preflight/src/checks/composition.rs", 2),
         // preflight/src/checks/sovereign.rs: PURGED 2026-07-16 — the ivc_history_compression check
         // now mints REAL rotated turns (rotation_witness) and drives the REAL whole-chain fold
         // (`ivc_turn_chain::prove_turn_chain_recursive` + `verify_whole_chain_proof_bytes`), with
         // forged-chain / tampered-publics / wrong-anchor refusal teeth.
-        ("preflight/src/checks/backends.rs", 2),
+        // preflight/src/checks/{proofs,composition,backends}.rs: PURGED 2026-07-16 (d17cbdfe9) — the
+        // promotion gate's IVC checks (ivc, ivc_wrong_root, chain, ivc-recursive) now verify the shared
+        // REAL whole-chain fold (`preflight/src/checks/ivc_real.rs`, ONE minter) via
+        // `verify_whole_chain_proof_bytes`, each with a refusal tooth (wrong genesis root, relabeled
+        // num_turns, tampered chain_digest). proofs 5->0, composition 2->0, backends 2->0.
         // ── HONEST-RETIRE (dead but ARMED: the mock rode wire types / is_valid honored it) ──
         // 2026-07-16 the presentation-IVC path was RETIRED: `PresentationAir::prove_ivc`/
         // `prove_ivc_no_folds`, `BridgePresentationBuilder::prove_ivc`, `IvcPresentationProof`,
