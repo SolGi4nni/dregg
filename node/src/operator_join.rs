@@ -919,6 +919,20 @@ mod tests {
             )
             .is_err()
         );
+        // The POINT-VALIDATION tooth the name promises: 64 valid hex chars that
+        // decode to 32 bytes (so length/hex gates pass) but do NOT encode a point
+        // on the Ed25519 curve. Without the `VerifyingKey::from_bytes` check this
+        // would be accepted as a "key". This vector encodes y = 2 (little-endian,
+        // sign bit clear); for y = 2 the recovered x² = (y²-1)/(d·y²+1) is a
+        // quadratic NON-residue mod 2²⁵⁵−19, so decompression fails — an off-curve
+        // point. (Note: many 32-byte strings like 0xFF×32 ARE on-curve and would be
+        // accepted, so the vector matters.)
+        let off_curve = "0200000000000000000000000000000000000000000000000000000000000000";
+        assert_eq!(off_curve.len(), 64);
+        assert!(
+            parse_validator_pubkey(off_curve).is_err(),
+            "32-byte-but-off-curve hex must be rejected by point validation, not accepted"
+        );
         let (_, pk) = keypair();
         assert_eq!(parse_validator_pubkey(&hex32(&pk)).unwrap(), pk);
     }
