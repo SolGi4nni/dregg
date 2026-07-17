@@ -3342,7 +3342,7 @@ pub fn verify_predicate_program(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_circuit::ConstraintProver;
+    use dregg_circuit::constraint_prover::ConstraintValidator;
     use dregg_circuit::merkle_types::MerkleAir;
 
     fn test_key() -> [u8; 32] {
@@ -3509,7 +3509,7 @@ mod tests {
 
         // The Merkle AIR should verify this witness.
         let air = MerkleAir::new(witness);
-        let result = ConstraintProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(
             result.is_valid(),
             "Issuer membership Merkle proof should verify"

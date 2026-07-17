@@ -1,11 +1,18 @@
-//! Constraint satisfaction prover for AIR definitions.
+//! Row-by-row AIR constraint **validator** — local checking, NOT proving.
 //!
 //! Evaluates AIR constraints row-by-row on a given execution trace and checks
-//! that every constraint evaluates to zero. This validates circuit logic and
-//! produces a compact trace-digest proof — **not** a cryptographic proof: a
-//! trace digest is not a STARK, and nothing here is sound against a prover that
-//! lies about its trace. For real proofs use [`crate::plonky3_prover`] (the
-//! deployed Plonky3 STARK prover/verifier). There is no `crate::stark` module.
+//! that every constraint evaluates to zero. This is honest LOCAL VALIDATION of
+//! circuit logic: useful to a prover sanity-checking its own witness, and to
+//! tests exercising an AIR's constraint set. It produces a [`TraceSummary`]
+//! (dimensions + a BLAKE3 trace digest + public inputs) — **not** a
+//! cryptographic proof: a trace digest is not a STARK, nothing here is sound
+//! against a prover that lies about its trace, and no verifier in this
+//! workspace treats a `TraceSummary` as evidence. For real proofs use
+//! [`crate::plonky3_prover`] (the deployed Plonky3 STARK prover/verifier).
+//!
+//! Renamed 2026-07-17 (was `ConstraintProver`/`ConstraintProof`): a "prover"
+//! whose output proves nothing is the same fiction as an `*_air` struct that
+//! implements no AIR. The names now say what the code does.
 
 use crate::field::BabyBear;
 use std::fmt;
@@ -102,17 +109,21 @@ pub trait Air: Send + Sync {
     fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>);
 }
 
-/// Constraint satisfaction prover. Evaluates all AIR constraints on the trace.
-pub struct ConstraintProver;
+/// Row-by-row constraint validator. Evaluates all AIR constraints on the trace.
+///
+/// This is LOCAL validation only: the caller supplies (or generates) the trace,
+/// so a lying caller can trivially satisfy it. It has no adversarial soundness
+/// and must never gate acceptance of remote data.
+pub struct ConstraintValidator;
 
-impl ConstraintProver {
-    /// Verify that the given trace satisfies all AIR constraints.
+impl ConstraintValidator {
+    /// Check that the AIR's own generated trace satisfies all its constraints.
     pub fn verify(air: &dyn Air) -> ConstraintCheckResult {
         let (trace, public_inputs) = air.generate_trace();
         Self::verify_trace(air, &trace, &public_inputs)
     }
 
-    /// Verify a pre-generated trace against the AIR constraints.
+    /// Check a pre-generated trace against the AIR constraints.
     ///
     /// This avoids redundant trace generation when the caller already has the trace.
     pub fn verify_trace(
@@ -210,7 +221,7 @@ impl ConstraintProver {
         }
     }
 
-    /// Run verification and return a human-readable report.
+    /// Run validation and return a human-readable report.
     pub fn verify_and_report(air: &dyn Air) -> String {
         let result = Self::verify(air);
         match result {
@@ -226,51 +237,72 @@ impl ConstraintProver {
     }
 }
 
-/// A proof produced by constraint satisfaction checking.
+/// A summary of an execution trace: dimensions, a BLAKE3 digest of the full
+/// trace, and the public inputs.
 ///
-/// Contains the trace digest (BLAKE3 hash of the full execution trace) and
-/// public inputs. This validates that the AIR constraints are satisfied without
-/// requiring full STARK proof generation. For cryptographic soundness in
-/// adversarial settings, use the STARK prover.
+/// **This is NOT a proof.** The digest is computed by whoever holds the trace,
+/// so it attests to nothing an adversary could not mint. No verifier in this
+/// workspace reads the digest; where a `TraceSummary` rides a wire struct
+/// (e.g. `PresentationProof`), it is metadata only, and all cryptographic
+/// weight lives in the accompanying real STARK descriptor proofs.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ConstraintProof {
+pub struct TraceSummary {
     /// The number of trace rows.
     pub num_rows: usize,
     /// The number of columns.
     pub num_cols: usize,
     /// The number of public inputs.
     pub num_public_inputs: usize,
-    /// A BLAKE3 digest of the entire trace (for integrity).
+    /// A BLAKE3 digest of the entire trace (integrity of the LOCAL copy only).
     pub trace_digest: [u8; 32],
     /// The public inputs (visible to verifier).
     pub public_inputs: Vec<BabyBear>,
-    /// Proof size in bytes (estimated for the equivalent STARK proof).
+    /// ESTIMATED size of an equivalent STARK proof, in bytes. A back-of-the-
+    /// envelope number for display; not the size of anything that exists.
     pub simulated_proof_size_bytes: usize,
 }
 
-impl ConstraintProof {
-    /// Generate a constraint proof without verifying constraints.
+impl TraceSummary {
+    /// Summarize a trace WITHOUT running the local constraint check.
     ///
     /// Use when the real cryptographic check is handled by a separate STARK proof
-    /// and this ConstraintProof is only needed for metadata (public inputs, size).
+    /// and this summary is only needed for metadata (public inputs, size).
     pub fn generate_unchecked(air: &dyn Air) -> Self {
         let (trace, public_inputs) = air.generate_trace();
+        Self::from_trace(air, &trace, public_inputs)
+    }
+
+    /// Summarize a trace after checking it locally with [`ConstraintValidator`].
+    /// Returns `None` if the trace violates the AIR's constraints.
+    pub fn generate(air: &dyn Air) -> Option<Self> {
+        let (trace, public_inputs) = air.generate_trace();
+        let result = ConstraintValidator::verify_trace(air, &trace, &public_inputs);
+        if !result.is_valid() {
+            return None;
+        }
+        Some(Self::from_trace(air, &trace, public_inputs))
+    }
+
+    fn from_trace(air: &dyn Air, trace: &[Vec<BabyBear>], public_inputs: Vec<BabyBear>) -> Self {
         let num_rows = trace.len();
         let num_cols = air.trace_width();
 
         let mut hasher = blake3::Hasher::new();
-        for row in &trace {
+        for row in trace {
             for elem in row {
                 hasher.update(&elem.0.to_le_bytes());
             }
         }
         let trace_digest = *hasher.finalize().as_bytes();
 
+        // Estimate proof size: in a real STARK, roughly
+        // O(num_cols * log(num_rows) * security_parameter).
         let log_rows = (num_rows.max(1) as f64).log2().ceil() as usize;
         let security_bits = 128;
-        let fri_queries = security_bits / 2;
-        let simulated_proof_size_bytes =
-            num_cols * log_rows * fri_queries * 4 + public_inputs.len() * 4 + 32;
+        let fri_queries = security_bits / 2; // ~64 queries
+        let simulated_proof_size_bytes = num_cols * log_rows * fri_queries * 4 // FRI layers
+            + public_inputs.len() * 4 // public inputs
+            + 32; // root commitment
 
         Self {
             num_rows,
@@ -282,73 +314,28 @@ impl ConstraintProof {
         }
     }
 
-    /// Generate a constraint proof from a valid trace.
-    pub fn generate(air: &dyn Air) -> Option<Self> {
-        let (trace, public_inputs) = air.generate_trace();
-        let result = ConstraintProver::verify_trace(air, &trace, &public_inputs);
-        if !result.is_valid() {
-            return None;
-        }
-        let num_rows = trace.len();
-        let num_cols = air.trace_width();
-
-        // Compute trace digest
-        let mut hasher = blake3::Hasher::new();
-        for row in &trace {
-            for elem in row {
-                hasher.update(&elem.0.to_le_bytes());
-            }
-        }
-        let trace_digest = *hasher.finalize().as_bytes();
-
-        // Estimate proof size: in a real STARK, it's roughly
-        // O(num_cols * log(num_rows) * security_parameter)
-        let log_rows = (num_rows as f64).log2().ceil() as usize;
-        let security_bits = 128;
-        let fri_queries = security_bits / 2; // ~64 queries
-        let simulated_proof_size_bytes = num_cols * log_rows * fri_queries * 4 // FRI layers
-            + public_inputs.len() * 4 // public inputs
-            + 32; // root commitment
-
-        Some(Self {
-            num_rows,
-            num_cols,
-            num_public_inputs: public_inputs.len(),
-            trace_digest,
-            public_inputs,
-            simulated_proof_size_bytes,
-        })
-    }
-
-    /// Verify a constraint proof (checks public input consistency).
-    pub fn verify(&self, expected_public_inputs: &[BabyBear]) -> bool {
+    /// Plaintext comparison of the stored public inputs against expected ones.
+    /// (Formerly misnamed `verify` — it verifies nothing cryptographic.)
+    pub fn public_inputs_match(&self, expected_public_inputs: &[BabyBear]) -> bool {
         if self.public_inputs.len() != expected_public_inputs.len() {
             return false;
         }
         self.public_inputs == expected_public_inputs
     }
-
-    /// Human-readable proof size.
-    pub fn proof_size_display(&self) -> String {
-        if self.simulated_proof_size_bytes < 1024 {
-            format!("{} B", self.simulated_proof_size_bytes)
-        } else if self.simulated_proof_size_bytes < 1024 * 1024 {
-            format!("{:.1} KiB", self.simulated_proof_size_bytes as f64 / 1024.0)
-        } else {
-            format!(
-                "{:.1} MiB",
-                self.simulated_proof_size_bytes as f64 / (1024.0 * 1024.0)
-            )
-        }
-    }
 }
 
-// Backward-compatible type aliases for internal migration.
-// These will be removed in a future version.
+// Legacy names. Kept ONLY because `circuit/src/lib.rs` (held dirty by another lane
+// at rename time) re-exports them by name, and in-flight lanes may still refer to
+// them. Retire these aliases together with lib.rs's `mock_prover` module and the
+// `Mock*`/`Constraint{Prover,Proof}` re-exports once lib.rs is free.
 #[doc(hidden)]
-pub type MockProof = ConstraintProof;
+pub type ConstraintProver = ConstraintValidator;
 #[doc(hidden)]
-pub type MockProver = ConstraintProver;
+pub type ConstraintProof = TraceSummary;
+#[doc(hidden)]
+pub type MockProof = TraceSummary;
+#[doc(hidden)]
+pub type MockProver = ConstraintValidator;
 #[doc(hidden)]
 pub type MockProofResult = ConstraintCheckResult;
 
@@ -385,42 +372,42 @@ mod tests {
     }
 
     #[test]
-    fn constraint_prover_valid_trace() {
+    fn constraint_validator_valid_trace() {
         let air = BinaryAir {
             values: vec![BabyBear::ZERO, BabyBear::ONE, BabyBear::ONE, BabyBear::ZERO],
         };
-        let result = ConstraintProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(result.is_valid());
     }
 
     #[test]
-    fn constraint_prover_invalid_trace() {
+    fn constraint_validator_invalid_trace() {
         let air = BinaryAir {
             values: vec![BabyBear::ZERO, BabyBear::new(2), BabyBear::ONE],
         };
-        let result = ConstraintProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(!result.is_valid());
         assert_eq!(result.violations().len(), 1);
         assert_eq!(result.violations()[0].row, 1);
     }
 
     #[test]
-    fn constraint_proof_generation() {
+    fn trace_summary_generation() {
         let air = BinaryAir {
             values: vec![BabyBear::ONE, BabyBear::ZERO, BabyBear::ONE],
         };
-        let proof = ConstraintProof::generate(&air).unwrap();
-        assert_eq!(proof.num_rows, 3);
-        assert_eq!(proof.num_cols, 1);
-        assert!(proof.verify(&[]));
+        let summary = TraceSummary::generate(&air).unwrap();
+        assert_eq!(summary.num_rows, 3);
+        assert_eq!(summary.num_cols, 1);
+        assert!(summary.public_inputs_match(&[]));
     }
 
     #[test]
-    fn constraint_proof_fails_on_invalid() {
+    fn trace_summary_refused_on_invalid_trace() {
         let air = BinaryAir {
             values: vec![BabyBear::new(5)],
         };
-        let proof = ConstraintProof::generate(&air);
-        assert!(proof.is_none());
+        let summary = TraceSummary::generate(&air);
+        assert!(summary.is_none());
     }
 }

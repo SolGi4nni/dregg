@@ -8,11 +8,11 @@
 //! 5. Verify the proof
 //! 6. Print proof size
 
+use crate::constraint_prover::{Air, ConstraintValidator};
 use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationAir, DerivationWitness};
 use crate::dsl::fold::{FoldAir, FoldWitness, RemovedFact, build_shared_tree};
 use crate::field::BabyBear;
 use crate::merkle_air::{MerkleAir, create_test_witness};
-use crate::mock_prover::{Air, MockProver};
 use crate::poseidon2::{hash_4_to_1, hash_fact, hash_many};
 use crate::presentation::{PresentationAir, PresentationVerification, PresentationWitness};
 
@@ -73,7 +73,7 @@ fn end_to_end_authorization_proof() {
 
     println!("\nFold step 1: Remove can_write(alice, file2)");
     let fold1_air = FoldAir::new(fold1.clone());
-    let fold1_result = MockProver::verify(&fold1_air);
+    let fold1_result = ConstraintValidator::verify(&fold1_air);
     assert!(
         fold1_result.is_valid(),
         "Fold 1 failed: {:?}",
@@ -99,7 +99,7 @@ fn end_to_end_authorization_proof() {
 
     println!("\nFold step 2: Remove owns(alice, file2), add check read_only(file2)");
     let fold2_air = FoldAir::new(fold2.clone());
-    let fold2_result = MockProver::verify(&fold2_air);
+    let fold2_result = ConstraintValidator::verify(&fold2_air);
     assert!(
         fold2_result.is_valid(),
         "Fold 2 failed: {:?}",
@@ -158,7 +158,7 @@ fn end_to_end_authorization_proof() {
 
     println!("\nDerivation: access(alice, file1) :- owns(alice, file1), can_read(alice, file1)");
     let deriv_air = DerivationAir::new(derivation.clone());
-    let deriv_result = MockProver::verify(&deriv_air);
+    let deriv_result = ConstraintValidator::verify(&deriv_air);
     assert!(
         deriv_result.is_valid(),
         "Derivation failed: {:?}",
@@ -176,7 +176,7 @@ fn end_to_end_authorization_proof() {
         issuer_key, federation_root
     );
     let issuer_air = MerkleAir::new(issuer_witness.clone());
-    let issuer_result = MockProver::verify(&issuer_air);
+    let issuer_result = ConstraintValidator::verify(&issuer_air);
     assert!(
         issuer_result.is_valid(),
         "Issuer membership failed: {:?}",
@@ -348,7 +348,7 @@ fn long_attenuation_chain() {
     // Verify each fold individually
     for (i, fold) in folds.iter().enumerate() {
         let air = FoldAir::new(fold.clone());
-        let result = MockProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(
             result.is_valid(),
             "Fold {i} failed: {:?}",
@@ -434,7 +434,7 @@ fn merkle_proofs_various_depths() {
         let leaf = BabyBear::new(depth as u32 * 1000);
         let witness = create_test_witness(leaf, depth);
         let air = MerkleAir::new(witness);
-        let result = MockProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(
             result.is_valid(),
             "Merkle proof at depth {depth} failed: {:?}",
@@ -547,8 +547,8 @@ fn fold_rejects_inconsistent_fact_hash() {
         }
     }
 
-    use crate::mock_prover::Constraint;
-    let result = MockProver::verify(&BadHashFoldAir);
+    use crate::constraint_prover::Constraint;
+    let result = ConstraintValidator::verify(&BadHashFoldAir);
     assert!(!result.is_valid());
     // Should specifically fail on fact_hash_correct constraint
     let has_hash_violation = result
@@ -565,8 +565,8 @@ fn fold_rejects_inconsistent_fact_hash() {
 /// Test: Derivation AIR rejects if derived hash doesn't match head.
 #[test]
 fn derivation_rejects_wrong_head() {
+    use crate::constraint_prover::Constraint;
     use crate::derivation_air::col;
-    use crate::mock_prover::Constraint;
 
     struct BadDerivAir;
     impl Air for BadDerivAir {
@@ -590,7 +590,7 @@ fn derivation_rejects_wrong_head() {
         }
     }
 
-    let result = MockProver::verify(&BadDerivAir);
+    let result = ConstraintValidator::verify(&BadDerivAir);
     assert!(!result.is_valid());
     let has_hash_violation = result
         .violations()

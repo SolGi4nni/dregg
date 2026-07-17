@@ -11,9 +11,14 @@
 //!   **Anyone who could call `prove_ivc` could mint a passing proof for any root walk.** Proof sizes
 //!   were fabricated; `create_test_chain` fabricated the data itself. DELETED 2026-07-16 (final cut) —
 //!   only the real Poseidon2 hash-chain primitives remain in that file.
-//! * `circuit/src/constraint_prover.rs` — says it of itself (:5-8): *"a trace digest … **not** a
-//!   cryptographic proof … nothing here is sound against a prover that lies"*; `generate_unchecked`
-//!   (:256) skips even the local constraint check.
+//! * `circuit/src/constraint_prover.rs` — the row-by-row local checker. Says it of itself: a trace
+//!   digest is *"**not** a cryptographic proof … nothing here is sound against a prover that lies"*;
+//!   `generate_unchecked` skips even the local constraint check. 2026-07-17: renamed to honest
+//!   VALIDATOR names (`ConstraintValidator` / `TraceSummary`; a "prover" that proves nothing was the
+//!   `*_air`-on-a-non-AIR fiction). The 2026-07-17 consumer census found NOTHING treating its output
+//!   as a proof: every production presentation verifier requires + cryptographically verifies the
+//!   separate `real_stark_proof` descriptor wires, and the trace summaries riding
+//!   `PresentationProof` are unread metadata. It survives as a legitimate prover-side/test validator.
 //!
 //! ## The REAL prover (the wiring target)
 //! `circuit-prove/src/ivc_turn_chain.rs`: `prove_turn_chain_recursive(&[FinalizedTurn]) -> WholeChainProof`
@@ -46,6 +51,12 @@ fn count_mock_sites(src: &str) -> usize {
         "verify_ivc(",
         "create_test_chain(",
         "ConstraintProof",
+        // 2026-07-17: `ConstraintProof` was renamed `TraceSummary` (and
+        // `ConstraintProver` -> `ConstraintValidator`) so the names stop
+        // claiming proof-ness; the artifact is IDENTICAL, so the gate counts
+        // BOTH names — the old one survives only as a doc(hidden) alias for
+        // the dirty-at-rename `circuit/src/lib.rs` re-exports.
+        "TraceSummary",
         "generate_unchecked",
         "simulated_proof_size_bytes",
     ]
@@ -66,7 +77,10 @@ const BASELINE: &[(&str, usize)] = &[
         // the ivc_attenuation_chain example). 70 -> 0. What remains in ivc.rs are the REAL
         // Poseidon2 hash-chain primitives + the state-transition trace shape, which contain
         // zero mock sites.
-        ("circuit/src/constraint_prover.rs", 17),
+        // 2026-07-17: renamed to VALIDATOR names (`ConstraintValidator`/`TraceSummary`,
+        // legacy aliases kept for lib.rs); dead `proof_size_display` deleted; counts under
+        // the widened pattern set (old + "TraceSummary"): 17 -> 15. Still SHRINK ONLY.
+        ("circuit/src/constraint_prover.rs", 15),
         // node/src/mcp/handlers_verify.rs: PURGED 2026-07-16 — dregg_compress_history now proves via
         // the REAL prove_turn_chain_recursive over retained FinalizedTurns (plumbed at the node commit
         // path); dregg_compose_proofs retired fail-closed. 3 -> 0.

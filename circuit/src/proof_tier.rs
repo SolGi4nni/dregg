@@ -1,7 +1,7 @@
 //! Proof tier markers — informational classification of proof backends.
 //!
 //! The codebase has multiple proof backends (custom STARK, Kimchi native, Mina/Pickles,
-//! constraint prover, structural stubs). All produce bytes that look like
+//! structural stubs). All produce bytes that look like
 //! "proofs," but only a subset provide real cryptographic soundness guarantees.
 //!
 //! This module introduces:
@@ -33,8 +33,10 @@ pub enum ProofTier {
     /// Produced by: custom STARK (base-field only).
     Experimental,
     /// Structural validation only — no cryptographic guarantees.
-    /// Produced by: the constraint prover.
-    /// These proofs cannot pass STARK verification and are rejected naturally.
+    /// Historically produced by the retired "constraint prover" (now honestly
+    /// renamed in [`crate::constraint_prover`], which no longer poses as a
+    /// proof backend). No live producer constructs this tier.
+    /// Such artifacts cannot pass STARK verification and are rejected naturally.
     Structural,
 }
 
@@ -132,13 +134,9 @@ pub fn stark_tier() -> ProofTier {
     ProofTier::Experimental
 }
 
-/// Returns the proof tier for the constraint prover (mock prover).
-///
-/// The constraint prover validates AIR constraints directly on the execution trace
-/// without generating cryptographic proofs. Always structural.
-pub fn constraint_prover_tier() -> ProofTier {
-    ProofTier::Structural
-}
+// `constraint_prover_tier()` was DELETED 2026-07-17: zero callers workspace-wide,
+// and it advertised the constraint VALIDATOR (`constraint_prover::ConstraintValidator`)
+// as a proof backend, which it is not.
 
 /// Returns the proof tier for the Plonky3 backend.
 ///
@@ -153,7 +151,7 @@ pub fn plonky3_tier() -> ProofTier {
 
 /// Backend name for the custom STARK prover.
 pub const STARK_BACKEND: &str = "custom-stark";
-/// Backend name for the constraint prover.
-pub const CONSTRAINT_PROVER_BACKEND: &str = "constraint-prover";
+// `CONSTRAINT_PROVER_BACKEND` deleted 2026-07-17 (zero callers; there is no
+// constraint-prover proof backend — see `constraint_prover` module docs).
 /// Backend name for Plonky3.
 pub const PLONKY3_BACKEND: &str = "plonky3";

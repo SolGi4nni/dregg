@@ -4,8 +4,9 @@
 //! convert to ZK commitments, evaluate authorization, and produce a verified
 //! presentation proof.
 
+use dregg_circuit::constraint_prover::ConstraintValidator;
 use dregg_circuit::dsl::fold::FoldAir;
-use dregg_circuit::{BabyBear, ConstraintProver, PresentationVerification};
+use dregg_circuit::{BabyBear, PresentationVerification};
 use dregg_commit::{
     CheckPolicy, Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain,
 };
@@ -386,7 +387,7 @@ fn test_circuit_fold_proofs() {
 
     for (i, witness) in witnesses.iter().enumerate() {
         let air = FoldAir::new(witness.clone());
-        let result = ConstraintProver::verify(&air);
+        let result = ConstraintValidator::verify(&air);
         assert!(
             result.is_valid(),
             "Fold AIR #{} should verify: {:?}",

@@ -18,7 +18,7 @@
 //! The presentation proof proves: "I hold a valid attenuated token chain whose
 //! final state authorizes action X" without revealing the chain or capabilities.
 
-use crate::constraint_prover::{Air, Constraint, ConstraintProof, ConstraintProver};
+use crate::constraint_prover::{Air, Constraint, ConstraintValidator, TraceSummary};
 use crate::derivation_air::{CircuitRule, DerivationAir, DerivationWitness};
 use crate::dsl::fold::{FoldAir, FoldWitness, RemovedFact};
 use crate::field::BabyBear;
@@ -246,17 +246,30 @@ pub struct PresentationPublicInputs {
 }
 
 /// A complete presentation proof.
+///
+/// # What is and is not proof here
+///
+/// Despite the field names (kept for wire compatibility — this struct rides
+/// `WirePresentationProof` as postcard), the three trace-summary fields are
+/// **not proofs**: they are prover-authored summaries (see
+/// [`crate::constraint_prover`] — a digest nobody re-checks, plus public
+/// inputs). No verifier in this workspace reads their digests; the
+/// production verifiers (`dregg_bridge::present::verify_proof_complete` and
+/// friends) require and cryptographically verify the SEPARATE
+/// `real_stark_proof` descriptor wires, and only read `public_inputs` off this
+/// struct as metadata to bind against the STARK's own public inputs.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PresentationProof {
     /// The public inputs.
     pub public_inputs: PresentationPublicInputs,
-    /// Proof of the fold chain (sequential STARK proofs).
-    pub fold_proofs: Vec<ConstraintProof>,
-    /// Proof of the final derivation.
-    pub derivation_proof: ConstraintProof,
-    /// Proof of issuer membership in federation.
-    pub issuer_membership_proof: ConstraintProof,
-    /// Total proof size in bytes.
+    /// Trace summaries of the fold-chain constraint checks (NOT proofs).
+    pub fold_proofs: Vec<TraceSummary>,
+    /// Trace summary of the final derivation constraint check (NOT a proof).
+    pub derivation_proof: TraceSummary,
+    /// Trace summary for issuer membership (unchecked; real crypto is the
+    /// issuer-membership STARK descriptor wire).
+    pub issuer_membership_proof: TraceSummary,
+    /// Sum of the ESTIMATED (simulated) sub-proof sizes in bytes.
     pub total_proof_size_bytes: usize,
 }
 
@@ -273,14 +286,21 @@ impl PresentationProof {
         }
     }
 
-    /// Verify the presentation proof.
+    /// Plaintext consistency check over the prover-supplied public inputs.
     ///
-    /// The verifier no longer sees initial_root or final_root (they are private).
-    /// Instead, it checks:
-    /// 1. Fold chain internal continuity (each step links to the next).
-    /// 2. Derivation proof's state root matches end of fold chain.
-    /// 3. The presentation_tag is well-formed (proven by the STARK internally).
-    /// 4. Issuer membership in federation.
+    /// **This is NOT cryptographic verification** — every value it reads
+    /// (`fold_proofs[i].public_inputs`, `derivation_proof.public_inputs`,
+    /// `issuer_membership_proof.public_inputs`) is authored by the prover, so a
+    /// lying prover trivially satisfies it. It has ZERO production callers
+    /// (2026-07-17 census: only `circuit/src/tests.rs`); the production
+    /// verifiers live in `dregg_bridge::present` and rest on the real STARK
+    /// descriptor wires.
+    ///
+    /// What it checks, as internal consistency only:
+    /// 1. Fold chain continuity (each step's old_root == previous new_root).
+    /// 2. Derivation's state root matches end of fold chain.
+    /// 3. (Presentation-tag well-formedness is NOT checked here.)
+    /// 4. Issuer membership public input equals the claimed federation root.
     pub fn verify(&self) -> PresentationVerification {
         // 1. Check fold chain internal continuity
         let mut current_root = if let Some(first) = self.fold_proofs.first() {
@@ -466,33 +486,34 @@ impl PresentationAir {
     pub fn prove(&self) -> Option<PresentationProof> {
         let w = &self.witness;
 
-        // 1. Prove each fold step
+        // 1. Locally validate + summarize each fold step (NOT proving — the
+        //    summaries carry no adversarial soundness; see PresentationProof docs).
         let mut fold_proofs = Vec::new();
         for fold_witness in &w.fold_chain {
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = ConstraintProver::verify(&fold_air);
+            let result = ConstraintValidator::verify(&fold_air);
             if !result.is_valid() {
                 return None;
             }
-            let proof = ConstraintProof::generate(&fold_air)?;
+            let proof = TraceSummary::generate(&fold_air)?;
             fold_proofs.push(proof);
         }
 
-        // 2. Prove the derivation (DEPRECATED: uses old DerivationAir).
+        // 2. Locally validate the derivation (DEPRECATED: uses old DerivationAir).
         // Production STARK proofs use crate::dsl::descriptors::derivation_circuit().
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let deriv_result = ConstraintProver::verify(&derivation_air);
+        let deriv_result = ConstraintValidator::verify(&derivation_air);
         if !deriv_result.is_valid() {
             return None;
         }
-        let derivation_proof = ConstraintProof::generate(&derivation_air)?;
+        let derivation_proof = TraceSummary::generate(&derivation_air)?;
 
-        // 3. Prove issuer membership.
+        // 3. Summarize issuer membership.
         // The witness uses hash_fact (Poseidon2 DSL path) which differs from
-        // MerkleAir's hash_4_to_1. Skip constraint verification here — the real
+        // MerkleAir's hash_4_to_1. Skip the local constraint check here — the real
         // cryptographic check is handled by the Poseidon2 STARK proof.
         let issuer_air = MerkleAir::new(w.issuer_membership.clone());
-        let issuer_membership_proof = ConstraintProof::generate_unchecked(&issuer_air);
+        let issuer_membership_proof = TraceSummary::generate_unchecked(&issuer_air);
 
         // Compute public inputs — initial_root and final_root stay private.
         // The presentation_tag blinds the final_root for unlinkability.
@@ -542,11 +563,14 @@ impl PresentationAir {
     // passing proof. No production caller existed (only a bench rode it). The real
     // presentation path is `BridgePresentationBuilder::prove()` (real STARK).
 
-    /// Verify the entire presentation (constraint prover, validates all sub-circuits).
+    /// Locally validate the entire presentation WITNESS (row-by-row constraint
+    /// check of all sub-circuits). Prover-side sanity only: the caller holds
+    /// the witness, so this is honest local checking, not verification of
+    /// anything remote.
     pub fn verify_all(&self) -> PresentationVerification {
         let w = &self.witness;
 
-        // Verify fold chain
+        // Validate fold chain
         let mut current_root = if let Some(first) = w.fold_chain.first() {
             first.old_root
         } else {
@@ -559,9 +583,9 @@ impl PresentationAir {
                 return PresentationVerification::FoldChainBreak { index: i };
             }
 
-            // Verify fold AIR
+            // Validate fold AIR constraints
             let fold_air = FoldAir::new(fold_witness.clone());
-            let result = ConstraintProver::verify(&fold_air);
+            let result = ConstraintValidator::verify(&fold_air);
             if !result.is_valid() {
                 return PresentationVerification::InvalidFoldProof { index: i };
             }
@@ -569,12 +593,12 @@ impl PresentationAir {
             current_root = fold_witness.new_root;
         }
 
-        // Verify derivation
+        // Validate derivation
         if w.derivation.state_root != current_root {
             return PresentationVerification::DerivationRootMismatch;
         }
         let derivation_air = DerivationAir::new(w.derivation.clone());
-        let result = ConstraintProver::verify(&derivation_air);
+        let result = ConstraintValidator::verify(&derivation_air);
         if !result.is_valid() {
             return PresentationVerification::InvalidDerivation;
         }
