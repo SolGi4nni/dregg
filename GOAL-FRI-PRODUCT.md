@@ -129,6 +129,8 @@ ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
 
 - **RecycleFlywheel .sol ✅** (05b5ccb03, DEPLOYMENT layer, RECYCLE-FLYWHEEL-MEASURED.md): adversarial A/B measured — MEV: dregg 0 vs mock 1.781 ETH; front-run edge dregg Δ0 vs mock 16.6%; split-deviation dregg REVERTS vs mock succeeds; conservation dregg netFlow=0 vs mock leaks; provenance 10000bps vs 0; honest gas premium ~16-28×. 268/268 forge green. Welds NAMED (price-binding not in-circuit, .sol↔Lean prose). → Lean-proven CORE firing (a81210f4, RecycleFlywheel.lean) = the assurance layer (theorems ∀-adversary, not tests).
 
+- **RecycleFlywheel LEAN CORE ✅** (RecycleFlywheel.lean, 20 keystones, sorry-free): the ASSURANCE layer — flywheel properties PROVEN ∀-adversary (not tested): recycle_insertion_futile + recycle_reorder_invariant (sandwich UNCONSTRUCTABLE via uniform_price_no_arbitrage + order-invariance), split_enforced (deviation rejected), recycle_conserves (composed Priced/Liquidity towers), recycle_recheckable (verify-not-find). Welds NAMED as theorems (welds_named_not_proved): price-binding=Attested (withhold-not-misprice), .sol-denotation=Deployed (un-mechanized). Reused only STABLE clearing lemmas → NO codex reconcile owed. So 'dregg surpasses CIRC' = a THEOREM (proven core) + measured .sol deployment + named welds. Open: the model↔.sol denotation binding (like FhEggRustDenotation).
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
