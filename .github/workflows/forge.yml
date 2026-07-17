@@ -1,0 +1,52 @@
+# Solidity contract build + test — the CI net for chain/ (the on-chain settlement,
+# launchpad, DVN, and vault contracts under chain/contracts).
+#
+# Why this exists: nothing in CI compiled or ran the Foundry suite, so a change that
+# broke a contract or a `.t.sol` test only surfaced on whoever happened to run `forge
+# test` locally. Worse, chain/lib/forge-std had been orphaned (no /.gitmodules, lib/
+# git-ignored), so a fresh `git clone` got an EMPTY chain/lib/ and `forge test` failed
+# at import. This job checks out with submodules (pulling forge-std at its pinned
+# v1.16.2), builds, and runs the full suite on every PR and push to main — so the
+# contracts are provably green off any one contributor's laptop.
+#
+# The suite reads only committed inputs: chain/test/fixtures/ and
+# tools/token-factory/artifacts/ (both git-tracked), per chain/foundry.toml's
+# fs_permissions. No RPC, no secrets, no deploy — a pure local EVM run.
+name: forge
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: forge build + test (chain/)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: chain
+    steps:
+      - name: Checkout (with submodules — pulls forge-std at its pin)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: forge --version
+        run: forge --version
+
+      - name: forge build
+        run: forge build
+
+      - name: forge test
+        run: forge test -vvv

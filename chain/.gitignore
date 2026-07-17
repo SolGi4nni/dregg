@@ -1,7 +1,10 @@
 # Foundry
 out/
 cache/
-lib/
+# lib/ is NOT ignored: Foundry dependencies (forge-std, ...) live here as tracked
+# git submodules pinned via /.gitmodules. Ignoring lib/ orphaned forge-std and made
+# a fresh clone's `forge test` fail (empty lib/). Only Foundry's own build junk under
+# lib is transient, and that is already covered by the out/ and cache/ rules above.
 
 # Environment
 .env
