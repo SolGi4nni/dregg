@@ -7,21 +7,28 @@ CAR v1, Kubo/gateway/pinning clients over an injected transport) and
 fetched content). This runbook is the ops half: a kubo daemon on hbox that gives
 those clients a real node to talk to.
 
-**Status: reviewed-go.** Everything below the smoke section is exercised in
-`cargo test -p dregg-ipfs -p ugc-dregg` against in-process transports; the LIVE
-round-trip against a running daemon is untested until an operator runs the smoke
-steps. The honest reviewed-go list:
+**Status: LIVE on hbox (2026-07-17).** Deployed and smoke-passed end-to-end:
+kubo v0.29.0 as the lingering user unit (loopback RPC :5001 / gateway :8080,
+server profile, bounded ConnMgr), and the full universe round-trip observed —
+`ipfs_smoke` published a real universe (80-byte wire), fetch-verified it back
+over RPC **and** the local gateway with the UniverseId re-derived both ways,
+and the SAME CID was then fetched through the PUBLIC ipfs.io gateway from a
+different machine and re-derived identical
+(`bafkr4igoiq6l3mpmj7rxwuxvlur3fdu5ofvyvldts3wbdizsbkyadebxji`). The daemon's
+`block/put`/`pin/add` acceptance of our RPC formatting, the `?format=raw`
+gateway read, blake3-CID alignment via `ipfs add`, and DHT propagation are all
+OBSERVED, not reviewed-go.
 
-- a live `ipfs daemon` accepting `block/put` / `block/get` / `pin/add` from
-  `KuboClient` over `StdHttpPost` (the RPC *formatting* is pinned by tests over a
-  recording transport; the daemon's acceptance is not),
-- a live gateway `?format=raw` read (`GatewayClient`),
-- public-gateway retrievability (DHT provide + propagation),
+Still open (honest):
+
+- the unit surviving an hbox REBOOT (deliberately unexercised — hbox is
+  co-tenant; observe it at the next natural reboot, then remove the unit's
+  banner),
 - byte-exact CID parity between our UnixFS builder and a stock `ipfs add`
   (our DAGs are valid and self-verifying; go-ipfs's exact chunk boundaries are a
   different layout — commit the CID you pinned, not the one you guessed),
-- the `kubo-hbox.service` unit surviving install + reboot (its banner comes off
-  after that is observed once).
+- third-party pinning durability (`PinningServiceClient` is format-tested;
+  picking/paying a provider is an ember decision).
 
 ## 1. Install kubo
 
