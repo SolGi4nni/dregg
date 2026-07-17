@@ -223,4 +223,146 @@ Kernel `decide` via `powModQ_eq_fold`: the `for _ in [0:32]` ladder itself does 
 theorem zeta_primitive_512th_root : powModQ zeta 256 = q - 1 := by
   rw [powModQ_eq_fold]; decide
 
+/-! ## FAST RUNTIME TWINS — `@[implemented_by]` over `Array UInt32` coefficients with `UInt64` products.
+
+The pure `def`s above store each coefficient as a boxed `Nat`, so every NTT butterfly / schoolbook step
+dispatches through `lean_nat_add`/`lean_nat_mul`/`lean_nat_mod` on heap bignums. These twins keep the coeffs
+in an UNBOXED `Array UInt32` and do machine arithmetic in the inner loops, converting to/from `Array Nat`
+only at the boundary. Each is attached to its pure def by `@[implemented_by]` so `MlDsaVerifyReal.verifyCore`
+and `MlDsaSignReal.signCore` — which call these ops directly — run the fast path with NO change to the
+callers and NO change to the proofs (`@[implemented_by]` is runtime-only; the kernel and `NttFaithful`'s
+∀-theorems still see the pure `Nat` bodies).
+
+**THE CORRECTNESS CRUX (why a naive `Array UInt32` port is WRONG).** Canonical coeffs are `< q ≈ 2²³`, so a
+COEFFICIENT PRODUCT reaches `< 2⁴⁶` — which TRUNCATES in a 32-bit multiply. Every modular multiply therefore
+forms the product in `UInt64` and reduces mod `q` before narrowing back to `UInt32` (`mulQu`). Adds/subs stay
+in `UInt32`: for canonical inputs `a,b < q`, `a + b < 2q < 2²⁴` and `a + q − b < 2²⁴`, both well under `2³²`,
+so no overflow (the pure defs already document the canonical-rep `[0,q)` precondition; all producers reduce).
+
+**TRUSTED — `@[implemented_by]` carries NO proof obligation** (a wrong twin silently corrupts sign/verify).
+Two live gates catch it: (1) the `#guard` differentials below pin each twin against the pure ground truth
+(`schoolbookMul`, kept pure, and inline `(a·b) mod q` formulas) — a genuine fast-vs-pure comparison, NOT
+fast-vs-fast, since the pure `schoolbookMul`/`Nat` arithmetic is not routed; (2) end-to-end, the byte-exact
+NIST-ACVP vectors (`AcvpKats`, sign floor) and `MlDsaVerifyReal.verify_accepts_real` (`native_decide`, in the
+default build) drive these ops through `signCore`/`verifyCore` and would go RED on any byte deviation. -/
+
+/-- `q` as a `UInt32` (canonical coeff reduction target). -/
+@[inline] def qU : UInt32 := 8380417
+/-- `q` as a `UInt64` (product-reduction modulus; a coeff product `< 2⁴⁶` fits here, not in `UInt32`). -/
+@[inline] def qU64 : UInt64 := 8380417
+
+/-- Modular add of canonical `UInt32` reps `< q`: `a + b < 2q < 2²⁴`, no 32-bit overflow. -/
+@[inline] def addQu (a b : UInt32) : UInt32 := (a + b) % qU
+/-- Modular sub of canonical `UInt32` reps `< q`: `a + q < 2²⁴` and `> b`, so no underflow/overflow. -/
+@[inline] def subQu (a b : UInt32) : UInt32 := (a + qU - b) % qU
+/-- Modular mul: the product of two `< q ≈ 2²³` reps reaches `< 2⁴⁶`, so it is formed in `UInt64`
+BEFORE reducing mod `q` and narrowing — a bare `UInt32` product would truncate at 32 bits. -/
+@[inline] def mulQu (a b : UInt32) : UInt32 := ((a.toUInt64 * b.toUInt64) % qU64).toUInt32
+
+/-- Widen a `Poly` (canonical `Nat` coeffs `< q < 2³²`) to unboxed `UInt32`; faithful since coeffs `< 2³²`. -/
+@[inline] def toU32 (p : Poly) : Array UInt32 := p.map Nat.toUInt32
+/-- Narrow an `Array UInt32` back to `Poly` (`Nat` coeffs); faithful (`UInt32.toNat` is exact `< 2³²`). -/
+@[inline] def toNatA (p : Array UInt32) : Poly := p.map UInt32.toNat
+
+/-- Fast twin of `addPoly`. -/
+def fastAddPoly (a b : Poly) : Poly := Id.run do
+  let au := toU32 a; let bu := toU32 b
+  let mut c : Array UInt32 := Array.replicate 256 0
+  for i in [0:256] do
+    c := c.set! i (addQu au[i]! bu[i]!)
+  return toNatA c
+
+/-- Fast twin of `subPoly`. -/
+def fastSubPoly (a b : Poly) : Poly := Id.run do
+  let au := toU32 a; let bu := toU32 b
+  let mut c : Array UInt32 := Array.replicate 256 0
+  for i in [0:256] do
+    c := c.set! i (subQu au[i]! bu[i]!)
+  return toNatA c
+
+/-- Fast twin of `pointwiseMul` (`UInt64` products). -/
+def fastPointwiseMul (a b : Poly) : Poly := Id.run do
+  let au := toU32 a; let bu := toU32 b
+  let mut c : Array UInt32 := Array.replicate 256 0
+  for i in [0:256] do
+    c := c.set! i (mulQu au[i]! bu[i]!)
+  return toNatA c
+
+/-- Fast twin of `schoolbookMul` (the negacyclic reference; `UInt64` products, `UInt32` accumulator).
+NOT attached via `@[implemented_by]` — `schoolbookMul` is never on the sign/verify runtime path (it is
+`NttFaithful`'s proof ground truth), so it stays a pure, unrouted reference for the differentials below. -/
+def fastSchoolbookMul (a b : Poly) : Poly := Id.run do
+  let au := toU32 a; let bu := toU32 b
+  let mut c : Array UInt32 := Array.replicate 256 0
+  for i in [0:256] do
+    for j in [0:256] do
+      let prod := mulQu au[i]! bu[j]!
+      let k := i + j
+      if k < 256 then
+        c := c.set! k (addQu c[k]! prod)
+      else
+        c := c.set! (k - 256) (subQu c[k - 256]! prod)
+  return toNatA c
+
+/-- Fast twin of `ntt` (FIPS 204 Algorithm 41), a line-for-line mirror over `Array UInt32` coeffs; the
+twiddle `ζ^{brv(k)}` is computed once per block and narrowed to `UInt32`, the butterfly does `UInt64`
+products via `mulQu`. -/
+def fastNtt (w : Poly) : Poly := Id.run do
+  let mut a := toU32 w
+  let mut k := 0
+  for s in [0:8] do
+    let len := 128 >>> s
+    let nblk := 128 / len
+    for blk in [0:nblk] do
+      let start := blk * 2 * len
+      k := k + 1
+      let z := (zetaTwiddle k).toUInt32
+      for j in [start : start + len] do
+        let t := mulQu z a[j + len]!
+        a := a.set! (j + len) (subQu a[j]! t)
+        a := a.set! j (addQu a[j]! t)
+  return toNatA a
+
+/-- Fast twin of `intt` (FIPS 204 Algorithm 42), mirroring the Gentleman–Sande dual + the `256⁻¹` scaling. -/
+def fastIntt (w : Poly) : Poly := Id.run do
+  let mut a := toU32 w
+  let mut k := 256
+  for s in [0:8] do
+    let len := 1 <<< s
+    let nblk := 128 / len
+    for blk in [0:nblk] do
+      let start := blk * 2 * len
+      k := k - 1
+      let z := (subQ 0 (zetaTwiddle k)).toUInt32   -- −ζ^{brv(k)} mod q, narrowed
+      for j in [start : start + len] do
+        let t := a[j]!
+        a := a.set! j (addQu t a[j + len]!)
+        a := a.set! (j + len) (mulQu z (subQu t a[j + len]!))
+  let nInvU := nInv.toUInt32
+  for j in [0:256] do
+    a := a.set! j (mulQu nInvU a[j]!)
+  return toNatA a
+
+attribute [implemented_by fastAddPoly] addPoly
+attribute [implemented_by fastSubPoly] subPoly
+attribute [implemented_by fastPointwiseMul] pointwiseMul
+attribute [implemented_by fastNtt] ntt
+attribute [implemented_by fastIntt] intt
+
+/-! ### Twin differentials — each `fast…` twin vs an UNROUTED pure ground truth (non-vacuous). -/
+
+-- The whole fast NTT multiply pipeline equals the pure negacyclic `schoolbookMul` (the load-bearing gate:
+-- `ntt_computes_negacyclic_mul` computed with the fast twins on one side, pure `schoolbookMul` on the other).
+#guard fastIntt (fastPointwiseMul (fastNtt sampleA) (fastNtt sampleB)) == schoolbookMul sampleA sampleB
+-- Fast round-trip: `intt ∘ ntt = id` on a nonzero high-degree poly.
+#guard fastIntt (fastNtt sampleA) == sampleA
+-- The schoolbook twin equals the pure `schoolbookMul` byte-for-byte.
+#guard fastSchoolbookMul sampleA sampleB == schoolbookMul sampleA sampleB
+-- Element-wise twins vs the inline pure `Nat` formulas (`+`, `*`, `a+q−b`, all mod `q` — unrouted).
+#guard (List.range 256).all (fun i => (fastAddPoly sampleA sampleB)[i]! == (sampleA[i]! + sampleB[i]!) % q)
+#guard (List.range 256).all (fun i =>
+  (fastSubPoly sampleA sampleB)[i]! == (sampleA[i]! + q - sampleB[i]!) % q)
+#guard (List.range 256).all (fun i =>
+  (fastPointwiseMul sampleA sampleB)[i]! == (sampleA[i]! * sampleB[i]!) % q)
+
 end Dregg2.Crypto.MlDsaRing
