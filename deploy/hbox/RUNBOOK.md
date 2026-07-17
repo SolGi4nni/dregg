@@ -1,44 +1,42 @@
-# Deploy the dregg discord bot on hbox — cutover runbook
+# RUNBOOK — the Dragon's Egg Discord bot on hbox
 
-Built in a SEPARATE worktree (`~/dev/bot-deploy`, branch `bot-deploy`) so hbox's active
-`mlkem-encaps-route` checkout is untouched. Binary: `~/dev/bot-deploy-target/release/dregg-discord-bot`.
+**Status: LIVE on hbox (2026-07-17).** Rehosted off the AWS edge — AWS is now
+caddy/gateway ONLY. Connected to Discord as "Dragon's Egg", 52 global slash
+commands, offerings bootstrapped, the daily-Descent cron live (rolls today's
+world from a real drand beacon).
 
-## 0. Wait for the build (in progress)
-    ssh hbox@hbox.local 'tail -n 3 ~/bot-build.log'      # look for `EXIT=0`
+## Where it runs
+- systemd USER unit `dregg-discord-bot.service` on **hbox** (this dir's unit),
+  `enable-linger`ed. Same pattern as the games funnel + kubo units.
+- Binary: built ON hbox (glibc 2.40 — a persvati/2.42 binary will NOT run here)
+  WITHOUT the Lean archive: `cargo build --release --features dregg-sdk/no-lean-link`
+  (the bot submits turns to a node over HTTP; the node proves). ExecStart points
+  at `~/dregg-bot/dregg-discord-bot`.
+- Secrets: `~/.config/dregg/discord-bot.env` (mode 600) — DISCORD_TOKEN,
+  DISCORD_APP_ID, BOT_SECRET, FEDERATION_ID, ADMIN_DISCORD_ID (staged from the
+  edge .env), plus DATABASE_URL (persistent sqlite `~/dregg-bot/bot.db`),
+  DEVNET_URL (`http://127.0.0.1:8420` — the hbox node), HTTP_HOST/PORT (loopback
+  :8081), RUST_LOG.
 
-## 1. Place the token env on hbox  (EMBER — I won't sling a prod token)
-From `./discord-values` (local): DISCORD_APP_ID, DISCORD_TOKEN. Write on hbox:
-    ssh hbox@hbox.local 'mkdir -p ~/.config/dregg && cat > ~/.config/dregg/discord-bot.env' <<VALS
-    DISCORD_TOKEN=…
-    DISCORD_APP_ID=…
-    # for live Claude Haiku narration (optional; else the bot narrates scripted, honestly labeled):
-    AWS_PROFILE=commonquant-ember
-    DREGG_NARRATOR_LEDGER=/home/hbox/.dregg/narrator-ledger.json
-    VALS
-    ssh hbox@hbox.local 'chmod 600 ~/.config/dregg/discord-bot.env'
-(AWS creds also need to reach hbox for Bedrock — `~/.aws/` or instance role. Scripted works without.)
+## One token = one bot
+The edge bot is DOWN and stays down (the edge no longer defines it as running).
+This hbox unit is the ONLY live instance. Before starting the bot anywhere else,
+stop this one, or the gateway double-connects.
 
-## 2. ⚠ STOP graviton's bot FIRST  (EMBER — I have no ssh to graviton)
-Two bots on one token = every command fires twice. Stop graviton's before hbox's starts:
-    ssh <graviton> 'sudo systemctl stop dregg-discord-bot'      # or `disable --now`
+## Redeploy (new binary)
+1. rsync the tree to `~/dregg-build/games-deploy` on hbox (or a bot-deploy dir).
+2. `cd .../discord-bot && swarm-build cargo build --release --features dregg-sdk/no-lean-link`.
+3. `systemctl --user restart dregg-discord-bot` (sqlite + resume are durable).
+4. `journalctl --user -u dregg-discord-bot -n 30` → "Bot connected as Dragon's Egg".
 
-## 3. Install + start on hbox
-    ssh hbox@hbox.local '
-      mkdir -p ~/.config/systemd/user
-      cp ~/dev/bot-deploy/deploy/hbox/dregg-discord-bot.service ~/.config/systemd/user/
-      systemctl --user daemon-reload
-      loginctl enable-linger hbox            # so the user unit survives logout
-      systemctl --user enable --now dregg-discord-bot
-      sleep 5; systemctl --user status dregg-discord-bot --no-pager | head -12
-    '
-Fastest alternative (no systemd), for a quick presentation run:
-    ssh hbox@hbox.local 'cd ~/dev/bot-deploy/discord-bot && set -a && . ~/.config/dregg/discord-bot.env && set +a && nohup ~/dev/bot-deploy-target/release/dregg-discord-bot > ~/bot-run.log 2>&1 & sleep 5; tail ~/bot-run.log'
+## The coupled node (TODO-1)
+DEVNET_URL points at `127.0.0.1:8420` — the hbox node, not yet up. The bot runs
+degraded-but-fine without it (Discord commands work; node-submit / anchoring
+features wait on the node). The node rehost on hbox is the other half of leaving
+AWS: a basic devnet node is straightforward; a PROVING node (`--prove-turns`)
+is gated on a HEAD-matching Lean seed.
 
-## 4. Verify in Discord
-`/dungeon list` → `/dungeon start` → tap a vote button → `/dungeon close` → `/dungeon verify`.
-Author: `/dungeon check` (paste/attach a .dungeon) → `/dungeon forge` → the channel plays it.
-
-## Narrator note
-fiction.rs narrates via ollama gemma2 → scripted fallback. hbox has NO ollama, so it narrates SCRIPTED
-(honest footer). To get live Claude Haiku 4.5, swap fiction.rs onto `dregg-narrator` (Bedrock, the same
-hard $20 ledger) — a follow-up code change + rebuild, not required for the first live deploy.
+## Verify live
+`journalctl --user -u dregg-discord-bot -n 40` — connect, 52 commands, the daily
+reveal. `curl -s http://127.0.0.1:8081/api/cells | head` (the loopback read
+surface). In Discord: `/start`.

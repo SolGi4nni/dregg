@@ -1,23 +1,41 @@
-# hbox home for the dregg discord bot — built + run on hbox (x86_64, 24c/123GB, OURS),
-# NOT on the tiny arm64 graviton. Placed at ~/.config/systemd/user/ (user unit) or
-# /etc/systemd/system/ (system unit; set User=hbox). Reads the token from an env file.
+# dregg Discord bot — hbox rehost (2026-07-17).
+#
+# Moved off the AWS edge: AWS is now caddy/gateway ONLY; the bot + node run on
+# hbox (our own infra — more powerful, cheaper). A systemd USER unit in the
+# games-funnel / kubo pattern (enable-linger + %h paths + a named data dir).
+#
+# The binary is built ON hbox (glibc 2.40; a persvati-built 2.42 binary will not
+# run here) WITHOUT the Lean archive: `cargo build --release --features
+# dregg-sdk/no-lean-link` — the bot signs+submits turns to a dregg-node over HTTP
+# and lets the NODE prove, so it needs no in-process Lean producer.
+#
+# Secrets (DISCORD_TOKEN / DISCORD_APP_ID / BOT_SECRET / FEDERATION_ID) live in
+# the EnvironmentFile below (mode 600), staged from the edge .env. One token =
+# one bot: the edge bot is DOWN, so this is the only live instance.
 [Unit]
-Description=Dregg Discord Bot (hbox)
+Description=dregg Discord bot (hbox rehost — off the AWS edge)
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=600
-StartLimitBurst=10
 
 [Service]
 Type=simple
-# EnvironmentFile carries DISCORD_TOKEN + DISCORD_APP_ID (from ./discord-values) and,
-# for live Claude Haiku narration, AWS_PROFILE + DREGG_NARRATOR_LEDGER. Placed by ember.
 EnvironmentFile=%h/.config/dregg/discord-bot.env
-Environment=RUST_LOG=info
-WorkingDirectory=%h/dev/bot-deploy/discord-bot
-ExecStart=%h/dev/bot-deploy-target/release/dregg-discord-bot
+WorkingDirectory=%h/dregg-bot
+ExecStart=%h/dregg-bot/dregg-discord-bot
 Restart=always
-RestartSec=5
+RestartSec=10
+
+# Security hardening — hbox user manager cannot apply the ProtectSystem/
+# ProtectKernel* sandbox set (218/CAPABILITIES; same as the games-funnel + kubo
+# units). Keep NoNewPrivileges (works everywhere).
+NoNewPrivileges=true
+
+# Resource brake — the bot is light, but hbox is co-tenant (builds/prover);
+# bound it well below capacity so it can never starve them.
+LimitNOFILE=65536
+MemoryHigh=1G
+MemoryMax=2G
+CPUWeight=40
 
 [Install]
 WantedBy=default.target
