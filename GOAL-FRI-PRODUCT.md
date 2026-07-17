@@ -123,6 +123,8 @@ ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
   landed, not just the lane's word — the from-scratch build is the only thing that catches a dangling file.
 - Cosmetic: Dregg2.lean:833 docstring says "22 keystones", real emitted count is 23 (harmless).
 
+- **launchpad P1/P2 ✅** (0ec6cd1e6): reproducibility wound CLOSED — forge-std restored as tracked submodule @ v1.16.2 (pin triangulated via gitdir+describe+foundry.lock+ls-remote), lib/ un-ignored, .gitmodules created, forge-test CI job added (.github/workflows/forge.yml, submodules:recursive). 259 forge tests pass (>122 cited). Launchpad now off-laptop-reproducible → P3 testnet deploy is ember's button.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
