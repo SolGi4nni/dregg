@@ -49,7 +49,7 @@ git push persvati main    # persvati/main is 13f65ae5a — verify ancestry first
 
 > `origin` = `git@github.com:emberian/dregg.git`. The `devnetbox` remote
 > (`ubuntu@34.224.208.52:/opt/dregg`) is the live AWS box — **do not** push to it;
-> the box pulls from origin via `deploy/aws/update.sh`.
+> the box pulls from origin via `deploy/aws/SUPERSEDED/update.sh`.
 
 ### 1c. What the push carries to light clients (the "VK distribute" step, grounded)
 
@@ -75,10 +75,10 @@ There are **two** genesis paths; they are different and must not be confused:
 | Path | Script | Where it writes | Used for |
 |------|--------|-----------------|----------|
 | **Repo/local** | `deploy/genesis/generate.sh` | into `deploy/genesis/` (repo tree) | producing the checked-in devnet artifact |
-| **On-instance** | `deploy/aws/federation-keygen.sh` | into `/etc/dregg/federation/` + each data dir | the live N3 federation (keys never leave the box) |
+| **On-instance** | `deploy/aws/SUPERSEDED/federation-keygen.sh` | into `/etc/dregg/federation/` + each data dir | the live N3 federation (keys never leave the box) |
 
 The N3 live federation uses the **on-instance** path
-(`deploy/aws/N3-RUNBOOK.md` §3). The repo path is what `deploy/genesis/README.md`
+(`deploy/aws/SUPERSEDED/N3-RUNBOOK.md` §3). The repo path is what `deploy/genesis/README.md`
 documents.
 
 **`./deploy/genesis/generate.sh --force` (repo path) — DESTROYS then regenerates:**

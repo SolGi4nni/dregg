@@ -28,7 +28,7 @@ census-era gap is code at HEAD; docs/GAME-INFRA-ROADMAP.md carries the wider bui
 - WORLD/SOCIAL: progression.rs (a real gated character sheet — XP/level/class/abilities) is WIRED to the persistent
   per-player identity [BUILT: dreggnet-offerings/src/character.rs — a returning player's sheet loads on open and persists on
   save, keyed by the stable DreggIdentity; durable backing = discord-bot/src/character_store.rs, sqlite]. mud.rs +
-  node/shared_world.rs (multi-player live receipt-stream sync); collective.rs (the signed party ballot); multicell.rs
+  node/src/shared_world.rs (multi-player live receipt-stream sync); collective.rs (the signed party ballot); multicell.rs
   (cross-cell world gating). The one-shot-vs-persistent CRUX resolves as: each run's CELL is deployed fresh +
   identically seeded (identity gives the deterministic cell identity), while the CHARACTER STATE carries across runs
   (the loaded sheet seeds the cell; XP earned from real admitted turns only).

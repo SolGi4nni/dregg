@@ -119,7 +119,7 @@ Three tools in `tools/`: `token-factory/` (orchestrator), `dregg-audit/` (9-door
 - **deployer-gate's macaroon gate is real** — composes the real `dregg_macaroon` crate
   (`Cargo.toml:15`), mints an HMAC-chained capability with 3 caveats (`lib.rs:367-370`), verifies
   the chain + clears caveats against a live snapshot (`lib.rs:394-400`), fails-closed on unknown
-  caveats (`lib.rs:431-437`). **14 substantive tests** (`tests/gate_poc.rs`) cover all arms +
+  caveats (`lib.rs:431-437`). **14 substantive tests** (`tools/deployer-gate/tests/gate_poc.rs`) cover all arms +
   forgery/wrong-operator/slash-after-issue/expiry/scope/revocation.
 - **The AI front is honestly a structured spec-builder, no LLM** (`emit_token.py:24-27,252-263`;
   no HTTP client anywhere). This is the explicitly-named wire-later — honest, not a wound.
@@ -156,7 +156,7 @@ Three tools in `tools/`: `token-factory/` (orchestrator), `dregg-audit/` (9-door
    UnguardedMintToken (new committed sample run) INV-CAP PASS + **INV-ACCESS-CONTROL
    COUNTEREXAMPLE** — the two-invariants-two-doors contrast case. (INV-REENTRANCY has
    PASS-only evidence; its FAIL polarity lives in the hand-written
-   `chain/formal-verification/DreggReentrancyFV.t.sol`.)
+   `chain/formal-verification/test/DreggReentrancyFV.t.sol`.)
 
 4. **The Opus "interview" is not live — now LABELED honestly (2026-07-17); wiring it is P7.**
    `deployer-gate/src/interview.rs` is a **text parser only** (`InterviewVerdict::parse`) —

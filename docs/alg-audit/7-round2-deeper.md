@@ -117,7 +117,7 @@ per-session-growing list, each turning O(n²) in session length:
 Fix the root once (a `HashSet<[u8;32]>` of finalized turn_hashes in `LocalNode`, populated in `land`) and
 all three drop to O(M+F); the call sites can also each hoist a one-shot `HashSet` snapshot.
 
-### B15 — coord `sync_from_blocklace` (new; round-6 covered `coord/budget.rs`, not `shared_budget.rs`)
+### B15 — coord `sync_from_blocklace` (new; round-6 covered `coord/src/budget.rs`, not `shared_budget.rs`)
 
 `coord/src/shared_budget.rs:411` loops participants and calls `blocklace.virtual_chain(&creator_key)`
 (`finality.rs:895`: `self.blocks.values().filter(|b| b.creator==creator).collect()` + `sort_by_key`) — a

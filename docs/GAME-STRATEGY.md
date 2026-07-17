@@ -123,7 +123,7 @@ shipped dependency of meta-progression).
    but we don't wait for the hit to build the keystone.
 2. ONBOARDING: **YES, pulled forward** — session-keys + passkey + paymaster onboarding is a flagship deliverable (a
    non-crypto person plays with zero wallet ceremony; a session key = a caveat-bounded play-cap delegation over macaroons).
-3. ATTESTED DM: **WIRE THE REAL CROWN FOR LAUNCH** — light the real MPC-TLS/attestation path (deos-hermes/attest.rs zk-live)
+3. ATTESTED DM: **WIRE THE REAL CROWN FOR LAUNCH** — light the real MPC-TLS/attestation path (deos-hermes/src/attest.rs zk-live)
    so "provably a real model, injection-free, bound to verified state" is true day one, not a fixture. (The operational
    remainder — a live pinned-notary api session — is the named frontier.)
 4. TOKEN: **SERVICES-ONLY, NO P2E** — $DREGG buys AI-narration credits / hosting / cosmetics / entry, NEVER power/features/

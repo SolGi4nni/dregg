@@ -67,7 +67,7 @@ in the private witness; only the two commitments public). All three exist and ar
 | **ZK-hiding (the "private")** | ✅ **shipped** | `circuit-prove/src/shielded/*` already does ZK attestations over *hidden committed cell state*, pure-descriptor; `prove_dsl_zk`/HidingFriPcs, OS-blinded |
 | **fold → O(1) light client** | ✅ real, tested | `lightclient` whole-chain IVC (`light_client_attests_whole_history`); every leaf exposes a folding segment |
 | **response attestation** | ✅ real, wired | `ZkOracleAttestation` (authentic ∧ well-formed), into `deos-hermes` + the grain ledger |
-| **the world engine** | ✅ real | `spween-dregg` (story = world-cell, each choice = a verified turn, replay re-verifies, collective authoring) + `starbridge-v2/mud.rs` (room = cell, item = cap, "can't dupe the item") |
+| **the world engine** | ✅ real | `spween-dregg` (story = world-cell, each choice = a verified turn, replay re-verifies, collective authoring) + `starbridge-v2/src/mud.rs` (room = cell, item = cap, "can't dupe the item") |
 | **the exact attach seam** | ✅ identified | `spween-dregg/src/world.rs:311` `WorldCell::commit`; cert lands on `StepReceipt` (world.rs:421); template ⊗ state already split by `compile_scene` (compiler.rs:124) |
 
 The load-bearing discovery: **spween's compiler already factors a story into

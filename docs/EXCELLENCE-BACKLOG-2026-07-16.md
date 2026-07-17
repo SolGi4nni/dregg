@@ -279,7 +279,7 @@ Web: `GET /offerings/{key}/session/{id}` lazily opens a real WorldCell for ANY i
 string (`dreggnet-web/src/lib.rs:30`, `ensure_open` :264) — no cap, TTL, eviction,
 or rate limit; a crawler is a memory-growth attack (and a disk-growth one once the
 durable session store lands). Bot: the offering `Store` and descent-run maps
-(`discord-bot/src/offering.rs:153`, `descent.rs:789`) grow monotonically —
+(`discord-bot/src/commands/offering.rs:153`, `descent.rs:789`) grow monotonically —
 `close_in` exists but is `#[allow(dead_code)]`; `/descent play`, `/buy-credits`,
 and every `offering:` press have no per-user cooldown (only presence/activity are
 limited). **Move:** per-identity open caps + LRU eviction + boot GC of never-landed
@@ -288,7 +288,7 @@ shared design, two small installs.
 
 ### G3. `/descent` serves a hardcoded pinned drand round when the cron hasn't fired — CHEAP ✓verified
 `DRAND_QUICKNET_ROUND = 1_000_000` + literal sig hex baked at
-`discord-bot/src/descent.rs:94-96`; `resolve_todays_beacon` (:124) silently
+`discord-bot/src/commands/descent.rs:94-96`; `resolve_todays_beacon` (:124) silently
 serves it — a genuine BLS-verified reveal, but the SAME dungeon every day absent
 egress. The daily-freshness claim rides a 5-minute cron + network. **Move:**
 label the fallback in the surface (footer: "pinned round, not today's") or
@@ -307,7 +307,7 @@ sweeper service per §2.
 
 ### G5. Generic collective mode is dead code on the live surface — CHEAP ✓verified
 `close_round`/`handle_close`/`open_round`/`with_round` are `#[allow(dead_code)]`
-(`discord-bot/src/offering.rs:495-579`); no generic close subcommand is
+(`discord-bot/src/commands/offering.rs:495-579`); no generic close subcommand is
 registered, so crowd-play is reachable ONLY through `/dungeon`'s bespoke wiring —
 `/council`/`/market` collective mode is scaffold in production. **Move:** register
 the close affordance on collective offerings; delete the allows.

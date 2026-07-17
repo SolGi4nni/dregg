@@ -22,7 +22,7 @@ holdings stay near-free (the AssetId is already game-independent).
    the executor enforces move-for-move; rides mud.rs seated player-cells + collective.rs::open_with signed roster/quorum
    + combat.rs FOCUS_BUDGET), with an on-ledger loot split. Escapes the TPP mush via DISTINCT caps per seat. Edge:
    nobody plays your seat / forges your vote / fakes the loot split.
-2. **SHARED HUB / TAVERN (small)** [BUILT: dreggnet-tavern]: node/shared_world.rs boot_shared_world (a hosted board +
+2. **SHARED HUB / TAVERN (small)** [BUILT: dreggnet-tavern]: node/src/shared_world.rs boot_shared_world (a hosted board +
    presence seats + live receipt-stream sync + over-reach refusal), re-homed as a persistent tavern between runs — an
    LFG board + per-patron market stalls, live co-inhabitance on the node's one ledger. Un-fakeable presence — the
    connective tissue that makes every other social system discoverable.

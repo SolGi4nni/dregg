@@ -90,7 +90,7 @@ audited whenever a mechanic is added.
   every subagent/codex output is verified by building + running, never trusted on its word;
   security teeth are re-audited; commits are path-specific.
 - **Parallel-safe fan-out:** frontend (`demo/`) and new self-contained crates (`dregg-dice`) run
-  in parallel with engine work; engine lanes serialize on `attested-dm/game.rs` (shared-tree
+  in parallel with engine work; engine lanes serialize on `attested-dm/src/game.rs` (shared-tree
   safety). New crates + `demo/` are the parallel lanes; `game.rs` is one-at-a-time.
 - **Verify > believe:** a lane is done when it builds + its driven test passes on *our* tree, not
   when it reports success. Findings are traced before they're bugs; claims are earned, not named.

@@ -32,8 +32,8 @@ native one; nothing references the dead operated fabric.
 | [regenerating-verifiers.md](regenerating-verifiers.md) | regenerating the three cross-chain verifier constants (EVM/Solana/Cosmos) from the one canonical spec |
 
 **Upgrades:** the former UPGRADE.md is superseded — it drove
-`deploy/aws/update-gated.sh`, a script for the never-ran topology (now
-`deploy/aws/SUPERSEDED/update-gated.sh`). The live update path is
+`deploy/aws/SUPERSEDED/update-gated.sh`, a script for the never-ran topology.
+The live update path is
 `deploy/aws/README.md` § "Updating: build elsewhere, ship the image" (build on
 persvati/hbox, `docker save | docker load`, recreate one service) plus
 `deploy/PRACTICES.md`. The old doc is retained at

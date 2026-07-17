@@ -156,7 +156,7 @@ closes internally); chaining the continuity anchor across multiple turns is the 
   and the Lean R3 FFI decision running as native code (`dregg-lean-ffi grain_r3`).
 - **Built + committed, tests confirmed when built (re-run to reconfirm — the other terminal keeps
   reworking the tree):** the confined Hermes body (4 poles), the federated PR-carry forge (183 lib),
-  the Lean R3 model (axiom-clean, non-vacuous), and the R3 live-grain adapter (`grain-turn/finalize.rs`,
+  the Lean R3 model (axiom-clean, non-vacuous), and the R3 live-grain adapter (`grain-turn/src/finalize.rs`,
   compiles clean).
 - **Reduced, not closed:** R3 (`WHOLE_HISTORY_GAP` reduced to the STARK/apex soundness + the head
   binding — the apex still carries three open reconciliation mismatches). It's a *reduction*, not a proof.

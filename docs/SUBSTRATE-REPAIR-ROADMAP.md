@@ -45,7 +45,7 @@ K1. **HeapAtom has no exact-delta twin + no cross-key relation** (`cell/src/prog
 
 ## STATUS (2026-07-12, after the repair swarm)
 FIXED + committed:
-- #1/#2/#3-compiler (Bazaar pair) — spween-dregg/compiler.rs: the clamp-defeated lift now emits a companion FieldDelta;
+- #1/#2/#3-compiler (Bazaar pair) — spween-dregg/src/compiler.rs: the clamp-defeated lift now emits a companion FieldDelta;
   the broke buyer is REFUSED. Driven 153/0 (dungeon-on-dregg 118 incl. dice-combat + the workarounds).
 - #5 (quorum aliasing, SECURITY) — collective-choice: RESOLVED gated on CountGe (>=M distinct committed voters, actor-
   bound commitment); a single-actor tally-inflation forge is REFUSED. Driven 11/0; /council + the liquidity vote inherit.
