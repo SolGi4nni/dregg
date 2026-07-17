@@ -294,9 +294,10 @@ fn automaton_gadget(
     // --- automaton position (ax,ay), pinned so board[n*ay+ax] == AUTO ---
     let ax_col = b.alloc("ax", ColumnKind::Value, ax as i128);
     let ay_col = b.alloc("ay", ColumnKind::Value, ay as i128);
-    let inb: Vec<i128> = (0..n as i128).collect();
-    b.assert_member(ax_col, &inb);
-    b.assert_member(ay_col, &inb);
+    // Range-pin each coord to 0..=n-1 by bit-decomposition (degree ≤ 2), not the degree-n
+    // membership product — the same range, under the constraint-degree cap as the board grows.
+    b.decompose_coord_le("ax", ax_col, n as i128 - 1);
+    b.decompose_coord_le("ay", ay_col, n as i128 - 1);
     let auto_idx = (ay as usize) * n + (ax as usize);
     let auto_index_head = Head::lin(n as i128, ay_col).add_lin(1, ax_col);
     let sel_auto = b.one_hot("auto", k, auto_idx, &auto_index_head);

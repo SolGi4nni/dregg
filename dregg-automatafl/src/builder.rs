@@ -278,6 +278,38 @@ impl Builder {
         ib
     }
 
+    /// Range-pin a board coordinate to `0 ..= max` by BIT-DECOMPOSITION instead of the
+    /// degree-`(max+1)` vanishing product [`Self::assert_member`] would emit for the set
+    /// `0..=max`. Two [`Self::range_nonneg`] gadgets do it in degree ≤ 2:
+    ///   * `col = Σ 2^k·b_k` over `rbits` boolean bits ⇒ `0 ≤ col < 2^rbits` (the lower edge);
+    ///   * `max − col = Σ 2^k·b'_k` ⇒ `col ≤ max` (the upper edge — a HARD non-negativity
+    ///     assertion, so a coordinate past `max` has no satisfying bits, exactly as the
+    ///     membership product rejected it).
+    /// `rbits` is the minimal width covering `0..=max`. Same range as `assert_member(0..=max)`,
+    /// but NO emitted constraint grows with the board: an 11×11 board's `0..=10` coordinate pin
+    /// is degree ≤ 2 rather than degree 11 (over `MAX_CONSTRAINT_DEGREE = 8`). This is what makes
+    /// a larger board legal on the degree axis; the receipt is unchanged (same coordinate columns,
+    /// same range). Lighter than a `forced_ge0` upper bound (which also witnesses a comparison bit
+    /// this hard pin does not need) — the column budget the deployed n=5 leaves prove under.
+    pub fn decompose_coord_le(&mut self, tag: &str, col: usize, max: i128) {
+        debug_assert!(max >= 0, "coordinate upper bound must be non-negative");
+        // Minimal bit width covering 0..=max (2^rbits > max).
+        let mut rbits = 1usize;
+        while (1i128 << rbits) <= max {
+            rbits += 1;
+        }
+        let val = self.value(col).0 as i128;
+        // Lower edge: col = Σ 2^k·b_k  ⇒  0 ≤ col < 2^rbits.
+        self.range_nonneg(&format!("{tag}_lo"), &Head::lin(1, col), val, rbits);
+        // Upper edge: max − col ≥ 0  ⇒  col ≤ max.
+        self.range_nonneg(
+            &format!("{tag}_hi"),
+            &Head::c(max).add_lin(-1, col),
+            max - val,
+            rbits,
+        );
+    }
+
     /// `ConditionalNonzero`: when `selector != 0`, require `value != 0` (via a witnessed
     /// inverse). `value_val` is the honest value (used to fill the inverse; `0` if the
     /// selector is off so `value` may legitimately be zero).

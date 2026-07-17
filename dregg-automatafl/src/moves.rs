@@ -128,15 +128,17 @@ fn validate_move(
     one: usize,
 ) -> (usize, usize, usize, usize, usize) {
     let n = old.n;
-    let inb: Vec<i128> = (0..n as i128).collect();
     let fx = b.alloc(format!("{tag}_fx"), ColumnKind::Value, m.frm.0 as i128);
     let fy = b.alloc(format!("{tag}_fy"), ColumnKind::Value, m.frm.1 as i128);
     let tx = b.alloc(format!("{tag}_tx"), ColumnKind::Value, m.to.0 as i128);
     let ty = b.alloc(format!("{tag}_ty"), ColumnKind::Value, m.to.1 as i128);
-    b.assert_member(fx, &inb);
-    b.assert_member(fy, &inb);
-    b.assert_member(tx, &inb);
-    b.assert_member(ty, &inb);
+    // Range-pin each coord to 0..=n-1 by bit-decomposition (degree ≤ 2), not the degree-n
+    // membership product — the same range, under the constraint-degree cap as the board grows.
+    let mx = n as i128 - 1;
+    b.decompose_coord_le(&format!("{tag}_fx"), fx, mx);
+    b.decompose_coord_le(&format!("{tag}_fy"), fy, mx);
+    b.decompose_coord_le(&format!("{tag}_tx"), tx, mx);
+    b.decompose_coord_le(&format!("{tag}_ty"), ty, mx);
     // rook-aligned: (fx-tx)*(fy-ty) == 0
     b.assert_zero(
         &Head::zero()
