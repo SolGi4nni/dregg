@@ -56,6 +56,16 @@ jobs:
       # mock adds no deps; alloy is already in the lockfile.
       - run: cargo test -p dregg-chain --features mock
       - run: cargo check -p dregg-chain --features on-chain
+      # starbridge-polis default features are EMPTY (the pure cell-program library),
+      # so `cargo test --workspace` compiles NEITHER the deos surface (src/deos.rs)
+      # NOR the AX3 service (src/service.rs) / AX5 reactor (src/reactor.rs) — all three
+      # ride a `#[path]`-into-test-binaries dance gated on the `deos` feature to dodge a
+      # package-graph cycle (see the crate's [features] note). Their tests
+      # (tests/{deos_seam,service,reactor,reexpress_deos_app}.rs) were built by nothing.
+      # The feature adds NO new dep to the graph (it only flips the test #[cfg]s; the
+      # app-framework/turn/sdk it pulls are dev-deps already built by --workspace), so
+      # this reuses the warm target dir above. Mirrors the dregg-chain matrix directly.
+      - run: cargo test -p starbridge-polis --features deos
 
   # solana-lock is a DELIBERATE standalone workspace (keeps the Solana/SBF dep
   # tree out of the main one — see solana-lock/Cargo.toml). That isolation also
@@ -358,12 +368,28 @@ jobs:
     name: Clippy (advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # ADVISORY, not a gate. CI's clippy (even pinned) carries lints the local
-    # same-dated clippy lacks (chunks_exact_to_as_chunks, doc_lazy_continuation,
-    # manual_is_multiple_of, …) AND the deos-* elephant crates don't inherit the
-    # workspace lint-allows — so a hard clippy gate is non-deterministic + fragile
-    # (you can't reproduce/fix it locally before pushing). It still RUNS + reports
-    # as annotations; it just doesn't fail the build. Run `cargo clippy` locally.
+    # ADVISORY, not a gate — but for an HONEST reason, corrected 2026-07-17.
+    # The OLD justification here (a pinned CI clippy still carries lints a local
+    # same-dated clippy lacks, e.g. chunks_exact_to_as_chunks / manual_is_multiple_of)
+    # was STALE TWICE OVER: (1) the toolchain is date-pinned (`nightly-2026-06-21`,
+    # committed 80cd71310), so CI's clippy IS the local same-dated clippy — the
+    # nondeterminism it feared is gone; (2) those exact lints are already
+    # `allow`ed in `[workspace.lints.clippy]`, so they never fire on the ~196
+    # crates that inherit them anyway.
+    #
+    # The REAL reason it stays advisory: `cargo clippy --workspace -- -D warnings`
+    # is genuinely RED right now, and not on a clippy style lint — on plain rustc
+    # `unused import` warnings promoted by `-D warnings` (last 4 completed main
+    # runs: ~50 of them, concentrated in the actively-refactored `circuit` crate,
+    # e.g. `crate::dsl::descriptors::merkle_poseidon2_circuit`), plus the handful
+    # of crates that do NOT carry `[lints] workspace = true` (e.g. deos-hermes).
+    # Flipping this to a hard gate TODAY reds main on churn that isn't the PR's.
+    #
+    # THE PATH TO A REAL GATE (do not delete this note until done): drive
+    # `cargo clippy --workspace -- -D warnings` to zero (start with the circuit
+    # unused-imports), give the non-inheriting crates `[lints] workspace = true`
+    # or an explicit exclude, VERIFY green, THEN drop `continue-on-error`. Until
+    # then it RUNS + reports as annotations. Run `cargo clippy` locally before pushing.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

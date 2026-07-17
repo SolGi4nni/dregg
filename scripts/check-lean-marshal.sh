@@ -74,4 +74,22 @@ echo "check-lean-marshal: running the DENOTATIONAL differential (leg 2: eval agr
     --test lean_state_producer_widen
 )
 
-echo "check-lean-marshal: PASS — Lean↔Rust faithfulness gate green (serialization + eval agreement)."
+echo "check-lean-marshal: running the lean-lib runtime probes (leg 3: embeddable + overspend)..."
+(
+  # The two whole-file `#![cfg(feature = "lean-lib")]` integration tests in
+  # dregg-lean-ffi (tests/embeddable_runtime_probe.rs, tests/overspend_probe.rs)
+  # link the archive at RUN time — which is exactly why they were gated. Before
+  # this leg NO CI step built them: the marshal gate built the `marshal_roundtrip`
+  # BINARY under `--features lean-lib`, but `cargo build/run --bin` never compiles
+  # test targets, so both probes sat dark on every run. They belong here — inside
+  # the archive-present block, so they only execute when a real Lean kernel exists
+  # to probe (embeddable_runtime_probe measures no-alloc-override / single-thread /
+  # real-turn against the linked image; overspend_probe checks the GATED executor
+  # rejects an overspend under unchecked-auth on the shadow marshal shape).
+  cd "$ROOT"
+  cargo test -p dregg-lean-ffi --features lean-lib \
+    --test embeddable_runtime_probe \
+    --test overspend_probe
+)
+
+echo "check-lean-marshal: PASS — Lean↔Rust faithfulness gate green (serialization + eval agreement + runtime probes)."
