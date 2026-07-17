@@ -48,7 +48,7 @@ as an existence obligation marked `TODO`, not discharged (`Core.lean:75`).
 
 ## Spec — the abstract laws (`Dregg2/Spec/`)
 
-### Conservation (`Spec/Conservation.lean`)
+### Conservation (`metatheory/Dregg2/Spec/Conservation.lean`)
 
 - `Spec.LinearityClass` — the effect coloring: six colors
   `Conservative | Monotonic | Terminal | Generative | Annihilative | Neutral`
@@ -73,7 +73,7 @@ as an existence obligation marked `TODO`, not discharged (`Core.lean:75`).
 - `Spec.TurnDeltas` / `turnConserves` / `multi_domain_independent` — a turn conserves iff
   every domain conserves; no cross-domain leakage (`Conservation.lean:359`, `:363`, `:372`).
 
-### Guard (`Spec/Guard.lean`)
+### Guard (`metatheory/Dregg2/Spec/Guard.lean`)
 
 - `Spec.Guard Request Statement` — the gating algebra: five constructors
   `firstParty (p : Request → Bool) | witnessed (s : Statement) | all gs | any gs | gnot g`
@@ -91,7 +91,7 @@ as an existence obligation marked `TODO`, not discharged (`Core.lean:75`).
   iff the verifier discharges `s` with `w s` (`admits` is definitionally `Laws.Discharged` at
   the verify seam) (`Guard.lean:224`).
 
-### Authority (`Spec/Authority.lean`)
+### Authority (`metatheory/Dregg2/Spec/Authority.lean`)
 
 The capability graph as rights-labelled edges, parametric over `[SemilatticeInf Rights]
 [OrderTop Rights]`.
@@ -161,7 +161,7 @@ an unauthorized one fails, and total is conserved at `105` (`Kernel.lean:162`–
 
 ---
 
-## The refinement square: `Exec ⊑ Spec` (`Spec/ExecRefinement.lean`)
+## The refinement square: `Exec ⊑ Spec` (`metatheory/Dregg2/Spec/ExecRefinement.lean`)
 
 This module proves `Dregg2.Exec.Kernel ⊑ Dregg2.Spec.{Conservation,Guard,Authority}` — the
 l4v `Design ⊑ Abstract` move — via two tractable projections of the simulation square.

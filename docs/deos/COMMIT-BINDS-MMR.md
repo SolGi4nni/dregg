@@ -79,7 +79,7 @@ aggregate pins it). The leaf identity is preserved: leaf `i` is the 32-byte
 **Owed:** a `Poseidon2Mmr` impl + a differential test that `Blake3Mmr` and
 `Poseidon2Mmr` agree on *structure* (skip / substitute / reorder all reject
 under both) even though their roots differ — the false-witness suite of
-`tests/synthetic.rs`, re-run under the field hasher.
+`dregg-query/tests/synthetic.rs`, re-run under the field hasher.
 
 ### Gap B — the limb weld (VK-affecting, deferred to the rotation)
 

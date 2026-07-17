@@ -20,12 +20,12 @@ against the code, not just the survey. The baseline is `docs/audit/SECURITY-PROP
 ## 0. Where we are — one honest paragraph
 
 dregg today proves a **refinement backbone** (`descriptorRefines` / `BindingFromFold` /
-`lightclient_unfoolable`, `Circuit/CircuitSoundness.lean:453`) and a real set of
+`lightclient_unfoolable`, `metatheory/Dregg2/Circuit/CircuitSoundness.lean:453`) and a real set of
 **security-properties** (authority non-amplification `IsNonAmplifying`
 `Exec/EffectsAuthority.lean:197`; conservation `reachable_total_zero`
 `Exec/ReachableConservation.lean:49`; freshness `AssuranceCase.lean:581`; vault
 no-dilution `Deos/Vault.lean:175`; settlement soundness `SettlementSoundness.lean:153`).
-It has a **UC/crypto shelf** (`Metatheory/Open/PerfectUC.lean`) that closes only the
+It has a **UC/crypto shelf** (`metatheory/Metatheory/Open/PerfectUC.lean`) that closes only the
 **perfect/statistical** fragment for **deterministic** ideals, wired **only** to the
 selective-disclosure functionality (`realπ_realizes_idealF`, `PerfectUC.lean:448`). Also in
 place: SealedEscrow's economic no-theft invariant (`sealedescrow_no_theft`,
@@ -58,7 +58,7 @@ functionalities `F` in one `Metatheory/UC/` frame and prove the deployed system 
 | **`F_turn`** | An ideal capability-machine that, given an authorized request, applies the kernel step by fiat and returns a receipt; refuses unauthorized/unfresh requests. | The kernel semantics `interp` / `recKExec` + the five `AssuranceCase` guarantees ARE the properties `F_turn` should have. `deployed_system_secure` (`AssuranceCase.lean:886`) is its one-turn realization statement in disguise. |
 | **`F_capability`** | Attenuable authority: a principal can delegate only a `⊆` of what it holds; no grant amplifies. | `IsNonAmplifying` (`EffectsAuthority.lean:197`); the kernel-level chain result `Membrane.reshareN_attenuates` (`Deos/Membrane.lean:122`); the cap-lattice `attenuate_subset`. This is the closest to a ready-made `F` — the property is already ∀-quantified over the kernel. |
 | **`F_payment`** | Money-in: a payment of `≥ amountCents` was genuinely authenticated (DECO/fiat) or bridged, exactly once, unforgeably. | `deco_authenticates_payment` (`Crypto/Deco.lean:315`) is the *correctness leg*; bridge `BackedAt` (`BridgeBindingFromFold.lean:200`) is the mint-linkage leg. Neither is UC yet; both name their crypto floor. |
-| **`F_ledger`** | Conservation + the committed forest: total value is invariant, the published root binds the whole post-state. | `reachable_total_zero` (`ReachableConservation.lean:49`) + `integrity_guarantee` whole-turn binding (`AssuranceCase.lean:412/486`) + the whole-history fold `light_client_verifies_whole_history` (`Circuit/RecursiveAggregation.lean:206`). |
+| **`F_ledger`** | Conservation + the committed forest: total value is invariant, the published root binds the whole post-state. | `reachable_total_zero` (`ReachableConservation.lean:49`) + `integrity_guarantee` whole-turn binding (`AssuranceCase.lean:412/486`) + the whole-history fold `light_client_verifies_whole_history` (`metatheory/Dregg2/Circuit/RecursiveAggregation.lean:206`). |
 | **`F_disclosure`** (already done, the template) | Selective field disclosure: the environment learns only public fields. | `realπ_realizes_idealF` (`PerfectUC.lean:448`) — **this is the one wired realization** and the pattern every other `F` should copy. |
 
 **Reuse insight (the load-bearing one):** the realization of `F_disclosure` is the *shape*
@@ -81,7 +81,7 @@ For each `F`, a UC realization needs **(i)** a real protocol `π` (the deployed 
   indistinguishable." The program: for each `F`, construct `S` that, given `F`'s ideal
   transcript, produces a real-world-looking view (it must *simulate proofs* — this is where
   the zero-knowledge / simulation-soundness of the STARK enters as a floor, `StarkSound`
-  `Circuit/CircuitSoundness.lean:382`), and quantify over `Z`.
+  `metatheory/Dregg2/Circuit/CircuitSoundness.lean:382`), and quantify over `Z`.
 
 ### 1c. `perfectUC_composition` as the composition backbone, and the gap to COMPUTATIONAL UC
 
@@ -127,7 +127,7 @@ The current guarantees have an **implicit** adversary. `lightclient_unfoolable`
 *prover*, but it is never named as a universally-quantified object; the forge-rejection teeth
 (`amplifying_grant_rejected`, `forged_deployed_accepts` in the `*BackingAttack` files) each
 assume a *specific* forger. **However — dregg already has the right object built:**
-`Metatheory/KeyLeak.lean` (`key_leak_contained`, `:202`) instantiates the adversary as an
+`metatheory/Metatheory/KeyLeak.lean` (`key_leak_contained`, `:202`) instantiates the adversary as an
 **opaque, universally-quantified controller** `ctrl : State → Action` and proves containment
 is literally `Metatheory.Polis.polis_safety` (`Polis/Polis.lean:102`) with the attacker as
 the ∀-quantified controller — *"verify the cage, not the animal."* This is the reusable
@@ -138,13 +138,13 @@ One `Metatheory/Adversary/` frame defining the explicit adversary class as a Lea
 each guarantee re-stated *against* it (`lightclient_unfoolable` → `unfoolable_against_A`).
 
 ### Ordered pieces
-1. `Metatheory/Adversary/Model.lean` — the adversary class as a structure: **(a)** a PPT
+1. `metatheory/Metatheory/Adversary/Model.lean` — the adversary class as a structure: **(a)** a PPT
    network adversary (schedules/drops/reorders messages), **(b)** a Byzantine node coalition
    `f < n/3`, **(c)** a malicious prover (chooses any proof/witness). *Reuse:* the opaque
    `ctrl : State → Action` of `KeyLeak.lean`/`polis_safety` IS the network+prover adversary
    already — generalize it from key-holding to full message/proof scheduling. The `f < n/3`
    coalition is a new parameter but the Byzantine-majority impossibility is already sketched
-   abstractly in `Metatheory/Disputation.lean` (`byzantine_majority_cannot_uphold:79`) —
+   abstractly in `metatheory/Metatheory/Disputation.lean` (`byzantine_majority_cannot_uphold:79`) —
    metabolize it onto the deployed committee.
 2. Make the forger **explicit and universal**: today each `*BackingAttack.lean` names a
    specific forged `VmRowEnv`. Re-state the teeth as "∀ adversary `A`, `A` cannot produce an
@@ -170,7 +170,7 @@ Pillar 1.
 `deployed_system_secure` (`AssuranceCase.lean:886`) is a genuine composed theorem but over
 **ONE deployed turn** (one committed forest `execFullForestG s f = some s'`, one noteSpend,
 one published aggregate). The **multi-turn ingredients already exist**:
-`light_client_verifies_whole_history` (`Circuit/RecursiveAggregation.lean:206`) proves the
+`light_client_verifies_whole_history` (`metatheory/Dregg2/Circuit/RecursiveAggregation.lean:206`) proves the
 published final root is the genuine fold of the *whole history* with the chain-bound tooth
 `new_root[i] == old_root[i+1]` (`HistoryAggregation.ChainBound`), and `settlement_soundness`
 (`SettlementSoundness.lean:153`) gives the temporal/revocation dimension. The former

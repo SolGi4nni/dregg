@@ -245,16 +245,51 @@ on `dregg-zkoracle-prove` and attests each turn.
 
 ### Honest boundaries of the crown
 
-- The attestation's **authentic *leg*** is still the modeled ed25519 carrier over the
-  response bytes, even in `zk-live` (where the bytes ARE really-authenticated by the 2PC
-  roundtrip run in the same call). **Fusing the real tlsn `PresentationOutput` into the
-  authentic leg** — so the leg IS the MPC-TLS presentation, not the modeled carrier — is
-  part of the operational remainder, alongside the live `api.anthropic.com` session.
+- **THE AUTHENTIC LEG IS FUSED (was: the named remainder).** The real tlsn presentation is
+  now the authentic leg on the live path, and the verifier CONSULTS it:
+  `attestation::verify_zkoracle_with_policy(att, config, AuthenticPolicy::RequireMpcTls)`
+  authenticates leg 1 by a genuine `presentation.verify()` and **REFUSES a fixture-only
+  attestation** (`ZkOracleError::FixtureOnLivePath`) before any leg runs. A build without
+  the `tlsn-live` backend cannot check a live leg and refuses fail-closed
+  (`LiveBackendUnavailable`) rather than falling back onto the self-signed carrier.
+  `authentic_provenance(&att)` reads which of the two actually vouches, and a
+  `VerifiedZkOracle` reports the provenance its accept rested on.
 
-- **Binding the attestation into the agent's R2 kernel turn is now WIRED** (see the
-  fusion section below): the minted turn commits to the attestation and lands on the node
-  ledger. The attestation's authentic *leg* is still the modeled ed25519 carrier; the
-  live-Anthropic session + the deployed homelab node are the remaining operational legs.
+  Driven: `zkoracle-prove/tests/model_provenance_fused.rs` (6 tests, `--features tlsn-live`)
+  against a genuine MPC-TLS 2PC roundtrip, and `zkoracle-prove/tests/provenance_gate.rs` (4 tests, light
+  build). The fixture survives ONLY as an explicitly-labelled test double
+  (`AuthenticProvenance::SelfSignedFixture`), admitted by `AuthenticPolicy::AllowFixture`.
+
+- **PROVENANCE IS A LADDER, and the rungs are not interchangeable:**
+  1. `AllowFixture` (default `attest_narration` / `attest_turn`) — ⚑ a SELF-SIGNED test
+     double. The prover builds the transcript and signs it with its own key: it proves the
+     PRODUCE→VERIFY plumbing and **nothing** about provenance. (The well-formed +
+     injection-free legs over the prose are real on this path.)
+  2. `attest_turn_live` / `attest_narration_live` (`zk-live`) — **real transport
+     provenance**: a genuine 2PC session, a notary that saw no plaintext, a real
+     `presentation.verify()`. But the endpoint is a LOCAL test server echoing a reply the
+     prover chose — the 2PC is real, the *model* is not.
+  3. `deos_hermes::attest::attest_turn_bedrock` (`zk-live`) — **real model provenance**: a
+     live TLS session to `bedrock-runtime.<region>.amazonaws.com`, Amazon's genuine cert
+     chain against the Mozilla roots, SigV4-signed, under a separate durable pinned notary,
+     binding **the completion Claude actually returned in-session**. Wired; needs live
+     network + AWS credentials (a paid call), so it is not driven in CI:
+     `cargo test -p dregg-zkoracle-prove --features tlsn-live --test bedrock_mpctls_live -- --ignored --nocapture`
+
+- **THE IN-CIRCUIT PROSE TOOTH IS LIVE (was: dead code).** Both narrators now attach the
+  zk-injection STARK (`zk_leg::prove_injection_leg` — a real `prove_vm_descriptor2` of the
+  pinned injection DFA's run), where `prove_zkoracle` defaulted `zk_injection: None` and
+  neither narrator attached it. The verifier checks it fail-closed. ⚑ Boundary: the leg
+  proves the run over the field's *padded brace-projection*, so a proof transfers between
+  brace-free fields in one padding block — it can never cross the accept/reject boundary,
+  and the field BYTES are bound by the `FieldSpan` weld, not this leg.
+
+- **Binding the attestation into the agent's R2 kernel turn is WIRED** (see the fusion
+  section below): the minted turn commits to the attestation and lands on the node ledger.
+  The receipt commitment is **v2** — it now fingerprints the real MPC-TLS presentation and
+  the STARK leg. Under v1 it hashed only the *fixture* carrier, so a live attestation's
+  real presentation was never bound and "proven in-circuit" could be stripped from a landed
+  turn without changing its receipt id.
 
 ## 🏆🏆 THE FUSION — jailed + attested + ON THE VERIFIABLE LEDGER (`grain-turn`, `agent-platform`, `deos-hermes`)
 
@@ -306,11 +341,21 @@ attestation, so the finalized, light-client-verifiable receipt proves **jailed �
     `attestation_commitment(&att)` equals the on-ledger witness; a forged binding, an
     unattested turn, and a tampered attestation are each distinguishable.
 
-- **Operational remainder (NAMED):** the live `api.anthropic.com` session (real key +
-  deployed/pinned notary) + fusing the real tlsn `PresentationOutput` into the authentic leg
-  (as in the crown), and forwarding the finalized turn to an EXTERNAL homelab federation node
-  over HTTP (`with_node_url` — the in-process `LocalNode` models the executor + receipt-log
-  half a single node runs locally). The Stripe/live-billing session is likewise a deploy step.
+- **Operational remainder (NAMED):** fusing the real tlsn presentation into the authentic
+  leg is **DONE** (see "Honest boundaries of the crown"). What remains is genuinely
+  operational, not architectural:
+  - **the live handshake, UN-DRIVEN here** — `attest_turn_bedrock` / the
+    `bedrock_mpctls_live` tests are wired end-to-end but need live network + AWS
+    credentials + a paid Bedrock call, so no live model session is driven in this
+    environment. Drive it with
+    `cargo test -p dregg-zkoracle-prove --features tlsn-live --test bedrock_mpctls_live -- --ignored --nocapture`;
+  - **hosting the notary** at a stable public address with a PUBLISHED, independently
+    audited pinned key and a documented rotation policy (the cryptographic pinning is
+    identical today; `run_bedrock_roundtrip_with_durable_notary` already gives a stable
+    re-pinnable key);
+  - forwarding the finalized turn to an EXTERNAL homelab federation node over HTTP
+    (`with_node_url` — the in-process `LocalNode` models the executor + receipt-log half a
+    single node runs locally). The Stripe/live-billing session is likewise a deploy step.
 
 ## Trust base
 
@@ -331,7 +376,7 @@ the §8 crypto floor + the external Web-PKI floor).
 - `deos-hermes/` (the CROWN weld): `src/attest.rs` (`AttestationCarrier`, `attest_turn`,
   `attest_turn_live`, + `attestation_commitment` for the fusion), `src/host.rs`
   (`run_hosted_agent_attested` + `HostedAgentReport::attestation`), `src/lib.rs` (re-exports),
-  `tests/crown_attested_turn.rs`, `tests/crown_attested_ledger.rs` (NEW — the end-to-end
+  `deos-hermes/tests/crown_attested_turn.rs`, `deos-hermes/tests/crown_attested_ledger.rs` (NEW — the end-to-end
   fusion). `deos-hermes/Cargo.toml`: `dregg-zkoracle-prove` (path, default-light) + the
   `zk-live` feature; `blake3` (for `attestation_commitment`, already in the lockfile); dev-deps
   `agent-platform`/`grain-turn`/`dregg-agent` for the fusion round-trip (no cycle —
@@ -339,7 +384,7 @@ the §8 crypto floor + the external Web-PKI floor).
 
 - `grain-turn/` (the FUSION, kernel half): `src/lib.rs` (`ATTESTATION_SLOT`,
   `ToolGatewayMinter::bind_attestation`/`bound_attestation`, the slot witnessed in
-  `mint_turn`), `tests/kernel_turns.rs` (the attestation-slot witness test).
+  `mint_turn`), `grain-turn/tests/kernel_turns.rs` (the attestation-slot witness test).
 
 - `agent-platform/` (the FUSION, node half): `src/node.rs` (`NodeMinter::bind_attestation`/
   `attestation_slot`, the slot witnessed in `mint_turn`, the compile-time slot assert),

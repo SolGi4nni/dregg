@@ -25,7 +25,7 @@ landed, named next rung unbuilt) · **STALLED-LANE** (an active GOAL lane that w
 |---|--------|-------|-----------|-----------|
 | 1 | Federation triad: checkpoint-unwired · state-field truncation · federation-wide settlement | DIAGNOSED (3 docs, 07-10) | HIGH — blocks federation-wide reads the DrEX proof-of-holdings frontier needs; truncation is a **live silent data-loss bug** | reachable→medium |
 | 2 | Verified layout **optimizer** (above the landed allocator) | FOUNDATION+RUNG | HIGH — retires the stark-kill hand-AIR grind + is the game-engine "verified allocator" keystone | medium→big |
-| 3 | Witnessed-nondeterminism **audit envelope** (`dregg-agent/envelope.rs`) | BUILT-STRANDED (1142 LoC, 07-12) | HIGH — turns DreggCloud's hosted-agent "audit rail" from prose into a running dispute-settler | medium |
+| 3 | Witnessed-nondeterminism **audit envelope** (`dregg-agent/src/envelope.rs`) | BUILT-STRANDED (1142 LoC, 07-12) | HIGH — turns DreggCloud's hosted-agent "audit rail" from prose into a running dispute-settler | medium |
 | 4 | Crown-lowering **assurance ladder** (general auto-lift + TEE rung) | FOUNDATION+RUNG | HIGH — the one gadget the game-engine D-crown, DreggCloud, and forge all hand-crank around | medium |
 | 5 | distributed-deos lane — the sovereign live image across machines | STALLED-LANE (quiet since 07-07) | MED-HIGH — the "distributed inhabited world"; one sharp named residual left | medium |
 | 6 | deos self-hosting named-seams residue (service-registry panel · reify_seam Lean · derivative-matching St.4) | BUILT-STRANDED ×3 | MEDIUM — each is a LANDED capability one small closure from complete | reachable each |

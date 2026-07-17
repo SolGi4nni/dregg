@@ -306,8 +306,8 @@ subprocess (`acp_client::AcpTransport`) or drives an in-process peer.
 `HermesAgentPeer` (`deos-hermes/src/agent_peer.rs`) is the brain-driven ACP peer
 that replaced the scripted `MockHermesPeer`: an `LlmBrain`'s closed loop whose
 every `CallTool` step becomes a streamed `tool_call` + permission request answered
-by the gateway. `tests/acp_loop.rs` exercises the loop over the faithful mock;
-`tests/live_acp.rs` drives the real `hermes-acp` subprocess end to end (it skips,
+by the gateway. `deos-hermes/tests/acp_loop.rs` exercises the loop over the faithful mock;
+`deos-hermes/tests/live_acp.rs` drives the real `hermes-acp` subprocess end to end (it skips,
 stating why, when the environment lacks the install or a model provider).
 
 ### The mapping (already true)
@@ -401,7 +401,7 @@ into it.
    (§1); `OwnedSpine` is the self-contained in-process impl of the same seam.
 2. **Hermes** — the cap-gated tool-call→turn→receipt path AND the ACP transport
    are real: `acp_client` drives a live `hermes-acp` subprocess or the
-   brain-driven `HermesAgentPeer` (`agent_peer.rs`); `tests/live_acp.rs` covers
+   brain-driven `HermesAgentPeer` (`agent_peer.rs`); `deos-hermes/tests/live_acp.rs` covers
    the live loop (§4).
 3. **Buffer = document** — the `dregg-doc` patch core (`DocGraph`, the
    `Add`/`Delete`/`Connect` grammar, `History`, merge, blame) + the rope↔patch

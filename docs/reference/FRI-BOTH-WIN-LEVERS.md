@@ -843,7 +843,10 @@ verified it:** `circuit/src/lib.rs:100-103` **already correctly** attributes 202
 *"the capacity conjecture is REFUTED … (Kambiré, eprint 2025/2046)"* — and
 `circuit-prove/src/plonky3_recursion_impl.rs:306` and `circuit/src/plonky3_prover.rs:116` carry the same
 pairing. *(Flagged as an instance of [[feedback-verify-agent-claims]]: the finding was real, the address
-was not.)*
+was not.)* **⚑ UPDATE (2026-07-15): the two Rust sites are repaired** — `plonky3_recursion_impl.rs` and
+`plonky3_prover.rs` now attribute 2025/2046 to Crites–Stewart and Kambiré to arXiv 2604.09724
+separately, and the recursion config's `128` is labeled as the refuted capacity column it is.
+`fri_params_soundness_budget.rs:130-131` is owned by another lane and is not repaired here.
 
 **Also found, and it retires a baseline flag:** the baseline's §4.1 worries that the `M = 1` fiber
 discharge fires only at 96.9% farness while FRI needs 87.5%, and reports it as an open metatheory

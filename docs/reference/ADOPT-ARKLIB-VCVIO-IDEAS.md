@@ -146,7 +146,7 @@ blocking stage 1.
 
 **(a)+(b)+(c)+(d)** Fully specced in [`FRI-EXTRACTION-FLOOR-DESIGN.md`](./FRI-EXTRACTION-FLOOR-DESIGN.md)
 (stages 0–5, falsifiers included): re-state the assumed `FriLdtExtractV3`
-(`Circuit/AlgoStarkSoundTransferV3.lean:131`) as `Pr[accepts ∧ ¬ExtractBundle] ≤ εFri(Q, params)`
+(`metatheory/Dregg2/Circuit/AlgoStarkSoundTransferV3.lean:131`) as `Pr[accepts ∧ ¬ExtractBundle] ≤ εFri(Q, params)`
 over a `QueryBounded` adversary on `RomOracle`, with the twelve conjuncts preserved verbatim and
 the ledger's proved density columns becoming the `εQuery` addend. ArkLib's
 `knowledgeSoundness` measured-event (`Security/Basic.lean:289`) and VCVio's Fischlin
@@ -168,7 +168,7 @@ enters only later, when a birthday bound prices "the log ever contains a collisi
 in Σ-form: `SigmaProtocol.SpeciallySoundAt` (`CryptoFoundations/SigmaProtocol.lean:81`).
 
 **(b)** Two of `FriLdtExtractV3`'s conjuncts are `merkleRecomputeZ` recomputes under an *assumed*
-`Poseidon2SpongeCR` (`Circuit/Poseidon2Binding.lean:178`) — extraction-design stage 3 ports
+`Poseidon2SpongeCR` (`metatheory/Dregg2/Circuit/Poseidon2Binding.lean:178`) — extraction-design stage 3 ports
 `findCollisionZ` + `birthday_cond` there. The broad survey adds the *pattern* mandate: this is
 the shape to prefer **house-wide** wherever a binding floor is currently a bare CR `Prop` —
 the five Merkle formalizations (D1) all meet at that one hypothesis, so one ported
@@ -183,8 +183,8 @@ opportunistic). **(e)** **P1.**
 
 **(a)+(b)** Adversary-game shapes are for statements whose truth *depends on a resource bound*.
 Most of our proved corpus is not that: the ∀-over-words refinement idiom
-(`Circuit/RotatedKernelRefinement.lean:430`), the counting bounds
-(`Circuit/FriQuerySoundness.lean:132`), the Polis demonic-controller invariants
+(`metatheory/Dregg2/Circuit/RotatedKernelRefinement.lean:430`), the counting bounds
+(`metatheory/Dregg2/Circuit/FriQuerySoundness.lean:132`), the Polis demonic-controller invariants
 (`Polis…sandbox_governed_safe`), the noninterference results — these are *correctly*
 deterministic/universal and should stay. The PQ hybrid keystone already has both registers
 (Prop-floor `HybridCombiner.lean:232` + quantitative `HybridThresholdQuant.lean:140`). The
@@ -231,8 +231,8 @@ binary trees from `ToMathlib/Data/IndexedBinaryTree`) handles non-perfect trees,
 completeness/binding/extractability/uniqueness/query-bound as separate files, and proves the lot.
 
 **(b)** We have **five** disjoint Merkle formalizations meeting only at `Poseidon2SpongeCR`:
-`Crypto/Merkle.lean`, `Circuit/IndexedMerkleTree.lean`, `Circuit/CapMerkleGeneric.lean` (+ its
-Emit family), `Lightclient/MMR.lean`, `Crypto/HashSigMerkle.lean` — a real 3–5× duplication.
+`Crypto/Merkle.lean`, `metatheory/Dregg2/Circuit/IndexedMerkleTree.lean`, `metatheory/Dregg2/Circuit/CapMerkleGeneric.lean` (+ its
+Emit family), `metatheory/Dregg2/Lightclient/MMR.lean`, `Crypto/HashSigMerkle.lean` — a real 3–5× duplication.
 The consolidation: one shared module (natural home `Dregg2/Crypto/MerkleCore.lean` or a new
 `Dregg2/Data/`, see D2) in the indexed-tree shape, carrying the B2 collision-finder once, with
 **adapters** proved from each existing formalization — never a flag-day rewrite, because the
@@ -275,7 +275,7 @@ names) is checked by the pinned `checkdecls` lake dependency in CI (`lakefile.to
 `.github/workflows/docs.yml`) — a renamed or deleted declaration fails the PR.
 
 **(b)** This is the cheapest high-fit adoption in either library. Our prose layer is large and
-load-bearing — `docs/KEYSTONE-LEDGER.md` (110 apex pins), `metatheory/docs/NAVIGATION.md` (which
+load-bearing — `metatheory/docs/KEYSTONE-LEDGER.md` (110 apex pins), `metatheory/docs/NAVIGATION.md` (which
 carries an honest line-drift warning *because* nothing checks it), `docs/reference/*.md` — and
 the docs-excellence campaign just re-verified 455 files and found 166 stale. We already have the
 harder half in-tree (`#assert_axioms` checks *axioms* of a decl; `Claims.lean` re-elaborates

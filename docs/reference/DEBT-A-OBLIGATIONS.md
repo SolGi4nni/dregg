@@ -73,7 +73,7 @@ composes.
 ### #5 — DeployedRefines / the verifyBatch ARCHITECTURE decision (EMBER-GATED, not a proof)
 `verifyBatch` is `opaque` (`CircuitSoundness.lean:353`). To make `StarkSound` a theorem, pick:
 - **(A)** `def verifyBatch := verifyBatchModel` (= `verifyAlgo @ fullChecks && extra`) + carry `DeployedMatchesModel`
-  as a KAT correspondence (harness EXISTS: `dregg-lean-ffi/circuit_differential.rs` + `goldens/`). Cost: an import
+  as a KAT correspondence (harness EXISTS: `dregg-lean-ffi/src/circuit_differential.rs` + `goldens/`). Cost: an import
   cycle to resolve + ~25/42-file ripple. Residual after: `leanc` + the KAT corpus (same status as
   `Poseidon2BabyBearW16`'s bit-exactness — validation, not ∀-proof).
 - **(B)** keep it opaque, name `StarkSound` an explicit floor/TCB item with its caveats.

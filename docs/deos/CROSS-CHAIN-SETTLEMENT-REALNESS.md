@@ -137,7 +137,7 @@ cargo run -p eth-lightclient --bin verify_holding
 
 Every artifact is external mainnet data (committee pubkeys, aggregate G2
 signature, both Merkle branches, EIP-1186 MPT proofs — provenance
-`tests/fixtures/e2e_mainnet.rs`); the bin is fully offline (a real captured
+`eth-lightclient/tests/fixtures/e2e_mainnet.rs`); the bin is fully offline (a real captured
 checkpoint compiled in). A live LC swaps the checkpoint for `beacon_getState` +
 `eth_getProof` behind the **same** verified rules — the rules are the part that
 was missing a runnable entry, and now has one.

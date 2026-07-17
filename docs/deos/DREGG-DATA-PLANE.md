@@ -119,7 +119,7 @@ typed channels, implicit + explicit comms, protocols-as-meta-level:
 
 ## How ToolGateway-as-router rides on this
 
-The sibling DP-1 lane turns `sdk/tool_gateway.rs` into a router. It does not need
+The sibling DP-1 lane turns `sdk/src/tool_gateway.rs` into a router. It does not need
 its own transport: it *is* a `Bus` client. A tool call is an `enqueue` to the target
 tool's inbox channel; the verdict/result is an `enqueue` back to the caller's reply
 channel; the gateway's "fan a broadcast to all listening tools" is a `publish`. The

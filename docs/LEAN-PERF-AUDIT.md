@@ -119,8 +119,8 @@ Secondary note (not the cause, but inline CPU): the Rust `tau()` differential si
 
 | # | path (file:line) | complexity | trigger | status |
 |---|---|---|---|---|
-| B1 | **`frameDigest` re-sort + re-hash all accounts per commit** — `Circuit/StateCommit.lean:173`, `encodeS`:293 | O(N log N) re-mergesort + re-hash every untouched leaf, un-shared across pre/post wires; O(T·N log N) aggregation | accounts N, turn count T | **FLAGGED** (circuit/light-client commitment model; Rust caches — `commit/src/merkle.rs:102` `cached_root`) |
-| B2 | **`accountsSorted`/`accountsComponent` sort-on-every-call (twice)** — `Circuit/AccountsCommit.lean:24,41` | O(N log N) per `digest` + re-sort for `expected` | account-growth (createCell/spawn) | **FLAGGED** (same family as B1) |
+| B1 | **`frameDigest` re-sort + re-hash all accounts per commit** — `metatheory/Dregg2/Circuit/StateCommit.lean:173`, `encodeS`:293 | O(N log N) re-mergesort + re-hash every untouched leaf, un-shared across pre/post wires; O(T·N log N) aggregation | accounts N, turn count T | **FLAGGED** (circuit/light-client commitment model; Rust caches — `commit/src/merkle.rs:102` `cached_root`) |
+| B2 | **`accountsSorted`/`accountsComponent` sort-on-every-call (twice)** — `metatheory/Dregg2/Circuit/AccountsCommit.lean:24,41` | O(N log N) per `digest` + re-sort for `expected` | account-growth (createCell/spawn) | **FLAGGED** (same family as B1) |
 | B3 | **`Heap.root` full O(M) re-sponge per write** — `Substrate/Heap.lean:366`, via `HeapKernel.lean:204` `heapStepGuarded` | O(M) flat re-hash per write (advertised O(log M) Merkle openings); O(W·M) | heap entries M, writes W | **FLAGGED — STAGED + UNWIRED** (`execFullA` has no heap-write arm yet, `FullForestAuth.lean:592`; latent on activation; Rust caches `heap_root` per cell, `cell/src/state.rs:217`) |
 
 ### Tier C — secondary inline-FFI (n5 lane; lighter than A1)

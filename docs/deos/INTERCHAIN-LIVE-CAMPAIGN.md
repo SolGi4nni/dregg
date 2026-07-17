@@ -139,7 +139,7 @@ impl is **not** unused; the alias makes the cross-chain test reach it.
 
 **Plan.**
 
-1. In `dregg-interchain-gov` (`tests/cross_chain_governance.rs`, `examples/cross_chain_vote.rs`),
+1. In `dregg-interchain-gov` (`dregg-interchain-gov/tests/cross_chain_governance.rs`, `examples/cross_chain_vote.rs`),
    replace `dregg_governance::CollectiveChoice::new()` with
    `VerifiedHoldingBallotBox::new(federation_id)` and swap `engine.open_poll(spec)` for
    `open_weighted_poll(&spec)` (`dregg-governance/src/holding_weight.rs:1180`). Note the

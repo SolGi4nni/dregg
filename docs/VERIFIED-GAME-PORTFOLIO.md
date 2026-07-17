@@ -83,10 +83,10 @@ raycast-decided step; win = steer the Daemon into your goal (no capture). What e
 - **The staged board-transition AIR** (`src/air.rs`, `src/builder.rs`, `src/moves.rs`) — the
   translation-validation Custom AIR, staged D1 (Daemon-only) → D2 (single move + occlusion) → D3
   (n=2 simultaneous resolution with the fork/collide/survive truth table).
-- **The refinement battery** (`tests/refinement.rs`) — the AIR accepts `(old, moves, next)` IFF
+- **The refinement battery** (`dregg-automatafl/tests/refinement.rs`) — the AIR accepts `(old, moves, next)` IFF
   `next == apply_turn(old, moves)`, driven against the oracle; non-vacuous (a wrong `next`, an
   invalid move, and a forged resolution are each REJECTED).
-- **The fold** (`tests/prove_fold.rs`) — D1/D2/D3 leaves prove, fold, and `verify_history` accepts;
+- **The fold** (`dregg-automatafl/tests/prove_fold.rs`) — D1/D2/D3 leaves prove, fold, and `verify_history` accepts;
   forged steps mint no leaf.
 - **The Lean** (`metatheory/Dregg2/Games/Automatafl.lean` + `AutomataflAir.lean`) — the pure
   `applyTurn` model with its load-bearing properties, and the CONNECTED refinement:
@@ -101,7 +101,7 @@ raycast-decided step; win = steer the Daemon into your goal (no capture). What e
 
 **Named residuals (labeled, not closed):**
 - **Width** — D2/D3 run the automaton gadget twice, so at n=5 they EXCEED `MAX_TRACE_WIDTH = 1024`
-  (D2 = 1178, D3 = 1411; measured in `tests/size.rs`). They fit and prove-fold-verify at n=3
+  (D2 = 1178, D3 = 1411; measured in `dregg-automatafl/tests/size.rs`). They fit and prove-fold-verify at n=3
   (D2 = 509, D3 = 661). The named close is the segmented board-read scan (the N=11 follow).
 - **Move count** — the concrete gadget is staged to n≤2 simultaneous moves; the general N=11
   occlusion scan and full-SCC resolution are the labeled residuals (`Automatafl.lean` §4,

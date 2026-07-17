@@ -100,7 +100,7 @@ or a loose sandbox?
   and `grain-turn` appear in `deos-hermes` only as dev-dependencies
   (`deos-hermes/Cargo.toml:251-257`); the fusion round-trip — a confined brain's
   attestation committed into a real R2 turn landing on a `LocalNode`
-  (`tests/crown_attested_ledger.rs`, `tests/brain_in_jail.rs`) — is exercised in
+  (`deos-hermes/tests/crown_attested_ledger.rs`, `deos-hermes/tests/brain_in_jail.rs`) — is exercised in
   tests, not shipped as a production surface. The hosted `OpenAICompatBrain` loop
   still makes its provider HTTP call from the ordinary agent process.
 

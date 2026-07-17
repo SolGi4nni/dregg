@@ -191,7 +191,7 @@ lift those into a ~40-line `examples/deploy_settle.rs` binary that:
    `proven_root = final_root`.
 
 The identical accept/reject is already proven end-to-end in
-`tests/settle_flow.rs` (`real_proof_settles_and_advances_root` /
+`solana-settlement/tests/settle_flow.rs` (`real_proof_settles_and_advances_root` /
 `forged_proof_rejected_root_unchanged`) on the same `ark-bn254` arithmetic the
 on-chain syscalls run — so the on-chain settle is the exercised path, not a new
 one.
@@ -409,7 +409,7 @@ CosmWasm has no per-instruction CU cap like Solana; `--gas auto` sizes the gas
 - **B2 — No CLI for the custom Solana `Settle` instruction.** `solana program
   deploy` puts the program on-chain, but `Init`/`Settle`/`AssertProvenRoot` need a
   ~40-line client. **Do first:** add `solana-settlement/examples/deploy_settle.rs`
-  lifting the instruction builders from `tests/settle_flow.rs` (L148–L204) and
+  lifting the instruction builders from `solana-settlement/tests/settle_flow.rs` (L148–L204) and
   prepending the CU-limit ix. (Deploy alone is one command and needs no client.)
 
 - **B3 — Chain CLI not installed.** `osmosisd` (and `neutrond`) are **not** on this

@@ -246,7 +246,7 @@ lands four punches that, *together*, no other system delivers in one place:
    `psql` and the published issuer key.
 
 **Why it lands:** punches #1, #2, and #4 run on the live Tier A/B/C substrate
-right now via `scripts/e2e-live.sh`; punch #3 runs in its outbox form (below) —
+right now via `pg-dregg/scripts/e2e-live.sh`; punch #3 runs in its outbox form (below) —
 the in-backend `_inproc` variant carries the spike's D-SIDECAR verdict (§2,
 Tier D). The demo *is* the evaluation artifact for the
 pug handoff: a stranger clones, runs one script, and watches capabilities narrow
@@ -334,8 +334,8 @@ and exercised interactively on the running pg18:28818 (the no-key path errors lo
 the verify-key-only status names the key id + "dev minting DISABLED — Production
 posture"; the enabled path mints a `dga1_…` token `dregg_cap_admits`/`dregg_cap_explain`
 accept and that narrows an RLS-gated table 3→2 under attenuation). The on-ramp doc is
-`docs/QUICKSTART-dregg-dev.md` §7b; the "all my rows vanished?" diagnostic is wired
-into `docs/QUICKSTART-pg-user.md`.
+`pg-dregg/docs/QUICKSTART-dregg-dev.md` §7b; the "all my rows vanished?" diagnostic is wired
+into `pg-dregg/docs/QUICKSTART-pg-user.md`.
 
 ### S4 — The cap-gated query cookbook (the explorer-as-capabilities surface) *(LANDED)*
 
@@ -537,7 +537,7 @@ over one trust root. The on-ramp *is* the product.
   on-ramp friction S3 addresses).
 - `pg-dregg/docs/QUICKSTART-pg-user.md` / `QUICKSTART-dregg-dev.md` — the two
   perspectives' existing on-ramps.
-- `pg-dregg/sql/cookbook.sql` + `sql/cookbook-seed.sql` + `docs/COOKBOOK.md` — the
+- `pg-dregg/sql/cookbook.sql` + `sql/cookbook-seed.sql` + `pg-dregg/docs/COOKBOOK.md` — the
   cap-gated query cookbook (S4): seven runnable, RLS-gated recipes (delegation tree,
   no-amplification audit, conservation, receipt-chain non-omission, time-travel,
   caps-as-rows, the write gate), tested against the live pg18 mirror.

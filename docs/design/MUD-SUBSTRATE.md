@@ -240,7 +240,7 @@ merge. Two shapes:
   result onto the new head, three-way merge, or last-writer-wins — is **still
   ember's call** (see the open decisions below; `MovingParent` is what forces it).
 
-**Driven** (`tests/membrane_per_realm.rs`): per-realm membrane read off the cell;
+**Driven** (`realm-model/tests/membrane_per_realm.rs`): per-realm membrane read off the cell;
 `PinAtBirth` hides a concurrent advance while `MovingParent` shows it; flip →
 visibility flips (canary); additive settles conflict-free; OCC settle detects a
 moved head and refuses.
@@ -279,7 +279,7 @@ supplies the signer's public keys, and the gate recomputes the commitment and
 checks it against the committed value (or membership in the guardian set) before
 verifying the hybrid signature — a stranger cannot substitute their own keys.
 
-**Driven** (`tests/hybrid_identity_succession.rs`): rotate → current key advances,
+**Driven** (`realm-model/tests/hybrid_identity_succession.rs`): rotate → current key advances,
 epoch advances, id unchanged, chain resolves to current, both surfaces still
 resolve to the same id; wrong-key + tampered-target refused; the retired key
 cannot succeed again; 2-of-3 guardian recovery lands, 1-of-3 (and a

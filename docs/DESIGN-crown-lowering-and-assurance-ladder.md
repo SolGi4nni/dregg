@@ -20,7 +20,7 @@ the lowering:
 - **Ordering teeth — `FieldGte`, `FieldLte`, `Monotonic`, `StrictMonotonic` — lower through a real
   bit-decomposition range gadget**, not per-rule hand-authoring: `game-turn-slice`'s `compiler`
   module (`game-turn-slice/src/lib.rs:20`) lowers every ordering tooth via boolean bit columns +
-  a recomposition `Polynomial`, driven end-to-end by `tests/game_program_compiler.rs` (an honest
+  a recomposition `Polynomial`, driven end-to-end by `game-turn-slice/tests/game_program_compiler.rs` (an honest
   leaf accepts; a forged ordering-violating witness has no satisfying leaf).
 
 **Scope boundary (architectural law #1, enforced in CI):** Rust-authored `ConstraintExpr` emission
@@ -119,7 +119,7 @@ keeps both honest.** Kernel-enforced → `{re-executed | tee-attested | proven}`
 2. ✅ **DONE — the standalone gadget**: `constraint-lowering` exists with the `emit_*` family +
    multilimb variants, unit-tested in isolation (honest accepts, `a<b` rejects).
 3. **PARTIAL — the wire-in**: the game terminal's `compiler.rs` lowers ordering teeth through a
-   range gadget end-to-end (`tests/game_program_compiler.rs`), but through its OWN implementation,
+   range gadget end-to-end (`game-turn-slice/tests/game_program_compiler.rs`), but through its OWN implementation,
    not `constraint-lowering`. The remaining coordination item is convergence: game compiler,
    DreggCloud, and forge all consuming the one standalone crate.
 4. **UNBUILT — the `tee_attested` rung**: add `CiAssurance::TeeAttested{measurement,vendor}`. The

@@ -265,7 +265,7 @@ dependents (`pending.rs:1`).
 This registry is held in node state as `pending_turns`
 (`node/src/state.rs:146`).
 
-The Lean dataflow spec is `Spec/Await.lean`: a `Promise` carries a `fulfilled`
+The Lean dataflow spec is `metatheory/Dregg2/Spec/Await.lean`: a `Promise` carries a `fulfilled`
 flag (`Await.Promise`, `:253`); a `PromiseGraph` is the dependency DAG
 (`Await.PromiseGraph`, `:266`) with `Acyclic` / `Depends`. `broken_promise_propagates`
 and `broken_promise_propagates_trans` (`Await.PromiseGraph.broken_promise_propagates`,

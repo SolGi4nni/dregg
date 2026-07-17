@@ -16,7 +16,7 @@ What already exists, cited:
 - **Tamper-evident receipts** — `chain_tamper_evident`, `cexec_appends_receipt` (`Exec/Receipt.lean`); per-asset conservation `maExec_conserves_per_asset`.
 - **The refinement-tower METHOD, instantiated twice** — `DealLifecycle→ProviderMarket→MarketRefinement` and `Trustline→StripeReserve→StripeMoneyIn`. dreggfi lifts this pattern onto exchange/lending/synthetics.
 - **A 7-layer trustless batch** (`intent/src/trustless.rs`) that compares itself to CoW/SUAVE/Anoma.
-- **Attested data + TEE** — `tee-verify` (AMD SEV-SNP + AWS Nitro report verifiers), `deos-hermes/tee_fact.rs`, `zkoracle-prove`, `dregg_cell::tee_attest`; the OCIP plan's attested lane.
+- **Attested data + TEE** — `tee-verify` (AMD SEV-SNP + AWS Nitro report verifiers), `deos-hermes/src/tee_fact.rs`, `zkoracle-prove`, `dregg_cell::tee_attest`; the OCIP plan's attested lane.
 
 ## 1. The trust-grade spine (from OCIP — the honesty framework that IS the brand)
 

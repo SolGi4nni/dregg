@@ -198,7 +198,7 @@ admission/coverage boundary of the running system (`AssuranceCase.lean:946-999`)
    (`circuit/src/effect_vm_p3_full_air.rs`) — for those, circuit⟺kernel agreement is test-attested,
    not theorem-attested (`:956-966`).
 2. **`ShadowHostCtx` host-fed admission inputs** — five values the host supplies
-   (`turn/src/lean_shadow.rs`); the IF–THEN is discharged by `Exec.HostCorrespondence`
+   (`exec-lean/src/lean_shadow.rs`); the IF–THEN is discharged by `Exec.HostCorrespondence`
    (`admissible_sound_of_reflects` + the obligation teeth), leaving a producer-coverage engineering
    obligation, not a cryptographic one (`:968-990`).
 3. **Producer coverage** — which turns route to the verified Lean executor

@@ -98,7 +98,7 @@ Resource→`Monotonic`, Identity→`WriteOnce`, Invariant→`FieldLteOther`, Col
 default-deny on unknown methods) deployed on a real `WorldCell` (`game.rs`: `SchemaGame::deploy`,
 `Turn` builder `.set(component, value).commit() -> Result<TurnReceipt, GameError>`). Worked
 example: `dregg-schema/src/lib.rs:65 descent_schema()`. **You never hand-write a StateConstraint,
-slot index, or heap key.** Driven: `tests/allocator.rs`, `tests/refinement.rs` (fast, non-vacuous).
+slot index, or heap key.** Driven: `dregg-schema/tests/allocator.rs`, `tests/refinement.rs` (fast, non-vacuous).
 
 ### `spween-dregg` — the WorldCell everything runs on (deployed)
 `spween-dregg/src/world.rs: WorldCell` — `deploy_compiled(story, seed)` (`:168`),
@@ -114,7 +114,7 @@ Bridges the two-language gap between executor teeth and the recursion-foldable c
 `game-turn-slice/src/compiler.rs: GameProgramCompiler` (`lower_state_constraint`,
 `SlotAssignment`, `witness`, `finish`). Algebraic teeth lower to single polynomials; ordering teeth
 (`FieldGte/Monotonic/…`) lower through a real **bit-decomposition range gadget** (never a refused
-`Lookup`). Fast gate: `tests/game_program_compiler.rs::compiler_lowering_table` (always runs);
+`Lookup`). Fast gate: `game-turn-slice/tests/game_program_compiler.rs::compiler_lowering_table` (always runs);
 whole-program leaf + fold + `verify_history` accept/reject is the `#[ignore]` battery.
 
 ### `dice` — verifiable randomness (driven, real drand interop)
@@ -171,7 +171,7 @@ Four crates compose:
 `dregg-multiway-tug`: 2-player tug over seven guilds (influence `[2,2,2,3,3,4,5]`, 21 total; four
 once-per-round actions; win ≥11 influence or ≥4 guilds). Phase 0 rules are pure teeth
 (`SumEquals==21` conservation, `WriteOnce` one-action-per-round, `Monotonic` placements,
-default-deny) — see `tests/round.rs` (8 named non-vacuous tests). Phase 2 is the **zk hidden
+default-deny) — see `dregg-multiway-tug/tests/round.rs` (8 named non-vacuous tests). Phase 2 is the **zk hidden
 hand**: `hidden_hand.rs: HandTree::commit` (depth-2 Poseidon2 Merkle), `prove_play(card_id) ->
 PlayProof` — prove a legal play revealing nothing; a fabricated card has no leaf. Phase 3
 `fold.rs` lowers plays into leaf bundles → one `WholeChainProof` (whole-match fold is `#[ignore]`
@@ -252,7 +252,7 @@ is the keyed registry with session-resume (a tampered move log fails to reopen).
 Text, Button{label,turn,arg}, Table, Menu, Gauge, CoordGrid…) renders through real backends:
 `text.rs: render_text`, `web.rs: render_html`, `discord.rs: render_card`, `telegram.rs`,
 `wechat.rs`. `dreggnet-surfaces::register_surfaces(host)` mounts eight feature surfaces in one
-call; `tests/golden_render.rs` asserts cross-backend invariants. `dreggnet-sprite` renders
+call; `dreggnet-surfaces/tests/golden_render.rs` asserts cross-backend invariants. `dreggnet-sprite` renders
 deterministic asset→SVG (same asset ⇒ byte-identical SVG; rarity weights `[1000,420,150,40,6]`),
 served at `/sprite/{kind}/{ref}` + `/gallery`.
 

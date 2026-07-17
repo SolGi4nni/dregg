@@ -181,7 +181,7 @@ decision is the Lean-proven object or it is not made.
   the `#guard` executable checks and the top/non-vacuity theorems above.
 - The Solana-side lock program named-not-built earlier IS now built:
   `solana-lock/` (`dregg-solana-lock` — `processor.rs`, `state.rs`, `instruction.rs`,
-  `attestation.rs`, `record.rs`, with `tests/lock_flow.rs` / `tests/unlock_flow.rs`).
+  `attestation.rs`, `record.rs`, with `solana-lock/tests/lock_flow.rs` / `solana-lock/tests/unlock_flow.rs`).
   It belongs to the lock/mirror exception, not this path, but it is no longer a name.
 
 **Residual (named, not yet closed):**

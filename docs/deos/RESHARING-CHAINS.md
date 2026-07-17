@@ -41,7 +41,7 @@ Per the WELD METHOD: the resharing chain is **largely already built, disconnecte
 | VRF | `federation/src/vrf.rs` | per-output proofs of correct evaluation |
 | Epoch transition | `federation/src/epoch.rs` | membership/threshold change — already TRIGGERS `reshare_deal` (`dkg.rs:103`) |
 | Shamir GF(256) | `federation/src/threshold_decrypt.rs` | the concrete sharing the chain re-randomizes |
-| Prime event structure | `DISTRIBUTED-TIMETRAVEL-SEMANTICS.md §2.1`; blocklace `Dregg2/Distributed/BlocklaceFinality.lean`, `Coord/CausalOrder.lean` | the chain's causal frame; a FORK = re-randomize at a configuration |
+| Prime event structure | `DISTRIBUTED-TIMETRAVEL-SEMANTICS.md §2.1`; blocklace `Dregg2/Distributed/BlocklaceFinality.lean`, `metatheory/Dregg2/Coord/CausalOrder.lean` | the chain's causal frame; a FORK = re-randomize at a configuration |
 
 **The honest conclusion up front:** the *cryptographic primitive* (proactive resharing) is NOT
 novel — it is Herzberg-Jarecki-Krawczyk-Yung 1995, and dregg already implements it. What is
@@ -63,7 +63,7 @@ committed evaluation mod `ker A`, so a cheating dealer's off-polynomial share is
 from proved theorems (the `HermineLossiness` pigeonhole + `ShamirPrivacy.shamir_t_privacy`) with the
 computational hiding of the short secret named as the separate MLWE/MSIS floor, not re-asserted (the
 honest, non-laundered framing — see `docs/PQ-CRYPTO.md`). What is still ahead of the metatheory is the
-RESHARE-specific machinery proper: `reshareChain_forward_secret` (`Metatheory/ResharingChain.lean`, §A)
+RESHARE-specific machinery proper: `reshareChain_forward_secret` (`metatheory/Metatheory/ResharingChain.lean`, §A)
 models the *link* `Sₙ → Sₙ₊₁` forward secrecy, but the executable `reshare_deal`'s constant-term
 anchoring (`Cⱼ,₀ == pkⱼ_old`) and the §C lineage emitter are not yet modelled — those are the remaining
 gaps, not the base DKG.
@@ -190,7 +190,7 @@ A resharing chain embeds directly:
   `dkg.rs:92` "the ceremony rides turns / the blocklace"). `r₀` is genesis (initial DKG).
 - **Causality** `rₙ ≤ rₙ₊₁`: a reshare's dealings are anchored to the *prior* committee's
   share-publics (`ReshareDealing` constant-term must equal old `pkⱼ`). So `rₙ₊₁` causally depends
-  on `rₙ` — exactly the `happenedBefore` of `Coord/CausalOrder.lean` (a turn carries hash-pointers
+  on `rₙ` — exactly the `happenedBefore` of `metatheory/Dregg2/Coord/CausalOrder.lean` (a turn carries hash-pointers
   to its causal deps). The chain is a `≤`-line in the event structure.
 - **Conflict** `rₙ′ # rₙ″`: two *different* reshares from the same prior configuration that
   install incompatible new committees / share-sets. Equivocation at a reshare (two dealings from

@@ -334,7 +334,7 @@ of the deos-host architecture.
 
 `boot_mud_world(player_seed)` (`node/src/mud_client.rs:241`) creates a headless `NodeState`
 over a tempdir, marks it `unlocked`, mints a funded open player cell from the seed
-(`node/src/mud_client.rs:245`–`:270`), hosts `tests/fixtures/mud_play_gm.js` via
+(`node/src/mud_client.rs:245`–`:270`), hosts `node/tests/fixtures/mud_play_gm.js` via
 `host_server_program` (the GM spawns rooms / character / NPC, grants the player a cap, forks
 dungeon instances, registers `move` / `gain-xp` / `descend` affordances,
 `node/src/mud_client.rs:272`–`:283`), and binds a real `127.0.0.1:0` listener. The `MudClient`

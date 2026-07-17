@@ -83,7 +83,7 @@ echo is why this object fits dregg's metatheory rather than merely sitting besid
 
 ## 2. The Lean module — `metatheory/Metatheory/CommonSecret.lean`
 
-**Status: GREEN and kernel-clean.** Builds standalone (`lake env lean Metatheory/CommonSecret.lean`,
+**Status: GREEN and kernel-clean.** Builds standalone (`lake env lean metatheory/Metatheory/CommonSecret.lean`,
 0 errors) and as the globbed `Metatheory` lake target (`lake build Metatheory.CommonSecret`).
 Every keystone is pinned `#assert_axioms` (allow-list: `propext`/`Classical.choice`/`Quot.sound`
 only); `#assert_axioms` *fails the build* on any open-hole axiom, so the green build is the proof of

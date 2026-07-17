@@ -112,7 +112,7 @@ the dregg sandbox:
 The server speaks standard MCP over stdio (the `mcp` Python SDK's `stdio_client` +
 `ClientSession`): `initialize` (echo `protocolVersion`, advertise `tools`),
 `tools/list` (exactly `run_js`/`terminal`), `tools/call` (route through dregg),
-`ping`. See `deos-hermes/src/mcp_server.rs` + `tests/mcp_confined_tools.rs`
+`ping`. See `deos-hermes/src/mcp_server.rs` + `deos-hermes/tests/mcp_confined_tools.rs`
 (6 tests, proven by running).
 
 #### Run the deep path live
@@ -153,7 +153,7 @@ The last mile — *this* model on *this* Copilot path actually emitting the `too
 that is model tool-selection behavior, not a wiring gap. The tool *execution* is proven
 by running over real MCP stdio (the direct drive below: `tools/list` = the two tools, a
 `terminal` returning verdict `0xf` with ambient authority denied + a receipt, a `run_js`
-receipted turn) and by `tests/mcp_confined_tools.rs` (6 tests). Once Hermes routes a
+receipted turn) and by `deos-hermes/tests/mcp_confined_tools.rs` (6 tests). Once Hermes routes a
 `mcp_dregg_*` call (a model that selects it, or a forced tool-choice), it lands in the
 dregg sandbox exactly as the direct drive shows.
 
@@ -249,7 +249,7 @@ is fully real in-process (the PD is forked from the MCP server).
 **The disjointness the prior slice named is CLOSED in mechanism, and confinement is
 layered today.** The real model can now *call* `run_js`/`terminal` as first-class MCP
 tools that execute in the dregg sandbox — built (`deos-hermes mcp-server` +
-`with_dregg_mcp_server`) and proven by running (`tests/mcp_confined_tools.rs`, 6 tests;
+`with_dregg_mcp_server`) and proven by running (`deos-hermes/tests/mcp_confined_tools.rs`, 6 tests;
 the `live-mcp` mode reached a live provider; the direct stdio drive shows verdict `0xf`).
 Two seams remain, both named: (1) the cross-process socket that would land the MCP
 `run_js` on the *cockpit's* live World (the answer path already lands `run_js` there;
@@ -318,7 +318,7 @@ agent; the agent does not host dregg.** We do NOT fork hermes — the OS jail
 neutralizes hermes's leaky base tools at the OS level, whatever its tool table
 says.
 
-### The three legs (each proven by running — `tests/dregg_hosts_the_agent.rs`)
+### The three legs (each proven by running — `deos-hermes/tests/dregg_hosts_the_agent.rs`)
 
 1. **The agent runs inside a dregg jail.** `DreggHost::run_hosted_agent` spawns
    the agent body INSIDE a confined firmament PD (`confined.rs` →
@@ -381,11 +381,11 @@ INTO the confined PD body, and the generic core `run_brain_confined` runs either
 brain kind on the same jail/gate/receipt rail:
 
 - the on-box `LocalBrain`, in the DEFAULT green suite —
-  `tests/brain_in_jail.rs::confined_brain_run_is_jailed_and_leaves_real_receipts`
+  `deos-hermes/tests/brain_in_jail.rs::confined_brain_run_is_jailed_and_leaves_real_receipts`
   (jailed multi-step ACP turn, every admitted tool-call a real 64-hex dregg receipt);
 - a genuine `reqwest` `HttpLlm` brain (`brain.rs`, Anthropic Messages or
   OpenAI-compat, built by `live_brain_from_env`), behind the `live-brain` feature —
-  `tests/provider_egress.rs::live_brain_in_jail_rides_the_provider_door_to_a_mock`:
+  `deos-hermes/tests/provider_egress.rs::live_brain_in_jail_rides_the_provider_door_to_a_mock`:
   the brain POSTs a real completion from INSIDE the exec-denied PD over the granted
   provider socket, its tool-call receipts through the gate; execve/host-FS/other-net
   stay denied.

@@ -130,7 +130,7 @@ TIMETRAVEL-SEMANTICS}.md`):
   (`metatheory/Metatheory/SettlementSoundness.lean`) plus its circuit-side module
   (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`). The Lean side is closed; what keeps this
   from being a *pure light-client* truth is the named residual stated in the circuit module itself
-  (`Circuit/SettlementSoundness.lean` ~:42-56): the DEPLOYED rest-hash does not yet absorb the
+  (`metatheory/Dregg2/Circuit/SettlementSoundness.lean` ~:42-56): the DEPLOYED rest-hash does not yet absorb the
   revocation-registry root — a Rust circuit-emit conformance obligation riding the gated VK epoch.
   Executor-side the gate bites today; the light client witnesses it after that emit lands.
 

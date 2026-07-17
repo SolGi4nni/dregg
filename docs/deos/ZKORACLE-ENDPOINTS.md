@@ -95,7 +95,7 @@ The honest boundary, endpoint by endpoint:
   real `TcpStream` to the real host, the Mozilla/webpki root store (the genuine cert chain
   verifies; the SNI pins the real domain), and a SEPARATE hosted notary reached over a real
   socket, whose verifying key the verifier pins out-of-band and which persists to a durable
-  trust root (`notary_server::load_or_generate_notary_key`, `tests/notary_durable_key.rs`).
+  trust root (`notary_server::load_or_generate_notary_key`, `zkoracle-prove/tests/notary_durable_key.rs`).
   The packaged pairs are `endpoints::price::{prove_coinbase_live, verify_coinbase_live}`
   and `endpoints::github::{prove_github_live, verify_github_live}`;
   `examples/coinbase_live.rs` is the portable-proof demo (prove against the live host →
@@ -117,7 +117,7 @@ The honest boundary, endpoint by endpoint:
   every forgery/mismatch is refused, all through the real verifier.
 - `--features tlsn-live` (`tests/tlsn_live_roundtrip.rs`): the real local MPC-TLS roundtrip
   for Anthropic, GitHub, and Coinbase — authentic body → CFG cert → fact, tamper refused.
-  The durable notary trust root is exercised hermetically in `tests/notary_durable_key.rs`.
+  The durable notary trust root is exercised hermetically in `zkoracle-prove/tests/notary_durable_key.rs`.
 - Live-host runs (need network): `cargo run -p dregg-zkoracle-prove --example coinbase_live
   --features tlsn-live` (prove against the real host, re-verify the portable proof file);
   `coinbase_inproc` is the in-process variant.

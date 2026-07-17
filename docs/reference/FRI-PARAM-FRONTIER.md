@@ -134,7 +134,7 @@ Deployed v1 config (`circuit/src/plonky3_prover.rs:98-102`): `log_blowup=3`, `q=
 
 ## 1. The model
 
-### 1a. Soundness ledgers (`circuit/tests/fri_params_soundness_budget.rs:45-53`)
+### 1a. Soundness ledgers (`circuit-prove/tests/fri_params_soundness_budget.rs:45-53`)
 
 ```
 capacity (REFUTED)      = num_queries · log_blowup       + pow_bits

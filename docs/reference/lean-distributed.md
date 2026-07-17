@@ -21,7 +21,7 @@ carries its own `#assert_axioms` CI tripwire forcing the proof closed under
   rollup (`Dregg2.lean:104,420-437,520-521,646,766-768`).
 - `Metatheory.SettlementSoundness` — a self-contained Lean-4 core that composes
   the settlement keystone over the `KeyLeak` cap+revocation model
-  (`Metatheory/SettlementSoundness.lean:55`).
+  (`metatheory/Metatheory/SettlementSoundness.lean:55`).
 
 The two settlement files are deliberately paired: the `Metatheory` one is the
 abstract keystone over a faithful restated model; the `Dregg2.Circuit` one is the
@@ -63,7 +63,7 @@ view) for a global one (`Revocation.lean:146`, in-source comment).
 
 ## 2. Settlement soundness — authority live AT settlement
 
-`Metatheory/SettlementSoundness.lean` extends light-client unfoolability ("accept
+`metatheory/Metatheory/SettlementSoundness.lean` extends light-client unfoolability ("accept
 ⟹ genuine transition") to "accept ⟹ genuine transition whose authority was *live
 at settlement*." It reuses the `KeyLeak` model verbatim
 (`SettlementSoundness.lean:57`): `Cap`/`reaches` is the attenuation floor
@@ -153,15 +153,15 @@ already-proven legs (`Dregg2/Circuit/SettlementSoundness.lean:12-39`):
    (which carries the `revoked` registry).
 2. `finalized_commit_binds_revoked` — equal finalized roots force equal `revoked`
    registries, the revoked-only projection of `recStateCommit_binds_kernel`
-   (`Circuit/SettlementSoundness.lean:168`). So the commitment is *binding* on the
+   (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:168`). So the commitment is *binding* on the
    revocation set; it cannot be equivocated.
 3. `settled_revocation_bounded` — `eventual_bounded_revocation` read at the
    settlement coordinate `(nSettle, tSettle)`
-   (`Circuit/SettlementSoundness.lean:139`); `settled_revocation_immediate` for
+   (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:139`); `settled_revocation_immediate` for
    the `n = 1` collapse (`:150`).
 
 The settlement view is `settledRevView st = localRevSet T log nSettle tSettle`
-(`Circuit/SettlementSoundness.lean:112`), and `honorsAtSettlement st cred =
+(`metatheory/Dregg2/Circuit/SettlementSoundness.lean:112`), and `honorsAtSettlement st cred =
 verify (settledRevView st) cred` (`:119`, `honorsAtSettlement_eq` at `:123`).
 
 **`settlement_soundness`** (the deployed theorem) — from a verifying finalized
@@ -169,8 +169,8 @@ batch (`verifyBatch (vkOfRegistry Rfix) pi π = accept`) plus a settlement
 coordinate `st`: there exist decoded endpoints with a genuine `kstepAll`
 transition committed to `(pi.pre, pi.post)`, AND any credential revoked before the
 settlement-tip propagation bound is `honorsAtSettlement st cred = false`
-(`Circuit/SettlementSoundness.lean:210-242`). Axiom-clean
-(`Circuit/SettlementSoundness.lean:244`).
+(`metatheory/Dregg2/Circuit/SettlementSoundness.lean:210-242`). Axiom-clean
+(`metatheory/Dregg2/Circuit/SettlementSoundness.lean:244`).
 
 The **named residual** is explicitly *not* a Lean gap (`:49-56`): that the
 deployed rest-hash encoder absorbs the `#139` revocation-channel wire root into

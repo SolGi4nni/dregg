@@ -153,7 +153,7 @@ Landed:
   sign the grain drive path (see THE ONE WELD above).
 - **`planned_advance_turn_hash`** on CWM — `starbridge-apps/compartment-workflow-mandate/src/lib.rs:880`,
   the pre-image so the forge can name the terminal turn before it runs (the analogue of
-  `ExecutorDrivenDoc::planned_turn_hash`); exercised by `tests/forge_ci_weld.rs`.
+  `ExecutorDrivenDoc::planned_turn_hash`); exercised by `starbridge-apps/compartment-workflow-mandate/tests/forge_ci_weld.rs`.
 - **The forge↔CWM weld itself** — `forge_ci_weld.rs` seeds a charter, drives it signed, and gates a
   `PullRequest` on the terminal receipt, end-to-end.
 

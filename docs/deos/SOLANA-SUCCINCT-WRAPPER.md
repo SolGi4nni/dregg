@@ -103,7 +103,7 @@ thin reuse of exactly that surface:
 
 - `dregg-lightclient::verify_history(agg, expected_vk)` /
   `verify_turn_chain_recursive(agg, expected_vk)`
-  (`circuit/src/ivc_turn_chain.rs`) — the plonky3 recursive-STARK verifier whose
+  (`circuit-prove/src/ivc_turn_chain.rs`) — the plonky3 recursive-STARK verifier whose
   cost is **independent of the folded work**, running three teeth: (1) the VK
   pin against a configured trust anchor `RecursionVk`, (2) the carried-publics
   attestation against the binding STARK (Fiat–Shamir binds the public inputs, so

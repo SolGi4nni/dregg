@@ -49,7 +49,7 @@ attested-dm toy blake3 ledger).
   is the operational remainder, a live pinned-notary session]. Monetize via AI-narration credits ONLY. · Platform
   (flagship as customer zero): SESSION KEYS + paymaster
   onboarding [BUILT: dreggnet-offerings/src/session.rs — a session key = a caveat-bounded play-cap delegation over
-  macaroons; the paymaster binds the real dregg-pay CreditLedger (tests/session_paymaster.rs)]; a MINIMAL
+  macaroons; the paymaster binds the real dregg-pay CreditLedger (dreggnet-offerings/tests/session_paymaster.rs)]; a MINIMAL
   reactive-read/INDEXER [BUILT: starbridge-web-surface/src/indexer.rs — the weld of receipt_stream.rs (verified live
   stream) + dregg-query (EDB+CALM+MMR non-omission) into a MaterializedView, with reactive query subscriptions, local
   tx simulation, and MMR non-omission attested answers]; DURABLE PERSISTENCE [BUILT for the load-bearing pieces:

@@ -174,4 +174,4 @@ for k in 0..n {                       // eliminate every state
 | 2 | `coord/budget.rs:140,460,162` debits | O(n²)/slice | per-op | debits per slice | HashSet<DebitDigest> |
 | 3 | `heap_root/cap_root/openable_fields` `position` | O(n) vs O(log n) | per-proof | tree leaves | binary_search / partition_point |
 | 4 | `heap_root.rs:387` insert rebuild | O(n²·depth) if looped | latent | tree size | batch build / incremental path |
-| 5 | `dfa/derivative.rs:376` from_dfa | O(states³)+expo | rare | DFA states | prefer Re-add path / bound |
+| 5 | `dfa/src/derivative.rs:376` from_dfa | O(states³)+expo | rare | DFA states | prefer Re-add path / bound |

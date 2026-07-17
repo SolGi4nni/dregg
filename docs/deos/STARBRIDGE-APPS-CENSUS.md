@@ -60,9 +60,9 @@ substrate), **compose-with** (other apps + the flagship crates
   exceeded its mandate.
 - **power-now:** Heavily load-bearing — the richest of its batch. Full
   5-axis template plus a real crash-recovery + exactly-once + light-client
-  audit engine. Extensive `src/lib.rs::tests` + `tests/orchestration_teeth.rs`,
+  audit engine. Extensive `src/lib.rs::tests` + `starbridge-apps/agent-orchestration/tests/orchestration_teeth.rs`,
   `tests/service.rs`, `tests/deos_surface.rs` (mounted axum),
-  `tests/mcp_binding.rs`, `tests/userspace_verify.rs`. Factory-birth via
+  `starbridge-apps/agent-orchestration/tests/mcp_binding.rs`, `tests/userspace_verify.rs`. Factory-birth via
   `EmbeddedExecutor`. **Not** seeded.
 - **make-it-stronger:** The mandate is a fixed 2-worker shape
   (`SPENT_A`/`SPENT_B`) — generalize to N workers over a real
@@ -213,8 +213,8 @@ substrate), **compose-with** (other apps + the flagship crates
 - **power-now:** Substantially built (self-described "scaffold" but with a
   real `ClearanceDominates` executor tooth bound to a stored graph root),
   full deos+service+card+reactor axes + an `ORGAN 2` `colonist_job` module.
-  Tests incl. `tests/cwm_lean_differential.rs`,
-  `tests/colonist_job_lean_differential.rs`. **SEEDED**
+  Tests incl. `starbridge-apps/compartment-workflow-mandate/tests/cwm_lean_differential.rs`,
+  `starbridge-apps/compartment-workflow-mandate/tests/colonist_job_lean_differential.rs`. **SEEDED**
   (`node/src/starbridge_seed.rs:483`). Honest follow-ons flagged (SPEND
   debit wiring, `SenderAuthorized` + revocation-root witness for
   `cwm_safety_forever`).
@@ -266,7 +266,7 @@ substrate), **compose-with** (other apps + the flagship crates
   a real `dregg-auth` ed25519 caveat-chain (`verify_bind_authority` `:118`,
   `mint_domain_bind_cap` `:82`, proven no-amplify). DNS seam real (`MockDns`
   in tests, `LiveDns` hickory behind `live-dns`, `live.rs:82`).
-- **power-now:** Load-bearing; `tests/domain_lifecycle.rs` 3 e2e pass. Not
+- **power-now:** Load-bearing; `starbridge-apps/domains/tests/domain_lifecycle.rs` 3 e2e pass. Not
   seeded; `register()` (`:612`) unused outside tests; no gateway consumer
   wired.
 - **make-it-stronger:** Close the honest gap (`:57`): thread DNS-challenge
@@ -291,7 +291,7 @@ substrate), **compose-with** (other apps + the flagship crates
   `CapMandate` is a caps lattice with `le`/`attenuate`/`authorizes`
   (`:171`+), lifted from `dregg_auth::Grant`. `authorized_keys_line` (`:944`)
   is a pure fn of committed state, `None` if revoked.
-- **power-now:** Load-bearing; three faces; `tests/edge_mandate.rs:81` real
+- **power-now:** Load-bearing; three faces; `starbridge-apps/edge-mandate/tests/edge_mandate.rs:81` real
   factory-birth (enrol→spend→over-budget REFUSED→revoke). Not seeded; live
   sshd deploy step out-of-crate (`:88`).
 - **make-it-stronger:** Hand the minted `SelfCell` cap (`:396`) to the hosted
@@ -315,7 +315,7 @@ substrate), **compose-with** (other apps + the flagship crates
   (`escrow_cell_program()` `:373`) carries TRUSTLINE `FieldLteField` +
   MAILBOX `WriteOnce` + FLASHWELL `AffineEq{RELEASED+REFUNDED−ESCROWED=0}` +
   LIFECYCLE `StrictMonotonic`. `EscrowVault` (`:1176`) is the `Payable` face.
-- **power-now:** Heavily load-bearing. `tests/cross_app_value_flow.rs:94`
+- **power-now:** Heavily load-bearing. `starbridge-apps/escrow-market/tests/cross_app_value_flow.rs:94`
   proves the FIRST cross-app token flow: bounty-board mints CREDIT → pays
   escrow via shared `Payable` → settles onward, Σδ=0 throughout on one
   executor (`both_apps_share_one_payable_interface` `:256`). Not seeded;

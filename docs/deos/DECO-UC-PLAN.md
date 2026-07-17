@@ -48,7 +48,7 @@
 >   `forge_not_ucRealizes` (FALSE over the forge kernel — identical content to rung-4's forgery bite).
 >   Manifest row 23 is DOWNGRADED to **wrapper-of-22, not a distinct summit**.
 > - **Governed schema:** `attestationUCDynamics` / `deco_attestation_uc_via_schema` /
->   `deco_attestation_uc_realizes` in `Metatheory/Adversary/Instances.lean` §3.9b — a truthfully-named
+>   `deco_attestation_uc_realizes` in `metatheory/Metatheory/Adversary/Instances.lean` §3.9b — a truthfully-named
 >   WRAPPER delivering the SAME invariant as rung-4 `attestationDynamics`, NOT above it in content.
 > - **To actually reach rung 5:** build the spmf / probabilistic-process-calculus model (route b-i,
 >   greenfield Lean, Pillar 1) OR mechanize `F_attestation` in the CryptHOL harness (route b-ii); wire a
@@ -129,21 +129,21 @@ map's assumed-floor row `SECURITY-PROPERTY-MAP.md:136`):
 - **HMAC unforgeability** — `PortalFloor.MacKernelE.unforgeable` (`PortalFloor.lean:270`).
 - **Poseidon2 collision-resistance** — `PortalFloor.Poseidon2Kernel.collisionHard` (`PortalFloor.lean:149`).
 - **STARK extractability/knowledge-soundness** — `DecoVerifierKernel.extractable` (`Deco.lean:285`);
-  deployed `StarkSound` (`Circuit/CircuitSoundness.lean:382`).
+  deployed `StarkSound` (`metatheory/Dregg2/Circuit/CircuitSoundness.lean:382`).
 - **Web-PKI honest-endpoint** — the external floor: `serverKey`-is-Stripe + `encode`-is-the-schema
   (`Deco.lean:28/:60`). A *deployment trust anchor* (which key is Stripe's), NOT a cryptographic
   hardness assumption — carried by the registration, not a Lean carrier.
 
 The deployed-carrier side already has a home in the adversary frame: `decoCarrierDynamics`
-(`Metatheory/Adversary/Instances.lean:483`), `deco_backing_from_fold` + `decoCarrier_bites`
+(`metatheory/Metatheory/Adversary/Instances.lean:483`), `deco_backing_from_fold` + `decoCarrier_bites`
 (`:497/:507`) — but that binds the *mint's published `payment_hash` to a verifying sub-proof*, a
 DIFFERENT statement from "the DECO attestation itself is unforgeable" (see §5.1). The adversarial
-audit of the deployed row (`Circuit/DecoBackingAttack.lean`, `DecoEngine`,
+audit of the deployed row (`metatheory/Dregg2/Circuit/DecoBackingAttack.lean`, `DecoEngine`,
 `deployed_admits_unbacked_deco`) shows the deployed AIR alone does not force payment backing —
 the repair is the fold (`DecoBindingFromFold`), and *this* plan supplies the missing leg beneath
 it: what a verifying DECO leaf actually *means*.
 
-The UC shelf (`Metatheory/Open/PerfectUC.lean`): perfect/statistical composition
+The UC shelf (`metatheory/Metatheory/Open/PerfectUC.lean`): perfect/statistical composition
 `perfectUC_composition` (`:200`), wired ONLY to the disclosure functionality
 (`realπ_realizes_idealF`, `:448`); the **computational** UC theorem is explicitly OPEN (`:502`).
 **PerfectUC is not wired to DECO** — that is the gap this plan fills.
@@ -324,7 +324,7 @@ fieldsDigest, salt, π)` indistinguishable from a real one, WITHOUT any real Str
 **What the simulator needs (each grounded, each named):**
 
 1. **STARK zero-knowledge** — simulate the proof `π` from `stmt` alone, never touching the witness
-   `w`. Grounded: `Metatheory/Open/PerfectZK.lean` already gives the perfect-ZK law
+   `w`. Grounded: `metatheory/Metatheory/Open/PerfectZK.lean` already gives the perfect-ZK law
    `hperf : ∀ s w, view s w = sim s` (`PerfectZK.lean:67-72`) — "the real view equals a simulation
    that never saw the witness." The DECO simulator's proof leg IS `PerfectZK.sim` at the DECO
    statement. The named floor: a `StarkZK` carrier (simulation-soundness / honest-verifier ZK of
@@ -386,7 +386,7 @@ matching `PortalFloor §9b`.
 ### 5.1 Into `governed_holds` — DECO-UC as a realization against the adversary
 
 Register `F_attestation` unforgeability as a `GovernedDynamics` instance (the schema at
-`Metatheory/Adversary/Schema.lean:65`, consumed by `governed_holds`, `:82`):
+`metatheory/Metatheory/Adversary/Schema.lean:65`, consumed by `governed_holds`, `:82`):
 
 ```
 attestationDynamics … : GovernedDynamics
@@ -398,7 +398,7 @@ attestationDynamics … : GovernedDynamics
 ```
 
 Then `governed_holds attestationDynamics (stmt, proof) hacc : Authenticated stmt` — DECO-UC as a
-`governed_holds` application against the ONE `Adversary` (`Metatheory/Adversary/Model.lean:73`).
+`governed_holds` application against the ONE `Adversary` (`metatheory/Metatheory/Adversary/Model.lean:73`).
 This is the poster's **rung 4** ("realizes the ideal against A", above rung 3 "holds against A"):
 the malicious prover surface `A.forgedPI`/`A.forgedProof` (`Model.lean:86-89`) cannot forge an
 accepting DECO attestation whose session did not happen.

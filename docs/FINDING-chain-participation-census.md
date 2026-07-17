@@ -102,7 +102,7 @@ the single missing primitive *(closed: `eth-lightclient` — see banner)*.
 
 - **`dregg-governance`**: `FederationGovernance` wired to the REAL `ConstitutionManager` —
   proposals open polls whose electorate is the constitution's participant set, 2n/3+1 threshold,
-  auto-enact on quorum (`src/governance.rs:80-151`, tests in `tests/teeth.rs`). Plus community
+  auto-enact on quorum (`src/governance.rs:80-151`, tests in `dregg-governance/tests/teeth.rs`). Plus community
   polls with content-addressed causal `VoteBlock`s (dropped ballot ⇒ root mismatch) and
   non-amplifying liquid delegation. Executor-backed at HEAD (`FederationGovernance` ≡
   `substrate::ExecutorGovernance`); not node-wired.

@@ -173,7 +173,7 @@ turn seam (`CardWorld::fire`/`read`, `InspectorWorld`) lives in `wasm/src/bindin
 
 `tests/` exercises both renderers: `fine_grained_rerender.rs` (a two-bind scene asserts a
 turn on slot A dirties binding A but not B, constructing `AppletView` gpui-free —
-`tests/fine_grained_rerender.rs:1`–`13`), the `renders_*_to_pixels.rs` headless-bake
+`deos-view/tests/fine_grained_rerender.rs:1`–`13`), the `renders_*_to_pixels.rs` headless-bake
 tests, and `web_projection_renders_card.rs`. `examples/web_render_card.rs` bakes the same
 counter card the native test paints to a browser-loadable `.html`, gpui-free
 (`examples/web_render_card.rs:1`–`17`); it is `required-features = ["web"]`

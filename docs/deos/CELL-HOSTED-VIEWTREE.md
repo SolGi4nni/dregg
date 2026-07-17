@@ -179,7 +179,7 @@ cursor invariant above holds regardless; the multi-cell ledger binding is the en
 - `deos-view/src/mount.rs` (native): `VIEWTREE_COLL`, `write_view_blob`/`read_view_blob`
   (the proven chunked-heap-blob codec), and `view_tree_from_cell_heap` — the real
   heap-as-view-source READ path.
-- A native render proof (`tests/mounts_a_hosted_subtree.rs`): a parent card mounts a child
+- A native render proof (`deos-view/tests/mounts_a_hosted_subtree.rs`): a parent card mounts a child
   cell's heap-stored hosted view-tree as a subtree and renders it nested (the child's tree
   appears inside the parent), proves a FRACTAL 2-level nest (child hosts grandchild, both
   heap-sourced), and a receipted edit to the child's hosted tree re-resolves into a changed

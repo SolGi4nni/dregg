@@ -69,7 +69,7 @@ A commit → reveal → settle sealed-bid **first-price** auction, the Rust imag
   proven capacity `dregg_cell::escrow_sealed`. `SealedEscrowMarket{ escrow, terms, custody_a, custody_b }`
   (`:180`) with `open(terms)` / `deposit(side, leg)` (locks a conforming leg into custody) / `settle`
   (2-of-2 atomic crossing, no partial) / `reclaim` (half-open-trade defence). Four properties proved in
-  `tests/atomic_swap.rs`.
+  `starbridge-apps/escrow-market/tests/atomic_swap.rs`.
 
 ### 1.4 The composition — `escrow-market/examples/verifiable_market.rs`
 The single real cross-crate use of the auction primitive: it wires **sealed-auction as the front-run-proof
@@ -278,7 +278,7 @@ realization · the honest grade · the build cost.** Privacy tiers (from `SHIELD
   `demoShieldedRing`).
 - **Rests on.** `escrow-market` (§1.3, `dregg_cell::escrow_sealed`, atomic settle, half-open-trade defence).
 - **App realization.** `starbridge-apps/escrow-market` — SHIPPED, four properties proved
-  (`tests/atomic_swap.rs`). The `verifiable_market.rs` composition IS the discovery→clearing pattern.
+  (`starbridge-apps/escrow-market/tests/atomic_swap.rs`). The `verifiable_market.rs` composition IS the discovery→clearing pattern.
 - **Grade.** **BUILT** (atomic swap); shielded legs = **circuit BUILT** (the 2-leg shielded ring apex, §3.11).
 - **Cost.** **Small** (it ships); the shielded variant's 2-leg ring apex exists — app wiring remains.
 

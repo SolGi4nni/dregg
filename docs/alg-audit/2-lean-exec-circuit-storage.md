@@ -126,13 +126,13 @@ scoped to a turn's touched set: a double-spend check needs the whole set).
   acc else l :: acc)` then `mergeSort`. Scoped to a turn's labels (caps+cells+action operands), so
   bounded per turn; the quadratic `contains`-dedup could be a `HashSet` pass but the constant is
   small. Rubric-4, minor.
-- **`Storage/BucketCommitment.lean:47` `contentRoot` → `Lightclient/MMR.lean:167` `peaksOf`** —
+- **`metatheory/Dregg2/Storage/BucketCommitment.lean:47` `contentRoot` → `metatheory/Dregg2/Lightclient/MMR.lean:167` `peaksOf`** —
   `peaksOf L = L.foldl appendLeaf []` rebuilds the whole MMR forest from the **full** object list on
   every `contentRoot` call (O(n)); called per object-add it's O(n²) to fill a bucket. The file's own
   note says the *deployed* implementation maintains the peaks incrementally and `peaksOf_append`
   proves the two agree — so this is a recompute-in-the-model, not a shipped hot loop. Storage-market
   path, not per-turn commit. Rubric-3, deferred to the incremental impl.
-- **`Storage/Deployed.lean:33`** — `xs.foldl (fun acc x => p2compress …)` is a single O(n) hash
+- **`metatheory/Dregg2/Storage/Deployed.lean:33`** — `xs.foldl (fun acc x => p2compress …)` is a single O(n) hash
   fold (fine); flagged only against being called in an outer loop.
 
 ## Summary ranking

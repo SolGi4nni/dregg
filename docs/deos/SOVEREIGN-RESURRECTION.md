@@ -177,7 +177,7 @@ evaluated at the tip, not at checkpoint time.**
   replaced by "supersession."
 - **Theorem target** — `resurrection_no_rollback`: if checkpoint epoch e′ > e is anchored at
   the tip, no resurrection of the epoch-e image can bind. Same proof family as
-  `settlement_soundness` (`Metatheory/SettlementSoundness.lean`); likely a composition over
+  `settlement_soundness` (`metatheory/Metatheory/SettlementSoundness.lean`); likely a composition over
   the anchored-monotone-ledger rather than new machinery.
 
 **The honest residual window:** turns committed after the last checkpoint and before the

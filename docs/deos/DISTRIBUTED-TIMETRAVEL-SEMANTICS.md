@@ -17,7 +17,7 @@ flagged-from-memory for spot-check are gathered in §7.*
 > real deployed circuit (`metatheory/Dregg2/Circuit/SettlementSoundness.lean`, `#assert_axioms
 > settlement_soundness` at :244) — accept ⟹ genuine transition whose authority was live at
 > settlement, exactly as §6.3 specified. The §7 finality-gate question is answered YES by
-> `finalized_commit_binds_revoked` (`Circuit/SettlementSoundness.lean:168`): equal finalized roots
+> `finalized_commit_binds_revoked` (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:168`): equal finalized roots
 > force equal `revoked`, so the settlement tip's revocation set IS bound into the commitment; the
 > only residual is a named Rust circuit-emit conformance floor, not an open design decision. See
 > `docs/reference/lean-distributed.md`. §1–§5 below (the abstract mapping) stand unchanged.
@@ -654,7 +654,7 @@ obligations of §4.4, both now discharged.
 
 1. **Bind the settlement-time revocation set into the commitment** so a light client
    checks authority-was-honored-at-the-tip, not just authority-was-honored-at-branch.
-   — DONE: `finalized_commit_binds_revoked` (`Circuit/SettlementSoundness.lean:168`).
+   — DONE: `finalized_commit_binds_revoked` (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:168`).
 2. **Put the propagation-delay bound inside the finality gate**, so two honest nodes
    cannot disagree about whether a since-revoked authority settled.
    — DONE: `settled_revocation_bounded` at the settlement coordinate.
@@ -772,7 +772,7 @@ whether that bind must be *added*. It is bound. `finalized_commit_binds_revoked`
 (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:168`) proves equal finalized roots force equal
 `revoked` — the settlement tip's revocation set IS committed — so Settlement Soundness (§6.3) landed
 as a *composition* of existing theorems, `#assert_axioms`-clean, not an extend-then-compose. The only
-residual is a named Rust circuit-emit conformance floor (`Circuit/SettlementSoundness.lean:49-56`),
+residual is a named Rust circuit-emit conformance floor (`metatheory/Dregg2/Circuit/SettlementSoundness.lean:49-56`),
 not an open bind decision. Grounded what-is: `docs/reference/lean-distributed.md`.
 
 ---

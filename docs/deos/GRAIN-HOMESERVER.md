@@ -242,8 +242,8 @@ five tier doors above plus the exec spawn, with the deny poles in the normal tes
 
 1. **Body + embed seam — BUILT.** `deos-homeserver/` embeds continuwuity as a library
    (`EmbeddedHomeserver`: loopback config + readiness poll around `conduwuit::run_with_args`);
-   `tests/cs_api_roundtrip.rs` proves the exact matrix-rust-sdk membrane slice, and
-   `scripts/card-carry-local.sh` runs the deos-matrix two-user card-fork-carry live test against
+   `deos-homeserver/tests/cs_api_roundtrip.rs` proves the exact matrix-rust-sdk membrane slice, and
+   `deos-homeserver/scripts/card-carry-local.sh` runs the deos-matrix two-user card-fork-carry live test against
    this binary instead of the external Docker Conduit. (RocksDB is the real tax: a C++ build dep +
    a hungry db dir — brew system-link kills the cold build on macOS.)
 2. **The firmament doors — BUILT** as the heavy-body tier above: `with_write_path` (the
@@ -251,7 +251,7 @@ five tier doors above plus the exec spawn, with the deny poles in the normal tes
    `with_listen` / `with_mach_service` / `with_system_reads` / `with_exec_image`
    (`sel4/dregg-firmament/src/sandbox.rs:212-272`).
 3. **The confined spawn (weld) — BUILT.** `ProcessKernel::spawn_pd_confined_exec` execs the
-   `deos-homeserver` bin under the heavy-body `Confinement`; `tests/homeserver_confined.rs`
+   `deos-homeserver` bin under the heavy-body `Confinement`; `sel4/dregg-firmament/tests/homeserver_confined.rs`
    carries the positive pole (`--ignored`, needs the prebuilt heavy bin) and the three
    always-run deny poles.
 4. **The lifecycle (named seam, open):** wrap the homeserver grain in `agent-platform`

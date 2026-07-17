@@ -137,7 +137,7 @@ An agent put into deos is not a tool calling an API; it **inhabits** the world. 
 The brain runs INSIDE a confined firmament PD — file/net/exec and every inherited fd denied by
 the OS sandbox (Seatbelt / namespaces+seccomp+landlock), the Endpoint its only channel. This is
 not a scripted stand-in: a real brain-driven ACP peer is compiled into the PD body and proven in
-the default suite (`tests/brain_in_jail.rs` — jailed multi-step turns, real receipts), and a live
+the default suite (`deos-hermes/tests/brain_in_jail.rs` — jailed multi-step turns, real receipts), and a live
 HTTP-LLM brain runs jailed behind the `live-brain` feature, reaching its provider through the
 **provider-only egress door** — one granted host:port, sealed by default, enforced on both
 platforms (macOS SBPL; Linux seccomp connect-notify where the child's net namespace stays empty,

@@ -338,15 +338,15 @@ settlement: authority is live-at-settlement (`settled_revocation_bounded` `:139`
 `Dregg2.Lightclient/` carries the verifier-side proofs (crypto enters only as the
 named `Poseidon2SpongeCR` carrier; `#assert_axioms` clean on every theorem):
 
-- `MMR` (`Lightclient/MMR.lean`) — the Merkle Mountain Range append-only log. Perfect
+- `MMR` (`metatheory/Dregg2/Lightclient/MMR.lean`) — the Merkle Mountain Range append-only log. Perfect
   binary trees (`PTree`), `hashOf_injective` under CR (`:101`), `Forest` push/append
   (`:152` ff.), `forestLeaves_peaksOf` round-trip (`:202`).
-- `AttestedQuery` (`Lightclient/AttestedQuery.lean`) — verified range queries with
+- `AttestedQuery` (`metatheory/Dregg2/Lightclient/AttestedQuery.lean`) — verified range queries with
   **completeness**: `Gap` exclusion (`:97`), `answer_sound` / `answer_complete`
   (`:157`,`:166`), `gapsOf_covers` (proves no key in the range is omitted, `:259`),
   `verifies_iff_exact` (`:323`), and `root_pins_verifies` tying it to a committed
   root under CR (`:348`).
-- `HistoryIndex` (`Lightclient/HistoryIndex.lean`).
+- `HistoryIndex` (`metatheory/Dregg2/Lightclient/HistoryIndex.lean`).
 
 ## Axiom hygiene
 

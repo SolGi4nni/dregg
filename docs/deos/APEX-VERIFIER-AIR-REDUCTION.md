@@ -8,7 +8,7 @@ stark-kill terminal / the `plonky3-recursion` fork). Companion to
 `WRAP-NATIVE-HASH-DECISION.md` (the three-lever plan) and the
 `apex_shrink_blowup_sweep` lane (the FRI-knobs lever — NOT duplicated here).*
 
-The measured run (`tests/apex_shrink_bn254_tooth.rs`, real 2-turn apex, release):
+The measured run (`circuit-prove/tests/apex_shrink_bn254_tooth.rs`, real 2-turn apex, release):
 apex fold 241–258s, **shrink prove ~1076–1142s (~18min)**, verify 68ms,
 `ext_degree 4`, **`degree_bits [9,9,15,14,15]`**, 5 instances (3 primitive + 2
 non-primitive tables), blowup 64 (`log_blowup 6`). Smaller trace = faster shrink;
@@ -71,7 +71,7 @@ The two 2^15 tables carry ~2^21 LDE rows each; the ALU table is also *wide*
 of the LDE + quotient work. **Cutting either 2^15 table's height directly cuts
 the dominant prover term.**
 
-*(Anatomy reproducible: `tests/apex_shrink_trace_anatomy.rs` — folds the same
+*(Anatomy reproducible: `circuit-prove/tests/apex_shrink_trace_anatomy.rs` — folds the same
 real 2-turn apex, builds the apex-verifier circuit, censuses `circuit.ops`
 (Const/Public/Alu-by-kind/Horner-run-length/NPO), and re-extracts the
 outer-config table AIRs + degrees at several packings, printing per-table
@@ -194,7 +194,7 @@ with the default path preserved byte-for-byte (`default_shrink_packing()` ==
 packing`. This makes lever A callable without disturbing the in-flight gnark
 fixture-export lane or the blowup sweep (both keep using the default packing).
 
-**Measured (shape, `tests/apex_shrink_trace_anatomy.rs`):** the ALU table's
+**Measured (shape, `circuit-prove/tests/apex_shrink_trace_anatomy.rs`):** the ALU table's
 `degree_bits` at candidate packings (baseline a4/h2 vs a8/h4, a8/h8, …), showing
 the ALU height drop while the poseidon2-W16 table (and thus the global max
 height / FRI shape) stays 2^15. *[Measured degree_bits table to be pasted from

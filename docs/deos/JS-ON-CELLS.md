@@ -147,7 +147,7 @@ it would have pointed at is never touched (you cannot even *name* what you do no
 name present whose held cap does not satisfy an affordance's `required` resolves to
 `Unauthorized` (the same `is_attenuation` tooth). A JS app can therefore touch only the
 cells it holds caps to, and only at the authority it holds — proven in
-`tests/native_js_app_coordinates_cells.rs` (the uncapped `vault` cell stays byte-untouched
+`deos-js-runtime/tests/native_js_app_coordinates_cells.rs` (the uncapped `vault` cell stays byte-untouched
 while a refused over-reach commits nothing).
 
 Each acting cell chains its OWN authority head (`previous_receipt_hash`), because the
@@ -208,7 +208,7 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
   (witnessed read), `viewPatch` (receipted heap self-edit moving `heap_root`), `tCell`
   (cap-gated turn on ANOTHER cell — the multi-cell-coordination keystone), and `transfer`
   (conservation-respecting value movement). A pure-JS starbridge-app prototype
-  (`tests/native_js_app_coordinates_cells.rs`) runs in the native runtime with NO servo and
+  (`deos-js-runtime/tests/native_js_app_coordinates_cells.rs`) runs in the native runtime with NO servo and
   coordinates two cells — `tCell("store","put",42)` + `transfer("wallet","store",100)` +
   `viewPatch(...)` + `get("store",0)` — committing THREE real verified turns, and an
   over-reach to a cell it holds no cap to is refused in-band (the uncapped cell stays
@@ -236,7 +236,7 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
      (`ServicedSeam`, mirroring `invoke()`'s seam), and the cap requirement is the published
      `MethodSig`'s — so the JS names a TYPED METHOD, not a bare affordance index.
 
-  Proven by running: `tests/native_js_kvstore_pure_js.rs` rebuilds the `starbridge-kvstore`
+  Proven by running: `deos-js-runtime/tests/native_js_kvstore_pure_js.rs` rebuilds the `starbridge-kvstore`
   service cell as pure JS-on-cells — `tCell("store", "put", reg, value)` writes the JS value
   to the JS register through the published `put` method (typed, `Signature`-gated,
   DFA-routed), overwrites it with a second literal write, refuses `get` as a serviced seam,
@@ -245,7 +245,7 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
 - **Second app — a multi-cell, value-COORDINATING app (2-party escrow) as pure JS — DONE:**
   the kvstore is a single cell behaving; an escrow is a JS program *coordinating several cells
   and moving value through an intermediary*, which is the harder shape the multi-cell
-  `CellWorld` exists for. `tests/native_js_escrow_pure_js.rs` drives a whole 2-party escrow
+  `CellWorld` exists for. `deos-js-runtime/tests/native_js_escrow_pure_js.rs` drives a whole 2-party escrow
   across THREE cells — a buyer (`alice`), a seller (`bob`), and the `escrow` coordinator —
   entirely in pure JS:
   1. **arm** — `tCell("escrow", "arm", price)` records the agreed price through the escrow's
@@ -309,7 +309,7 @@ web shell binds the (SpiderMonkey today, boa-on-wasm tomorrow) `Context` to its
 - **Third app — a multi-party COMMIT-REVEAL sealed-bid auction as pure JS — DONE:** the
   kvstore is one cell behaving and the escrow coordinates two parties through an intermediary;
   a sealed-bid auction is the harder shape — SEVERAL parties COMPETE for one award by sealing
-  HIDDEN bids, then opening them under a runtime-enforced binding. `tests/native_js_sealed_auction_pure_js.rs`
+  HIDDEN bids, then opening them under a runtime-enforced binding. `deos-js-runtime/tests/native_js_sealed_auction_pure_js.rs`
   drives a whole auction across FIVE cells (three bidders `alice`/`bob`/`carol`, the `seller`,
   the `auction` coordinator) entirely in pure JS, mirroring `starbridge-apps/sealed-auction`
   (the executable surface of `Dregg2/Intent/SealedAuction.lean`).

@@ -217,7 +217,7 @@ flows through the one verified value rail.
   completeness, finalized-vs-voted) qualify this bullet.
 - **Real:** the Solana-side lock-vault SPL program — `solana-lock/`
   (`dregg-solana-lock`: `processor.rs`, `state.rs`, `instruction.rs`,
-  `attestation.rs`, `record.rs`, with `tests/lock_flow.rs` / `tests/unlock_flow.rs`).
+  `attestation.rs`, `record.rs`, with `solana-lock/tests/lock_flow.rs` / `solana-lock/tests/unlock_flow.rs`).
 - **Not built (named gaps):** the Option-B succinct zk-proof-of-lock route
   (the relayer consensus AIR; the wire-format adapter layer under it is built —
   `solana_wire.rs` real vote-`Transaction` parsing, `solana_provenance.rs`

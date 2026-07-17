@@ -207,12 +207,12 @@ deployed light-client fold.
 
 | carrier | leaf | binding node | negative tooth | refute (BackingAttack) | BindingFromFold (positive)? | deployed-wired? |
 |---|---|---|---|---|---|---|
-| **custom** | `custom_leaf_adapter.rs:994/1179` | `joint_turn_recursive.rs:591` | `joint_turn_recursive.rs:1174` + integration `tests/custom_binding_deployed_tooth.rs`, `custom_binding_production_path.rs` | — (superseded) | **YES** `CustomBindingFromFold.lean` (7 pins) | **YES** (buff-in-production) |
-| bridge | `bridge_leaf_adapter.rs:170/227` | `joint_turn_recursive.rs:797` | `bridge_leaf_adapter.rs:353` + `tests/bridge_binding_mechanism.rs` | `BridgeBackingAttack.lean` (7) | no | no |
+| **custom** | `custom_leaf_adapter.rs:994/1179` | `joint_turn_recursive.rs:591` | `joint_turn_recursive.rs:1174` + integration `circuit-prove/tests/custom_binding_deployed_tooth.rs`, `custom_binding_production_path.rs` | — (superseded) | **YES** `CustomBindingFromFold.lean` (7 pins) | **YES** (buff-in-production) |
+| bridge | `bridge_leaf_adapter.rs:170/227` | `joint_turn_recursive.rs:797` | `bridge_leaf_adapter.rs:353` + `circuit-prove/tests/bridge_binding_mechanism.rs` | `BridgeBackingAttack.lean` (7) | no | no |
 | sovereign | `sovereign_leaf_adapter.rs:181/221` | `joint_turn_recursive.rs:898` | `sovereign_leaf_adapter.rs:375` | `SovereignBackingAttack.lean` (10) | no | no |
 | factory | `factory_leaf_adapter.rs:177/214` | `factory_leaf_adapter.rs:338` | `factory_leaf_adapter.rs:468/590` | `FactoryBackingAttack.lean` (12) | no | no |
 | hatchery | `hatchery_leaf_adapter.rs:176/214` | `hatchery_leaf_adapter.rs:343` | `hatchery_leaf_adapter.rs:477/595` | `HatcheryBackingAttack.lean` (8) | no | no |
-| membership | `membership_leaf_adapter.rs:197/235` | `membership_leaf_adapter.rs:431` | `membership_leaf_adapter.rs:574` + `tests/membership_binding_mechanism.rs` | `MembershipBackingAttack.lean` (8) | no | no |
+| membership | `membership_leaf_adapter.rs:197/235` | `membership_leaf_adapter.rs:431` | `membership_leaf_adapter.rs:574` + `circuit-prove/tests/membership_binding_mechanism.rs` | `MembershipBackingAttack.lean` (8) | no | no |
 | dsl (Dfa) | `dsl_leaf_adapter.rs:112` — REUSES `prove_custom_leaf_with_commitment` | `dsl_leaf_adapter.rs:141` — REUSES `prove_custom_binding_node_segmented` | `dsl_leaf_adapter.rs:321` | `DslBackingAttack.lean` (7) | no | no |
 
 Provenance: bridge/sovereign landed `aa34a6244`; factory/hatchery/membership `9cade93a2`;
@@ -423,7 +423,7 @@ dsl genuinely rides custom's non-vacuous fold-binding. The census did NOT over-p
   46..49 (`CUSTOM_COMMIT_PI_LO=46`, `joint_turn_recursive.rs:104`), folded against the RE-PROVEN
   custom sub-proof leaf through `prove_custom_binding_node_segmented` — the `connect` ties the two
   4-felt commitments IN the recursion tree; a forged claim with no backing sub-proof is UNSAT.
-  Pinned end-to-end by `tests/custom_binding_deployed_tooth.rs`.
+  Pinned end-to-end by `circuit-prove/tests/custom_binding_deployed_tooth.rs`.
 - ⚑ KEY: custom's PI 46..49 is NOT constrained by the deployed AIR (the proofBind gate is vacuous
   `True`, `CustomCarrierAttack`). It is bound SOLELY because it is a FRI-bound PI of the deployed
   proof that the fold re-exposes and connects to a genuine sub-proof. "Committed" here = "a

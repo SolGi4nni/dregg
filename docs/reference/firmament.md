@@ -194,7 +194,7 @@ semihost the runner is the cockpit's real `dregg_sdk::embed::DreggEngine` (a
 `FIDELITY` records what runs now vs. WALL step 4 (the Lean ELF runtime port,
 blocked on real seL4, not here) (`executor_pd.rs:184-194`). The boot test
 `app_pd_stages_turn_executor_pd_commits_receipt_round_trips`
-(`tests/executor_pd_boot.rs:105`) drives the full path.
+(`sel4/dregg-firmament/tests/executor_pd_boot.rs:105`) drives the full path.
 
 ### compositor-PD — the framebuffer/input multiplexer
 
@@ -245,7 +245,7 @@ authority path is real on the semihost (the framebuffer differs at exactly the
 dirty region; a rejected turn leaves it byte-identical) while the pixels' last hop
 to a panel is the same graphics frontier the compositor names
 (`repaint.rs:89-101`). The end-to-end proof is
-`tests/live_repaint_on_turn.rs` — two framebuffer snapshots straddling the turn
+`sel4/dregg-firmament/tests/live_repaint_on_turn.rs` — two framebuffer snapshots straddling the turn
 (`live_repaint_on_turn.rs:19-31`).
 
 ## The v1 process-backed substrate (`process-pd`)

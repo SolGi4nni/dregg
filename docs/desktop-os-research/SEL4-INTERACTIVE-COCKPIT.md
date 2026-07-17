@@ -333,7 +333,7 @@ What is PROVEN (`sel4/dregg-firmament/tests/live_repaint_on_turn.rs`):
 
 This adds ONLY the projection + the wire — NO new primitive. It rides the proven
 executor-PD turn path, the proven compositor-PD present gate, and the cross-PD
-`notify`/shared-region `Channel` the 2-PD notify slice (`tests/boot_pds.rs`)
+`notify`/shared-region `Channel` the 2-PD notify slice (`sel4/dregg-firmament/tests/boot_pds.rs`)
 proves. The honest fidelity label travels with the code
 (`dregg_firmament::REPAINT_FIDELITY`): the loop is REAL on the semihost (a genuine
 turn drives a genuine scene-gated present advancing the framebuffer); the
@@ -469,7 +469,7 @@ transcription of the now-proven semihost wiring (§3.6).
   as a build-time-baked RGBA blit (`cockpit_frame.rs`). Repaint is already cheap
   and idempotent (`paint()` re-maps the framebuffer every transition).
 - **Live-repaint-on-turn is WIRED + PROVEN on the semihost** (§3.5,
-  `sel4/dregg-firmament/src/repaint.rs` + `tests/live_repaint_on_turn.rs`, 8 unit
+  `sel4/dregg-firmament/src/repaint.rs` + `sel4/dregg-firmament/tests/live_repaint_on_turn.rs`, 8 unit
   + 2 boot tests green). A committed turn through the executor-PD projects a
   `DirtyRegion`, writes a shared `repaint_out` region, and the compositor-PD reads
   it and runs a scene-gated `present()` — **two framebuffer snapshots differ at

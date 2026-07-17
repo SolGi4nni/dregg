@@ -159,7 +159,7 @@ BLS12-381 G1 for the beacon committee. FROST needs the same protocol over edward
    from `federation` + downstream Cargo.tomls (census list above), drop `ark-*` from
    federation (NOTE: `dkg.rs`/`beacon.rs` keep ark-bls12-381 only if the beacon stays BLS —
    the beacon is a SEPARATE lane; scope removal to the QC path first). `hints/` itself stays
-   only while `turn/membership_verifier.rs:1182` and governed-namespace use it directly —
+   only while `turn/src/executor/membership_verifier.rs:1182` and governed-namespace use it directly —
    those get their own FROST ports before the crate leaves the workspace.
 4. Gate to pass before each step: full-workspace build + the federation/checkpoint/epoch/
    dfa-federation/cross-fed test suites + a live-mesh soak on the test federation

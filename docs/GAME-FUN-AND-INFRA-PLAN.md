@@ -65,7 +65,7 @@ teleport you) · provably-fair randomness native.
    non-omission attested answers, so a client renders a living world at low latency.
 3. **Session keys + passkeys + paymaster UX** [BUILT: dreggnet-offerings/src/session.rs]. A session key = a
    caveat-bounded delegation of the player's play cap — macaroon attenuation, no new trust model; the paymaster binds
-   to the real dregg-pay CreditLedger (tests/session_paymaster.rs: a paid move is a genuine debit, an out-of-credit
+   to the real dregg-pay CreditLedger (dreggnet-offerings/tests/session_paymaster.rs: a paid move is a genuine debit, an out-of-credit
    move commits nothing).
 4. **Durable persistence** [partially built]. The character store is durable (discord-bot/src/character_store.rs,
    sqlite — a leveling character survives a restart) and session resume reopens by REPLAY of the reproducible public
