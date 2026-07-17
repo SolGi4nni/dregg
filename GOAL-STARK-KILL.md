@@ -1853,3 +1853,25 @@ unexpected_cfgs=warn. Each bites when run; the persvati sweep is the workspace-w
 deceived by the scale of what we already have."* We found 4 real forgeries + a fail-open guard + a
 compiled-out transport + multiple theater suites, NONE caught by ~15k existing tests, ALL caught by asking
 "what real break would this catch?" Scale was real; power was the gap; the ratchets are the durable close.
+
+### `2910585a4` — grain-fork FIXED (fix-forward, not just named); both srot breakages CLOSED
+Reconsidered my "name it" call: a committed-broken member is worse than a valid API-preserving fix. Converted
+the 9 `Faithful8` field reads (heap_root×6 + fields_root×3) with `.to_bytes32()` — grain-fork's `[u8;32]`
+public API preserved; persvati verified `cargo check -p grain-fork` GREEN (iterated: fields_root sites hid
+behind the heap_root ones). Refinement (adopt Faithful8 natively) NAMED for the hash-migration lane. With
+perf (`5e42f0b7a`), both srot-sweep breakages are closed → the workspace compiles (modulo live WIP).
+
+### Security fixes — MY OWN gate-runs confirmed (loop closed)
+persvati SEC2_EXIT=0: dregg-token 172 passed / dregg-cell-crypto 158 passed → ed25519 + peer-exchange
+CONFIRMED. fold-delta already confirmed (bm4srg4ky). credentials lane-verified (<1s round trip). All 4
+security forgery fixes stand on real gate-runs.
+
+### STATE: remaining goal work is EXTERNALLY BLOCKED
+- Engine DELETE (ivc.rs 70 + constraint_prover 17): the 3 preflight riders are mid a MAJOR other-lane rework
+  (−295 lines) that PRESERVES the mock (carries the "prove_ivc survived intact" comment I flagged). Blocked
+  until they land; then wire to real + delete.
+- srot re-run (full non-compiling-TEST-target map): confounded by other lanes' live WIP (rsync tests the
+  dirty tree). Run once the tree settles.
+- ~143 dirty files: other lanes' WIP (deploy/docs/realm/arklib — visible in the log) — not mine.
+Nothing productive + non-blocked remains that doesn't risk sweeping another lane's work. Wakeup re-checks the
+preflight-freeing.
