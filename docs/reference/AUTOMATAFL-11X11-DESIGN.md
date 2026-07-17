@@ -59,7 +59,7 @@ not two leaves under one receipt, to ride the deployed chain path.)
 ## Ordered build plan (two-player)
 0. **Reference oracle → n=11, m=2** (`reference.rs`) — the refinement target; scale the faithful
    two-player `apply_turn` + the 11×11 stock opening + goal corners + win check. Differential-verify vs
-   the o1Labs reference (`~/dev/automatafl/logic`). *No SCC/merge/multiplayer.*
+   the automatafl reference (`~/dev/automatafl/logic`). *No SCC/merge/multiplayer.*
 1. **C.1 coord bit-decomposition** — lowest risk, unblocks the degree wall; n=5 tests stay green,
    `max_degree` drops. Prerequisite for everything.
 2. **C.2 row×column authenticated reads/writes** — retrofit `validate_move` / `write_mid_witnessed` /
@@ -74,4 +74,4 @@ not two leaves under one receipt, to ride the deployed chain path.)
 **Foundation handed to every lane (absolute paths):** oracle `dregg-automatafl/src/reference.rs`;
 builder primitives `dregg-automatafl/src/builder.rs`; the seam `circuit-prove/src/joint_turn_recursive.rs`
 + `circuit-prove/src/ivc_turn_chain.rs`; the Lean contract `metatheory/Dregg2/Games/Automatafl.lean`; the
-o1Labs ground truth `~/dev/automatafl/logic/src/{game,automaton,board}.rs`.
+automatafl ground truth `~/dev/automatafl/logic/src/{game,automaton,board}.rs`.

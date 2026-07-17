@@ -39,8 +39,8 @@ blake3 = "1"
 # real turn chain the light client verify_history accepts.
 dregg-turn = { path = "../turn" }
 dregg-lightclient = { path = "../lightclient" }
-# The o1Labs reference engine — the DIFFERENTIAL ORACLE for
-# `tests/differential_o1labs.rs`. Test-only; never linked into the crate/AIR.
+# ember's automatafl reference engine (emberian/automatafl) — the DIFFERENTIAL
+# ORACLE for the differential test. Test-only; never linked into the crate/AIR.
 # Pinned GIT dep on the public repo (rev on origin/rust) so the differential is
 # REPRODUCIBLE on persvati/CI, not a local-path "green on my laptop" test.
 automatafl-logic = { git = "https://github.com/emberian/automatafl", rev = "253bafa5dcad7c40b4d71ac0861ee0c9728a7dcd" }
