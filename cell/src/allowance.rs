@@ -137,20 +137,9 @@ pub const KEY_SPENT_THIS_EPOCH: u32 = 2;
 /// running total a beneficiary/auditor can read.
 pub const KEY_SPENT_TOTAL: u32 = 3;
 
-/// Encode an `i64` as a 32-byte heap [`FieldElement`] (little-endian, low 8
-/// bytes). Round-trips with [`decode_i64`].
-pub fn encode_i64(value: i64) -> FieldElement {
-    let mut f = [0u8; 32];
-    f[0..8].copy_from_slice(&value.to_le_bytes());
-    f
-}
-
-/// Decode a heap field back to the `i64` it encodes (low 8 bytes).
-pub fn decode_i64(f: &FieldElement) -> i64 {
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&f[0..8]);
-    i64::from_le_bytes(buf)
-}
+// The `i64` <-> field codec is shared by every ledger; re-export the single
+// canonical definition so the encoding cannot drift between them.
+pub use crate::state::{decode_i64, encode_i64};
 
 /// The sealed terms of a rate-limited allowance: who may spend, in what asset,
 /// the per-epoch ceiling, the epoch length in blocks, and the block at which
@@ -723,19 +712,16 @@ mod tests {
             "the genuine committed counter rejects the over-spend"
         );
 
+        // Snapshot the GENUINE commitment (the object a light client / auditor
+        // holds) before tampering.
+        let genuine_commitment = cell.state_commitment();
+
         // Now FORGE the committed counter DOWN to 0 to fake full headroom.
         cell.state
             .set_heap(ALLOWANCE_COLL, KEY_SPENT_THIS_EPOCH, encode_i64(0));
         let forged_view = AllowanceState::read(&cell).unwrap();
+        let forged_commitment = cell.state_commitment();
 
-        // The forge is only "accepted" against the FORGED commitment — but that
-        // commitment is itself bound and DIVERGES from the genuine one a light
-        // client/auditor verifies. The committed state is part of what is checked
-        // (see `allowance_state_is_bound_into_commitment`): a holder comparing the
-        // cell's commitment against the genuine spend history sees the forged
-        // counter does not match. The same `check_spend` reads whatever is
-        // committed — so a verifier with the genuine commitment rejects, and the
-        // forged commitment is a different (detectable) object.
         assert_ne!(
             forged_view.terms_digest, // digest unchanged
             [0u8; 32],
@@ -750,6 +736,40 @@ mod tests {
         assert_eq!(
             forged_view.spent_total, 95,
             "the committed cumulative total still records the 95 genuinely spent — the forge contradicts it"
+        );
+
+        // THE ACTUAL DETECTION TEETH (what the old test never asserted): the
+        // `spent_this_epoch` counter is BOUND INTO THE STATE COMMITMENT, so
+        // forging it re-seals the cell to a DIFFERENT commitment. A holder of the
+        // genuine commitment (or the spend receipt chain) therefore sees the
+        // forged object does not match — the forge cannot be laundered past anyone
+        // who checks the commitment. Without heap-binding in the commitment this
+        // divergence would vanish and the forge would be undetectable.
+        assert_ne!(
+            genuine_commitment, forged_commitment,
+            "forging spent_this_epoch must change the state commitment — the committed \
+             counter is bound, so a verifier holding the genuine commitment detects the forge"
+        );
+
+        // And even against the FORGED view, `check_spend` STILL enforces the
+        // per-epoch ceiling: forging the baseline down cannot let a spend exceed
+        // the limit outright. A 150-spend (> the 100 ceiling) is refused even from
+        // the fake-zero baseline — the ceiling reads the committed counter and
+        // caps at `limit_per_epoch` regardless.
+        assert_eq!(
+            forged_view.check_spend(
+                &terms,
+                &Spend {
+                    amount: 150,
+                    at_block: 10_600
+                }
+            ),
+            Err(AllowanceError::ExceedsCeiling {
+                spent: 0,
+                amount: 150,
+                limit: 100
+            }),
+            "the ceiling still caps the forged view — a spend above the per-epoch limit is refused"
         );
     }
 
