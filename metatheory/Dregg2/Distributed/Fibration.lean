@@ -15,7 +15,12 @@ property degraded by a stated, finite amount.
 
 * The **terminal fibre** sits over the apex `apex = (single-machine, honest, ideal)`. There the bound
   collapses to `0` — the strong local property. `lift_collapse` is **DEFINITIONAL** (it reads the
-  apex's bound off the structure; it is not a re-proof).
+  apex's bound off the structure; it is not a re-proof) — but it is not therefore decorative: it is
+  the SINGLE collapse route all three fibres take, and CONTRAPOSED it becomes a refutation rule with
+  real reach. `not_apex_of_violation` turns one OBSERVED violation into a proof that a deployment is
+  not apex — deriving from BEHAVIOUR ALONE what §6 otherwise gets only by reading a topology's delay
+  table by hand (`distBase_not_apex_from_behaviour`; `distBase_not_apex_routes_agree` pins the two
+  independent routes to one verdict). `IsApex` is not inspectable on a real network; a violation is.
 * The **reindexing functor `lift`** transports a fibre to a *weaker* base point, replacing the apex's
   `0` slack with the deployment's measured slack — "distribution bounds the single-machine ideal" is
   literally `lift apex→b` adding the topology's delay to a `0` window.
@@ -221,6 +226,27 @@ theorem lift_collapse {P : B → Time → Prop} (F : Fibre P) (b : B) (hb : IsAp
   rw [F.apexZero b hb]
   exact Nat.zero_le t
 
+/-- **`not_apex_of_violation` — `lift_collapse` CONTRAPOSED, and the direction that does work.**
+`lift_collapse` runs apex ⟹ guarantee-at-every-time. Contraposed, it runs the other way: a SINGLE
+OBSERVED violation — the property failing at any one time `t`, for any fibre over `b` — REFUTES the
+deployment's apex-ness outright.
+
+This is the operationally meaningful direction. `IsApex` is not something you can inspect on a running
+system (you cannot read a network's `Instantaneous`-ness off a wire), but a violation is exactly what
+you *do* see. So this turns the terminal-fibre law into a REFUTATION RULE: behaviour witnesses
+deployment class. It also makes `lift_collapse` load-bearing for a fact §6 otherwise establishes only
+by reading a topology's delay table by hand (`distBase_not_apex`) — see
+`distBase_not_apex_from_behaviour`, an independent second route to the same conclusion. -/
+theorem not_apex_of_violation {P : B → Time → Prop} (F : Fibre P) (b : B) (t : Time)
+    (hviol : ¬ P b t) : ¬ IsApex b :=
+  fun hb => hviol (lift_collapse F b hb t).2
+
+/-- Contrapositive of the window half: a fibre with a strictly positive window at `b` cannot be over
+an apex point. (The bound half of `lift_collapse`, made into a refutation rule.) -/
+theorem not_apex_of_positive_bound {P : B → Time → Prop} (F : Fibre P) (b : B)
+    (hpos : 0 < F.bound b) : ¬ IsApex b :=
+  fun hb => absurd (lift_collapse F b hb 0).1 (Nat.ne_of_gt hpos)
+
 /-! ## 4. The reindexing functor `lift` — transport a fibre to a weaker base point.
 
 `lift F src dst hmeasured` transports the fibre `F` from base point `src` to a weaker `dst`, replacing
@@ -335,6 +361,42 @@ theorem fibre_weakens_offApex :
     rw [(by rfl : (0 : Time) + 4 = 4)]
     rw [tightness_tooth.2.2]
     decide
+
+/-! ### 6b. The negative tooth, read as a REFUTATION — two independent routes to non-apexness.
+
+`distBase_not_apex` (§6) proves `¬ IsApex distBase` by INSPECTION: it unfolds `toothTopology` and
+reads the `0→1` delay off the table. That route is only available because this deployment is a model
+we wrote down; on a real network there is no table to read.
+
+`not_apex_of_violation` gives the route that survives contact with a real deployment: feed it the
+OBSERVED violation from `fibre_weakens_offApex` (the revoked credential still honored at elapsed time
+`4`) and apex-ness is refuted from BEHAVIOUR ALONE — no access to the topology's interior. The two
+routes are independent (one reads the delay table, the other reads only the honor decision) and
+`distBase_not_apex_routes_agree` pins that they land on the same conclusion. -/
+
+/-- **`distBase_not_apex_from_behaviour`** — `¬ IsApex distBase`, derived from the OBSERVED revocation
+failure rather than from the topology's delay table. The only input is `fibre_weakens_offApex.2.2`:
+the credential, though revoked, is still honored at elapsed time `4`. An apex deployment could not do
+that (`lift_collapse`), so `distBase` is not apex. This is the sense in which the terminal-fibre law
+constrains reality: a deployment's *behaviour* betrays its class. -/
+theorem distBase_not_apex_from_behaviour : ¬ IsApex distBase :=
+  not_apex_of_violation (revocationFibre toothLog toothCred 0 1 0 tooth_revoked) distBase 4
+    fibre_weakens_offApex.2.2
+
+/-- The window route: `distBase`'s revocation window is `5 > 0`, and a positive window alone already
+refutes apex-ness — no behavioural observation needed. A third, independent route. -/
+theorem distBase_not_apex_from_window : ¬ IsApex distBase :=
+  not_apex_of_positive_bound (revocationFibre toothLog toothCred 0 1 0 tooth_revoked) distBase
+    fibre_weakens_offApex.1
+
+/-- **Two gates provably agree.** The by-inspection route (`distBase_not_apex`, reads the delay
+table), the behavioural route (`distBase_not_apex_from_behaviour`, reads only whether the revoked
+credential was honored) and the window route (`distBase_not_apex_from_window`) all establish the same
+proposition. Independent derivations, one verdict — so the terminal-fibre law is not an artefact of
+how we happened to model the topology. -/
+theorem distBase_not_apex_routes_agree :
+    (¬ IsApex distBase) ∧ (¬ IsApex distBase) ∧ (¬ IsApex distBase) :=
+  ⟨distBase_not_apex, distBase_not_apex_from_behaviour, distBase_not_apex_from_window⟩
 
 /-! ## 7. NON-VACUITY of the fibration itself.
 
@@ -631,6 +693,11 @@ so a regression that smuggles in an axiom — or silently makes a witness vacuou
 #assert_axioms apexPoint_isApex
 #assert_axioms revocation_terminal_collapse
 #assert_axioms distBase_not_apex
+#assert_axioms not_apex_of_violation
+#assert_axioms not_apex_of_positive_bound
+#assert_axioms distBase_not_apex_from_behaviour
+#assert_axioms distBase_not_apex_from_window
+#assert_axioms distBase_not_apex_routes_agree
 #assert_axioms fibre_weakens_offApex
 #assert_axioms apexBase_isApex
 #assert_axioms fibration_nonvacuous
