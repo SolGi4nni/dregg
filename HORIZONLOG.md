@@ -1,5 +1,37 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ #56 TIER-2 — MODEL agent-reach in the Lean KERNEL (retire the Rust authority divergence) (2026-07-17)
+The FENCE (`015d9ff67`) CLOSED the deployed loosening (the default producer no longer installs a cross-cell root
+write Rust rejects — agent≠target non-bearer roots fence to Rust as `AgentReach`, falsifier+canary green). But the
+fence is the band-aid: it keeps TWO authority implementations (producer DEFERS to Rust). THE THESIS FIX (ember:
+"replace Rust-with-bugs by Lean-with-proofs"): make the Lean root's authority ACTOR be `turn.agent` so `authorizedB`'s
+owner+cap disjuncts BECOME the agent-reach gate Rust enforces — then the producer is authoritative with NO Rust
+divergence to drift from. Scoped: `WireTurn.agent` is authority-DECORATIVE today (flows only into `turnHdrOf` at
+`Exec/FFI/Refine.lean:60`); thread it at `liftForestG w.turn.root` / an agent-reach conjunct in the `execFullForestG`
+root arm (`Exec/FullForestAuth.lean:515`, fail-closed staged-additive). Re-proof risk: `Spec/FunctionalRefinement.lean`
+(root `actor=cell` assumption), `Proof/Noninterference.lean:489` (relies on stateAuthB passing unconditionally). ⚑
+VK-LOCKSTEP: `authorizedFacetEffB` (`Exec/FacetAuthority.lean:256`) carries the identical owner disjunct, is a PARALLEL
+gate EMITTED into the STARK cap-open descriptor (`Circuit/Emit/CapOpenEmit.lean`) — must move agent-sourced in lockstep
+or the VK drifts. 67 `.lean` files reference `stateAuthB`. A dedicated metatheory+VK session — land proven + in-lockstep,
+NOT half in the shared tree. This is authority AIR IN LEAN (law #1, the correct substrate).
+
+## ⚑⚑ #55 CUTOVER — wire the completed self-cap gate into the DEPLOYED executor (2026-07-17)
+`recKDelegateOwned` (admit `t=delegator`, the ⊤ self-cap) + non-amplification PROVEN + first-grant falsifier are
+LANDED ADDITIVELY (`60a7c8d2d`, whole `Dregg2` green, `#assert_axioms`-clean). REMAINING = route the DEPLOYED
+`recKDelegate`/`recCDelegate` through the owned gate so a cell's FIRST self-grant admits (matching Rust
+`apply.rs:647`). Ripple (why additive, not mutated): the 18-component `DelegateSpec ↔ recCDelegate` iff + `delegateGuard`
+(`Circuit/Spec/authorityunattenuated.lean`), delegate/introduce witnesses, `CrossTurnFreshness`, `EffectsAuthority`,
+`execFull_delegate_grounds/_grants` (+ PerAsset), `ExecRefinementFull`, `CrossCellLTS`, `Polis/PolisAuthExecGraph`, and
+`LTS.authAbsStep_forward` — the last needs a reflexive self-edge / `SelfEndow` constructor (`Spec.Endow.holds_source`
+demands a held source edge the empty-caps owner lacks). Multi-file, multi-session; the proof groundwork is done.
+
+## ⚑ MCP `dregg_submit_turn` DROPS the effects array — a green that lies (2026-07-17, from #3)
+`node/src/mcp/handlers_act.rs:169` `tool_submit_turn` hardcodes `effects: vec![]` — it ACCEPTS the documented `effects`
+array in the tool schema but never wires it into the action. So an MCP-submitted turn is a state-advancing CHAINING
+receipt, NOT a proven slot write — the schema promises effect application it does not deliver. Surfaced writing
+`demo/hello-receipt-chain/` (#3). Fix: thread the schema `effects` into the built action (or reject if the handler
+genuinely cannot apply them — never silently drop). Small, but the "green that lies" class on the agent-facing surface.
+
 ## ⚠⚠⚠ AUTOMATAFL 11×11 — WRONG SUBSTRATE (Rust AIR = DEBT); must RE-AUTHOR IN LEAN (2026-07-17)
 ⚠ REVISED (I over-claimed "the game PROVES end-to-end ⚑⚑⚑" — that was wrong). What the night built is a **RUST AIR**
 (`dregg-automatafl/src/{air,moves,builder}.rs`), which is the anti-pattern we FIGHT (author AIR in LEAN, law #1;
