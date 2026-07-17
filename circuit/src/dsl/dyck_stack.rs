@@ -1,4 +1,4 @@
-//! `dregg-dyck-parse-v1`: the FIRST SLICE of the *parse-as-derivation* circuit
+//! `dregg-dyck-parse-v1`: the *parse-as-derivation* circuit
 //! (`docs/DESIGN-parse-as-derivation.md`, the zk-succinct path).
 //!
 //! This is the depth-bounded pushdown-stack extension of the deployed inter-row
@@ -15,36 +15,51 @@
 //! (`Dregg2.Crypto.CfgCompact.Replay`) of the one-bracket **Dyck** grammar
 //! `S → [ S ] | ε` (`CfgCompact.lean` `Reference`: `dyck`, rules `rBracket`/`rEmpty`)
 //! on its input word, with the parse's per-step commitments folded into a public
-//! `route_commitment`. The bundled witness proves acceptance of `"[]"` — the exact
-//! word `CfgCompact.Reference.brackets_replays` accepts via `[rBracket, rEmpty]`.
+//! `route_commitment`.
 //!
-//! # The stack discipline (honest sizing)
+//! # Slice 2: the variable-length RHS push with a remainder shift
 //!
-//! The design's §5 sketch says "`D = 2` stack". The **faithful** pushdown run for
-//! `"[]"` peaks at stack `[op, S, cl]` — depth **3** — the instant `rBracket` fires
-//! (`S ⟹ [ S ]` pushes three symbols). So the spike carries `D = 3` stack cells
-//! (`STACK0` = top). This is a real correction to the design's undercount, recorded
-//! so slice 2 sizes `D` to the true max stack depth (bracket-nesting `k` ⇒ depth
-//! `2k + 1`), not to the nesting number.
+//! Slice 1 wrote `rBracket`'s push as `next.STACK[0..3] = (op, S, cl)` and **ignored
+//! the stack below the popped `S`**. That was sound only while the remainder was
+//! empty — true for `"[]"`, false the moment a bracket nests under un-consumed stack.
+//! This slice implements the general form (`docs/DESIGN-parse-as-derivation.md` §2,
+//! hard-part #3): a production with RHS length `L` pops one cell and writes
 //!
-//! Likewise the run is **five action rows** (`rule, term, rule, term, done`), padded
-//! to a power of two with `done` self-loops — not the "2–3 rows" the sketch names.
+//! ```text
+//!   next.STACK[j] = rhs[j]                  for j < L          (the pushed RHS)
+//!   next.STACK[j] = local.STACK[j - (L-1)]  for L ≤ j < D      (the REMAINDER SHIFT)
+//!   local.STACK[i] == 0                     for i ≥ D - (L-1)  (the OVERFLOW GUARD)
+//! ```
+//!
+//! The remainder shift is what makes a nested word verify: `"[[]]"`'s second
+//! `rBracket` fires with `cl` still sitting under the popped `S`, and that `cl` must
+//! reappear beneath the pushed RHS or the closing bracket has nothing to match.
+//!
+//! The overflow guard is the honest statement of the depth bound: a push whose
+//! remainder does not fit in the `D`-wide buffer **REJECTS**. It never silently drops
+//! a symbol — dropping is exactly the slice-1 unsoundness, and the guard converts it
+//! into a refusal.
+//!
+//! # Stack sizing (honest)
+//!
+//! Stack cells hold **symbol ids**; `0` is the reserved EMPTY cell. The `rBracket`
+//! spike pushes three symbols for one popped `S`, so bracket-nesting `k` bounds the
+//! stack at depth `2k + 1`. `D = 5` therefore covers `k ≤ 2` — enough for both
+//! bundled witnesses: `"[]"` (peak 3) and `"[[]]"` (peak 4). A word needing more
+//! nesting than `D` allows is not mis-proved; it fails the overflow guard.
 //!
 //! # Symbol / rule encoding
 //!
-//! Stack cells hold **symbol ids**; `0` is the reserved EMPTY cell.
 //! `S = 1` (the sole nonterminal), `op = '[' = 2`, `cl = ']' = 3`.
 //! Rule ids: `0 = none` (term/done rows), `rBracket = 1` (`S → [ S ]`),
 //! `rEmpty = 2` (`S → ε`).
 //!
-//! # The bound this slice accepts (documented, not hidden)
+//! # What is still out of slice
 //!
-//! `rBracket`'s push writes `next.STACK[0..3] = (op, S, cl)` and **ignores the stack
-//! below the popped `S`** — sound only while that remainder is empty (which it is for
-//! `"[]"`, and for any input whose live prefix never nests a bracket under un-consumed
-//! stack). The general variable-length RHS push over a `W`-wide buffer with a
-//! remainder shift (`docs/DESIGN-parse-as-derivation.md` §2, hard-part #3) is slice-2
-//! work. This slice de-risks the *threading + tamper-bite* on the deployed primitives.
+//! The Lean inductive refinement (`parse_sat_imp_replay` — a satisfying trace
+//! *implies* a `CfgCompact.Replay`) is slice 3. So is the depth↔occupancy invariant
+//! (nothing yet ties `STACK_DEPTH` to which cells are nonzero); the boundaries and
+//! the per-action depth deltas pin the endpoints, not every intermediate cell.
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
@@ -74,9 +89,14 @@ pub const RULE_BRACKET: u32 = 1;
 /// `rEmpty : S → ε` (`CfgCompact.Reference.rEmpty`).
 pub const RULE_EMPTY: u32 = 2;
 
-/// Bounded stack depth carried in columns (top at `STACK0`). See the module header
-/// for why the `"[]"` spike needs `3`, not the design sketch's `2`.
-pub const STACK_D: usize = 3;
+/// Bounded stack depth carried in columns (top at `STACK0`). Bracket-nesting `k`
+/// needs `2k + 1`; `D = 5` covers `k ≤ 2` (`"[]"`, `"[[]]"`). Words that would exceed
+/// it fail the overflow guard rather than being mis-proved.
+pub const STACK_D: usize = 5;
+
+/// The RHS symbol lengths of the grammar's productions, for reference:
+/// `rBracket` pushes 3 (`op S cl`), `rEmpty` pushes 0.
+pub const RHS_LEN_BRACKET: usize = 3;
 
 // ============================================================================
 // Column / public-input indices
@@ -84,49 +104,63 @@ pub const STACK_D: usize = 3;
 
 /// Column indices for the Dyck-parse trace.
 pub mod col {
-    /// `STACK[0]` — the stack top (the symbol a `rule`/`term` step reads).
+    use super::STACK_D;
+
+    /// `STACK[i]` — cell `i` of the bounded stack (`STACK[0]` is the top, the symbol
+    /// a `rule`/`term` step reads). Valid for `i < STACK_D`.
+    pub const fn stack(i: usize) -> usize {
+        assert!(i < STACK_D, "stack cell index out of the D-wide buffer");
+        i
+    }
+
+    /// `STACK[0]` — the stack top.
     pub const STACK0: usize = 0;
-    /// `STACK[1]`.
+    /// `STACK[1]` — the first remainder cell (the top of what sits under a popped top).
     pub const STACK1: usize = 1;
-    /// `STACK[2]` — the deepest cell the `D = 3` spike carries.
+    /// `STACK[2]`.
     pub const STACK2: usize = 2;
+    /// `STACK[3]` — the first cell a `rBracket` remainder shift WRITES.
+    pub const STACK3: usize = 3;
+    /// `STACK[4]` — the deepest cell the `D = 5` buffer carries.
+    pub const STACK4: usize = 4;
+
     /// Current stack depth (pointer), pinned `0` at `done`, `1` at the first row.
-    pub const STACK_DEPTH: usize = 3;
+    pub const STACK_DEPTH: usize = STACK_D;
     /// The stack depth AFTER this row's action (witness helper; threaded into
     /// `next.STACK_DEPTH` by a `Transition`). Constrained per action selector.
-    pub const DEPTH_NEXT: usize = 4;
+    pub const DEPTH_NEXT: usize = STACK_D + 1;
     /// `STEP_KIND = rule` selector (binary).
-    pub const IS_RULE: usize = 5;
+    pub const IS_RULE: usize = STACK_D + 2;
     /// `STEP_KIND = term` selector (binary).
-    pub const IS_TERM: usize = 6;
+    pub const IS_TERM: usize = STACK_D + 3;
     /// `STEP_KIND = done` selector (binary).
-    pub const IS_DONE: usize = 7;
+    pub const IS_DONE: usize = STACK_D + 4;
     /// The production id this row fires (`RULE_*`); `RULE_NONE` on term/done rows.
-    pub const RULE_ID: usize = 8;
+    pub const RULE_ID: usize = STACK_D + 5;
     /// The input token read on a `term` step (the tape symbol at `INPUT_POS`).
-    pub const INPUT_TOKEN: usize = 9;
+    pub const INPUT_TOKEN: usize = STACK_D + 6;
     /// Input-tape pointer.
-    pub const INPUT_POS: usize = 10;
+    pub const INPUT_POS: usize = STACK_D + 7;
     /// `INPUT_POS + 1` (witness helper; threaded into `next.INPUT_POS` on a `term`).
-    pub const INPUT_POS_P1: usize = 11;
+    pub const INPUT_POS_P1: usize = STACK_D + 8;
     /// Rule selector: `1` iff this row fires `rBracket` (binary, `⊆ IS_RULE`).
-    pub const SEL_BRACKET: usize = 12;
+    pub const SEL_BRACKET: usize = STACK_D + 9;
     /// Rule selector: `1` iff this row fires `rEmpty` (binary, `⊆ IS_RULE`).
-    pub const SEL_EMPTY: usize = 13;
+    pub const SEL_EMPTY: usize = STACK_D + 10;
     /// Per-step commitment `hash_4_to_1(RULE_ID, STACK0, INPUT_TOKEN, 0)`.
-    pub const ENTRY_HASH: usize = 14;
+    pub const ENTRY_HASH: usize = STACK_D + 11;
     /// Rolling parse commitment up to and including this row.
-    pub const RUNNING_HASH: usize = 15;
+    pub const RUNNING_HASH: usize = STACK_D + 12;
     /// First-row selector (gates the running-hash seed).
-    pub const IS_FIRST: usize = 16;
+    pub const IS_FIRST: usize = STACK_D + 13;
     /// Fixed lane `= op` (a `Transition` source for pushing the constant `op`).
-    pub const LANE_OP: usize = 17;
+    pub const LANE_OP: usize = STACK_D + 14;
     /// Fixed lane `= cl`.
-    pub const LANE_CL: usize = 18;
+    pub const LANE_CL: usize = STACK_D + 15;
     /// Fixed lane `= S`.
-    pub const LANE_S: usize = 19;
+    pub const LANE_S: usize = STACK_D + 16;
     /// Fixed lane `= 0` (the EMPTY push source + the 4th entry-hash lane).
-    pub const LANE_ZERO: usize = 20;
+    pub const LANE_ZERO: usize = STACK_D + 17;
 }
 
 /// Public-input indices.
@@ -142,7 +176,7 @@ pub mod pi {
 }
 
 /// Trace width.
-pub const DYCK_WIDTH: usize = 21;
+pub const DYCK_WIDTH: usize = STACK_D + 18;
 
 /// Number of public inputs.
 pub const DYCK_PI_COUNT: usize = 4;
@@ -227,6 +261,84 @@ fn gated_thread(sel: usize, next_col: usize, local_col: usize) -> ConstraintExpr
 }
 
 // ============================================================================
+// The stack-discipline constraint groups
+// ============================================================================
+
+/// The general **variable-length RHS push with remainder shift**, gated on `sel`.
+///
+/// A production `A → γ` fires by popping `local.STACK[0]` (the matched `A`) and
+/// writing `γ` over the top, with everything that sat under `A` shifted by
+/// `|γ| − 1` cells. `rhs_lanes` names the fixed lane columns holding `γ`'s symbols
+/// (they are pinned to constants by [`lane_fixes`]), so the push reads the RHS from
+/// the trace via plain `Transition`s — the same primitive `dfa_routing` threads its
+/// single `CURRENT_STATE` with.
+///
+/// Emits three groups:
+///
+/// 1. **push** — `next.STACK[j] == rhs_lanes[j]` for `j < |γ|`;
+/// 2. **remainder shift** — `next.STACK[j] == local.STACK[j − (|γ| − 1)]` for
+///    `|γ| ≤ j < D`. This is the tooth slice 1 lacked: the stack under the popped
+///    cell survives, reappearing beneath the pushed RHS.
+/// 3. **overflow guard** — `local.STACK[i] == 0` for every `i` whose shifted
+///    destination `i + (|γ| − 1)` falls outside the `D`-wide buffer. Without this the
+///    shift would silently DROP those symbols, which is precisely the slice-1 hole in
+///    a wider disguise. With it, a push that does not fit REJECTS.
+///
+/// Requires `|γ| ≥ 1` (a shrinking RHS is [`pop_shift`]'s job) and `|γ| ≤ D`.
+fn push_with_remainder_shift(sel: usize, rhs_lanes: &[usize]) -> Vec<ConstraintExpr> {
+    let l = rhs_lanes.len();
+    assert!((1..=STACK_D).contains(&l), "RHS must fit the D-wide buffer");
+    let shift = l - 1; // pop 1, push l  ⇒  the remainder moves up by l - 1
+    let mut out = Vec::new();
+
+    // 1. the pushed RHS occupies cells 0..l.
+    for (j, &lane) in rhs_lanes.iter().enumerate() {
+        out.push(gated_thread(sel, col::stack(j), lane));
+    }
+    // 2. the remainder (everything that was under the popped top) shifts up by `shift`.
+    for j in l..STACK_D {
+        out.push(gated_thread(sel, col::stack(j), col::stack(j - shift)));
+    }
+    // 3. cells whose shifted destination leaves the buffer must be EMPTY.
+    for i in (STACK_D - shift)..STACK_D {
+        out.push(gated(sel, eq_const(col::stack(i), SYM_EMPTY)));
+    }
+    out
+}
+
+/// The **pop / shift-down**, gated on `sel`: `next.STACK[j] == local.STACK[j + 1]`,
+/// with the vacated deepest cell forced EMPTY. Used by `rEmpty` (`S → ε`: pop 1,
+/// push 0) and by a `term` step (consume the matched terminal). This is
+/// [`push_with_remainder_shift`] at `|γ| = 0` — written out because there is no lane
+/// to read the (absent) RHS from and the shift runs the other direction.
+fn pop_shift(sel: usize) -> Vec<ConstraintExpr> {
+    let mut out = Vec::new();
+    for j in 0..STACK_D - 1 {
+        out.push(gated_thread(sel, col::stack(j), col::stack(j + 1)));
+    }
+    out.push(gated_thread(sel, col::stack(STACK_D - 1), col::LANE_ZERO));
+    out
+}
+
+/// The **hold**, gated on `sel`: every stack cell threads unchanged. `done` rows (and
+/// the `done` self-loop padding) take no action, so the stack must not move.
+fn hold_stack(sel: usize) -> Vec<ConstraintExpr> {
+    (0..STACK_D)
+        .map(|j| gated_thread(sel, col::stack(j), col::stack(j)))
+        .collect()
+}
+
+/// The fixed constant lanes (`Transition` sources for pushing constants).
+fn lane_fixes() -> Vec<ConstraintExpr> {
+    vec![
+        eq_const(col::LANE_OP, SYM_OP),
+        eq_const(col::LANE_CL, SYM_CL),
+        eq_const(col::LANE_S, SYM_S),
+        eq_const(col::LANE_ZERO, SYM_EMPTY),
+    ]
+}
+
+// ============================================================================
 // Descriptor
 // ============================================================================
 
@@ -246,8 +358,9 @@ fn gated_thread(sel: usize, next_col: usize, local_col: usize) -> ConstraintExpr
 ///   `Gated` equalities, the shape of the design §2 `rule`/`term` teeth).
 /// - **stack threading** (the heart) — the multi-cell generalization of
 ///   `dfa_routing`'s single `Transition{CURRENT_STATE ← NEXT_STATE}`
-///   (`dfa_routing.rs:173`): `rBracket` pushes `(op, S, cl)`; `rEmpty` and `term`
-///   shift the stack down one cell. Depth threads through `DEPTH_NEXT`.
+///   (`dfa_routing.rs:173`): `rBracket` fires [`push_with_remainder_shift`] with
+///   `γ = op S cl`; `rEmpty` and `term` fire [`pop_shift`]; `done` fires
+///   [`hold_stack`]. Depth threads through `DEPTH_NEXT`.
 /// - **input tape** — `term` advances `INPUT_POS` by one; every non-`term` step
 ///   holds it (`Transition`s on the pointer).
 /// - **running commitment** — `ENTRY_HASH == hash_4_to_1(RULE_ID, STACK0,
@@ -261,7 +374,7 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
         kind,
     };
 
-    let constraints = vec![
+    let mut constraints = vec![
         // ---- selector booleans -------------------------------------------
         ConstraintExpr::Binary { col: col::IS_RULE },
         ConstraintExpr::Binary { col: col::IS_TERM },
@@ -349,18 +462,17 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
         // done step: stack empty (top == 0) and depth == 0.
         gated(col::IS_DONE, eq_const(col::STACK0, SYM_EMPTY)),
         gated(col::IS_DONE, eq_const(col::STACK_DEPTH, 0)),
-        // ---- lane fixes (constant push sources) ---------------------------
-        eq_const(col::LANE_OP, SYM_OP),
-        eq_const(col::LANE_CL, SYM_CL),
-        eq_const(col::LANE_S, SYM_S),
-        eq_const(col::LANE_ZERO, 0),
         // ---- input-pointer helper -----------------------------------------
         diff_is(col::INPUT_POS_P1, col::INPUT_POS, 1), // INPUT_POS_P1 == INPUT_POS + 1
         // ---- depth-delta helper (per action) ------------------------------
         // rBracket: depth += 2 (pop 1, push 3).
         gated(
             col::SEL_BRACKET,
-            diff_is(col::DEPTH_NEXT, col::STACK_DEPTH, 2),
+            diff_is(
+                col::DEPTH_NEXT,
+                col::STACK_DEPTH,
+                RHS_LEN_BRACKET as i64 - 1,
+            ),
         ),
         // rEmpty: depth -= 1 (pop 1, push 0).
         gated(
@@ -407,19 +519,22 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
                 local_col: col::INPUT_POS,
             }),
         },
-        // ---- stack threading: rBracket push (op, S, cl) -------------------
-        gated_thread(col::SEL_BRACKET, col::STACK0, col::LANE_OP),
-        gated_thread(col::SEL_BRACKET, col::STACK1, col::LANE_S),
-        gated_thread(col::SEL_BRACKET, col::STACK2, col::LANE_CL),
-        // ---- stack threading: rEmpty pop (shift down one cell) ------------
-        gated_thread(col::SEL_EMPTY, col::STACK0, col::STACK1),
-        gated_thread(col::SEL_EMPTY, col::STACK1, col::STACK2),
-        gated_thread(col::SEL_EMPTY, col::STACK2, col::LANE_ZERO),
-        // ---- stack threading: term pop (shift down one cell) --------------
-        gated_thread(col::IS_TERM, col::STACK0, col::STACK1),
-        gated_thread(col::IS_TERM, col::STACK1, col::STACK2),
-        gated_thread(col::IS_TERM, col::STACK2, col::LANE_ZERO),
     ];
+
+    // ---- lane fixes (constant push sources) -------------------------------
+    constraints.extend(lane_fixes());
+
+    // ---- stack threading ---------------------------------------------------
+    // rBracket: the general push `S → op S cl` with the remainder shift + overflow guard.
+    constraints.extend(push_with_remainder_shift(
+        col::SEL_BRACKET,
+        &[col::LANE_OP, col::LANE_S, col::LANE_CL],
+    ));
+    // rEmpty (`S → ε`) and term: pop the top, shift the rest down.
+    constraints.extend(pop_shift(col::SEL_EMPTY));
+    constraints.extend(pop_shift(col::IS_TERM));
+    // done: the machine has stopped; the stack holds.
+    constraints.extend(hold_stack(col::IS_DONE));
 
     // Degree: the gated rule-membership polynomial is degree 3 (selector · quadratic);
     // everything else is ≤ 2. Keep headroom to match the derivation descriptor envelope.
@@ -471,33 +586,40 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
         },
     ];
 
+    let mut columns = Vec::with_capacity(DYCK_WIDTH);
+    for i in 0..STACK_D {
+        columns.push(column(
+            &format!("stack{i}"),
+            col::stack(i),
+            ColumnKind::Value,
+        ));
+    }
+    columns.extend([
+        column("stack_depth", col::STACK_DEPTH, ColumnKind::Value),
+        column("depth_next", col::DEPTH_NEXT, ColumnKind::Value),
+        column("is_rule", col::IS_RULE, ColumnKind::Selector),
+        column("is_term", col::IS_TERM, ColumnKind::Selector),
+        column("is_done", col::IS_DONE, ColumnKind::Selector),
+        column("rule_id", col::RULE_ID, ColumnKind::Value),
+        column("input_token", col::INPUT_TOKEN, ColumnKind::Value),
+        column("input_pos", col::INPUT_POS, ColumnKind::Value),
+        column("input_pos_p1", col::INPUT_POS_P1, ColumnKind::Value),
+        column("sel_bracket", col::SEL_BRACKET, ColumnKind::Selector),
+        column("sel_empty", col::SEL_EMPTY, ColumnKind::Selector),
+        column("entry_hash", col::ENTRY_HASH, ColumnKind::Hash),
+        column("running_hash", col::RUNNING_HASH, ColumnKind::Hash),
+        column("is_first", col::IS_FIRST, ColumnKind::Selector),
+        column("lane_op", col::LANE_OP, ColumnKind::Value),
+        column("lane_cl", col::LANE_CL, ColumnKind::Value),
+        column("lane_s", col::LANE_S, ColumnKind::Value),
+        column("lane_zero", col::LANE_ZERO, ColumnKind::Value),
+    ]);
+
     CircuitDescriptor {
         name: name.to_string(),
         trace_width: DYCK_WIDTH,
         max_degree,
-        columns: vec![
-            column("stack0", col::STACK0, ColumnKind::Value),
-            column("stack1", col::STACK1, ColumnKind::Value),
-            column("stack2", col::STACK2, ColumnKind::Value),
-            column("stack_depth", col::STACK_DEPTH, ColumnKind::Value),
-            column("depth_next", col::DEPTH_NEXT, ColumnKind::Value),
-            column("is_rule", col::IS_RULE, ColumnKind::Selector),
-            column("is_term", col::IS_TERM, ColumnKind::Selector),
-            column("is_done", col::IS_DONE, ColumnKind::Selector),
-            column("rule_id", col::RULE_ID, ColumnKind::Value),
-            column("input_token", col::INPUT_TOKEN, ColumnKind::Value),
-            column("input_pos", col::INPUT_POS, ColumnKind::Value),
-            column("input_pos_p1", col::INPUT_POS_P1, ColumnKind::Value),
-            column("sel_bracket", col::SEL_BRACKET, ColumnKind::Selector),
-            column("sel_empty", col::SEL_EMPTY, ColumnKind::Selector),
-            column("entry_hash", col::ENTRY_HASH, ColumnKind::Hash),
-            column("running_hash", col::RUNNING_HASH, ColumnKind::Hash),
-            column("is_first", col::IS_FIRST, ColumnKind::Selector),
-            column("lane_op", col::LANE_OP, ColumnKind::Value),
-            column("lane_cl", col::LANE_CL, ColumnKind::Value),
-            column("lane_s", col::LANE_S, ColumnKind::Value),
-            column("lane_zero", col::LANE_ZERO, ColumnKind::Value),
-        ],
+        columns,
         constraints,
         boundaries,
         public_input_count: DYCK_PI_COUNT,
@@ -533,7 +655,7 @@ pub fn dyck_rule_table_commitment() -> BabyBear {
 }
 
 // ============================================================================
-// Trace generation — the honest accepting run of "[]"
+// Trace generation — honest accepting runs
 // ============================================================================
 
 /// One machine action, before power-of-two padding.
@@ -564,13 +686,43 @@ pub fn build_brackets_witness() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     build_witness(&input, &actions)
 }
 
+/// Build the accepting-parse trace + public inputs for the **nested** word `"[[]]"`
+/// (`[op, op, cl, cl]`) — the slice-2 witness.
+///
+/// `S ⟹ [S] ⟹ [[S]] ⟹ [[]]`, replayed as
+/// `rule rBracket · term '[' · rule rBracket · term '[' · rule rEmpty · term ']' ·
+/// term ']' · done` — exactly 8 rows, no padding.
+///
+/// This is the word slice 1 could not verify: the SECOND `rBracket` (row 2) fires
+/// with the stack at `[S, cl]`, so the outer `cl` sits under the popped `S` and must
+/// survive the push. The remainder shift carries it to `STACK3`, whence the two
+/// `term ']'` rows consume it. Without the shift the run has nothing to close with.
+pub fn build_nested_witness() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    let input: Vec<u32> = vec![SYM_OP, SYM_OP, SYM_CL, SYM_CL];
+    let actions = vec![
+        Action::Rule(RULE_BRACKET),
+        Action::Term(SYM_OP),
+        Action::Rule(RULE_BRACKET),
+        Action::Term(SYM_OP),
+        Action::Rule(RULE_EMPTY),
+        Action::Term(SYM_CL),
+        Action::Term(SYM_CL),
+        Action::Done,
+    ];
+    build_witness(&input, &actions)
+}
+
 /// General trace builder: fold `actions` over the pushdown machine, laying out one
 /// row per action and padding to a power of two with `done`. Used by
-/// [`build_brackets_witness`] and by the tamper test's honest baseline.
+/// [`build_brackets_witness`], [`build_nested_witness`], and by the tamper test's
+/// honest baseline.
 ///
 /// This is the prover-side companion of the descriptor: it fills every witness
 /// helper column (`DEPTH_NEXT`, `INPUT_POS_P1`, `SEL_*`, the lanes, the running
-/// hash) so the honest run satisfies the descriptor.
+/// hash) so the honest run satisfies the descriptor. The live stack is a `Vec`, so
+/// the push here is the *unbounded* pushdown step; the descriptor's overflow guard is
+/// what refuses a run whose stack outgrows the `D`-wide buffer, and
+/// [`build_witness`] panics rather than emit such a truncated row.
 pub fn build_witness(input: &[u32], actions: &[Action]) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let table_commitment = dyck_rule_table_commitment();
 
@@ -594,9 +746,13 @@ pub fn build_witness(input: &[u32], actions: &[Action]) -> (Vec<Vec<BabyBear>>, 
                 running: &mut BabyBear,
                 first: bool|
      -> Vec<BabyBear> {
+        assert!(
+            stack.len() <= STACK_D,
+            "the live stack ({}) outgrew the D = {STACK_D} buffer — widen STACK_D; \
+             the descriptor's overflow guard would REJECT a truncated row",
+            stack.len()
+        );
         let top = stack.first().copied().unwrap_or(SYM_EMPTY);
-        let s1 = stack.get(1).copied().unwrap_or(SYM_EMPTY);
-        let s2 = stack.get(2).copied().unwrap_or(SYM_EMPTY);
         let depth = stack.len() as u32;
         let entry = hash_4_to_1(&[
             BabyBear::new(rule_id),
@@ -610,9 +766,9 @@ pub fn build_witness(input: &[u32], actions: &[Action]) -> (Vec<Vec<BabyBear>>, 
             *running = hash_2_to_1(*running, entry);
         }
         let mut row = vec![BabyBear::ZERO; DYCK_WIDTH];
-        row[col::STACK0] = BabyBear::new(top);
-        row[col::STACK1] = BabyBear::new(s1);
-        row[col::STACK2] = BabyBear::new(s2);
+        for i in 0..STACK_D {
+            row[col::stack(i)] = BabyBear::new(stack.get(i).copied().unwrap_or(SYM_EMPTY));
+        }
         row[col::STACK_DEPTH] = BabyBear::new(depth);
         row[col::DEPTH_NEXT] = BabyBear::new(depth_next);
         row[col::IS_RULE] = BabyBear::new(kind.0 as u32);
@@ -639,11 +795,14 @@ pub fn build_witness(input: &[u32], actions: &[Action]) -> (Vec<Vec<BabyBear>>, 
         let first = i == 0;
         match *action {
             Action::Rule(rule_id) => {
-                // depth after: pop 1, push |rhs|.
+                // depth after: pop 1, push |rhs| — and the REMAINDER (everything under
+                // the popped top) rides along, which is the slice-2 correction.
                 let (sel_bracket, sel_empty, new_stack) = match rule_id {
                     RULE_BRACKET => {
-                        // pop S, push [op, S, cl] (rest below assumed empty — the D=3 bound).
-                        (1u32, 0u32, vec![SYM_OP, SYM_S, SYM_CL])
+                        // pop S, push [op, S, cl] OVER the surviving remainder.
+                        let mut s = vec![SYM_OP, SYM_S, SYM_CL];
+                        s.extend_from_slice(&stack[1..]);
+                        (1u32, 0u32, s)
                     }
                     RULE_EMPTY => {
                         // pop S, push nothing → shift down.
@@ -707,8 +866,6 @@ pub fn build_witness(input: &[u32], actions: &[Action]) -> (Vec<Vec<BabyBear>>, 
 
     // Pad to a power of two with `done` self-loops (stack empty, tape at end).
     while rows.len() < n_pad {
-        let i = rows.len();
-        let _ = i;
         rows.push(emit(
             &stack,
             0,
@@ -836,5 +993,38 @@ mod tests {
             dyck_satisfied(&desc, &trace, &pi),
             "the honest '[]' parse must satisfy the descriptor"
         );
+    }
+
+    #[test]
+    fn nested_brackets_accepts() {
+        let desc = dyck_parse_descriptor(NAME);
+        let (trace, pi) = build_nested_witness();
+        assert!(
+            dyck_satisfied(&desc, &trace, &pi),
+            "the honest '[[]]' parse must satisfy the descriptor (the remainder shift)"
+        );
+    }
+
+    /// The nested run's stack really does carry a remainder under a pushed RHS: at the
+    /// SECOND `rBracket` (row 2) the stack is `[S, cl]`, and the row after it is
+    /// `[op, S, cl, cl]` — the trailing `cl` is the shifted remainder at `STACK3`.
+    #[test]
+    fn nested_run_exercises_the_remainder() {
+        let (trace, _pi) = build_nested_witness();
+        assert_eq!(trace[2][col::STACK0], BabyBear::new(SYM_S));
+        assert_eq!(
+            trace[2][col::STACK1],
+            BabyBear::new(SYM_CL),
+            "the remainder"
+        );
+        assert_eq!(trace[3][col::STACK0], BabyBear::new(SYM_OP));
+        assert_eq!(trace[3][col::STACK1], BabyBear::new(SYM_S));
+        assert_eq!(trace[3][col::STACK2], BabyBear::new(SYM_CL));
+        assert_eq!(
+            trace[3][col::STACK3],
+            BabyBear::new(SYM_CL),
+            "the remainder must survive the push, shifted by |rhs| - 1 = 2"
+        );
+        assert_eq!(trace[3][col::STACK_DEPTH], BabyBear::new(4));
     }
 }
