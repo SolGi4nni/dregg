@@ -28,6 +28,7 @@ name = "webauth_core"
 path = "src/lib.rs"
 
 [dependencies]
+hex = "0.4"
 # The dga1_ credential core (RootKey/Credential/Caveat/Pred/Context/Refusal).
 dregg-agent = { path = "../dregg-agent" }
 # CellId::derive_raw — the account id IS the substrate identity-cell id.

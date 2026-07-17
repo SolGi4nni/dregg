@@ -38,6 +38,7 @@ pub mod config;
 pub mod credext;
 pub mod grant;
 pub mod json;
+pub mod link_claim;
 pub mod observe;
 pub mod ratelimit;
 pub mod replay;
@@ -247,7 +248,11 @@ pub fn subject_of_credential(cred: &Credential) -> Option<String> {
     Some(format!("dregg:{}", &cred.tail_hex()[..16]))
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// Constant-time byte-slice equality: returns as soon as the lengths differ,
+/// otherwise ORs the XOR of every byte pair so the timing does not leak where
+/// the first mismatch is. The single copy shared by every tag comparison in
+/// this crate.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
