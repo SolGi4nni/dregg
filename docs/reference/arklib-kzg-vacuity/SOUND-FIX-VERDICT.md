@@ -9,11 +9,19 @@ and reading the theorem *statements*, not trusting the lane's summary.**
 
 Nothing here is filed, pushed, or PR'd.
 
-**⚑ STATUS UPDATE — the end-to-end sound argument is COMPLETE.** The single capstone
-`GgmEndToEnd.tSdh_ggm_sound` is a `sorry`-free upper bound on ArkLib's **real** `tSdhExperiment`,
+**⚑ STATUS UPDATE — the end-to-end sound argument is COMPLETE, in BOTH standard GGM models.** The single
+capstone `GgmEndToEnd.tSdh_ggm_sound` is a `sorry`-free upper bound on ArkLib's **real** `tSdhExperiment`,
 `≤ (C(fuel+D+4,2)·D + (D+1))/(p−1)` (a genuine `< 1` in the standard regime,
 `tSdh_ggm_sound_lt_one`), quantifying over the **image of the generic embedding** `embed` — the class
-that escapes the vacuity. Independently rebuilt from the committed source against ArkLib `d72f8392`:
+that escapes the vacuity. This wired capstone is the **Maurer explicit-equality** model (the adversary
+tests handle pairs by explicit `Move.query` queries; the all-pairs count is a sound over-count here). The
+**Shoup random-encoding** model — the adversary comparing all held encodings *freely* via the full
+equality matrix `eqPattern`, no `query` move, where the same all-pairs count is *tight* — is now proved
+**standalone** as `GgmShoup.shoup_ggm_sound` (commit `a97a7c7c1`) at the identical bound, with the
+matrix-valued identical-until-bad hybrid `runShoup_congr_off_bad` PROVEN. Earlier drafts mislabelled the
+wired capstone "Shoup random-encoding"; that label belongs to the standalone `GgmShoup` theorem, and the
+capstone is corrected to Maurer. Wiring Shoup into ArkLib (a Tier-2 embed) is optional and redundant —
+Maurer is the wired track; the injective encoding `σ` folds away in both models and is never mechanized. Independently rebuilt from the committed source against ArkLib `d72f8392`:
 `#print axioms tSdh_ggm_sound` = `[propext, Classical.choice, Quot.sound]`, no `sorryAx`; the full
 spine (`embed`, `embed_run_correspondence`, `experiment_eq_count`, `rand_encoding_bound_D_of_run`,
 `hdeg_out_of_run`, `hdeg_handles_of_run`, `groupWinSet_eq_realWinSet`, `card_realWinSet_le_encoding_D`)
@@ -43,7 +51,8 @@ closure printed. All are `sorry`-free with axioms exactly `[propext, Classical.c
 | `GgmDegreeDischarge.lean` (DEGREE, real oracle) | `hdeg_out_of_run`, `hdeg_handles_of_run`, `rand_encoding_bound_D_of_run`, `runTable_natDegree_le` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
 | `GgmProbThreading.lean` (PROBCOMP) | `experiment_eq_count`, `game_collapse` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
 | `GgmEmbed.lean` (EMBEDDING) | `embed`, `embed_run_correspondence` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
-| `GgmEndToEnd.lean` (**⚑ CAPSTONE**) | `tSdh_ggm_sound`, `tSdh_ggm_sound_lt_one` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
+| `GgmEndToEnd.lean` (**⚑ CAPSTONE**, Maurer explicit-equality, wired) | `tSdh_ggm_sound`, `tSdh_ggm_sound_lt_one` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
+| `GgmShoup.lean` (**⚑ SHOUP random-encoding**, standalone) | `shoup_ggm_sound`, `shoup_ggm_sound_lt_one`, `runShoup_congr_off_bad`, `realWinSetShoup_subset`, `card_realWinSetShoup_le_allPairs` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
 | `AlgebraicTSdh.lean` (novel) | `algExperiment_le`, `alg_survives_attack`, `algExperiment_zeroPoly` (canary) | exit 0 | clean |
 | `RepairSurvives.lean` (extraction) | `binding_reduces_to_tSdh`, `repair_survives_attack`, `t_sdh_cond_of_two_valid_openings` | exit 0 | clean |
 | `KzgQDlogVacuity.lean` (qdlog) | `not_qDlogAssumption`, `qDlogExperiment_trapdoorAdversary`, `experiment_discriminates` (canary) | exit 0 | clean |
@@ -117,12 +126,16 @@ and it delivers a real `ε`.
   axioms `[propext, Classical.choice, Quot.sound]`. **The identical-until-bad hybrid is PROVEN by
   induction** (`runAux_congr_of_agree`), not assumed; `fuel = 0` recovers the static number exactly.
   Two residuals remain (see PAPER §9.2), named not faked, and **both narrowed** by the three new lemma
-  files: (i) the *classical quadratic* `~(q_G+D)²(D+1)/(p−1)` — Shoup's *random-encoding* model (free
-  equality comparison → bad event over all table pairs) — is now MECHANIZED at the counting level as
+  files: (i) the *classical quadratic* `~(q_G+D)²(D+1)/(p−1)` — the all-table-pairs collision-counting
+  shape — is MECHANIZED at the counting level as
   `GgmRandomEncoding.rand_encoding_bound : ε ≤ (C(n,2)·2D + (D+1))/(p−1)` with `n = fuel+D+4`, the
   all-table-pairs bad event and the table-size bound both THEOREMS (`badSet_subset_pairRootUnion`,
-  `card_handlePolys_le`), **modulo** the whole-table degree hypothesis `hdeg_handles`; our tighter
-  linear-in-queries number remains the honest bound for the model where equality costs a query; (ii)
+  `card_handlePolys_le`), **modulo** the whole-table degree hypothesis `hdeg_handles`; that all-pairs
+  count is a sound *over-count* in the Maurer model (only queried pairs collide), and the genuine
+  **Shoup random-encoding** model — free comparison, where the same count is *tight* — is now a proved
+  standalone theorem `GgmShoup.shoup_ggm_sound` (the `eqPattern` free-comparison adversary, hybrid
+  `runShoup_congr_off_bad` PROVEN); our tighter linear-in-queries number remains the honest Maurer bound
+  for the model where equality costs a query; (ii)
   the degree facts still enter as hypotheses, but the SRS degree invariant is now proved
   **structurally** — `GgmDegreeInvariant.degree_invariant_paired : 2D` under the two-sorted pairing
   discipline, with the naive flat `2D` claim REFUTED (`flat_2D_bound_false`, `X⁴` at `D=1`). Crucially
@@ -198,17 +211,28 @@ number holds; both are now closed on the critical path, with the end-to-end caps
   mechanized candidate that delivers a real `ε = (D+1)/(p-1) < 1` proven for the whole generic
   adversary type. Scope it as **static** every time.
 
-- **End-to-end t-SDH soundness on ArkLib's real experiment → `GgmEndToEnd.lean` (MECHANIZED, COMPLETE).**
+- **End-to-end t-SDH soundness on ArkLib's real experiment → `GgmEndToEnd.lean` (MECHANIZED, COMPLETE) —
+  the Maurer explicit-equality model.**
   The capstone `tSdh_ggm_sound` composes every leg into one `sorry`-free bound
   `tSdhExperiment D (embed strat) ≤ (C(fuel+D+4,2)·D + (D+1))/(p−1)` over the image of the generic
   embedding (`< 1` in the standard regime, `tSdh_ggm_sound_lt_one`), axioms exactly
-  `[propext, Classical.choice, Quot.sound]`. This is the sound-fix goal fully met at the GGM level.
+  `[propext, Classical.choice, Quot.sound]`. This is the sound-fix goal fully met at the GGM level, in
+  the Maurer model (explicit `Move.query` equality; all-pairs count a sound over-count).
+- **Both standard GGM models covered → `GgmShoup.lean` (MECHANIZED, standalone) — the Shoup
+  random-encoding model.** `shoup_ggm_sound` proves the *same* bound `≤ (C(fuel+D+4,2)·D + (D+1))/(p−1)`
+  for the free-comparison `ShoupStrat` adversary (full equality matrix `eqPattern`, no `query` move,
+  all-pairs count TIGHT), the matrix-valued identical-until-bad hybrid `runShoup_congr_off_bad` PROVEN,
+  degree invariants discharged. Standalone (`1 ≤ D`, `2 ≤ p`, `Fact (Nat.Prime p)`; no group or
+  `SampleableType` condition). This is the theorem the "random-encoding" claim now names; wiring it into
+  ArkLib is optional and redundant, Maurer being the wired track.
 - **Adaptive numeric bound (explicit-oracle GGM) → `GgmAdaptive.lean` (MECHANIZED).** The
   generic-group oracle that was absent from Mathlib/VCVio is now built, and the adaptive `q`-query
   bound `(fuel·Δ + (D+1))/(p−1)` is proven sorry-free with the identical-until-bad hybrid mechanized
   by induction. The follow-on files (PAPER §9.1) then complete the chain: `GgmRandomEncoding.lean`
-  mechanizes the classical **quadratic** Shoup random-encoding number `(C(n,2)·2D + (D+1))/(p−1)` at the
-  counting level (all-table-pairs bad event + table size, both THEOREMS); `GgmDegreeDischarge.lean`
+  mechanizes the **quadratic** all-pairs collision-counting core `(C(n,2)·2D + (D+1))/(p−1)` at the
+  counting level (all-table-pairs bad event + table size, both THEOREMS) — a sound over-count for the
+  Maurer capstone, and the tight count for the standalone **Shoup random-encoding** theorem
+  `GgmShoup.shoup_ggm_sound`; `GgmDegreeDischarge.lean`
   **discharges** the degree invariant on the real (linear, pairing-free) `runTable` via its `_of_run`
   theorems (`GgmDegreeInvariant.lean`'s `2D` structural bound is retained as the off-path pairing-aware
   ceiling); `GgmArkLibTransport.lean` mechanizes the **condition-level** field→group transport against
