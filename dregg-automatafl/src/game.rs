@@ -40,6 +40,7 @@ use dregg_app_framework::{
 use dregg_cell::program::HeapAtom;
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
+use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
 use spween_dregg::{CompiledStory, WorldCell, WorldError};
 
 use crate::reference::{AUTO, Board, Coord, VAC};
@@ -168,8 +169,34 @@ impl Deployment {
             .collect()
     }
 
-    /// The hand-rolled play-teeth program (the commit → reveal → resolve discipline).
+    /// The hand-rolled play-teeth program (the commit → reveal → resolve discipline),
+    /// with the ONE-SHOT genesis guard installed (the deployed program).
     pub fn program(&self) -> CellProgram {
+        self.build_program(true)
+    }
+
+    /// **CANARY ONLY — the historical write-hatch, deliberately reopened.** The program
+    /// with the genesis guard REMOVED: genesis carries EMPTY teeth and the play cases do
+    /// NOT freeze the sentinel — the byte-identical pre-fix program. A post-deploy
+    /// `apply_raw(GENESIS, [SetField(slot, V)])` this build ADMITS the real
+    /// [`Self::program`] REFUSES, which proves the one-shot guard is load-bearing.
+    #[doc(hidden)]
+    pub fn program_hatch_reopened(&self) -> CellProgram {
+        self.build_program(false)
+    }
+
+    /// Build the play teeth. When `oneshot` (the deployed program), the genesis case is
+    /// the `0 → 1` one-shot on [`spween_dregg::GENESIS_DONE_EXT_KEY`]
+    /// ([`genesis_oneshot_teeth`]: `Equals{1} ∧ DeltaEquals{1}`, admissible exactly once
+    /// at deploy/seed, jointly unsatisfiable for every later genesis turn) and every
+    /// non-genesis case FREEZES that sentinel ([`genesis_sentinel_freeze`]), so a
+    /// post-deploy genesis staple is refused regardless of which slot it targets — with
+    /// no per-slot dependence — and no move can reset the sentinel to re-open genesis.
+    /// `WorldCell` births the sentinel at deploy and injects the `0 → 1` write on the
+    /// `genesis` method automatically (it keys off this genesis-case `HeapField`). When
+    /// `false`, the historical permissive genesis (the universal write-hatch) — canary
+    /// only.
+    fn build_program(&self, oneshot: bool) -> CellProgram {
         let case = |name: &str, constraints: Vec<StateConstraint>| TransitionCase {
             guard: TransitionGuard::MethodIs {
                 method: symbol(name),
@@ -226,10 +253,26 @@ impl Deployment {
             value: field_from_u64(2),
         });
 
+        // The genesis case: the one permissive seeding method (it seeds the opening board
+        // + the registers the relational teeth read as an `old` value). It cannot carry
+        // per-slot teeth without refusing a legit blank-baseline seed — so an EMPTY
+        // genesis case is a UNIVERSAL post-deploy write-hatch: `apply_raw(GENESIS,
+        // [SetField(any_slot, V)])` re-dispatches the permissive case and commits an
+        // arbitrary write to any slot, routing around every play tooth (the stapleable-slot
+        // hole class). The one-shot guard closes it at the ROOT for every slot at once:
+        // genesis becomes the `0 → 1` sentinel transition, and each play case freezes the
+        // sentinel so no move can reset it.
+        let genesis = if oneshot {
+            for teeth in [&mut select, &mut commit, &mut reveal, &mut resolve] {
+                teeth.push(genesis_sentinel_freeze());
+            }
+            genesis_oneshot_teeth()
+        } else {
+            Vec::new()
+        };
+
         CellProgram::Cases(vec![
-            // The one permissive case: seed the opening board + the registers the relational
-            // teeth read as an `old` value.
-            case(GENESIS, vec![]),
+            case(GENESIS, genesis),
             case(SELECT, select),
             case(COMMIT, commit),
             case(REVEAL, reveal),
@@ -237,8 +280,16 @@ impl Deployment {
         ])
     }
 
-    /// The compiled story to install on the world-cell.
+    /// The compiled story to install on the world-cell (the deployed one-shot program).
     pub fn story(&self) -> CompiledStory {
+        self.story_with(self.program())
+    }
+
+    /// The compiled story carrying a chosen `program` — the real [`Self::story`] uses the
+    /// one-shot [`Self::program`]; the write-hatch canary uses
+    /// [`Self::program_hatch_reopened`].
+    #[doc(hidden)]
+    pub fn story_with(&self, program: CellProgram) -> CompiledStory {
         let mut var_slots = BTreeMap::new();
         for name in REGISTERS {
             var_slots.insert(name.to_string(), self.reg(name) as usize);
@@ -248,7 +299,7 @@ impl Deployment {
             var_slots,
             has_slots: BTreeMap::new(),
             passage_index: BTreeMap::new(),
-            program: self.program(),
+            program,
             fully_gated: BTreeMap::new(),
         }
     }
@@ -311,6 +362,18 @@ impl AutomataflGame {
     pub fn deploy(seed: u8) -> Result<Self, WorldError> {
         let dep = Deployment::new();
         let story = dep.story();
+        let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
+        Ok(AutomataflGame { dep, world })
+    }
+
+    /// **CANARY ONLY.** Deploy with the genesis guard REMOVED (the historical write-hatch,
+    /// [`Deployment::program_hatch_reopened`]). Used to prove the one-shot guard is
+    /// load-bearing: a post-deploy genesis staple this build ADMITS the real
+    /// [`Self::deploy`] REFUSES.
+    #[doc(hidden)]
+    pub fn deploy_hatch_reopened(seed: u8) -> Result<Self, WorldError> {
+        let dep = Deployment::new();
+        let story = dep.story_with(dep.program_hatch_reopened());
         let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
         Ok(AutomataflGame { dep, world })
     }

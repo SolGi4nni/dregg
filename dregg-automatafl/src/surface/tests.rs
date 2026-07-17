@@ -579,11 +579,13 @@ fn the_executor_refuses_a_forged_raw_turn() {
         "a resolution that does not advance the turn is REFUSED"
     );
 
-    // The permissive genesis still admits a legal seed (the teeth are not vacuously closed).
+    // Genesis is ONE-SHOT: the opening seed already consumed it during `open`, so a
+    // post-deploy genesis staple — the universal write-hatch — is now REFUSED regardless
+    // of which slot it targets (the `0 → 1` sentinel guard, not a per-slot tooth).
     assert!(
         game.commit_raw(GENESIS, vec![game.reg_effect("phase", 0)])
-            .is_ok(),
-        "the genesis case still admits a legal write"
+            .is_err(),
+        "a post-deploy genesis staple is refused (the one-shot write-hatch is closed)"
     );
 }
 
