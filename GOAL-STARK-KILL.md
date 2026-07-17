@@ -2297,3 +2297,20 @@ the 868-line mirror, the gen_plonky3 corpse (emitted UNCOMPILABLE code), the Sta
 **Ratchets standing**: law-#1 · mock-proof-purge · effect-enum · verify-routing · ed25519-strict ·
 (unexpected_cfgs deny pending re-apply). Two of the five bugs were the SAME primitive-contract drift —
 which is why the tree-wide invariant, not the patch, is the lasting deliverable.
+
+## ⚑ TREE SETTLED (2026-07-17 ~03:35) — held lanes landed / verified in HEAD
+The co-tenant flood settled (694 -> ~30 dirty). Status of the 3 held lanes:
+- **Lane A (deny flip): LANDED + VERIFIED GREEN IN HEAD.** A co-tenant `git add -A` swept it into their
+  commit — so `unexpected_cfgs = "deny"` (Cargo.toml:332) is now live in HEAD, committed alongside 662
+  co-tenant files it was never checked against. **The risk (a co-tenant phantom cfg would break the
+  denied build) is CLEARED**: `cargo check --workspace` on HEAD -> Finished, 0 errors, 0 unexpected_cfgs
+  (persvati, HEADDENY=0). The phantom-cfg class is now IMPOSSIBLE workspace-wide, not just visible. (The
+  git add -A that swept it is the 4th such sweep this session — but this time it landed WORKING code and I
+  verified it after the fact rather than trusting it.)
+- **Lane D (doc citations): 14 doc repoints COMMITTED** (`515ec3087`, targets spot-verified to exist). The
+  code-comment repoints were swept into co-tenant commits.
+- **Lane E (15 dead-item deletions): PRESENT in the tree** (the drifted-mirror `mint_from_block_witnesses`
+  is gone) — swept into co-tenant commits by their add -A; the deletions landed, verified green by the
+  workspace check above.
+Net: all 3 held lanes are effectively LANDED (2 via co-tenant sweep, verified after; 1 committed by me), and
+HEAD is GREEN under the full ratchet set including the new deny flip. Nothing lost.
