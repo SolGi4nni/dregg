@@ -127,6 +127,8 @@ ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
 
 - **CIRC analysis ✅** (1095f3fde, CIRC-COMPETITIVE-ANALYSIS.md): $CIRC = pump.fun agent-infra token, FDV~$55K, early. ⚑ KILLER (their own doc): flywheel fed by pump.fun DEV REWARDS = the token's OWN trading fees — self-referential speculation, NOT usage revenue. Verdict: CIRC flywheel VISIBLE not VERIFIED (key-enforced split, front-runnable buy, chart-not-conservation). dregg-surpasses design graded PROVEN/BUILT/NAMED-WELD (sealed-bid clearing=fairness proven, contract-enforced split, conservation proven, attested receipts; welds flagged: price-binding trusted, RecycleFlywheel.sol to-build). → BUILD+MEASURE lane firing (the usecase).
 
+- **RecycleFlywheel .sol ✅** (05b5ccb03, DEPLOYMENT layer, RECYCLE-FLYWHEEL-MEASURED.md): adversarial A/B measured — MEV: dregg 0 vs mock 1.781 ETH; front-run edge dregg Δ0 vs mock 16.6%; split-deviation dregg REVERTS vs mock succeeds; conservation dregg netFlow=0 vs mock leaks; provenance 10000bps vs 0; honest gas premium ~16-28×. 268/268 forge green. Welds NAMED (price-binding not in-circuit, .sol↔Lean prose). → Lean-proven CORE firing (a81210f4, RecycleFlywheel.lean) = the assurance layer (theorems ∀-adversary, not tests).
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
