@@ -1,4 +1,11 @@
-# DrEX web prototype
+# DrEX web prototype (legacy demo — the primary terminal is `drex-web-v2/`)
+
+> **Reconciliation (2026-07-17):** the two-frontend fork is resolved **toward v2**.
+> `drex-web-v2/` (`:8782`) now serves the FULL endpoint surface this demo pioneered
+> (`/clear`, `/clear-shielded`, `/prove-shielded`, `/settle`, `/node/status`) and is
+> the primary DrEX terminal going forward. This surface (`:8781`) remains as the
+> legacy scripted walkthrough (the wallet-wasm sealed-bid flow + the headless
+> gate) — kept runnable, no longer the integration target for new UI work.
 
 A clickable Dragon's EXchange, **end-to-end real**: place a sealed-bid order,
 have your **wallet** (the Dragon's Egg Cipherclerk wasm) **really sign it and

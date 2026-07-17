@@ -1,24 +1,32 @@
 // app.js — the DrEX v2 product frontend (Preact + htm + signals).
 //
-// Rich Phase-1 seed (Open-first, extension-central). The extension (window.dregg)
-// is the identity + wallet + signer; this app is the orchestrator. What is wired
-// REAL end-to-end here:
-//   • the app SHELL (header, wallet handshake, node probe);
+// The primary DrEX terminal (the v1 :8781 demo's endpoint surface is fully
+// ported to this server; v1 remains as the legacy scripted walkthrough). The
+// extension (window.dregg) is the identity + wallet + signer; this app is the
+// orchestrator. What is wired REAL end-to-end here:
+//   • the app SHELL (header, wallet handshake, node probe, engine report);
 //   • the TIER-DIAL as a first-class control — Open/Shielded/Dark, with the
 //     "what each viewer sees" honest display, reusing the session's viz
 //     (drex-web/drex-viz.js ringGraph) to redact the REAL cleared ring per tier;
 //   • the OPEN-tier multilateral ring order-entry wired to the REAL /clear
 //     (drex_clear: solver.rs + verified_settle.rs), built by REAL entry;
+//   • the SHIELDED Cert-F circulation clearing wired to the REAL /clear-shielded
+//     (fhegg_clear: PDHG + Cert-F + the verified AIR gate), and the REAL
+//     reveal-nothing STARK at /prove-shielded (cert_f_prove) — both with honest
+//     not-built fallbacks when a binary is absent (never faked);
 //   • the SEALED-BID commit→reveal two-phase ceremony routed through the REAL
 //     extension (dregg.sealedBid.commit/reveal → real keccak256 + EIP-712 +
 //     secp256k1), with the on-chain escrow post labelled deploy-gated;
-//   • dregg-native order signing through dregg.drex.placeOrder.
-// Shielded/Dark tiers and the other seven mechanisms are PRESENT as honestly-
-// labelled controls; nothing not-yet-live is shown as live.
+//   • the live-node SETTLE with the full proof-receipt read back from the node
+//     (turn hash, STARK proof, finality, per-trader balances);
+//   • a session RECEIPT LEDGER — every completed action's real result, one row
+//     per move, because every move here IS a receipt.
+// Dark tier and the not-yet-wired mechanisms are PRESENT as honestly-labelled
+// controls; nothing not-yet-live is shown as live.
 import { h, render } from 'preact';
 import { signal, computed } from '@preact/signals';
 import htm from 'htm';
-import { clearOpen, settle, nodeStatus } from './api.js';
+import { clearOpen, clearShielded, proveShielded, settle, nodeStatus, engines } from './api.js';
 import * as ext from './extension.js';
 import { TIERS, MECHANISMS, COMPOSITION, ASSETS } from './model.js';
 import { ringGraph } from '../../drex-web/drex-viz.js';
@@ -30,23 +38,39 @@ const SHOW = (s) => ({ dangerouslySetInnerHTML: { __html: s } });
 const activeTier = signal('open');
 const activeMech = signal('ring');
 const entryMode  = signal('direct');   // 'direct' | 'sealed'
+const theme      = signal(document.documentElement.getAttribute('data-theme') || 'dark');
 const book = signal([
   { id: 1, trader: 'Ada',  offerAsset: 'GOLD', offerAmount: 100, wantAsset: 'ART',  wantMin: 10, priority: 3 },
   { id: 2, trader: 'Bram', offerAsset: 'ART',  offerAmount: 50,  wantAsset: 'WINE', wantMin: 20, priority: 1 },
   { id: 3, trader: 'Cyl',  offerAsset: 'WINE', offerAmount: 80,  wantAsset: 'GOLD', wantMin: 40, priority: 2 },
 ]);
 const draft = signal({ trader: '', offerAsset: 'SILVER', offerAmount: 30, wantAsset: 'PEARL', wantMin: 5, priority: 4 });
+const draftErr = signal(null);
 const clearing = signal(null);
 const clearBusy = signal(false);
 const settleState = signal(null);
+const shielded2 = signal(null);           // /clear-shielded result
+const shieldedBusy = signal(false);
+const worldProof = signal(null);           // /prove-shielded result
+const proveBusy = signal(false);
 const node = signal({ up: null });
+const engineMap = signal(null);            // GET /engines — which binary backs each route
 const wallet = signal({ status: 'unknown' });     // unknown|absent|detected|connected|error
 const sealed = signal({ phase: 'idle' });          // idle|committed|revealed|error
 const yourOrder = signal({ trader: 'You', offerAsset: 'SILVER', offerAmount: 30, wantAsset: 'PEARL', wantMin: 5, priority: 4 });
+const receipts = signal([]);               // the session receipt ledger — real results only
 
 const tierById = (id) => TIERS.find(t => t.id === id);
 const mechById = (id) => MECHANISMS.find(m => m.id === id);
 const activeMechObj = computed(() => mechById(activeMech.value));
+
+// Append a row to the session receipt ledger. Only called with REAL endpoint
+// results — the ledger is a view of what actually happened, never a synthesis.
+function logReceipt(kind, ok, headline, detail) {
+  const t = new Date();
+  const ts = t.toTimeString().slice(0, 8);
+  receipts.value = [...receipts.value, { id: receipts.value.length + 1, ts, kind, ok, headline, detail }];
+}
 
 // Convert a REAL drex_clear result into the shape drex-viz.ringGraph expects
 // (assets=nodes, orders parallel to solverCert edges/flows/caps). Faithful — it
@@ -64,6 +88,12 @@ function toVizRing(res) {
 }
 const vizRing = computed(() => (clearing.value && clearing.value.ring ? toVizRing(clearing.value) : null));
 
+function toggleTheme() {
+  const next = theme.value === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  theme.value = next;
+}
+
 // ── header ──
 function Header() {
   const n = node.value, w = wallet.value;
@@ -75,12 +105,13 @@ function Header() {
     <header class="hdr">
       <div class="brand">
         <span class="logo">◇</span>
-        <div><div class="title">DrEX</div><div class="sub">one exchange · a privacy dial · one verified kernel</div></div>
+        <div><div class="title">DrEX</div><div class="sub">one exchange · a privacy dial · one verified kernel · every move is a receipt</div></div>
       </div>
       <div class="pills">
         <span class=${'pill ' + (n.up === true ? 'live' : n.up === false ? 'warn' : '')}>
           ${n.up === true ? 'node: live @ ' + (n.node || '').replace(/^https?:\/\//, '') : n.up === false ? 'node: offline · local clear only' : 'node: probing…'}</span>
         <span class=${'pill ' + (w.status === 'connected' ? 'live' : w.status === 'absent' || w.status === 'error' ? 'warn' : '')}>${wlabel}</span>
+        <button class="themetog" onClick=${toggleTheme} title="toggle light/dark" aria-label="toggle theme">${theme.value === 'dark' ? '☀' : '◑'}</button>
       </div>
     </header>`;
 }
@@ -99,7 +130,7 @@ function WalletPanel() {
     return html`<section class="card wallet warn">
       <div class="card-h">Wallet — extension required</div>
       <p>The Dragon's Egg Cipherclerk (<span class="mono">./extension</span>) is not installed in this browser, so there is no <span class="mono">window.dregg</span> to sign with.</p>
-      <p class="honest">The seed refuses to fake a wallet. Sealed-bid signing and dregg-native order-turns route through the installed extension; without it those actions are unavailable. The Open-tier clear below still runs (the matcher does not need your key).</p>
+      <p class="honest">The terminal refuses to fake a wallet. Sealed-bid signing and dregg-native order-turns route through the installed extension; without it those actions are unavailable. The Open-tier clear below still runs (the matcher does not need your key).</p>
       <button class="ghost" onClick=${detectWallet}>Re-check for the extension</button>
     </section>`;
   }
@@ -129,6 +160,7 @@ async function connectWallet() {
 function TierDial() {
   const t = tierById(activeTier.value);
   const vr = vizRing.value;
+  theme.value; // subscribe: the lens SVG reads the current theme at render time
   return html`
     <section class="card dial">
       <div class="card-h">Privacy tier <span class="hint">— the dial over one kernel; the guarantee never moves, only what the world sees</span></div>
@@ -185,6 +217,7 @@ function OrderEntry() {
   const m = activeMechObj.value;
   if (!m) return null;
   if (m.id === 'ring') return html`<${RingEntry} />`;
+  if (m.id === 'circulation') return html`<${ShieldedEntry} />`;
   return html`
     <section class="card entry">
       <div class="card-h">Order entry — ${m.name}</div>
@@ -193,10 +226,52 @@ function OrderEntry() {
         <p class="blurb">${m.blurb}</p>
         <p class="honest">Its order-entry form is part of the phased architecture (see the overhaul plan).
           ${m.endpoint ? html`A real engine serves it at <span class="mono">${m.endpoint}</span>, but at the <b>${m.tier}</b> tier — not the live Open path.` : 'It is not wired to a live endpoint yet.'}
-          The live end-to-end flow today is the Open-tier multilateral ring clear.</p>
+          The live end-to-end flows today are the Open ring clear and the shielded Cert-F circulation.</p>
         <button class="ghost" onClick=${() => { activeTier.value = 'open'; activeMech.value = 'ring'; }}>→ Go to the live Open ring clear</button>
       </div>
     </section>`;
+}
+
+// ── the shared batch editor: the order book + the draft-order row ──
+function BookEditor() {
+  const d = draft.value;
+  const err = draftErr.value;
+  const setD = (k, v) => { draft.value = { ...draft.value, [k]: v }; if (draftErr.value) draftErr.value = null; };
+  const addOrder = () => {
+    const t = (d.trader || '').trim();
+    if (!t) return (draftErr.value = 'name the trader first');
+    if (book.value.some(o => o.trader.toLowerCase() === t.toLowerCase())) return (draftErr.value = `"${t}" is already in the batch — one order per trader`);
+    if (!(+d.offerAmount > 0)) return (draftErr.value = 'offer amount must be > 0');
+    if (!(+d.wantMin >= 0)) return (draftErr.value = 'want-min must be ≥ 0');
+    if (d.offerAsset === d.wantAsset) return (draftErr.value = 'offer and want must be different assets');
+    const id = Math.max(0, ...book.value.map(o => o.id)) + 1;
+    book.value = [...book.value, { id, ...d, trader: t, offerAmount: +d.offerAmount, wantMin: +d.wantMin, priority: Math.max(1, +d.priority || 1) }];
+    draft.value = { ...draft.value, trader: '' };
+    draftErr.value = null;
+  };
+  const rm = (id) => (book.value = book.value.filter(o => o.id !== id));
+  return html`
+    <div>
+      <div class="book">
+        ${book.value.map(o => html`<div class="ord" key=${o.id}>
+          <span class="who">${o.trader}</span>
+          <span class="leg">offer <b>${o.offerAmount} ${o.offerAsset}</b> · want ≥ <b>${o.wantMin} ${o.wantAsset}</b></span>
+          <span class="prio">p${o.priority}</span>
+          <button class="x" onClick=${() => rm(o.id)} aria-label=${'remove ' + o.trader}>✕</button></div>`)}
+        ${book.value.length === 0 && html`<div class="empty">no orders — add one below</div>`}
+      </div>
+      <div class="draft">
+        <input class="in trader" placeholder="trader" value=${d.trader} onInput=${e => setD('trader', e.target.value)} onKeyDown=${e => e.key === 'Enter' && addOrder()} />
+        <label>offer<input class="in num" type="number" min="1" value=${d.offerAmount} onInput=${e => setD('offerAmount', e.target.value)} /></label>
+        <${AssetSel} value=${d.offerAsset} onChange=${v => setD('offerAsset', v)} />
+        <span class="arrow">→</span>
+        <label>want ≥<input class="in num" type="number" min="0" value=${d.wantMin} onInput=${e => setD('wantMin', e.target.value)} /></label>
+        <${AssetSel} value=${d.wantAsset} onChange=${v => setD('wantAsset', v)} />
+        <label>prio<input class="in num sm" type="number" min="1" value=${d.priority} onInput=${e => setD('priority', e.target.value)} /></label>
+        <button class="add" onClick=${addOrder}>+ add</button>
+      </div>
+      ${err && html`<div class="drafterr" role="alert">${err}</div>`}
+    </div>`;
 }
 
 // ── the ring entry: a mode toggle between the direct open clear and the ──
@@ -214,43 +289,60 @@ function RingEntry() {
 }
 
 function DirectBook() {
-  const d = draft.value;
-  const setD = (k, v) => (draft.value = { ...draft.value, [k]: v });
-  const addOrder = () => {
-    const t = (d.trader || '').trim(); if (!t) return;
-    const id = Math.max(0, ...book.value.map(o => o.id)) + 1;
-    book.value = [...book.value, { id, ...d, trader: t, offerAmount: +d.offerAmount, wantMin: +d.wantMin, priority: +d.priority }];
-    draft.value = { ...draft.value, trader: '' };
-  };
-  const rm = (id) => (book.value = book.value.filter(o => o.id !== id));
+  const eng = engineMap.value;
+  const where = eng && eng.clear && eng.clear.where;
   return html`
     <div>
       <p class="entry-lead">Build the batch with real orders. Each is an intent: <i>offer</i> an asset, <i>want</i> ≥ a minimum of another. The real
         matcher (Johnson circuits + Shapley–Scarf TTC) finds the multilateral ring no pairwise swap can close; the verified kernel settles it conserving + all-or-nothing.</p>
-      <div class="book">
-        ${book.value.map(o => html`<div class="ord" key=${o.id}>
-          <span class="who">${o.trader}</span>
-          <span class="leg">offer <b>${o.offerAmount} ${o.offerAsset}</b> · want ≥ <b>${o.wantMin} ${o.wantAsset}</b></span>
-          <span class="prio">p${o.priority}</span>
-          <button class="x" onClick=${() => rm(o.id)}>✕</button></div>`)}
-        ${book.value.length === 0 && html`<div class="empty">no orders — add one below</div>`}
-      </div>
-      <div class="draft">
-        <input class="in trader" placeholder="trader" value=${d.trader} onInput=${e => setD('trader', e.target.value)} onKeyDown=${e => e.key === 'Enter' && addOrder()} />
-        <label>offer<input class="in num" type="number" min="1" value=${d.offerAmount} onInput=${e => setD('offerAmount', e.target.value)} /></label>
-        <${AssetSel} value=${d.offerAsset} onChange=${v => setD('offerAsset', v)} />
-        <span class="arrow">→</span>
-        <label>want ≥<input class="in num" type="number" min="0" value=${d.wantMin} onInput=${e => setD('wantMin', e.target.value)} /></label>
-        <${AssetSel} value=${d.wantAsset} onChange=${v => setD('wantAsset', v)} />
-        <label>prio<input class="in num sm" type="number" min="1" value=${d.priority} onInput=${e => setD('priority', e.target.value)} /></label>
-        <button class="add" onClick=${addOrder}>+ add</button>
-      </div>
+      <${BookEditor} />
       <div class="actions">
-        <button class="primary" disabled=${clearBusy.value || book.value.length < 2} onClick=${runClear}>${clearBusy.value ? 'clearing…' : 'Clear the batch →'}</button>
-        <span class="hint">real POST /clear · ${book.value.length} order(s)</span>
+        <button class="primary" disabled=${clearBusy.value || book.value.length < 2} onClick=${runClear}>${clearBusy.value ? html`<span class="spin"></span> clearing…` : 'Clear the batch →'}</button>
+        <span class="hint">real POST /clear · ${book.value.length} order(s)${where ? ' · matcher @ ' + where : ''}</span>
       </div>
       ${clearing.value && html`<${ClearingResult} res=${clearing.value} />`}
     </div>`;
+}
+
+// ── the SHIELDED entry: the same batch through the real fhEgg engine ──
+// (/clear-shielded: PDHG circulation + Cert-F + the verified AIR gate), and the
+// reveal-nothing STARK (/prove-shielded) as a separate, seconds-long action.
+function ShieldedEntry() {
+  const eng = engineMap.value;
+  const fheggReady = !eng || eng.clearShielded.ready;   // unknown → let the server answer honestly
+  const proveReady = !eng || eng.proveShielded.ready;
+  return html`
+    <section class="card entry">
+      <div class="card-h">Order entry — Cert-F circulation clearing
+        ${fheggReady ? html`<span class="badge live">ENGINE LIVE · /clear-shielded</span>` : html`<span class="badge gated">engine not built</span>`}
+        <span class="badge tier">shielded tier — labelled preview</span>
+      </div>
+      <p class="entry-lead">The same batch, cleared as a <b>convex circulation</b> (PDHG) with a primal-dual <b>Cert-F certificate</b> the
+        verified AIR re-checks — partial fills in [0,1], volume-maximizing, machine-checked fair. The certificate here is the
+        <b>solver's plaintext view</b>; hiding it from the world is the separate reveal-nothing STARK below.</p>
+      <${BookEditor} />
+      <div class="actions">
+        <button class="primary" disabled=${shieldedBusy.value || book.value.length < 2} onClick=${runShieldedClear2}>${shieldedBusy.value ? html`<span class="spin"></span> clearing…` : 'Clear shielded →'}</button>
+        <span class="hint">real POST /clear-shielded · fhegg_clear${eng ? ' @ ' + eng.clearShielded.where : ''}</span>
+      </div>
+      ${!fheggReady && html`<div class="buildhint">honest fallback — the engine binary is not built on this box. Build it:
+        <span class="mono">cargo build --release --bin fhegg_clear</span> (in <span class="mono">fhegg-solver/</span>)</div>`}
+      ${shielded2.value && html`<${ShieldedResult} res=${shielded2.value} />`}
+      ${shielded2.value && !shielded2.value.error && html`
+        <div class="provezone">
+          <div class="pz-h">Reveal-nothing — prove it without showing it</div>
+          <p class="entry-lead">The clearing above is the solver's view. <b>Prove</b> runs the same batch into a real dregg STARK
+            (BabyBear + FRI over the Cert-F AIR): the world gets the proof + one public scalar (wᵀf) — never the flows, prices, or slacks.
+            The witness stays server-side; the redaction is structural. Real proving work: seconds, not a click.</p>
+          <div class="actions">
+            <button class="primary" disabled=${proveBusy.value} onClick=${runProveShielded}>${proveBusy.value ? html`<span class="spin"></span> proving (real STARK — a moment)…` : 'Prove reveal-nothing STARK →'}</button>
+            <span class="hint">real POST /prove-shielded · cert_f_prove${eng ? ' @ ' + eng.proveShielded.where : ''}</span>
+          </div>
+          ${!proveReady && html`<div class="buildhint">honest fallback — the prover binary is not built on this box. Build it:
+            <span class="mono">cargo build --release -p dregg-circuit-prove --bin cert_f_prove</span></div>`}
+          ${worldProof.value && html`<${WorldView} r=${worldProof.value} />`}
+        </div>`}
+    </section>`;
 }
 
 // ── the sealed-bid two-phase ceremony, routed through the extension ──
@@ -307,6 +399,7 @@ async function doCommit() {
     const order = { ...yourOrder.value };
     const commit = await ext.sealedCommit({ auctionId: AUCTION_ID, order });
     sealed.value = { phase: 'committed', commit, order };
+    logReceipt('sealed-commit', true, 'commitment ' + (commit.commitment || '').slice(0, 18) + '…', 'EIP-712 SealedBid, extension-signed');
   } catch (e) {
     sealed.value = { phase: 'error', error: String(e && e.message || e) };
   }
@@ -317,6 +410,7 @@ async function doReveal() {
   try {
     const reveal = await ext.sealedReveal({ auctionId: AUCTION_ID });
     sealed.value = { ...prev, phase: 'revealed', reveal, busy: false };
+    logReceipt('sealed-reveal', !!reveal.bindsCommitment, reveal.bindsCommitment ? 'opening binds commitment ✔' : 'opening does NOT bind ✗', 'extension re-hash check');
   } catch (e) {
     sealed.value = { ...prev, phase: 'error', error: String(e && e.message || e), busy: false };
   }
@@ -332,24 +426,58 @@ function AssetSel({ value, onChange }) {
   return html`<select class="in sel" value=${value} onChange=${e => onChange(e.target.value)}>${ASSETS.map(a => html`<option value=${a}>${a}</option>`)}</select>`;
 }
 
-// ── run the real clear / settle ──
+const bookOrders = () => book.value.map(({ trader, offerAsset, offerAmount, wantAsset, wantMin, priority }) =>
+  ({ trader, offerAsset, offerAmount: +offerAmount, wantAsset, wantMin: +wantMin, priority: +priority }));
+
+// ── run the real clear / shielded clear / prove / settle ──
 async function runClear() {
   clearBusy.value = true; clearing.value = null; settleState.value = null;
-  const orders = book.value.map(({ trader, offerAsset, offerAmount, wantAsset, wantMin, priority }) =>
-    ({ trader, offerAsset, offerAmount: +offerAmount, wantAsset, wantMin: +wantMin, priority: +priority }));
-  try { clearing.value = await clearOpen(orders); }
+  try { clearing.value = await clearOpen(bookOrders()); }
   catch (e) { clearing.value = { error: String(e && e.message || e) }; }
   finally { clearBusy.value = false; }
+  const r = clearing.value;
+  if (r && !r.error) logReceipt('clear', !!r.ring, r.ring ? `${r.ring.participants.length}-party ring cleared` : 'no ring — book rests', 'drex_clear · verified settle');
+  else if (r) logReceipt('clear', false, 'matcher error', r.error);
+}
+async function runShieldedClear2() {
+  shieldedBusy.value = true; shielded2.value = null; worldProof.value = null;
+  try { shielded2.value = await clearShielded(bookOrders()); }
+  catch (e) { shielded2.value = { error: String(e && e.message || e) }; }
+  finally { shieldedBusy.value = false; }
+  const r = shielded2.value;
+  if (r && !r.error) {
+    const c = r.certificate || {};
+    logReceipt('clear-shielded', !!c.valid, `Cert-F ${c.valid ? 'valid' : 'INVALID'} · wᵀf = ${c.clearedVolume}`, 'fhegg_clear · PDHG + verified AIR gate');
+  } else if (r) logReceipt('clear-shielded', false, 'engine unavailable', r.error);
+}
+async function runProveShielded() {
+  proveBusy.value = true; worldProof.value = null;
+  const t0 = performance.now();
+  let r;
+  try { r = await proveShielded(bookOrders()); }
+  catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+  r.wallMs = Math.round(performance.now() - t0);   // set BEFORE the signal assignment (assignment triggers the render)
+  worldProof.value = r;
+  proveBusy.value = false;
+  if (r.ok) logReceipt('prove', !!r.verify, `STARK ${r.verify ? 'verifies' : 'FAILED'} · ${r.proofBytes} bytes · ${r.proveMs} ms`, 'cert_f_prove · reveal-nothing world view');
+  else logReceipt('prove', false, 'prover unavailable', r.error);
 }
 async function runSettle() {
   if (!clearing.value || !clearing.value.ring) return;
   settleState.value = { busy: true };
   try { settleState.value = await settle(clearing.value); }
   catch (e) { settleState.value = { nodeUp: false, error: String(e && e.message || e) }; }
+  const s = settleState.value;
+  if (s && s.accepted) {
+    const proven = !!(s.proof && s.proof.present);
+    logReceipt('settle', proven, (proven ? 'settled · proven' : 'committed · proof pending') + ' · turn ' + (s.turnHash || '').slice(0, 14) + '…', 'live node ' + (s.node || ''));
+  } else if (s && !s.busy) logReceipt('settle', false, s.nodeUp === false ? 'no live node — clear kept local' : 'turn not accepted', s.error || '');
 }
 
 function ClearingResult({ res }) {
-  if (res.error) return html`<div class="result err">Matcher error: ${res.error}<div class="hint">run the app via serve.mjs (it shells to the real drex_clear binary)</div></div>`;
+  if (res.error) return html`<div class="result err"><b>Matcher error.</b> ${res.error}
+    ${res.stderr && html`<div class="mono errdetail">${res.stderr}</div>`}
+    <div class="hint">the server shells to the real drex_clear binary — check <span class="mono">GET /engines</span> for where it runs (local target/ vs the build host over ssh)</div></div>`;
   const ring = res.ring, cleared = res.allocations || [];
   const live = cleared.filter(a => !a.rested), rested = cleared.filter(a => a.rested);
   const color = { GOLD: '#f0c14b', ART: '#bc8cff', WINE: '#f85149', SILVER: '#8b949e', PEARL: '#58a6ff' };
@@ -366,23 +494,136 @@ function ClearingResult({ res }) {
         ${res.conservation.map(c => html`<div class="consrow"><span>${c.asset}: ${c.in} in = ${c.out} out</span><span class=${c.ok ? 'ok' : 'no'}>${c.ok ? '✔' : '✗'}</span><div class="bar"><span style=${'width:100%;background:' + (color[c.asset] || '#58a6ff')}></span></div></div>`)}</div>`}
       ${res.reject && html`<div class="reject">reject-polarity: drain a sender one short → leg ${res.reject.refusedAt} REFUSED by the verified kernel; whole ring aborts. <span class="hint">over-debit is provably impossible, not merely avoided.</span></div>`}
       <div class="settle-line">
-        <button class="ghost" disabled=${settleState.value && settleState.value.busy} onClick=${runSettle}>${settleState.value && settleState.value.busy ? 'settling…' : 'Settle on the live node →'}</button>
-        <span class="hint">lands the ring as one real turn (solo dev node; no on-chain settle yet)</span>
+        <button class="ghost" disabled=${settleState.value && settleState.value.busy} onClick=${runSettle}>${settleState.value && settleState.value.busy ? html`<span class="spin"></span> settling…` : 'Settle on the live node →'}</button>
+        <span class="hint">lands the ring as per-trader Transfer turns (solo dev node; no on-chain settle yet)</span>
       </div>
       ${settleState.value && !settleState.value.busy && html`<${SettleResult} s=${settleState.value} />`}`}
   </div>`;
 }
 
-function SettleResult({ s }) {
-  if (!s.nodeUp) return html`<div class="settle warn">No live node reachable (${s.error || 'offline'}). The clearing above is the real verified solver, but it did not land on a node this run. <span class="hint">start one: dregg-node run --port 8420 --enable-faucet --prove-turns</span></div>`;
-  if (!s.accepted) return html`<div class="settle warn">Node rejected the settlement turn: ${s.error || 'unknown'}</div>`;
-  const proven = !!(s.proof && s.proof.present);
-  return html`<div class=${'settle ' + (proven ? 'ok' : 'warn')}>
-    <div class="sh">${proven ? 'Settled · proven' : 'Committed · proof pending'}</div>
-    <div class="srow">turn <span class="mono">${(s.turnHash || '').slice(0, 24)}…</span> on ${s.node}</div>
-    ${proven && html`<div class="srow">${s.proof.mode === 'stark_full_turn' ? `full-turn STARK proof · ${s.proof.len} bytes` : 'witnessed receipt (prove_pool)'} — re-checkable at /api/turn/${(s.turnHash || '').slice(0, 10)}…/proof</div>`}
-    ${!proven && html`<div class="srow hint">${s.proofNote || ''}</div>`}
+// ── the shielded clearing result: the solver's certificate as a checkable object ──
+function ShieldedResult({ res }) {
+  if (res.error) return html`<div class="result err"><b>Shielded engine unavailable.</b> ${res.error}
+    ${res.stderr && html`<div class="mono errdetail">${res.stderr}</div>`}</div>`;
+  const c = res.certificate || {}, air = res.air || {}, t = res.tamper || {}, st = res.starkStage || {};
+  const check = (ok, label, val) => html`<div class=${'chk ' + (ok ? 'ok' : 'no')}><span class="ci">${ok ? '✓' : '✕'}</span><span class="cl">${label}</span><span class="cv">${val}</span></div>`;
+  return html`<div class="result">
+    <div class="res-h">Cleared · real fhEgg engine <span class="chip">${res.nodes} assets · ${res.edges} orders · T=${res.iters} iters</span></div>
+    <div class="allocs">
+      ${(res.orders || []).map(o => html`<div class="alloc"><span class="who">${o.trader}</span>
+        <span class="leg">${o.offerAsset}→${o.wantAsset}: cleared <b>${o.clearedFlow}</b> of ${o.offerAmount} (want ≥${o.wantMin})</span>
+        <span class=${o.filled ? 'ok' : 'restdot'}>${o.filled ? '✔' : '·'}</span></div>`)}
+    </div>
+    <div class="certbox">
+      <div class="hint">Cert-F primal-dual certificate — the fair-batch gate the verified AIR checks:</div>
+      <div class="certgrid">
+        ${check(c.conserves, 'conservation ‖Af‖∞ = 0', c.conservationResidual)}
+        ${check(c.gapOk !== false && c.dualityGap !== undefined, 'duality gap ≤ ε', 'wᵀf ' + c.clearedVolume + ' vs cᵀs ' + c.dualObjective + ' · gap ' + c.dualityGap)}
+        ${check(c.primalBoxed !== false, 'primal boxed 0 ≤ f ≤ c', c.primalBoxed === false ? 'no' : 'yes')}
+        ${check(c.sNonneg !== false, 'dual slack s ≥ 0', c.sNonneg === false ? 'no' : 'yes')}
+        ${check(c.dualFeasible !== false, 'dual feasible', c.dualFeasible === false ? 'no' : 'yes')}
+        ${check(c.valid, 'certificate valid', c.valid ? 'PROVED-sound checks pass' : 'INVALID')}
+      </div>
+    </div>
+    <div class="gate">
+      <div class="gcol ok">
+        <div class="gh">✓ honest certificate</div>
+        <div class="gb">the verified AIR (${air.constraints} constraints · ${air.terms} terms · ${air.witnessCells} witness cells) <b class="ok">${air.accept ? 'ACCEPTS' : 'rejects (BUG)'}</b></div>
+        <div class="gm">the exact n+4m+1 rows <span class="mono">Market/CertF.lean</span> proves sound</div>
+      </div>
+      <div class="gcol no">
+        <div class="gh">✕ tampered certificate</div>
+        <div class="gb">${t.what || 'tamper'} → the AIR <b class=${!t.accept ? 'ok' : 'no'}>${!t.accept ? 'REJECTS' : 'accepted (BUG)'}</b></div>
+        <div class="gm">violated: <span class="mono">${(t.violated || []).join(', ') || '—'}</span> — a cheat can't even be built</div>
+      </div>
+    </div>
+    <div class="hint">who sees what: ${(res.tiers || []).map(x => html`<span class="tiersee"><b>${x.tier}</b> ${x.sees}</span>`)}</div>
+    ${st.status && html`<div class="hint">STARK-ZK stage: ${st.status} — hides ${(st.hides || []).join(', ')}. Run the prove below to produce the world view.</div>`}
   </div>`;
+}
+
+// ── the reveal-nothing world view: what the world gets, and only that ──
+function WorldView({ r }) {
+  if (!r.ok) return html`<div class="result err"><b>Reveal-nothing prover: honest fallback.</b> ${r.error}${r.stage ? ' (stage: ' + r.stage + ')' : ''}
+    ${r.stderr && html`<div class="mono errdetail">${r.stderr}</div>`}</div>`;
+  const p = r.program || {}, tr = r.trace || {};
+  const rem = r.remaining || {};
+  return html`<div class="worldview">
+    <div class="wv-boundary">
+      <div class="wv-col solver"><div class="wv-h">the solver saw</div>
+        <div class="wv-b">every order, every flow f, the dual prices π, the slacks s — plaintext, server-side, to clear fast.</div>
+        <div class="wv-flows">${book.value.map(o => html`<div class="wv-flow"><span class="who">${o.trader}</span><span class="mono blurred" aria-hidden="true">${o.offerAsset}→${o.wantAsset} · ██ units</span><span class="chip">hidden</span></div>`)}</div>
+      </div>
+      <div class="wv-col world"><div class="wv-h">the world sees</div>
+        <div class="wv-rows">
+          <div class="wv-row"><span class="k">fair batch cleared</span><span class="v"><span class=${r.conserves ? 'ok' : 'no'}>${r.conserves ? '✔ conservation held' : '✗'}</span></span></div>
+          <div class="wv-row"><span class="k">cleared volume wᵀf</span><span class="v num"><b>${r.clearedVolume}</b> <span class="hint">(the ONLY witness-derived scalar; public inputs = [${(r.publicInputs || []).join(', ')}])</span></span></div>
+          <div class="wv-row"><span class="k">proof verifies</span><span class="v"><span class=${r.verify ? 'ok' : 'no'}>${r.verify ? '✔ verify_cert_f → true' : '✗ did NOT verify'}</span></span></div>
+          <div class="wv-row"><span class="k">proof</span><span class="v num">${r.proofBytes} bytes · descriptor <span class="mono">${r.descriptor || 'cert-f'}</span> · trace width ${tr.width} (${tr.valueBits}-bit range gadget)</span></div>
+          <div class="wv-row"><span class="k">public shape</span><span class="v num">${p.nodes} assets, ${p.edges} orders, ε=${p.epsilon} <span class="hint">(A, w, c ride as public descriptor constants)</span></span></div>
+          <div class="wv-row"><span class="k">latency</span><span class="v num"><b>${r.proveMs} ms</b> prove · ${r.verifyMs} ms verify · ${r.wallMs} ms wall</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="hint wv-honest">honest scope — hidden here means hidden from the PUBLIC OUTPUT (this proof): ${(r.hides || []).join(' · ')}.
+      Full input-privacy still needs: ${rem.noteCommitmentMatching}. ZK floor: ${rem.zkFloor}.</div>
+  </div>`;
+}
+
+// ── the settle result: the full proof-receipt, read back from the node ──
+function SettleResult({ s }) {
+  if (!s.nodeUp) return html`<div class="settle warn"><b>No live node reachable</b> (${s.error || 'offline'}). The clearing above is the real verified solver, but it did not land on a node this run. <span class="hint">start one: dregg-node run --port 8420 --enable-faucet --prove-turns</span></div>`;
+  if (!s.accepted) return html`<div class="settle warn">Node rejected the settlement turn: ${s.error || 'unknown'}</div>`;
+  const proof = s.proof || {}, rc = s.receipt || {};
+  const proven = !!(proof.present || rc.hasProof);
+  const h = s.turnHash || '';
+  const st = s.settle || {};
+  const copyHash = (e) => {
+    try { navigator.clipboard && navigator.clipboard.writeText(h); } catch (_e) {}
+    const b = e.currentTarget; b.textContent = 'copied ✓'; setTimeout(() => { b.textContent = 'copy'; }, 1400);
+  };
+  return html`<div class=${'proofcard ' + (proven ? 'proven' : 'pending')}>
+    <div class="pc-crest">
+      <div class=${'pc-seal ' + (proven ? 'ok' : '')} aria-hidden="true">${proven ? '✓' : '…'}</div>
+      <div>
+        <div class="pc-title">${proven ? html`Settled · <span class="pc-proven">proven</span>` : 'Committed · proof pending'}</div>
+        <div class="pc-say">${proven ? 'The batch cleared as real per-trader turns on the live node — and math itself signed the receipt.' : (s.proofNote || 'the async prove_pool has not attached the STARK yet — committed-but-unattested, surfaced honestly')}</div>
+      </div>
+    </div>
+    <div class="pc-rows">
+      <div class="pc-r"><span class="k">turn hash</span><span class="v mono hashv">${h}<button class="copybtn" onClick=${copyHash}>copy</button></span></div>
+      ${proven && html`<div class="pc-r"><span class="k">proof</span><span class="v">${proof.mode === 'stark_full_turn' ? `full-turn STARK proof · ${proof.len} bytes` : `witnessed receipt · prove_pool (witnesses ${proof.witnessCount || rc.witnessCount || 1})`}</span></div>`}
+      <div class="pc-r"><span class="k">finality</span><span class="v">${rc.finality || '—'} · ${rc.computronsUsed ?? '—'} computrons · ${rc.actionCount ?? '—'} action(s) · executor-signed ${String(rc.executorSigned ?? '—')}</span></div>
+      <div class="pc-r"><span class="k">ledger</span><span class="v mono">${(rc.preState || '').slice(0, 16)}… → ${(rc.postState || '').slice(0, 16)}…</span></div>
+      <div class="pc-r"><span class="k">node</span><span class="v">${s.node || ''} · operator <span class="mono">${(s.operator || '').slice(0, 14)}…</span></span></div>
+    </div>
+    ${(s.perTrader || []).length > 0 && html`<div class="pc-traders">
+      <div class="hint">per-trader allocations settled as REAL transfers — balances read back from the node${st.scaled ? html` · <span class="warntext">settled at scale ${st.scale} (devnet computron-budget envelope; true cleared amounts kept)</span>` : ''}:</div>
+      ${s.perTrader.map(t => html`<div class="pc-tr"><span class="who">${t.trader}</span>
+        <span class="leg mono">${(t.cell || '').slice(0, 12)}…</span>
+        <span class="leg">got <b>${t.settled}</b>${t.settled !== t.received ? ` (of ${t.received} cleared)` : ''} ${t.recvAsset}</span>
+        <span class="num">balance ${t.balance ?? '—'}</span></div>`)}
+    </div>`}
+    ${proven && html`<div class="pc-recheck">Don't take our word for it — <b>anyone can re-run this check.</b> The proof is fetchable at
+      <span class="mono">/api/turn/${h.slice(0, 10)}…/proof</span> and re-verifies against the committed turn. The guarantee comes from the math, not from us.</div>`}
+  </div>`;
+}
+
+// ── the session receipt ledger — every move is a receipt ──
+function ReceiptLedger() {
+  const rs = receipts.value;
+  if (!rs.length) return null;
+  return html`<section class="card ledger">
+    <div class="card-h">Session receipts <span class="hint">— every action's real result, one row per move; nothing synthesized</span></div>
+    <div class="ledger-rows">
+      ${rs.slice().reverse().map(r => html`<div class="lrow" key=${r.id}>
+        <span class="lts mono">${r.ts}</span>
+        <span class=${'lkind lk-' + r.kind}>${r.kind}</span>
+        <span class=${'lhead ' + (r.ok ? '' : 'warntext')}>${r.headline}</span>
+        <span class="ldetail hint">${r.detail}</span>
+      </div>`)}
+    </div>
+  </section>`;
 }
 
 function CompositionStrip() {
@@ -400,12 +641,18 @@ function App() {
     <${WalletPanel} />
     <${TierDial} />
     <div class="grid"><${MechanismRail} /><${OrderEntry} /></div>
+    <${ReceiptLedger} />
     <${CompositionStrip} />
-    <footer class="foot">Seed · Phase 1 (Open-first). The Open-tier ring clear is real end-to-end (solver.rs + verified_settle.rs + solo-node settle); the sealed-bid ceremony is real extension-signed crypto. Shielded / Dark tiers and the other seven mechanisms are present as honestly-labelled previews — not live with real money — and wire in per the phased plan (docs/deos/DREX-FRONTEND-OVERHAUL.md).</footer>
+    <footer class="foot">DrEX v2 — the primary terminal (the :8781 demo remains as the legacy scripted walkthrough). Real end-to-end: the Open ring clear
+    (solver.rs + verified_settle.rs), the shielded Cert-F circulation + reveal-nothing STARK (fhegg_clear + cert_f_prove, honest not-built
+    fallbacks), the sealed-bid ceremony (extension-signed), and the solo-node settle with the proof-receipt read back from the node. Dark tier
+    and the remaining mechanisms are honestly-labelled previews — not live with real money — and wire in per the phased plan
+    (docs/deos/DREX-FRONTEND-OVERHAUL.md).</footer>
   </div>`;
 }
 
 render(html`<${App} />`, document.getElementById('root'));
 
 nodeStatus().then(s => (node.value = s)).catch(() => (node.value = { up: false }));
+engines().then(e => (engineMap.value = e)).catch(() => {});
 detectWallet();

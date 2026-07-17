@@ -57,7 +57,10 @@ export const MECHANISMS = [
     id: 'circulation', name: 'Cert-F circulation clearing', family: 'fhegg',
     blurb: 'Volume-maximizing circulation over a convex program (PDHG), with a primal-dual Cert-F certificate the verified AIR re-checks. Partial fills in [0,1]. Runs shielded today via /clear-shielded (plaintext cert); the reveal-nothing STARK wrap is /prove-shielded.',
     orderShape: 'ring',
-    endpoint: '/clear-shielded', live: false, tier: 'shielded',
+    // `live`: BOTH routes are served by v2's serve.mjs (ported from :8781). The
+    // engine binaries keep their honest not-built fallbacks; the TIER itself
+    // stays a labelled preview (solver-sees plaintext; not live with real money).
+    endpoint: '/clear-shielded', live: true, tier: 'shielded',
   },
   {
     id: 'fisher', name: 'Fisher market equilibrium', family: 'fhegg',
