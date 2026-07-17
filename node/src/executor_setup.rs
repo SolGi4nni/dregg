@@ -82,10 +82,14 @@ pub fn program_registry_with_route_circuit(_s: &NodeStateInner) -> ProgramRegist
     // `DslCircuitDfaVerifier` resolves ANY `vk_hash` present in the registry it is
     // handed, lowers that program, and verifies its STARK against PROVER-SUPPLIED
     // public inputs; nothing else pins the program to the routing circuit. The
-    // node's `s.program_registry` is populated by the UNAUTHENTICATED
-    // `POST /programs/deploy` (`api.rs::post_deploy_program`), which accepts an
-    // arbitrary postcard `CircuitDescriptor` from anyone. Handing that registry to
-    // the verifier would let an attacker deploy a trivially-satisfiable program and
+    // node's `s.program_registry` is CALLER-FILLABLE: `POST /programs/deploy`
+    // (`api.rs::post_deploy_program`) accepts an arbitrary postcard
+    // `CircuitDescriptor` and `descriptor.validate()` has no minimum-constraint
+    // check, so a trivially-satisfiable program sails through. (That route sits
+    // behind `require_auth`, so this is "any AUTHORIZED deployer", not "anyone" —
+    // but that is exactly the point: the Dfa verifier must not trust a circuit
+    // merely because some authorized caller deployed it. Defence in depth.)
+    // Handing that registry to the verifier would let such a deployer and
     // discharge a `Dfa` caveat against their OWN program's vk — turning a
     // fail-closed (safe-but-dead) relay into a live forgery surface. Pinning the
     // registry to the one content-derived route vk is what makes wiring the
