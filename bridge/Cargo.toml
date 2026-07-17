@@ -70,6 +70,15 @@ solana-vote-interface = { version = "6.0.2", default-features = false, features 
 # bincode 1.x (Solana's instruction-data codec) for decoding the `VoteInstruction`
 # carried in a real vote transaction's instruction data.
 bincode = "1"
+# The Agave full-snapshot container is a `.tar.zst` archive: `zstd` for the real
+# Zstandard stream and `tar` for the USTAR entry walk (`snapshots/<slot>/<slot>`
+# bank fields + `accounts/<slot>.<id>` AppendVec storages). Both are standard,
+# byte-faithful codecs already in the workspace lock (pulled by other members);
+# they add no new transitive crates beyond their own. Used by
+# `solana_feed::agave_snapshot` to unpack a real snapshot archive into the
+# committed `SnapshotBank` the anchored verifier consumes.
+zstd = "0.13"
+tar = "0.4"
 # Type-only Solana stake interface for the REAL warmup/cooldown effective-stake
 # curve (`Delegation::stake_v2` / `StakeHistory` / `StakeHistoryEntry` + the
 # `warmup_cooldown_allowance` rate constants — 25% original / 9% tower). Pulled
