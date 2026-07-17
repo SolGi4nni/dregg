@@ -94,27 +94,24 @@ def SplitUniqueAt (c : α) : Prop :=
 theorem split_unique_generic_packaged (c : α) : SplitUniqueAt c :=
   split_unique_generic c
 
-/-! ## §3 THE TWO EXISTING LEMMAS ARE INSTANCES (doc-noted; the wiring is a deferred refactor).
+/-! ## §3 THE TWO EXISTING LEMMAS ARE INSTANCES (the wiring is LANDED).
 
-This file imports NOTHING under `Handlebars*` (import-cycle-free, so the refactor can later make those
-files depend on THIS one), so the identities below are recorded as prose rather than machine-checked
-here. ⚠ HONEST MECHANISM (tested against the real oleans): the existing guards are only
-**propositionally** equivalent to `Segmentation.Absent`, NOT defeq — `NoBrace w = Segmentation.Absent
-Tok.brace w` FAILS by `rfl` (they are distinct equation-compiler fixpoints). So `brace_split_unique`
-does NOT typecheck at `SplitUniqueAt Tok.brace`, and the refactor is NOT a drop-in one-liner: it needs
-an inductive `NoBrace ↔ Absent` bridge (or replacing the guard `def`s in the Handlebars files with
-`Segmentation.Absent`). What IS exact is the instantiation SHAPE — the same generic proof at two
-alphabets:
+This file imports NOTHING under `Handlebars*` (import-cycle-free), so the Handlebars uniqueness files
+depend on THIS one — both now derive their lemmas from the generics here. ⚠ HONEST MECHANISM (tested
+against the real oleans): the existing guards are only **propositionally** equivalent to
+`Segmentation.Absent`, NOT defeq — `NoBrace w = Segmentation.Absent Tok.brace w` FAILS by `rfl`
+(they are distinct equation-compiler fixpoints). So the wiring goes through inductive bridge lemmas
+(`HandlebarsUniqueness.noBrace_iff_absent`, `HandlebarsGuardedUniqueness.guarded_absent_iff`), not a
+drop-in `SplitUniqueAt` coercion. The instantiations, now machine-checked in those files:
 
-  * `Dregg2.Crypto.HandlebarsUniqueness.brace_split_unique` is the α := `Tok`, c := `Tok.brace` case
-    (its `NoBrace w` is propositionally, not definitionally, `Segmentation.Absent Tok.brace w`).
-  * `Dregg2.Crypto.HandlebarsGuardedUniqueness.split_unique` is the α := `Value` case, ∀ c
-    (its `Absent c w` is propositionally, not definitionally, `Segmentation.Absent c w`).
+  * `Dregg2.Crypto.HandlebarsUniqueness.brace_split_unique` = `split_unique_generic` at α := `Tok`,
+    c := `Tok.brace`, guards transported via `noBrace_iff_absent`.
+  * `Dregg2.Crypto.HandlebarsGuardedUniqueness.split_unique` = `split_unique_generic` at
+    α := `Value`, ∀ c, guards transported via `guarded_absent_iff`.
 
-The deferred refactor points both files at `split_unique_generic` via that guard-equivalence bridge. Both
-render-injectivity lemmas — `HandlebarsUniqueness.delim_render_injective_holes` (over `Tok`) and
-`HandlebarsGuardedUniqueness.spine_render_injective_aux` (over `Value`) — are in turn instances of the
-generic spine form `spine_segment_unique` (§4), at the same two alphabets. -/
+Both render-injectivity lemmas — `HandlebarsUniqueness.delim_render_injective_holes` (over `Tok`,
+via `toSpine`) and `HandlebarsGuardedUniqueness.spine_render_injective_aux` (over `Value`, via
+`eraseGuards`) — are instances of the generic spine form `spine_segment_unique` (§4). -/
 
 /-! ## §4 The alternating-join / spine form — unique segmentation of a delimiter-joined word.
 

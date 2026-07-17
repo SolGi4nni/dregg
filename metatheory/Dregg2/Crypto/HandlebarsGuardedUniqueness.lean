@@ -48,6 +48,7 @@ hole's data — is FORCED. This is the guard-structure generalization of `Handle
 -/
 import Dregg2.Crypto.HandlebarsGuarded
 import Dregg2.Crypto.Deriv.Correctness
+import Dregg2.Crypto.Segmentation
 import Dregg2.Tactics
 
 namespace Dregg2.Crypto.HandlebarsGuardedUniqueness
@@ -71,25 +72,24 @@ def Absent (c : Value) : List Value → Prop
   | []       => True
   | a :: rest => a ≠ c ∧ Absent c rest
 
+/-- **`guarded_absent_iff`** — the guard bridge: this module's `Absent c w` is propositionally
+`Segmentation.Absent c w` (distinct equation-compiler fixpoints, so NOT `rfl`; by induction on the
+word). -/
+theorem guarded_absent_iff (c : Value) : ∀ w, Absent c w ↔ Segmentation.Absent c w
+  | [] => Iff.rfl
+  | _ :: rest => and_congr Iff.rfl (guarded_absent_iff c rest)
+
 /-- **`split_unique`** — if `x ++ c :: s = y ++ c :: t` with `x`, `y` both `c`-free (`Absent c`), then
 `x = y` and `s = t`. The load-bearing uniqueness step, generic in the delimiter symbol `c`: the
 delimiter `c` cannot occur inside a `c`-free prefix, so it is located identically in both
-decompositions. Generalizes `HandlebarsUniqueness.brace_split_unique` (`c := Tok.brace`). -/
+decompositions. Generalizes `HandlebarsUniqueness.brace_split_unique` (`c := Tok.brace`). Instance of
+`Segmentation.split_unique_generic` at `α := Value` via the `guarded_absent_iff` bridge. -/
 theorem split_unique (c : Value) :
     ∀ (x y s t : List Value), Absent c x → Absent c y →
-      x ++ c :: s = y ++ c :: t → x = y ∧ s = t
-  | [], [], s, t, _, _, h => ⟨rfl, by simpa using h⟩
-  | [], _ :: _, _, _, _, hy, h => by
-      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
-      exact absurd h.1.symm hy.1
-  | _ :: _, [], _, _, hx, _, h => by
-      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
-      exact absurd h.1 hx.1
-  | a :: x', b :: y', s, t, hx, hy, h => by
-      simp only [List.cons_append, List.cons.injEq] at h
-      obtain ⟨hab, htail⟩ := h
-      obtain ⟨hxy, hst⟩ := split_unique c x' y' s t hx.2 hy.2 htail
-      exact ⟨by rw [hab, hxy], hst⟩
+      x ++ c :: s = y ++ c :: t → x = y ∧ s = t :=
+  fun x y s t hx hy h =>
+    Segmentation.split_unique_generic c x y s t
+      ((guarded_absent_iff c x).mp hx) ((guarded_absent_iff c y).mp hy) h
 
 /-! ## §2 The separation primitive — a guard `EXCLUDES` a symbol. -/
 
@@ -164,46 +164,63 @@ theorem render_spine_cons (d : Nat → List Value) (id : Nat) (g : PredRE) (c : 
   simp only [render, spineTemplate, spineSegs, List.flatMap_cons, renderSeg,
     List.singleton_append]
 
-/-! ## §4 THE KEY THEOREM — render injectivity / unique data recovery, guard-parametric. -/
+/-! ## §4 THE KEY THEOREM — render injectivity / unique data recovery, guard-parametric.
+
+The induction lives alphabet-generically in `Segmentation.spine_segment_unique`; the lemmas below
+erase the guards to reach its `Spine` (`eraseGuards`), turn `Separated` + `guardedSafe` into
+`Segmented` (via `Excludes` and the `guarded_absent_iff` bridge), and instantiate. -/
+
+/-- The spine with its guards ERASED — the pure word-combinatorics skeleton that
+`Segmentation.spine_segment_unique` acts on (guards enter only through `Segmented`, via
+`Excludes`). -/
+def eraseGuards : SepSpine → Segmentation.Spine Value
+  | .last id _        => .last id
+  | .cons id _ c rest => .cons id c (eraseGuards rest)
+
+/-- Guard erasure preserves the named hole-ids. -/
+theorem eraseGuards_holes : ∀ s : SepSpine,
+    Segmentation.spineHoles (eraseGuards s) = spineHoles s
+  | .last _ _ => rfl
+  | .cons _ _ _ rest => by
+      simp only [eraseGuards, Segmentation.spineHoles, spineHoles, eraseGuards_holes rest]
+
+/-- Guard erasure preserves the render (guards do not print). -/
+theorem eraseGuards_render (d : Nat → List Value) : ∀ s : SepSpine,
+    Segmentation.spineRender d (eraseGuards s) = render (spineTemplate s) d
+  | .last _ _ => by rw [render_spine_last]; rfl
+  | .cons _ _ _ rest => by
+      rw [render_spine_cons]
+      simp only [eraseGuards, Segmentation.spineRender, eraseGuards_render d rest]
+
+/-- `Separated` + `guardedSafe` make the erased spine `Segmented`: each non-final hole's guard
+EXCLUDES its delimiter, and its data satisfies the guard, so the data is `Absent` the delimiter
+(via the `guarded_absent_iff` bridge). -/
+theorem eraseGuards_segmented (d : Nat → List Value) : ∀ s : SepSpine,
+    Separated s → guardedSafe (spineTemplate s) d →
+    Segmentation.Segmented d (eraseGuards s)
+  | .last _ _, _, _ => trivial
+  | .cons id g c rest, hsep, hsafe =>
+      ⟨(guarded_absent_iff c _).mp
+         (hsep.1 _ (hsafe id g (by simp [spineTemplate, spineSegs]))),
+       eraseGuards_segmented d rest hsep.2 fun id' g' hm =>
+         hsafe id' g' (by
+           simp only [spineTemplate, spineSegs]
+           exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hm))⟩
 
 /-- The spine-form injectivity: for a `Separated` spine whose holes are guard-satisfied on both `d`,
-`d'`, equal output forces equal data on every named hole. Proof: strip the first hole via
-`split_unique` (its guard EXCLUDES the following delimiter, so its data ends exactly at that
-delimiter), recurse on the tail. Generalizes `HandlebarsUniqueness.delim_render_injective_holes`. -/
+`d'`, equal output forces equal data on every named hole. Instance of
+`Segmentation.spine_segment_unique` on the guard-erased spine. Generalizes
+`HandlebarsUniqueness.delim_render_injective_holes`. -/
 theorem spine_render_injective_aux :
     ∀ (s : SepSpine), Separated s → ∀ (d d' : Nat → List Value),
       guardedSafe (spineTemplate s) d → guardedSafe (spineTemplate s) d' →
       render (spineTemplate s) d = render (spineTemplate s) d' →
-      ∀ id ∈ spineHoles s, d id = d' id
-  | .last id0 g0, _, d, d', _, _, heq => by
-      intro id hmem
-      simp only [spineHoles, List.mem_singleton] at hmem
-      subst hmem
-      rw [render_spine_last, render_spine_last] at heq
-      exact heq
-  | .cons id0 g0 c0 rest, hsep, d, d', hsafe, hsafe', heq => by
-      rw [render_spine_cons, render_spine_cons] at heq
-      obtain ⟨hexcl, hsep_rest⟩ := hsep
-      have hd0  : derives (d id0) g0 = true  := hsafe  id0 g0 (by simp [spineTemplate, spineSegs])
-      have hd0' : derives (d' id0) g0 = true := hsafe' id0 g0 (by simp [spineTemplate, spineSegs])
-      obtain ⟨hhead, htail⟩ :=
-        split_unique c0 (d id0) (d' id0)
-          (render (spineTemplate rest) d) (render (spineTemplate rest) d')
-          (hexcl _ hd0) (hexcl _ hd0') heq
-      have hsafe_r : guardedSafe (spineTemplate rest) d := fun id g hm =>
-        hsafe id g (by
-          simp only [spineTemplate, spineSegs]
-          exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hm))
-      have hsafe_r' : guardedSafe (spineTemplate rest) d' := fun id g hm =>
-        hsafe' id g (by
-          simp only [spineTemplate, spineSegs]
-          exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ hm))
-      have ih := spine_render_injective_aux rest hsep_rest d d' hsafe_r hsafe_r' htail
-      intro id hmem
-      simp only [spineHoles, List.mem_cons] at hmem
-      rcases hmem with rfl | hin
-      · exact hhead
-      · exact ih id hin
+      ∀ id ∈ spineHoles s, d id = d' id :=
+  fun s hsep d d' hsafe hsafe' heq id hmem =>
+    Segmentation.spine_segment_unique (eraseGuards s) d d'
+      (eraseGuards_segmented d s hsep hsafe) (eraseGuards_segmented d' s hsep hsafe')
+      (by rw [eraseGuards_render, eraseGuards_render]; exact heq)
+      id (by rw [eraseGuards_holes]; exact hmem)
 
 /-- **`SeparatedTemplate T`** — `T` is (equal to) a separated-guards spine. The precise home of the
 inverse: an alternation of holes and single-symbol delimiter literals in which every non-final hole's

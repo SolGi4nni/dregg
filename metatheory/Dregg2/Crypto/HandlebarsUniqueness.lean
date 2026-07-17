@@ -41,6 +41,7 @@ seam-abutting braces) stays the NAMED WALL; see §6.
     (non-vacuity: the guard genuinely separates), with `#guard`s.
 -/
 import Dregg2.Crypto.Handlebars
+import Dregg2.Crypto.Segmentation
 import Dregg2.Tactics
 
 namespace Dregg2.Crypto.HandlebarsUniqueness
@@ -70,26 +71,28 @@ instance decNoBrace : (w : List Tok) → Decidable (NoBrace w)
 
 This is the parse-uniqueness content, at the granularity the guarded class needs: because both
 prefixes are `brace`-free, the first `brace` in a shared output falls at the same index in each, so
-the split point — and thus the prefix and suffix — are forced. -/
+the split point — and thus the prefix and suffix — are forced. The combinatorics lives
+alphabet-generically in `Segmentation.split_unique_generic`; `noBrace_iff_absent` is the bridge
+(`NoBrace` and `Segmentation.Absent Tok.brace` are distinct equation-compiler fixpoints, so the
+equivalence is propositional, NOT `rfl`). -/
+
+/-- **`noBrace_iff_absent`** — the guard bridge: `NoBrace w ↔ Segmentation.Absent Tok.brace w`.
+Propositional (by induction on the word), not definitional — the two `def`s are distinct
+equation-compiler fixpoints. -/
+theorem noBrace_iff_absent : ∀ w, NoBrace w ↔ Segmentation.Absent Tok.brace w
+  | [] => Iff.rfl
+  | _ :: rest => and_congr Iff.rfl (noBrace_iff_absent rest)
 
 /-- **`brace_split_unique`** — if `x ++ {` ` :: s = y ++ {` ` :: t` with `x`, `y` both `brace`-free,
 then `x = y` and `s = t`. The load-bearing uniqueness step: the delimiter `{` cannot occur inside a
-`brace`-free prefix, so it is located identically in both decompositions. -/
+`brace`-free prefix, so it is located identically in both decompositions. Instance of
+`Segmentation.split_unique_generic` at `⟨Tok, Tok.brace⟩` via the `noBrace_iff_absent` bridge. -/
 theorem brace_split_unique :
     ∀ (x y s t : List Tok), NoBrace x → NoBrace y →
-      x ++ Tok.brace :: s = y ++ Tok.brace :: t → x = y ∧ s = t
-  | [], [], s, t, _, _, h => ⟨rfl, by simpa using h⟩
-  | [], _ :: _, _, _, _, hy, h => by
-      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
-      exact absurd h.1.symm hy.1
-  | _ :: _, [], _, _, hx, _, h => by
-      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
-      exact absurd h.1 hx.1
-  | a :: x', b :: y', s, t, hx, hy, h => by
-      simp only [List.cons_append, List.cons.injEq] at h
-      obtain ⟨hab, htail⟩ := h
-      obtain ⟨hxy, hst⟩ := brace_split_unique x' y' s t hx.2 hy.2 htail
-      exact ⟨by rw [hab, hxy], hst⟩
+      x ++ Tok.brace :: s = y ++ Tok.brace :: t → x = y ∧ s = t :=
+  fun x y s t hx hy h =>
+    Segmentation.split_unique_generic Tok.brace x y s t
+      ((noBrace_iff_absent x).mp hx) ((noBrace_iff_absent y).mp hy) h
 
 /-! ## §3 The delimiter-normal-form template class. -/
 
@@ -132,40 +135,56 @@ theorem render_delim_cons (d : HoleId → List Tok) (h0 h1 : HoleId) (rest : Lis
   simp only [render, delimTemplate, delimSegs, List.flatMap_cons, renderSeg,
     List.singleton_append]
 
-/-! ## §5 THE KEY THEOREM — render injectivity / unique data recovery. -/
+/-! ## §5 THE KEY THEOREM — render injectivity / unique data recovery.
+
+The induction lives alphabet-generically in `Segmentation.spine_segment_unique`; the lemmas below
+exhibit `delimTemplate` as a brace-delimited `Segmentation.Spine Tok` (`toSpine`), transport the
+guard via `noBrace_iff_absent`, and instantiate. -/
+
+/-- The hole-id list as a brace-delimited `Segmentation.Spine` (delimiter `Tok.brace` throughout). -/
+def toSpine : HoleId → List HoleId → Segmentation.Spine Tok
+  | h, []         => .last h
+  | h, h1 :: rest => .cons h Tok.brace (toSpine h1 rest)
+
+/-- `toSpine` names exactly the hole-id list. -/
+theorem toSpine_holes : ∀ (h0 : HoleId) (rest : List HoleId),
+    Segmentation.spineHoles (toSpine h0 rest) = h0 :: rest
+  | _, [] => rfl
+  | h0, h1 :: rest => by
+      simp only [toSpine, Segmentation.spineHoles, toSpine_holes h1 rest]
+
+/-- `toSpine` renders as the delimiter-normal-form template. -/
+theorem toSpine_render (d : HoleId → List Tok) : ∀ (h0 : HoleId) (rest : List HoleId),
+    Segmentation.spineRender d (toSpine h0 rest) = render (delimTemplate (h0 :: rest)) d
+  | h0, [] => by rw [render_delim_single]; rfl
+  | h0, h1 :: rest => by
+      rw [render_delim_cons]
+      simp only [toSpine, Segmentation.spineRender, toSpine_render d h1 rest]
+
+/-- `brace`-free hole data makes the spine `Segmented` (via the `noBrace_iff_absent` bridge). -/
+theorem toSpine_segmented (d : HoleId → List Tok) :
+    ∀ (h0 : HoleId) (rest : List HoleId), (∀ h ∈ h0 :: rest, NoBrace (d h)) →
+      Segmentation.Segmented d (toSpine h0 rest)
+  | _, [], _ => trivial
+  | h0, h1 :: rest, hnb =>
+      ⟨(noBrace_iff_absent _).mp (hnb h0 (by simp)),
+       toSpine_segmented d h1 rest fun h hm => hnb h (List.mem_cons_of_mem _ hm)⟩
 
 /-- Injectivity in the hole-id-list form: for a delimiter-guarded template with every hole's data
-`brace`-free on both sides, equal output forces equal data on every named hole. Proof: strip the
-first hole via `brace_split_unique` (its `brace`-free data ends exactly at the first `{`), recurse on
-the tail. -/
+`brace`-free on both sides, equal output forces equal data on every named hole. Instance of
+`Segmentation.spine_segment_unique` on `toSpine` (the hole data is `Absent` each following `{`, so
+each split is forced). -/
 theorem delim_render_injective_holes :
     ∀ (holes : List HoleId) (d d' : HoleId → List Tok),
       (∀ h ∈ holes, NoBrace (d h)) → (∀ h ∈ holes, NoBrace (d' h)) →
       render (delimTemplate holes) d = render (delimTemplate holes) d' →
       ∀ h ∈ holes, d h = d' h
   | [], _, _, _, _, _ => by intro h hmem; simp at hmem
-  | [h0], d, d', _, _, heq => by
-      intro h hmem
-      simp only [List.mem_singleton] at hmem
-      subst hmem
-      rw [render_delim_single, render_delim_single] at heq
-      exact heq
-  | h0 :: h1 :: rest, d, d', hnd, hnd', heq => by
-      rw [render_delim_cons, render_delim_cons] at heq
-      have hb0 : NoBrace (d h0) := hnd h0 (by simp)
-      have hb0' : NoBrace (d' h0) := hnd' h0 (by simp)
-      obtain ⟨hhead, htail⟩ :=
-        brace_split_unique (d h0) (d' h0)
-          (render (delimTemplate (h1 :: rest)) d) (render (delimTemplate (h1 :: rest)) d')
-          hb0 hb0' heq
-      have ih := delim_render_injective_holes (h1 :: rest) d d'
-        (fun h hm => hnd h (List.mem_cons_of_mem _ hm))
-        (fun h hm => hnd' h (List.mem_cons_of_mem _ hm))
-        htail
-      intro h hmem
-      rcases List.mem_cons.mp hmem with rfl | h_in
-      · exact hhead
-      · exact ih h h_in
+  | h0 :: rest, d, d', hnd, hnd', heq => fun h hmem =>
+      Segmentation.spine_segment_unique (toSpine h0 rest) d d'
+        (toSpine_segmented d h0 rest hnd) (toSpine_segmented d' h0 rest hnd')
+        (by rw [toSpine_render, toSpine_render]; exact heq)
+        h (by rw [toSpine_holes]; exact hmem)
 
 /-- **`delim_render_injective`** — RENDER INJECTIVITY on `holesOf`. For a delimiter-guarded template
 `delimTemplate holes` whose holes carry `brace`-free data on both assignments, `render T d = render T
