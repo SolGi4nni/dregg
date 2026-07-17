@@ -11,7 +11,23 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
   deriveTranscript, compress is separate — honest; 19 keystones clean, additive). Stage 2 ✅ DONE (FriVerifierFS.lean, 10 keystones): ExtractBundleSansFS verbatim (10/12,
   machine-gated) + fs_epsilon_bound REAL ε=(Q+1)deg/|F|+Q/2^pow (BabyBear-grounded, <1 teeth, grinding
   term a theorem 1st time). ⚑ HONEST NAMED GAP: freshness (fsPt∉S) SUPPLIED not derived — the §4.5
-  QueryLog-erasure carrier, NOT faked. Stage 3 ✅ DONE (FriVerifierMerkle.lean, 3fbf42cf7, 21 keystones): findCollisionZ extraction-as-data (sound/complete, Merkle binding DERIVED w/o Poseidon2SpongeCR hyp); Merkle ε via birthday_cond; freshness carrier ADVANCED — fsPt∉S now fsPt∉queriedFinset (card≤permCallCount), residual = transcript-ordering non-membership + α-pin (named, not faked). Stage 4 FIRING (query-phase εQuery, the hard one). → Stage 2 (FS terms ε: 2/12 conjuncts
+  QueryLog-erasure carrier, NOT faked. Stage 3 ✅ DONE (FriVerifierMerkle.lean, 3fbf42cf7, 21 keystones): findCollisionZ extraction-as-data (sound/complete, Merkle binding DERIVED w/o Poseidon2SpongeCR hyp); Merkle ε via birthday_cond; freshness carrier ADVANCED — fsPt∉S now fsPt∉queriedFinset (card≤permCallCount), residual = transcript-ordering non-membership + α-pin (named, not faked). Stage 4 ✅ DONE (FriVerifierQuery.lean, 2965 jobs, 9 axiom-pins):
+  epsilon_query_layer_carried Pr[4d-far ∧ k checks accept] ≤ L/|F| + (1−δ)^k; DEPLOYED
+  epsilon_query_deployed ≤ 1/|F| + (9/16)^38, (9/16)^38 < 2⁻³¹ → εQuery dominated by fold term.
+  johnsonBits exponent is now a THEOREM about (α,Q) randomness, not by norm_num. PROVEN: query term
+  (accept_prob_le), fold term at L=1 (proximityGap_uniqueDecoding), union, fibre-counting; qidx↔
+  transcript teeth LIFTED via Stage-1 run_eq. ⚑ DESIGN FORK SURFACED (not picked): (i) unique-decoding
+  L=1 = fully proven, nothing carried; (ii) Johnson L>1 = where ~112.6 + sharper perFoldBits live,
+  under the NAMED correlated-agreement carrier (codes/densities only; in-tree proven ONLY for
+  wrap_correlatedAgreementLine, dIn=56). Landed (i); (ii) is a one-hypothesis discharge (parametric
+  in L). File REFUSES to read 112-bit out of the L=1 pipeline (design §6 falsifier ii). Ledger-density
+  bridge NAMED: sharper perFoldBits composes ONLY through fork (ii).
+  Stage-3 residuals NOT discharged (exceed stage, named): transcript-ordering freshness (needs an
+  ordered-log model RomOracle lacks) + α-pin (permanent ROM carrier).
+  → STAGE 5 SEAM: εQuery is over uniform F × (Fin k → κ); attaching it to a QueryBounded adversary's
+  single run needs α,Q fresh/post-commitment = EXACTLY the transcript-ordering residual. Stage 5 must
+  close that to compose εFri = εMerkle+εFS+εGrind+εQuery over a shared oracle, then instantiate at the
+  recursion VK + union-bound over PTree nodes (recursive_sound_from_nodes) → GroundedApex re-read. → Stage 2 (FS terms ε: 2/12 conjuncts
   assumed→proven, `(Q+1)` grinding) → 3 (Merkle extraction-as-data + `birthday_cond`) → 4
   (query-phase `εQuery`, the hard one; `johnsonBits` stops being `by norm_num`) → 5 (apex re-read:
   "bits = query budget where εFri=½"). Each ADDITIVE, sorry-free, `#assert_axioms`-clean, no
