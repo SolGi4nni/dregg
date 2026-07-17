@@ -37,6 +37,15 @@
 #
 set -u
 
+# --- pin byte-mode for the extractor (SELF-DEFENDING, not caller-dependent) ---
+# The extraction is a single awk pass over prose full of em-dashes. Under a UTF-8
+# locale, an awk that decodes multibyte (BSD awk) hits a `towc` failure and
+# TRUNCATES the scan mid-stream — silently under-reporting (and the count varied
+# with file argument order). The regex is pure ASCII, so byte-mode is both correct
+# and portable. This lived only in the CI workflow's env; pinning it here means the
+# script cannot be truncated by a direct/local invocation with a different locale.
+export LC_ALL=C
+
 # --- locate repo root -------------------------------------------------------
 if ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null); then
   :
@@ -191,6 +200,22 @@ printf 'check-doc-refs: scanned %d resolvable refs across %d markdown files\n' \
   "$scanned_refs" "${#FILES[@]}"
 printf 'check-doc-refs: %d DEAD, %d WARN (line past EOF)\n' \
   "$dead_count" "$warn_count"
+
+# --- the scanned-ref FLOOR (a gate that scanned nothing is not a passing gate) ---
+# The extractor is a single awk pass. If it dies, truncates (a UTF-8 `towc` failure
+# on em-dash punctuation silently cut the scan to ~1300 of ~5900 refs — the reason
+# LC_ALL=C is pinned), or the FILES glob matches an empty/moved tree, `dead_count`
+# stays 0 and the gate would GREEN having checked almost nothing. This corpus
+# resolves ~5900 refs; a run that sees fewer than a conservative floor is a broken
+# scan, not a clean tree. Fail loud rather than pass vacuously.
+readonly SCANNED_FLOOR="${DOC_REFS_SCANNED_FLOOR:-3000}"
+if [ "$scanned_refs" -lt "$SCANNED_FLOOR" ]; then
+  echo "check-doc-refs: FAIL — only $scanned_refs refs scanned (floor $SCANNED_FLOOR)." >&2
+  echo "  The extractor resolves ~5900 here; a count this low means it TRUNCATED or the" >&2
+  echo "  file set is empty/moved — the gate would otherwise green having checked almost" >&2
+  echo "  nothing. Common cause: a non-C locale (pin LC_ALL=C) or a broken FILES glob." >&2
+  exit 1
+fi
 
 if [ "$dead_count" -gt 0 ]; then
   exit 1
