@@ -44,8 +44,6 @@ D1:deos-hermes:deos-hermes/tests/hermes_composes_multi_cell.rs:seed_agent  # D1/
 D1:dregg-circuit:circuit/tests/fields_root_gentian_weld.rs:fields_leaves  # D1/D1-self-declared-mirror
 D1:dregg-exec-lean:exec-lean/tests/faucet_fee_well_divergence.rs:run_faucet  # D1/D1-self-declared-mirror
 D1:dregg-exec-lean:exec-lean/tests/faucet_fee_well_divergence.rs:run_faucet_at  # D1/D1-self-declared-mirror
-D1:dregg-protocol-tests:protocol-tests/src/invariants/effect_vm_differential.rs:project_turn_to_vm  # D1/D1-self-declared-mirror
-D2-priv:dregg-protocol-tests:convert_turn_effects_to_vm  # D2/D2-false-privacy-claim
 D2-reads:deos-view:from_prop  # D2/D2-cited-consumer-absent
 D2-reads:dregg-sdk:agent_receipt_head  # D2/D2-cited-consumer-absent
 D2-reads:dreggnet-asset:trait_root_of  # D2/D2-cited-consumer-absent

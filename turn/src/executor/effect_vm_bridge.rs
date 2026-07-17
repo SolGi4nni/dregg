@@ -38,11 +38,15 @@ pub fn convert_turn_effects_to_vm(
         // all 8 four-byte limbs of the value into the BabyBear felt. The SDK
         // projector (`sdk/src/cipherclerk.rs::convert_effects_to_vm`) imports
         // and calls the SAME function, so the two projectors agree byte-for-
-        // byte by construction (asserted by the differential invariant in
-        // `protocol-tests/.../effect_vm_differential.rs`). Because every byte
-        // now contributes to the felt, the per-effect param column and the
-        // `compute_effects_hash`-derived `PI[EFFECTS_HASH]` bind the full
-        // 32-byte value rather than a 4-byte equivalence class.
+        // byte by construction (they call one shared helper — NOT because any
+        // test compares them; the executor↔SDK agreement invariant does not
+        // yet exist — see M11 in docs/audit/RE-AUTHORED-MIRROR-MAP.md). What
+        // IS tested: `protocol-tests/.../effect_vm_differential.rs` drives THIS
+        // projection through the AIR trace and checks it against the runtime
+        // executor's state mutation. Because every byte now contributes to the
+        // felt, the per-effect param column and the `compute_effects_hash`-
+        // derived `PI[EFFECTS_HASH]` bind the full 32-byte value rather than a
+        // 4-byte equivalence class.
         //
         // (The full-u64 amount truncation, by contrast, was closed earlier:
         // the VM effect carries `value_full` bound via 4×16-bit PI limbs +
@@ -65,8 +69,9 @@ pub fn convert_turn_effects_to_vm(
         // 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): the full
         // 256-bit binding path. Projects a 32-byte value into 8 BabyBear limbs
         // (4 bytes each, little-endian) via the SHARED circuit helper, so the
-        // executor and SDK projectors emit byte-for-byte identical encodings
-        // (asserted by the protocol-tests differential invariant). Used for the
+        // executor and SDK projectors emit byte-for-byte identical encodings by
+        // construction (one shared helper — no executor↔SDK comparison test
+        // exists yet; M11 in docs/audit/RE-AUTHORED-MIRROR-MAP.md). Used for the
         // hash params widened to `[BabyBear; 8]` — same shape EmitEvent/Custom
         // already use. Where the old single-felt fold gave ~31-bit collision
         // resistance, the 8-limb form binds all 32 bytes via compute_effects_hash.

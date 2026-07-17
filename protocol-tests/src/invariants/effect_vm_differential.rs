@@ -24,16 +24,19 @@
 //! NOTE: These tests do NOT exercise the SNARK constraints — they only
 //! probe what the trace generator and PI extractor *claim*. Constraint
 //! soundness is covered by `circuit::effect_vm::tests`. This module
-//! verifies the *bridge* between two independent implementations of
-//! "what does effect V do to cell state".
+//! verifies the *bridge* between the two REAL implementations of "what
+//! does effect V do to cell state": the deployed executor projection
+//! `dregg_turn::executor::convert_turn_effects_to_vm` (as carried into the
+//! AIR trace by `generate_effect_vm_trace`) versus the runtime executor's
+//! actual state mutation (`TurnExecutor::execute`). It calls the real
+//! bridge — there is NO hand-written mirror of the projection here.
 
 use std::collections::HashMap;
 
 use dregg_cell::Permissions;
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger};
 use dregg_circuit::effect_vm::{
-    CellState as VmCellState, Effect as VmEffect, extract_net_delta, generate_effect_vm_trace,
-    state as vm_state,
+    CellState as VmCellState, extract_net_delta, generate_effect_vm_trace, state as vm_state,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_turn::{
@@ -135,231 +138,6 @@ fn fresh_ledger() -> (Ledger, Vec<CellId>) {
     build_open_ledger(&spec)
 }
 
-/// Inline projection of the runtime turn into VM effects.
-///
-/// Mirrors `TurnExecutor::convert_turn_effects_to_vm` (which is module-
-/// private). Kept inline here so the differential test is independent of
-/// the executor crate; if the executor's projection changes shape this
-/// helper will go stale and the tests should be updated together. We only
-/// cover the variants exercised by tests below — others fall through to
-/// `VmEffect::NoOp`.
-fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
-    // CLOSED (effect-vm-hash-truncation lane, 2026-05-28): mirror the
-    // executor + SDK projectors, which now fold all 32 bytes via the shared
-    // `dregg_circuit::effect_vm::fold_bytes32_to_bb`. Keeping this inline
-    // helper in lock-step is what makes the differential checks meaningful.
-    fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
-        dregg_circuit::effect_vm::fold_bytes32_to_bb(h)
-    }
-    fn field_to_bb(v: &[u8; 32]) -> BabyBear {
-        dregg_circuit::effect_vm::fold_bytes32_to_bb(v)
-    }
-    // 32-byte widening (effect-vm-hash-widen lane): the 12 identity/hash params
-    // are now `[BabyBear; 8]`. Mirror the executor + SDK projectors, which
-    // project the full 32 bytes into 8 limbs via the shared circuit helper, so
-    // the differential check stays byte-for-byte meaningful.
-    fn hash_to_8(h: &[u8; 32]) -> [BabyBear; 8] {
-        dregg_circuit::effect_vm::bytes32_to_8_limbs(h)
-    }
-
-    let mut out: Vec<VmEffect> = Vec::new();
-    for root in &turn.call_forest.roots {
-        // Single-action turns only (our tests build these). Walk root.
-        for effect in &root.action.effects {
-            match effect {
-                Effect::Transfer { from, to, amount } => {
-                    if from == cell_id {
-                        out.push(VmEffect::Transfer {
-                            amount: *amount,
-                            direction: 1,
-                        });
-                    } else if to == cell_id {
-                        out.push(VmEffect::Transfer {
-                            amount: *amount,
-                            direction: 0,
-                        });
-                    }
-                }
-                Effect::SetField { cell, index, value } if cell == cell_id => {
-                    out.push(VmEffect::SetField {
-                        field_idx: *index as u32,
-                        value: field_to_bb(value),
-                    });
-                }
-                Effect::GrantCapability { to, cap, .. } if to == cell_id => {
-                    let cap_hash = blake3::hash(&cap.slot.to_le_bytes());
-                    out.push(VmEffect::GrantCapability {
-                        cap_entry: hash_to_8(cap_hash.as_bytes()),
-                        phase_b: None,
-                    });
-                }
-                Effect::RevokeCapability { cell, slot } if cell == cell_id => {
-                    let slot_hash_bytes = blake3::hash(&slot.to_le_bytes());
-                    out.push(VmEffect::RevokeCapability {
-                        slot_hash: hash_to_8(slot_hash_bytes.as_bytes()),
-                        phase_b: None,
-                    });
-                }
-                Effect::EmitEvent { cell, event } if cell == cell_id => {
-                    // #110: project to canonical (topic_hash, payload_hash)
-                    // 8-felt form. Mirrors the executor's effect_vm_bridge
-                    // projection; the differential check requires byte-for-byte
-                    // equivalence with the executor.
-                    let topic_bytes = *blake3::hash(&event.topic).as_bytes();
-                    let mut ph = blake3::Hasher::new();
-                    for d in &event.data {
-                        ph.update(d);
-                    }
-                    let payload_bytes = *ph.finalize().as_bytes();
-                    fn bytes32_to_8_felts(b: &[u8; 32]) -> [BabyBear; 8] {
-                        dregg_circuit::effect_vm::bytes32_to_8_limbs(b)
-                    }
-                    out.push(VmEffect::EmitEvent {
-                        topic_hash: bytes32_to_8_felts(&topic_bytes),
-                        payload_hash: bytes32_to_8_felts(&payload_bytes),
-                    });
-                }
-                Effect::SetPermissions {
-                    cell,
-                    new_permissions,
-                } if cell == cell_id => {
-                    let perm_bytes = postcard::to_allocvec(new_permissions).unwrap_or_default();
-                    let perm_hash = blake3::hash(&perm_bytes);
-                    out.push(VmEffect::SetPermissions {
-                        permissions_hash: hash_to_8(perm_hash.as_bytes()),
-                    });
-                }
-                Effect::SetVerificationKey { cell, new_vk } if cell == cell_id => {
-                    let vk_hash = match new_vk {
-                        Some(vk) => {
-                            let bytes = postcard::to_allocvec(vk).unwrap_or_default();
-                            let h = blake3::hash(&bytes);
-                            hash_to_8(h.as_bytes())
-                        }
-                        None => [BabyBear::ZERO; 8],
-                    };
-                    out.push(VmEffect::SetVerificationKey { vk_hash });
-                }
-                Effect::CreateCell {
-                    public_key,
-                    token_id,
-                    balance,
-                } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(public_key);
-                    h.update(token_id);
-                    h.update(&balance.to_le_bytes());
-                    out.push(VmEffect::CreateCell {
-                        create_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                Effect::SpawnWithDelegation {
-                    child_public_key,
-                    child_token_id,
-                    max_staleness,
-                } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(child_public_key);
-                    h.update(child_token_id);
-                    h.update(&max_staleness.to_le_bytes());
-                    out.push(VmEffect::SpawnWithDelegation {
-                        spawn_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                Effect::RefreshDelegation { child, snapshot } => {
-                    out.push(VmEffect::RefreshDelegation {
-                        child_hash: hash_to_8(child.as_bytes()),
-                        snapshot_value: hash_to_8(snapshot),
-                    });
-                }
-                Effect::RevokeDelegation { child } => {
-                    out.push(VmEffect::RevokeDelegation {
-                        child_hash: hash_to_8(child.as_bytes()),
-                    });
-                }
-                Effect::BridgeMint { portable_proof } => {
-                    // FELT-DOMAIN mint_hash (STEP-1 re-align): the ONE
-                    // canonical `bridge_mint_hash_felt`, matching the
-                    // executor + SDK projectors byte-for-byte.
-                    let mint_hash = dregg_circuit::dsl::note_spending::bridge_mint_hash_felt(
-                        &portable_proof.nullifier,
-                        &portable_proof
-                            .source_root
-                            .note_tree_root
-                            .unwrap_or([0u8; 32]),
-                        &portable_proof.destination_federation,
-                        portable_proof.value,
-                        portable_proof.asset_type,
-                    );
-                    let value_lo =
-                        BabyBear::new((portable_proof.value & ((1u64 << 30) - 1)) as u32);
-                    out.push(VmEffect::BridgeMint {
-                        value_lo,
-                        mint_hash,
-                        value_full: portable_proof.value,
-                    });
-                }
-                Effect::Introduce {
-                    introducer,
-                    recipient,
-                    target,
-                    permissions,
-                } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(introducer.as_bytes());
-                    h.update(recipient.as_bytes());
-                    h.update(target.as_bytes());
-                    let perm_byte: u8 = match permissions {
-                        AuthRequired::None => 0,
-                        AuthRequired::Signature => 1,
-                        AuthRequired::Proof => 2,
-                        AuthRequired::Either => 3,
-                        AuthRequired::Impossible => 4,
-                        AuthRequired::Custom { .. } => 5,
-                    };
-                    h.update(&[perm_byte]);
-                    // For Custom auth, mix the vk_hash into the introduce
-                    // hash so the differential VM observes the same
-                    // distinction the reference executor's commitment does.
-                    if let AuthRequired::Custom { vk_hash } = permissions {
-                        h.update(vk_hash);
-                    }
-                    out.push(VmEffect::Introduce {
-                        intro_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                Effect::PipelinedSend { target, action } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(&target.source_turn);
-                    h.update(&target.output_slot.to_le_bytes());
-                    h.update(&action.hash());
-                    out.push(VmEffect::PipelinedSend {
-                        send_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                Effect::ExerciseViaCapability {
-                    cap_slot,
-                    inner_effects,
-                } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(&cap_slot.to_le_bytes());
-                    for inner in inner_effects {
-                        h.update(&inner.hash());
-                    }
-                    out.push(VmEffect::ExerciseViaCapability {
-                        exercise_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                _ => { /* Skipped; not part of this cell's projection. */ }
-            }
-        }
-    }
-    if out.is_empty() {
-        out.push(VmEffect::NoOp);
-    }
-    out
-}
-
 /// Generate the VM trace and extract the AIR's claimed (net_balance_delta,
 /// final_cap_root, final_state_commit). We deliberately don't run the
 /// prover — the trace generator's view *is* the AIR's view of state
@@ -367,7 +145,10 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
 /// the per-effect deltas the generator computed.
 fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     let cell_id = actor_cell.id();
-    let vm_effects = project_turn_to_vm(&cell_id, turn);
+    // Call the REAL deployed executor projection — no hand-written mirror.
+    // This is the exact bridge the sovereign proof-verification path resolves
+    // descriptors against (`proof_verify.rs:490/:586`).
+    let vm_effects = dregg_turn::executor::convert_turn_effects_to_vm(&cell_id, turn);
     // Build the AIR's starting state from the cell.
     // THE EPOCH: the actor cell is ORDINARY (non-negative); the VM's starting
     // balance is u64, so use a checked conversion rather than an `as` cast
@@ -375,12 +156,15 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     let vm_balance = u64::try_from(actor_cell.state.balance())
         .expect("ordinary actor cell balance is non-negative");
     let mut vm_initial = VmCellState::new(vm_balance, actor_cell.state.nonce() as u32);
-    // Pull current field bytes into BabyBear (truncated; matches executor
-    // projection).
+    // Pull current field bytes into BabyBear via the SAME faithful lane the
+    // deployed bridge writes SetField into: `field_limbs8(f)[0]` = big-endian
+    // bytes[28..32] (the u64-lane lo32), the lane the rotated producer welds to
+    // limb `4 + slot`. (The historical `u32::from_le_bytes([f[0..4]])` dialect
+    // put before/after state in DIFFERENT domains — a third projector — so the
+    // field comparisons were meaningless; this aligns them.)
     for i in 0..8 {
         if let Some(f) = actor_cell.state.get_field(i) {
-            let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]]) % dregg_circuit::field::BABYBEAR_P;
-            vm_initial.fields[i] = BabyBear::new(v);
+            vm_initial.fields[i] = dregg_circuit::effect_vm::field_limbs8(f)[0];
         }
     }
     vm_initial.refresh_commitment();
@@ -700,28 +484,46 @@ proptest! {
         let before = CellSnapshot::of(actor_cell);
         let nonce = actor_cell.state.nonce();
 
+        // Write v0 into the FAITHFUL u64-lane lo32: big-endian bytes[28..32].
+        // That is exactly the lane the deployed bridge reads via
+        // `field_limbs8(value)[0]` (BE bytes[28..32]) and the rotated producer
+        // welds to limb `4 + slot`, so v0 lands in the AIR's field column
+        // meaningfully (nonzero) rather than in a byte range the bridge ignores.
         let mut value = [0u8; 32];
-        value[..4].copy_from_slice(&v0.to_le_bytes());
+        value[28..32].copy_from_slice(&v0.to_be_bytes());
         let effect = Effect::SetField { cell: actor, index: idx, value };
         let turn = one_effect_turn(actor, nonce, effect);
         let claim = air_claim(actor_cell, &turn);
 
         let executor = TurnExecutor::new(ComputronCosts::zero());
         let _ = executor.execute(&turn, &mut ledger);
-        let after = CellSnapshot::of(ledger.get(&actor).unwrap());
+        let after_cell = ledger.get(&actor).unwrap();
+        let after = CellSnapshot::of(after_cell);
 
-        // AIR's field[idx] should match runtime's field[idx] (mod truncation).
-        let expected_bb = BabyBear::new(v0 % dregg_circuit::field::BABYBEAR_P);
+        // GENUINE executor↔AIR consistency: project the RUNTIME's actually-stored
+        // 32-byte field bytes through the SAME canonical field encoding the AIR
+        // uses (`field_limbs8(..)[0]`), and require the AIR's claimed field
+        // column to equal it. No hand-typed expectation — the bar is that the
+        // deployed bridge's projection (carried into the AIR trace) agrees with
+        // what the executor wrote. A bridge that reverted SetField to the stale
+        // `fold_bytes32_to_bb` fold, or an AIR trace that dropped the write,
+        // makes these two disagree and this fails.
+        let runtime_field_bytes = after_cell
+            .state
+            .get_field(idx)
+            .expect("SetField wrote the field slot at runtime");
+        let expected_bb = dregg_circuit::effect_vm::field_limbs8(runtime_field_bytes)[0];
         prop_assert_eq!(
             claim.final_fields[idx], expected_bb,
-            "SetField: AIR final field[{}] should be {:?} (got {:?})",
-            idx, expected_bb, claim.final_fields[idx],
+            "SetField: AIR final field[{}]={:?} must equal field_limbs8(runtime field)[0]={:?}",
+            idx, claim.final_fields[idx], expected_bb,
         );
-        // Runtime side
-        let runtime_field = after.field_hashes[idx];
-        prop_assert_ne!(
-            runtime_field, before.field_hashes[idx],
-            "SetField: runtime field[{}] should change", idx,
+        // Runtime side: the executor must have stored EXACTLY the 32 bytes we
+        // wrote (stronger than "the hash changed", and robust to v0==0 where a
+        // zero write into an already-zero slot leaves the hash untouched).
+        prop_assert_eq!(
+            runtime_field_bytes, &value,
+            "SetField: runtime field[{}] must hold the written value", idx,
         );
         // Other fields untouched on both sides
         for j in 0..8 {
