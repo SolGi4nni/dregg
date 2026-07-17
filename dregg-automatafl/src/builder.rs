@@ -364,6 +364,36 @@ impl Builder {
         self.assert_zero(&rd);
     }
 
+    /// Gated read that REUSES an already-proven one-hot `sel` (over the same board),
+    /// shifted by a COMPILE-TIME flat offset `off`: `value_col == board[hot + off]` when
+    /// `gate` is on (and `hot + off` is in range), else `value_col == 0`. Allocates NO new
+    /// selector columns — the constraint is `value - Σ_{j: 0 ≤ j+off < k} gate·sel[j]·board[j+off]`.
+    ///
+    /// This is THE RAY-SCAN reduction: the four rays read cells at COMPILE-TIME offsets from
+    /// the auto pin, so they reuse the single `sel_auto` one-hot instead of allocating a fresh
+    /// n² one-hot per step — collapsing the 4n³ selector blowup to n². Soundness is UNCHANGED:
+    /// `sel` is the same one-hot pinned to the auto position, so the read is the genuine board
+    /// cell `auto + off`; the `gate` (the in-bounds bit, itself range-gadget-forced) zeroes an
+    /// out-of-bounds step exactly as the fresh-one-hot read did. Degree 3 (`gate·sel·board`).
+    pub fn shifted_read_gated(
+        &mut self,
+        sel: &[usize],
+        board_cols: &[usize],
+        gate_col: usize,
+        off: i128,
+        value_col: usize,
+    ) {
+        let k = board_cols.len();
+        let mut rd = Head::lin(1, value_col);
+        for (j, &s) in sel.iter().enumerate() {
+            let t = j as i128 + off;
+            if t >= 0 && (t as usize) < k {
+                rd = rd.add_prod(-1, vec![gate_col, s, board_cols[t as usize]]);
+            }
+        }
+        self.assert_zero(&rd);
+    }
+
     /// A fresh column pinned to the product of two columns (`out == a*b`).
     pub fn alloc_prod(&mut self, name: &str, a: usize, b: usize) -> usize {
         let v = (self.values[a] * self.values[b]).0 as i128;

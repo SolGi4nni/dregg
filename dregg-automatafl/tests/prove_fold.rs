@@ -38,7 +38,7 @@ fn demo() -> Board {
 // ============================================================================
 
 #[test]
-#[ignore = "SLOW: real leaf prove of the ~989-col automaton-step AIR + in-circuit commitment expose"]
+#[ignore = "SLOW: real leaf prove of the ~538-col automaton-step AIR + in-circuit commitment expose"]
 fn d1_leaf_proves_and_binds_commitment() {
     use dregg_circuit_prove::custom_leaf_adapter::{
         prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
@@ -112,14 +112,15 @@ fn d1_forged_next_does_not_prove() {
 // ============================================================================
 // D2 / D3 leaf boundary — the single-move apply (D2) and the n=2 resolution (D3)
 // prove as foldable custom leaves, just like D1. MEASURED (tests/size.rs): D2/D3
-// run the automaton gadget a SECOND time (on the move-resolved `mid`), plus the two
-// `MerkleHash8` board roots, so at n=5 they EXCEED MAX_TRACE_WIDTH=1024 — the honest
-// width residual the 4n³ ray-scan redesign must close before the n=5 leaves prove.
-// They FIT at n=3 (the tests below drive that size); `tests/size.rs` is the width
-// GATE (RED at n=5 until the scan lands), and these fold tests are `#[ignore]` because
-// a real STARK fold is minutes+ (run `-- --ignored` on the build box), NOT because
-// they would false-green: with the state-binding ABI now satisfied (32 PIs, PI[0..16]
-// == the leg's real rotated roots) they PROVE-FOLD-VERIFY when run at n=3.
+// run the automaton gadget on the move-resolved `mid`, plus the two `MerkleHash8`
+// board roots. The ray-scan reduction landed (`Builder::shifted_read_gated` reuses
+// the auto one-hot, collapsing the 4n³ selector blowup to n²), so the DEPLOYED n=5
+// leaves now FIT under MAX_TRACE_WIDTH=1024 (D1 538 / D2 727 / D3 960) — a real n=5
+// move receipt is provable again. `tests/size.rs` is the width GATE (GREEN now; it
+// re-reddens if a widening pushes any stage back over). These fold tests are
+// `#[ignore]` because a real STARK fold is minutes+ (run `-- --ignored` on the build
+// box), NOT because they would false-green: with the state-binding ABI satisfied
+// (32 PIs, PI[0..16] == the leg's real rotated roots) they PROVE-FOLD-VERIFY.
 // ============================================================================
 
 use dregg_automatafl::reference::Move;

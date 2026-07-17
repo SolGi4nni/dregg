@@ -1,7 +1,14 @@
 //! Width / constraint census across the staged AIRs. The automaton gadget runs on the
-//! move-resolved `mid` in D2/D3, so each stage adds a second ~automaton-width block —
-//! this test MEASURES whether the widened circuits fit under `MAX_TRACE_WIDTH = 1024` at
-//! each board size, driving the prove/fold size decision (`prove_fold.rs`).
+//! move-resolved `mid` in D2/D3, so each stage carries a full automaton-width block —
+//! this test MEASURES whether the circuits fit under `MAX_TRACE_WIDTH = 1024` at each
+//! board size, driving the prove/fold size decision (`prove_fold.rs`).
+//!
+//! The ray-scan reduction has LANDED: the four rays read cells at compile-time offsets
+//! from the auto pin, so they REUSE the single `sel_auto` one-hot (a shifted dot product,
+//! `Builder::shifted_read_gated`) instead of allocating a fresh n² one-hot per step. That
+//! collapses the old 4n³ selector blowup to n², so every deployed-size (n=5) leaf now fits
+//! under the cap — the board-root `MerkleHash8` commitment rides along without pushing D1
+//! back over.
 
 use dregg_automatafl::reference::{ATT, AUTO, Board, Move, REP, VAC};
 use dregg_automatafl::{
@@ -27,8 +34,9 @@ fn mk(n: usize, placed: &[((i32, i32), u8)], auto: (i32, i32)) -> Board {
 /// then return `Some(tag width)` if it EXCEEDS `MAX_TRACE_WIDTH`. The caller collects the
 /// over-budget stages and asserts NONE remain — so every stage's width still prints before the
 /// gate fails. THE BUDGET IS A GATE, NOT A PRINTOUT: a leaf over `MAX_TRACE_WIDTH` cannot be
-/// proven by the deployed prover, so this test is RED when any stage exceeds (D2/D3 at n=5 do
-/// today; the ray-scan redesign is what closes it). Never weaken this to buy green.
+/// proven by the deployed prover, so this test is RED the moment any stage exceeds — including
+/// the deployed n=5 board. It is GREEN today because the ray-scan reduction landed; a future
+/// widening that pushes any stage back over the cap re-reddens it. Never weaken this to buy green.
 #[must_use]
 fn report(tag: &str, b: &Builder) -> Option<String> {
     let d = b.descriptor();
@@ -96,10 +104,11 @@ fn staged_width_census_n3_fits() {
     assert_all_fit(over);
 }
 
-/// The n=5 (deployed board size) census. D2/D3 run the automaton gadget a SECOND time on the
-/// move-resolved `mid`, and the 4n³ ray scan dominates — so they EXCEED `MAX_TRACE_WIDTH`
-/// TODAY and this test is RED. That RED is the TRUE signal the ray-scan redesign is not yet
-/// landed; it is NOT to be weakened into a print. (D1 n5 and the sealed reveal fit.)
+/// The n=5 (deployed board size) census. D2/D3 run the automaton gadget on the move-resolved
+/// `mid`; the ray scan used to dominate at 4n³ selectors and pushed every stage over the cap,
+/// but the `shifted_read_gated` reduction (reusing `sel_auto`) collapses it to n², so all four
+/// stages — including the board-root-bearing D1/D2/D3 — now FIT under `MAX_TRACE_WIDTH`. This
+/// test asserts that; a widening that breaks it re-reddens the gate (do NOT paper it over).
 #[test]
 fn staged_width_census_n5() {
     let d2n5_old = mk(5, &[((0, 0), ATT)], (4, 4));

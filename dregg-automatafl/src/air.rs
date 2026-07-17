@@ -349,25 +349,14 @@ fn automaton_gadget(
             };
             let ib = b.forced_ge0(&format!("{dtag}_ib{kk}"), &d_head, d_val, SMALL_RBITS);
             ib_cols.push(ib);
-            // Read src[cell] gated by ib (0 when OOB = wall vacuum).
+            // Read src[cell] gated by ib (0 when OOB = wall vacuum). The cell sits at a
+            // COMPILE-TIME flat offset from the auto pin, so we REUSE `sel_auto` (the proven
+            // auto one-hot) shifted by `off` instead of allocating a fresh n² one-hot per step
+            // — the ray-scan reduction that collapses the 4n³ selector blowup to n².
             let cell_val = src.cell_at((cx, cy)) as i128; // 0 if OOB
             let rc = b.alloc(format!("{dtag}_rc{kk}"), ColumnKind::Value, cell_val);
-            let index_head = Head::lin(n as i128, ay_col)
-                .add_lin(1, ax_col)
-                .add_const(n as i128 * kk as i128 * dy as i128 + kk as i128 * dx as i128);
-            let index_val = if src.in_bounds((cx, cy)) {
-                (cy as usize) * n + (cx as usize)
-            } else {
-                0
-            };
-            b.one_hot_read_gated(
-                &format!("{dtag}_rd{kk}"),
-                board_cols,
-                ib,
-                index_val,
-                &index_head,
-                rc,
-            );
+            let off = n as i128 * kk as i128 * dy as i128 + kk as i128 * dx as i128;
+            b.shifted_read_gated(&sel_auto, board_cols, ib, off, rc);
             rc_cols.push(rc);
         }
 
