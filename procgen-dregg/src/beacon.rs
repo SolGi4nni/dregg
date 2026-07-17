@@ -37,9 +37,15 @@
 //!
 //! - The **verification** is real drand interop (a BLS pairing check against the pinned
 //!   `quicknet` group key; the crate's own tests verify a real published round). The
-//!   **producer** half — *fetching* `(round, signature)` from a drand node over HTTP — is a
-//!   named client seam, not embedded here (a `DailyBeacon` is built from an already-fetched
-//!   round). This keeps the verifier a pure function of public data.
+//!   **producer** half — *fetching* `(round, signature)` from a drand node over HTTP — lives
+//!   below behind the injected [`RoundFetch`] transport seam ([`todays_beacon`] is the
+//!   default live path); the verifier itself stays a pure function of public data.
+//! - The live fetch can fail (no egress, a drand outage). The pinned published round is the
+//!   **explicit, labeled** fallback: [`todays_beacon`] returns a [`ResolvedDailyBeacon`]
+//!   whose [`BeaconSource`] says *which* beacon a caller got — [`BeaconSource::Live`] or
+//!   [`BeaconSource::PinnedFallback`] (with its staleness) — so a surface can never honestly
+//!   render the pinned round as if it were today's. A fetched round that FAILS verification
+//!   is a hard error, never a silent fallback.
 //! - "Unpredictable" is the drand **threshold assumption** (no sub-threshold coalition signs a
 //!   future round). This wire *binds* that beacon and makes each day's binding verifiable; it
 //!   does not re-prove the threshold assumption.
@@ -173,10 +179,16 @@ pub fn generate_daily(beacon: &DailyBeacon) -> Result<crate::GeneratedDungeon, V
 // the NAMED client seam is closed here: a genuine HTTP GET of today's `quicknet` round
 // from a drand node, parsed, built into a [`DailyBeacon`], and BLS-VERIFIED (the same
 // pairing check) before it can seed a day. A forged / tampered round fails the pairing
-// check and is refused (fail-closed) — it never becomes a dungeon seed. The pinned
-// published round ([`pinned_fallback_beacon`]) stays the offline/test fallback: a real
-// BLS-verifiable reveal, so an offline day is still beacon-seeded (never a fabricated
-// seed), and [`todays_beacon_or_pinned`] serves live-or-pinned transparently.
+// check and is a HARD ERROR (fail-closed) — it never becomes a dungeon seed, and it is
+// never silently papered over by the fallback. The pinned published round
+// ([`pinned_fallback_beacon`]) is the EXPLICIT offline fallback: a real BLS-verifiable
+// reveal, so an offline day is still beacon-seeded (never a fabricated seed) — but it is
+// only ever returned LABELED as [`BeaconSource::PinnedFallback`] (with its staleness) by
+// [`todays_beacon`], the default resolver. The transport is the injected [`RoundFetch`]
+// seam (mirroring dregg-ipfs's `HttpPost`): the default [`HttpRoundFetch`] does the GET,
+// a test injects a mock, and the verified core stays free of any ambient network choice.
+// [`todays_beacon_or_pinned`] remains only as the legacy provenance-ERASING shim for
+// callers not yet wired to render the source.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// The drand `quicknet` chain hash — the API path segment naming the network whose
@@ -313,13 +325,40 @@ fn http_get(url: &str) -> Result<String, FetchError> {
     ))
 }
 
+/// **The injected round-fetch transport seam** (mirrors dregg-ipfs's `HttpPost`): the resolver
+/// ([`resolve_beacon`] / [`todays_beacon`]) is a pure formatter + verifier over this trait, so the
+/// crate's beacon logic carries no ambient network choice — the default [`HttpRoundFetch`] does a
+/// real GET, a test injects a mock, and a host with its own HTTP stack (a browser, a gateway)
+/// supplies its own impl across the same seam.
+///
+/// **Contract:** return the drand `public/{round}` JSON body for `round` on `api_base`, or a
+/// [`FetchError::Http`] when the transport could not deliver it (unreachable node, non-2xx,
+/// timeout). A transport reports *availability* failures only — it never parses or verifies; a
+/// non-`Http` error from a transport is treated as a hard error, not a fallback trigger.
+pub trait RoundFetch {
+    /// GET the drand `public/{round}` JSON body for `round` from `api_base`.
+    fn fetch_round(&self, api_base: &str, round: u64) -> Result<String, FetchError>;
+}
+
+/// The default live transport: one bounded blocking HTTP GET of the canonical
+/// [`quicknet_round_url`] (reqwest + rustls on native; fail-closed on wasm32, where the host
+/// fetches the body itself and calls [`verified_beacon_from_body`]). Blocking — drive it off a
+/// `spawn_blocking` on an async runtime.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HttpRoundFetch;
+
+impl RoundFetch for HttpRoundFetch {
+    fn fetch_round(&self, api_base: &str, round: u64) -> Result<String, FetchError> {
+        http_get(&quicknet_round_url(api_base, round))
+    }
+}
+
 /// **Fetch + verify a specific `quicknet` round over HTTP.** GET the round from `api_base`, parse
 /// the body, build the [`DailyBeacon`], and BLS-verify it against the pinned group key before
 /// returning — the returned beacon is ALWAYS verified (a forged / tampered round is refused). This
 /// is a blocking call; drive it off a `spawn_blocking` on an async runtime.
 pub fn fetch_quicknet_round(api_base: &str, round: u64) -> Result<DailyBeacon, FetchError> {
-    let url = quicknet_round_url(api_base, round);
-    let body = http_get(&url)?;
+    let body = HttpRoundFetch.fetch_round(api_base, round)?;
     verified_beacon_from_body(round, &body)
 }
 
@@ -350,14 +389,150 @@ pub fn pinned_fallback_beacon() -> DailyBeacon {
     )
 }
 
-/// **Today's beacon, live-or-pinned.** Try a live drand fetch of today's UTC-day round (BLS-verified);
-/// on ANY failure — no network, a drand outage, a wrong/forged round — fall back to the pinned
-/// published round. Either way the returned beacon is VERIFIED: a forged live round is refused (the
-/// pinned reveal stands in) and the pinned reveal is itself a genuine BLS-verifiable round, so The
-/// Descent always opens on a real beacon-seeded day, never a fabricated seed.
+/// **Where a resolved daily beacon came from** — carried on every [`ResolvedDailyBeacon`] so a
+/// surface can (and must, to be honest) label the day it serves. The pinned round is never
+/// returned *as if* it were live: a caller holding this value always knows which day it got.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BeaconSource {
+    /// A live-fetched, BLS-verified `quicknet` round — the round bound to the requested day.
+    Live {
+        /// The round that was fetched and verified.
+        round: u64,
+    },
+    /// The EXPLICIT pinned fallback: the transport could not deliver the live round, so the
+    /// pinned published round (itself BLS-verified on this very resolution) stands in. It is a
+    /// REAL beacon reveal — just not today's — and this variant says so, with its staleness.
+    PinnedFallback {
+        /// The pinned round actually served ([`PINNED_FALLBACK_ROUND`]).
+        round: u64,
+        /// The round that was WANTED (today's schedule-bound round the fetch was for).
+        target_round: u64,
+        /// How stale the pinned round is: seconds between its maturity and the target
+        /// round's maturity (≈ the pinned round's age relative to the day it stands in for).
+        stale_secs: u64,
+        /// Why the live fetch failed (the transport's [`FetchError::Http`] message).
+        reason: String,
+    },
+}
+
+impl BeaconSource {
+    /// Whether this is the live-fetched round (`false` = the labeled pinned fallback).
+    pub fn is_live(&self) -> bool {
+        matches!(self, BeaconSource::Live { .. })
+    }
+
+    /// The round actually served (live round, or the pinned round standing in).
+    pub fn round(&self) -> u64 {
+        match self {
+            BeaconSource::Live { round } => *round,
+            BeaconSource::PinnedFallback { round, .. } => *round,
+        }
+    }
+}
+
+impl std::fmt::Display for BeaconSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BeaconSource::Live { round } => write!(f, "live drand round {round}"),
+            BeaconSource::PinnedFallback {
+                round,
+                target_round,
+                stale_secs,
+                reason,
+            } => write!(
+                f,
+                "PINNED fallback round {round} (standing in for round {target_round}, \
+                 ~{stale_secs}s stale; live fetch failed: {reason})"
+            ),
+        }
+    }
+}
+
+/// A resolved daily beacon **with its provenance**: the verified beacon plus the
+/// [`BeaconSource`] saying whether it is today's live round or the labeled pinned fallback.
+/// Every beacon in here PASSED the BLS pairing check on this resolution.
+#[derive(Clone, Debug)]
+pub struct ResolvedDailyBeacon {
+    /// The verified beacon (live, or the pinned published round).
+    pub beacon: DailyBeacon,
+    /// Which one it is — a surface renders this, it does not guess.
+    pub source: BeaconSource,
+}
+
+/// **Resolve one specific round, live-first with an explicit labeled fallback.** The pure core
+/// [`todays_beacon`] wraps (parameterized by round so the whole path is drivable by a mock with
+/// a published vector — no clock, no socket):
+///
+/// - the transport delivers a body ⇒ it MUST parse as `round` and MUST pass the BLS pairing
+///   check; success is [`BeaconSource::Live`], and any parse/verify failure is a **hard error**
+///   ([`FetchError::Parse`] / [`FetchError::Verify`]) — a tampered or wrong-round response is
+///   refused outright, never silently replaced by the pinned round (an integrity failure is not
+///   an outage, and hiding it would let a corrupt node quietly steer every day to the same
+///   pinned dungeon);
+/// - the transport itself fails ([`FetchError::Http`] — no egress, node down) ⇒ the pinned
+///   published round, itself re-verified here, returned as [`BeaconSource::PinnedFallback`]
+///   carrying the target round, the staleness, and the transport's reason.
+pub fn resolve_beacon<F: RoundFetch + ?Sized>(
+    fetcher: &F,
+    api_base: &str,
+    round: u64,
+) -> Result<ResolvedDailyBeacon, FetchError> {
+    match fetcher.fetch_round(api_base, round) {
+        Ok(body) => {
+            let beacon = verified_beacon_from_body(round, &body)?;
+            Ok(ResolvedDailyBeacon {
+                beacon,
+                source: BeaconSource::Live { round },
+            })
+        }
+        Err(FetchError::Http(reason)) => {
+            let beacon = pinned_fallback_beacon();
+            // Fail-closed even on the fallback: the pinned reveal must itself verify.
+            beacon.verify().map_err(FetchError::Verify)?;
+            let stale_secs = quicknet_round_matures_at(round)
+                .saturating_sub(quicknet_round_matures_at(beacon.round));
+            let source = BeaconSource::PinnedFallback {
+                round: beacon.round,
+                target_round: round,
+                stale_secs,
+                reason,
+            };
+            Ok(ResolvedDailyBeacon { beacon, source })
+        }
+        // A transport must only report availability as `Http`; anything else is not a
+        // fallback trigger — it is refused as-is (fail-closed).
+        Err(e) => Err(e),
+    }
+}
+
+/// **Today's beacon — the DEFAULT path.** Fetch today's schedule-bound `quicknet` round
+/// ([`quicknet_round_for_utc_day`] of [`current_utc_day`]) over the injected transport and
+/// BLS-verify it; on a *transport* failure only, serve the pinned published round **explicitly
+/// labeled** as [`BeaconSource::PinnedFallback`] (with its staleness), so no surface can pass
+/// the pinned dungeon off as today's. A fetched round that fails to parse or verify is a hard
+/// error — see [`resolve_beacon`]. Blocking with [`HttpRoundFetch`]; drive it off a
+/// `spawn_blocking`.
+pub fn todays_beacon<F: RoundFetch + ?Sized>(
+    fetcher: &F,
+    api_base: &str,
+) -> Result<ResolvedDailyBeacon, FetchError> {
+    let round = quicknet_round_for_utc_day(current_utc_day());
+    resolve_beacon(fetcher, api_base, round)
+}
+
+/// **The legacy, provenance-ERASING shim** — prefer [`todays_beacon`], whose result says
+/// whether the day is live or the pinned fallback. This keeps the old contract for callers not
+/// yet wired to render a [`BeaconSource`]: try the live fetch; on ANY failure (a transport
+/// outage, but also a wrong/forged round) serve the pinned published round with the distinction
+/// dropped on the floor. Either way the returned beacon is VERIFIED — a forged live round never
+/// seeds a day, and the pinned reveal is a genuine BLS-verifiable round — but the caller cannot
+/// tell which dungeon it is serving, which is exactly the dishonesty [`todays_beacon`] exists
+/// to remove.
 pub fn todays_beacon_or_pinned(api_base: &str) -> DailyBeacon {
-    match fetch_todays_beacon(api_base) {
-        Ok(beacon) => beacon,
+    match todays_beacon(&HttpRoundFetch, api_base) {
+        Ok(resolved) => resolved.beacon,
+        // A hard integrity error (forged/wrong-round response): the legacy contract still
+        // serves the pinned reveal — silently, which is why this shim is legacy.
         Err(_) => pinned_fallback_beacon(),
     }
 }
@@ -474,6 +649,151 @@ mod fetch_tests {
             beacon.seed().is_ok(),
             "the pinned fallback verifies + seeds a day"
         );
+        // The DEFAULT path (the real HttpRoundFetch transport) reports the same outage as the
+        // EXPLICIT, labeled fallback — never as a live day.
+        let resolved = todays_beacon(&HttpRoundFetch, unreachable)
+            .expect("a transport outage yields the labeled pinned fallback");
+        assert!(
+            matches!(resolved.source, BeaconSource::PinnedFallback { .. }),
+            "the default path labels its provenance, got {:?}",
+            resolved.source
+        );
+    }
+
+    /// The injected mock transport: a canned body (the real published round vector) or a canned
+    /// transport failure — the full resolve path runs with no socket and no clock dependence.
+    struct MockRoundFetch(Result<String, String>);
+
+    impl RoundFetch for MockRoundFetch {
+        fn fetch_round(&self, _api_base: &str, _round: u64) -> Result<String, FetchError> {
+            self.0.clone().map_err(FetchError::Http)
+        }
+    }
+
+    /// THE LIVE PATH THROUGH THE SEAM: the mock serves the real published interop vector, the
+    /// resolver BLS-verifies it and returns it LABELED [`BeaconSource::Live`] — and the labeled
+    /// beacon seeds the day identically to the same round resolved any other way.
+    #[test]
+    fn a_mock_live_fetch_verifies_and_is_labeled_live() {
+        let fetcher = MockRoundFetch(Ok(pinned_round_body()));
+        let resolved = resolve_beacon(&fetcher, "mock://drand", PINNED_FALLBACK_ROUND)
+            .expect("a real round through the seam verifies");
+        assert_eq!(
+            resolved.source,
+            BeaconSource::Live {
+                round: PINNED_FALLBACK_ROUND
+            },
+            "a fetched-and-verified round is labeled LIVE"
+        );
+        assert!(resolved.source.is_live());
+        assert_eq!(resolved.source.round(), PINNED_FALLBACK_ROUND);
+        assert_eq!(
+            resolved.beacon.seed().unwrap().as_bytes(),
+            pinned_fallback_beacon().seed().unwrap().as_bytes(),
+            "same round ⇒ same day seed, however it was resolved"
+        );
+    }
+
+    /// A TAMPERED round through the seam is a HARD ERROR — it is refused by the pairing check
+    /// and is NEVER silently replaced by the pinned fallback (an integrity failure is not an
+    /// outage). NON-VACUOUS: the honest body above resolves Live.
+    #[test]
+    fn a_tampered_mock_fetch_is_a_hard_error_not_a_silent_fallback() {
+        let mut sig = hex::decode(PINNED_FALLBACK_SIG_HEX).unwrap();
+        sig[0] ^= 0x01;
+        let forged_body = format!(
+            "{{\"round\":{},\"randomness\":\"00\",\"signature\":\"{}\"}}",
+            PINNED_FALLBACK_ROUND,
+            hex::encode(&sig),
+        );
+        let fetcher = MockRoundFetch(Ok(forged_body));
+        let out = resolve_beacon(&fetcher, "mock://drand", PINNED_FALLBACK_ROUND);
+        assert!(
+            matches!(out, Err(FetchError::Verify(_))),
+            "a forged round must be a hard error, got {out:?}"
+        );
+    }
+
+    /// A WRONG-ROUND response through the seam is equally a hard error (a corrupt node cannot
+    /// steer a day to an already-published favourable round, nor silently onto the pinned one).
+    #[test]
+    fn a_wrong_round_mock_fetch_is_a_hard_error() {
+        let fetcher = MockRoundFetch(Ok(pinned_round_body()));
+        let out = resolve_beacon(&fetcher, "mock://drand", PINNED_FALLBACK_ROUND + 1);
+        assert!(
+            matches!(out, Err(FetchError::Parse(_))),
+            "a round mismatch is refused, got {out:?}"
+        );
+    }
+
+    /// A TRANSPORT failure takes the EXPLICIT fallback path: the pinned round is served, but
+    /// LABELED [`BeaconSource::PinnedFallback`] with the target round, the staleness, and the
+    /// transport's reason — and the fallback beacon itself VERIFIES + seeds (a real reveal,
+    /// just not today's).
+    #[test]
+    fn a_transport_error_takes_the_explicit_labeled_pinned_fallback() {
+        // A target round 8 hours of rounds past the pinned one, so staleness is non-trivial.
+        let target = PINNED_FALLBACK_ROUND + 9_600;
+        let fetcher = MockRoundFetch(Err("connection refused".to_string()));
+        let resolved = resolve_beacon(&fetcher, "mock://drand", target)
+            .expect("a transport outage still yields a (labeled) beacon-seeded day");
+        assert!(
+            !resolved.source.is_live(),
+            "the fallback is never labeled live"
+        );
+        match &resolved.source {
+            BeaconSource::PinnedFallback {
+                round,
+                target_round,
+                stale_secs,
+                reason,
+            } => {
+                assert_eq!(*round, PINNED_FALLBACK_ROUND);
+                assert_eq!(*target_round, target);
+                assert_eq!(
+                    *stale_secs,
+                    9_600 * DRAND_QUICKNET_PERIOD_SECS,
+                    "staleness = the maturity gap between the pinned and target rounds"
+                );
+                assert_eq!(
+                    reason, "connection refused",
+                    "the failure reason is carried"
+                );
+            }
+            other => panic!("expected the labeled pinned fallback, got {other:?}"),
+        }
+        // The pinned fallback still verifies against its own baked round and seeds a day.
+        resolved
+            .beacon
+            .verify()
+            .expect("the pinned reveal verifies");
+        assert_eq!(
+            resolved.beacon.seed().unwrap().as_bytes(),
+            pinned_fallback_beacon().seed().unwrap().as_bytes()
+        );
+        // And the provenance label renders honestly.
+        let label = resolved.source.to_string();
+        assert!(
+            label.contains("PINNED"),
+            "the label names the fallback: {label}"
+        );
+    }
+
+    /// `todays_beacon` (the clock-bound default) rides the same seam: a transport failure
+    /// resolves to the labeled pinned fallback whose target round is TODAY's schedule-bound
+    /// round.
+    #[test]
+    fn todays_beacon_falls_back_explicitly_on_a_dead_transport() {
+        let fetcher = MockRoundFetch(Err("no egress".to_string()));
+        let resolved = todays_beacon(&fetcher, "mock://drand").expect("labeled fallback");
+        match resolved.source {
+            BeaconSource::PinnedFallback { target_round, .. } => assert_eq!(
+                target_round,
+                quicknet_round_for_utc_day(current_utc_day()),
+                "the fallback records which round today WANTED"
+            ),
+            ref other => panic!("expected the labeled pinned fallback, got {other:?}"),
+        }
     }
 
     /// A LIVE network fetch of today's real `quicknet` round — verifies the round exists, the BLS
