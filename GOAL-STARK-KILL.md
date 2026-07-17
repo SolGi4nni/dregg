@@ -1922,3 +1922,28 @@ The full surface we identified this session, so nothing is lost to tunnel-vision
 ### THE SharedTree* residuals (4) — likely STALE now (were other lanes' mid-flight breakage; several landed)
 SharedTreeMarketAggregateBinding (Market built green later), SharedTreeRefusalGauntlet, SharedTreeEffectVm
 DescriptorDrift, SharedTreeBridgePredicateSignature — re-check on a settled tree, most are probably resolved.
+
+## ⚑⚑⚑ MOCK IVC FUNCTIONALLY PURGED (2026-07-16) — zero production riders
+`d17cbdfe9` wired the promotion gate's 4 IVC checks to the real `prove_turn_chain_recursive` (shared
+`ivc_real.rs` minter, not a mirror; 3 refusal teeth). That was THE LAST real rider. Verified: `grep` for
+real (non-comment, non-test) calls to `ivc::{prove_ivc, verify_ivc, create_test_chain}` → ONLY
+`tests/src/soundness.rs` remains (the scope-corrected suite that intentionally tests the mock, retires WITH
+the engine). **No production surface can be deceived by the mock IVC anymore** — the security/honesty goal
+is achieved. Mock-purge surfaces: 7/7 done (compress_history, compose_proofs, presentation, genesis,
+sovereign, + the 4 promotion-gate checks).
+
+### PHYSICAL ENGINE DELETION — NAMED as careful follow-up (wide blast radius)
+Deleting `circuit/src/ivc.rs`'s mock code + `constraint_prover.rs` is NOT a blind cut: `FoldDelta` (:52) +
+`IvcProof` (:90) are LEGIT DATA TYPES used across demo/, commit/ (fold.rs, lib.rs), bridge/ (delta.rs,
+present.rs, lib.rs), circuit/lib.rs — NOT mock-only. The mock FUNCTIONS (prove_ivc/verify_ivc/
+create_test_chain/fold_and_accumulate/finalize_ivc/IvcBuilder/simulated_proof_size_bytes) are deletable
+(zero production callers) but their removal orphans IvcProof unless consumers are rewired. Needs a scope
+analysis separating mock-machinery from shared-data-types first. `MockEngineDeletionResidual` — cleanup, not
+a lie (nothing production trusts it now). Retire soundness.rs's 4 mock tests with it.
+
+### ⚠ SELF-INFLICTED, RECOVERED — I hit my OWN documented lesson
+Ran `git checkout circuit-prove/tests/mock_proof_purge_gate.rs` to "check" it — which DISCARDED Fable's
+uncommitted ratchet edit (removing the 3 purged preflight entries). This is the EXACT memory lesson
+("never checkout/restore to revert without git diff first — shared worktree, uncommitted changes are real
+work"). Recovered by re-applying the edit (I had the diff). Lesson re-paid: on a shared tree, `git checkout
+<file>` is as dangerous as `git add -A`.
