@@ -29,7 +29,7 @@ the low part `r0 = r mod± α ∈ (−γ₂, γ₂]` and returns `(r1, r0)` with
 (sign by `r0`), else `r1`. `w1Encode` is `SimpleBitPack` of the 6 `w1'` polys at `bitlen(15) = 4` bits/coeff
 (reusing the codec's `packBits`), hence `μ ‖ 768 bytes`.
 
-## THE ANTI-FAKE GATE — accept a REAL crate signature, reject tampers (`native_decide`)
+## THE ANTI-FAKE GATE — accept a REAL crate signature, reject tampers
 
 `genPk`/`genSig`/`genSigTampered` are a genuine ML-DSA-65 keypair+signature from the real `fips204` v0.4.6
 crate (`ml_dsa_65::try_keygen` + `.try_sign(msg, ctx)`) over `msg = b"dregg real verify KAT"`, `ctx = ε`,
@@ -37,18 +37,23 @@ pinned verbatim. The crate's OWN `pk.verify` was checked in the generator: `true
 `false` on the one-byte-flipped `genSigTampered`, `false` on the wrong message. The gate makes Lean's verify
 AGREE with the crate's bool:
 
-* `verify_accepts_real` — `verifyCore genPk genMsg [] genSig = true` (Lean ACCEPTS the genuine crate signature).
-* `verify_rejects_tampered` — `verifyCore genPk genMsg [] genSigTampered = false`.
-* `verify_rejects_wrong_msg` — `verifyCore genPk (genMsg ++ [0]) [] genSig = false`.
+* `verify_accepts_real` (a `native_decide` theorem) — `verifyCore genPk genMsg [] genSig = true` (Lean
+  ACCEPTS the genuine crate signature).
+* `#guard verifyCore genPk genMsg [] genSigTampered == false` (Lean REJECTS the one-byte tamper).
+* `#guard verifyCore genPk (genMsg ++ [0]) [] genSig == false` (Lean REJECTS the wrong message).
 
-`native_decide` runs the COMPILED `def`s. If the `μ` framing, the centered-`Decompose`, the `w1Encode` width,
-or the `2^d` NTT scaling were wrong, `verify_accepts_real` would NOT close on the real signature. No `sorry`,
-no user `axiom`, no toy substitute.
+`native_decide` / `#guard` run the COMPILED `def`s. If the `μ` framing, the centered-`Decompose`, the
+`w1Encode` width, or the `2^d` NTT scaling were wrong, `verify_accepts_real` would NOT close on the real
+signature. No `sorry`, no user `axiom`, no toy substitute.
 
 ## RESIDUAL
 
-`native_decide`'s trusted base is `Lean.ofReduceBool` + `Lean.trustCompiler` (compiled evaluation) — the SAME
-residual `Keccak`, `MlDsaRing`, and `MlDsaCodec` already name.
+`verify_accepts_real`, the one remaining `native_decide` theorem here (kept because
+`verifyCore_eq_spec_witness` in `VerifyCoreEqSpec` consumes it as a proof term), has trusted base the
+per-declaration `native_decide` compiler-trust axiom `verify_accepts_real._native.native_decide.ax`
+(the v4.30 realization of `Lean.ofReduceBool` / `Lean.trustCompiler`, i.e. compiled evaluation) — the
+SAME residual `Keccak`, `MlDsaRing`, and `MlDsaCodec` already name. The `#guard` reject/length vectors are commands with no
+proof term and add NO axiom.
 -/
 import Dregg2.Crypto.Keccak
 import Dregg2.Crypto.MlDsaRing
@@ -189,17 +194,18 @@ def genSigTampered : Array UInt8 := #[7, 18, 22, 69, 147, 160, 223, 4, 149, 248,
 /-- The signed message `b"dregg real verify KAT"` as bytes. -/
 def genMsg : List UInt8 := [100, 114, 101, 103, 103, 32, 114, 101, 97, 108, 32, 118, 101, 114, 105, 102, 121, 32, 75, 65, 84].map UInt8.ofNat
 
-/-! ## THE ANTI-FAKE GATE — Lean's verify AGREES with the real crate's bool (`native_decide`).
+/-! ## THE ANTI-FAKE GATE — Lean's verify AGREES with the real crate's bool.
 
-`native_decide` runs the COMPILED `def`s over the genuine crate bytes. `verify_accepts_real` is the whole
-brick: if the assembly (μ framing, centered `Decompose`, `w1Encode` width, `2^d` NTT scaling) were wrong,
-it would NOT close on the real signature. -/
+Over the genuine crate bytes: `verify_accepts_real` is a `native_decide` theorem (the whole brick — if the
+μ framing, centered `Decompose`, `w1Encode` width, or `2^d` NTT scaling were wrong it would NOT close on the
+real signature; downstream `verifyCore_eq_spec_witness` consumes it as a proof term, so it stays a theorem
+and keeps its `native_decide` compiler-trust axiom `..._native.native_decide.ax` — the v4.30
+realization of `Lean.ofReduceBool`/`Lean.trustCompiler`). The reject/length vectors are `#guard` checks — compiler-
+evaluated commands with no proof term, hence no `ofReduceBool` axiom. -/
 
-/-- Sanity: the pinned bytes are exactly the ML-DSA-65 lengths. -/
--- `.size` of the literal byte arrays reduces in the kernel → `decide` closes it with NO
--- `Lean.ofReduceBool`/`trustCompiler` (`maxRecDepth` clears the array-literal traversal).
-theorem gen_lengths : genPk.size = 1952 ∧ genSig.size = 3309 ∧ genSigTampered.size = 3309 := by
-  set_option maxRecDepth 20000 in decide
+-- Sanity: the pinned bytes are exactly the ML-DSA-65 lengths. `#guard` is a compiler-evaluated
+-- command (no proof term, no `ofReduceBool` axiom).
+#guard genPk.size == 1952 && genSig.size == 3309 && genSigTampered.size == 3309
 
 /-- **THE KEYSTONE**: Lean ACCEPTS the genuine `fips204` crate signature — `verifyCore` recomputes `c̃'` from
 `Â·z − c·t1·2^d` under the full FIPS 204 assembly and it matches the crate's `c̃`, with `‖z‖∞ < γ₁−β`. The
@@ -207,12 +213,12 @@ crate's own `pk.verify(msg, sig, ctx)` returned `true` on these bytes. -/
 theorem verify_accepts_real : verifyCore genPk.toList genMsg [] genSig.toList = true := by
   native_decide
 
-/-- Lean REJECTS the one-byte-flipped signature (crate `pk.verify` → `false`). -/
-theorem verify_rejects_tampered : verifyCore genPk.toList genMsg [] genSigTampered.toList = false := by
-  native_decide
+-- Lean REJECTS the one-byte-flipped signature (crate `pk.verify` → `false`); `#guard` sanity vector,
+-- compiler-evaluated with no proof term (no `ofReduceBool` axiom).
+#guard verifyCore genPk.toList genMsg [] genSigTampered.toList == false
 
-/-- Lean REJECTS the genuine signature under the WRONG message (crate `pk.verify` → `false`). -/
-theorem verify_rejects_wrong_msg : verifyCore genPk.toList (genMsg ++ [0]) [] genSig.toList = false := by
-  native_decide
+-- Lean REJECTS the genuine signature under the WRONG message (crate `pk.verify` → `false`); `#guard`
+-- sanity vector, compiler-evaluated with no proof term (no `ofReduceBool` axiom).
+#guard verifyCore genPk.toList (genMsg ++ [0]) [] genSig.toList == false
 
 end Dregg2.Crypto.MlDsaVerifyReal

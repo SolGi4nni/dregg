@@ -652,9 +652,28 @@ pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
 /// OS entropy. The orb TLS X-Wing server side runs this for the ML-KEM half, then concat-KDFs `ss` with its
 /// X25519 secret.
 pub fn ml_kem768_encaps(ek: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
+    // Length-gate the encapsulation key on BOTH paths (a wrong-length `ek` is a
+    // malformed-wire fault); `ek_encoded` is consumed only by the crate fallback.
     let ek_encoded = Encoded::<Ek>::try_from(ek).ok()?;
-    let ek = Ek::from_bytes(&ek_encoded);
     let mut rng = OsCsprng;
+    if let Some(core) = LEAN_KEM_ENCAPS_CORE_REAL.get() {
+        // AUTHORITY: the Lean-verified REAL encaps core over the real bytes — the
+        // SAME object [`initiate`] routes through, so the deployed bare-KEM callers
+        // (the TLS / QUIC `X25519MLKEM768` server side) run the verified core, not
+        // the crate. We supply our own fresh 32-byte `m` (fresh OS entropy, exactly
+        // as the crate's randomized encaps does internally); the core
+        // deterministically produces `(ct, K)` from `(ek, m)`. A `None` (archive
+        // fault) or malformed (`"ERR"` / wrong-length / non-hex) reply fails CLOSED.
+        // The `ml-kem` crate's `.encapsulate` is NOT consulted here — it has left
+        // the KEM-encaps TCB.
+        let mut m = [0u8; 32];
+        rng.fill_bytes(&mut m);
+        let wire = real_encaps_wire(ek, &m);
+        m.zeroize();
+        return core(&wire).and_then(|reply| decode_ct_ss_hex(&reply));
+    }
+    // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
+    let ek = Ek::from_bytes(&ek_encoded);
     let (ct, ss) = ek.encapsulate(&mut rng).ok()?;
     Some((ct.as_slice().to_vec(), shared_to_array(ss)))
 }
@@ -665,10 +684,25 @@ pub fn ml_kem768_encaps(ek: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
 /// independent) secret — ML-KEM FO implicit-reject — so the two parties diverge without leaking, exactly the
 /// behavior [`HybridResponder::finish`] relies on. The orb TLS X-Wing client side runs this.
 pub fn ml_kem768_decaps(dk: &[u8], ct: &[u8]) -> Option<[u8; 32]> {
+    // Length-gate `dk` and `ct` on BOTH paths (a wrong-length key/ciphertext is a
+    // malformed-wire fault); the decoded forms are consumed only by the fallback.
     let dk_encoded = Encoded::<Dk>::try_from(dk).ok()?;
+    let ct_parsed = Ciphertext::<MlKem768>::try_from(ct).ok()?;
+    if let Some(core) = LEAN_KEM_DECAPS_CORE_REAL.get() {
+        // AUTHORITY: the Lean-verified REAL decaps core over the real bytes — the
+        // SAME object [`HybridResponder::finish`] routes through, so the deployed
+        // bare-KEM callers (the TLS / QUIC `X25519MLKEM768` client side) run the
+        // verified core, not the crate. A `None` (archive fault) or malformed
+        // (`"ERR"` / non-32-byte) reply fails CLOSED; a well-formed-but-tampered
+        // `ct` implicit-rejects to a DIFFERENT secret (a valid 64-hex reply). The
+        // `ml-kem` crate's `.decapsulate` is NOT consulted here — it has left the
+        // KEM-decaps TCB.
+        let wire = real_decaps_wire(dk, ct);
+        return core(&wire).and_then(|reply| decode_ss_hex(&reply));
+    }
+    // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
     let dk = Dk::from_bytes(&dk_encoded);
-    let ct = Ciphertext::<MlKem768>::try_from(ct).ok()?;
-    Some(shared_to_array(dk.decapsulate(&ct).ok()?))
+    Some(shared_to_array(dk.decapsulate(&ct_parsed).ok()?))
 }
 
 #[cfg(test)]
