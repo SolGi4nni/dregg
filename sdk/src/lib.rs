@@ -129,7 +129,15 @@ pub mod embed;
 pub mod endpoints;
 pub mod error;
 pub mod explain;
+// EXPERIMENTAL (feature `fhegg`, default-on): the fhEgg PLAINTEXT uniform-price
+// clearing demo surface — clear-a-book + verify-a-settlement over
+// `fhegg_solver::wire`. NO FHE, NO privacy, demo-scale; the solver is untrusted
+// and the settlement is self-checkable (`verify_settlement` re-derives it all).
+// The STARK-VERIFIED clearing path (Cert-F, ring-3/market4) lives in
+// circuit-prove, not here — see the module doc before claiming anything.
 pub mod factories;
+#[cfg(feature = "fhegg")]
+pub mod fhegg;
 pub mod flashwell;
 pub mod full_turn_proof;
 pub mod hatchery_mint;

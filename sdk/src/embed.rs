@@ -783,16 +783,60 @@ mod tests {
 
     #[test]
     fn load_state_rejects_hash_only_snapshot() {
-        // A snapshot of exactly 32 bytes (just the hash, no data) should either
-        // fail integrity or fail deserialization of the empty data portion.
+        // A snapshot of exactly 32 bytes = an empty data portion followed by the
+        // BLAKE3 of that empty data. This is the adversarial case the integrity
+        // hash CANNOT catch: the trailing hash genuinely matches `blake3([])`, so
+        // the integrity check PASSES. The rejection must therefore come from the
+        // deserializer: `[]` is not a valid postcard `Vec<Cell>` (a real empty
+        // ledger serializes to the one-byte length prefix `0x00`, never to zero
+        // bytes). A snapshot whose data survives integrity but cannot be decoded
+        // into a ledger must be REFUSED, not silently accepted as some default
+        // (empty) ledger — otherwise an attacker who strips the payload but keeps
+        // a matching hash rolls the engine to a blank ledger.
         let mut engine = DreggEngine::new(EngineConfig::for_testing());
-        let empty_data = &[];
+
+        // Seed a non-empty ledger so a silent "accept as empty" would be a visible
+        // state change we can catch.
+        let cell = dregg_cell::Cell::with_balance([9u8; 32], [0u8; 32], 4242);
+        engine.ledger_mut().insert_cell(cell).unwrap();
+        let cells_before = engine.ledger().iter().count();
+        assert_eq!(cells_before, 1, "setup: the ledger holds one cell");
+
+        let empty_data: &[u8] = &[];
         let hash = blake3::hash(empty_data);
         let snapshot: Vec<u8> = hash.as_bytes().to_vec();
-        // This is 32 bytes exactly — the data portion is empty.
+        assert_eq!(
+            snapshot.len(),
+            32,
+            "fixture: hash-only snapshot is 32 bytes"
+        );
+
+        // The integrity check must PASS on this snapshot (the hash matches the
+        // empty data) — proving the rejection below is a *deserialization*
+        // refusal, not an integrity one.
+        {
+            let (data, expected) = snapshot.split_at(snapshot.len() - 32);
+            assert!(data.is_empty(), "the data portion is empty");
+            assert_eq!(
+                blake3::hash(data).as_bytes(),
+                expected,
+                "the trailing hash genuinely matches — integrity alone cannot reject this"
+            );
+        }
+
         let result = engine.load_state(&snapshot);
-        // Should succeed (empty cell list is valid) or fail gracefully.
-        // The important thing is it doesn't panic.
-        let _ = result;
+        assert!(
+            result.is_err(),
+            "a hash-only snapshot (empty, undeserializable payload) must be rejected, \
+             got Ok — the engine accepted a payload it could not decode"
+        );
+
+        // And the refused load must leave the existing ledger untouched (no
+        // silent rollback to a blank ledger).
+        assert_eq!(
+            engine.ledger().iter().count(),
+            cells_before,
+            "a refused load_state must not mutate the ledger"
+        );
     }
 }
