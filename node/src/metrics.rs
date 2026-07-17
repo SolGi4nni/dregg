@@ -55,6 +55,30 @@ pub fn install_recorder() -> PrometheusHandle {
                 "reason" => "none",
             )
             .increment(0);
+            // Pre-seed the bridge conservation gauge at 1 (CONSERVING) so the
+            // series exists on /metrics from boot — a healthy flat line — and the
+            // `BridgeConservationBreach` page (deploy/observability/prometheus/rules/
+            // dregg.rules.yml, `min(dregg_bridge_conservation_ok) == 0`) is ARMED
+            // rather than matching no series (inert, cannot fire). The gauge means:
+            // 1 when the bridge's circulating mirror value never exceeds the value
+            // locked/burned on the source chain (`live_supply <= currently_locked`,
+            // `dregg_bridge::solana_mirror::MirrorState::invariant_holds`), 0 the
+            // instant a mint outruns its backing.
+            //
+            // SEAM (do not read this as a live breach detector yet): the
+            // AUTHORITATIVE conservation decision is the COMMITTED bridge ledger in
+            // `dregg_turn::executor::bridge_ledger::bridge_mint_against_lock`
+            // (it computes `new_live <= locked` against committed cell state); a
+            // breach can only arise when that mint path runs. Today NO in-process
+            // caller drives it on the node — the relayer mint/escrow loop is
+            // exercised only in `bridge/tests/` — so this series holds the boot
+            // floor. Full coverage = the node hosts the relayer loop (or the
+            // relayer process exports its own /metrics) and calls
+            // `set_bridge_conservation_ok(receipt.live_supply <= receipt.currently_locked)`
+            // at every `bridge_mint_against_lock` / `record_escrow` receipt. This is
+            // the same "registered here, wired when its plane exports" posture as
+            // `dregg_sandbox_denials_total` below.
+            gauge!("dregg_bridge_conservation_ok").set(1.0);
             handle
         })
         .clone()
@@ -184,6 +208,26 @@ pub fn set_federation_root_age(seconds: f64) {
     gauge!("dregg_federation_root_age_seconds").set(seconds);
 }
 
+/// Publish the bridge conservation state: `true` (→ gauge 1) when the bridge's
+/// circulating mirror value is fully backed (`live_supply <= currently_locked`),
+/// `false` (→ gauge 0) the instant a mint outran its lock/burn backing.
+///
+/// This is the single most important bridge safety signal — a 0 means the bridge
+/// released more value on the destination chain than was locked/burned on the
+/// source (an unbacked-value emission: double-mint or forged lock attestation),
+/// and pages via `BridgeConservationBreach`.
+///
+/// Call this at every committed bridge accounting outcome — i.e. from the
+/// `dregg_turn::executor::bridge_ledger::bridge_mint_against_lock` /
+/// `record_escrow` receipt path (`BridgeMintReceipt` / `BridgeEscrowReceipt`
+/// carry the committed `currently_locked` + `live_supply`) — with
+/// `receipt.live_supply <= receipt.currently_locked`. See the boot-seed note in
+/// `install_recorder` for why the node does not yet drive this in-process (no
+/// hosted relayer loop) and what full coverage requires.
+pub fn set_bridge_conservation_ok(ok: bool) {
+    gauge!("dregg_bridge_conservation_ok").set(if ok { 1.0 } else { 0.0 });
+}
+
 // ─── Protocol structure gauges (receipt chain · blocklace DAG · mempool) ──────
 
 /// Set the current length of this node's receipt chain (the append-only
@@ -310,4 +354,48 @@ pub fn set_validator_last_seen(voter: &str) {
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
     gauge!("dregg_validator_last_seen_timestamp_seconds", "voter" => voter.to_owned()).set(now);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `BridgeConservationBreach` page fires on
+    /// `min(dregg_bridge_conservation_ok) == 0`, so the series MUST exist on
+    /// `/metrics` (the wound: it did not) and MUST render 0 on a breach. This
+    /// exercises the exposition surface end-to-end: install the recorder (which
+    /// boot-seeds the healthy 1), drive the setter to a breach and back, and read
+    /// it out of the rendered text the `/metrics` handler serves. Only this test
+    /// writes this gauge, so its value is stable across the shared process-global
+    /// recorder.
+    #[test]
+    fn bridge_conservation_gauge_renders_and_flips() {
+        let handle = install_recorder();
+
+        // Boot seed materialized the series at the healthy value.
+        assert!(
+            handle.render().contains("dregg_bridge_conservation_ok"),
+            "conservation series must exist on /metrics from boot"
+        );
+
+        // A breach renders as 0 — the value the page keys on.
+        set_bridge_conservation_ok(false);
+        assert!(
+            handle
+                .render()
+                .lines()
+                .any(|l| l.trim() == "dregg_bridge_conservation_ok 0"),
+            "breach must render dregg_bridge_conservation_ok 0"
+        );
+
+        // Recovery renders as 1 (conserving).
+        set_bridge_conservation_ok(true);
+        assert!(
+            handle
+                .render()
+                .lines()
+                .any(|l| l.trim() == "dregg_bridge_conservation_ok 1"),
+            "conserving must render dregg_bridge_conservation_ok 1"
+        );
+    }
 }

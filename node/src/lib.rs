@@ -490,6 +490,14 @@ pub enum Command {
         /// Validator public key(s) to add (64-hex Ed25519). Repeat for several.
         #[arg(long = "pubkey", required = true)]
         pubkeys: Vec<String>,
+        /// ML-DSA-65 public key(s) for a HYBRID federation, one per `--pubkey`
+        /// (positionally aligned; hex, printed by `gen-validator-key`). Omit for a
+        /// legacy Ed25519-only federation. A hybrid federation REQUIRES this for
+        /// every new validator so the committee identity stays the coupled-core
+        /// hybrid roster (the reroll re-derives the same federation_id genesis and
+        /// the running node do).
+        #[arg(long = "ml-dsa-pubkey")]
+        ml_dsa_pubkeys: Vec<String>,
         /// Data directory holding the committee `genesis.json`.
         #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
@@ -703,10 +711,12 @@ pub async fn run(cli: Cli) {
         }
         Command::AddValidator {
             pubkeys,
+            ml_dsa_pubkeys,
             data_dir,
             json,
         } => {
-            if let Err(e) = operator_join::add_validator(&data_dir, &pubkeys, json) {
+            if let Err(e) = operator_join::add_validator(&data_dir, &pubkeys, &ml_dsa_pubkeys, json)
+            {
                 eprintln!("error: {e}");
                 std::process::exit(1);
             }
@@ -1964,8 +1974,9 @@ async fn run_relay(
         fee_policy: relay_service::FeePolicy {
             min_deposit_computrons: min_message_deposit,
             subscription_fee,
-            accept_external_assets: false,
-            external_rate_micros: 1_000_000,
+            // FAIL CLOSED: no external assets accepted until the operator
+            // declares a per-asset table (docs/deos/COMPUTRON-POLICY.md).
+            external_assets: Default::default(),
         },
         max_total_capacity: max_capacity,
         gc_interval_secs: gc_interval,

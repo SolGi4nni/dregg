@@ -4,10 +4,15 @@
 //! new `dregg-node` into a federation. It is grounded in the REAL committee
 //! machinery, not a parallel abstraction:
 //!
-//! * a federation's identity is a *commitment to its committee* —
-//!   `federation_id = derive_federation_id_with_epoch(sorted_committee_pubkeys,
-//!   epoch)` ([`dregg_federation::derive_federation_id_with_epoch`], the exact
-//!   function `dregg-node genesis` and the running node both use);
+//! * a federation's identity is a *commitment to its committee* — the
+//!   coupled-core HYBRID roster: `federation_id =
+//!   derive_federation_id_hybrid_with_epoch(sorted committee, epoch)` over each
+//!   member's `hybrid_id_commitment(ed25519, ml_dsa)`
+//!   ([`dregg_federation::derive_federation_id_hybrid_with_epoch`], the exact
+//!   function `dregg-node genesis` writes and the running node re-derives). A
+//!   legacy federation with no enrolled ML-DSA roster falls back to the
+//!   Ed25519-only [`dregg_federation::derive_federation_id_with_epoch`]; a reroll
+//!   must speak the SAME projection or it diverges from genesis;
 //! * the committee lives in `genesis.json` (`validators[].public_key` + the
 //!   derived `federation_id` + `threshold`), every node deriving the same id
 //!   from the same committee;
@@ -46,8 +51,62 @@
 
 use std::path::{Path, PathBuf};
 
-use dregg_federation::{derive_federation_id_with_epoch, quorum_threshold};
+use dregg_federation::frost::MlDsaPublicKey;
+use dregg_federation::{
+    derive_federation_id_hybrid_with_epoch, derive_federation_id_with_epoch, quorum_threshold,
+};
 use dregg_types::PublicKey;
+
+/// One committee member as the reroll path sees it: its Ed25519 validator key and
+/// its OPTIONAL published ML-DSA-65 key. The ML-DSA key is what makes the member's
+/// canonical id the COUPLED-CORE `hybrid_id_commitment(ed, ml_dsa)` rather than the
+/// bare Ed25519 key; genesis publishes it for every validator
+/// (`genesis.rs` → `derive_federation_id_hybrid_with_epoch`), so a reroll that
+/// dropped it would recompute a DIFFERENT federation_id than genesis and the
+/// running node (which both re-derive over the hybrid roster).
+#[derive(Clone, Debug)]
+pub struct CommitteeMember {
+    /// The validator's Ed25519 public key.
+    pub ed: [u8; 32],
+    /// The validator's published ML-DSA-65 key, when the federation is hybrid.
+    /// `None` only for a legacy Ed25519-only federation (no enrolled PQ roster).
+    pub ml_dsa: Option<MlDsaPublicKey>,
+}
+
+impl PartialEq for CommitteeMember {
+    fn eq(&self, other: &Self) -> bool {
+        self.ed == other.ed
+    }
+}
+impl Eq for CommitteeMember {}
+
+/// Parse an ML-DSA-65 public key from hex (FIPS 204 = `ML_DSA_PK_LEN` bytes).
+pub fn parse_ml_dsa_pubkey(hex: &str) -> Result<MlDsaPublicKey, String> {
+    let s = hex.trim();
+    if !s.is_ascii() || s.len() % 2 != 0 {
+        return Err(format!(
+            "not hex ({} chars); an ML-DSA-65 public key is {} bytes = {} hex chars",
+            s.len(),
+            dregg_pq::ML_DSA_PK_LEN,
+            dregg_pq::ML_DSA_PK_LEN * 2
+        ));
+    }
+    let mut bytes = Vec::with_capacity(s.len() / 2);
+    for i in 0..s.len() / 2 {
+        bytes.push(
+            u8::from_str_radix(s.get(i * 2..i * 2 + 2).unwrap_or(""), 16)
+                .map_err(|e| format!("non-hex byte: {e}"))?,
+        );
+    }
+    let arr: [u8; dregg_pq::ML_DSA_PK_LEN] = bytes.try_into().map_err(|v: Vec<u8>| {
+        format!(
+            "wrong length: got {} bytes, ML-DSA-65 public key is {} bytes",
+            v.len(),
+            dregg_pq::ML_DSA_PK_LEN
+        )
+    })?;
+    Ok(MlDsaPublicKey(arr))
+}
 
 /// Hex-encode a 32-byte value (lower-case, no prefix).
 pub fn hex32(bytes: &[u8; 32]) -> String {
@@ -86,8 +145,9 @@ pub fn parse_validator_pubkey(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-/// Derive the validator public key from a raw 32-byte `node.key` seed file.
-pub fn pubkey_from_key_file(key_path: &Path) -> Result<[u8; 32], String> {
+/// Read the raw 32-byte `node.key` seed from disk (the Ed25519 seed the ML-DSA-65
+/// key is ALSO deterministically derived from).
+fn seed_from_key_file(key_path: &Path) -> Result<[u8; 32], String> {
     let raw = std::fs::read(key_path)
         .map_err(|e| format!("cannot read key file {}: {e}", key_path.display()))?;
     if raw.len() != 32 {
@@ -99,12 +159,18 @@ pub fn pubkey_from_key_file(key_path: &Path) -> Result<[u8; 32], String> {
     }
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&raw);
+    Ok(seed)
+}
+
+/// Derive the validator public key from a raw 32-byte `node.key` seed file.
+pub fn pubkey_from_key_file(key_path: &Path) -> Result<[u8; 32], String> {
+    let seed = seed_from_key_file(key_path)?;
     let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
     Ok(signing.verifying_key().to_bytes())
 }
 
-/// Generate a raw 32-byte node key at `key_path` (0600) and return its pubkey.
-fn generate_key_file(key_path: &Path) -> Result<[u8; 32], String> {
+/// Generate a raw 32-byte node key at `key_path` (0600) and return the seed.
+fn generate_key_seed(key_path: &Path) -> Result<[u8; 32], String> {
     let mut seed = [0u8; 32];
     getrandom::fill(&mut seed).map_err(|e| format!("getrandom failed: {e}"))?;
     std::fs::write(key_path, seed)
@@ -115,17 +181,24 @@ fn generate_key_file(key_path: &Path) -> Result<[u8; 32], String> {
         std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("failed to 0600 {}: {e}", key_path.display()))?;
     }
+    Ok(seed)
+}
+
+/// Generate a raw 32-byte node key at `key_path` (0600) and return its pubkey.
+fn generate_key_file(key_path: &Path) -> Result<[u8; 32], String> {
+    let seed = generate_key_seed(key_path)?;
     let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
     Ok(signing.verifying_key().to_bytes())
 }
 
 /// The outcome of folding one or more members into a committee.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct CommitteeReroll {
     /// The new committee, the genesis-writer order preserved with new members
     /// appended (the federation_id derivation sorts internally, so on-disk order
-    /// is cosmetic).
-    pub committee: Vec<[u8; 32]>,
+    /// is cosmetic). Each entry carries its ML-DSA key so the descriptor written
+    /// back keeps every member's hybrid enrollment.
+    pub committee: Vec<CommitteeMember>,
     /// Members that were requested but already present (skipped, not an error).
     pub already_present: Vec<[u8; 32]>,
     /// The recomputed federation id over the new committee + `epoch`.
@@ -134,6 +207,9 @@ pub struct CommitteeReroll {
     pub threshold: usize,
     /// The committee epoch the id was minted for (unchanged by a static re-roll).
     pub epoch: u64,
+    /// Whether the id was derived over the HYBRID roster (`true`, every member
+    /// carries an ML-DSA key) or the legacy Ed25519-only projection (`false`).
+    pub hybrid: bool,
 }
 
 /// Fold `additions` into `existing`, returning the new committee + its derived
@@ -143,27 +219,33 @@ pub struct CommitteeReroll {
 ///   re-running with an overlapping set is idempotent rather than an error.
 /// * If *every* addition is already present (nothing to do), this is an error —
 ///   the caller asked for a change that wouldn't change anything.
-/// * The id derivation is [`derive_federation_id_with_epoch`] — byte-identical to
-///   what `dregg-node genesis` writes and what the running node recomputes from
-///   `genesis.json`, so the descriptor this produces is the one the federation
-///   will agree on.
+/// * The id derivation is the SAME projection genesis and the running node use:
+///   [`derive_federation_id_hybrid_with_epoch`] over the committee's HYBRID member
+///   ids (`hybrid_id_commitment(ed, ml_dsa)`) when every member carries an ML-DSA
+///   key, falling back to the legacy Ed25519-only id
+///   ([`derive_federation_id_with_epoch`]) when the federation has no enrolled PQ
+///   roster at all. A MIXED committee — some members hybrid, some not — is an
+///   ERROR rather than a silent Ed25519-only downgrade: the running node's
+///   `set_federation_keys_hybrid` rejects a partial ML-DSA set, so producing such
+///   a descriptor would strip the PQ binding off the whole committee. The caller
+///   must supply the ML-DSA key for any new member of a hybrid federation.
 pub fn reroll_committee(
-    existing: &[[u8; 32]],
-    additions: &[[u8; 32]],
+    existing: &[CommitteeMember],
+    additions: &[CommitteeMember],
     epoch: u64,
 ) -> Result<CommitteeReroll, String> {
-    let mut committee: Vec<[u8; 32]> = existing.to_vec();
+    let mut committee: Vec<CommitteeMember> = existing.to_vec();
     let mut already_present: Vec<[u8; 32]> = Vec::new();
     let mut added_any = false;
 
-    for pk in additions {
-        if committee.contains(pk) {
-            if !already_present.contains(pk) {
-                already_present.push(*pk);
+    for m in additions {
+        if committee.iter().any(|c| c.ed == m.ed) {
+            if !already_present.contains(&m.ed) {
+                already_present.push(m.ed);
             }
             continue;
         }
-        committee.push(*pk);
+        committee.push(m.clone());
         added_any = true;
     }
 
@@ -173,8 +255,32 @@ pub fn reroll_committee(
         );
     }
 
-    let pubkeys: Vec<PublicKey> = committee.iter().map(|b| PublicKey(*b)).collect();
-    let federation_id = derive_federation_id_with_epoch(&pubkeys, epoch);
+    // Choose the SAME identity projection genesis / the running node use. All
+    // members hybrid → coupled-core id; none hybrid → legacy Ed25519-only id;
+    // a mixed set is refused (it would silently downgrade the committee's PQ
+    // identity — `set_federation_keys_hybrid` drops a partial ML-DSA set).
+    let with_ml = committee.iter().filter(|m| m.ml_dsa.is_some()).count();
+    let ed_keys: Vec<PublicKey> = committee.iter().map(|m| PublicKey(m.ed)).collect();
+    let (federation_id, hybrid) = if with_ml == committee.len() {
+        let ml: Vec<MlDsaPublicKey> = committee
+            .iter()
+            .map(|m| m.ml_dsa.clone().expect("checked all present"))
+            .collect();
+        (
+            derive_federation_id_hybrid_with_epoch(&ed_keys, &ml, epoch),
+            true,
+        )
+    } else if with_ml == 0 {
+        (derive_federation_id_with_epoch(&ed_keys, epoch), false)
+    } else {
+        return Err(format!(
+            "mixed committee: {with_ml}/{} members carry an ML-DSA key. This is a HYBRID \
+             federation; supply the ML-DSA public key for every new validator \
+             (`--ml-dsa-pubkey <hex>`, printed by `gen-validator-key`). Refusing to write a \
+             descriptor that silently downgrades the committee to Ed25519-only identity.",
+            committee.len()
+        ));
+    };
     let threshold = quorum_threshold(committee.len());
 
     Ok(CommitteeReroll {
@@ -183,14 +289,24 @@ pub fn reroll_committee(
         federation_id,
         threshold,
         epoch,
+        hybrid,
     })
 }
 
-/// Read the committee (`validators[].public_key`) + epoch from a parsed
-/// `genesis.json`. Returns `(committee, epoch)`. Malformed validator entries are
-/// surfaced as an error rather than silently dropped (a committee we can't read
-/// exactly must not be re-rolled).
-fn committee_from_genesis(genesis: &serde_json::Value) -> Result<(Vec<[u8; 32]>, u64), String> {
+/// Read the committee (`validators[].public_key` + optional
+/// `validators[].ml_dsa_public_key`) + epoch from a parsed `genesis.json`.
+/// Returns `(committee, epoch)`. Malformed validator entries are surfaced as an
+/// error rather than silently dropped (a committee we can't read exactly must not
+/// be re-rolled).
+///
+/// The ML-DSA key is preserved so the reroll re-derives the federation_id over the
+/// SAME hybrid roster genesis committed to — dropping it would recompute a
+/// divergent id and strip the committee's PQ enrollment. A validator whose
+/// `ml_dsa_public_key` is present but undecodable is an error (a committee we
+/// cannot read exactly), not a silent Ed25519-only fallback.
+fn committee_from_genesis(
+    genesis: &serde_json::Value,
+) -> Result<(Vec<CommitteeMember>, u64), String> {
     let epoch = genesis
         .get("committee_epoch")
         .and_then(|v| v.as_u64())
@@ -205,9 +321,15 @@ fn committee_from_genesis(genesis: &serde_json::Value) -> Result<(Vec<[u8; 32]>,
             .get("public_key")
             .and_then(|p| p.as_str())
             .ok_or_else(|| format!("validator[{i}] has no string `public_key`"))?;
-        let pk = hex_decode_32(pk_hex)
+        let ed = hex_decode_32(pk_hex)
             .ok_or_else(|| format!("validator[{i}].public_key is not 32-byte hex"))?;
-        committee.push(pk);
+        let ml_dsa = match v.get("ml_dsa_public_key").and_then(|p| p.as_str()) {
+            Some(h) => Some(parse_ml_dsa_pubkey(h).map_err(|e| {
+                format!("validator[{i}].ml_dsa_public_key is present but undecodable: {e}")
+            })?),
+            None => None,
+        };
+        committee.push(CommitteeMember { ed, ml_dsa });
     }
     Ok((committee, epoch))
 }
@@ -226,16 +348,28 @@ pub fn gen_validator_key(data_dir: &str, json: bool) -> Result<(), String> {
         .map_err(|e| format!("failed to create data dir {}: {e}", data_path.display()))?;
     let key_path = data_path.join("node.key");
 
-    let (pubkey, generated) = if key_path.exists() {
-        (pubkey_from_key_file(&key_path)?, false)
+    let (generated, seed) = if key_path.exists() {
+        (false, seed_from_key_file(&key_path)?)
     } else {
-        (generate_key_file(&key_path)?, true)
+        let seed = generate_key_seed(&key_path)?;
+        (true, seed)
     };
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let pubkey = signing.verifying_key().to_bytes();
     let pk_hex = hex32(&pubkey);
+    // HYBRID-PQ: derive this box's ML-DSA-65 key DETERMINISTICALLY from the same
+    // 32-byte node.key seed — exactly as `genesis.rs` does for a generated
+    // committee — and publish the public key. The operator threads it into
+    // `add-validator --ml-dsa-pubkey` so the committee identity stays the
+    // coupled-core hybrid roster (the reroll re-derives the same federation_id
+    // genesis and the running node do).
+    let (ml_dsa_pk, _sk) = dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+    let ml_dsa_hex: String = ml_dsa_pk.0.iter().map(|b| format!("{b:02x}")).collect();
 
     if json {
         let j = serde_json::json!({
             "public_key": pk_hex,
+            "ml_dsa_public_key": ml_dsa_hex,
             "key_file": key_path.display().to_string(),
             "generated": generated,
         });
@@ -250,11 +384,15 @@ pub fn gen_validator_key(data_dir: &str, json: bool) -> Result<(), String> {
     }
     println!("  Key file (secret, 0600): {}", key_path.display());
     println!();
-    println!("  Validator public key:");
+    println!("  Validator public key (Ed25519):");
     println!("    {pk_hex}");
     println!();
-    println!("Hand this PUBLIC key to the federation operator. They admit you with:");
-    println!("    dregg-node add-validator --pubkey {pk_hex}");
+    println!("  Validator public key (ML-DSA-65, post-quantum half):");
+    println!("    {ml_dsa_hex}");
+    println!();
+    println!("Hand BOTH public keys to the federation operator. They admit you with:");
+    println!("    dregg-node add-validator --pubkey {pk_hex} --ml-dsa-pubkey {ml_dsa_hex}");
+    println!("(A legacy Ed25519-only federation omits --ml-dsa-pubkey.)");
     println!("…then send you back the resulting genesis.json so you can `dregg-node join`.");
     Ok(())
 }
@@ -271,7 +409,12 @@ pub fn gen_validator_key(data_dir: &str, json: bool) -> Result<(), String> {
 /// `genesis-<fedid8>.json` for distribution). The node's own filesystem access
 /// to its data dir IS the authority — there is no remote self-admit (that would
 /// defeat BFT).
-pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Result<(), String> {
+pub fn add_validator(
+    data_dir: &str,
+    pubkey_hexes: &[String],
+    ml_dsa_pubkey_hexes: &[String],
+    json: bool,
+) -> Result<(), String> {
     let data_path = expand_path(data_dir);
     let genesis_path = data_path.join("genesis.json");
     if !genesis_path.exists() {
@@ -283,11 +426,30 @@ pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Res
         ));
     }
 
-    // Parse the requested additions (hex + Ed25519 validity) up front so a bad
-    // key fails before we touch anything.
+    // Each `--ml-dsa-pubkey` pairs POSITIONALLY with the `--pubkey` at the same
+    // index. Supply either none (a legacy Ed25519-only federation) or exactly one
+    // per added validator (a hybrid federation) — a partial set can't be aligned.
+    if !ml_dsa_pubkey_hexes.is_empty() && ml_dsa_pubkey_hexes.len() != pubkey_hexes.len() {
+        return Err(format!(
+            "{} --pubkey but {} --ml-dsa-pubkey: pass one --ml-dsa-pubkey per --pubkey \
+             (positionally aligned), or none for a legacy Ed25519-only federation.",
+            pubkey_hexes.len(),
+            ml_dsa_pubkey_hexes.len()
+        ));
+    }
+
+    // Parse the requested additions (hex + Ed25519 validity, and the ML-DSA key
+    // when hybrid) up front so a bad key fails before we touch anything.
     let mut additions = Vec::with_capacity(pubkey_hexes.len());
-    for h in pubkey_hexes {
-        additions.push(parse_validator_pubkey(h).map_err(|e| format!("--pubkey {h}: {e}"))?);
+    for (i, h) in pubkey_hexes.iter().enumerate() {
+        let ed = parse_validator_pubkey(h).map_err(|e| format!("--pubkey {h}: {e}"))?;
+        let ml_dsa = match ml_dsa_pubkey_hexes.get(i) {
+            Some(mh) => {
+                Some(parse_ml_dsa_pubkey(mh).map_err(|e| format!("--ml-dsa-pubkey for {h}: {e}"))?)
+            }
+            None => None,
+        };
+        additions.push(CommitteeMember { ed, ml_dsa });
     }
 
     let raw = std::fs::read_to_string(&genesis_path)
@@ -300,24 +462,34 @@ pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Res
 
     // Rewrite `validators`, `federation_id`, `threshold` in place; preserve every
     // other field (wells, initial_cells, starbridge_cells, intervals).
-    let new_members: Vec<[u8; 32]> = reroll
+    let new_members: Vec<CommitteeMember> = reroll
         .committee
         .iter()
-        .copied()
-        .filter(|pk| !existing.contains(pk))
+        .filter(|m| !existing.iter().any(|e| e.ed == m.ed))
+        .cloned()
         .collect();
     if let Some(validators) = genesis.get_mut("validators").and_then(|v| v.as_array_mut()) {
         let base = validators.len();
-        for (i, pk) in new_members.iter().enumerate() {
-            let pk_hex = hex32(pk);
+        for (i, m) in new_members.iter().enumerate() {
+            let pk_hex = hex32(&m.ed);
             // Derive a devnet XMSS-root placeholder the same way `genesis.rs`
             // does, so the entry shape matches a generated committee.
-            let xmss_root = blake3::derive_key("dregg-devnet-xmss-root-v1", pk);
-            validators.push(serde_json::json!({
+            let xmss_root = blake3::derive_key("dregg-devnet-xmss-root-v1", &m.ed);
+            let mut entry = serde_json::json!({
                 "name": format!("node-{}", base + i),
                 "public_key": pk_hex,
                 "xmss_root": hex32(&xmss_root),
-            }));
+            });
+            // HYBRID: mirror `genesis.rs` and publish this member's ML-DSA key +
+            // its coupled-core hybrid_id, so the descriptor keeps every member's
+            // PQ enrollment and the running node re-derives the same id.
+            if let Some(ml) = &m.ml_dsa {
+                let hybrid_id = dregg_types::hybrid_id_commitment(&m.ed, &ml.0);
+                entry["ml_dsa_public_key"] =
+                    serde_json::Value::String(ml.0.iter().map(|b| format!("{b:02x}")).collect());
+                entry["hybrid_id"] = serde_json::Value::String(hex32(&hybrid_id));
+            }
+            validators.push(entry);
         }
     }
     genesis["federation_id"] = serde_json::Value::String(hex32(&reroll.federation_id));
@@ -338,8 +510,9 @@ pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Res
             "committee_epoch": reroll.epoch,
             "threshold": reroll.threshold,
             "committee_size": reroll.committee.len(),
-            "added": new_members.iter().map(hex32).collect::<Vec<_>>(),
+            "added": new_members.iter().map(|m| hex32(&m.ed)).collect::<Vec<_>>(),
             "already_present": reroll.already_present.iter().map(hex32).collect::<Vec<_>>(),
+            "hybrid": reroll.hybrid,
             "genesis": genesis_path.display().to_string(),
             "descriptor": descriptor_path.display().to_string(),
         });
@@ -348,14 +521,22 @@ pub fn add_validator(data_dir: &str, pubkey_hexes: &[String], json: bool) -> Res
     }
 
     println!("Committee re-rolled.");
-    for pk in &new_members {
-        println!("  + added    {}", hex32(pk));
+    for m in &new_members {
+        println!("  + added    {}", hex32(&m.ed));
     }
     for pk in &reroll.already_present {
         println!("  · already  {} (skipped)", hex32(pk));
     }
     println!();
     println!("  New federation_id : {}", hex32(&reroll.federation_id));
+    println!(
+        "  Identity          : {}",
+        if reroll.hybrid {
+            "HYBRID (Ed25519 + ML-DSA-65 coupled-core roster)"
+        } else {
+            "legacy Ed25519-only (no enrolled PQ roster)"
+        }
+    );
     println!("  Committee size    : {}", reroll.committee.len());
     println!(
         "  BFT threshold     : {} (quorum_threshold({})) — f = {} faulty tolerated",
@@ -652,7 +833,7 @@ pub fn prepare_join(data_dir: &str, bootstrap: &str, json: bool) -> Result<JoinP
     let genesis: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("genesis.json is not valid JSON: {e}"))?;
     let (committee, _epoch) = committee_from_genesis(&genesis)?;
-    let in_committee = committee.contains(&self_pubkey);
+    let in_committee = committee.iter().any(|m| m.ed == self_pubkey);
 
     Ok(JoinPlan {
         bootstrap: bootstrap.to_string(),
@@ -700,6 +881,7 @@ fn expand_path(path: &str) -> PathBuf {
 mod tests {
     use super::*;
     use dregg_federation::derive_federation_id_with_epoch;
+    use dregg_federation::frost::MlDsaSigningKey;
     use dregg_types::PublicKey;
 
     fn keypair() -> ([u8; 32], [u8; 32]) {
@@ -707,6 +889,24 @@ mod tests {
         getrandom::fill(&mut seed).unwrap();
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         (seed, sk.verifying_key().to_bytes())
+    }
+
+    /// A legacy (Ed25519-only) committee member.
+    fn ed_member(ed: [u8; 32]) -> CommitteeMember {
+        CommitteeMember { ed, ml_dsa: None }
+    }
+
+    /// A HYBRID member: Ed25519 pubkey + the ML-DSA-65 key deterministically
+    /// derived from `seed` — exactly the pairing `genesis.rs` publishes.
+    fn hybrid_member(seed: [u8; 32]) -> CommitteeMember {
+        let ed = ed25519_dalek::SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes();
+        let (ml, _) = MlDsaSigningKey::from_seed(&seed);
+        CommitteeMember {
+            ed,
+            ml_dsa: Some(ml),
+        }
     }
 
     #[test]
@@ -738,9 +938,15 @@ mod tests {
         let (_, persvati) = keypair();
         let (_, snoopy) = keypair();
 
-        // edge-only → +persvati +snoopy = a 3-member committee.
-        let r = reroll_committee(&[edge], &[persvati, snoopy], 0).unwrap();
+        // edge-only → +persvati +snoopy = a 3-member committee (legacy Ed25519-only).
+        let r = reroll_committee(
+            &[ed_member(edge)],
+            &[ed_member(persvati), ed_member(snoopy)],
+            0,
+        )
+        .unwrap();
         assert_eq!(r.committee.len(), 3);
+        assert!(!r.hybrid, "no ML-DSA keys → legacy Ed25519-only derivation");
         assert_eq!(r.threshold, quorum_threshold(3)); // = 3 (strict supermajority, f=0)
         assert_eq!(r.threshold, 3);
 
@@ -769,18 +975,71 @@ mod tests {
         let (_, a) = keypair();
         let (_, b) = keypair();
         // adding b when {a} → {a,b}; re-adding b reports already_present.
-        let r1 = reroll_committee(&[a], &[b], 0).unwrap();
+        let r1 = reroll_committee(&[ed_member(a)], &[ed_member(b)], 0).unwrap();
         assert_eq!(r1.committee.len(), 2);
-        let r2 = reroll_committee(&[a, b], &[b], 0);
+        let r2 = reroll_committee(&[ed_member(a), ed_member(b)], &[ed_member(b)], 0);
         assert!(
             r2.is_err(),
             "re-adding only-present members is a no-op error"
         );
         // a mixed batch (one present, one new) succeeds and records the present one.
         let (_, c) = keypair();
-        let r3 = reroll_committee(&[a, b], &[b, c], 0).unwrap();
+        let r3 = reroll_committee(
+            &[ed_member(a), ed_member(b)],
+            &[ed_member(b), ed_member(c)],
+            0,
+        )
+        .unwrap();
         assert_eq!(r3.committee.len(), 3);
         assert_eq!(r3.already_present, vec![b]);
+    }
+
+    #[test]
+    fn reroll_matches_genesis_hybrid_derivation_over_same_roster() {
+        // THE WOUND'S REGRESSION GUARD: genesis derives the federation_id via
+        // `derive_federation_id_hybrid_with_epoch` over the committee's HYBRID
+        // roster. A reroll that added members must re-derive the id the SAME way,
+        // or any membership change silently diverges from (and downgrades) the
+        // committed PQ identity.
+        let m0 = hybrid_member([0x11; 32]);
+        let m1 = hybrid_member([0x22; 32]);
+        let m2 = hybrid_member([0x33; 32]);
+
+        // Reroll: existing {m0} + additions {m1, m2}.
+        let r = reroll_committee(&[m0.clone()], &[m1.clone(), m2.clone()], 7).unwrap();
+        assert_eq!(r.committee.len(), 3);
+        assert!(r.hybrid, "every member carries an ML-DSA key → hybrid id");
+
+        // GENESIS derivation over the SAME roster {m0, m1, m2}.
+        let ed: Vec<PublicKey> = [&m0, &m1, &m2].iter().map(|m| PublicKey(m.ed)).collect();
+        let ml: Vec<_> = [&m0, &m1, &m2]
+            .iter()
+            .map(|m| m.ml_dsa.clone().unwrap())
+            .collect();
+        let genesis_id = derive_federation_id_hybrid_with_epoch(&ed, &ml, 7);
+
+        assert_eq!(
+            r.federation_id, genesis_id,
+            "reroll id MUST equal the genesis hybrid derivation over the same roster"
+        );
+        // And it must NOT equal the legacy Ed25519-only projection of the same
+        // committee — proving the reroll actually commits to the ML-DSA roster.
+        let ed_only = derive_federation_id_with_epoch(&ed, 7);
+        assert_ne!(
+            r.federation_id, ed_only,
+            "hybrid-derived id must differ from the Ed25519-only id (PQ binding is live)"
+        );
+    }
+
+    #[test]
+    fn reroll_refuses_mixed_hybrid_and_legacy_committee() {
+        // Adding an Ed25519-only member to a HYBRID committee would strip the PQ
+        // binding off the whole committee (the running node drops a partial
+        // ML-DSA set). The reroll must REFUSE rather than silently downgrade.
+        let hybrid = hybrid_member([0x44; 32]);
+        let (_, ed_only_pk) = keypair();
+        let e = reroll_committee(&[hybrid], &[ed_member(ed_only_pk)], 0).unwrap_err();
+        assert!(e.contains("mixed committee"), "{e}");
     }
 
     #[test]
@@ -806,7 +1065,9 @@ mod tests {
         )
         .unwrap();
 
-        add_validator(dir.path().to_str().unwrap(), &[hex32(&new_pk)], true).unwrap();
+        // Legacy Ed25519-only federation (genesis carries no ml_dsa_public_key):
+        // no --ml-dsa-pubkey, so the reroll stays on the legacy projection.
+        add_validator(dir.path().to_str().unwrap(), &[hex32(&new_pk)], &[], true).unwrap();
 
         let after: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join("genesis.json")).unwrap(),
@@ -833,8 +1094,129 @@ mod tests {
     fn add_validator_errors_without_genesis() {
         let dir = tempfile::tempdir().unwrap();
         let (_, pk) = keypair();
-        let e = add_validator(dir.path().to_str().unwrap(), &[hex32(&pk)], true).unwrap_err();
+        let e = add_validator(dir.path().to_str().unwrap(), &[hex32(&pk)], &[], true).unwrap_err();
         assert!(e.contains("no genesis.json"), "{e}");
+    }
+
+    #[test]
+    fn add_validator_on_hybrid_genesis_reproduces_the_hybrid_id_and_pins_the_new_member() {
+        // A HYBRID genesis (every validator has an ml_dsa_public_key). Adding a
+        // validator through `add-validator --ml-dsa-pubkey` must (a) re-derive the
+        // federation_id the SAME way genesis + the running node do, (b) publish the
+        // new member's ml_dsa_public_key + hybrid_id, keeping the committee's PQ
+        // enrollment. This is the on-disk end of the genesis == reroll invariant.
+        let existing = hybrid_member([0xA1; 32]);
+        let addition = hybrid_member([0xB2; 32]);
+        let add_ml_hex: String = addition
+            .ml_dsa
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let existing_ml_hex: String = existing
+            .ml_dsa
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let existing_hybrid_id =
+            dregg_types::hybrid_id_commitment(&existing.ed, &existing.ml_dsa.as_ref().unwrap().0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let genesis_id = derive_federation_id_hybrid_with_epoch(
+            &[PublicKey(existing.ed)],
+            &[existing.ml_dsa.clone().unwrap()],
+            0,
+        );
+        let genesis = serde_json::json!({
+            "federation_id": hex32(&genesis_id),
+            "committee_epoch": 0,
+            "threshold": 1,
+            "validators": [ {
+                "name": "node-0",
+                "public_key": hex32(&existing.ed),
+                "xmss_root": "00".repeat(32),
+                "ml_dsa_public_key": existing_ml_hex,
+                "hybrid_id": hex32(&existing_hybrid_id),
+            } ],
+        });
+        std::fs::write(
+            dir.path().join("genesis.json"),
+            serde_json::to_string_pretty(&genesis).unwrap(),
+        )
+        .unwrap();
+
+        add_validator(
+            dir.path().to_str().unwrap(),
+            &[hex32(&addition.ed)],
+            &[add_ml_hex.clone()],
+            true,
+        )
+        .unwrap();
+
+        let after: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("genesis.json")).unwrap(),
+        )
+        .unwrap();
+
+        // The written id equals the genesis hybrid derivation over the FULL roster —
+        // exactly what the running node recomputes (`derive_federation_id_hybrid_with_epoch`).
+        let expected = derive_federation_id_hybrid_with_epoch(
+            &[PublicKey(existing.ed), PublicKey(addition.ed)],
+            &[
+                existing.ml_dsa.clone().unwrap(),
+                addition.ml_dsa.clone().unwrap(),
+            ],
+            0,
+        );
+        assert_eq!(after["federation_id"], hex32(&expected));
+        // …and it is NOT the Ed25519-only projection the OLD reroll would have written.
+        let ed_only =
+            derive_federation_id_with_epoch(&[PublicKey(existing.ed), PublicKey(addition.ed)], 0);
+        assert_ne!(after["federation_id"], hex32(&ed_only));
+
+        // The new member entry carries its ml_dsa_public_key + coupled-core hybrid_id.
+        let v1 = &after["validators"][1];
+        assert_eq!(v1["public_key"], hex32(&addition.ed));
+        assert_eq!(v1["ml_dsa_public_key"], add_ml_hex);
+        let expected_new_hybrid_id =
+            dregg_types::hybrid_id_commitment(&addition.ed, &addition.ml_dsa.as_ref().unwrap().0);
+        assert_eq!(v1["hybrid_id"], hex32(&expected_new_hybrid_id));
+    }
+
+    #[test]
+    fn add_validator_on_hybrid_genesis_refuses_ed_only_addition() {
+        // The downgrade guard on the on-disk path: adding to a hybrid federation
+        // WITHOUT the new member's ML-DSA key is refused (would strip PQ identity).
+        let existing = hybrid_member([0xC3; 32]);
+        let (_, addition) = keypair();
+        let existing_ml_hex: String = existing
+            .ml_dsa
+            .as_ref()
+            .unwrap()
+            .0
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let genesis = serde_json::json!({
+            "committee_epoch": 0,
+            "validators": [ {
+                "name": "node-0",
+                "public_key": hex32(&existing.ed),
+                "xmss_root": "00".repeat(32),
+                "ml_dsa_public_key": existing_ml_hex,
+            } ],
+        });
+        std::fs::write(dir.path().join("genesis.json"), genesis.to_string()).unwrap();
+
+        let e = add_validator(dir.path().to_str().unwrap(), &[hex32(&addition)], &[], true)
+            .unwrap_err();
+        assert!(e.contains("mixed committee"), "{e}");
     }
 
     #[test]
