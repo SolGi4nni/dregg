@@ -1753,10 +1753,55 @@ impl AgentCipherclerk {
     /// Returns `true` if the token passes verification for the request,
     /// `false` otherwise.
     pub fn verify_token(&self, token: &HeldToken, request: &AuthRequest) -> bool {
-        match token.decode() {
+        // Resolve the key under which the HMAC chain must be checked.
+        //
+        // A root token holds its own (non-zero) minting key and verifies under it —
+        // behavior preserved.
+        //
+        // An attenuated (or delegated) token carries a ZEROED `root_key` BY DESIGN — a
+        // holder must not carry the forging key (see `HeldToken::new_attenuated`).
+        // Verifying it under that zeroed key can NEVER recompute the caveat-extended HMAC
+        // chain, so every attenuated token would be spuriously denied. We must recover the
+        // MINTING ROOT key from the root token this chain descends from — which this clerk
+        // minted and still holds. The narrowing caveats stay enforced: they are checked by
+        // `MacaroonToken::verify` (HMAC chain + Datalog) under this same resolved root key,
+        // so attenuation remains sound and an out-of-scope request still denies.
+        let verify_key: [u8; 32] = if token.can_mint() {
+            *token.root_key()
+        } else {
+            match self.minting_root_key(token) {
+                Some(k) => k,
+                // The minting root is not held locally (e.g. an attenuated token received
+                // via delegation with no local root). That path legitimately needs the
+                // federation/issuer-key route; here we conservatively deny rather than
+                // verify under a key we do not have.
+                None => return false,
+            }
+        };
+
+        match MacaroonToken::from_encoded(token.encoded(), verify_key) {
             Ok(t) => t.verify(request).is_ok(),
             Err(_) => false,
         }
+    }
+
+    /// Resolve the raw minting-root key for a (possibly attenuated) held token by the
+    /// macaroon's embedded key id (`kid`).
+    ///
+    /// Attenuation adds caveats but keeps the root macaroon's nonce/`kid`, so the `kid`
+    /// names the minting root across the whole attenuation chain; the root `HeldToken`'s
+    /// `id` equals that `kid` (both are set to the same string in [`Self::mint_token`]).
+    /// Returns `None` when no local token with that `kid` holds the forging key — the
+    /// caller then denies rather than verifying under a key it does not have.
+    fn minting_root_key(&self, token: &HeldToken) -> Option<[u8; 32]> {
+        let kid = MacaroonToken::extract_key_id(token.encoded()).ok()?;
+        let kid = String::from_utf8(kid).ok()?;
+        let root = self.find_token_by_id(&kid)?;
+        // Only a token that actually holds the forging key can supply the verifying key.
+        if !root.can_mint() {
+            return None;
+        }
+        Some(*root.root_key())
     }
 
     /// Maximum size (in bytes) for a delegated token's encoded payload.
@@ -7851,6 +7896,123 @@ mod tests {
             }
             other => panic!("expected Private presentation, got: {:?}", other),
         }
+    }
+
+    /// FALSIFIER: an attenuated token, verified over the HTTP/ws/mcp `verify_token`
+    /// surface (NOT the in-process `.verify` with the real key), must be ACCEPTED for a
+    /// request inside its narrowed scope.
+    ///
+    /// Before the fix, `verify_token` decoded the attenuated token under its own ZEROED
+    /// `root_key` (`new_attenuated` sets `[0u8; 32]` by design), so the caveat-extended
+    /// HMAC chain never recomputed → `VerificationFailed` → `false`. Every attenuated
+    /// token was spuriously denied over these surfaces. The fix resolves the minting-root
+    /// key (still held by this clerk, named by the macaroon `kid`) and verifies under it.
+    ///
+    /// MUTATION CANARY: reverting `verify_token` to decode under the token's own zeroed
+    /// key (`token.decode()`) reds the positive assertion below.
+    #[test]
+    fn test_verify_token_accepts_attenuated_in_scope() {
+        let mut cclerk = AgentCipherclerk::new();
+        let root_key = [0x5Au8; 32];
+        let root_token = cclerk.mint_token(&root_key, "compute");
+
+        // Attenuate: restrict to read-only on "compute".
+        let restrictions = Attenuation {
+            services: vec![("compute".to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        let attenuated = cclerk.attenuate(&root_token, &restrictions).unwrap();
+
+        // The attenuated token carries a ZEROED root key by design — the very condition
+        // that made the HTTP-path verifier reject it before the fix.
+        assert_eq!(attenuated.root_key(), &[0u8; 32]);
+
+        // In-scope request: read on compute — the attenuation permits exactly this.
+        let request = dregg_token::AuthRequest {
+            service: Some("compute".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
+
+        // The HTTP/ws/mcp authorize surfaces route through `verify_token`. It MUST accept.
+        assert!(
+            cclerk.verify_token(&attenuated, &request),
+            "verify_token must accept an attenuated token for an in-scope request \
+             (regression: attenuated tokens verified under their zeroed root key were denied)"
+        );
+
+        // The root token itself still verifies under its own key (behavior preserved).
+        assert!(
+            cclerk.verify_token(&root_token, &request),
+            "root token must still verify under its own held key"
+        );
+    }
+
+    /// GUARD: the fix must NOT over-accept. An attenuated token used OUTSIDE its narrowed
+    /// scope must still be DENIED by `verify_token` — the narrowing caveats are enforced
+    /// under the resolved minting-root key, so attenuation stays sound.
+    #[test]
+    fn test_verify_token_denies_attenuated_out_of_scope() {
+        let mut cclerk = AgentCipherclerk::new();
+        let root_key = [0x5Bu8; 32];
+        let root_token = cclerk.mint_token(&root_key, "compute");
+
+        // Attenuate to read-only on "compute".
+        let restrictions = Attenuation {
+            services: vec![("compute".to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        let attenuated = cclerk.attenuate(&root_token, &restrictions).unwrap();
+
+        // Out-of-scope: WRITE on compute — the "r"-only caveat forbids it.
+        let write_request = dregg_token::AuthRequest {
+            service: Some("compute".into()),
+            action: Some("w".into()),
+            ..Default::default()
+        };
+        assert!(
+            !cclerk.verify_token(&attenuated, &write_request),
+            "verify_token must DENY an attenuated token for an out-of-scope action \
+             (the narrowing caveat must stay enforced under the resolved root key)"
+        );
+
+        // Out-of-scope: a different service entirely — also denied.
+        let other_service_request = dregg_token::AuthRequest {
+            service: Some("storage".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
+        assert!(
+            !cclerk.verify_token(&attenuated, &other_service_request),
+            "verify_token must DENY an attenuated token for a service outside its scope"
+        );
+    }
+
+    /// GUARD: an attenuated token whose minting root is NOT held locally (no `kid` match)
+    /// is DENIED rather than accepted — `verify_token` returns false without panicking.
+    #[test]
+    fn test_verify_token_denies_attenuated_when_root_absent() {
+        // Mint + attenuate in one clerk...
+        let mut minter = AgentCipherclerk::new();
+        let root_key = [0x5Cu8; 32];
+        let root_token = minter.mint_token(&root_key, "compute");
+        let restrictions = Attenuation {
+            services: vec![("compute".to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        let attenuated = minter.attenuate(&root_token, &restrictions).unwrap();
+
+        // ...then present it to a DIFFERENT clerk that never held the minting root.
+        let verifier = AgentCipherclerk::new();
+        let request = dregg_token::AuthRequest {
+            service: Some("compute".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
+        assert!(
+            !verifier.verify_token(&attenuated, &request),
+            "verify_token must DENY (not panic, not accept) when the minting root is not held locally"
+        );
     }
 
     /// Test that doubly-attenuated tokens can also prove (issuer_key propagates).
