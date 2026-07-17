@@ -127,6 +127,12 @@ pub use protocol_native::{
     ChargeError, DEFAULT_RUN_PRICE_CREDITS, RUN_CREDIT_ASSET_DOMAIN, RunBudgetLedger, RunReceipt,
     RunSettlementMode, run_credit_asset,
 };
+// The value-id and pay-authority types the protocol-native `charge_run` signature
+// requires ([`RunBudgetLedger::charge_run`]), re-exported so a consumer (the demo
+// dungeon service) can drive the conserved run charge through `dregg-pay` alone —
+// without taking a direct `dregg-payable` / `dregg-types` dependency.
+pub use dregg_payable::{InvokeAuthority, InvokeRefused};
+pub use dregg_types::CellId;
 pub use swap::{
     BuiltSwap, GovernanceAuthority, HttpPost, JupiterQuote, JupiterSwap, JupiterVenue, MockSigner,
     MockSwapVenue, RouteHop, Signer, SignerError, SwapAuthorization, SwapError, SwapOutcome,

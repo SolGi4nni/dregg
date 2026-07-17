@@ -48,6 +48,12 @@ spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e10913849
 dregg-app-framework = { path = "../../app-framework", default-features = false }
 # The tiny server-independent HTTP/1.1 serve loop the handler binds to.
 http-serve = { path = "../../http-serve" }
+# THE PROTOCOL-NATIVE RUN-CREDIT RAIL (Track C rung 2a): `RunBudgetLedger::charge_run`
+# settles a dungeon RUN as ONE conserving `Effect::Transfer` of an internal run-credit
+# asset the player cell authorizes — a conserved cell balance, NO custody key, NO
+# sweeper. We charge the run boundary through it; we never fork its src. (`CellId` /
+# `InvokeAuthority` come re-exported from here too, so this is the only pay dependency.)
+dregg-pay = { path = "../../dregg-pay" }
 # JSON for the request/response bodies.
 serde_json = { workspace = true }
 
