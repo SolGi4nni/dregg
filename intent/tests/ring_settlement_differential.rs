@@ -284,13 +284,15 @@ fn ring_solver_corpus_fuzz_agrees() {
 // =============================================================================
 
 #[test]
-fn free_mint_ring_rejected_by_both() {
+fn free_mint_ring_caught_by_rust_cycle_closure_not_by_per_asset_executor() {
     // Cell 1 sends AA to cell 2, but cell 2 never sends (only receives) — a free mint. The cycle
-    // does not close, so the Rust check rejects (recvImpSend fails). On the verified executor the
-    // funded ledger settles the single leg fine, BUT the per-asset totals are NOT conserved across
-    // the *closed-ring* accounting expectation — the differential's `accept<=>settles+conserves`
-    // must report DISAGREEMENT-as-reject: Rust rejects, so we require the verified side to ALSO be
-    // non-accepting. We model "non-accepting" as: the ring is not a closed conserving cycle.
+    // does not close, so the Rust check rejects (`recvImpSend` / cycle-closure fails).
+    //
+    // HONEST ASYMMETRY (the old test asserted a TAUTOLOGY on the literal and never ran the
+    // executor): the verified per-asset executor, given a FUNDED sender, SETTLES the single leg and
+    // CONSERVES the per-asset total (a transfer is conserving by construction). So per-asset
+    // conservation ALONE does not catch the free mint — the Rust cycle-closure check is the
+    // load-bearing teeth here, and this differential documents that gap rather than hiding it.
     let ring = RingTrade {
         participants: vec![[1; 32]],
         settlements: vec![Settlement {
@@ -301,26 +303,39 @@ fn free_mint_ring_rejected_by_both() {
         }],
         score: 1.0,
     };
-    // Rust structural check rejects (cycle does not close).
+    // Rust structural check rejects — and specifically on the CYCLE-CLOSURE teeth (a receiver that
+    // never sends), not some incidental error.
+    let err = ring_conservation_decision(std::slice::from_ref(&ring))
+        .expect_err("free-mint ring must be rejected by the Rust conservation check");
     assert!(
-        ring_conservation_decision(std::slice::from_ref(&ring)).is_err(),
-        "free-mint ring must be rejected by the Rust conservation check"
+        err.contains("free mint") || err.contains("never sends"),
+        "rejection must name the cycle-closure (free-mint) teeth, got: {err}"
     );
-    // The verified-executor closed-ring contract also fails: cell 2 receives 5 of AA but the ring
-    // contains no leg returning value to cell 1, so the SENDER (cell 1) strictly loses supply while
-    // the RECEIVER (cell 2) strictly gains — the funded single-leg post-state does not restore the
-    // pre-state per-cell, i.e. it is not a conserving CYCLE. We assert the structural mismatch:
-    // a one-leg ring has a sender that never receives.
+    // The verified per-asset executor is INVOKED (not a tautology): it settles the funded leg and
+    // conserves every touched asset's global total — proving it does NOT reject the free mint.
+    let k0 = funded_ledger(&ring);
+    let settled =
+        verified_executor_reference(&k0, &ring).expect("funded single leg settles on the executor");
+    for a in touched_assets(&ring) {
+        assert_eq!(
+            settled.total_asset(&a),
+            k0.total_asset(&a),
+            "the per-asset executor conserves asset {:02x}.. — so per-asset conservation alone does \
+             NOT catch the free mint",
+            a[0]
+        );
+    }
+    // The exact gap the Rust check closes: a node receives but never sends (non-closed cycle).
     let senders: BTreeSet<u8> = ring.settlements.iter().map(|s| s.from.0[0]).collect();
     let receivers: BTreeSet<u8> = ring.settlements.iter().map(|s| s.to.0[0]).collect();
-    assert_ne!(
-        senders, receivers,
-        "free-mint ring: senders != receivers (the verified cycle-closure teeth)"
+    assert!(
+        receivers.iter().any(|r| !senders.contains(r)),
+        "cell 2 receives but never sends — the non-closure the per-asset executor misses"
     );
 }
 
 #[test]
-fn zero_amount_leg_rejected_by_both() {
+fn zero_amount_leg_rejected_by_rust_but_committed_by_the_per_asset_executor() {
     // An otherwise-closed 2-ring with a zero-amount leg (a no-op masquerading as a settlement).
     let ring = RingTrade {
         participants: vec![[1; 32], [2; 32]],
@@ -340,22 +355,33 @@ fn zero_amount_leg_rejected_by_both() {
         ],
         score: 2.0,
     };
-    // Rust rejects the zero-amount leg.
+    // Rust rejects — specifically on the NO-PHANTOM-VALUE teeth (the zero-amount leg).
+    let err = ring_conservation_decision(std::slice::from_ref(&ring))
+        .expect_err("zero-amount leg must be rejected by the Rust conservation check");
     assert!(
-        ring_conservation_decision(std::slice::from_ref(&ring)).is_err(),
-        "zero-amount leg must be rejected by the Rust conservation check"
+        err.contains("zero-amount"),
+        "rejection must name the zero-amount (no-phantom-value) teeth, got: {err}"
     );
-    // The verified executor would COMMIT a zero transfer (amt=0 passes the gate, a vacuous move),
-    // so the verified ledger does conserve — but the SETTLEMENT is a no-op masquerade. The teeth
-    // here is the Rust-side phantom-value rejection; the differential's contract is that an
-    // accepted ring conserves, NOT that every conserving fold is accepted. We assert the Rust
-    // rejection holds (the no-phantom-value rule), which the Lean `zeroLegRing_rejected` mirrors.
-    let has_zero = ring.settlements.iter().any(|s| s.amount == 0);
-    assert!(has_zero, "the adversarial ring carries a zero-amount leg");
+    // HONEST ASYMMETRY (invoking the executor, not a tautology): the verified per-asset executor
+    // COMMITS the zero transfer (amt=0 passes the availability gate — a vacuous move), settling the
+    // ring and conserving every asset. So the no-phantom-value rule lives ONLY on the Rust side;
+    // this differential documents that the per-asset executor does NOT reject the masquerade.
+    let k0 = funded_ledger(&ring);
+    let settled = verified_executor_reference(&k0, &ring)
+        .expect("the per-asset executor commits the zero leg (a vacuous, conserving move)");
+    for a in touched_assets(&ring) {
+        assert_eq!(
+            settled.total_asset(&a),
+            k0.total_asset(&a),
+            "the executor conserves asset {:02x}.. — a zero move is vacuous, so per-asset \
+             conservation does NOT reject the phantom leg",
+            a[0]
+        );
+    }
 }
 
 #[test]
-fn unbalanced_asset_ring_rejected_by_both() {
+fn receive_only_node_caught_by_rust_cycle_closure_not_by_per_asset_executor() {
     // A "ring" with an asset sent but, by a fabricated decoupled shape, more received than sent:
     // we add a second credit leg of AA with no matching debit (free credit). check_settlement_
     // conservation's per-asset balance (sent==received) is preserved by from/to pairing for these
@@ -386,15 +412,32 @@ fn unbalanced_asset_ring_rejected_by_both() {
         ],
         score: 3.0,
     };
+    // Rust rejects on the cycle-closure teeth (cell 3 receives but never sends).
+    let err = ring_conservation_decision(std::slice::from_ref(&ring))
+        .expect_err("a ring with a receive-only node (cell 3) must be rejected (free mint)");
     assert!(
-        ring_conservation_decision(std::slice::from_ref(&ring)).is_err(),
-        "a ring with a receive-only node (cell 3) must be rejected (free mint)"
+        err.contains("free mint") || err.contains("never sends"),
+        "rejection must name the cycle-closure (free-mint) teeth, got: {err}"
     );
+    // HONEST ASYMMETRY (executor INVOKED): the funded legs all settle and every asset's global
+    // total is conserved — the per-asset executor does NOT catch cell 3's receive-only free mint.
+    let k0 = funded_ledger(&ring);
+    let settled =
+        verified_executor_reference(&k0, &ring).expect("funded legs settle on the executor");
+    for a in touched_assets(&ring) {
+        assert_eq!(
+            settled.total_asset(&a),
+            k0.total_asset(&a),
+            "the per-asset executor conserves asset {:02x}.. — cycle-closure is the load-bearing \
+             Rust teeth, not per-asset conservation",
+            a[0]
+        );
+    }
     let senders: BTreeSet<u8> = ring.settlements.iter().map(|s| s.from.0[0]).collect();
     let receivers: BTreeSet<u8> = ring.settlements.iter().map(|s| s.to.0[0]).collect();
-    // Cell 3 receives but never sends — the verified cycle-closure teeth agree it is not a cycle.
+    // Cell 3 receives but never sends — the non-closure the per-asset executor misses.
     assert!(
         receivers.iter().any(|r| !senders.contains(r)),
-        "cell 3 receives but never sends — verified cycle closure fails too"
+        "cell 3 receives but never sends — the cycle-closure gap the executor does not close"
     );
 }
