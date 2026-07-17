@@ -20,23 +20,26 @@
 //!   cursors  = [0, 1, 2, 3]   (charter terminal = 3)
 
 use starbridge_compartment_workflow_mandate::{
-    FieldElement, WorkflowPhase, clearance_label, cwm_advance_admits,
+    FieldElement, clerk_label, cwm_advance_admits, officer_label,
 };
 
 const CHARTER_TERMINAL: u64 = 3;
 
-/// Officer clears every compartment in the charter (review/redact/sign): the Lean
-/// `charterMandate3` actor whose `mayRead` resolves on all three steps.
+/// Officer carries the ROLE label `officer` — exactly the Lean `charterMandate3.actorLabels =
+/// [Label.named "officer"]`. Its clearance over review/redact/sign is EARNED by walking the
+/// `charter_clearance_graph` dominance edges (officer ⊐ review/redact/sign), NOT by feeding the
+/// compartment labels back in and resolving them reflexively. Feeding compartment labels made the
+/// graph a dead input: every row resolved `review ⊐ review` without traversing a single edge, so
+/// zeroing the graph left the pinned vector unmoved. With the role label, the corpus traverses the
+/// real graph and a dropped/over-permissive edge flips the vector.
 fn officer_labels() -> Vec<FieldElement> {
-    WorkflowPhase::CHARTER
-        .iter()
-        .map(|p| p.compartment_label())
-        .collect()
+    vec![officer_label()]
 }
 
-/// Clerk clears ONLY the `review` compartment (step 0): the Lean `clerkMandate3` actor.
+/// Clerk carries the ROLE label `clerk` — the Lean `clerkMandate3.actorLabels = [Label.named
+/// "clerk"]`; it dominates ONLY `review` via the single `clerk → review` graph edge.
 fn clerk_labels() -> Vec<FieldElement> {
-    vec![clearance_label("review")]
+    vec![clerk_label()]
 }
 
 const CURSORS: [u64; 4] = [0, 1, 2, 3];

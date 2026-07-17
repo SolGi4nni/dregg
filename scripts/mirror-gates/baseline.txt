@@ -49,7 +49,6 @@ D2-priv:dregg-protocol-tests:convert_turn_effects_to_vm  # D2/D2-false-privacy-c
 D2-reads:deos-view:from_prop  # D2/D2-cited-consumer-absent
 D2-reads:dregg-sdk:agent_receipt_head  # D2/D2-cited-consumer-absent
 D2-reads:dreggnet-asset:trait_root_of  # D2/D2-cited-consumer-absent
-D2-roster:dreggnet-telegram:dreggnet-web:18  # D2/D2-uncited-producer
 D2-roster:dreggnet-wechat:dreggnet-web:18  # D2/D2-uncited-producer
 D3:dregg-circuit:EffectVmDescriptor:cap_delegation_nonamp_descriptor|parse_vm_descriptor  # D3/D3-tested-twin-is-not-the-deployed-one
 D3:dregg-circuit:EffectVmDescriptor:cap_reshape_descriptor|parse_vm_descriptor  # D3/D3-tested-twin-is-not-the-deployed-one
@@ -59,6 +58,5 @@ D3:starbridge-domains:DomainRegistry:with_authority|new  # D3/D3-tested-twin-is-
 D3:starbridge-subscription:CellProgram:subscription_program|feed_invariants_program  # D3/D3-tested-twin-is-not-the-deployed-one
 D3:starbridge-swarm-orchestration:CellProgram:board_service_program|coordinator_program  # D3/D3-tested-twin-is-not-the-deployed-one
 G1:accumulator_nonrev_golden.json:GOLDEN_JSON  # G1/G1-unpinned-test-golden  [sweep-two §5.1 blind spot — 1 of the 4 tests-local goldens; matches deployed 48==48 today, but single-author so free to drift]
-G1:adjacency_membership_golden_audit.json:GOLDEN_JSON  # G1/G1-unpinned-test-golden  [M27 — the drifted one: golden 26 vs deployed 34; lane owns the DELETE + one-author hoist]
 G1:committed_threshold_golden.json:GOLDEN_JSON  # G1/G1-unpinned-test-golden  [sweep-two §5.1 blind spot — no by-name twin (name dregg-committed-threshold::poseidon2-v2); single-author, needs a Lean #guard]
 G1:quantified_absence_golden.json:GOLDEN_JSON  # G1/G1-unpinned-test-golden  [sweep-two §5.1 blind spot — matches deployed 20==20 today, but single-author so free to drift]

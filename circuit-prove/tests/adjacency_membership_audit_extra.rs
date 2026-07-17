@@ -16,9 +16,10 @@
 
 use std::panic::AssertUnwindSafe;
 
+use dregg_circuit::descriptor_by_name::descriptor_by_name;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, parse_vm_descriptor2,
-    prove_vm_descriptor2, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, VmConstraint2, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
@@ -36,9 +37,13 @@ const POW: usize = 16;
 const POW2: usize = 17;
 const ADJ_WIDTH: usize = 32;
 
-// The byte-identical Lean-emitted golden, embedded to prove against the SAME descriptor the gate
-// pins (kept in sync by the `#guard` in AdjacencyMembershipEmit.lean and the gate's assert_eq).
-const GOLDEN_JSON: &str = include_str!("adjacency_membership_golden_audit.json");
+// The DEPLOYED adjacency AIR is loaded here through the production `descriptor_by_name` path — the
+// same loader the per-verify path uses (`bridge/src/verifier.rs`), reading the Lean-emitted by-name
+// artifact `circuit/descriptors/by-name/adjacency-membership.json`. There is no test-local golden:
+// this audit proves its isolating tamper against exactly the descriptor the deployment runs, not a
+// hand-embedded copy that is free to drift (the private 26-constraint mirror this file used to carry
+// had drifted to strictly fewer constraints than the deployed 34).
+const DEPLOYED_ADJACENCY: &str = "dregg-membership-adjacency::poseidon2-v1";
 
 #[derive(Clone, Copy)]
 struct Step {
@@ -178,7 +183,13 @@ fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pi: &[BabyBear])
 /// caused by the reconstructed-index binding and nothing unrelated.
 #[test]
 fn forged_index_pi_isolates_the_idx_binding() {
-    let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
+    let desc = descriptor_by_name(DEPLOYED_ADJACENCY)
+        .expect("the deployed adjacency AIR is registered by name");
+    assert_eq!(
+        desc.constraints.len(),
+        34,
+        "the audit must run on the DEPLOYED 34-constraint adjacency AIR, not a weaker private mirror"
+    );
     let leaves = sample_leaves(16);
     let levels = build_tree(&leaves);
     let root = levels.last().unwrap()[0];
