@@ -61,10 +61,13 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.NonRevocationEmit
 open Dregg2.Circuit.Emit.NonRevocationRefine
   (RangeTableSound NonRevocationFragment nonRevocation_sat_refines nonRevocation_nonmembership
-   FieldCanonicalDiffs)
+   FieldCanonicalDiffs NonRevCanon Canon LowHalf)
 open Dregg2.Crypto.NonMembership (Sorted Adjacent NonMember sorted_gap_excludes)
 
 set_option autoImplicit false
+
+/-- Field-faithful glue: an ℤ equation lifts to the DEPLOYED mod-`p` gate/pin denotation. -/
+private theorem modEqOfEq {a b : ℤ} (h : a = b) : a ≡ b [ZMOD 2013265921] := by rw [h]
 
 /-! ## §1 — the parametric completeness witness (row, pub, tables, trace). -/
 
@@ -243,21 +246,16 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
       · -- level-1 chip lookup
         simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0]
         rw [hL1]; exact List.mem_cons_of_mem _ List.mem_cons_self
-      · -- continuity gate: CUR1 − PAR0 = 0
-        show contBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [contBody, subBody, EmittedExpr.eval, loc0, r_CUR1, r_PAR0]; ring
-      · -- diff_left gate: (x−L−1) − x + L + 1 = 0
-        show diffLBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [diffLBody, EmittedExpr.eval, loc0, r_DIFF_L, r_X, r_LEAF_L]; ring
+      · -- continuity gate: CUR1 − PAR0 ≡ 0
+        exact modEqOfEq (by simp only [contBody, subBody, EmittedExpr.eval, loc0, r_CUR1, r_PAR0]; ring)
+      · -- diff_left gate: (x−L−1) − x + L + 1 ≡ 0
+        exact modEqOfEq (by simp only [diffLBody, EmittedExpr.eval, loc0, r_DIFF_L, r_X, r_LEAF_L]; ring)
       · -- diff_right gate
-        show diffRBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [diffRBody, EmittedExpr.eval, loc0, r_DIFF_R, r_LEAF_R, r_X]; ring
-      · -- range-left binding gate: RL + diff_left − HALF = 0
-        show rangeLBindBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [rangeLBindBody, EmittedExpr.eval, loc0, r_RL, r_DIFF_L]; ring
+        exact modEqOfEq (by simp only [diffRBody, EmittedExpr.eval, loc0, r_DIFF_R, r_LEAF_R, r_X]; ring)
+      · -- range-left binding gate: RL + diff_left − HALF ≡ 0
+        exact modEqOfEq (by simp only [rangeLBindBody, EmittedExpr.eval, loc0, r_RL, r_DIFF_L]; ring)
       · -- range-right binding gate
-        show rangeRBindBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [rangeRBindBody, EmittedExpr.eval, loc0, r_RR, r_DIFF_R]; ring
+        exact modEqOfEq (by simp only [rangeRBindBody, EmittedExpr.eval, loc0, r_RR, r_DIFF_R]; ring)
       · -- range-left lookup: [RL] ∈ range table
         simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0, List.map_cons, List.map_nil,
           EmittedExpr.eval, r_RL]
@@ -274,15 +272,14 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
         simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0, List.map_cons, List.map_nil,
           EmittedExpr.eval, r_DIFF_R]
         exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
-      · -- adjacency gate: (pos+1) − pos − 1 = 0
-        show adjBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
-        simp only [adjBody, EmittedExpr.eval, loc0, r_RPOS, r_LPOS]; ring
-      · -- root PI pin: loc PAR1 = pub ROOT_PI
+      · -- adjacency gate: (pos+1) − pos − 1 ≡ 0
+        exact modEqOfEq (by simp only [adjBody, EmittedExpr.eval, loc0, r_RPOS, r_LPOS]; ring)
+      · -- root PI pin: loc PAR1 ≡ pub ROOT_PI
         simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
-        intro _; simp only [loc0, pub_i, r_PAR1, p_ROOT]
-      · -- queried-item PI pin: loc X = pub QUERIED_PI
+        intro _; exact modEqOfEq (by simp only [loc0, pub_i, r_PAR1, p_ROOT])
+      · -- queried-item PI pin: loc X ≡ pub QUERIED_PI
         simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
-        intro _; simp only [loc0, pub_i, r_X, p_QUERIED]
+        intro _; exact modEqOfEq (by simp only [loc0, pub_i, r_X, p_QUERIED])
       -- the six LAST-ROW-FIX boundary constraints are vacuous on the active (non-last) row 0.
       · intro h; exact absurd h (by decide)   -- boundary-last continuity
       · intro h; exact absurd h (by decide)   -- boundary-last diff_left
@@ -326,18 +323,18 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
         intro h; exact absurd h (by decide)
       -- the six LAST-ROW-FIX boundary constraints FIRE on the last row 1 (the fix): each body
       -- vanishes on the (identical) padding row — the same equations as the row-0 gates.
-      · intro _; show contBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [contBody, subBody, EmittedExpr.eval, loc1, r_CUR1, r_PAR0]; ring
-      · intro _; show diffLBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [diffLBody, EmittedExpr.eval, loc1, r_DIFF_L, r_X, r_LEAF_L]; ring
-      · intro _; show diffRBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [diffRBody, EmittedExpr.eval, loc1, r_DIFF_R, r_LEAF_R, r_X]; ring
-      · intro _; show rangeLBindBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [rangeLBindBody, EmittedExpr.eval, loc1, r_RL, r_DIFF_L]; ring
-      · intro _; show rangeRBindBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [rangeRBindBody, EmittedExpr.eval, loc1, r_RR, r_DIFF_R]; ring
-      · intro _; show adjBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
-        simp only [adjBody, EmittedExpr.eval, loc1, r_RPOS, r_LPOS]; ring
+      · intro _
+        exact modEqOfEq (by simp only [contBody, subBody, EmittedExpr.eval, loc1, r_CUR1, r_PAR0]; ring)
+      · intro _
+        exact modEqOfEq (by simp only [diffLBody, EmittedExpr.eval, loc1, r_DIFF_L, r_X, r_LEAF_L]; ring)
+      · intro _
+        exact modEqOfEq (by simp only [diffRBody, EmittedExpr.eval, loc1, r_DIFF_R, r_LEAF_R, r_X]; ring)
+      · intro _
+        exact modEqOfEq (by simp only [rangeLBindBody, EmittedExpr.eval, loc1, r_RL, r_DIFF_L]; ring)
+      · intro _
+        exact modEqOfEq (by simp only [rangeRBindBody, EmittedExpr.eval, loc1, r_RR, r_DIFF_R]; ring)
+      · intro _
+        exact modEqOfEq (by simp only [adjBody, EmittedExpr.eval, loc1, r_RPOS, r_LPOS]; ring)
   · intro i _; trivial
   · intro i _ r hr; simp [nonRevocationDesc] at hr
   · exact List.nodup_nil
@@ -375,7 +372,8 @@ trace (this file's completeness), then FEED it back through the committed SOUNDN
 bracketed witness AND its acceptance re-derives the semantic non-membership — the accept-set and the
 spec agree in both directions on the whole bracketed family. -/
 theorem sem_roundtrip (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
-    (hlt : L < x) (hgt : x < R) (hbL : x - L - 1 ≤ HALF_P_MINUS_1) (hbR : R - x - 1 ≤ HALF_P_MINUS_1) :
+    (hlt : L < x) (hgt : x < R) (hbL : x - L - 1 ≤ HALF_P_MINUS_1) (hbR : R - x - 1 ≤ HALF_P_MINUS_1)
+    (hcanon : NonRevCanon (semTrace hash L x R sib pos)) :
     NonMember [L, R] x := by
   have hsat := sem_satisfied hash L x R sib pos
   have hsorted : Sorted ([L, R] : List ℤ) := by
@@ -390,7 +388,7 @@ theorem sem_roundtrip (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
   have hlen : 0 < (semTrace hash L x R sib pos).rows.length := by
     show (0 : Nat) < 2; decide
   have := nonRevocation_nonmembership hlen hsat (sem_chipSound hash L x R sib pos)
-    (sem_rangeSound hash L x R sib pos hlt hgt hbL hbR) [L, R] hsorted hadj
+    (sem_rangeSound hash L x R sib pos hlt hgt hbL hbR) hcanon [L, R] hsorted hadj
   simpa only [loc0, r_X] using this
 
 #assert_axioms sem_satisfied
@@ -410,8 +408,17 @@ theorem sem_hyps_inhabited :
 built from a satisfying trace, not asserted. -/
 theorem sem_roundtrip_demo : NonMember ([100, 300] : List ℤ) 200 := by
   have := sem_hyps_inhabited
-  exact sem_roundtrip (fun xs => xs.foldl (fun a v => a * 1000000 + v) 0) 100 200 300 7 5
-    (by norm_num) (by norm_num) this.2.2.1 this.2.2.2
+  -- base-1000 digit hash keeps both digests canonical (`hash [100,300] = 100300`,
+  -- `hash [100300,7] = 100300007 < p`), so the deployed range-check envelope is inhabited concretely.
+  have hcanon : NonRevCanon
+      (semTrace (fun xs => xs.foldl (fun a v => a * 1000 + v) 0) 100 200 300 7 5) :=
+    { cur1 := ⟨by decide, by decide⟩, par0 := ⟨by decide, by decide⟩,
+      par1 := ⟨by decide, by decide⟩, rootPi := ⟨by decide, by decide⟩,
+      queriedPi := ⟨by decide, by decide⟩, x := ⟨by decide, by decide⟩,
+      leafL := ⟨by decide, by decide⟩, leafR := ⟨by decide, by decide⟩,
+      lpos := ⟨by decide, by decide⟩, rpos := ⟨by decide, by decide⟩ }
+  exact sem_roundtrip (fun xs => xs.foldl (fun a v => a * 1000 + v) 0) 100 200 300 7 5
+    (by norm_num) (by norm_num) this.2.2.1 this.2.2.2 hcanon
 
 /-- **Witness FALSE — the recovered spec CONSTRAINS.** The bracketing data is load-bearing: a PRESENT
 key (`x = L = 100`) is NOT a non-member of `[100, 300]`, so the round-trip conclusion is two-valued (a
@@ -454,7 +461,9 @@ theorem sem_fail (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h0
   have hR : (envAt (semTraceBad hash L x R sib pos) 0).loc RPOS = pos + 2 := rfl
   have hL : (envAt (semTraceBad hash L x R sib pos) 0).loc LPOS = pos := rfl
-  simp only [adjBody, EmittedExpr.eval, hR, hL] at h0
+  -- the adjacency gate binds `≡ 0 [ZMOD p]`; here the body is `(pos+2) − pos − 1 = 1`, so `p ∣ 1` — absurd.
+  simp only [adjBody, EmittedExpr.eval, hR, hL, Int.modEq_zero_iff_dvd] at h0
+  obtain ⟨k, hk⟩ := h0
   omega
 
 #assert_axioms sem_roundtrip_demo

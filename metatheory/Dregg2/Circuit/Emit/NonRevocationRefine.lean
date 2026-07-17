@@ -108,12 +108,13 @@ local macro "nr_mem" : tactic =>
   `(tactic| (simp [nonRevocationDesc, nonRevLastRowFix, level0Lookup, level1Lookup, rangeLLookup,
       rangeRLookup, rangeLDiffLookup, rangeRDiffLookup]))
 
-/-- A declared `.gate` fires on the active row 0 (non-last, since `length ≥ 2`): its body vanishes. -/
+/-- A declared `.gate` fires on the active row 0 (non-last, since `length ≥ 2`): its body vanishes
+mod `p` (the DEPLOYED field constraint — `VmConstraint.holdsVm` binds `≡ 0 [ZMOD p]`, not `= 0`). -/
 theorem gateZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hlen : 1 < t.rows.length) (body : EmittedExpr)
     (hmem : VmConstraint2.base (.gate body) ∈ nonRevocationDesc.constraints) :
-    body.eval (envAt t 0).loc = 0 := by
+    body.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have h0 : 0 < t.rows.length := by omega
   have hlast : (0 + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; omega
@@ -126,13 +127,14 @@ binding gate vanishes on row 0 REGARDLESS of whether row 0 is the last row: if r
 row the `.gate body` fires; if row 0 IS the last row (a HEIGHT-1 trace) the `.boundary VmRow.last body`
 counterpart supplied by `nonRevLastRowFix` fires. Either way `body.eval (envAt t 0).loc = 0`. This is
 what closes the last-row / height-1 forgery: the six semantic bindings are now forced on row 0 for
-every `0 < length`, not only for `1 < length`. -/
+every `0 < length`, not only for `1 < length`. Binds the body `≡ 0 [ZMOD p]` (the DEPLOYED field
+constraint); the genuine ℤ equations are recovered below through the range-check envelope. -/
 theorem gateBodyZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (body : EmittedExpr)
     (hgate : VmConstraint2.base (.gate body) ∈ nonRevocationDesc.constraints)
     (hbnd : VmConstraint2.base (.boundary VmRow.last body) ∈ nonRevocationDesc.constraints) :
-    body.eval (envAt t 0).loc = 0 := by
+    body.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   by_cases hlast : (0 + 1 == t.rows.length) = true
   · -- row 0 IS the last row: the boundary-last re-lowering fires.
     have h := hsat.rowConstraints 0 hlen _ hbnd
@@ -150,7 +152,7 @@ theorem piFirst0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col k) ∈ nonRevocationDesc.constraints) :
-    (envAt t 0).loc col = t.pub k := by
+    (envAt t 0).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have h0 : 0 < t.rows.length := by omega
   have h := hsat.rowConstraints 0 h0 _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
@@ -183,6 +185,41 @@ theorem range0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mf
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt, List.map_cons, List.map_nil,
     EmittedExpr.eval] at h
   exact range_lookup_sound hRange _ h
+
+/-! ## §1b — the deployed range-check canonicality envelope (the field-faithful ℤ recovery).
+
+`VmConstraint.holdsVm` now binds every gate `≡ 0 [ZMOD p]` and every PI pin `≡ pub [ZMOD p]` (the
+DEPLOYED field constraint), not `= 0`/`= pub` over ℤ. For an abstract Poseidon2 FOLD the digest cells
+are re-hashed, so a mere congruence cannot thread through `hash`; and the ordering diffs admit the
+classic underflow wrap (`x < L`, `diff = x − L − 1 + p` still 30 bits). We recover the genuine ℤ facts
+from the DEPLOYED range-check invariant: the digest / commitment cells are canonical field cells
+(`0 ≤ · < p`), and the compared ordering cells sit in the field's LOW HALF (`2·x < p`) — the deployed
+half-field discipline that, together with `diff ≤ HALF_P_MINUS_1` (itself forced by the range lookup),
+makes the ordering subtraction WRAP-FREE. The diff / range wires are canonical FOR FREE (their 30-bit
+range lookups), so they are not part of the envelope. Inhabited concretely by `concrete_canon`. -/
+
+/-- A DEPLOYED range-check canonical field cell: the residue itself (`0 ≤ x < p`). -/
+def Canon (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+/-- A DEPLOYED low-half field cell: `x ≤ (p−1)/2` (the wrap-free window the half-field tooth needs). -/
+def LowHalf (x : ℤ) : Prop := 0 ≤ x ∧ 2 * x < 2013265921
+
+/-- **`NonRevCanon t` — the deployed range-check envelope for the active row 0.** The two chained
+digest cells + the root digest are canonical; the two public inputs are canonical; the queried item
+`X`, the two bracketing leaves and the two neighbor positions sit in the field's low half (the
+wrap-free ordering window). Everything else the bridge needs (the 30-bit diff / range wires) is
+canonical for free through its own range lookup. -/
+structure NonRevCanon (t : VmTrace) : Prop where
+  cur1 : Canon ((envAt t 0).loc CUR1)
+  par0 : Canon ((envAt t 0).loc PAR0)
+  par1 : Canon ((envAt t 0).loc PAR1)
+  rootPi : Canon (t.pub ROOT_PI)
+  queriedPi : Canon (t.pub QUERIED_PI)
+  x : LowHalf ((envAt t 0).loc X)
+  leafL : LowHalf ((envAt t 0).loc LEAF_L)
+  leafR : LowHalf ((envAt t 0).loc LEAF_R)
+  lpos : LowHalf ((envAt t 0).loc LPOS)
+  rpos : LowHalf ((envAt t 0).loc RPOS)
 
 /-! ## §2 — the fully-forced fragment (SAT_IMPLIES_SEM, sound part). -/
 
@@ -217,43 +254,103 @@ theorem nonRevocation_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
+    (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
+    (hcanon : NonRevCanon t) :
     NonRevocationFragment hash t := by
-  -- the two genuine chip hashes (level-0 child, level-1 root).
+  obtain ⟨hcCur1, hcPar0, hcPar1, hcRoot, hcQ, hcX, hcLL, hcLR, hcLP, hcRP⟩ := hcanon
+  -- the two genuine chip hashes (level-0 child, level-1 root) — lookups bind over ℤ unchanged.
   have hp0 := chip0 hsat hChip hlen [.var LEAF_L, .var LEAF_R] PAR0 LEVEL0_LANES (by decide) (by nr_mem)
   have hp1 := chip0 hsat hChip hlen [.var CUR1, .var SIB1] PAR1 LEVEL1_LANES (by decide) (by nr_mem)
   simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hp0 hp1
-  -- the gate equations (through the byte-pinned per-gate lemmas) — each forced on row 0 for ANY
-  -- non-empty trace via `gateBodyZero0` (the `.gate` on a transition row OR the last-row fix's
-  -- `.boundary VmRow.last` counterpart on a height-1 trace).
-  have hcont := (cont_body_zero_iff _).mp (gateBodyZero0 hsat hlen contBody (by nr_mem) (by nr_mem))
-  have hdl := (diffL_body_zero_iff _).mp (gateBodyZero0 hsat hlen diffLBody (by nr_mem) (by nr_mem))
-  have hdr := (diffR_body_zero_iff _).mp (gateBodyZero0 hsat hlen diffRBody (by nr_mem) (by nr_mem))
-  have hrl := (rangeLBind_body_zero_iff _).mp
-    (gateBodyZero0 hsat hlen rangeLBindBody (by nr_mem) (by nr_mem))
-  -- (NonRevocationEmit proves only the L-variant `*_zero_iff`; the R-binding is the structural twin.)
-  have hrr : (envAt t 0).loc RR = HALF_P_MINUS_1 - (envAt t 0).loc DIFF_R := by
-    have hg := gateBodyZero0 hsat hlen rangeRBindBody (by nr_mem) (by nr_mem)
-    simp only [rangeRBindBody, EmittedExpr.eval] at hg
-    omega
-  have hadj := (adj_body_zero_iff _).mp (gateBodyZero0 hsat hlen adjBody (by nr_mem) (by nr_mem))
-  -- the two 30-bit range bounds (their ≥ 0 half gives the ℤ-sound upper half-field bound).
+  -- the 30-bit range bounds (canonical FOR FREE): RL/RR and the two direct diff wires.
   have hRLb := range0 hsat hRange hlen RL (by nr_mem)
   have hRRb := range0 hsat hRange hlen RR (by nr_mem)
-  -- the two pins.
-  have hqp := piFirst0 hsat hlen X QUERIED_PI (by nr_mem)
-  have hrp := piFirst0 hsat hlen PAR1 ROOT_PI (by nr_mem)
+  have hDLb := range0 hsat hRange hlen DIFF_L (by nr_mem)
+  have hDRb := range0 hsat hRange hlen DIFF_R (by nr_mem)
+  have hp30 : (2 : ℤ) ^ ORDERING_BITS = 1073741824 := by norm_num [ORDERING_BITS]
+  rw [hp30] at hRLb hRRb hDLb hDRb
+  -- Each gate binds its body `≡ 0 [ZMOD p]` on row 0 (via `gateBodyZero0`: the `.gate` on a
+  -- transition row OR the last-row fix's `.boundary VmRow.last` counterpart on a height-1 trace).
+  -- The genuine ℤ equalities are recovered from the range-check envelope: `p ∣ body`, and the
+  -- canonical windows force `body` into `(−p, p)`, so `p ∣ body ⟹ body = 0`.
+  -- continuity: CUR1 = PAR0 (both canonical digests).
+  have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PAR0 := by
+    have hg := gateBodyZero0 hsat hlen contBody (by nr_mem) (by nr_mem)
+    have hb : contBody.eval (envAt t 0).loc
+        = (envAt t 0).loc CUR1 - (envAt t 0).loc PAR0 := by
+      simp only [contBody, subBody, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; obtain ⟨_, _⟩ := hcCur1; obtain ⟨_, _⟩ := hcPar0; omega
+  -- the range-wire bindings RL/RR = HALF_P_MINUS_1 − diff (RL/RR and diff canonical for free), which
+  -- yield the ℤ-sound upper half-field bound `diff ≤ HALF_P_MINUS_1` used to defeat the ordering wrap.
+  have hrl : (envAt t 0).loc RL = HALF_P_MINUS_1 - (envAt t 0).loc DIFF_L := by
+    have hg := gateBodyZero0 hsat hlen rangeLBindBody (by nr_mem) (by nr_mem)
+    have hb : rangeLBindBody.eval (envAt t 0).loc
+        = (envAt t 0).loc RL - (HALF_P_MINUS_1 - (envAt t 0).loc DIFF_L) := by
+      simp only [rangeLBindBody, HALF_P_MINUS_1, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; simp only [HALF_P_MINUS_1] at hk ⊢; omega
+  have hrr : (envAt t 0).loc RR = HALF_P_MINUS_1 - (envAt t 0).loc DIFF_R := by
+    have hg := gateBodyZero0 hsat hlen rangeRBindBody (by nr_mem) (by nr_mem)
+    have hb : rangeRBindBody.eval (envAt t 0).loc
+        = (envAt t 0).loc RR - (HALF_P_MINUS_1 - (envAt t 0).loc DIFF_R) := by
+      simp only [rangeRBindBody, HALF_P_MINUS_1, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; simp only [HALF_P_MINUS_1] at hk ⊢; omega
+  have hboundL : (envAt t 0).loc DIFF_L ≤ HALF_P_MINUS_1 := by
+    have h := hRLb.1; rw [hrl] at h; simp only [HALF_P_MINUS_1] at h ⊢; omega
+  have hboundR : (envAt t 0).loc DIFF_R ≤ HALF_P_MINUS_1 := by
+    have h := hRRb.1; rw [hrr] at h; simp only [HALF_P_MINUS_1] at h ⊢; omega
+  -- diff equations: `diff = x − L − 1` / `R − x − 1`, WRAP-FREE via `diff ≤ HALF_P_MINUS_1` + the
+  -- low-half windows on x / L / R (the deployed half-field tooth rules out the underflow forgery).
+  have hdl : (envAt t 0).loc DIFF_L
+      = (envAt t 0).loc X - (envAt t 0).loc LEAF_L - 1 := by
+    have hg := gateBodyZero0 hsat hlen diffLBody (by nr_mem) (by nr_mem)
+    have hb : diffLBody.eval (envAt t 0).loc
+        = (envAt t 0).loc DIFF_L
+          - ((envAt t 0).loc X - (envAt t 0).loc LEAF_L - 1) := by
+      simp only [diffLBody, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg
+    obtain ⟨_, _⟩ := hcX; obtain ⟨_, _⟩ := hcLL
+    simp only [HALF_P_MINUS_1] at hboundL; omega
+  have hdr : (envAt t 0).loc DIFF_R
+      = (envAt t 0).loc LEAF_R - (envAt t 0).loc X - 1 := by
+    have hg := gateBodyZero0 hsat hlen diffRBody (by nr_mem) (by nr_mem)
+    have hb : diffRBody.eval (envAt t 0).loc
+        = (envAt t 0).loc DIFF_R
+          - ((envAt t 0).loc LEAF_R - (envAt t 0).loc X - 1) := by
+      simp only [diffRBody, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg
+    obtain ⟨_, _⟩ := hcX; obtain ⟨_, _⟩ := hcLR
+    simp only [HALF_P_MINUS_1] at hboundR; omega
+  -- adjacency: RPOS = LPOS + 1 (both low-half).
+  have hadj : (envAt t 0).loc RPOS = (envAt t 0).loc LPOS + 1 := by
+    have hg := gateBodyZero0 hsat hlen adjBody (by nr_mem) (by nr_mem)
+    have hb : adjBody.eval (envAt t 0).loc
+        = (envAt t 0).loc RPOS - ((envAt t 0).loc LPOS + 1) := by
+      simp only [adjBody, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; obtain ⟨_, _⟩ := hcRP; obtain ⟨_, _⟩ := hcLP; omega
+  -- the two pins: `X = pub QUERIED_PI` (low-half X, canonical PI) and `PAR1 = pub ROOT_PI`.
+  have hqp : (envAt t 0).loc X = t.pub QUERIED_PI := by
+    have hg := piFirst0 hsat hlen X QUERIED_PI (by nr_mem)
+    rw [Int.modEq_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; obtain ⟨_, _⟩ := hcX; obtain ⟨_, _⟩ := hcQ; omega
+  have hrp : (envAt t 0).loc PAR1 = t.pub ROOT_PI := by
+    have hg := piFirst0 hsat hlen PAR1 ROOT_PI (by nr_mem)
+    rw [Int.modEq_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; obtain ⟨_, _⟩ := hcPar1; obtain ⟨_, _⟩ := hcRoot; omega
   refine
     { queried := hqp
       rootHashed := ?_
       diffL := hdl
       diffR := hdr
-      boundL := ?_
-      boundR := ?_
+      boundL := hboundL
+      boundR := hboundR
       adjacent := hadj }
   · rw [← hrp, hp1, hcont, hp0]
-  · have h := hRLb.1; rw [hrl] at h; omega
-  · have h := hRRb.1; rw [hrr] at h; omega
 
 /-! ## §3 — the named field-canonicity residual + the full non-membership refinement. -/
 
@@ -303,11 +400,12 @@ theorem nonRevocation_nonmembership {hash : List ℤ → ℤ} {t : VmTrace} {min
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
+    (hcanon : NonRevCanon t)
     (spine : List ℤ)
     (hsorted : Sorted spine)
     (hadj : Adjacent spine ((envAt t 0).loc LEAF_L) ((envAt t 0).loc LEAF_R)) :
     NonMember spine ((envAt t 0).loc X) := by
-  have frag := nonRevocation_sat_refines hlen hsat hChip hRange
+  have frag := nonRevocation_sat_refines hlen hsat hChip hRange hcanon
   obtain ⟨hlo, hhi⟩ := fragment_strict frag (sat_forces_canon hlen hsat hRange)
   exact ⟨hsorted, sorted_gap_excludes spine _ _ _ hsorted hadj hlo hhi⟩
 
@@ -339,10 +437,13 @@ A two-row witness (active row 0 + identical padding row 1): the adjacent leaves 
 bracket the queried `x = 200` (`diff_left = diff_right = 99`), at consecutive positions `5, 6`, both
 folding to the committed root `hash [hash [100,300], 7]`. -/
 
-/-- A concrete little-endian digit hash (base `10^6`): `[100,300] ↦ 100000300`. -/
-private def demoHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000000 + x) 0
+/-- A concrete little-endian digit hash (base `1000`): `[100,300] ↦ 100300`. Base 1000 keeps every
+digest CANONICAL (`< p`), so the `NonRevCanon` envelope is inhabited — a genuine field-valued hash,
+as the deployed Poseidon2 is. -/
+private def demoHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000 + x) 0
 
-/-- The single active assignment. `PAR0 = CUR1 = hash [100,300]`, `PAR1 = hash [PAR0, 7] = root`. -/
+/-- The single active assignment. `PAR0 = CUR1 = hash [100,300] = 100300`,
+`PAR1 = hash [PAR0, 7] = 100300007 = root`. -/
 private def cRow : Assignment := fun c =>
   if c = X then 200
   else if c = LEAF_L then 100
@@ -353,19 +454,19 @@ private def cRow : Assignment := fun c =>
   else if c = DIFF_R then 99
   else if c = RL then 1006632860
   else if c = RR then 1006632860
-  else if c = PAR0 then 100000300
-  else if c = CUR1 then 100000300
+  else if c = PAR0 then 100300
+  else if c = CUR1 then 100300
   else if c = SIB1 then 7
-  else if c = PAR1 then 100000300000007
+  else if c = PAR1 then 100300007
   else 0
 
 private def cPub : Assignment := fun k =>
-  if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 200 else 0
+  if k = ROOT_PI then 100300007 else if k = QUERIED_PI then 200 else 0
 
 /-- The Poseidon2 chip table: the two genuine node hashes (`[100,300] ↦ PAR0`, `[PAR0,7] ↦ root`). -/
 private def cTbl : List (List ℤ) :=
   [ chipRow demoHash [100, 300] (List.replicate 7 0)
-  , chipRow demoHash [100000300, 7] (List.replicate 7 0) ]
+  , chipRow demoHash [100300, 7] (List.replicate 7 0) ]
 
 /-- The range table: the 30-bit range-wire value `1006632860 = HALF_P_MINUS_1 − 99` AND the honest
 diff value `99` itself (the two direct `[DIFF_L]`/`[DIFF_R]` lookups of the fixed descriptor range-check
@@ -385,7 +486,7 @@ theorem concrete_chipSound : ChipTableSound demoHash (cTrace.tf .poseidon2) := b
   simp only [cTrace, cTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl
   · exact ⟨[100, 300], List.replicate 7 0, by decide, by decide, rfl⟩
-  · exact ⟨[100000300, 7], List.replicate 7 0, by decide, by decide, rfl⟩
+  · exact ⟨[100300, 7], List.replicate 7 0, by decide, by decide, rfl⟩
 
 /-- The concrete range table is genuinely SOUND — so `RangeTableSound` is realizable, not just assumed. -/
 theorem concrete_rangeSound : RangeTableSound ORDERING_BITS (cTrace.tf .range) := by
@@ -434,6 +535,22 @@ theorem concrete_sat :
 /-- The named residual HOLDS on the honest witness (`diff_left = diff_right = 99 ≥ 0`). -/
 theorem concrete_canon : FieldCanonicalDiffs cTrace := ⟨by decide, by decide⟩
 
+/-- **The range-check envelope is genuinely INHABITED** for the honest witness — the chained digest
+cells (`CUR1 = PAR0 = 100300`, `PAR1 = 100300007`) and both public inputs are small canonical field
+values, and the queried item / leaves / positions are deep in the low half. So
+`nonRevocation_sat_refines` does NOT rest on a vacuous range-check hypothesis. -/
+theorem concrete_nonRevCanon : NonRevCanon cTrace where
+  cur1 := ⟨by decide, by decide⟩
+  par0 := ⟨by decide, by decide⟩
+  par1 := ⟨by decide, by decide⟩
+  rootPi := ⟨by decide, by decide⟩
+  queriedPi := ⟨by decide, by decide⟩
+  x := ⟨by decide, by decide⟩
+  leafL := ⟨by decide, by decide⟩
+  leafR := ⟨by decide, by decide⟩
+  lpos := ⟨by decide, by decide⟩
+  rpos := ⟨by decide, by decide⟩
+
 /-- **THE FULL BRIDGE, RUN END-TO-END on the inhabited instance.** All hypotheses jointly hold
 (inhabited `Satisfied2`, realizable `ChipTableSound` / `RangeTableSound`, the residual, a concrete
 sorted spine with `100`/`300` adjacent), and the descriptor's acceptance PROVES the genuine
@@ -443,7 +560,7 @@ theorem concrete_nonmembership : NonMember ([100, 300] : List ℤ) 200 := by
   have hadj : Adjacent ([100, 300] : List ℤ)
       ((envAt cTrace 0).loc LEAF_L) ((envAt cTrace 0).loc LEAF_R) := ⟨[], [], rfl⟩
   exact nonRevocation_nonmembership (by decide) concrete_sat concrete_chipSound
-    concrete_rangeSound [100, 300] hsorted hadj
+    concrete_rangeSound concrete_nonRevCanon [100, 300] hsorted hadj
 
 /-- The FAILING trace: identical, but the neighbor positions are NON-consecutive (`RPOS = 8`), so the
 adjacency gate `RPOS − LPOS − 1 = 8 − 5 − 1 = 2 ≠ 0` bites on the active row 0. -/

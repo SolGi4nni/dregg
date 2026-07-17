@@ -88,10 +88,11 @@ theorem nonRevocation_full_discharge {hash : List ℤ → ℤ} {t : VmTrace} {mi
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
+    (hcanon : NonRevCanon t)
     (spine : List ℤ) (hsorted : Sorted spine)
     (hadj : Adjacent spine ((envAt t 0).loc LEAF_L) ((envAt t 0).loc LEAF_R)) :
     NonMember spine ((envAt t 0).loc X) :=
-  nonRevocation_rung2 hlen hsat hChip hRange spine hsorted hadj
+  nonRevocation_rung2 hlen hsat hChip hRange hcanon spine hsorted hadj
 
 #assert_axioms emitfix_yields_lowerRange
 #assert_axioms nonRevocation_full_discharge

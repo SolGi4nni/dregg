@@ -83,9 +83,33 @@ open Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 open Dregg2.Circuit.Emit.NoteSpendingLeafRefine
   (firingIns firing5 factLaneVals factSite_block NoteSpendLeafSpec noteSpend_satisfied2_spec
    witnessTrace witnessPerm witnessAsg witnessPub witnessTrace_satisfied2 witness_chipSound
-   invEqGate_spend)
+   invEqGate_spend NoteCanon Canon eq_of_modEq_canon witness_canon)
 
 set_option autoImplicit false
+
+/-! ## §0 — field-faithful glue for the multi-row fold.
+
+The continuity window gate binds `next.CURRENT − this.PARENT ≡ 0 [ZMOD p]` and the terminal root pin
+binds `CURRENT ≡ merkle_root [ZMOD p]` (the DEPLOYED BabyBear field constraints). The fold threads
+GENUINE ℤ equalities, recovered from the deployed range-check invariant that every felt is canonical
+(`0 ≤ · < p`). `MerkleThreadCanon` names exactly the cells the fold reads back — the per-row
+continuity pair and the terminal `(CURRENT, merkle_root)` — inhabited concretely by the witness. -/
+
+/-- The window continuity gate `≡ 0 [ZMOD p]`, with both cells canonical, gives the genuine thread. -/
+private theorem thread_of_window (env : VmRowEnv) (hn : Canon (env.nxt 0)) (h5 : Canon (env.loc 5))
+    (h : contBodyW.eval env ≡ 0 [ZMOD 2013265921]) : env.nxt 0 = env.loc 5 := by
+  have hb : contBodyW.eval env = env.nxt 0 - env.loc 5 := by
+    simp only [contBodyW, WindowExpr.eval]; ring
+  rw [hb, Int.modEq_zero_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h; obtain ⟨_, _⟩ := hn; obtain ⟨_, _⟩ := h5; omega
+
+/-- **`MerkleThreadCanon t` — the deployed range-check envelope the multi-row fold reads back.** Each
+non-last row's continuity pair (`next.CURRENT`, `this.PARENT`) is canonical (so `next.CURRENT =
+this.PARENT` lifts from the mod-`p` gate), and the terminal `(CURRENT, merkle_root)` are canonical (so
+the root pin lifts). -/
+def MerkleThreadCanon (t : VmTrace) : Prop :=
+  (∀ i, i + 1 < t.rows.length → Canon ((envAt t i).nxt 0) ∧ Canon ((envAt t i).loc 5))
+  ∧ Canon ((envAt t (t.rows.length - 1)).loc 0) ∧ Canon (t.pub 1)
 
 /-! ## §1 — the genuine Merkle-membership fold MODEL (the trace-independent no-forgery relation). -/
 
@@ -206,6 +230,8 @@ theorem recompose_reaches (permOut : List ℤ → List ℤ) (hash : List ℤ →
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash noteSpendLeafDesc minit mfin maddrs t)
     (hChip : ChipTableSoundN permOut (t.tf .poseidon2))
+    (hcont : ∀ i, i + 1 < t.rows.length →
+      Canon ((envAt t i).nxt 0) ∧ Canon ((envAt t i).loc 5))
     (hpath : ∀ i, 1 ≤ i → i + 1 < t.rows.length → (envAt t i).loc IS_MERKLE = 1) :
     ∀ m, m + 1 ≤ t.rows.length - 1 →
       (envAt t (m + 1)).loc 0 = foldUpN permOut ((envAt t 0).loc 5) (stepsUpto t m) := by
@@ -217,11 +243,12 @@ theorem recompose_reaches (permOut : List ℤ → List ℤ) (hash : List ℤ →
     have hnotlast0 : ((0 : Nat) + 1 == t.rows.length) = false := by
       simp only [beq_eq_false_iff_ne]; omega
     have hc7 := hsat.rowConstraints 0 hrow0 _ mem_c7
-    have hbody : contBodyW.eval (envAt t 0) = 0 := by
+    have hbody : contBodyW.eval (envAt t 0) ≡ 0 [ZMOD 2013265921] := by
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hc7
       exact hc7 hnotlast0
+    have hcont0 := hcont 0 (by omega)
     have hthread : (envAt t 0).nxt 0 = (envAt t 0).loc 5 :=
-      (cont_body_zero_iff (envAt t 0)).mp hbody
+      thread_of_window (envAt t 0) hcont0.1 hcont0.2 hbody
     have hnl : (envAt t 0).nxt 0 = (envAt t (0 + 1)).loc 0 := rfl
     simp only [stepsUpto, List.range_zero, List.map_nil, foldUpN, List.foldl_nil]
     rw [← hnl]; exact hthread
@@ -240,11 +267,12 @@ theorem recompose_reaches (permOut : List ℤ → List ℤ) (hash : List ℤ →
     have hnotlast : ((k + 1) + 1 == t.rows.length) = false := by
       simp only [beq_eq_false_iff_ne]; omega
     have hc7 := hsat.rowConstraints (k + 1) hrowk1 _ mem_c7
-    have hbody : contBodyW.eval (envAt t (k + 1)) = 0 := by
+    have hbody : contBodyW.eval (envAt t (k + 1)) ≡ 0 [ZMOD 2013265921] := by
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hc7
       exact hc7 hnotlast
+    have hcontk := hcont (k + 1) (by omega)
     have hthread : (envAt t (k + 1)).nxt 0 = (envAt t (k + 1)).loc 5 :=
-      (cont_body_zero_iff (envAt t (k + 1))).mp hbody
+      thread_of_window (envAt t (k + 1)) hcontk.1 hcontk.2 hbody
     have hnl : (envAt t (k + 1)).nxt 0 = (envAt t (k + 1 + 1)).loc 0 := rfl
     rw [← hnl, hthread, hc6, hkstep, stepsUpto_succ, foldUpN_append]
     simp only [stepAt]
@@ -265,10 +293,12 @@ theorem noteSpend_merkle_rung2 {permOut : List ℤ → List ℤ} {hash : List �
     (hsat : Satisfied2 hash noteSpendLeafDesc minit mfin maddrs t)
     (hChip : ChipTableSoundN permOut (t.tf .poseidon2))
     (hlen : 2 ≤ t.rows.length)
+    (hcanon : MerkleThreadCanon t)
     (hpath : ∀ i, 1 ≤ i → i + 1 < t.rows.length → (envAt t i).loc IS_MERKLE = 1) :
     MembersAtRoot permOut ((envAt t 0).loc 5) (t.pub 1) (merklePathSteps t) := by
+  obtain ⟨hcont, hcLast0, hcPub1⟩ := hcanon
   have hn1 : t.rows.length - 1 < t.rows.length := by omega
-  have hrec := recompose_reaches permOut hash minit mfin maddrs t hsat hChip hpath
+  have hrec := recompose_reaches permOut hash minit mfin maddrs t hsat hChip hcont hpath
     (t.rows.length - 2) (by omega)
   have heq : t.rows.length - 2 + 1 = t.rows.length - 1 := by omega
   rw [heq] at hrec
@@ -278,7 +308,7 @@ theorem noteSpend_merkle_rung2 {permOut : List ℤ → List ℤ} {hash : List �
     rw [this]; exact beq_self_eq_true _
   have hpineq : (envAt t (t.rows.length - 1)).loc 0 = t.pub 1 := by
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hpin
-    exact hpin hislast
+    exact eq_of_modEq_canon hcLast0 hcPub1 (hpin hislast)
   show foldUpN permOut ((envAt t 0).loc 5) (merklePathSteps t) = t.pub 1
   rw [merklePathSteps, ← hrec]; exact hpineq
 
@@ -292,11 +322,12 @@ theorem noteSpend_committed_note_member {permOut : List ℤ → List ℤ} {hash 
     (hsat : Satisfied2 hash noteSpendLeafDesc minit mfin maddrs t)
     (hChip : ChipTableSoundN permOut (t.tf .poseidon2))
     (hlen : 2 ≤ t.rows.length) (hspend : (envAt t 0).loc IS_MERKLE = 0)
+    (hcanon : NoteCanon (envAt t 0)) (hmcanon : MerkleThreadCanon t)
     (hpath : ∀ i, 1 ≤ i → i + 1 < t.rows.length → (envAt t i).loc IS_MERKLE = 1) :
     (envAt t 0).loc 5 = (permOut (firingIns (envAt t 0) [53, 45, 46, 47])).headD 0
     ∧ MembersAtRoot permOut ((envAt t 0).loc 5) (t.pub 1) (merklePathSteps t) := by
-  have hspec := noteSpend_satisfied2_spec permOut hash minit mfin maddrs t hsat hChip (by omega) hspend
-  refine ⟨?_, noteSpend_merkle_rung2 hsat hChip hlen hpath⟩
+  have hspec := noteSpend_satisfied2_spec permOut hash minit mfin maddrs t hsat hChip (by omega) hspend hcanon
+  refine ⟨?_, noteSpend_merkle_rung2 hsat hChip hlen hmcanon hpath⟩
   rw [hspec.commitmentBinds]; exact hspec.commitmentFull
 
 #assert_axioms merkleRow_c6
@@ -317,6 +348,13 @@ theorem witness_merkle_rung2 :
     MembersAtRoot witnessPerm ((envAt witnessTrace 0).loc 5) (witnessTrace.pub 1)
       (merklePathSteps witnessTrace) :=
   noteSpend_merkle_rung2 witnessTrace_satisfied2 witness_chipSound (by decide)
+    ⟨by intro i hi
+        have hl : witnessTrace.rows.length = 2 := rfl
+        rw [hl] at hi
+        have : i = 0 := by omega
+        subst this
+        exact ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩,
+      ⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
     (by intro i h1 h2; have hl : witnessTrace.rows.length = 2 := rfl; omega)
 
 /-- The recovered value is the concrete zero-fact digest `K₀` on BOTH sides — the fired conclusion is
@@ -359,10 +397,12 @@ theorem merkle_broken_chain_rejects (hash : List ℤ → ℤ) (minit : ℤ → �
   intro h
   have hc := h.rowConstraints 0 (by decide) _ mem_c7
   have hnl : ((0 : Nat) + 1 == bcTrace.rows.length) = false := by decide
-  have hbody : contBodyW.eval (envAt bcTrace 0) = 0 := by
+  have hbody : contBodyW.eval (envAt bcTrace 0) ≡ 0 [ZMOD 2013265921] := by
     simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hc
     exact hc hnl
-  revert hbody; decide
+  -- the C7 window gate binds `next.CURRENT − this.PARENT ≡ 0`; here it is `0 − 1 = −1`, and `p ∤ −1`.
+  have hval : contBodyW.eval (envAt bcTrace 0) = -1 := by decide
+  rw [hval] at hbody; revert hbody; decide
 
 /-- A single-row trace whose CURRENT (col 0) is `1` but whose public `merkle_root` (pi1) is `0`. -/
 def wrRow : Assignment := fun c => if c = 0 then 1 else 0
@@ -519,7 +559,9 @@ theorem fixed_commitment_binds_last {hash : List ℤ → ℤ} {minit : ℤ → �
     {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash noteSpendLeafDescFixed minit mfin maddrs t)
     (hlen : 0 < t.rows.length)
-    (hspendLast : (envAt t (t.rows.length - 1)).loc IS_MERKLE = 0) :
+    (hspendLast : (envAt t (t.rows.length - 1)).loc IS_MERKLE = 0)
+    (hcanon5 : Canon ((envAt t (t.rows.length - 1)).loc 5))
+    (hcanon54 : Canon ((envAt t (t.rows.length - 1)).loc 54)) :
     (envAt t (t.rows.length - 1)).loc 5 = (envAt t (t.rows.length - 1)).loc 54 := by
   have hidx : t.rows.length - 1 < t.rows.length := by omega
   have hmem : VmConstraint2.base (.boundary VmRow.last (invEqGate IS_MERKLE 5 54))
@@ -532,7 +574,7 @@ theorem fixed_commitment_binds_last {hash : List ℤ → ℤ} {minit : ℤ → �
     have he : (t.rows.length - 1) + 1 = t.rows.length := by omega
     rw [he]; exact beq_self_eq_true _
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hc
-  exact invEqGate_spend (envAt t (t.rows.length - 1)) hspendLast 5 54 (hc hislast)
+  exact invEqGate_spend (envAt t (t.rows.length - 1)) hspendLast 5 54 hcanon5 hcanon54 (hc hislast)
 
 /-! ## §13 — the FIXED descriptor still ACCEPTS the honest witness (the fix is not over-tight).
 

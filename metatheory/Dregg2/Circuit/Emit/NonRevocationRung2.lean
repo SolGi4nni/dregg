@@ -81,13 +81,23 @@ theorem satisfied_admits_negative_window {hash : List ℤ → ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
     (-(2 ^ 26) : ℤ) ≤ (envAt t 0).loc DIFF_L := by
-  have hrl := (rangeLBind_body_zero_iff _).mp (gateZero0 hsat hlen rangeLBindBody (by nr_mem))
-  have hub := (range0 hsat hRange (by omega) RL (by nr_mem)).2
-  rw [hrl] at hub
   have hpow : (2 : ℤ) ^ ORDERING_BITS = 1073741824 := by decide
-  rw [hpow] at hub
+  have hRLb := range0 hsat hRange (by omega) RL (by nr_mem)
+  have hDLb := range0 hsat hRange (by omega) DIFF_L (by nr_mem)
+  rw [hpow] at hRLb hDLb
+  -- the RL binding gate binds `≡ 0 [ZMOD p]`; RL and DIFF_L are canonical FOR FREE (their 30-bit
+  -- range lookups), so the congruence lifts to the genuine ℤ equality `RL = HALF_P_MINUS_1 − DIFF_L`.
+  have hrl : (envAt t 0).loc RL = HALF_P_MINUS_1 - (envAt t 0).loc DIFF_L := by
+    have hg := gateZero0 hsat hlen rangeLBindBody (by nr_mem)
+    have hb : rangeLBindBody.eval (envAt t 0).loc
+        = (envAt t 0).loc RL - (HALF_P_MINUS_1 - (envAt t 0).loc DIFF_L) := by
+      simp only [rangeLBindBody, HALF_P_MINUS_1, EmittedExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg; simp only [HALF_P_MINUS_1] at hk ⊢; omega
+  have hub := hRLb.2
+  rw [hrl] at hub
   simp only [HALF_P_MINUS_1] at hub
-  have : ((2 : ℤ) ^ 26) = 67108864 := by decide
+  have hp26 : ((2 : ℤ) ^ 26) = 67108864 := by decide
   omega
 
 /-! ## §2 — THE NAMED CARRIER (the lower-gap range tooth) + the discharge. -/
@@ -131,11 +141,12 @@ theorem nonRevocation_rung2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
+    (hcanon : NonRevCanon t)
     (spine : List ℤ)
     (hsorted : Sorted spine)
     (hadj : Adjacent spine ((envAt t 0).loc LEAF_L) ((envAt t 0).loc LEAF_R)) :
     NonMember spine ((envAt t 0).loc X) :=
-  nonRevocation_nonmembership hlen hsat hChip hRange spine hsorted hadj
+  nonRevocation_nonmembership hlen hsat hChip hRange hcanon spine hsorted hadj
 
 #assert_axioms window_width
 #assert_axioms satisfied_admits_negative_window
@@ -148,13 +159,14 @@ theorem nonRevocation_rung2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ
 A depth-2 tree over the adjacent bottom siblings `L = 100`, `R = 300` under sibling `sib = 7`, folding
 to the committed root `hash [hash [100,300], 7]`, at consecutive positions `5, 6`. -/
 
-/-- A concrete little-endian digit hash (base `10^6`): `[100,300] ↦ 100000300` (twin of Rung 1's). -/
-private def demoHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000000 + x) 0
+/-- A concrete little-endian digit hash (base `1000`): `[100,300] ↦ 100300` (twin of Rung 1's). Base
+1000 keeps every digest CANONICAL (`< p`), so the `NonRevCanon` envelope is inhabited. -/
+private def demoHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 1000 + x) 0
 
 /-- The shared Poseidon2 chip table: the two genuine node hashes of the committed tree. -/
 private def demoTbl : List (List ℤ) :=
   [ chipRow demoHash [100, 300] (List.replicate 7 0)
-  , chipRow demoHash [100000300, 7] (List.replicate 7 0) ]
+  , chipRow demoHash [100300, 7] (List.replicate 7 0) ]
 
 /-- The shared chip table is genuinely SOUND (so `ChipTableSound` is realizable, not just assumed). -/
 private theorem demoTbl_chipSound (tf : TableId → Table) (h : tf .poseidon2 = demoTbl) :
@@ -164,7 +176,7 @@ private theorem demoTbl_chipSound (tf : TableId → Table) (h : tf .poseidon2 = 
   simp only [demoTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl
   · exact ⟨[100, 300], List.replicate 7 0, by decide, by decide, rfl⟩
-  · exact ⟨[100000300, 7], List.replicate 7 0, by decide, by decide, rfl⟩
+  · exact ⟨[100300, 7], List.replicate 7 0, by decide, by decide, rfl⟩
 
 /-! ### §3a — the HONEST witness (`x = 200`, strictly bracketed, `diff = 99`). -/
 
@@ -178,14 +190,14 @@ private def hnRow : Assignment := fun c =>
   else if c = DIFF_R then 99
   else if c = RL then 1006632860
   else if c = RR then 1006632860
-  else if c = PAR0 then 100000300
-  else if c = CUR1 then 100000300
+  else if c = PAR0 then 100300
+  else if c = CUR1 then 100300
   else if c = SIB1 then 7
-  else if c = PAR1 then 100000300000007
+  else if c = PAR1 then 100300007
   else 0
 
 private def hnPub : Assignment := fun k =>
-  if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 200 else 0
+  if k = ROOT_PI then 100300007 else if k = QUERIED_PI then 200 else 0
 
 private def hnRangeTbl : List (List ℤ) := [[1006632860], [99]]
 
@@ -253,7 +265,13 @@ theorem honest_rung2_fires : NonMember ([100, 300] : List ℤ) 200 := by
   have hsorted : Sorted ([100, 300] : List ℤ) := by simp [Sorted, List.pairwise_cons]
   have hadj : Adjacent ([100, 300] : List ℤ)
       ((envAt hnTrace 0).loc LEAF_L) ((envAt hnTrace 0).loc LEAF_R) := ⟨[], [], rfl⟩
-  exact nonRevocation_rung2 (by decide) hn_sat hn_chipSound hn_rangeSound
+  have hcanon : NonRevCanon hnTrace :=
+    { cur1 := ⟨by decide, by decide⟩, par0 := ⟨by decide, by decide⟩,
+      par1 := ⟨by decide, by decide⟩, rootPi := ⟨by decide, by decide⟩,
+      queriedPi := ⟨by decide, by decide⟩, x := ⟨by decide, by decide⟩,
+      leafL := ⟨by decide, by decide⟩, leafR := ⟨by decide, by decide⟩,
+      lpos := ⟨by decide, by decide⟩, rpos := ⟨by decide, by decide⟩ }
+  exact nonRevocation_rung2 (by decide) hn_sat hn_chipSound hn_rangeSound hcanon
     [100, 300] hsorted hadj
 
 /-! ### §3b — THE CLOSED BUG: the PRE-FIX descriptor admitted a member-forgery; the fixed one rejects it.
@@ -305,14 +323,14 @@ private def chRow : Assignment := fun c =>
   else if c = DIFF_R then 199
   else if c = RL then 1006632960
   else if c = RR then 1006632760
-  else if c = PAR0 then 100000300
-  else if c = CUR1 then 100000300
+  else if c = PAR0 then 100300
+  else if c = CUR1 then 100300
   else if c = SIB1 then 7
-  else if c = PAR1 then 100000300000007
+  else if c = PAR1 then 100300007
   else 0
 
 private def chPub : Assignment := fun k =>
-  if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 100 else 0
+  if k = ROOT_PI then 100300007 else if k = QUERIED_PI then 100 else 0
 
 private def chRangeTbl : List (List ℤ) := [[1006632960], [1006632760]]
 
@@ -478,14 +496,14 @@ private def flrRow : Assignment := fun c =>
   else if c = DIFF_R then 199
   else if c = RL then 0
   else if c = RR then 0
-  else if c = PAR0 then 100000300
-  else if c = CUR1 then 100000300
+  else if c = PAR0 then 100300
+  else if c = CUR1 then 100300
   else if c = SIB1 then 7
-  else if c = PAR1 then 100000300000007
+  else if c = PAR1 then 100300007
   else 0
 
 private def flrPub : Assignment := fun k =>
-  if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 100 else 0
+  if k = ROOT_PI then 100300007 else if k = QUERIED_PI then 100 else 0
 
 private def flrRangeTbl : List (List ℤ) := [[0], [199]]
 

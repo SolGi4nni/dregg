@@ -77,6 +77,50 @@ open Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 
 set_option autoImplicit false
 
+/-! ## §0 — the deployed range-check canonicality envelope (field-faithful ℤ recovery).
+
+`VmConstraint.holdsVm` now binds every base gate `≡ 0 [ZMOD p]` and every PI pin `≡ pub [ZMOD p]`
+(the DEPLOYED BabyBear field constraint), not `= 0`/`= pub` over ℤ. The base equalities the spec
+carries (`COMMITMENT = COMMITMENT_FULL`, the value / asset limb links, the chain-continuity, and the
+eight PI pins) are read back off the congruence through the DEPLOYED range-check invariant that every
+felt is canonical (`0 ≤ · < p`). The Poseidon2 chip sites (the `permOut` chain / nullifier / mint
+digests) bind over ℤ unchanged (a lookup, not a field gate), so they are NOT part of the envelope. -/
+
+/-- A DEPLOYED range-check canonical field cell: the residue itself (`0 ≤ x < p`). -/
+def Canon (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+/-- Two canonical cells congruent mod `p` are EQUAL over ℤ. -/
+theorem eq_of_modEq_canon {a b : ℤ} (ha : Canon a) (hb : Canon b)
+    (h : a ≡ b [ZMOD 2013265921]) : a = b := by
+  rw [Int.modEq_iff_dvd] at h; obtain ⟨k, hk⟩ := h
+  obtain ⟨_, _⟩ := ha; obtain ⟨_, _⟩ := hb; omega
+
+/-- **`NoteCanon env` — the deployed range-check envelope for the spend row.** Every cell a base
+equality / pin reads back as a genuine ℤ equality is a canonical felt: the commitment cells and their
+preimage limbs, the chain-continuity input, and the eight public inputs. Inhabited by the concrete
+witness (`witness_canon`). -/
+structure NoteCanon (env : VmRowEnv) : Prop where
+  c1 : Canon (env.loc 1)
+  c2 : Canon (env.loc 2)
+  c5 : Canon (env.loc 5)
+  c14 : Canon (env.loc 14)
+  c18 : Canon (env.loc 18)
+  c19 : Canon (env.loc 19)
+  c28 : Canon (env.loc 28)
+  c29 : Canon (env.loc 29)
+  c30 : Canon (env.loc 30)
+  c54 : Canon (env.loc 54)
+  c62 : Canon (env.loc 62)
+  c64 : Canon (env.loc 64)
+  cnxt0 : Canon (env.nxt 0)
+  p0 : Canon (env.pub 0)
+  p1 : Canon (env.pub 1)
+  p2 : Canon (env.pub 2)
+  p3 : Canon (env.pub 3)
+  p4 : Canon (env.pub 4)
+  p5 : Canon (env.pub 5)
+  p6 : Canon (env.pub 6)
+
 /-! ## §1 — the firing-row seed of a `hash_fact` site (the Lean twin of the deployed absorb). -/
 
 /-- The 5 muxed value lanes of a fact site, EVALUATED on a firing row: the input columns' values,
@@ -208,19 +252,23 @@ theorem unlessSite_digest (permOut : List ℤ → List ℤ) (tf : TraceFamily) (
     (unless_fire_eval env hm) (unless_hold_eval env hm) hmem
   rw [← hblock]; rfl
 
-/-- The base gate (`.gate body`) at a non-last row IS its body-vanishing. -/
+/-- The base gate (`.gate body`) at a non-last row binds its body `≡ 0 [ZMOD p]` (the DEPLOYED field
+constraint — `VmConstraint.holdsVm` binds a congruence, not `= 0`). -/
 theorem gate_of_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst : Bool)
     (body : EmittedExpr)
     (h : (VmConstraint2.base (VmConstraint.gate body)).holdsAt hash tf env isFirst false) :
-    body.eval env.loc = 0 := h
+    body.eval env.loc ≡ 0 [ZMOD 2013265921] := h
 
-/-- An inverted-gated equality on the spend row (`is_merkle = 0`) IS its raw equality. -/
+/-- An inverted-gated equality on the spend row (`is_merkle = 0`), field-faithfully: the gate binds
+`a − b ≡ 0 [ZMOD p]`, and both cells canonical (the deployed range check) recover the genuine ℤ
+equality `a = b`. -/
 theorem invEqGate_spend (env : VmRowEnv) (hm : env.loc IS_MERKLE = 0) (a b : Nat)
-    (h : (invEqGate IS_MERKLE a b).eval env.loc = 0) : env.loc a = env.loc b := by
+    (ha : Canon (env.loc a)) (hb : Canon (env.loc b))
+    (h : (invEqGate IS_MERKLE a b).eval env.loc ≡ 0 [ZMOD 2013265921]) : env.loc a = env.loc b := by
   have hz : (invEqGate IS_MERKLE a b).eval env.loc = env.loc a - env.loc b := by
     simp only [invEqGate, subE, EmittedExpr.eval, hm]; ring
-  rw [hz] at h
-  linarith
+  rw [hz, Int.modEq_zero_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h; obtain ⟨_, _⟩ := ha; obtain ⟨_, _⟩ := hb; omega
 
 /-! ## §5 — the authored functional spec (NO_LEAN): the note-spend leaf's spend-row relation. -/
 
@@ -267,15 +315,18 @@ structure NoteSpendLeafSpec (permOut : List ℤ → List ℤ) (env : VmRowEnv) :
 
 /-- C5's position polynomial vanishing (over ℤ) yields the genuine BabyBear position-root relation
 `pos·(pos−1)·(pos−2)·(pos−3) ≡ 0 (mod p)` — the `p−6` coefficient is `−6` in the field. -/
-theorem posGate_modeq (env : VmRowEnv) (h : posGate.eval env.loc = 0) :
+theorem posGate_modeq (env : VmRowEnv) (h : posGate.eval env.loc ≡ 0 [ZMOD 2013265921]) :
     env.loc 4 * (env.loc 4 - 1) * (env.loc 4 - 2) * (env.loc 4 - 3) ≡ 0 [ZMOD 2013265921] := by
-  have h' : env.loc 4 ^ 4 + 2013265915 * env.loc 4 ^ 3 + 11 * env.loc 4 ^ 2
-              + 2013265915 * env.loc 4 = 0 := by
-    have := h
-    simp only [posGate, EmittedExpr.eval] at this
-    linear_combination this
-  refine (Int.modEq_zero_iff_dvd).mpr ⟨-(env.loc 4 ^ 3 + env.loc 4), ?_⟩
-  linear_combination h'
+  -- the deployed field gate binds `posGate.eval ≡ 0 [ZMOD p]`; the field gate poly differs from the
+  -- genuine position quartic by `p·(pos³+pos)`, so the congruence carries straight over.
+  have hb : posGate.eval env.loc
+      = env.loc 4 * (env.loc 4 - 1) * (env.loc 4 - 2) * (env.loc 4 - 3)
+        + 2013265921 * (env.loc 4 ^ 3 + env.loc 4) := by
+    simp only [posGate, EmittedExpr.eval]; ring
+  rw [hb, Int.modEq_zero_iff_dvd] at h
+  rw [Int.modEq_zero_iff_dvd]
+  obtain ⟨k, hk⟩ := h
+  exact ⟨k - (env.loc 4 ^ 3 + env.loc 4), by linear_combination hk⟩
 
 /-! ## §6 — THE BRIDGE (SAT ⟹ SEM): a satisfying trace binds the whole spend-row relation. -/
 
@@ -289,7 +340,8 @@ theorem noteSpend_satisfied2_spec
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash noteSpendLeafDesc minit mfin maddrs t)
     (hChip : ChipTableSoundN permOut (t.tf .poseidon2))
-    (hlen : 1 < t.rows.length) (hspend : (envAt t 0).loc IS_MERKLE = 0) :
+    (hlen : 1 < t.rows.length) (hspend : (envAt t 0).loc IS_MERKLE = 0)
+    (hcanon : NoteCanon (envAt t 0)) :
     NoteSpendLeafSpec permOut (envAt t 0) := by
   set env := envAt t 0 with henv
   have hfalse : (0 + 1 == t.rows.length) = false := by
@@ -316,16 +368,16 @@ theorem noteSpend_satisfied2_spec
         (H (unlessSite 53 [52, 41, 42, 43, 44] 100) (by in_constraints))
     , commitmentFull := unlessSite_digest permOut t.tf env hChip hspend 54 [53, 45, 46, 47] 107
         (H (unlessSite 54 [53, 45, 46, 47] 107) (by in_constraints))
-    , commitmentBinds := invEqGate_spend env hspend 5 54
+    , commitmentBinds := invEqGate_spend env hspend 5 54 hcanon.c5 hcanon.c54
         (gate_of_holdsAt hash t.tf env true _
           (H (VmConstraint2.base (VmConstraint.gate (invEqGate IS_MERKLE 5 54))) (by in_constraints)))
-    , valueLink := invEqGate_spend env hspend 1 28
+    , valueLink := invEqGate_spend env hspend 1 28 hcanon.c1 hcanon.c28
         (gate_of_holdsAt hash t.tf env true _
           (H (VmConstraint2.base (VmConstraint.gate (invEqGate IS_MERKLE 1 28))) (by in_constraints)))
-    , valueHiLink := invEqGate_spend env hspend 19 29
+    , valueHiLink := invEqGate_spend env hspend 19 29 hcanon.c19 hcanon.c29
         (gate_of_holdsAt hash t.tf env true _
           (H (VmConstraint2.base (VmConstraint.gate (invEqGate IS_MERKLE 19 29))) (by in_constraints)))
-    , assetLink := invEqGate_spend env hspend 2 30
+    , assetLink := invEqGate_spend env hspend 2 30 hcanon.c2 hcanon.c30
         (gate_of_holdsAt hash t.tf env true _
           (H (VmConstraint2.base (VmConstraint.gate (invEqGate IS_MERKLE 2 30))) (by in_constraints)))
     , nullIntermediate := unlessSite_digest permOut t.tf env hChip hspend 17 [5, 6, 7, 8, 9] 114
@@ -340,23 +392,29 @@ theorem noteSpend_satisfied2_spec
         (H (unlessSite 63 [14, 62, 18, 2] 135) (by in_constraints))
     , mintHash := unlessSite_digest permOut t.tf env hChip hspend 64 [63, 1, 19] 142
         (H (unlessSite 64 [63, 1, 19] 142) (by in_constraints))
-    , piNullifier :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 14 0)) (by in_constraints)) rfl
-    , piValue :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 1 2)) (by in_constraints)) rfl
-    , piAsset :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 2 3)) (by in_constraints)) rfl
-    , piDestFed :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 18 4)) (by in_constraints)) rfl
-    , piValueHi :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 19 5)) (by in_constraints)) rfl
-    , piMintRoot :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 62 1)) (by in_constraints)) rfl
-    , piMintHash :=
-        (H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 64 6)) (by in_constraints)) rfl }
+    , piNullifier := eq_of_modEq_canon hcanon.c14 hcanon.p0
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 14 0)) (by in_constraints)) rfl)
+    , piValue := eq_of_modEq_canon hcanon.c1 hcanon.p2
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 1 2)) (by in_constraints)) rfl)
+    , piAsset := eq_of_modEq_canon hcanon.c2 hcanon.p3
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 2 3)) (by in_constraints)) rfl)
+    , piDestFed := eq_of_modEq_canon hcanon.c18 hcanon.p4
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 18 4)) (by in_constraints)) rfl)
+    , piValueHi := eq_of_modEq_canon hcanon.c19 hcanon.p5
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 19 5)) (by in_constraints)) rfl)
+    , piMintRoot := eq_of_modEq_canon hcanon.c62 hcanon.p1
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 62 1)) (by in_constraints)) rfl)
+    , piMintHash := eq_of_modEq_canon hcanon.c64 hcanon.p6
+        ((H (VmConstraint2.base (VmConstraint.piBinding VmRow.first 64 6)) (by in_constraints)) rfl) }
   case cont =>
+    -- the continuity window gate binds `nxt 0 − loc 5 ≡ 0 [ZMOD p]`; both cells canonical ⟹ genuine.
     have hw := H (VmConstraint2.windowGate ⟨contBodyW, true⟩) (by in_constraints)
-    exact (cont_body_zero_iff env).mp (hw rfl)
+    have hg : contBodyW.eval env ≡ 0 [ZMOD 2013265921] := hw rfl
+    have hb : contBodyW.eval env = env.nxt 0 - env.loc 5 := by
+      simp only [contBodyW, WindowExpr.eval]; ring
+    rw [hb, Int.modEq_zero_iff_dvd] at hg
+    obtain ⟨k, hk⟩ := hg
+    obtain ⟨_, _⟩ := hcanon.cnxt0; obtain ⟨_, _⟩ := hcanon.c5; omega
 
 /-! ## §7 — non-vacuity: a CONCRETE satisfying witness (bridge fires) + two failing ones (gate bites).
 
@@ -433,11 +491,36 @@ theorem witnessTrace_satisfied2 :
   · rw [witness_memLog]; rfl
   · rw [witness_mapLog]; rfl
 
+/-- **The range-check envelope is genuinely INHABITED** on the witness — every enveloped cell is
+`K₀ = 657167757` or `0`, both small canonical felts (`< p`). So the bridge does NOT rest on a vacuous
+range-check hypothesis. -/
+theorem witness_canon : NoteCanon (envAt witnessTrace 0) where
+  c1 := ⟨by decide, by decide⟩
+  c2 := ⟨by decide, by decide⟩
+  c5 := ⟨by decide, by decide⟩
+  c14 := ⟨by decide, by decide⟩
+  c18 := ⟨by decide, by decide⟩
+  c19 := ⟨by decide, by decide⟩
+  c28 := ⟨by decide, by decide⟩
+  c29 := ⟨by decide, by decide⟩
+  c30 := ⟨by decide, by decide⟩
+  c54 := ⟨by decide, by decide⟩
+  c62 := ⟨by decide, by decide⟩
+  c64 := ⟨by decide, by decide⟩
+  cnxt0 := ⟨by decide, by decide⟩
+  p0 := ⟨by decide, by decide⟩
+  p1 := ⟨by decide, by decide⟩
+  p2 := ⟨by decide, by decide⟩
+  p3 := ⟨by decide, by decide⟩
+  p4 := ⟨by decide, by decide⟩
+  p5 := ⟨by decide, by decide⟩
+  p6 := ⟨by decide, by decide⟩
+
 /-- **The bridge fires end-to-end on the concrete witness** (SAT ⟹ SEM, non-vacuously): the whole
 spend-row relation is DERIVED, not assumed. -/
 theorem witness_spec : NoteSpendLeafSpec witnessPerm (envAt witnessTrace 0) :=
   noteSpend_satisfied2_spec witnessPerm (fun _ => 0) (fun _ => 0) (fun _ => (0, 0)) []
-    witnessTrace witnessTrace_satisfied2 witness_chipSound (by decide) (by decide)
+    witnessTrace witnessTrace_satisfied2 witness_chipSound (by decide) (by decide) witness_canon
 
 /-- A trace whose row-0 `is_merkle` is `2` (non-boolean) — the C1 tooth is violated. -/
 def badMerkleRow : Assignment := fun c => if c = IS_MERKLE then 2 else 0
@@ -451,8 +534,11 @@ theorem badMerkle_rejects (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin 
   intro h
   have hc1 := h.rowConstraints 0 (by decide)
     (VmConstraint2.base (VmConstraint.gate (binaryGate IS_MERKLE))) (by in_constraints)
-  have hbad : (binaryGate IS_MERKLE).eval (envAt badMerkleTrace 0).loc = 0 := hc1
-  revert hbad; decide
+  -- the C1 gate binds `is_merkle·(is_merkle−1) ≡ 0 [ZMOD p]`; here it is `2·1 = 2`, and `p ∤ 2`.
+  have hbad : (binaryGate IS_MERKLE).eval (envAt badMerkleTrace 0).loc ≡ 0 [ZMOD 2013265921] :=
+    gate_of_holdsAt hash badMerkleTrace.tf (envAt badMerkleTrace 0) true _ hc1
+  have hb2 : (binaryGate IS_MERKLE).eval (envAt badMerkleTrace 0).loc = 2 := by decide
+  rw [hb2] at hbad; revert hbad; decide
 
 /-- A spend-row trace with `is_merkle = 0` but `COMMITMENT (col 5) = 1 ≠ 0 = COMMITMENT_FULL (col 54)`
 — the C2-final tooth is violated. -/
@@ -469,11 +555,15 @@ theorem badCommitment_rejects (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (m
   intro h
   have hc := h.rowConstraints 0 (by decide)
     (VmConstraint2.base (VmConstraint.gate (invEqGate IS_MERKLE 5 54))) (by in_constraints)
-  have hbad : (invEqGate IS_MERKLE 5 54).eval (envAt badCommitTrace 0).loc = 0 := hc
-  have h54 : (envAt badCommitTrace 0).loc 5 = 1 := by decide
-  have := invEqGate_spend (envAt badCommitTrace 0) (by decide) 5 54 hbad
-  rw [h54] at this
-  revert this; decide
+  have hbad : (invEqGate IS_MERKLE 5 54).eval (envAt badCommitTrace 0).loc ≡ 0 [ZMOD 2013265921] :=
+    gate_of_holdsAt hash badCommitTrace.tf (envAt badCommitTrace 0) true _ hc
+  have hcan5 : Canon ((envAt badCommitTrace 0).loc 5) := ⟨by decide, by decide⟩
+  have hcan54 : Canon ((envAt badCommitTrace 0).loc 54) := ⟨by decide, by decide⟩
+  have heq := invEqGate_spend (envAt badCommitTrace 0) (by decide) 5 54 hcan5 hcan54 hbad
+  have h5 : (envAt badCommitTrace 0).loc 5 = 1 := by decide
+  have h54 : (envAt badCommitTrace 0).loc 54 = 0 := by decide
+  rw [h5, h54] at heq
+  revert heq; decide
 
 /-! ### Shape pins. -/
 #guard decide (witnessTrace.rows.length = 2)
