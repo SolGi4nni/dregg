@@ -222,6 +222,13 @@ is the most mature ops surface.
   `dregg-node:n5` image build (TODO-7), stale `deploy/hbox/RUNBOOK.md` + `deploy/gateway-ask/` unverified, dangling
   `systemctl restart dregg-gateway` pointers in `redteam/` findings docs (historical, low harm).
 
+## ✅ FORWARD WAVE 1 — both rungs landed + verified on persvati (2026-07-16)
+- **Track A · gov off the HostBallotBox shim** (`e5dc08766`): dregg-interchain-gov repointed onto VerifiedHoldingBallotBox, the demoted shim DELETED. Closes the weighted-cast residual — last governance flow now on the verified engine. persvati: governance 57/57, interchain-gov all-green.
+- **Track C · two-tranche $DREGG bond rung-1** (`21ccce981`): quote/computron senior (floor) + $DREGG junior first-loss, PRICE-FREE (`junior_forfeit` takes no mark arg; compile_fail doctest proves it), conserving third Effect::Transfer, no burn. 3 named canaries green on persvati. Reconciled the burn-vs-conserving doc contradiction.
+- **⚑ VERIFICATION DOCTRINE (paid for this session):** heavy Rust verification goes to **persvati via `scripts/pbuild <warm-lane> cargo test -p X`**, NOT the laptop — the local box refights the cold Mathlib/Lean closure (30min, holds the one target lock, gridlocks all terminals). The disk-crisis cargo cleans wiped the closure → that was the whole "why is nothing building" mystery. `scripts/reclaim-space.sh` (`620071d22`) is the sprawl sweep.
+- **⚠ persvati is MARSHAL-ONLY** (no Lean sysroot): Rust-logic tests verify fine there, but Lean-producer-dependent tests (turn_proving prove/verify, state crash-recovery genesis, trustline) FAIL by construction (state.rs: "a marshal-only binary cannot run the verified producer"). So: Rust-logic → persvati; Lean-producer tests → local Lean box or CI. Provisioning DREGG_LEAN_SYSROOT on persvati would remove the split (follow-up).
+- Wave 2 (A rooted-feed, C protocol-native payments, D reproducible-build gaps) NOT fired — keeping the box calm; fire when quiet + disk headroom.
+
 ## ✅ EXCELLENCE BRAID 1 — ALL 10 LANES LANDED (2026-07-16)
 All committed + verified on the healed tree: bridge holes+live-feed (`72561117d`), verb-registry classify+ratchet
 (`5a6358093`), FRI cutover+extraction docs (`4609a507e`), bond design+paper refs (`c77c5ddd7`), weighted-cast
