@@ -52,11 +52,13 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
   LEAKAGE: change `FhEggRustDenotation` mpc reveal from ARGMAX → BALANCE-THRESHOLD sign vector
   (what §2 clean-privacy already proves). Two files then agree; privacy covers the actual reveal;
   reveal-minimality becomes the proven security goal. (Aligning down = always safe direction.)
-- **Optimality = ATTESTED EXECUTION, not "maximizing."** Use the proof-carrying/receipt infra to
-  prove the clearing algo's STEPS were honestly run on sealed inputs (p*/V* = the run's output) +
-  compose with already-proven value-neutrality. Honest headline: "value-neutral uniform-price
-  clearing, computation attested step-by-step" (= 'every move is a receipt'). DROP "provably
-  volume-maximizing" (hard/maybe-false). Stronger AND honest.
+- **Optimality = OPEN — my prior entry here was WRONG (conflation, corrected by ember).** The dregg
+  proof-carrying/RECEIPT infra (turn-attestation over the ledger) is a SEPARATE stack from the fhegg
+  confidential-clearing computation — it does NOT attest the clearing algorithm's steps. Do NOT use
+  the receipt infra as the optimality mechanism. → READ the real fhegg verification path (Cert-F,
+  the AIR/STARK over clearing, FhEgg* Lean) to find what — if anything — actually attests the fhegg
+  run, then state the HONEST optimality claim from THAT. Drop "volume-maximizing"; keep already-proven
+  value-neutrality. (grounding lane dispatched)
 - FRI: keep driving ALL stages autonomously; surface a genuine design fork, don't paper it.
 
 ## Standing
