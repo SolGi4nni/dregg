@@ -72,9 +72,21 @@ the gate never learns who they are.
   attenuation-only, unforgeable without the issuing key).
 - The three-arm pluggable gate + issuance + deploy-time re-check + live-recheck
   tooth (a slashed bond / revoked attestation fails *after* issuance).
-- The interview is a **real** hard-to-convince Opus 4.8 run, both polarities.
+- The two interview transcripts are **real** hard-to-convince Opus 4.8 output,
+  both polarities — captured **once, offline** (see the honest-scope note below).
 - The hiding-commitment reveal-nothing layer (gate sees only "gated").
 - The on-chain gate composing the real `DreggCredentialGate` for the private arm.
+- The `deploy-gate` CLI (`src/bin/deploy-gate.rs`): the **Audit arm wired
+  end-to-end** — `tools/token-factory` registers a verified-safe report hash,
+  issues a real macaroon capability, and authorizes it (or is refused
+  `NotGated` for a rejected token). File-backed operator state, off-chain.
+
+**Honest scope — the interview arm is NOT live:** this crate has **no LLM client
+and no HTTP**. The automated path parses and replays the two frozen transcripts
+above; a scammer today would face the *design*, not a fresh skeptical Opus. The
+live per-applicant interview (grain-jail / hosted provider) is a named weld
+below, and the zkTLS attestation of a live session is doc-and-type-shape
+(`src/private.rs::zktls`).
 
 **Named weld (designed, reuses existing machinery):**
 - **Full unlinkable ZK** so the gate doesn't even see *which* commitment — reuse
@@ -91,10 +103,19 @@ the gate never learns who they are.
 
 ```sh
 # The capability-gate PoC (composes real dregg-macaroon), both polarities:
-cd tools/deployer-gate && cargo test        # 14 tests
+cargo test -p dregg-deployer-gate           # 14 lib tests + 2 CLI tests
 
 # The on-chain gate (composes real DreggCredentialGate), both polarities:
 cd chain && forge test --match-contract DreggDeployerGateTest   # 17 tests
+
+# The Audit-arm CLI (the token-factory gate wire):
+cargo build -p dregg-deployer-gate --bins
+target/debug/deploy-gate init /tmp/gate.state
+target/debug/deploy-gate register-audit /tmp/gate.state path/to/report.audit.md
+target/debug/deploy-gate issue /tmp/gate.state --deployer alice \
+  --launch-params spec.json --report-hash <hex64>       # refuses if unregistered
+target/debug/deploy-gate authorize /tmp/gate.state --deployer alice \
+  --launch-params spec.json --capability <token>        # AUTHORIZED / refused
 ```
 
 ## The launchpad hook — LANDED

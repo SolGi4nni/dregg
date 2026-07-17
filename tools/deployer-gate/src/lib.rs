@@ -31,8 +31,10 @@
 //! - [`GateArm::Interview`] — social, **the marquee**. The deployer sits a
 //!   *structured interview with a hard-to-convince Claude Opus 4.8*, briefed to
 //!   probe for rug-intent, vaporware, and scam-signals and to refuse to be
-//!   moved by hype (see `interview/interviewer-prompt.md` + the two real runs in
-//!   `interview/runs/`). A PASS issues the capability. This beats a
+//!   moved by hype (see `interview/interviewer-prompt.md` + the two captured
+//!   runs in `interview/runs/` — real Opus output, produced once, offline; a
+//!   LIVE per-applicant interview is the named wire-later, see
+//!   [`interview`]'s honest-scope note). A PASS issues the capability. This beats a
 //!   whitelist/token-gate because a scammer cannot hype their way past a skeptic
 //!   asking real questions, and it does **not doxx** — it interrogates the
 //!   *project*, not the person's KYC.

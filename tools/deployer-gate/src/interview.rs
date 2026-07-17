@@ -26,6 +26,17 @@
 //!
 //! The skeptic passed the real project and failed the rug. [`InterviewVerdict::parse`]
 //! parses exactly that verdict block; the tests feed it the captured runs.
+//!
+//! ## Honest scope: the transcripts are FROZEN — the interview arm is not live
+//!
+//! The two runs above were produced by a real Opus 4.8 **once, offline** and
+//! captured verbatim. This crate contains **no LLM client and no HTTP** — the
+//! automated path is [`InterviewVerdict::parse`] replaying those two frozen
+//! transcripts forever. A *live* interview (a real model call per applicant,
+//! behind grain-jail or a hosted provider) is the named wire-later; until it is
+//! wired, "the deployer sits an interview" describes the DESIGN, and what runs
+//! is the parser + the captured evidence. The zkTLS attestation of a live
+//! session is likewise design + type-shape ([`crate::private::zktls`]).
 
 use crate::private::{self, VerdictCommitment};
 
