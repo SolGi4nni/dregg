@@ -124,7 +124,26 @@ def escrowBitZ (floor : List ℤ) : ℤ := if tagEscrowZ ∈ floor then 1 else 0
 /-- **The felt-domain floor-digest binding floor.** Equal floor digests ⟹ equal floors — the
 collision-resistance of the `hash_many` Option-B floor digest. The felt-level analog of
 `ConstraintBinding.DeclCommitBinds` / `Poseidon2WideCR`; stated as a named hypothesis, never an
-axiom. -/
+axiom.
+
+⚠ **BROKEN AS NAMED — FALSE at deployed parameters, so the CR leg of all four consumers below is
+VACUOUSLY TRUE there** (`Deos.InAirAuthorityFloorRegrounded.floorDigestBinds_false_babyBear`;
+`docs/deos/VACUITY-SWEEP.md` FINDING 2). It is injectivity on the INFINITE `List ℤ` while the Option-B
+digest is ONE BabyBear felt — literally the `StateCommit.compressNInjective` shape, which
+`HashFloorHonesty` had ALREADY proved false.
+
+⚑ **AND THE FELT BOUND THAT REFUTES THIS FLOOR IS A HYPOTHESIS THE CONSUMERS THEMSELVES ASSUME, IN THE
+SAME SIGNATURE, ABOUT THE VERY FELTS THEY DIGEST**: `hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧
+(envAt t i).loc c < 2013265921`. The pigeon was always in the signature.
+
+**The honest replacement is `Deos.InAirAuthorityFloorRegrounded`** —
+`gentian_alternate_floor_advantage_bound`, from a REAL alternate-floor game whose win relation reads
+the attacked value out of the REAL `VmTrace` (`(envAt …).loc gentianAuthDigestCol`, the deployed
+column through the deployed `envAt`) and transports through the limb binding to a genuine collision,
+carrying an explicit undischarged `Eff`. ⚑ SCOPE, NAMED: that repair re-grounds the **CR leg only** —
+the chip-table faithfulness leg (`ChipTableSound`) and the wide-commit limb binding (`hcommitLimb`)
+are SEPARATE hypotheses with their own repair paths, untouched. One of three legs. This def is KEPT so
+the record and the teeth keep compiling. -/
 def FloorDigestBinds (hash : List ℤ → ℤ) : Prop :=
   ∀ l l' : List ℤ, hash l = hash l' → l = l'
 
