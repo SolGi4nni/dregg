@@ -10,23 +10,24 @@ should be.
 **Set:** 2026-07-17 ~04:40 by ember (away ~5× the night's elapsed; work self-paced until blocked).
 
 ## Current thrust
-Cargo lock is held by co-tenant `dregg-mcp --release` builds → threads **1 (held Rust pile)** and
-**2 (clippy)** are BLOCKED. So drive the **Lean** threads (lake on hbox `~/ts-verify/dregg`, warm
-oleans — no cargo contention) + read-only discovery, and take the cargo threads the moment the lock
-frees. **Integrator = single cargo-lock owner. Fan reads wide, keep builds narrow.**
+The crypto-vacuity frontier is where wins are landing (Lean/lake, no cargo contention). FINDING-2
+sweep (~18 carriers) DONE + pushed + main green (`lake build Dregg2` 9743 jobs). Its report surfaced a
+big backlog → DISPATCHED (per [[feedback-swarm-delegate-identified-work-immediately]]): the 28 RED
+dark `Circuit.Emit.*{Refine,Rung2}` modules, and the tree-wide ⊤-class defect (`CollisionResistant`
+itself false-at-deployed; 6 earlier `*Regrounded` files still rest on it). Both lanes live on hbox.
+⚑ Thread 1 (held Rust pile) is NOT a static pile I own — it is the live multi-terminal working tree
+(40 intermixed .rs, mostly OTHER terminals' active WIP: credentials, circuit-prove, cell/*); its
+owners land their own slices (a persvati `pbuild botverify` is doing exactly that). So thread 1 = pick
+off only clearly-mine-and-verified pieces; do NOT force a wholesale integration.
 
-## Next 3 moves
-1. **Proof engineering, round 2** (unblocked; lake/hbox). Round 1 landed 2 real strengthenings and
-   *named but did not action*: `PolisMembrane.transfer_safety` (a universal-acceptance hypothesis
-   standing in for an unmodeled shield — a laundered assumption; "a larger threading job"), the
-   `Fibration.lift_collapse` family (decorative, 0 external uses), `PolisStreamCarrier.
-   polisFloorProp_inhabited` (`fun _ => True`). Strengthen until a real mutation reds it; REFUSE
-   anything whose "vacuity" is an intentional thesis (round 1 rightly refused `computeThreshold 0 = 0`
-   and `no_bad_debt`).
-2. **Wiring hunt, round 2** (read-only discovery; the wire itself is cheap YAML). More tests/gates
-   that exist, assert real things, and run nowhere.
-3. **Held Rust pile** (thread 1) the instant the lock frees: verify each (compile + does-it-bite),
-   commit sound path-limited, revert what does not hold. Never sweep other terminals' WIP; never `-A`.
+## Next moves
+1. **Harvest the 2 dispatched lanes** (28-red-Emit-modules · tree-wide ⊤-class) → verify + push.
+2. **Round 3 vacuity/proof + wiring** as capacity frees (hbox lake). Named residuals: cluster-1's
+   ~11 downstream `Poseidon2WideCR` uses + the `Cap8Scheme→Chip8Keyed` migration (signature-changing);
+   the `RomEff` random-oracle-modelling landing site; `PairCR`/`LenBindCR` game re-grounding.
+3. **Clippy → real gate** (thread 2) when cargo is genuinely idle: ember's hint — unused-import warns
+   are often `#[cfg(test)]`-vs-not accidents; drive `clippy --workspace -- -D warnings` to zero, give
+   non-inheriting crates `[lints] workspace = true`, drop continue-on-error. Do NOT red main mid-churn.
 
 ## Open / flagged for ember
 - Sign-floor CI step costs ~22 min via `CryptoVerifyAll`; narrowing that ONE step to
@@ -49,6 +50,15 @@ frees. **Integrator = single cargo-lock owner. Fan reads wide, keep builds narro
   it never gets done. [[feedback-swarm-delegate-identified-work-immediately]]
 
 ## Done log
+- 05:3x — **FINDING-2 sweep: ~18 injective-hash floor carriers re-grounded** (`0b0f0de37` cluster1 ·
+  `a3668c8f0` cluster2 · `81e55f69f`/`c4294734c`/`974a9fb31`/`7cdf3f8a9` cluster3; all pushed, main
+  green 9743 jobs). Each: proved FALSE-as-named at deployed BabyBear params (counting core), consumer
+  re-grounded onto a real collision game with explicit undischarged `Eff` (the Hermine shape — NOT
+  bare `CollisionResistant`, which is ITSELF false-at-⊤), mutation-canaried. Two lanes shipped
+  relabeled-mirror games (`wins_imp = ⟨hne,hcom⟩` tautology) — caught by a peer AUDITOR reading proof
+  bodies, both fixed to transport through real deployed objects. Fixed a RED-at-HEAD umbrella:
+  `AssuranceCaseGrounded.hermine_rushing` still declared the pre-repair P→P shape (Hermine's own
+  un-rebuilt downstream). ⚑ Surfaced backlog now DISPATCHED (28 red Emit modules; tree-wide ⊤-class).
 - 04:58 — **Crypto-TCB laundering repaired: `hermine_concurrent_forgery_advantage_bound`** (`4fe326cce`,
   pushed): the free `hmsis : MSISHardQuantShape` hypothesis (a P→P) is GONE; the MSIS advantage now
   comes from a real extractor `forgeryToMsisSolver` DERIVED from the forger, union-bounded (forger ≤
