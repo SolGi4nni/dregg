@@ -128,9 +128,9 @@ fn batch_events(events: &[RecentEvent]) -> Vec<CreateEmbed> {
                     event.event_type, event.summary
                 ));
                 if let Some(hash) = &event.tx_hash {
-                    let short = if hash.len() > 12 { &hash[..12] } else { hash };
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{hash})\n"
+                        "  {}\n",
+                        crate::devnet::explorer_ref("tx", hash, 12)
                     ));
                 }
                 description.push('\n');

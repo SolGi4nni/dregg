@@ -289,7 +289,7 @@ async fn handle_address(ctx: &Context, command: &CommandInteraction, state: &Bot
         .field("Cell ID", format!("```\n{cell_id}\n```"), false)
         .field(
             "Explorer",
-            format!("[View](https://devnet.dregg.fg-goose.online/explorer/cell/{cell_id})"),
+            state.devnet.explorer_link("cell", &cell_id, "View"),
             false,
         );
 

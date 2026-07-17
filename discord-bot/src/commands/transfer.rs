@@ -193,11 +193,7 @@ pub(crate) async fn execute_transfer(
                 .map(|b| format!("{b} DEC"))
                 .unwrap_or_else(|| "—".to_string());
 
-            let receipt_link = format!(
-                "[view on explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                tx_hash
-            );
+            let receipt_link = state.devnet.explorer_link("turn", &tx_hash, "view on explorer");
 
             embeds::success_embed("Transfer Sent")
                 .field("To", format!("<@{recipient_id}>"), true)
@@ -310,11 +306,10 @@ pub(crate) async fn execute_first_payment(
                 )
                 .await;
 
-            let explorer = format!(
-                "[view the receipt on the explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                tx_hash
-            );
+            let explorer =
+                state
+                    .devnet
+                    .explorer_link("turn", &tx_hash, "view the receipt on the explorer");
             let portal = format!(
                 "[verify your cell in your own browser](https://portal.dregg.studio/cell.html?id={sender_cell})"
             );

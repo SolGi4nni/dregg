@@ -415,8 +415,7 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     match state.devnet.get_cell_details(&cell_id).await {
         Ok(cell) => {
-            let explorer_url =
-                format!("{}/cell/{}", state.devnet.explorer_base_url(), cell.cell_id);
+            let explorer_link = state.devnet.explorer_link("cell", &cell.cell_id, "View");
             let short_id = truncate(&cell.cell_id, 16);
             let short_vk = cell
                 .program_vk
@@ -444,7 +443,7 @@ async fn handle_cell(ctx: &Context, command: &CommandInteraction, state: &BotSta
                         .unwrap_or_else(|| "Direct".to_string()),
                     true,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field("Explorer", explorer_link, false);
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -467,11 +466,7 @@ async fn handle_turn(ctx: &Context, command: &CommandInteraction, state: &BotSta
 
     match state.devnet.get_turn_details(&turn_hash).await {
         Ok(turn) => {
-            let explorer_url = format!(
-                "{}/turn/{}",
-                state.devnet.explorer_base_url(),
-                turn.turn_hash
-            );
+            let explorer_link = state.devnet.explorer_link("turn", &turn.turn_hash, "View");
             let short_hash = truncate(&turn.turn_hash, 16);
             let short_signer = truncate(&turn.signer, 16);
 
@@ -498,7 +493,7 @@ async fn handle_turn(ctx: &Context, command: &CommandInteraction, state: &BotSta
                     },
                     false,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field("Explorer", explorer_link, false);
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -528,11 +523,10 @@ async fn handle_block(ctx: &Context, command: &CommandInteraction, state: &BotSt
 
     match state.devnet.get_block_details(height).await {
         Ok(block) => {
-            let explorer_url = format!(
-                "{}/block/{}",
-                state.devnet.explorer_base_url(),
-                block.height
-            );
+            let explorer_link =
+                state
+                    .devnet
+                    .explorer_link("block", &block.height.to_string(), "View");
             let short_root = truncate(&block.root_hash, 16);
 
             let tx_list: String = if block.transactions.is_empty() {
@@ -557,7 +551,7 @@ async fn handle_block(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     format!("{} total: {}", block.transactions.len(), tx_list),
                     false,
                 )
-                .field("Explorer", format!("[View]({explorer_url})"), false);
+                .field("Explorer", explorer_link, false);
 
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
@@ -949,7 +943,7 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
     match resp.json::<TurnProofWire>().await {
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
-            let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), hash);
+            let explorer_link = state.devnet.explorer_link("turn", &hash, "View turn");
             let embed = embeds::dregg_embed("Turn Proof Artifact")
                 .field(
                     "Turn",
@@ -967,7 +961,7 @@ async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     format!("`{}...`", truncate(&proof.proof_hex, 32)),
                     false,
                 )
-                .field("Explorer", format!("[View turn]({explorer_url})"), false);
+                .field("Explorer", explorer_link, false);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -1039,15 +1033,9 @@ async fn handle_search(ctx: &Context, command: &CommandInteraction, state: &BotS
 
             let mut description = String::new();
             for result in results.iter().take(10) {
-                let short_id = truncate(&result.id, 16);
-                let explorer_url = format!(
-                    "{}/{}/{}",
-                    state.devnet.explorer_base_url(),
-                    result.kind,
-                    result.id
-                );
+                let explorer_ref = state.devnet.explorer_ref(&result.kind, &result.id, 16);
                 description.push_str(&format!(
-                    "**{}** [`{short_id}...`]({explorer_url})\n{}\n\n",
+                    "**{}** {explorer_ref}\n{}\n\n",
                     result.kind, result.summary
                 ));
             }
@@ -1173,9 +1161,9 @@ async fn handle_recent(ctx: &Context, command: &CommandInteraction, state: &BotS
                     event.event_type, event.summary
                 ));
                 if let Some(tx) = &event.tx_hash {
-                    let short = truncate(tx, 12);
                     description.push_str(&format!(
-                        "  [`{short}...`](https://devnet.dregg.fg-goose.online/explorer/tx/{tx})\n"
+                        "  {}\n",
+                        state.devnet.explorer_ref("tx", tx, 12)
                     ));
                 }
             }

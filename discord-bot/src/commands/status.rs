@@ -364,7 +364,7 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
         Ok(proof) => {
             let kib = proof.proof_len as f64 / 1024.0;
             let preview = short(&proof.proof_hex, 32);
-            let explorer_url = format!("{}/turn/{}", state.devnet.explorer_base_url(), turn_hash);
+            let explorer_link = state.devnet.explorer_link("turn", &turn_hash, "View turn");
             let embed = embeds::success_embed("Proof Artifact")
                 .field(
                     "Turn",
@@ -378,7 +378,7 @@ pub async fn handle_proof(ctx: &Context, command: &CommandInteraction, state: &B
                 )
                 .field("Attached", "\u{2705} yes", true)
                 .field("Proof (head)", format!("`{preview}...`"), false)
-                .field("Explorer", format!("[View turn]({explorer_url})"), false);
+                .field("Explorer", explorer_link, false);
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

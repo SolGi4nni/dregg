@@ -230,11 +230,10 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 .collect::<Vec<_>>()
                 .join(" → ");
             let producer_promise = &out.receipt.fills[0];
-            let receipt_link = format!(
-                "[view the receipt on the explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                turn_hash
-            );
+            let receipt_link =
+                state
+                    .devnet
+                    .explorer_link("turn", &turn_hash, "view the receipt on the explorer");
             let conserved = match (c_before, c_after, p_before, p_after) {
                 (Some(cb), Some(ca), Some(pb), Some(pa)) => {
                     let before = cb.saturating_add(pb);

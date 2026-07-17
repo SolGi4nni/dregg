@@ -531,11 +531,7 @@ fn with_receipt(embed: CreateEmbed, state: &BotState, turn_hash: Option<String>)
     match turn_hash {
         Some(hash) => embed.field(
             "Receipt",
-            format!(
-                "[view on explorer]({}/turn/{})",
-                state.devnet.explorer_base_url(),
-                hash
-            ),
+            state.devnet.explorer_link("turn", &hash, "view on explorer"),
             false,
         ),
         None => embed,

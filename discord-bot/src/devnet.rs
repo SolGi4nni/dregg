@@ -514,6 +514,43 @@ impl std::fmt::Display for DevnetError {
     }
 }
 
+// ─── Explorer links (no dead links) ─────────────────────────────────────────
+
+/// The dregg explorer's configured base URL — `DREGG_EXPLORER_BASE` (e.g.
+/// `https://explorer.dregg.net`), trailing slash tolerated. `None` when unset: callers
+/// must render plain text rather than a link (the old hardcoded
+/// `devnet.dregg.fg-goose.online` domain no longer routes anywhere). Mirrors
+/// `cards::explorer_base`.
+pub fn explorer_base() -> Option<String> {
+    env::var("DREGG_EXPLORER_BASE")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// A `[label](base/kind/id)` markdown link when an explorer base is configured — just
+/// `label` (no link) otherwise, never a dead link.
+pub fn explorer_link(kind: &str, id: &str, label: &str) -> String {
+    match explorer_base() {
+        Some(base) => format!("[{label}]({base}/{kind}/{id})"),
+        None => label.to_string(),
+    }
+}
+
+/// A shortened `` `id...` `` code span, linked into the explorer when a base is configured
+/// — plain text otherwise, never a dead link.
+pub fn explorer_ref(kind: &str, id: &str, short_len: usize) -> String {
+    let short = if id.len() > short_len {
+        &id[..short_len]
+    } else {
+        id
+    };
+    match explorer_base() {
+        Some(base) => format!("[`{short}...`]({base}/{kind}/{id})"),
+        None => format!("`{short}...`"),
+    }
+}
+
 // ─── Client implementation ──────────────────────────────────────────────────
 
 impl DevnetClient {
@@ -950,9 +987,16 @@ impl DevnetClient {
         Ok(resp.json().await?)
     }
 
-    /// Get the explorer base URL for building links.
-    pub fn explorer_base_url(&self) -> &'static str {
-        "https://devnet.dregg.fg-goose.online/explorer"
+    /// A `[label](base/kind/id)` markdown link when an explorer base is configured — just
+    /// `label` (no link) otherwise. See [`explorer_link`].
+    pub fn explorer_link(&self, kind: &str, id: &str, label: &str) -> String {
+        explorer_link(kind, id, label)
+    }
+
+    /// A shortened `` `id...` `` code span, linked into the explorer when a base is
+    /// configured. See [`explorer_ref`].
+    pub fn explorer_ref(&self, kind: &str, id: &str, short_len: usize) -> String {
+        explorer_ref(kind, id, short_len)
     }
 
     // ─── Cipherclerk / transfer endpoints ───────────────────────────────────────────
