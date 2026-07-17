@@ -73,7 +73,7 @@ pub mod sprite;
 
 pub use descent::{DescentState, descent_router, run_share_path};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 
@@ -231,6 +231,12 @@ impl Frontend for WebFrontend {
     }
 }
 
+/// Hard cap on concurrently-open legacy `/session/{id}` sessions. This single-offering surface
+/// predates [`SessionPolicy`] (the cap/TTL/quota machinery armed on [`CatalogState`] via
+/// [`resolve_demo_host`]) and has no policy concept of its own — past this cap, the
+/// oldest-opened session is evicted so an id-guessing crawler cannot grow this map without bound.
+const MAX_LEGACY_SESSIONS: usize = 2_000;
+
 /// **The axum web surface state** — the ONE [`DungeonOffering`] core, the live per-session
 /// [`DungeonSession`]s (the real verifiable state chains), and the [`WebFrontend`] recording what
 /// each session last presented. Shared behind an `Arc` as the axum handler `State`.
@@ -241,6 +247,13 @@ pub struct WebState {
     sessions: Mutex<HashMap<SessionId, DungeonSession>>,
     /// The web frontend recording each session's last-presented surface + actions.
     frontend: Mutex<WebFrontend>,
+    /// FIFO open-order of live session ids — kept 1:1 with `sessions` by `ensure_open` (pushed on
+    /// every fresh open, popped only on eviction). Bounds memory at [`MAX_LEGACY_SESSIONS`] by
+    /// evicting the oldest-OPENED session, not a true LRU (an old session still being actively
+    /// played can be evicted before an idle one opened a minute ago) — a simple, honest bound
+    /// good enough to stop unbounded growth; `SessionPolicy` is the real LRU/TTL/quota machinery
+    /// for the multi-offering catalog surface.
+    open_order: Mutex<VecDeque<SessionId>>,
 }
 
 impl WebState {
@@ -250,6 +263,7 @@ impl WebState {
             offering: DungeonOffering::new(),
             sessions: Mutex::new(HashMap::new()),
             frontend: Mutex::new(WebFrontend::new()),
+            open_order: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -259,6 +273,7 @@ impl WebState {
             offering,
             sessions: Mutex::new(HashMap::new()),
             frontend: Mutex::new(WebFrontend::new()),
+            open_order: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -270,12 +285,33 @@ impl WebState {
     /// Ensure a session is open: on first touch, [`open`](Offering::open) a fresh
     /// [`DungeonSession`] (seeded deterministically from the session id, so a re-open of the same
     /// id is the SAME replay-verifiable world), spin its frontend slot, and present the initial
-    /// surface (so a first POST can already `collect` the gatehall affordances).
+    /// surface (so a first POST can already `collect` the gatehall affordances). Capped at
+    /// [`MAX_LEGACY_SESSIONS`]; see [`ensure_open_capped`](Self::ensure_open_capped).
     pub fn ensure_open(&self, id: &SessionId) {
+        self.ensure_open_capped(id, MAX_LEGACY_SESSIONS)
+    }
+
+    /// [`ensure_open`](Self::ensure_open) with an explicit cap — split out so a test can exercise
+    /// eviction on a small cap without opening [`MAX_LEGACY_SESSIONS`] real sessions.
+    fn ensure_open_capped(&self, id: &SessionId, cap: usize) {
         {
             let sessions = self.sessions.lock().unwrap();
             if sessions.contains_key(id) {
                 return;
+            }
+        }
+        {
+            // At cap: evict the oldest-opened session(s) to make room (see `open_order`). A
+            // separate pool from `CatalogState`'s — deliberately not reported on
+            // `dregg_web_sessions_open`/`_evicted_total`, which are documented as that host's own
+            // counts (see `metrics.rs`).
+            let mut sessions = self.sessions.lock().unwrap();
+            let mut order = self.open_order.lock().unwrap();
+            while sessions.len() >= cap {
+                let Some(oldest) = order.pop_front() else {
+                    break;
+                };
+                sessions.remove(&oldest);
             }
         }
         let session = self
@@ -285,6 +321,7 @@ impl WebState {
         let surface = self.offering.render(&session);
         let actions = self.offering.actions(&session);
         self.sessions.lock().unwrap().insert(id.clone(), session);
+        self.open_order.lock().unwrap().push_back(id.clone());
         let mut fe = self.frontend.lock().unwrap();
         fe.spin_session(id.clone());
         fe.present(id, &surface, &actions);
@@ -336,6 +373,38 @@ impl WebState {
 impl Default for WebState {
     fn default() -> Self {
         WebState::new()
+    }
+}
+
+#[cfg(test)]
+mod web_state_cap_tests {
+    use super::*;
+
+    /// Opening past the cap evicts the oldest-opened session (FIFO), never grows past it, and a
+    /// still-live id survives a re-touch instead of being treated as a fresh open.
+    #[test]
+    fn ensure_open_capped_evicts_oldest_past_cap() {
+        let state = WebState::new();
+        let cap = 3;
+        let ids: Vec<SessionId> = (0..5).map(|n| SessionId::new(format!("s{n}"))).collect();
+
+        for id in &ids {
+            state.ensure_open_capped(id, cap);
+            assert!(state.sessions.lock().unwrap().len() <= cap);
+        }
+
+        // Only the last `cap` opened survive; the first two (s0, s1) were evicted.
+        assert!(!state.is_open(&ids[0]));
+        assert!(!state.is_open(&ids[1]));
+        assert!(state.is_open(&ids[2]));
+        assert!(state.is_open(&ids[3]));
+        assert!(state.is_open(&ids[4]));
+        assert_eq!(state.sessions.lock().unwrap().len(), cap);
+
+        // Re-touching a still-live session is a no-op, not an eviction-triggering fresh open.
+        state.ensure_open_capped(&ids[4], cap);
+        assert_eq!(state.sessions.lock().unwrap().len(), cap);
+        assert!(state.is_open(&ids[2]));
     }
 }
 
