@@ -1,5 +1,22 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUTOMATAFL 11×11 — the REAL two-player game PROVES end-to-end (2026-07-17)
+Design: `docs/reference/AUTOMATAFL-11X11-DESIGN.md`. Reference = ember's own `emberian/automatafl` (NOT o1Labs — that
+was a design-lane hallucination, swept). SCOPE = two-player m=2 (multiplayer/SCC/merge = future work; `build_d3` is
+already faithful at m=2). Ladder, each real-prove-verified on persvati:
+- oracle → real 11×11 board + reproducible differential vs the live public repo (git dev-dep) (`edc26961b`; occluded-
+  source-overwrite faithfulness fix). C.1 bit-decompose coords: degree wall 11→5 (`921d56c38`). C.2 row×col √n reads:
+  D3 1020→885 (`567f2c71a`). C.5 leg-split R(old→mid)+A(mid→new) on the deployed mid_root seam, K=2 fold accepts
+  (`83b023175`). C.4 real occlusion + constraint-462 (`6ac7807d9`). Leg A narrow 1121→901 via prefix-sum in-bounds
+  (`e7cfea56f`).
+- ✅ **HONEST 11×11 FOLD ACCEPTS**: Leg R (920) then Leg A (901) → fold(K=2) → verify_history OK, num_turns=2. Both
+  legs prove at the real board; differential (automaton_step∘resolve_mid==apply_turn) green; forgeries reject.
+- ⚠ **ONE RESIDUAL — mid-seam soundness (EMBER-gated decision, surfaced):** a MISMATCHED-mid fold still ACCEPTS
+  (empirically confirmed). Root cause: cross-turn continuity welds the CELL rotated roots (nonce 0→1), independent of
+  board content; board mid_root rides app-PI but not the chain segment ABI. Close via (a) board-root weld in the shared
+  fold (`ivc_turn_chain.rs`+`joint_turn_recursive.rs` — touches every turn) OR (b) cell-root carries board mid_root.
+  Gate `mismatched_mid_fold_probe_{n5,11x11}` flips green when it lands. NOT autonomous-fired (commitment/fold change).
+
 ## ⚑ OVERNIGHT LOOM — operating-devnet + game-quality + floor (2026-07-17)
 Play-tests DROVE the real games (not tests); flywheel = finding -> fix -> verify-by-driving -> commit.
 - ✅ **Games PLAY**: Descent/Council/Market/Dungeon/Automatafl all work (legal lands real receipt, illegal refused). Fixed:
