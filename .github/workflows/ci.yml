@@ -89,6 +89,33 @@ jobs:
       - run: cargo test
         working-directory: solana-lock
 
+  # solana-settlement is the SAME standalone-workspace class as solana-lock, and
+  # it had the SAME hole: its settle_flow.rs integration test — the both-polarity
+  # gate that VERIFIES the real dregg Groth16 apex proof on-chain via alt_bn128
+  # (the identical ark-bn254 arithmetic the sol_alt_bn128_* syscalls use) and
+  # REJECTS a forged proof — ran in no CI job. The prior exclude-list note claimed
+  # this workspace "needs the SBF toolchain"; that conflated DEPLOYMENT (cargo
+  # build-sbf) with TESTING. The tests use solana-program-test's native BanksClient
+  # (no validator, no SBF, no build-sbf), exactly like solana-lock — verified green
+  # locally: 11 unit + 2 settle_flow integration tests, ~2s. This closes the hole
+  # the note itself flagged as "a candidate for a solana-lock-style job later".
+  solana-settlement:
+    name: solana-settlement (standalone workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-21
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: solana-settlement
+      - run: cargo test --locked
+        working-directory: solana-settlement
+
   # wasm/ is a DELIBERATE standalone workspace, for reasons that are still good:
   # its `[patch]` path-points plonky3-recursion at a sibling checkout, and it
   # force-enables wasm32-only features (getrandom's `wasm_js`, the `no-lean-link`
@@ -171,11 +198,11 @@ jobs:
   # touches them, so nothing can say they have rotted. discord-bot sat silently
   # uncompilable at HEAD until 2026-07-16; wasm's ~78 tests were unbuildable for
   # the identical reason (see the wasm job above). solana-lock and wasm have their
-  # dedicated jobs above; sdk-py is compile+test-gated by publish-sdk-py.yml. This
-  # matrix closes the hole for the remaining buildable five. Still ungated:
-  # pg-dregg (cargo-pgrx cdylib — wants a pgrx-managed postgres, not a bare
-  # runner), solana-settlement (needs the SBF toolchain; its native tests are a
-  # candidate for a solana-lock-style job later), and deos-zed-full (the vendored
+  # dedicated jobs above; sdk-py is compile+test-gated by publish-sdk-py.yml;
+  # solana-settlement has its own solana-lock-style job above (its native
+  # BanksClient tests need no SBF). This matrix closes the hole for the remaining
+  # buildable five. Still ungated: pg-dregg (cargo-pgrx cdylib — wants a
+  # pgrx-managed postgres, not a bare runner) and deos-zed-full (the vendored
   # full-Zed recon spike: gpui/display-bound, same reason the root test job
   # excludes deos-zed).
   #
