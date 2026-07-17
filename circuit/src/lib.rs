@@ -563,7 +563,7 @@ pub use field::BabyBear;
 // The simulated IVC engine (`prove_ivc`/`verify_ivc`, `IvcProof`, `IvcBuilder`,
 // `FoldDelta`, …) was DELETED 2026-07-16 (mock-proof purge, final cut); only the
 // real hash primitives and trace shape remain in `ivc`.
-pub use ivc::{MAX_FOLD_DEPTH, StateTransitionAir};
+pub use ivc::MAX_FOLD_DEPTH;
 pub use non_membership::{
     NonMembershipCheck, NonMembershipProver, SetIdentifier, compute_set_accumulator,
     derive_alpha_for_set,

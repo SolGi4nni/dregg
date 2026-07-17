@@ -6,7 +6,7 @@
 //!   the REAL hash primitives the emitted state-transition descriptor tests
 //!   (`circuit-prove/tests/ivc_{audit_firststep_canary,state_transition_emit_gate}.rs`)
 //!   and `dregg-dsl-runtime` composition bind against.
-//! * [`StateTransitionAir`]'s trace layout and [`generate_state_transition_trace`]
+//! * the state-transition trace layout and [`generate_state_transition_trace`]
 //!   (consumed by the descriptor-world emit gates).
 //! * [`MAX_FOLD_DEPTH`] — the delegation-depth bound enforced by `bridge::present`.
 //! * The multi-Turn summary hash primitives ([`TurnTransitionSummary`],
@@ -162,10 +162,23 @@ pub fn recompute_accumulated_hash(initial_root: BabyBear, roots: &[BabyBear]) ->
     hash
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// StateTransitionAir: real STARK AIR for the IVC hash chain
+// The IVC hash-chain STATE-TRANSITION trace layout.
+//
+// ⚠ RETIREMENT NOTE (2026-07-17): this section used to head a `pub struct StateTransitionAir;` described
+// as "real STARK AIR for the IVC hash chain". It was NOT an AIR — it implemented NOTHING (no `Air`, no
+// `BaseAir`, no impl block at all) and had ZERO consumers beyond a `pub use` re-export. It was a bare unit
+// struct wearing an `*Air*` name: the goal's "ivc.rs::StateTransitionAir has an emitter it ignores" — it
+// ignored the emitter because it did nothing at all. DELETED.
+//
+// The REAL state-transition circuit is AUTHORED IN LEAN (`ivcStateTransitionDescriptor`) and byte-pinned
+// via `emitVmJson2`; the equality gate is `circuit-prove/tests/ivc_state_transition_emit_gate.rs`, which
+// decodes the Lean wire string and asserts it equals its OWN independently hand-built
+// `EffectVmDescriptor2` twin (the drift-detector — it never depended on the deleted struct).
+// The trace-layout constants below and `generate_state_transition_trace` REMAIN: they are live, used by
+// that gate and by the accumulated-hash tests.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Width of the StateTransitionAir trace.
+/// Width of the state-transition trace (the layout the Lean-emitted `ivcStateTransitionDescriptor` pins).
 ///
 /// Columns: [step_count, old_hash, new_root, new_hash]
 ///
@@ -173,7 +186,7 @@ pub fn recompute_accumulated_hash(initial_root: BabyBear, roots: &[BabyBear]) ->
 ///   new_hash == extend_accumulated_hash(old_hash, new_root, step_count)
 pub const STATE_TRANSITION_WIDTH: usize = 4;
 
-/// Column indices for the StateTransitionAir.
+/// Column indices for the state-transition trace.
 pub mod st_col {
     /// Step number (1-indexed).
     pub const STEP: usize = 0;
@@ -206,8 +219,6 @@ pub mod st_col {
 /// ~124-bit birthday-attack (collision) resistance and is the soundness-load-bearing
 /// published/verified anchor, stored alongside the single-element continuity hash
 /// used in the STARK trace for efficiency.
-pub struct StateTransitionAir;
-
 /// Generate the STARK trace for the state transition hash chain.
 ///
 /// Given an initial root and a sequence of new roots (one per fold step),
