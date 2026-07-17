@@ -91,6 +91,14 @@ pub enum WorldError {
     /// The choice navigates to a passage not in the scene (a compile-time-checked
     /// invariant that should not occur post-[`compile_scene`]).
     UnknownTarget(String),
+    /// The choice's gate did NOT lower fully to executor constraints — its
+    /// [`CompiledStory::fully_gated`] entry is `Some(false)`, so the installed
+    /// `MethodIs` case carries an EMPTY (handler-only) tooth set. `apply_choice`
+    /// drives the executor as the SOLE referee, so admitting such a turn would
+    /// commit a choice whose condition NOTHING on this path checks (a fail-open).
+    /// Refused, fail-closed: a handler-only gate must go through the `Driver`
+    /// path (`select_choice`), the only path that evaluates it.
+    UngatedChoice(String),
     /// The scene could not be compiled to a world-cell.
     Compile(CompileError),
     /// The choice-turn committed locally but a configured [`NodeTarget::Federation`]
@@ -104,6 +112,11 @@ impl std::fmt::Display for WorldError {
         match self {
             WorldError::Refused(r) => write!(f, "world-cell turn refused: {r}"),
             WorldError::UnknownTarget(t) => write!(f, "unknown navigation target `{t}`"),
+            WorldError::UngatedChoice(m) => write!(
+                f,
+                "under-gated choice refused: method `{m}` did not lower fully to \
+                 executor teeth (handler-only gate; drive it through the runtime path)"
+            ),
             WorldError::Compile(c) => write!(f, "compile error: {c}"),
             WorldError::Federation(m) => write!(f, "federation routing failed: {m}"),
         }
@@ -367,6 +380,7 @@ impl WorldCell {
         choice: &Choice,
     ) -> Result<TurnReceipt, WorldError> {
         let method = choice_method(passage_name, choice_index);
+        self.require_fully_gated(&method)?;
         let effects = self.choice_effects(choice)?;
         self.commit(&method, effects)
     }
@@ -389,9 +403,27 @@ impl WorldCell {
         commitment: FieldElement,
     ) -> Result<TurnReceipt, WorldError> {
         let method = choice_method(passage_name, choice_index);
+        self.require_fully_gated(&method)?;
         let mut effects = self.choice_effects(choice)?;
         effects.push(set_field(self.cell, DECISION_EXT_KEY as usize, commitment));
         self.commit(&method, effects)
+    }
+
+    /// **Fail-closed on an under-gated choice.** `apply_choice*` drives the executor as
+    /// the SOLE referee, so a choice whose gate did NOT lower fully to executor teeth
+    /// (`fully_gated[method] == Some(false)`: some clause was left to the runtime/handler
+    /// and its `MethodIs` case carries an EMPTY tooth set) would commit WITHOUT anything
+    /// on this path ever checking its condition. Refuse it here so the executor admits a
+    /// turn IFF the installed case is the WHOLE gate. The map is `Absent ⇒ no condition
+    /// (trivially, correctly ungated — nothing to check)` / `Some(true) ⇒ full teeth` /
+    /// `Some(false) ⇒ handler-only` — only the third is the hazard, and it must instead be
+    /// driven through [`Driver::advance`]'s `select_choice`, the only path that evaluates
+    /// the handler-only clause.
+    fn require_fully_gated(&self, method: &str) -> Result<(), WorldError> {
+        if self.story.fully_gated.get(method) == Some(&false) {
+            return Err(WorldError::UngatedChoice(method.to_string()));
+        }
+        Ok(())
     }
 
     /// Read the certified-decision commitment currently pinned under
