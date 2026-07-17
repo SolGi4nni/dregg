@@ -1815,3 +1815,41 @@ So: the earlier "CI never runs = biggest lie" framing was too harsh. The local r
 effect-enum, mock-proof, unexpected_cfgs=warn) + the remote srot sweep are the right tools for THIS stage —
 they bite when run, catch regressions, and don't block the daily surgery. Green-everywhere is the direction,
 not the current bar.
+
+## ⚑ HARVEST CONSOLIDATED (2026-07-16 evening) — validation swarms fully gated
+The persvati sweep validated the entire harvest compiles (only 2 pre-existing other-lane breakages found:
+perf FIXED `5e42f0b7a`, grain-fork NAMED). Everything HIGH-value + isolated is committed:
+
+**SECURITY (4 forgery-class, none visible to the ~15k-test suite):**
+- `8258de1c8` ed25519 non-strict → universal forgery (assumption ledger)
+- `bac9e2b95` credentials default present+verify → ZERO crypto, mint-a-fake (production surface)
+- `e93d0f1c1` peer-exchange rule-5 fail-OPEN (phantom `zkvm` cfg) + un-trippable executor threat rules
+- `ca2bdab56` fold-delta verify never recomputed new_root → attenuation that ESCALATES (+ restored a HEAD
+  break from a concurrent `git add -A`)
+
+**SILENCE KILLED / THEATER FIXED:**
+- `5fe426a0d` un-silenced the Rust⇔Lean differential estate (17 sites/13 files self-skipped; 67 tests now run)
+- `982008076` un-gated ReqwestTransport (production transport compiled out via phantom `reqwest` cfg)
+- `64bff9501` flipped `unexpected_cfgs` allow→warn (phantom gates can no longer hide; ember-approved)
+- `d11594d10` dregg-tui Verify tab reported a verdict on a proof nothing read (fail-SAFE theater → honest
+  `CANNOT VERIFY HERE`)
+- `af1eec9e0` armed 3 emit-gates that could not be red (acceptance without rejection = theater)
+- (earlier) `61adf7e02` the SOUNDNESS suite tested a MOCK; `621088ca7` un-silenced the effect-enum gate
+
+**RATCHETS now holding** (the durable fix for SILENCE): law-#1, mock-proof-purge, effect-enum-residual,
+unexpected_cfgs=warn. Each bites when run; the persvati sweep is the workspace-wide runner.
+
+### REMAINING (blocked / lower-severity / other-lane)
+- ~143 dirty files: mostly OTHER lanes' WIP (deploy/ reorg, docs, chain, tools) — NOT mine to commit;
+  plus lower-severity swarm test-improvements (misc-crates/demo-agent) needing per-file ownership attribution.
+- Mock-engine DELETE (ivc.rs 70 + constraint_prover 17): pending the 3 CONTESTED preflight checks
+  (composition/backends/proofs) being freed + wired — the last mock-IVC riders.
+- NAMED residuals: grain-fork Faithful8 ripple; sidetable tooth runtime-verify; preflight §4 runtime-verify;
+  the phantom-gate cleanup (now surfaced by `warn`); the 2 SECURITY fixes committed on opus/lane word +
+  self-evident diffs want a clean gate-run once the tree settles.
+- ember decisions: `unexpected_cfgs`→`deny` once cleared; confirm the new GitHub remote gates CI.
+
+**THE SESSION'S THESIS, PROVEN:** ember — *"testing is validation, not verification… it will be easy to be
+deceived by the scale of what we already have."* We found 4 real forgeries + a fail-open guard + a
+compiled-out transport + multiple theater suites, NONE caught by ~15k existing tests, ALL caught by asking
+"what real break would this catch?" Scale was real; power was the gap; the ratchets are the durable close.
