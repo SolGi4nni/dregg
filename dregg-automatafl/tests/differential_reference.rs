@@ -236,7 +236,7 @@ fn boards_agree(o1_board: &o1::Board, dboard: &DBoard, ctx: &str) {
 // (1) The stock opening agrees, byte for byte.
 // ===========================================================================
 #[test]
-fn stock_opening_matches_o1labs() {
+fn stock_opening_matches_automatafl() {
     let o1_board = o1::Board::stock_two_player();
     let dregg = dref::stock_two_player();
     assert_eq!(dregg.n, N11);
@@ -444,7 +444,7 @@ fn automaton_step_differential() {
 //     dregg dropped set.
 // ===========================================================================
 #[test]
-fn conflict_detection_matches_o1labs() {
+fn conflict_detection_matches_automatafl() {
     // Source fork: one piece, two distinct destinations.
     {
         let mut game = new_stock_game();
@@ -554,7 +554,7 @@ fn conflict_detection_matches_o1labs() {
 //     that corner's owner, agreeing with automatafl.
 // ===========================================================================
 #[test]
-fn win_condition_matches_o1labs() {
+fn win_condition_matches_automatafl() {
     // Engineer a board where the automaton is one step from a seat-1 corner (10,10)
     // and an attractor beyond it drags it in. We start from a cleared board.
     let n = N11;
