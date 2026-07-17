@@ -75,6 +75,10 @@ const RESTRICTED_METHODS = new Set<MessageType>([
   "dregg:postIntent",
   "dregg:signTurn",
   "dregg:signTurnV3",
+  // Offering turn (G1 rung 2): a key-touching signature over a
+  // dreggnet-offerings move — per-origin grant + the un-overlayable
+  // confirm-intent consent, exactly like signTurnV3.
+  "dregg:signOfferingTurn",
   "dregg:listOutbox",
   "dregg:flushOutbox",
   "dregg:dropOutboxEntry",

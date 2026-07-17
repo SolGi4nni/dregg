@@ -17,6 +17,11 @@ import {
   SIGN_TURN_V3_FEDERATION_DOMAIN_CAPABILITY,
   validateFederationDomain,
 } from "./federation-domain";
+import {
+  parseOfferingTurnParams,
+  type OfferingSignFailure,
+  type OfferingSignResult,
+} from "./offering-sign";
 
 // Retrieve the session nonce from the script tag's data attribute.
 const currentScript = document.currentScript || document.querySelector("script[data-dregg-nonce]");
@@ -327,6 +332,41 @@ export interface DreggAPI {
    * `dregg.capabilities.signTurnV3FederationDomain`.
    */
   signTurnV3(turnBytes: Uint8Array, federationId?: Uint8Array): Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
+  /**
+   * Sign one dreggnet-offerings move (G1 rung 2 of the signed-identity
+   * ladder) with the extension-held identity key. The signature is over the
+   * canonical `dregg-offering-turn-v1:` message
+   * (`dreggnet-offerings/src/signed.rs::signing_message`) binding the
+   * offering, the session, the replay counter, and the action's
+   * `{turn, arg, text}` — exactly what the server's
+   * `OfferingHost::advance_signed` verifies.
+   *
+   * `counter` is supplied BY THE PAGE (fetch the next acceptable value from
+   * the server; the server's strictly-increasing counter ledger enforces
+   * replay safety and refuses stale values). `counter`/`arg` accept a number
+   * (safe integer) or a decimal string (u64/i64-safe for values beyond
+   * 2^53 - 1). Invalid parameters reject with a `TypeError` BEFORE anything
+   * is dispatched; the background revalidates independently.
+   *
+   * The user sees the exact intent (offering, session, move, arg, counter,
+   * signing identity) in the un-overlayable confirm surface and must accept
+   * before the signature is released. A user decline rejects with an `Error`
+   * whose `name` is `"DreggUserDeclined"` and `code` is `"user-declined"` —
+   * distinguishable from a signature failure (`code: "sign-failed"`) and
+   * locked custody (`code: "custody-locked"`). An origin without the
+   * per-origin grant gets the standard restricted-method denial.
+   *
+   * Returns the `SignedAction` wire, hex-encoded for JSON transport: POST it
+   * (plus the action fields) to the server's `act-signed` route.
+   */
+  signOfferingTurn(params: {
+    offeringKey: string;
+    sessionId: string;
+    counter: number | string;
+    turn: string;
+    arg: number | string;
+    text?: string;
+  }): Promise<{ actorPubkeyHex: string; counter: number | string; signatureHex: string }>;
   /** List locally persisted signed submissions waiting for node acceptance. */
   listOutbox(): Promise<OutboxEntry[]>;
   /** Retry pending outbox submissions against the configured node. */
@@ -561,6 +601,43 @@ const dregg: DreggAPI = {
       payload.federationId = Array.from(validated.bytes);
     }
     return sendMessage("dregg:signTurnV3", payload) as Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
+  },
+
+  signOfferingTurn(params) {
+    // Fast typed failure page-side (the background revalidates independently
+    // — never trust page-side validation alone).
+    const parsed = parseOfferingTurnParams(params);
+    if (!parsed.ok) {
+      return Promise.reject(new TypeError(`dregg.signOfferingTurn: ${parsed.error}`));
+    }
+    // The VALIDATED canonical copy crosses the channel (bigints as decimal
+    // strings — the message channel is JSON); mutating the caller's object
+    // after this call cannot change what is signed.
+    const wireParams: Record<string, unknown> = {
+      offeringKey: parsed.params.offeringKey,
+      sessionId: parsed.params.sessionId,
+      counter: parsed.params.counter.toString(),
+      turn: parsed.params.turn,
+      arg: parsed.params.arg.toString(),
+    };
+    if (parsed.params.text !== null) wireParams.text = parsed.params.text;
+    return (sendMessage("dregg:signOfferingTurn", { params: wireParams }) as Promise<OfferingSignResult>)
+      .then((result) => {
+        if (result && result.ok === true) {
+          return {
+            actorPubkeyHex: result.actorPubkeyHex,
+            counter: result.counter,
+            signatureHex: result.signatureHex,
+          };
+        }
+        const failure = result as OfferingSignFailure | undefined;
+        const err = new Error(
+          `dregg.signOfferingTurn: ${failure?.error || "signing failed"}`,
+        ) as Error & { code?: string };
+        err.code = failure?.code || "sign-failed";
+        err.name = failure?.code === "user-declined" ? "DreggUserDeclined" : "DreggOfferingSignError";
+        throw err;
+      });
   },
 
   listOutbox() {

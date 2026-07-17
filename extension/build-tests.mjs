@@ -9,6 +9,7 @@ await esbuild.build({
     'src/onboarding.ts',
     'src/login.ts',
     'src/federation-domain.ts',
+    'src/offering-sign.ts',
     'src/sealedbid.ts',
     'src/launchpad.ts',
     'src/evm.ts',

@@ -228,6 +228,10 @@ export type MessageType =
   | "dregg:clearDisclosurePref"
   // Turn v3 (pre-built postcard bytes)
   | "dregg:signTurnV3"
+  // Offering turn (G1 rung 2): sign a dreggnet-offerings move with the
+  // extension-held identity key (verified server-side by
+  // OfferingHost::advance_signed).
+  | "dregg:signOfferingTurn"
   // Durable offline outbox
   | "dregg:listOutbox"
   | "dregg:flushOutbox"

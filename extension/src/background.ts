@@ -15,6 +15,14 @@ import { ChromeCustodyStore } from "./passkey";
 import { resolveCustody } from "./custody-resolve";
 import { validateFederationDomain, ZERO_FEDERATION_DOMAIN_HEX } from "./federation-domain";
 import {
+  bytesToHex as offeringBytesToHex,
+  counterWire,
+  parseOfferingTurnParams,
+  signingMessage as offeringSigningMessage,
+  type OfferingSignResult,
+  type ParsedOfferingTurn,
+} from "./offering-sign";
+import {
   deriveEvmIdentity,
   personalSign as evmPersonalSign,
   personalSignDigest as evmPersonalSignDigest,
@@ -3251,6 +3259,183 @@ async function signTurnV3(
 }
 
 /**
+ * The offering-turn consent surface (G1 rung 2): a nonce-bound popup rendering
+ * the human-readable intent — offering, session, move, arg, optional text, the
+ * replay counter, and the signing identity — before any signature is released.
+ * Same un-overlayable popup-decision framework as `showTurnConfirmation`
+ * (P0-1/P0-2 sender validation), with the ACCEPT bound to `bindingHex` (the
+ * SHA-256 of the exact canonical message about to be signed): the popup echoes
+ * the binding it displayed, and any accept whose echo differs — a stale or
+ * post-confirmation-substituted decision — is treated as a decline.
+ */
+function showOfferingConfirmation(input: {
+  origin?: string;
+  offeringKey: string;
+  sessionId: string;
+  moveTurn: string;
+  argDecimal: string;
+  text: string | null;
+  counterDecimal: string;
+  signerPubkeyHex: string;
+  signerProfile?: string;
+  /** Lowercase hex SHA-256 of the canonical signing message — the echo binding. */
+  bindingHex: string;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const nonce = registerPendingDecision("confirm-intent.html", {
+      action: "signOfferingTurn",
+      origin: input.origin || "unknown",
+      offeringKey: input.offeringKey,
+      sessionId: input.sessionId,
+      moveTurn: input.moveTurn,
+      argDecimal: input.argDecimal,
+      text: input.text,
+      counterDecimal: input.counterDecimal,
+      signerPubkeyHex: input.signerPubkeyHex,
+      signerProfile: input.signerProfile,
+      bindingHex: input.bindingHex,
+    });
+    const popupUrl = chrome.runtime.getURL("confirm-intent.html") + "#nonce=" + nonce;
+
+    chrome.windows.create({
+      url: popupUrl,
+      type: "popup",
+      width: 460,
+      height: 560,
+      focused: true,
+    }, (win) => {
+      const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
+        if (message.type !== "dregg:intentConfirmation") return;
+        if (!validatePopupSender(message, sender, nonce, "confirm-intent.html")) return;
+        chrome.runtime.onMessage.removeListener(listener);
+        if (message.confirmed !== true) {
+          resolve(false);
+          return;
+        }
+        // The accept must bind what the popup DISPLAYED.
+        if (message.offeringBindingHex !== input.bindingHex) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      };
+      chrome.runtime.onMessage.addListener(listener);
+      if (win?.id) {
+        chrome.windows.onRemoved.addListener(function onClose(closedId: number) {
+          if (closedId === win.id) {
+            chrome.windows.onRemoved.removeListener(onClose);
+            chrome.runtime.onMessage.removeListener(listener);
+            consumePendingDecision(nonce);
+            resolve(false);
+          }
+        });
+      }
+    });
+  });
+}
+
+/**
+ * Sign one dreggnet-offerings move with the extension-held identity key —
+ * the SIGNER half (rung 2, browser-held key) of the seam whose VERIFIER half
+ * is `OfferingHost::advance_signed` (`dreggnet-offerings/src/signed.rs`,
+ * rung 1). The signature is raw Ed25519 (wasm `sign_message`, the same
+ * `SigningKey::from_bytes` derivation the server's `TurnSigner` uses) over the
+ * canonical `dregg-offering-turn-v1:` message built by
+ * `src/offering-sign.ts::signingMessage` — pin-tested byte-for-byte against
+ * the Rust builder.
+ *
+ * REPLAY SAFETY IS ENFORCED SERVER-SIDE: the host's strictly-increasing
+ * counter ledger (per offering/session/pubkey) refuses a stale counter, so a
+ * captured wire result cannot land twice. The page supplies the counter (from
+ * the server's floor); this handler's job is honest display — the confirm
+ * surface shows the exact counter, and refuses non-integer / negative / >u64
+ * values via `parseOfferingTurnParams` — and correct bytes.
+ *
+ * Fail-closed order: params → custody (locked / no passphrase / no key) →
+ * user consent → signature. Every refusal carries a typed `code` the page can
+ * distinguish (`user-declined` ≠ `sign-failed`).
+ */
+async function signOfferingTurn(paramsInput: unknown, origin?: string): Promise<OfferingSignResult> {
+  if (!wasmLoaded || !wasm) {
+    return {
+      ok: false,
+      code: "wasm-unavailable",
+      error: `WASM cryptographic module not loaded. ${wasmLoadError ? `Load error: ${wasmLoadError}` : "Module unavailable."}`,
+    };
+  }
+  const w = wasm;
+
+  // Revalidate independently of the page bridge — never trust page-side
+  // validation alone.
+  const parsed = parseOfferingTurnParams(paramsInput);
+  if (!parsed.ok) return { ok: false, code: "invalid-params", error: parsed.error };
+  const p: ParsedOfferingTurn = parsed.params;
+
+  const cc = await loadState();
+  if (cc.locked) return { ok: false, code: "custody-locked", error: "Cipherclerk is locked" };
+  if (cc.needsPassphraseSetup) {
+    return { ok: false, code: "custody-locked", error: "Set a cipherclerk passphrase before signing." };
+  }
+  if (!cc.secretKey || cc.secretKey.length !== 32) {
+    return { ok: false, code: "custody-locked", error: "Cipherclerk secret key not available" };
+  }
+  if (!cc.publicKey || cc.publicKey.length !== 32) {
+    return { ok: false, code: "custody-locked", error: "Cipherclerk public key not available" };
+  }
+  const actorPubkeyHex = offeringBytesToHex(cc.publicKey);
+
+  // The exact bytes about to be signed, and their digest — the consent
+  // binding: the popup's ACCEPT echoes the digest it displayed, so consent
+  // covers precisely this message and nothing else.
+  const message = offeringSigningMessage(p);
+  const bindingHex = offeringBytesToHex(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", message as Uint8Array<ArrayBuffer>)),
+  );
+
+  const confirmed = await showOfferingConfirmation({
+    origin,
+    offeringKey: p.offeringKey,
+    sessionId: p.sessionId,
+    moveTurn: p.turn,
+    argDecimal: p.arg.toString(),
+    text: p.text,
+    counterDecimal: p.counter.toString(),
+    signerPubkeyHex: actorPubkeyHex,
+    signerProfile: cc.activeProfile || undefined,
+    bindingHex,
+  });
+  if (!confirmed) {
+    return { ok: false, code: "user-declined", error: "User declined to sign this offering turn" };
+  }
+
+  let signature: Uint8Array;
+  try {
+    signature = w.sign_message(new Uint8Array(cc.secretKey), message);
+  } catch (e: unknown) {
+    return { ok: false, code: "sign-failed", error: (e as Error).message || "sign_message failed" };
+  }
+  if (signature.length !== 64) {
+    return { ok: false, code: "sign-failed", error: `expected a 64-byte Ed25519 signature, got ${signature.length}` };
+  }
+
+  cc.log.push({
+    action: "signOfferingTurn",
+    resource: `${p.offeringKey}/${p.sessionId}`,
+    allowed: true,
+    timestamp: Date.now(),
+    mode: "signed",
+  });
+  await saveState();
+
+  return {
+    ok: true,
+    actorPubkeyHex,
+    counter: counterWire(p.counter),
+    signatureHex: offeringBytesToHex(signature),
+  };
+}
+
+/**
  * Register a known federation in local chrome.storage.local.
  * Keyed by federation_id under KNOWN_FEDERATIONS_KEY.
  */
@@ -4717,6 +4902,17 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // revalidates with exact checks (absence = legacy zero domain).
       const result = await signTurnV3(turnBytes, origin, message.federationId);
       resetLockTimer();
+      return { id: message.id, result };
+    }
+
+    // Offering turn (G1 rung 2): sign a dreggnet-offerings move with the
+    // extension-held identity key. Consent-gated; the typed failure codes
+    // ride in `result` so the page can distinguish a user decline from a
+    // signature failure.
+    case "dregg:signOfferingTurn": {
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const result = await signOfferingTurn(message.params, origin);
+      if (result.ok) resetLockTimer();
       return { id: message.id, result };
     }
 

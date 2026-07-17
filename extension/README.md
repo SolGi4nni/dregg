@@ -39,6 +39,18 @@ to the node's receipt stream so you can see what committed.
   "dregg-sign-turn-v3-federation-domain/v1"` (frozen) — the capability
   DreggCloud requires before handing a nonzero owner-lifecycle domain to a
   browser provider (see DreggCloud `docs/OWNER-LIFECYCLE-BROWSER-SEAM.md`).
+- **Signed offering turns** — `signOfferingTurn(params)` signs one
+  `dreggnet-offerings` move (a dungeon choice, a Hermes prompt, a poll vote)
+  with the extension-held identity key: rung 2 of the G1 signed-identity
+  ladder, where rung 1 is the server-side verifier
+  (`dreggnet-offerings/src/signed.rs`, `OfferingHost::advance_signed`). The
+  canonical `dregg-offering-turn-v1:` message is built in
+  `src/offering-sign.ts` and pin-tested byte-for-byte against the Rust
+  builder's vector (`test/offering-sign.test.mjs`), so the two sides cannot
+  drift silently. The confirm popup renders the exact intent — offering,
+  session, move, arg, replay counter, signing identity — and the accept is
+  bound to the SHA-256 of the exact bytes signed. See "Offering turns" below
+  for the wire contract a webapp implements.
 - **Receipt as the result noun** — the signed turn travels as the node's
   `SignedTurn` envelope (postcard bytes, `POST /api/turns/submit-signed`,
   with a durable offline outbox + retry/backoff), and the result carries the
@@ -207,3 +219,83 @@ const auth = await window.dregg.authorize({
 // Live committed receipts (from the node's SSE receipt stream).
 window.dregg.on("receipt", ({ hash, kinds, hasProof }) => { /* ... */ });
 ```
+
+## Offering turns — the wire contract a dregg webapp implements
+
+`dregg.signOfferingTurn` lets any dregg webapp (the live games demo, a
+self-hosted offering host) have its moves SIGNED by the key the extension
+holds, so the server attributes the move to a **verified** Ed25519 identity
+(`Attribution::Signed`) instead of a frontend-asserted label. The verifier is
+`dreggnet-offerings/src/signed.rs::verify_signed`, consumed by
+`OfferingHost::advance_signed`; the web route that feeds it (`act-signed`) is
+the named follow-up — this section is the contract that route consumes.
+
+No host permission is involved: the provider is injected on every origin, the
+signing method performs no network fetch, and access is gated by the
+extension's own per-origin, per-method grant (the user approves
+`dregg:signOfferingTurn` for your origin on first use — a self-hosted webapp
+origin works exactly like a known one). The webapp does all the fetching,
+same-origin to its own server.
+
+```js
+// 1. Detect the provider.
+if (!window.dregg) { /* fall back to asserted attribution */ }
+
+// 2. Fetch the next acceptable replay counter from YOUR server (the host
+//    tracks the floor per (offering, session, pubkey) and refuses stale
+//    counters — replay safety is enforced server-side; the extension
+//    displays the counter and refuses malformed values).
+const counter = await fetchNextCounter(offeringKey, sessionId);
+
+// 3. Ask the extension to sign. The user confirms the exact intent
+//    (offering, session, move, arg, counter, signing identity) in the
+//    extension's popup. counter/arg accept a number (safe integer) or a
+//    decimal string (u64/i64-safe beyond 2^53 - 1).
+const signed = await window.dregg.signOfferingTurn({
+  offeringKey,          // e.g. "dungeon"
+  sessionId,            // the session the move lands in
+  counter,              // from step 2
+  turn: action.turn,    // the affordance verb, e.g. "choose"
+  arg: action.arg,      // the affordance argument (i64)
+  text: action.text,    // optional free-text payload (omit when absent)
+});
+// -> { actorPubkeyHex, counter, signatureHex }
+//    actorPubkeyHex: 64 lowercase hex chars (the verified DreggIdentity)
+//    counter:        number, or decimal string beyond 2^53 - 1
+//    signatureHex:   128 lowercase hex chars (64-byte Ed25519 signature)
+
+// 4. POST the SignedAction to the server's act-signed route (the follow-up
+//    lane), alongside the action fields the message was signed over:
+await fetch(`/api/offerings/${offeringKey}/sessions/${sessionId}/act-signed`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    action: { label: action.label, turn: action.turn, arg: action.arg,
+              enabled: action.enabled, text: action.text ?? null },
+    actor_pubkey_hex: signed.actorPubkeyHex,
+    counter: signed.counter,        // route must accept number OR decimal string
+    signature_hex: signed.signatureHex,
+  }),
+});
+```
+
+Error paths a webapp distinguishes:
+
+- **Origin not granted** — the promise rejects with the standard
+  restricted-method denial (`"Origin not authorized for this method. User
+  denied permission."`).
+- **User declined the confirm popup** — rejects with an `Error` whose `name`
+  is `"DreggUserDeclined"` and `code` is `"user-declined"`.
+- **Signature failure / locked custody / wasm unavailable** — rejects with
+  `code` `"sign-failed"` / `"custody-locked"` / `"wasm-unavailable"`.
+- **Malformed params** — rejects with a `TypeError` before anything is
+  dispatched (non-integer / negative / >u64 counters, out-of-i64 args, NUL
+  bytes in string fields).
+
+The signature is over exactly
+`"dregg-offering-turn-v1:" ‖ offeringKey ‖ 0x00 ‖ sessionId ‖ 0x00 ‖
+counter_le(8) ‖ 0x00 ‖ turn ‖ 0x00 ‖ arg_le(8) ‖ 0x00 ‖ text-or-empty` —
+`label` and `enabled` are surface decorations and deliberately not signed.
+The server reconstructs this message from the claimed fields and verifies
+strictly, so any tampering (a different arg, a spliced session or offering, a
+shifted counter) fails as `BadSignature`.

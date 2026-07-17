@@ -26,6 +26,29 @@ let initialized = false;
 // substitution is treated as a decline).
 let displayedTurnId = null;
 let displayedFederationDomainHex = null;
+// Offering-turn confirmations bind the SHA-256 of the exact canonical message
+// about to be signed; the decision echoes it so the background refuses an
+// accept for anything other than what this popup displayed.
+let displayedOfferingBinding = null;
+
+// Append one label/value row to the details panel (textContent only — the
+// values are page-supplied strings and must never parse as markup).
+function addDetailRow(label, value, mono) {
+  const details = document.getElementById('details');
+  if (!details) return;
+  const row = document.createElement('div');
+  row.className = 'detail-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'detail-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.className = 'detail-value';
+  valueEl.textContent = value;
+  if (mono) valueEl.style.fontFamily = "'Courier New', monospace";
+  row.appendChild(labelEl);
+  row.appendChild(valueEl);
+  details.appendChild(row);
+}
 
 async function init() {
   if (!NONCE) {
@@ -77,6 +100,40 @@ async function init() {
         const optionsRow = document.getElementById('optionsRow');
         if (specRow) specRow.style.display = 'none';
         if (optionsRow) optionsRow.style.display = 'none';
+      } else if (p.action === 'signOfferingTurn') {
+        // Offering-turn signing (G1 rung 2): render the human-readable intent
+        // — offering, session, move, arg, text, replay counter, and the
+        // signing identity — exactly the fields the canonical
+        // dregg-offering-turn-v1 message binds.
+        const titleEl = document.getElementById('title');
+        const subtitleEl = document.getElementById('subtitle');
+        if (titleEl) titleEl.textContent = 'Sign Offering Turn';
+        if (subtitleEl) subtitleEl.textContent =
+          'A page asks your cipherclerk to sign this offering move with your identity key. This is exactly what will be signed:';
+        addDetailRow('Offering', String(p.offeringKey ?? ''));
+        addDetailRow('Session', String(p.sessionId ?? ''));
+        addDetailRow('Move', String(p.moveTurn ?? ''));
+        addDetailRow('Argument', String(p.argDecimal ?? ''));
+        if (typeof p.text === 'string') addDetailRow('Text', p.text, true);
+        addDetailRow('Replay counter', String(p.counterDecimal ?? ''));
+        addDetailRow(
+          'Signing identity',
+          (typeof p.signerProfile === 'string' && p.signerProfile ? p.signerProfile + ' — ' : '') +
+            String(p.signerPubkeyHex ?? ''),
+          true,
+        );
+        const explanationEl = document.getElementById('explanation');
+        if (explanationEl) {
+          explanationEl.textContent =
+            'The replay counter must be strictly newer than the last move this identity made in this session. ' +
+            'The server refuses stale counters, so this exact signature can land at most once.';
+          explanationEl.style.display = 'block';
+        }
+        displayedOfferingBinding = typeof p.bindingHex === 'string' ? p.bindingHex : null;
+        const specRow = document.getElementById('specRow');
+        const optionsRow = document.getElementById('optionsRow');
+        if (specRow) specRow.style.display = 'none';
+        if (optionsRow) optionsRow.style.display = 'none';
       } else {
         specEl.textContent = JSON.stringify(p.matchSpec || {}, null, 2);
         optionsEl.textContent = JSON.stringify(p.options || {}, null, 2);
@@ -104,6 +161,8 @@ function sendDecision(confirmed) {
   // anything other than exactly what the user saw.
   if (displayedTurnId !== null) message.turnId = displayedTurnId;
   if (displayedFederationDomainHex !== null) message.federationDomainHex = displayedFederationDomainHex;
+  // Offering-turn decisions bind the displayed canonical-message digest.
+  if (displayedOfferingBinding !== null) message.offeringBindingHex = displayedOfferingBinding;
   chrome.runtime.sendMessage(message);
 }
 
