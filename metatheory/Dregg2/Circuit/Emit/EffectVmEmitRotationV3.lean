@@ -5269,9 +5269,34 @@ def B_CHILD_VK_OCTET : Nat := 89
 /-- In-block base of the v12 `contract_hash` carrier octet (limbs 97..=104, REVOKED-ROOT +1). Rust
 twin `trace_rotated::B_CONTRACT_HASH_OCTET`. -/
 def B_CONTRACT_HASH_OCTET : Nat := 97
+/-- In-block base of the committed `public_key` carrier octet (limbs 105..=112, REVOKED-ROOT +1 —
+was 104). The one octet non-zero on a generic turn (the operated cell's owner key), so it moves every
+turn's `state_commit`. Rust twin `trace_rotated::B_PUBKEY_OCTET`; the app-root octet list is
+`[B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET] = [89, 97, 105]`. -/
+def B_PUBKEY_OCTET : Nat := 105
+
+/-- **THE APP-ROOT WELD FIELD OCTET in-block base.** The AFTER rotated block's directly-committed
+`fields[0..8]` lane-0 octet: field register `r(state.FIELD_BASE + i)` rides in-block offset
+`CUSTOM_APP_FIELD_ROT_BASE + i`, per `weldsAt` (`colEq (base + 4) (stateBase + state.FIELD_BASE)`,
+… `colEq (base + 11) (stateBase + state.FIELD_BASE + 7)`). So a consumer derives an octet index from
+a state register slot by `octet_index_of_register r = r - state.FIELD_BASE`. Rust twin
+`trace_rotated::CUSTOM_APP_FIELD_ROT_BASE`. -/
+def CUSTOM_APP_FIELD_ROT_BASE : Nat := 4
+/-- Width of the app-root field octet (8 field lane-0 limbs). Rust twin
+`trace_rotated::CUSTOM_APP_FIELD_OCTET_LEN`. -/
+def CUSTOM_APP_FIELD_OCTET_LEN : Nat := 8
 
 #guard B_CHILD_VK_OCTET == 89
 #guard B_CONTRACT_HASH_OCTET == 97
+#guard B_PUBKEY_OCTET == 105
+#guard CUSTOM_APP_FIELD_OCTET_LEN == 8
+-- The app-root octet in-block base IS the block offset `weldsAt` aligns with the state field base:
+-- `weldsAt base stateBase` maps `base + CUSTOM_APP_FIELD_ROT_BASE + i ↔ stateBase + state.FIELD_BASE + i`
+-- for every field lane `i < 8` (see `weldsAt` above, `colEq (base + 4) (stateBase + state.FIELD_BASE)`).
+#guard CUSTOM_APP_FIELD_ROT_BASE == 4
+-- The octet spans in-block offsets `CUSTOM_APP_FIELD_ROT_BASE .. +7` = `4..11`, exactly the range
+-- `weldsAt` maps to `stateBase + state.FIELD_BASE .. +7` (its `colEq (base+4) … (base+11)` field welds).
+#guard CUSTOM_APP_FIELD_ROT_BASE + CUSTOM_APP_FIELD_OCTET_LEN - 1 == 11
 
 /-- **`withAfterOctetPins g octetBase`** — APPEND 8 `.piBinding .last` pins publishing the AFTER-block
 committed carrier octet (`EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + octetBase + k`, `k < 8`) as 8 TAIL PIs

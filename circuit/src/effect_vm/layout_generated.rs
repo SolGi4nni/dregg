@@ -85,3 +85,29 @@ pub const B_IROOT: usize = 178;
 
 /// the state-commitment limb
 pub const B_STATE_COMMIT: usize = 179;
+
+/// state register index of the first committed field (fields[0]); the AFTER-block field octet holds register r(FIELD_BASE+i) at octet index i, so octet_index(r) = r - FIELD_BASE
+pub const FIELD_BASE: usize = 3;
+
+/// in-block column base of the AFTER-block committed fields[0..8] lane-0 octet (the app-root weld octet): weldsAt maps base+CUSTOM_APP_FIELD_ROT_BASE+i ↔ stateBase+FIELD_BASE+i
+pub const CUSTOM_APP_FIELD_ROT_BASE: usize = 4;
+
+/// width of the app-root field octet (8 field lane-0 limbs)
+pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
+
+/// in-block base of the child_vk carrier octet (app-PI octet base 0 of [89, 97, 105])
+pub const B_CHILD_VK_OCTET: usize = 89;
+
+/// in-block base of the contract_hash carrier octet (app-PI octet base 1 of [89, 97, 105])
+pub const B_CONTRACT_HASH_OCTET: usize = 97;
+
+/// in-block base of the public_key carrier octet (app-PI octet base 2 of [89, 97, 105])
+pub const B_PUBKEY_OCTET: usize = 105;
+
+/// Derive the app-root field OCTET INDEX from a state register slot: the AFTER-block
+/// `fields[0..8]` octet holds field register `r(FIELD_BASE + i)` at octet index `i`, so
+/// `octet_index_of_register(r) == r - FIELD_BASE` — the single Lean-authored query the fold's
+/// app-root weld reads (killing the hand `reg("winner") - 3`).
+pub const fn octet_index_of_register(reg: usize) -> usize {
+    reg - FIELD_BASE
+}

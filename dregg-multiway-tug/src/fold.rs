@@ -370,17 +370,26 @@ fn mint_turn(bundle: &LeafBundle, nonce: u64) -> FinalizedTurn {
 /// (the winner is a register `new8` commits), not a `pk[0]=7` fixture nonce-bump.
 fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
     let commit = custom_proof_pi_commitment(&win.public_inputs);
-    // DELIVER #2 — THE APP-ROOT CUTOVER (LANDED with the wide custom leg-emit `withAfterOctetPins
-    // customV3 4`): weld the win sub-proof's PUBLISHED winner (PI 17, `WIN_WINNER`) to the cell's
-    // REAL committed winner field IN-CIRCUIT. The wide leg now exposes the AFTER-block `fields[0..8]`
-    // octet; `field_key` selects the winner's cell field index (relocated into that octet —
-    // `Deployment::reg("winner")` = 7), and the fold routes through
-    // `prove_custom_binding_node_app_root_segmented`, forcing `PI 17 == field[K]`. A tug turn
-    // publishing a winner that does NOT match the cell's committed winner field then has NO
-    // satisfying fold — UNSAT, refused by the DEPLOYED `verify_history`, light-client-visible. This
-    // is no longer the state-node adoption (winner bound only as a commitment preimage): it is the
-    // app-root weld, a property of the artifact.
-    let winner_field_key = crate::state::Deployment::new().reg("winner") as usize;
+    // DELIVER #2 — THE APP-ROOT CUTOVER (the wide custom leg-emit `withAfterOctetPins customV3 4`):
+    // weld the win sub-proof's PUBLISHED winner (the tug win-leaf's app-output PI, see below) to the
+    // cell's REAL committed winner field IN-CIRCUIT. The wide leg exposes the AFTER-block `fields[0..8]`
+    // octet, holding field register `r(FIELD_BASE + i)` at octet index `i`. `winner` rides register
+    // slot `reg("winner")` (see `state::schema`), so its OCTET INDEX is the LEAN-AUTHORED query
+    // `layout_generated::octet_index_of_register(reg) == reg - FIELD_BASE` — NOT a hand `- 3`. The fold
+    // routes through `prove_custom_binding_node_app_root_segmented`, forcing
+    // `PI[app_root_pi_offset] == octet[field_key] == winner`. A tug turn publishing a winner that does
+    // NOT match the cell's committed winner field then has NO satisfying fold — UNSAT, refused by the
+    // DEPLOYED `verify_history`, light-client-visible. This is the app-root weld (a property of the
+    // artifact), not the state-node adoption (winner bound only as a commitment preimage).
+    let winner_reg = crate::state::Deployment::new().reg("winner") as usize;
+    let winner_field_key =
+        dregg_circuit::effect_vm::layout_generated::octet_index_of_register(winner_reg);
+    // The winner's PI slot in the win sub-proof: past the Lean-owned state-binding prefix
+    // (`CUSTOM_PI_STATE_PREFIX_LEN = [old8 ‖ new8]`) the win leaf binds its app outputs in order
+    // [charm, winner] (see `win_leaf_bound`), so winner rides prefix + `WINNER_APP_PI_INDEX`. The
+    // prefix is Lean-owned; which app-output slot winner rides is the tug's own leaf layout.
+    const WINNER_APP_PI_INDEX: usize = 1; // charm=app output 0 (PI prefix+0), winner=app output 1
+    let app_root_pi_offset = CUSTOM_PI_STATE_PREFIX_LEN + WINNER_APP_PI_INDEX;
     let cwb = CustomWitnessBundle {
         program: win.program.clone(),
         witness_values: win.witness_values.clone(),
@@ -388,7 +397,7 @@ fn mint_win_turn_over_cell(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
         public_inputs: win.public_inputs.clone(),
         app_root_binding: Some(
             dregg_circuit::effect_vm::custom_state_binding::AppRootBinding {
-                app_root_pi_offset: 17,
+                app_root_pi_offset,
                 app_root_len: 1,
                 field_key: winner_field_key,
             },
@@ -518,6 +527,52 @@ pub fn fold_win_over_cell(
     }
     prove_turn_chain_recursive(&[t0, t1])
         .map_err(|e| format!("win fold over real cell failed: {e}"))
+}
+
+/// CANARY twin of [`mint_win_turn_over_cell`] with `app_root_binding = None` — the win leaf rides
+/// the deployed STATE node (`prove_custom_binding_node_state_segmented`, the pre-cutover behavior),
+/// which welds the `[old8 ‖ new8]` prefix to the leg's real roots but does NOT force the published
+/// winner (PI 17) to equal the cell's committed winner field. So a winner DISAGREEING with the
+/// cell's committed field folds GREEN here — the byte-identical `None` arm of the cutover.
+fn mint_win_turn_state_node_canary(cell: &Cell, win: &LeafBundle) -> FinalizedTurn {
+    let commit = custom_proof_pi_commitment(&win.public_inputs);
+    let cwb = CustomWitnessBundle {
+        program: win.program.clone(),
+        witness_values: win.witness_values.clone(),
+        num_rows: win.num_rows,
+        public_inputs: win.public_inputs.clone(),
+        app_root_binding: None,
+    };
+    let after = nonce_bumped(cell);
+    let leg = cell_custom_leg(cell, &after, commit, Some(cwb));
+    FinalizedTurn::new(DescriptorParticipant::rotated(leg))
+}
+
+/// **CANARY (no code disabled): fold the terminal win over the real cell through the STATE node.**
+/// The `app_root_binding = None` twin of [`fold_win_over_cell`] — the pre-cutover behavior, routing
+/// the win leaf through `prove_custom_binding_node_state_segmented` (weld `[old8 ‖ new8]` to the
+/// leg's real roots) WITHOUT the app-root `PI 17 == field[K]` weld. A winner DISAGREEING with the
+/// cell's committed winner field therefore folds GREEN here and `verify_history` accepts it — so the
+/// UNSAT refusal in [`fold_win_over_cell`] IS the app-root weld, not incidental. See the HARD GATE
+/// `fold_real_cell.rs::app_root_weld_refuses_disagreeing_winner_through_verify_history`.
+///
+/// SLOW (the deployed recursive fold).
+pub fn fold_win_over_cell_state_node_canary(
+    cell: &Cell,
+    charm: u64,
+    winner: u64,
+) -> Result<dregg_circuit_prove::ivc_turn_chain::WholeChainProof, String> {
+    let (old8, new8) = cell_rotated_roots(cell);
+    let win = win_leaf_bound(old8, new8, charm, winner);
+    let t0 = mint_win_turn_state_node_canary(cell, &win);
+    let t1 = plain_turn_over_cell(&nonce_bumped(cell));
+    if t0.new_root() != t1.old_root() {
+        return Err(
+            "win canary fold: turn 0 post-state does not link to the tail turn".to_string(),
+        );
+    }
+    prove_turn_chain_recursive(&[t0, t1])
+        .map_err(|e| format!("win canary fold over real cell failed: {e}"))
 }
 
 /// Mint ONE per-play membership turn folded over the REAL WorldCell cell. Mirrors

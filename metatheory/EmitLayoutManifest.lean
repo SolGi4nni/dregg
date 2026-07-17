@@ -85,6 +85,23 @@ def items : List Item :=
       doc := "FIRST vk-digest completion limb; vkHash[1..7] ride B_VK_COMPLETION..+6" }
   , { name := "B_IROOT", value := B_IROOT, doc := "the iroot limb (pre-iroot limbs end here)" }
   , { name := "B_STATE_COMMIT", value := B_STATE_COMMIT, doc := "the state-commitment limb" }
+    -- THE OCTET → REGISTER QUERY + APP-PI LAYOUT (the field_key class — Rust reads, never re-derives).
+    -- `FIELD_BASE` is the state register index the AFTER-block field octet's index 0 maps to; a consumer
+    -- derives an octet index from a register slot via `octet_index_of_register` (emitted below).
+  , { name := "FIELD_BASE", value := Dregg2.Circuit.Emit.EffectVmEmit.state.FIELD_BASE,
+      doc := "state register index of the first committed field (fields[0]); the AFTER-block field \
+              octet holds register r(FIELD_BASE+i) at octet index i, so octet_index(r) = r - FIELD_BASE" }
+  , { name := "CUSTOM_APP_FIELD_ROT_BASE", value := CUSTOM_APP_FIELD_ROT_BASE,
+      doc := "in-block column base of the AFTER-block committed fields[0..8] lane-0 octet (the app-root \
+              weld octet): weldsAt maps base+CUSTOM_APP_FIELD_ROT_BASE+i ↔ stateBase+FIELD_BASE+i" }
+  , { name := "CUSTOM_APP_FIELD_OCTET_LEN", value := CUSTOM_APP_FIELD_OCTET_LEN,
+      doc := "width of the app-root field octet (8 field lane-0 limbs)" }
+  , { name := "B_CHILD_VK_OCTET", value := B_CHILD_VK_OCTET,
+      doc := "in-block base of the child_vk carrier octet (app-PI octet base 0 of [89, 97, 105])" }
+  , { name := "B_CONTRACT_HASH_OCTET", value := B_CONTRACT_HASH_OCTET,
+      doc := "in-block base of the contract_hash carrier octet (app-PI octet base 1 of [89, 97, 105])" }
+  , { name := "B_PUBKEY_OCTET", value := B_PUBKEY_OCTET,
+      doc := "in-block base of the public_key carrier octet (app-PI octet base 2 of [89, 97, 105])" }
   ]
 
 /-- Emit one Rust `pub const`. -/
@@ -105,11 +122,27 @@ def header : String :=
    //\n\
    // Regenerate with the ack-gated emit pipeline (`scripts/emit_descriptors.py`); never hand-edit.\n\n"
 
+/-- The octet→register QUERY, emitted as a `const fn` so the Rust consumer READS the mapping instead
+of re-deriving the `- FIELD_BASE` offset by hand (the `field_key` mirror the fold guessed wrong). -/
+def footerLines : List String :=
+  [ ""
+  , "/// Derive the app-root field OCTET INDEX from a state register slot: the AFTER-block"
+  , "/// `fields[0..8]` octet holds field register `r(FIELD_BASE + i)` at octet index `i`, so"
+  , "/// `octet_index_of_register(r) == r - FIELD_BASE` — the single Lean-authored query the fold's"
+  , "/// app-root weld reads (killing the hand `reg(\"winner\") - 3`)."
+  , "pub const fn octet_index_of_register(reg: usize) -> usize {"
+  , "    reg - FIELD_BASE"
+  , "}"
+  ]
+
+def footer : String := String.intercalate "\n" footerLines ++ "\n"
+
 def main : IO Unit := do
   IO.print header
   for i in items do
     IO.print (renderItem i)
     IO.print "\n"
+  IO.print footer
 
 end EmitLayoutManifest
 

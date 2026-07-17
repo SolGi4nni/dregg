@@ -49,13 +49,15 @@ pub const SCORE: &str = "score";
 
 /// The 16 register components, in allocation order (slots `0..16`).
 ///
-/// APP-ROOT WELD RELOCATION: `winner` rides slot 7 (was 12), inside the rotated block's
-/// directly-committed `fields[0..8]` octet (register limbs r3..r10 = field indices 0..7) that the
-/// wide custom leg exposes as PIs (Lean `withAfterOctetPins customV3 4`). `b_board` takes the vacated
-/// slot 12 — it is committed via `fields_root` past the octet, which is sound for a `SumEquals`
-/// conservation counter (the tooth reads the field VALUE, not a limb position, and
-/// `conservation_indices` resolves it BY NAME). This lets the fold weld the published winner (win
-/// sub-proof PI 17) to `field[7]` in-circuit through `prove_custom_binding_node_app_root_segmented`.
+/// ⚠ APP-ROOT WELD — BLOCKED, diagnosis is a Lean-layout FACT (see docs/audit/CIRCUIT-LEAN-BOUNDARY.md).
+/// `winner` rides slot 7 (was 12) so `octet_index_of_register(7) = 7 - FIELD_BASE(3) = 4` is a VALID
+/// octet index — but the app-root weld (`PI[app] == octet[K]`) is UNSAT anyway, because the wide leg's
+/// AFTER-block octet exposes the CELL'S committed `fields[0..8]`, and `winner` is an `.identity`
+/// REGISTER-FILE component: it is absorbed into `state_commit`/`new8` but is NOT written into a
+/// committed `fields[0..7]` lane, so octet lane 4 holds 0 while the winner is 2 (the driven `0 vs 2`
+/// WitnessConflict). This slot move does NOT fix it (a register slot is not a cell field). THE REAL
+/// FIX is a schema/lowering change: lower/mirror `winner` into a committed `fields[0..7]` lane — the
+/// region the octet actually carries. Tracked as a tug follow-up; the fold test is `#[ignore]`d + red.
 const REGISTERS: [&str; 16] = [
     "deck",
     "oop",
@@ -111,12 +113,16 @@ pub fn schema() -> Schema {
         .stat("a_secret", 0, 1)
         .stat("b_secret", 0, 1)
         .stat("a_board", 0, 21)
-        .stat("b_board", 0, 21)
+        // APP-ROOT WELD RELOCATION (the REAL slot assignment is this builder order, not the
+        // REGISTERS[] array): `winner` rides slot 7 so `reg("winner")==7` lands inside the wide
+        // leg's exposed fields[0..8] octet; `b_board` takes the vacated slot 12 (committed past the
+        // octet via `fields_root`, sound for a by-name-resolved SumEquals conservation counter).
+        .identity("winner")
         .stat("a_charm", 0, 21)
         .stat("b_charm", 0, 21)
         .stat("a_guilds", 0, 7)
         .stat("b_guilds", 0, 7)
-        .identity("winner")
+        .stat("b_board", 0, 21)
         .stat("current", 0, 1)
         .stat("round_actions", 0, 8)
         .stat("scored", 0, 1);

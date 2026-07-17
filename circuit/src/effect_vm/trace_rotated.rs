@@ -49,6 +49,11 @@ use super::bare_floor_refuse_weld;
 use super::columns::rotation::caveat as cav;
 use super::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 use super::{EFFECT_VM_WIDTH, EffectVmContext, generate_effect_vm_trace_ext};
+// The rotated-layout SPINE is Lean-authored: `metatheory/EmitLayoutManifest.lean` emits it into
+// `layout_generated.rs`. Read it here instead of re-declaring the 25 constants by hand (the mirror
+// that drifted and made every honest setPermissions/setVK turn UNSAT). Renamed twins below alias
+// the emitted const (`B_NULLIFIER_ROOT = B_NULLIFIER_ROOT_OFF`, …) so the value still comes from Lean.
+pub use crate::effect_vm::layout_generated::*;
 use crate::effect_vm::{CellState, Effect};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_many;
@@ -95,27 +100,23 @@ pub const NUM_REGISTERS: usize = 24;
 /// path's clean-grouping discipline).
 pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 6 + 75 + 65; // 178 (base widened 37→38; fields octet 113..=168; cells-completion 169..=175; pads 176..=177 → body 174 = 58×3 clean)
 
-/// A rotated block: 178 pre-iroot limbs + iroot + state_commit + 59 chain carriers = 239 columns.
-/// The 178-limb body chains as a 4-wide head (limbs 0..3) + FIFTY-EIGHT 3-wide groups (limbs
-/// restore) + the iroot absorbed ALONE last, so the chain-carrier count is 59 (1 head + 58 groups).
-pub const B_SPAN: usize = 239;
-/// The widened-caveat region: 29 manifest + 9 chain + 1 commit + the 4-felt DFA route-commitment
-/// carrier = 43 columns. Lean `EffectVmEmitRotationV3.C_SPAN`.
-pub const C_SPAN: usize = 43;
+// `B_SPAN` (a rotated block: 178 pre-iroot limbs + iroot + state_commit + 59 chain carriers = 239
+// columns) and `C_SPAN` (the widened-caveat region = 43 columns) are Lean-emitted — read from the
+// `pub use layout_generated::*` above (Lean `EffectVmEmitRotationV3.{B_SPAN, C_SPAN}`).
 /// In-region offset of the chained caveat commitment (the `caveatCommit` fold over the 29 manifest
-/// felts — UNTOUCHED by the rc carrier appended past it). Lean `C_COMMIT`.
-pub const C_CAVEAT_COMMIT: usize = 38;
+/// felts — UNTOUCHED by the rc carrier appended past it). Lean-emitted as `C_COMMIT`.
+pub const C_CAVEAT_COMMIT: usize = C_COMMIT;
 /// In-region base of the 4-felt DFA ROUTE-COMMITMENT carrier (offsets 39..=42 — the dsl rc-EMIT).
 /// Carries [`dfa_route_commitment`] of the turn's `Witnessed{Dfa}` proof-wire public inputs on a
 /// Dfa-gated turn, ZERO otherwise (the absent sentinel). Filled uniformly on every row by
 /// [`fill_caveat`] from [`RotatedCaveatManifest::dfa_rc`]; published as each cohort member's LAST 4
-/// member PIs by the Lean `withDfaRcPins` wrap. Lean `EffectVmEmitRotationV3.C_RC_OFF`.
-pub const C_DFA_RC_OFF: usize = 39;
+/// member PIs by the Lean `withDfaRcPins` wrap. Lean-emitted as `C_RC_OFF`.
+pub const C_DFA_RC_OFF: usize = C_RC_OFF;
 /// Width of the DFA route-commitment carrier (4 felts — the same shape as the custom carrier's
 /// `custom_proof_commitment`).
 pub const DFA_RC_LEN: usize = 4;
-/// The appendix: two blocks + the caveat region (2·239 + 43 = 521).
-pub const APPENDIX: usize = 2 * B_SPAN + C_SPAN; // 521
+/// The appendix: two blocks + the caveat region (2·239 + 43 = 521). Lean-emitted as `APPENDIX_SPAN`.
+pub const APPENDIX: usize = APPENDIX_SPAN;
 /// The UN-GRADUATED rotated trace width (the rotated main columns BEFORE Phase B-GATE appends the
 /// per-chip-lookup 7-lane blocks). `188 + 521 = 709`.
 pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 709
@@ -240,67 +241,22 @@ fn fill_avail_aux_row(
 /// input), so the v1 OLD_COMMIT binds the SAME authority residue the rotated weld
 /// carries — closing audit P0-2 across BOTH legs.
 pub const B_AUTHORITY_DIGEST: usize = 24;
-/// Alias used by the record-forcing pin (`record_pin_offset`): the setPermissions/setVK post
-/// `record_digest` limb IS the authority-digest limb (r23, limb 24). Lean `B_RECORD_DIGEST`.
-pub const B_RECORD_DIGEST: usize = B_AUTHORITY_DIGEST;
-/// In-block offset of the per-cell `lifecycle` felt limb (limb 29 in `preLimbsAt`, shifted +1 by
-/// `commitments_root`), filled by the producer witness `rotation_witness.rs::lifecycle_felt`. The
-/// forced limb for the lifecycle flips (cellSeal/cellUnseal/cellDestroy). Lean
-/// `EffectVmEmitRotationV3.B_LIFECYCLE`.
-pub const B_LIFECYCLE: usize = 29;
-/// In-block offset of the `cap_root` limb (the welded cap-root, limb 25).
-pub const B_CAP_ROOT: usize = 25;
-/// nullifier-root offset inside a block (limb 26) — the deployed nullifier accumulator's
-/// openable sorted-Poseidon2 root the noteSpend grow-gate (`nullifierFreshOp` / `nullifierInsertOp`)
-/// opens against.
-pub const B_NULLIFIER_ROOT: usize = 26;
-/// commitments-root offset inside a block (limb 27) — the flag-day committed shielded-set root
-/// the noteCreate grow-gate (`commitmentsInsertOp`) opens against. Rides AFTER nullifier_root,
-/// shifting heap/lifecycle/epoch/committed_height each by one (Lean `B_COMMITMENTS_ROOT`).
-pub const B_COMMITMENTS_ROOT: usize = 27;
-/// heap-root offset inside a block (limb 28, shifted +1 by `commitments_root`).
-pub const B_HEAP_ROOT: usize = 28;
-/// In-block offset of the `committed_height` limb (limb 31, UNCHANGED by the disc flag-day).
-pub const B_COMMITTED_HEIGHT: usize = 31;
-/// In-block offset of the committed lifecycle-DISC limb (limb 32 — the WAVE-1 flag-day committed
-/// `u8 0..4` discriminant beside the opaque `lifecycle_felt` at 29). Lean `EffectVmEmitRotationV3.B_DISC`.
-pub const B_DISC: usize = 32;
-/// In-block offset of the committed PERMS-DIGEST limb (limb 33 — the WAVE-2 flag-day perms sub-limb,
-/// `= permsHash[0]`, the forced limb for the setPermissions weld). Lean `EffectVmEmitRotationV3.B_PERMS`.
-pub const B_PERMS: usize = 33;
-/// In-block offset of the committed VK-DIGEST limb (limb 34 — the WAVE-2 flag-day vk sub-limb,
-/// `= vkHash[0]`, the forced limb for the setVK weld). Lean `EffectVmEmitRotationV3.B_VK`.
-pub const B_VK: usize = 34;
-/// In-block offset of the committed cell-MODE limb (limb 35 — the WAVE-3 flag-day mode byte,
-/// `Hosted=0 / Sovereign=1`, the makeSovereign CONSTANT-force limb). Lean `EffectVmEmitRotationV3.B_MODE`.
-pub const B_MODE: usize = 35;
-/// In-block offset of the committed `fields_root` digest limb (limb 36 — the WAVE-3 flag-day overflow
-/// map root, the setFieldDyn / refusal weld limb). Lean `EffectVmEmitRotationV3.B_FIELDS_ROOT`.
-pub const B_FIELDS_ROOT: usize = 36;
-/// In-block offset of the committed `revoked_root` lane-0 limb (limb 37 — the REVOKED-ROOT flag-day
-/// NEW base limb, right after `fields_root` at 36; the credential-revocation accumulator's openable
-/// sorted-Poseidon2 root, lane 0 of the 8-felt `revoked_root` group whose completion limbs ride at
-/// 82..=88). Lane 0 of [`revoked_root_group_col`]. Lean `EffectVmEmitRotationV3.B_REVOKED_ROOT`.
-pub const B_REVOKED_ROOT: usize = 37;
-/// In-block base of the v12 CHILD-VK carrier octet (limbs 89..=96 after the REVOKED-ROOT +1 shift;
-/// was 88). Carries
-/// `bytes32_to_8_limbs(child_vk)` on a `CreateCellFromFactory` block (the REAL installed child VK
-/// captured at the executor's `effective_vk` site), ZERO on every other block. The SAT-foundation
-/// fill; the STEP-3 `CarrierOctetGates` weld binds it to the factory's installed VK.
-pub const B_CHILD_VK_OCTET: usize = 89;
-/// In-block base of the v12 CONTRACT-HASH carrier octet (limbs 97..=104 after the REVOKED-ROOT +1
-/// shift; was 96). Carries
-/// `bytes32_to_8_limbs(contract_hash)` on a hatchery-mint block (the `HpresProof::Attested`
-/// content hash), ZERO otherwise.
-pub const B_CONTRACT_HASH_OCTET: usize = 97;
-/// In-block base of the v12 PUBKEY carrier octet (limbs 105..=112 after the REVOKED-ROOT +1 shift;
-/// was 104). Carries
-/// `canonical_32_to_felts_8(cell.public_key())` UNCONDITIONALLY (every turn — the operated cell's
-/// owner key, the 30-bit canonical form that matches the executor's KEY_COMMIT teeth). This is the
-/// only octet non-zero on a generic turn, so it moves every turn's `state_commit`.
-pub const B_PUBKEY_OCTET: usize = 105;
-/// In-block offset of the iroot carrier (absorbed last, limb 178 in the REVOKED-ROOT+cells geometry).
-pub const B_IROOT: usize = 178;
+// The committed base limbs `B_RECORD_DIGEST`(=B_AUTHORITY_DIGEST) · `B_LIFECYCLE` · `B_CAP_ROOT` ·
+// `B_COMMITMENTS_ROOT` · `B_HEAP_ROOT` · `B_COMMITTED_HEIGHT` · `B_DISC` · `B_PERMS` · `B_VK` ·
+// `B_MODE` · `B_FIELDS_ROOT` · `B_REVOKED_ROOT` are Lean-emitted — read from `layout_generated`
+// (`pub use` above), Lean `EffectVmEmitRotationV3.B_*`. The producer writes the corresponding lanes
+// and the in-circuit welds read them; a drift here was the setPermissions/setVK UNSAT bug.
+/// nullifier-root offset inside a block (limb 26) — the deployed nullifier accumulator's openable
+/// sorted-Poseidon2 root the noteSpend grow-gate (`nullifierFreshOp` / `nullifierInsertOp`) opens
+/// against. Lean-emitted as `B_NULLIFIER_ROOT_OFF`.
+pub const B_NULLIFIER_ROOT: usize = B_NULLIFIER_ROOT_OFF;
+// The v12 carrier-octet in-block bases `B_CHILD_VK_OCTET`(89, `child_vk` on a factory block) ·
+// `B_CONTRACT_HASH_OCTET`(97, hatchery `contract_hash`) · `B_PUBKEY_OCTET`(105, the operated cell's
+// owner key — the one octet non-zero on a generic turn, so it moves every turn's `state_commit`) are
+// Lean-emitted — read from `layout_generated` (`pub use` above), Lean
+// `EffectVmEmitRotationV3.{B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET}`.
+// `B_IROOT` (in-block offset of the iroot carrier, absorbed last, limb 178) is Lean-emitted — read
+// from `layout_generated` (`pub use` above), Lean `EffectVmEmitRotationV3.B_IROOT`.
 
 // ── THE CANONICAL FAITHFUL-8-FELT GROUP TABLE — the ONE Rust source ───────────────────────────────
 //
@@ -349,8 +305,9 @@ pub const ALL_FELT8_GROUPS: [Felt8Group; 9] = [
     FIELDS_ROOT_GROUP,
     REVOKED_ROOT_GROUP,
 ];
-/// In-block offset of the `state_commit` carrier (the chain's final digest, `= hash(carrier238, iroot)`).
-pub const B_STATE_COMMIT: usize = 179;
+// `B_STATE_COMMIT` (in-block offset of the `state_commit` carrier, the chain's final digest
+// `= hash(carrier238, iroot)`, limb 179) is Lean-emitted — read from `layout_generated` (`pub use`
+// above), Lean `EffectVmEmitRotationV3.B_STATE_COMMIT`.
 /// In-block base of the chained-absorption intermediate carriers (59 sites at 180..=238).
 pub const B_CHAIN_BASE: usize = 180;
 
@@ -5450,13 +5407,13 @@ pub const CUSTOM_COMMIT_TEETH_LEN: usize = 4;
 /// AHEAD of the 16 wide anchors (leg PI count 78 → 86; anchors shift to `[70..86)`). The per-turn
 /// FOLD's app-root arm (`dregg_circuit_prove::ivc_turn_chain` `Some(binding)`) reads
 /// `field[binding.field_key]` from this octet and connects it to the custom sub-proof's published
-/// root `R`, forcing `R == field[K]`. Byte-pinned to the Lean `withAfterOctetPins customV3 4`
-/// emit and to `dregg_circuit_prove::ivc_turn_chain::CUSTOM_APP_FIELD_OCTET_LEN`.
-pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
-/// In-block offset of the AFTER rotated block's `fields[0..8]` lane-0 octet: the field registers
-/// r3..r10 sit at in-block offsets `4..12` (Lean `weldsAt base+4 ↔ state.FIELD_BASE`). The absolute
-/// after-block field column is [`AFTER_BASE`] `+ CUSTOM_APP_FIELD_ROT_BASE + i`.
-pub const CUSTOM_APP_FIELD_ROT_BASE: usize = 4;
+/// root `R`, forcing `R == field[K]`.
+///
+/// `CUSTOM_APP_FIELD_OCTET_LEN`(8) and `CUSTOM_APP_FIELD_ROT_BASE`(4 — the in-block offset of the
+/// AFTER rotated block's `fields[0..8]` lane-0 octet: field registers r(FIELD_BASE+i) ride offsets
+/// `CUSTOM_APP_FIELD_ROT_BASE + i`, Lean `weldsAt base+4 ↔ state.FIELD_BASE`; absolute column is
+/// [`AFTER_BASE`] `+ CUSTOM_APP_FIELD_ROT_BASE + i`) are Lean-emitted — read from `layout_generated`
+/// (`pub use` above), Lean `EffectVmEmitRotationV3.{CUSTOM_APP_FIELD_OCTET_LEN, CUSTOM_APP_FIELD_ROT_BASE}`.
 /// The custom member's host width INCLUDING the commit teeth — the base the wide
 /// carrier appendix is appended at (wide trace = 1623 + 960 = 2583; the deployed
 /// wide member additionally carries the gentian bare-refuse block past that).
@@ -6383,77 +6340,29 @@ mod tests {
         );
     }
 
-    /// THE MIRROR TOOTH: every hand-declared layout constant in this module must equal the value
-    /// Lean EXPORTS for it (`effect_vm::layout_generated`, emitted by
-    /// `metatheory/EmitLayoutManifest.lean`).
+    /// THE MIRROR TOOTH (STEP-1 RESIDUE): the rotated SPINE is now Lean-authored and read via
+    /// `pub use layout_generated::*`, so the 25 spine constants can no longer drift (one declaration).
+    /// The self-comparisons that guarded them were retired in Step 1. What REMAINS hand-declared —
+    /// and so still needs a Lean-export guard until its own migration step lands — is:
+    ///   * `columns::EFFECT_VM_WIDTH` (the v1 face, computed `AUX_BASE + NUM_AUX`; Step 8 emits it);
+    ///   * the faithful-8-felt GROUP TABLE (`PERMS_GROUP`/`VK_GROUP`/`REVOKED_ROOT_GROUP` lane-0 and
+    ///     the completion lanes; Step 3 emits `RotatedLayout.groupTable`).
     ///
-    /// Lean owns this geometry: it defines the limb layout AND emits the constraint descriptors that
-    /// read those columns. This module's producer writes the same columns. When the two disagree the
-    /// failure is not cosmetic — it is a soundness bug that still PROVES on every member you did not
-    /// happen to exercise. That is precisely what happened: the REVOKED-ROOT flag day shifted every
-    /// limb >= 37 by +1, the producer moved to limb 38, the in-circuit perms/VK completion weld stayed
-    /// on 37 (`revoked_root` lane-0), and every honest setPermissions / setVerificationKey turn was
-    /// UNSAT until someone noticed.
-    ///
-    /// This test is the cheap standing guard against that whole class. It is intentionally a
-    /// CONSTANT-BY-CONSTANT comparison and not a fingerprint: when it fails it must say WHICH number
-    /// drifted and to what.
+    /// These are the exact numbers the setPermissions/setVK UNSAT bug lived in: the REVOKED-ROOT flag
+    /// day shifted every limb >= 37 by +1, the producer moved to limb 38, the in-circuit perms/VK
+    /// completion weld stayed on 37 (`revoked_root` lane-0), and every honest setPermissions /
+    /// setVerificationKey turn was UNSAT. This tooth cross-checks the still-hand group table against
+    /// the Lean export; it is DELETED in the step that makes the group table Lean-authored (Step 3).
     #[test]
-    fn hand_written_layout_mirrors_the_lean_export() {
+    fn hand_written_group_table_mirrors_the_lean_export() {
         use crate::effect_vm::layout_generated as lean;
 
-        // the spine
+        // The v1 face is still computed in `columns.rs` (Step 8 territory); guard it against Lean.
         assert_eq!(
             V1_WIDTH,
             lean::EFFECT_VM_WIDTH,
-            "V1_WIDTH vs Lean EFFECT_VM_WIDTH"
+            "V1_WIDTH (columns AUX_BASE + NUM_AUX) vs Lean EFFECT_VM_WIDTH"
         );
-        assert_eq!(B_SPAN, lean::B_SPAN, "B_SPAN");
-        assert_eq!(C_SPAN, lean::C_SPAN, "C_SPAN");
-        assert_eq!(
-            APPENDIX,
-            lean::APPENDIX_SPAN,
-            "APPENDIX vs Lean APPENDIX_SPAN"
-        );
-        assert_eq!(
-            C_CAVEAT_COMMIT,
-            lean::C_COMMIT,
-            "C_CAVEAT_COMMIT vs Lean C_COMMIT"
-        );
-        assert_eq!(
-            C_DFA_RC_OFF,
-            lean::C_RC_OFF,
-            "C_DFA_RC_OFF vs Lean C_RC_OFF"
-        );
-
-        // the committed base limbs
-        assert_eq!(B_RECORD_DIGEST, lean::B_RECORD_DIGEST, "B_RECORD_DIGEST");
-        assert_eq!(B_CAP_ROOT, lean::B_CAP_ROOT, "B_CAP_ROOT");
-        assert_eq!(
-            B_NULLIFIER_ROOT,
-            lean::B_NULLIFIER_ROOT_OFF,
-            "B_NULLIFIER_ROOT"
-        );
-        assert_eq!(
-            B_COMMITMENTS_ROOT,
-            lean::B_COMMITMENTS_ROOT,
-            "B_COMMITMENTS_ROOT"
-        );
-        assert_eq!(B_HEAP_ROOT, lean::B_HEAP_ROOT, "B_HEAP_ROOT");
-        assert_eq!(B_LIFECYCLE, lean::B_LIFECYCLE, "B_LIFECYCLE");
-        assert_eq!(
-            B_COMMITTED_HEIGHT,
-            lean::B_COMMITTED_HEIGHT,
-            "B_COMMITTED_HEIGHT"
-        );
-        assert_eq!(B_DISC, lean::B_DISC, "B_DISC");
-        assert_eq!(B_PERMS, lean::B_PERMS, "B_PERMS");
-        assert_eq!(B_VK, lean::B_VK, "B_VK");
-        assert_eq!(B_MODE, lean::B_MODE, "B_MODE");
-        assert_eq!(B_FIELDS_ROOT, lean::B_FIELDS_ROOT, "B_FIELDS_ROOT");
-        assert_eq!(B_REVOKED_ROOT, lean::B_REVOKED_ROOT, "B_REVOKED_ROOT");
-        assert_eq!(B_IROOT, lean::B_IROOT, "B_IROOT");
-        assert_eq!(B_STATE_COMMIT, lean::B_STATE_COMMIT, "B_STATE_COMMIT");
 
         // THE WELD OFFSETS — the numbers the setPerms/setVK bug lived in. The producer writes the
         // perms 8-felt group to lanes [B_PERMS, B_PERMS_COMPLETION ..= +6] and the vk group to
