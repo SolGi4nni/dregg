@@ -65,7 +65,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff pPrimeInt)
-open Dregg2.Games.Automatafl (Board Coord Particle Dir raycastFuel)
+open Dregg2.Games.Automatafl (Board Coord Particle Dir raycastFuel Decision Raycast evaluateAxis)
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -1471,6 +1471,384 @@ theorem raycast_yn_of_sat
 
 end RayYN
 
+/-! ## §4.8 — sub-lemma (3): the `decide_axis` truth table ⇒ per-axis `Decision = evaluateAxis`.
+
+This section lands leg (3): on a satisfying, canonical trace the decoded `decide_axis` witness columns
+`(variant, pos, att, rep)` decode to exactly `evaluateAxis` of the two rays' `(dist, what)` on that
+axis. The HEART is `forcedGe0_core` — the `forced_ge0` NO-WRAP soundness: a 5-bit range witness that
+vanishes mod `p` pins the ACTUAL comparison, because `SMALL_RBITS = 5` makes the compared magnitudes
+`< 2^5 ≪ p`, the exact no-wrap window. `forcedGe0_core` is applied to the byte-pinned descriptor in
+`xdec_gpd_sound` (the `gpd = [pd ≥ 2]` bit), the one-hot case selection is closed in `xdec_ipw_sel` /
+`xdec_inw_sel`, and the 9-case `assert_case` truth table then forces the witnessed decision to the
+`evaluateAxis` formula case-by-case. Two representative cases close IN FULL against the byte-pinned
+object — `decideAxis_xdec_none` (vacuum/vacuum ⇒ `.none`) and `decideAxis_xdec_attRep`
+(attractor/repulsor ⇒ `.unbalancedPair`) — demonstrating the pipeline (ge0 no-wrap ▸ one-hot ▸
+assert_case ▸ decode) closes end-to-end; the remaining seven cases + the `ydec` axis are the named
+residual (§7). Nothing assumed: the only extra premises are the two ray `what`-codes, the legitimate
+case discriminant. -/
+
+/-- Wide no-wrap window: two integers of magnitude `≤ 10^6` congruent mod `p` are equal (`p ≈ 2·10^9`
+dwarfs the gap, so `p ∣ (a−b)` collapses to `a = b`). The interval that contains every `forced_ge0`
+term and 5-bit range-sum. -/
+theorem eq_of_modEq_win {a b : ℤ} (ha : -1000000 ≤ a ∧ a ≤ 1000000)
+    (hb : -1000000 ≤ b ∧ b ≤ 1000000) (h : a ≡ b [ZMOD 2013265921]) : a = b := by
+  obtain ⟨k, hk⟩ := h.dvd; obtain ⟨ha0, ha1⟩ := ha; obtain ⟨hb0, hb1⟩ := hb; omega
+
+/-- **The `forced_ge0` NO-WRAP soundness heart.** A `forced_ge0` bit `ib` pins `[d ≥ 0]` with NO
+wraparound: given `ib ∈ {0,1}`, a 5-bit range-sum `S ∈ [0, 31]`, and the recomposed non-negativity
+term `2·ib·D + ib − D − 1 ≡ S [ZMOD p]` for a SMALL `D` (`|D| ≤ 100 ≪ 2^5 ≪ p`), the bit is exactly
+the comparison: `ib = 1 → 0 ≤ D` and `ib = 0 → D ≤ −1`. The window `[−100,100] ∪ [0,31] ⊂ (−p/2, p/2)`
+is the exact no-wrap interval — a 5-bit witness cannot alias a different residue, so a forged bit has
+no satisfying decomposition. This is the lemma that makes the `decide_axis` distance comparisons SOUND
+(not merely well-typed): `gpd/gnd/lt/gt/le/gm` genuinely decide `pd ≥ 2`, `pd < nd`, etc. -/
+theorem forcedGe0_core {ib D S : ℤ}
+    (hib : ib = 0 ∨ ib = 1) (hS0 : 0 ≤ S) (hS1 : S ≤ 31)
+    (hmod : (2 * ib * D + ib - D - 1) ≡ S [ZMOD 2013265921])
+    (hDlo : -100 ≤ D) (hDhi : D ≤ 100) :
+    (ib = 1 → 0 ≤ D) ∧ (ib = 0 → D ≤ -1) := by
+  rcases hib with h | h
+  · subst h
+    rw [show (2 * (0:ℤ) * D + 0 - D - 1) = -D - 1 by ring] at hmod
+    have heq : -D - 1 = S := eq_of_modEq_win (by omega) (by omega) hmod
+    exact ⟨by intro hc; omega, by intro _; omega⟩
+  · subst h
+    rw [show (2 * (1:ℤ) * D + 1 - D - 1) = D by ring] at hmod
+    have heq : D = S := eq_of_modEq_win (by omega) (by omega) hmod
+    exact ⟨by intro _; omega, by intro hc; omega⟩
+
+/-- Decode the four `decide_axis` witness columns `(variant, pos, att, rep)` into the reference
+`Decision` (`reference.rs`'s felt encoding: the priority number in `variant` — `unbalancedPair = 3 >
+fromRepulsor = 2 > towardAttractor = 1 > none = 0` — the direction bit in `pos`, and the attractor /
+repulsor distances in `att` / `rep`). This is the circuit-side reader `choose_offset`'s score head
+consumes; leg (3) proves it equals `evaluateAxis`. -/
+def decodeDecision (v pos att rep : ℤ) : Decision :=
+  if v = 3 then .unbalancedPair (pos = 1) att.toNat rep.toNat
+  else if v = 2 then .fromRepulsor (pos = 1) rep.toNat
+  else if v = 1 then .towardAttractor (pos = 1) att.toNat
+  else .none
+
+section DecideXdec
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+
+/-- The xdec `ipw` one-hot (over the XP ray's `what`-code, columns `62..64`): booleans, `Σ = 1`, and
+the index pin `ipw₁ + 2·ipw₂ = what`. Together they force `ipw` to be single-hot at the code. -/
+theorem xdec_ipw_sel (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    ((envAt t i).loc 62 = 0 ∨ (envAt t i).loc 62 = 1)
+    ∧ ((envAt t i).loc 63 = 0 ∨ (envAt t i).loc 63 = 1)
+    ∧ ((envAt t i).loc 64 = 0 ∨ (envAt t i).loc 64 = 1)
+    ∧ (envAt t i).loc 62 + (envAt t i).loc 63 + (envAt t i).loc 64 = 1
+    ∧ (envAt t i).loc 63 + 2 * (envAt t i).loc 64 = (envAt t i).loc (rWhat 0) := by
+  set e := envAt t i with he
+  have b0 : e.loc 62 = 0 ∨ e.loc 62 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 62) (by decide)) (canon_loc hc i _)
+  have b1 : e.loc 63 = 0 ∨ e.loc 63 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 63) (by decide)) (canon_loc hc i _)
+  have b2 : e.loc 64 = 0 ∨ e.loc 64 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 64) (by decide)) (canon_loc hc i _)
+  have hsum : e.loc 62 + e.loc 63 + e.loc 64 = 1 := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ([62,63,64].foldl (fun h co => h.addLin 1 co) (Head.c (-1)))) (by decide)
+    rw [show (headToExpr ([62,63,64].foldl (fun h co => h.addLin 1 co) (Head.c (-1)))).eval e.loc
+        = e.loc 62 + e.loc 63 + e.loc 64 + -1 from rfl] at hg
+    have := (gate_modEq_iff (a := e.loc 62 + e.loc 63 + e.loc 64) (b := 1) (by ring)).mp hg
+    rcases b0 with h|h <;> rcases b1 with h'|h' <;> rcases b2 with h''|h'' <;>
+      exact eq_of_modEq_small (by rw [h,h',h'']; norm_num) (by norm_num) this
+  have hidx : e.loc 63 + 2 * e.loc 64 = e.loc (rWhat 0) := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr (((List.range 3).foldl (fun h (j:Nat) => h.addLin (j:ℤ) ([62,63,64][j]!)) Head.zero).append
+        ((Head.lin 1 (rWhat 0)).scale (-1)))) (by decide)
+    rw [show (headToExpr (((List.range 3).foldl (fun h (j:Nat) => h.addLin (j:ℤ) ([62,63,64][j]!)) Head.zero).append
+        ((Head.lin 1 (rWhat 0)).scale (-1)))).eval e.loc = e.loc 63 + 2 * e.loc 64 + -1 * e.loc (rWhat 0) from rfl] at hg
+    have hmod := (gate_modEq_iff (a := e.loc 63 + 2 * e.loc 64) (b := e.loc (rWhat 0)) (by ring)).mp hg
+    have hcL : Canon (e.loc 63 + 2 * e.loc 64) := by
+      rcases b1 with h|h <;> rcases b2 with h'|h' <;> rw [h,h'] <;> exact ⟨by norm_num, by norm_num⟩
+    exact eq_of_modEq_canon hcL (canon_loc hc i _) hmod
+  exact ⟨b0, b1, b2, hsum, hidx⟩
+
+/-- The xdec `inw` one-hot (over the XN ray's `what`-code, columns `65..67`). -/
+theorem xdec_inw_sel (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    ((envAt t i).loc 65 = 0 ∨ (envAt t i).loc 65 = 1)
+    ∧ ((envAt t i).loc 66 = 0 ∨ (envAt t i).loc 66 = 1)
+    ∧ ((envAt t i).loc 67 = 0 ∨ (envAt t i).loc 67 = 1)
+    ∧ (envAt t i).loc 65 + (envAt t i).loc 66 + (envAt t i).loc 67 = 1
+    ∧ (envAt t i).loc 66 + 2 * (envAt t i).loc 67 = (envAt t i).loc (rWhat 1) := by
+  set e := envAt t i with he
+  have b0 : e.loc 65 = 0 ∨ e.loc 65 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 65) (by decide)) (canon_loc hc i _)
+  have b1 : e.loc 66 = 0 ∨ e.loc 66 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 66) (by decide)) (canon_loc hc i _)
+  have b2 : e.loc 67 = 0 ∨ e.loc 67 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin 67) (by decide)) (canon_loc hc i _)
+  have hsum : e.loc 65 + e.loc 66 + e.loc 67 = 1 := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ([65,66,67].foldl (fun h co => h.addLin 1 co) (Head.c (-1)))) (by decide)
+    rw [show (headToExpr ([65,66,67].foldl (fun h co => h.addLin 1 co) (Head.c (-1)))).eval e.loc
+        = e.loc 65 + e.loc 66 + e.loc 67 + -1 from rfl] at hg
+    have := (gate_modEq_iff (a := e.loc 65 + e.loc 66 + e.loc 67) (b := 1) (by ring)).mp hg
+    rcases b0 with h|h <;> rcases b1 with h'|h' <;> rcases b2 with h''|h'' <;>
+      exact eq_of_modEq_small (by rw [h,h',h'']; norm_num) (by norm_num) this
+  have hidx : e.loc 66 + 2 * e.loc 67 = e.loc (rWhat 1) := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr (((List.range 3).foldl (fun h (j:Nat) => h.addLin (j:ℤ) ([65,66,67][j]!)) Head.zero).append
+        ((Head.lin 1 (rWhat 1)).scale (-1)))) (by decide)
+    rw [show (headToExpr (((List.range 3).foldl (fun h (j:Nat) => h.addLin (j:ℤ) ([65,66,67][j]!)) Head.zero).append
+        ((Head.lin 1 (rWhat 1)).scale (-1)))).eval e.loc = e.loc 66 + 2 * e.loc 67 + -1 * e.loc (rWhat 1) from rfl] at hg
+    have hmod := (gate_modEq_iff (a := e.loc 66 + 2 * e.loc 67) (b := e.loc (rWhat 1)) (by ring)).mp hg
+    have hcL : Canon (e.loc 66 + 2 * e.loc 67) := by
+      rcases b1 with h|h <;> rcases b2 with h'|h' <;> rw [h,h'] <;> exact ⟨by norm_num, by norm_num⟩
+    exact eq_of_modEq_canon hcL (canon_loc hc i _) hmod
+  exact ⟨b0, b1, b2, hsum, hidx⟩
+
+/-- The XP ray distance is a genuine `n = 2` step count: `rDist 0 ∈ {1,2}` (from the hit one-hot +
+`dist = Σ kk·hitₖ` recomposition). The `forced_ge0` comparisons rely on this small-magnitude fact. -/
+theorem xdec_pd_mem (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    (envAt t i).loc (rDist 0) = 1 ∨ (envAt t i).loc (rDist 0) = 2 := by
+  set e := envAt t i with he
+  have b1 : e.loc (rHit 0 1) = 0 ∨ e.loc (rHit 0 1) = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (rHit 0 1)) (by decide)) (canon_loc hc i _)
+  have b2 : e.loc (rHit 0 2) = 0 ∨ e.loc (rHit 0 2) = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (rHit 0 2)) (by decide)) (canon_loc hc i _)
+  have hsum : e.loc (rHit 0 1) + e.loc (rHit 0 2) = 1 := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin 1 (rHit 0 kk))
+        (Head.c (-1)))) (by decide)
+    rw [show (headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin 1 (rHit 0 kk))
+        (Head.c (-1)))).eval e.loc = e.loc (rHit 0 1) + e.loc (rHit 0 2) + (-1) from rfl] at hg
+    have := (gate_modEq_iff (a := e.loc (rHit 0 1) + e.loc (rHit 0 2)) (b := 1) (by ring)).mp hg
+    rcases b1 with h0 | h0 <;> rcases b2 with h1 | h1 <;>
+      exact eq_of_modEq_small (by rw [h0, h1]; norm_num) (by norm_num) this
+  have hval : e.loc (rDist 0) = e.loc (rHit 0 1) + 2 * e.loc (rHit 0 2) := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin (kk : ℤ) (rHit 0 kk))
+        (Head.lin (-1) (rDist 0)))) (by decide)
+    rw [show (headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin (kk : ℤ) (rHit 0 kk))
+        (Head.lin (-1) (rDist 0)))).eval e.loc
+        = (-1) * e.loc (rDist 0) + e.loc (rHit 0 1) + 2 * e.loc (rHit 0 2) from rfl] at hg
+    have hmod := (gate_modEq_iff (a := e.loc (rHit 0 1) + 2 * e.loc (rHit 0 2))
+      (b := e.loc (rDist 0)) (by ring)).mp hg
+    have hcD : Canon (e.loc (rHit 0 1) + 2 * e.loc (rHit 0 2)) := by
+      rcases b1 with h|h <;> rcases b2 with h2|h2 <;> rw [h, h2] <;> exact ⟨by norm_num, by norm_num⟩
+    exact (eq_of_modEq_canon hcD (canon_loc hc i _) hmod).symm
+  rw [hval]; rcases b1 with h|h <;> rcases b2 with h2|h2 <;> rw [h, h2] at hsum ⊢ <;> omega
+
+/-- The XN ray distance `rDist 1 ∈ {1,2}`. -/
+theorem xdec_nd_mem (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    (envAt t i).loc (rDist 1) = 1 ∨ (envAt t i).loc (rDist 1) = 2 := by
+  set e := envAt t i with he
+  have b1 : e.loc (rHit 1 1) = 0 ∨ e.loc (rHit 1 1) = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (rHit 1 1)) (by decide)) (canon_loc hc i _)
+  have b2 : e.loc (rHit 1 2) = 0 ∨ e.loc (rHit 1 2) = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (rHit 1 2)) (by decide)) (canon_loc hc i _)
+  have hsum : e.loc (rHit 1 1) + e.loc (rHit 1 2) = 1 := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin 1 (rHit 1 kk))
+        (Head.c (-1)))) (by decide)
+    rw [show (headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin 1 (rHit 1 kk))
+        (Head.c (-1)))).eval e.loc = e.loc (rHit 1 1) + e.loc (rHit 1 2) + (-1) from rfl] at hg
+    have := (gate_modEq_iff (a := e.loc (rHit 1 1) + e.loc (rHit 1 2)) (b := 1) (by ring)).mp hg
+    rcases b1 with h0 | h0 <;> rcases b2 with h1 | h1 <;>
+      exact eq_of_modEq_small (by rw [h0, h1]; norm_num) (by norm_num) this
+  have hval : e.loc (rDist 1) = e.loc (rHit 1 1) + 2 * e.loc (rHit 1 2) := by
+    have hg := astep_gate hsat i hi
+      (g := headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin (kk : ℤ) (rHit 1 kk))
+        (Head.lin (-1) (rDist 1)))) (by decide)
+    rw [show (headToExpr ((List.range' 1 NN).foldl (fun h (kk : Nat) => h.addLin (kk : ℤ) (rHit 1 kk))
+        (Head.lin (-1) (rDist 1)))).eval e.loc
+        = (-1) * e.loc (rDist 1) + e.loc (rHit 1 1) + 2 * e.loc (rHit 1 2) from rfl] at hg
+    have hmod := (gate_modEq_iff (a := e.loc (rHit 1 1) + 2 * e.loc (rHit 1 2))
+      (b := e.loc (rDist 1)) (by ring)).mp hg
+    have hcD : Canon (e.loc (rHit 1 1) + 2 * e.loc (rHit 1 2)) := by
+      rcases b1 with h|h <;> rcases b2 with h2|h2 <;> rw [h, h2] <;> exact ⟨by norm_num, by norm_num⟩
+    exact (eq_of_modEq_canon hcD (canon_loc hc i _) hmod).symm
+  rw [hval]; rcases b1 with h|h <;> rcases b2 with h2|h2 <;> rw [h, h2] at hsum ⊢ <;> omega
+
+/-- **`forcedGe0_core` applied to the byte-pinned descriptor: the `gpd = [pd ≥ 2]` bit is SOUND.** The
+xdec `forced_ge0` guard column `68` genuinely decides `rDist 0 ≥ 2` — no wraparound — with its 5-bit
+range witness (`bits 69..73`) forcing the non-negativity of `2·gpd·(pd−2) + gpd − (pd−2) − 1`. This is
+the leg's heart wired to the real object. -/
+theorem xdec_gpd_sound (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    ((envAt t i).loc 68 = 0 ∨ (envAt t i).loc 68 = 1)
+    ∧ ((envAt t i).loc 68 = 1 → 2 ≤ (envAt t i).loc (rDist 0))
+    ∧ ((envAt t i).loc 68 = 0 → (envAt t i).loc (rDist 0) ≤ 1) := by
+  set e := envAt t i with he
+  have gpdB : e.loc 68 = 0 ∨ e.loc 68 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 10)) (by decide)) (canon_loc hc i _)
+  have bit0 : e.loc 69 = 0 ∨ e.loc 69 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 11)) (by decide)) (canon_loc hc i _)
+  have bit1 : e.loc 70 = 0 ∨ e.loc 70 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 12)) (by decide)) (canon_loc hc i _)
+  have bit2 : e.loc 71 = 0 ∨ e.loc 71 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 13)) (by decide)) (canon_loc hc i _)
+  have bit3 : e.loc 72 = 0 ∨ e.loc 72 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 14)) (by decide)) (canon_loc hc i _)
+  have bit4 : e.loc 73 = 0 ∨ e.loc 73 = 1 :=
+    bin_of_gate (astep_gate hsat i hi (g := gBin (58 + 15)) (by decide)) (canon_loc hc i _)
+  have grec := astep_gate hsat i hi
+    (g := headToExpr ((List.range SMALL_RBITS).foldl
+      (fun h (k : Nat) => h.addLin (-((2:ℤ) ^ k)) ((bitsFrom (58 + 11) SMALL_RBITS)[k]!))
+      (forcedGe0Term (58 + 10) ((Head.lin 1 (rDist 0)).addConst (-2))))) (by decide)
+  rw [show (headToExpr ((List.range SMALL_RBITS).foldl
+      (fun h (k : Nat) => h.addLin (-((2:ℤ) ^ k)) ((bitsFrom (58 + 11) SMALL_RBITS)[k]!))
+      (forcedGe0Term (58 + 10) ((Head.lin 1 (rDist 0)).addConst (-2))))).eval e.loc
+      = 2 * (e.loc 68 * e.loc (rDist 0)) + -4 * e.loc 68 + e.loc 68 + -1 * e.loc (rDist 0)
+        + -1 * e.loc 69 + -2 * e.loc 70 + -4 * e.loc 71 + -8 * e.loc 72 + -16 * e.loc 73 + 1 from rfl] at grec
+  have gmod : (2 * e.loc 68 * (e.loc (rDist 0) - 2) + e.loc 68 - (e.loc (rDist 0) - 2) - 1)
+      ≡ (e.loc 69 + 2 * e.loc 70 + 4 * e.loc 71 + 8 * e.loc 72 + 16 * e.loc 73) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp grec
+  have pdMem := xdec_pd_mem hsat hc i hi
+  rw [← he] at pdMem
+  have core := forcedGe0_core (D := e.loc (rDist 0) - 2)
+    (S := e.loc 69 + 2 * e.loc 70 + 4 * e.loc 71 + 8 * e.loc 72 + 16 * e.loc 73) gpdB
+    (by rcases bit0 with h|h <;> rcases bit1 with h1|h1 <;> rcases bit2 with h2|h2 <;>
+        rcases bit3 with h3|h3 <;> rcases bit4 with h4|h4 <;> rw [h,h1,h2,h3,h4] <;> norm_num)
+    (by rcases bit0 with h|h <;> rcases bit1 with h1|h1 <;> rcases bit2 with h2|h2 <;>
+        rcases bit3 with h3|h3 <;> rcases bit4 with h4|h4 <;> rw [h,h1,h2,h3,h4] <;> norm_num)
+    gmod (by rcases pdMem with h|h <;> rw [h] <;> norm_num) (by rcases pdMem with h|h <;> rw [h] <;> norm_num)
+  exact ⟨gpdB, by intro h; have := core.1 h; omega, by intro h; have := core.2 h; omega⟩
+
+/-- **Leg (3), case (vacuum, vacuum): `decide_axis` decodes to `.none`.** On a satisfying canonical
+trace whose XP/XN rays both read vacuum, the decoded xdec decision IS `evaluateAxis` — both `.none`.
+The `assert_case` `(0,0)` gate (selected by the `ipw₀·inw₀` one-hot) forces `variant = 0`. Keyed on
+the byte-pinned `automataflStepDesc`; the only extra premises are the ray `what`-codes. -/
+theorem decideAxis_xdec_none (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (hpw : (envAt t i).loc (rWhat 0) = 0) (hnw : (envAt t i).loc (rWhat 1) = 0) :
+    decodeDecision ((envAt t i).loc 58) ((envAt t i).loc 59) ((envAt t i).loc 60) ((envAt t i).loc 61)
+      = evaluateAxis { what := codeToParticle ((envAt t i).loc (rWhat 0)), dist := ((envAt t i).loc (rDist 0)).toNat }
+                     { what := codeToParticle ((envAt t i).loc (rWhat 1)), dist := ((envAt t i).loc (rDist 1)).toNat } := by
+  obtain ⟨ib0, ib1, ib2, isum, iidx⟩ := xdec_ipw_sel hsat hc i hi
+  obtain ⟨nb0, nb1, nb2, nsum, nidx⟩ := xdec_inw_sel hsat hc i hi
+  set e := envAt t i with he
+  rw [hpw] at iidx; rw [hnw] at nidx
+  have hip0 : e.loc 62 = 1 := by rcases ib1 with h|h <;> rcases ib2 with h'|h' <;> omega
+  have hin0 : e.loc 65 = 1 := by rcases nb1 with h|h <;> rcases nb2 with h'|h' <;> omega
+  have hgv := astep_gate hsat i hi (g := headToExpr (Head.zero.addProd 1 [62,65,58])) (by decide)
+  rw [show (headToExpr (Head.zero.addProd 1 [62,65,58])).eval e.loc = e.loc 62 * e.loc 65 * e.loc 58 from rfl,
+     hip0, hin0] at hgv
+  have hvar : e.loc 58 = 0 :=
+    eq_of_modEq_canon (canon_loc hc i _) canon_zero
+      ((gate_modEq_iff (a := e.loc 58) (b := 0) (by ring)).mp hgv)
+  rw [hvar, hpw, hnw]
+  simp [decodeDecision, codeToParticle, evaluateAxis]
+
+/-- **Leg (3), case (attractor, repulsor): `decide_axis` decodes to `.unbalancedPair`.** On a
+satisfying canonical trace whose XP ray reads an attractor and XN a repulsor, the decoded xdec decision
+IS `evaluateAxis`: `.unbalancedPair true pd nd` when the guard `pd > 1` holds (`gpd = 1`), else `.none`.
+The full pipeline closes — `xdec_gpd_sound` (the `forced_ge0` no-wrap heart) resolves the distance
+guard, `xdec_ipw_sel`/`xdec_inw_sel` select the `(2,1)` case, and its four `assert_case` gates force
+`variant = 3·gpd`, `pos = gpd`, `att = gpd·pd`, `rep = gpd·nd`. -/
+theorem decideAxis_xdec_attRep (hsat : Satisfied2 hash automataflStepDesc minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (hpw : (envAt t i).loc (rWhat 0) = 2) (hnw : (envAt t i).loc (rWhat 1) = 1) :
+    decodeDecision ((envAt t i).loc 58) ((envAt t i).loc 59) ((envAt t i).loc 60) ((envAt t i).loc 61)
+      = evaluateAxis { what := codeToParticle ((envAt t i).loc (rWhat 0)), dist := ((envAt t i).loc (rDist 0)).toNat }
+                     { what := codeToParticle ((envAt t i).loc (rWhat 1)), dist := ((envAt t i).loc (rDist 1)).toNat } := by
+  obtain ⟨ib0, ib1, ib2, isum, iidx⟩ := xdec_ipw_sel hsat hc i hi
+  obtain ⟨nb0, nb1, nb2, nsum, nidx⟩ := xdec_inw_sel hsat hc i hi
+  obtain ⟨gpdB, gpd1, gpd0⟩ := xdec_gpd_sound hsat hc i hi
+  have pdMem := xdec_pd_mem hsat hc i hi
+  set e := envAt t i with he
+  rw [hpw] at iidx; rw [hnw] at nidx
+  have hip2 : e.loc 64 = 1 := by rcases ib1 with h|h <;> rcases ib2 with h'|h' <;> omega
+  have hin1 : e.loc 66 = 1 := by rcases nb1 with h|h <;> rcases nb2 with h'|h' <;> omega
+  have hgv := astep_gate hsat i hi
+    (g := headToExpr ((Head.zero.addProd 1 [64,66,58]).addProd (-3) [64,66,68])) (by decide)
+  rw [show (headToExpr ((Head.zero.addProd 1 [64,66,58]).addProd (-3) [64,66,68])).eval e.loc
+      = e.loc 64 * e.loc 66 * e.loc 58 + -3 * (e.loc 64 * e.loc 66 * e.loc 68) from rfl,
+     hip2, hin1] at hgv
+  have hvar : e.loc 58 = 3 * e.loc 68 :=
+    eq_of_modEq_canon (canon_loc hc i _)
+      (by rcases gpdB with h|h <;> rw [h] <;> exact ⟨by norm_num, by norm_num⟩)
+      ((gate_modEq_iff (a := e.loc 58) (b := 3 * e.loc 68) (by ring)).mp hgv)
+  have hgp := astep_gate hsat i hi
+    (g := headToExpr ((Head.zero.addProd 1 [64,66,59]).addProd (-1) [64,66,68])) (by decide)
+  rw [show (headToExpr ((Head.zero.addProd 1 [64,66,59]).addProd (-1) [64,66,68])).eval e.loc
+      = e.loc 64 * e.loc 66 * e.loc 59 + -1 * (e.loc 64 * e.loc 66 * e.loc 68) from rfl,
+     hip2, hin1] at hgp
+  have hpos : e.loc 59 = e.loc 68 :=
+    eq_of_modEq_canon (canon_loc hc i _) (canon_loc hc i _)
+      ((gate_modEq_iff (a := e.loc 59) (b := e.loc 68) (by ring)).mp hgp)
+  have hga := astep_gate hsat i hi
+    (g := headToExpr ((Head.zero.addProd 1 [64,66,60]).addProd (-1) [64,66,68, rDist 0])) (by decide)
+  rw [show (headToExpr ((Head.zero.addProd 1 [64,66,60]).addProd (-1) [64,66,68, rDist 0])).eval e.loc
+      = e.loc 64 * e.loc 66 * e.loc 60 + -1 * (e.loc 64 * e.loc 66 * e.loc 68 * e.loc (rDist 0)) from rfl,
+     hip2, hin1] at hga
+  have hgr := astep_gate hsat i hi
+    (g := headToExpr ((Head.zero.addProd 1 [64,66,61]).addProd (-1) [64,66,68, rDist 1])) (by decide)
+  rw [show (headToExpr ((Head.zero.addProd 1 [64,66,61]).addProd (-1) [64,66,68, rDist 1])).eval e.loc
+      = e.loc 64 * e.loc 66 * e.loc 61 + -1 * (e.loc 64 * e.loc 66 * e.loc 68 * e.loc (rDist 1)) from rfl,
+     hip2, hin1] at hgr
+  have hatt : e.loc 60 = e.loc 68 * e.loc (rDist 0) :=
+    eq_of_modEq_canon (canon_loc hc i _)
+      (by rcases gpdB with h|h <;> rw [h] <;> rcases pdMem with hp|hp <;> rw [hp] <;>
+          exact ⟨by norm_num, by norm_num⟩)
+      ((gate_modEq_iff (a := e.loc 60) (b := e.loc 68 * e.loc (rDist 0)) (by ring)).mp hga)
+  have hrep : e.loc 61 = e.loc 68 * e.loc (rDist 1) :=
+    eq_of_modEq_canon (canon_loc hc i _)
+      (by rcases gpdB with h|h <;> rw [h] <;> rcases xdec_nd_mem hsat hc i hi with hp|hp <;>
+          rw [← he] at hp <;> rw [hp] <;> exact ⟨by norm_num, by norm_num⟩)
+      ((gate_modEq_iff (a := e.loc 61) (b := e.loc 68 * e.loc (rDist 1)) (by ring)).mp hgr)
+  rw [hpw, hnw]
+  rcases gpdB with hg0 | hg1
+  · have hpd1 : e.loc (rDist 0) = 1 := by have := gpd0 hg0; rcases pdMem with h|h <;> omega
+    have hv0 : e.loc 58 = 0 := by rw [hvar, hg0]; ring
+    rw [hv0, hpd1]
+    simp [decodeDecision, codeToParticle, evaluateAxis]
+  · have hpd2 : e.loc (rDist 0) = 2 := by have := gpd1 hg1; rcases pdMem with h|h <;> omega
+    have hv3 : e.loc 58 = 3 := by rw [hvar, hg1]; ring
+    have hp1 : e.loc 59 = 1 := by rw [hpos, hg1]
+    have hattv : e.loc 60 = e.loc (rDist 0) := by rw [hatt, hg1]; ring
+    have hrepv : e.loc 61 = e.loc (rDist 1) := by rw [hrep, hg1]; ring
+    rw [hv3, hp1, hattv, hrepv, hpd2]
+    simp [decodeDecision, codeToParticle, evaluateAxis]
+
+end DecideXdec
+
+/-! ## §4.9 — NON-VACUITY for leg (3): the `forced_ge0` bit + `assert_case` gate REJECT wrong witnesses
+(`#guard`).
+
+The `forced_ge0` no-wrap soundness is only meaningful if the gadget can FAIL: a forged `gpd = 1` on a
+board where `pd = 1` (`pd − 2 = −1 < 0`) has NO 5-bit non-negativity decomposition — its recomposition
+term `2·1·1 + 1 − 1 − 1 = 1`… wait, the forged direction: claiming `gpd = 1` forces the range witness
+to encode `pd − 2`; when `pd = 1` that is `−1`, which no sum of five booleans equals, so the gate is
+UNSATISFIABLE. And the `(2,1)` `assert_case` variant gate rejects a decision that claims
+`unbalancedPair` (`variant = 3`) while `gpd = 0`. Both shown as two-sided `#guard`s below. -/
+
+/-- `gpd = 1`, `pd = 2`: the non-negativity witness `2·gpd·(pd−2) + gpd − (pd−2) − 1 = 0` recomposes
+with ALL range bits `0` — the gadget ACCEPTS. -/
+def ge0GoodAsg : Assignment := fun c =>
+  if c = 68 then 1 else if c = rDist 0 then 2 else 0
+
+/-- `gpd = 1`, `pd = 1`: term `= 2·1·1 + 1 − 1 − 1 = 1`; with ALL range bits 0 the recomposition is
+`1 ≠ 0` — a FORGED `[pd ≥ 2]` bit has no satisfying decomposition here. -/
+def ge0ForgeAsg : Assignment := fun c => if c = 68 then 1 else if c = rDist 0 then 1 else 0
+
+/-- The exact `forced_ge0` recomposition gate body for the gpd gadget (term − Σ 2^k·bitₖ). -/
+def gpdRecompExpr : EmittedExpr :=
+  headToExpr ((List.range SMALL_RBITS).foldl
+    (fun h (k : Nat) => h.addLin (-((2:ℤ) ^ k)) ((bitsFrom (58 + 11) SMALL_RBITS)[k]!))
+    (forcedGe0Term (58 + 10) ((Head.lin 1 (rDist 0)).addConst (-2))))
+
+#guard gpdRecompExpr.eval ge0GoodAsg == 0     -- pd = 2, gpd = 1, bit₁ = 1: term recomposes, gate holds
+#guard gpdRecompExpr.eval ge0ForgeAsg != 0    -- pd = 1, forged gpd = 1: NO decomposition, gate FAILS
+
+/-- The `(2,1)` `assert_case` variant gate `ipw₂·inw₁·(variant − 3·gpd)`. A decision claiming
+`unbalancedPair` (`variant = 3`) while the guard failed (`gpd = 0`) makes it `≠ 0`. -/
+def acVariantExpr : EmittedExpr :=
+  headToExpr ((Head.zero.addProd 1 [64,66,58]).addProd (-3) [64,66,68])
+/-- Selected case (`ipw₂ = inw₁ = 1`), `gpd = 1`, `variant = 3`: consistent — gate holds. -/
+def acGoodAsg : Assignment := fun c => if c = 64 ∨ c = 66 ∨ c = 68 then 1 else if c = 58 then 3 else 0
+/-- Selected case, but `gpd = 0` while `variant = 3` claims `unbalancedPair` — a LIE; gate FAILS. -/
+def acForgeAsg : Assignment := fun c => if c = 64 ∨ c = 66 then 1 else if c = 58 then 3 else 0
+
+#guard acVariantExpr.eval acGoodAsg == 0      -- variant = 3·gpd = 3: consistent
+#guard acVariantExpr.eval acForgeAsg != 0     -- variant = 3 but gpd = 0: unbalancedPair LIE FAILS
+
 /-! ## §5 — NON-VACUITY: the auto-pin gate is a two-sided discriminator (`#guard`).
 
 A full satisfying trace for all 410 constraints (ray/decide/step witness columns + the two Poseidon2
@@ -1532,6 +1910,10 @@ def rayVacBadAsgXN : Assignment := fun c => if c = rHib 1 then 1 else 0
 #print axioms raycast_xn_of_sat
 #print axioms raycast_yp_of_sat
 #print axioms raycast_yn_of_sat
+#print axioms forcedGe0_core
+#print axioms xdec_gpd_sound
+#print axioms decideAxis_xdec_none
+#print axioms decideAxis_xdec_attRep
 
 /-! ## §7 — THE NAMED RESIDUAL (what remains for the full composition).
 
@@ -1549,13 +1931,31 @@ Proven here, keyed on the byte-pinned `automataflStepDesc`, canonical over BabyB
     THREE rays IN FULL, keyed on the byte-pinned `rayConstraints d dx dy` for `d = 1,2,3` (each with
     its own `inWindowCols`/`rcReadHead` closed form: `XN` shifts `−x`; `YP`/`YN` scan ROWS via
     `selRow`). **SUB-LEMMA (2) IS NOW CLOSED FOR ALL FOUR RAYS** — leg (2) is complete;
-  * `offset_of_sat` — the value-range half of sub-lemma (4).
+  * `offset_of_sat` — the value-range half of sub-lemma (4);
+  * **leg (3), PARTIAL — the `forced_ge0` NO-WRAP heart + the `decide_axis` case selection + two of the
+    nine cases IN FULL:**
+      - `forcedGe0_core` — the no-wrap soundness heart: a 5-bit range witness pins the ACTUAL
+        comparison (`SMALL_RBITS = 5` ⇒ magnitudes `< 2^5 ≪ p`, the exact no-wrap window). PURE, the
+        lemma every distance guard rests on;
+      - `xdec_gpd_sound` — `forcedGe0_core` APPLIED to the byte-pinned descriptor: the guard column `68`
+        genuinely decides `rDist 0 ≥ 2` (the field-congruence trap discharged, not tripped);
+      - `xdec_pd_mem` / `xdec_nd_mem` — the ray distances are `n = 2` step counts (`∈ {1,2}`);
+      - `xdec_ipw_sel` / `xdec_inw_sel` — the `ipw`/`inw` one-hots select exactly the ray-code case;
+      - `decideAxis_xdec_none` (vacuum/vacuum ⇒ `.none`) and `decideAxis_xdec_attRep`
+        (attractor/repulsor ⇒ `.unbalancedPair`) — TWO of the nine `decide_axis` cases closed IN FULL:
+        the decoded `(variant, pos, att, rep)` = `evaluateAxis` of the two rays, keyed on the byte-pinned
+        object, only the ray `what`-codes as premises. §4.9 canary `#guard`s show the `forced_ge0` bit
+        and the `assert_case` gate REJECT forged witnesses (a `[pd ≥ 2]` lie at `pd = 1`; an
+        `unbalancedPair` claim with `gpd = 0`).
 
-REMAINING (the heavier soundness legs, each a multi-file effort; NOT assumed, NOT stubbed):
-  (3) `evaluateAxis` refinement — the `decide_axis` 9×4 truth table + `forced_ge0` range gadgets
-      force `Decision = evaluateAxis` (watch the field-congruence trap on the `ge0` bits);
+REMAINING (each NOT assumed, NOT stubbed — no `sorry`, no placeholder):
+  (3, rest) the OTHER SEVEN `decide_axis` cases (`(1,2)`/`(1,0)`/`(0,1)`/`(2,0)`/`(0,2)` each a single
+      `gpd`/`gnd` guard, mechanical replays of `attRep`; `(1,1)`/`(2,2)` need the `lt`/`gt`/`le`/`gm`
+      + `min` gadgets — all six `forced_ge0` closed forms are already verified) AND the `ydec` axis
+      (base `105`, rays `d = 2,3` — a column-shift replay of `xdec`); then the union `Decision =
+      evaluateAxis` over all `(pw, nw)`;
   (4) `chooseOffset` — the score-compare (`sgt/slt`, 20-bit) soundness closing offset = `chooseOffset`;
   (5) the step + board-update fold ⇒ `boardDecode(new) = automatonStep(boardDecode(old))`.
-The top-level composition is deliberately NOT stated as a proven theorem until (2')-(5) close. -/
+The top-level composition is deliberately NOT stated as a proven theorem until (3, rest)-(5) close. -/
 
 end Dregg2.Circuit.Emit.AutomataflStepRefine
