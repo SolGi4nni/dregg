@@ -33,6 +33,7 @@ the artifact IS the Lean author's output.
 import Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
 import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
 import Dregg2.Circuit.Emit.AttestedFactMembershipEmit
+import Dregg2.Circuit.Emit.AutomataflStepEmit
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
@@ -87,6 +88,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.AdjacencyMembershipEmit.adjacencyDesc)
   , ("attested-fact-membership.json",
       Dregg2.Circuit.Emit.AttestedFactMembershipEmit.attestedFactMembershipDesc)
+  , ("automatafl-step.json",
+      Dregg2.Circuit.Emit.AutomataflStepEmit.automataflStepDesc)
   , ("blinded-membership-4ary-depth2.json",
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 2)
   , ("blinded-membership-4ary-depth8.json",
@@ -139,11 +142,11 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding.turnChainBindingDescriptor)
   ]
 
-/- The routing table covers the checked-in directory exactly (28 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly (29 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 28
+#guard byNameDescriptors.length == 29
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
