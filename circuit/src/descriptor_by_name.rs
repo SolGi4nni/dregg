@@ -148,6 +148,7 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-effectvm-custom-v1",
         crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON,
     ),
+    ("dregg-dyck-parse-v1", DYCK_PARSE_JSON),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -261,6 +262,16 @@ const BLINDED_MEMBERSHIP_JSON: &str =
 /// body↔membership-leaf binding). Its Rust witness builder is
 /// [`crate::derivation_witness::derivation_descriptor_witness`].
 const DERIVATION_JSON: &str = include_str!("../descriptors/by-name/derivation.json");
+/// The **Dyck pushdown parse** family (`dregg-dyck-parse-v1`), authored in
+/// `metatheory/Dregg2/Circuit/Emit/DyckStackEmit.lean` (`dyckParseDesc`) and byte-pinned there by
+/// an `emitVmJson2` `#guard`. This is the loader-flip successor to the hand-authored IR-v1
+/// `dsl::dyck_stack::dyck_parse_descriptor`: the DEPLOYED dispatch serves the Lean-emitted
+/// descriptor (38 wide: the 23 Rust `dyck_stack::col` base columns index for index, + the `ACC`
+/// copy-forward accumulator + 2×7 chip lanes), so the deployed object IS the one the
+/// `DyckStackRefine` theorems read. Its Rust witness lift is
+/// [`crate::dsl::dyck_stack::lift_witness_to_v2`]; the prove-path teeth live in
+/// `circuit-prove/tests/dyck_parse_tamper.rs`.
+const DYCK_PARSE_JSON: &str = include_str!("../descriptors/by-name/dyck-parse.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
@@ -492,6 +503,40 @@ mod tests {
                 "the deployed `{name}` descriptor must be the Lean-emitted welded shape"
             );
         }
+    }
+
+    /// THE DYCK LOADER FLIP: `dregg-dyck-parse-v1` dispatches to the Lean-emitted, byte-pinned
+    /// golden (`DyckStackEmit.dyckParseDesc`), decodes well-formed, and carries the emitted shape
+    /// (38 wide, 4 PIs, the two Poseidon2 chip lookups — the arity-4 entry hash and the arity-2
+    /// running-hash step). A regression to the hand-authored Rust AIR (23 wide, zero lookups)
+    /// fails HERE, not silently at verify time.
+    #[test]
+    fn dyck_parse_dispatches_to_the_lean_emitted_golden() {
+        let desc = descriptor_by_name("dregg-dyck-parse-v1")
+            .expect("the Dyck parse descriptor must dispatch");
+        assert_eq!(desc.name, "dregg-dyck-parse-v1");
+        assert_eq!(
+            desc.trace_width, 38,
+            "the Lean-emitted width (23 base + ACC + 14 lanes)"
+        );
+        assert_eq!(desc.public_input_count, 4);
+        check_descriptor2_wellformed(&desc).expect("the emitted Dyck descriptor is well-formed");
+        let arities: Vec<i64> = desc
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::Lookup(l) if l.table == TID_P2 => match l.tuple.first() {
+                    Some(LeanExpr::Const(v)) => Some(*v),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            arities,
+            vec![4, 2],
+            "the entry-hash (arity 4) and running-hash (arity 2) chip lookups, in emit order"
+        );
     }
 
     /// PedersenEquality has NO descriptor (off-STARK) — its name list is empty and no

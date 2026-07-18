@@ -1115,6 +1115,42 @@ fn table_commitment_of() -> BabyBear {
 }
 
 // ============================================================================
+// The IR-v2 witness lift — the loader-flip prover side
+// ============================================================================
+
+/// The `ACC` copy-forward accumulator column of the Lean-emitted IR-v2 descriptor
+/// (`DyckStackEmit.lean` §1): `acc[0] = pi[TABLE_COMMITMENT]`, `acc[i+1] = running[i]` — the
+/// prior-accumulator carrier that makes the rolling `hash_2_to_1` chain single-row.
+pub const V2_ACC: usize = DYCK_WIDTH;
+
+/// The Lean-emitted IR-v2 trace width: the 23 base columns ([`DYCK_WIDTH`], index for index the
+/// `col` layout above) + [`V2_ACC`] + 2×7 exposed chip lanes (filled by the descriptor prover).
+pub const DYCK_V2_WIDTH: usize = DYCK_WIDTH + 1 + 14;
+
+/// Lift an IR-v1 witness (from [`build_witness`] / [`build_brackets_witness`] /
+/// [`build_nested_witness`]) to the base trace of the Lean-emitted IR-v2 descriptor
+/// (`descriptor_by_name("dregg-dyck-parse-v1")`, authored in `DyckStackEmit.lean`).
+///
+/// The v2 base columns `0..23` are the v1 columns index for index, so the lift is: widen each row
+/// to [`DYCK_V2_WIDTH`] and fill [`V2_ACC`] with the copy-forward chain
+/// (`acc[0] = table_commitment`, `acc[i+1] = running[i]`). The 14 chip-lane columns are left zero —
+/// `prove_vm_descriptor2` derives them from the descriptor's chip lookups (`trace_with_chip_lanes`),
+/// exactly as every other emitted family's producer does.
+pub fn lift_witness_to_v2(trace: &[Vec<BabyBear>]) -> Vec<Vec<BabyBear>> {
+    let mut acc = dyck_rule_table_commitment();
+    trace
+        .iter()
+        .map(|row| {
+            let mut v2 = row.clone();
+            v2.resize(DYCK_V2_WIDTH, BabyBear::ZERO);
+            v2[V2_ACC] = acc;
+            acc = row[col::RUNNING_HASH];
+            v2
+        })
+        .collect()
+}
+
+// ============================================================================
 // Satisfaction predicate — the Rust `Satisfied2` driver
 // ============================================================================
 

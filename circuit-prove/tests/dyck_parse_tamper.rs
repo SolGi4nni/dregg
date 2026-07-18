@@ -34,11 +34,24 @@
 //!     (isolated to that single vanishing poly). The depth deltas are field congruences,
 //!     so a depth of `p − 1` reads as `−1` and satisfies every one of them; only the
 //!     range tooth refuses it.
+//!
+//! **THE LOADER FLIP** (the second half of this file): the DEPLOYED Dyck descriptor is the
+//! Lean-emitted, byte-pinned `DyckStackEmit.dyckParseDesc`, served by `descriptor_by_name`
+//! (`dregg-dyck-parse-v1`). The `emitted_dyck_*` tests drive THAT object end-to-end through
+//! `prove_vm_descriptor2`/`verify_vm_descriptor2`: both honest words accept, and each tamper
+//! family above is re-fired at the emitted path and REJECTS. The v1 mirror above is retained
+//! for its per-tooth isolation; the emitted section is the deployed accept/reject.
 
+use std::panic::AssertUnwindSafe;
+
+use dregg_circuit::descriptor_by_name::descriptor_by_name;
+use dregg_circuit::descriptor_ir2::{
+    EffectVmDescriptor2, MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
+};
 use dregg_circuit::dsl::circuit::{CircuitDescriptor, ConstraintExpr};
 use dregg_circuit::dsl::dyck_stack::{
-    RULE_EMPTY, STACK_D, SYM_CL, SYM_EMPTY, build_brackets_witness, build_nested_witness, col,
-    dyck_parse_descriptor, dyck_satisfied, pi,
+    DYCK_V2_WIDTH, RULE_EMPTY, STACK_D, SYM_CL, SYM_EMPTY, SYM_S, build_brackets_witness,
+    build_nested_witness, col, dyck_parse_descriptor, dyck_satisfied, lift_witness_to_v2, pi,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 
@@ -745,5 +758,143 @@ fn nested_and_flat_commitments_differ() {
         flat_pi[pi::ROUTE_COMMITMENT],
         nested_pi[pi::ROUTE_COMMITMENT],
         "different parses must fold to different route_commitments"
+    );
+}
+
+// ============================================================================
+// THE LOADER FLIP: the DEPLOYED path is the Lean-emitted descriptor, LOADED
+// by `descriptor_by_name` and proven through the real IR-v2 batch prover.
+//
+// Everything above this line drives the hand-authored IR-v1 mirror
+// (`dyck_parse_descriptor` + `dyck_satisfied`) — retained because its
+// pattern-matched constraint ISOLATION credits each reject to a named tooth.
+// Everything below drives the byte-pinned emitted descriptor
+// (`DyckStackEmit.lean` → `circuit/descriptors/by-name/dyck-parse.json`)
+// end-to-end: honest witnesses PROVE + VERIFY, tampers REJECT through
+// `prove_vm_descriptor2`/`verify_vm_descriptor2` — the same accept/reject the
+// production dispatch serves.
+// ============================================================================
+
+/// The dispatched, Lean-emitted Dyck descriptor.
+fn emitted_desc() -> EffectVmDescriptor2 {
+    let desc = descriptor_by_name("dregg-dyck-parse-v1")
+        .expect("the deployed by-name dispatch must serve the Lean-emitted Dyck descriptor");
+    assert_eq!(desc.trace_width, DYCK_V2_WIDTH, "the emitted 38-wide shape");
+    desc
+}
+
+/// Prove + verify through the emitted descriptor; `false` on ANY refusal (the pre-flight
+/// replay's `Err`, a prover panic, or a verifier reject).
+fn v2_accepts(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -> bool {
+    let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let proof = prove_vm_descriptor2(desc, trace, pis, &MemBoundaryWitness::default(), &[])?;
+        verify_vm_descriptor2(desc, &proof, pis)
+    }));
+    matches!(r, Ok(Ok(())))
+}
+
+/// **The flip's headline**: the honest `"[]"` parse PROVES and VERIFIES through the LOADED
+/// emitted descriptor — and a forged `route_commitment` public input is REJECTED by the
+/// verifier on the SAME proof, so the accept is non-vacuous and the PI binding is real.
+#[test]
+fn emitted_dyck_brackets_proves_and_verifies() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_brackets_witness();
+    let v2 = lift_witness_to_v2(&trace);
+
+    let proof = prove_vm_descriptor2(&desc, &v2, &pis, &MemBoundaryWitness::default(), &[])
+        .expect("the honest '[]' parse must prove through the emitted descriptor");
+    verify_vm_descriptor2(&desc, &proof, &pis).expect("the honest proof must verify");
+
+    let mut forged = pis.clone();
+    forged[pi::ROUTE_COMMITMENT] += BabyBear::ONE;
+    assert!(
+        verify_vm_descriptor2(&desc, &proof, &forged).is_err(),
+        "a forged route_commitment must be REJECTED by the verifier (last-row PiBinding)"
+    );
+}
+
+/// The honest **nested** `"[[]]"` parse — the slice-2 remainder-shift word — proves and
+/// verifies through the emitted descriptor too.
+#[test]
+fn emitted_dyck_nested_proves_and_verifies() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_nested_witness();
+    assert!(
+        v2_accepts(&desc, &lift_witness_to_v2(&trace), &pis),
+        "the honest '[[]]' parse must prove + verify through the emitted descriptor"
+    );
+}
+
+/// A **wrapped depth** (`p − 1` masquerading as `−1`) is REJECTED by the emitted path — the
+/// same tamper `tamper_wrapped_depth_rejects` isolates on the v1 mirror, here refused by the
+/// deployed prove/verify pipeline.
+#[test]
+fn emitted_dyck_wrapped_depth_rejects() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_brackets_witness();
+    let mut tampered = lift_witness_to_v2(&trace);
+    tampered[3][col::STACK_DEPTH] = -BabyBear::ONE;
+    tampered[3][col::DEPTH_NEXT] = -BabyBear::new(2);
+    assert!(
+        !v2_accepts(&desc, &tampered, &pis),
+        "a wrapped STACK_DEPTH must REJECT through the emitted descriptor"
+    );
+}
+
+/// An **occupancy hole below the pointer** (nested row 3 claims depth 4 with cell 1 EMPTY) is
+/// REJECTED by the emitted path — the depth↔occupancy tooth rode through the emit.
+#[test]
+fn emitted_dyck_occupancy_hole_rejects() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_nested_witness();
+    let mut tampered = lift_witness_to_v2(&trace);
+    tampered[NROW_AFTER_NESTED_PUSH][col::STACK1] = BabyBear::new(SYM_EMPTY);
+    assert!(
+        !v2_accepts(&desc, &tampered, &pis),
+        "a hole below the pointer must REJECT through the emitted descriptor"
+    );
+}
+
+/// A **dropped remainder** (the slice-1 unsoundness: the outer `cl` evaporates under the
+/// nested push) is REJECTED by the emitted path — the remainder-shift window rode through.
+#[test]
+fn emitted_dyck_dropped_remainder_rejects() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_nested_witness();
+    let mut tampered = lift_witness_to_v2(&trace);
+    tampered[NROW_AFTER_NESTED_PUSH][col::STACK3] = BabyBear::new(SYM_EMPTY);
+    assert!(
+        !v2_accepts(&desc, &tampered, &pis),
+        "a dropped remainder must REJECT through the emitted descriptor"
+    );
+}
+
+/// A **term row consuming the nonterminal `S`** is REJECTED by the emitted path — the
+/// terminal-top tooth (what makes the parsed word decodable) rode through.
+#[test]
+fn emitted_dyck_term_consumes_nonterminal_rejects() {
+    let desc = emitted_desc();
+    let (trace, pis) = build_brackets_witness();
+    let mut tampered = lift_witness_to_v2(&trace);
+    tampered[ROW_TERM_OPEN][col::STACK0] = BabyBear::new(SYM_S);
+    assert!(
+        !v2_accepts(&desc, &tampered, &pis),
+        "a term row consuming the nonterminal S must REJECT through the emitted descriptor"
+    );
+}
+
+/// A **forged table-commitment seed** — claiming this parse under a DIFFERENT grammar's rule
+/// table — is REJECTED: the first-row `ACC` PiBinding pins the seed the running hash folded
+/// from, so a route cannot be re-homed onto another table.
+#[test]
+fn emitted_dyck_forged_table_commitment_rejects() {
+    let desc = emitted_desc();
+    let (trace, mut pis) = build_brackets_witness();
+    let v2 = lift_witness_to_v2(&trace);
+    pis[pi::TABLE_COMMITMENT] += BabyBear::ONE;
+    assert!(
+        !v2_accepts(&desc, &v2, &pis),
+        "a forged table_commitment must REJECT through the emitted descriptor"
     );
 }

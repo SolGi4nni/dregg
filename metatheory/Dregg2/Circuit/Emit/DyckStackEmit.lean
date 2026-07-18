@@ -73,14 +73,22 @@ tooth means what it says, and `DyckStackRefine.depth_of_sat` DISCHARGES `DyckCan
    lanes). The chip lanes are what the IR-v2 lookup lowering costs; the base columns 0..22 are index
    for index the Rust `dyck_stack::col` layout, so a reader can diff the two by eye.
 
-## Why the loader flip is NOT in this change
+## The loader flip — LANDED
 
-`dyck_parse_descriptor` returns an IR-v1 `CircuitDescriptor` (`ConstraintExpr::Gated`/`Transition`/
-`Hash4to1`/`ChainedHash2to1`), and `circuit-prove/tests/dyck_parse_tamper.rs` pattern-MATCHES on
-those v1 variants to isolate each tooth. IR-v2 has no such variants, and no v2→v1 lowering exists.
-Pointing the loader here therefore means rewriting the prover-side driver and the tamper suite, not
-swapping a constructor. The emitted, byte-pinned descriptor + this registration are the law-#1
-spine; the loader flip is the tracked follow-up.
+`descriptor_by_name` (`circuit/src/descriptor_by_name.rs`) now serves `dregg-dyck-parse-v1` from
+the byte-pinned `dyck-parse.json` this file emits, so the DEPLOYED dispatch object IS this
+descriptor. The prover side is `dyck_stack::lift_witness_to_v2` (the 23 base columns are index for
+index the Rust layout; the lift adds the `ACC` copy-forward chain and the descriptor prover fills
+the chip lanes), and `circuit-prove/tests/dyck_parse_tamper.rs`'s `emitted_dyck_*` tests drive it
+end-to-end: both honest words prove + verify through `prove_vm_descriptor2`, and the wrapped-depth /
+occupancy-hole / dropped-remainder / terminal-top / forged-PI tampers all REJECT on the emitted
+path.
+
+What REMAINS of the v1 mirror: `dyck_parse_descriptor` + `dyck_satisfied` still exist as the
+tamper suite's per-tooth ISOLATION harness (its finders pattern-match IR-v1 `ConstraintExpr`
+variants to credit each reject to a named constraint; IR-v2 has no such variants). Retiring them
+means porting that isolation to `VmConstraint2` shapes (and `DyckStackRefine`'s reading along with
+it) — the tracked residual of the flip, test-side only: no deployed path constructs the Rust AIR.
 
 ## Axiom hygiene
 
