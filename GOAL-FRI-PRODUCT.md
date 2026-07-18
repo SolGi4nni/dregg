@@ -154,7 +154,9 @@ delete the hand-Go. Closes circuit-faithfulness (#2); NOT the FRI floor (#1) or 
   — all green in-tree (1151 jobs), sorry-free, #assert_axioms-clean, EACH Opus-adversarially confirmed
   bit-exact-vs-Go with NO mirror (KAT+edge). Named seam: Fr=CommRing (primality Pratt cert deferred, non-
   load-bearing). Swarm collapsed serial Stages A-C.2 into ONE parallel cycle.
-- **Cycle 2 FIRING** (wf_85813b30): architecture de-risk — emit-faithful + emit-JSON + a REAL ∀ toy-refinement
+- ✅ **Cycle 2 DONE** (dae713110): architecture de-risked — canonicity_refines is a REAL ∀-theorem (not KAT) + the Go interp genuinely os.ReadFile+Unmarshals the committed 20KB canonicity_toy.json (data-driven, no mirror). emit_faithful round-trip proven. real-e2e-socket ✓.
+- ✅ **Cycle 3 DONE** (1a7fa4486 + 7f5df61a6 + 40e364efa): ALL 5 per-check leaf refinements — Merkle(80% mass, Poseidon2Fr-sourced), Fold(deg-4 ext, BabyBearFr-sourced), BatchTable, QueryPow, Segment — each gHolds(emit)↔check a REAL ∀-theorem w/ reject polarity, adversarially real-refinement, gadget-sourced (no mirror except BatchTable's flagged inline-algebra), 5-file subtree builds green (1174 jobs). Fable-5 credits hit mid-cycle → Merkle+Fold salvaged on Opus. ⚠ root build RED from OTHER lanes' WIP (AutomataflStepRefine/CommitmentTreeAppendEmit — not ours, untouched). Follow-ups: BatchTable reuse stark_constraint_interp, merkle_open+boolean-decode.
+- **Cycle 2 (superseded label)** (wf_85813b30): architecture de-risk — emit-faithful + emit-JSON + a REAL ∀ toy-refinement
   (gHolds(emitCanonicity)↔canonical) + the generic Go interp consuming the ACTUAL Lean-emitted bytes;
   adversarial gate = the mirror-trap (Go must be data-driven from the emitted JSON, not a re-authored twin).
 - NEXT: cycle 3-4 per-check emits (Merkle+FRI-core=80% mass, batch-table reuses stark_constraint_interp) →
