@@ -16,25 +16,32 @@ the grammar derivation — four rungs, one `Hypergraph.bridge`, differing only i
 
 ## The subsumption payoff
 
-`Circuit/Emit/DyckStackRefine.mrun_imp_replay` — the design's named hard multi-row induction
-("forward trace of per-row-valid pushdown steps ⇒ backward `Replay` inductive, certificate
-RECONSTRUCTED by `rulesOf`") — is an INSTANCE of the generic `Hypergraph.Cert.foldSound` at
+`AbstractMachine.mrun_imp_replay` — the design's named hard multi-row induction ("forward trace of
+per-row-valid pushdown steps ⇒ backward `Replay` inductive, certificate RECONSTRUCTED by
+`rulesOf`"; stated by the circuit refinement as `DyckStackRefine.mrun_imp_replay`, which re-exports
+the SAME declaration) — is an INSTANCE of the generic `Hypergraph.Cert.foldSound` at
 `out := rowRules` (a `rule` row contributes `[r]`, others `[]`) and
 `Sem rs row := Replay dyck rs row.inp row.stk`. `mrun_imp_replay_via_fold` below re-derives the
 IDENTICAL statement through the generic fold: the bespoke induction's content splits into
 
   * `mrun_cert`   — an `MRun` IS a chain certificate over `MStep` ending in an `MFinal` row
                     (run-shape, no pushdown content), and
-  * `mstep_step`  — ONE local step is sound for prepending (the per-row content §6 already
-                    isolated in `MStep`),
+  * `mstep_step`  — ONE local step is sound for prepending (the per-row content the machine layer
+                    already isolated in `MStep`),
 
 and `Cert.foldSound` supplies the whole multi-row induction. `subsumption_stmt_eq` checks (by
 elaboration) that the statement types coincide — the generic fold genuinely subsumes the bespoke
-proof, which stays untouched in `DyckStackRefine`.
+proof, which stays untouched in `AbstractMachine`.
+
+(The machine layer `MRow`/`MStep`/`MRun`/`rulesOf` used to live in
+`Circuit/Emit/DyckStackRefine.lean` §6, and this file imported the CIRCUIT module to state the
+subsumption against the real defs — a Crypto←Circuit layering inversion. The layer carries no
+circuit-specific content, so it was extracted DOWN into `Dregg2.Crypto.AbstractMachine`; both this
+file and `DyckStackRefine` now import it downward, and the inversion is gone.)
 -/
 import Dregg2.Crypto.CfgCompact
 import Dregg2.Crypto.Hypergraph
-import Dregg2.Circuit.Emit.DyckStackRefine
+import Dregg2.Crypto.AbstractMachine
 import Dregg2.Tactics
 
 namespace Dregg2.Crypto.ReplayAsCert
@@ -136,7 +143,7 @@ for prepending is `mstep_step`; `Cert.foldSound` at `out := rowRules`,
 
 section Subsumption
 
-open Dregg2.Circuit.Emit.DyckStackRefine
+open Dregg2.Crypto.AbstractMachine
 open Dregg2.Crypto.Cfg.Reference (Brk NTs dyck rBracket rEmpty)
 
 /-- The `out` of the fold: a `rule` row contributes its production to the reconstructed wire
@@ -220,12 +227,13 @@ theorem mrun_imp_replay_via_fold {a : MRow} {rest : List MRow} (h : MRun a rest)
   exact hfold
 
 /-- The statements coincide — this elaborates ONLY because `mrun_imp_replay_via_fold`'s type is
-(definitionally) the type of `DyckStackRefine.mrun_imp_replay`: the generic fold derivation proves
-the same theorem the bespoke induction proves. -/
+(definitionally) the type of `AbstractMachine.mrun_imp_replay` (the SAME declaration
+`DyckStackRefine.mrun_imp_replay` re-exports): the generic fold derivation proves the same theorem
+the bespoke induction proves. -/
 theorem subsumption_stmt_eq :
     (∀ {a : MRow} {rest : List MRow}, MRun a rest →
       Replay dyck (rulesOf (a :: rest)) a.inp a.stk) :=
-  @Dregg2.Circuit.Emit.DyckStackRefine.mrun_imp_replay
+  @Dregg2.Crypto.AbstractMachine.mrun_imp_replay
 
 #assert_axioms rulesOf_eq_flatMap
 #assert_axioms mstep_step
@@ -239,7 +247,7 @@ end Subsumption
 namespace Reference
 
 open Dregg2.Crypto.Cfg.Reference Brk
-open Dregg2.Circuit.Emit.DyckStackRefine (bRow0 bracketsRest bracketsRows_run rulesOf_brackets)
+open Dregg2.Crypto.AbstractMachine (bRow0 bracketsRest bracketsRows_run rulesOf_brackets)
 
 /-- The accepting pole: the genuine 2-rule replay of `"[]"`
 (`CfgCompact.Reference.brackets_replays`) yields, through the rung, a genuine machine-step chain
