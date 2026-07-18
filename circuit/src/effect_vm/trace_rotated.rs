@@ -1,26 +1,19 @@
-//! # `trace_rotated` — THE LIVE rotated (R=24) trace generator (G1).
+//! # `trace_rotated` — the live rotated (R=24) trace generator.
 //!
-//! `docs/ROTATION-CUTOVER.md` §5 deferred the rotated trace BUILDER: the staged keystones
-//! (`EffectVmEmitRotationV3.lean`) prove the rotated R=24 cohort sound and the staged probe
-//! measures the SHAPE, but the LIVE machinery that turns a real turn into the 327-column
-//! rotated trace existed ONLY hand-welded inside `circuit/tests/effect_vm_rotation_flip.rs`
-//! (`fill_block` / `fill_caveat`). This module PROMOTES that hand-welding into a genuine
-//! generator: from the v1 186-column trace (`generate_effect_vm_trace`) plus the per-turn
-//! producer witness limbs, it emits the rotated 327-column trace — the two rotated blocks
-//! (BEFORE / AFTER) + the widened-caveat region + every chained `wireCommitR` digest — and
-//! the 38-PI vector (34 v1 + 4 appended) the staged registry descriptor
-//! (`transferVmDescriptor2R24`) pins.
+//! From the 188-column v1 face plus a per-turn rotated witness, this module builds the current
+//! 709-column ungraduated trace: two 239-column state blocks and the 43-column caveat region.
+//! Chip graduation appends 7 lanes at each of 134 sites, producing the deployed 1647-column base
+//! shape. The common rotated PI vector is 46 entries (42 v1 + four rotated commit pins); wide
+//! members append the DFA and faithful-commitment carriers from that base.
 //!
 //! ## Law #1 — the shapes come from Lean
 //!
 //! Every quantity this module computes matches a Lean definition (the Rust interprets, never
 //! invents):
 //!
-//! * the 31-limb absorption ORDER is `EffectVmEmitRotationV3.preLimbsAt`
-//!   (cells_root · r0..r23 · cap_root · nullifier_root · heap_root · lifecycle · epoch ·
-//!   committed_height, then iroot LAST) — the caller's `RotatedBlockWitness::pre_limbs` is
-//!   already in this order (it is the producer `dregg_turn::rotation_witness::produce`'s
-//!   output);
+//! * the 178-limb absorption order is `EffectVmEmitRotationV3.preLimbsAt`; the caller's
+//!   `RotatedBlockWitness::pre_limbs` is already in that order, and `NUM_PRE_LIMBS` plus every
+//!   faithful-8 group coordinate are generated from the verified Lean `rotated178` layout;
 //! * the welds (`r0↔balance_lo`, `r1↔nonce`, `r2↔balance_hi`, `r3..r10↔fields`,
 //!   `cap_root↔cap_root`) are `EffectVmEmitRotationV3.weldsAt` — overridden here per-row from
 //!   THAT row's own v1 state block so the weld gates `colEq` hold on EVERY row;
@@ -32,18 +25,11 @@
 //!   `EffectVmEmitRotationCaveat.{RotCaveatManifest, caveatCommit}` (1 count + 4 × 7-felt
 //!   entries `[type_tag, domain_tag, key, p0..p3]`, then a 10-site chain).
 //!
-//! The four appended PI carriers land on the columns the staged registry descriptor's
-//! `pi_binding` constraints pin (verified against the committed TSV): PI 34 ← row-0
-//! before-block `state_commit` (col 218), PI 35 ← last-row after-block `state_commit`
-//! (col 261), PI 36 ← last-row after-block `committed_height` limb (col 259), PI 37 ←
-//! last-row caveat-region `caveat_commit` (col 310).
+//! The four appended PI carriers are PI 42..45: row-0 BEFORE `state_commit`, last-row AFTER
+//! `state_commit`, last-row AFTER `committed_height`, and last-row `caveat_commit`.
 //!
-//! ## STAGED-ADDITIVE
-//!
-//! NOTHING on the live v1 wire path calls this generator: the live 186-column trace +
-//! IR-v1 prover stay the byte-identical default. This is the rotated path BESIDE it, behind
-//! the IR-v2 route in `sdk::full_turn_proof` (gated). The flag-day descriptor regen + VK
-//! bump is a SEPARATE deliberate act (G2/G5).
+//! The deployed per-turn proof uses the wide rotated registry path. Layout refactors here must remain
+//! byte-preserving unless a separately acknowledged federation re-key deliberately regenerates VKs.
 
 use super::bare_floor_refuse_weld;
 use super::columns::rotation::caveat as cav;
@@ -83,22 +69,13 @@ type RotatedTraceWithMem = Result<
 // ============================================================================
 
 /// The v1 main-table width the rotated appendix extends.
-pub const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 187 (P0-2 record-digest aux column)
+pub const V1_WIDTH: usize = EFFECT_VM_WIDTH; // 188
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const NUM_REGISTERS: usize = 24;
 
-/// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
-/// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
-/// perms_digest · vk_digest · mode · fields_root · revoked_root · v12 carrier-material octets
-/// 89..=112 · the v13 fields[0..7] COMPLETION lanes 113..=168 · the circuit-only cells_root
-/// completion 169..=175 · two zero PAD limbs 176..=177). Lean
-/// `EffectVmEmitRotationV3.preLimbsAt_length = 178`. The REVOKED-ROOT base widen (37→38) shifted every
-/// limb ≥ 37 by +1; `cells_root`'s 8-felt completion group was relocated OFF `revoked_root`'s 82..=88
-/// group to fresh lanes 169..=175 (circuit-only — ZERO in the producer); the two pad limbs 176..=177
-/// land the body `[4..177]` = 174 = 58×3 (clean 3-grouping, NO arity-2 leftover — the wide 8-felt
-/// path's clean-grouping discipline).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 6 + 75 + 65; // 178 (base widened 37→38; fields octet 113..=168; cells-completion 169..=175; pads 176..=177 → body 174 = 58×3 clean)
+// `NUM_PRE_LIMBS` is emitted from `rotated178.numPreLimbs` and re-exported above. The circuit and
+// both live Rust producers consume that one generated value.
 
 // `B_SPAN` (a rotated block: 178 pre-iroot limbs + iroot + state_commit + 59 chain carriers = 239
 // columns) and `C_SPAN` (the widened-caveat region = 43 columns) are Lean-emitted — read from the
@@ -130,7 +107,7 @@ pub const ROT_WIDTH: usize = V1_WIDTH + APPENDIX; // 709
 /// caveat-region sites = 134. The committed graduated width is `ROT_WIDTH + 7 * N_ROT_SITES = 709 +
 /// 938 = 1647`, matching the regen'd `*VmDescriptor2R24` trace_width. Graduation APPENDS (positions
 /// < ROT_WIDTH unchanged).
-pub const N_ROT_SITES: usize = 134;
+pub const N_ROT_SITES: usize = 2 * (1 + (NUM_PRE_LIMBS - 4) / 3) + 16;
 
 /// The GRADUATED rotated trace width: the un-graduated rotated columns PLUS the 7×`N_ROT_SITES`
 /// appended chip-lane columns (`709 + 938 = 1647` = the committed `transferVmDescriptor2R24`
@@ -240,7 +217,7 @@ fn fill_avail_aux_row(
 /// the EffectVM `CellState::record_digest` (the v1-prefix OLD_COMMIT's fourth root
 /// input), so the v1 OLD_COMMIT binds the SAME authority residue the rotated weld
 /// carries — closing audit P0-2 across BOTH legs.
-pub const B_AUTHORITY_DIGEST: usize = 24;
+pub const B_AUTHORITY_DIGEST: usize = B_RECORD_DIGEST;
 // The committed base limbs `B_RECORD_DIGEST`(=B_AUTHORITY_DIGEST) · `B_LIFECYCLE` · `B_CAP_ROOT` ·
 // `B_COMMITMENTS_ROOT` · `B_HEAP_ROOT` · `B_COMMITTED_HEIGHT` · `B_DISC` · `B_PERMS` · `B_VK` ·
 // `B_MODE` · `B_FIELDS_ROOT` · `B_REVOKED_ROOT` are Lean-emitted — read from `layout_generated`
@@ -260,51 +237,11 @@ pub const B_NULLIFIER_ROOT: usize = B_NULLIFIER_ROOT_OFF;
 
 // ── THE CANONICAL FAITHFUL-8-FELT GROUP TABLE — the ONE Rust source ───────────────────────────────
 //
-// `[lane0, completion×7]` for each faithful-8-felt root: lane 0 is the committed scalar limb (a `B_*`
-// constant), lanes 1..7 are the faithful completion felts. The PRODUCER
-// (`turn::rotation_witness::compute_rotated_pre_limbs`, which `write_lanes`-writes these exact rows)
-// and the circuit's `*_group_col` twins address the SAME columns — so a committed 8-felt digest and
-// its in-circuit weld can never read different lanes. That equivalence is not decorative: the
-// perms/VK completion weld once read limb 37 (`revoked_root` lane-0) while the producer wrote limb 38,
-// and every honest setPermissions/setVerificationKey turn was UNSAT. The values here are the deployed
-// rotated pre-limb layout; the mirror tooth in `tests` cross-checks lane 0 against the `B_*` constants
-// and the perms/VK completion starts against the Lean export (`effect_vm::layout_generated`). Wiring
-// the producer's inline `write_lanes` arrays to READ this table is the consolidation it enables.
+// This table is generated from the verified `rotated178.groupTable`; the setPermissions/setVK
+// overlap class is no longer representable as a producer/circuit mirror drift.
 
-/// `[lane0, completion×7]` for one faithful-8-felt root (lane 0 committed, lanes 1..7 completion).
-pub type Felt8Group = [usize; 8];
-
-/// Authority / record-digest 8-felt group (lane 0 = [`B_RECORD_DIGEST`]).
-pub const AUTHORITY_DIGEST_GROUP: Felt8Group = [B_RECORD_DIGEST, 12, 13, 14, 15, 16, 17, 18];
-/// Capability-root 8-felt group (lane 0 = [`B_CAP_ROOT`]).
-pub const CAP_ROOT_GROUP: Felt8Group = [B_CAP_ROOT, 52, 53, 54, 55, 56, 57, 58];
-/// Heap-root 8-felt group (lane 0 = [`B_HEAP_ROOT`]).
-pub const HEAP_ROOT_GROUP: Felt8Group = [B_HEAP_ROOT, 59, 60, 61, 62, 63, 64, 65];
-/// Nullifier-root 8-felt group (lane 0 = [`B_NULLIFIER_ROOT`]).
-pub const NULLIFIER_ROOT_GROUP: Felt8Group = [B_NULLIFIER_ROOT, 68, 69, 70, 71, 72, 73, 74];
-/// Commitments-root 8-felt group (lane 0 = [`B_COMMITMENTS_ROOT`]).
-pub const COMMITMENTS_ROOT_GROUP: Felt8Group = [B_COMMITMENTS_ROOT, 75, 76, 77, 78, 79, 80, 81];
-/// Permissions-digest 8-felt group (lane 0 = [`B_PERMS`]; completion opens PAST `revoked_root`).
-pub const PERMS_GROUP: Felt8Group = [B_PERMS, 38, 39, 40, 41, 42, 43, 44];
-/// Verification-key-digest 8-felt group (lane 0 = [`B_VK`]).
-pub const VK_GROUP: Felt8Group = [B_VK, 45, 46, 47, 48, 49, 50, 51];
-/// Fields-root 8-felt group (lane 0 = [`B_FIELDS_ROOT`]; completion is non-contiguous by layout).
-pub const FIELDS_ROOT_GROUP: Felt8Group = [B_FIELDS_ROOT, 66, 67, 19, 20, 21, 22, 23];
-/// Revoked-root 8-felt group (lane 0 = [`B_REVOKED_ROOT`]; the completion felts the base widen freed).
-pub const REVOKED_ROOT_GROUP: Felt8Group = [B_REVOKED_ROOT, 82, 83, 84, 85, 86, 87, 88];
-
-/// Every faithful-8-felt group, for the disjointness / coverage tooth.
-pub const ALL_FELT8_GROUPS: [Felt8Group; 9] = [
-    AUTHORITY_DIGEST_GROUP,
-    CAP_ROOT_GROUP,
-    HEAP_ROOT_GROUP,
-    NULLIFIER_ROOT_GROUP,
-    COMMITMENTS_ROOT_GROUP,
-    PERMS_GROUP,
-    VK_GROUP,
-    FIELDS_ROOT_GROUP,
-    REVOKED_ROOT_GROUP,
-];
+// `Felt8Group`, every named `*_GROUP`, and `ROTATED_GROUP_TABLE`/`ALL_FELT8_GROUPS` are
+// Lean-generated and re-exported from `layout_generated`; this module carries no coordinate copy.
 // `B_STATE_COMMIT` (in-block offset of the `state_commit` carrier, the chain's final digest
 // `= hash(carrier238, iroot)`, limb 179) is Lean-emitted — read from `layout_generated` (`pub use`
 // above), Lean `EffectVmEmitRotationV3.B_STATE_COMMIT`.
@@ -312,11 +249,11 @@ pub const ALL_FELT8_GROUPS: [Felt8Group; 9] = [
 pub const B_CHAIN_BASE: usize = 180;
 
 /// Absolute base column of the BEFORE rotated block.
-pub const BEFORE_BASE: usize = V1_WIDTH; // 186
+pub const BEFORE_BASE: usize = V1_WIDTH; // 188
 /// Absolute base column of the AFTER rotated block.
-pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 237
+pub const AFTER_BASE: usize = V1_WIDTH + B_SPAN; // 427
 /// Absolute base column of the widened-caveat region.
-pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 287
+pub const CAVEAT_BASE: usize = V1_WIDTH + 2 * B_SPAN; // 666
 
 /// The number of v1 public inputs the rotated PI vector prefixes. This is the
 /// length of the v1 PI window the descriptors pin into — it MUST cover every v1
@@ -342,7 +279,7 @@ pub const ROT_NULLIFIER_PI: usize = ROT_PI_COUNT;
 
 /// One rotated state-block witness for a single cell's before/after `RecordKernelState`.
 ///
-/// `pre_limbs` is the 31-limb absorption vector in the Lean-pinned order
+/// `pre_limbs` is the 178-limb absorption vector in the Lean-pinned order
 /// (`EffectVmEmitRotationV3.preLimbsAt`); `iroot` is the receipt-index MMR root absorbed
 /// LAST. This is exactly the data `dregg_turn::rotation_witness::RotationWitness` carries —
 /// the producer bridge (in `turn` / `sdk` / the flip test, which depend on both crates)
@@ -507,7 +444,7 @@ pub fn dfa_route_commitment(public_inputs: &[BabyBear]) -> [BabyBear; DFA_RC_LEN
 // THE GENERATOR.
 // ============================================================================
 
-/// Generate the LIVE rotated (R = 24) trace + 38-PI vector for one transfer-shaped turn.
+/// Generate the live rotated (R = 24) trace plus its 46-PI vector for one transfer-shaped turn.
 ///
 /// `initial_state` / `effects` drive the v1 trace (`generate_effect_vm_trace`); `before_w` /
 /// `after_w` are the per-turn producer witnesses for the acting cell's before/after
@@ -663,7 +600,7 @@ fn generate_rotated_effect_vm_trace_avail_core(
 
     // The four appended PIs, read from the trace carriers the descriptor's pin constraints
     // bind. (The pins are `pi_binding` constraints, so these reads must agree with the
-    // committed columns 218 / 261 / 259 / 310.)
+    // current committed carrier columns.)
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..V1_PI_COUNT].to_vec();
@@ -676,13 +613,13 @@ fn generate_rotated_effect_vm_trace_avail_core(
     // THE C4 LAST-FLIP-GATE (note-spend nullifier weld): a NoteSpend turn rotates against the
     // `noteSpendVmDescriptor2R24` descriptor, which carries a FIFTH appended PI pin
     // (`EffectVmEmitRotationV3.noteSpendV3`) welding the spend row's folded nullifier
-    // (`param::NULLIFIER = param0`, col `PARAM_BASE + 0`) to rotated PI slot 38 on the FIRST
+    // (`param::NULLIFIER = param0`, col `PARAM_BASE + 0`) to rotated PI slot 46 on the FIRST
     // row — the rotated analog of the v1 hand-AIR D5 cross-binding (offset 198). The note-spend
     // spend is laid on row 0 (`generate_effect_vm_trace`'s `Effect::NoteSpend` arm), so the pin
     // reads `r0[PARAM_BASE + param::NULLIFIER]`. We append it ONLY for a NoteSpend lead effect,
-    // matching the descriptor's 39-PI shape (the prover asserts `pis.len() == piCount`); the
-    // other 35 cohort members keep the 38-PI vector. This lets a note-spending turn rotate:
-    // `verify_full_turn` step 8 reads PI[38] instead of refusing the rotated leg.
+    // matching the descriptor's 47-PI shape (the prover asserts `pis.len() == piCount`); the
+    // other cohort members keep the 46-PI vector. This lets a note-spending turn rotate:
+    // `verify_full_turn` step 8 reads PI[46] instead of refusing the rotated leg.
     if matches!(effects.first(), Some(Effect::NoteSpend { .. })) {
         use super::columns::{PARAM_BASE, param};
 
@@ -691,7 +628,7 @@ fn generate_rotated_effect_vm_trace_avail_core(
         // AND v1 surfaces ONE nullifier into the single PI slot — so a turn with two DISTINCT
         // nullifiers is UNSAT on v1 (`trace.rs` D5: "multi-distinct-nullifier proofs need PI
         // extension — deferred"). The rotated weld is a FIRST-row pin against the SAME single PI
-        // slot (PI[38]), cross-checked by `verify_full_turn` step 8 against the one freshness
+        // slot (PI[46]), cross-checked by `verify_full_turn` step 8 against the one freshness
         // proof. A second NoteSpend on a NON-first row would be UNPINNED by the rotated
         // descriptor and ESCAPE the freshness check — a double-spend the v1 leg forbids. So the
         // rotated note-spend leg accepts exactly ONE spend row (v1's single-nullifier shape); a
@@ -710,7 +647,7 @@ fn generate_rotated_effect_vm_trace_avail_core(
             ));
         }
 
-        dpis.push(r0[PARAM_BASE + param::NULLIFIER]); // PI 38: the spend row's folded nullifier
+        dpis.push(r0[PARAM_BASE + param::NULLIFIER]); // PI 46: the spend row's folded nullifier
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT);
     }
 
@@ -722,12 +659,12 @@ fn generate_rotated_effect_vm_trace_avail_core(
     // refusal/receiptArchive set a named record field in `fields_root`, which the r23 authority
     // digest folds), and the rolled-up commitment BINDS it — but bare `rotateV3` does NOT FORCE
     // the AFTER limb to the correctly-written value. The descriptor for these seven carries a
-    // FIFTH last-row PI pin welding that limb to rotated PI slot 38; a frozen-lifecycle /
+    // FIFTH last-row PI pin welding that limb to rotated PI slot 46; a frozen-lifecycle /
     // un-written-record / frozen-audit-slot AFTER block FAILS the pin and is UNSAT. We push the
     // honest post value (read from the LAST row's AFTER block, exactly the column the pin binds)
-    // so the honest trace satisfies it; the verifier recomputes PI[38] from the committed
-    // pre-state + the effect, so a forgery cannot match it. The 33 other cohort members keep the
-    // 38-PI vector.
+    // so the honest trace satisfies it; the verifier recomputes PI[46] from the committed
+    // pre-state + the effect, so a forgery cannot match it. Other cohort members keep the
+    // 46-PI vector.
     if let Some(off) = record_pin_offset(effects.first()) {
         dpis.push(last[after_base + off]); // PI 46: the correctly-written post lifecycle / record digest
         // H1: the RECORD-DIGEST movers (off == B_AUTHORITY_DIGEST: setPerms/setVK/makeSovereign/refusal)
@@ -750,9 +687,9 @@ fn generate_rotated_effect_vm_trace_avail_core(
     // THE ACCOUNTS-SET GROW-GATE PIN (createCell / factory / spawn — the deployment-real account
     // set-insert close). The live `{createCell,factory,spawn}VmDescriptor2R24` carry a FIFTH pin
     // welding the new-cell key (`param0`, col `PARAM_BASE + 0` — the `Effect::CreateCell`/`Spawn`/
-    // `Factory` arm writes the child id there on row 0) to rotated PI slot 38, plus the two
+    // `Factory` arm writes the child id there on row 0) to rotated PI slot 46, plus the two
     // `cells_root` map-ops (limb 0) that force the accounts set-insert. We push the row-0 new-cell
-    // key so the honest trace matches the 39-PI shape; the openable before/after cells trees are
+    // key so the honest trace matches the 47-PI shape; the openable before/after cells trees are
     // threaded by `generate_rotated_create_cell_trace_with_accounts_tree`. Mirrors Lean
     // `EffectVmEmitRotationV3.{createCellV3,factoryV3,spawnV3}`.
     if let Some(key_col) = new_cell_key_param_col(effects.first()) {
@@ -764,9 +701,9 @@ fn generate_rotated_effect_vm_trace_avail_core(
     // THE FACTORY CARRIER-OCTET PINS (STEP 3 — the direct child_vk8 / contract_hash8 PI exposure).
     // The deployed `factoryVmDescriptor2R24` is `withAfterOctetPins (withAfterOctetPins factoryV3
     // B_CHILD_VK_OCTET) B_CONTRACT_HASH_OCTET` (Lean `factoryV3Carriers`, piCount 47 → 63): 16 TAIL
-    // pins publishing the committed AFTER-block carrier octets — child_vk8 (limbs 88..=95,
+    // pins publishing the committed AFTER-block carrier octets — child_vk8 (limbs 89..=96,
     // PI 47..54: the executor's REAL installed child VK, which the hatchery-INVARIANT carrier also
-    // rides) then contract_hash8 (limbs 96..=103, PI 55..62: the hatchery-mint
+    // rides) then contract_hash8 (limbs 97..=104, PI 55..62: the hatchery-mint
     // `HpresProof::Attested` content hash, ZERO on a plain factory turn). The octet columns are the
     // STEP-2/2.5 committed fills (carrier material absorbed into `state_commit`), so the pins read
     // the LAST row's AFTER block — exactly the columns the Lean pins bind, and a forged octet
@@ -822,9 +759,9 @@ fn generate_rotated_effect_vm_trace_avail_core(
     // THE COMMITMENTS-SET GROW-GATE PIN (noteCreate — the deployment-real commitment set-insert
     // close, the `commitments_root` flag-day). The live `noteCreateVmDescriptor2R24` carries a FIFTH
     // pin welding the published note commitment (`param0`, col `PARAM_BASE + 0` — the
-    // `Effect::NoteCreate` arm writes the commitment there on row 0) to rotated PI slot 38, plus the
+    // `Effect::NoteCreate` arm writes the commitment there on row 0) to rotated PI slot 46, plus the
     // `commitmentsInsertOp` map-op (limb 27) that forces the commitment set-insert. We push the row-0
-    // commitment so the honest trace matches the 39-PI shape; the openable before/after commitments
+    // commitment so the honest trace matches the 47-PI shape; the openable before/after commitments
     // trees are threaded by `generate_rotated_note_create_trace_with_commitments_tree`. Mirrors Lean
     // `EffectVmEmitRotationV3.noteCreateV3`.
     if matches!(effects.first(), Some(Effect::NoteCreate { .. })) {
@@ -858,7 +795,7 @@ pub const FEE_MAX: u64 = (1u64 << 30) - 1;
 ///
 /// Identical to [`generate_rotated_effect_vm_trace`] EXCEPT the deployed `transferFeeVmDescriptor2R24`
 /// debits the turn `fee` INSIDE the proven transition (so NEW_COMMIT binds the POST-fee balance) and
-/// publishes the fee as PI slot 38. The descriptor (vs. the unfee'd `transferVmDescriptor2R24`)
+/// publishes the fee as PI slot 46. The descriptor (vs. the unfee'd `transferVmDescriptor2R24`)
 /// differs by exactly four constraint deltas (verified against the committed registry TSV):
 ///   (a) the balance-lo gate is AUGMENTED to `after.bal_lo = before.bal_lo + amount·(1−2·dir) − feeCol`
 ///       (`feeCol = STATE_AFTER_BASE + state::RESERVED = col 89`);
@@ -882,7 +819,7 @@ pub const FEE_MAX: u64 = (1u64 << 30) - 1;
 ///   * the fee is written to col 89 (= `STATE_AFTER_BASE + state::RESERVED`) on EVERY row — the
 ///     transfer-row gate reads it (selector 0 makes it inert on padding rows) and the last-row pin
 ///     reads it regardless;
-///   * the 39-PI vector is re-read from the (now post-fee) trace carriers so producer and verifier
+///   * the 47-PI vector is re-read from the (now post-fee) trace carriers so producer and verifier
 ///     reconstruct byte-identical PIs (Fiat–Shamir agreement). PI 38 = the fee felt.
 ///
 /// The producer (`cipherclerk::prove_sovereign_turn_rotated`) and verifier
@@ -952,7 +889,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee_avail(
     let after_base = before_base + B_SPAN;
     let caveat_base = before_base + 2 * B_SPAN;
 
-    // The base rotated trace + 38-PI vector (PRE-fee after-balance, welds, v1 economic block).
+    // The base rotated trace plus 46-PI vector (PRE-fee after-balance, welds, v1 economic block).
     // The REAL fee is threaded to the base pass's fee-weld fill so its availability check
     // (`fee ≤ mid`) is the genuine one, not a read of the pre-surgery RESERVED column.
     let (mut trace, base_pis) = generate_rotated_effect_vm_trace_avail_core(
@@ -1474,18 +1411,11 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
         })?;
     let after_root8 = aafi.new_root;
 
-    // Mirror of `EffectVmEmitRotationV3.nullifierRootGroupCol`: lane 0 = limb `B_NULLIFIER_ROOT` (26);
-    // the seven DEDICATED completion limbs 67..73 for lanes 1..7.
-    let nullifier_group_col = |block_base: usize, lane: usize| -> usize {
-        block_base
-            + match lane {
-                0 => B_NULLIFIER_ROOT,
-                _ => 67 + lane, // lanes 1..7 → limbs 68..74 (REVOKED-ROOT +1 shift)
-            }
-    };
+    let nullifier_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + NULLIFIER_ROOT_GROUP[lane] };
 
     // Write the FAITHFUL 8-felt before/after nullifier-root GROUP into BOTH rotated blocks (lane 0 the
-    // scalar limb 26, lanes 1..7 the dedicated completion limbs 67..73 — the map-op `.absent`/`.insert`
+    // scalar limb 26, lanes 1..7 the dedicated completion limbs 68..74 — the map-op `.absent`/`.insert`
     // root/newRoot groups the deployed AIR binds all eight lanes of), NEVER the lane-0 squeeze. Then
     // recompute the dependent chained commitments so the published `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
@@ -1511,8 +1441,6 @@ pub fn generate_rotated_note_spend_trace_with_nullifier_tree(
 /// factoryV3,spawnV3}`) now carry two map-ops on it: `cellsFreshOp` (`.absent`: the new-cell key is
 /// a NON-MEMBER of the BEFORE accounts tree — no id collision) and `cellsInsertOp` (`.insert`: the
 /// AFTER root IS the genuine sorted insert of the new-cell key).
-const B_CELLS_ROOT: usize = 0;
-
 /// **THE DEPLOYMENT-REAL createCell / factory / spawn accounts-tree wiring (the accounts-set
 /// grow-gate's witness).** The clone of `generate_rotated_note_spend_trace_with_nullifier_tree` for
 /// the `cells_root` limb (limb 0): it makes limb 0 the openable accounts accumulator for a
@@ -1587,16 +1515,11 @@ pub fn generate_rotated_create_cell_trace_with_accounts_tree(
     // (82..88) to the fresh clean-alignment lanes the 178-limb widen opened: `cells_root` is circuit-only
     // (ZERO in the producer pre_limbs), so on a createCell/factory/spawn turn this fill no longer clobbers
     // the producer-committed `revoked_root` group. Lanes 176..177 stay pure pad.
-    let cells_group_col = |block_base: usize, lane: usize| -> usize {
-        block_base
-            + match lane {
-                0 => B_CELLS_ROOT,
-                _ => 168 + lane, // lanes 1..7 → limbs 169..175 (fresh, non-colliding with revoked 82..88)
-            }
-    };
+    let cells_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + CELLS_ROOT_GROUP[lane] };
 
     // Write the FAITHFUL 8-felt before/after cells-root GROUP into BOTH rotated blocks (lane 0 the
-    // scalar limb 0, lanes 1..7 the dedicated completion limbs 81..87), NEVER the lane-0 squeeze. Then
+    // scalar limb 0, lanes 1..7 the dedicated completion limbs 169..175), NEVER the lane-0 squeeze. Then
     // recompute the dependent chained commitments so `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
         for lane in 0..HEAP_DIGEST_W {
@@ -1671,18 +1594,11 @@ pub fn generate_rotated_note_create_trace_with_commitments_tree(
         })?;
     let after_root8 = aafi.new_root;
 
-    // Mirror of `EffectVmEmitRotationV3.commitmentsRootGroupCol`: lane 0 = limb `B_COMMITMENTS_ROOT`
-    // (27); the seven DEDICATED completion limbs 74..80 for lanes 1..7.
-    let commitments_group_col = |block_base: usize, lane: usize| -> usize {
-        block_base
-            + match lane {
-                0 => B_COMMITMENTS_ROOT,
-                _ => 74 + lane, // lanes 1..7 → limbs 75..81 (REVOKED-ROOT +1 shift)
-            }
-    };
+    let commitments_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + COMMITMENTS_ROOT_GROUP[lane] };
 
     // Write the FAITHFUL 8-felt before/after commitments-root GROUP into BOTH rotated blocks (lane 0
-    // the scalar limb 27, lanes 1..7 the dedicated completion limbs 74..80), NEVER the lane-0 squeeze.
+    // the scalar limb 27, lanes 1..7 the dedicated completion limbs 75..81), NEVER the lane-0 squeeze.
     // Then recompute the dependent chained commitments so `STATE_COMMIT` binds the grown set.
     for row in trace.iter_mut() {
         for lane in 0..HEAP_DIGEST_W {
@@ -1773,15 +1689,8 @@ pub fn generate_rotated_revoke_trace_with_revoked_tree(
         })?;
     let after_root8 = aafi.new_root;
 
-    // Mirror of `EffectVmEmitRotationV3.revokedRootGroupCol`: lane 0 = limb `B_REVOKED_ROOT` (37); the
-    // seven DEDICATED completion limbs 82..88 for lanes 1..7 (the `revoked_root` 8-felt group).
-    let revoked_group_col = |block_base: usize, lane: usize| -> usize {
-        block_base
-            + match lane {
-                0 => B_REVOKED_ROOT,
-                _ => 81 + lane, // lanes 1..7 → limbs 82..88
-            }
-    };
+    let revoked_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + REVOKED_ROOT_GROUP[lane] };
 
     // Write the FAITHFUL 8-felt before/after revoked-root GROUP into BOTH rotated blocks (lane 0 the
     // scalar limb 37, lanes 1..7 the dedicated completion limbs 82..88 — the map-op `.absent`/`.aafiInsert`
@@ -1891,23 +1800,8 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
         })?
         .new_root;
 
-    // Mirror of `EffectVmEmitRotationV3.fieldsRootGroupCol`: lane 0 = limb `B_FIELDS_ROOT` (36); the seven
-    // completion limbs are NON-contiguous — 65,66 (past heap's 58..64) for lanes 1,2 and the repurposed
-    // register-headroom limbs 19..23 for lanes 3..7.
-    let fields_group_col = |block_base: usize, lane: usize| -> usize {
-        block_base
-            + match lane {
-                0 => B_FIELDS_ROOT,
-                1 => 66, // REVOKED-ROOT +1 shift (was 65)
-                2 => 67, // REVOKED-ROOT +1 shift (was 66)
-                3 => 19,
-                4 => 20,
-                5 => 21,
-                6 => 22,
-                7 => 23,
-                _ => unreachable!("fields root8 has 8 lanes"),
-            }
-    };
+    let fields_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + FIELDS_ROOT_GROUP[lane] };
 
     // Fill the declared audit-felt param column (col 70) with the written value on EVERY row, so the
     // map-op's value column is the row's own published column (the noteSpend pattern — the gate reads
@@ -1917,7 +1811,7 @@ pub fn generate_rotated_refusal_trace_with_fields_tree(
     }
 
     // Write the FAITHFUL 8-felt before/after fields-root GROUP into BOTH rotated blocks (lane 0 the
-    // scalar limb 36, lanes 1..7 the completion limbs 65,66,19..23 — the map-op `.write` root/newRoot
+    // scalar limb 36, lanes 1..7 the completion limbs 66,67,19..23 — the map-op `.write` root/newRoot
     // groups the deployed AIR binds all eight lanes of), NEVER the lane-0 scalar squeeze. Then recompute
     // the dependent chained commitments so the published `STATE_COMMIT` binds the written map.
     for row in trace.iter_mut() {
@@ -2471,8 +2365,8 @@ fn new_cell_key_param_col(lead: Option<&Effect>) -> Option<usize> {
 /// r11..r23) come from the per-turn producer witness `w` (turn-invariant). Then the genuine
 /// chained `wireCommitR` digests are computed on this row's own limbs.
 ///
-/// The v12 CARRIER-MATERIAL octets (`B_CHILD_VK_OCTET` 88..=95 · `B_CONTRACT_HASH_OCTET` 96..=103 ·
-/// `B_PUBKEY_OCTET` 104..=111) ride the `pre_limbs` COPY above — the trace is the third producer of
+/// The carrier-material octets (`B_CHILD_VK_OCTET` 89..=96 · `B_CONTRACT_HASH_OCTET` 97..=104 ·
+/// `B_PUBKEY_OCTET` 105..=112) ride the `pre_limbs` COPY above — the trace is the third producer of
 /// them, and it fills them byte-identically to the two flat-record twins
 /// (`rotation_witness::produce` / `commitment::compute_rotated_pre_limbs`) BY COPY: the octets are
 /// filled in `pre_limbs` at their source, so this generator carries them into the block and the
@@ -2816,7 +2710,7 @@ pub const CAP_OPEN_DEPTH: usize = 16;
 /// 7-lane chip blocks at the END), so the cap-open appendix now starts at the GRADUATED rotated
 /// width `GRAD_ROT_WIDTH` (the committed `attenuateVmDescriptor2R24.trace_width`), NOT at the
 /// un-graduated `ROT_WIDTH = 328`. The cap-open builds ON the graduated rotated layout.
-pub const CAP_OPEN_BASE: usize = GRAD_ROT_WIDTH; // 608
+pub const CAP_OPEN_BASE: usize = GRAD_ROT_WIDTH; // 1647
 /// The width of the FULL `EffectMask` bit decomposition (residual (a) — GENUINE MEMBERSHIP). The
 /// decoded facet is the full `u32` mask `maskOfLimbs(mask_lo, mask_hi) = mask_lo + mask_hi·65536`
 /// (`EFFECT_ALL = 0xFFFF_FFFF`), so the decomposition spans all 32 bits: any deployed effect-kind bit
@@ -2857,29 +2751,29 @@ pub const CAP_OPEN_SPAN: usize = CAP_OPEN_MEMBERSHIP_COLS; // 329
 /// (Lean `CapOpenEmit.AFTER_SPINE_SPAN`, the `*_forces_write8` weld). A WRITE cap-open descriptor's
 /// `trace_width` is `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`; a READ-only one is `CAP_OPEN_WIDTH`.
 pub const CAP_OPEN_AFTER_SPINE_SPAN: usize = 15 + 8 * CAP_OPEN_DEPTH; // 143
-/// The cap-open trace width (`GRAD_ROT_WIDTH + 329 = 937` = the committed
+/// The cap-open trace width (`GRAD_ROT_WIDTH + 329 = 1976` = the committed
 /// `attenuateCapOpenEffVmDescriptor2R24.trace_width` under the native 8-felt cap tree).
 pub const CAP_OPEN_WIDTH: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 
 /// The turn-identity `actor` column of the TB (turn-bound) cap-open weld
 /// (`CapOpenTurnPins.capOpenActorCol w = w + CAP_OPEN_SPAN`, i.e. the first column PAST the full
-/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 608 + 210 = 818` (the committed
-/// `transferCapOpenTBVmDescriptor2R24` turn-identity column, PI 39).
+/// cap-open appendix). `= CAP_OPEN_BASE + CAP_OPEN_SPAN = 1976` (the committed
+/// `transferCapOpenTBVmDescriptor2R24` turn-identity column, PI 47).
 pub const CAP_OPEN_TB_ACTOR_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN;
 /// The turn-identity `dst` column of the TB cap-open weld (`CapOpenTurnPins.capOpenDstCol w = w +
-/// CAP_OPEN_SPAN + 1`). `= CAP_OPEN_BASE + CAP_OPEN_SPAN + 1 = 819` (PI 40).
+/// CAP_OPEN_SPAN + 1`). `= CAP_OPEN_BASE + CAP_OPEN_SPAN + 1 = 1977` (PI 48).
 pub const CAP_OPEN_TB_DST_COL: usize = CAP_OPEN_BASE + CAP_OPEN_SPAN + 1;
 /// The turn-bound cap-open trace width: the cap-open width PLUS the two turn-identity columns
-/// (`effCapOpenV3TB`'s `traceWidth := d.traceWidth + 2`). `= CAP_OPEN_WIDTH + 2 = 820`.
+/// (`effCapOpenV3TB`'s `traceWidth := d.traceWidth + 2`). `= CAP_OPEN_WIDTH + 2 = 1978`.
 pub const CAP_OPEN_TB_WIDTH: usize = CAP_OPEN_WIDTH + 2;
-/// The cap-open base descriptor's PI count (`effCapOpenV3.piCount = 38` — the rotated 38-PI vector;
-/// the cap-open appendix adds no PIs). The TB weld appends THREE turn-identity PIs at `38/39/40`.
-pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT; // 38
+/// The cap-open base descriptor's PI count (`effCapOpenV3.piCount = 46`; the cap-open appendix adds
+/// no PIs). The TB weld appends THREE turn-identity PIs at `46/47/48`.
+pub const CAP_OPEN_TB_PI_BASE: usize = ROT_PI_COUNT; // 46
 /// The published turn-identity PI slots of the TB cap-open (`effCapOpenV3.piCount + 0/1/2`):
-/// `src → PI[38]`, `actor → PI[39]`, `dst → PI[40]` (`CapOpenTurnPins.turnIdentityPins`).
-pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 38
-pub const CAP_OPEN_TB_PI_ACTOR: usize = CAP_OPEN_TB_PI_BASE + 1; // 39
-pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 40
+/// `src → PI[46]`, `actor → PI[47]`, `dst → PI[48]` (`CapOpenTurnPins.turnIdentityPins`).
+pub const CAP_OPEN_TB_PI_SRC: usize = CAP_OPEN_TB_PI_BASE; // 46
+pub const CAP_OPEN_TB_PI_ACTOR: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
+pub const CAP_OPEN_TB_PI_DST: usize = CAP_OPEN_TB_PI_BASE + 2; // 48
 
 /// The `FACT_MARK` node-tag felt (`DeployedCapTree.FACT_MARK = 0xFACF`).
 pub const FACT_MARK: u32 = 0xFACF; // 64207
@@ -3641,15 +3535,9 @@ pub fn append_wide_carriers_cap_open_avail(
     ))
 }
 
-/// The cap-root 8-felt GROUP column at lane `lane` for the rotated block based at `block_base` (the
-/// exact mirror of the Lean `EffectVmEmitRotationV3.capRootGroupCol`: lane 0 = the scalar cap-root limb
-/// `B_CAP_ROOT = 25`; lanes 1..7 = the dedicated 8-felt completion limbs `50 + lane` = 51..57). With the
-/// v11 rotated block span (`B_SPAN = 119`), the descriptor block bases (`EFFECT_VM_WIDTH` BEFORE /
-/// `EFFECT_VM_WIDTH + 119` AFTER) coincide EXACTLY with the trace bases (`BEFORE_BASE = V1_WIDTH = 188` /
-/// `AFTER_BASE = V1_WIDTH + B_SPAN = 307`), so this single mapping serves both descriptor and trace — no
-/// column offset. (The `beforeCapRootCols`/`afterCapRootCols` group readers pin these lanes.)
+/// The cap-root group column, projected from the Lean-generated group table.
 fn cap_root_group_col(block_base: usize, lane: usize) -> usize {
-    block_base + if lane == 0 { B_CAP_ROOT } else { 51 + lane } // lanes 1..7 → 52..58 (REVOKED-ROOT +1)
+    block_base + CAP_ROOT_GROUP[lane]
 }
 
 /// **THE ATTENUATE cap-WRITE AFTER-SPINE producer (`attenuateCapOpenEffVmDescriptor2R24` wide member).**
@@ -3916,7 +3804,7 @@ pub fn widen_to_cap_open_tb_avail(
     Ok(())
 }
 
-/// Extend a base 38-PI rotated vector to the TURN-BOUND 41-PI vector by APPENDING the three
+/// Extend a base 46-PI rotated vector to the turn-bound 49-PI vector by appending the three
 /// turn-identity PIs (`src` at 38, `actor` at 39, `dst` at 40). The honest prover publishes its own
 /// turn's `(src, actor, dst)`; the verifier OVERRIDES these slots from the trusted turn before
 /// `verify_vm_descriptor2` (see [`anchor_cap_open_turn_pins`]), so a forged identity is UNSAT.
@@ -4145,7 +4033,7 @@ pub fn generate_rotated_transfer_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
-    // The live 608-wide rotated trace + 38-PI vector (UNTOUCHED machinery).
+    // The live 1647-wide graduated rotated trace plus the 46-PI base vector.
     let (mut trace, base_pis) =
         generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
     if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
@@ -4242,7 +4130,7 @@ pub fn append_wide_carriers_avail(
 }
 
 /// **THE WIDE BURN/MINT trace generator (transfer-shape cohort).** Burn and mint carry the bare
-/// 38-PI rotated vector exactly as transfer does (no grow-gate root, no record pin); their wide
+/// 46-PI rotated vector exactly as transfer does (no grow-gate root, no record pin); their wide
 /// member is `wideAppend burn 187 238` (width `WIDE_WIDTH` / PI `WIDE_PI_COUNT`), the SAME carrier shape as transfer. This
 /// wraps the LIVE base generator ([`generate_rotated_effect_vm_trace`], which proves any cohort
 /// member's real turn) + the generic widener at `GRAD_ROT_WIDTH`. Returns `(trace, dpis)`.
@@ -4589,7 +4477,7 @@ pub const HEAP_WRITE_READ_BASE: usize =
 /// the SAME rotated block as every cohort member, plus a genuine sorted-Merkle SPLICE on the FAITHFUL
 /// 8-felt heap root: the in-row `HEAP_ADDR` recompute (`col 102 = chip-absorb(coll, key)`) keys a `.write`
 /// `MapOp` that opens the committed BEFORE heap-root GROUP (cols `216 ‖ 246..252` — lane 0 = limb 28,
-/// lanes 1..7 = completion limbs 58..64) at that address for the written value (`col 72`) and FORCES the
+/// lanes 1..7 = completion limbs 59..65) at that address for the written value (`col 72`) and FORCES the
 /// AFTER heap-root GROUP (cols `307 ‖ 337..343`) to the genuine 8-felt `CanonicalHeapTree8` update. There
 /// is NO live `Effect::HeapWrite` selector (the descriptor is reached by the exercise-inner heap-write
 /// path, NOT the effect→descriptor resolvers), so this is the per-family wide PRODUCER for it — exactly
@@ -4690,23 +4578,15 @@ pub fn generate_rotated_heap_write_wide(
         .ok_or_else(|| "heap-write wide: BEFORE leaf vanished".to_string())?;
 
     // Write the FAITHFUL 8-felt heap root into the HEAP GROUP of both rotated blocks — lane 0 the
-    // scalar heap-root limb (`B_HEAP_ROOT = 28`), lanes 1..7 the completion limbs 58..64 (the Lean
-    // `heapRootGroupCol`: `BEFORE_BASE + 28` / `BEFORE_BASE + 58..64` = cols 216 + 246..252; `AFTER_BASE
-    // + 28` / `+ 58..64` = cols 307 + 337..343 — EXACTLY the map-op `.write` root/newRoot groups). This
+    // scalar heap-root limb (`B_HEAP_ROOT = 28`), lanes 1..7 the completion limbs 59..65 (the Lean
+    // `heapRootGroupCol`: `BEFORE_BASE + 28` / `BEFORE_BASE + 59..65` = cols 216 + 247..253; `AFTER_BASE
+    // + 28` / `+ 59..65` = cols 307 + 338..344 — EXACTLY the map-op `.write` root/newRoot groups). This
     // REPLACES the old (wrong) scalar override of the cap limb (`BEFORE_BASE + B_CAP_ROOT`, col 213) —
     // the heap root has its OWN group and never rides the cap register. The v1-state `cap_root` cols
     // (65/87) and the cap rotated limbs (213/304) are LEFT UNTOUCHED (the base gen lays a consistent cap
     // block; the `213 == 65` weld holds).
-    let heap_group_col = |block_base: usize, lane: usize| -> usize {
-        // Mirror of `EffectVmEmitRotationV3.heapRootGroupCol`: lane 0 = limb 28, lanes 1..7 = 58+lane
-        // (limbs 59..65, REVOKED-ROOT +1 shift from 58..64).
-        block_base
-            + if lane == 0 {
-                B_HEAP_ROOT
-            } else {
-                51 + lane + 7
-            }
-    };
+    let heap_group_col =
+        |block_base: usize, lane: usize| -> usize { block_base + HEAP_ROOT_GROUP[lane] };
     let coll_col = PARAM_BASE + 2; // 70 (HEAP_ADDR recompute input: collection)
     let key_col = PARAM_BASE + 3; // 71 (HEAP_ADDR recompute input: key)
     let value_col = PARAM_BASE + 4; // 72 (HEAP_VALUE — the map-op `.write` value column)
@@ -6292,32 +6172,15 @@ mod tests {
         );
     }
 
-    /// The Rust-side `Legal` guard, mirroring the Lean-verified `rotated178` (`Dregg2.Circuit.Emit.
-    /// RotatedLayout`, proven `Legal` + complete-tiling). The producer (`compute_rotated_pre_limbs`)
-    /// and the circuit group_col fns are independent copies of these positions; this asserts they form
-    /// a COMPLETE DISJOINT TILING of `0..NUM_PRE_LIMBS`, catching the position-overlap/gap drift the
-    /// Lean allocator makes unconstructable (the cells/revoked overlap class that cost the 178 flag-day).
-    /// Lane-0 columns are bound to the circuit's own `B_*` constants; the completion positions are
-    /// grounded lane-for-lane in `cell::commitment::compute_rotated_pre_limbs`.
+    /// Rust re-check of the Lean-generated table's complete tiling. Group coordinates and
+    /// `NUM_PRE_LIMBS` are generated; the remaining scalar/octet regions below make this an
+    /// end-to-end artifact-integrity tooth for the full pre-limb layout.
     #[test]
     fn rotated_layout_is_a_complete_disjoint_tiling() {
         let mut occ: Vec<usize> = Vec::new();
         // singles (scalars, no completion group): r0/r1/r2, fields[0..7] lane-0, lifecycle/epoch/height/disc/mode
         occ.extend([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29, 30, 31, 32, 35]);
-        // the 10 faithful-8-felt groups (lane0 + 7 completion)
-        let groups: [[usize; 8]; 10] = [
-            [24, 12, 13, 14, 15, 16, 17, 18], // authority_digest
-            [B_CAP_ROOT, 52, 53, 54, 55, 56, 57, 58],
-            [B_NULLIFIER_ROOT, 68, 69, 70, 71, 72, 73, 74],
-            [B_COMMITMENTS_ROOT, 75, 76, 77, 78, 79, 80, 81],
-            [B_HEAP_ROOT, 59, 60, 61, 62, 63, 64, 65],
-            [33, 38, 39, 40, 41, 42, 43, 44], // perms_digest
-            [34, 45, 46, 47, 48, 49, 50, 51], // vk_digest
-            [B_FIELDS_ROOT, 66, 67, 19, 20, 21, 22, 23], // non-contiguous (reuses headroom 19..23)
-            [B_REVOKED_ROOT, 82, 83, 84, 85, 86, 87, 88],
-            [B_CELLS_ROOT, 169, 170, 171, 172, 173, 174, 175], // completion circuit-only, producer-zero
-        ];
-        for g in groups {
+        for g in ROTATED_GROUP_TABLE {
             occ.extend(g);
         }
         // carrier-material octets (each base .. base+8)
@@ -6340,62 +6203,22 @@ mod tests {
         );
     }
 
-    /// THE MIRROR TOOTH (STEP-1 RESIDUE): the rotated SPINE is now Lean-authored and read via
-    /// `pub use layout_generated::*`, so the 25 spine constants can no longer drift (one declaration).
-    /// The self-comparisons that guarded them were retired in Step 1. What REMAINS hand-declared —
-    /// and so still needs a Lean-export guard until its own migration step lands — is:
-    ///   * `columns::EFFECT_VM_WIDTH` (the v1 face, computed `AUX_BASE + NUM_AUX`; Step 8 emits it);
-    ///   * the faithful-8-felt GROUP TABLE (`PERMS_GROUP`/`VK_GROUP`/`REVOKED_ROOT_GROUP` lane-0 and
-    ///     the completion lanes; Step 3 emits `RotatedLayout.groupTable`).
+    /// The v1 EffectVM face width is still hand-computed in `columns.rs` (`AUX_BASE + NUM_AUX`); this
+    /// pin guards that lone hand copy against the Lean export until Step 8 emits the v1 sel/state face.
     ///
-    /// These are the exact numbers the setPermissions/setVK UNSAT bug lived in: the REVOKED-ROOT flag
-    /// day shifted every limb >= 37 by +1, the producer moved to limb 38, the in-circuit perms/VK
-    /// completion weld stayed on 37 (`revoked_root` lane-0), and every honest setPermissions /
-    /// setVerificationKey turn was UNSAT. This tooth cross-checks the still-hand group table against
-    /// the Lean export; it is DELETED in the step that makes the group table Lean-authored (Step 3).
+    /// The group-table mirror tooth that used to live here (`hand_written_group_table_mirrors_the_lean_export`,
+    /// cross-checking the HAND `PERMS_GROUP`/`VK_GROUP`/`REVOKED_ROOT_GROUP` integers against the Lean
+    /// export) is GONE: the faithful-8 group table is now Lean-authored (`ROTATED_GROUP_TABLE`, a
+    /// projection of the proven-`Legal` `rotated178`), so the completion-lane aliasing the setPermissions/
+    /// setVK UNSAT bug lived in is disjoint-by-construction — unrepresentable, not merely guarded.
     #[test]
-    fn hand_written_group_table_mirrors_the_lean_export() {
+    fn v1_face_width_matches_lean_export() {
         use crate::effect_vm::layout_generated as lean;
 
-        // The v1 face is still computed in `columns.rs` (Step 8 territory); guard it against Lean.
         assert_eq!(
             V1_WIDTH,
             lean::EFFECT_VM_WIDTH,
             "V1_WIDTH (columns AUX_BASE + NUM_AUX) vs Lean EFFECT_VM_WIDTH"
-        );
-
-        // THE WELD OFFSETS — the numbers the setPerms/setVK bug lived in. The producer writes the
-        // perms 8-felt group to lanes [B_PERMS, B_PERMS_COMPLETION ..= +6] and the vk group to
-        // [B_VK, B_VK_COMPLETION ..= +6]; the in-circuit weld reads exactly those columns.
-        assert_eq!(
-            lean::B_PERMS_COMPLETION,
-            B_REVOKED_ROOT + 1,
-            "the perms completion group must start immediately PAST revoked_root — if this ever \
-             collides with B_REVOKED_ROOT again, every honest setPermissions turn goes UNSAT"
-        );
-        assert_eq!(
-            lean::B_VK_COMPLETION,
-            lean::B_PERMS_COMPLETION + 7,
-            "the vk completion group follows the 7 perms completion felts"
-        );
-
-        // The canonical faithful-8-felt group table agrees with the constants and the Lean export.
-        assert_eq!(PERMS_GROUP[0], B_PERMS, "PERMS_GROUP lane 0 vs B_PERMS");
-        assert_eq!(VK_GROUP[0], B_VK, "VK_GROUP lane 0 vs B_VK");
-        assert_eq!(
-            REVOKED_ROOT_GROUP[0], B_REVOKED_ROOT,
-            "REVOKED_ROOT_GROUP lane 0 vs B_REVOKED_ROOT"
-        );
-        assert_eq!(
-            PERMS_GROUP[1],
-            lean::B_PERMS_COMPLETION,
-            "the perms group's first completion felt must be the Lean-exported B_PERMS_COMPLETION — \
-             this is the exact lane the setPermissions UNSAT bug lived in"
-        );
-        assert_eq!(
-            VK_GROUP[1],
-            lean::B_VK_COMPLETION,
-            "the vk group's first completion felt must be the Lean-exported B_VK_COMPLETION"
         );
     }
 

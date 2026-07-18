@@ -14,6 +14,9 @@
 /// the v1 EffectVM face width — the base every rotated member graduates from
 pub const EFFECT_VM_WIDTH: usize = 188;
 
+/// pre-iroot limbs in one rotated block — projected from the verified RotatedLayout
+pub const NUM_PRE_LIMBS: usize = 178;
+
 /// one rotated state block's span (BEFORE and AFTER each occupy B_SPAN columns)
 pub const B_SPAN: usize = 239;
 
@@ -103,6 +106,37 @@ pub const B_CONTRACT_HASH_OCTET: usize = 97;
 
 /// in-block base of the public_key carrier octet (app-PI octet base 2 of [89, 97, 105])
 pub const B_PUBKEY_OCTET: usize = 105;
+
+/// One faithful-8 group: lane 0 followed by seven completion columns.
+pub type Felt8Group = [usize; 8];
+
+/// Every named group, emitted verbatim from `rotated178.groupTable`.
+pub const ROTATED_GROUP_TABLE: [Felt8Group; 10] = [
+    [24, 12, 13, 14, 15, 16, 17, 18],
+    [25, 52, 53, 54, 55, 56, 57, 58],
+    [26, 68, 69, 70, 71, 72, 73, 74],
+    [27, 75, 76, 77, 78, 79, 80, 81],
+    [28, 59, 60, 61, 62, 63, 64, 65],
+    [33, 38, 39, 40, 41, 42, 43, 44],
+    [34, 45, 46, 47, 48, 49, 50, 51],
+    [36, 66, 67, 19, 20, 21, 22, 23],
+    [37, 82, 83, 84, 85, 86, 87, 88],
+    [0, 169, 170, 171, 172, 173, 174, 175],
+];
+
+pub const AUTHORITY_DIGEST_GROUP: Felt8Group = ROTATED_GROUP_TABLE[0];
+pub const CAP_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[1];
+pub const NULLIFIER_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[2];
+pub const COMMITMENTS_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[3];
+pub const HEAP_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[4];
+pub const PERMS_GROUP: Felt8Group = ROTATED_GROUP_TABLE[5];
+pub const VK_GROUP: Felt8Group = ROTATED_GROUP_TABLE[6];
+pub const FIELDS_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[7];
+pub const REVOKED_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[8];
+pub const CELLS_ROOT_GROUP: Felt8Group = ROTATED_GROUP_TABLE[9];
+
+/// Compatibility/readability alias used by the Rust disjointness tooth.
+pub const ALL_FELT8_GROUPS: [Felt8Group; 10] = ROTATED_GROUP_TABLE;
 
 /// Derive the app-root field OCTET INDEX from a state register slot: the AFTER-block
 /// `fields[0..8]` octet holds field register `r(FIELD_BASE + i)` at octet index `i`, so
