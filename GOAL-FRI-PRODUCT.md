@@ -144,6 +144,24 @@ RULES: (1) don't let a $60K token set the agenda — the real value is the verif
 (FRI/Market/fhegg). (2) never compare a DIFFERENT mechanism as a better-SAME one — like-for-like or
 don't compare. (3) circuits are Lean-authored; a hand-written gnark/Go circuit is debt, not a foundation.
 
+
+## ⚑ GNARK-LEAN REPLACEMENT (ultracode swarm, 8-cycle plan — GNARK-LEAN-AUTHORED-PLAN.md)
+Replace the hand-Go 12M-R1CS gnark STARK-verifier with a Lean-authored, refinement-proven R1CS circuit.
+The proven `wrap_sound` socket (FriVerifier.lean:1037) already exists — fill GnarkRefines structurally,
+delete the hand-Go. Closes circuit-faithfulness (#2); NOT the FRI floor (#1) or ceremony (#3).
+- ✅ **Cycle 1 DONE** (9716dcbea): R1csFr foundation (genuine R1CS over ZMod r, lower_sound — constraints
+  force the aux region, not the dead ℤ rail) + 3 BN254 gadgets (BabyBearFr field, Poseidon2Fr, ChallengerFr)
+  — all green in-tree (1151 jobs), sorry-free, #assert_axioms-clean, EACH Opus-adversarially confirmed
+  bit-exact-vs-Go with NO mirror (KAT+edge). Named seam: Fr=CommRing (primality Pratt cert deferred, non-
+  load-bearing). Swarm collapsed serial Stages A-C.2 into ONE parallel cycle.
+- **Cycle 2 FIRING** (wf_85813b30): architecture de-risk — emit-faithful + emit-JSON + a REAL ∀ toy-refinement
+  (gHolds(emitCanonicity)↔canonical) + the generic Go interp consuming the ACTUAL Lean-emitted bytes;
+  adversarial gate = the mirror-trap (Go must be data-driven from the emitted JSON, not a re-authored twin).
+- NEXT: cycle 3-4 per-check emits (Merkle+FRI-core=80% mass, batch-table reuses stark_constraint_interp) →
+  cycle 5-6 unroll → cycle 7 top theorem (emitVerifier_refines=GnarkRefines) → cycle 8 cutover (delete hand-Go).
+- Honest: gadgets KAT+edge-VALIDATED not yet ∀-proven; real faithfulness lands at cutover. ATTRIBUTION: the
+  FRI verifier model (verifyAlgoO) + wrap_sound socket are prior/codex work, consumed read-only, not mine.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
