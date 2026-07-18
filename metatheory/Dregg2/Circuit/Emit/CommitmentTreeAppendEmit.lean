@@ -154,7 +154,56 @@ theorem rootReal_append_offpath_unchanged (leaves : List ℤ) (cm : ℤ) (level 
       = nodeAt hash4to1Real leaves level index :=
   append_offpath_unchanged hash4to1Real leaves cm level index hoff
 
-/-! ## §4 — axiom-hygiene tripwires. -/
+/-! ## §4 — the `@[export]` FFI ENTRY (Rust → Lean): the DEPLOYED note-tree root, COMPUTED in Lean.
+
+This is the FIRST cutover step toward retiring the hand-rolled Rust root arithmetic
+(`commit/src/poseidon2_tree.rs::compute_node_at_level`/`root`/`append`): expose `rootReal` — the
+Lean-authored deployed-byte root — across the established `@[export] String → String` ABI (the
+`Dregg2.Crypto.HandlebarsFFI` / `dregg_render_with_proof` precedent, marshalled by the C bridge
+`dregg-lean-ffi/src/lib.rs::lean_string_bridge`). Once the C-bridge registration + Rust call site land,
+the note-tree root becomes a CALL INTO this verified Lean object rather than a Rust reimplementation
+kept byte-equal by a differential — collapsing the two implementations to one.
+
+Wire contract (this export DEFINES it; the Rust caller must match):
+  * input  : `"<depth>;<leaf0>,<leaf1>,…,<leafN-1>"` — `depth` a decimal `Nat`; leaves comma-separated
+             decimal canonical BabyBear values in `[0, p)`. Empty leaf set is `"<depth>;"`.
+  * output : the decimal deployed root (`rootReal depth leaves`), or `"ERR"` on a malformed wire.
+Fail CLOSED: any parse failure → `"ERR"` (never a silent zero that could pass for a real root).
+
+SCOPE NOTE (why this is step 1, not the whole cutover): the root is only PART of what the Rust tree
+computes. `prove_membership` gathers per-level SIBLINGS via the same `compute_node_at_level` — the
+Lean model authors NO membership witness generation. A true single implementation must ALSO export the
+membership sibling/position generation from Lean (or that Rust node arithmetic stays for membership and
+only the root routes through here). This export lands the root leg; the membership leg is the follow-on. -/
+
+/-- Parse a `"leaf0,leaf1,…"` segment into canonical `ℤ` leaves; `""` is the empty tree. Fail-closed. -/
+def parseLeaves (s : String) : Option (List ℤ) :=
+  if s = "" then some []
+  else (s.splitOn ",").mapM (fun t => t.toNat?.map (fun n => (n : ℤ)))
+
+/-- **`@[export dregg_note_tree_root]`** — the deployed 4-ary Poseidon2 note-tree root, computed by the
+verified Lean `rootReal` over the KAT-locked real hash. Wire per §4; malformed → `"ERR"`. -/
+@[export dregg_note_tree_root]
+def noteTreeRootWire (wire : String) : String :=
+  match wire.splitOn ";" with
+  | [depthStr, leavesStr] =>
+      match depthStr.toNat?, parseLeaves leavesStr with
+      | some depth, some leaves => toString (rootReal depth leaves)
+      | _, _ => "ERR"
+  | _ => "ERR"
+
+-- The export reproduces the deployed goldens byte-for-byte (the same integers the Rust tree emits and
+-- the retiring differential asserts) — so the FFI cutover is byte-exact by construction.
+#guard noteTreeRootWire "2;" = "1354085513"          -- empty depth-2 tree
+#guard noteTreeRootWire "2;1,2,3" = "1895531837"      -- rootReal 2 (mkSeq 3)
+#guard noteTreeRootWire "2;1,2,3,4" = "1834518077"    -- rootReal 2 (mkSeq 4)
+#guard noteTreeRootWire "3;1,2,3" = "78377282"        -- rootReal 3 (mkSeq 3)
+-- Fail-closed on malformed wires (no silent zero root).
+#guard noteTreeRootWire "garbage" = "ERR"
+#guard noteTreeRootWire "2;1,x,3" = "ERR"
+#guard noteTreeRootWire "2;1;3" = "ERR"
+
+/-! ## §5 — axiom-hygiene tripwires. -/
 
 #assert_axioms rootReal_eq
 #assert_axioms rootReal_distinct_extracts_collision
