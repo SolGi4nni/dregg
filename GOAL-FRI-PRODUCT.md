@@ -462,6 +462,36 @@ NOTE: ArkLib/VCVio NOT vendored (mathlib only); ArkLib FRI soundness is `sorry` 
 to import. The tree is honest to an unusual degree (Stage 5 states its own NEGATIVE verdict in Lean;
 FriPositiveRadiusPayment proves its own vacuity) — the campaign inherits good faith, not good bits.
 
+
+## ⚡⚡⚡ FRI CAMPAIGN WAVE 1 (07-20) — THE COUNTERPROOF LANDED: deployed floor is EMPTY, machine-checked
+7 lanes + 7 adversarial verifiers; 6/7 real-and-adversary-quantified, non-trivializable (verifiers TRIED
+oracle:=0 / witness:=⟨True⟩, didn't take). The swarm REFUTED the deployed floor FOUR ways, with arithmetic:
+- ⚑ εQuery ≥ 1 AT DEPLOYED PARAMS (81cecbfb0, FriQueryAdversary): εQuery(|F|=2013265921,k=38,δ=7/16)=1/|F|+
+  (9/16)^38 ≈ 2^-30.19 ⇒ Q·εQuery ≥ 1 (a bound of ≥1 = NOTHING) already at Q=2^31
+  (epsQueryAdv_deployed_vacuous_at_2_31). The system's central number is VACUOUS BY COUNTING.
+- ⚑ FriLowDegreeSound ↔ True machine-checked (81cecbfb0 friLowDegreeSound_content_iff_true +
+  has_no_falsifier); payoff re-proven carrier-DELETED (wrap_sound_needs_no_carrier). Cycle-4 keystone
+  confirmed IN LEAN to conclude nothing.
+- ⚑ arity-8 REFUTED both ways (e8d843df4 FriArityForking): rewinding priced out (babybear_8fork_vacuous) AND
+  straight-line cannot supply 8 challenges. Keystone only at positive d; deployed discharge uses unobtainable d=0.
+- ⚑ extractor BUILT + REFUTES "total column" (737a69fa4 FriColumnLogExtract): extractComp_queryBounded (real,
+  QueryBounded 0, BCS16, treeExtract_log_isTree NO floating hyp); no_deterministic_extraction (node-check⟹
+  recover-subtree FALSE even 0-query). Build on ColumnDecodeBridge, NOT the trivializable DeployedFriEmbedding.
+- ⚑ payment FIRES + domain never helps (9c6376789 FriDeployedRat...): realistic instance built, folding
+  closure PROVED, deployed_positive_radius_payment_fires (deg-2^21 word 14.68M-far). AND arity_payment_delta_cap
+  (∀ domain size) ⇒ enlarging domain NEVER recovers advertised soundness; δ=7/16 UNREACHABLE at the instance.
+- ⚑ number is 51 not 61 not 57 (d140bfc98 friCommitLedger); only proved radius δ=7/16 prices ~31.5 bits;
+  capacity_claim_understates_by_2pow82 / johnson_understates_by_2pow25.
+7th lane (numbers docs-sweep): INCOMPLETE — left 3 self-contradictions in lane-edited files (fix next wave).
+⇒ HONEST HEADLINE: the deployed FRI soundness is NOT there at deployed parameters, and it is now MACHINE-
+CHECKED that it is not — a counterproof of our OWN floor, exactly ember's hoped-for outcome #2. The bits do
+not exist as claimed (~31.5 at the only proved radius, vs 57/61/112.6 in circulation). This is ACTIONABLE:
+either the deployed FRI PARAMS must change (more queries / different radius) to buy real bits, or the honest
+posture is "unique-decoding ~31.5 bits, everything above is a NAMED assumption we have now PROVEN unpurchased".
+NEXT WAVE: (1) finish the numbers sweep + purge 112.6/57/61 tree-wide → the PROVEN 51/31.5 + which theorem;
+(2) COMPUTE what params WOULD buy target bits (the actionable fix — q, radius, arity for e.g. 100 real bits);
+(3) the honest wrap posture doc (retire FriLowDegreeSound in the DEPLOYED wrap, state ~31.5 + the named floor).
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
