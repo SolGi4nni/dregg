@@ -97,12 +97,14 @@ pub mod session;
 pub mod signed;
 
 pub use host::{
-    HostError, HostOperationError, OfferingHost, OfferingInfo, ResumeError, seed_from_id,
+    HostArtifactError, HostError, HostOperationError, OfferingHost, OfferingInfo, ResumeError,
+    seed_from_id,
 };
 pub use lifecycle::{Clock, ManualClock, PolicyRefusal, SessionPolicy, SweepReport, SystemClock};
 pub use operation::{
+    BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
     BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
-    BinaryOperationReplayMaterial,
+    BinaryOperationReplayMaterial, MAX_HOSTED_ARTIFACT_BYTES,
 };
 pub use resume::{
     FileResumeStore, InMemoryResumeStore, LoggedBinaryOperation, LoggedMove, SessionMoveLog,
@@ -600,6 +602,30 @@ pub trait Offering {
     /// surface, one for the buttons, both keyed to who is looking.
     fn actions_for(&self, session: &Self::Session, _viewer: &DreggIdentity) -> Vec<Action> {
         self.actions(session)
+    }
+
+    /// Discover canonical read-only artifacts published by this live session.
+    ///
+    /// Unlike [`binary_operations`](Offering::binary_operations), these bytes
+    /// do not mutate the session. Each descriptor declares whether anonymous
+    /// retrieval is deliberate or an attributed viewer is required; adapters
+    /// and the host must not infer that policy from the content.
+    fn binary_artifacts(&self, _session: &Self::Session) -> Vec<BinaryArtifactDescriptor> {
+        Vec::new()
+    }
+
+    /// Export the canonical bytes for one advertised artifact.
+    ///
+    /// Visibility, media-type, size, digest, and duplicate-name checks live in
+    /// [`OfferingHost::export_binary_artifact`]. The offering remains the sole
+    /// author of the bytes and may refuse when an otherwise advertised work
+    /// item is not available in the current session state.
+    fn export_binary_artifact(
+        &self,
+        _session: &Self::Session,
+        name: &str,
+    ) -> Result<Vec<u8>, BinaryArtifactError> {
+        Err(BinaryArtifactError::UnknownArtifact(name.to_string()))
     }
 
     /// Discover transport-bearing operations on this live session.  These are

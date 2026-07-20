@@ -39,9 +39,11 @@ use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_k
 use crate::resume::{LoggedBinaryOperation, SessionMoveLog, SessionResumeStore};
 use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
 use crate::{
-    Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
-    BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity, Offering, OfferingError,
-    Outcome, RunCost, SessionConfig, SessionId, Surface, VerifyReport,
+    Action, BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError,
+    BinaryArtifactVisibility, BinaryOperationDescriptor, BinaryOperationError,
+    BinaryOperationReceipt, BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity,
+    MAX_HOSTED_ARTIFACT_BYTES, Offering, OfferingError, Outcome, RunCost, SessionConfig, SessionId,
+    Surface, VerifyReport,
 };
 
 /// A **catalog entry** — one registered offering's public identity + its live-session count, for a
@@ -121,6 +123,31 @@ impl std::fmt::Display for HostOperationError {
 }
 
 impl std::error::Error for HostOperationError {}
+
+/// A routing or concrete-offering refusal for a read-only binary artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostArtifactError {
+    /// No offering is registered under this key.
+    UnknownOffering(String),
+    /// No live session exists under the addressed offering/session pair.
+    UnknownSession { key: String, id: SessionId },
+    /// The concrete offering or generic artifact gate refused the export.
+    Artifact(BinaryArtifactError),
+}
+
+impl std::fmt::Display for HostArtifactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownOffering(key) => write!(f, "no offering registered under key {key:?}"),
+            Self::UnknownSession { key, id } => {
+                write!(f, "no live session {:?} under offering {key:?}", id.0)
+            }
+            Self::Artifact(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for HostArtifactError {}
 
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -249,6 +276,14 @@ trait OfferingSlot {
     fn price(&self, id: &SessionId, input: &Action) -> Option<RunCost>;
     /// Transport-bearing affordances published by this live session.
     fn binary_operations(&self, id: &SessionId) -> Option<Vec<BinaryOperationDescriptor>>;
+    /// Read-only binary artifacts published by this live session.
+    fn binary_artifacts(&self, id: &SessionId) -> Option<Vec<BinaryArtifactDescriptor>>;
+    /// Export one offering-authored artifact body.
+    fn export_binary_artifact(
+        &self,
+        id: &SessionId,
+        name: &str,
+    ) -> Option<Result<Vec<u8>, BinaryArtifactError>>;
     /// Ask the concrete offering for an explicitly safe restart representation.
     fn binary_operation_replay_material(
         &self,
@@ -378,6 +413,20 @@ impl<O: Offering> OfferingSlot for Hosted<O> {
         Some(self.offering.binary_operations(session))
     }
 
+    fn binary_artifacts(&self, id: &SessionId) -> Option<Vec<BinaryArtifactDescriptor>> {
+        let session = self.sessions.get(id)?;
+        Some(self.offering.binary_artifacts(session))
+    }
+
+    fn export_binary_artifact(
+        &self,
+        id: &SessionId,
+        name: &str,
+    ) -> Option<Result<Vec<u8>, BinaryArtifactError>> {
+        let session = self.sessions.get(id)?;
+        Some(self.offering.export_binary_artifact(session, name))
+    }
+
     fn binary_operation_replay_material(
         &self,
         id: &SessionId,
@@ -482,6 +531,44 @@ pub struct OfferingHost {
     minted_live: HashMap<String, usize>,
     /// Last fresh-mint time per opener quota key (the `min_open_interval_secs` gate).
     last_minted_at: HashMap<String, u64>,
+}
+
+fn validate_artifact_descriptor(
+    descriptor: &BinaryArtifactDescriptor,
+) -> Result<(), BinaryArtifactError> {
+    let valid_name = !descriptor.name.is_empty()
+        && descriptor.name.len() <= 128
+        && descriptor.name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        });
+    if !valid_name {
+        return Err(BinaryArtifactError::InvalidArtifact(
+            "name must be 1..=128 lowercase ASCII route characters [a-z0-9._-]".to_string(),
+        ));
+    }
+    if descriptor.title.trim().is_empty() || descriptor.disclosure.trim().is_empty() {
+        return Err(BinaryArtifactError::InvalidArtifact(
+            "title and disclosure must be non-empty".to_string(),
+        ));
+    }
+    let valid_media_type = !descriptor.media_type.is_empty()
+        && descriptor.media_type.len() <= 127
+        && descriptor
+            .media_type
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b';' | b',' | b'"' | b'\\'))
+        && descriptor.media_type.matches('/').count() == 1;
+    if !valid_media_type {
+        return Err(BinaryArtifactError::InvalidArtifact(
+            "media type must be one exact ASCII type/subtype without parameters".to_string(),
+        ));
+    }
+    if descriptor.max_bytes == 0 || descriptor.max_bytes > MAX_HOSTED_ARTIFACT_BYTES {
+        return Err(BinaryArtifactError::InvalidArtifact(format!(
+            "max_bytes must be within 1..={MAX_HOSTED_ARTIFACT_BYTES}"
+        )));
+    }
+    Ok(())
 }
 
 impl OfferingHost {
@@ -974,6 +1061,100 @@ impl OfferingHost {
                 key: key.to_string(),
                 id: id.clone(),
             })
+    }
+
+    /// Discover the bounded, read-only binary artifacts of live session
+    /// `(key, id)`.
+    ///
+    /// Descriptors cross a generic transport boundary, so the host validates
+    /// their route name, exact media type, cap, and uniqueness before exposing
+    /// any of them. One malformed descriptor fails the entire discovery rather
+    /// than allowing adapters to disagree about which policy applies.
+    pub fn binary_artifacts(
+        &self,
+        key: &str,
+        id: &SessionId,
+    ) -> Result<Vec<BinaryArtifactDescriptor>, HostArtifactError> {
+        let slot = self
+            .slots
+            .get(key)
+            .ok_or_else(|| HostArtifactError::UnknownOffering(key.to_string()))?;
+        let descriptors =
+            slot.binary_artifacts(id)
+                .ok_or_else(|| HostArtifactError::UnknownSession {
+                    key: key.to_string(),
+                    id: id.clone(),
+                })?;
+
+        let mut names = std::collections::BTreeSet::new();
+        for descriptor in &descriptors {
+            validate_artifact_descriptor(descriptor).map_err(HostArtifactError::Artifact)?;
+            if !names.insert(descriptor.name.as_str()) {
+                return Err(HostArtifactError::Artifact(
+                    BinaryArtifactError::InvalidArtifact(format!(
+                        "duplicate artifact name {:?}",
+                        descriptor.name
+                    )),
+                ));
+            }
+        }
+        Ok(descriptors)
+    }
+
+    /// Export one canonical artifact from exactly the addressed live session.
+    ///
+    /// `viewer` is `None` only for an anonymous request. Authenticated
+    /// artifacts are refused before the concrete offering is called. The host
+    /// then enforces the live descriptor's byte cap, copies its exact media
+    /// type, and computes the BLAKE3 digest over the returned body.
+    pub fn export_binary_artifact(
+        &self,
+        key: &str,
+        id: &SessionId,
+        name: &str,
+        viewer: Option<&DreggIdentity>,
+    ) -> Result<BinaryArtifact, HostArtifactError> {
+        let descriptors = self.binary_artifacts(key, id)?;
+        let descriptor = descriptors
+            .into_iter()
+            .find(|descriptor| descriptor.name == name)
+            .ok_or_else(|| {
+                HostArtifactError::Artifact(BinaryArtifactError::UnknownArtifact(name.to_string()))
+            })?;
+        if descriptor.visibility == BinaryArtifactVisibility::Authenticated && viewer.is_none() {
+            return Err(HostArtifactError::Artifact(
+                BinaryArtifactError::AuthenticationRequired,
+            ));
+        }
+
+        let slot = self
+            .slots
+            .get(key)
+            .ok_or_else(|| HostArtifactError::UnknownOffering(key.to_string()))?;
+        let bytes = slot
+            .export_binary_artifact(id, name)
+            .ok_or_else(|| HostArtifactError::UnknownSession {
+                key: key.to_string(),
+                id: id.clone(),
+            })?
+            .map_err(HostArtifactError::Artifact)?;
+        if bytes.len() > descriptor.max_bytes {
+            return Err(HostArtifactError::Artifact(
+                BinaryArtifactError::InvalidArtifact(format!(
+                    "artifact {:?} returned {} bytes, exceeding its {}-byte descriptor cap",
+                    descriptor.name,
+                    bytes.len(),
+                    descriptor.max_bytes
+                )),
+            ));
+        }
+
+        Ok(BinaryArtifact {
+            name: descriptor.name,
+            media_type: descriptor.media_type,
+            digest: *blake3::hash(&bytes).as_bytes(),
+            bytes,
+        })
     }
 
     /// Apply one transport-bearing operation to exactly the addressed live

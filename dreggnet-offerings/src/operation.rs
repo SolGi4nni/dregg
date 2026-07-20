@@ -10,6 +10,103 @@
 //! executor; web, Discord, Telegram, and native adapters only enforce their
 //! transport/authentication boundary and call the same host method.
 
+/// Absolute ceiling for one artifact crossing the generic hosting seam.
+///
+/// A concrete descriptor may select a smaller bound. It cannot silently turn
+/// this read-only route into an unbounded memory response by advertising a
+/// larger one.
+pub const MAX_HOSTED_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
+
+/// Who may retrieve a hosted binary artifact.
+///
+/// This is explicit because neither the host nor a frontend is allowed to
+/// infer secrecy from a media type, title, or the bytes themselves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryArtifactVisibility {
+    /// The artifact is deliberately public and may be fetched anonymously.
+    Public,
+    /// The artifact is not public; a surface must establish an attributed
+    /// viewer before asking the host for it.
+    Authenticated,
+}
+
+impl BinaryArtifactVisibility {
+    /// Stable transport spelling used by discovery responses.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Authenticated => "authenticated",
+        }
+    }
+}
+
+/// A discoverable, read-only binary artifact of one live offering session.
+///
+/// Typical artifacts are canonical worker tasks, public proving inputs, or a
+/// receipt export. Publishing this descriptor does not itself publish bytes:
+/// [`visibility`](Self::visibility) is the explicit retrieval policy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BinaryArtifactDescriptor {
+    /// Stable protocol/artifact identity within this offering.
+    pub name: String,
+    /// Human-facing download label.
+    pub title: String,
+    /// Exact response media type, without content negotiation.
+    pub media_type: String,
+    /// Offering-selected cap, itself bounded by
+    /// [`MAX_HOSTED_ARTIFACT_BYTES`].
+    pub max_bytes: usize,
+    /// Exact disclosure every renderer must show verbatim.
+    pub disclosure: String,
+    /// Explicit anonymous-versus-attributed retrieval policy.
+    pub visibility: BinaryArtifactVisibility,
+}
+
+/// A host-validated artifact ready for an adapter to return.
+///
+/// The concrete offering supplies only the canonical bytes. The host copies
+/// the exact media type from the live descriptor and computes the digest, so
+/// those transport claims cannot disagree with the body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BinaryArtifact {
+    /// Stable artifact identity that was requested.
+    pub name: String,
+    /// Exact response media type selected by the live offering descriptor.
+    pub media_type: String,
+    /// Canonical body bytes.
+    pub bytes: Vec<u8>,
+    /// BLAKE3 digest of `bytes`.
+    pub digest: [u8; 32],
+}
+
+/// A concrete offering's refusal while exporting a read-only artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BinaryArtifactError {
+    /// This live offering/session does not publish the requested artifact.
+    UnknownArtifact(String),
+    /// The artifact is explicitly authenticated and no viewer was established.
+    AuthenticationRequired,
+    /// A descriptor or returned body violated the generic bounded/exact seam.
+    InvalidArtifact(String),
+    /// The artifact exists, but is not available in the session's current state.
+    Refused(String),
+}
+
+impl std::fmt::Display for BinaryArtifactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownArtifact(name) => write!(f, "unknown binary artifact {name:?}"),
+            Self::AuthenticationRequired => {
+                write!(f, "artifact requires an authenticated viewer")
+            }
+            Self::InvalidArtifact(reason) => write!(f, "invalid hosted artifact: {reason}"),
+            Self::Refused(reason) => write!(f, "artifact export refused: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for BinaryArtifactError {}
+
 /// A discoverable, transport-bearing operation on one live offering session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BinaryOperationDescriptor {
