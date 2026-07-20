@@ -39,12 +39,19 @@
 //! `value_binding = hash_fact(value, [asset_type, randomness, 0])` (C7), computed
 //! from the SAME value/asset/randomness cells the membership leaf is built from, so
 //! the STARK leaf value+asset cannot float free of what the transfer actually
-//! balances. PQ CUTOVER (Option A): this Poseidon2 commitment is the AUTHORITATIVE
-//! shielded value-commitment — binding on `(value, asset_type)` under `HashCR`
-//! (Poseidon2 collision-resistance, quantum-safe), hiding via the `randomness`
-//! blinder. It retires the Ristretto three-generator Pedersen `commit_hidden_asset`
-//! (DLog binding, Shor-broken); the in-AIR STARK conservation (the ring-clearing AIR)
-//! is the authoritative no-mint check. The Rust mirror
+//! balances. ⚠ POSTURE (honest, 2026-07-20 — corrected from an overstated claim):
+//! this Poseidon2 value-binding is the INTENDED authoritative PQ commitment (binding on
+//! `(value, asset_type)` under `HashCR` / Poseidon2 collision-resistance, hiding via the
+//! `randomness` blinder) — but it is NOT yet the deployed no-mint gate. On the CURRENTLY
+//! DEPLOYED single-transfer path, conservation still runs through the Ristretto
+//! three-generator Pedersen `commit_hidden_asset` (DLog, Shor-broken), and the
+//! value_binding↔leaf link (`verify_value_link`) is checked ONLY in tests, not in
+//! `apply_shielded_transfer`. The PQ cutover COMPLETES only when the deployed transfer is
+//! routed through the ring-clearing apex (`shielded_ring_clearing_nleg_air`) as a 1-leg
+//! ring — the approved Option-A redesign (docs/DECISION-shielded-redesign-2026-07-20.md +
+//! docs/PLAN-shielded-apex-redesign-2026-07-20.md) — which makes THIS the authoritative
+//! Poseidon2 no-mint check and retires Ristretto. Until then the real posture is
+//! Ristretto-DLog conservation, not the PQ gate this comment previously claimed. The Rust mirror
 //! `dregg_cell_crypto::value_commitment::value_link_binding` re-derives this felt.
 
 use dregg_circuit::dsl::circuit::{
@@ -474,14 +481,17 @@ impl ShieldedSpendWitness {
     /// from the SAME value/asset/randomness cells the membership leaf (C6) is built
     /// from, so the published binding cannot float free of the leaf's value or asset.
     ///
-    /// PQ CUTOVER (Option A): this Poseidon2 commitment is the AUTHORITATIVE shielded
-    /// value-commitment — binding on `(value, asset_type)` under `HashCR` (Poseidon2
-    /// collision-resistance, a quantum-safe floor), the exact jointly-binding property
-    /// the retired three-generator Ristretto `commit_hidden_asset(value, asset_type,
-    /// blinding)` had under DLog. Hiding is the `randomness` blinder; the asset type is
-    /// absorbed inside the hash, so the public PI reveals neither value nor asset. The
-    /// Rust mirror `dregg_cell_crypto::value_commitment::value_link_binding(value,
-    /// asset_type, randomness)` re-derives exactly this felt.
+    /// ⚠ POSTURE (honest, 2026-07-20 — corrected from an overstated claim): this
+    /// Poseidon2 commitment is the INTENDED authoritative PQ value-commitment (binding on
+    /// `(value, asset_type)` under `HashCR`, a quantum-safe floor; hiding via `randomness`;
+    /// asset absorbed in the hash so the PI reveals neither value nor asset) — but it is
+    /// NOT yet the deployed no-mint gate. The value_binding↔leaf link (`verify_value_link`)
+    /// runs ONLY in tests, and deployed conservation gates on the Shor-broken Ristretto
+    /// `commit_hidden_asset(value, asset_type, blinding)` DLog. This becomes authoritative
+    /// (and Ristretto retired) only after the Option-A redesign routes the transfer through
+    /// the ring-clearing apex. The Rust mirror
+    /// `dregg_cell_crypto::value_commitment::value_link_binding(value, asset_type,
+    /// randomness)` re-derives exactly this felt.
     pub fn value_binding(&self) -> BabyBear {
         hash_fact(
             self.value,
