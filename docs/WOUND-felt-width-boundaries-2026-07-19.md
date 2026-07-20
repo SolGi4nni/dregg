@@ -47,10 +47,16 @@ readiness claim. Captured here so they ride the same campaign.
   only in a `prover`-enabled executor (verify-only fails closed); not in the committed VK.
 - **Correction to #4/#10 (note/nullifier):** I over-claimed this as "finish an existing port." The
   accumulator NODE digests are 8-felt + proven (`DeployedHeapTree`/`SortedTreeNonMembershipHeap8`), but
-  the note commitment/nullifier **value and the sorted key** are still 1-felt and UNSTARTED —
-  authoring a new Digest8-keyed scheme + new bracketing math over multi-felt keys (the `List ℤ` sorted-gap
-  lemmas do not transfer). Plus an **ember-gated, frozen** kernel flip (`NullifierAccumulator.lean:12-23`,
-  "do NOT fire piecemeal"). This is the HARDEST lane, not the exemplar.
+  the note commitment/nullifier **value and the sorted key** are still 1-felt and UNSTARTED.
+  **CORRECTION (07-20 scoping):** the "new bracketing math" fear was too pessimistic — the sorted-gap
+  soundness (`Crypto/NonMembership.lean`) is already `[LinearOrder Digest]`-**generic**, so instantiating
+  `Digest := Lex (Fin 8 → ℤ)` gives the whole adjacency bracketing FOR FREE (the IMT/Heap8 wrappers are
+  ℤ-typed but their proofs never touch ℤ arithmetic — mechanical generalization, machine-confirmable by a
+  one-section spike). The genuine new work is bounded and nameable: **one lex-`<`-over-8-felts AIR gadget**
+  (`eval_lex_lt` is only a doc-comment today, no def), a **leaf-schema widening** (addr/nextAddr → 8 felts,
+  arity-17 leaf), and the **easy value widening** (`hash_many→hash_many_8`, `felt_to_bytes32→digest8_to_bytes32`).
+  Still HIGH — but the cost is a compare gadget + a leaf widening, **not new combinatorics**. Plus the
+  **ember-gated, frozen** kernel flip (`NullifierAccumulator.lean:12-23`, "do NOT fire piecemeal").
 - **#12 interface_id has NO Lean model and NO wide twin** — left behind when cap_root grew its `_8`.
   Reusable wide primitive exists (`Market/WideCommitBoundary.lean` `wireCommitR8`/`Poseidon2Width8`;
   Rust `hash_many_8`/`digest8_to_bytes32`). Anti-laundering: the fold accumulator must be 8-felt
