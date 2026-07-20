@@ -93,5 +93,10 @@ path = "src/bin/mpc_bench.rs"
 name = "fhe-boundary-bench"
 path = "src/bin/boundary_bench.rs"
 
+# Long-running process roles for authenticated reveal-only scalar equality.
+[[bin]]
+name = "fhegg-equality-worker"
+path = "src/bin/equality_transport_worker.rs"
+
 [lints]
 workspace = true

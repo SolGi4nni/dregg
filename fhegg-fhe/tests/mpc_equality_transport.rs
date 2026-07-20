@@ -217,6 +217,31 @@ fn authenticated_equality_transport_is_reveal_only_and_fail_closed() {
         Err(EqualityTransportError::SessionMismatch)
     ));
 
+    // Timeout is part of the exact authenticated session, not merely a local
+    // process preference: a same-nonce frame from a differently timed session
+    // cannot cross the boundary.
+    let different_timeout = PartyMpcSession::equality(
+        session.nonce(),
+        N,
+        VALUE_BITS,
+        MODULUS,
+        Duration::from_secs(6),
+    )
+    .unwrap();
+    let mut differently_timed_parties = build_parties(
+        &different_timeout,
+        &roster,
+        &party_seeds,
+        0x5254,
+        [20, 30, 27],
+        [10, 11, 56],
+    );
+    let timed_cross = next_frame(&mut differently_timed_parties[0]);
+    assert!(matches!(
+        parties[timed_cross.recipient()].accept_frame(timed_cross.as_bytes()),
+        Err(EqualityTransportError::SessionMismatch)
+    ));
+
     // The ordered transport roster is part of the session identity. Even a
     // frame from an unchanged sender key cannot cross into a session whose
     // other participant key differs.

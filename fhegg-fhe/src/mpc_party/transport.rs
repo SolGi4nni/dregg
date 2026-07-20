@@ -816,6 +816,8 @@ fn equality_session_digest(
     hash.update((session.buckets as u64).to_be_bytes());
     hash.update((session.value_bits as u64).to_be_bytes());
     hash.update(session.plaintext_modulus.to_be_bytes());
+    hash.update(session.quorum_timeout.as_secs().to_be_bytes());
+    hash.update(session.quorum_timeout.subsec_nanos().to_be_bytes());
     hash.update([1u8]);
     hash.update((roster.party_keys.len() as u64).to_be_bytes());
     for key in &roster.party_keys {

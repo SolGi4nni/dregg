@@ -59,6 +59,11 @@ pub const MAX_DECISION_TRANSCRIPT_BYTES: usize = 16 * 1024 * 1024;
 const DECISION_TRANSCRIPT_MAGIC: &[u8; 8] = b"FHDTR001";
 const DECISION_TRANSCRIPT_FIXED_BYTES: usize = 8 + 8 + 1 + 5 * 8;
 const MASKED_OPENING_WIRE_BYTES: usize = 8 + 1 + 1;
+/// Maximum protected Beaver-material custody accepted at a party process
+/// boundary. This is secret preprocessing, never a coordinator artifact.
+pub const MAX_TRIPLE_MATERIAL_BYTES: usize = 16 * 1024 * 1024;
+const TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI001";
+const TRIPLE_MATERIAL_FIXED_BYTES: usize = 8 + 32 + 8 * 7 + 4 + 1;
 
 /// Public circuit/session parameters. The nonce is a routing/replay-domain tag,
 /// not an authenticator; a deployment must bind it to an authenticated roster.
@@ -299,6 +304,7 @@ pub enum PartyMpcError {
     TripleExhausted,
     InvalidOutput,
     MalformedTranscriptWire,
+    MalformedTripleMaterialWire,
     ArithmeticOverflow,
 }
 
@@ -344,6 +350,199 @@ pub struct TripleMaterial {
     session: PartyMpcSession,
     party: usize,
     triples: Vec<LocalTriple>,
+}
+
+impl TripleMaterial {
+    /// Canonical protected custody for one party's trusted-dealer Beaver row.
+    ///
+    /// The wire binds the complete MPC session, party index, and exact gate
+    /// count. It contains secret triple shares and must be handled like a key,
+    /// never published or delivered to the coordinator.
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>> {
+        let encoded_len = TRIPLE_MATERIAL_FIXED_BYTES
+            .checked_add(
+                self.triples
+                    .len()
+                    .checked_mul(3)
+                    .ok_or(PartyMpcError::ArithmeticOverflow)?,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if encoded_len > MAX_TRIPLE_MATERIAL_BYTES
+            || self.triples.len() != self.session.exact_and_gates()
+            || self
+                .triples
+                .iter()
+                .any(|triple| triple.a > 1 || triple.b > 1 || triple.c > 1)
+        {
+            return Err(PartyMpcError::MalformedTripleMaterialWire);
+        }
+        let mut out = Vec::with_capacity(encoded_len);
+        out.extend_from_slice(TRIPLE_MATERIAL_MAGIC);
+        out.extend_from_slice(&self.session.nonce);
+        put_triple_usize(&mut out, self.session.n_parties)?;
+        put_triple_usize(&mut out, self.session.buckets)?;
+        put_triple_usize(&mut out, self.session.value_bits)?;
+        out.extend_from_slice(&self.session.plaintext_modulus.to_be_bytes());
+        out.extend_from_slice(&self.session.quorum_timeout.as_secs().to_be_bytes());
+        out.extend_from_slice(&self.session.quorum_timeout.subsec_nanos().to_be_bytes());
+        out.push(match self.session.circuit {
+            CircuitKind::Crossing => 0,
+            CircuitKind::Equality => 1,
+            CircuitKind::LessThan => 2,
+        });
+        put_triple_usize(&mut out, self.party)?;
+        put_triple_usize(&mut out, self.triples.len())?;
+        for triple in &self.triples {
+            out.extend_from_slice(&[triple.a, triple.b, triple.c]);
+        }
+        debug_assert_eq!(out.len(), encoded_len);
+        Ok(out)
+    }
+
+    /// Strictly decode protected preprocessing for one expected session and
+    /// party. A custody file cannot be replayed under a different timeout,
+    /// circuit, nonce, shape, or party slot.
+    pub fn from_wire_bytes(
+        expected_session: &PartyMpcSession,
+        expected_party: usize,
+        bytes: &[u8],
+    ) -> Result<Self> {
+        if bytes.len() < TRIPLE_MATERIAL_FIXED_BYTES || bytes.len() > MAX_TRIPLE_MATERIAL_BYTES {
+            return Err(PartyMpcError::MalformedTripleMaterialWire);
+        }
+        let mut input = TripleWireReader::new(bytes);
+        if input.take(TRIPLE_MATERIAL_MAGIC.len())? != TRIPLE_MATERIAL_MAGIC {
+            return Err(PartyMpcError::MalformedTripleMaterialWire);
+        }
+        let nonce: [u8; 32] = input
+            .take(32)?
+            .try_into()
+            .map_err(|_| PartyMpcError::MalformedTripleMaterialWire)?;
+        let n_parties = input.usize()?;
+        let buckets = input.usize()?;
+        let value_bits = input.usize()?;
+        let plaintext_modulus = input.u64()?;
+        let timeout_secs = input.u64()?;
+        let timeout_nanos = input.u32()?;
+        let circuit = match input.byte()? {
+            0 => CircuitKind::Crossing,
+            1 => CircuitKind::Equality,
+            2 => CircuitKind::LessThan,
+            _ => return Err(PartyMpcError::MalformedTripleMaterialWire),
+        };
+        let party = input.usize()?;
+        let count = input.usize()?;
+        let expected_len = TRIPLE_MATERIAL_FIXED_BYTES
+            .checked_add(
+                count
+                    .checked_mul(3)
+                    .ok_or(PartyMpcError::ArithmeticOverflow)?,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if expected_len != bytes.len()
+            || timeout_nanos >= 1_000_000_000
+            || party != expected_party
+            || party >= n_parties
+        {
+            return Err(PartyMpcError::MalformedTripleMaterialWire);
+        }
+        let session = PartyMpcSession::new_for(
+            nonce,
+            n_parties,
+            buckets,
+            value_bits,
+            plaintext_modulus,
+            Duration::new(timeout_secs, timeout_nanos),
+            circuit,
+        )
+        .map_err(|_| PartyMpcError::MalformedTripleMaterialWire)?;
+        if &session != expected_session || count != session.exact_and_gates() {
+            return Err(PartyMpcError::SessionMismatch);
+        }
+        let mut triples = Vec::with_capacity(count);
+        for _ in 0..count {
+            let a = input.byte()?;
+            let b = input.byte()?;
+            let c = input.byte()?;
+            if a > 1 || b > 1 || c > 1 {
+                return Err(PartyMpcError::MalformedTripleMaterialWire);
+            }
+            triples.push(LocalTriple { a, b, c });
+        }
+        input.finish()?;
+        let material = Self {
+            session,
+            party,
+            triples,
+        };
+        if material.to_wire_bytes()? != bytes {
+            return Err(PartyMpcError::MalformedTripleMaterialWire);
+        }
+        Ok(material)
+    }
+}
+
+fn put_triple_usize(out: &mut Vec<u8>, value: usize) -> Result<()> {
+    out.extend_from_slice(
+        &u64::try_from(value)
+            .map_err(|_| PartyMpcError::ArithmeticOverflow)?
+            .to_be_bytes(),
+    );
+    Ok(())
+}
+
+struct TripleWireReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> TripleWireReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(PartyMpcError::MalformedTripleMaterialWire)?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn byte(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32> {
+        Ok(u32::from_be_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| PartyMpcError::MalformedTripleMaterialWire)?,
+        ))
+    }
+
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_be_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| PartyMpcError::MalformedTripleMaterialWire)?,
+        ))
+    }
+
+    fn usize(&mut self) -> Result<usize> {
+        usize::try_from(self.u64()?).map_err(|_| PartyMpcError::MalformedTripleMaterialWire)
+    }
+
+    fn finish(self) -> Result<()> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(PartyMpcError::MalformedTripleMaterialWire)
+        }
+    }
 }
 
 /// One masked Beaver opening broadcast by the coordinator. Both bits are
