@@ -36,6 +36,28 @@ fn child_body(role: &str) -> ! {
                 out.is_some()
             );
         }
+        "sign" => {
+            // The SHIPPING sign path: derive the key from a seed (keygen is NOT
+            // gated -- see the keygen hole -- so we reach the sign gate), then
+            // sign. The gate must stop this before `fips204` produces bytes.
+            let seed = [7u8; 32];
+            let sig = dregg_pq::ml_dsa_sign_from_seed(&seed, b"ctx", b"msg");
+            eprintln!(
+                "CHILD SURVIVED THE GATE: ml_dsa_sign_from_seed -> {:?} bytes",
+                sig.as_ref().map(|s| s.len())
+            );
+        }
+        "decaps" => {
+            // Well-formed FIPS-203 lengths so the fail-closed length gate does
+            // not short-circuit ahead of the audit gate: dk = 2400, ct = 1088.
+            let dk = vec![0u8; 2400];
+            let ct = vec![0u8; 1088];
+            let out = dregg_pq::ml_kem768_decaps(&dk, &ct);
+            eprintln!(
+                "CHILD SURVIVED THE GATE: ml_kem768_decaps -> {:?}",
+                out.is_some()
+            );
+        }
         other => {
             eprintln!("CHILD: unknown role {other}");
             std::process::exit(3);
@@ -133,6 +155,92 @@ fn encaps_without_core_aborts_loudly() {
         "ML-KEM-768 encaps",
         "ml-kem 0.2.3",
         "install_verified_mlkem_encaps_core",
+    ] {
+        assert!(
+            stderr.contains(needle),
+            "refusal message is missing {needle:?}. stderr:\n{stderr}"
+        );
+    }
+}
+
+/// ★ THE SIGN ARM of the gate. A signature is the half an operator most easily
+/// mistakes for verified output -- it is bytes that go on the wire under a
+/// pinned identity -- so producing one from the unaudited `fips204` primitive
+/// must abort, not warn.
+#[test]
+fn sign_without_core_aborts_loudly() {
+    let out = run_child("sign", false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "ml_dsa_sign_from_seed SURVIVED with no verified core installed -- the \
+         unaudited fips204 fallback SIGNED silently. stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("CHILD SURVIVED THE GATE"),
+        "the gate did not stop the sign:\n{stderr}"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            out.status.signal(),
+            Some(6),
+            "expected SIGABRT (process::abort), got {:?}. stderr:\n{stderr}",
+            out.status
+        );
+    }
+
+    for needle in [
+        "refused to run UNAUDITED post-quantum crypto",
+        "ML-DSA-65 sign",
+        "fips204 0.4",
+        "install_verified_mldsa_sign_core_real",
+        "DREGG_ALLOW_UNAUDITED_PQ=1",
+    ] {
+        assert!(
+            stderr.contains(needle),
+            "refusal message is missing {needle:?} -- it must name the unaudited \
+             crate and the install that fixes it. stderr:\n{stderr}"
+        );
+    }
+}
+
+/// The decaps twin of `encaps_without_core_aborts_loudly`. Gate 2 guards four
+/// arms (verify / sign / encaps / decaps); each one gets a test that proves the
+/// abort actually fires, so no arm can rot into a silent fallback unobserved.
+#[test]
+fn decaps_without_core_aborts_loudly() {
+    let out = run_child("decaps", false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "ml_kem768_decaps SURVIVED with no verified core installed. stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("CHILD SURVIVED THE GATE"),
+        "the gate did not stop the decaps:\n{stderr}"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            out.status.signal(),
+            Some(6),
+            "expected SIGABRT (process::abort), got {:?}. stderr:\n{stderr}",
+            out.status
+        );
+    }
+
+    for needle in [
+        "refused to run UNAUDITED post-quantum crypto",
+        "ML-KEM-768 decaps (bare)",
+        "ml-kem 0.2.3",
+        "install_verified_mlkem_decaps_core",
     ] {
         assert!(
             stderr.contains(needle),

@@ -512,6 +512,17 @@ fn shared_to_array(ss: ml_kem::SharedKey<MlKem768>) -> [u8; 32] {
 /// state. The returned [`HybridOffer`] is sent to the initiator; the
 /// [`HybridResponder`] is retained for [`finish`](HybridResponder::finish).
 pub fn responder_offer() -> (HybridOffer, HybridResponder) {
+    // NO VERIFIED PATH EXISTS FOR THE PQ HALF OF THIS OFFER. The hybrid's decaps
+    // routes to the Lean-verified `MlKemDecaps` core when installed, but the
+    // KEYPAIR that decaps consumes is minted here by the unaudited `ml-kem` crate
+    // -- there is no verified ML-KEM keygen core in the metatheory and none
+    // exported from `libdregg_lean.a`. Refuses (aborts) unless
+    // DREGG_ALLOW_UNAUDITED_PQ=1 -- see `crate::audit`.
+    crate::audit::guard_no_verified_core(
+        "ML-KEM-768 KeyGen (hybrid responder offer, from OS entropy)",
+        "ml-kem 0.2.3",
+        "the ML-KEM-768 decapsulation key backing this hybrid session's shared secret",
+    );
     let mut rng = OsCsprng;
 
     // Classical half: fresh X25519 ephemeral keypair.
@@ -664,6 +675,18 @@ impl HybridResponder {
 /// FIPS-203 ML-KEM-768 sizes. The SAME `ml-kem` v0.2.3 primitive [`responder_offer`] mints its post-quantum
 /// half from; dregg `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
 pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
+    // NO VERIFIED PATH EXISTS FOR THIS OPERATION. Encaps and decaps route to the
+    // Lean-verified `MlKemEncaps` / `MlKemDecaps` cores when installed; KEYGEN has
+    // no verified core in the metatheory and none exported from `libdregg_lean.a`,
+    // so the `ml-kem` crate's CSPRNG draw and key expansion are UNCONDITIONALLY the
+    // authority producing this decapsulation key -- there is no install that could
+    // displace it. Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 -- see
+    // `crate::audit`.
+    crate::audit::guard_no_verified_core(
+        "ML-KEM-768 KeyGen (bare, from OS entropy)",
+        "ml-kem 0.2.3",
+        "an ML-KEM-768 decapsulation key (2400 B) guarding every session secret it opens",
+    );
     let mut rng = OsCsprng;
     let (dk, ek) = MlKem768::generate(&mut rng);
     (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())

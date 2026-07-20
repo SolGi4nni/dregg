@@ -383,6 +383,18 @@ impl MlDsaKey {
     /// PQ public key matches across cipherclerk / node / genesis with no
     /// separate ceremony.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
+        // NO VERIFIED PATH EXISTS FOR THIS OPERATION. Unlike sign/verify -- which
+        // route to `MlDsaSignReal.signCore` / `Fips204Verify.verifyRealCore` when a
+        // host installs them -- there is no Lean-verified ML-DSA keygen core in the
+        // metatheory and none exported from `libdregg_lean.a`. The `fips204` crate
+        // is therefore UNCONDITIONALLY the authority that expands this seed into a
+        // secret key, with no install that could displace it. Refuses (aborts)
+        // unless DREGG_ALLOW_UNAUDITED_PQ=1 -- see `crate::audit`.
+        crate::audit::guard_no_verified_core(
+            "ML-DSA-65 KeyGen (deterministic, from the ed25519 seed)",
+            "fips204 0.4",
+            "an ML-DSA-65 secret key (4032 B) and the public key enrolled/pinned to this identity",
+        );
         let (pk, sk) = ml_dsa_65::KG::keygen_from_seed(seed);
         Self {
             secret: sk,
