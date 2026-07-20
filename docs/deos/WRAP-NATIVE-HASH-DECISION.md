@@ -242,8 +242,10 @@ CORRECTION" / "EVM SETTLEMENT REAL END-TO-END" / "APEX-VK PIN" entries):
    `FriProximityGapChallenges`) are each proved at `L = 1` on the deployed
    rate-1/64 code, their `L > 1` correlated-agreement generalization proved by
    ordered-pair counting (`L ≤ 186` interior / `L ≤ 292` boundary) in
-   `FriCorrelatedAgreementSharp.lean`, and the deployed per-fold soundness is
-   the proven ~112.6-bit `wrap_perFold_soundness_capacity`. Open: the
+   `FriCorrelatedAgreementSharp.lean`, and the deployed **arity-8** per-fold soundness is
+   **~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`); the proven ~112.6-bit
+   `wrap_perFold_soundness_capacity` is the **arity-2** figure and provably fails at arity 8
+   (`arity8_error_not_lt_2e112`). Open: the
    Guruswami–Sudan-ideal `L ≤ 128` list bound for the multiset word
    (`Dregg2/ForMathlib/GuruswamiSudan.lean:20-33`).
    `docs/reference/FRI-BOTH-WIN-LEVERS.md` prices the deployed artifact under

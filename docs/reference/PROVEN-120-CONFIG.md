@@ -176,9 +176,15 @@ path**.
 | `fri_trace_height_measure.rs:133` | `DEPLOYED_WORST_LOG_D0 = WRAP_LOG_CEIL + RECURSION_FRI_LOG_BLOWUP = 19` — same mispairing, and `:293-299` **asserts** it |
 | `plonky3_recursion_impl.rs:385-392` | stale comment: *"the recursion PROVER side is unchanged from `create_recursion_config` (log_blowup=3)"* — **false of the code beneath it** |
 
-⚑ **Consequence: the deployed posture is 57, not 61.** The tree is **4 bits optimistic** about its own
-worst case, and the census's warning about *"~2 bits per doubling"* guards a number two doublings
-stale.
+⚑ **Consequence: the proven deployed posture is 51, not 61 and not 57.** The machine-checked fixed-`m`
+ledger reads the apex commit column as **51 bits** at the deployed `|D⁰| = 2^22`
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`); `61` is the `recursionConfig`-at-`2^19`
+mispairing (`the_61_is_the_recursion_config_reading`, `deployed_wrap_is_not_61`) and `57` is the same
+`lb=6` engine read at the wrong height `2^19` (`the_proven120_correction_is_half_applied`,
+`deployed_wrap_is_not_the_proven120_number`). The `57`/`57.98` numbers elsewhere in this document are
+the `m=3` best-case CEILING (an upper bound on achievable λ) or an `m`-optimized eq.(20) reading — **not**
+the proven deployed ε_C. The tree was **more than 4 bits optimistic** about its own worst case, and the
+census's warning about *"~2 bits per doubling"* guards a number two doublings stale.
 
 ⚑ **A second, unmeasured config falls out.** `ir2LeafWrapRotatedConfig` (lb=6, arity 2 —
 `FriLedgerSound.lean:277`) has **no row at any recursion height** in
@@ -203,10 +209,17 @@ Honest eq. (20), on the mechanized ledger, each config at **its own** measured h
 | `ir2_config` (leaf, arity 8) | 6 | 19 | 16 | 2^8 | 2^14 | 73 | **69.00** |
 | `ethWrapOuterConfig` (gnark outer) | 3 | 38 | 16 | 2^15 | 2^18 | 69 | **65.54** |
 | `recursionConfig` | 3 | 38 | 14 | 2^16 | 2^19 | 67 | **63.54** |
-| **`ir2_leaf_wrap` (THE APEX)** | 6 | 19 | 16 | **2^16** | **2^22** | **57** | **57.00** |
+| **`ir2_leaf_wrap` (THE APEX)** | 6 | 19 | 16 | **2^16** | **2^22** | 57 ‡ | 57.00 ‡ |
 
-**Nothing ships above 71. The artifact a light client verifies reads 57.** Proven-120 is **63 bits
-away** on the binding config.
+‡ **These two apex figures `m`-optimize eq.(20).** The machine-checked fixed-`m` (BCIKS `m=7`) ledger
+reads the apex's proven deployed posture as **ε_C = 51 bits** / composite **50**
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`, `the_commit_column_binds_at_the_deployed_pairing`),
+below the `m`-optimized `57.00`. **The deployed posture is 51 — treat the row's `57` as the best-case
+ceiling, not the proven number.**
+
+**Nothing ships above 71. The artifact a light client verifies has a proven commit posture of 51 bits**
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`); its `m=3` best-case ceiling is 57, so proven-120
+is **63 ceiling-bits away** on the binding config.
 
 ### 3.2 The ceiling map — the only question that matters first
 
@@ -346,7 +359,7 @@ and the target is 120. **Only degree moves the ceiling.**
 
 | # | (d, lb, q, pow, T) | **proven λ** | reaches 120? | prover | proof | wrap | engineering |
 |---|---|---:|---|---|---|---|---|
-| **0** | **d=4, lb=6, q=19, pow=16, T=2^16** — *deployed* | **57.00** | **no** — ceiling 57 | 1.00× | 120 KiB | 4.98M | — |
+| **0** | **d=4, lb=6, q=19, pow=16, T=2^16** — *deployed* | 57.00 ‡ | **no** — ceiling 57 | 1.00× | 120 KiB | 4.98M | — |
 | 1 | d=4, lb=6, q=19, pow=16, **T=2^15** | 59.00 | **no** — ceiling 59 | **~0.5×** apex | 120 KiB | 4.98M | **free** (`WRAP_LOG_CEIL`) |
 | 2 | **d=5**, any lb, any q, any pow, **any T ≥ 2^6** | **≤ 118** | **NO — ANYWHERE** | +7% | +4.6% | ~6–7M | wrap rewrite **+ W: 11→2** |
 | 3 | **d=6**, lb=6, T=2^16 | **≤ 119** | **NO** | ~+15% (EST) | ~+12% (EST) | ~6.5–9M (EST) | wrap rewrite **+ FORK of 18 crates** (orphan-blocked) |
@@ -355,6 +368,10 @@ and the target is 120. **Only degree moves the ceiling.**
 | **6** | **d=8, lb=6, q=36, pow=16, T=2^15** ⭐ | **122.60** | **YES — 2.6 bits** | **+25%** | **252 KiB** | **~7.5–12M** (EST) | wrap rewrite + p3-recursion `8 =>` arm; **no fork, no W change** |
 | 7 | d=8, lb=6, q=34, pow=20, T=2^15 | 120.6 | yes | +25% | 240 KiB | ~7.5–12M (EST) | as #6 + 4 grind bits |
 | 8 | d=8, lb=3, q=71, pow=16, T=2^15 | 120.70 | yes | +25% | **~350 KiB** | **~14–22M** (EST) | as #6, **1.87× wrap query loop** |
+
+‡ **Candidate 0's `57.00` is the `m`-optimized eq.(20) reading.** The proven deployed posture (fixed
+`m=7` ledger) is **ε_C = 51 / composite 50** (`FriDeployedHeightPairing.deployed_wrap_commitBits`,
+`the_commit_column_binds_at_the_deployed_pairing`). It does not change the verdict (no knob reaches 120).
 
 **Labels.** Prover / proof deltas at d=5 and d=8 are **MEASURED** (`EXT-DEGREE-COST.md` §1.2/§1.4,
 `circuit-prove/tests/ext_degree_cost_measure.rs`, min-of-3, deployed-realistic width 128). **d=6 is

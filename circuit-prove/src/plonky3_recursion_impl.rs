@@ -112,7 +112,9 @@ pub mod recursive {
     /// models `dregg_circuit::descriptor_ir2::ir2_config`, NOT the Rust fn named
     /// `ir2_leaf_wrap_config()`. The latter's real knob set is `FriLedgerSound.ir2LeafWrapRotatedConfig`
     /// — and being arity-2 at `logBlowup = 6`, it is the ONE shipped config the standing ~112.6-bit
-    /// per-fold posture actually describes.
+    /// per-fold posture actually describes (`FriLedgerSound.rotatedLeafWrap_ledger_perFoldBits`: 112
+    /// bits; the deployed arity-8 `ir2_config` carries 109 and ~112.6 provably fails there,
+    /// `FriArityTransfer.arity8_error_not_lt_2e112`).
     pub const INNER_FRI_MAX_LOG_ARITY: usize = 1;
     /// The query count [`create_recursion_config_for_inner_fri`] pins — 19, matching `ir2_config`'s
     /// security target at log_blowup 6.

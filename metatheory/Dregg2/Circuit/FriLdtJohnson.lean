@@ -55,7 +55,9 @@ relative `13/16`, GS-non-degenerate) and `WrapCorrelatedAgreementSharp 292` (bou
 each via the ordered distinct-`Φ` pair injection into `κ × κ`. The GS-IDEAL list `L ≤ 2·|κ| = 128`
 stays BLOCKED for the constant-fold multiset word (`Dregg2/ForMathlib/GuruswamiSudan.lean:20-33`), so
 `186`/`292` is the counting reach, not the GS ideal — security-irrelevant (`L/|F|`, `|F| ≈ 2¹²⁴`). The
-deployed per-fold soundness is `wrap_perFold_soundness_capacity`'s **~112.6** proven bits.
+deployed **arity-8** per-fold soundness is **~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`);
+`wrap_perFold_soundness_capacity`'s **~112.6** is the **arity-2** fold and provably FAILS at arity 8
+(`FriArityTransfer.arity8_error_not_lt_2e112`).
 -/
 
 namespace Dregg2.Circuit.FriLdtJohnson

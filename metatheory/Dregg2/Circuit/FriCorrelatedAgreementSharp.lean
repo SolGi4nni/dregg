@@ -65,8 +65,11 @@ sizes via the ordered-pair injection into `κ × κ` (card `4096`):
   **interior** radius `dIn = 52` (relative `13/16`), list `L = 186`, GS-NON-DEGENERATE
   (`wrap_meets_gs_line_radius`: `t² = 144 > 128 = 2·|κ|`); the deployed analysis prefers this (§6).
 * `wrap_perFold_soundness_capacity : |Good|/babyBearP⁴ < 2⁻¹¹²` — the near-capacity radius
-  `dOut = 125`, field-independent count `|Good| ≤ C(64,2) = 2016`, the deployed **~112.6-bit** proven
-  per-fold soundness over the quartic extension (§8). SOUND against Kambiré's capacity refutation:
+  `dOut = 125`, field-independent count `|Good| ≤ C(64,2) = 2016`, the **arity-2 (2-to-1 fold)**
+  **~112.6-bit** proven per-fold soundness over the quartic extension (§8). ⚠ This is NOT the deployed
+  posture: the deployed prover folds at ARITY 8 and carries **~109.84 bits**
+  (`FriArityTransfer.arity8_perFold_soundness`); ~112.6 provably FAILS at arity 8
+  (`arity8_error_not_lt_2e112`). SOUND against Kambiré's capacity refutation:
   his `n^C` blow-up needs `n → ∞`, `r > 2`; at fixed `r = 2` his construction caps at `C(n,2)`.
 The **GS-IDEAL list `L ≤ 2·|κ| = 128` is BLOCKED** for the constant-fold multiset word
 (`Dregg2/ForMathlib/GuruswamiSudan.lean:20-33` is the authority — multiplicity/fibre-concentration

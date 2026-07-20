@@ -501,14 +501,19 @@ theorem-backed ε_C + query-soundness). fri_params_soundness_budget calculator h
 ed9a0bb72, 11 keystones clean): field_ceiling_vacuous_at_2_124 — BabyBear degree-4 gives ε ceiling ~2^-124;
 100+128=228 ≫ 122 ⇒ NO honest "100 bits vs 2^128 adv" at deg-4, at ANY q. Config CORRECTLY left unchanged
 (a q bump against a field ceiling is theater). PROVEN honest TRADEOFF: launch_100bits_vs_2_22_adv (100 bits
-vs weak 2^22 adv), launch_60bits_vs_2_62_adv (60 vs strong 2^62). System posture = ε_C-ceilinged (~51-61,
-NOT movable by q/pow — ε_C carries no numQueries/powBits).
+vs weak 2^22 adv), launch_60bits_vs_2_62_adv (60 vs strong 2^62). System posture = ε_C-ceilinged (~51 at
+the deployed pairing, NOT movable by q/pow — ε_C carries no numQueries/powBits).
 ⚑ THE REAL LEVER = EXTENSION DEGREE (extDeg): +30.91 bits/degree. deg-4→deg-8 buys ~124 bits headroom = the
 actual upgrade, but a PROVER-FIELD change (touches the AIR arithmetic) — EMBER-GATED, deeper than a q cascade.
-⚠ RESIDUAL: ε_C reads 51 (friCommitLedger d140bfc98) vs 61 (launch worst-case height) — reconcile (different
-height/config); + verify lane flagged residual 57/61 to finish de-claiming.
-⇒ HONEST DEPLOYED POSTURE: ~51-61 bits (ε_C-ceilinged, field-bound), δ=7/16 unique decoding, ~31.5 query term.
-NOT 100. NOT 112.6. The only path above the ceiling is a bigger field / higher extension degree.
+✅ RESIDUAL RESOLVED (FriDeployedHeightPairing): the deployed running fold binds ir2_leaf_wrap_config (lb 6)
+under WRAP_LOG_CEIL's 2^16 floor ⇒ |D⁰| = 2^22 ⇒ ε_C reads **51** (deployed_wrap_commitBits); the 61 is
+recursionConfig@2^19 (the_61_is_the_recursion_config_reading, deployed_wrap_is_not_61) and the 57 is the
+same lb-6 engine at the wrong height 2^19 (deployed_wrap_is_not_the_proven120_number) — neither is deployed.
+Verify-lane residual 57/61 de-claimed tree-wide (PROVEN-120-CONFIG §0.3/§2/§3, REPRODUCIBLE-BUILD-AND-FREEZE,
+VK-CEREMONY, FRI-CUTOVER-PLAN, FRI-BOTH-WIN-LEVERS, paper/dregg.typ all now cite 51 = deployed_wrap_commitBits).
+⇒ HONEST DEPLOYED POSTURE: ~51 bits (ε_C at |D⁰|=2^22, deployed_wrap_commitBits; field-bound ~124),
+δ=7/16 unique decoding, ~31.5 query term. NOT 100. NOT 112.6. NOT 57/61. The only path above the ceiling is
+a bigger field / higher extension degree.
 
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.

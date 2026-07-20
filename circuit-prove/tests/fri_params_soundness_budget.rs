@@ -97,8 +97,14 @@
 //!      `fri_trace_height_measure.rs` measures real heights off real verified proofs:
 //!      `LEAF_ENVELOPE_LOG_D0 = 14` (64-effect turn) and `DEPLOYED_WORST_LOG_D0 = 19` (the recursion
 //!      wrap's FORCED `2^16` rows + blowup 3). Lean reads **71** at the fixture, **67** at the
-//!      measured leaf, and **61** at the deployed worst case. So `COMMIT_FLOOR_BITS = 71` is a floor
-//!      AT A FIXTURE and **not** a claim about dregg; the deployed commit posture is **~61 bits**.
+//!      measured leaf, and **61** at `2^19`. So `COMMIT_FLOOR_BITS = 71` is a floor AT A FIXTURE and
+//!      **not** a claim about dregg. ⚠ CORRECTED 2026-07-20: the `61`-at-`2^19` reading is NOT the
+//!      deployed pairing — it is a TRUE reading of `recursionConfig`, not the deployed wrap
+//!      (`FriDeployedHeightPairing.the_61_is_the_recursion_config_reading`). The DEPLOYED wrap binds
+//!      `ir2_leaf_wrap_config()` (`log_blowup = 6`) with `wrap_params()` (`2^16` rows) in ONE prove
+//!      call, so its domain is `2^22` and the proven deployed commit posture is **51 bits**
+//!      (`FriDeployedHeightPairing.deployed_wrap_commitBits`; `deployed_wrap_is_not_61`). See the
+//!      full pairing correction at `FIXTURE_LOG_D0` below.
 //!      `the_measured_deployed_heights_read_below_the_fixture_floor` gates that gap so the convenient
 //!      number cannot be quoted for the system. Closing it is a posture decision (shrink the traces,
 //!      or raise `FIXTURE_LOG_D0` and lower the floor to what Lean then says) — ember's, not a test's.
@@ -229,25 +235,30 @@ const PER_FOLD_FLOOR_BITS: usize = 109;
 /// pay ~4 bits for it. "The weakest shipped config" is not a property of the system; it is a property
 /// of the column, which is exactly why these columns stay separate.
 ///
-/// ⚑ **FINDING 2 — at the deployed wrap the commit column BINDS BELOW the Johnson column.** Johnson
-/// reads `73`; `ε_C` reads `71`. ethSTARK (eprint 2021/582) eq. (20) composes them as
-/// `λ ≥ min{−log₂ ε_C, ζ − s·log₂ α} − 1`, so the deployed wrap's FRI posture is **~70, not 73** — the
-/// `73` is the `m → ∞` idealisation that DROPS this term. The number going DOWN is the correct outcome
-/// of adding this column; it is what the column was added to reveal.
+/// ⚑ **FINDING 2 — at the deployed wrap the commit column BINDS BELOW the Johnson column.** AT THE
+/// FIXTURE HEIGHT, Johnson reads `73`; `ε_C` reads `71`. ethSTARK (eprint 2021/582) eq. (20) composes
+/// them (informally — this composite is not a tree theorem) as `λ ≥ min{−log₂ ε_C, ζ − s·log₂ α} − 1`,
+/// so the fixture-height FRI posture is **~70, not 73** — the `73` is the `m → ∞` idealisation that
+/// DROPS this term. (At the real deployed `2^22` height ε_C reads `51`, `deployed_wrap_commitBits`, so
+/// the composite is correspondingly lower.) The number going DOWN is the correct outcome of adding this
+/// column; it is what the column was added to reveal.
 ///
 /// ⚑ **THIS FLOOR IS ONLY VALID AT `FIXTURE_LOG_D0`, AND THE FIXTURE IS NOT THE DEPLOYED HEIGHT.**
 /// `ε_C` is not trace-invariant, so `71` is not a standing claim about dregg — it is a claim at a
 /// 1-effect turn's height. The tree's OWN measured heights
-/// (`fri_trace_height_measure.rs`) read **67** at the 64-effect leaf (`2^14`) and **61** at the
-/// deployed worst case (`2^19`, the recursion wrap's forced `2^16` rows + blowup) — i.e. the real
-/// deployed commit posture is ~10 bits BELOW this floor.
+/// (`fri_trace_height_measure.rs`) read **67** at the 64-effect leaf (`2^14`) and **61** at `2^19`.
+/// ⚠ CORRECTED 2026-07-20: `61`-at-`2^19` is the `recursionConfig` reading, NOT the deployed pairing
+/// (`FriDeployedHeightPairing.the_61_is_the_recursion_config_reading`). The DEPLOYED wrap runs at
+/// `2^22` and reads **51** (`FriDeployedHeightPairing.deployed_wrap_commitBits`; `deployed_wrap_is_not_61`)
+/// — the real deployed commit posture is ~20 bits BELOW this fixture floor.
 ///
 /// ⚑ **FINDING 3 — so this floor does not gate the deployed height; it gates the fixture.** That is
 /// stated, not smuggled: `the_measured_deployed_heights_read_below_the_fixture_floor` asserts the gap
 /// as a standing fact, and `eps_c_column_is_not_trace_invariant` proves the floor genuinely REDS at a
 /// taller trace. Raising `FIXTURE_LOG_D0` to a measured height REQUIRES lowering this floor to
-/// whatever Lean then reports — a real posture change to be argued (is ~61 bits acceptable? does the
-/// wrap's forced `2^16` need to shrink? does `extDeg` need to rise?), never a number to massage.
+/// whatever Lean then reports — a real posture change to be argued (is the deployed **51 bits** at
+/// `2^22` acceptable — `deployed_wrap_commitBits`? does the wrap's forced `2^16` need to shrink? does
+/// `extDeg` need to rise?), never a number to massage.
 const COMMIT_FLOOR_BITS: usize = 71;
 
 // ─────────────────────────────────────────────────────────────────────────────

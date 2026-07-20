@@ -289,7 +289,7 @@ pub struct TelegramHost<T: Transport> {
     /// The offering registry, confined to its owning thread. The SHARED tables — the games and
     /// service offerings — live here (a council with one voter per host is not a council).
     host: HostThread,
-    /// The per-identity RPG worlds, confined to their own owning thread. The eight [`is_rpg_key`]
+    /// The per-identity RPG worlds, confined to their own owning thread. The seven [`is_rpg_key`]
     /// surfaces (trade / inventory / craft / …) are per-player by nature, so every RPG-key session
     /// operation routes to the PRESSER's own [`OfferingHost`] here
     /// ([`run_offering`](Self::run_offering)), keyed by their derived identity — two Telegram users
@@ -383,7 +383,7 @@ impl<T: Transport> TelegramHost<T> {
 
     /// **Route a `(key, session)`-scoped host job to the host that OWNS it for `viewer`.** An
     /// [`is_rpg_key`] offering runs against the viewer's own per-identity RPG world (their isolated
-    /// inventory); everything else — the shared games + services — runs against the ONE catalog
+    /// inventory); everything else — the shared games, party, and services — runs against the ONE catalog
     /// host. This ONE routing decision is why two Telegram users never share an inventory while a
     /// council / tug stays a single shared table.
     fn run_offering<R: Send + 'static>(

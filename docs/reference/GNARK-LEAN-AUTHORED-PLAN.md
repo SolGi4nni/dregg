@@ -294,7 +294,9 @@ twins do not go away — they become the differential oracle for the lowering ch
 **DOES NOT CLOSE — the FRI extraction floor (seam #1).** `FriLowDegreeSound` / the `verifyAlgo →
 StarkSound` bridge stays a **named terminal crypto carrier** (`FriVerifier.lean:989`,
 `FriVerifierBridge.starkSound_of_verifyAlgo`). Per `project-fri-soundness-reality`, the deployed posture
-is ~57 "calculator" bits (no adversary/grinding model at deployed params); this plan does not touch it.
+has no adversary/grinding model; the "~57 calculator bits" was an INFORMAL estimate, not a soundness
+bound — the theorem-backed readings are commit ε_C **51 bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`)
+and query soundness **~31.5 bits** (`DeployedProximitySoundness`). This plan does not touch it.
 A faithful circuit for an unproven-sound verifier is still only as sound as the verifier.
 
 **DOES NOT CLOSE — the ceremony + lowering trust (seam #3).** Groth16 trusted setup, the gnark

@@ -15,6 +15,14 @@ Date: 2026-07-16
 > optimizes over `m`, so its "63.976 at the wrap / 61 at a ρ=1/8 row" attribution should be read as
 > approximate); it does not affect the qualitative verdict. Companion:
 > `FRI-SOUNDNESS-FRONTIER-RESEARCH.md` §8.
+>
+> ⚑ **These ε_C figures (61, 61.779, 63.976, …) are INFORMAL analytical outputs of the BCIKS20
+> formula, NOT proven soundness bounds against an adversary.** The theorem-backed deployed
+> commit-phase reading is **51 bits** at the deployed `2²²` domain
+> (`FriDeployedHeightPairing.deployed_wrap_commitBits`); the "61" anchor this section reconciles is
+> a config/height MISPAIRING and is refuted (`deployed_wrap_is_not_61` — it is a true reading of
+> `recursionConfig` at `2^19`, not of the deployed wrap). Use `51` as the deployed number; read
+> everything below as the derivation of the FORMULA those readings come from, not as a bound.
 
 ## Executive verdict
 

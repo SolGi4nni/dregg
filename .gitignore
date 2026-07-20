@@ -85,3 +85,4 @@ tmp/
 .codex/
 *.log
 cosmos-settlement/artifacts/
+chain/gnark/emitted

@@ -1,8 +1,10 @@
 // THE ZETA-BIND COST DIFFERENTIAL. bindBlockZeta (emitted_verifier_full.go) is
 // what makes block 3's zeta-derived inputs provably the ones at the
 // transcript-squeezed zeta: it re-derives the Lagrange selectors in-circuit at
-// that zeta and equates the openings-at-zeta against the transcript-observed
-// opened stream. This file MEASURES what that costs by compiling the stage-ON
+// that zeta (tooth 1), equates the openings-at-zeta against the transcript-observed
+// opened stream (tooth 2), and asserts the DEEP quotient identity
+// folded == quotient(zeta)·Z_H(zeta) over the transcript-observed opened chunks
+// (tooth 3). This file MEASURES what that costs by compiling the stage-ON
 // circuit twice — bind off (meta.zetaSampleOff < 0) and bind on — and reporting
 // the R1CS delta. Nothing here is a deployed path; the off variant exists only to
 // price the on variant.

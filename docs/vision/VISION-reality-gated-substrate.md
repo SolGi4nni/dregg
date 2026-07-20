@@ -336,7 +336,9 @@ Int→Nat bridge (unblocked by Cycle A).
 leaving a receipt"* is machine-checked end to end at the deployed object.
 
 **Composes:** the capstone — DEPENDS on A + B + C and consumes E. **Honest floor:**
-the STARK soundness is its own frontier (57 calculator bits today,
+the STARK soundness is its own frontier (no adversary model; the "57 calculator bits" was an
+informal estimate — proven deployed readings: commit ε_C **51 bits**
+`FriDeployedHeightPairing.deployed_wrap_commitBits`, query **~31.5 bits** `DeployedProximitySoundness`;
 `project-fri-soundness-reality`); F welds the *architecture* conditionally on that
 labeled floor (the iterative-approximative method) and names it as a placeholder,
 never as discharged.
@@ -457,7 +459,9 @@ This is bold, and honesty is the point (`feedback-integrator-must-not-compress-s
   them as *proven* functions is circuit-authoring-in-Lean adjacent to the FRI
   frontier — months, honestly.
 - **Cycle F rides the STARK floor.** "The whole turn is proven" is *conditional* on
-  the deployed STARK soundness (57 calculator bits today,
+  the deployed STARK soundness (no adversary model; the "57 calculator bits" was an informal
+  estimate — proven deployed readings: commit ε_C **51 bits**
+  `FriDeployedHeightPairing.deployed_wrap_commitBits`, query **~31.5 bits** `DeployedProximitySoundness`;
   `project-fri-soundness-reality`), which is its own campaign. F welds the
   architecture conditionally and labels the floor — never asserts it discharged.
 - **The context/witness marshalling grows the wire.** For variants that read live

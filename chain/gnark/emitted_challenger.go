@@ -146,6 +146,21 @@ type shrinkTranscriptMeta struct {
 	// the transcript-observed stream. nil = the openings bind is off.
 	shapes []StarkInstanceShape
 
+	// isolateQuotientIdentity is a TEST-ONLY structural probe (never a deployed
+	// path — the deployed lane leaves it false, exactly like zetaSampleOff<0's
+	// cost differential). When true, bindBlockZeta runs tooth 1 (the selector
+	// re-derivation, needed for Z_H) and tooth 3 (the DEEP quotient identity
+	// folded == quotient(zeta)·Z_H(zeta)) but SKIPS tooth 2 (the opened-value /
+	// cumulative-sum / public-value equality binds to the transcript-observed
+	// stream). This ISOLATES tooth 3: with the opened trace/perm rows no longer
+	// pinned to the transcript, a folded-side tamper (a block-3 trace witness bump)
+	// is caught by the quotient identity ALONE — the only remaining constraint on
+	// folded — so its load-bearing-ness is attributable to tooth 3, not to the
+	// opened-value bind it would otherwise be over-determined with. The quotient
+	// chunks tooth 3 recomposes still come from the transcript-observed stream, so a
+	// chunk tamper stays caught by the prefix squeeze; only the FOLDED side is freed.
+	isolateQuotientIdentity bool
+
 	// friStage is the FRI-stage emit-path template-replay context
 	// (emitted_fri_stage_replay.go): non-nil drives the per-round commit-phase
 	// leaf-hash / Merkle path / arity-2 fold through the committed Lean-emitted

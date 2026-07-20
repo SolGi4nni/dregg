@@ -29,8 +29,13 @@ plonky3 rev we pin.**
 2. **⚑ We have been pricing the wrong artifact — by 12 bits.** The baseline headlines **70.11 proven
    bits**. That is a **2^6-row leaf**. The artifact that travels to a light client is the **recursion
    apex**: tables floored at `WRAP_LOG_CEIL = 16` (`circuit-prove/src/accumulator.rs:238`), running at
-   `log_blowup 6` (`circuit-prove/src/joint_turn_recursive.rs:435`) ⟹ `|D⁽⁰⁾| = 2^22` ⟹ **57.98 proven
-   bits under BCIKS20**, not 70.11.
+   `log_blowup 6` (`circuit-prove/src/joint_turn_recursive.rs:435`) ⟹ `|D⁽⁰⁾| = 2^22` ⟹ **57.98
+   informal (`m`-optimized) bits under BCIKS20**, not 70.11. ⚠ The PROVEN deployed commit posture is
+   **51 bits** — the machine-checked fixed-`m` (BCIKS `m=7`) ledger reading
+   (`FriDeployedHeightPairing.deployed_wrap_commitBits`); `57.98` is this document's `m`-optimized
+   calculator output, above the proven bound and refuted as the deployed number by
+   `deployed_wrap_is_not_the_proven120_number`. Every `57.98` below is that informal `m`-optimized
+   figure, not a proven bound.
 
 3. **⚑ At the apex, the cheap levers buy EXACTLY ZERO.** `ε_C` and the query ledger compose as a `min`
    (ethSTARK eq. 20). Below trace ≈ **2^11.1** the query term binds and trace height is worth ~0; above
@@ -757,9 +762,11 @@ says.**
 
 ## 6. ⚑ THE RANKED BOTH-WIN TABLE
 
-**Column: QUERY ledger, PROVEN.** Baseline artifact = **the recursion apex** (`ir2_leaf_wrap_config`:
-lb 6, arity 2, q 19, pow 16, T = 2^16 ⟹ `|D⁽⁰⁾| = 2^22`) = **57.98 bits under BCIKS20**, **~70.9 under
-BCSS25**. Bits are BCIKS20 unless noted.
+**Column: QUERY ledger.** Baseline artifact = **the recursion apex** (`ir2_leaf_wrap_config`:
+lb 6, arity 2, q 19, pow 16, T = 2^16 ⟹ `|D⁽⁰⁾| = 2^22`) = **57.98 informal (`m`-optimized) bits under
+BCIKS20**, **~70.9 under BCSS25**. ⚠ The PROVEN deployed commit posture is **51 bits**
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`, fixed `m=7`); the `57.98` here is the
+`m`-optimized calculator figure, not the proven bound. Bits are BCIKS20 unless noted.
 
 | # | lever | bits gained | speed effect | cost | today? |
 |---|---|---|---|---|---|

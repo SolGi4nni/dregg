@@ -158,10 +158,24 @@ $EDITOR ~/.config/dregg/games-funnel.env
 #   DREGG_NODE_URL=http://127.0.0.1:8420
 #   DREGG_NODE_BEARER=<token>          (only if the node has a passphrase; else leave unset)
 #   DATABASE_URL=sqlite:/home/hbox/.local/state/dregg-games/leaderboard.db
+#   DREGG_FHEGG_QUORUM_PUBLIC_KEYS=... # optional owning-settlement signer roster
+#   DREGG_FHEGG_QUORUM_THRESHOLD=...   # set together with the roster
+#   DREGG_DARK_AMM_SECRET_KEY_FILE=... # protected BFV custody; optional
+#   DREGG_DARK_AMM_INITIAL_ROOT=...     # set with the key to require hiding receipts
+#   DREGG_DARK_AMM_AUTHORITY_PUBLIC_KEYS=... # exact-opening issuer roster; set with threshold
+#   DREGG_DARK_AMM_AUTHORITY_THRESHOLD=...   # v3 Tier-1 signatures required
 chmod 600 ~/.config/dregg/games-funnel.env
 ```
 No token is committed or placed by an agent — ember's hand-placement (same discipline as
 `deploy/hbox/RUNBOOK.md`).
+
+The Dark AMM key file is separate from the environment file: it is canonical
+postcard key material created by `dark-amm-tool keygen`, is never committed, and
+must be a regular non-symlink file with no group/other permissions. The generic
+runtime supports a key-only, explicitly labelled legacy encrypted-only operation;
+this public deploy preflight refuses that half-configuration. Setting both key
+and root exposes only the proof-required v2 operation. The offline producer flow
+and its honest custody boundary are in `docs/deos/DARK-AMM-PRIVATE-RECEIPT.md`.
 
 ### (c) Run the deploy — build + install the web unit on LOOPBACK  ⟨SCRIPT⟩
 ```bash
@@ -170,7 +184,9 @@ cd ~/dev/breadstuffs/deploy/games
 ./deploy-hbox.sh --funnel --dry-run   # rehearse — prints every step, no side effects
 ./deploy-hbox.sh --funnel             # build -> snapshot -> install -> reload -> health
 ```
-`--funnel` builds `dreggnet-web-server`, installs the **funnel** user unit
+`--funnel` builds `dreggnet-web-server` with the `public-shielded-games` feature
+bundle (fhEgg settlement, private raid/preference/shuffle/quest, and Dark AMM),
+then installs the **funnel** user unit
 (`dregg-web-games-funnel.service`, bound `127.0.0.1:8790`, `DREGG_NODE_URL=:8420`) with
 `loginctl enable-linger` so it survives logout, and **skips the gateway/Caddy leg
 entirely**. Its health gate polls `http://127.0.0.1:8790/health`. The funnel fast-path
@@ -203,6 +219,13 @@ Against the public URL `https://hbox-dregg.<tailnet>.ts.net`:
 - Open `/` and `/offerings` — the landing + catalog load.
 - Play a game (`/offerings/dungeon/session/demo`, `/offerings/automatafl/...`, …) — a
   move lands a real executor receipt; a crafted illegal move is refused (anti-ghost).
+- Open `/offerings/dungeon/session/demo/operations` and confirm the private
+  raid, party-preference, fair-shuffle, and private-quest descriptors are all
+  present. Their identical binary operations are also mounted below `/tg` and
+  `/da`; those platform routes require their native authenticated actor token.
+- If Dark AMM v2 is configured, open its session operation list and confirm
+  `dark-bazaar.private-amm-swap.proved.v2` is present and the legacy
+  `dark-bazaar.private-amm-swap.v1` is absent.
 - `/descent/leaderboard` — the no-cheat board renders.
 - Submit a run (`POST /descent/submit`) — it ranks in-process AND **anchors on the node**.
   Confirm on the node's ledger:

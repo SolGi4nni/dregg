@@ -199,3 +199,25 @@ fn seal_is_deterministic_and_binds_all_fields() {
     // Negative values are distinguished from their magnitude (the sign tag).
     assert_ne!(Bid::new(7, 42, 1).seal(), Bid::new(7, -42, 1).seal());
 }
+
+#[test]
+fn source_bound_seal_refuses_substituted_source_or_order() {
+    let bid = Bid::new(AGENT_A, 42, 99);
+    let source = [0x31; 32];
+    let other_source = [0x32; 32];
+    let mut auction = Auction::new(SELLER, SLOT, PAY, TOKEN);
+    auction.commit(bid.seal_with_source(&source)).unwrap();
+    auction.seal_commit_phase();
+
+    assert!(!auction.valid_source_bound_reveal(&bid, &other_source));
+    assert_eq!(
+        auction.reveal_source_bound(bid, &other_source),
+        Err(AuctionError::NotCommitted)
+    );
+    assert_eq!(
+        auction.reveal_source_bound(Bid::new(AGENT_A, 43, 99), &source),
+        Err(AuctionError::NotCommitted)
+    );
+    auction.reveal_source_bound(bid, &source).unwrap();
+    assert_eq!(auction.winner(), Some(bid));
+}

@@ -902,6 +902,14 @@ impl Offering for AutomataflOffering {
         session.surface_for(session.seat_of(viewer))
     }
 
+    /// **Hidden information: YES.** `render_for` shows the viewer their own SEALED move before it
+    /// is revealed — simultaneous secrecy is the game. Painting that into a shared surface hands
+    /// the opponent the seal, so a frontend serves [`render`] (both moves fog) on any surface with
+    /// more than one reader.
+    fn hidden_information(&self) -> bool {
+        true
+    }
+
     fn price(&self, _input: &Action) -> RunCost {
         RunCost::free()
     }

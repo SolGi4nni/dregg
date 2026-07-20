@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "609bf2698679e648d5c9a0359e5748706901f5f42ed9789436f2bec6e44f45cb";
+    "7c2ce4324cb95b61c5d4a62e4c3999fb654473c6d92f87e29a29f4bcfb3300cb";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1216,7 +1216,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "4b432c00dff229a09b06e1094f3f8b6e2d7b940e05b4ae0eec610da72af30869";
+    "9fd3bf98851a987ed21b19456301be27000ac7d9f43941445da9182c62311a4b";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1242,7 +1242,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "535e5c029f257da4462ad223098109ed2161da1fdde6908605c5209c53bec956";
+    "7e73f325c65f7a83eab3b75fe88919d13fd0ac77afc2353ff47e5db58fff11f7";
 
 /// **THE LEAN-EMITTED setField VALUE8 EPOCH (STAGED, VK-AFFECTING BUT NON-DESTRUCTIVE).** The 8
 /// written-slot value8 members (`setFieldValue8VmDescriptor2-{slot}R24`) that swap the deployed
@@ -1422,7 +1422,7 @@ pub fn require_wide_carrier_geometry_v2(
 }
 
 // ============================================================================
-// THE CUSTOM PROOF-BIND COMMITMENT VERSION BOUNDARY (the flag-day rotation, v2).
+// THE CUSTOM PROOF-BIND CARRIER VERSION BOUNDARY (the faithful flag-day rotation, v3).
 //
 // v1 (RETIRED): the Custom member published a 4-felt `custom_proof_commitment`
 //   (~62-bit birthday collision resistance) — 8 exposure pins total: commit limbs
@@ -1450,7 +1450,7 @@ pub fn require_wide_carrier_geometry_v2(
 pub const CUSTOM_COMMIT_VERSION: u32 = 3;
 /// The RETIRED v1 commitment width (felts).
 pub const CUSTOM_COMMIT_WIDTH_RETIRED_V1: usize = 4;
-/// The LIVE v2 commitment width (felts).
+/// The full commitment width introduced by v2 and retained by live carrier v3 (felts).
 pub const CUSTOM_COMMIT_WIDTH_V2: usize = 8;
 
 /// Typed refusal at the custom proof-bind commitment version boundary.
@@ -1476,7 +1476,7 @@ pub enum CustomCommitVersionError {
         name: String,
     },
     /// The pins after the low commit block match NEITHER the retired v1 VK
-    /// block NOR the live v2 commit-teeth + VK layout; fail closed.
+    /// block NOR the live v3 commit-teeth + VK-teeth layout; fail closed.
     UnknownLayout {
         /// The presented descriptor's name.
         name: String,
@@ -1527,9 +1527,10 @@ impl std::error::Error for CustomCommitVersionError {}
 /// the param union never moves) and classifies the four PI slots directly after
 /// the low commit block:
 ///
-/// * `Ok(CUSTOM_COMMIT_VERSION)` — v2: those slots pin NON-param columns (the
-///   commit teeth carrying limbs 4..8), and the VK block (cols
-///   `PARAM_BASE..+4`) rides at the four slots after THEM;
+/// * `Ok(CUSTOM_COMMIT_VERSION)` — v3: those slots pin NON-param columns (the
+///   commit teeth carrying limbs 4..8), the low VK block (cols
+///   `PARAM_BASE..+4`) rides at the four slots after THEM, and four contiguous
+///   VK teeth immediately complete the exact VK8;
 /// * `Err(RetiredV1)` — v1: those slots pin the VK block directly (cols
 ///   `PARAM_BASE..+4`) — the 4-felt legacy exposure: explicit version refusal;
 /// * `Err(MissingCommitPins)` / `Err(UnknownLayout)` — fail closed.
@@ -1573,17 +1574,22 @@ pub fn custom_commit_version(
             commit_pi_lo: lo,
         });
     }
-    // v2: slots mid..mid+4 must pin four NON-param columns (the commit teeth, contiguous and
-    // ascending), and the VK block must ride directly after them.
-    let teeth_ok = (0..CUSTOM_COMMIT_WIDTH_RETIRED_V1).all(|k| {
-        first_pins.get(&(mid + k))
-            == Some(&(crate::effect_vm::trace_rotated::CUSTOM_COMMIT_TEETH_BASE + k))
+    // v2/v3 common prefix: slots mid..mid+4 must pin four NON-param columns (the commit teeth,
+    // contiguous and ascending), and the low VK block must ride directly after them. Only v3
+    // continues with the four exact contiguous VK teeth; prefix-only v2 is retired.
+    // The S2-compacted wide registry shifts this member-local tail left by 960 columns,
+    // so classify by its exact relative shape: four contiguous non-param commit teeth,
+    // immediately followed by four contiguous VK teeth. No arbitrary/folded columns pass.
+    let teeth_base = first_pins.get(&mid).copied();
+    let teeth_ok = teeth_base.is_some_and(|base| {
+        base >= crate::effect_vm::trace_rotated::V1_WIDTH
+            && (0..CUSTOM_COMMIT_WIDTH_RETIRED_V1)
+                .all(|k| first_pins.get(&(mid + k)) == Some(&(base + k)))
     });
     let vk_lo = mid + CUSTOM_COMMIT_WIDTH_RETIRED_V1;
     if teeth_ok && is_vk_low_block(vk_lo, &first_pins) {
-        let vk_hi_ok = (0..4).all(|k| {
-            first_pins.get(&(vk_lo + 4 + k))
-                == Some(&(crate::effect_vm::trace_rotated::CUSTOM_VK_TEETH_BASE + k))
+        let vk_hi_ok = teeth_base.is_some_and(|base| {
+            (0..4).all(|k| first_pins.get(&(vk_lo + 4 + k)) == Some(&(base + 4 + k)))
         });
         if vk_hi_ok {
             return Ok(CUSTOM_COMMIT_VERSION);
@@ -3101,7 +3107,7 @@ mod tests {
                 // `custom_program_vk_hash` low4 (PARAM_BASE+0..3) → PI[54..57], high4
                 // (`CUSTOM_VK_TEETH_BASE..+4`) → PI[58..61], all on the FIRST row
                 // (the binding is fold-enforced, like memOp/umemOp, NOT a row poly). So custom
-                // carries 58 PIs (46 + 12 anchors).
+                // carries 62 PIs (46 + 16 binding pins).
                 use crate::effect_vm::trace_rotated::{
                     CUSTOM_COMMIT_TEETH_BASE, CUSTOM_VK_TEETH_BASE,
                 };
@@ -3128,8 +3134,8 @@ mod tests {
                      (PARAM_BASE+4..7)→PI[46..49] + limbs 4..8 (commit teeth)→PI[50..53] \
                      + program_vk_hash low4→PI[54..57] + exact high4 VK teeth→PI[58..61]"
                 );
-                // The versioned boundary classifies THIS committed member as live v2 (and the
-                // retired 4-felt layout as an explicit RetiredV1 refusal — see the boundary test).
+                // The versioned boundary classifies THIS committed member as live v3 (and the
+                // retired commitment4/VK4 and commitment8/VK4 layouts as typed refusals).
                 assert_eq!(
                     custom_commit_version(&d),
                     Ok(CUSTOM_COMMIT_VERSION),
@@ -3536,16 +3542,16 @@ mod tests {
         );
     }
 
-    /// **THE CUSTOM PROOF-BIND COMMITMENT VERSION BOUNDARY (flag-day v2, blocker #2).**
+    /// **THE CUSTOM PROOF-BIND CARRIER VERSION BOUNDARY (faithful flag-day v3).**
     ///
     /// A LEGACY 4-felt custom artifact — the retired eight-pin exposure (commit limbs 0..4 at
     /// cols `PARAM_BASE+4..8` → PI 46..49, then the VK block DIRECTLY after at 50..53, NO commit
     /// teeth) — is REFUSED by the versioned route with the TYPED
-    /// `CustomCommitVersionError::RetiredV1`, never silently widened or zero-padded. The live v2
-    /// the former v2 twelve-pin low4-VK layout is also refused; the live sixteen-pin
+    /// `CustomCommitVersionError::RetiredV1`, never silently widened or zero-padded. The former v2
+    /// twelve-pin low4-VK layout is also refused; the live sixteen-pin
     /// layout classifies `Ok(3)`. A pin-less descriptor and a garbled layout fail
     /// closed with their own typed variants. Also: the COMMITTED registry members (narrow + wide)
-    /// classify as live v2.
+    /// classify as live v3.
     #[test]
     fn custom_commit_version_boundary_refuses_legacy_four_felt() {
         use crate::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
@@ -3651,7 +3657,7 @@ mod tests {
             Err(CustomCommitVersionError::UnknownLayout { .. })
         ));
 
-        // The COMMITTED members classify as live v2 — narrow (v3rot registry) and wide.
+        // The COMMITTED members classify as live v3 — narrow (v3rot registry) and wide.
         // Both registries are `key\tname\tjson` (3 fields — see V3_STAGED_REGISTRY_TSV docs).
         let narrow_json = V3_STAGED_REGISTRY_TSV
             .lines()

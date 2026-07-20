@@ -108,9 +108,14 @@ densities*; the apex's assumed `FriLdtExtractV3` speaks *a deterministic ∀-ove
 extraction Prop*. **Nothing composes them.** The ledger is imported by no apex file; the apex chain runs
 entirely through the assumed `FriLdtExtractV3`. There is a probability frame in the tree (`winProb`,
 used for the FS/OOD residuals) and a real ROM adversary framework (`RomOracle`/`RomEff`) — but neither
-is attached to `verifyAlgo`. So the deployed "57–61 bits" is a *calculator output*: a density ratio
-that bounds the success probability of *no object*, because there is no adversary at the FRI apex whose
-probability it could bound. This is [FRI-SOUNDNESS-REALITY]'s finding, confirmed against the code.
+is attached to `verifyAlgo`. So the once-quoted "57–61 bits" is a *calculator output* — an INFORMAL
+density estimate, NOT a soundness bound: a density ratio that bounds the success probability of *no
+object*, because there is no adversary at the FRI apex whose probability it could bound (and 61 is a
+config/height mispairing — `FriDeployedHeightPairing.deployed_wrap_is_not_61`). The theorem-backed
+ledger readings are the deployed commit-phase ε_C **51 bits** at `2²²` (`deployed_wrap_commitBits`)
+and query soundness **~31.5 bits** at δ=7/16 (`(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness`) — real
+numbers about real bounds, though still not adversary-quantified. This is [FRI-SOUNDNESS-REALITY]'s
+finding, confirmed against the code.
 
 **And note the mirror-image failure modes.** ArkLib's *shape* is right but its adversary is *unbounded*,
 so its stated soundness (were it proved) would be Lean-false the KZG way — `∀ prover, Pr[…] ≤ ε` with

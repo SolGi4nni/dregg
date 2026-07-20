@@ -21,7 +21,9 @@
 //!
 //! Modelling `cap_node8` as a random 16→8 compression, a stream that collides needs a full
 //! 8-felt (~124-bit) collision — matching the deployed 8-felt `WideHash` /
-//! `CellState::compute_commitment_8` and sitting above the ~112.6-bit FRI soundness floor.
+//! `CellState::compute_commitment_8` and sitting above the deployed FRI soundness floor
+//! (per-fold ~109.84 bits at the arity-8 fold, `FriArityTransfer.arity8_perFold_soundness`; the
+//! ~112.6 figure is the arity-2 fold, which the deployed prover does NOT run).
 //! The stream is a function of the shape (each stream is padded to the shape's maxima with
 //! the canonical all-zero inactive encoding, so its LENGTH — and hence the block count — is
 //! fixed per VK), and the four streams are domain-separated by their IVs.
@@ -54,7 +56,9 @@ pub const ABSORB_RATE: usize = 8;
 ///
 /// Each felt carries ~31 bits, so 8 felts give a ~248-bit digest with a ~124-bit collision
 /// floor, matching the deployed 8-felt `WideHash` / `CellState::compute_commitment_8` and
-/// sitting above the ~112.6-bit FRI soundness floor. It is not a knob: `cap_node8` outputs
+/// sitting above the deployed FRI soundness floor (per-fold ~109.84 bits at the arity-8 fold,
+/// `FriArityTransfer.arity8_perFold_soundness`; ~112.6 is the arity-2 fold the deployed prover
+/// does NOT run). It is not a knob: `cap_node8` outputs
 /// exactly 8 lanes, and the digest binds all of them.
 pub const DIGEST_FELTS: usize = 8;
 

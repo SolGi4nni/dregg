@@ -72,24 +72,26 @@ closure. That *is* a proof of an arbitrary reduction. Two instantiations:
   parsing is the linear/string instance of hypergraph reduction: **one verified certificate framework
   covers both.**
 
-## 4. `Crypto/GraphRewrite` — full graph rewriting over arbitrary bytes (matchings included)
+## 4. `Crypto/GraphRewrite` — match-driven contextual hyperedge replacement
 
-`Hypergraph.Reduces` is only *positional* edge splicing. Full graph rewriting adds a genuine **match** and
+`Hypergraph.Reduces` is only *positional* edge splicing. `GraphRewrite` adds a genuine **match** and
 runs over arbitrary node/label carriers `V`/`L` (instantiate at `UInt8` for byte graphs):
 
 - **matching** — `IsHom f pat host` (a node map sending every pattern edge to a host edge); `Matches`
   (a homomorphism exists) and `Embeds` (an injective one = subgraph isomorphism onto its image). This is
   graph pattern matching / subgraph matching as a first-class relation over arbitrary bytes.
-- **rules + steps** — `Rule Var L = ⟨lhs, rhs⟩` over pattern variables; `RewriteStep rules G H` is the
-  double-pushout step: a rule, a MATCH `σ : Var → V` embedding `lhs` into `G`, a preserved CONTEXT, with
+- **rules + steps** — `Rule Var L = ⟨lhs, rhs⟩` over pattern variables; `RewriteStep rules G H` is a
+  contextual replacement step: a rule, a MATCH `σ : Var → V` mapping `lhs` into `G`, a preserved
+  CONTEXT, with
   `G.edges ~ ctx ++ σ·lhs` and `H.edges = ctx ++ σ·rhs` (match, delete, glue).
-- `graphRewrite_bridge` = the generic `bridge` at `RewriteStep rules` — ZK-checkable certificates for
-  ARBITRARY graph-rewriting derivations. `step_matches` proves every rewrite step is witnessed by a graph
+- `graphRewrite_bridge` = the generic `bridge` at `RewriteStep rules` — checkable certificates for
+  finite graph-rewriting derivations. `step_matches` proves every rewrite step is witnessed by a graph
   matching, so rewriting is inseparable from matching. Concrete `UInt8`-byte witnesses: `patA_matches_host`
   (a subgraph match), `g0_rewrites_g1` (a match-driven step), `g0_reduces_g1` (the reduction, certified).
 
-Because a rule encodes any local graph transformation and `bridge` closes it reflexive-transitively, this
-expresses **arbitrary relations on arbitrary byte-labeled graphs** — with graph matching as the primitive.
+The relation is polymorphic over node and label carrier types and `bridge` closes it reflexive-transitively.
+It is DPO-inspired, not yet a categorical DPO implementation: injectivity, RHS freshness, and dangling
+conditions must be added explicitly by a concrete instance.
 
 ## Trust base
 

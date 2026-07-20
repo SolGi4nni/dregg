@@ -165,9 +165,11 @@ touch it.** Four honest gaps, at current resolution.
   state-commit anchor cutover (delete BLAKE3 `ledger.root()`, make `wire_commit_8` the
   chained root) have not landed. Encouraging truth: **this is replication of a proven
   pattern, not research.**
-- **FRI soundness reality.** The deployed apex proves at `d=4` → **~57 "calculator"
-  bits** — a Finset density ratio from a parametric Lean ledger, **with no adversary /
-  protocol object in existence** (`verifyAlgo` is a `Bool` on a *supplied* proof)
+- **FRI soundness reality.** The deployed apex proves at `d=4`. The "~57 calculator bits" once
+  quoted was an INFORMAL Finset density ratio, NOT a soundness bound, **with no adversary / protocol
+  object in existence** (`verifyAlgo` is a `Bool` on a *supplied* proof). The theorem-backed deployed
+  readings are commit ε_C **51 bits** at `2²²` (`FriDeployedHeightPairing.deployed_wrap_commitBits`)
+  and query soundness **~31.5 bits** at δ=7/16 (`(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness`)
   (`project-fri-soundness-reality`, `docs/THE-LINKING-TOWER.md:180-189`). There is
   deliberately no `2⁻¹²⁸` headline; the client is not entitled to believe one. This is
   the deepest, last-sequenced gap.
@@ -273,7 +275,9 @@ the anchor cutover open. Replication, not research. Orthogonal to the FRI floor 
 laundered by this work (`docs/ROADMAP-assurance-perimeter.md`).
 
 ### Cycle 2 — FLOOR: sharpen the proof to an adversary, and prepare the freeze
-**Objective.** Cut the deployed config from `d=4`/57-calc-bits to **λ ≥ 122 with margin**
+**Objective.** Cut the deployed config from `d=4` (the "57-calc-bits" was an informal estimate, not a
+soundness bound — the proven deployed readings are query ~31.5 bits `DeployedProximitySoundness` /
+commit ε_C 51 bits `FriDeployedHeightPairing.deployed_wrap_commitBits`) to **λ ≥ 122 with margin**
 (`d=8, lb=6, q=36, pow=16`), and re-base the one assumed FRI extraction leg
 (`FriLdtExtractV3`) over a query-counting **adversary object** (`RomOracle`) so the bits
 mean "εFri(2^b) ≤ ½," not a density ratio (`docs/FORWARD-CAMPAIGN-2026-07.md` Track B).
@@ -296,7 +300,7 @@ the A mainnet feed (prove one real mainnet holding against real ≥2/3 Solana co
 and wire the on-chain settle from a *live* turn.
 **Unlocks.** Every downstream "deployed" claim becomes true; a stranger can reproduce the
 VK they verify against. **Sequencing law:** D-freeze MUST ride FLOOR's cutover Phase-4
-re-key — freeze the proven-122 VK, never a standalone ceremony that pins the 57-bit one.
+re-key — freeze the proven-122 VK, never a standalone ceremony that pins the current un-upgraded posture (the "57 bit" figure was an informal estimate; the proven deployed commit reading is 51 bits, `FriDeployedHeightPairing.deployed_wrap_commitBits`).
 D-reproducibility (bare-clone gate) and the durable federation have *no* Track-B
 dependency and proceed first.
 

@@ -695,7 +695,10 @@ fn resolve_inner(
 /// A pass proves the state-commitment DELTA `pre -> post` for this turn is attested by a real
 /// satisfying EffectVM trace — NOT the full state (the AIR is one-directionally constrained and the
 /// state-commit is PI-bound, assurance-perimeter #2) — and it still rests on the undischarged FRI
-/// floor (`project-fri-soundness-reality`, ~57 calculator bits deployed). It is a real improvement
+/// floor (`project-fri-soundness-reality`: no adversary model; the "~57 calculator bits" was an
+/// informal estimate, not a soundness bound — the theorem-backed deployed readings are commit ε_C
+/// ~51 bits (`FriDeployedHeightPairing.deployed_wrap_commitBits`) and query soundness ~31.5 bits
+/// (`DeployedProximitySoundness`)). It is a real improvement
 /// over the retired signature: the receipt is bound to a PROOF, not to a trusted signer.
 fn verify_effect_vm_turn_proof(
     proof_bytes: &[u8],

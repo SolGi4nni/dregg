@@ -136,6 +136,17 @@ impl Bid {
         hasher.update(&self.nonce.to_le_bytes());
         *hasher.finalize().as_bytes()
     }
+
+    /// Commit the ordinary bid opening together with an independently verified
+    /// source object (for example an exact encrypted-order binding).  This is a
+    /// shared commitment, not a claim that `source_binding` itself proves a
+    /// relation: the caller must obtain that digest from its source verifier.
+    pub fn seal_with_source(&self, source_binding: &Seal) -> Seal {
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-sealed-auction source-bound bid v1");
+        hasher.update(&self.seal());
+        hasher.update(source_binding);
+        *hasher.finalize().as_bytes()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +266,15 @@ impl Auction {
         self.phase == Phase::Reveal && self.commitments.contains(&bid.seal())
     }
 
+    /// Source-bound sibling of [`Self::valid_reveal`]. Both the ordinary bid
+    /// opening and the exact verified source digest must match the frozen seal.
+    pub fn valid_source_bound_reveal(&self, bid: &Bid, source_binding: &Seal) -> bool {
+        self.phase == Phase::Reveal
+            && self
+                .commitments
+                .contains(&bid.seal_with_source(source_binding))
+    }
+
     /// **Reveal phase** — open a bid. Accepted iff [`Auction::valid_reveal`] holds: the auction must
     /// be in the reveal phase and the bid's seal must be among the commitments. A non-committed party
     /// (or a peeker who changed its bid so the seal no longer matches) is rejected with
@@ -266,12 +286,26 @@ impl Auction {
     ///   - `reveal_binds_committed` (only the exact committed bid opens its commitment, since a
     ///     different bid hashes to a different seal that is not in `commitments`).
     pub fn reveal(&mut self, bid: Bid) -> Result<(), AuctionError> {
+        self.reveal_exact_seal(bid, bid.seal())
+    }
+
+    /// Reveal a bid whose commit slot was source-bound with
+    /// [`Bid::seal_with_source`]. Substituting either the bid opening or the
+    /// source digest changes the seal and is rejected.
+    pub fn reveal_source_bound(
+        &mut self,
+        bid: Bid,
+        source_binding: &Seal,
+    ) -> Result<(), AuctionError> {
+        self.reveal_exact_seal(bid, bid.seal_with_source(source_binding))
+    }
+
+    fn reveal_exact_seal(&mut self, bid: Bid, seal: Seal) -> Result<(), AuctionError> {
         match self.phase {
             Phase::Commit => return Err(AuctionError::NotRevealPhase),
             Phase::Settled => return Err(AuctionError::AlreadySettled),
             Phase::Reveal => {}
         }
-        let seal = bid.seal();
         if !self.commitments.contains(&seal) {
             return Err(AuctionError::NotCommitted);
         }

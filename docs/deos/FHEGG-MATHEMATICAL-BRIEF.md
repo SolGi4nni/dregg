@@ -207,8 +207,13 @@ and lives over lattice-additive commitments. This is the crux the analyst is ask
 ## 6. The cryptographic floors (what the whole thing stands on)
 
 - **STARK soundness floor:** Poseidon2 sponge **collision-resistance** (`HashCR`) +
-  `Poseidon2ChipArithSound`, with the BCIKS20 list-decoding core proved for the deployed code; the
-  deployed FRI is provably ~112.6-bit. Everything inherits this floor. All PQ (hash-based).
+  `Poseidon2ChipArithSound`, with the BCIKS20 list-decoding core proved for the deployed code. The
+  deployed FRI query-soundness floor is **~31.5 bits** — a δ=7/16-far word survives the 38-query
+  check with probability `(9/16)³⁸ < 2⁻³¹` (`FriArityForking.deployed_far_survival_lt`,
+  `DeployedProximitySoundness`). The per-fold proximity-gap column reads **~109.84 bits** at the
+  deployed arity-8 fold (`FriArityTransfer.arity8_perFold_soundness`, `< 2⁻¹⁰⁹`); the once-quoted
+  ~112.6 is the arity-2 figure and provably fails at arity 8 (`arity8_error_not_lt_2e112`).
+  Everything inherits this floor. All PQ (hash-based).
 - **Privacy floor (already PQ):** Pedersen *hiding* is perfect/information-theoretic (quantum-safe
   unconditionally); the STARK privacy path is statistical zero-knowledge (`HidingFriPcs`, `ZK=true`).
   So confidentiality is quantum-safe today.

@@ -24,7 +24,9 @@ pub use dregg_circuit::dsl::circuit::{MAX_CONSTRAINT_DEGREE, MAX_PUBLIC_INPUTS, 
 ///
 /// Each felt carries ~31 bits, so 8 felts give a ~248-bit digest with a ~124-bit collision
 /// floor, matching the deployed 8-felt `WideHash` / `CellState::compute_commitment_8` and
-/// sitting above the ~112.6-bit FRI soundness floor.
+/// sitting above the deployed FRI soundness floor (per-fold ~109.84 bits at the arity-8 fold,
+/// `FriArityTransfer.arity8_perFold_soundness`; ~112.6 is the arity-2 fold the deployed prover
+/// does NOT run).
 ///
 /// # It is not a knob (it used to be)
 ///

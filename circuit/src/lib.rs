@@ -60,7 +60,8 @@
 //!     often-quoted ~112.6 is proved for a 2-to-1 fold the deployed prover does NOT run;
 //!     `log₂ 7 ≈ 2.807` bits is the price of the arity-8 moment curve.
 //!   * `ir2_leaf_wrap_config` (arity 2 at `log_blowup 6`) is the ONE shipped config ~112.6
-//!     describes: `|Good| ≤ C(64,2) = 2016` ⇒ **112 bits**.
+//!     describes: `|Good| ≤ C(64,2) = 2016` ⇒ **112 bits**
+//!     (`FriLedgerSound.rotatedLeafWrap_ledger_perFoldBits`).
 //!   * v1 `create_config` / `create_zk_config`: **116**. `create_outer_config` (**the config
 //!     the gnark ETH-wrap verifies**) / its GPU twin / `create_recursion_config`: **118**.
 //!   ⚑ per-fold RISES as `log_blowup` FALLS, and that is NOT an upgrade — a smaller folded

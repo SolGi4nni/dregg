@@ -388,12 +388,18 @@ The STARK system provides:
 ### Configuration
 
 - Blowup factor: 8 (Reed-Solomon expansion)
-- FRI queries: 28 (for ~112-bit security)
+- FRI queries: 28
 - Merkle commitments: BLAKE3
 
 ### Soundness Level
 
-- Target: ~112 bits (from FRI query count * log(blowup))
+- ⚑ The old "~112 bits (from FRI query count * log(blowup))" line was CALCULATOR-STYLE
+  number-crunching — an informal query-count × log-blowup product with no formal connection, NOT a
+  soundness bound. It described this retired `ProofTier::Experimental` config, not production.
+- Production (Plonky3 backend) proven readings: per-fold **~109.84 bits** at the deployed arity-8
+  fold (`FriArityTransfer.arity8_perFold_soundness`), query soundness **~31.5 bits** at δ=7/16
+  (`(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness`), commit ε_C **51 bits**
+  (`FriDeployedHeightPairing.deployed_wrap_commitBits`).
 - Extension field: 124-bit alpha prevents constraint-combination forgery
 - Classification: `ProofTier::Experimental` (production uses Plonky3 backend)
 

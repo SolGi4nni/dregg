@@ -393,6 +393,13 @@ table so neither has to be trusted; the **deltas**, which are what the decision 
 | **proven bits** @ apex `T=2^16, lb=6` | **57.98** | **88.88** | **181.61** |
 | **proven bits** @ `T=2^19, lb=3` (the brief's) | **62.48** (~61) | **93.38** (~93) | **186.11** (~186) |
 | **reaches 128 proven?** | **NO — at any q** | **NO** at these knobs; **yes** at short-trace/low-lb (§2 of the levers doc: ceiling 119.38 → short) | **YES**, comfortably |
+
+⚠ **These "proven bits" rows are `m`-optimized CEILINGS (max λ, an upper bound), not the deployed
+posture.** The machine-checked fixed-`m` ledger reads the deployed `d=4` apex commit column as **51 bits**
+at `|D⁰| = 2^22` (`FriDeployedHeightPairing.deployed_wrap_commitBits`); the `57.98`/`62.48` here are the
+ceiling and are refuted as the deployed number (`deployed_wrap_is_not_the_proven120_number`,
+`deployed_wrap_is_not_61`). The **deltas** (+30.91 bits/degree), which are what this cost table turns on,
+are unaffected.
 | **native prover** (MEASURED, w128) | 1.000× | **1.071–1.075×** | **1.242–1.274×** |
 | **native prover** (MEASURED, w32 — narrow, conservative) | 1.000× | 1.137–1.217× | 1.472–1.515× |
 | **ext-arith fraction of prove** (MEASURED/solved) | ~14–18% | ~14–18% | ~14–18% |

@@ -323,6 +323,7 @@ fn classify(error: &TurnError) -> (GuardKind, Vec<CellId>) {
         | TooManyCustomProofs { .. }
         | CustomProofCountMismatch { .. }
         | CustomProofStateBindingMismatch { .. }
+        | CustomAppWriteBindingMismatch { .. }
         | CustomEffectRequiresProofCarryingTurn { .. } => (GuardKind::Proof, vec![]),
         SovereignWitnessRequired { cell }
         | SovereignCommitmentMismatch { cell, .. }

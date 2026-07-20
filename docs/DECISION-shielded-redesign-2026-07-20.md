@@ -84,8 +84,14 @@ I'll take it.
 
 ---
 
-### Decision (ember to fill)
+### Decision (ember, 2026-07-20): **B now + A (redesign)**
 
-- [ ] **B now** (honesty downgrade) — _recommended, unconditional_
-- [ ] then: **A** (redesign via the apex, as a scheduled project) — OR — **C** (fence, revisit later)
-- notes:
+- [x] **B now** — honesty-downgrade the overstated #17 posture comments (Claude, in progress).
+- [x] **A** — commit to the apex redesign as a **scheduled project**: route the deployed single-transfer
+  through `shielded_ring_clearing_nleg_air` as a degenerate 1-leg ring, closing #15/#16/#17 on a PQ gate.
+  Scoping first (`PLAN-shielded-apex-redesign`), then build. The two named residuals (`pedTwoGen` ≠ real
+  Ristretto; BabyBear large-amount range → in-AIR Bulletproof) are the next honest frontier after A lands.
+
+_(Related decisions, same session: the #4/#10 IMT generalization is an **unadditive rename** in the
+deployed `IndexedMerkleTree.lean` (not a twin); #11 **folds in** the delegation-ancestor revocation
+(limb-37 non-membership on spends) rather than carving it out.)_

@@ -76,6 +76,15 @@ pub const DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE: &str =
     "application/vnd.dregg.dark-amm-collective-decision.v1";
 pub const DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE: &str = "Commits the staged collective-key candidate only after a strict reveal-only equality transcript and independent authenticated FHDAR quorum receipt accept it. The bundle contains masked gate openings and one decision bit, never reserves, amounts, shares, operands, or a BFV secret key.";
 
+/// Exact public candidate identity accepted by the abandon operation. Requiring
+/// the current task digest makes a delayed cancellation fail closed after a
+/// different candidate is staged at the same table.
+pub const DARK_AMM_COLLECTIVE_ABANDON_OPERATION: &str = "dark-amm.collective-abandon.v1";
+pub const DARK_AMM_COLLECTIVE_ABANDON_MEDIA_TYPE: &str =
+    "application/vnd.dregg.dark-amm-collective-abandon.v1";
+pub const DARK_AMM_COLLECTIVE_ABANDON_BYTES: usize = 32;
+pub const DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE: &str = "Abandons exactly the currently staged collective-key candidate without consuming either authority replay slot or advancing encrypted pool/root/sequence state. The 32-byte body is the public decision-task digest; only the same frontend identity that staged the candidate may abandon it.";
+
 /// Read-only work item exported after phase one for independent custodians.
 pub const DARK_AMM_COLLECTIVE_TASK_ARTIFACT: &str = "dark-amm.collective-decision-task.v1";
 pub const DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE: &str =
@@ -986,6 +995,11 @@ impl CollectiveDarkAmmOffering {
         payload: &[u8],
         actor: &DreggIdentity,
     ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        if session.pending_actor.is_some() {
+            return Err(BinaryOperationError::Refused(
+                "collective staging slot already has a frontend owner".to_string(),
+            ));
+        }
         let staged = session
             .collective
             .stage_same_opening_request(payload)
@@ -1005,6 +1019,7 @@ impl CollectiveDarkAmmOffering {
         receipt.update(&staged.decision_task_digest);
         bind_actor(&mut receipt, actor)?;
         let receipt_id = *receipt.finalize().as_bytes();
+        session.pending_actor = Some(actor.clone());
         Ok(BinaryOperationReceipt {
             operation: DARK_AMM_COLLECTIVE_STAGE_OPERATION.to_string(),
             receipt_id,
@@ -1042,6 +1057,7 @@ impl CollectiveDarkAmmOffering {
         payload: &[u8],
         actor: &DreggIdentity,
     ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        require_pending_actor(session, actor)?;
         let bundle = CollectiveDecisionBundle::from_wire_bytes(payload)
             .map_err(map_collective_operation_error)?;
         let committed = session
@@ -1063,6 +1079,7 @@ impl CollectiveDarkAmmOffering {
         receipt.update(&committed.decision_claim_digest);
         bind_actor(&mut receipt, actor)?;
         let receipt_id = *receipt.finalize().as_bytes();
+        session.pending_actor = None;
         Ok(BinaryOperationReceipt {
             operation: DARK_AMM_COLLECTIVE_COMMIT_OPERATION.to_string(),
             receipt_id,
@@ -1106,6 +1123,73 @@ impl CollectiveDarkAmmOffering {
             ],
         })
     }
+
+    fn execute_abandon(
+        &self,
+        session: &mut CollectiveDarkAmmGameSession,
+        payload: &[u8],
+        actor: &DreggIdentity,
+    ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        require_pending_actor(session, actor)?;
+        let presented_task_digest = decode_abandon_digest(payload)?;
+        let expected_task_digest = session
+            .collective
+            .pending_decision_task()
+            .and_then(|task| {
+                task.attestation_nonce().map_err(|error| {
+                    CollectiveDarkAmmError::Refused(format!("decision task refused: {error}"))
+                })
+            })
+            .map_err(map_collective_operation_error)?;
+        if presented_task_digest != expected_task_digest {
+            return Err(BinaryOperationError::Refused(
+                "abandon request names a different pending decision task".to_string(),
+            ));
+        }
+        let abandoned = session
+            .collective
+            .abandon_pending()
+            .map_err(map_collective_operation_error)?;
+        let public = session
+            .collective
+            .public_session()
+            .map_err(map_collective_operation_error)?;
+        let mut receipt =
+            blake3::Hasher::new_derive_key("dregg-dark-amm-collective-abandon-receipt-v1");
+        receipt.update(&public.session_id());
+        receipt.update(&abandoned.sequence.to_le_bytes());
+        for lane in abandoned.new_root {
+            receipt.update(&lane.to_le_bytes());
+        }
+        receipt.update(&abandoned.same_opening_claim_digest);
+        receipt.update(&abandoned.candidate_nonce);
+        receipt.update(&abandoned.decision_task_digest);
+        bind_actor(&mut receipt, actor)?;
+        let receipt_id = *receipt.finalize().as_bytes();
+        session.pending_actor = None;
+        Ok(BinaryOperationReceipt {
+            operation: DARK_AMM_COLLECTIVE_ABANDON_OPERATION.to_string(),
+            receipt_id,
+            public_fields: vec![
+                ("phase".to_string(), "abandoned".to_string()),
+                ("sequence".to_string(), abandoned.sequence.to_string()),
+                ("newRoot".to_string(), hex_root(&abandoned.new_root)),
+                (
+                    "candidateNonce".to_string(),
+                    hex_digest(&abandoned.candidate_nonce),
+                ),
+                (
+                    "decisionTaskDigest".to_string(),
+                    hex_digest(&abandoned.decision_task_digest),
+                ),
+                (
+                    "sameOpeningClaimDigest".to_string(),
+                    hex_digest(&abandoned.same_opening_claim_digest),
+                ),
+                ("replaySlotsConsumed".to_string(), "0".to_string()),
+            ],
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -1122,6 +1206,12 @@ struct AcceptedCollectiveOperation {
 pub struct CollectiveDarkAmmGameSession {
     seed: u64,
     collective: CollectiveDarkAmmSession,
+    /// Frontend identity that staged the live candidate. The cryptographic
+    /// authorities remain independent; this is the shared-surface ownership
+    /// gate that prevents one player from committing or cancelling another
+    /// player's pending operation. Host replay reconstructs it from the
+    /// actor-bearing operation journal rather than trusting a state snapshot.
+    pending_actor: Option<DreggIdentity>,
     accepted: Vec<AcceptedCollectiveOperation>,
 }
 
@@ -1162,6 +1252,7 @@ impl Offering for CollectiveDarkAmmOffering {
         Ok(CollectiveDarkAmmGameSession {
             seed,
             collective,
+            pending_actor: None,
             accepted: Vec::new(),
         })
     }
@@ -1187,6 +1278,7 @@ impl Offering for CollectiveDarkAmmOffering {
             Ok(collective) => CollectiveDarkAmmGameSession {
                 seed: session.seed,
                 collective,
+                pending_actor: None,
                 accepted: Vec::new(),
             },
             Err(error) => return VerifyReport::broken(0, error.to_string()),
@@ -1198,6 +1290,9 @@ impl Offering for CollectiveDarkAmmOffering {
                 }
                 DARK_AMM_COLLECTIVE_COMMIT_OPERATION => {
                     self.execute_commit(&mut replay, &accepted.canonical_payload, &accepted.actor)
+                }
+                DARK_AMM_COLLECTIVE_ABANDON_OPERATION => {
+                    self.execute_abandon(&mut replay, &accepted.canonical_payload, &accepted.actor)
                 }
                 other => Err(BinaryOperationError::UnknownOperation(other.to_string())),
             };
@@ -1221,6 +1316,12 @@ impl Offering for CollectiveDarkAmmOffering {
             return VerifyReport::broken(
                 session.accepted.len(),
                 "replayed collective checkpoint differs from live encrypted state",
+            );
+        }
+        if replay.pending_actor != session.pending_actor {
+            return VerifyReport::broken(
+                session.accepted.len(),
+                "replayed collective pending actor differs from live surface ownership",
             );
         }
         let mut report = VerifyReport::ok(session.accepted.len());
@@ -1280,6 +1381,13 @@ impl Offering for CollectiveDarkAmmOffering {
                                 &session.collective.public_host_material().material_digest()
                             ),
                         )),
+                        ViewNode::Text(match &session.pending_actor {
+                            Some(actor) => format!(
+                                "pending candidate belongs to frontend actor {}",
+                                short_identity(actor.as_str())
+                            ),
+                            None => "no frontend actor currently owns the staging slot".to_string(),
+                        }),
                         ViewNode::Text(
                             "Reserves, swap amounts, BFV secret keys, decryption shares, MPC operands, and same-opening witnesses are absent from this host surface."
                                 .to_string(),
@@ -1333,13 +1441,22 @@ impl Offering for CollectiveDarkAmmOffering {
 
     fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
         if session.collective.has_pending_candidate() {
-            vec![BinaryOperationDescriptor {
-                name: DARK_AMM_COLLECTIVE_COMMIT_OPERATION.to_string(),
-                title: "Commit the authority-approved encrypted candidate".to_string(),
-                input_media_type: DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE.to_string(),
-                max_input_bytes: MAX_COLLECTIVE_DECISION_BUNDLE_BYTES,
-                disclosure: DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE.to_string(),
-            }]
+            vec![
+                BinaryOperationDescriptor {
+                    name: DARK_AMM_COLLECTIVE_COMMIT_OPERATION.to_string(),
+                    title: "Commit the authority-approved encrypted candidate".to_string(),
+                    input_media_type: DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE.to_string(),
+                    max_input_bytes: MAX_COLLECTIVE_DECISION_BUNDLE_BYTES,
+                    disclosure: DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE.to_string(),
+                },
+                BinaryOperationDescriptor {
+                    name: DARK_AMM_COLLECTIVE_ABANDON_OPERATION.to_string(),
+                    title: "Abandon this staged candidate".to_string(),
+                    input_media_type: DARK_AMM_COLLECTIVE_ABANDON_MEDIA_TYPE.to_string(),
+                    max_input_bytes: DARK_AMM_COLLECTIVE_ABANDON_BYTES,
+                    disclosure: DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE.to_string(),
+                },
+            ]
         } else {
             vec![BinaryOperationDescriptor {
                 name: DARK_AMM_COLLECTIVE_STAGE_OPERATION.to_string(),
@@ -1382,6 +1499,29 @@ impl Offering for CollectiveDarkAmmOffering {
                     DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE,
                 )))
             }
+            DARK_AMM_COLLECTIVE_ABANDON_OPERATION if session.collective.has_pending_candidate() => {
+                let digest = decode_abandon_digest(payload)?;
+                let expected = session
+                    .collective
+                    .pending_decision_task()
+                    .and_then(|task| {
+                        task.attestation_nonce().map_err(|error| {
+                            CollectiveDarkAmmError::Refused(format!(
+                                "decision task refused: {error}"
+                            ))
+                        })
+                    })
+                    .map_err(map_collective_operation_error)?;
+                if digest != expected {
+                    return Err(BinaryOperationError::Refused(
+                        "abandon request names a different pending decision task".to_string(),
+                    ));
+                }
+                Ok(Some(BinaryOperationReplayMaterial::new(
+                    payload.to_vec(),
+                    DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE,
+                )))
+            }
             _ => Err(BinaryOperationError::UnknownOperation(name.to_string())),
         }
     }
@@ -1406,6 +1546,14 @@ impl Offering for CollectiveDarkAmmOffering {
                 let receipt = self.execute_commit(session, payload, &actor)?;
                 (
                     DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+                    payload.to_vec(),
+                    receipt,
+                )
+            }
+            DARK_AMM_COLLECTIVE_ABANDON_OPERATION if session.collective.has_pending_candidate() => {
+                let receipt = self.execute_abandon(session, payload, &actor)?;
+                (
+                    DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
                     payload.to_vec(),
                     receipt,
                 )
@@ -1502,6 +1650,30 @@ fn map_collective_operation_error(error: CollectiveDarkAmmError) -> BinaryOperat
     }
 }
 
+fn decode_abandon_digest(payload: &[u8]) -> Result<[u8; 32], BinaryOperationError> {
+    payload.try_into().map_err(|_| {
+        BinaryOperationError::Malformed(format!(
+            "collective abandon body must be exactly {DARK_AMM_COLLECTIVE_ABANDON_BYTES} bytes"
+        ))
+    })
+}
+
+fn require_pending_actor(
+    session: &CollectiveDarkAmmGameSession,
+    actor: &DreggIdentity,
+) -> Result<(), BinaryOperationError> {
+    match &session.pending_actor {
+        Some(owner) if owner == actor => Ok(()),
+        Some(_) => Err(BinaryOperationError::Refused(
+            "only the frontend actor that staged this candidate may finish or abandon it"
+                .to_string(),
+        )),
+        None => Err(BinaryOperationError::Refused(
+            "pending collective candidate has no frontend owner".to_string(),
+        )),
+    }
+}
+
 fn bind_actor(
     hash: &mut blake3::Hasher,
     actor: &DreggIdentity,
@@ -1512,6 +1684,17 @@ fn bind_actor(
     hash.update(&len.to_le_bytes());
     hash.update(actor);
     Ok(())
+}
+
+fn short_identity(identity: &str) -> String {
+    const DISPLAY_CHARS: usize = 18;
+    if identity.chars().count() <= DISPLAY_CHARS {
+        return identity.to_string();
+    }
+    format!(
+        "{}…",
+        identity.chars().take(DISPLAY_CHARS).collect::<String>()
+    )
 }
 
 fn hex_digest(bytes: &[u8; 32]) -> String {

@@ -8,8 +8,10 @@
 //! the bundle's next private state becomes the producer's new custody object.
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dregg_circuit_prove::dark_amm_private::{
     PublicStatement as PrivateAmmPublicStatement, prove_zk, sample_commitment_blind,
@@ -31,13 +33,24 @@ use fhegg_fhe::amm_same_opening::{
     Tier1SameOpeningEndorsement,
 };
 use fhegg_fhe::attestation::{AuthenticatedQuorumVerifier, PartyClaimSignature};
+use fhegg_fhe::bfv_lean::LeanCiphertext;
+use fhegg_fhe::boundary::{
+    EncryptedMaskContribution, MaskedBoundaryParty, MaskedDecryptCoordinator, MaskedDecryptSession,
+};
 use fhegg_fhe::dark_amm::{DarkPoolPublicHostMaterial, MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES};
-use fhegg_fhe::mpc_party::trusted_dealer_triples;
+use fhegg_fhe::mpc_party::transport::{
+    AuthenticatedEqualityFrame, EqualityCoordinatorMachine, EqualityPartyMachine,
+    EqualityTransportRoster,
+};
+use fhegg_fhe::mpc_party::{
+    DecisionTranscript, PartyEqualityInput, PartyMpcSession, TripleMaterial, trusted_dealer_triples,
+};
 use fhegg_fhe::threshold::{
-    BfvParams, KeygenCoordinator, KeygenSession, PublicKeyContribution, ThresholdParty,
+    BfvParams, CollectivePublicKey, KeygenCoordinator, KeygenSession, MIN_SMUDGE_BITS,
+    PublicKeyContribution, ThresholdParty,
 };
 use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::rngs::{OsRng, StdRng};
 use rand_09::RngCore;
 
 const COLLECTIVE_WORKER_CONFIG_MAGIC: &[u8; 8] = b"DBWCv001";
@@ -65,6 +78,18 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|command| command == "collective-process-preprocess-internal")
+    {
+        return collective_process_preprocess_internal(&args[1..]);
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "collective-process-party-internal")
+    {
+        return collective_process_party_internal(&args[1..]);
+    }
     if args
         .first()
         .is_some_and(|command| command == "collective-decide-split")

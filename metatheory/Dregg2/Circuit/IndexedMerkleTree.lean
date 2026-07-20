@@ -30,8 +30,15 @@ tree. Then:
 
 ## What is PROVEN here (all `#assert_axioms`-clean, sorry/admit/carrier-free)
 
-  * the IMT model: `ImtLeaf`, `imtLeafHash` (3-felt, CR-injective `imtLeafHash_injective`),
-    `ImtSorted` (well-linked strictly-increasing chain), `ImtAbsent` (pointer bracket), `imtInsert`;
+  * the IMT model: `ImtLeaf` — KEY-GENERIC: `ImtLeaf K V` with `[LinearOrder K]`; the DEPLOYED
+    shape is the DEFAULT instantiation (bare `ImtLeaf` IS `ImtLeaf ℤ ℤ`), and the #4/#10 8-felt
+    note-nullifier key `Digest8Key := Lex (Fin 8 → ℤ)` instantiates the SAME object with zero
+    reproof (`Crypto/Digest8KeySpike.lean`) — `imtLeafHash` (3-felt, CR-injective
+    `imtLeafHash_injective`), `ImtSorted` (well-linked strictly-increasing chain), `ImtAbsent`
+    (pointer bracket), `imtInsert`; the ordering core (`imtSorted_addrs_sorted`,
+    `imtSorted_dichotomy`, `imtAbsent_excludes`, `imtInsert_preserves`, `mem_imtAddrs_imtInsert`,
+    `imt_double_spend_unsat`) is proved over ANY `LinearOrder` key — only `<`/`≤`/`.trans`/
+    `lt_irrefl`, no ℤ arithmetic;
   * the in-circuit INDUCTION: `genesis_sorted` (the `[MIN → MAX]` sentinel chain is `ImtSorted`,
     a pinnable constant) + `imtInsert_preserves` (local bracket check preserves it) + the CHAIN
     `reachable_sorted` (`Reachable ⟹ ImtSorted`);
@@ -97,18 +104,26 @@ open Dregg2.Substrate
 set_option autoImplicit false
 set_option linter.unusedVariables false
 
-/-! ## §1 — THE IMT LEAF/SCHEME: the linked-list node embedded in the sorted Merkle tree. -/
+/-! ## §1 — THE IMT LEAF/SCHEME: the linked-list node embedded in the sorted Merkle tree.
+
+The KEY type is GENERIC: `addr`/`nextAddr : K` need only `[LinearOrder K]` for every ordering
+proof below (the value `V` is never ordered). The DEPLOYED instantiation is the DEFAULT
+`K := ℤ, V := ℤ` — bare `ImtLeaf` IS the deployed shape, so every existing consumer compiles
+unchanged — and the #4/#10 note-nullifier widening instantiates `K := Digest8Key = Lex (Fin 8 → ℤ)`
+directly (`Crypto/Digest8KeySpike.lean`), the lex-order bracketing coming for free. -/
 
 /-- **`ImtLeaf`** — an indexed-Merkle-tree leaf: the sort key `addr`, the stored `value`, and the
-`nextAddr` POINTER to the next-larger present address (the sorted linked-list link). The genesis
-sentinel points `MIN → MAX`; every real insert splices between an `addr` and its `nextAddr`. -/
-structure ImtLeaf where
-  /-- The sort key (the heap address `hash[coll, key]`, the tree is sorted by this). -/
-  addr : ℤ
-  /-- The stored value felt. -/
-  value : ℤ
-  /-- The pointer to the next-larger present address (the linked-list link; the absence bracket). -/
-  nextAddr : ℤ
+`nextAddr` POINTER to the next-larger present key (the sorted linked-list link). The genesis
+sentinel points `MIN → MAX`; every real insert splices between an `addr` and its `nextAddr`.
+Key/value types generic; the defaults are the deployed felt instantiation. -/
+structure ImtLeaf (K : Type := ℤ) (V : Type := ℤ) where
+  /-- The sort key (deployed: the heap address `hash[coll, key]`; widens to `Digest8Key` for the
+  #4/#10 note nullifiers — the tree is sorted by this). -/
+  addr : K
+  /-- The stored value (deployed: a felt; irrelevant to the ordering — hence free). -/
+  value : V
+  /-- The pointer to the next-larger present key (the linked-list link; the absence bracket). -/
+  nextAddr : K
 deriving DecidableEq, Repr
 
 /-- **`imtLeafHash hash l`** — the 3-felt IMT leaf digest `hash[addr, value, nextAddr]` (the deployed
@@ -128,31 +143,35 @@ theorem imtLeafHash_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
   obtain ⟨ha, hv, hn⟩ := hl
   subst ha; subst hv; subst hn; rfl
 
-/-- The address spine of an IMT chain (the sorted key list the bracketing combinatorics read). -/
-def imtAddrs (c : List ImtLeaf) : List ℤ := c.map (·.addr)
+variable {K : Type} {V : Type}
 
-@[simp] theorem imtAddrs_cons (l : ImtLeaf) (c : List ImtLeaf) :
+/-- The address spine of an IMT chain (the sorted key list the bracketing combinatorics read). -/
+def imtAddrs (c : List (ImtLeaf K V)) : List K := c.map (·.addr)
+
+@[simp] theorem imtAddrs_cons (l : ImtLeaf K V) (c : List (ImtLeaf K V)) :
     imtAddrs (l :: c) = l.addr :: imtAddrs c := rfl
 
-@[simp] theorem imtAddrs_nil : imtAddrs [] = [] := rfl
+@[simp] theorem imtAddrs_nil : imtAddrs ([] : List (ImtLeaf K V)) = [] := rfl
 
-theorem mem_imtAddrs {c : List ImtLeaf} {x : ℤ} :
+theorem mem_imtAddrs {c : List (ImtLeaf K V)} {x : K} :
     x ∈ imtAddrs c ↔ ∃ l ∈ c, l.addr = x := by
   simp [imtAddrs, List.mem_map]
+
+variable [LinearOrder K]
 
 /-- **`ImtSorted c`** — the tree invariant: the leaves form a strictly-increasing WELL-LINKED chain
 — each leaf's `addr < nextAddr`, and each leaf's `nextAddr` EQUALS the next leaf's `addr` (the
 sorted linked-list link). This is the per-leaf pointer property (O(1) per leaf, O(depth) per path),
 NEVER a whole-tree scan. -/
-def ImtSorted : List ImtLeaf → Prop
+def ImtSorted : List (ImtLeaf K V) → Prop
   | [] => True
   | [l] => l.addr < l.nextAddr
   | l :: l' :: rest => l.addr < l.nextAddr ∧ l.nextAddr = l'.addr ∧ ImtSorted (l' :: rest)
 
-@[simp] theorem imtSorted_nil : ImtSorted [] = True := rfl
-@[simp] theorem imtSorted_singleton (l : ImtLeaf) :
+@[simp] theorem imtSorted_nil : ImtSorted ([] : List (ImtLeaf K V)) = True := rfl
+@[simp] theorem imtSorted_singleton (l : ImtLeaf K V) :
     ImtSorted [l] = (l.addr < l.nextAddr) := rfl
-@[simp] theorem imtSorted_cons_cons (l l' : ImtLeaf) (rest : List ImtLeaf) :
+@[simp] theorem imtSorted_cons_cons (l l' : ImtLeaf K V) (rest : List (ImtLeaf K V)) :
     ImtSorted (l :: l' :: rest)
       = (l.addr < l.nextAddr ∧ l.nextAddr = l'.addr ∧ ImtSorted (l' :: rest)) := rfl
 
@@ -171,7 +190,7 @@ theorem genesis_sorted {lo hi : ℤ} (h : lo < hi) : ImtSorted (genesis lo hi) :
 
 /-- The well-linked strictly-increasing chain has a STRICTLY-SORTED address spine (the linked-list
 pointers transitively order the addresses). Proved by induction — O(chain), pointer-local. -/
-theorem imtSorted_addrs_sorted : ∀ {c : List ImtLeaf}, ImtSorted c → Sorted (imtAddrs c) := by
+theorem imtSorted_addrs_sorted : ∀ {c : List (ImtLeaf K V)}, ImtSorted c → Sorted (imtAddrs c) := by
   intro c
   induction c with
   | nil => intro _; simp [imtAddrs, Sorted]
@@ -213,13 +232,13 @@ theorem imtSorted_sortedKeys {c : List ImtLeaf} (hs : ImtSorted c) :
 /-- **`ImtAbsent c k`** — the deployed IMT non-membership open: ONE low-leaf in the chain whose
 POINTER bracket straddles `k` (`low.addr < k < low.nextAddr`). No physical-position adjacency — the
 `nextAddr` pointer IS the hi bracket. -/
-def ImtAbsent (c : List ImtLeaf) (k : ℤ) : Prop :=
+def ImtAbsent (c : List (ImtLeaf K V)) (k : K) : Prop :=
   ∃ low ∈ c, low.addr < k ∧ k < low.nextAddr
 
 /-- **The addr dichotomy** — on an `ImtSorted` chain every address is `≤ low.addr` (at or before the
 low leaf) OR `≥ low.nextAddr` (at or after the low leaf's successor): the pointer gap
 `(low.addr, low.nextAddr)` contains NO present address. The pointer-local face of sortedness. -/
-theorem imtSorted_dichotomy : ∀ {c : List ImtLeaf}, ImtSorted c →
+theorem imtSorted_dichotomy : ∀ {c : List (ImtLeaf K V)}, ImtSorted c →
     ∀ low ∈ c, ∀ x ∈ imtAddrs c, x ≤ low.addr ∨ low.nextAddr ≤ x := by
   intro c
   induction c with
@@ -257,8 +276,9 @@ theorem imtSorted_dichotomy : ∀ {c : List ImtLeaf}, ImtSorted c →
 
 /-- **`imtAbsent_excludes` — THE POINTER-BRACKET NON-MEMBERSHIP KEYSTONE.** On an `ImtSorted` chain,
 a single low-leaf pointer bracket `low.addr < k < low.nextAddr` proves `k` ABSENT from the address
-spine — the deployed `.absent` open, with NO physical-position adjacency gate. -/
-theorem imtAbsent_excludes {c : List ImtLeaf} (hs : ImtSorted c) {k : ℤ}
+spine — the deployed `.absent` open, with NO physical-position adjacency gate. K-GENERIC: the
+bracket needs NOTHING from ℤ — the 8-felt lex key instantiates it directly. -/
+theorem imtAbsent_excludes {c : List (ImtLeaf K V)} (hs : ImtSorted c) {k : K}
     (ha : ImtAbsent c k) : k ∉ imtAddrs c := by
   obtain ⟨low, hlow, h1, h2⟩ := ha
   intro hk
@@ -272,14 +292,14 @@ theorem imtAbsent_excludes {c : List ImtLeaf} (hs : ImtSorted c) {k : ℤ}
 `nextAddr → k`, (ii) splice the new leaf `(k, v, low_oldNext)` right after it. TWO O(depth)
 Merkle-path updates (no shift). On an `ImtSorted` chain the first bracketing leaf is the unique
 one. -/
-def imtInsert : List ImtLeaf → ℤ → ℤ → List ImtLeaf
+def imtInsert : List (ImtLeaf K V) → K → V → List (ImtLeaf K V)
   | [], _, _ => []
   | l :: rest, k, v =>
     if l.addr < k ∧ k < l.nextAddr then
       { l with nextAddr := k } :: { addr := k, value := v, nextAddr := l.nextAddr } :: rest
     else l :: imtInsert rest k v
 
-theorem imtInsert_cons (l : ImtLeaf) (rest : List ImtLeaf) (k v : ℤ) :
+theorem imtInsert_cons (l : ImtLeaf K V) (rest : List (ImtLeaf K V)) (k : K) (v : V) :
     imtInsert (l :: rest) k v =
       if l.addr < k ∧ k < l.nextAddr then
         { l with nextAddr := k } :: { addr := k, value := v, nextAddr := l.nextAddr } :: rest
@@ -287,7 +307,7 @@ theorem imtInsert_cons (l : ImtLeaf) (rest : List ImtLeaf) (k v : ℤ) :
 
 /-- `imtInsert` never changes the head ADDRESS (it only edits the low leaf's `nextAddr` and splices
 AFTER it) — the fact preservation threads to keep the incoming link intact. -/
-theorem imtInsert_head_addr (l : ImtLeaf) (rest : List ImtLeaf) (k v : ℤ) :
+theorem imtInsert_head_addr (l : ImtLeaf K V) (rest : List (ImtLeaf K V)) (k : K) (v : V) :
     ∃ hd tl, imtInsert (l :: rest) k v = hd :: tl ∧ hd.addr = l.addr := by
   rw [imtInsert_cons]
   by_cases hbr : l.addr < k ∧ k < l.nextAddr
@@ -298,7 +318,7 @@ theorem imtInsert_head_addr (l : ImtLeaf) (rest : List ImtLeaf) (k v : ℤ) :
 a pointer-bracket-absent key into an `ImtSorted` chain yields an `ImtSorted` chain: the spliced pair
 `{low; nextAddr:=k}, {k; nextAddr:=low_oldNext}` keeps every link (`low.addr<k`, `k<low_oldNext`,
 `k` links to the old successor). A LOCAL per-row check — NOT an O(n) rebuild. -/
-theorem imtInsert_preserves : ∀ {c : List ImtLeaf}, ImtSorted c → ∀ {k v : ℤ},
+theorem imtInsert_preserves : ∀ {c : List (ImtLeaf K V)}, ImtSorted c → ∀ {k : K} {v : V},
     ImtAbsent c k → ImtSorted (imtInsert c k v) := by
   intro c
   induction c with
@@ -342,7 +362,7 @@ theorem imtInsert_preserves : ∀ {c : List ImtLeaf}, ImtSorted c → ∀ {k v :
 /-- **`mem_imtAddrs_imtInsert` — the spine grows by EXACTLY the fresh key** (the `mem_sortedInsert`
 analog for the IMT chain): after a bracketed insert, an address is present iff it is `k` or was
 present. The insert is faithful — no ghost keys, no lost keys. -/
-theorem mem_imtAddrs_imtInsert : ∀ {c : List ImtLeaf} {k v : ℤ}, ImtAbsent c k →
+theorem mem_imtAddrs_imtInsert : ∀ {c : List (ImtLeaf K V)} {k : K} {v : V}, ImtAbsent c k →
     ∀ x, x ∈ imtAddrs (imtInsert c k v) ↔ x = k ∨ x ∈ imtAddrs c := by
   intro c
   induction c with
@@ -409,7 +429,7 @@ THROUGH the present `k` (contradicting the well-linked dichotomy). The §3 doubl
 nullifier `25` placed out of sorted order, then bracketed absent by `20 < 25 < 30`) is impossible:
 the forge needed a NON-sorted committed root, but the induction (`reachable_sorted`) forces every
 reachable root `ImtSorted`, and this theorem then refutes the absence open. -/
-theorem imt_double_spend_unsat {c : List ImtLeaf} (hs : ImtSorted c) {k : ℤ}
+theorem imt_double_spend_unsat {c : List (ImtLeaf K V)} (hs : ImtSorted c) {k : K}
     (hpresent : k ∈ imtAddrs c) (habsent : ImtAbsent c k) : False :=
   imtAbsent_excludes hs habsent hpresent
 

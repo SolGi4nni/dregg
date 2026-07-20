@@ -240,7 +240,7 @@ supplied proof over an assumed extraction**, not an extraction-backed adversary 
 - **The richer numbers are calculator columns on disconnected leaves:** conjectured capacity 130;
   "proven Johnson" 73 (`FriLedgerSound.lean:415`, a `by norm_num` with no theorem relating grinding
   to probability); per-fold density 109 (arity-8 wrap, at 96.9% farness while FRI runs at Johnson
-  87.5%); commit-phase deployed worst case 61 (`FriLedgerSound.lean:696`). The Johnson-radius
+  87.5%); commit-phase reading 61 at `(recursionConfig, 2^19)` (`FriLedgerSound.lean:696`) — ⚠ NOT the deployed pairing (deployed is **51** at `2^22`, `deployed_wrap_commitBits`; see the grade note below). The Johnson-radius
   `(1/8)^19 = 2^-57` (`BabyBearFriDeployedInstance.lean:209,231`) needs the **undischarged**
   `FriLdtDeployedBound` (`:221`, "carried as a `Prop`, never proved here").
 - **The extraction is ASSUMED, never discharged.** `verify ⟹ ∃ witness` is `FriLdtExtractV3`
@@ -266,9 +266,13 @@ supplied proof over an assumed extraction**, not an extraction-backed adversary 
   only in whatever prove+verify roundtrip coverage exists (`be732a9dd`, the v13 `OodEvaluationMismatch`).
 
 **Grade: NAMED terminal-by-design floor, and weaker than "112.6-bit" framing suggests.** The memory's
-"57 calculator bits" is stale in two details (the `FriLedgerSound.lean:692` mispairing was fixed —
-deployed commit worst case is 61 — and the fully-proven per-turn query line is ~31, not 57), but its
-**thesis holds at HEAD**: no adversary/grinding model, `verifyAlgo` is a Bool on a supplied proof,
+"57 calculator bits" is an INFORMAL density estimate with no adversary model and no theorem — not a
+soundness bound. The theorem-backed readings: the deployed commit-phase ε_C is **51 bits** at the
+deployed `2²²` domain (`FriDeployedHeightPairing.deployed_wrap_commitBits`; both the old `61` and the
+PROVEN-120 `57` are refuted mispairings — `deployed_wrap_is_not_61`,
+`deployed_wrap_is_not_the_proven120_number`), and the fully-proven per-turn query line is **~31.5
+bits** (δ=7/16, `(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness` / `FriArityForking.deployed_far_survival_lt`),
+not 57. The **thesis holds at HEAD**: no adversary/grinding model, `verifyAlgo` is a Bool on a supplied proof,
 and the ledger/apex rests on an assumed extraction the proven combinatorial bounds never discharge.
 `STARK-FLOOR.md:122` self-states the honest status: p3 `verify_batch` "under conjectured FRI
 security, self-reviewed and **UNAUDITED** by a third party" — while `CircuitSoundness.lean:475` names

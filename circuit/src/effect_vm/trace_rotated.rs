@@ -5376,7 +5376,7 @@ pub const CUSTOM_HOST_WIDTH_TEETH: usize =
 /// the deployed prover mints carries exactly the binding the fold re-derives.
 /// (The off-AIR `verify_proof_bind` engine that once re-derived it from a
 /// hand-verified STARK died with stark-kill; there is no such SDK-reachable
-/// entry point.) The binding is enforced at the per-turn FOLD: the twelve pins
+/// entry point.) The binding is enforced at the per-turn FOLD: the sixteen pins
 /// publish the bound columns as PIs the fold connects to the custom sub-proof
 /// leaf's 8-felt PI-commitment (the recursion / `EngineBinding` carrier), so the
 /// in-AIR `proof_bind` op is intentionally a declaration (like `mem_op`/`umem_op`,

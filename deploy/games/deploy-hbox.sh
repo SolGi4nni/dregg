@@ -174,6 +174,75 @@ gated() {
   echo "    ── EMBER-GATED (manual) ── $*"
 }
 
+# Read one unquoted `NAME=value` from the systemd EnvironmentFile without
+# sourcing it. The env file contains bearer/bot secrets and is data, never shell
+# code. Shielded-operation values intentionally use no spaces or shell escapes.
+env_file_value() {
+  local name="$1"
+  awk -v name="$name" '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      sub(/^[[:space:]]*/, "", line)
+      if (index(line, name "=") == 1) value = substr(line, length(name) + 2)
+    }
+    END {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) value = substr(value, 2, length(value) - 2)
+      print value
+    }
+  ' "$GAMES_ENV"
+}
+
+# A healthy server with the wrong privacy mode is not a successful deploy.
+# Enforce pairwise configuration before paying the build cost; the binary still
+# repeats all parsing and key-file checks independently at startup.
+validate_shielded_env() {
+  [[ -f "$GAMES_ENV" ]] || return 0
+  local quorum_keys quorum_threshold dark_key dark_root dark_authority_keys dark_authority_threshold
+  quorum_keys="$(env_file_value DREGG_FHEGG_QUORUM_PUBLIC_KEYS)"
+  quorum_threshold="$(env_file_value DREGG_FHEGG_QUORUM_THRESHOLD)"
+  dark_key="$(env_file_value DREGG_DARK_AMM_SECRET_KEY_FILE)"
+  dark_root="$(env_file_value DREGG_DARK_AMM_INITIAL_ROOT)"
+  dark_authority_keys="$(env_file_value DREGG_DARK_AMM_AUTHORITY_PUBLIC_KEYS)"
+  dark_authority_threshold="$(env_file_value DREGG_DARK_AMM_AUTHORITY_THRESHOLD)"
+
+  if { [[ -n "$quorum_keys" ]] && [[ -z "$quorum_threshold" ]]; } ||
+     { [[ -z "$quorum_keys" ]] && [[ -n "$quorum_threshold" ]]; }; then
+    die "DREGG_FHEGG_QUORUM_PUBLIC_KEYS and DREGG_FHEGG_QUORUM_THRESHOLD must be set together"
+  fi
+  if { [[ -n "$dark_key" ]] && [[ -z "$dark_root" ]]; } ||
+     { [[ -z "$dark_key" ]] && [[ -n "$dark_root" ]]; }; then
+    die "public Dark AMM requires DREGG_DARK_AMM_SECRET_KEY_FILE and DREGG_DARK_AMM_INITIAL_ROOT together (refusing accidental proofless v1)"
+  fi
+  if { [[ -n "$dark_authority_keys" ]] && [[ -z "$dark_authority_threshold" ]]; } ||
+     { [[ -z "$dark_authority_keys" ]] && [[ -n "$dark_authority_threshold" ]]; }; then
+    die "DREGG_DARK_AMM_AUTHORITY_PUBLIC_KEYS and DREGG_DARK_AMM_AUTHORITY_THRESHOLD must be set together"
+  fi
+  if { [[ -n "$dark_key" ]] && [[ -z "$dark_authority_keys" ]]; } ||
+     { [[ -z "$dark_key" ]] && [[ -n "$dark_authority_keys" ]]; }; then
+    die "public Dark AMM requires both BFV/root custody and the Tier-1 exact-opening authority policy (refusing proof-only v2)"
+  fi
+  if [[ -n "$dark_key" ]]; then
+    [[ "$dark_key" == /* ]] || die "DREGG_DARK_AMM_SECRET_KEY_FILE must be an absolute path"
+    [[ -f "$dark_key" && ! -L "$dark_key" ]] || die "Dark AMM key must already exist as a regular non-symlink file: $dark_key"
+    local key_mode key_bytes
+    key_mode="$(stat -c '%a' "$dark_key" 2>/dev/null)" || die "cannot inspect Dark AMM key permissions: $dark_key"
+    [[ "$key_mode" =~ ^[0-7]+$ ]] || die "cannot parse Dark AMM key mode: $key_mode"
+    (( (8#$key_mode & 8#77) == 0 )) || die "Dark AMM key has group/other permissions; chmod 600 $dark_key"
+    key_bytes="$(stat -c '%s' "$dark_key" 2>/dev/null)" || die "cannot inspect Dark AMM key size: $dark_key"
+    (( key_bytes <= 134217728 )) || die "Dark AMM key exceeds the 128 MiB runtime cap: $dark_key"
+    local old_ifs="$IFS" lanes=() lane
+    IFS=',' read -r -a lanes <<< "$dark_root"
+    IFS="$old_ifs"
+    [[ "${#lanes[@]}" == "8" ]] || die "DREGG_DARK_AMM_INITIAL_ROOT must contain exactly eight comma-separated BabyBear lanes"
+    for lane in "${lanes[@]}"; do
+      [[ "$lane" =~ ^[0-9]+$ ]] || die "Dark AMM root lane is not a canonical decimal integer: $lane"
+      (( 10#$lane < 2013265921 )) || die "Dark AMM root lane is outside the BabyBear field: $lane"
+    done
+  fi
+}
+
 # ── the ember-gated banner (printed at the top of every real run) ────────────
 gated_banner() {
   cat <<'BANNER'
@@ -229,6 +298,7 @@ preflight() {
     gated "place $GAMES_ENV from deploy/games/$ENV_EXAMPLE, then chmod 600"
     [[ "$DRY_RUN" == "1" ]] || die "cannot start units without $GAMES_ENV; place it and re-run"
   fi
+  validate_shielded_env
   run mkdir -p "$STATE_DIR" "$USER_UNIT_DIR" "$RELEASES_DIR"
 }
 
@@ -243,7 +313,11 @@ build() {
   # redeploy was not reliably safe. Marshal-only is the correct posture for this
   # surface and matches how the crate's tests build.
   # web server: root workspace member.
-  run bash -c "cd '$GAMES_REPO_DIR' && DREGG_REQUIRE_LEAN=0 cargo build --release -p dreggnet-web --bin dreggnet-web-server"
+  # `public-shielded-games` is the deployment contract: the public binary owns
+  # every completed hosted private mechanic and its verifier. Building the
+  # default feature set here would produce a healthy but misleading binary in
+  # which all of those operations were compiled out.
+  run bash -c "cd '$GAMES_REPO_DIR' && DREGG_REQUIRE_LEAN=0 cargo build --release -p dreggnet-web --bin dreggnet-web-server --features public-shielded-games"
   # bot: its OWN workspace — build from within discord-bot/ (NOT `-p` from root,
   # which fails: it is `exclude`d from the root workspace).
   if [[ "$SKIP_BOT" != "1" ]]; then

@@ -13,9 +13,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dregg_circuit_prove::dark_amm_private::{PrivateAmmWitness, prove_zk};
 use dreggnet_market::dark_amm_collective::{
     CollectiveDarkAmmConfig, CollectiveDarkAmmError, CollectiveDarkAmmOffering,
-    CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
-    DARK_AMM_COLLECTIVE_STAGE_OPERATION, DARK_AMM_COLLECTIVE_TASK_ARTIFACT,
-    DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
+    CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+    DARK_AMM_COLLECTIVE_COMMIT_OPERATION, DARK_AMM_COLLECTIVE_STAGE_OPERATION,
+    DARK_AMM_COLLECTIVE_TASK_ARTIFACT, DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
 };
 use dreggnet_market::dark_amm_collective_worker::{
     CollectiveDecisionTask, CollectiveDecisionTaskContext,
@@ -803,9 +803,15 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         staged_receipt.operation,
         DARK_AMM_COLLECTIVE_STAGE_OPERATION
     );
+    let pending_operations = offering.binary_operations(&game);
+    assert_eq!(pending_operations.len(), 2);
     assert_eq!(
-        offering.binary_operations(&game)[0].name,
+        pending_operations[0].name,
         DARK_AMM_COLLECTIVE_COMMIT_OPERATION
+    );
+    assert_eq!(
+        pending_operations[1].name,
+        DARK_AMM_COLLECTIVE_ABANDON_OPERATION
     );
     let artifacts = offering.binary_artifacts(&game);
     assert_eq!(artifacts.len(), 1);
@@ -825,6 +831,74 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         .find(|(name, _)| name == "decisionTaskDigest")
         .map(|(_, value)| decode_hex_digest(value))
         .unwrap();
+
+    // The staging identity owns this exact pending slot at the shared-surface
+    // layer. Another web/Telegram/Discord identity cannot cancel it, and a
+    // stale task digest cannot cancel a replacement candidate at the same
+    // sequence. Both refusals preserve the encrypted state and replay guards.
+    let stranger = DreggIdentity("player:not-the-stager".to_string());
+    assert!(
+        offering
+            .invoke_binary_operation(
+                &mut game,
+                DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+                &task_digest,
+                stranger.clone(),
+            )
+            .is_err()
+    );
+    assert!(game.has_pending_candidate());
+    let mut wrong_task_digest = task_digest;
+    wrong_task_digest[0] ^= 1;
+    assert!(
+        offering
+            .invoke_binary_operation(
+                &mut game,
+                DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+                &wrong_task_digest,
+                actor.clone(),
+            )
+            .is_err()
+    );
+    assert!(game.has_pending_candidate());
+    let abandon_receipt = offering
+        .invoke_binary_operation(
+            &mut game,
+            DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+            &task_digest,
+            actor.clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        abandon_receipt.operation,
+        DARK_AMM_COLLECTIVE_ABANDON_OPERATION
+    );
+    assert!(!game.has_pending_candidate());
+    assert_eq!(
+        offering.binary_operations(&game)[0].name,
+        DARK_AMM_COLLECTIVE_STAGE_OPERATION
+    );
+    let report = offering.verify(&game);
+    assert!(report.verified, "{}", report.detail);
+    assert_eq!(report.turns, 2);
+
+    // Neither replay guard was consumed by stage/abandon, so the identical
+    // proof-bearing request remains live and reconstructs the same task.
+    let restaged_receipt = offering
+        .invoke_binary_operation(
+            &mut game,
+            DARK_AMM_COLLECTIVE_STAGE_OPERATION,
+            &request_wire,
+            actor.clone(),
+        )
+        .unwrap();
+    let restaged_task_digest = restaged_receipt
+        .public_fields
+        .iter()
+        .find(|(name, _)| name == "decisionTaskDigest")
+        .map(|(_, value)| decode_hex_digest(value))
+        .unwrap();
+    assert_eq!(restaged_task_digest, task_digest);
     let candidate = game.pending_decision_candidate().unwrap();
     assert_eq!(candidate.decision_session_nonce(), candidate_nonce);
     let task = game.pending_decision_task().unwrap();
@@ -1035,7 +1109,18 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
             &mut game,
             DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
             &bundle_wire,
-            DreggIdentity("authority:decision-carrier".to_string()),
+            stranger,
+        )
+        .expect_err("another frontend actor cannot finish the stager's candidate");
+    assert!(committed_receipt.to_string().contains("staged"));
+    assert!(game.has_pending_candidate());
+
+    let committed_receipt = offering
+        .invoke_binary_operation(
+            &mut game,
+            DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+            &bundle_wire,
+            actor,
         )
         .unwrap();
     assert_eq!(
@@ -1047,5 +1132,5 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     assert!(offering.binary_artifacts(&game).is_empty());
     let report = offering.verify(&game);
     assert!(report.verified, "{}", report.detail);
-    assert_eq!(report.turns, 2);
+    assert_eq!(report.turns, 4);
 }

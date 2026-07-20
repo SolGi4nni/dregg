@@ -48,8 +48,10 @@ Then paste the **real signatures and absolute paths** into any subagent prompt. 
    proves `RSListBound (codeC 6 ω) 112 15` at the Johnson radius (`FriLdtJohnsonList.lean`, no
    axiom, no sorry), and the BCIKS20 δ-preserving correlated-agreement primitive is closed by
    ordered-pair counting (`wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 292`;
-   `wrap_perFold_soundness_capacity` — the ~112.6-bit per-fold bound, carried to the deployed
-   arity-8 posture at ~109.84 bits by `FriArityTransfer.lean`).
+   `wrap_perFold_soundness_capacity` — the ~112.6-bit per-fold bound at the arity-2 model. At the
+   deployed **arity-8** fold the per-fold posture is **~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`,
+   `< 2⁻¹⁰⁹`); ~112.6 does NOT hold there (`arity8_error_not_lt_2e112`). The deployed query-soundness
+   floor is **~31.5 bits** (δ=7/16, `(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness`)).
 2. **`[Poseidon2SpongeCR hash]`** — Poseidon2-sponge collision resistance (`Dregg2/Circuit/Poseidon2Binding.lean`).
    The named crypto floor; it stays a hypothesis (a standard CR assumption, not Lean-provable).
 3. Per-effect carried facts: `cellLeafInjective CH`, `RestHashIffFrame RH` (hypotheses of

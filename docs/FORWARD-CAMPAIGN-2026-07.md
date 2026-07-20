@@ -59,7 +59,9 @@ the disease's root cause into a falsifier (`REPRODUCIBLE-BUILD-AND-FREEZE.md` §
 ### Track B — proof-sharp (cutover + extraction floor)
 
 **Maturity: BUILT design, RUNS numerics, cutover not executed.** The deployed apex proves at
-`d=4`, apex height `2^22` → **57.98 → 57 proven bits** (`PROVEN-120-CONFIG.md` §3.1). That number
+`d=4`, apex height `2^22` → **51 proven commit bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`;
+the `57.98`/`57` once quoted from `PROVEN-120-CONFIG.md` §3.1 is the `m`-optimized ceiling at a mispaired
+height, refuted as the deployed number by `deployed_wrap_is_not_the_proven120_number`). That number
 is a Finset density ratio from a parametric Lean ledger, not an adversary bound, and the one leg
 below the grounded apex — the per-node FRI extraction bundle `FriLdtExtractV3`
 (`AlgoStarkSoundTransferV3.lean:131`) and its recursion twin `AggAirSound.FriExtract`

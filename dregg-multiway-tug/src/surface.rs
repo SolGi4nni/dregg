@@ -470,6 +470,14 @@ impl Offering for TugOffering {
         session.surface_for(TugOffering::seat_of(viewer))
     }
 
+    /// **Hidden information: YES.** `render_for` reveals the viewer's own card ids — the whole
+    /// point of the hand. A frontend must never paint that projection onto a surface more than
+    /// one person reads (a group chat's shared message); it serves [`render`] there, or hosts the
+    /// game somewhere private.
+    fn hidden_information(&self) -> bool {
+        true
+    }
+
     fn price(&self, _input: &Action) -> RunCost {
         RunCost::free()
     }

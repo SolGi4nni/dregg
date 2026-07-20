@@ -324,7 +324,8 @@ And the error term is a SUM whose addends are the ledger's columns finally compo
   carried, initially, as a named probabilistic hypothesis **about words and densities** (its
   honest home), not about adversaries. Radius honesty from [[project-fri-soundness-reality]]
   binds here: state it at the PROVEN radius (the unique-decoding/`M = 1`-discharged regime — the
-  57-bit-honest column), NOT at Johnson 87.5% where `M = 1` is provably false
+  proven-radius query-soundness column, **~31.5 bits** at δ=7/16, `DeployedProximitySoundness`),
+  NOT at Johnson 87.5% where `M = 1` is provably false
   (`deployed_M1_false_at_johnson`). A bigger ε that is *attached to an adversary* is worth more
   than a smaller one that is attached to nothing.
 - **The ROM instantiation** ("Poseidon2's sponge behaves as a random function") — permanent,
@@ -446,7 +447,8 @@ Stated in advance so failure is cheap and early ([[feedback-prove-the-floor-fals
 - **Stage 4:** two. (i) If the per-fold density columns cannot compose into a per-query bound
   without assuming `M > 1` correlated agreement at Johnson radius — where `M = 1` is provably
   false (`deployed_M1_false_at_johnson`) — then stage 4 must stand at the unique-decoding radius
-  and εFri is the 57-bit-honest figure. That is NOT approach failure; it is the approach
+  and εFri is the proven-radius figure (query soundness **~31.5 bits** at δ=7/16,
+  `DeployedProximitySoundness`). That is NOT approach failure; it is the approach
   *refusing to launder*. The approach FAILS only if even the proven-radius columns cannot attach
   to the adversary's acceptance event — e.g., if the qidx binding is too weak to force the
   adversary's opened positions to be the transcript's. (ii) If anyone attempts to read the
@@ -472,8 +474,11 @@ Stated in advance so failure is cheap and early ([[feedback-prove-the-floor-fals
 
 ## 7. What the bits mean afterward
 
-Today (per [[project-fri-soundness-reality]]): the deployed posture is 57 calculator bits — a
-Finset density ratio with no adversary, computed by a ledger that never touches the apex. After
+Today (per [[project-fri-soundness-reality]]): there is no adversary-quantified posture. The "57
+calculator bits" once quoted was an INFORMAL Finset density ratio with no adversary, computed by a
+ledger that never touches the apex — not a soundness bound. The theorem-backed readings are query
+soundness **~31.5 bits** at δ=7/16 (`DeployedProximitySoundness`) and commit ε_C **51 bits**
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`). After
 stage 5: `εFri(Q, params)` is a proven bound on ANY Q-query adversary's probability of producing
 an accepting proof that the straight-line extractor cannot open into the deployed `VmTrace`, with
 one named word-level carrier (correlated agreement at the proven radius) and one named permanent

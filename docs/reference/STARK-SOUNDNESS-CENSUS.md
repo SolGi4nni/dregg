@@ -39,10 +39,12 @@ genuinely: `algoStarkSound_kernel` (STARK) → `StarkSound hash Rfix` + `closedL
   (`FriLdtJohnsonList.lean`, `#assert_axioms`-clean), `wrap_badChallengePoly_johnson` gives
   `FriProximityGapChallenges` at `L=26`, and the δ-preserving correlated-agreement primitive is closed by
   ordered-pair counting (`wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 292`;
-  `wrap_perFold_soundness_capacity` — the ~112.6-bit per-fold bound, carried to the deployed arity-8 posture
-  at ~109.84 bits by `FriArityTransfer.lean`; `circuit/src/lib.rs`'s Lean-owned FRI ledger quotes 109 bits
-  for the deployed wrap). The prover config (rate `1/8`, `38` queries)
-  is separately DISCHARGED in the unique-decoding regime (`DeployedProximitySoundness`, `< 2^-31`).
+  `wrap_perFold_soundness_capacity` — the ~112.6-bit per-fold bound at the **arity-2** model. At the
+  deployed **arity-8** fold the per-fold posture is **~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`;
+  ~112.6 provably fails there, `arity8_error_not_lt_2e112`); `circuit/src/lib.rs`'s Lean-owned FRI ledger
+  quotes 109 bits for the deployed wrap). The prover config (rate `1/8`, `38` queries)
+  is separately DISCHARGED in the unique-decoding regime (`DeployedProximitySoundness`, `(9/16)³⁸ < 2⁻³¹`,
+  i.e. **~31.5-bit** query soundness).
 - **FS-SZ ε** — Fiat-Shamir non-exceptionality, `ε ≤ deg/|F|` (a game in `ProbCrypto.winProb`, not an axiom).
 - structural range tables (PROVEN, not a floor: `rangeTable bits = [0,2^bits)` symbolically, never enumerated).
 

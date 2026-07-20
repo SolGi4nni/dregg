@@ -6,9 +6,14 @@ import Dregg2.Tactics
 /-!
 # `FriWeightingTransfer` — the WEIGHTING TRANSFER is `[Sta25]`-free (BCIKS20 Lemmas 7.5 + 7.6, mechanized)
 
-**Why this file exists — the `+17…+31`-bit question, made honest.** The deployed FRI commit-phase
-proven posture is `~61` bits (`FriLedger.friCommitLedger`, `FriLedgerSound.ledger_epsC_soundness`),
-and it BINDS because BCIKS20's `ε_C` carries a term `∝ |D⁽⁰⁾|² / |F|` — the `O(n²)` exceptional-set
+**Why this file exists — the `+17…+31`-bit question, made honest.** The FRI commit-phase `ε_C`
+reads `~61` bits at the `2^19` height (`FriLedger.friCommitLedger`, `FriLedgerSound.ledger_epsC_soundness`)
+— that is the `recursionConfig` reading (`FriDeployedHeightPairing.the_61_is_the_recursion_config_reading`),
+NOT the deployed wrap: the DEPLOYED wrap at its `2^22` domain reads **51**
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`; `61` is a refuted config/height mispairing,
+`deployed_wrap_is_not_61`). The `~61`-at-`2^19` accounting below is kept because this file's
+`|D⁽⁰⁾|²` question is stated at that height. It BINDS because BCIKS20's `ε_C` carries a term
+`∝ |D⁽⁰⁾|² / |F|` — the `O(n²)` exceptional-set
 bound of its correlated-agreement theorem (`n = |D⁽⁰⁾|`). **BCSS25** (Ben-Sasson–Carmon–Haböck–
 Kopparty–Saraf, *On Proximity Gaps for Reed–Solomon Codes*, ECCC TR25-169 = eprint 2025/2055) improves
 that exceptional set to `O(n)` up to the Johnson radius (Thm 1.5 / Thm 4.2), which would make `ε_C`

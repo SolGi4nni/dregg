@@ -3215,13 +3215,13 @@ fn mint_rotated_turn_leaf(
     let leg = &t.participant.rotated;
     Ok(match &leg.carrier_witness {
         Some(CarrierWitness::Custom(bundle)) => {
-            // THE PROOF-BIND COMMITMENT VERSION BOUNDARY (flag-day v2, blocker #2): a leg
-            // whose descriptor publishes the RETIRED 4-felt custom commitment exposure is
-            // refused HERE with the TYPED `CustomCommitVersionError::RetiredV1` — old custom
-            // artifacts cannot re-enter at the upgraded ~124-bit assurance rung, and are
-            // never silently widened or zero-padded. The detector is structural (the leg's
-            // own exposure pins), the exact custom twin of the wide-carrier geometry
-            // boundary in `admit_welded_leg`.
+            // THE PROOF-BIND CARRIER VERSION BOUNDARY (faithful flag-day v3): a leg whose
+            // descriptor publishes either the RETIRED commitment4/VK4 exposure or the retired
+            // commitment8/VK4 prefix is refused HERE with a TYPED error. Old custom artifacts
+            // cannot re-enter at the exact commitment8+VK8 assurance rung and are never silently
+            // widened, zero-padded, or prefix-matched. The detector is structural (the leg's own
+            // exposure pins), the exact custom twin of the wide-carrier geometry boundary in
+            // `admit_welded_leg`.
             dregg_circuit::effect_vm_descriptors::require_custom_carrier_vk8(&leg.descriptor)
                 .map_err(|e| TurnChainError::TurnProofInvalid {
                     index: i,
@@ -3370,6 +3370,11 @@ fn mint_rotated_turn_leaf(
         // connect commitment8, state roots, app root, and canonical program VK8
         // to the faithful custom-wide leg inside one binding node.
         Some(CarrierWitness::CustomIr2(bundle)) => {
+            dregg_circuit::effect_vm_descriptors::require_custom_carrier_vk8(&leg.descriptor)
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("direct-IR2 custom carrier version boundary: {e}"),
+                })?;
             bundle
                 .vk_recipe
                 .require_exact_descriptor(&bundle.descriptor)
@@ -4419,19 +4424,21 @@ mod streaming_fold_tests {
     use super::*;
 
     #[test]
-    fn direct_ir2_vk_correlation_refuses_low4_and_wrong_leg_vk8() {
+    fn direct_ir2_vk_correlation_refuses_low4_and_every_wrong_leg_vk_limb() {
         // SAME direct descriptor/leaf identity in both cases.  The deployed
         // leg's low4 prefix is insufficient even when it agrees, and a future
         // full-width leg with one changed lane is also refused.
         let direct_vk8 = core::array::from_fn(|i| BabyBear::new(100 + i as u32));
-        let low4 = &direct_vk8[..DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN];
+        let low4 = &direct_vk8[..4];
         let err = require_direct_ir2_leg_vk8(low4, direct_vk8).unwrap_err();
         assert_eq!(err, DIRECT_IR2_VK8_REFUSAL);
 
-        let mut wrong_leg_vk8 = direct_vk8;
-        wrong_leg_vk8[7] += BabyBear::ONE;
-        let err = require_direct_ir2_leg_vk8(&wrong_leg_vk8, direct_vk8).unwrap_err();
-        assert!(err.contains("leg program VK8 differs"));
+        for lane in 0..DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN {
+            let mut wrong_leg_vk8 = direct_vk8;
+            wrong_leg_vk8[lane] += BabyBear::ONE;
+            let err = require_direct_ir2_leg_vk8(&wrong_leg_vk8, direct_vk8).unwrap_err();
+            assert!(err.contains("leg program VK8 differs"), "lane {lane}");
+        }
 
         require_direct_ir2_leg_vk8(&direct_vk8, direct_vk8)
             .expect("the full-width exact identity is the only admitted boundary");

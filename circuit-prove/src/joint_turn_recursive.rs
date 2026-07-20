@@ -27,6 +27,7 @@ use p3_recursion::{BatchOnly, RecursionOutput};
 
 use crate::joint_turn_aggregation::JointAggError;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
+#[cfg(test)]
 use dregg_circuit::field::BabyBear;
 
 const D: usize = 4;
@@ -34,8 +35,8 @@ const D: usize = 4;
 /// IR2 PI slot the deployed `customVmDescriptor2R24` publishes its `custom_proof_commitment` at
 /// (the Lean `customPiExposure`; see `effect_vm/trace_rotated.rs::generate_rotated_custom_wide` —
 /// the PROOF-BIND FLAG-DAY ROTATION lays the eight `custom_proof_commitment` limbs at IR2 PI
-/// 46..53 (limbs 0..4 from cols 72..75, limbs 4..8 from the commit-teeth columns), and the four
-/// low `custom_program_vk_hash` limbs at 54..57).
+/// 46..53 (limbs 0..4 from cols 72..75, limbs 4..8 from the commit-teeth columns), and the full
+/// `custom_program_vk_hash` at 54..61 (low4 parameter columns plus high4 VK teeth).
 pub const CUSTOM_COMMIT_PI_LO: usize = 46;
 /// Width of the `custom_proof_commitment` claim — the FULL 8-felt `WideHash` class
 /// (~124-bit birthday; flag-day rotation from the retired 4-felt / ~62-bit shape).
@@ -1692,8 +1693,8 @@ mod custom_state_fold_wire_tests {
 mod app_root_weld_fold_tests {
     use super::*;
     use crate::custom_leaf_adapter::{
-        custom_app_root_claim_len, prove_custom_leaf_with_app_root_commitment,
-        prove_custom_leaf_with_state_commitment, read_exposed_app_root,
+        prove_custom_leaf_with_app_root_commitment, prove_custom_leaf_with_state_commitment,
+        read_exposed_app_root,
     };
     use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::{

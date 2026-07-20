@@ -99,11 +99,13 @@ authority, conservation, integrity, freshness, and light-client
 unfoolability---while pinning each theorem's axiom set and exposing every
 cryptographic or liveness hypothesis.
 
-Those hypotheses matter. The deployed FRI parameters yield a 57.98-bit density
-calculation under the cited proximity bound; this is not an adversarial
-soundness theorem over supplied proofs, and extraction remains an explicit
-carrier. A costed extension-degree-eight configuration exceeds 120 bits under
-the same calculation but is not deployed. The paper therefore separates the
+Those hypotheses matter. At the deployed domain size the mechanized
+commit-phase ledger (BCIKS20's $epsilon_C$, fixed-parameter) reads 51 bits;
+this is a knob-ledger calculation, not an adversarial soundness theorem over
+supplied proofs, and extraction remains an explicit carrier. The once-quoted
+57.98 was an informal density figure evaluated at a mispaired height and is not
+a bound. A costed extension-degree-eight configuration exceeds 120 bits under
+the same ledger but is not deployed. The paper therefore separates the
 mechanized transition argument, the proof-system floor, and deployment
 correspondence instead of collapsing them into one claim. The same kernel spans
 distributed cells and local seL4 protection domains, and factory-minted

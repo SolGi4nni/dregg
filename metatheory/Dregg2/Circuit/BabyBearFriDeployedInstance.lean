@@ -45,8 +45,11 @@ BCIKS20 residual (words INSIDE the `δ_J` ball, past unique decoding) is two pre
 (min-distance `127`); their `L > 1` correlated-agreement generalization is PROVED by ordered-pair
 counting at `L ≤ 186` interior (`dIn = 52`) / `L ≤ 292` boundary (`dIn = 56`) in
 `FriCorrelatedAgreementSharp.lean` (§6/§5), with the GS-ideal `L ≤ 128` BLOCKED for the multiset word
-(`Dregg2/ForMathlib/GuruswamiSudan.lean:20-33`). The deployed per-fold soundness is the **~112.6-bit**
-`wrap_perFold_soundness_capacity` (§8); the FRI capacity conjecture that once quoted `~130` is refuted.
+(`Dregg2/ForMathlib/GuruswamiSudan.lean:20-33`). The deployed **arity-8** per-fold soundness is
+**~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`); the **~112.6-bit**
+`wrap_perFold_soundness_capacity` (§8) is the **arity-2** fold and provably FAILS at the deployed
+arity 8 (`FriArityTransfer.arity8_error_not_lt_2e112`). The FRI capacity conjecture that once quoted
+`~130` is refuted.
 
 **The reduction (§5, stated).** The deployed extraction bundle
 `AlgoStarkSoundTransferV3.FriLdtExtractV3` ("`verifyAlgo` accepts ⟹ FRI opened a genuine

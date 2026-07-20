@@ -773,6 +773,27 @@ pub struct MaskedCollectiveDecision {
 }
 
 impl MaskedCollectiveDecision {
+    /// Reconstitute the public result of an externally transported equality
+    /// run.  This is the process-boundary adapter: callers may supply only the
+    /// canonical reveal-only transcript, never an operand, residue, Boolean
+    /// input share, or Beaver row.
+    pub fn from_external_transcript(
+        session: PartyMpcSession,
+        transcript: DecisionTranscript,
+    ) -> Result<Self> {
+        if !transcript.is_reveal_only(&session) {
+            return Err(CollectiveDecisionWorkerError::InvalidConfiguration(
+                "external decision transcript does not match the equality session",
+            ));
+        }
+        let equal = transcript.revealed_equal == 1;
+        Ok(Self {
+            session,
+            transcript,
+            equal,
+        })
+    }
+
     pub fn session(&self) -> &PartyMpcSession {
         &self.session
     }

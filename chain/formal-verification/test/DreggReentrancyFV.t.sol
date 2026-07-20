@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {DreggLaunchToken} from "contracts/launchpad/DreggLaunchToken.sol";
 import {DreggSolventPool} from "contracts/launchpad/DreggSolventPool.sol";
+import {LibClone1167} from "contracts/launchpad/LibClone1167.sol";
 
 /// @title REENTRANCY-FREEDOM — SYMBOLIC formal verification (Halmos)
 /// @notice A NEW anti-rug invariant, PROVEN not grepped: a state-changing function
@@ -107,10 +108,13 @@ contract DreggReentrancyFV is Test {
 
         DreggLaunchToken token = new DreggLaunchToken("N", "S", 1e30, address(this));
         token.mint(address(this), 1e30 - 1);
-        DreggSolventPool pool = new DreggSolventPool(address(token), 1, floorQuote, floorToken, feeBps);
+        // LIVE deployment shape (EIP-1167): clone the inert impl, seed tokens in,
+        // then initialize (see DreggSolventPool §Deployment shape).
+        DreggSolventPool impl = new DreggSolventPool();
+        DreggSolventPool pool = DreggSolventPool(LibClone1167.clone(address(impl)));
         token.transfer(address(pool), tokenSeed);
         vm.deal(address(this), quoteSeed);
-        pool.initialize{value: quoteSeed}(tokenSeed);
+        pool.initialize{value: quoteSeed}(address(token), 1, floorQuote, floorToken, feeBps, tokenSeed);
 
         // A re-entrant seller: its `receive` re-enters `pool.sell` once.
         ReentrantSeller seller = new ReentrantSeller(address(pool), address(token));

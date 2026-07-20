@@ -17,7 +17,7 @@ constant, one final descriptor registry, one committed commitment width) so the 
 now, while no community state exists to migrate. The reproducible-build rung is the enabler; its keystone
 is a CI gate that clones bare into an empty `~/dev` and builds — the one check that makes "works on my
 machine" a test failure instead of a discovery. The freeze rung has a hard dependency on Track B: the
-ceremony must pin the **proven-120** FRI configuration, not the deployed 57.98-bit calculator config,
+ceremony must pin the **proven-120** FRI configuration, not the deployed `d=4` config (proven commit posture 51 bits, `deployed_wrap_commitBits`),
 which means the FRI degree cutover has to land *before* the ceremony, not after — sequenced so we pay the
 multi-GB Groth16 re-setup exactly once.
 
@@ -127,13 +127,16 @@ Several P0 items the launch-readiness bullet names as open are, at HEAD, **done*
 
 ### 2.4 The Track B dependency, stated precisely
 
-The deployed FRI posture is **57.98 proven bits** at the apex (`d=4`; `PROVEN-120-CONFIG.md` §3.1, apex
-row `ir2_leaf_wrap` = 57.00). Proven-120 needs the extension-degree cutover to **`d=8, lb=6, q=36,
+The deployed FRI commit posture is **51 proven bits** at the apex (`d=4`, `|D⁰| = 2^22`;
+`FriDeployedHeightPairing.deployed_wrap_commitBits`). The `57.98`/`57.00` once quoted here
+(`PROVEN-120-CONFIG.md` §3.1) is an `m`-optimized ceiling read at a mispaired height, refuted as the
+deployed number (`deployed_wrap_is_not_the_proven120_number`). Proven-120 needs the extension-degree
+cutover to **`d=8, lb=6, q=36,
 pow=16, WRAP_LOG_CEIL=15` → λ = 122.60 on every shipped config** (`PROVEN-120-CONFIG.md` §3.4). That
 cutover **re-keys the apex VK** at its Phase 4 (`FRI-CUTOVER-PLAN.md` §2 Phase 4: Groth16 re-setup, re-key
 the `DREGG_APEX_RECURSION_VK` / `DreggApexRecursionVk` pinned pair, regenerate the Solidity verifier). The
 MPC VK ceremony this document sequences **also** produces the apex VK. These are the same artifact: run
-the ceremony at `d=4` and the frozen hex KAT pins the 57.98-bit config, and the `d=8` cutover then throws
+the ceremony at `d=4` and the frozen hex KAT pins the deployed `d=4` config (proven commit posture 51 bits), and the `d=8` cutover then throws
 that ceremony away and demands a second one. **The ceremony is Phase 4 of the FRI cutover, not a separate
 event.**
 
@@ -250,7 +253,7 @@ rejected (`FRI-CUTOVER-PLAN.md` gate G5). **ember-gated** (deployment flips are 
 ## 5. Dependencies on other tracks
 
 - **Track B (FRI soundness) — HARD, blocking, and it dictates the sequence.** Rung D4's ceremony MUST pin
-  the proven-120 `d=8` config, never the deployed `d=4` 57.98-bit config. Therefore D4 = Phases 4-5 of
+  the proven-120 `d=8` config, never the deployed `d=4` config (proven commit posture 51 bits). Therefore D4 = Phases 4-5 of
   `FRI-CUTOVER-PLAN.md`, and Phases 0-3 of that plan (the free `WRAP_LOG_CEIL 16→15` both-win, the three
   ledger-artifact corrections, the `d=8` Rust flip, the 2-4-week gnark wrap rewrite, gate G3) are
   prerequisites of D4. If instead the freeze pinned `d=4` now, the cutover would force a **second**
@@ -318,5 +321,5 @@ Other risks, each with its check:
 | 13 `-staged` deployed registries | BUILT | `circuit/descriptors/*staged*`; `docs/VK-REGEN-LOG.md` |
 | 8-felt commitment RUNS + tooth; 1-felt fenced | RUNS | `circuit/src/faithful8.rs`; `ivc.rs:175,184,1423`; `ci.yml:287-299` |
 | Control 4 differential design-only; 1-3 run | NAMED (design-only) | `docs/VK-REGEN-CONTROLS.md:92,70-95` |
-| deployed 57.98 bits (d=4); proven target d=8 λ=122.60 | DERIVED (Track B) | `PROVEN-120-CONFIG.md` §3.1,§3.4 |
+| deployed commit posture 51 proven bits (d=4, `deployed_wrap_commitBits`); proven target d=8 λ=122.60 | DERIVED (Track B) | `FriDeployedHeightPairing`; `PROVEN-120-CONFIG.md` §3.4 |
 | ceremony = FRI-CUTOVER Phases 4-5; consumes d=8 | DERIVED | `FRI-CUTOVER-PLAN.md` §2 Phases 4-5, §4.3 |

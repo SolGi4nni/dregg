@@ -2,7 +2,10 @@
 
 **Target:** `d = 8, lb = 6, q = 36, pow = 16, WRAP_LOG_CEIL = 15` — **λ = 122.60 on every shipped
 config** (2.6 bits of margin), per [`PROVEN-120-CONFIG.md`](./PROVEN-120-CONFIG.md) §3.4/§6. The
-deployed posture is `d = 4` at the apex: **57 proven bits** (ibid. §2–3.1). This document is the
+deployed posture is `d = 4` at the apex: **51 proven commit bits** at `|D⁰| = 2^22`
+(`FriDeployedHeightPairing.deployed_wrap_commitBits`; the `57` once quoted at ibid. §2–3.1 is the `m=3`
+best-case ceiling / a `2^19`-mispairing, refuted as the deployed number by
+`deployed_wrap_is_not_the_proven120_number`). This document is the
 operator checklist for the cutover: the file-and-site inventory (counted, not inherited), the ordered
 steps, the gates at each step, the cost expectations and how to re-measure them, the rollback story,
 and what does not change.

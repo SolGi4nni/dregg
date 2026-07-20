@@ -106,7 +106,9 @@ mkdir -p ~/.config/dregg ~/.local/state/dregg-games
 cp ~/dev/breadstuffs/deploy/games/.env.example ~/.config/dregg/games.env
 $EDITOR ~/.config/dregg/games.env      # DISCORD_TOKEN / DISCORD_APP_ID / BOT_SECRET,
                                         # DESCENT_ANNOUNCE_CHANNEL_ID, DATABASE_URL;
-                                        # DREGGNET_WEB_BIND=100.95.240.73:8790 (tailnet iface)
+                                        # DREGGNET_WEB_BIND=100.95.240.73:8790 (tailnet iface);
+                                        # optional fhEgg quorum + strict v3 Dark AMM key/root/
+                                        # exact-opening issuer policy
 chmod 600 ~/.config/dregg/games.env
 ```
 No prod token is ever committed or placed by an agent — this is ember's hand-placement
@@ -133,6 +135,10 @@ cd ~/dev/breadstuffs/deploy/games
 ./deploy-hbox.sh --dry-run     # rehearse — prints every step, no side effects
 ./deploy-hbox.sh               # build -> snapshot -> install -> reload -> health (+auto-revert)
 ```
+The web build uses the aggregate `public-shielded-games` feature. That is a
+deployment invariant, not a default Cargo feature: ordinary library builds stay
+lightweight, while the public binary cannot silently compile out the completed
+fhEgg, private dungeon, or Dark AMM operation surfaces.
 The script installs the two **user** units (with `loginctl enable-linger` so they
 survive logout). Its health gate polls `http://100.95.240.73:8790/health` (the tailnet
 iface the web unit binds — NOT localhost). Knobs: `SKIP_BOT=1` (web demo only),

@@ -102,9 +102,12 @@ widened to the **faithful 8-felt commitment** (`CHIP_WIDE_ARITY = 11`,
 `docs/FAITHFUL-COMMITMENT-LAW.md` (the historical widening analysis is archived
 at `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`) and the
 don't-launder-a-load-bearing-insecurity scar: the umem-ref root **must** be
-carried at the system's own soundness floor (8 felts, matching the ~112.6-bit
-**proven** per-fold FRI/STARK soundness floor,
-`wrap_perFold_soundness_capacity` — the ~130-bit figure is the refuted FRI
+carried at the system's own soundness floor (8 felts ≈ 124 bits, comfortably
+above the **proven** deployed FRI floors: per-fold **~109.84 bits** at the
+arity-8 fold (`FriArityTransfer.arity8_perFold_soundness`; ~112.6 is the arity-2
+figure and provably fails at arity 8, `arity8_error_not_lt_2e112`), and
+query-soundness **~31.5 bits** (δ=7/16, `(9/16)³⁸ < 2⁻³¹`,
+`FriArityForking.deployed_far_survival_lt`) — the ~130-bit figure is the refuted FRI
 capacity conjecture, kept in the record only as a drift baseline), **not** the
 reserved 4 and **never** a 31-bit single felt. The `[u8; 32]` external form is fine; the
 in-circuit public-input carrier is the 8-felt faithful commitment. This is an

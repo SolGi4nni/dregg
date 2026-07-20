@@ -29,7 +29,8 @@ only) carrying the relation-parametric certificate every instance rides on:
 generic instances: `hypergraph_reduction_bridge` (`:60`, hyperedge replacement) and
 `cfg_parse_via_reduction` (`:69`, `R := g.Produces` ⇒ grammar membership; `Cfg.cfg_bridge`
 is literally an alias of it, not a second induction). `GraphRewrite.lean::graphRewrite_bridge`
-is the DPO instance. All declarations live in the `Dregg2.Crypto.Hypergraph` namespace, so
+is the match-driven contextual-replacement instance. All declarations live in the
+`Dregg2.Crypto.Hypergraph` namespace, so
 downstream references are unchanged.
 
 ## 2. The four rungs — one `Hypergraph.bridge`, four relations (BUILT)

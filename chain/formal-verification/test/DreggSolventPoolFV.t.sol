@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {DreggLaunchToken} from "contracts/launchpad/DreggLaunchToken.sol";
 import {DreggSolventPool} from "contracts/launchpad/DreggSolventPool.sol";
+import {LibClone1167} from "contracts/launchpad/LibClone1167.sol";
 
 /// @title DreggSolventPool — SYMBOLIC formal verification (Halmos)
 /// @notice Proves the NEVER-DRAINABLE (solvency-floor) invariant against the REAL
@@ -48,10 +49,14 @@ contract DreggSolventPoolFV is Test {
 
         token = new DreggLaunchToken("N", "S", BOUND, address(this));
         token.mint(address(this), BOUND - 1); // this contract holds all tokens
-        pool = new DreggSolventPool(address(token), 1, floorQuote, floorToken, feeBps);
+        // LIVE deployment shape (EIP-1167): the implementation self-bricks in its
+        // constructor, so pools are minimal-proxy CLONES of one inert impl. Seed the
+        // token reserve INTO the clone, then initialize it (ETH = quote reserve).
+        DreggSolventPool impl = new DreggSolventPool();
+        pool = DreggSolventPool(LibClone1167.clone(address(impl)));
         token.transfer(address(pool), tokenSeed);
         vm.deal(address(this), quoteSeed);
-        pool.initialize{value: quoteSeed}(tokenSeed);
+        pool.initialize{value: quoteSeed}(address(token), 1, floorQuote, floorToken, feeBps, tokenSeed);
     }
 
     // ── INVARIANT — BUY never drains the TOKEN reserve below its floor ────────────
