@@ -492,6 +492,24 @@ NEXT WAVE: (1) finish the numbers sweep + purge 112.6/57/61 tree-wide → the PR
 (2) COMPUTE what params WOULD buy target bits (the actionable fix — q, radius, arity for e.g. 100 real bits);
 (3) the honest wrap posture doc (retire FriLowDegreeSound in the DEPLOYED wrap, state ~31.5 + the named floor).
 
+
+## ⚡ FRI CRISIS RESPONSE (07-20) — PURGE done; UPGRADE hits the FIELD WALL (proven, not guessed)
+PURGE ✅: ~112.6 de-claimed tree-wide (both remaining hits are "this was WRONG" statements, not assertions);
+"~57 calculator bits" relabeled INFORMAL-density-estimate-NOT-a-bound; honest posture in docs (CHAIN-INVENTORY:
+theorem-backed ε_C + query-soundness). fri_params_soundness_budget calculator handled.
+⚑ UPGRADE — THE FINDING: you CANNOT buy bits by changing q/pow. The FIELD caps it (FriQueryAdversaryLaunch.lean
+ed9a0bb72, 11 keystones clean): field_ceiling_vacuous_at_2_124 — BabyBear degree-4 gives ε ceiling ~2^-124;
+100+128=228 ≫ 122 ⇒ NO honest "100 bits vs 2^128 adv" at deg-4, at ANY q. Config CORRECTLY left unchanged
+(a q bump against a field ceiling is theater). PROVEN honest TRADEOFF: launch_100bits_vs_2_22_adv (100 bits
+vs weak 2^22 adv), launch_60bits_vs_2_62_adv (60 vs strong 2^62). System posture = ε_C-ceilinged (~51-61,
+NOT movable by q/pow — ε_C carries no numQueries/powBits).
+⚑ THE REAL LEVER = EXTENSION DEGREE (extDeg): +30.91 bits/degree. deg-4→deg-8 buys ~124 bits headroom = the
+actual upgrade, but a PROVER-FIELD change (touches the AIR arithmetic) — EMBER-GATED, deeper than a q cascade.
+⚠ RESIDUAL: ε_C reads 51 (friCommitLedger d140bfc98) vs 61 (launch worst-case height) — reconcile (different
+height/config); + verify lane flagged residual 57/61 to finish de-claiming.
+⇒ HONEST DEPLOYED POSTURE: ~51-61 bits (ε_C-ceilinged, field-bound), δ=7/16 unique decoding, ~31.5 query term.
+NOT 100. NOT 112.6. The only path above the ceiling is a bigger field / higher extension degree.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
