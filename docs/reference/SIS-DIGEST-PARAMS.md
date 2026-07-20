@@ -14,15 +14,23 @@ fold is buildable-in-practice or pays a fat proof-input tax.
 | **single-matrix** `A·(Σe)` | **≈ 660–1060 BabyBear felts** (20.5k–33.0k bits) | Module-SIS lattice floor, grows as `(log₂ N)²` |
 | **position-indexed** `Σ Aᵢeᵢ` | **≈ 9–48 BabyBear felts** (0.28k–1.4k bits) | birthday floor / small-β SIS floor, **flat in N** |
 
+*Estimator-tightened (real `lattice-estimator` run, Core-SVP, below): single-matrix* **≈ 440–960 felts**
+*(ℓ∞) / 255–664 (ℓ₂); position-indexed* **≈ 9 felts (ℓ₂/birthday) → 36–40 (ℓ∞), standard width** —
+*same verdict, tighter numbers.*
+
 **Position-indexed wins by ~15–70×** and is the only one that stays flat as the history grows. The
 single-matrix digest is *fat* (hundreds to a thousand felts) because its collision-norm `β = 2N·β₀`
 grows with the fold count; the position-indexed digest is *tolerable* (tens of felts) because its
 per-block norm stays `≈2β₀`, constant in `N`. **Build the fluid scan state on the position-indexed
 encoding.**
 
-This is a **first-principles Core-SVP estimate**, not an estimator run (no `lattice-estimator` / Sage
-on this box). See the honesty note (§7) for the model's slack; every number here is a *conservative*
-floor (Core-SVP under-counts real attack cost, so true security ≥ quoted).
+Sections 1–4 are a **first-principles Core-SVP estimate**; the **"Tightened (estimator)" section**
+below now backs them with a **real `lattice-estimator` run** (Albrecht et al., through a Python/scipy
+SageMath shim validated against the estimator's own doctests). The run **confirms and tightens** every
+figure: the first-principles felt counts are honest *conservative* floors (Core-SVP under-counts real
+attack cost, so true security ≥ quoted), and the estimator bears this out — the single-matrix ℓ∞ felt
+counts drop ~12–14 % and the position-indexed ℓ∞ floor drops 46 → 36 felts. See the honesty note (§8)
+for the model's slack.
 
 ---
 
@@ -139,6 +147,96 @@ if you argue the ℓ∞ balancedness over-credits the attacker (both are small).
 
 ---
 
+## Tightened (estimator)
+
+The §1–§4 numbers are the closed-form Core-SVP relation. This section replaces them with a **real run
+of the [`malb/lattice-estimator`](https://github.com/malb/lattice-estimator)** (Albrecht–Player–Scott
+et al.) — the tool Kyber/Dilithium quote.
+
+**How it was run (no Sage/Docker on this box).** The estimator is SageMath code; it was run through a
+~200-line pure-Python **SageMath shim** (`math`/`scipy`-backed `RR`, `log`, `find_root`, `binomial`,
+`erf`, arbitrary-precision `RealField` via `Decimal`, etc.). The shim is **validated against the
+estimator's own published doctests** before any of our numbers were trusted — all reproduce exactly:
+
+| estimator reference call | published | reproduced |
+| --- | --- | --- |
+| `SIS.lattice(Dilithium2_MSIS_WkUnf)` (MATZOV/GSA) | `2^152.2, β427, d2304` | ✅ identical |
+| `SIS.estimate.rough(Dilithium2_MSIS_WkUnf)` (Core-SVP/lgsa) | `2^123.5, β423` | ✅ identical |
+| `SIS.estimate(n=113,q=2048,ν=512,ℓ₂)` (euclidean) | `2^47.0, β61, d276` | ✅ identical |
+| `SIS.lattice(n=113,q=2048,ν=16,ℓ∞,lgsa)` | `2^61.0, β95, d2486` | ✅ identical |
+| `RC.BDGL16(500,1024)` / `RC.ADPS16(500,1024)` / `Kyber.d4f(500)` | `2^175.4 / 2^146.0 / 42.60` | ✅ identical |
+
+**Models reported.** `q = 2³¹−2²⁷+1` (BabyBear), digest-felts `= n` (rows).
+* **Core-SVP classical** — `RC.ADPS16` (`2^{0.292β}`), LGSA shape. *This is the doc's model* — the
+  apples-to-apples tightening.
+* **Core-SVP quantum** — `ADPS16(mode="quantum")` (`2^{0.265β}`), LGSA.
+* **MATZOV** — the estimator's **default** state-of-the-art gate model (list-decoding sieve **with the
+  dimensions-for-free** `β·log(4/3)/log(β/2πe)` term the first-principles pass omitted), GSA shape.
+  Higher security than Core-SVP → an upper cross-check confirming the Core-SVP felt counts are safe.
+
+Reported `n` = the **minimal digest-felt count** at which `rop ≥ 2^128`, at the estimator's default
+(standard) SIS width; `m` and the optimal sub-dimension are found by the estimator.
+
+### Position-indexed `Σ Aᵢeᵢ` (β = 2) — the one we build on
+
+| reading | Core-SVP-C | Core-SVP-Q | MATZOV | first-principles (§4) | governed by |
+| --- | --- | --- | --- | --- | --- |
+| **ℓ₂ (optimistic)** | `rop=∞` ∀n≥1 → **9 felts** | → **13 felts** | `rop=∞` → 9 | 9 | **birthday floor** |
+| **ℓ∞ (conservative)** | **36 felts** (2^130) | **40 felts** (2^131) | **26 felts** (2^129) | 46 | **small-β SIS floor** |
+
+* **ℓ₂ / euclidean is width-independent and trivially hard:** a length-2 ℓ₂ kernel vector needs ≤4
+  nonzero ±1 entries, and for `n=9` rows no such sparse combination exists below width `2^{≈70}`
+  (`rop=∞` even at `n=1`, even at `m=10⁵`). So the ℓ₂ SIS floor is ~1 felt and the **birthday floor
+  (9 felts classical, 13 quantum-BHT) governs** — exactly as §4 claimed for the ℓ₂ reading.
+* **ℓ∞ / infinity governs the conservative reading at 36 felts** (not the birthday floor: at the
+  birthday `n=9` the ℓ∞ SIS is only **~30 bits**, at `n=13` only ~45). This **tightens §4's 46 → 36
+  felts** (CoreSVP-C) — the closed-form's `√m'` balancedness factor over-charged the attacker.
+
+### Single-matrix `A·(Σe)` (β = 2N) — digest felts `n`
+
+| N | ℓ₂ C / Q | ℓ∞ C / Q | ℓ∞ MATZOV | first-principles ℓ∞ / ℓ₂ (§3) |
+| --- | --- | --- | --- | --- |
+| **2¹²** | 255 / 273 | **443** / 478 | 360 | 506 / 254 |
+| **2¹⁶** | 435 / 466 | **679** / 731 | 553 | 760 / 434 |
+| **2²⁰** | 664 / 711 | **963** / 1037 | 788 | 1064 / 662 |
+
+* **ℓ₂ matches almost exactly** (255/435/664 vs the doc's 254/434/662) — §3's ℓ₂ closed-form was
+  already tight; spot-checked, the doc's ℓ₂ felt counts sit at **2^127.6–127.9**, i.e. calibrated
+  right on 128.
+* **ℓ∞ tightens by ~12–14 %** (443/679/963 vs 506/760/1064): the estimator's probabilistic
+  infinity-norm analysis is less pessimistic than the doc's flat `√m' → 2×` balancedness heuristic
+  (it lands at ~1.5× ℓ₂, not 2×). Spot-checked, the doc's ℓ∞ felt counts sit at **2^146–152** — real
+  but loose by ~18–24 bits, confirming they were conservative upper bounds as advertised.
+* **MATZOV** (with dims-for-free) is uniformly **higher security** than Core-SVP (e.g. `N=2²⁰` ℓ∞:
+  `2^176.6` at n=1064 vs Core-SVP's `2^146.3`), so **every Core-SVP felt count above is safe/loose**
+  against the state-of-the-art model too.
+
+### Honesty note on the new run — the ℓ∞ **width** lever
+
+One genuinely new observation the first-principles pass missed: **the ℓ∞ (Dilithium-style) cost falls
+as the matrix width `m` grows.** At `n=36`, β=2: `m=960 → 2^130`, `m=5000 → 2^88`, `m=50000 → 2^46`.
+The ℓ₂ reading has no such lever (subdimension-optimal; width-independent). This matters because the
+**position-indexed matrix's *physical* width is `N·m_block`** (the whole point of position-indexing),
+which for large `N` is far wider than the standard SIS width used above. The ℓ∞ figures (36/40 felts)
+are therefore at **standard per-fold width**, and admitting the full concatenated width would push the
+ℓ∞/combinatorial attack stronger (roughly, `n` grows ~`log(width)`). The **robust, width-independent
+guarantees** are (a) the **birthday floor 9–13 felts** and (b) the **ℓ₂/euclidean reading** (`rop=∞`
+even at astronomically wide `m`). **Design recommendation:** size each fold-block's SIS at standard
+width and lean on the width-independent floors; treat the `36–40`-felt ℓ∞ number as the standard-width
+Core-SVP point, not a full-width guarantee. (The estimator's GSA basis-shape simulator overflows
+double-precision for `m ≳ 2^14`, so a direct full-width ℓ∞ run at `N·m_block` for `N≥2^16` was not
+computed here — flagged as follow-up.)
+
+### Tightened bottom line
+
+* **Position-indexed digest at 128-bit: 9 felts (ℓ₂/birthday) → 36–40 felts (ℓ∞ Core-SVP), standard
+  width.** Tighter than §4's `9–48`. **Still 9–48 (indeed ≤ 40) — buildable-in-practice confirmed.**
+  9 felts ≈ 2 Poseidon2-BabyBear permutations, 40 felts ≈ 5 — one small commitment's worth of PI.
+* **Single-matrix: 443–963 felts (ℓ∞ Core-SVP) / 255–664 (ℓ₂), tightened from 506–1064 / 254–662.**
+  Still `Θ((log N)²)`-fat and the wrong asymptotic. Position-indexed still wins by **~12–70×**.
+
+---
+
 ## 5. Which construction wins on digest size
 
 **Position-indexed, decisively, and by a margin that widens with N.** The single-matrix digest is
@@ -189,15 +287,18 @@ structural via position-indexing is also the security-and-cost-optimal choice, n
 
 ## 8. Honesty note & citations
 
-* **First-principles, not an estimator run.** No `lattice-estimator` (Albrecht et al.) or Sage is
-  installed on this box (`pip`/`sage` both absent); a run was not possible here. The numbers are the
-  closed-form Core-SVP relation `D > (log₂β)²/(4 log₂δ(b))` with the standard `δ(b)` and
-  `2^{0.292b}/2^{0.265b}` costs — the same model those tools report in the "Core-SVP" column, minus
-  the tool's refinements (BKZ simulation, dimensions-for-free, the `+16` sieve constant). All of those
-  refinements make the attack **more** expensive, so the real security is **≥** quoted and these
-  digest sizes are conservative. **To tighten:** run `SIS.estimate` /
-  `lattice_parameter_estimation` on `(n, q=2³¹, β, m)` from §3–§4 with the Core-SVP model; expect the
-  breaking blocksize to *rise* modestly, i.e. these felt counts to be safe or slightly loose.
+* **§1–§4 are first-principles; the estimator run is now done (see "Tightened (estimator)").** The
+  §1–§4 numbers are the closed-form Core-SVP relation `D > (log₂β)²/(4 log₂δ(b))` with the standard
+  `δ(b)` and `2^{0.292b}/2^{0.265b}` costs — the same model the tools report in their "Core-SVP"
+  column, minus the tool's refinements (BKZ simulation, dimensions-for-free, the `+16` sieve
+  constant). Those refinements make the attack **more** expensive, so the real security is **≥** quoted
+  and these digest sizes are conservative — **and the estimator run bears this out**: the tightened
+  section reruns `SIS.lattice` on `(n, q=2³¹, β, m)` under Core-SVP (`RC.ADPS16`, LGSA) and MATZOV, and
+  the breaking blocksize *rises* exactly as predicted (single-matrix ℓ∞ felt counts drop ~12–14 %,
+  position-indexed ℓ∞ floor 46 → 36). `lattice-estimator` was run **without Sage** via a Python/scipy
+  shim validated against the estimator's own doctests (all reproduce exactly). One new lever the
+  closed form missed surfaced: the **ℓ∞ cost is width-sensitive** — see the tightened section's honesty
+  note.
 * **Biggest modeling lever:** the ℓ∞→ℓ₂ balancedness factor `√m'` (~2× on `D`). We size to the
   pessimistic side. Second lever: whether "128-bit" means classical (b=438, quantum-116) or quantum
   (b=483, `+7–8%`); both are tabulated.
