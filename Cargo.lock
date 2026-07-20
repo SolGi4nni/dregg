@@ -7849,6 +7849,7 @@ dependencies = [
 name = "dreggnet-party"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "collective-choice",
  "dregg-app-framework",
  "dregg-cell",
