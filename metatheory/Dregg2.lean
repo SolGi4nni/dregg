@@ -1171,6 +1171,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitSetVKFullState
 import Dregg2.Circuit.Emit.FieldDeltaRangeEmit -- LAW #1: FieldDelta range algebra + whole-descriptor range soundness emitted from Lean, byte-pinned
 import Dregg2.Circuit.Emit.MerkleMembership4aryRefine -- LAW #1: deployed membership algebra emitted from Lean; whole-descriptor SAT ⇒ positional Poseidon2 fold, byte-pinned artifact
 import Dregg2.Circuit.Emit.Poseidon2HashRefine -- LAW #1: standalone Poseidon2 hash descriptor emitted from Lean; SAT ⇒ genuine chip hash, concrete non-vacuity
+import Dregg2.Circuit.Emit.HomomorphicDigestEmit -- LAW #1: SIS homomorphic-digest FOLD-STEP descriptor emitted from Lean, byte-pinned. Constrains the fluid scan-state digest update dig'=dig+A·enc at q=BabyBear (windowGate accumulate + A·enc gates + last-row-vacuity repair). step_refines: the fold-step constraints vanish mod p IFF the step is exact (field-faithful, BOTH directions); descriptor-level teeth via real constraint membership. n=4 POC (scales to ~9-48 felts per SIS-DIGEST-PARAMS); registry/golden DEPLOY deferred (placeholder A, not yet transparently sampled).
 -- Dregg2.Circuit.Emit.EmitAllJson / EmitGraduate EXCLUDED: pure `def main` JSON-emitter
 -- executables (zero theorems / zero hygiene pins); their top-level `main` collides with
 -- Dregg2.Apps.AgentOrchestration.main already in root. Nothing to enmesh.
