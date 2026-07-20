@@ -20,7 +20,8 @@ use axum::{
 #[cfg(feature = "fhegg-settlement")]
 use dreggnet_market::fhegg_transport::{FHEGG_SETTLEMENT_OPERATION, FheggSettlementOperation};
 use dreggnet_offerings::{
-    BinaryOperationDescriptor, BinaryOperationError, DreggIdentity, HostOperationError, SessionId,
+    BinaryArtifactDescriptor, BinaryArtifactError, BinaryOperationDescriptor, BinaryOperationError,
+    DreggIdentity, HostArtifactError, HostOperationError, SessionId,
 };
 use serde::Serialize;
 
@@ -31,6 +32,40 @@ use crate::{CatalogState, WebQuery, web_identity, web_user};
 /// on web, Telegram, and Discord.
 pub const UPLOAD_PATH_SUFFIX: &str =
     "/offerings/{offering}/session/{session}/operations/{operation}";
+
+/// Relative suffix for one live offering's canonical read-only artifact.
+pub const ARTIFACT_PATH_SUFFIX: &str =
+    "/offerings/{offering}/session/{session}/artifacts/{artifact}";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactDescriptorWire {
+    name: String,
+    title: String,
+    media_type: String,
+    max_bytes: usize,
+    disclosure: String,
+    visibility: &'static str,
+    download_path_suffix: &'static str,
+    cache_policy: &'static str,
+    integrity: &'static str,
+}
+
+impl From<BinaryArtifactDescriptor> for ArtifactDescriptorWire {
+    fn from(value: BinaryArtifactDescriptor) -> Self {
+        Self {
+            name: value.name,
+            title: value.title,
+            media_type: value.media_type,
+            max_bytes: value.max_bytes,
+            disclosure: value.disclosure,
+            visibility: value.visibility.as_str(),
+            download_path_suffix: ARTIFACT_PATH_SUFFIX,
+            cache_policy: "no-store",
+            integrity: "BLAKE3 body digest in ETag and X-Dregg-Artifact-Digest",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,6 +184,140 @@ pub(crate) fn session_operations(catalog: &Arc<CatalogState>, key: String, id: S
             "unexpected discovery error",
         ),
     }
+}
+
+/// Discover canonical read-only artifacts enabled on one exact live session.
+async fn get_web_session_artifacts(
+    State(catalog): State<Arc<CatalogState>>,
+    Path((key, id)): Path<(String, String)>,
+) -> Response {
+    session_artifacts(&catalog, key, id)
+}
+
+/// Shared artifact discovery used by web, Telegram, and Discord wrappers.
+pub(crate) fn session_artifacts(catalog: &Arc<CatalogState>, key: String, id: String) -> Response {
+    let sid = SessionId::new(id);
+    let viewer = DreggIdentity("artifact-discovery".to_string());
+    let result = {
+        let routed_key = key.clone();
+        let routed_sid = sid.clone();
+        catalog.run_offering(&key, &viewer, move |host| {
+            host.binary_artifacts(&routed_key, &routed_sid)
+        })
+    };
+    match result {
+        Ok(descriptors) => Json(
+            descriptors
+                .into_iter()
+                .map(ArtifactDescriptorWire::from)
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(HostArtifactError::UnknownOffering(_)) => {
+            error(StatusCode::NOT_FOUND, "unknown offering")
+        }
+        Err(HostArtifactError::UnknownSession { .. }) => {
+            error(StatusCode::NOT_FOUND, "unknown live session")
+        }
+        Err(HostArtifactError::Artifact(_)) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid hosted artifact policy",
+        ),
+    }
+}
+
+/// Shared exact-session artifact export used by all surface wrappers.
+pub(crate) fn export_artifact(
+    catalog: &Arc<CatalogState>,
+    key: String,
+    id: String,
+    name: String,
+    viewer: Option<DreggIdentity>,
+) -> Response {
+    let sid = SessionId::new(id);
+    let routing_viewer = viewer
+        .clone()
+        .unwrap_or_else(|| DreggIdentity("anonymous-artifact-reader".to_string()));
+    let result = {
+        let routed_key = key.clone();
+        let routed_sid = sid.clone();
+        let routed_name = name.clone();
+        let routed_viewer = viewer.clone();
+        catalog.run_offering(&key, &routing_viewer, move |host| {
+            host.export_binary_artifact(
+                &routed_key,
+                &routed_sid,
+                &routed_name,
+                routed_viewer.as_ref(),
+            )
+        })
+    };
+    match result {
+        Ok(artifact) => {
+            let digest = hex32(&artifact.digest);
+            let etag = format!("\"{digest}\"");
+            let content_type = match artifact.media_type.parse::<axum::http::HeaderValue>() {
+                Ok(value) => value,
+                Err(_) => {
+                    return error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "invalid hosted artifact media type",
+                    );
+                }
+            };
+            let mut response = Response::new(Body::from(artifact.bytes));
+            *response.status_mut() = StatusCode::OK;
+            let headers = response.headers_mut();
+            headers.insert(header::CONTENT_TYPE, content_type);
+            headers.insert(
+                header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            );
+            headers.insert(
+                header::ETAG,
+                axum::http::HeaderValue::from_str(&etag).expect("hex ETag is a valid header"),
+            );
+            headers.insert(
+                axum::http::HeaderName::from_static("x-dregg-artifact-digest"),
+                axum::http::HeaderValue::from_str(&format!("blake3:{digest}"))
+                    .expect("hex digest is a valid header"),
+            );
+            response
+        }
+        Err(HostArtifactError::UnknownOffering(_)) => {
+            error(StatusCode::NOT_FOUND, "unknown offering")
+        }
+        Err(HostArtifactError::UnknownSession { .. }) => {
+            error(StatusCode::NOT_FOUND, "unknown live session")
+        }
+        Err(HostArtifactError::Artifact(BinaryArtifactError::UnknownArtifact(_))) => {
+            error(StatusCode::NOT_FOUND, "unknown hosted artifact")
+        }
+        Err(HostArtifactError::Artifact(BinaryArtifactError::AuthenticationRequired)) => error(
+            StatusCode::UNAUTHORIZED,
+            "an attributed identity is required for this artifact",
+        ),
+        Err(HostArtifactError::Artifact(BinaryArtifactError::InvalidArtifact(_))) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid hosted artifact policy or body",
+        ),
+        Err(HostArtifactError::Artifact(BinaryArtifactError::Refused(reason))) => {
+            error(StatusCode::CONFLICT, reason)
+        }
+    }
+}
+
+/// Web wrapper: public artifacts remain anonymously reachable; authenticated
+/// artifacts receive the existing attributed cookie/query identity or refuse.
+async fn get_web_artifact(
+    State(catalog): State<Arc<CatalogState>>,
+    Path((key, id, name)): Path<(String, String, String)>,
+    Query(query): Query<WebQuery>,
+    request: Request<Body>,
+) -> Response {
+    let user = web_user(request.headers(), &query);
+    let viewer = (user != "anon").then(|| web_identity(&user));
+    export_artifact(&catalog, key, id, name, viewer)
 }
 
 /// Read a canonical bundle request without ever formatting or logging its body.
@@ -314,6 +483,14 @@ pub fn router(catalog: Arc<CatalogState>) -> Router {
         .route(
             "/offerings/{key}/session/{id}/operations/{name}",
             post(post_web_upload),
+        )
+        .route(
+            "/offerings/{key}/session/{id}/artifacts",
+            get(get_web_session_artifacts),
+        )
+        .route(
+            "/offerings/{key}/session/{id}/artifacts/{name}",
+            get(get_web_artifact),
         );
     #[cfg(feature = "fhegg-settlement")]
     let router = router.route("/operations/{name}", get(get_descriptor));

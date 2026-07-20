@@ -521,6 +521,14 @@ pub fn tg_miniapp_router(state: Arc<TgMiniAppState>) -> Router {
         .route(
             "/tg/offerings/{key}/session/{id}/operations/{name}",
             post(post_tg_operation),
+        )
+        .route(
+            "/tg/offerings/{key}/session/{id}/artifacts",
+            get(get_tg_artifacts),
+        )
+        .route(
+            "/tg/offerings/{key}/session/{id}/artifacts/{name}",
+            get(get_tg_artifact),
         );
     #[cfg(feature = "fhegg-settlement")]
     let router = router.route(
@@ -870,6 +878,51 @@ async fn post_tg_operation(
         request,
     )
     .await
+}
+
+/// Telegram-authenticated discovery of read-only live-session artifacts.
+#[cfg(feature = "hosted-binary-operations")]
+async fn get_tg_artifacts(
+    State(state): State<Arc<TgMiniAppState>>,
+    Path((key, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    if let Err(response) = verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /tg/offerings/{key}/session/{id}/artifacts",
+    ) {
+        return response;
+    }
+    crate::fhegg_operation::session_artifacts(&state.catalog, key, id)
+}
+
+/// Telegram-authenticated wrapper around the shared canonical artifact export.
+#[cfg(feature = "hosted-binary-operations")]
+async fn get_tg_artifact(
+    State(state): State<Arc<TgMiniAppState>>,
+    Path((key, id, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    let user = match verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /tg/offerings/{key}/session/{id}/artifacts/{name}",
+    ) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    crate::fhegg_operation::export_artifact(
+        &state.catalog,
+        key,
+        id,
+        name,
+        Some(state.identity_for(user.user_id)),
+    )
 }
 
 /// The `{turn, arg, text}` POST body of `POST /tg/offerings/{key}/session/{id}/act` — the same

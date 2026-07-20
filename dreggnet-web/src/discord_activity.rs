@@ -743,6 +743,14 @@ pub fn discord_activity_router(state: Arc<DiscordActivityState>) -> Router {
         .route(
             "/da/offerings/{key}/session/{id}/operations/{name}",
             post(post_da_operation),
+        )
+        .route(
+            "/da/offerings/{key}/session/{id}/artifacts",
+            get(get_da_artifacts),
+        )
+        .route(
+            "/da/offerings/{key}/session/{id}/artifacts/{name}",
+            get(get_da_artifact),
         );
     #[cfg(feature = "fhegg-settlement")]
     let router = router.route(
@@ -1229,6 +1237,51 @@ async fn post_da_operation(
         request,
     )
     .await
+}
+
+/// Discord-ticket-authenticated discovery of read-only session artifacts.
+#[cfg(feature = "hosted-binary-operations")]
+async fn get_da_artifacts(
+    State(state): State<Arc<DiscordActivityState>>,
+    Path((key, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    if let Err(response) = verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /da/offerings/{key}/session/{id}/artifacts",
+    ) {
+        return response;
+    }
+    crate::fhegg_operation::session_artifacts(&state.catalog, key, id)
+}
+
+/// Discord-ticket-authenticated wrapper around the shared artifact export.
+#[cfg(feature = "hosted-binary-operations")]
+async fn get_da_artifact(
+    State(state): State<Arc<DiscordActivityState>>,
+    Path((key, id, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    let user = match verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /da/offerings/{key}/session/{id}/artifacts/{name}",
+    ) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    crate::fhegg_operation::export_artifact(
+        &state.catalog,
+        key,
+        id,
+        name,
+        Some(state.identity_for(user.user_id)),
+    )
 }
 
 /// The `{turn, arg, text}` POST body of `POST /da/offerings/{key}/session/{id}/act` — the same form
