@@ -136,6 +136,137 @@ theorem approximate_kkt_radius_bound {n mc : Nat}
   have hscale := mul_le_mul_of_nonneg_left (hradius x' hfeas') cert.epsilon_nonneg
   linarith
 
+/-! ## The deployed projection residual, quantitatively rather than exactly. -/
+
+/-- A clamped value is inside its public interval. -/
+theorem rustClamp_mem {value lower upper : ℚ} (hlu : lower ≤ upper) :
+    lower ≤ Market.rustClamp value lower upper ∧
+      Market.rustClamp value lower upper ≤ upper := by
+  constructor
+  · exact le_min (le_max_right _ _) hlu
+  · exact min_le_right _ _
+
+/-- Approximate projection membership gives an explicit normal-cone loss.  The loss depends only
+on the projection error, interval width, and the public dual magnitude; it is zero at an exact
+projection fixed point. -/
+theorem approximate_clamp_normal {lower z upper y z' delta : ℚ}
+    (hlu : lower ≤ upper) (hz'lower : lower ≤ z') (hz'upper : z' ≤ upper)
+    (hdelta : 0 ≤ delta)
+    (hprojection : |z - Market.rustClamp (z + y) lower upper| ≤ delta) :
+    y * (z' - z) ≤ delta * ((upper - lower) + |y|) := by
+  let w := Market.rustClamp (z + y) lower upper
+  let normal := z + y - w
+  have hw := rustClamp_mem (value := z + y) hlu
+  have hnormal : normal * (z' - w) ≤ 0 := by
+    apply Market.rustClamp_fixed_normal hw.1 hw.2 hz'lower hz'upper
+    change w = Market.rustClamp (w + normal) lower upper
+    have : w + normal = z + y := by simp [normal]
+    rw [this]
+  have hwidth : 0 ≤ upper - lower := sub_nonneg.mpr hlu
+  have hspan : |z' - w| ≤ upper - lower := by
+    rw [abs_le]
+    constructor <;> linarith [hw.1, hw.2]
+  have herror : |w - z| ≤ delta := by
+    simpa [w, abs_sub_comm] using hprojection
+  have hcross : (w - z) * (z' - w) ≤ delta * (upper - lower) := by
+    calc
+      (w - z) * (z' - w) ≤ |(w - z) * (z' - w)| := le_abs_self _
+      _ = |w - z| * |z' - w| := abs_mul _ _
+      _ ≤ delta * (upper - lower) :=
+        mul_le_mul herror hspan (abs_nonneg _) hdelta
+  have hdualError : y * (w - z) ≤ |y| * delta := by
+    calc
+      y * (w - z) ≤ |y * (w - z)| := le_abs_self _
+      _ = |y| * |w - z| := abs_mul _ _
+      _ ≤ |y| * delta := mul_le_mul_of_nonneg_left herror (abs_nonneg y)
+  have hsplit :
+      y * (z' - z) = normal * (z' - w) + (w - z) * (z' - w) + y * (w - z) := by
+    simp only [normal]
+    ring
+  rw [hsplit]
+  nlinarith
+
+/-- Pointwise projection/normal residual bound used by the deployed checker. -/
+def NormalResidualAtMost {n mc : Nat}
+    (prob : Market.RustQpProblem n mc) (x : Fin n -> ℚ) (y : Fin mc -> ℚ)
+    (epsilon : ℚ) : Prop :=
+  ∀ i, Market.rustNormalViolation prob x y i ≤ epsilon
+
+/-- The two residuals that affect the convex objective inequality. Candidate feasibility is a
+separate admissibility obligation: the objective law itself remains true for an infeasible `x`, but
+a product must not call that point an executable allocation without also checking primal residual. -/
+structure ResidualObjectiveCertificate {n mc : Nat}
+    (prob : Market.RustQpProblem n mc) (x : Fin n -> ℚ) (y : Fin mc -> ℚ)
+    (dualTolerance normalTolerance : ℚ) : Prop where
+  dual_nonneg : 0 ≤ dualTolerance
+  normal_nonneg : 0 ≤ normalTolerance
+  ordered_bounds : ∀ i, prob.l i ≤ prob.u i
+  stationarity : StationarityResidualAtMost prob x y dualTolerance
+  normal : NormalResidualAtMost prob x y normalTolerance
+
+/-- Public coefficient multiplying the normal/projection tolerance. -/
+def normalLossWeight {n mc : Nat}
+    (prob : Market.RustQpProblem n mc) (y : Fin mc -> ℚ) : ℚ :=
+  ∑ i : Fin mc, ((prob.u i - prob.l i) + abs (y i))
+
+/-- **Full residual objective law.** Positive stationarity and normal/projection tolerances produce
+two explicit additive loss terms. This is the theorem shape needed by the deployed checker; its
+separate primal residual still governs whether `x` is an admissible executable allocation. -/
+theorem residual_objective_bound {n mc : Nat}
+    (prob : Market.RustQpProblem n mc) (hP : Market.PsdSymm prob.p)
+    {x : Fin n -> ℚ} {y : Fin mc -> ℚ} {dualTolerance normalTolerance : ℚ}
+    (cert : ResidualObjectiveCertificate prob x y dualTolerance normalTolerance)
+    {x' : Fin n -> ℚ} (hfeas' : Market.RustQpFeasible prob x') :
+    Market.rustQpObjective prob x ≤ Market.rustQpObjective prob x' +
+      dualTolerance * l1Distance x x' +
+      normalTolerance * normalLossWeight prob y := by
+  let residual : Fin n -> ℚ := fun j =>
+    Market.rustPTimes prob x j + prob.q j + Market.rustATTimes prob y j
+  have hnormalPoint : ∀ i,
+      y i * (Market.rustATimes prob x' i - Market.rustATimes prob x i) ≤
+        normalTolerance * ((prob.u i - prob.l i) + |y i|) := by
+    intro i
+    apply approximate_clamp_normal (cert.ordered_bounds i) (hfeas' i).1 (hfeas' i).2
+      cert.normal_nonneg
+    exact cert.normal i
+  have hnormalSum :
+      y ⬝ᵥ ((prob.a *ᵥ x') - (prob.a *ᵥ x)) ≤
+        normalTolerance * normalLossWeight prob y := by
+    rw [dotProduct, normalLossWeight, Finset.mul_sum]
+    apply Finset.sum_le_sum
+    intro i _hi
+    simpa [Market.rustATimes_eq_mulVec] using hnormalPoint i
+  have hdecomp : prob.p *ᵥ x + prob.q = residual - (y ᵥ* prob.a) := by
+    funext j
+    simp only [Pi.add_apply, Pi.sub_apply, residual]
+    rw [← Market.rustPTimes_eq_mulVec, ← Market.rustATTimes_eq_vecMul]
+    ring
+  have hgrad :
+      (prob.p *ᵥ x + prob.q) ⬝ᵥ (x' - x) =
+        residual ⬝ᵥ (x' - x) -
+          y ⬝ᵥ ((prob.a *ᵥ x') - (prob.a *ᵥ x)) := by
+    rw [hdecomp, sub_dotProduct, ← dotProduct_mulVec, mulVec_sub]
+  have hres : ∀ j, |residual j| ≤ dualTolerance := by
+    intro j
+    exact cert.stationarity j
+  have hresLower :
+      -(dualTolerance * l1Distance x x') ≤ residual ⬝ᵥ (x' - x) := by
+    simpa [l1Distance] using
+      (residual_dot_lower_bound (r := residual) (delta := x' - x) hres)
+  let core : Market.QP (Fin n) (Fin 0) :=
+    { P := prob.p
+      q := prob.q
+      A := fun i => i.elim0
+      b := fun i => i.elim0
+      l := fun _ => 0
+      u := fun _ => 0
+      ε := 0 }
+  have hconv := Market.quad_convex_ge (qp := core) hP x x'
+  change (prob.p *ᵥ x + prob.q) ⬝ᵥ (x' - x) ≤
+    Market.rustQpObjective prob x' - Market.rustQpObjective prob x at hconv
+  rw [hgrad] at hconv
+  linarith
+
 /-! ## Executable/non-vacuous one-dimensional tooth. -/
 
 def approximateFixture : DistanceBoundedKkt Market.rustQpOne
@@ -172,6 +303,9 @@ theorem approximateFixture_bound :
 #assert_axioms residual_dot_lower_bound
 #assert_axioms approximate_kkt_distance_bound
 #assert_axioms approximate_kkt_radius_bound
+#assert_axioms rustClamp_mem
+#assert_axioms approximate_clamp_normal
+#assert_axioms residual_objective_bound
 #assert_axioms approximateFixture_bound
 
 #assert_not_depends_on Market.QpApproximateBound.StationarityResidualAtMost [
@@ -183,6 +317,9 @@ theorem approximateFixture_bound :
   Market.QpApproximateBound.residual_dot_lower_bound,
   Market.QpApproximateBound.approximate_kkt_distance_bound,
   Market.QpApproximateBound.approximate_kkt_radius_bound,
+  Market.QpApproximateBound.rustClamp_mem,
+  Market.QpApproximateBound.approximate_clamp_normal,
+  Market.QpApproximateBound.residual_objective_bound,
   Market.QpApproximateBound.approximateFixture_bound]
 
 end Market.QpApproximateBound
