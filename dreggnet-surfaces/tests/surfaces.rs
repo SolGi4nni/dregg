@@ -10,12 +10,14 @@ use dreggnet_offerings::{Action, DreggIdentity, Offering, OfferingHost, SessionC
 
 use dreggnet_surfaces::companion::TURN_OVERLEVEL;
 use dreggnet_surfaces::party::{
-    TURN_CLAIM, TURN_FORK, TURN_LAUNCH, TURN_MISPLAY, TURN_READY, TURN_RESOLVE_FORK,
+    TURN_ACT, TURN_ADVANCE_ENEMY, TURN_CLAIM, TURN_FORK, TURN_LAUNCH, TURN_MISPLAY, TURN_READY,
+    TURN_RESOLVE_FORK,
 };
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
     TavernOffering, TradeOffering, register_surfaces,
 };
+use dungeon_on_dregg::combat::{WARDEN, is_hero};
 
 // ── ViewNode-walk assertion helpers ──────────────────────────────────────────────────────────
 
@@ -590,7 +592,7 @@ fn tavern_renders_presence_and_lfg_board_populated_and_empty() {
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn party_renders_roster_and_acts_and_resolves_a_collective_fork() {
+fn party_renders_roster_resolves_a_target_and_fights_in_the_arena() {
     let offering = PartyOffering::new();
     let mut s = offering.open(SessionConfig::default()).expect("open");
     assert_eq!(s.seat_count(), 0, "a new shared table begins as a lobby");
@@ -628,26 +630,8 @@ fn party_renders_roster_and_acts_and_resolves_a_collective_fork() {
     );
     assert!(s.launched());
 
-    // Alice's authenticated identity—not the forged arg—selects the Tank cell.
-    let out = offering.advance(&mut s, act("act", 99), players[0].clone());
-    assert!(out.landed(), "the tank's own role move lands: {out:?}");
-
-    // NON-VACUOUS REFUSED — Bob's cross-role misplay is a real cap refusal;
-    // Bob's own Scout move lands immediately afterward.
-    let misplay = offering.advance(&mut s, act(TURN_MISPLAY, 0), players[1].clone());
-    assert!(
-        !misplay.landed(),
-        "a cross-role misplay is refused: {misplay:?}"
-    );
-    assert!(
-        offering
-            .advance(&mut s, act("act", 0), players[1].clone())
-            .landed(),
-        "the scout's own move lands (the refusal was non-vacuous)"
-    );
-
-    // THE COLLECTIVE FORK — three actual seats cast three individually
-    // custody-signed ballot turns, then the leader resolves the real quorum.
+    // THE COLLECTIVE TARGET — three actual seats cast three individually
+    // custody-signed Warden ballots, then the leader resolves the real quorum.
     for player in players.iter().take(3) {
         assert!(
             offering
@@ -676,11 +660,62 @@ fn party_renders_roster_and_acts_and_resolves_a_collective_fork() {
     }
     assert_eq!(
         s.last_fork(),
-        Some("Left, the sunken stair"),
-        "the party took the crowd's winning path"
+        Some("Warden"),
+        "the party concentrates on the crowd's winning target"
     );
 
-    assert!(offering.verify(&s).verified, "the party world re-verifies");
+    // Initiative is dice-derived. Enemy slots are explicit hosted actions, not
+    // render-time side effects, so drive them until a hero is active.
+    for _ in 0..4 {
+        if s.arena_active().is_some_and(is_hero) {
+            break;
+        }
+        assert!(
+            offering
+                .advance(&mut s, act(TURN_ADVANCE_ENEMY, 0), players[0].clone(),)
+                .landed(),
+            "the leader advances the active enemy"
+        );
+    }
+
+    // Alice's authenticated identity—not the forged arg—selects the Tank cell,
+    // and the corresponding guard lands in the real tactical Arena.
+    let out = offering.advance(&mut s, act(TURN_ACT, 99), players[0].clone());
+    assert!(out.landed(), "the tank's tactical move lands: {out:?}");
+
+    // NON-VACUOUS REFUSED — Bob's cross-role misplay reaches Alice's already
+    // spent Tank WriteOnce tooth. Bob can still use Scout when a hero is active.
+    let misplay = offering.advance(&mut s, act(TURN_MISPLAY, 0), players[1].clone());
+    assert!(
+        !misplay.landed(),
+        "a cross-role misplay is refused: {misplay:?}"
+    );
+    for _ in 0..4 {
+        if s.arena_active().is_some_and(is_hero) {
+            break;
+        }
+        assert!(
+            offering
+                .advance(&mut s, act(TURN_ADVANCE_ENEMY, 0), players[0].clone(),)
+                .landed()
+        );
+    }
+    let warden_hp_before = s.arena_hp(WARDEN).expect("Warden is in the Arena");
+    assert!(
+        offering
+            .advance(&mut s, act(TURN_ACT, 0), players[1].clone())
+            .landed(),
+        "the scout's own tactical move lands (the refusal was non-vacuous)"
+    );
+    assert!(
+        s.arena_hp(WARDEN).expect("Warden remains in the Arena") < warden_hp_before,
+        "the shared-surface role action changed real tactical HP"
+    );
+
+    assert!(
+        offering.verify(&s).verified,
+        "the party, vote, and Arena worlds re-verify"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════

@@ -3,23 +3,25 @@
 //! A shared table now begins as an actual lobby instead of four server-named
 //! demo seats. Authenticated frontend identities claim Tank/Scout/Mage/Healer,
 //! explicitly ready, and the first claimant (the leader) launches only when the
-//! full roster is ready. Launch lowers that roster into [`dreggnet_party::Party`]:
-//! each identity reaches only its own capability-bearing player cell.
+//! full roster is ready. Launch consumes that actual capability-seated party into
+//! [`dreggnet_party::encounter::PartyArenaEncounter`]. There is no parallel
+//! "demo party": target ballots, role contributions, and enemy turns all advance
+//! the real party, collective-choice, and tactical-Arena executors.
 //!
 //! Formation is not off-ledger UI state. Every admitted lobby mutation advances
 //! a dedicated audit cell whose `FieldDelta(+1)` revision and full 256-bit lobby
 //! root are committed by the real executor. Refusals mutate neither lobby nor
-//! audit world. After launch, role actions return the complete real party-world
-//! receipt; repeated role actions hit the role cell's executor-enforced
-//! `WriteOnce` predicate.
+//! audit world. After launch, each role action returns the tactical executor's
+//! complete receipt while the encounter journal binds it together with the
+//! party authorization receipt. Repeated role actions hit the party cell's
+//! executor-enforced `WriteOnce` predicate.
 //!
-//! Forks are individual hosted turns too: each seated identity casts its own
-//! custody-signed ballot as an ordinary `fork` action, then the leader resolves
-//! the real quorum result. This matters operationally: the shared
+//! Target selection is individual hosted play too: each seated identity casts
+//! its own custody-signed Warden/Hound ballot, then the leader resolves the real
+//! quorum result before the fight begins. Enemy turns are explicit leader moves,
+//! not side effects of render. This matters operationally: the shared
 //! [`dreggnet_offerings::OfferingHost`] move log records and resumes each claim,
 //! ready, ballot, resolve, and role move without needing a synthetic crowd blob.
-
-use std::collections::BTreeMap;
 
 use deos_view::ViewNode;
 use dregg_app_framework::{CellProgram, StateConstraint, TurnReceipt, field_from_u64};
@@ -27,8 +29,12 @@ use dreggnet_offerings::{
     Action, CollectiveDecision, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, Surface, VerifyReport,
 };
+use dreggnet_party::encounter::{EncounterCommand, PartyArenaEncounter};
 use dreggnet_party::lobby::{LobbyRefusal, PartyLobby};
-use dreggnet_party::{ActOutcome, FOCUS_BUDGET, Party, PartyFork, PartyMove, ROLE_SLOT, Role};
+use dreggnet_party::{FOCUS_BUDGET, ROLE_SLOT, Role};
+use dungeon_on_dregg::combat::{
+    CLERIC, HOUND, N, Outcome as ArenaOutcome, RANGER, WARDEN, is_hero, name as combatant_name,
+};
 use starbridge_v2::world::{CommitOutcome, World, set_field};
 
 use crate::{action_menu, menu, pill, row, section, text};
@@ -43,22 +49,24 @@ pub const TURN_UNREADY: &str = "unready";
 pub const TURN_LEAVE: &str = "leave-party";
 /// Leader-only lock of a full ready roster into the real party world.
 pub const TURN_LAUNCH: &str = "launch-party";
-/// Act in the authenticated caller's own role. `arg` is ignored for authority.
+/// Contribute the authenticated caller's own role tactic. `arg` is ignored for authority.
 pub const TURN_ACT: &str = "act";
 /// Adversarial probe: attempt a move outside the caller's claimed role.
 pub const TURN_MISPLAY: &str = "misplay";
-/// Cast the caller's own custody-signed fork ballot (`arg = option`).
+/// Cast the caller's own custody-signed target ballot (`arg = 0` Warden, `1` Hound).
 pub const TURN_FORK: &str = "fork";
 /// Leader-only resolution once the real ballot engine reaches quorum.
 pub const TURN_RESOLVE_FORK: &str = "resolve-fork";
+/// Leader-only explicit tactical turn for the currently active enemy.
+pub const TURN_ADVANCE_ENEMY: &str = "advance-enemy";
 
 const LOBBY_REVISION_SLOT: usize = 0;
 const LOBBY_ROOT_BASE: usize = 1;
 
 fn fork_options() -> Vec<(String, u64)> {
     vec![
-        ("Left, the sunken stair".to_string(), 1),
-        ("Right, the warded arch".to_string(), 2),
+        ("Break the Warden".to_string(), WARDEN as u64),
+        ("Silence the Hound".to_string(), HOUND as u64),
     ]
 }
 
@@ -69,7 +77,7 @@ struct HostedStep {
 }
 
 /// One live shared party table: formation lobby + its executor audit cell,
-/// followed by the launched party and (optionally) an open signed fork ballot.
+/// followed by the launched party's real collective tactical encounter.
 pub struct PartySession {
     seed: u64,
     lobby_session_id: String,
@@ -77,32 +85,35 @@ pub struct PartySession {
     lobby_world: World,
     lobby_agent: dregg_app_framework::CellId,
     lobby_cell: dregg_app_framework::CellId,
-    party: Option<Party>,
-    current_fork: Option<PartyFork>,
-    fork_votes: BTreeMap<String, usize>,
+    encounter: Option<PartyArenaEncounter>,
     turns: usize,
-    last_fork: Option<String>,
     history: Vec<HostedStep>,
 }
 
 impl PartySession {
     /// Occupied roles (during formation) or fixed seat count (after launch).
     pub fn seat_count(&self) -> usize {
-        self.party
+        self.encounter
             .as_ref()
-            .map(Party::seat_count)
+            .map(|encounter| encounter.party().seat_count())
             .or_else(|| self.lobby.as_ref().map(PartyLobby::occupied_count))
             .unwrap_or(0)
     }
 
     /// Fork quorum (three of four for this role kit).
     pub fn quorum(&self) -> u64 {
-        self.party.as_ref().map(Party::quorum).unwrap_or(3)
+        self.encounter
+            .as_ref()
+            .map(|encounter| encounter.party().quorum())
+            .unwrap_or(3)
     }
 
     /// Total shared focus spent after launch.
     pub fn focus_spent(&self) -> u64 {
-        self.party.as_ref().map(Party::focus_spent).unwrap_or(0)
+        self.encounter
+            .as_ref()
+            .map(|encounter| encounter.party().focus_spent())
+            .unwrap_or(0)
     }
 
     /// Number of committed formation, ballot, resolution, and role turns.
@@ -112,7 +123,7 @@ impl PartySession {
 
     /// Whether the lobby has locked into the real party world.
     pub fn launched(&self) -> bool {
-        self.party.is_some()
+        self.encounter.is_some()
     }
 
     /// First claimant and launch authority, if formation has begun.
@@ -135,13 +146,54 @@ impl PartySession {
         })
     }
 
-    /// Last resolved fork label.
+    /// Quorum-selected enemy label.
     pub fn last_fork(&self) -> Option<&str> {
-        self.last_fork.as_deref()
+        match self.encounter.as_ref()?.target()? {
+            WARDEN => Some("Warden"),
+            HOUND => Some("Hound"),
+            _ => None,
+        }
+    }
+
+    /// Quorum-selected enemy id.
+    pub fn target(&self) -> Option<u8> {
+        self.encounter
+            .as_ref()
+            .and_then(PartyArenaEncounter::target)
+    }
+
+    /// Number of replay-bound tactical events after launch.
+    pub fn encounter_revision(&self) -> u64 {
+        self.encounter
+            .as_ref()
+            .map(PartyArenaEncounter::revision)
+            .unwrap_or(0)
+    }
+
+    /// Current tactical combatant id.
+    pub fn arena_active(&self) -> Option<u8> {
+        self.encounter
+            .as_ref()
+            .map(|encounter| encounter.arena().active())
+    }
+
+    /// Current HP for one of the four tactical combatants.
+    pub fn arena_hp(&self, combatant: u8) -> Option<u64> {
+        if combatant >= N {
+            return None;
+        }
+        Some(self.encounter.as_ref()?.arena().hp(combatant))
+    }
+
+    /// Current mechanically derived Arena result.
+    pub fn arena_outcome(&self) -> Option<ArenaOutcome> {
+        self.encounter
+            .as_ref()
+            .map(|encounter| encounter.arena().outcome())
     }
 
     fn seat_acted(&self, idx: usize) -> bool {
-        let Some(party) = self.party.as_ref() else {
+        let Some(party) = self.encounter.as_ref().map(PartyArenaEncounter::party) else {
             return false;
         };
         if idx >= party.seat_count() {
@@ -158,18 +210,26 @@ impl PartySession {
     }
 
     fn actor_acted(&self, actor: &DreggIdentity) -> bool {
-        self.party
+        self.encounter
             .as_ref()
-            .and_then(|party| party.seat_index_for(actor.as_str()))
+            .and_then(|encounter| encounter.party().seat_index_for(actor.as_str()))
             .is_some_and(|idx| self.seat_acted(idx))
     }
 
     fn fork_tally(&self) -> Option<Vec<u64>> {
-        self.current_fork
-            .as_ref()?
-            .tally()
-            .ok()
-            .map(|tally| tally.per_option)
+        let encounter = self.encounter.as_ref()?;
+        if encounter.target().is_some() {
+            return None;
+        }
+        let mut counts = vec![0, 0];
+        for event in encounter.events() {
+            if let EncounterCommand::Vote { option, .. } = &event.command {
+                if let Some(count) = counts.get_mut(*option) {
+                    *count += 1;
+                }
+            }
+        }
+        Some(counts)
     }
 
     fn fork_total(&self) -> u64 {
@@ -178,8 +238,12 @@ impl PartySession {
             .unwrap_or(0)
     }
 
-    fn party_root(&self) -> Option<[u8; 32]> {
-        self.party.as_ref().map(|party| party.world().state_root())
+    fn has_voted(&self, actor: &str) -> bool {
+        self.encounter.as_ref().is_some_and(|encounter| {
+            encounter.events().iter().any(|event| {
+                matches!(&event.command, EncounterCommand::Vote { actor: voter, .. } if voter == actor)
+            })
+        })
     }
 }
 
@@ -215,11 +279,8 @@ impl PartyOffering {
             lobby_world,
             lobby_agent,
             lobby_cell,
-            party: None,
-            current_fork: None,
-            fork_votes: BTreeMap::new(),
+            encounter: None,
             turns: 0,
-            last_fork: None,
             history: Vec::new(),
         })
     }
@@ -310,7 +371,7 @@ impl PartyOffering {
     }
 
     fn do_launch(session: &mut PartySession, actor: &DreggIdentity) -> Outcome {
-        if session.party.is_some() {
+        if session.encounter.is_some() {
             return Outcome::Refused("party already launched".to_string());
         }
         let Some(mut next) = session.lobby.clone() else {
@@ -320,31 +381,38 @@ impl PartyOffering {
             Ok(launch) => launch,
             Err(error) => return Self::lobby_refusal(error),
         };
+        // Consume the exact Party produced by the live lobby. Construct the
+        // tactical bridge before locking either hosted state so a malformed
+        // launch cannot strand the lobby in a half-launched phase.
+        let encounter = match PartyArenaEncounter::from_party(
+            launch.party,
+            actor.as_str(),
+            arena_seed(session.seed),
+        ) {
+            Ok(encounter) => encounter,
+            Err(error) => {
+                return Outcome::Refused(format!("the party could not enter the Arena: {error}"));
+            }
+        };
         let receipt = match Self::commit_lobby_checkpoint(session, &next) {
             Ok(receipt) => receipt,
             Err(reason) => return Outcome::Refused(reason),
         };
         session.lobby = Some(next);
-        session.party = Some(launch.party);
+        session.encounter = Some(encounter);
         landed(session, receipt)
     }
 
-    fn fold_party_act(session: &mut PartySession, outcome: ActOutcome) -> Outcome {
-        match outcome {
-            ActOutcome::Refused { reason } => Outcome::Refused(reason),
-            ActOutcome::Committed { receipt: expected } => {
-                let receipt = session
-                    .party
-                    .as_ref()
-                    .and_then(|party| party.world().receipts().last())
-                    .cloned();
-                match receipt {
-                    Some(receipt) if receipt.turn_hash == expected => landed(session, receipt),
-                    _ => Outcome::Refused(
-                        "party committed but its complete receipt was unavailable".to_string(),
-                    ),
-                }
-            }
+    fn land_encounter_event(
+        session: &mut PartySession,
+        receipt: Option<TurnReceipt>,
+        kind: &str,
+    ) -> Outcome {
+        match receipt {
+            Some(receipt) if receipt.turn_hash != [0u8; 32] => landed(session, receipt),
+            _ => Outcome::Refused(format!(
+                "{kind} committed but its complete executor receipt was unavailable"
+            )),
         }
     }
 
@@ -352,115 +420,90 @@ impl PartyOffering {
         if session.actor_acted(actor) {
             return Outcome::Refused("this role already contributed to the encounter".to_string());
         }
-        let Some(party) = session.party.as_mut() else {
+        let Some(role) = session.role_of(actor.as_str()) else {
+            return Outcome::Refused("identity holds no party seat".to_string());
+        };
+        let Some(encounter) = session.encounter.as_mut() else {
             return Outcome::Refused("the roster has not launched".to_string());
         };
-        let outcome = party.act_in_role_as(actor.as_str());
-        Self::fold_party_act(session, outcome)
+        let receipt = match encounter.contribute(actor.as_str(), role) {
+            Ok(event) => event.arena_receipt.clone(),
+            Err(error) => return Outcome::Refused(error.to_string()),
+        };
+        Self::land_encounter_event(session, receipt, "role contribution")
     }
 
     fn do_misplay(session: &mut PartySession, actor: &DreggIdentity) -> Outcome {
-        let Some(party) = session.party.as_mut() else {
-            return Outcome::Refused("the roster has not launched".to_string());
-        };
-        let Some(idx) = party.seat_index_for(actor.as_str()) else {
+        let Some(held) = session.role_of(actor.as_str()) else {
             return Outcome::Refused("identity holds no party seat".to_string());
         };
-        let wrong = if party.seat(idx).role() == Role::Tank {
-            PartyMove::DisarmLock
+        let wrong = if held == Role::Tank {
+            Role::Scout
         } else {
-            PartyMove::GuardFront
+            Role::Tank
         };
-        let outcome = party.act_as(actor.as_str(), wrong);
-        Self::fold_party_act(session, outcome)
+        let Some(encounter) = session.encounter.as_mut() else {
+            return Outcome::Refused("the roster has not launched".to_string());
+        };
+        match encounter.contribute(actor.as_str(), wrong) {
+            Ok(_) => Outcome::Refused(
+                "cross-role contribution unexpectedly passed the party capability".to_string(),
+            ),
+            Err(error) => Outcome::Refused(error.to_string()),
+        }
     }
 
     fn do_fork_vote(session: &mut PartySession, actor: &DreggIdentity, arg: i64) -> Outcome {
-        let options = fork_options();
-        if arg < 0 || arg as usize >= options.len() {
-            return Outcome::Refused("no such fork path".to_string());
+        if arg < 0 || arg as usize >= fork_options().len() {
+            return Outcome::Refused("no such enemy target".to_string());
         }
         let option = arg as usize;
-        let Some(party) = session.party.as_ref() else {
+        let Some(encounter) = session.encounter.as_mut() else {
             return Outcome::Refused("the roster has not launched".to_string());
         };
-        if party.seat_index_for(actor.as_str()).is_none() {
-            return Outcome::Refused("identity holds no party seat".to_string());
-        }
-        if session.fork_votes.contains_key(actor.as_str()) {
-            return Outcome::Refused("this seat already voted at the fork".to_string());
-        }
-
-        if session.current_fork.is_none() {
-            let mut fork = match party.open_fork("The passage forks", options) {
-                Ok(fork) => fork,
-                Err(error) => {
-                    return Outcome::Refused(format!("the fork could not open: {error}"));
-                }
-            };
-            let ballot = match party.sign_ballot_as(&fork, actor.as_str(), option) {
-                Ok(ballot) => ballot,
-                Err(error) => return Outcome::Refused(error.to_string()),
-            };
-            let receipt = match fork.cast_receipted(&ballot) {
-                Ok(receipt) => receipt,
-                Err(error) => {
-                    return Outcome::Refused(format!("the party ballot was refused: {error}"));
-                }
-            };
-            session.current_fork = Some(fork);
-            session.fork_votes.insert(actor.0.clone(), option);
-            return landed(session, receipt);
-        }
-
-        let ballot = {
-            let fork = session.current_fork.as_ref().expect("checked above");
-            match party.sign_ballot_as(fork, actor.as_str(), option) {
-                Ok(ballot) => ballot,
-                Err(error) => return Outcome::Refused(error.to_string()),
-            }
+        let receipt = match encounter.vote(actor.as_str(), option) {
+            Ok(event) => event.vote_receipt.clone(),
+            Err(error) => return Outcome::Refused(error.to_string()),
         };
-        let receipt = match session
-            .current_fork
-            .as_mut()
-            .expect("checked above")
-            .cast_receipted(&ballot)
-        {
-            Ok(receipt) => receipt,
-            Err(error) => {
-                return Outcome::Refused(format!("the party ballot was refused: {error}"));
-            }
-        };
-        session.fork_votes.insert(actor.0.clone(), option);
-        landed(session, receipt)
+        match receipt {
+            Some(receipt) => landed(session, receipt),
+            None => Outcome::Refused(
+                "target ballot committed without its vote-engine receipt".to_string(),
+            ),
+        }
     }
 
     fn do_resolve_fork(session: &mut PartySession, actor: &DreggIdentity) -> Outcome {
         if session.leader() != Some(actor.as_str()) {
             return Outcome::Refused("only the party leader can resolve the fork".to_string());
         }
-        let Some(fork) = session.current_fork.as_mut() else {
-            return Outcome::Refused("no fork ballot is open".to_string());
-        };
-        let Some(party) = session.party.as_mut() else {
+        let Some(encounter) = session.encounter.as_mut() else {
             return Outcome::Refused("the roster has not launched".to_string());
         };
-        let resolution = match fork.resolve_into(party) {
-            Ok(resolution) => resolution,
-            Err(error) => return Outcome::Refused(format!("the fork did not resolve: {error}")),
+        let receipt = match encounter.resolve(actor.as_str()) {
+            Ok(event) => event.party_receipt.clone(),
+            Err(error) => return Outcome::Refused(error.to_string()),
         };
-        let receipt = match party.world().receipts().last().cloned() {
-            Some(receipt) if receipt.turn_hash == resolution.receipt => receipt,
-            _ => {
-                return Outcome::Refused(
-                    "fork resolved but its complete receipt was unavailable".to_string(),
-                );
+        match receipt {
+            Some(receipt) => landed(session, receipt),
+            None => {
+                Outcome::Refused("target resolved without its complete party receipt".to_string())
             }
+        }
+    }
+
+    fn do_advance_enemy(session: &mut PartySession, actor: &DreggIdentity) -> Outcome {
+        let Some(encounter) = session.encounter.as_mut() else {
+            return Outcome::Refused("the roster has not launched".to_string());
         };
-        session.current_fork = None;
-        session.fork_votes.clear();
-        session.last_fork = Some(resolution.label);
-        landed(session, receipt)
+        let receipt = match encounter.advance_enemy(actor.as_str()) {
+            Ok(event) => event.arena_receipt.clone(),
+            Err(error) => return Outcome::Refused(error.to_string()),
+        };
+        match receipt {
+            Some(receipt) => landed(session, receipt),
+            None => Outcome::Refused("enemy advanced without its Arena receipt".to_string()),
+        }
     }
 
     fn apply_solo(
@@ -479,6 +522,7 @@ impl PartyOffering {
             TURN_MISPLAY => Self::do_misplay(session, &actor),
             TURN_FORK => Self::do_fork_vote(session, &actor, input.arg),
             TURN_RESOLVE_FORK => Self::do_resolve_fork(session, &actor),
+            TURN_ADVANCE_ENEMY => Self::do_advance_enemy(session, &actor),
             other => Outcome::Refused(format!("unknown party affordance: {other}")),
         }
     }
@@ -503,22 +547,39 @@ impl PartyOffering {
             return out;
         }
 
-        let mut out = vec![Action::new("Act in my role", TURN_ACT, 0, true)];
-        for (i, (label, _)) in fork_options().into_iter().enumerate() {
+        if session.target().is_none() {
+            let mut out = Vec::new();
+            for (i, (label, _)) in fork_options().into_iter().enumerate() {
+                out.push(Action::new(
+                    format!("Target: {label}"),
+                    TURN_FORK,
+                    i as i64,
+                    true,
+                ));
+            }
             out.push(Action::new(
-                format!("Vote: {label}"),
-                TURN_FORK,
-                i as i64,
-                true,
+                "Leader resolves the target",
+                TURN_RESOLVE_FORK,
+                0,
+                session.fork_total() >= session.quorum(),
             ));
+            return out;
         }
-        out.push(Action::new(
-            "Resolve the fork",
-            TURN_RESOLVE_FORK,
-            0,
-            session.fork_total() >= session.quorum(),
-        ));
-        out
+        let active = session.arena_active();
+        vec![
+            Action::new(
+                "Contribute my role tactic",
+                TURN_ACT,
+                0,
+                active.is_some_and(is_hero),
+            ),
+            Action::new(
+                "Leader advances the enemy",
+                TURN_ADVANCE_ENEMY,
+                0,
+                active.is_some_and(|combatant| !is_hero(combatant)),
+            ),
+        ]
     }
 
     fn viewer_actions(&self, session: &PartySession, viewer: &DreggIdentity) -> Vec<Action> {
@@ -547,34 +608,53 @@ impl PartyOffering {
             return out;
         }
 
-        let Some(party) = session.party.as_ref() else {
+        let Some(party) = session.encounter.as_ref().map(PartyArenaEncounter::party) else {
             return Vec::new();
         };
         let Some(seat_idx) = party.seat_index_for(viewer.as_str()) else {
             return Vec::new();
         };
-        let mut out = vec![Action::new(
-            format!("Act as {}", party.seat(seat_idx).role().name()),
-            TURN_ACT,
-            seat_idx as i64,
-            !session.seat_acted(seat_idx),
-        )];
-        if !session.fork_votes.contains_key(viewer.as_str()) {
-            for (i, (label, _)) in fork_options().into_iter().enumerate() {
+        if session.target().is_none() {
+            let mut out = Vec::new();
+            if !session.has_voted(viewer.as_str()) {
+                for (i, (label, _)) in fork_options().into_iter().enumerate() {
+                    out.push(Action::new(
+                        format!("Target: {label}"),
+                        TURN_FORK,
+                        i as i64,
+                        true,
+                    ));
+                }
+            }
+            if session.leader() == Some(viewer.as_str()) {
                 out.push(Action::new(
-                    format!("Vote: {label}"),
-                    TURN_FORK,
-                    i as i64,
-                    true,
+                    "Resolve the target",
+                    TURN_RESOLVE_FORK,
+                    0,
+                    session.fork_total() >= session.quorum(),
                 ));
             }
+            return out;
         }
-        if session.leader() == Some(viewer.as_str()) {
+
+        let active = session.arena_active();
+        let mut out = Vec::new();
+        if active.is_some_and(is_hero) {
             out.push(Action::new(
-                "Resolve the fork",
-                TURN_RESOLVE_FORK,
+                format!("Contribute {} tactic", party.seat(seat_idx).role().name()),
+                TURN_ACT,
+                seat_idx as i64,
+                !session.seat_acted(seat_idx),
+            ));
+        }
+        if session.leader() == Some(viewer.as_str())
+            && active.is_some_and(|combatant| !is_hero(combatant))
+        {
+            out.push(Action::new(
+                format!("Advance {}", active.map(combatant_name).unwrap_or("enemy")),
+                TURN_ADVANCE_ENEMY,
                 0,
-                session.fork_total() >= session.quorum(),
+                true,
             ));
         }
         out
@@ -612,7 +692,11 @@ impl PartyOffering {
                 ),
                 pill(
                     if session.launched() {
-                        "playing"
+                        if session.seat_acted(role.index()) {
+                            "contributed"
+                        } else {
+                            "ready to fight"
+                        }
                     } else if seat.is_some_and(|seat| seat.ready()) {
                         "ready"
                     } else if seat.is_some() {
@@ -631,15 +715,47 @@ impl PartyOffering {
         children.push(section("Roster", "accent", vec![ViewNode::Table(rows)]));
 
         if session.launched() {
-            children.push(section(
-                "Encounter",
-                "accent",
-                vec![text(format!(
-                    "shared focus {}/{} · each role contributes once",
+            if let Some(encounter) = session.encounter.as_ref() {
+                let arena = encounter.arena();
+                let active = arena.active();
+                let mut tactical = vec![text(format!(
+                    "event {} · active {} · {:?} · shared focus {}/{}",
+                    encounter.revision(),
+                    combatant_name(active),
+                    arena.outcome(),
                     session.focus_spent(),
                     FOCUS_BUDGET,
-                ))],
-            ));
+                ))];
+                let mut combat = vec![row(vec![text("Combatant"), text("HP"), text("Condition")])];
+                for combatant in [RANGER, CLERIC, WARDEN, HOUND] {
+                    let condition = if arena.is_down(combatant) {
+                        "down"
+                    } else if arena.is_stunned(combatant) {
+                        "stunned"
+                    } else if arena.is_guarding(combatant) {
+                        "guarding"
+                    } else {
+                        "standing"
+                    };
+                    combat.push(row(vec![
+                        pill(
+                            combatant_name(combatant),
+                            if Some(combatant) == session.target() {
+                                "warn"
+                            } else {
+                                "accent"
+                            },
+                        ),
+                        text(arena.hp(combatant).to_string()),
+                        pill(
+                            condition,
+                            if condition == "down" { "muted" } else { "good" },
+                        ),
+                    ]));
+                }
+                tactical.push(ViewNode::Table(combat));
+                children.push(section("Tactical Arena", "accent", tactical));
+            }
         }
 
         if let Some(tally) = session.fork_tally() {
@@ -655,13 +771,13 @@ impl PartyOffering {
                     ))
                 })
                 .collect();
-            children.push(section("Open fork ballot", "warn", counts));
+            children.push(section("Enemy target ballot", "warn", counts));
         }
         if let Some(fork) = session.last_fork() {
             children.push(section(
-                "Resolved fork",
+                "Resolved target",
                 "genuine",
-                vec![text(format!("the party took: {fork}"))],
+                vec![text(format!("the party concentrates on the {fork}"))],
             ));
         }
 
@@ -671,7 +787,7 @@ impl PartyOffering {
         }
 
         Surface(section(
-            "DreggNet Party — form, ready, act, decide",
+            "DreggNet Party — muster, choose, fight",
             "accent",
             children,
         ))
@@ -697,6 +813,43 @@ impl PartyOffering {
             }
         }
         true
+    }
+
+    fn encounter_semantics_match(left: &PartySession, right: &PartySession) -> bool {
+        match (&left.encounter, &right.encounter) {
+            (None, None) => true,
+            (Some(left), Some(right)) => {
+                left.target() == right.target()
+                    && left.revision() == right.revision()
+                    && left
+                        .events()
+                        .iter()
+                        .map(|event| &event.command)
+                        .eq(right.events().iter().map(|event| &event.command))
+                    && left.arena().active() == right.arena().active()
+                    && left.arena().outcome() == right.arena().outcome()
+                    && left.arena().world.snapshot() == right.arena().world.snapshot()
+                    && left.party().focus_spent() == right.party().focus_spent()
+                    && (0..left.party().seat_count()).all(|idx| {
+                        left.party().seat(idx).name() == right.party().seat(idx).name()
+                            && left.party().seat(idx).role() == right.party().seat(idx).role()
+                            && left.party().loot_share(idx) == right.party().loot_share(idx)
+                    })
+                    && Role::ALL.into_iter().all(|role| {
+                        let left_layout = left.party().layout();
+                        let right_layout = right.party().layout();
+                        let (left_cell, right_cell) = match role {
+                            Role::Tank => (left_layout.front, right_layout.front),
+                            Role::Scout => (left_layout.lock, right_layout.lock),
+                            Role::Mage => (left_layout.ward, right_layout.ward),
+                            Role::Healer => (left_layout.rally, right_layout.rally),
+                        };
+                        left.party().read_field(left_cell, ROLE_SLOT)
+                            == right.party().read_field(right_cell, ROLE_SLOT)
+                    })
+            }
+            _ => false,
+        }
     }
 }
 
@@ -761,13 +914,14 @@ impl Offering for PartyOffering {
                 "lobby journal diverges from its committed audit cell",
             );
         }
-        if session.lobby.as_ref().is_some_and(PartyLobby::launched) != session.party.is_some() {
+        if session.lobby.as_ref().is_some_and(PartyLobby::launched) != session.encounter.is_some() {
             return VerifyReport::broken(
                 session.turns,
-                "lobby launch state diverges from the party world",
+                "lobby launch state diverges from the party-Arena encounter",
             );
         }
-        if let Some(party) = session.party.as_ref() {
+        if let Some(encounter) = session.encounter.as_ref() {
+            let party = encounter.party();
             for seat in party.seats() {
                 if party.world().ledger().get(&seat.cell()).is_none() {
                     return VerifyReport::broken(
@@ -775,6 +929,15 @@ impl Offering for PartyOffering {
                         format!("seat `{}` has no cell in the shared world", seat.name()),
                     );
                 }
+            }
+            let record = encounter.export_record();
+            if let Err(error) =
+                PartyArenaEncounter::resume_at(&record, encounter.revision(), encounter.root())
+            {
+                return VerifyReport::broken(
+                    session.turns,
+                    format!("party-Arena encounter record did not replay: {error}"),
+                );
             }
         }
 
@@ -802,17 +965,23 @@ impl Offering for PartyOffering {
             .lobby
             .as_ref()
             .map(|lobby| (lobby.revision(), lobby.root(), lobby.launched()));
-        if replay_lobby != live_lobby
-            || replay.turns != session.turns
-            || replay.lobby_world.state_root() != session.lobby_world.state_root()
-            || replay.party_root() != session.party_root()
-            || replay.fork_votes != session.fork_votes
-            || replay.fork_tally() != session.fork_tally()
-            || replay.last_fork != session.last_fork
-        {
+        // Compare the committed audit cell through `audit_matches` plus the
+        // semantic lobby record above. The whole World root includes
+        // process-local cell identities, so it is deliberately not a portable
+        // restart commitment once the party and Arena allocate other worlds.
+        let divergence = if replay_lobby != live_lobby {
+            Some("lobby semantic state")
+        } else if replay.turns != session.turns {
+            Some("hosted turn count")
+        } else if !Self::encounter_semantics_match(&replay, session) {
+            Some("party-Arena semantic state")
+        } else {
+            None
+        };
+        if let Some(divergence) = divergence {
             return VerifyReport::broken(
                 session.turns,
-                "hosted party replay reached a different committed state",
+                format!("hosted party replay changed {divergence}"),
             );
         }
         VerifyReport::ok(session.turns)
@@ -835,6 +1004,10 @@ fn role_from_arg(arg: i64) -> Option<Role> {
     usize::try_from(arg)
         .ok()
         .and_then(|idx| Role::ALL.get(idx).copied())
+}
+
+fn arena_seed(seed: u64) -> u8 {
+    seed.to_le_bytes().into_iter().fold(0u8, u8::wrapping_add)
 }
 
 fn open_role_actions(session: &PartySession) -> Vec<Action> {
