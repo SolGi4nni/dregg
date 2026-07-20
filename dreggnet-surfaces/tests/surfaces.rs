@@ -6,13 +6,12 @@
 //! web/discord/telegram reach).
 
 use deos_view::ViewNode;
-use dreggnet_offerings::{
-    Action, CollectiveDecision, DreggIdentity, Offering, OfferingHost, SessionConfig, Tally,
-    VoteCount,
-};
+use dreggnet_offerings::{Action, DreggIdentity, Offering, OfferingHost, SessionConfig};
 
 use dreggnet_surfaces::companion::TURN_OVERLEVEL;
-use dreggnet_surfaces::party::TURN_MISPLAY;
+use dreggnet_surfaces::party::{
+    TURN_CLAIM, TURN_FORK, TURN_LAUNCH, TURN_MISPLAY, TURN_READY, TURN_RESOLVE_FORK,
+};
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
     TavernOffering, TradeOffering, register_surfaces,
@@ -587,49 +586,84 @@ fn tavern_renders_presence_and_lfg_board_populated_and_empty() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
-// 8. PartyOffering — a playable roster; seat acts + a quorum-certified collective fork.
+// 8. PartyOffering — live formation; identity-bound role action + signed fork ballots.
 // ═══════════════════════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn party_renders_roster_and_acts_and_resolves_a_collective_fork() {
     let offering = PartyOffering::new();
     let mut s = offering.open(SessionConfig::default()).expect("open");
-    assert_eq!(s.seat_count(), 4, "a four-seat party");
+    assert_eq!(s.seat_count(), 0, "a new shared table begins as a lobby");
 
     let surface = offering.render(&s);
     let roster = find_section(surface.view(), "Roster").expect("a Roster section");
     let rows = first_table(roster).expect("Roster holds a Table");
-    assert_eq!(rows.len(), 5, "header + 4 seat rows");
+    assert_eq!(rows.len(), 5, "header + four open role rows");
 
-    // A seat acts IN its role — a real committed turn.
-    let out = offering.advance(&mut s, act("act", 0), actor());
-    assert!(out.landed(), "seat 0 acts in role and lands: {out:?}");
-    assert_eq!(s.turns(), 1, "one committed party turn");
+    let players = [
+        DreggIdentity("alice".into()),
+        DreggIdentity("bob".into()),
+        DreggIdentity("carol".into()),
+        DreggIdentity("dana".into()),
+    ];
+    for (idx, player) in players.iter().enumerate() {
+        assert!(
+            offering
+                .advance(&mut s, act(TURN_CLAIM, idx as i64), player.clone())
+                .landed(),
+            "player claims a distinct role"
+        );
+        assert!(
+            offering
+                .advance(&mut s, act(TURN_READY, 0), player.clone())
+                .landed(),
+            "claimed role readies"
+        );
+    }
+    assert!(
+        offering
+            .advance(&mut s, act(TURN_LAUNCH, 0), players[0].clone())
+            .landed(),
+        "the first claimant launches the full ready roster"
+    );
+    assert!(s.launched());
 
-    // NON-VACUOUS REFUSED — a cross-role misplay (scout fires the tank's move) is a real cap
-    // refusal; the same seat's own move lands.
-    let misplay = offering.advance(&mut s, act(TURN_MISPLAY, 1), actor());
+    // Alice's authenticated identity—not the forged arg—selects the Tank cell.
+    let out = offering.advance(&mut s, act("act", 99), players[0].clone());
+    assert!(out.landed(), "the tank's own role move lands: {out:?}");
+
+    // NON-VACUOUS REFUSED — Bob's cross-role misplay is a real cap refusal;
+    // Bob's own Scout move lands immediately afterward.
+    let misplay = offering.advance(&mut s, act(TURN_MISPLAY, 0), players[1].clone());
     assert!(
         !misplay.landed(),
         "a cross-role misplay is refused: {misplay:?}"
     );
     assert!(
-        offering.advance(&mut s, act("act", 1), actor()).landed(),
+        offering
+            .advance(&mut s, act("act", 0), players[1].clone())
+            .landed(),
         "the scout's own move lands (the refusal was non-vacuous)"
     );
 
-    // THE COLLECTIVE FORK — the crowd decides Left (option 0); advance_collective casts a quorum of
-    // the seats' signed ballots for it and resolves the certified shared move into the world.
-    let electorate = vec![
-        DreggIdentity("Bramwen".into()),
-        DreggIdentity("Corvin".into()),
-    ];
-    let decision = CollectiveDecision::new(
-        electorate,
-        DreggIdentity("Bramwen".into()),
-        Tally::new(vec![VoteCount::new(0, 3), VoteCount::new(1, 1)], 0),
+    // THE COLLECTIVE FORK — three actual seats cast three individually
+    // custody-signed ballot turns, then the leader resolves the real quorum.
+    for player in players.iter().take(3) {
+        assert!(
+            offering
+                .advance(&mut s, act(TURN_FORK, 0), player.clone())
+                .landed(),
+            "each seat's own signed ballot lands"
+        );
+    }
+    let before_resolve = s.turns();
+    let usurped = offering.advance(&mut s, act(TURN_RESOLVE_FORK, 0), players[1].clone());
+    assert!(
+        !usurped.landed(),
+        "a non-leader cannot resolve even a quorum-ready fork: {usurped:?}"
     );
-    let forked = offering.advance_collective(&mut s, act("fork", 0), decision);
+    assert_eq!(s.turns(), before_resolve, "leader refusal is anti-ghost");
+    let forked = offering.advance(&mut s, act(TURN_RESOLVE_FORK, 0), players[0].clone());
     assert!(
         forked.landed(),
         "the quorum-certified fork resolves: {forked:?}"
@@ -645,10 +679,6 @@ fn party_renders_roster_and_acts_and_resolves_a_collective_fork() {
         Some("Left, the sunken stair"),
         "the party took the crowd's winning path"
     );
-
-    // A solo fork (no crowd) is refused — a fork needs a collective decision.
-    let solo = offering.advance(&mut s, act("fork", 0), actor());
-    assert!(!solo.landed(), "a solo fork is refused: {solo:?}");
 
     assert!(offering.verify(&s).verified, "the party world re-verifies");
 }
@@ -697,7 +727,7 @@ fn register_surfaces_mounts_all_eight_on_an_offering_host() {
         ("trade", act("list", 0)),
         ("craft", act("craft", 0)),
         ("companion", act("hatch", 1)),
-        ("party", act("act", 0)),
+        ("party", act(TURN_CLAIM, 0)),
     ] {
         let id = host.open(key).expect("open playable");
         let out = host

@@ -12,6 +12,7 @@
 //! - **(b) THE REGRESSION GUARD** — a SHARED multi-party table (`council`) is still shared, NOT
 //!   split per-identity: alice proposes and BOB approves the SAME proposal, reaching the 2-of-2
 //!   quorum and enacting — only possible if both press ONE shared council.
+//! - **(c) PARTY IS SHARED** — two users in one group claim distinct roles in one live roster.
 
 use dreggnet_telegram::api::encode_callback;
 use dreggnet_telegram::host::{HostPress, TelegramHost};
@@ -152,4 +153,41 @@ fn a_shared_council_is_not_split_per_identity() {
         ),
         other => panic!("the quorum must let alice enact on the shared council, got {other:?}"),
     }
+}
+
+/// **(c) THE PARTY ROUTING FALSIFIER.** Alice and Bob claim different roles from one group-chat
+/// surface; the resulting message contains one two-player roster. Per-identity routing would leave
+/// each user in a separate one-role lobby.
+#[test]
+fn a_party_lobby_is_shared_between_group_members() {
+    let mut h = host();
+    let chat: i64 = -6002;
+
+    h.open("party", chat, None, ALICE).expect("party opens");
+    match h.press(CallbackQuery::press(
+        chat,
+        ALICE,
+        encode_callback("claim-role", 0),
+    )) {
+        HostPress::Advanced { outcome, .. } => {
+            assert!(outcome.landed(), "alice claims Tank: {outcome:?}")
+        }
+        other => panic!("alice's claim must advance the party, got {other:?}"),
+    }
+    match h.press(CallbackQuery::press(
+        chat,
+        BOB,
+        encode_callback("claim-role", 1),
+    )) {
+        HostPress::Advanced { outcome, .. } => {
+            assert!(outcome.landed(), "bob claims Scout: {outcome:?}")
+        }
+        other => panic!("bob's claim must advance the same party, got {other:?}"),
+    }
+
+    let party = surface_text(&h, chat, "party");
+    assert!(
+        party.contains("2 / 4 roles"),
+        "the shared group lobby contains both players: {party}"
+    );
 }

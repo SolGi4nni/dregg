@@ -1296,7 +1296,7 @@ pub struct CatalogState {
     /// live here: a council with one voter per host is not a council, so those are inherently
     /// shared and stay on this ONE host across every viewer.
     host: HostThread,
-    /// The per-identity RPG worlds handle. The eight [`is_rpg_key`] surfaces (trade / inventory /
+    /// The per-identity RPG worlds handle. The seven [`is_rpg_key`] surfaces (trade / inventory /
     /// craft / …) are per-player by nature — an inventory is yours — so every RPG-key session
     /// operation routes to the VIEWER's own [`OfferingHost`] here ([`run_offering`](Self::run_offering)),
     /// keyed by their derived identity. Two viewers on the same web surface therefore have
@@ -1342,7 +1342,7 @@ impl CatalogState {
 
     /// **Route a `(key, session)`-scoped host job to the host that OWNS it for `viewer`.** An
     /// [`is_rpg_key`] offering runs against the viewer's own per-identity RPG world (their isolated
-    /// inventory); everything else — the shared games + services — runs against the ONE catalog
+    /// inventory); everything else — the shared games, party, and services — runs against the ONE catalog
     /// host. This ONE routing decision is the whole fix: it is why two viewers never share an
     /// inventory while a council / tug stays a single shared table.
     pub(crate) fn run_offering<R: Send + 'static>(
@@ -3263,7 +3263,7 @@ pub fn resolve_demo_host() -> OfferingHost {
 }
 
 /// **Resolve the per-identity RPG worlds registry** from the environment — the per-player half of
-/// the catalog (the eight [`is_rpg_key`] surfaces). With `DREGGNET_WEB_SESSION_DIR` set, each
+/// the catalog (the seven [`is_rpg_key`] surfaces). With `DREGGNET_WEB_SESSION_DIR` set, each
 /// identity's world attaches a durable [`FileResumeStore`] under a PER-IDENTITY subdirectory
 /// (`<dir>/players/<blake3(identity)>`), so a player's forge / inventory / trade survive a restart
 /// by move-log replay — the same durability the shared game sessions get, and the same per-player

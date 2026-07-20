@@ -188,10 +188,34 @@ pub fn register_surfaces_for(host: &mut OfferingHost, player: &str) {
     register_surfaces_in_world(host, SharedWorld::demo(player));
 }
 
+/// **Register the seven identity-owned surfaces for one player.** This is the production
+/// per-identity mount: trade, inventory, cheevos, guild, craft, companion, and tavern. `party` is
+/// deliberately absent because it is a shared multi-identity table; mounting it in one host per
+/// viewer would give every player a private lobby nobody else could join.
+///
+/// [`register_surfaces_for`] remains the complete eight-surface demo registrar. Frontends that
+/// split identity-owned worlds from shared games should use this narrower registrar for their
+/// player hosts and keep the globally registered [`PartyOffering`] on the shared catalog host.
+pub fn register_player_surfaces_for(host: &mut OfferingHost, player: &str) {
+    register_player_surfaces_in_world(host, SharedWorld::demo(player));
+}
+
 /// **Register all eight surfaces onto a caller-supplied [`SharedWorld`]** — the primitive behind
 /// [`register_surfaces`] and [`register_surfaces_for`], for a frontend that wants to seed the
 /// world itself (a different starting stock, a world it also reads directly).
 pub fn register_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
+    register_player_surfaces_in_world(host, world);
+    host.register(
+        "party",
+        "Party — a seated roster + a quorum-certified fork ballot",
+        PartyOffering::new(),
+    );
+}
+
+/// Register only the seven surfaces whose state belongs to one identity. This is the primitive
+/// behind [`register_player_surfaces_for`]; callers supplying their own world retain the same
+/// craft → inventory → trade composition without accidentally privatizing the party lobby.
+pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
     host.register(
         "trade",
         "DreggNet Trade — a player market (list · settle an atomic asset swap)",
@@ -226,11 +250,6 @@ pub fn register_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
         "tavern",
         "Tavern — the shared hub: presence · the LFG board · the party roster",
         TavernOffering::demo("The Salted Tankard"),
-    );
-    host.register(
-        "party",
-        "Party — a seated roster + a quorum-certified fork ballot",
-        PartyOffering::new(),
     );
 }
 

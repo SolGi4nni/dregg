@@ -195,6 +195,7 @@ impl LobbyVerifyReport {
 }
 
 /// A live four-role party lobby.
+#[derive(Clone)]
 pub struct PartyLobby {
     session_id: String,
     leader: String,

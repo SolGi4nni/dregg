@@ -19,12 +19,12 @@
 //! the buttons, a press is ONE real `advance` attributed to the presser's derived dregg identity, and
 //! the press re-render is projected FOR the presser ([`crate::commands::offering::surface_for`]).
 //!
-//! ROUTING: the eight RPG feature-surface keys open in the invoker's **per-identity persistent
+//! ROUTING: the seven identity-owned RPG feature-surface keys open in the invoker's **per-identity persistent
 //! world** ([`crate::commands::rpg_world`]) — one `OfferingHost` per derived dregg identity,
 //! mounted via `dreggnet_surfaces::register_surfaces` (ONE shared world across craft/inventory/
 //! trade, so a forged item IS in your inventory IS tradeable), sqlite-persisted by replay, with
-//! the player's REAL earned cheevos. The four remaining keys (the two games + names/compute)
-//! keep the per-channel generic-adapter stores below. A board offering (automatafl, tug) is a
+//! the player's REAL earned cheevos. `party` joins the two games + names/compute on the shared
+//! per-channel generic-adapter stores below. A board offering (automatafl, tug) is a
 //! `CoordGrid` that the Discord card renderer paints in full (the most complete renderer of the
 //! three chat surfaces).
 
@@ -423,7 +423,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     // EDIT of this deferred response.
     ack::defer_slash(ctx, command, false).await;
 
-    // The eight RPG feature surfaces open in the invoker's PER-IDENTITY PERSISTENT world
+    // The seven identity-owned RPG feature surfaces open in the invoker's PER-IDENTITY PERSISTENT world
     // (`commands::rpg_world`): ONE shared craft/inventory/trade ledger per player (the saga
     // composition), sqlite-persisted by replay, real earned cheevos — never a throwaway
     // per-channel demo world. `handle_play` edits the response this handler already deferred.
@@ -447,6 +447,9 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         }
         "compute" => {
             open_and_post::<ComputeOffering>(ctx, command, ComputeOffering::new, &viewer, cfg).await
+        }
+        "party" => {
+            open_and_post::<PartyOffering>(ctx, command, PartyOffering::new, &viewer, cfg).await
         }
         "gear" => {
             open_and_post::<dreggnet_gear::LoadoutOffering>(
@@ -501,7 +504,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 
 /// `/play <offering> action:verify` — dispatch the chain re-verifier for the chosen offering
 /// key, so the portfolio offerings — the flagship games included — answer verify-don't-trust
-/// with a command, not a shrug (backlog Tier-2 #10). The eight RPG keys verify the INVOKER's
+/// with a command, not a shrug (backlog Tier-2 #10). The seven identity-owned RPG keys verify the INVOKER's
 /// per-identity persistent world chain (`commands::rpg_world` — where their sessions actually
 /// live); the rest go through the generic per-channel verifier ([`offering::handle_verify`],
 /// the SAME one behind `/council verify` et al.).
@@ -521,6 +524,7 @@ async fn handle_play_verify(
         "automatafl" => offering::handle_verify::<AutomataflOffering>(ctx, command).await,
         "names" => offering::handle_verify::<NamesOffering>(ctx, command).await,
         "compute" => offering::handle_verify::<ComputeOffering>(ctx, command).await,
+        "party" => offering::handle_verify::<PartyOffering>(ctx, command).await,
         "gear" => offering::handle_verify::<dreggnet_gear::LoadoutOffering>(ctx, command).await,
         "talents" => {
             offering::handle_verify::<dreggnet_gear::TalentTreeOffering>(ctx, command).await
@@ -614,8 +618,8 @@ mod tests {
         Driven, close_in, drive, fire_id, is_open, surface_for, with_live,
     };
     // The tests still drive the generic per-type adapter path for all twelve keys (the adapter
-    // mechanics); the LIVE `/play` route for the eight RPG keys is the per-identity persistent
-    // world (`commands::rpg_world`), whose own tests cover composition + persistence.
+    // mechanics); the LIVE `/play` route for the seven identity-owned RPG keys is the per-identity
+    // persistent world (`commands::rpg_world`), while party stays on this shared channel path.
     use dreggnet_offerings::{Outcome, Surface};
     use dreggnet_surfaces::SharedWorld;
 

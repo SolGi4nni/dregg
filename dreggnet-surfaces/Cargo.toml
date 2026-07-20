@@ -64,6 +64,9 @@ dreggnet-companion = { path = "../dreggnet-companion" }
 # roster whose caps ARE its roles, and a real quorum-certified collective fork. Consumed.
 # (The gpui-free, embedded-executor party world; NOT the heavy mozjs/node tavern crate.)
 dreggnet-party = { path = "../dreggnet-party" }
+# The party lobby's audit cell: every claim/ready/leave/launch is a real
+# FieldDelta(+1) world turn carrying the lobby's full hash-chain root.
+starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
 # THE FAIRNESS ANCHOR — `CommittedSeed` (the beacon the craft/companion fair draws anchor to).
 procgen-dregg = { path = "../procgen-dregg" }
 # `TurnReceipt` — named to carry the party's genuine committed turn-hash into `Outcome::Landed`

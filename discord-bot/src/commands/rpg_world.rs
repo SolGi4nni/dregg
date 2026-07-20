@@ -60,7 +60,7 @@ use dreggnet_offerings::resume::{SessionMoveLog, SessionResumeStore};
 use dreggnet_offerings::{Action, DreggIdentity, OfferingHost, SessionId, VerifyReport};
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
-    TavernOffering, TradeOffering, register_surfaces,
+    TavernOffering, TradeOffering, register_player_surfaces_for,
 };
 use ugc_dregg::{Completion, Universe, record_playthrough};
 
@@ -75,9 +75,9 @@ use crate::commands::offering::{
 use crate::db::Database;
 use crate::rpg_store::SqliteRpgResumeStore;
 
-/// The eight `/play` keys this module serves out of the per-identity persistent host (the other
-/// four `/play` keys — the games + names/compute — keep their per-channel generic-adapter stores).
-pub const RPG_KEYS: [&str; 8] = [
+/// The seven `/play` keys this module serves out of the per-identity persistent host. `party` is a
+/// shared multi-identity game and therefore stays on the per-channel generic-adapter store.
+pub const RPG_KEYS: [&str; 7] = [
     "trade",
     "inventory",
     "cheevos",
@@ -85,10 +85,9 @@ pub const RPG_KEYS: [&str; 8] = [
     "craft",
     "companion",
     "tavern",
-    "party",
 ];
 
-/// Whether `key` is one of the eight RPG-world keys this module owns.
+/// Whether `key` is one of the seven identity-owned RPG-world keys this module owns.
 pub fn is_rpg_key(key: &str) -> bool {
     RPG_KEYS.contains(&key)
 }
@@ -173,15 +172,15 @@ pub fn order_logs_for_replay(mut logs: Vec<SessionMoveLog>) -> Vec<SessionMoveLo
     logs
 }
 
-/// **Build one player's persistent RPG host**: mount the eight surfaces via the web-parity
-/// [`register_surfaces`] (ONE shared world across craft/inventory/trade), replace the demo
+/// **Build one player's persistent RPG host**: mount the seven identity-owned surfaces
+/// (ONE shared world across craft/inventory/trade), replace the demo
 /// cheevo showcase with the player's REAL earned cheevos, attach the durable store, and reopen
 /// every persisted session by replay (craft-first ordering). A log that refuses to re-drive is
 /// reported and left closed — fail-closed, its durable record kept.
 pub fn build_player_host(store: Box<dyn SessionResumeStore>, cheevos: Vec<Cheevo>) -> OfferingHost {
     let logs = order_logs_for_replay(store.all());
     let mut host = OfferingHost::new().with_resume_store(store);
-    register_surfaces(&mut host);
+    register_player_surfaces_for(&mut host, dreggnet_surfaces::DEMO_PLAYER);
     // #24 — the player's OWN earned proofs, not Ada's demo museum. Re-registering the key
     // replaces the demo showcase `register_surfaces` mounted.
     host.register(
@@ -519,7 +518,7 @@ fn verify_core(
 }
 
 /// Route `/play <rpg-key> action:verify` — re-verify the chain of the INVOKER's persistent
-/// world session (the eight RPG keys no longer live in the per-channel generic store, so
+/// world session (the seven identity-owned RPG keys no longer live in the per-channel generic store, so
 /// `offering::handle_verify` would honestly-but-uselessly report "no live session" for them).
 /// Defers first: a first-touch verify rebuilds the host by full replay, which can exceed
 /// Discord's 3s window.
@@ -583,7 +582,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     let Some(press) = offering::parse_press(&component.data.custom_id) else {
         return;
     };
-    // The eight RPG surfaces declare no value/text prompts, so every press is a direct fire
+    // The seven identity-owned RPG surfaces declare no value/text prompts, so every press is a direct fire
     // (an `ask`-shaped id would only arise from a stale foreign message — fire it honestly
     // with its arg rather than dead-ending, the same fallback `offering::drive` takes).
     let (key, turn, arg) = match press {

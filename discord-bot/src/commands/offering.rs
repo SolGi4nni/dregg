@@ -1632,7 +1632,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// serves exactly the LIVE `dreggnet_catalog::full_catalog_host` — the same 19 web, Telegram,
 /// and WeChat register (docs/BOT-SHARED-BACKEND-DESIGN.md).
 ///
-/// Component presses for the eight RPG feature-surface keys never reach this table's arms
+/// Component presses for the seven identity-owned RPG feature-surface keys never reach this table's arms
 /// (they are intercepted for the per-identity persistent world, `commands::rpg_world`); their
 /// rows here serve the modal router and the key census. Offerings whose affordances are all
 /// fixed-arg buttons never mint a modal, so their modal arms are inert — present for
@@ -1690,7 +1690,7 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         .await;
         return;
     };
-    // ── The eight RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
+    // ── The seven identity-owned RPG feature surfaces route to the PER-IDENTITY PERSISTENT world
     //    (`commands::rpg_world`): the press is one real turn in the PRESSER's own
     //    sqlite-persisted world (backlog #15/#24), not a per-channel demo store. ──
     if crate::commands::rpg_world::is_rpg_key(&key) {

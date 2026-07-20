@@ -47,11 +47,11 @@
 //!    spends the shared focus — enough to prove the cap-gated division of labor. Wiring
 //!    each role to a full ability kit (the built-but-idle `dungeon-on-dregg::spells`, the
 //!    combat `Arena`) is the named follow-on.
-//! * **Surface-specific party-formation UX.** The frontend-neutral formation core is now
+//! * **Surface-specific party-formation UX.** The frontend-neutral formation core is
 //!   [`lobby::PartyLobby`]: authenticated identities claim roles, ready, and leader-launch a
-//!   bounded replay-verified journal into [`Party::muster_with_roster`]. Painting those controls
-//!   as native/web/Discord/Telegram widgets is the remaining adapter work; the roster state
-//!   machine and real cap-seated launch are built.
+//!   bounded replay-verified journal into [`Party::muster_with_roster`]. `dreggnet-surfaces`
+//!   exposes those controls as one shared `Offering`, inherited by web/Discord/Telegram renderers;
+//!   richer platform-native presentation remains optional adapter work.
 //! * **RAIDS.** A party acts turn-by-turn on ONE serial world here. The concurrent
 //!    multi-cell battle (each seat its own cell acting SIMULTANEOUSLY, phases gating on
 //!    prior-phase completion) is the raid frontier `combat.rs` / `mud.rs` name — staged
@@ -364,6 +364,18 @@ impl Party {
         let rally = world.genesis_cell(0x54, 0);
         let gate = world.genesis_cell(0x56, 0);
 
+        // A role ability is a once-per-encounter contribution. The surface may
+        // dim an already-used action, but this is the real tooth: a forged
+        // repeated click reaches the executor and WriteOnce refuses it.
+        for role_cell in [front, lock, ward, rally] {
+            world.set_cell_program(
+                &role_cell,
+                CellProgram::Predicate(vec![StateConstraint::WriteOnce {
+                    index: ROLE_SLOT as u8,
+                }]),
+            );
+        }
+
         // THE SHARED FOCUS POOL: a cell seeded with the party budget and carrying the
         // real `FieldLteField(spent <= budget)` tooth. Built at genesis with the budget
         // slot pre-set (genesis bypasses the executor, so the predicate bites only on
@@ -537,21 +549,36 @@ impl Party {
     /// is shared, so this composes across seats' turns).
     fn lower_move(&self, mv: PartyMove) -> Vec<Effect> {
         let l = &self.layout;
-        let mark = field_from_u64(ROLE_MARK);
         match mv {
-            PartyMove::GuardFront => vec![set_field(l.front, ROLE_SLOT, mark)],
-            PartyMove::DisarmLock => vec![set_field(l.lock, ROLE_SLOT, mark)],
+            PartyMove::GuardFront => vec![set_field(
+                l.front,
+                ROLE_SLOT,
+                field_from_u64(self.read_field(l.front, ROLE_SLOT) + ROLE_MARK),
+            )],
+            PartyMove::DisarmLock => vec![set_field(
+                l.lock,
+                ROLE_SLOT,
+                field_from_u64(self.read_field(l.lock, ROLE_SLOT) + ROLE_MARK),
+            )],
             PartyMove::CastWard => {
                 let next = self.focus_spent() + FOCUS_COST;
                 vec![
-                    set_field(l.ward, ROLE_SLOT, mark),
+                    set_field(
+                        l.ward,
+                        ROLE_SLOT,
+                        field_from_u64(self.read_field(l.ward, ROLE_SLOT) + ROLE_MARK),
+                    ),
                     set_field(l.focus, FOCUS_SPENT_SLOT, field_from_u64(next)),
                 ]
             }
             PartyMove::Rally => {
                 let next = self.focus_spent() + FOCUS_COST;
                 vec![
-                    set_field(l.rally, ROLE_SLOT, mark),
+                    set_field(
+                        l.rally,
+                        ROLE_SLOT,
+                        field_from_u64(self.read_field(l.rally, ROLE_SLOT) + ROLE_MARK),
+                    ),
                     set_field(l.focus, FOCUS_SPENT_SLOT, field_from_u64(next)),
                 ]
             }
@@ -654,7 +681,18 @@ impl PartyFork {
     /// second ballot by the same seat is [`VoteError::DoubleVote`]. Nothing commits on a
     /// refusal (the board does not move).
     pub fn cast(&mut self, ballot: &SignedBallot) -> Result<(), CollectiveError> {
-        self.round.cast(ballot).map(|_receipt| ())
+        self.cast_receipted(ballot).map(|_receipt| ())
+    }
+
+    /// Cast one authenticated ballot and retain its complete real turn receipt.
+    /// Hosted offerings use this path so an individual player's vote carries a
+    /// normal resumable [`dregg_app_framework::TurnReceipt`] rather than being
+    /// hidden inside one synthetic crowd action.
+    pub fn cast_receipted(
+        &mut self,
+        ballot: &SignedBallot,
+    ) -> Result<dregg_app_framework::TurnReceipt, CollectiveError> {
+        self.round.cast(ballot)
     }
 
     /// The per-option tally (the monotone verified board).
@@ -910,6 +948,46 @@ mod tests {
             party.read_field(l.lock, ROLE_SLOT),
             ROLE_MARK,
             "lock disarmed"
+        );
+    }
+
+    /// A role contribution is once-per-encounter in the executor, not merely in a frontend. The
+    /// second click proposes marker `2` over frozen marker `1`, reaches the role cell's `WriteOnce`
+    /// predicate, and is refused without a state-root or committed-receipt mutation.
+    #[test]
+    fn a_repeated_role_ability_hits_writeonce_and_is_anti_ghost() {
+        let mut party = Party::muster();
+        let front = party.layout().front;
+        let first = party.act_in_role(TANK);
+        assert!(
+            first.committed(),
+            "the tank's first contribution lands: {first:?}"
+        );
+        assert_eq!(party.read_field(front, ROLE_SLOT), ROLE_MARK);
+
+        let before_root = party.world().state_root();
+        let before_receipts = party.world().receipts().len();
+        let repeated = party.act_in_role(TANK);
+        assert!(
+            repeated.refused(),
+            "the repeated contribution is executor-refused: {repeated:?}"
+        );
+        assert!(
+            repeated
+                .reason()
+                .is_some_and(|reason| reason.to_ascii_lowercase().contains("write-once")),
+            "the refusal comes from the role cell's WriteOnce predicate: {repeated:?}"
+        );
+        assert_eq!(party.read_field(front, ROLE_SLOT), ROLE_MARK);
+        assert_eq!(
+            party.world().state_root(),
+            before_root,
+            "anti-ghost state root"
+        );
+        assert_eq!(
+            party.world().receipts().len(),
+            before_receipts,
+            "a refused repeat appends no committed receipt"
         );
     }
 

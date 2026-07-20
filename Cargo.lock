@@ -7932,6 +7932,7 @@ dependencies = [
  "dreggnet-trade",
  "dungeon-on-dregg",
  "procgen-dregg",
+ "starbridge-v2",
  "ugc-dregg",
 ]
 

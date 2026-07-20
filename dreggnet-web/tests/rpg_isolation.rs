@@ -12,6 +12,8 @@
 //! - **(b) THE REGRESSION GUARD** — a SHARED multi-party table (`council`) is still shared, NOT
 //!   accidentally split per-identity: alice proposes and bob approves the SAME proposal, reaching
 //!   the 2-of-2 quorum and enacting — impossible unless both act on ONE council.
+//! - **(c) PARTY IS A SHARED TABLE** — alice and bob claim different roles in the SAME party lobby.
+//!   A party routed through the private RPG worlds would strand each claimant in a one-person copy.
 
 use std::sync::Arc;
 
@@ -139,5 +141,30 @@ async fn a_shared_council_is_not_split_per_identity() {
     assert!(
         be.contains("Turn committed"),
         "the 2-of-2 quorum enacts on the ONE shared council: {be}"
+    );
+}
+
+/// **(c) THE PARTY ROUTING FALSIFIER.** Two web identities claim two roles in the same session and
+/// the second response sees both holders. This pins `party` to the shared catalog host while the
+/// inventory-bearing surfaces remain per-identity.
+#[tokio::test]
+async fn a_party_lobby_is_shared_between_identities() {
+    let app = app();
+    let act = "/offerings/party/session/shared-party/act";
+
+    let (_status, alice) = post(&app, act, "claim-role", 0, "alice").await;
+    assert!(
+        alice.contains("Turn committed"),
+        "alice claims the first shared role: {alice}"
+    );
+
+    let (_status, bob) = post(&app, act, "claim-role", 1, "bob").await;
+    assert!(
+        bob.contains("Turn committed"),
+        "bob claims a second role in the same lobby: {bob}"
+    );
+    assert!(
+        bob.contains("alice") && bob.contains("bob") && bob.contains("2 / 4 roles"),
+        "the second response renders one shared two-player roster: {bob}"
     );
 }
