@@ -412,6 +412,26 @@ draws on a finite reserve of will.
 * [Seize the hoard]
   ~ gold += 500
   -> END
+
+* [Let the first-watch Mender bind the party's wounds]
+  ~ hp += 20
+  ~ raid_mending_used += 1
+  -> sanctum
+
+* [Let the second-watch Mender bind the party's wounds]
+  ~ hp += 20
+  ~ raid_mending_used += 1
+  -> sanctum
+
+* [Let the third-watch Mender bind the party's wounds]
+  ~ hp += 20
+  ~ raid_mending_used += 1
+  -> sanctum
+
+* [Let the fourth-watch Mender bind the party's wounds]
+  ~ hp += 20
+  ~ raid_mending_used += 1
+  -> sanctum
 "#;
 
 // ── Keep room / choice coordinates (the driver + verifier speak in these) ────────
@@ -450,6 +470,10 @@ pub const KP_CAST_WARD: usize = 0;
 pub const KP_CLIMB_BACK: usize = 1;
 /// `sanctum`: seize the hoard (ends the dungeon).
 pub const KP_SEIZE: usize = 2;
+/// `sanctum`: the four seat-indexed raid-Mender actions. Exactly the choice
+/// corresponding to the proven assignment's unique Mender seat may restore
+/// twenty HP, once, through a certified private-result carrier.
+pub const KP_PRIVATE_RAID_MENDER_CHOICES: [usize; 4] = [3, 4, 5, 6];
 
 /// The dispatch method for a raw heap-write turn ([`WorldCell::apply_raw`]) that stashes
 /// an item into the heap-keyed inventory (mechanic #5).
@@ -560,6 +584,8 @@ pub fn keep_compiled() -> CompiledStory {
     let depth = keep_slot(&story, "depth");
     let spent = keep_slot(&story, "mana_spent");
     let budget = keep_slot(&story, "mana_budget");
+    let hp = keep_slot(&story, "hp");
+    let raid_mending_used = keep_slot(&story, "raid_mending_used");
 
     // #2 Loot / first-grabber-wins: the crown's owner slot is WRITE-ONCE — the first
     // claim (0 → banner) commits; a rival second claim (banner → other) is refused.
@@ -632,6 +658,44 @@ pub fn keep_compiled() -> CompiledStory {
         }],
     );
 
+    // A proven private raid assignment publishes one Mender seat. The hosted
+    // application selects exactly that seat-indexed method and binds the proof
+    // result into DECISION_EXT_KEY; the executor independently enforces the
+    // carrier, exact +20 recovery, 50 HP ceiling, and one-use resource.
+    let raid_mender_methods: Vec<String> = KP_PRIVATE_RAID_MENDER_CHOICES
+        .iter()
+        .map(|choice| choice_method(ROOM_SANCTUM, *choice))
+        .collect();
+    for method in &raid_mender_methods {
+        augment_case(
+            &mut story.program,
+            method,
+            vec![
+                StateConstraint::FieldDelta {
+                    index: hp,
+                    delta: field_from_u64(20),
+                },
+                StateConstraint::FieldLte {
+                    index: hp,
+                    value: field_from_u64(50),
+                },
+                StateConstraint::FieldDelta {
+                    index: raid_mending_used,
+                    delta: field_from_u64(1),
+                },
+                StateConstraint::WriteOnce {
+                    index: raid_mending_used,
+                },
+                StateConstraint::HeapField {
+                    key: DECISION_EXT_KEY,
+                    atom: HeapAtom::Gte {
+                        value: field_from_u64(1),
+                    },
+                },
+            ],
+        );
+    }
+
     // #5 Heap-keyed inventory: the crown's HEAP owner key is WRITE-ONCE. The heap
     // (`fields_map`, keys ≥ 16) holds a collection larger than the 16 register slots.
     add_case(
@@ -673,6 +737,30 @@ pub fn keep_compiled() -> CompiledStory {
             },
         ],
     );
+
+    // Close the raw-method staple surface for the new recovery. HP is seeded
+    // once at genesis, moves by exactly -20 on a real blow, and by exactly +20
+    // on one of the four certified Mender methods; every other method freezes
+    // it. The one-use counter is writable only by those Mender methods.
+    let trade_blow_method = choice_method(ROOM_GATEHALL, KP_TRADE_BLOWS);
+    augment_case(
+        &mut story.program,
+        GENESIS_METHOD,
+        vec![StateConstraint::WriteOnce { index: hp }],
+    );
+    augment_case(
+        &mut story.program,
+        &trade_blow_method,
+        vec![StateConstraint::FieldDelta {
+            index: hp,
+            delta: signed_delta(-20),
+        }],
+    );
+    let mut hp_writers = vec![GENESIS_METHOD, trade_blow_method.as_str()];
+    hp_writers.extend(raid_mender_methods.iter().map(String::as_str));
+    pin_immutable_except(&mut story.program, &hp_writers, hp);
+    let mending_writers: Vec<&str> = raid_mender_methods.iter().map(String::as_str).collect();
+    pin_immutable_except(&mut story.program, &mending_writers, raid_mending_used);
 
     story
 }
@@ -913,6 +1001,54 @@ mod keep_tests {
     //! illegal move is a REAL executor refusal that commits NOTHING (anti-ghost).
     use super::*;
     use spween_dregg::{Driver, Value, WorldError, verify, verify_chain_linkage};
+
+    #[test]
+    fn raid_mender_methods_have_exact_carrier_resource_and_staple_teeth() {
+        let story = keep_compiled();
+        let hp = keep_slot(&story, "hp");
+        let used = keep_slot(&story, "raid_mending_used");
+        for choice in KP_PRIVATE_RAID_MENDER_CHOICES {
+            let constraints = case_constraints(&story, &choice_method(ROOM_SANCTUM, choice));
+            assert!(constraints.iter().any(|constraint| matches!(
+                constraint,
+                StateConstraint::FieldDelta { index, delta }
+                    if *index == hp && *delta == field_from_u64(20)
+            )));
+            assert!(constraints.iter().any(|constraint| matches!(
+                constraint,
+                StateConstraint::FieldLte { index, value }
+                    if *index == hp && *value == field_from_u64(50)
+            )));
+            assert!(constraints.iter().any(|constraint| matches!(
+                constraint,
+                StateConstraint::FieldDelta { index, delta }
+                    if *index == used && *delta == field_from_u64(1)
+            )));
+            assert!(constraints.iter().any(|constraint| matches!(
+                constraint,
+                StateConstraint::WriteOnce { index } if *index == used
+            )));
+            assert!(constraints.iter().any(|constraint| matches!(
+                constraint,
+                StateConstraint::HeapField { key, atom: HeapAtom::Gte { value } }
+                    if *key == DECISION_EXT_KEY && *value == field_from_u64(1)
+            )));
+        }
+
+        let seize = case_constraints(&story, &choice_method(ROOM_SANCTUM, KP_SEIZE));
+        assert!(seize.iter().any(
+            |constraint| matches!(constraint, StateConstraint::Immutable { index } if *index == hp)
+        ));
+        assert!(seize.iter().any(
+            |constraint| matches!(constraint, StateConstraint::Immutable { index } if *index == used)
+        ));
+        let blow = case_constraints(&story, &choice_method(ROOM_GATEHALL, KP_TRADE_BLOWS));
+        assert!(blow.iter().any(|constraint| matches!(
+            constraint,
+            StateConstraint::FieldDelta { index, delta }
+                if *index == hp && *delta == signed_delta(-20)
+        )));
+    }
 
     /// THE STAPLE-CLOSURE FALSIFIER (keep, driven). Before `bind_slot_write`, a
     /// `SetField(relic_owner, 2)` STAPLED onto a legit press-on turn — or onto a re-invoked

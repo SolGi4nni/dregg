@@ -47,8 +47,10 @@ use dungeon_on_dregg::private_quest::{
 };
 #[cfg(feature = "private-raid-operation")]
 use dungeon_on_dregg::private_raid::{
-    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
+    RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment, RaidRole,
 };
+#[cfg(feature = "private-raid-operation")]
+use dungeon_on_dregg::{KP_PRIVATE_RAID_MENDER_CHOICES, ROOM_SANCTUM};
 #[cfg(feature = "private-fair-shuffle-operation")]
 use dungeon_on_dregg::{KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE, KP_PRIVATE_SHUFFLE_ODD_INITIATIVE};
 use dungeon_on_dregg::{deploy_keep, keep_scene};
@@ -92,7 +94,7 @@ pub const PRIVATE_RAID_MEDIA_TYPE: &str =
 #[cfg(feature = "private-raid-operation")]
 pub const MAX_PRIVATE_RAID_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(feature = "private-raid-operation")]
-pub const PRIVATE_RAID_DISCLOSURE: &str = "HidingFri proves the published four-seat role permutation is admissible and globally optimal for one producer-private 4x4 score matrix. The producer sees every score and admissibility bit; this is not distributed private-input assembly or an Effect::Custom cell transition.";
+pub const PRIVATE_RAID_DISCLOSURE: &str = "HidingFri proves the published four-seat role permutation is admissible and globally optimal for one producer-private 4x4 score matrix. In the Keep, the proof submitter may carry the unique assigned Mender seat into one exact +20 HP sanctum recovery, bound to the assignment, actor, and operation order. The producer sees every score and admissibility bit, while every assigned role is public; the current statement does not bind seat numbers to separate player identities, so the authenticated proof submitter—not a proved seat holder—is the carrier. This is not distributed private-input assembly, and the standalone proof remains in the durable operation journal rather than recursively folded into the world turn.";
 
 #[cfg(feature = "private-preference-operation")]
 pub const PRIVATE_PREFERENCE_OPERATION: &str = "dungeon.private-party-preference.v1";
@@ -255,6 +257,10 @@ pub struct DungeonSession {
     private_raid: RaidAssignmentSession,
     #[cfg(feature = "private-raid-operation")]
     private_raid_actor: Option<DreggIdentity>,
+    /// Number of already-landed world steps when the private raid assignment
+    /// was accepted. The assignment cannot authorize an earlier recovery.
+    #[cfg(feature = "private-raid-operation")]
+    private_raid_accepted_after_steps: Option<usize>,
     /// One proof-gated aggregate party decision. The public session retains
     /// only the ballot root, winner, and submitter.
     #[cfg(feature = "private-preference-operation")]
@@ -442,6 +448,37 @@ fn private_preference_enactment_commitment(
     field_from_bytes(&bytes)
 }
 
+/// Return the seat encoded by one of the four role-indexed sanctum choices.
+#[cfg(feature = "private-raid-operation")]
+fn private_raid_mender_seat(choice_index: usize) -> Option<usize> {
+    KP_PRIVATE_RAID_MENDER_CHOICES
+        .iter()
+        .position(|choice| *choice == choice_index)
+}
+
+/// Bind the exact public assignment, its accepting timeline cursor, and its
+/// authenticated proof submitter to the one role-specific world transition.
+#[cfg(feature = "private-raid-operation")]
+fn private_raid_enactment_commitment(
+    assignment: RaidPartyAssignment,
+    accepted_after: usize,
+    actor: &DreggIdentity,
+) -> FieldElement {
+    let mut bytes = Vec::with_capacity(128 + actor.as_str().len());
+    bytes.extend_from_slice(b"dregg-dungeon/private-raid-mender-enactment-v1");
+    bytes.extend_from_slice(&assignment.session().to_be_bytes());
+    for lane in assignment.input_root() {
+        bytes.extend_from_slice(&lane.to_be_bytes());
+    }
+    for role in assignment.roles() {
+        bytes.push(role as u8);
+    }
+    bytes.extend_from_slice(&(accepted_after as u64).to_be_bytes());
+    bytes.extend_from_slice(&(actor.as_str().len() as u64).to_be_bytes());
+    bytes.extend_from_slice(actor.as_str().as_bytes());
+    field_from_bytes(&bytes)
+}
+
 /// Locate the one selectively revealed card owned by `actor`. Commit-time
 /// admission already prevents one identity from occupying two live seats.
 #[cfg(feature = "private-fair-shuffle-operation")]
@@ -575,6 +612,20 @@ impl DungeonOffering {
                 } else {
                     available
                 };
+                #[cfg(feature = "private-raid-operation")]
+                let available = if passage.name.as_str() == ROOM_SANCTUM {
+                    if let Some(seat) = private_raid_mender_seat(choice_index) {
+                        session.read_var("raid_mending_used") == 0
+                            && session.read_var("hp") <= 30
+                            && session.private_raid_assignment().is_some_and(|assignment| {
+                                assignment.role_for_seat(seat) == Some(RaidRole::Mender)
+                            })
+                    } else {
+                        available
+                    }
+                } else {
+                    available
+                };
                 Action::new(
                     choice.text.to_string(),
                     TURN_CHOOSE,
@@ -638,6 +689,8 @@ impl Offering for DungeonOffering {
                 .map_err(|error| OfferingError::Deploy(error.to_string()))?,
             #[cfg(feature = "private-raid-operation")]
             private_raid_actor: None,
+            #[cfg(feature = "private-raid-operation")]
+            private_raid_accepted_after_steps: None,
             #[cfg(feature = "private-preference-operation")]
             private_preference: PrivatePreferenceSession::new(private_preference_session)
                 .map_err(|error| OfferingError::Deploy(error.to_string()))?,
@@ -791,7 +844,67 @@ impl Offering for DungeonOffering {
         #[cfg(not(feature = "private-fair-shuffle-operation"))]
         let private_shuffle_binding: Option<FieldElement> = None;
 
-        let private_result_binding = private_preference_binding.or(private_shuffle_binding);
+        #[cfg(feature = "private-raid-operation")]
+        let private_raid_binding = if passage_name == ROOM_SANCTUM {
+            if let Some(seat) = private_raid_mender_seat(choice_index) {
+                let Some(assignment) = session.private_raid_assignment() else {
+                    return Outcome::Refused(
+                        "raid Mender recovery requires a verified private assignment".to_string(),
+                    );
+                };
+                if assignment.role_for_seat(seat) != Some(RaidRole::Mender) {
+                    return Outcome::Refused(format!(
+                        "raid seat {seat} is not the assignment's Mender"
+                    ));
+                }
+                let Some(raid_actor) = session.private_raid_actor() else {
+                    return Outcome::Refused(
+                        "the verified raid assignment has no authenticated submitter".to_string(),
+                    );
+                };
+                if raid_actor != &actor {
+                    return Outcome::Refused(
+                        "only the authenticated raid-assignment submitter may carry its Mender recovery"
+                            .to_string(),
+                    );
+                }
+                let Some(accepted_after) = session.private_raid_accepted_after_steps else {
+                    return Outcome::Refused(
+                        "the raid assignment is missing its replay-order binding".to_string(),
+                    );
+                };
+                if accepted_after > session.steps.len() {
+                    return Outcome::Refused(
+                        "the raid assignment cannot authorize an earlier world step".to_string(),
+                    );
+                }
+                if session.read_var("raid_mending_used") != 0 {
+                    return Outcome::Refused(
+                        "the assigned Mender recovery has already been spent".to_string(),
+                    );
+                }
+                if session.read_var("hp") > 30 {
+                    return Outcome::Refused(
+                        "the Mender cannot raise the party above its 50 HP limit".to_string(),
+                    );
+                }
+                Some(private_raid_enactment_commitment(
+                    assignment,
+                    accepted_after,
+                    &actor,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        #[cfg(not(feature = "private-raid-operation"))]
+        let private_raid_binding: Option<FieldElement> = None;
+
+        let private_result_binding = private_preference_binding
+            .or(private_shuffle_binding)
+            .or(private_raid_binding);
 
         let applied = match private_result_binding {
             Some(commitment) => session.world.apply_choice_certified(
@@ -1263,6 +1376,7 @@ impl Offering for DungeonOffering {
                 .accept(&receipt)
                 .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
             session.private_raid_actor = Some(actor);
+            session.private_raid_accepted_after_steps = Some(session.steps.len());
             return Ok(BinaryOperationReceipt {
                 operation: PRIVATE_RAID_OPERATION.to_string(),
                 receipt_id,
@@ -1673,6 +1787,46 @@ fn verify_private_result_enactments(
             if step.decision_commitment != Some(expected) {
                 return Err(
                     "fair-dealt initiative carries a substituted result commitment".to_string(),
+                );
+            }
+        }
+    }
+    #[cfg(feature = "private-raid-operation")]
+    {
+        for (index, step) in record.steps.iter().enumerate() {
+            if step.passage != ROOM_SANCTUM {
+                continue;
+            }
+            let Some(seat) = private_raid_mender_seat(step.choice_index) else {
+                continue;
+            };
+            let assignment = session.private_raid_assignment().ok_or_else(|| {
+                "raid Mender world step has no verified private assignment".to_string()
+            })?;
+            if assignment.role_for_seat(seat) != Some(RaidRole::Mender) {
+                return Err(format!("raid seat {seat} is not the assignment's Mender"));
+            }
+            let accepted_after = session.private_raid_accepted_after_steps.ok_or_else(|| {
+                "raid Mender world step has no operation-order binding".to_string()
+            })?;
+            if accepted_after > index {
+                return Err(
+                    "raid assignment was accepted after the recovery it claims to authorize"
+                        .to_string(),
+                );
+            }
+            let actor = session.actors.get(index).ok_or_else(|| {
+                "raid Mender world step has no authenticated actor attribution".to_string()
+            })?;
+            if session.private_raid_actor() != Some(actor) {
+                return Err(
+                    "raid Mender world step actor differs from the proof submitter".to_string(),
+                );
+            }
+            let expected = private_raid_enactment_commitment(assignment, accepted_after, actor);
+            if step.decision_commitment != Some(expected) {
+                return Err(
+                    "raid Mender world step carries a substituted result commitment".to_string(),
                 );
             }
         }
