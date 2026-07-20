@@ -15,6 +15,7 @@ use dreggnet_web::discord_activity::{DiscordActivityState, discord_activity_rout
 use dreggnet_web::telegram_miniapp::{TgMiniAppState, tg_miniapp_router};
 use dreggnet_web::{CatalogState, catalog_router, fhegg_operation, web_identity};
 use dungeon_on_dregg::private_preference::{PrivateBallot, prove_private_preference};
+use dungeon_on_dregg::{KP_PRESS_ON, KP_PRIVATE_COUNSEL_DESCEND};
 use tower::ServiceExt;
 
 const OFFERING: &str = "dungeon";
@@ -64,6 +65,16 @@ fn upload(path: &str, body: impl Into<Body>) -> Request<Body> {
         .unwrap()
 }
 
+fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("cookie", format!("dregg_user={user}"))
+        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .unwrap()
+}
+
 #[tokio::test]
 async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
     let catalog = catalog();
@@ -85,6 +96,11 @@ async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
         .merge(fhegg_operation::router(Arc::clone(&catalog)))
         .merge(tg)
         .merge(da);
+
+    let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
+    let act_path = format!("{game_path}/act");
+    let (status, entered) = response(&app, act(&act_path, KP_PRESS_ON, "guild-counsel")).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&entered));
 
     let operations = format!("/offerings/{OFFERING}/session/{SESSION}/operations");
     let (status, descriptors) = response(
@@ -133,10 +149,22 @@ async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
     assert!(applied.contains("winner"));
     assert_eq!(response(&app, upload(&route, honest)).await.0, 409);
 
+    let (status, enacted) = response(
+        &app,
+        act(&act_path, KP_PRIVATE_COUNSEL_DESCEND, "guild-counsel"),
+    )
+    .await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&enacted));
+    assert!(
+        String::from_utf8(enacted)
+            .unwrap()
+            .contains("Turn committed")
+    );
+
     let (status, game) = response(
         &app,
         Request::builder()
-            .uri(format!("/offerings/{OFFERING}/session/{SESSION}"))
+            .uri(&game_path)
             .header("cookie", "dregg_user=guild-counsel")
             .body(Body::empty())
             .unwrap(),
@@ -147,5 +175,21 @@ async fn shielded_party_choice_is_discoverable_authenticated_and_live() {
     assert!(game.contains("Shielded party counsel"));
     assert!(game.contains("the party privately chose #1"));
     assert!(game.contains("descend the drowned stair"));
+    assert!(game.contains("depth 2"));
     assert!(game.contains(&web_identity("guild-counsel").0));
+
+    let (status, verified) = response(
+        &app,
+        Request::builder()
+            .uri(format!("{game_path}/verify"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        String::from_utf8(verified)
+            .unwrap()
+            .contains("\"verified\":true")
+    );
 }

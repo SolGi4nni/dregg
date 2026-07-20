@@ -13,7 +13,8 @@ use dreggnet_offerings::{OfferingHost, SessionConfig, SessionId};
 use dreggnet_web::discord_activity::{DiscordActivityState, discord_activity_router};
 use dreggnet_web::telegram_miniapp::{TgMiniAppState, tg_miniapp_router};
 use dreggnet_web::{CatalogState, catalog_router, fhegg_operation, web_identity};
-use dungeon_on_dregg::private_raid::prove_private_assignment;
+use dungeon_on_dregg::private_raid::{RaidRole, prove_private_assignment};
+use dungeon_on_dregg::{KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES, KP_TRADE_BLOWS};
 use tower::ServiceExt;
 
 const OFFERING: &str = "dungeon";
@@ -58,6 +59,16 @@ fn upload(path: &str, body: impl Into<Body>) -> Request<Body> {
         .unwrap()
 }
 
+fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("cookie", format!("dregg_user={user}"))
+        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .unwrap()
+}
+
 #[tokio::test]
 async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_game() {
     let catalog = catalog();
@@ -80,7 +91,9 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
         .merge(tg)
         .merge(da);
 
-    let operations_path = format!("/offerings/{OFFERING}/session/{SESSION}/operations");
+    let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
+    let act_path = format!("{game_path}/act");
+    let operations_path = format!("{game_path}/operations");
     let (status, discovered) = response(
         &app,
         Request::builder()
@@ -97,10 +110,16 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
 
     let route = format!("{operations_path}/{PRIVATE_RAID_OPERATION}");
     let proof_session = ((SEED % 2_013_265_920) + 1) as u32;
-    let honest = prove_private_assignment(proof_session, scores(), [[true; 4]; 4])
-        .expect("real private assignment proves")
-        .to_postcard()
-        .expect("canonical transport");
+    let receipt = prove_private_assignment(proof_session, scores(), [[true; 4]; 4])
+        .expect("real private assignment proves");
+    let mender_seat = receipt
+        .statement()
+        .roles
+        .iter()
+        .position(|role| *role == RaidRole::Mender as u8)
+        .expect("the proved permutation has exactly one Mender");
+    let mender_choice = KP_PRIVATE_RAID_MENDER_CHOICES[mender_seat];
+    let honest = receipt.to_postcard().expect("canonical transport");
 
     let wrong_media = Request::builder()
         .method("POST")
@@ -137,6 +156,14 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
         assert_eq!(response(&app, anonymous).await.0, 401);
     }
 
+    // Reach the sanctum with exactly 30 HP through ordinary HTTP turns.  The
+    // later proof acceptance is bound to this live timeline cursor.
+    for choice in [KP_TRADE_BLOWS, KP_PRESS_ON, KP_DESCEND] {
+        let (status, moved) = response(&app, act(&act_path, choice, "raid-captain")).await;
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&moved));
+        assert!(String::from_utf8(moved).unwrap().contains("Turn committed"));
+    }
+
     let (status, applied) = response(&app, upload(&route, honest.clone())).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&applied));
     let applied = String::from_utf8(applied).unwrap();
@@ -147,6 +174,26 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
     assert!(applied.contains("Pathfinder"));
 
     assert_eq!(response(&app, upload(&route, honest)).await.0, 409);
+
+    // A different authenticated web actor cannot spend the proof submitter's
+    // capability.  The refusal does not consume the Mender recovery.
+    let (status, refused) = response(&app, act(&act_path, mender_choice, "raid-thief")).await;
+    assert_eq!(status, 200);
+    assert!(String::from_utf8(refused).unwrap().contains("Refused"));
+
+    // The exact role-indexed choice then crosses the ordinary action route and
+    // spends the verified assignment once: HP 30 -> 50 in a committed turn.
+    let (status, healed) = response(&app, act(&act_path, mender_choice, "raid-captain")).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&healed));
+    assert!(
+        String::from_utf8(healed)
+            .unwrap()
+            .contains("Turn committed")
+    );
+
+    let (status, reused) = response(&app, act(&act_path, mender_choice, "raid-captain")).await;
+    assert_eq!(status, 200);
+    assert!(String::from_utf8(reused).unwrap().contains("Refused"));
 
     // The operation is not a sidecar: the normal playable dungeon surface now
     // renders the proof-produced party roles and the attributed submitter.
@@ -165,4 +212,20 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
     assert!(game.contains("verified roles"));
     assert!(game.contains("submitted by"));
     assert!(game.contains(&web_identity("raid-captain").0));
+    assert!(game.contains("HP 50"));
+
+    let (status, verified) = response(
+        &app,
+        Request::builder()
+            .uri(format!("{game_path}/verify"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        String::from_utf8(verified)
+            .unwrap()
+            .contains("\"verified\":true")
+    );
 }

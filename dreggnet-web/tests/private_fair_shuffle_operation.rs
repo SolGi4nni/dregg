@@ -15,6 +15,9 @@ use dreggnet_offerings::dungeon::{
 use dreggnet_offerings::{OfferingHost, SessionConfig, SessionId};
 use dreggnet_web::{CatalogState, catalog_router, fhegg_operation};
 use dungeon_on_dregg::private_fair_shuffle::{PARTICIPANTS, PreparedFairShuffle};
+use dungeon_on_dregg::{
+    KP_PRESS_ON, KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE, KP_PRIVATE_SHUFFLE_ODD_INITIATIVE,
+};
 use tower::ServiceExt;
 
 const OFFERING: &str = "dungeon";
@@ -55,12 +58,26 @@ fn upload(path: &str, media_type: &str, user: &str, body: impl Into<Body>) -> Re
         .unwrap()
 }
 
+fn act(path: &str, arg: usize, user: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("cookie", format!("dregg_user={user}"))
+        .body(Body::from(format!("turn=choose&arg={arg}")))
+        .unwrap()
+}
+
 #[tokio::test]
 async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     let catalog = catalog();
     let app = Router::new()
         .merge(catalog_router(Arc::clone(&catalog)))
         .merge(fhegg_operation::router(Arc::clone(&catalog)));
+    let game_path = format!("/offerings/{OFFERING}/session/{SESSION}");
+    let act_path = format!("{game_path}/act");
+    let (status, entered) = response(&app, act(&act_path, KP_PRESS_ON, "seat-6")).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&entered));
     let operations = format!("/offerings/{OFFERING}/session/{SESSION}/operations");
 
     let (status, descriptors) = response(
@@ -143,7 +160,9 @@ async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert!(String::from_utf8(body).unwrap().contains("accepted"));
 
-    let opening = prepared.card_opening(6).unwrap().to_postcard().unwrap();
+    let prepared_opening = prepared.card_opening(6).unwrap();
+    let card = prepared_opening.card;
+    let opening = prepared_opening.to_postcard().unwrap();
     let reveal_route = format!("{operations}/{PRIVATE_SHUFFLE_REVEAL_OPERATION}");
     assert_eq!(
         response(
@@ -172,10 +191,23 @@ async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&opened));
     assert!(String::from_utf8(opened).unwrap().contains("card"));
 
+    let initiative = if card % 2 == 0 {
+        KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE
+    } else {
+        KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+    };
+    let (status, enacted) = response(&app, act(&act_path, initiative, "seat-6")).await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&enacted));
+    assert!(
+        String::from_utf8(enacted)
+            .unwrap()
+            .contains("Turn committed")
+    );
+
     let (status, game) = response(
         &app,
         Request::builder()
-            .uri(format!("/offerings/{OFFERING}/session/{SESSION}"))
+            .uri(&game_path)
             .header("cookie", "dregg_user=seat-6")
             .body(Body::empty())
             .unwrap(),
@@ -186,4 +218,25 @@ async fn eight_web_actors_commit_then_one_proof_and_one_owned_opening_land() {
     assert!(game.contains("Private fair deal"));
     assert!(game.contains("accepted attempt 0"));
     assert!(game.contains("1 private card opening(s) landed"));
+    assert!(game.contains("depth 1"));
+    assert!(game.contains(if card % 2 == 0 {
+        "crown Red Hand"
+    } else {
+        "crown Blue Hand"
+    }));
+
+    let (status, verified) = response(
+        &app,
+        Request::builder()
+            .uri(format!("{game_path}/verify"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        String::from_utf8(verified)
+            .unwrap()
+            .contains("\"verified\":true")
+    );
 }
