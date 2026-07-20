@@ -65,6 +65,7 @@ import Market.SddPsd
 import Market.CertQpRustDenotation
 import Market.QpCertificateBundle
 import Market.QpExternalProgramBinding
+import Market.QpApproximateBound
 import Market.CertQpDescriptor
 import Market.PriceCert
 import Market.FhIRAdmissible
