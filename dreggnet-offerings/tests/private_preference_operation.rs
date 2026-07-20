@@ -1,11 +1,16 @@
 #![cfg(feature = "private-preference-operation")]
 
+use dregg_app_framework::field_from_bytes;
 use dreggnet_offerings::dungeon::{
-    DungeonOffering, PRIVATE_PREFERENCE_OPERATION, private_preference_session_for_seed,
+    DungeonOffering, PRIVATE_PREFERENCE_OPERATION, TURN_CHOOSE, private_preference_session_for_seed,
 };
 use dreggnet_offerings::resume::{InMemoryResumeStore, SessionResumeStore};
-use dreggnet_offerings::{DreggIdentity, Offering, OfferingHost, SessionConfig, SessionId};
+use dreggnet_offerings::{
+    Action, DreggIdentity, Offering, OfferingHost, RecordVerify, SessionConfig, SessionId,
+};
 use dungeon_on_dregg::private_preference::{PrivateBallot, prove_private_preference};
+use dungeon_on_dregg::{KP_PRESS_ON, KP_PRIVATE_COUNSEL_DESCEND, deploy_keep, keep_scene};
+use spween_dregg::{Driver, verify};
 
 const SEED: u64 = 0xC011EC7;
 
@@ -32,6 +37,41 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
     let proof_session = private_preference_session_for_seed(SEED);
     let receipt = prove_private_preference(proof_session, &ballots()).unwrap();
     let honest = receipt.to_postcard().unwrap();
+    let counsel = DreggIdentity("guild-counsel".to_string());
+
+    assert!(
+        offering
+            .advance(
+                &mut session,
+                Action::new("press on", TURN_CHOOSE, KP_PRESS_ON as i64, true),
+                DreggIdentity("pathfinder".to_string()),
+            )
+            .landed()
+    );
+    let benefit = Action::new(
+        "take the drowned stair",
+        TURN_CHOOSE,
+        KP_PRIVATE_COUNSEL_DESCEND as i64,
+        true,
+    );
+    assert!(
+        !offering
+            .actions(&session)
+            .into_iter()
+            .find(|action| action.arg == KP_PRIVATE_COUNSEL_DESCEND as i64)
+            .unwrap()
+            .enabled,
+        "the private route is visibly unavailable before proof"
+    );
+    let before_refusal = session.receipts_len();
+    assert!(
+        !offering
+            .advance(&mut session, benefit.clone(), counsel.clone())
+            .landed(),
+        "an absent private result cannot produce the two-depth benefit"
+    );
+    assert_eq!(session.receipts_len(), before_refusal);
+    assert_eq!(session.read_var("depth"), 0);
 
     let wrong = prove_private_preference(proof_session + 1, &ballots())
         .unwrap()
@@ -49,6 +89,13 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
     );
     assert!(session.private_preference_decision().is_none());
     assert!(session.private_preference_actor().is_none());
+    assert!(
+        !offering
+            .advance(&mut session, benefit.clone(), counsel.clone())
+            .landed(),
+        "a receipt substituted from another proof session cannot authorize the route"
+    );
+    assert_eq!(session.read_var("depth"), 0);
 
     let mut corrupt = honest.clone();
     let at = corrupt.len() - 1;
@@ -70,15 +117,85 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
             &mut session,
             PRIVATE_PREFERENCE_OPERATION,
             &honest,
-            DreggIdentity("guild-counsel".to_string()),
+            counsel.clone(),
         )
         .unwrap();
     assert_eq!(landed.operation, PRIVATE_PREFERENCE_OPERATION);
     assert_eq!(session.private_preference_decision().unwrap().winner(), 1);
-    assert_eq!(
-        session.private_preference_actor(),
-        Some(&DreggIdentity("guild-counsel".to_string()))
+    assert_eq!(session.private_preference_actor(), Some(&counsel));
+    assert!(
+        offering
+            .actions(&session)
+            .into_iter()
+            .find(|action| action.arg == KP_PRIVATE_COUNSEL_DESCEND as i64)
+            .unwrap()
+            .enabled,
+        "the verified drowned-stair result unlocks the route"
     );
+    let before_actor_substitution = session.receipts_len();
+    assert!(
+        !offering
+            .advance(
+                &mut session,
+                benefit.clone(),
+                DreggIdentity("route-thief".to_string()),
+            )
+            .landed(),
+        "another identity cannot spend the submitter-bound result"
+    );
+    assert_eq!(session.receipts_len(), before_actor_substitution);
+    assert_eq!(session.read_var("depth"), 0);
+
+    assert!(
+        offering
+            .advance(&mut session, benefit, counsel.clone())
+            .landed(),
+        "the proof submitter enacts the certified route"
+    );
+    assert_eq!(
+        session.read_var("depth"),
+        2,
+        "ordinary descent advances only one"
+    );
+    let authentic = session.playthrough();
+    assert!(
+        authentic
+            .steps
+            .last()
+            .unwrap()
+            .decision_commitment
+            .is_some()
+    );
+    assert!(offering.verify(&session).verified);
+
+    // This is a fully valid scene receipt chain carrying a DIFFERENT certified
+    // commitment. The generic spween verifier accepts it; the dungeon verifier
+    // must reject it because it is not the accepted HidingFri result + actor.
+    let world_seed = ((SEED % 251) + 1) as u8;
+    let scene = keep_scene();
+    let mut unbound = Driver::start(deploy_keep(world_seed), &scene).unwrap();
+    unbound.advance(KP_PRESS_ON).unwrap();
+    assert!(
+        unbound.advance(KP_PRIVATE_COUNSEL_DESCEND).is_err(),
+        "the executor itself refuses the benefit without a same-turn certified commitment"
+    );
+
+    let mut substituted = Driver::start(deploy_keep(world_seed), &scene).unwrap();
+    substituted.advance(KP_PRESS_ON).unwrap();
+    substituted
+        .advance_certified(
+            KP_PRIVATE_COUNSEL_DESCEND,
+            field_from_bytes(b"substituted-private-result"),
+        )
+        .unwrap();
+    let substituted_record = substituted.playthrough();
+    assert!(verify(deploy_keep(world_seed), &scene, &substituted_record).is_ok());
+    let rejected = offering.verify_record(&session, &substituted_record);
+    assert!(
+        !rejected.verified,
+        "an unrelated certified value must not pass"
+    );
+    assert!(rejected.detail.contains("substituted result commitment"));
 
     let before = session.private_preference_decision();
     assert!(
@@ -107,6 +224,13 @@ fn private_party_choice_reverifies_from_the_operation_journal_after_restart() {
     host.register("dungeon", "The Warden's Keep", DungeonOffering::new());
     host.open_session("dungeon", id.clone(), SessionConfig::with_seed(SEED))
         .unwrap();
+    host.advance(
+        "dungeon",
+        &id,
+        Action::new("press on", TURN_CHOOSE, KP_PRESS_ON as i64, true),
+        DreggIdentity("pathfinder".to_string()),
+    )
+    .unwrap();
     host.invoke_binary_operation(
         "dungeon",
         &id,
@@ -115,9 +239,26 @@ fn private_party_choice_reverifies_from_the_operation_journal_after_restart() {
         DreggIdentity("guild-counsel".to_string()),
     )
     .unwrap();
+    let enacted = host
+        .advance(
+            "dungeon",
+            &id,
+            Action::new(
+                "take the drowned stair",
+                TURN_CHOOSE,
+                KP_PRIVATE_COUNSEL_DESCEND as i64,
+                true,
+            ),
+            DreggIdentity("guild-counsel".to_string()),
+        )
+        .unwrap();
+    assert!(enacted.landed());
+    assert!(host.verify("dungeon", &id).unwrap().verified);
 
     let log = store.load("dungeon", &id).unwrap();
     assert_eq!(log.operations.len(), 1);
+    assert_eq!(log.operations[0].after_moves, 1);
+    assert_eq!(log.moves.len(), 2);
     assert!(log.operations[0].replay_is_canonical_request);
     assert!(log.operations[0].replay_disclosure.contains("no ballot"));
     drop(host);
@@ -130,6 +271,8 @@ fn private_party_choice_reverifies_from_the_operation_journal_after_restart() {
     let rendered = format!("{:?}", reopened.render("dungeon", &id).unwrap().0);
     assert!(rendered.contains("the party privately chose #1"));
     assert!(rendered.contains("descend the drowned stair"));
+    assert!(rendered.contains("depth 2"));
+    assert!(reopened.verify("dungeon", &id).unwrap().verified);
 
     assert!(
         reopened

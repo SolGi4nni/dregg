@@ -185,7 +185,9 @@ pub mod overworld;
 pub mod dialogue;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
-use spween_dregg::{CompiledStory, GENESIS_METHOD, WorldCell, choice_method, compile_scene, parse};
+use spween_dregg::{
+    CompiledStory, DECISION_EXT_KEY, GENESIS_METHOD, WorldCell, choice_method, compile_scene, parse,
+};
 
 /// The dungeon, expressed in the spween narrative DSL. Three rooms
 /// (`shore` → `antechamber` → `dark_stair`), one item (the brass lantern), one gated
@@ -380,6 +382,10 @@ and only the first hand to close on it holds it.
   ~ depth += 1
   -> sanctum
 
+* [Take the shielded counsel's drowned stair]
+  ~ depth += 2
+  -> sanctum
+
 === sanctum
 
 The sanctum hums with old wards; the stair groans and sheds stone behind you. Casting
@@ -417,6 +423,11 @@ pub const KP_CLAIM_RED: usize = 0;
 pub const KP_CLAIM_BLUE: usize = 1;
 /// `hall`: descend the collapsing stair (`depth += 1`).
 pub const KP_DESCEND: usize = 2;
+/// `hall`: take the shielded-counsel route (`depth += 2`). Its executor case
+/// requires a certified-decision commitment in the post-state (there is none in
+/// a fresh Keep, so a plain turn refuses); the hosted dungeon writes one in this
+/// turn and checks it against its accepted private preference.
+pub const KP_PRIVATE_COUNSEL_DESCEND: usize = 3;
 /// `sanctum`: cast the sealing ward (`mana_spent += 30`) — refused past the budget.
 pub const KP_CAST_WARD: usize = 0;
 /// `sanctum`: climb back up (`depth -= 1`) — refused (the stair collapsed: one-way).
@@ -554,6 +565,19 @@ pub fn keep_compiled() -> CompiledStory {
         &mut story.program,
         &choice_method(ROOM_HALL, KP_DESCEND),
         vec![StateConstraint::Monotonic { index: depth }],
+    );
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_HALL, KP_PRIVATE_COUNSEL_DESCEND),
+        vec![
+            StateConstraint::Monotonic { index: depth },
+            StateConstraint::HeapField {
+                key: DECISION_EXT_KEY,
+                atom: HeapAtom::Gte {
+                    value: field_from_u64(1),
+                },
+            },
+        ],
     );
     augment_case(
         &mut story.program,

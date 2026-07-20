@@ -16,10 +16,11 @@
 //! (a killing blow past the HP floor, a second grab of a `WriteOnce` relic, climbing a one-way
 //! stair, an over-budget ward) is a real `WorldError::Refused` that commits nothing — the
 //! anti-ghost tooth. `verify` re-drives a fresh identically-seeded world-cell through the
-//! recorded choices ([`verify_by_replay`]); a forged/reordered record fails.
+//! recorded choices ([`verify_by_replay`]) and rechecks any private-result enactment against
+//! its accepted session/result/actor; a forged, substituted, or reordered record fails.
 
 use deos_view::{MenuItem, ViewNode};
-use dregg_app_framework::TurnReceipt;
+use dregg_app_framework::{FieldElement, TurnReceipt, field_from_bytes};
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
 use spween_dregg::{StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay};
 
@@ -41,6 +42,8 @@ use dungeon_on_dregg::private_quest::{
 use dungeon_on_dregg::private_raid::{
     RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
 };
+#[cfg(feature = "private-preference-operation")]
+use dungeon_on_dregg::{KP_PRIVATE_COUNSEL_DESCEND, ROOM_HALL};
 use dungeon_on_dregg::{deploy_keep, keep_scene};
 
 use crate::{
@@ -92,7 +95,7 @@ pub const PRIVATE_PREFERENCE_MEDIA_TYPE: &str =
 #[cfg(feature = "private-preference-operation")]
 pub const MAX_PRIVATE_PREFERENCE_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(feature = "private-preference-operation")]
-pub const PRIVATE_PREFERENCE_DISCLOSURE: &str = "A Lean-authored HidingFri proof aggregates four producer-private, two-bit score ballots over four public party plans and reveals only the lowest-index winning plan plus a faithful ballot root. Ballots, option totals, and the winning total stay hidden; the current Tier-1 producer sees all ballots, while the separate custom-cell descriptor is not folded by this hosted receipt.";
+pub const PRIVATE_PREFERENCE_DISCLOSURE: &str = "A Lean-authored HidingFri proof aggregates four producer-private, two-bit score ballots over four public party plans and reveals only the lowest-index winning plan plus a faithful ballot root. When the drowned-stair plan wins, its authenticated submitter may enact a one-shot two-depth route whose real world receipt commits the public result and actor. Ballots, option totals, and the winning total stay hidden; the current Tier-1 producer sees all ballots, and the hiding proof itself is reverified from the durable operation journal rather than recursively folded into the world turn.";
 #[cfg(feature = "private-preference-operation")]
 pub const PRIVATE_PREFERENCE_OPTIONS: [&str; 4] = [
     "assault the ash gate",
@@ -100,6 +103,11 @@ pub const PRIVATE_PREFERENCE_OPTIONS: [&str; 4] = [
     "barter in the Dark Bazaar",
     "muster for the moon raid",
 ];
+/// The shielded plan with an enacted Keep mechanic: a verified winner of the
+/// drowned-stair plan authorizes its submitting identity to take the two-depth
+/// counsel route from the hall. The ordinary stair advances only one depth.
+#[cfg(feature = "private-preference-operation")]
+pub const PRIVATE_PREFERENCE_DROWNED_STAIR_PLAN: usize = 1;
 
 #[cfg(feature = "private-fair-shuffle-operation")]
 pub const PRIVATE_SHUFFLE_COMMIT_OPERATION: &str = "dungeon.private-fair-shuffle.commit.v1";
@@ -246,6 +254,11 @@ pub struct DungeonSession {
     private_preference: PrivatePreferenceSession,
     #[cfg(feature = "private-preference-operation")]
     private_preference_actor: Option<DreggIdentity>,
+    /// Number of already-landed world steps when the verified preference was
+    /// accepted. This is the operation/move ordering pin used by verification:
+    /// counsel cannot authorize an earlier world step after the fact.
+    #[cfg(feature = "private-preference-operation")]
+    private_preference_accepted_after_steps: Option<usize>,
     /// Public commit/proof/opening state for the opt-in private fair deal.
     #[cfg(feature = "private-fair-shuffle-operation")]
     private_shuffle: FairShuffleTable,
@@ -398,6 +411,26 @@ impl DungeonSession {
     }
 }
 
+/// Bind the public result of the hiding proof and its authenticated carrier to
+/// the exact world turn that enacts it. `apply_choice_certified` commits this
+/// field under the world's decision ext-key in the same receipt as the route.
+#[cfg(feature = "private-preference-operation")]
+fn private_preference_enactment_commitment(
+    decision: PrivatePartyDecision,
+    actor: &DreggIdentity,
+) -> FieldElement {
+    let mut bytes = Vec::with_capacity(64 + actor.as_str().len());
+    bytes.extend_from_slice(b"dregg-dungeon/private-preference-enactment-v1");
+    bytes.extend_from_slice(&decision.session().to_be_bytes());
+    for lane in decision.ballot_root() {
+        bytes.extend_from_slice(&lane.to_be_bytes());
+    }
+    bytes.extend_from_slice(&(decision.winner() as u64).to_be_bytes());
+    bytes.extend_from_slice(&(actor.as_str().len() as u64).to_be_bytes());
+    bytes.extend_from_slice(actor.as_str().as_bytes());
+    field_from_bytes(&bytes)
+}
+
 /// **The dungeon offering** — offering #0. A stateless factory over the hosted Keep universe;
 /// each [`open`](Offering::open) deploys a fresh [`DungeonSession`]. Carries the per-move
 /// [`RunCost`] (the free tier by default; a paid tier prices the confined narrator — which the
@@ -450,6 +483,18 @@ impl DungeonOffering {
                     .as_ref()
                     .map(|c| eval_condition(&c.expr, &session.world))
                     .unwrap_or(true);
+                #[cfg(feature = "private-preference-operation")]
+                let available = if passage.name.as_str() == ROOM_HALL
+                    && choice_index == KP_PRIVATE_COUNSEL_DESCEND
+                {
+                    session
+                        .private_preference_decision()
+                        .is_some_and(|decision| {
+                            decision.winner() == PRIVATE_PREFERENCE_DROWNED_STAIR_PLAN
+                        })
+                } else {
+                    available
+                };
                 Action::new(
                     choice.text.to_string(),
                     TURN_CHOOSE,
@@ -518,6 +563,8 @@ impl Offering for DungeonOffering {
                 .map_err(|error| OfferingError::Deploy(error.to_string()))?,
             #[cfg(feature = "private-preference-operation")]
             private_preference_actor: None,
+            #[cfg(feature = "private-preference-operation")]
+            private_preference_accepted_after_steps: None,
             #[cfg(feature = "private-fair-shuffle-operation")]
             private_shuffle: FairShuffleTable::new(private_shuffle_session)
                 .map_err(|error| OfferingError::Deploy(error.to_string()))?,
@@ -565,17 +612,71 @@ impl Offering for DungeonOffering {
             return Outcome::Refused("that move is not on the current ballot".to_string());
         };
 
-        match session
-            .world
-            .apply_choice(&passage_name, choice_index, &choice)
+        #[cfg(feature = "private-preference-operation")]
+        let private_preference_binding = if passage_name == ROOM_HALL
+            && choice_index == KP_PRIVATE_COUNSEL_DESCEND
         {
+            let Some(decision) = session.private_preference_decision() else {
+                return Outcome::Refused(
+                    "the shielded counsel route requires a verified private preference".to_string(),
+                );
+            };
+            if decision.winner() != PRIVATE_PREFERENCE_DROWNED_STAIR_PLAN {
+                return Outcome::Refused(format!(
+                    "private plan #{} does not authorize the drowned-stair route",
+                    decision.winner()
+                ));
+            }
+            let Some(counsel_actor) = session.private_preference_actor() else {
+                return Outcome::Refused(
+                    "the verified private preference has no authenticated submitter".to_string(),
+                );
+            };
+            if counsel_actor != &actor {
+                return Outcome::Refused(
+                    "only the authenticated private-counsel submitter may enact its route"
+                        .to_string(),
+                );
+            }
+            let Some(accepted_after) = session.private_preference_accepted_after_steps else {
+                return Outcome::Refused(
+                    "the private preference is missing its replay-order binding".to_string(),
+                );
+            };
+            if accepted_after > session.steps.len() {
+                return Outcome::Refused(
+                    "the private preference cannot authorize an earlier world step".to_string(),
+                );
+            }
+            Some(private_preference_enactment_commitment(
+                decision,
+                counsel_actor,
+            ))
+        } else {
+            None
+        };
+        #[cfg(not(feature = "private-preference-operation"))]
+        let private_preference_binding: Option<FieldElement> = None;
+
+        let applied = match private_preference_binding {
+            Some(commitment) => session.world.apply_choice_certified(
+                &passage_name,
+                choice_index,
+                &choice,
+                commitment,
+            ),
+            None => session
+                .world
+                .apply_choice(&passage_name, choice_index, &choice),
+        };
+        match applied {
             Ok(receipt) => {
                 let step = StepReceipt {
                     passage: passage_name,
                     choice_index,
                     receipt: receipt.clone(),
                     state: session.world.snapshot(),
-                    decision_commitment: None,
+                    decision_commitment: private_preference_binding,
                 };
                 session.steps.push(step);
                 session.actors.push(actor);
@@ -618,7 +719,9 @@ impl Offering for DungeonOffering {
 
     /// **Re-verify the whole receipt chain by REPLAY** — re-drives a fresh identically-seeded
     /// world-cell through the recorded choices and confirms it reproduces exactly the committed
-    /// state chain in passage order ([`verify_by_replay`]). A forged/reordered record fails.
+    /// state chain in passage order ([`verify_by_replay`]). Private-counsel steps additionally
+    /// rebind their certified value to the accepted hiding-proof result, operation order, and
+    /// submitting actor. A forged/reordered/substituted record fails.
     fn verify(&self, session: &DungeonSession) -> VerifyReport {
         let turns = session.receipts_len();
         match verify_by_replay(
@@ -626,7 +729,10 @@ impl Offering for DungeonOffering {
             &session.scene,
             &session.playthrough(),
         ) {
-            Ok(()) => VerifyReport::ok(turns),
+            Ok(()) => match verify_private_preference_enactments(session, &session.playthrough()) {
+                Ok(()) => VerifyReport::ok(turns),
+                Err(reason) => VerifyReport::broken(turns, reason),
+            },
             Err(b) => VerifyReport::broken(turns, b.to_string()),
         }
     }
@@ -1065,6 +1171,7 @@ impl Offering for DungeonOffering {
                 .accept(&receipt)
                 .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
             session.private_preference_actor = Some(actor);
+            session.private_preference_accepted_after_steps = Some(session.steps.len());
             return Ok(BinaryOperationReceipt {
                 operation: PRIVATE_PREFERENCE_OPERATION.to_string(),
                 receipt_id,
@@ -1323,10 +1430,72 @@ impl RecordVerify for DungeonOffering {
     fn verify_record(&self, session: &DungeonSession, record: &Playthrough) -> VerifyReport {
         let turns = record.receipts().len();
         match verify(deploy_keep(session.seed), &session.scene, record) {
-            Ok(()) => VerifyReport::ok(turns),
+            Ok(()) => match verify_private_preference_enactments(session, record) {
+                Ok(()) => VerifyReport::ok(turns),
+                Err(reason) => VerifyReport::broken(turns, reason),
+            },
             Err(b) => VerifyReport::broken(turns, b.to_string()),
         }
     }
+}
+
+/// Verify the application-level half of the private-result carrier. The generic
+/// spween verifier replays the certified commitment byte-for-byte in the real
+/// world transition; this check proves that commitment is exactly the accepted
+/// HidingFri result, session ordering, and authenticated actor—not an unrelated
+/// collective value placed under the same ext-key.
+fn verify_private_preference_enactments(
+    session: &DungeonSession,
+    record: &Playthrough,
+) -> Result<(), String> {
+    #[cfg(feature = "private-preference-operation")]
+    {
+        for (index, step) in record.steps.iter().enumerate() {
+            let is_counsel =
+                step.passage == ROOM_HALL && step.choice_index == KP_PRIVATE_COUNSEL_DESCEND;
+            if !is_counsel {
+                continue;
+            }
+            let decision = session.private_preference_decision().ok_or_else(|| {
+                "private-counsel world step has no verified private preference".to_string()
+            })?;
+            if decision.winner() != PRIVATE_PREFERENCE_DROWNED_STAIR_PLAN {
+                return Err(format!(
+                    "private-counsel world step is not authorized by winner #{}",
+                    decision.winner()
+                ));
+            }
+            let accepted_after =
+                session
+                    .private_preference_accepted_after_steps
+                    .ok_or_else(|| {
+                        "private-counsel world step has no operation-order binding".to_string()
+                    })?;
+            if accepted_after > index {
+                return Err(
+                    "private-counsel proof was accepted after the world step it claims to authorize"
+                        .to_string(),
+                );
+            }
+            let actor = session.actors.get(index).ok_or_else(|| {
+                "private-counsel world step has no authenticated actor attribution".to_string()
+            })?;
+            if session.private_preference_actor() != Some(actor) {
+                return Err(
+                    "private-counsel world step actor differs from the proof submitter".to_string(),
+                );
+            }
+            let expected = private_preference_enactment_commitment(decision, actor);
+            if step.decision_commitment != Some(expected) {
+                return Err(
+                    "private-counsel world step carries a substituted result commitment"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    let _ = (session, record);
+    Ok(())
 }
 
 /// Pull the `n`-th `Choice` out of `passage` in the scene (the same ordering the compiler
