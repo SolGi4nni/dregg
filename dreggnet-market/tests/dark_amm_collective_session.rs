@@ -173,6 +173,14 @@ fn finish_worker_wire(mut content: Vec<u8>) -> Vec<u8> {
     content
 }
 
+fn worker_config_digest(config_wire: &[u8]) -> [u8; 32] {
+    let mut hash =
+        blake3::Hasher::new_derive_key("dregg-dark-amm-collective-worker-configuration-v1");
+    hash.update(&(config_wire.len() as u64).to_le_bytes());
+    hash.update(config_wire);
+    *hash.finalize().as_bytes()
+}
+
 fn worker_context_wire(context: CollectiveDecisionTaskContext) -> Vec<u8> {
     let mut wire = Vec::new();
     wire.extend_from_slice(b"DBCTX001");
@@ -200,19 +208,19 @@ fn worker_config_wire(fixture: &CollectiveFixture, decision_keys: &[SigningKey])
     finish_worker_wire(wire)
 }
 
-fn worker_custody_wire(threshold_roots: &[[u8; 32]], decision_keys: &[SigningKey]) -> Vec<u8> {
+fn party_custody_wire(
+    config_wire: &[u8],
+    party: usize,
+    threshold_root: [u8; 32],
+    decision_key: &SigningKey,
+) -> Vec<u8> {
     let mut wire = Vec::new();
-    wire.extend_from_slice(b"DBCKv001");
-    wire.extend_from_slice(&(threshold_roots.len() as u64).to_le_bytes());
-    for root in threshold_roots {
-        wire.extend_from_slice(root);
-    }
-    wire.extend_from_slice(&[0xec; 32]);
-    wire.extend_from_slice(&2u64.to_le_bytes());
-    for index in [0usize, 2] {
-        wire.extend_from_slice(&(index as u64).to_le_bytes());
-        wire.extend_from_slice(&decision_keys[index].to_bytes());
-    }
+    wire.extend_from_slice(b"DBPCv001");
+    wire.extend_from_slice(&worker_config_digest(config_wire));
+    wire.extend_from_slice(&(party as u64).to_le_bytes());
+    wire.extend_from_slice(&threshold_root);
+    wire.extend_from_slice(&[0x81 + party as u8; 32]);
+    wire.extend_from_slice(&decision_key.to_bytes());
     finish_worker_wire(wire)
 }
 
@@ -225,24 +233,36 @@ fn write_worker_file(path: &Path, bytes: &[u8], secret: bool) {
     }
 }
 
-fn run_collective_worker(
-    task: &Path,
-    material: &Path,
-    context: &Path,
-    config: &Path,
-    custody: &Path,
-    output: &Path,
-) -> Output {
+fn run_party_contribute(config: &Path, custody: &Path, output: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dark-amm-tool"))
-        .arg("collective-decide")
-        .arg(task)
-        .arg(material)
-        .arg(context)
+        .arg("collective-party-contribute")
         .arg(config)
         .arg(custody)
         .arg(output)
         .output()
         .unwrap()
+}
+
+fn run_split_collective_worker(
+    task: &Path,
+    material: &Path,
+    context: &Path,
+    config: &Path,
+    output: &Path,
+    parties: &[(PathBuf, PathBuf)],
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dark-amm-tool"));
+    command
+        .arg("collective-decide-split")
+        .arg(task)
+        .arg(material)
+        .arg(context)
+        .arg(config)
+        .arg(output);
+    for (custody, artifact) in parties {
+        command.arg(custody).arg(artifact);
+    }
+    command.output().unwrap()
 }
 
 fn decode_hex_digest(value: &str) -> [u8; 32] {
@@ -836,7 +856,6 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     let material_path = worker_dir.path("material.dbhm");
     let context_path = worker_dir.path("context.dbctx");
     let config_path = worker_dir.path("worker.dbwc");
-    let custody_path = worker_dir.path("custody.dbck");
     write_worker_file(&task_path, &task_wire, false);
     write_worker_file(&material_path, &material.to_wire_bytes(), false);
     write_worker_file(
@@ -844,16 +863,36 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         &worker_context_wire(expected_task_context),
         false,
     );
-    write_worker_file(
-        &config_path,
-        &worker_config_wire(&fixture, &decision_keys),
-        false,
-    );
-    write_worker_file(
-        &custody_path,
-        &worker_custody_wire(&fixture.threshold_roots, &decision_keys),
-        true,
-    );
+    let config_wire = worker_config_wire(&fixture, &decision_keys);
+    write_worker_file(&config_path, &config_wire, false);
+    let mut party_files = Vec::new();
+    for party in 0..N {
+        let custody_path = worker_dir.path(&format!("party-{party}.dbpc"));
+        let artifact_path = worker_dir.path(&format!("party-{party}.dbpa"));
+        write_worker_file(
+            &custody_path,
+            &party_custody_wire(
+                &config_wire,
+                party,
+                fixture.threshold_roots[party],
+                &decision_keys[party],
+            ),
+            true,
+        );
+        let contributed = run_party_contribute(&config_path, &custody_path, &artifact_path);
+        assert!(
+            contributed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&contributed.stderr)
+        );
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&contributed.stdout),
+            String::from_utf8_lossy(&contributed.stderr)
+        );
+        assert!(!output.contains(&format!("{:02x}", 0x31 + party as u8).repeat(32)));
+        party_files.push((custody_path, artifact_path));
+    }
 
     // Every independently pinned input is fail-closed before an output file is
     // created: hosted context, canonical task, committed ciphertext material,
@@ -867,13 +906,13 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         }),
         false,
     );
-    let refused = run_collective_worker(
+    let refused = run_split_collective_worker(
         &task_path,
         &material_path,
         &wrong_context_path,
         &config_path,
-        &custody_path,
         &worker_dir.path("wrong-context.bundle"),
+        &party_files,
     );
     assert!(!refused.status.success());
 
@@ -883,13 +922,13 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         &task_wire[..task_wire.len() - 1],
         false,
     );
-    let refused = run_collective_worker(
+    let refused = run_split_collective_worker(
         &truncated_task_path,
         &material_path,
         &context_path,
         &config_path,
-        &custody_path,
         &worker_dir.path("truncated-task.bundle"),
+        &party_files,
     );
     assert!(!refused.status.success());
 
@@ -897,42 +936,72 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     let wrong_material = fixture.initial_material();
     assert_ne!(wrong_material.material_digest(), material.material_digest());
     write_worker_file(&wrong_material_path, &wrong_material.to_wire_bytes(), false);
-    let refused = run_collective_worker(
+    let refused = run_split_collective_worker(
         &task_path,
         &wrong_material_path,
         &context_path,
         &config_path,
-        &custody_path,
         &worker_dir.path("wrong-material.bundle"),
+        &party_files,
     );
     assert!(!refused.status.success());
 
-    let wrong_custody_path = worker_dir.path("wrong-custody.dbck");
-    let mut wrong_roots = fixture.threshold_roots.clone();
-    wrong_roots[0][0] ^= 1;
+    let wrong_custody_path = worker_dir.path("wrong-party-0.dbpc");
+    let mut wrong_root = fixture.threshold_roots[0];
+    wrong_root[0] ^= 1;
     write_worker_file(
         &wrong_custody_path,
-        &worker_custody_wire(&wrong_roots, &decision_keys),
+        &party_custody_wire(&config_wire, 0, wrong_root, &decision_keys[0]),
         true,
     );
-    let refused = run_collective_worker(
+    let mut wrong_custody_files = party_files.clone();
+    wrong_custody_files[0].0 = wrong_custody_path;
+    let refused = run_split_collective_worker(
         &task_path,
         &material_path,
         &context_path,
         &config_path,
-        &wrong_custody_path,
         &worker_dir.path("wrong-custody.bundle"),
+        &wrong_custody_files,
+    );
+    assert!(!refused.status.success());
+
+    let tampered_artifact_path = worker_dir.path("tampered-party-0.dbpa");
+    let mut tampered_artifact = fs::read(&party_files[0].1).unwrap();
+    tampered_artifact[48] ^= 1;
+    write_worker_file(&tampered_artifact_path, &tampered_artifact, false);
+    let mut tampered_files = party_files.clone();
+    tampered_files[0].1 = tampered_artifact_path;
+    let refused = run_split_collective_worker(
+        &task_path,
+        &material_path,
+        &context_path,
+        &config_path,
+        &worker_dir.path("tampered-artifact.bundle"),
+        &tampered_files,
+    );
+    assert!(!refused.status.success());
+
+    let mut reordered_files = party_files.clone();
+    reordered_files.swap(0, 1);
+    let refused = run_split_collective_worker(
+        &task_path,
+        &material_path,
+        &context_path,
+        &config_path,
+        &worker_dir.path("reordered-parties.bundle"),
+        &reordered_files,
     );
     assert!(!refused.status.success());
 
     let bundle_path = worker_dir.path("decision.bundle");
-    let produced = run_collective_worker(
+    let produced = run_split_collective_worker(
         &task_path,
         &material_path,
         &context_path,
         &config_path,
-        &custody_path,
         &bundle_path,
+        &party_files,
     );
     assert!(
         produced.status.success(),

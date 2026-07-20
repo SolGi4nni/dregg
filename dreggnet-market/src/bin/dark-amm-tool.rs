@@ -25,7 +25,7 @@ use dreggnet_market::dark_amm_game::{
     private_amm_statement_to_wire, produce_encrypted_swap, produce_proved_encrypted_swap,
     produce_proved_encrypted_swap_seeded,
 };
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use fhegg_fhe::amm_same_opening::{
     MAX_AUTHORITY_PARTIES, SAME_OPENING_ENDORSEMENT_WIRE_LEN, Tier1SameOpeningAuthority,
     Tier1SameOpeningEndorsement,
@@ -33,7 +33,9 @@ use fhegg_fhe::amm_same_opening::{
 use fhegg_fhe::attestation::{AuthenticatedQuorumVerifier, PartyClaimSignature};
 use fhegg_fhe::dark_amm::{DarkPoolPublicHostMaterial, MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES};
 use fhegg_fhe::mpc_party::trusted_dealer_triples;
-use fhegg_fhe::threshold::{BfvParams, KeygenCoordinator, KeygenSession, ThresholdParty};
+use fhegg_fhe::threshold::{
+    BfvParams, KeygenCoordinator, KeygenSession, PublicKeyContribution, ThresholdParty,
+};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand_09::RngCore;
@@ -41,12 +43,18 @@ use rand_09::RngCore;
 const COLLECTIVE_WORKER_CONFIG_MAGIC: &[u8; 8] = b"DBWCv001";
 const COLLECTIVE_WORKER_CONTEXT_MAGIC: &[u8; 8] = b"DBCTX001";
 const COLLECTIVE_WORKER_CUSTODY_MAGIC: &[u8; 8] = b"DBCKv001";
+const COLLECTIVE_PARTY_CUSTODY_MAGIC: &[u8; 8] = b"DBPCv001";
+const COLLECTIVE_PARTY_ARTIFACT_MAGIC: &[u8; 8] = b"DBPAv001";
 const COLLECTIVE_WORKER_CHECKSUM_DOMAIN: &str =
     "dregg-dark-amm-collective-worker-input-checksum-v1";
+const COLLECTIVE_PARTY_ARTIFACT_SIGNATURE_DOMAIN: &str =
+    "dregg-dark-amm-collective-party-artifact-signature-v1";
 const MAX_COLLECTIVE_WORKER_PARTIES: usize = MAX_AUTHORITY_PARTIES;
 const MAX_COLLECTIVE_WORKER_CONFIG_BYTES: u64 = 1024;
 const MAX_COLLECTIVE_WORKER_CONTEXT_BYTES: u64 = 144;
 const MAX_COLLECTIVE_WORKER_CUSTODY_BYTES: u64 = 2048;
+const MAX_COLLECTIVE_PARTY_CUSTODY_BYTES: u64 = 256;
+const MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 fn main() {
     if let Err(error) = run() {
@@ -57,6 +65,12 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|command| command == "collective-decide-split")
+    {
+        return collective_decide_split(&args[1..]);
+    }
     match args.as_slice() {
         [command, output] if command == "keygen" => {
             let mut rng = rand_09::rng();
@@ -451,6 +465,15 @@ fn run() -> Result<(), String> {
             Path::new(worker_custody_file),
             Path::new(output),
         ),
+        [command, config_file, party_custody_file, output]
+            if command == "collective-party-contribute" =>
+        {
+            collective_party_contribute(
+                Path::new(config_file),
+                Path::new(party_custody_file),
+                Path::new(output),
+            )
+        }
         _ => Err(
             "usage:\n  dark-amm-tool keygen <new-secret-key-file>\n  dark-amm-tool public <secret-key-file> <session-seed> <new-public-context-file>\n  dark-amm-tool public-proved <secret-key-file> <session-seed> <initial-statement-file> <new-public-context-file>\n  dark-amm-tool public-private <secret-key-file> <session-seed> <private-state-file> <new-public-context-file>\n  dark-amm-tool public-id <secret-key-file> <web-session-id> <new-public-context-file>\n  dark-amm-tool public-id-proved <secret-key-file> <web-session-id> <initial-statement-file> <new-public-context-file>\n  dark-amm-tool public-id-private <secret-key-file> <web-session-id> <private-state-file> <new-public-context-file>\n  dark-amm-tool private-init <public-context-file> <x> <y> <new-private-state-file>\n  dark-amm-tool swap <public-context-file> <dx> <dy> <dx-bound> <dy-bound> <new-request-file>\n  dark-amm-tool proved-swap <public-context-file> <statement-file> <proof-postcard-file> <dx> <dy> <dx-bound> <dy-bound> <new-request-file>\n  dark-amm-tool private-swap <proof-public-context-file> <private-state-file> <dx> <dy> <dx-bound> <dy-bound> <new-bundle-directory>\n  dark-amm-tool same-opening-endorse <public-context-file> <request.dbam> <authority.dbaa> <ordered-roster-file> <threshold> <signer-index> <signing-key-file> <new-endorsement-file>\n  dark-amm-tool same-opening-assemble <public-context-file> <request.dbam> <authority.dbaa> <ordered-roster-file> <threshold> <new-v3-request-file> <endorsement-file> <endorsement-file> [...]\n  dark-amm-tool cursor <public-context-file> <next-sequence> <new-public-context-file>\n  dark-amm-tool proved-cursor <public-context-file> <accepted-statement-file> <next-sequence> <new-public-context-file>\n  dark-amm-tool collective-decide <task-file> <committed-public-material-file> <expected-context-file> <public-worker-config-file> <protected-worker-custody-file> <new-decision-bundle-file>"
                 .to_string(),
@@ -479,6 +502,340 @@ impl Drop for CollectiveWorkerCustody {
         self.preprocessing_seed.fill(0);
         // `ed25519_dalek::SigningKey` provides its own zeroize-on-drop path.
     }
+}
+
+struct CollectivePartyCustody {
+    party: usize,
+    threshold_root: [u8; 32],
+    preprocessing_seed_share: [u8; 32],
+    decision_signer: SigningKey,
+}
+
+impl Drop for CollectivePartyCustody {
+    fn drop(&mut self) {
+        self.threshold_root.fill(0);
+        self.preprocessing_seed_share.fill(0);
+    }
+}
+
+struct CollectivePartyArtifact {
+    party: usize,
+    contribution: PublicKeyContribution,
+    signature: [u8; 64],
+}
+
+impl CollectivePartyArtifact {
+    fn to_wire_bytes(&self, config_wire: &[u8]) -> Vec<u8> {
+        let contribution = self.contribution.to_wire_bytes();
+        let mut out = Vec::with_capacity(128 + contribution.len());
+        out.extend_from_slice(COLLECTIVE_PARTY_ARTIFACT_MAGIC);
+        out.extend_from_slice(&(self.party as u64).to_le_bytes());
+        out.extend_from_slice(&collective_worker_config_digest(config_wire));
+        out.extend_from_slice(&(contribution.len() as u64).to_le_bytes());
+        out.extend_from_slice(&contribution);
+        out.extend_from_slice(&self.signature);
+        out.extend_from_slice(&collective_worker_checksum(&out));
+        out
+    }
+
+    fn from_wire_bytes(
+        bytes: &[u8],
+        config_wire: &[u8],
+        config: &CollectiveWorkerConfig,
+    ) -> Result<Self, String> {
+        let content = checked_collective_worker_wire(
+            bytes,
+            COLLECTIVE_PARTY_ARTIFACT_MAGIC,
+            "public collective party contribution",
+        )?;
+        let mut input = CollectiveWorkerReader::new(content);
+        input.expect_magic(COLLECTIVE_PARTY_ARTIFACT_MAGIC)?;
+        let party = input.usize()?;
+        let config_digest = input.array()?;
+        if config_digest != collective_worker_config_digest(config_wire) {
+            return Err("party contribution names a different worker configuration".to_string());
+        }
+        let contribution_wire = input.bytes(MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES as usize)?;
+        let signature = input.array()?;
+        input.finish()?;
+        let contribution = PublicKeyContribution::from_wire_bytes(contribution_wire)
+            .map_err(|error| format!("party public-key contribution refused: {error:?}"))?;
+        if party >= config.keygen.n_parties()
+            || contribution.party() != party
+            || contribution.session() != &config.keygen
+        {
+            return Err("party contribution has a wrong DKG identity or index".to_string());
+        }
+        let public_key = config
+            .decision_verifier
+            .ordered_public_keys()
+            .get(party)
+            .ok_or_else(|| "party contribution signer is outside the public roster".to_string())?;
+        let verifier = VerifyingKey::from_bytes(public_key)
+            .map_err(|_| "party contribution signer key is malformed".to_string())?;
+        verifier
+            .verify_strict(
+                &collective_party_artifact_message(party, &config_digest, contribution_wire),
+                &Signature::from_bytes(&signature),
+            )
+            .map_err(|_| "party contribution signature is invalid".to_string())?;
+        let artifact = Self {
+            party,
+            contribution,
+            signature,
+        };
+        if artifact.to_wire_bytes(config_wire) != bytes {
+            return Err("party contribution is not canonically encoded".to_string());
+        }
+        Ok(artifact)
+    }
+}
+
+fn collective_party_contribute(
+    config_path: &Path,
+    custody_path: &Path,
+    output_path: &Path,
+) -> Result<(), String> {
+    let config_wire = read_bounded_regular(
+        config_path,
+        "public collective worker configuration",
+        MAX_COLLECTIVE_WORKER_CONFIG_BYTES,
+        false,
+    )?;
+    let config = parse_collective_worker_config(&config_wire)?;
+    let mut custody_wire = read_bounded_regular(
+        custody_path,
+        "protected single-party collective custody",
+        MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
+        true,
+    )?;
+    let result = (|| {
+        let custody = parse_collective_party_custody(&custody_wire, &config_wire, &config)?;
+        let params = BfvParams::fold_set();
+        let (_party, contribution) = ThresholdParty::join_seeded(
+            &config.keygen,
+            custody.party,
+            &params,
+            &custody.threshold_root,
+        )
+        .map_err(|error| format!("threshold custody refused: {error:?}"))?;
+        let contribution_wire = contribution.to_wire_bytes();
+        let message = collective_party_artifact_message(
+            custody.party,
+            &collective_worker_config_digest(&config_wire),
+            &contribution_wire,
+        );
+        let artifact = CollectivePartyArtifact {
+            party: custody.party,
+            contribution,
+            signature: custody.decision_signer.sign(&message).to_bytes(),
+        };
+        let artifact_wire = artifact.to_wire_bytes(&config_wire);
+        if artifact_wire.len() > MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES as usize {
+            return Err("party contribution artifact exceeds its allocation limit".to_string());
+        }
+        let digest = *blake3::hash(&artifact_wire).as_bytes();
+        write_new_atomic(output_path, &artifact_wire, false)?;
+        println!(
+            "created public collective party contribution: {} (artifact {})",
+            output_path.display(),
+            hex32(&digest)
+        );
+        Ok(())
+    })();
+    custody_wire.fill(0);
+    result
+}
+
+fn collective_decide_split(args: &[String]) -> Result<(), String> {
+    if args.len() < 9 || (args.len() - 5) % 2 != 0 {
+        return Err("usage: dark-amm-tool collective-decide-split <task-file> <committed-public-material-file> <expected-context-file> <public-worker-config-file> <new-decision-bundle-file> <party-custody-0> <party-artifact-0> [<party-custody-N> <party-artifact-N> ...]".to_string());
+    }
+    let task_path = Path::new(&args[0]);
+    let material_path = Path::new(&args[1]);
+    let expected_context_path = Path::new(&args[2]);
+    let config_path = Path::new(&args[3]);
+    let output_path = Path::new(&args[4]);
+    let party_files = &args[5..];
+
+    let task_wire = read_bounded_regular(
+        task_path,
+        "collective decision task",
+        MAX_COLLECTIVE_DECISION_TASK_BYTES as u64,
+        false,
+    )?;
+    let material_wire = read_bounded_regular(
+        material_path,
+        "committed public host material",
+        MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES as u64,
+        false,
+    )?;
+    let context_wire = read_bounded_regular(
+        expected_context_path,
+        "expected collective task context",
+        MAX_COLLECTIVE_WORKER_CONTEXT_BYTES,
+        false,
+    )?;
+    let config_wire = read_bounded_regular(
+        config_path,
+        "public collective worker configuration",
+        MAX_COLLECTIVE_WORKER_CONFIG_BYTES,
+        false,
+    )?;
+    let expected_context = parse_collective_worker_context(&context_wire)?;
+    let config = parse_collective_worker_config(&config_wire)?;
+    if party_files.len() / 2 != config.keygen.n_parties() {
+        return Err(
+            "split worker must receive exactly one custody/artifact pair per DKG party".to_string(),
+        );
+    }
+
+    let params = BfvParams::fold_set();
+    let material = DarkPoolPublicHostMaterial::from_wire_bytes(&material_wire, params.arc())
+        .map_err(|error| format!("committed public host material refused: {error}"))?;
+    let mut coordinator = KeygenCoordinator::new(config.keygen.clone(), params.clone());
+    let mut parties = Vec::with_capacity(config.keygen.n_parties());
+    let mut preprocessing_seed = [0u8; 32];
+
+    for (expected_party, pair) in party_files.chunks_exact(2).enumerate() {
+        let custody_path = Path::new(&pair[0]);
+        let artifact_path = Path::new(&pair[1]);
+        let artifact_wire = read_bounded_regular(
+            artifact_path,
+            "public collective party contribution",
+            MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES,
+            false,
+        )?;
+        let artifact =
+            CollectivePartyArtifact::from_wire_bytes(&artifact_wire, &config_wire, &config)?;
+        if artifact.party != expected_party {
+            return Err("split party artifacts must be supplied in exact DKG order".to_string());
+        }
+        let mut custody_wire = read_bounded_regular(
+            custody_path,
+            "protected single-party collective custody",
+            MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
+            true,
+        )?;
+        let party_result = (|| {
+            let custody = parse_collective_party_custody(&custody_wire, &config_wire, &config)?;
+            if custody.party != expected_party {
+                return Err("split party custody must be supplied in exact DKG order".to_string());
+            }
+            let (party, contribution) = ThresholdParty::join_seeded(
+                &config.keygen,
+                expected_party,
+                &params,
+                &custody.threshold_root,
+            )
+            .map_err(|error| format!("threshold custody refused: {error:?}"))?;
+            if contribution != artifact.contribution {
+                return Err(
+                    "single-party custody does not reproduce its authenticated contribution"
+                        .to_string(),
+                );
+            }
+            coordinator
+                .accept(contribution)
+                .map_err(|error| format!("threshold contribution refused: {error:?}"))?;
+            for (combined, share) in preprocessing_seed
+                .iter_mut()
+                .zip(custody.preprocessing_seed_share.iter())
+            {
+                *combined ^= *share;
+            }
+            parties.push(party);
+            Ok(())
+        })();
+        custody_wire.fill(0);
+        party_result?;
+    }
+    if preprocessing_seed == [0; 32] {
+        return Err("combined split preprocessing seed must be nonzero".to_string());
+    }
+    let collective = coordinator
+        .finish()
+        .map_err(|error| format!("collective key reconstruction refused: {error:?}"))?;
+    let task = CollectiveDecisionTask::from_wire_bytes(
+        &task_wire,
+        &material,
+        &params,
+        &config.keygen,
+        &collective,
+        config.value_bits,
+    )
+    .map_err(|error| error.to_string())?;
+    task.validate_context(expected_context)
+        .map_err(|error| error.to_string())?;
+    let worker = MaskedCollectiveDecisionWorker::new(
+        &params,
+        &config.keygen,
+        &collective,
+        &parties,
+        config.value_bits,
+        config.timeout,
+    )
+    .map_err(|error| error.to_string())?;
+    let session = worker
+        .decision_session_for_task(&task, &material, expected_context)
+        .map_err(|error| error.to_string())?;
+    let mut preprocessing_rng = StdRng::from_seed(preprocessing_seed);
+    preprocessing_seed.fill(0);
+    let triples = trusted_dealer_triples(&session, &mut preprocessing_rng)
+        .map_err(|error| error.to_string())?;
+    let decision = worker
+        .decide_task_with_triples(&task, &material, expected_context, triples)
+        .map_err(|error| error.to_string())?;
+    let draft = decision
+        .draft_receipt(&config.decision_verifier)
+        .map_err(|error| error.to_string())?;
+
+    // Reopen one protected party file at a time. The coordinator never retains
+    // a vector of roots or signing keys, though the current in-process MPC API
+    // still requires all derived `ThresholdParty` share objects above.
+    let mut signatures = Vec::with_capacity(config.keygen.n_parties());
+    for (expected_party, pair) in party_files.chunks_exact(2).enumerate() {
+        let mut custody_wire = read_bounded_regular(
+            Path::new(&pair[0]),
+            "protected single-party collective custody",
+            MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
+            true,
+        )?;
+        let signature_result = (|| {
+            let custody = parse_collective_party_custody(&custody_wire, &config_wire, &config)?;
+            if custody.party != expected_party {
+                return Err("split signer custody changed order".to_string());
+            }
+            config
+                .decision_verifier
+                .sign_claim(
+                    &draft.claim_digest(),
+                    expected_party,
+                    &custody.decision_signer,
+                )
+                .map_err(|error| error.to_string())
+        })();
+        custody_wire.fill(0);
+        signatures.push(signature_result?);
+    }
+    let receipt = decision
+        .assemble_attested_receipt(&config.decision_verifier, &signatures)
+        .map_err(|error| error.to_string())?;
+    let bundle = CollectiveDecisionBundle::new(decision.transcript().clone(), receipt);
+    let bundle_wire = bundle.to_wire_bytes().map_err(|error| error.to_string())?;
+    let bundle_digest = *blake3::hash(&bundle_wire).as_bytes();
+    write_new_atomic(output_path, &bundle_wire, false)?;
+    println!(
+        "created public split-custody Dark Bazaar decision bundle: {} (task {}, bundle {})",
+        output_path.display(),
+        hex32(
+            &task
+                .attestation_nonce()
+                .map_err(|error| error.to_string())?
+        ),
+        hex32(&bundle_digest)
+    );
+    Ok(())
 }
 
 fn collective_decide(
@@ -743,6 +1100,48 @@ fn parse_collective_worker_custody(
     })
 }
 
+fn parse_collective_party_custody(
+    bytes: &[u8],
+    config_wire: &[u8],
+    config: &CollectiveWorkerConfig,
+) -> Result<CollectivePartyCustody, String> {
+    let content = checked_collective_worker_wire(
+        bytes,
+        COLLECTIVE_PARTY_CUSTODY_MAGIC,
+        "protected single-party collective custody",
+    )?;
+    let mut input = CollectiveWorkerReader::new(content);
+    input.expect_magic(COLLECTIVE_PARTY_CUSTODY_MAGIC)?;
+    if input.array::<32>()? != collective_worker_config_digest(config_wire) {
+        return Err("single-party custody names a different worker configuration".to_string());
+    }
+    let party = input.usize()?;
+    let threshold_root = input.array()?;
+    let preprocessing_seed_share = input.array()?;
+    let mut signer_bytes: [u8; 32] = input.array()?;
+    input.finish()?;
+    if party >= config.keygen.n_parties()
+        || threshold_root == [0; 32]
+        || preprocessing_seed_share == [0; 32]
+    {
+        signer_bytes.fill(0);
+        return Err("single-party custody has an invalid index or zero secret".to_string());
+    }
+    let decision_signer = SigningKey::from_bytes(&signer_bytes);
+    signer_bytes.fill(0);
+    if decision_signer.verifying_key().to_bytes()
+        != config.decision_verifier.ordered_public_keys()[party]
+    {
+        return Err("single-party signer key does not match its public roster slot".to_string());
+    }
+    Ok(CollectivePartyCustody {
+        party,
+        threshold_root,
+        preprocessing_seed_share,
+        decision_signer,
+    })
+}
+
 fn checked_collective_worker_wire<'a>(
     bytes: &'a [u8],
     magic: &[u8; 8],
@@ -762,6 +1161,27 @@ fn collective_worker_checksum(content: &[u8]) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key(COLLECTIVE_WORKER_CHECKSUM_DOMAIN);
     hash.update(&(content.len() as u64).to_le_bytes());
     hash.update(content);
+    *hash.finalize().as_bytes()
+}
+
+fn collective_worker_config_digest(config_wire: &[u8]) -> [u8; 32] {
+    let mut hash =
+        blake3::Hasher::new_derive_key("dregg-dark-amm-collective-worker-configuration-v1");
+    hash.update(&(config_wire.len() as u64).to_le_bytes());
+    hash.update(config_wire);
+    *hash.finalize().as_bytes()
+}
+
+fn collective_party_artifact_message(
+    party: usize,
+    config_digest: &[u8; 32],
+    contribution_wire: &[u8],
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new_derive_key(COLLECTIVE_PARTY_ARTIFACT_SIGNATURE_DOMAIN);
+    hash.update(&(party as u64).to_le_bytes());
+    hash.update(config_digest);
+    hash.update(&(contribution_wire.len() as u64).to_le_bytes());
+    hash.update(blake3::hash(contribution_wire).as_bytes());
     *hash.finalize().as_bytes()
 }
 
@@ -807,6 +1227,21 @@ impl<'a> CollectiveWorkerReader<'a> {
     fn usize(&mut self) -> Result<usize, String> {
         usize::try_from(self.u64()?)
             .map_err(|_| "collective worker count does not fit this platform".to_string())
+    }
+
+    fn bytes(&mut self, max: usize) -> Result<&'a [u8], String> {
+        let len = self.usize()?;
+        if len > max {
+            return Err("collective worker length-delimited field exceeds its limit".to_string());
+        }
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| "collective worker length-delimited field is truncated".to_string())?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
     }
 
     fn finish(self) -> Result<(), String> {
