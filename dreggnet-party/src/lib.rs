@@ -67,6 +67,9 @@ use dungeon_on_dregg::collective::{
 };
 use dungeon_on_dregg::narrator::Command;
 
+/// A replayable tactical encounter that braids this crate's role-capability
+/// receipts and signed fork certificate into real `combat::Arena` turns.
+pub mod encounter;
 /// Live party formation: role claims, readiness, anti-ghost refusal, a bounded
 /// hash-chained lobby journal, and launch into the real cap-seated [`Party`].
 pub mod lobby;
