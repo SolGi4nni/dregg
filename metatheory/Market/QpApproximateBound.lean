@@ -267,6 +267,105 @@ theorem residual_objective_bound {n mc : Nat}
   rw [hgrad] at hconv
   linarith
 
+/-! ## Composition with the deployed exact-rational checker denotation. -/
+
+theorem foldl_max_acc_le (values : List ℚ) (acc : ℚ) :
+    acc ≤ values.foldl max acc := by
+  induction values generalizing acc with
+  | nil => rfl
+  | cons value values ih =>
+      simp only [List.foldl_cons]
+      exact (le_max_left acc value).trans (ih (max acc value))
+
+theorem mem_le_foldl_max (values : List ℚ) {value : ℚ} (hmem : value ∈ values)
+    (acc : ℚ) : value ≤ values.foldl max acc := by
+  induction values generalizing acc with
+  | nil => simp at hmem
+  | cons head tail ih =>
+      simp only [List.foldl_cons]
+      rcases List.mem_cons.mp hmem with rfl | htail
+      · exact (le_max_right acc value).trans (foldl_max_acc_le tail (max acc value))
+      · exact ih htail (max acc head)
+
+theorem coordinate_le_rustMaxResidual {n : Nat} (values : Fin n -> ℚ) (i : Fin n) :
+    values i ≤ Market.rustMaxResidual (List.ofFn values) := by
+  apply mem_le_foldl_max (List.ofFn values) (List.mem_ofFn.mpr ⟨i, rfl⟩) 0
+
+theorem checked_dual_coordinate {n mc : Nat} (cert : Market.RustCertQp n mc)
+    (hcheck : Market.rustCertQpCheck cert = true) (j : Fin n) :
+    Market.rustDualViolation cert.prob cert.x cert.y j ≤ cert.epsilon := by
+  have hbound := (Market.rustCertQpCheck_iff cert).mp hcheck |>.2.1
+  exact (coordinate_le_rustMaxResidual
+    (fun k => Market.rustDualViolation cert.prob cert.x cert.y k) j).trans hbound
+
+theorem checked_normal_coordinate {n mc : Nat} (cert : Market.RustCertQp n mc)
+    (hcheck : Market.rustCertQpCheck cert = true) (i : Fin mc) :
+    Market.rustNormalViolation cert.prob cert.x cert.y i ≤ cert.epsilon := by
+  have hbound := (Market.rustCertQpCheck_iff cert).mp hcheck |>.2.2
+  exact (coordinate_le_rustMaxResidual
+    (fun k => Market.rustNormalViolation cert.prob cert.x cert.y k) i).trans hbound
+
+theorem checked_primal_coordinate {n mc : Nat} (cert : Market.RustCertQp n mc)
+    (hcheck : Market.rustCertQpCheck cert = true) (i : Fin mc) :
+    Market.rustPrimalViolation cert.prob cert.x i ≤ cert.epsilon := by
+  have hbound := (Market.rustCertQpCheck_iff cert).mp hcheck |>.1
+  exact (coordinate_le_rustMaxResidual
+    (fun k => Market.rustPrimalViolation cert.prob cert.x k) i).trans hbound
+
+/-- The checker's primal residual means the returned point lies in the public constraint box
+expanded by exactly `epsilon` on each side. -/
+theorem checked_point_is_epsilon_feasible {n mc : Nat} (cert : Market.RustCertQp n mc)
+    (hcheck : Market.rustCertQpCheck cert = true) (i : Fin mc) :
+    cert.prob.l i - cert.epsilon ≤ Market.rustATimes cert.prob cert.x i ∧
+      Market.rustATimes cert.prob cert.x i ≤ cert.prob.u i + cert.epsilon := by
+  have hres := checked_primal_coordinate cert hcheck i
+  change max (Market.rustATimes cert.prob cert.x i - cert.prob.u i) 0 +
+    max (cert.prob.l i - Market.rustATimes cert.prob cert.x i) 0 ≤ cert.epsilon at hres
+  have hupperPart :
+      max (Market.rustATimes cert.prob cert.x i - cert.prob.u i) 0 ≤ cert.epsilon := by
+    have hnonneg : 0 ≤ max (cert.prob.l i - Market.rustATimes cert.prob cert.x i) 0 :=
+      le_max_right _ _
+    linarith
+  have hlowerPart :
+      max (cert.prob.l i - Market.rustATimes cert.prob cert.x i) 0 ≤ cert.epsilon := by
+    have hnonneg : 0 ≤ max (Market.rustATimes cert.prob cert.x i - cert.prob.u i) 0 :=
+      le_max_right _ _
+    linarith
+  constructor
+  · have := le_max_left (cert.prob.l i - Market.rustATimes cert.prob cert.x i) 0
+    linarith
+  · have := le_max_left (Market.rustATimes cert.prob cert.x i - cert.prob.u i) 0
+    linarith
+
+/-- **Deployed-checker quantitative meaning.** At its exact-rational denotation, positive-tolerance
+acceptance gives both coordinatewise epsilon-feasibility and an explicit convex-objective loss bound.
+It still does not give exact feasibility or exact global optimality. -/
+theorem rustCertQpCheck_quantitative {n mc : Nat} (cert : Market.RustCertQp n mc)
+    (hP : Market.PsdSymm cert.prob.p)
+    (hordered : ∀ i, cert.prob.l i ≤ cert.prob.u i)
+    (hepsilon : 0 ≤ cert.epsilon)
+    (hcheck : Market.rustCertQpCheck cert = true)
+    {x' : Fin n -> ℚ} (hfeas' : Market.RustQpFeasible cert.prob x') :
+    (∀ i, cert.prob.l i - cert.epsilon ≤ Market.rustATimes cert.prob cert.x i ∧
+      Market.rustATimes cert.prob cert.x i ≤ cert.prob.u i + cert.epsilon) ∧
+    Market.rustQpObjective cert.prob cert.x ≤ Market.rustQpObjective cert.prob x' +
+      cert.epsilon * l1Distance cert.x x' +
+      cert.epsilon * normalLossWeight cert.prob cert.y := by
+  constructor
+  · intro i
+    exact checked_point_is_epsilon_feasible cert hcheck i
+  · apply residual_objective_bound cert.prob hP
+      { dual_nonneg := hepsilon
+        normal_nonneg := hepsilon
+        ordered_bounds := hordered
+        stationarity := by
+          intro j
+          exact checked_dual_coordinate cert hcheck j
+        normal := by
+          intro i
+          exact checked_normal_coordinate cert hcheck i }
+      hfeas'
+
 /-! ## Executable/non-vacuous one-dimensional tooth. -/
 
 def approximateFixture : DistanceBoundedKkt Market.rustQpOne
@@ -306,6 +405,12 @@ theorem approximateFixture_bound :
 #assert_axioms rustClamp_mem
 #assert_axioms approximate_clamp_normal
 #assert_axioms residual_objective_bound
+#assert_axioms coordinate_le_rustMaxResidual
+#assert_axioms checked_dual_coordinate
+#assert_axioms checked_normal_coordinate
+#assert_axioms checked_primal_coordinate
+#assert_axioms checked_point_is_epsilon_feasible
+#assert_axioms rustCertQpCheck_quantitative
 #assert_axioms approximateFixture_bound
 
 #assert_not_depends_on Market.QpApproximateBound.StationarityResidualAtMost [
@@ -320,6 +425,12 @@ theorem approximateFixture_bound :
   Market.QpApproximateBound.rustClamp_mem,
   Market.QpApproximateBound.approximate_clamp_normal,
   Market.QpApproximateBound.residual_objective_bound,
+  Market.QpApproximateBound.coordinate_le_rustMaxResidual,
+  Market.QpApproximateBound.checked_dual_coordinate,
+  Market.QpApproximateBound.checked_normal_coordinate,
+  Market.QpApproximateBound.checked_primal_coordinate,
+  Market.QpApproximateBound.checked_point_is_epsilon_feasible,
+  Market.QpApproximateBound.rustCertQpCheck_quantitative,
   Market.QpApproximateBound.approximateFixture_bound]
 
 end Market.QpApproximateBound
