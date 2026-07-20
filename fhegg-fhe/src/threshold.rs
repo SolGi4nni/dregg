@@ -55,6 +55,7 @@ use fhe::mbfv::{Aggregate, CommonRandomPoly, PublicKeyShare};
 use fhe_traits::{DeserializeParametrized, FheDecoder, FheDecrypter, Serialize as FheSerialize};
 use rand_09::rngs::StdRng;
 use rand_09::{Rng, RngCore, SeedableRng};
+use sha2::{Digest, Sha256};
 
 use crate::additive::pick_params;
 use crate::bfv_lean::{LeanCiphertext, RnsPoly};
@@ -76,6 +77,7 @@ pub enum ThresholdError {
     SmudgeTooSmall,
     SmudgeTooLarge,
     InvalidParty { party: usize, n_parties: usize },
+    InvalidCustodySeed,
     MalformedWire,
 }
 
@@ -425,6 +427,42 @@ impl ThresholdParty {
         party: usize,
         params: &BfvParams,
     ) -> Result<(Self, PublicKeyContribution)> {
+        let mut rng = rand_09::rng();
+        Self::join_with_rng(session, party, params, &mut rng)
+    }
+
+    /// Reconstructible party-local key generation from an independently
+    /// custodied 32-byte root. The root is domain-separated by the complete
+    /// public ceremony identity, party index, and BFV parameter set before it
+    /// seeds key-share and public-contribution sampling. Consequently the same
+    /// inputs reproduce the exact `ThresholdParty` and public contribution
+    /// after a process restart, while another ceremony or party gets unrelated
+    /// randomness.
+    ///
+    /// This is a custody boundary, not a shared dealer: every party must keep a
+    /// distinct, high-entropy root outside the coordinator process. The root is
+    /// never retained in `ThresholdParty` or emitted on a wire. An all-zero root
+    /// is refused as an obvious deployment misconfiguration.
+    pub fn join_seeded(
+        session: &KeygenSession,
+        party: usize,
+        params: &BfvParams,
+        custody_root: &[u8; 32],
+    ) -> Result<(Self, PublicKeyContribution)> {
+        if custody_root.iter().all(|byte| *byte == 0) {
+            return Err(ThresholdError::InvalidCustodySeed);
+        }
+        let seed = threshold_party_seed(session, party, params, custody_root)?;
+        let mut rng = StdRng::from_seed(seed);
+        Self::join_with_rng(session, party, params, &mut rng)
+    }
+
+    fn join_with_rng<R: RngCore + rand_09::CryptoRng>(
+        session: &KeygenSession,
+        party: usize,
+        params: &BfvParams,
+        rng: &mut R,
+    ) -> Result<(Self, PublicKeyContribution)> {
         if party >= session.n_parties {
             return Err(ThresholdError::InvalidParty {
                 party,
@@ -432,7 +470,6 @@ impl ThresholdParty {
             });
         }
 
-        let mut rng = rand_09::rng();
         let coeffs = (0..params.degree())
             .map(|_| rng.random_range(-1i64..=1))
             .collect::<Vec<_>>();
@@ -442,7 +479,7 @@ impl ThresholdParty {
             n_parties: session.n_parties,
         };
         let sk = sk_from_coeffs(&key_share.coeffs, params.arc());
-        let pk_share = PublicKeyShare::new(&sk, session.common_random_poly(params), &mut rng)
+        let pk_share = PublicKeyShare::new(&sk, session.common_random_poly(params), rng)
             .expect("mbfv PublicKeyShare");
         // A singleton aggregation is a public wire container for (p0_i, CRP). The coordinator
         // later sums only p0_i and keeps one CRP, exactly matching mbfv's Aggregate impl.
@@ -482,6 +519,33 @@ impl ThresholdParty {
         }
         Ok(partial_decrypt_inner(&self.key_share, ct, smudge_bits))
     }
+}
+
+fn threshold_party_seed(
+    session: &KeygenSession,
+    party: usize,
+    params: &BfvParams,
+    custody_root: &[u8; 32],
+) -> Result<[u8; 32]> {
+    if party >= session.n_parties {
+        return Err(ThresholdError::InvalidParty {
+            party,
+            n_parties: session.n_parties,
+        });
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"fhegg/threshold-party-custody/v1");
+    hash.update(custody_root);
+    hash.update((session.n_parties as u64).to_le_bytes());
+    hash.update(session.crp_seed);
+    hash.update((party as u64).to_le_bytes());
+    hash.update((params.degree() as u64).to_le_bytes());
+    hash.update(params.plaintext_modulus().to_le_bytes());
+    hash.update((params.moduli().len() as u64).to_le_bytes());
+    for modulus in params.moduli() {
+        hash.update(modulus.to_le_bytes());
+    }
+    Ok(hash.finalize().into())
 }
 
 /// Coordinator state for the public half of n-of-n key generation.
@@ -1098,6 +1162,70 @@ mod tests {
             DecryptShare::from_wire_bytes(&noncanonical, &params),
             Err(ThresholdError::MalformedWire)
         );
+    }
+
+    /// Durable custody does not require serializing a raw BFV share: each
+    /// party can reconstruct its exact opaque state and public DKG message from
+    /// its own secret root after restart, then decrypt under the unchanged
+    /// collective key.
+    #[test]
+    fn seeded_party_restart_reconstructs_collective_key_and_decrypts() {
+        let params = BfvParams::fold_set();
+        let session = KeygenSession::from_seed(3, [0x73; 32]).expect("public ceremony");
+        let roots = [[0xa1; 32], [0xa2; 32], [0xa3; 32]];
+
+        let mut first_parties = Vec::new();
+        let mut first_contributions = Vec::new();
+        for (party, root) in roots.iter().enumerate() {
+            let (state, contribution) = ThresholdParty::join_seeded(&session, party, &params, root)
+                .expect("first process joins");
+            first_parties.push(state);
+            first_contributions.push(contribution);
+        }
+        let mut first_coordinator = KeygenCoordinator::new(session.clone(), params.clone());
+        for contribution in first_contributions.iter().cloned() {
+            first_coordinator.accept(contribution).expect("first DKG");
+        }
+        let first_key = first_coordinator.finish().expect("first collective key");
+        drop(first_parties);
+
+        let mut restarted_parties = Vec::new();
+        let mut restarted_contributions = Vec::new();
+        for (party, root) in roots.iter().enumerate() {
+            let (state, contribution) = ThresholdParty::join_seeded(&session, party, &params, root)
+                .expect("restarted process joins");
+            restarted_parties.push(state);
+            restarted_contributions.push(contribution);
+        }
+        assert_eq!(restarted_contributions, first_contributions);
+        let mut restarted_coordinator = KeygenCoordinator::new(session.clone(), params.clone());
+        for contribution in restarted_contributions {
+            restarted_coordinator
+                .accept(contribution)
+                .expect("restarted DKG");
+        }
+        let restarted_key = restarted_coordinator
+            .finish()
+            .expect("restarted collective key");
+        assert_eq!(restarted_key.pk.to_bytes(), first_key.pk.to_bytes());
+
+        let ciphertext = encrypt_slots(&first_key, &params, &vec![42; params.degree()], 42);
+        let shares = restarted_parties
+            .iter()
+            .map(|party| party.partial_decrypt(&ciphertext, MIN_SMUDGE_BITS))
+            .collect::<Result<Vec<_>>>()
+            .expect("restarted parties produce shares");
+        let opening = combine(&shares, &params).expect("restarted quorum opens");
+        assert_eq!(opening[0], 42);
+
+        assert!(matches!(
+            ThresholdParty::join_seeded(&session, 0, &params, &[0; 32]),
+            Err(ThresholdError::InvalidCustodySeed)
+        ));
+        let (_, other_contribution) =
+            ThresholdParty::join_seeded(&session, 0, &params, &[0xb1; 32])
+                .expect("different custody root");
+        assert_ne!(other_contribution, first_contributions[0]);
     }
 
     /// Our zigzag/packed-sint64 SecretKey proto must round-trip through fhe.rs's OWN codec:
