@@ -5,7 +5,10 @@
 
 #![cfg(feature = "dark-amm-game")]
 
-use std::time::Duration;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dregg_circuit_prove::dark_amm_private::{PrivateAmmWitness, prove_zk};
 use dreggnet_market::dark_amm_collective::{
@@ -15,7 +18,7 @@ use dreggnet_market::dark_amm_collective::{
     DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
 };
 use dreggnet_market::dark_amm_collective_worker::{
-    CollectiveDecisionTask, CollectiveDecisionTaskContext, MaskedCollectiveDecisionWorker,
+    CollectiveDecisionTask, CollectiveDecisionTaskContext,
 };
 use dreggnet_market::dark_amm_game::{
     DarkAmmPublicSession, SameOpeningProvedEncryptedSwapRequest,
@@ -34,9 +37,7 @@ use fhegg_fhe::attestation::{
 use fhegg_fhe::dark_amm::{DarkPool, DarkPoolPublicHostMaterial};
 use fhegg_fhe::dark_amm_attested::AttestedPrivateDecisionPolicy;
 use fhegg_fhe::decision_attestation::{AttestedDecisionReceipt, ExpectedDecisionContext};
-use fhegg_fhe::mpc_party::{
-    DecisionTranscript, PartyMpcSession, simulate_decision_transcript, trusted_dealer_triples,
-};
+use fhegg_fhe::mpc_party::{DecisionTranscript, PartyMpcSession, simulate_decision_transcript};
 use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
 use fhegg_fhe::threshold::{
     BfvParams, CollectivePublicKey, KeygenCoordinator, KeygenSession, ThresholdParty,
@@ -47,13 +48,14 @@ use rand::rngs::StdRng as StdRng08;
 const N: usize = 3;
 const VALUE_BITS: usize = 19;
 const HOSTED_SESSION: [u8; 32] = [0x91; 32];
+const WORKER_INPUT_CHECKSUM_DOMAIN: &str = "dregg-dark-amm-collective-worker-input-checksum-v1";
 
 struct CollectiveFixture {
     params: BfvParams,
     keygen: KeygenSession,
     public_key_bytes: Vec<u8>,
     relin: RelinearizationKey,
-    parties: Vec<ThresholdParty>,
+    threshold_roots: Vec<[u8; 32]>,
 }
 
 impl CollectiveFixture {
@@ -62,8 +64,13 @@ impl CollectiveFixture {
         let keygen = KeygenSession::from_seed(N, [0x92; 32]).unwrap();
         let mut coordinator = KeygenCoordinator::new(keygen.clone(), params.clone());
         let mut parties = Vec::new();
+        let threshold_roots = (0..N)
+            .map(|party| [0x31 + party as u8; 32])
+            .collect::<Vec<_>>();
         for party in 0..N {
-            let (holder, contribution) = ThresholdParty::join(&keygen, party, &params).unwrap();
+            let (holder, contribution) =
+                ThresholdParty::join_seeded(&keygen, party, &params, &threshold_roots[party])
+                    .unwrap();
             coordinator.accept(contribution).unwrap();
             parties.push(holder);
         }
@@ -83,7 +90,7 @@ impl CollectiveFixture {
             keygen,
             public_key_bytes,
             relin,
-            parties,
+            threshold_roots,
         }
     }
 
@@ -125,6 +132,117 @@ fn verifier(keys: &[SigningKey]) -> AuthenticatedQuorumVerifier {
         2,
     )
     .unwrap()
+}
+
+struct WorkerTestDir(PathBuf);
+
+impl WorkerTestDir {
+    fn new() -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "dregg-dark-amm-worker-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for WorkerTestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn worker_checksum(content: &[u8]) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new_derive_key(WORKER_INPUT_CHECKSUM_DOMAIN);
+    hash.update(&(content.len() as u64).to_le_bytes());
+    hash.update(content);
+    *hash.finalize().as_bytes()
+}
+
+fn finish_worker_wire(mut content: Vec<u8>) -> Vec<u8> {
+    content.extend_from_slice(&worker_checksum(&content));
+    content
+}
+
+fn worker_context_wire(context: CollectiveDecisionTaskContext) -> Vec<u8> {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"DBCTX001");
+    wire.extend_from_slice(&context.hosted_session);
+    wire.extend_from_slice(&context.sequence.to_le_bytes());
+    for lane in context.committed_root {
+        wire.extend_from_slice(&lane.to_le_bytes());
+    }
+    wire.extend_from_slice(&context.same_opening_claim_digest);
+    finish_worker_wire(wire)
+}
+
+fn worker_config_wire(fixture: &CollectiveFixture, decision_keys: &[SigningKey]) -> Vec<u8> {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"DBWCv001");
+    wire.extend_from_slice(&(N as u64).to_le_bytes());
+    wire.extend_from_slice(&fixture.keygen.crp_seed());
+    wire.extend_from_slice(&(VALUE_BITS as u64).to_le_bytes());
+    wire.extend_from_slice(&5_000u64.to_le_bytes());
+    wire.extend_from_slice(&2u64.to_le_bytes());
+    wire.extend_from_slice(&(decision_keys.len() as u64).to_le_bytes());
+    for key in decision_keys {
+        wire.extend_from_slice(&key.verifying_key().to_bytes());
+    }
+    finish_worker_wire(wire)
+}
+
+fn worker_custody_wire(threshold_roots: &[[u8; 32]], decision_keys: &[SigningKey]) -> Vec<u8> {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"DBCKv001");
+    wire.extend_from_slice(&(threshold_roots.len() as u64).to_le_bytes());
+    for root in threshold_roots {
+        wire.extend_from_slice(root);
+    }
+    wire.extend_from_slice(&[0xec; 32]);
+    wire.extend_from_slice(&2u64.to_le_bytes());
+    for index in [0usize, 2] {
+        wire.extend_from_slice(&(index as u64).to_le_bytes());
+        wire.extend_from_slice(&decision_keys[index].to_bytes());
+    }
+    finish_worker_wire(wire)
+}
+
+fn write_worker_file(path: &Path, bytes: &[u8], secret: bool) {
+    fs::write(path, bytes).unwrap();
+    #[cfg(unix)]
+    if secret {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
+fn run_collective_worker(
+    task: &Path,
+    material: &Path,
+    context: &Path,
+    config: &Path,
+    custody: &Path,
+    output: &Path,
+) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_dark-amm-tool"))
+        .arg("collective-decide")
+        .arg(task)
+        .arg(material)
+        .arg(context)
+        .arg(config)
+        .arg(custody)
+        .arg(output)
+        .output()
+        .unwrap()
 }
 
 fn decode_hex_digest(value: &str) -> [u8; 32] {
@@ -713,43 +831,132 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         same_opening_claim_digest: request.same_opening_receipt().claim.digest(),
     };
     task.validate_context(expected_task_context).unwrap();
-    let authority_collective = fixture.collective();
-    let worker = MaskedCollectiveDecisionWorker::new(
-        &fixture.params,
-        &fixture.keygen,
-        &authority_collective,
-        &fixture.parties,
-        VALUE_BITS,
-        Duration::from_secs(5),
-    )
-    .unwrap();
-    let decision_session = worker
-        .decision_session_for_task(&task, &material, expected_task_context)
-        .unwrap();
-    let mut preprocessing_rng = StdRng08::seed_from_u64(0xc011_ec72);
-    let triples = trusted_dealer_triples(&decision_session, &mut preprocessing_rng).unwrap();
-    let private_decision = worker
-        .decide_task_with_triples(&task, &material, expected_task_context, triples)
-        .unwrap();
-    assert!(private_decision.is_equal());
-    let draft = private_decision.draft_receipt(&decision_verifier).unwrap();
-    let decision_signatures = [0usize, 2]
-        .map(|index| {
-            decision_verifier
-                .sign_claim(&draft.claim_digest(), index, &decision_keys[index])
-                .unwrap()
-        })
-        .to_vec();
-    let receipt = private_decision
-        .assemble_attested_receipt(&decision_verifier, &decision_signatures)
-        .unwrap();
-    let bundle = CollectiveDecisionBundle::new(private_decision.transcript().clone(), receipt);
-    let bundle_wire = bundle.to_wire_bytes().unwrap();
-    assert_eq!(&bundle_wire[..8], b"DBCDv001");
-    assert_eq!(
-        CollectiveDecisionBundle::from_wire_bytes(&bundle_wire).unwrap(),
-        bundle
+    let worker_dir = WorkerTestDir::new();
+    let task_path = worker_dir.path("task.dbdt");
+    let material_path = worker_dir.path("material.dbhm");
+    let context_path = worker_dir.path("context.dbctx");
+    let config_path = worker_dir.path("worker.dbwc");
+    let custody_path = worker_dir.path("custody.dbck");
+    write_worker_file(&task_path, &task_wire, false);
+    write_worker_file(&material_path, &material.to_wire_bytes(), false);
+    write_worker_file(
+        &context_path,
+        &worker_context_wire(expected_task_context),
+        false,
     );
+    write_worker_file(
+        &config_path,
+        &worker_config_wire(&fixture, &decision_keys),
+        false,
+    );
+    write_worker_file(
+        &custody_path,
+        &worker_custody_wire(&fixture.threshold_roots, &decision_keys),
+        true,
+    );
+
+    // Every independently pinned input is fail-closed before an output file is
+    // created: hosted context, canonical task, committed ciphertext material,
+    // and deterministic threshold custody.
+    let wrong_context_path = worker_dir.path("wrong-context.dbctx");
+    write_worker_file(
+        &wrong_context_path,
+        &worker_context_wire(CollectiveDecisionTaskContext {
+            sequence: 1,
+            ..expected_task_context
+        }),
+        false,
+    );
+    let refused = run_collective_worker(
+        &task_path,
+        &material_path,
+        &wrong_context_path,
+        &config_path,
+        &custody_path,
+        &worker_dir.path("wrong-context.bundle"),
+    );
+    assert!(!refused.status.success());
+
+    let truncated_task_path = worker_dir.path("truncated-task.dbdt");
+    write_worker_file(
+        &truncated_task_path,
+        &task_wire[..task_wire.len() - 1],
+        false,
+    );
+    let refused = run_collective_worker(
+        &truncated_task_path,
+        &material_path,
+        &context_path,
+        &config_path,
+        &custody_path,
+        &worker_dir.path("truncated-task.bundle"),
+    );
+    assert!(!refused.status.success());
+
+    let wrong_material_path = worker_dir.path("wrong-material.dbhm");
+    let wrong_material = fixture.initial_material();
+    assert_ne!(wrong_material.material_digest(), material.material_digest());
+    write_worker_file(&wrong_material_path, &wrong_material.to_wire_bytes(), false);
+    let refused = run_collective_worker(
+        &task_path,
+        &wrong_material_path,
+        &context_path,
+        &config_path,
+        &custody_path,
+        &worker_dir.path("wrong-material.bundle"),
+    );
+    assert!(!refused.status.success());
+
+    let wrong_custody_path = worker_dir.path("wrong-custody.dbck");
+    let mut wrong_roots = fixture.threshold_roots.clone();
+    wrong_roots[0][0] ^= 1;
+    write_worker_file(
+        &wrong_custody_path,
+        &worker_custody_wire(&wrong_roots, &decision_keys),
+        true,
+    );
+    let refused = run_collective_worker(
+        &task_path,
+        &material_path,
+        &context_path,
+        &config_path,
+        &wrong_custody_path,
+        &worker_dir.path("wrong-custody.bundle"),
+    );
+    assert!(!refused.status.success());
+
+    let bundle_path = worker_dir.path("decision.bundle");
+    let produced = run_collective_worker(
+        &task_path,
+        &material_path,
+        &context_path,
+        &config_path,
+        &custody_path,
+        &bundle_path,
+    );
+    assert!(
+        produced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    let process_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&produced.stdout),
+        String::from_utf8_lossy(&produced.stderr)
+    );
+    assert!(!process_output.contains(&"ec".repeat(32)));
+    assert!(!process_output.contains(&"31".repeat(32)));
+    let signer_secret_hex = decision_keys[0]
+        .to_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert!(!process_output.contains(&signer_secret_hex));
+    let bundle_wire = fs::read(&bundle_path).unwrap();
+    let bundle = CollectiveDecisionBundle::from_wire_bytes(&bundle_wire).unwrap();
+    assert_eq!(&bundle_wire[..8], b"DBCDv001");
+    assert!(bundle.receipt().claim.equal);
+    assert_eq!(bundle.receipt().claim.session_nonce, task_digest);
     let mut trailing = bundle_wire.clone();
     trailing.push(0);
     assert!(CollectiveDecisionBundle::from_wire_bytes(&trailing).is_err());
