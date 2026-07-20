@@ -23,6 +23,7 @@ use crate::compile::{
 };
 use crate::solver_bridge::{run, ExactCertQpVerdict, RunOutcome};
 use fhegg_solver::qp_exact::{CertQpExact, QpProblemBindingError};
+use fhegg_solver::qp_strict::{verify_zero_kkt_qp, VerifiedZeroKktQp, ZeroKktQpError};
 use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8; 8] = b"FHQPB001";
@@ -60,6 +61,7 @@ pub enum ExactQpCertificateBundleError {
     UnsupportedVersion { found: u8 },
     ChecksumMismatch,
     ProgramBinding(QpProblemBindingError),
+    ZeroKkt(ZeroKktQpError),
 }
 
 impl std::fmt::Display for ExactQpCertificateBundleError {
@@ -82,6 +84,12 @@ impl From<QpProblemBindingError> for ExactQpCertificateBundleError {
     }
 }
 
+impl From<ZeroKktQpError> for ExactQpCertificateBundleError {
+    fn from(value: ZeroKktQpError) -> Self {
+        Self::ZeroKkt(value)
+    }
+}
+
 /// An externally supplied optimizer result that has been checked against the
 /// independently compiled fhIR program.  Construction is private: callers can
 /// obtain this authority only through [`verify_certified_qp`].
@@ -89,6 +97,39 @@ impl From<QpProblemBindingError> for ExactQpCertificateBundleError {
 pub struct VerifiedExactQpCertificate {
     bundle: ExactQpCertificateBundle,
     program_digest: [u8; 32],
+}
+
+/// A canonical fhIR QP bundle whose PSD admission, complete public problem,
+/// and exact-zero KKT witness have all been independently checked.
+///
+/// Construction is private.  In particular, a valid positive-tolerance
+/// [`VerifiedExactQpCertificate`] cannot be converted into this stronger
+/// capability without replaying the zero-tolerance checker.
+#[derive(Clone, Debug)]
+pub struct VerifiedZeroKktQpCertificate {
+    certified: VerifiedExactQpCertificate,
+    zero_kkt: VerifiedZeroKktQp,
+}
+
+impl VerifiedZeroKktQpCertificate {
+    /// The checked canonical bundle, including its same-matrix SDD admission.
+    pub fn certified(&self) -> &VerifiedExactQpCertificate {
+        &self.certified
+    }
+
+    /// Exact-zero residual evidence over the very KKT certificate embedded in
+    /// [`Self::certified`].
+    pub fn zero_kkt(&self) -> &VerifiedZeroKktQp {
+        &self.zero_kkt
+    }
+
+    pub fn program_digest(&self) -> [u8; 32] {
+        self.certified.program_digest()
+    }
+
+    pub fn solution(&self) -> (&[i128], &[i128], u32) {
+        self.zero_kkt.solution()
+    }
 }
 
 impl VerifiedExactQpCertificate {
@@ -353,6 +394,37 @@ pub fn verify_certified_qp(
     })
 }
 
+/// Verify a hostile canonical `FHQPB001` artifact as an exact-zero KKT result.
+///
+/// This is a strict extension of [`verify_certified_qp`], not a second wire or
+/// a parallel decoder.  It first performs the bounded canonical decode, SDD
+/// admission replay, and complete `(P,q,A,l,u)` binding against `compiled`.
+/// It then runs the typed exact-zero checker over the certificate embedded in
+/// that already-bound bundle.  Positive-tolerance certificates remain valid
+/// inputs to [`verify_certified_qp`] but cannot cross this API.
+///
+/// The returned capability is executable Rust evidence.  It does not claim
+/// that the Rust checker refines the corresponding Lean predicate; that
+/// separately named refinement boundary remains unchanged.
+pub fn verify_zero_kkt_certified_qp(
+    compiled: &Compiled,
+    wire: &[u8],
+) -> Result<VerifiedZeroKktQpCertificate, ExactQpCertificateBundleError> {
+    let certified = verify_certified_qp(compiled, wire)?;
+    let ConvexProgram::Qp(public_problem) = &compiled.program else {
+        return Err(ExactQpCertificateBundleError::NotQp);
+    };
+    let zero_kkt = verify_zero_kkt_qp(
+        certified.bundle().kkt().clone(),
+        public_problem,
+        QP_CERT_EXACT_SCALE,
+    )?;
+    Ok(VerifiedZeroKktQpCertificate {
+        certified,
+        zero_kkt,
+    })
+}
+
 fn push_i128s(out: &mut Vec<u8>, values: &[i128]) {
     for value in values {
         out.extend_from_slice(&value.to_be_bytes());
@@ -471,7 +543,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Product, ProductBody};
+    use crate::ast::{MatrixData, Product, ProductBody};
     use crate::{compile, products};
 
     fn bundle() -> ExactQpCertificateBundle {
@@ -483,6 +555,52 @@ mod tests {
         let payload_len = wire.len() - CHECKSUM_LEN;
         let repaired = checksum(&wire[..payload_len]);
         wire[payload_len..].copy_from_slice(&repaired);
+    }
+
+    fn exact_zero_bundle() -> (Compiled, ExactQpCertificateBundle) {
+        // min 1/2 x^2 - x, subject to x=1 and 0 <= x <= 1.
+        // x=1, y=(0,0) has literal zero primal, stationarity, and
+        // normal-cone residuals at fhIR's canonical scale.
+        let product = Product::infer(
+            "one-dimensional-exact-kkt",
+            ProductBody::Portfolio {
+                cov: MatrixData::public(1, 1, vec![1.0]),
+                mu: vec![1.0],
+                lambda: 1.0,
+                w_max: 1.0,
+            },
+        );
+        let compiled = compile(&product).expect("compile exact one-dimensional QP");
+        let ConvexProgram::Qp(problem) = &compiled.program else {
+            unreachable!()
+        };
+        let scale = 10_i128.pow(QP_CERT_EXACT_SCALE);
+        let lift = |values: &[f64]| {
+            values
+                .iter()
+                .map(|value| (value * scale as f64).round() as i128)
+                .collect()
+        };
+        let kkt = CertQpExact {
+            n: problem.n,
+            mc: problem.mc,
+            scale: QP_CERT_EXACT_SCALE,
+            p: lift(&problem.p),
+            q: lift(&problem.q),
+            a: lift(&problem.a),
+            l: lift(&problem.l),
+            u: lift(&problem.u),
+            x: vec![scale],
+            y: vec![0; problem.mc],
+            epsilon: 0,
+        };
+        let admission = compiled
+            .exact_sdd_psd_certificate
+            .clone()
+            .expect("compiled QP carries SDD admission");
+        let bundle = ExactQpCertificateBundle::new(admission, kkt)
+            .expect("exact-zero witness and admission agree");
+        (compiled, bundle)
     }
 
     #[test]
@@ -599,6 +717,104 @@ mod tests {
         assert_eq!(scale, QP_CERT_EXACT_SCALE);
         assert_ne!(verified.program_digest(), [0; 32]);
         assert_eq!(verified.bundle().to_wire_bytes().unwrap(), wire);
+    }
+
+    #[test]
+    fn canonical_wire_mints_composed_psd_and_zero_kkt_capability() {
+        let (compiled, bundle) = exact_zero_bundle();
+        let wire = bundle.to_wire_bytes().unwrap();
+        let verified = verify_zero_kkt_certified_qp(&compiled, &wire)
+            .expect("one canonical artifact establishes admission, binding, and zero KKT");
+
+        assert_eq!(verified.certified().bundle().to_wire_bytes().unwrap(), wire);
+        assert_eq!(
+            verified.certified().bundle().admission().exact_entries(),
+            verified.zero_kkt().certificate().p
+        );
+        assert_eq!(verified.zero_kkt().certificate().epsilon, 0);
+        assert_eq!(verified.zero_kkt().report().prim_res, Some(0));
+        assert_eq!(verified.zero_kkt().report().dual_res, Some(0));
+        assert_eq!(verified.zero_kkt().report().normal_res, Some(0));
+        assert_eq!(verified.zero_kkt().report().tol, Some(0));
+        assert_ne!(verified.program_digest(), [0; 32]);
+    }
+
+    #[test]
+    fn valid_positive_tolerance_wire_cannot_cross_zero_kkt_api() {
+        let (compiled, exact) = exact_zero_bundle();
+        let scale = 10_i128.pow(QP_CERT_EXACT_SCALE);
+
+        // A literal mutation to a positive tolerance remains a valid
+        // FHQPB001 bounded-residual artifact, even though all residuals happen
+        // to be zero. It is intentionally too weak for the strict capability.
+        let mut tolerance_only = exact.to_wire_bytes().unwrap();
+        let epsilon_offset = tolerance_only.len() - CHECKSUM_LEN - 16;
+        tolerance_only[epsilon_offset..epsilon_offset + 16].copy_from_slice(&1_i128.to_be_bytes());
+        repair_checksum(&mut tolerance_only);
+        let approximate = verify_certified_qp(&compiled, &tolerance_only)
+            .expect("positive tolerance remains valid approximate evidence");
+        assert_eq!(approximate.bundle().kkt().epsilon, 1);
+        assert!(approximate.bundle().kkt().check().valid);
+        assert!(matches!(
+            verify_zero_kkt_certified_qp(&compiled, &tolerance_only),
+            Err(ExactQpCertificateBundleError::ZeroKkt(
+                ZeroKktQpError::NonZeroTolerance { epsilon: 1 }
+            ))
+        ));
+
+        // The same separation holds for a genuinely nonzero residual accepted
+        // under a matching positive bound: x=0 misses both stationarity and
+        // the budget row by one unit, but FHQPB001 remains a valid approximate
+        // certificate at epsilon=1.
+        let mut bounded = exact;
+        bounded.kkt.x[0] = 0;
+        bounded.kkt.epsilon = scale;
+        let bounded_wire = bounded.to_wire_bytes().unwrap();
+        let approximate = verify_certified_qp(&compiled, &bounded_wire)
+            .expect("bounded nonzero residual remains valid approximate evidence");
+        let report = approximate.bundle().kkt().check();
+        assert_eq!(report.prim_res, Some(scale * scale));
+        assert_eq!(report.dual_res, Some(scale * scale));
+        assert!(report.valid);
+        assert!(matches!(
+            verify_zero_kkt_certified_qp(&compiled, &bounded_wire),
+            Err(ExactQpCertificateBundleError::ZeroKkt(
+                ZeroKktQpError::NonZeroTolerance { epsilon }
+            )) if epsilon == scale
+        ));
+    }
+
+    #[test]
+    fn zero_kkt_api_reuses_hostile_decode_and_complete_program_binding() {
+        let (compiled, bundle) = exact_zero_bundle();
+        let wire = bundle.to_wire_bytes().unwrap();
+
+        let mut corrupted = wire.clone();
+        corrupted[HEADER_LEN + 1] ^= 1;
+        assert!(matches!(
+            verify_zero_kkt_certified_qp(&compiled, &corrupted),
+            Err(ExactQpCertificateBundleError::ChecksumMismatch)
+        ));
+
+        let changed = compile(&Product::infer(
+            "same-P-different-q-strict",
+            ProductBody::Portfolio {
+                cov: MatrixData::public(1, 1, vec![1.0]),
+                mu: vec![2.0],
+                lambda: 1.0,
+                w_max: 1.0,
+            },
+        ))
+        .expect("changed public QP remains independently admissible");
+        assert!(matches!(
+            verify_zero_kkt_certified_qp(&changed, &wire),
+            Err(ExactQpCertificateBundleError::ProgramBinding(
+                QpProblemBindingError::FieldMismatch {
+                    field: "q",
+                    index: 0
+                }
+            ))
+        ));
     }
 
     #[test]

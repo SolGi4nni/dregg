@@ -55,6 +55,11 @@
 //! relying-party boundary: it accepts an externally produced artifact without
 //! running ADMM, but only after exact-lifting and matching the complete
 //! independently compiled public problem `(P,q,A,l,u)`.
+//! [`qp_certificate::verify_zero_kkt_certified_qp`] is the stronger verify-only
+//! capability: it reuses that one wire and admission/binding path, then admits
+//! only an embedded witness with literally zero tolerance and recomputed zero
+//! KKT residuals. This executable Rust boundary does not itself claim a
+//! Rust-to-Lean refinement theorem.
 
 pub mod ast;
 pub mod compile;
@@ -69,8 +74,8 @@ pub use compile::{
     ExactSddPsdCertificateError,
 };
 pub use qp_certificate::{
-    run_certified_qp, verify_certified_qp, ExactQpCertificateBundle, ExactQpCertificateBundleError,
-    VerifiedExactQpCertificate,
+    run_certified_qp, verify_certified_qp, verify_zero_kkt_certified_qp, ExactQpCertificateBundle,
+    ExactQpCertificateBundleError, VerifiedExactQpCertificate, VerifiedZeroKktQpCertificate,
 };
 pub use solver_bridge::{run, AggregationSourceBinding, RunOutcome};
 pub use tier::Tier;
