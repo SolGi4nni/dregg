@@ -1331,3 +1331,88 @@ settlement, strict Dark AMM v3, private preference/shuffle/raid/quest, web, auth
 restart, and the wider game catalog. The persvati run used the prescribed test-only `DREGG_REQUIRE_LEAN=0`
 override because that build lane lacks the seeded Lean archive; this is test evidence for these paths, not a
 shipping authorization for the marshal-only executor.
+
+## 44. The optimizer bundle can be verified against an independently compiled fhIR problem
+
+`FHQPB001` is no longer limited to internal consistency between its PSD and KKT halves.
+`fhegg-solver::CertQpExact::verify_problem_binding` now compares every dimension and every entry of
+the complete external `(P, q, A, l, u)` problem against the certificate. The fhIR boundary exposes
+`verify_certified_qp(compiled, wire)`: it decodes the bounded canonical artifact, independently
+rechecks both certificate families, binds them to the exact problem emitted by the supplied
+`Compiled`, and returns a verified value carrying the program digest and exact primal/dual vectors.
+It does not rerun ADMM or silently search for a replacement witness; this is a verify-not-find API.
+
+Dimension, objective, constraint-matrix, bound, scale, and program substitutions are refusal teeth.
+The focused gates were `fhir` 60/60 and `fhegg-solver` 107/107, including the exact external-binding
+test. The existing floating-point source-to-fixed-point refinement and positive-residual
+optimality-bound seams remain exactly as stated in §41.
+
+Commit: `a1220dc91` (`fhir: verify optimizer certificates against compiled programs`).
+
+## 45. Collective party custody has a strict restart image
+
+Opaque `ThresholdParty` custody now has a bounded, checksummed, canonical restart carrier. Restore
+reconstructs the exact party/session/CRP/parameter identity and refuses corruption, trailing bytes,
+wrong party index, wrong keygen session, and parameter substitution. This closes evaluator restart
+without reintroducing the convenience API that assembles all shares into one secret key.
+
+This is still an in-process honest-party custody object. It is not an HSM/TEE integration, does not
+authenticate an operating-system principal, and does not make n-of-n robust to dropout. Those are
+separate transport/custody properties, not implied by a sound codec.
+
+Commit: `687900c82` (`fhegg: make threshold party custody restartable`).
+
+## 46. The collective decision is now a context-bound public work item
+
+The staged collective AMM no longer asks an authority to infer what it is approving from a raw
+candidate. `CollectiveDecisionTask` is a strict bounded carrier for the exact hosted session,
+sequence, committed pre-root, public-material digest, same-opening claim digest, BFV parameter and
+DKG identities, collective key, equality width/caps, and canonical encrypted candidate. Its digest
+is the PartyMPC/FHDAR attestation nonce. A valid receipt for a different task, session, sequence,
+root, rerandomized ciphertext, key, material image, or same-opening claim cannot authorize commit;
+the older raw candidate nonce is deliberately not accepted in this contextual path.
+
+While a candidate is pending, `CollectiveDarkAmmOffering` exports that exact public task as
+`dark-amm.collective-decision-task.v1`. The generic Offering artifact boundary enforces bounded
+names, media types, visibility, exact-session routing, canonical bytes, BLAKE3 digest headers, ETag,
+and `no-store`; web, Telegram Mini App, and Discord Activity expose the same artifact rather than
+three reimplementations. The collective deployment registrar replaces the secret-key table when
+collective public material is configured. The end-to-end service test downloads the task,
+re-parses it against independently held public material and context, runs the real masked worker,
+and commits the returned two-authority bundle.
+
+Focused gates: artifact host 2/2; web artifact adapters 3/3; contextual worker 2/2; collective
+service 1/1; restart/atomicity 1/1. Public task bytes contain ciphertexts and public identities, not
+reserves, masks, threshold secret shares, or same-opening witnesses. The worker is still an
+in-process set of party threads with trusted Beaver preprocessing and semi-honest inputs; an
+external-process command/transport, malicious share/input proofs, dealer-free preprocessing, and
+rollback-resistant storage remain live work.
+
+Commits: `ef807ade5`, `c2c9b6dac`, `a9a215027`, and `7b46e9e31`.
+
+## 47. The party surface is a live shared capability game, not four demo names
+
+`PartyOffering` now begins with an empty multi-identity lobby. Authenticated players claim the
+Tank, Scout, Mage, and Healer seats, ready/unready/leave, and the first claimant launches only a
+full ready roster. Every admitted formation mutation advances a real audit cell with a
+`FieldDelta(+1)` revision and the complete 256-bit lobby-journal root. The launched roster lowers
+into the existing capability-seated `dreggnet-party::Party`; identity, not a caller-supplied role
+argument, chooses the player cell. Per-seat actions and signed fork ballots retain complete real
+turn receipts and replay across `OfferingHost` restart.
+
+Role contributions now carry executor-installed `WriteOnce` teeth. A repeated forged click reaches
+the executor as marker `1 -> 2`, is refused there, and leaves both state root and receipt count
+unchanged. The previous `1 -> 1` lowering would have vacuously satisfied WriteOnce and is gone.
+
+The catalog split was corrected at the same time: inventories, craft, gear, and the other
+identity-owned RPG surfaces remain private per-player hosts; `party` is a shared table. Web and
+Telegram tests prove two identities see and mutate one roster, and Discord routes party through the
+shared per-channel adapter. Focused gates passed for direct WriteOnce, hosted party (2/2), catalog
+routing, and Telegram compilation. The web execution target and legacy fork targets encountered
+the repository's then-fail-closed missing verified ML-DSA core before their test bodies; the
+subsequent keygen guard repair at `49d2c8212` should be used for the next aggregate rerun rather than
+laundering the earlier compile-only evidence.
+
+Commit: `e7d473b74` (`games: host live shared capability-seated parties`). The immediate game
+frontier is to make shielded preference/raid/shuffle results change later encounter authority and
+resources, instead of remaining impressive but partially museum-like receipt panels.
