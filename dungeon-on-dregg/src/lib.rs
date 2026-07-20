@@ -386,6 +386,16 @@ and only the first hand to close on it holds it.
   ~ depth += 2
   -> sanctum
 
+* [Let the fair-dealt even card claim for the Red Hand and descend]
+  ~ relic_owner = 1
+  ~ depth += 1
+  -> sanctum
+
+* [Let the fair-dealt odd card claim for the Blue Hand and descend]
+  ~ relic_owner = 2
+  ~ depth += 1
+  -> sanctum
+
 === sanctum
 
 The sanctum hums with old wards; the stair groans and sheds stone behind you. Casting
@@ -428,6 +438,12 @@ pub const KP_DESCEND: usize = 2;
 /// a fresh Keep, so a plain turn refuses); the hosted dungeon writes one in this
 /// turn and checks it against its accepted private preference.
 pub const KP_PRIVATE_COUNSEL_DESCEND: usize = 3;
+/// `hall`: an actor whose selectively opened fair-deal card is even atomically
+/// claims the crown for Red and descends. The hosted verifier binds the exact
+/// accepted deal, seat, card, and actor into this certified transition.
+pub const KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE: usize = 4;
+/// `hall`: the odd-card twin, claiming for Blue before descending.
+pub const KP_PRIVATE_SHUFFLE_ODD_INITIATIVE: usize = 5;
 /// `sanctum`: cast the sealing ward (`mana_spent += 30`) — refused past the budget.
 pub const KP_CAST_WARD: usize = 0;
 /// `sanctum`: climb back up (`depth -= 1`) — refused (the stair collapsed: one-way).
@@ -579,6 +595,25 @@ pub fn keep_compiled() -> CompiledStory {
             },
         ],
     );
+    for method in [
+        choice_method(ROOM_HALL, KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE),
+        choice_method(ROOM_HALL, KP_PRIVATE_SHUFFLE_ODD_INITIATIVE),
+    ] {
+        augment_case(
+            &mut story.program,
+            &method,
+            vec![
+                StateConstraint::WriteOnce { index: owner },
+                StateConstraint::Monotonic { index: depth },
+                StateConstraint::HeapField {
+                    key: DECISION_EXT_KEY,
+                    atom: HeapAtom::Gte {
+                        value: field_from_u64(1),
+                    },
+                },
+            ],
+        );
+    }
     augment_case(
         &mut story.program,
         &choice_method(ROOM_SANCTUM, KP_CLIMB_BACK),

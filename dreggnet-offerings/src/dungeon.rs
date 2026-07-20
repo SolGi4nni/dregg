@@ -24,6 +24,13 @@ use dregg_app_framework::{FieldElement, TurnReceipt, field_from_bytes};
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
 use spween_dregg::{StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay};
 
+#[cfg(feature = "private-preference-operation")]
+use dungeon_on_dregg::KP_PRIVATE_COUNSEL_DESCEND;
+#[cfg(any(
+    feature = "private-preference-operation",
+    feature = "private-fair-shuffle-operation"
+))]
+use dungeon_on_dregg::ROOM_HALL;
 #[cfg(feature = "private-fair-shuffle-operation")]
 use dungeon_on_dregg::private_fair_shuffle::{
     DIGEST_WIDTH as SHUFFLE_DIGEST_WIDTH, FairCardOpening, FairShuffleAttemptOutcome,
@@ -42,8 +49,8 @@ use dungeon_on_dregg::private_quest::{
 use dungeon_on_dregg::private_raid::{
     RaidAssignmentReceipt, RaidAssignmentSession, RaidPartyAssignment,
 };
-#[cfg(feature = "private-preference-operation")]
-use dungeon_on_dregg::{KP_PRIVATE_COUNSEL_DESCEND, ROOM_HALL};
+#[cfg(feature = "private-fair-shuffle-operation")]
+use dungeon_on_dregg::{KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE, KP_PRIVATE_SHUFFLE_ODD_INITIATIVE};
 use dungeon_on_dregg::{deploy_keep, keep_scene};
 
 use crate::{
@@ -125,7 +132,7 @@ pub const PRIVATE_SHUFFLE_PROOF_MEDIA_TYPE: &str =
 pub const PRIVATE_SHUFFLE_REVEAL_MEDIA_TYPE: &str =
     "application/vnd.dregg.private-fair-shuffle-opening.v1+postcard";
 #[cfg(feature = "private-fair-shuffle-operation")]
-pub const PRIVATE_SHUFFLE_DISCLOSURE: &str = "Eight actor-bound commitments must land before a HidingFri proof can admit a bias-free deal; rejected ranks are recorded and retried, and each accepted seat may reveal only its own Merkle-opened card. The current producer sees all contributions and the host sees submitted openings; this is Tier-1, not distributed MPC input assembly or an Effect::Custom cell transition.";
+pub const PRIVATE_SHUFFLE_DISCLOSURE: &str = "Eight actor-bound commitments must land before a HidingFri proof can admit a bias-free deal; rejected ranks are recorded and retried, and each accepted seat may reveal only its own Merkle-opened card. In the Keep, that seat owner may spend the revealed card as fair initiative: parity chooses the banner in one atomic crown-and-descent turn, bound to the accepted deal, seat, card, actor, and reveal order. The current producer sees all contributions and the host sees submitted openings; this is Tier-1, not distributed MPC input assembly, and the hiding proof remains in the durable operation journal rather than recursively folded into the world turn.";
 #[cfg(feature = "private-fair-shuffle-operation")]
 const MAX_PRIVATE_SHUFFLE_PROOF_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(feature = "private-fair-shuffle-operation")]
@@ -264,6 +271,10 @@ pub struct DungeonSession {
     private_shuffle: FairShuffleTable,
     #[cfg(feature = "private-fair-shuffle-operation")]
     private_shuffle_actors: [Option<DreggIdentity>; SHUFFLE_PARTICIPANTS],
+    /// World-step cursor at which each selective opening landed. An opened
+    /// card cannot be retconned into authorization for an earlier initiative.
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    private_shuffle_revealed_after_steps: [Option<usize>; SHUFFLE_PARTICIPANTS],
     /// Consumer-side root/proof history. The hidden graph is intentionally not
     /// present in the host session; an external quest producer owns it.
     #[cfg(feature = "private-quest-operation")]
@@ -431,6 +442,58 @@ fn private_preference_enactment_commitment(
     field_from_bytes(&bytes)
 }
 
+/// Locate the one selectively revealed card owned by `actor`. Commit-time
+/// admission already prevents one identity from occupying two live seats.
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn private_shuffle_card_for_actor(
+    session: &DungeonSession,
+    actor: &DreggIdentity,
+) -> Option<(usize, u8)> {
+    session
+        .private_shuffle_actors
+        .iter()
+        .zip(session.private_shuffle.revealed_cards())
+        .enumerate()
+        .find_map(|(seat, (bound, card))| {
+            if bound.as_ref() == Some(actor) {
+                card.map(|card| (seat, card))
+            } else {
+                None
+            }
+        })
+}
+
+/// Bind the accepted fair-deal statement, the selectively opened result, and
+/// its seat owner to the exact crown-and-descent transition it authorizes.
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn private_shuffle_enactment_commitment(
+    session: &DungeonSession,
+    seat: usize,
+    card: u8,
+    revealed_after: usize,
+    actor: &DreggIdentity,
+) -> Option<FieldElement> {
+    let receipt = session.private_shuffle.accepted_receipt()?;
+    let statement = receipt.statement();
+    let mut bytes = Vec::with_capacity(160 + actor.as_str().len());
+    bytes.extend_from_slice(b"dregg-dungeon/private-fair-shuffle-enactment-v1");
+    bytes.extend_from_slice(&statement.session.to_be_bytes());
+    bytes.extend_from_slice(&statement.attempt.to_be_bytes());
+    for lane in statement.commitment_root {
+        bytes.extend_from_slice(&lane.to_be_bytes());
+    }
+    for lane in statement.deal_root {
+        bytes.extend_from_slice(&lane.to_be_bytes());
+    }
+    bytes.extend_from_slice(&receipt.verifier_key());
+    bytes.extend_from_slice(&(seat as u64).to_be_bytes());
+    bytes.push(card);
+    bytes.extend_from_slice(&(revealed_after as u64).to_be_bytes());
+    bytes.extend_from_slice(&(actor.as_str().len() as u64).to_be_bytes());
+    bytes.extend_from_slice(actor.as_str().as_bytes());
+    Some(field_from_bytes(&bytes))
+}
+
 /// **The dungeon offering** — offering #0. A stateless factory over the hosted Keep universe;
 /// each [`open`](Offering::open) deploys a fresh [`DungeonSession`]. Carries the per-move
 /// [`RunCost`] (the free tier by default; a paid tier prices the confined narrator — which the
@@ -492,6 +555,23 @@ impl DungeonOffering {
                         .is_some_and(|decision| {
                             decision.winner() == PRIVATE_PREFERENCE_DROWNED_STAIR_PLAN
                         })
+                } else {
+                    available
+                };
+                #[cfg(feature = "private-fair-shuffle-operation")]
+                let available = if passage.name.as_str() == ROOM_HALL
+                    && matches!(
+                        choice_index,
+                        KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE | KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+                    ) {
+                    let wanted_parity = (choice_index == KP_PRIVATE_SHUFFLE_ODD_INITIATIVE) as u8;
+                    session.read_var("relic_owner") == 0
+                        && session
+                            .private_shuffle
+                            .revealed_cards()
+                            .iter()
+                            .flatten()
+                            .any(|card| card % 2 == wanted_parity)
                 } else {
                     available
                 };
@@ -570,6 +650,8 @@ impl Offering for DungeonOffering {
                 .map_err(|error| OfferingError::Deploy(error.to_string()))?,
             #[cfg(feature = "private-fair-shuffle-operation")]
             private_shuffle_actors: core::array::from_fn(|_| None),
+            #[cfg(feature = "private-fair-shuffle-operation")]
+            private_shuffle_revealed_after_steps: [None; SHUFFLE_PARTICIPANTS],
             #[cfg(feature = "private-quest-operation")]
             private_quest: None,
             #[cfg(feature = "private-quest-operation")]
@@ -658,7 +740,60 @@ impl Offering for DungeonOffering {
         #[cfg(not(feature = "private-preference-operation"))]
         let private_preference_binding: Option<FieldElement> = None;
 
-        let applied = match private_preference_binding {
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        let private_shuffle_binding = if passage_name == ROOM_HALL
+            && matches!(
+                choice_index,
+                KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE | KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+            ) {
+            if session.read_var("relic_owner") != 0 {
+                return Outcome::Refused(
+                    "fair-dealt initiative cannot retake an already claimed crown".to_string(),
+                );
+            }
+            let Some((seat, card)) = private_shuffle_card_for_actor(session, &actor) else {
+                return Outcome::Refused(
+                    "fair-dealt initiative requires this actor's selectively opened card"
+                        .to_string(),
+                );
+            };
+            let expected_choice = if card % 2 == 0 {
+                KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE
+            } else {
+                KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+            };
+            if choice_index != expected_choice {
+                return Outcome::Refused(format!(
+                    "revealed card {card} authorizes the other initiative route"
+                ));
+            }
+            let Some(revealed_after) = session.private_shuffle_revealed_after_steps[seat] else {
+                return Outcome::Refused(
+                    "the fair-dealt card is missing its replay-order binding".to_string(),
+                );
+            };
+            if revealed_after > session.steps.len() {
+                return Outcome::Refused(
+                    "the fair-dealt card cannot authorize an earlier world step".to_string(),
+                );
+            }
+            let Some(commitment) =
+                private_shuffle_enactment_commitment(session, seat, card, revealed_after, &actor)
+            else {
+                return Outcome::Refused(
+                    "fair-dealt initiative has no accepted shuffle receipt".to_string(),
+                );
+            };
+            Some(commitment)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "private-fair-shuffle-operation"))]
+        let private_shuffle_binding: Option<FieldElement> = None;
+
+        let private_result_binding = private_preference_binding.or(private_shuffle_binding);
+
+        let applied = match private_result_binding {
             Some(commitment) => session.world.apply_choice_certified(
                 &passage_name,
                 choice_index,
@@ -676,7 +811,7 @@ impl Offering for DungeonOffering {
                     choice_index,
                     receipt: receipt.clone(),
                     state: session.world.snapshot(),
-                    decision_commitment: private_preference_binding,
+                    decision_commitment: private_result_binding,
                 };
                 session.steps.push(step);
                 session.actors.push(actor);
@@ -729,7 +864,7 @@ impl Offering for DungeonOffering {
             &session.scene,
             &session.playthrough(),
         ) {
-            Ok(()) => match verify_private_preference_enactments(session, &session.playthrough()) {
+            Ok(()) => match verify_private_result_enactments(session, &session.playthrough()) {
                 Ok(()) => VerifyReport::ok(turns),
                 Err(reason) => VerifyReport::broken(turns, reason),
             },
@@ -1327,6 +1462,7 @@ impl Offering for DungeonOffering {
                 .private_shuffle
                 .reveal_card(opening)
                 .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
+            session.private_shuffle_revealed_after_steps[seat] = Some(session.steps.len());
             let receipt_id =
                 *blake3::Hasher::new_derive_key("dregg-dungeon-private-shuffle-opening-receipt-v1")
                     .update(&canonical)
@@ -1430,7 +1566,7 @@ impl RecordVerify for DungeonOffering {
     fn verify_record(&self, session: &DungeonSession, record: &Playthrough) -> VerifyReport {
         let turns = record.receipts().len();
         match verify(deploy_keep(session.seed), &session.scene, record) {
-            Ok(()) => match verify_private_preference_enactments(session, record) {
+            Ok(()) => match verify_private_result_enactments(session, record) {
                 Ok(()) => VerifyReport::ok(turns),
                 Err(reason) => VerifyReport::broken(turns, reason),
             },
@@ -1444,7 +1580,7 @@ impl RecordVerify for DungeonOffering {
 /// world transition; this check proves that commitment is exactly the accepted
 /// HidingFri result, session ordering, and authenticated actor—not an unrelated
 /// collective value placed under the same ext-key.
-fn verify_private_preference_enactments(
+fn verify_private_result_enactments(
     session: &DungeonSession,
     record: &Playthrough,
 ) -> Result<(), String> {
@@ -1490,6 +1626,53 @@ fn verify_private_preference_enactments(
                 return Err(
                     "private-counsel world step carries a substituted result commitment"
                         .to_string(),
+                );
+            }
+        }
+    }
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    {
+        for (index, step) in record.steps.iter().enumerate() {
+            let is_initiative = step.passage == ROOM_HALL
+                && matches!(
+                    step.choice_index,
+                    KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE | KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+                );
+            if !is_initiative {
+                continue;
+            }
+            let actor = session.actors.get(index).ok_or_else(|| {
+                "fair-dealt initiative has no authenticated actor attribution".to_string()
+            })?;
+            let (seat, card) = private_shuffle_card_for_actor(session, actor).ok_or_else(|| {
+                "fair-dealt initiative actor has no selectively verified card".to_string()
+            })?;
+            let revealed_after = session.private_shuffle_revealed_after_steps[seat]
+                .ok_or_else(|| "fair-dealt initiative has no reveal-order binding".to_string())?;
+            if revealed_after > index {
+                return Err(
+                    "fair-dealt card was revealed after the world step it claims to authorize"
+                        .to_string(),
+                );
+            }
+            let expected_choice = if card % 2 == 0 {
+                KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE
+            } else {
+                KP_PRIVATE_SHUFFLE_ODD_INITIATIVE
+            };
+            if step.choice_index != expected_choice {
+                return Err(format!(
+                    "fair-dealt card {card} does not authorize this initiative route"
+                ));
+            }
+            let expected =
+                private_shuffle_enactment_commitment(session, seat, card, revealed_after, actor)
+                    .ok_or_else(|| {
+                        "fair-dealt initiative has no accepted shuffle statement".to_string()
+                    })?;
+            if step.decision_commitment != Some(expected) {
+                return Err(
+                    "fair-dealt initiative carries a substituted result commitment".to_string(),
                 );
             }
         }
