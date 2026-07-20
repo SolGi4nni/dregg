@@ -105,3 +105,56 @@ fn crossing_and_equality_inputs_cannot_be_confused() {
         Err(PartyMpcError::SessionMismatch)
     ));
 }
+
+#[test]
+fn reveal_only_decision_transcript_has_a_strict_bounded_wire() {
+    let session =
+        PartyMpcSession::equality([0x54; 32], N, BITS, T, Duration::from_secs(1)).expect("session");
+    let mut rng = StdRng::seed_from_u64(0x5454);
+    let transcript =
+        simulate_decision_transcript(true, &session, &mut rng).expect("public simulator");
+    let wire = transcript
+        .to_wire_bytes()
+        .expect("canonical transcript wire");
+    assert_eq!(&wire[..8], b"FHDTR001");
+    let decoded = fhegg_fhe::mpc_party::DecisionTranscript::from_wire_bytes(&wire)
+        .expect("strict transcript decode");
+    assert_eq!(decoded, transcript);
+    assert!(decoded.is_reveal_only(&session));
+
+    let mut retired = wire.clone();
+    retired[..8].copy_from_slice(b"FHDTR000");
+    assert!(matches!(
+        fhegg_fhe::mpc_party::DecisionTranscript::from_wire_bytes(&retired),
+        Err(PartyMpcError::MalformedTranscriptWire)
+    ));
+
+    let mut non_bit = wire.clone();
+    // magic + count + first opening's gate index => its d bit
+    non_bit[8 + 8 + 8] = 2;
+    assert!(matches!(
+        fhegg_fhe::mpc_party::DecisionTranscript::from_wire_bytes(&non_bit),
+        Err(PartyMpcError::MalformedTranscriptWire)
+    ));
+
+    let mut allocation_attack = wire.clone();
+    allocation_attack[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+    assert!(matches!(
+        fhegg_fhe::mpc_party::DecisionTranscript::from_wire_bytes(&allocation_attack),
+        Err(PartyMpcError::MalformedTranscriptWire | PartyMpcError::ArithmeticOverflow)
+    ));
+
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert!(matches!(
+        fhegg_fhe::mpc_party::DecisionTranscript::from_wire_bytes(&trailing),
+        Err(PartyMpcError::MalformedTranscriptWire)
+    ));
+
+    let mut inconsistent = transcript;
+    inconsistent.and_gates += 1;
+    assert!(matches!(
+        inconsistent.to_wire_bytes(),
+        Err(PartyMpcError::MalformedTranscriptWire)
+    ));
+}

@@ -17,8 +17,15 @@
 
 use std::fmt;
 
+use deos_view::ViewNode;
 use dregg_circuit_prove::dark_amm_private::RULE_ID as PRIVATE_AMM_RULE_ID;
-use fhe_traits::Serialize as FheSerialize;
+use dreggnet_offerings::{
+    Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
+    BinaryOperationReplayMaterial, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
+    SessionConfig, Surface, VerifyReport,
+};
+use fhe::bfv::PublicKey;
+use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 use fhegg_fhe::amm_same_opening::{
     AmmPrivacyTier, AmmSameOpeningContext, canonical_bfv_parameters_digest,
 };
@@ -27,12 +34,13 @@ use fhegg_fhe::attestation::{
 };
 use fhegg_fhe::dark_amm::{
     DarkPool, DarkPoolPublicHostMaterial, MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES,
+    PrivateAppliedSwap,
 };
 use fhegg_fhe::dark_amm_attested::{
     AttestedPrivateDecisionPolicy, commit_attested_private_decision,
 };
 use fhegg_fhe::decision_attestation::AttestedDecisionReceipt;
-use fhegg_fhe::mpc_party::DecisionTranscript;
+use fhegg_fhe::mpc_party::{DecisionTranscript, MAX_DECISION_TRANSCRIPT_BYTES};
 use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey, KeygenSession};
 
 use crate::dark_amm_game::{
@@ -48,6 +56,21 @@ const MAX_CHECKPOINT_BYTES: usize = MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES
     + MAX_DARK_AMM_REQUEST_BYTES
     + 2 * MAX_REPLAY_WIRE_BYTES
     + 1024;
+
+const DECISION_BUNDLE_MAGIC: &[u8; 8] = b"DBCDv001";
+const MAX_DECISION_RECEIPT_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_COLLECTIVE_DECISION_BUNDLE_BYTES: usize =
+    MAX_DECISION_TRANSCRIPT_BYTES + MAX_DECISION_RECEIPT_BYTES + 32;
+
+pub const DARK_AMM_COLLECTIVE_STAGE_OPERATION: &str = "dark-amm.collective-stage.v1";
+pub const DARK_AMM_COLLECTIVE_STAGE_MEDIA_TYPE: &str =
+    "application/vnd.dregg.dark-amm-collective-stage.v1";
+pub const DARK_AMM_COLLECTIVE_STAGE_DISCLOSURE: &str = "Stages one collective-key encrypted candidate after verifying its HidingFri transition and Tier-1 same-opening quorum. The public host learns no reserve or amount opening; configured Tier-1 issuers see the witness and encryption seeds. State does not advance until an independent FHDAR decision is committed.";
+
+pub const DARK_AMM_COLLECTIVE_COMMIT_OPERATION: &str = "dark-amm.collective-commit.v1";
+pub const DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE: &str =
+    "application/vnd.dregg.dark-amm-collective-decision.v1";
+pub const DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE: &str = "Commits the staged collective-key candidate only after a strict reveal-only equality transcript and independent authenticated FHDAR quorum receipt accept it. The bundle contains masked gate openings and one decision bit, never reserves, amounts, shares, operands, or a BFV secret key.";
 
 /// Stable refusal surface for the public-only collective session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,9 +100,102 @@ impl fmt::Display for CollectiveDarkAmmError {
 
 impl std::error::Error for CollectiveDarkAmmError {}
 
+/// Canonical phase-two object transported by web, Telegram, Discord, or a
+/// native coordinator. Both members are public reveal-only artifacts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectiveDecisionBundle {
+    transcript: DecisionTranscript,
+    receipt: AttestedDecisionReceipt,
+}
+
+impl CollectiveDecisionBundle {
+    pub fn new(transcript: DecisionTranscript, receipt: AttestedDecisionReceipt) -> Self {
+        Self {
+            transcript,
+            receipt,
+        }
+    }
+
+    pub fn transcript(&self) -> &DecisionTranscript {
+        &self.transcript
+    }
+
+    pub fn receipt(&self) -> &AttestedDecisionReceipt {
+        &self.receipt
+    }
+
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>, CollectiveDarkAmmError> {
+        let transcript = self
+            .transcript
+            .to_wire_bytes()
+            .map_err(|error| CollectiveDarkAmmError::Malformed(error.to_string()))?;
+        let receipt = self
+            .receipt
+            .to_wire_bytes()
+            .map_err(|error| CollectiveDarkAmmError::Malformed(error.to_string()))?;
+        if receipt.len() > MAX_DECISION_RECEIPT_BYTES {
+            return Err(CollectiveDarkAmmError::Malformed(
+                "decision receipt exceeds the collective bundle limit".to_string(),
+            ));
+        }
+        let total = DECISION_BUNDLE_MAGIC
+            .len()
+            .checked_add(16)
+            .and_then(|len| len.checked_add(transcript.len()))
+            .and_then(|len| len.checked_add(receipt.len()))
+            .ok_or_else(|| {
+                CollectiveDarkAmmError::Malformed("decision bundle length overflow".to_string())
+            })?;
+        if total > MAX_COLLECTIVE_DECISION_BUNDLE_BYTES {
+            return Err(CollectiveDarkAmmError::Malformed(
+                "decision bundle exceeds the allocation limit".to_string(),
+            ));
+        }
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(DECISION_BUNDLE_MAGIC);
+        put_u64(&mut out, transcript.len() as u64);
+        out.extend_from_slice(&transcript);
+        put_u64(&mut out, receipt.len() as u64);
+        out.extend_from_slice(&receipt);
+        Ok(out)
+    }
+
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, CollectiveDarkAmmError> {
+        if bytes.len() > MAX_COLLECTIVE_DECISION_BUNDLE_BYTES {
+            return Err(CollectiveDarkAmmError::Malformed(
+                "decision bundle exceeds the allocation limit".to_string(),
+            ));
+        }
+        let mut input = DecisionBundleReader::new(bytes);
+        if input.array::<8>()? != *DECISION_BUNDLE_MAGIC {
+            return Err(CollectiveDarkAmmError::Malformed(
+                "wrong collective decision bundle version".to_string(),
+            ));
+        }
+        let transcript_wire = input.bytes(MAX_DECISION_TRANSCRIPT_BYTES)?;
+        let receipt_wire = input.bytes(MAX_DECISION_RECEIPT_BYTES)?;
+        input.finish()?;
+        let transcript = DecisionTranscript::from_wire_bytes(transcript_wire)
+            .map_err(|error| CollectiveDarkAmmError::Malformed(error.to_string()))?;
+        let receipt = AttestedDecisionReceipt::from_wire_bytes(receipt_wire)
+            .map_err(|error| CollectiveDarkAmmError::Malformed(error.to_string()))?;
+        let bundle = Self {
+            transcript,
+            receipt,
+        };
+        if bundle.to_wire_bytes()? != bytes {
+            return Err(CollectiveDarkAmmError::Malformed(
+                "collective decision bundle is not canonical".to_string(),
+            ));
+        }
+        Ok(bundle)
+    }
+}
+
 /// Exact public relying-party configuration. The same-opening authority and
 /// FHDAR decision verifier are independent policies even when a deployment
 /// intentionally gives them overlapping rosters.
+#[derive(Clone)]
 pub struct CollectiveDarkAmmConfig {
     hosted_session: [u8; 32],
     params: BfvParams,
@@ -217,6 +333,7 @@ pub struct CommittedCollectiveSwap {
 
 /// Secretless host state. The optional pending carrier contains only the
 /// canonical v3 request and public digests/nonces needed to reconstruct it.
+#[derive(Clone)]
 pub struct CollectiveDarkAmmSession {
     config: CollectiveDarkAmmConfig,
     public_host_material: DarkPoolPublicHostMaterial,
@@ -273,6 +390,40 @@ impl CollectiveDarkAmmSession {
 
     pub fn public_host_material(&self) -> &DarkPoolPublicHostMaterial {
         &self.public_host_material
+    }
+
+    /// Reconstruct the encrypted invariant target for the currently staged
+    /// candidate. This is the public worker handoff: it contains ciphertexts
+    /// and public bounds only, never the reserves, amounts, witness, opening
+    /// seeds, a BFV secret key, or a threshold decryption share.
+    ///
+    /// The commit path independently reconstructs and re-verifies the same
+    /// candidate before accepting a decision, so a worker cannot substitute a
+    /// different ciphertext by mutating this returned value.
+    pub fn pending_decision_candidate(&self) -> Result<PrivateAppliedSwap, CollectiveDarkAmmError> {
+        let pending = self
+            .pending
+            .as_ref()
+            .ok_or(CollectiveDarkAmmError::NoPendingCandidate)?;
+        let request = decode_request(&pending.request_wire)?;
+        self.validate_request_bindings(&request)?;
+        let (dx, dy) = request
+            .proved_request()
+            .bounded_ciphertexts(self.config.params.arc())
+            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
+        let pool =
+            DarkPool::restore_public_host(self.config.params.arc(), &self.public_host_material)
+                .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
+        let candidate = pool
+            .try_private_swap_proposed(&dx, &dy)
+            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
+        if candidate.decision_session_nonce() != pending.candidate_nonce {
+            return Err(CollectiveDarkAmmError::Refused(
+                "pending candidate no longer reconstructs against the committed pre-state"
+                    .to_string(),
+            ));
+        }
+        Ok(candidate)
     }
 
     /// Deliberately abandon a staged candidate. Phase one has not consumed the
@@ -605,6 +756,569 @@ impl CollectiveDarkAmmSession {
     }
 }
 
+/// Reusable game-engine registration for collective-key Dark Bazaar tables.
+/// Each offering session derives a distinct hosted-session domain from its
+/// seed, while sharing only the deployment's public DKG/relinearization
+/// material and authority policies.
+#[derive(Clone)]
+pub struct CollectiveDarkAmmOffering {
+    base_hosted_session: [u8; 32],
+    session_seed: u64,
+    params: BfvParams,
+    keygen: KeygenSession,
+    collective: CollectivePublicKey,
+    initial_material: DarkPoolPublicHostMaterial,
+    initial_root: [u32; 8],
+    same_opening_verifier: AuthenticatedQuorumVerifier,
+    decision_policy: AttestedPrivateDecisionPolicy,
+}
+
+impl CollectiveDarkAmmOffering {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        base_hosted_session: [u8; 32],
+        session_seed: u64,
+        params: BfvParams,
+        keygen: KeygenSession,
+        collective: CollectivePublicKey,
+        initial_material: DarkPoolPublicHostMaterial,
+        initial_root: [u32; 8],
+        same_opening_verifier: AuthenticatedQuorumVerifier,
+        decision_policy: AttestedPrivateDecisionPolicy,
+    ) -> Result<Self, CollectiveDarkAmmError> {
+        if base_hosted_session == [0; 32] {
+            return Err(CollectiveDarkAmmError::Configuration(
+                "base hosted-session domain must be nonzero".to_string(),
+            ));
+        }
+        validate_root(initial_root)?;
+        let offering = Self {
+            base_hosted_session,
+            session_seed,
+            params,
+            keygen,
+            collective,
+            initial_material,
+            initial_root,
+            same_opening_verifier,
+            decision_policy,
+        };
+        let config = offering.config_for_seed(session_seed)?;
+        config.validate_material(&offering.initial_material)?;
+        Ok(offering)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_public_material(
+        base_hosted_session: [u8; 32],
+        session_seed: u64,
+        params: BfvParams,
+        keygen: KeygenSession,
+        initial_material: DarkPoolPublicHostMaterial,
+        initial_root: [u32; 8],
+        same_opening_verifier: AuthenticatedQuorumVerifier,
+        decision_policy: AttestedPrivateDecisionPolicy,
+    ) -> Result<Self, CollectiveDarkAmmError> {
+        let public_key = PublicKey::from_bytes(initial_material.public_key_bytes(), params.arc())
+            .map_err(|error| {
+            CollectiveDarkAmmError::Configuration(format!(
+                "collective public key decode failed: {error}"
+            ))
+        })?;
+        if public_key.to_bytes() != initial_material.public_key_bytes() {
+            return Err(CollectiveDarkAmmError::Configuration(
+                "collective public key is not canonically encoded".to_string(),
+            ));
+        }
+        Self::new(
+            base_hosted_session,
+            session_seed,
+            params,
+            keygen,
+            CollectivePublicKey { pk: public_key },
+            initial_material,
+            initial_root,
+            same_opening_verifier,
+            decision_policy,
+        )
+    }
+
+    pub fn public_session_for_seed(
+        &self,
+        seed: u64,
+    ) -> Result<DarkAmmPublicSession, CollectiveDarkAmmError> {
+        if seed != self.session_seed {
+            return Err(CollectiveDarkAmmError::Configuration(format!(
+                "collective table is pinned to session seed {}, got {seed}",
+                self.session_seed
+            )));
+        }
+        self.open_collective(seed)?.public_session()
+    }
+
+    pub fn derive_hosted_session(
+        base_hosted_session: [u8; 32],
+        seed: u64,
+        initial_material: &DarkPoolPublicHostMaterial,
+    ) -> Result<[u8; 32], CollectiveDarkAmmError> {
+        if base_hosted_session == [0; 32] {
+            return Err(CollectiveDarkAmmError::Configuration(
+                "base hosted-session domain must be nonzero".to_string(),
+            ));
+        }
+        let mut hash =
+            blake3::Hasher::new_derive_key("dregg-dark-amm-collective-offering-session-v1");
+        hash.update(&base_hosted_session);
+        hash.update(&seed.to_le_bytes());
+        hash.update(&initial_material.material_digest());
+        let mut hosted_session = *hash.finalize().as_bytes();
+        if hosted_session == [0; 32] {
+            hosted_session[0] = 1;
+        }
+        Ok(hosted_session)
+    }
+
+    fn hosted_session_for_seed(&self, seed: u64) -> [u8; 32] {
+        Self::derive_hosted_session(self.base_hosted_session, seed, &self.initial_material)
+            .expect("constructor validated the nonzero base hosted-session domain")
+    }
+
+    fn config_for_seed(
+        &self,
+        seed: u64,
+    ) -> Result<CollectiveDarkAmmConfig, CollectiveDarkAmmError> {
+        CollectiveDarkAmmConfig::new(
+            self.hosted_session_for_seed(seed),
+            self.params.clone(),
+            self.keygen.clone(),
+            self.collective.clone(),
+            self.same_opening_verifier.clone(),
+            self.decision_policy.clone(),
+        )
+    }
+
+    fn open_collective(
+        &self,
+        seed: u64,
+    ) -> Result<CollectiveDarkAmmSession, CollectiveDarkAmmError> {
+        if seed != self.session_seed {
+            return Err(CollectiveDarkAmmError::Configuration(format!(
+                "collective table is pinned to session seed {}, got {seed}",
+                self.session_seed
+            )));
+        }
+        CollectiveDarkAmmSession::new(
+            self.config_for_seed(seed)?,
+            self.initial_material.clone(),
+            self.initial_root,
+            0,
+        )
+    }
+
+    fn execute_stage(
+        &self,
+        session: &mut CollectiveDarkAmmGameSession,
+        payload: &[u8],
+        actor: &DreggIdentity,
+    ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        let staged = session
+            .collective
+            .stage_same_opening_request(payload)
+            .map_err(map_collective_operation_error)?;
+        let request_digest = *blake3::hash(payload).as_bytes();
+        let public = session
+            .collective
+            .public_session()
+            .map_err(map_collective_operation_error)?;
+        let mut receipt =
+            blake3::Hasher::new_derive_key("dregg-dark-amm-collective-stage-operation-receipt-v1");
+        receipt.update(&public.session_id());
+        receipt.update(&staged.sequence.to_le_bytes());
+        receipt.update(&request_digest);
+        receipt.update(&staged.same_opening_claim_digest);
+        receipt.update(&staged.candidate_nonce);
+        bind_actor(&mut receipt, actor)?;
+        let receipt_id = *receipt.finalize().as_bytes();
+        Ok(BinaryOperationReceipt {
+            operation: DARK_AMM_COLLECTIVE_STAGE_OPERATION.to_string(),
+            receipt_id,
+            public_fields: vec![
+                (
+                    "phase".to_string(),
+                    "awaiting-authority-decision".to_string(),
+                ),
+                ("sequence".to_string(), staged.sequence.to_string()),
+                ("newRoot".to_string(), hex_root(&staged.new_root)),
+                (
+                    "candidateNonce".to_string(),
+                    hex_digest(&staged.candidate_nonce),
+                ),
+                (
+                    "sameOpeningClaimDigest".to_string(),
+                    hex_digest(&staged.same_opening_claim_digest),
+                ),
+                ("requestDigest".to_string(), hex_digest(&request_digest)),
+                (
+                    "collectiveParties".to_string(),
+                    session.collective.config.keygen.n_parties().to_string(),
+                ),
+            ],
+        })
+    }
+
+    fn execute_commit(
+        &self,
+        session: &mut CollectiveDarkAmmGameSession,
+        payload: &[u8],
+        actor: &DreggIdentity,
+    ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        let bundle = CollectiveDecisionBundle::from_wire_bytes(payload)
+            .map_err(map_collective_operation_error)?;
+        let committed = session
+            .collective
+            .commit_attested_decision(bundle.transcript(), bundle.receipt())
+            .map_err(map_collective_operation_error)?;
+        let bundle_digest = *blake3::hash(payload).as_bytes();
+        let public = session
+            .collective
+            .public_session()
+            .map_err(map_collective_operation_error)?;
+        let mut receipt =
+            blake3::Hasher::new_derive_key("dregg-dark-amm-collective-commit-operation-receipt-v1");
+        receipt.update(&public.session_id());
+        receipt.update(&committed.committed_sequence.to_le_bytes());
+        receipt.update(&bundle_digest);
+        receipt.update(&committed.public_host_material_digest);
+        receipt.update(&committed.same_opening_claim_digest);
+        receipt.update(&committed.decision_claim_digest);
+        bind_actor(&mut receipt, actor)?;
+        let receipt_id = *receipt.finalize().as_bytes();
+        Ok(BinaryOperationReceipt {
+            operation: DARK_AMM_COLLECTIVE_COMMIT_OPERATION.to_string(),
+            receipt_id,
+            public_fields: vec![
+                ("phase".to_string(), "committed".to_string()),
+                (
+                    "committedSequence".to_string(),
+                    committed.committed_sequence.to_string(),
+                ),
+                (
+                    "nextSequence".to_string(),
+                    committed.next_sequence.to_string(),
+                ),
+                ("newRoot".to_string(), hex_root(&committed.new_root)),
+                (
+                    "publicHostMaterialDigest".to_string(),
+                    hex_digest(&committed.public_host_material_digest),
+                ),
+                (
+                    "sameOpeningClaimDigest".to_string(),
+                    hex_digest(&committed.same_opening_claim_digest),
+                ),
+                (
+                    "decisionClaimDigest".to_string(),
+                    hex_digest(&committed.decision_claim_digest),
+                ),
+                (
+                    "decisionBundleDigest".to_string(),
+                    hex_digest(&bundle_digest),
+                ),
+                (
+                    "decisionThreshold".to_string(),
+                    session
+                        .collective
+                        .config
+                        .decision_policy
+                        .verifier()
+                        .threshold()
+                        .to_string(),
+                ),
+            ],
+        })
+    }
+}
+
+#[derive(Clone)]
+struct AcceptedCollectiveOperation {
+    operation: &'static str,
+    canonical_payload: Vec<u8>,
+    actor: DreggIdentity,
+    receipt: BinaryOperationReceipt,
+}
+
+/// Public-only hosted game state. The authoritative encrypted pool and replay
+/// cursors live in `collective`; `accepted` is the replay-verification history
+/// and contains only canonical public protocol objects.
+pub struct CollectiveDarkAmmGameSession {
+    seed: u64,
+    collective: CollectiveDarkAmmSession,
+    accepted: Vec<AcceptedCollectiveOperation>,
+}
+
+impl CollectiveDarkAmmGameSession {
+    pub fn public_session(&self) -> Result<DarkAmmPublicSession, CollectiveDarkAmmError> {
+        self.collective.public_session()
+    }
+
+    pub fn has_pending_candidate(&self) -> bool {
+        self.collective.has_pending_candidate()
+    }
+
+    /// Public encrypted target for an in-process or separately transported
+    /// collective decision worker. See
+    /// [`CollectiveDarkAmmSession::pending_decision_candidate`].
+    pub fn pending_decision_candidate(&self) -> Result<PrivateAppliedSwap, CollectiveDarkAmmError> {
+        self.collective.pending_decision_candidate()
+    }
+
+    pub fn committed_swaps(&self) -> u64 {
+        self.collective.next_sequence()
+    }
+}
+
+impl Offering for CollectiveDarkAmmOffering {
+    type Session = CollectiveDarkAmmGameSession;
+
+    fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
+        let seed = cfg.seed.unwrap_or(1);
+        let collective = self
+            .open_collective(seed)
+            .map_err(|error| OfferingError::Deploy(error.to_string()))?;
+        Ok(CollectiveDarkAmmGameSession {
+            seed,
+            collective,
+            accepted: Vec::new(),
+        })
+    }
+
+    fn actions(&self, _session: &Self::Session) -> Vec<Action> {
+        Vec::new()
+    }
+
+    fn advance(
+        &self,
+        _session: &mut Self::Session,
+        _input: Action,
+        _actor: DreggIdentity,
+    ) -> Outcome {
+        Outcome::Refused(
+            "the collective Dark Pool advances only through its staged binary operations"
+                .to_string(),
+        )
+    }
+
+    fn verify(&self, session: &Self::Session) -> VerifyReport {
+        let mut replay = match self.open_collective(session.seed) {
+            Ok(collective) => CollectiveDarkAmmGameSession {
+                seed: session.seed,
+                collective,
+                accepted: Vec::new(),
+            },
+            Err(error) => return VerifyReport::broken(0, error.to_string()),
+        };
+        for (index, accepted) in session.accepted.iter().enumerate() {
+            let result = match accepted.operation {
+                DARK_AMM_COLLECTIVE_STAGE_OPERATION => {
+                    self.execute_stage(&mut replay, &accepted.canonical_payload, &accepted.actor)
+                }
+                DARK_AMM_COLLECTIVE_COMMIT_OPERATION => {
+                    self.execute_commit(&mut replay, &accepted.canonical_payload, &accepted.actor)
+                }
+                other => Err(BinaryOperationError::UnknownOperation(other.to_string())),
+            };
+            match result {
+                Ok(receipt) if receipt == accepted.receipt => {}
+                Ok(_) => {
+                    return VerifyReport::broken(
+                        index,
+                        "collective operation replay produced a different receipt",
+                    );
+                }
+                Err(error) => {
+                    return VerifyReport::broken(
+                        index,
+                        format!("collective operation replay refused: {error}"),
+                    );
+                }
+            }
+        }
+        if replay.collective.checkpoint_wire_bytes() != session.collective.checkpoint_wire_bytes() {
+            return VerifyReport::broken(
+                session.accepted.len(),
+                "replayed collective checkpoint differs from live encrypted state",
+            );
+        }
+        let mut report = VerifyReport::ok(session.accepted.len());
+        report.detail = format!(
+            "{} collective Dark Pool transition(s) replayed; {} committed swap(s), {} pending candidate; the host retains public BFV material only",
+            session.accepted.len(),
+            session.collective.next_sequence(),
+            usize::from(session.collective.has_pending_candidate()),
+        );
+        report
+    }
+
+    fn render(&self, session: &Self::Session) -> Surface {
+        let public = session
+            .collective
+            .public_session()
+            .expect("a constructed collective session retains a valid public view");
+        let status = if session.collective.has_pending_candidate() {
+            "Candidate staged · awaiting an independent FHDAR authority decision"
+        } else {
+            "Open for one collective-key encrypted candidate"
+        };
+        Surface(ViewNode::Section {
+            title: "The Dark Bazaar — collective encrypted table".to_string(),
+            tag: "accent".to_string(),
+            children: vec![
+                ViewNode::Section {
+                    title: "Public game state".to_string(),
+                    tag: "genuine".to_string(),
+                    children: vec![
+                        ViewNode::Text(status.to_string()),
+                        ViewNode::Text(format!(
+                            "{} committed swap(s) · invariant k={} · next sequence {}",
+                            session.collective.next_sequence(),
+                            public.k(),
+                            public.next_sequence(),
+                        )),
+                        ViewNode::Text(format!(
+                            "{} custodians · Tier-1 threshold {} · decision threshold {}",
+                            session.collective.config.keygen.n_parties(),
+                            session
+                                .collective
+                                .config
+                                .same_opening_verifier
+                                .threshold(),
+                            session
+                                .collective
+                                .config
+                                .decision_policy
+                                .verifier()
+                                .threshold(),
+                        )),
+                        ViewNode::Text(format!(
+                            "current semantic root {} · public carrier {}",
+                            short_root(&session.collective.current_root()),
+                            short_digest(
+                                &session.collective.public_host_material().material_digest()
+                            ),
+                        )),
+                        ViewNode::Text(
+                            "Reserves, swap amounts, BFV secret keys, decryption shares, MPC operands, and same-opening witnesses are absent from this host surface."
+                                .to_string(),
+                        ),
+                    ],
+                },
+                ViewNode::Section {
+                    title: "Two-authority lifecycle".to_string(),
+                    tag: "muted".to_string(),
+                    children: vec![ViewNode::Text(if session.collective.has_pending_candidate() {
+                        DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE.to_string()
+                    } else {
+                        DARK_AMM_COLLECTIVE_STAGE_DISCLOSURE.to_string()
+                    })],
+                },
+            ],
+        })
+    }
+
+    fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
+        if session.collective.has_pending_candidate() {
+            vec![BinaryOperationDescriptor {
+                name: DARK_AMM_COLLECTIVE_COMMIT_OPERATION.to_string(),
+                title: "Commit the authority-approved encrypted candidate".to_string(),
+                input_media_type: DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE.to_string(),
+                max_input_bytes: MAX_COLLECTIVE_DECISION_BUNDLE_BYTES,
+                disclosure: DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE.to_string(),
+            }]
+        } else {
+            vec![BinaryOperationDescriptor {
+                name: DARK_AMM_COLLECTIVE_STAGE_OPERATION.to_string(),
+                title: "Stage a proof-bound collective-key Dark Pool candidate".to_string(),
+                input_media_type: DARK_AMM_COLLECTIVE_STAGE_MEDIA_TYPE.to_string(),
+                max_input_bytes: MAX_DARK_AMM_REQUEST_BYTES,
+                disclosure: DARK_AMM_COLLECTIVE_STAGE_DISCLOSURE.to_string(),
+            }]
+        }
+    }
+
+    fn binary_operation_replay_material(
+        &self,
+        session: &Self::Session,
+        name: &str,
+        payload: &[u8],
+    ) -> Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError> {
+        match name {
+            DARK_AMM_COLLECTIVE_STAGE_OPERATION if !session.collective.has_pending_candidate() => {
+                let request = SameOpeningProvedEncryptedSwapRequest::from_wire_bytes(payload)
+                    .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
+                let canonical = request.to_wire_bytes();
+                if canonical != payload {
+                    return Err(BinaryOperationError::Malformed(
+                        "collective stage request is not canonical".to_string(),
+                    ));
+                }
+                Ok(Some(BinaryOperationReplayMaterial::new(
+                    canonical,
+                    DARK_AMM_COLLECTIVE_STAGE_DISCLOSURE,
+                )))
+            }
+            DARK_AMM_COLLECTIVE_COMMIT_OPERATION if session.collective.has_pending_candidate() => {
+                let bundle = CollectiveDecisionBundle::from_wire_bytes(payload)
+                    .map_err(map_collective_operation_error)?;
+                Ok(Some(BinaryOperationReplayMaterial::new(
+                    bundle
+                        .to_wire_bytes()
+                        .map_err(map_collective_operation_error)?,
+                    DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE,
+                )))
+            }
+            _ => Err(BinaryOperationError::UnknownOperation(name.to_string())),
+        }
+    }
+
+    fn invoke_binary_operation(
+        &self,
+        session: &mut Self::Session,
+        name: &str,
+        payload: &[u8],
+        actor: DreggIdentity,
+    ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        let (operation, canonical_payload, receipt) = match name {
+            DARK_AMM_COLLECTIVE_STAGE_OPERATION if !session.collective.has_pending_candidate() => {
+                let receipt = self.execute_stage(session, payload, &actor)?;
+                (
+                    DARK_AMM_COLLECTIVE_STAGE_OPERATION,
+                    payload.to_vec(),
+                    receipt,
+                )
+            }
+            DARK_AMM_COLLECTIVE_COMMIT_OPERATION if session.collective.has_pending_candidate() => {
+                let receipt = self.execute_commit(session, payload, &actor)?;
+                (
+                    DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+                    payload.to_vec(),
+                    receipt,
+                )
+            }
+            _ => return Err(BinaryOperationError::UnknownOperation(name.to_string())),
+        };
+        session.accepted.push(AcceptedCollectiveOperation {
+            operation,
+            canonical_payload,
+            actor,
+            receipt: receipt.clone(),
+        });
+        Ok(receipt)
+    }
+
+    fn price(&self, _input: &Action) -> RunCost {
+        RunCost::free()
+    }
+}
+
 fn decode_request(
     bytes: &[u8],
 ) -> Result<SameOpeningProvedEncryptedSwapRequest, CollectiveDarkAmmError> {
@@ -672,6 +1386,112 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
 fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
     put_u64(out, bytes.len() as u64);
     out.extend_from_slice(bytes);
+}
+
+fn map_collective_operation_error(error: CollectiveDarkAmmError) -> BinaryOperationError {
+    match error {
+        CollectiveDarkAmmError::Malformed(reason) => BinaryOperationError::Malformed(reason),
+        other => BinaryOperationError::Refused(other.to_string()),
+    }
+}
+
+fn bind_actor(
+    hash: &mut blake3::Hasher,
+    actor: &DreggIdentity,
+) -> Result<(), BinaryOperationError> {
+    let actor = actor.as_str().as_bytes();
+    let len = u64::try_from(actor.len())
+        .map_err(|_| BinaryOperationError::Refused("actor identity is too long".to_string()))?;
+    hash.update(&len.to_le_bytes());
+    hash.update(actor);
+    Ok(())
+}
+
+fn hex_digest(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn short_digest(bytes: &[u8; 32]) -> String {
+    hex_digest(bytes)[..12].to_string()
+}
+
+fn hex_root(root: &[u32; 8]) -> String {
+    let mut out = String::with_capacity(64);
+    for lane in root {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{lane:08x}");
+    }
+    out
+}
+
+fn short_root(root: &[u32; 8]) -> String {
+    hex_root(root)[..12].to_string()
+}
+
+struct DecisionBundleReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> DecisionBundleReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], CollectiveDarkAmmError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| {
+                CollectiveDarkAmmError::Malformed("truncated decision bundle".to_string())
+            })?;
+        let value = self.bytes[self.offset..end].try_into().map_err(|_| {
+            CollectiveDarkAmmError::Malformed("invalid decision bundle field".to_string())
+        })?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u64(&mut self) -> Result<u64, CollectiveDarkAmmError> {
+        Ok(u64::from_le_bytes(self.array()?))
+    }
+
+    fn bytes(&mut self, max: usize) -> Result<&'a [u8], CollectiveDarkAmmError> {
+        let len = usize::try_from(self.u64()?).map_err(|_| {
+            CollectiveDarkAmmError::Malformed("decision bundle length overflow".to_string())
+        })?;
+        if len > max {
+            return Err(CollectiveDarkAmmError::Malformed(format!(
+                "decision bundle member length {len} exceeds maximum {max}"
+            )));
+        }
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| {
+                CollectiveDarkAmmError::Malformed("truncated decision bundle".to_string())
+            })?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn finish(self) -> Result<(), CollectiveDarkAmmError> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(CollectiveDarkAmmError::Malformed(
+                "trailing decision bundle bytes".to_string(),
+            ))
+        }
+    }
 }
 
 struct PendingRef<'a> {

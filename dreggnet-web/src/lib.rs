@@ -2696,6 +2696,31 @@ pub const DARK_AMM_AUTHORITY_KEYS_ENV: &str = "DREGG_DARK_AMM_AUTHORITY_PUBLIC_K
 /// Required issuer signatures from [`DARK_AMM_AUTHORITY_KEYS_ENV`].
 #[cfg(feature = "dark-amm-game")]
 pub const DARK_AMM_AUTHORITY_THRESHOLD_ENV: &str = "DREGG_DARK_AMM_AUTHORITY_THRESHOLD";
+/// Canonical public-only collective pool carrier. Unlike the legacy key file,
+/// this contains no BFV secret key or decryption share.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_MATERIAL_FILE";
+/// Named web/Telegram/Discord session id this root/material pair is provisioned
+/// for. The registrar derives the host's exact `blake3(id)` seed and refuses all
+/// other session ids at offering open.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_SESSION_ID_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_SESSION_ID";
+/// Nonzero 32-byte hex domain from which the collective hosted-session identity
+/// is derived together with the pinned session id and public carrier.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_BASE_SESSION_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_BASE_SESSION";
+/// Public DKG party count and authenticated CRP seed. These reconstruct the
+/// exact collective-key identity carried by same-opening receipts.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_PARTIES_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_PARTIES";
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_CRP_SEED_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_CRP_SEED";
+/// Independent FHDAR decision-authority roster. It must contain exactly the DKG
+/// party count; its threshold need not equal the Tier-1 issuer threshold.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_DECISION_KEYS_ENV: &str = "DREGG_DARK_AMM_DECISION_PUBLIC_KEYS";
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_DECISION_THRESHOLD_ENV: &str = "DREGG_DARK_AMM_DECISION_THRESHOLD";
 
 /// Parse the host-selected exact-opening issuer policy. Both values absent
 /// means the stricter operation is deliberately unconfigured; a partial or
@@ -2708,6 +2733,17 @@ pub fn dark_amm_authority_from(
         get,
         DARK_AMM_AUTHORITY_KEYS_ENV,
         DARK_AMM_AUTHORITY_THRESHOLD_ENV,
+    )
+}
+
+#[cfg(feature = "dark-amm-game")]
+pub fn dark_amm_decision_authority_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<Option<(Vec<[u8; 32]>, usize)>, String> {
+    quorum_policy_from(
+        get,
+        DARK_AMM_DECISION_KEYS_ENV,
+        DARK_AMM_DECISION_THRESHOLD_ENV,
     )
 }
 
@@ -2816,6 +2852,141 @@ pub fn register_dark_amm_from(
         offering,
     );
     Ok(true)
+}
+
+/// Register the actual public-only two-phase collective table. Every required
+/// deployment pin is explicit; a partial collective configuration is a boot
+/// error rather than a fallback to the single-key offering.
+#[cfg(feature = "dark-amm-game")]
+pub fn register_collective_dark_amm_from(
+    host: &mut OfferingHost,
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<bool, String> {
+    const VALUE_BITS: usize = 19;
+    const MAX_PUBLIC_MATERIAL_BYTES: u64 = 256 * 1024 * 1024;
+
+    let Some(path) =
+        get(DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV).filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(false);
+    };
+    let required = |name: &'static str| {
+        get(name)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} requires {name}"))
+    };
+    let session_id = required(DARK_AMM_COLLECTIVE_SESSION_ID_ENV)?;
+    let base_hosted_session = decode_quorum_key(&required(DARK_AMM_COLLECTIVE_BASE_SESSION_ENV)?)
+        .ok_or_else(|| {
+        format!("{DARK_AMM_COLLECTIVE_BASE_SESSION_ENV} must be exactly 32 bytes of hex")
+    })?;
+    let n_parties = required(DARK_AMM_COLLECTIVE_PARTIES_ENV)?
+        .parse::<usize>()
+        .map_err(|_| format!("{DARK_AMM_COLLECTIVE_PARTIES_ENV} is not a positive integer"))?;
+    let crp_seed =
+        decode_quorum_key(&required(DARK_AMM_COLLECTIVE_CRP_SEED_ENV)?).ok_or_else(|| {
+            format!("{DARK_AMM_COLLECTIVE_CRP_SEED_ENV} must be exactly 32 bytes of hex")
+        })?;
+    let root = parse_dark_amm_root(&required(DARK_AMM_INITIAL_ROOT_ENV)?)?;
+    let (same_opening_keys, same_opening_threshold) =
+        dark_amm_authority_from(|name| get(name))?.ok_or_else(|| {
+            format!(
+                "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} requires {DARK_AMM_AUTHORITY_KEYS_ENV} and {DARK_AMM_AUTHORITY_THRESHOLD_ENV}"
+            )
+        })?;
+    let (decision_keys, decision_threshold) =
+        dark_amm_decision_authority_from(|name| get(name))?.ok_or_else(|| {
+            format!(
+                "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} requires {DARK_AMM_DECISION_KEYS_ENV} and {DARK_AMM_DECISION_THRESHOLD_ENV}"
+            )
+        })?;
+
+    let path = std::path::Path::new(&path);
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "cannot inspect {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {}: {error}",
+            path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(format!(
+            "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {} must be a regular, non-symlinked file",
+            path.display()
+        ));
+    }
+    if metadata.len() > MAX_PUBLIC_MATERIAL_BYTES {
+        return Err(format!(
+            "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {} is {} bytes; maximum is {MAX_PUBLIC_MATERIAL_BYTES}",
+            path.display(),
+            metadata.len()
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "cannot read {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {}: {error}",
+            path.display()
+        )
+    })?;
+    let params = fhegg_fhe::threshold::BfvParams::fold_set();
+    let material =
+        fhegg_fhe::dark_amm::DarkPoolPublicHostMaterial::from_wire_bytes(&bytes, params.arc())
+            .map_err(|error| format!("invalid collective Dark Pool public material: {error}"))?;
+    let keygen = fhegg_fhe::threshold::KeygenSession::from_seed(n_parties, crp_seed)
+        .map_err(|error| format!("invalid collective Dark Pool DKG identity: {error:?}"))?;
+    let same_opening_verifier = fhegg_fhe::attestation::AuthenticatedQuorumVerifier::new(
+        same_opening_keys,
+        same_opening_threshold,
+    )
+    .map_err(|error| format!("invalid Tier-1 same-opening policy: {error}"))?;
+    let decision_verifier =
+        fhegg_fhe::attestation::AuthenticatedQuorumVerifier::new(decision_keys, decision_threshold)
+            .map_err(|error| format!("invalid FHDAR decision policy: {error}"))?;
+    let decision_policy = fhegg_fhe::dark_amm_attested::AttestedPrivateDecisionPolicy::new(
+        VALUE_BITS,
+        params.plaintext_modulus(),
+        std::time::Duration::from_secs(5),
+        decision_verifier,
+    )
+    .map_err(|error| format!("invalid FHDAR circuit policy: {error}"))?;
+    let session_seed = dreggnet_offerings::seed_from_id(&session_id);
+    let offering =
+        dreggnet_market::dark_amm_collective::CollectiveDarkAmmOffering::from_public_material(
+            base_hosted_session,
+            session_seed,
+            params,
+            keygen,
+            material,
+            root,
+            same_opening_verifier,
+            decision_policy,
+        )
+        .map_err(|error| format!("invalid collective Dark Pool deployment: {error}"))?;
+    host.register(
+        dreggnet_market::dark_amm_game::DARK_AMM_OFFERING_KEY,
+        "The Dark Bazaar — collective encrypted constant-product table",
+        offering,
+    );
+    Ok(true)
+}
+
+/// Select exactly one custody mode. Collective public-only material wins only
+/// when the legacy secret-key path is absent; configuring both is an error.
+#[cfg(feature = "dark-amm-game")]
+pub fn register_resolved_dark_amm_from(
+    host: &mut OfferingHost,
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<bool, String> {
+    let has_secret =
+        get(DARK_AMM_SECRET_KEY_FILE_ENV).is_some_and(|value| !value.trim().is_empty());
+    let has_collective =
+        get(DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV).is_some_and(|value| !value.trim().is_empty());
+    match (has_secret, has_collective) {
+        (true, true) => Err(format!(
+            "{DARK_AMM_SECRET_KEY_FILE_ENV} and {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} are mutually exclusive custody modes"
+        )),
+        (false, true) => register_collective_dark_amm_from(host, get),
+        _ => register_dark_amm_from(host, get),
+    }
 }
 
 #[cfg(feature = "dark-amm-game")]
@@ -2978,12 +3149,14 @@ fn demo_host_with_resolved_fhegg() -> OfferingHost {
 
 #[cfg(feature = "dark-amm-game")]
 fn demo_host_with_resolved_dark_amm(mut host: OfferingHost) -> OfferingHost {
-    match register_dark_amm_from(&mut host, |key| std::env::var(key).ok()) {
+    match register_resolved_dark_amm_from(&mut host, |key| std::env::var(key).ok()) {
         Ok(true) => tracing::info!(
-            "encrypted Dark Pool enabled — v3 iff root + exact-opening authority are set; SINGLE-HOST BFV custody remains"
+            "encrypted Dark Pool enabled — collective public-only custody when configured, otherwise the explicit single-host mode"
         ),
         Ok(false) => {
-            tracing::info!("encrypted Dark Pool disabled — DREGG_DARK_AMM_SECRET_KEY_FILE is unset")
+            tracing::info!(
+                "encrypted Dark Pool disabled — neither custody material path is configured"
+            )
         }
         Err(error) => tracing::error!(
             error = %error,
@@ -3013,34 +3186,50 @@ pub fn validate_public_shielded_deployment_from(
         None => {}
     }
 
-    let dark_key = get(DARK_AMM_SECRET_KEY_FILE_ENV)
-        .filter(|value| !value.trim().is_empty())
-        .is_some();
-    let dark_root = get(DARK_AMM_INITIAL_ROOT_ENV)
-        .filter(|value| !value.trim().is_empty())
-        .is_some();
-    let dark_authority_keys = get(DARK_AMM_AUTHORITY_KEYS_ENV)
-        .filter(|value| !value.trim().is_empty())
-        .is_some();
-    let dark_authority_threshold = get(DARK_AMM_AUTHORITY_THRESHOLD_ENV)
-        .filter(|value| !value.trim().is_empty())
-        .is_some();
-    match (
-        dark_key,
-        dark_root,
-        dark_authority_keys,
-        dark_authority_threshold,
-    ) {
-        (false, false, false, false) => return Ok(()),
-        (true, true, true, true) => {}
-        _ => {
+    let present = |name: &str| get(name).is_some_and(|value| !value.trim().is_empty());
+    let dark_key = present(DARK_AMM_SECRET_KEY_FILE_ENV);
+    let collective_material = present(DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV);
+    if dark_key && collective_material {
+        return Err(format!(
+            "{DARK_AMM_SECRET_KEY_FILE_ENV} and {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} are mutually exclusive custody modes"
+        ));
+    }
+    if dark_key {
+        if ![
+            DARK_AMM_INITIAL_ROOT_ENV,
+            DARK_AMM_AUTHORITY_KEYS_ENV,
+            DARK_AMM_AUTHORITY_THRESHOLD_ENV,
+        ]
+        .into_iter()
+        .all(&present)
+        {
             return Err(format!(
                 "{DARK_AMM_SECRET_KEY_FILE_ENV}, {DARK_AMM_INITIAL_ROOT_ENV}, {DARK_AMM_AUTHORITY_KEYS_ENV}, and {DARK_AMM_AUTHORITY_THRESHOLD_ENV} must be set together in the public shielded deployment (strict v3; refusing proof-only v2)"
             ));
         }
+    } else if !collective_material {
+        let stray = [
+            DARK_AMM_INITIAL_ROOT_ENV,
+            DARK_AMM_AUTHORITY_KEYS_ENV,
+            DARK_AMM_AUTHORITY_THRESHOLD_ENV,
+            DARK_AMM_COLLECTIVE_SESSION_ID_ENV,
+            DARK_AMM_COLLECTIVE_BASE_SESSION_ENV,
+            DARK_AMM_COLLECTIVE_PARTIES_ENV,
+            DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
+            DARK_AMM_DECISION_KEYS_ENV,
+            DARK_AMM_DECISION_THRESHOLD_ENV,
+        ]
+        .into_iter()
+        .find(|name| present(name));
+        if let Some(name) = stray {
+            return Err(format!(
+                "{name} is set without either {DARK_AMM_SECRET_KEY_FILE_ENV} or {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV}"
+            ));
+        }
+        return Ok(());
     }
     let mut host = OfferingHost::new();
-    if !register_dark_amm_from(&mut host, |name| get(name))? {
+    if !register_resolved_dark_amm_from(&mut host, |name| get(name))? {
         return Err("configured proof-required Dark AMM was not registered".to_string());
     }
     Ok(())

@@ -122,6 +122,10 @@ impl CollectiveFixture {
     }
 
     fn encrypted_amount(&self, value: u64) -> BoundedCiphertext {
+        self.encrypted_amount_with_bound(value, value)
+    }
+
+    fn encrypted_amount_with_bound(&self, value: u64, public_bound: u64) -> BoundedCiphertext {
         let plaintext = Plaintext::try_encode(&[value], Encoding::simd(), self.params.arc())
             .expect("amount encoding");
         let ciphertext = self
@@ -129,7 +133,7 @@ impl CollectiveFixture {
             .pk
             .try_encrypt(&plaintext, &mut rand_09::rng())
             .expect("collective amount encryption");
-        BoundedCiphertext::new(ciphertext, value)
+        BoundedCiphertext::new(ciphertext, public_bound)
     }
 }
 
@@ -722,6 +726,37 @@ fn restarted_host_commits_independent_attested_bit_without_runtime_decision_capa
     assert_eq!(policy.n_parties(), N);
     assert_eq!(policy.value_bits(), VALUE_BITS);
     assert_eq!(policy.verifier().roster_digest(), verifier.roster_digest());
+
+    // A true invariant can still carry a public worst-case bound wider than
+    // the configured equality circuit. Even a genuine masked equality bit and
+    // quorum receipt must not authorize a truncated-domain decision.
+    let wide_dx = fixture.encrypted_amount_with_bound(50, 200);
+    let wide_candidate = host
+        .try_private_swap_proposed(&wide_dx, &dy)
+        .expect("BFV modulus admits the wider public bound");
+    assert!(wide_candidate.invariant.plain_bound >= (1 << VALUE_BITS));
+    let (wide_session, wide_decision) =
+        masked_invariant_decision(&fixture, &wide_candidate, host.k, 0x6500_0002);
+    assert!(wide_decision.is_equal());
+    let wide_receipt = attested_receipt(&wide_session, &wide_decision, &keys, policy.verifier());
+    let mut wide_replay = SnapshotReplayGuard::new([0x64; 32]);
+    assert!(matches!(
+        commit_attested_private_decision(
+            &mut host,
+            &wide_candidate,
+            &policy,
+            &wide_decision.transcript,
+            &wide_receipt,
+            &mut wide_replay,
+        ),
+        Err(AttestedPrivateCommitError::CandidateRangeExceedsDecisionWidth {
+            candidate_bound,
+            range_end,
+        }) if candidate_bound >= range_end && range_end == (1 << VALUE_BITS)
+    ));
+    assert!(wide_replay.is_empty());
+    assert_eq!(host.reserve_cts().ct_x.ct.to_bytes(), before_x);
+    assert_eq!(host.reserve_cts().ct_y.ct.to_bytes(), before_y);
 
     // A well-formed but wrong host policy is rejected before replay storage is
     // touched; the exact same candidate/receipt can still pass under policy.

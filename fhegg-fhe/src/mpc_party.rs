@@ -47,6 +47,14 @@ use rand::Rng;
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
+/// Maximum canonical reveal-only equality transcript accepted at a process
+/// boundary.  The current scalar equality circuits are far smaller; this is an
+/// allocation/exhaustion ceiling, not a claim about a particular game shape.
+pub const MAX_DECISION_TRANSCRIPT_BYTES: usize = 16 * 1024 * 1024;
+const DECISION_TRANSCRIPT_MAGIC: &[u8; 8] = b"FHDTR001";
+const DECISION_TRANSCRIPT_FIXED_BYTES: usize = 8 + 8 + 1 + 5 * 8;
+const MASKED_OPENING_WIRE_BYTES: usize = 8 + 1 + 1;
+
 /// Public circuit/session parameters. The nonce is a routing/replay-domain tag,
 /// not an authenticator; a deployment must bind it to an authenticated roster.
 /// Constructing a session records the protocol precondition that the honest
@@ -285,6 +293,7 @@ pub enum PartyMpcError {
     },
     TripleExhausted,
     InvalidOutput,
+    MalformedTranscriptWire,
     ArithmeticOverflow,
 }
 
@@ -421,6 +430,156 @@ impl DecisionTranscript {
                 .checked_mul(session.n_parties)
                 .is_some_and(|count| self.gate_share_messages == count)
             && self.output_share_messages == session.n_parties
+    }
+
+    /// Canonical public transport for the reveal-only equality transcript.
+    /// No operand, residue, Boolean share, or Beaver triple is present.
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>> {
+        if self.masked.len() != self.and_gates
+            || self.scalar_opening_rounds != self.and_gates
+            || self.revealed_equal > 1
+            || self
+                .masked
+                .iter()
+                .enumerate()
+                .any(|(gate, opening)| opening.gate != gate || opening.d > 1 || opening.e > 1)
+        {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let encoded_len = DECISION_TRANSCRIPT_FIXED_BYTES
+            .checked_add(
+                self.masked
+                    .len()
+                    .checked_mul(MASKED_OPENING_WIRE_BYTES)
+                    .ok_or(PartyMpcError::ArithmeticOverflow)?,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if encoded_len > MAX_DECISION_TRANSCRIPT_BYTES {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let mut out = Vec::with_capacity(encoded_len);
+        out.extend_from_slice(DECISION_TRANSCRIPT_MAGIC);
+        put_transcript_usize(&mut out, self.masked.len())?;
+        for opening in &self.masked {
+            put_transcript_usize(&mut out, opening.gate)?;
+            out.push(opening.d);
+            out.push(opening.e);
+        }
+        out.push(self.revealed_equal);
+        put_transcript_usize(&mut out, self.and_gates)?;
+        put_transcript_usize(&mut out, self.scalar_opening_rounds)?;
+        put_transcript_usize(&mut out, self.modeled_batched_rounds)?;
+        put_transcript_usize(&mut out, self.gate_share_messages)?;
+        put_transcript_usize(&mut out, self.output_share_messages)?;
+        debug_assert_eq!(out.len(), encoded_len);
+        Ok(out)
+    }
+
+    /// Strict inverse of [`Self::to_wire_bytes`].  Exact circuit/session shape
+    /// remains the relying party's job via [`Self::is_reveal_only`].
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DECISION_TRANSCRIPT_FIXED_BYTES
+            || bytes.len() > MAX_DECISION_TRANSCRIPT_BYTES
+        {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let mut input = TranscriptWireReader::new(bytes);
+        if input.take(DECISION_TRANSCRIPT_MAGIC.len())? != DECISION_TRANSCRIPT_MAGIC {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let count = input.usize()?;
+        let expected_len = DECISION_TRANSCRIPT_FIXED_BYTES
+            .checked_add(
+                count
+                    .checked_mul(MASKED_OPENING_WIRE_BYTES)
+                    .ok_or(PartyMpcError::ArithmeticOverflow)?,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if expected_len != bytes.len() || expected_len > MAX_DECISION_TRANSCRIPT_BYTES {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let mut masked = Vec::with_capacity(count);
+        for expected_gate in 0..count {
+            let gate = input.usize()?;
+            let d = input.byte()?;
+            let e = input.byte()?;
+            if gate != expected_gate || d > 1 || e > 1 {
+                return Err(PartyMpcError::MalformedTranscriptWire);
+            }
+            masked.push(MaskedOpening { gate, d, e });
+        }
+        let revealed_equal = input.byte()?;
+        let and_gates = input.usize()?;
+        let scalar_opening_rounds = input.usize()?;
+        let modeled_batched_rounds = input.usize()?;
+        let gate_share_messages = input.usize()?;
+        let output_share_messages = input.usize()?;
+        input.finish()?;
+        if revealed_equal > 1 || and_gates != count || scalar_opening_rounds != count {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        let transcript = Self {
+            masked,
+            revealed_equal,
+            and_gates,
+            scalar_opening_rounds,
+            modeled_batched_rounds,
+            gate_share_messages,
+            output_share_messages,
+        };
+        if transcript.to_wire_bytes()? != bytes {
+            return Err(PartyMpcError::MalformedTranscriptWire);
+        }
+        Ok(transcript)
+    }
+}
+
+fn put_transcript_usize(out: &mut Vec<u8>, value: usize) -> Result<()> {
+    let value = u64::try_from(value).map_err(|_| PartyMpcError::ArithmeticOverflow)?;
+    out.extend_from_slice(&value.to_be_bytes());
+    Ok(())
+}
+
+struct TranscriptWireReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> TranscriptWireReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(PartyMpcError::MalformedTranscriptWire)?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn byte(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn usize(&mut self) -> Result<usize> {
+        let raw = u64::from_be_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| PartyMpcError::MalformedTranscriptWire)?,
+        );
+        usize::try_from(raw).map_err(|_| PartyMpcError::MalformedTranscriptWire)
+    }
+
+    fn finish(self) -> Result<()> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(PartyMpcError::MalformedTranscriptWire)
+        }
     }
 }
 

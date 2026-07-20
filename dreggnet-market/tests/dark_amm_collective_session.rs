@@ -9,12 +9,16 @@ use std::time::Duration;
 
 use dregg_circuit_prove::dark_amm_private::{PrivateAmmWitness, prove_zk};
 use dreggnet_market::dark_amm_collective::{
-    CollectiveDarkAmmConfig, CollectiveDarkAmmError, CollectiveDarkAmmSession,
+    CollectiveDarkAmmConfig, CollectiveDarkAmmError, CollectiveDarkAmmOffering,
+    CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+    DARK_AMM_COLLECTIVE_STAGE_OPERATION,
 };
+use dreggnet_market::dark_amm_collective_worker::MaskedCollectiveDecisionWorker;
 use dreggnet_market::dark_amm_game::{
     DarkAmmPublicSession, SameOpeningProvedEncryptedSwapRequest,
     produce_proved_encrypted_swap_seeded,
 };
+use dreggnet_offerings::{DreggIdentity, Offering, SessionConfig};
 use ed25519_dalek::SigningKey;
 use fhe::bfv::{PublicKey, RelinearizationKey};
 use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
@@ -27,7 +31,9 @@ use fhegg_fhe::attestation::{
 use fhegg_fhe::dark_amm::{DarkPool, DarkPoolPublicHostMaterial};
 use fhegg_fhe::dark_amm_attested::AttestedPrivateDecisionPolicy;
 use fhegg_fhe::decision_attestation::{AttestedDecisionReceipt, ExpectedDecisionContext};
-use fhegg_fhe::mpc_party::{DecisionTranscript, PartyMpcSession, simulate_decision_transcript};
+use fhegg_fhe::mpc_party::{
+    DecisionTranscript, PartyMpcSession, simulate_decision_transcript, trusted_dealer_triples,
+};
 use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
 use fhegg_fhe::threshold::{
     BfvParams, CollectivePublicKey, KeygenCoordinator, KeygenSession, ThresholdParty,
@@ -44,6 +50,7 @@ struct CollectiveFixture {
     keygen: KeygenSession,
     public_key_bytes: Vec<u8>,
     relin: RelinearizationKey,
+    parties: Vec<ThresholdParty>,
 }
 
 impl CollectiveFixture {
@@ -73,6 +80,7 @@ impl CollectiveFixture {
             keygen,
             public_key_bytes,
             relin,
+            parties,
         }
     }
 
@@ -254,7 +262,7 @@ fn collective_two_phase_game_session_is_atomic_and_restartable_without_host_secr
         &public,
         50,
         300,
-        200,
+        100,
         400,
         statement,
         proof.to_postcard().unwrap(),
@@ -481,4 +489,228 @@ fn collective_two_phase_game_session_is_atomic_and_restartable_without_host_secr
     assert_eq!(restaged, staged_for_cancel);
     assert!(cancelled.has_pending_candidate());
     assert_eq!(cancelled.same_opening_replay_revision(), 0);
+}
+
+#[test]
+fn collective_service_is_a_replay_verified_two_phase_game_offering() {
+    const SEED: u64 = 0xc011_ec71;
+    const BASE_SESSION: [u8; 32] = [0x95; 32];
+
+    let fixture = CollectiveFixture::new();
+    let material = fixture.initial_material();
+    let hosted_session =
+        CollectiveDarkAmmOffering::derive_hosted_session(BASE_SESSION, SEED, &material).unwrap();
+    let bootstrap = DarkAmmPublicSession::try_from_collective(
+        hosted_session,
+        &fixture.params,
+        &fixture.keygen,
+        &fixture.collective(),
+        90_000,
+        400,
+        1_000,
+        0,
+        [1; 8],
+    )
+    .unwrap();
+    let witness = PrivateAmmWitness::try_new(
+        100,
+        900,
+        50,
+        300,
+        [3_000, 3_001, 3_002, 3_003, 3_004, 3_005, 3_006, 3_007],
+        [4_000, 4_001, 4_002, 4_003, 4_004, 4_005, 4_006, 4_007],
+    )
+    .unwrap();
+    let (proof, statement) = prove_zk(bootstrap.private_amm_receipt_session(), &witness).unwrap();
+
+    let same_opening_keys = signing_keys(0xc1);
+    let decision_keys = signing_keys(0xd1);
+    let same_opening_authority = Tier1SameOpeningAuthority::new(
+        same_opening_keys
+            .iter()
+            .map(|key| key.verifying_key().to_bytes())
+            .collect(),
+        2,
+    )
+    .unwrap();
+    let decision_verifier = verifier(&decision_keys);
+    let decision_policy = AttestedPrivateDecisionPolicy::new(
+        VALUE_BITS,
+        fixture.params.plaintext_modulus(),
+        Duration::from_secs(5),
+        decision_verifier.clone(),
+    )
+    .unwrap();
+    let offering = CollectiveDarkAmmOffering::new(
+        BASE_SESSION,
+        SEED,
+        fixture.params.clone(),
+        fixture.keygen.clone(),
+        fixture.collective(),
+        material,
+        statement.old_root,
+        same_opening_authority.verifier().clone(),
+        decision_policy,
+    )
+    .unwrap();
+    let mut game = offering.open(SessionConfig::with_seed(SEED)).unwrap();
+    let public = game.public_session().unwrap();
+    assert_eq!(public.session_id(), hosted_session);
+    assert_eq!(
+        public.proof_context().unwrap().current_root(),
+        statement.old_root
+    );
+    assert_eq!(
+        offering.binary_operations(&game)[0].name,
+        DARK_AMM_COLLECTIVE_STAGE_OPERATION
+    );
+
+    let proved = produce_proved_encrypted_swap_seeded(
+        &public,
+        50,
+        300,
+        100,
+        400,
+        statement,
+        proof.to_postcard().unwrap(),
+        [0xe1; 32],
+        [0xe2; 32],
+    )
+    .unwrap();
+    let (dx, dy) = proved.bounded_ciphertexts(fixture.params.arc()).unwrap();
+    let decoded_proof = proved.decoded_private_amm_proof().unwrap();
+    let authority_collective = fixture.collective();
+    let opening_context = AmmSameOpeningContext {
+        privacy_tier: AmmPrivacyTier::Tier1IssuerVisible,
+        hosted_session,
+        sequence: 0,
+        dx_bound: proved.dx_bound(),
+        dy_bound: proved.dy_bound(),
+        params: &fixture.params,
+        keygen: &fixture.keygen,
+        collective: &authority_collective,
+        dx_ciphertext: &dx.ct,
+        dy_ciphertext: &dy.ct,
+        proof: &decoded_proof,
+        statement,
+    };
+    let dx_opening = ExactBfvAmountOpening::new(50, [0xe1; 32]);
+    let dy_opening = ExactBfvAmountOpening::new(300, [0xe2; 32]);
+    let endorsements = [0usize, 2]
+        .map(|index| {
+            same_opening_authority
+                .endorse(
+                    &opening_context,
+                    &witness,
+                    &dx_opening,
+                    &dy_opening,
+                    index,
+                    &same_opening_keys[index],
+                )
+                .unwrap()
+        })
+        .to_vec();
+    let request = SameOpeningProvedEncryptedSwapRequest::new(
+        proved,
+        same_opening_authority
+            .assemble_receipt(&endorsements)
+            .unwrap(),
+    );
+    let request_wire = request.to_wire_bytes();
+    let actor = DreggIdentity("player:collective-swapper".to_string());
+
+    // Journal preflight performs strict canonical decoding but no mutation.
+    let replay = offering
+        .binary_operation_replay_material(&game, DARK_AMM_COLLECTIVE_STAGE_OPERATION, &request_wire)
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.bytes, request_wire);
+    assert!(!game.has_pending_candidate());
+    let staged_receipt = offering
+        .invoke_binary_operation(
+            &mut game,
+            DARK_AMM_COLLECTIVE_STAGE_OPERATION,
+            &request_wire,
+            actor.clone(),
+        )
+        .unwrap();
+    assert!(game.has_pending_candidate());
+    assert_eq!(
+        staged_receipt.operation,
+        DARK_AMM_COLLECTIVE_STAGE_OPERATION
+    );
+    assert_eq!(
+        offering.binary_operations(&game)[0].name,
+        DARK_AMM_COLLECTIVE_COMMIT_OPERATION
+    );
+
+    let candidate_nonce = staged_receipt
+        .public_fields
+        .iter()
+        .find(|(name, _)| name == "candidateNonce")
+        .map(|(_, value)| {
+            let bytes = (0..32)
+                .map(|index| u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap())
+                .collect::<Vec<_>>();
+            <[u8; 32]>::try_from(bytes).unwrap()
+        })
+        .unwrap();
+    let candidate = game.pending_decision_candidate().unwrap();
+    assert_eq!(candidate.decision_session_nonce(), candidate_nonce);
+    let authority_collective = fixture.collective();
+    let worker = MaskedCollectiveDecisionWorker::new(
+        &fixture.params,
+        &fixture.keygen,
+        &authority_collective,
+        &fixture.parties,
+        VALUE_BITS,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let decision_session = worker.decision_session(&candidate).unwrap();
+    let mut preprocessing_rng = StdRng08::seed_from_u64(0xc011_ec72);
+    let triples = trusted_dealer_triples(&decision_session, &mut preprocessing_rng).unwrap();
+    let private_decision = worker
+        .decide_with_triples(&candidate, 90_000, triples)
+        .unwrap();
+    assert!(private_decision.is_equal());
+    let draft = private_decision.draft_receipt(&decision_verifier).unwrap();
+    let decision_signatures = [0usize, 2]
+        .map(|index| {
+            decision_verifier
+                .sign_claim(&draft.claim_digest(), index, &decision_keys[index])
+                .unwrap()
+        })
+        .to_vec();
+    let receipt = private_decision
+        .assemble_attested_receipt(&decision_verifier, &decision_signatures)
+        .unwrap();
+    let bundle = CollectiveDecisionBundle::new(private_decision.transcript().clone(), receipt);
+    let bundle_wire = bundle.to_wire_bytes().unwrap();
+    assert_eq!(&bundle_wire[..8], b"DBCDv001");
+    assert_eq!(
+        CollectiveDecisionBundle::from_wire_bytes(&bundle_wire).unwrap(),
+        bundle
+    );
+    let mut trailing = bundle_wire.clone();
+    trailing.push(0);
+    assert!(CollectiveDecisionBundle::from_wire_bytes(&trailing).is_err());
+
+    let committed_receipt = offering
+        .invoke_binary_operation(
+            &mut game,
+            DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+            &bundle_wire,
+            DreggIdentity("authority:decision-carrier".to_string()),
+        )
+        .unwrap();
+    assert_eq!(
+        committed_receipt.operation,
+        DARK_AMM_COLLECTIVE_COMMIT_OPERATION
+    );
+    assert_eq!(game.committed_swaps(), 1);
+    assert!(!game.has_pending_candidate());
+    let report = offering.verify(&game);
+    assert!(report.verified, "{}", report.detail);
+    assert_eq!(report.turns, 2);
 }

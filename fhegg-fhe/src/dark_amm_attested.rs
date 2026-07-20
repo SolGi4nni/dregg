@@ -98,6 +98,13 @@ pub enum AttestedPrivateCommitError {
         pool: u64,
         policy: u64,
     },
+    /// The encrypted candidate's public worst-case bound does not fit the
+    /// equality circuit's declared bit width. Accepting it would let the
+    /// authorities attest equality only after truncation.
+    CandidateRangeExceedsDecisionWidth {
+        candidate_bound: u64,
+        range_end: u64,
+    },
     Candidate(DarkAmmCommitPreflightError),
     Session(PartyMpcError),
     Attestation(DecisionAttestationError),
@@ -119,6 +126,13 @@ impl fmt::Display for AttestedPrivateCommitError {
             Self::PoolPlaintextModulusMismatch { pool, policy } => write!(
                 f,
                 "attested Dark AMM policy plaintext modulus {policy} does not match pool {pool}"
+            ),
+            Self::CandidateRangeExceedsDecisionWidth {
+                candidate_bound,
+                range_end,
+            } => write!(
+                f,
+                "Dark AMM candidate bound {candidate_bound} is outside the decision circuit range 0..{range_end}"
             ),
             Self::Candidate(reason) => {
                 write!(f, "Dark AMM candidate preflight refused: {reason:?}")
@@ -178,6 +192,15 @@ pub fn commit_attested_private_decision<R: ReplayGuard>(
             pool: pool_t,
             policy: policy.plaintext_modulus,
         });
+    }
+    let range_end = 1u64 << policy.value_bits;
+    if candidate.invariant.plain_bound >= range_end {
+        return Err(
+            AttestedPrivateCommitError::CandidateRangeExceedsDecisionWidth {
+                candidate_bound: candidate.invariant.plain_bound,
+                range_end,
+            },
+        );
     }
     if !receipt.claim.equal || transcript.revealed_equal != 1 {
         return Err(AttestedPrivateCommitError::DecisionRefused);

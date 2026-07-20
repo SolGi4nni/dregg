@@ -1622,7 +1622,7 @@ fn retryable_resume_error(e: &ResumeError) -> bool {
 
 /// A deterministic session seed from a session id — `blake3(id)`'s low 8 bytes as a `u64`. The
 /// SAME derivation `dreggnet-web` uses, so a host-minted id and a web route id seed identically.
-fn seed_from_id(id: &str) -> u64 {
+pub fn seed_from_id(id: &str) -> u64 {
     let h = blake3::hash(id.as_bytes());
     let b = h.as_bytes();
     u64::from_le_bytes(b[..8].try_into().unwrap())

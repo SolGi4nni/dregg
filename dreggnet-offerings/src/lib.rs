@@ -96,7 +96,9 @@ pub mod session;
 /// consumer exists; rung 2 (browser/device-held keys) feeds this same verifier. See [`signed`].
 pub mod signed;
 
-pub use host::{HostError, HostOperationError, OfferingHost, OfferingInfo, ResumeError};
+pub use host::{
+    HostError, HostOperationError, OfferingHost, OfferingInfo, ResumeError, seed_from_id,
+};
 pub use lifecycle::{Clock, ManualClock, PolicyRefusal, SessionPolicy, SweepReport, SystemClock};
 pub use operation::{
     BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,

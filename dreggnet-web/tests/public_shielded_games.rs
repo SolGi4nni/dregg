@@ -12,9 +12,13 @@ use dreggnet_offerings::dungeon::{
 };
 use dreggnet_offerings::{SessionConfig, SessionId};
 use dreggnet_web::{
-    DARK_AMM_AUTHORITY_KEYS_ENV, DARK_AMM_AUTHORITY_THRESHOLD_ENV, DARK_AMM_INITIAL_ROOT_ENV,
-    DARK_AMM_SECRET_KEY_FILE_ENV, FHEGG_QUORUM_KEYS_ENV, FHEGG_QUORUM_THRESHOLD_ENV,
-    dark_amm_authority_from, validate_public_shielded_deployment_from,
+    DARK_AMM_AUTHORITY_KEYS_ENV, DARK_AMM_AUTHORITY_THRESHOLD_ENV,
+    DARK_AMM_COLLECTIVE_BASE_SESSION_ENV, DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
+    DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV, DARK_AMM_COLLECTIVE_PARTIES_ENV,
+    DARK_AMM_COLLECTIVE_SESSION_ID_ENV, DARK_AMM_DECISION_KEYS_ENV,
+    DARK_AMM_DECISION_THRESHOLD_ENV, DARK_AMM_INITIAL_ROOT_ENV, DARK_AMM_SECRET_KEY_FILE_ENV,
+    FHEGG_QUORUM_KEYS_ENV, FHEGG_QUORUM_THRESHOLD_ENV, dark_amm_authority_from,
+    dark_amm_decision_authority_from, validate_public_shielded_deployment_from,
 };
 
 #[test]
@@ -82,6 +86,15 @@ fn dark_amm_exact_opening_policy_is_paired_and_strictly_parsed() {
     assert_eq!(policy.0, vec![[0; 32], [0x11; 32]]);
     assert_eq!(policy.1, 2);
 
+    let decision = dark_amm_decision_authority_from(|name| match name {
+        DARK_AMM_DECISION_KEYS_ENV => Some(format!("{key0},{key1}")),
+        DARK_AMM_DECISION_THRESHOLD_ENV => Some("2".to_string()),
+        _ => None,
+    })
+    .unwrap()
+    .expect("independent FHDAR authority policy parses");
+    assert_eq!(decision, policy);
+
     for (keys, threshold) in [
         ("not-hex".to_string(), "1".to_string()),
         (key0.clone(), "0".to_string()),
@@ -107,9 +120,6 @@ fn production_startup_refuses_half_configured_private_authorities() {
         FHEGG_QUORUM_KEYS_ENV,
         FHEGG_QUORUM_THRESHOLD_ENV,
         DARK_AMM_SECRET_KEY_FILE_ENV,
-        DARK_AMM_INITIAL_ROOT_ENV,
-        DARK_AMM_AUTHORITY_KEYS_ENV,
-        DARK_AMM_AUTHORITY_THRESHOLD_ENV,
     ] {
         let error = validate_public_shielded_deployment_from(|name| {
             (name == lone_name).then(|| "configured-alone".to_string())
@@ -117,4 +127,40 @@ fn production_startup_refuses_half_configured_private_authorities() {
         .expect_err("one-sided production configuration must refuse startup");
         assert!(error.contains("must be set together"), "{error}");
     }
+
+    for lone_name in [
+        DARK_AMM_INITIAL_ROOT_ENV,
+        DARK_AMM_AUTHORITY_KEYS_ENV,
+        DARK_AMM_AUTHORITY_THRESHOLD_ENV,
+    ] {
+        let error = validate_public_shielded_deployment_from(|name| {
+            (name == lone_name).then(|| "configured-alone".to_string())
+        })
+        .expect_err("a policy pin without either custody mode must refuse startup");
+        assert!(error.contains("without either"), "{error}");
+    }
+
+    for lone_collective_name in [
+        DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV,
+        DARK_AMM_COLLECTIVE_SESSION_ID_ENV,
+        DARK_AMM_COLLECTIVE_BASE_SESSION_ENV,
+        DARK_AMM_COLLECTIVE_PARTIES_ENV,
+        DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
+        DARK_AMM_DECISION_KEYS_ENV,
+        DARK_AMM_DECISION_THRESHOLD_ENV,
+    ] {
+        validate_public_shielded_deployment_from(|name| {
+            (name == lone_collective_name).then(|| "configured-alone".to_string())
+        })
+        .expect_err("a partial collective public-host policy must refuse startup");
+    }
+
+    let error = validate_public_shielded_deployment_from(|name| match name {
+        DARK_AMM_SECRET_KEY_FILE_ENV | DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV => {
+            Some("configured".to_string())
+        }
+        _ => None,
+    })
+    .expect_err("single-key and collective custody cannot be enabled together");
+    assert!(error.contains("mutually exclusive"), "{error}");
 }

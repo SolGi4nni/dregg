@@ -240,6 +240,7 @@ impl DecryptShare {
 
 /// The collective public key everyone encrypts to — a REAL fhe.rs `PublicKey`, aggregated from
 /// per-party mbfv `PublicKeyShare`s.
+#[derive(Clone)]
 pub struct CollectivePublicKey {
     /// Use with `fhe_traits::FheEncrypter` exactly like a single-party key.
     pub pk: PublicKey,

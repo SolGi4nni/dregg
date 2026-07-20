@@ -93,6 +93,8 @@ pub mod dark_amm_game;
 /// it. This does not alter the single-host strict-v3 offering above.
 #[cfg(feature = "dark-amm-game")]
 pub mod dark_amm_collective;
+#[cfg(feature = "dark-amm-game")]
+pub mod dark_amm_collective_worker;
 
 use dreggnet_offerings::{
     Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,

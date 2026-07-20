@@ -35,6 +35,7 @@ dark-amm-game = [
     "dep:fhe-traits",
     "dep:rand_09",
     "dep:ed25519-dalek",
+    "dep:rand",
 ]
 
 [[bin]]
@@ -87,6 +88,7 @@ fhegg-fhe = { path = "../fhegg-fhe", optional = true }
 fhe = { version = "0.1.1", optional = true }
 fhe-traits = { version = "0.1.1", optional = true }
 rand_09 = { package = "rand", version = "0.9", optional = true }
+rand = { version = "0.8", optional = true }
 ed25519-dalek = { version = "2", features = ["std"], optional = true }
 
 [dev-dependencies]
