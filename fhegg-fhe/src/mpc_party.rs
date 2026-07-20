@@ -47,6 +47,11 @@ use rand::Rng;
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
+/// Bounded authenticated process transport for the scalar equality runtime.
+/// Transport authentication does not upgrade the semi-honest MPC arithmetic
+/// to malicious security.
+pub mod transport;
+
 /// Maximum canonical reveal-only equality transcript accepted at a process
 /// boundary.  The current scalar equality circuits are far smaller; this is an
 /// allocation/exhaustion ceiling, not a claim about a particular game shape.
