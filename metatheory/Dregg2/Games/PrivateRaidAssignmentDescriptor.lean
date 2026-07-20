@@ -1430,6 +1430,242 @@ theorem diff_nonzero_zero_of_diff_zero
   rcases h0 with h0 | h0 <;> rcases h1 with h1 | h1 <;>
     rcases h2 with h2 | h2 <;> rcases h3 with h3 | h3 <;> simp_all
 
+/-! ## 6. Mender enactment semantics.
+
+This is a small Lean-authored semantic companion to the hosted Keep mechanic.
+It does not claim refinement of the Rust implementation: no extraction or FFI
+bridge connects this transition to that code.  `authenticatedActor` denotes the
+identity already authenticated by the surrounding turn/application boundary.
+
+An accepted assignment is carried as a bijection, hence publishes exactly one
+Mender seat.  The grant binds that assignment to the authenticated proof
+submitter and to the world-timeline cursor at which it was accepted.  Enactment
+then permits exactly that seat and actor, never before the acceptance cursor,
+at most once, and only when adding twenty hit points stays at or below fifty.
+-/
+
+/-- Public role number used by the Rust raid ABI for `Mender`. -/
+def MENDER_ROLE_ID : Fin 4 := ⟨2, by omega⟩
+
+theorem exactAssignment_unique_mender {roles : Fin 4 → Fin 4}
+    (hexact : ExactAssignment roles) :
+    ∃! seat, roles seat = MENDER_ROLE_ID := by
+  obtain ⟨seat, hseat⟩ := hexact.2 MENDER_ROLE_ID
+  refine ⟨seat, hseat, ?_⟩
+  intro other hother
+  exact hexact.1 (hother.trans hseat.symm)
+
+/-- Application capability minted after accepting one private raid proof. -/
+structure MenderGrant where
+  roles : Fin 4 → Fin 4
+  exactAssignment : ExactAssignment roles
+  authenticatedCarrier : Nat
+  acceptedAfter : Nat
+
+theorem MenderGrant.unique_mender (grant : MenderGrant) :
+    ∃! seat, grant.roles seat = MENDER_ROLE_ID :=
+  exactAssignment_unique_mender grant.exactAssignment
+
+/-- The public, authenticated inputs of one attempted Mender world action. -/
+structure MenderCommand where
+  seat : Fin 4
+  authenticatedActor : Nat
+  deriving DecidableEq, Repr
+
+/-- Only the state touched by the Mender semantic transition. -/
+structure MenderState where
+  hp : Nat
+  mendingUsed : Bool
+  timelineCursor : Nat
+  deriving DecidableEq, Repr
+
+inductive MenderRefusal where
+  | wrongSeat
+  | wrongActor
+  | staleGrant
+  | alreadyUsed
+  | wouldOverheal
+  deriving DecidableEq, Repr
+
+inductive MenderOutcome where
+  | committed (state : MenderState)
+  | refused (reason : MenderRefusal) (state : MenderState)
+  deriving DecidableEq, Repr
+
+def menderSuccessor (state : MenderState) : MenderState :=
+  { hp := state.hp + 20
+  , mendingUsed := true
+  , timelineCursor := state.timelineCursor + 1 }
+
+/-- Deterministic fail-closed Mender transition, in the same refusal order as
+the logical boundary: assignment seat, actor, timeline, resource, HP ceiling. -/
+def enactMender (grant : MenderGrant) (command : MenderCommand)
+    (state : MenderState) : MenderOutcome :=
+  if grant.roles command.seat ≠ MENDER_ROLE_ID then
+    .refused .wrongSeat state
+  else if command.authenticatedActor ≠ grant.authenticatedCarrier then
+    .refused .wrongActor state
+  else if grant.acceptedAfter > state.timelineCursor then
+    .refused .staleGrant state
+  else if state.mendingUsed then
+    .refused .alreadyUsed state
+  else if state.hp > 30 then
+    .refused .wouldOverheal state
+  else
+    .committed (menderSuccessor state)
+
+theorem enactMender_commits
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor = grant.authenticatedCarrier)
+    (hcursor : grant.acceptedAfter ≤ state.timelineCursor)
+    (hunused : state.mendingUsed = false)
+    (hhp : state.hp ≤ 30) :
+    enactMender grant command state = .committed (menderSuccessor state) := by
+  have hnotStale : ¬grant.acceptedAfter > state.timelineCursor := by omega
+  have hnotOverheal : ¬state.hp > 30 := by omega
+  simp [enactMender, hseat, hactor, hnotStale, hunused, hnotOverheal]
+
+/-- Functional correctness of every successful transition: exact recovery,
+resource consumption, cursor advance, and the post-state HP ceiling. -/
+theorem enactMender_functional_correctness
+    {grant : MenderGrant} {command : MenderCommand}
+    {before after : MenderState}
+    (h : enactMender grant command before = .committed after) :
+    grant.roles command.seat = MENDER_ROLE_ID ∧
+    command.authenticatedActor = grant.authenticatedCarrier ∧
+    grant.acceptedAfter ≤ before.timelineCursor ∧
+    before.mendingUsed = false ∧
+    before.hp ≤ 30 ∧
+    after.hp = before.hp + 20 ∧
+    after.hp ≤ 50 ∧
+    after.mendingUsed = true ∧
+    after.timelineCursor = before.timelineCursor + 1 := by
+  simp only [enactMender] at h
+  split at h <;> try contradiction
+  next hseat =>
+    split at h <;> try contradiction
+    next hactor =>
+      split at h <;> try contradiction
+      next hcursor =>
+        split at h <;> try contradiction
+        next hused =>
+          split at h <;> try contradiction
+          next hhp =>
+            simp only [MenderOutcome.committed.injEq] at h
+            subst after
+            simp only [menderSuccessor]
+            simp_all
+
+theorem enactMender_wrong_seat
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat ≠ MENDER_ROLE_ID) :
+    enactMender grant command state = .refused .wrongSeat state := by
+  simp [enactMender, hseat]
+
+theorem enactMender_wrong_actor
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor ≠ grant.authenticatedCarrier) :
+    enactMender grant command state = .refused .wrongActor state := by
+  simp [enactMender, hseat, hactor]
+
+theorem enactMender_stale
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor = grant.authenticatedCarrier)
+    (hstale : state.timelineCursor < grant.acceptedAfter) :
+    enactMender grant command state = .refused .staleGrant state := by
+  simp [enactMender, hseat, hactor, hstale]
+
+theorem enactMender_reuse
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor = grant.authenticatedCarrier)
+    (hcursor : grant.acceptedAfter ≤ state.timelineCursor)
+    (hused : state.mendingUsed = true) :
+    enactMender grant command state = .refused .alreadyUsed state := by
+  simp [enactMender, hseat, hactor, hcursor, hused]
+
+theorem enactMender_overheal
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor = grant.authenticatedCarrier)
+    (hcursor : grant.acceptedAfter ≤ state.timelineCursor)
+    (hunused : state.mendingUsed = false)
+    (hhp : 30 < state.hp) :
+    enactMender grant command state = .refused .wouldOverheal state := by
+  simp [enactMender, hseat, hactor, hcursor, hunused, hhp]
+
+/-- Refusal is observationally state-holding, independently of its reason. -/
+theorem enactMender_refusal_holds_state
+    {grant : MenderGrant} {command : MenderCommand} {before after : MenderState}
+    {reason : MenderRefusal}
+    (h : enactMender grant command before = .refused reason after) :
+    after = before := by
+  unfold enactMender at h
+  split at h
+  · simp_all
+  · split at h
+    · simp_all
+    · split at h
+      · simp_all
+      · split at h
+        · simp_all
+        · split at h <;> simp_all
+
+/-- The first successful recovery consumes the resource, so the next otherwise
+identical attempt is refused without changing its post-success state. -/
+theorem enactMender_success_then_reuse
+    {grant : MenderGrant} {command : MenderCommand} {state : MenderState}
+    (hseat : grant.roles command.seat = MENDER_ROLE_ID)
+    (hactor : command.authenticatedActor = grant.authenticatedCarrier)
+    (hcursor : grant.acceptedAfter ≤ state.timelineCursor) :
+    enactMender grant command (menderSuccessor state) =
+      .refused .alreadyUsed (menderSuccessor state) := by
+  apply enactMender_reuse hseat hactor
+  · simp [menderSuccessor]
+    omega
+  · simp [menderSuccessor]
+
+def exampleMenderGrant : MenderGrant where
+  roles := id
+  exactAssignment := Function.bijective_id
+  authenticatedCarrier := 7
+  acceptedAfter := 3
+
+def exampleMenderCommand : MenderCommand where
+  seat := 2
+  authenticatedActor := 7
+
+def exampleMenderState : MenderState where
+  hp := 30
+  mendingUsed := false
+  timelineCursor := 3
+
+#guard enactMender exampleMenderGrant exampleMenderCommand exampleMenderState ==
+  .committed { hp := 50, mendingUsed := true, timelineCursor := 4 }
+
+#guard enactMender exampleMenderGrant
+    { seat := 1, authenticatedActor := 7 } exampleMenderState ==
+  .refused .wrongSeat exampleMenderState
+
+#guard enactMender exampleMenderGrant
+    { seat := 2, authenticatedActor := 8 } exampleMenderState ==
+  .refused .wrongActor exampleMenderState
+
+#guard enactMender exampleMenderGrant exampleMenderCommand
+    { hp := 30, mendingUsed := false, timelineCursor := 2 } ==
+  .refused .staleGrant { hp := 30, mendingUsed := false, timelineCursor := 2 }
+
+#guard enactMender exampleMenderGrant exampleMenderCommand
+    { hp := 30, mendingUsed := true, timelineCursor := 3 } ==
+  .refused .alreadyUsed { hp := 30, mendingUsed := true, timelineCursor := 3 }
+
+#guard enactMender exampleMenderGrant exampleMenderCommand
+    { hp := 31, mendingUsed := false, timelineCursor := 3 } ==
+  .refused .wouldOverheal { hp := 31, mendingUsed := false, timelineCursor := 3 }
+
 #assert_all_clean [
   Dregg2.Games.PrivateRaidAssignmentDescriptor.participantPack_injective,
   Dregg2.Games.PrivateRaidAssignmentDescriptor.packedInputs_injective,
@@ -1446,6 +1682,15 @@ theorem diff_nonzero_zero_of_diff_zero
   Dregg2.Games.PrivateRaidAssignmentDescriptor.selected_total_exact,
   Dregg2.Games.PrivateRaidAssignmentDescriptor.candidate_chosen_exact,
   Dregg2.Games.PrivateRaidAssignmentDescriptor.candidate_allowed_exact,
-  Dregg2.Games.PrivateRaidAssignmentDescriptor.diff_nonzero_zero_of_diff_zero]
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.diff_nonzero_zero_of_diff_zero,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.exactAssignment_unique_mender,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_functional_correctness,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_wrong_seat,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_wrong_actor,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_stale,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_reuse,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_overheal,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_refusal_holds_state,
+  Dregg2.Games.PrivateRaidAssignmentDescriptor.enactMender_success_then_reuse]
 
 end Dregg2.Games.PrivateRaidAssignmentDescriptor
