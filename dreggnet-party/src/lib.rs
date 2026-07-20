@@ -47,9 +47,11 @@
 //!    spends the shared focus — enough to prove the cap-gated division of labor. Wiring
 //!    each role to a full ability kit (the built-but-idle `dungeon-on-dregg::spells`, the
 //!    combat `Arena`) is the named follow-on.
-//! * **Live party-formation UX.** [`Party::muster`] mints the roster at genesis; join /
-//!    leave / invite (a seat minting its own cell + custody key and enrolling into the
-//!    electorate) is the session layer above the world.
+//! * **Surface-specific party-formation UX.** The frontend-neutral formation core is now
+//!   [`lobby::PartyLobby`]: authenticated identities claim roles, ready, and leader-launch a
+//!   bounded replay-verified journal into [`Party::muster_with_roster`]. Painting those controls
+//!   as native/web/Discord/Telegram widgets is the remaining adapter work; the roster state
+//!   machine and real cap-seated launch are built.
 //! * **RAIDS.** A party acts turn-by-turn on ONE serial world here. The concurrent
 //!    multi-cell battle (each seat its own cell acting SIMULTANEOUSLY, phases gating on
 //!    prior-phase completion) is the raid frontier `combat.rs` / `mud.rs` name — staged
@@ -64,6 +66,10 @@ use dungeon_on_dregg::collective::{
     CollectiveError, CollectiveRound, Custodian, Proposal, Seat as ElectorateSeat, SignedBallot,
 };
 use dungeon_on_dregg::narrator::Command;
+
+/// Live party formation: role claims, readiness, anti-ghost refusal, a bounded
+/// hash-chained lobby journal, and launch into the real cap-seated [`Party`].
+pub mod lobby;
 
 // ── Party parameters (the balance numbers; the teeth guarantee the invariants) ───
 
@@ -103,7 +109,7 @@ const EXECUTOR_SEED: [u8; 32] = [0x9C; 32];
 /// capability to (its mandate) and WHICH move it may fire. A seat cannot act outside its
 /// role: the cells its role does not reach are cells it holds no cap to, so a move onto
 /// them is a real executor refusal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
     /// The front line — acts on the front-rank cell (holds the enemy at the gate). No
     /// focus (a martial seat).
@@ -118,6 +124,9 @@ pub enum Role {
 }
 
 impl Role {
+    /// The canonical four-seat role order used by rosters, loot slots, and lobby launch.
+    pub const ALL: [Role; 4] = [Role::Tank, Role::Scout, Role::Mage, Role::Healer];
+
     /// The role's display name.
     pub fn name(self) -> &'static str {
         match self {
@@ -137,7 +146,63 @@ impl Role {
             Role::Healer => PartyMove::Rally,
         }
     }
+
+    /// This role's stable seat index in [`Role::ALL`].
+    pub const fn index(self) -> usize {
+        match self {
+            Role::Tank => 0,
+            Role::Scout => 1,
+            Role::Mage => 2,
+            Role::Healer => 3,
+        }
+    }
 }
+
+/// Why a claimed live roster could not become a cap-seated [`Party`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PartyFormationError {
+    /// An identity is empty or too large to bind safely into the roster.
+    InvalidIdentity { role: Role },
+    /// Two entries claim the same role.
+    DuplicateRole(Role),
+    /// One identity attempted to occupy more than one role.
+    DuplicateIdentity(String),
+    /// A canonical role was not present.
+    MissingRole(Role),
+}
+
+impl std::fmt::Display for PartyFormationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidIdentity { role } => {
+                write!(
+                    f,
+                    "the {} identity is empty or exceeds 256 bytes",
+                    role.name()
+                )
+            }
+            Self::DuplicateRole(role) => write!(f, "the {} role was claimed twice", role.name()),
+            Self::DuplicateIdentity(identity) => {
+                write!(f, "identity {identity:?} attempted to occupy two roles")
+            }
+            Self::MissingRole(role) => write!(f, "the {} role is unfilled", role.name()),
+        }
+    }
+}
+
+impl std::error::Error for PartyFormationError {}
+
+/// An authenticated caller does not occupy any seat in this party.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnseatedIdentity(pub String);
+
+impl std::fmt::Display for UnseatedIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "identity {:?} holds no party seat", self.0)
+    }
+}
+
+impl std::error::Error for UnseatedIdentity {}
 
 /// A move a seat can attempt — the union of every role's move. [`Party::act`] lowers it to
 /// cell-write effects and lets the REAL executor referee: a move whose target cells the
@@ -241,6 +306,55 @@ impl Party {
     ///
     /// The quorum for a fork ballot is a majority of the roster (3 of 4).
     pub fn muster() -> Party {
+        Self::muster_with_roster([
+            (Role::Tank, "Bramwen".to_string()),
+            (Role::Scout, "Corvin".to_string()),
+            (Role::Mage, "Della".to_string()),
+            (Role::Healer, "Ferro".to_string()),
+        ])
+        .expect("the canonical demo roster is valid")
+    }
+
+    /// Muster a live, player-chosen roster into the real multi-actor party world.
+    ///
+    /// Input order is irrelevant: seats are canonicalized to [`Role::ALL`], so
+    /// role indices, loot slots, quorum membership, and replay stay stable. Every
+    /// role must occur exactly once and every non-empty identity may occupy only
+    /// one role. The resulting seat names are the supplied frontend identities;
+    /// the role's capability set remains the executor-enforced mandate.
+    pub fn muster_with_roster(roster: [(Role, String); 4]) -> Result<Party, PartyFormationError> {
+        let mut names: [Option<String>; 4] = std::array::from_fn(|_| None);
+        let mut identities = std::collections::BTreeSet::new();
+        for (role, identity) in roster {
+            if identity.is_empty() || identity.len() > 256 {
+                return Err(PartyFormationError::InvalidIdentity { role });
+            }
+            if !identities.insert(identity.clone()) {
+                return Err(PartyFormationError::DuplicateIdentity(identity));
+            }
+            if names[role.index()].replace(identity).is_some() {
+                return Err(PartyFormationError::DuplicateRole(role));
+            }
+        }
+        let canonical = [
+            names[0]
+                .take()
+                .ok_or(PartyFormationError::MissingRole(Role::Tank))?,
+            names[1]
+                .take()
+                .ok_or(PartyFormationError::MissingRole(Role::Scout))?,
+            names[2]
+                .take()
+                .ok_or(PartyFormationError::MissingRole(Role::Mage))?,
+            names[3]
+                .take()
+                .ok_or(PartyFormationError::MissingRole(Role::Healer))?,
+        ];
+
+        Ok(Self::muster_canonical(canonical))
+    }
+
+    fn muster_canonical(names: [String; 4]) -> Party {
         let mut world = World::new().with_executor_signing_key(EXECUTOR_SEED);
 
         // The role-target cells (open — reach is what the caps gate).
@@ -277,10 +391,10 @@ impl Party {
         // The four seats — each a real player-cell holding ONLY its role's caps, plus a
         // deterministic demo custody keypair (its ballot identity).
         let roster = [
-            (Role::Tank, "Bramwen", 0x0A, vec![front]),
-            (Role::Scout, "Corvin", 0x0B, vec![lock]),
-            (Role::Mage, "Della", 0x0C, vec![ward, focus]),
-            (Role::Healer, "Ferro", 0x0D, vec![rally, focus]),
+            (Role::Tank, names[0].clone(), 0x0A, vec![front]),
+            (Role::Scout, names[1].clone(), 0x0B, vec![lock]),
+            (Role::Mage, names[2].clone(), 0x0C, vec![ward, focus]),
+            (Role::Healer, names[3].clone(), 0x0D, vec![rally, focus]),
         ];
         let seats: Vec<Seat> = roster
             .into_iter()
@@ -288,9 +402,9 @@ impl Party {
                 let cell = install_seat(&mut world, seed, &caps);
                 Seat {
                     role,
-                    name: name.to_string(),
+                    name: name.clone(),
                     cell,
-                    custodian: Custodian::demo(name),
+                    custodian: Custodian::demo(&name),
                 }
             })
             .collect();
@@ -334,6 +448,12 @@ impl Party {
     /// The seat at `idx`.
     pub fn seat(&self, idx: usize) -> &Seat {
         &self.seats[idx]
+    }
+
+    /// Resolve an authenticated frontend identity to its canonical role/loot
+    /// index. This is the handoff from [`lobby::PartyLobby`] into live play.
+    pub fn seat_index_for(&self, identity: &str) -> Option<usize> {
+        self.seats.iter().position(|seat| seat.name == identity)
     }
 
     /// The fork-ballot quorum threshold `M` (a majority of the roster).
@@ -387,6 +507,29 @@ impl Party {
     /// `act(seat_idx, seats[seat_idx].role().move_of())`).
     pub fn act_in_role(&mut self, seat_idx: usize) -> ActOutcome {
         self.act(seat_idx, self.seats[seat_idx].role.move_of())
+    }
+
+    /// Fire a move as an authenticated lobby identity. An outsider is refused
+    /// before any turn is built; a seated player is mapped only to their own
+    /// capability-bearing cell, after which the real executor still referees
+    /// whether that role may touch the requested game cells.
+    pub fn act_as(&mut self, identity: &str, mv: PartyMove) -> ActOutcome {
+        let Some(seat_idx) = self.seat_index_for(identity) else {
+            return ActOutcome::Refused {
+                reason: UnseatedIdentity(identity.to_string()).to_string(),
+            };
+        };
+        self.act(seat_idx, mv)
+    }
+
+    /// Fire the authenticated identity's own sanctioned role move.
+    pub fn act_in_role_as(&mut self, identity: &str) -> ActOutcome {
+        let Some(seat_idx) = self.seat_index_for(identity) else {
+            return ActOutcome::Refused {
+                reason: UnseatedIdentity(identity.to_string()).to_string(),
+            };
+        };
+        self.act_in_role(seat_idx)
     }
 
     /// Lower a [`PartyMove`] to the cell-write effects a turn carries. A caster's spend
@@ -470,6 +613,20 @@ impl Party {
         self.seats[seat_idx]
             .custodian
             .sign_ballot(fork.poll(), option)
+    }
+
+    /// Sign a fork ballot under the custody key of the authenticated lobby
+    /// identity's own seat. An outsider cannot select some other seat by index.
+    pub fn sign_ballot_as(
+        &self,
+        fork: &PartyFork,
+        identity: &str,
+        option: usize,
+    ) -> Result<SignedBallot, UnseatedIdentity> {
+        let seat_idx = self
+            .seat_index_for(identity)
+            .ok_or_else(|| UnseatedIdentity(identity.to_string()))?;
+        Ok(self.sign_ballot(fork, seat_idx, option))
     }
 }
 

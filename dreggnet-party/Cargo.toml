@@ -54,6 +54,9 @@ collective-choice = { path = "../collective-choice" }
 # classical signature the executor authorizes turns with) — used to construct the
 # adversarial forged/non-member ballots the tests refuse.
 dregg-types = { path = "../types" }
+# Domain-separated, bounded lobby event journal. The root makes party formation
+# replay-verifiable without trusting a serialized roster blob.
+blake3 = "1"
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.
