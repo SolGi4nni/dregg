@@ -1416,3 +1416,94 @@ laundering the earlier compile-only evidence.
 Commit: `e7d473b74` (`games: host live shared capability-seated parties`). The immediate game
 frontier is to make shielded preference/raid/shuffle results change later encounter authority and
 resources, instead of remaining impressive but partially museum-like receipt panels.
+
+## 48. Collective decisions cross a real executable boundary, with custody split per party
+
+`dark-amm-tool collective-decide` first established a real subprocess boundary: bounded strict task,
+material, independent context, public configuration, and protected custody inputs produce one canonical
+public `DBCDv001` bundle. The service integration test invokes the binary as another process and then gives
+its bytes to the real `CollectiveDarkAmmOffering` commit operation; restart verification accepts the same
+state. Wrong context, truncated task, substituted committed material, wrong custody, trailing bundle bytes,
+and existing output targets refuse before mutation. The output is public by design and stdout contains only
+the path plus public task/bundle digests.
+
+The next cut removed the all-roots custody blob. Each owner-only `DBPCv001` file contains one party index,
+one deterministic DKG root, one preprocessing seed share, and that roster slot's signing key. An independent
+`collective-party-contribute` process emits a checksummed, roster-signed public `DBPAv001` DKG contribution.
+`collective-decide-split` requires exactly one custody/artifact pair per party in canonical order, verifies
+the signed contribution and aggregate key, re-derives one party at a time, XOR-combines preprocessing shares,
+and later reopens one signer file at a time. It never retains a vector of roots or signing keys. Tampered
+artifact, root/artifact disagreement, reorder, context, task, and material substitutions all refuse; the
+honest split path is accepted by the real offering. The focused external-process gate passes 2/2 (honest
+case 10.979s in the split-custody run).
+
+This is not yet process-isolated MPC. The coordinator still holds all derived `ThresholdParty` share objects
+while equality runs, because `PartyChannels`, gate messages, triples, and `MaskedBoundaryParty` state have no
+transport codec/step machine. Returning all derived mod-t inputs to the coordinator would reveal the hidden
+invariant. Trusted Beaver preprocessing and semi-honest arithmetic also remain explicit.
+
+Commits: `8329204ee` and `031e053e1`.
+
+## 49. The two external binding boundaries now have Lean laws
+
+`Market.DarkAmmContextBoundDecision` models the canonical decoded collective task rather than assuming a
+hash is injective. Thirteen clean keystones bind hosted session, sequence, pre-root, same-opening claim,
+committed material, BFV parameters, DKG/key identity, value width, and exact candidate semantics; stale,
+cross-context, cross-candidate, replayed, and false receipts hold the complete state. The model transparently
+compresses some large Rust subfields into semantic digests; codec/hash refinement remains a separate portal.
+
+`Market.QpExternalProgramBinding` gives `FHQPB001` the other missing semantic edge. Executable complete
+identity checks every decoded `(P,q,A,l,u)` field; full identity reconstructs problem equality and transports
+exact KKT plus SDD/PSD global optimality to the independently authorized program. Each field has a generic
+substitution-refusal theorem and executable falsifier. A concrete same-`P`, different-`q` fixture changes the
+optimum and is refused, showing why matrix-only binding is insufficient. Nine capstones are kernel-clean.
+
+Commits: `f695dc670` and `98be59d04`.
+
+## 50. Positive QP tolerances now have a quantitative theorem instead of a false optimality slogan
+
+`Market.QpApproximateBound` closes much of the named residual semantics honestly. For exact feasibility and
+normal-cone membership, coordinatewise stationarity error `epsilon` proves
+`f(x) <= f(x') + epsilon * ||x'-x||_1` for every feasible competitor. The stronger deployed-shape theorem
+also admits a nonzero projection residual and adds the exact penalty
+`normalTolerance * sum_i ((u_i-l_i)+|y_i|)`.
+
+The module then proves that the actual `rustMaxResidual` folds imply every coordinate bound. Consequently,
+`rustCertQpCheck = true` at the exact-rational denotation gives both coordinatewise epsilon-feasibility and
+the explicit two-term objective bound. It still does not claim exact feasibility or exact global optimality,
+and the raw IEEE/fixed-point refinement plus a product-specific feasible-set radius remain separate
+obligations. Thirteen keystones are kernel-clean; direct Lean and the aggregate `lake build Market` gate pass.
+
+Commits: `0135ef756`, `84766e923`, and `38bf55ea8`.
+
+## 51. A hiding preference now changes the Keep's authoritative world state
+
+The private-preference operation is no longer only a rendered receipt. After entering the hall, a verified
+winner `#1` authorizes only its authenticated submitter to take the drowned-stair route. The real compiled
+Keep transition advances depth by two rather than the ordinary route's one and requires a nonzero certified
+decision carrier; a plain driver invocation refuses in the executor. The same world receipt commits the full
+32-byte domain-separated binding of proof session, faithful ballot root, winner, and actor.
+
+Dungeon verification adds the application half that generic spween replay cannot infer: it recomputes the
+accepted result/actor/order binding. A deliberately different certified value forms a generically valid
+receipt chain but is refused by `DungeonOffering::verify_record`. Durable operation/move replay reconstructs
+the proof and depth-two route. The focused target compiled; its two runtime bodies were stopped before entry
+by persvati's fail-closed missing verified ML-DSA signing core, and no unaudited bypass was enabled.
+
+Commit: `53b23ce1f`.
+
+## 52. A selectively opened fair deal is now spendable initiative
+
+The Keep adds two proof-gated initiative routes. An even selectively revealed card atomically claims the Red
+crown and descends; an odd card does the same for Blue. Both compiled executor cases require WriteOnce crown,
+monotone depth, and a nonzero decision carrier. Hosted admission additionally requires the crown to be free,
+the exact seat owner, an accepted fair-shuffle receipt, a selectively verified card, matching parity, and
+reveal-before-move order. Its 32-byte carrier binds session, attempt, commitment/deal roots, verifier key,
+seat, card, reveal cursor, and actor.
+
+Application verification again rejects a substituted carrier even when generic spween replay accepts the
+world chain. The durable host test journals eight commitments plus proof and reveal after entering the hall,
+then replays the exact initiative/crown/depth result after restart. The focused target compiled; runtime
+bodies hit the same fail-closed verified-ML-DSA environment gate before entry, with no bypass.
+
+Commit: `b7ae31afe`.
