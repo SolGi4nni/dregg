@@ -43,6 +43,7 @@ import Market.DarkAmmBoundReceipt
 import Market.DarkAmmPublicHost
 import Market.DarkAmmPublicHostLifecycle
 import Market.DarkAmmCollectiveTwoAuthority
+import Market.DarkAmmContextBoundDecision
 import Market.PrivateComparison
 import Market.PrivateBoxProjection
 import Market.FhEggLedgerBinding
