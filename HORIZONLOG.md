@@ -10434,6 +10434,7 @@ disagreement after re-running both checkers; valid-checksum version/dimension/ma
 `Market.QpCertificateBundle` supplies the semantic join: same-matrix SDD plus exact-zero KKT implies global
 optimality (two clean keystones and two independence pins). It explicitly does not promote the deployed
 positive-tolerance residual check into that exact-zero premise.
+
 The expanded fhir release gate is 58/58 (combined fhir + solver 164/164). This exposes
 the exact Lean premise at runtime, while the source-f64
 tolerance/averaging/rounding refinement remains structural/KAT rather than a floating-point theorem.
@@ -10450,3 +10451,42 @@ Replay persistence now has a shared strict carrier: `SnapshotReplayGuard` contex
 id set, revision, exact EOF and corruption checksum; restart/corruption/context/noncanonical-order teeth
 pass 2/2. It must still be persisted atomically with the mutation and anchored against rollback; the public
 checksum alone is not rollback resistance.
+
+## 2026-07-20 — fhEgg/Dark Bazaar external workers, quantitative certificates, and mechanics that spend private results
+
+The collective Dark Bazaar path is now operationally outside the host process. A strict external command
+consumes the exported context-bound work item plus independently supplied public material/context/policy and
+emits one canonical public decision bundle; the real `CollectiveDarkAmmOffering` accepts that subprocess
+output and replay-verifies the committed transition. The first command used one protected aggregate custody
+file. The next cut replaces that with one owner-only custody file and one roster-signed public DKG contribution
+artifact per party. Contributions are verified in exact order, the aggregate key/task/material/context are
+rebound, roots and signing keys are opened and zeroed one at a time, and adversarial context/task/material/
+root/artifact/order substitutions fail. Focused external-process integration is 2/2. The coordinator still
+holds all derived `ThresholdParty` objects because PartyMPC equality has no authenticated wire/step machine;
+trusted preprocessing and semi-honest arithmetic remain named. (`8329204ee`, `031e053e1`)
+
+The optimizer composition now has both missing semantic statements. `Market.QpExternalProgramBinding`
+checks complete decoded `(P,q,A,l,u)` identity and transports exact KKT plus SDD/PSD optimality only through
+that full pin; same-`P`/different-`q` is an executable material counterexample. `Market.QpApproximateBound`
+does not pretend the deployed positive tolerance is exact KKT. It proves the actual quantitative meaning:
+epsilon-feasibility plus objective loss bounded by stationarity tolerance times L1 displacement and projection
+tolerance times `sum_i((u_i-l_i)+|y_i|)`. The deployed `rustMaxResidual` folds are connected to every
+coordinate, so `rustCertQpCheck=true` implies this bound at the exact-rational denotation. Thirteen capstones
+are kernel-clean and aggregate `lake build Market` is green. Raw IEEE/fixed-point refinement and a
+product-specific feasible-set radius remain. (`98be59d04`, `0135ef756`, `84766e923`, `38bf55ea8`)
+
+Two formerly museum-like hiding operations now authorize real compiled Keep transitions. Private preference
+winner #1 lets only the proof submitter take a depth-two drowned-stair route. A selectively opened fair-deal
+card lets only its seat owner atomically claim the parity-selected crown and descend. Each executor case has
+a nonzero decision-carrier tooth plus the ordinary state constraints; each hosted verifier recomputes a full
+32-byte session/result/actor/timeline commitment and rejects a substituted carrier even when generic spween
+replay accepts the altered receipt chain. Durable operation/move replay reconstructs both mechanics. The
+focused targets compile, but their runtime bodies currently stop at the intended missing verified ML-DSA
+sign-core gate on persvati; no unaudited bypass was used. (`53b23ce1f`, `b7ae31afe`)
+
+The shared party is also now a live lobby/capability game rather than four fixture names: authenticated seat
+claims/readiness/launch, audit-cell roots on every formation mutation, identity-derived role cells,
+executor-refused repeated WriteOnce contributions, signed fork ballots, and durable receipt replay are shared
+across web/Telegram/Discord. (`e7d473b74`) Active next cuts are process-transported PartyMPC equality, a
+party/capability-authorized tactical encounter, a proof-assigned raid mechanic, and web action-route tests that
+spend the newly accepted counsel/deal results rather than stopping at their operation panels.
