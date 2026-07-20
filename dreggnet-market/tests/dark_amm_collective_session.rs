@@ -11,14 +11,17 @@ use dregg_circuit_prove::dark_amm_private::{PrivateAmmWitness, prove_zk};
 use dreggnet_market::dark_amm_collective::{
     CollectiveDarkAmmConfig, CollectiveDarkAmmError, CollectiveDarkAmmOffering,
     CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
-    DARK_AMM_COLLECTIVE_STAGE_OPERATION,
+    DARK_AMM_COLLECTIVE_STAGE_OPERATION, DARK_AMM_COLLECTIVE_TASK_ARTIFACT,
+    DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
 };
-use dreggnet_market::dark_amm_collective_worker::MaskedCollectiveDecisionWorker;
+use dreggnet_market::dark_amm_collective_worker::{
+    CollectiveDecisionTask, CollectiveDecisionTaskContext, MaskedCollectiveDecisionWorker,
+};
 use dreggnet_market::dark_amm_game::{
     DarkAmmPublicSession, SameOpeningProvedEncryptedSwapRequest,
     produce_proved_encrypted_swap_seeded,
 };
-use dreggnet_offerings::{DreggIdentity, Offering, SessionConfig};
+use dreggnet_offerings::{BinaryArtifactVisibility, DreggIdentity, Offering, SessionConfig};
 use ed25519_dalek::SigningKey;
 use fhe::bfv::{PublicKey, RelinearizationKey};
 use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
@@ -122,6 +125,13 @@ fn verifier(keys: &[SigningKey]) -> AuthenticatedQuorumVerifier {
         2,
     )
     .unwrap()
+}
+
+fn decode_hex_digest(value: &str) -> [u8; 32] {
+    let bytes = (0..32)
+        .map(|index| u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    <[u8; 32]>::try_from(bytes).unwrap()
 }
 
 fn config(
@@ -367,7 +377,7 @@ fn collective_two_phase_game_session_is_atomic_and_restartable_without_host_secr
     // A false decision, a cross-candidate decision, and residual-only evidence
     // each preserve every byte of authoritative state, including replay sets.
     let (false_transcript, false_receipt) = decision_receipt(
-        staged.candidate_nonce,
+        staged.decision_task_digest,
         false,
         &decision_keys,
         &decision_verifier,
@@ -388,8 +398,23 @@ fn collective_two_phase_game_session_is_atomic_and_restartable_without_host_secr
     );
     assert_eq!(host.checkpoint_wire_bytes(), before_cross);
 
-    let (transcript, receipt) = decision_receipt(
+    // The old context-free candidate nonce is no longer a valid hosted
+    // authority session: a correctly signed legacy receipt still refuses.
+    let (legacy_transcript, legacy_receipt) = decision_receipt(
         staged.candidate_nonce,
+        true,
+        &decision_keys,
+        &decision_verifier,
+    );
+    let before_legacy = host.checkpoint_wire_bytes();
+    assert!(
+        host.commit_attested_decision(&legacy_transcript, &legacy_receipt)
+            .is_err()
+    );
+    assert_eq!(host.checkpoint_wire_bytes(), before_legacy);
+
+    let (transcript, receipt) = decision_receipt(
+        staged.decision_task_digest,
         true,
         &decision_keys,
         &decision_verifier,
@@ -547,7 +572,7 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         fixture.params.clone(),
         fixture.keygen.clone(),
         fixture.collective(),
-        material,
+        material.clone(),
         statement.old_root,
         same_opening_authority.verifier().clone(),
         decision_policy,
@@ -564,6 +589,7 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         offering.binary_operations(&game)[0].name,
         DARK_AMM_COLLECTIVE_STAGE_OPERATION
     );
+    assert!(offering.binary_artifacts(&game).is_empty());
 
     let proved = produce_proved_encrypted_swap_seeded(
         &public,
@@ -643,20 +669,50 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         offering.binary_operations(&game)[0].name,
         DARK_AMM_COLLECTIVE_COMMIT_OPERATION
     );
+    let artifacts = offering.binary_artifacts(&game);
+    assert_eq!(artifacts.len(), 1);
+    assert_eq!(artifacts[0].name, DARK_AMM_COLLECTIVE_TASK_ARTIFACT);
+    assert_eq!(artifacts[0].media_type, DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE);
+    assert_eq!(artifacts[0].visibility, BinaryArtifactVisibility::Public);
 
     let candidate_nonce = staged_receipt
         .public_fields
         .iter()
         .find(|(name, _)| name == "candidateNonce")
-        .map(|(_, value)| {
-            let bytes = (0..32)
-                .map(|index| u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap())
-                .collect::<Vec<_>>();
-            <[u8; 32]>::try_from(bytes).unwrap()
-        })
+        .map(|(_, value)| decode_hex_digest(value))
+        .unwrap();
+    let task_digest = staged_receipt
+        .public_fields
+        .iter()
+        .find(|(name, _)| name == "decisionTaskDigest")
+        .map(|(_, value)| decode_hex_digest(value))
         .unwrap();
     let candidate = game.pending_decision_candidate().unwrap();
     assert_eq!(candidate.decision_session_nonce(), candidate_nonce);
+    let task = game.pending_decision_task().unwrap();
+    assert!(task.matches_candidate(&candidate));
+    assert_eq!(task.attestation_nonce().unwrap(), task_digest);
+    let task_wire = offering
+        .export_binary_artifact(&game, DARK_AMM_COLLECTIVE_TASK_ARTIFACT)
+        .unwrap();
+    assert_eq!(task_wire, task.to_wire_bytes().unwrap());
+    let authority_collective = fixture.collective();
+    let task = CollectiveDecisionTask::from_wire_bytes(
+        &task_wire,
+        &material,
+        &fixture.params,
+        &fixture.keygen,
+        &authority_collective,
+        VALUE_BITS,
+    )
+    .unwrap();
+    let expected_task_context = CollectiveDecisionTaskContext {
+        hosted_session,
+        sequence: 0,
+        committed_root: statement.old_root,
+        same_opening_claim_digest: request.same_opening_receipt().claim.digest(),
+    };
+    task.validate_context(expected_task_context).unwrap();
     let authority_collective = fixture.collective();
     let worker = MaskedCollectiveDecisionWorker::new(
         &fixture.params,
@@ -667,11 +723,13 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         Duration::from_secs(5),
     )
     .unwrap();
-    let decision_session = worker.decision_session(&candidate).unwrap();
+    let decision_session = worker
+        .decision_session_for_task(&task, &material, expected_task_context)
+        .unwrap();
     let mut preprocessing_rng = StdRng08::seed_from_u64(0xc011_ec72);
     let triples = trusted_dealer_triples(&decision_session, &mut preprocessing_rng).unwrap();
     let private_decision = worker
-        .decide_with_triples(&candidate, 90_000, triples)
+        .decide_task_with_triples(&task, &material, expected_task_context, triples)
         .unwrap();
     assert!(private_decision.is_equal());
     let draft = private_decision.draft_receipt(&decision_verifier).unwrap();
@@ -710,6 +768,7 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     );
     assert_eq!(game.committed_swaps(), 1);
     assert!(!game.has_pending_candidate());
+    assert!(offering.binary_artifacts(&game).is_empty());
     let report = offering.verify(&game);
     assert!(report.verified, "{}", report.detail);
     assert_eq!(report.turns, 2);

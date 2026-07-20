@@ -20,7 +20,8 @@ use std::fmt;
 use deos_view::ViewNode;
 use dregg_circuit_prove::dark_amm_private::RULE_ID as PRIVATE_AMM_RULE_ID;
 use dreggnet_offerings::{
-    Action, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
+    Action, BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
+    BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
     BinaryOperationReplayMaterial, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, Surface, VerifyReport,
 };
@@ -37,12 +38,15 @@ use fhegg_fhe::dark_amm::{
     PrivateAppliedSwap,
 };
 use fhegg_fhe::dark_amm_attested::{
-    AttestedPrivateDecisionPolicy, commit_attested_private_decision,
+    AttestedPrivateDecisionPolicy, commit_attested_private_decision_in_context,
 };
 use fhegg_fhe::decision_attestation::AttestedDecisionReceipt;
 use fhegg_fhe::mpc_party::{DecisionTranscript, MAX_DECISION_TRANSCRIPT_BYTES};
 use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey, KeygenSession};
 
+use crate::dark_amm_collective_worker::{
+    CollectiveDecisionTask, CollectiveDecisionTaskContext, MAX_COLLECTIVE_DECISION_TASK_BYTES,
+};
 use crate::dark_amm_game::{
     DarkAmmPublicSession, MAX_DARK_AMM_REQUEST_BYTES, SameOpeningProvedEncryptedSwapRequest,
 };
@@ -71,6 +75,12 @@ pub const DARK_AMM_COLLECTIVE_COMMIT_OPERATION: &str = "dark-amm.collective-comm
 pub const DARK_AMM_COLLECTIVE_COMMIT_MEDIA_TYPE: &str =
     "application/vnd.dregg.dark-amm-collective-decision.v1";
 pub const DARK_AMM_COLLECTIVE_COMMIT_DISCLOSURE: &str = "Commits the staged collective-key candidate only after a strict reveal-only equality transcript and independent authenticated FHDAR quorum receipt accept it. The bundle contains masked gate openings and one decision bit, never reserves, amounts, shares, operands, or a BFV secret key.";
+
+/// Read-only work item exported after phase one for independent custodians.
+pub const DARK_AMM_COLLECTIVE_TASK_ARTIFACT: &str = "dark-amm.collective-decision-task.v1";
+pub const DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE: &str =
+    "application/vnd.dregg.dark-amm-collective-decision-task.v1";
+pub const DARK_AMM_COLLECTIVE_TASK_DISCLOSURE: &str = "Public collective-decision work item: exact encrypted candidate carrier plus hosted table/round/root, same-opening claim, committed material, BFV/DKG/key identity, and equality shape. It contains no plaintext reserve or amount, witness, encryption seed, secret key, decryption share, party-local mask, MPC operand, Beaver share, or authority signing key.";
 
 /// Stable refusal surface for the public-only collective session.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -316,6 +326,8 @@ pub struct StagedCollectiveSwap {
     pub new_root: [u32; 8],
     pub same_opening_claim_digest: [u8; 32],
     pub candidate_nonce: [u8; 32],
+    /// Contextual worker-task digest used as the PartyMPC/FHDAR session nonce.
+    pub decision_task_digest: [u8; 32],
 }
 
 /// Public result of the atomic FHDAR commit.
@@ -407,16 +419,7 @@ impl CollectiveDarkAmmSession {
             .ok_or(CollectiveDarkAmmError::NoPendingCandidate)?;
         let request = decode_request(&pending.request_wire)?;
         self.validate_request_bindings(&request)?;
-        let (dx, dy) = request
-            .proved_request()
-            .bounded_ciphertexts(self.config.params.arc())
-            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        let pool =
-            DarkPool::restore_public_host(self.config.params.arc(), &self.public_host_material)
-                .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        let candidate = pool
-            .try_private_swap_proposed(&dx, &dy)
-            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
+        let candidate = self.reconstruct_candidate(&request)?;
         if candidate.decision_session_nonce() != pending.candidate_nonce {
             return Err(CollectiveDarkAmmError::Refused(
                 "pending candidate no longer reconstructs against the committed pre-state"
@@ -424,6 +427,23 @@ impl CollectiveDarkAmmSession {
             ));
         }
         Ok(candidate)
+    }
+
+    /// Canonical public work order for the currently staged candidate.
+    ///
+    /// Unlike [`pending_decision_candidate`](Self::pending_decision_candidate),
+    /// this is safe to transport to a separately configured worker: the task
+    /// binds the table/round/root, same-opening authority claim, public
+    /// BFV/DKG identity, committed material, equality width, and the exact
+    /// encrypted candidate carrier. Its digest—not the context-free candidate
+    /// nonce—is the PartyMPC/FHDAR session nonce.
+    pub fn pending_decision_task(&self) -> Result<CollectiveDecisionTask, CollectiveDarkAmmError> {
+        let pending = self
+            .pending
+            .as_ref()
+            .ok_or(CollectiveDarkAmmError::NoPendingCandidate)?;
+        let candidate = self.pending_decision_candidate()?;
+        self.decision_task_for(&candidate, pending.same_opening_claim_digest)
     }
 
     /// Deliberately abandon a staged candidate. Phase one has not consumed the
@@ -436,11 +456,18 @@ impl CollectiveDarkAmmSession {
             .as_ref()
             .ok_or(CollectiveDarkAmmError::NoPendingCandidate)?;
         let request = decode_request(&pending.request_wire)?;
+        let decision_task_digest =
+            self.pending_decision_task()?
+                .attestation_nonce()
+                .map_err(|error| {
+                    CollectiveDarkAmmError::Refused(format!("decision task refused: {error}"))
+                })?;
         let abandoned = StagedCollectiveSwap {
             sequence: self.next_sequence,
             new_root: request.proved_request().statement().new_root,
             same_opening_claim_digest: pending.same_opening_claim_digest,
             candidate_nonce: pending.candidate_nonce,
+            decision_task_digest,
         };
         self.pending = None;
         Ok(abandoned)
@@ -474,13 +501,20 @@ impl CollectiveDarkAmmSession {
         }
         let request = decode_request(request_wire)?;
         let mut replay_probe = self.same_opening_replay.clone();
-        let (candidate_nonce, claim_digest) =
-            self.verify_and_reconstruct(&request, &mut replay_probe)?;
+        let (candidate, claim_digest) = self.verify_and_reconstruct(&request, &mut replay_probe)?;
+        let candidate_nonce = candidate.decision_session_nonce();
+        let decision_task_digest = self
+            .decision_task_for(&candidate, claim_digest)?
+            .attestation_nonce()
+            .map_err(|error| {
+                CollectiveDarkAmmError::Refused(format!("decision task refused: {error}"))
+            })?;
         let staged = StagedCollectiveSwap {
             sequence: self.next_sequence,
             new_root: request.proved_request().statement().new_root,
             same_opening_claim_digest: claim_digest,
             candidate_nonce,
+            decision_task_digest,
         };
         self.pending = Some(PendingCandidate {
             request_wire: request_wire.to_vec(),
@@ -505,35 +539,33 @@ impl CollectiveDarkAmmSession {
         let request = decode_request(&pending.request_wire)?;
         self.validate_request_bindings(&request)?;
         let mut staged_same_opening_replay = self.same_opening_replay.clone();
-        let (reverified_nonce, reverified_claim_digest) =
+        let (candidate, reverified_claim_digest) =
             self.verify_and_reconstruct(&request, &mut staged_same_opening_replay)?;
-        if reverified_nonce != pending.candidate_nonce
+        if candidate.decision_session_nonce() != pending.candidate_nonce
             || reverified_claim_digest != pending.same_opening_claim_digest
         {
             return Err(CollectiveDarkAmmError::Refused(
                 "pending candidate no longer matches its Tier-1 authority claim".to_string(),
             ));
         }
-        let (dx, dy) = request
-            .proved_request()
-            .bounded_ciphertexts(self.config.params.arc())
-            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
         let mut detached_pool =
             DarkPool::restore_public_host(self.config.params.arc(), &self.public_host_material)
                 .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        let candidate = detached_pool
-            .try_private_swap_proposed(&dx, &dy)
-            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        if candidate.decision_session_nonce() != pending.candidate_nonce {
+        let task = self.decision_task_for(&candidate, reverified_claim_digest)?;
+        if !task.matches_candidate(&candidate) {
             return Err(CollectiveDarkAmmError::Refused(
-                "pending candidate no longer reconstructs against the committed pre-state"
+                "reconstructed decision task does not match the authoritative candidate"
                     .to_string(),
             ));
         }
+        let decision_session_nonce = task.attestation_nonce().map_err(|error| {
+            CollectiveDarkAmmError::Refused(format!("decision task refused: {error}"))
+        })?;
         let mut staged_replay = self.decision_replay.clone();
-        commit_attested_private_decision(
+        commit_attested_private_decision_in_context(
             &mut detached_pool,
             &candidate,
+            decision_session_nonce,
             &self.config.decision_policy,
             transcript,
             receipt,
@@ -649,9 +681,9 @@ impl CollectiveDarkAmmSession {
         if let Some(pending) = &session.pending {
             let request = decode_request(&pending.request_wire)?;
             let mut replay_probe = session.same_opening_replay.clone();
-            let (candidate_nonce, claim_digest) =
+            let (candidate, claim_digest) =
                 session.verify_and_reconstruct(&request, &mut replay_probe)?;
-            if candidate_nonce != pending.candidate_nonce
+            if candidate.decision_session_nonce() != pending.candidate_nonce
                 || claim_digest != pending.same_opening_claim_digest
             {
                 return Err(CollectiveDarkAmmError::Malformed(
@@ -671,7 +703,7 @@ impl CollectiveDarkAmmSession {
         &self,
         request: &SameOpeningProvedEncryptedSwapRequest,
         replay: &mut R,
-    ) -> Result<([u8; 32], [u8; 32]), CollectiveDarkAmmError> {
+    ) -> Result<(PrivateAppliedSwap, [u8; 32]), CollectiveDarkAmmError> {
         self.validate_request_bindings(request)?;
         let proved = request.proved_request();
         let (dx, dy) = proved
@@ -702,13 +734,46 @@ impl CollectiveDarkAmmSession {
                     "collective Tier-1 same-opening verification failed: {error}"
                 ))
             })?;
+        let candidate = self.reconstruct_candidate(request)?;
+        Ok((candidate, verified.claim_digest()))
+    }
+
+    fn reconstruct_candidate(
+        &self,
+        request: &SameOpeningProvedEncryptedSwapRequest,
+    ) -> Result<PrivateAppliedSwap, CollectiveDarkAmmError> {
+        let (dx, dy) = request
+            .proved_request()
+            .bounded_ciphertexts(self.config.params.arc())
+            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
         let pool =
             DarkPool::restore_public_host(self.config.params.arc(), &self.public_host_material)
                 .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        let candidate = pool
-            .try_private_swap_proposed(&dx, &dy)
-            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))?;
-        Ok((candidate.decision_session_nonce(), verified.claim_digest()))
+        pool.try_private_swap_proposed(&dx, &dy)
+            .map_err(|error| CollectiveDarkAmmError::Refused(error.to_string()))
+    }
+
+    fn decision_task_for(
+        &self,
+        candidate: &PrivateAppliedSwap,
+        same_opening_claim_digest: [u8; 32],
+    ) -> Result<CollectiveDecisionTask, CollectiveDarkAmmError> {
+        let context = CollectiveDecisionTaskContext {
+            hosted_session: self.config.hosted_session,
+            sequence: self.next_sequence,
+            committed_root: self.current_root,
+            same_opening_claim_digest,
+        };
+        CollectiveDecisionTask::from_candidate(
+            context,
+            &self.public_host_material,
+            &self.config.params,
+            &self.config.keygen,
+            &self.config.collective,
+            self.config.decision_policy.value_bits(),
+            candidate,
+        )
+        .map_err(|error| CollectiveDarkAmmError::Refused(format!("decision task refused: {error}")))
     }
 
     fn validate_request_bindings(
@@ -937,6 +1002,7 @@ impl CollectiveDarkAmmOffering {
         receipt.update(&request_digest);
         receipt.update(&staged.same_opening_claim_digest);
         receipt.update(&staged.candidate_nonce);
+        receipt.update(&staged.decision_task_digest);
         bind_actor(&mut receipt, actor)?;
         let receipt_id = *receipt.finalize().as_bytes();
         Ok(BinaryOperationReceipt {
@@ -952,6 +1018,10 @@ impl CollectiveDarkAmmOffering {
                 (
                     "candidateNonce".to_string(),
                     hex_digest(&staged.candidate_nonce),
+                ),
+                (
+                    "decisionTaskDigest".to_string(),
+                    hex_digest(&staged.decision_task_digest),
                 ),
                 (
                     "sameOpeningClaimDigest".to_string(),
@@ -1069,6 +1139,11 @@ impl CollectiveDarkAmmGameSession {
     /// [`CollectiveDarkAmmSession::pending_decision_candidate`].
     pub fn pending_decision_candidate(&self) -> Result<PrivateAppliedSwap, CollectiveDarkAmmError> {
         self.collective.pending_decision_candidate()
+    }
+
+    /// Strict public work order for an external collective decision worker.
+    pub fn pending_decision_task(&self) -> Result<CollectiveDecisionTask, CollectiveDarkAmmError> {
+        self.collective.pending_decision_task()
     }
 
     pub fn committed_swaps(&self) -> u64 {
@@ -1222,6 +1297,38 @@ impl Offering for CollectiveDarkAmmOffering {
                 },
             ],
         })
+    }
+
+    fn binary_artifacts(&self, session: &Self::Session) -> Vec<BinaryArtifactDescriptor> {
+        if !session.collective.has_pending_candidate() {
+            return Vec::new();
+        }
+        vec![BinaryArtifactDescriptor {
+            name: DARK_AMM_COLLECTIVE_TASK_ARTIFACT.to_string(),
+            title: "Download the collective authority work item".to_string(),
+            media_type: DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE.to_string(),
+            max_bytes: MAX_COLLECTIVE_DECISION_TASK_BYTES,
+            disclosure: DARK_AMM_COLLECTIVE_TASK_DISCLOSURE.to_string(),
+            visibility: BinaryArtifactVisibility::Public,
+        }]
+    }
+
+    fn export_binary_artifact(
+        &self,
+        session: &Self::Session,
+        name: &str,
+    ) -> Result<Vec<u8>, BinaryArtifactError> {
+        if name != DARK_AMM_COLLECTIVE_TASK_ARTIFACT {
+            return Err(BinaryArtifactError::UnknownArtifact(name.to_string()));
+        }
+        session
+            .pending_decision_task()
+            .and_then(|task| {
+                task.to_wire_bytes().map_err(|error| {
+                    CollectiveDarkAmmError::Refused(format!("decision task refused: {error}"))
+                })
+            })
+            .map_err(|error| BinaryArtifactError::Refused(error.to_string()))
     }
 
     fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
