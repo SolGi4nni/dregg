@@ -4,9 +4,11 @@
 //! process. A secretless host retains a [`PrivateAppliedSwap`]; custodians run
 //! the masked-decrypt/equality protocol elsewhere and return its public
 //! reveal-only transcript plus an [`AttestedDecisionReceipt`]. This module
-//! reconstructs the equality session only from host policy and the
-//! candidate-bound nonce, verifies configured quorum evidence and replay, then
-//! installs the already-encrypted state.
+//! reconstructs the equality session only from host policy and an independently
+//! expected candidate/task nonce, verifies configured quorum evidence and
+//! replay, then installs the already-encrypted state. Hosted collective tables
+//! use the digest of their complete canonical worker task so a receipt cannot
+//! migrate across table sessions or sequences.
 //!
 //! This is not threshold decryption and never accepts a BFV secret key or
 //! decryption share. Quorum signatures authenticate agreement on the bit; they
@@ -184,6 +186,36 @@ pub fn commit_attested_private_decision<R: ReplayGuard>(
     receipt: &AttestedDecisionReceipt,
     replay_guard: &mut R,
 ) -> Result<(), AttestedPrivateCommitError> {
+    commit_attested_private_decision_in_context(
+        pool,
+        candidate,
+        candidate.decision_session_nonce(),
+        policy,
+        transcript,
+        receipt,
+        replay_guard,
+    )
+}
+
+/// Verify and install a candidate whose FHDAR session nonce is an independently
+/// reconstructed contextual task digest.
+///
+/// The ordinary helper above uses the candidate nonce directly. Collective
+/// hosted services should instead hash the complete canonical worker task—
+/// including hosted session, sequence, committed material, public collective
+/// identity, and exact candidate carrier—and supply that digest here. This
+/// makes the existing FHDAR `session_nonce` field bind the larger context
+/// without adding a second optional claim field or accepting legacy ambiguity.
+#[allow(clippy::too_many_arguments)]
+pub fn commit_attested_private_decision_in_context<R: ReplayGuard>(
+    pool: &mut DarkPool,
+    candidate: &PrivateAppliedSwap,
+    decision_session_nonce: [u8; 32],
+    policy: &AttestedPrivateDecisionPolicy,
+    transcript: &DecisionTranscript,
+    receipt: &AttestedDecisionReceipt,
+    replay_guard: &mut R,
+) -> Result<(), AttestedPrivateCommitError> {
     pool.preflight_private_candidate(candidate)
         .map_err(candidate_preflight_error)?;
     let pool_t = pool.plaintext_modulus();
@@ -206,7 +238,7 @@ pub fn commit_attested_private_decision<R: ReplayGuard>(
         return Err(AttestedPrivateCommitError::DecisionRefused);
     }
 
-    let session = policy.session(candidate.decision_session_nonce())?;
+    let session = policy.session(decision_session_nonce)?;
     let expected = ExpectedDecisionContext {
         session: &session,
         roster_digest: policy.verifier.roster_digest(),

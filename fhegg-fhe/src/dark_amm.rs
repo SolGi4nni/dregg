@@ -83,11 +83,17 @@ use crate::mpc_party::DistributedDecisionRun;
 const PUBLIC_HOST_MAGIC: &[u8; 8] = b"FHDAP002";
 const PUBLIC_HOST_CHECKSUM_DOMAIN: &[u8] = b"fhegg/dark-amm/public-host-material/v2";
 const PUBLIC_HOST_PARAMETER_DOMAIN: &[u8] = b"fhegg/dark-amm/public-host-parameters/v2";
+const PRIVATE_DECISION_CARRIER_MAGIC: &[u8; 8] = b"FHDPW001";
+const PRIVATE_DECISION_CARRIER_CHECKSUM_DOMAIN: &[u8] =
+    b"fhegg/dark-amm/private-decision-carrier/v1";
 const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RELINEARIZATION_KEY_BYTES: usize = 192 * 1024 * 1024;
 const MAX_POOL_CIPHERTEXT_BYTES: usize = 16 * 1024 * 1024;
 /// Fixed allocation ceiling for the complete public-only restart carrier.
 pub const MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES: usize = 224 * 1024 * 1024;
+/// Allocation ceiling for the invariant plus exact encrypted post-state handed
+/// from a secretless table to an independent collective decision worker.
+pub const MAX_PRIVATE_DECISION_CARRIER_BYTES: usize = 3 * MAX_POOL_CIPHERTEXT_BYTES + 1024;
 
 /// Errors — every refusal is loud and NAMES what was refused.
 #[derive(Debug)]
@@ -618,21 +624,314 @@ impl PrivateAppliedSwap {
     /// post-state, so a one-bit decision from another proposal or pool revision
     /// cannot be replayed here.
     pub fn decision_session_nonce(&self) -> [u8; 32] {
-        let mut h = Sha256::new();
-        h.update(b"fhegg/dark-amm-private-invariant-decision/v2");
-        h.update(self.k.to_le_bytes());
-        h.update(self.state_before_digest);
-        for bounded in [
-            &self.invariant,
-            &self.state_after.ct_x,
-            &self.state_after.ct_y,
-        ] {
-            let bytes = bounded.ct.to_bytes();
-            h.update(bounded.plain_bound.to_le_bytes());
-            h.update((bytes.len() as u64).to_le_bytes());
-            h.update(bytes);
+        let invariant = self.invariant.ct.to_bytes();
+        let state_x = self.state_after.ct_x.ct.to_bytes();
+        let state_y = self.state_after.ct_y.ct.to_bytes();
+        private_candidate_nonce_from_parts(
+            self.k,
+            self.state_before_digest,
+            [
+                (self.invariant.plain_bound, &invariant),
+                (self.state_after.ct_x.plain_bound, &state_x),
+                (self.state_after.ct_y.plain_bound, &state_y),
+            ],
+        )
+    }
+
+    /// Construct the exact public carrier an out-of-process custodian needs.
+    /// The supplied committed material is independently decoded and must be
+    /// the candidate's actual encrypted pre-state.
+    pub fn public_decision_carrier(
+        &self,
+        params: &Arc<BfvParameters>,
+        committed_material: &DarkPoolPublicHostMaterial,
+    ) -> Result<PrivateAppliedSwapDecisionCarrier, PrivateDecisionCarrierError> {
+        PrivateAppliedSwapDecisionCarrier::from_candidate(params, committed_material, self)
+    }
+}
+
+/// Strict transport failures for one encrypted private-swap candidate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrivateDecisionCarrierError {
+    TooLarge,
+    InvalidWire(String),
+    ParameterMismatch,
+    CommittedPreStateMismatch,
+}
+
+impl fmt::Display for PrivateDecisionCarrierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "private decision carrier exceeds its allocation limit"),
+            Self::InvalidWire(reason) => {
+                write!(f, "invalid private decision carrier: {reason}")
+            }
+            Self::ParameterMismatch => {
+                write!(
+                    f,
+                    "private decision carrier belongs to different BFV parameters"
+                )
+            }
+            Self::CommittedPreStateMismatch => write!(
+                f,
+                "private decision carrier does not descend from the committed public material"
+            ),
         }
-        h.finalize().into()
+    }
+}
+
+impl std::error::Error for PrivateDecisionCarrierError {}
+
+/// Complete public encrypted candidate handed to a collective decision worker.
+///
+/// This type deliberately cannot be converted into [`PrivateAppliedSwap`]. A
+/// host must reconstruct its own candidate from the proved encrypted request;
+/// otherwise a caller could pair `Enc(k)` with an unrelated post-state. The
+/// carrier exists only so custodians can verify the candidate nonce and decide
+/// its exact invariant ciphertext.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PrivateAppliedSwapDecisionCarrier {
+    degree: u64,
+    modulus_count: u64,
+    plaintext_modulus: u64,
+    parameter_digest: [u8; 32],
+    k: u64,
+    state_before_digest: [u8; 32],
+    invariant_bound: u64,
+    invariant_bytes: Vec<u8>,
+    state_x_bound: u64,
+    state_x_bytes: Vec<u8>,
+    state_y_bound: u64,
+    state_y_bytes: Vec<u8>,
+    candidate_nonce: [u8; 32],
+}
+
+impl fmt::Debug for PrivateAppliedSwapDecisionCarrier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PrivateAppliedSwapDecisionCarrier")
+            .field("k", &self.k)
+            .field("invariant_bound", &self.invariant_bound)
+            .field("invariant_bytes", &self.invariant_bytes.len())
+            .field("state_x_bound", &self.state_x_bound)
+            .field("state_x_bytes", &self.state_x_bytes.len())
+            .field("state_y_bound", &self.state_y_bound)
+            .field("state_y_bytes", &self.state_y_bytes.len())
+            .field("candidate_nonce", &self.candidate_nonce)
+            .finish()
+    }
+}
+
+impl PrivateAppliedSwapDecisionCarrier {
+    fn from_candidate(
+        params: &Arc<BfvParameters>,
+        committed_material: &DarkPoolPublicHostMaterial,
+        candidate: &PrivateAppliedSwap,
+    ) -> Result<Self, PrivateDecisionCarrierError> {
+        let carrier = Self {
+            degree: params.degree() as u64,
+            modulus_count: params.moduli().len() as u64,
+            plaintext_modulus: params.plaintext(),
+            parameter_digest: public_host_parameter_digest(params),
+            k: candidate.k,
+            state_before_digest: candidate.state_before_digest,
+            invariant_bound: candidate.invariant.plain_bound,
+            invariant_bytes: candidate.invariant.ct.to_bytes(),
+            state_x_bound: candidate.state_after.ct_x.plain_bound,
+            state_x_bytes: candidate.state_after.ct_x.ct.to_bytes(),
+            state_y_bound: candidate.state_after.ct_y.plain_bound,
+            state_y_bytes: candidate.state_after.ct_y.ct.to_bytes(),
+            candidate_nonce: candidate.decision_session_nonce(),
+        };
+        carrier.validate(params)?;
+        carrier.validate_committed_pre_state(params, committed_material)?;
+        if carrier.to_wire_bytes()?.len() > MAX_PRIVATE_DECISION_CARRIER_BYTES {
+            return Err(PrivateDecisionCarrierError::TooLarge);
+        }
+        Ok(carrier)
+    }
+
+    pub const fn public_k(&self) -> u64 {
+        self.k
+    }
+
+    pub const fn state_before_digest(&self) -> [u8; 32] {
+        self.state_before_digest
+    }
+
+    pub const fn candidate_nonce(&self) -> [u8; 32] {
+        self.candidate_nonce
+    }
+
+    pub const fn parameter_digest(&self) -> [u8; 32] {
+        self.parameter_digest
+    }
+
+    pub const fn invariant_bound(&self) -> u64 {
+        self.invariant_bound
+    }
+
+    pub fn invariant(
+        &self,
+        params: &Arc<BfvParameters>,
+    ) -> Result<BoundedCiphertext, PrivateDecisionCarrierError> {
+        self.validate_parameter_identity(params)?;
+        Ok(BoundedCiphertext::new(
+            decode_private_candidate_ciphertext(&self.invariant_bytes, params)?,
+            self.invariant_bound,
+        ))
+    }
+
+    /// Bind this carrier to independently obtained, canonical committed
+    /// material. A material digest in an outer task is therefore not trusted
+    /// without also checking the exact pre-state supplied by the table.
+    pub fn validate_committed_pre_state(
+        &self,
+        params: &Arc<BfvParameters>,
+        material: &DarkPoolPublicHostMaterial,
+    ) -> Result<(), PrivateDecisionCarrierError> {
+        let (_, _, state) = material
+            .decode_public_objects(params)
+            .map_err(|_| PrivateDecisionCarrierError::ParameterMismatch)?;
+        if material.k != self.k
+            || material.parameter_digest != self.parameter_digest
+            || encrypted_pool_state_digest(material.k, &state) != self.state_before_digest
+        {
+            return Err(PrivateDecisionCarrierError::CommittedPreStateMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn matches_candidate(&self, candidate: &PrivateAppliedSwap) -> bool {
+        self.k == candidate.k
+            && self.state_before_digest == candidate.state_before_digest
+            && self.invariant_bound == candidate.invariant.plain_bound
+            && self.invariant_bytes == candidate.invariant.ct.to_bytes()
+            && self.state_x_bound == candidate.state_after.ct_x.plain_bound
+            && self.state_x_bytes == candidate.state_after.ct_x.ct.to_bytes()
+            && self.state_y_bound == candidate.state_after.ct_y.plain_bound
+            && self.state_y_bytes == candidate.state_after.ct_y.ct.to_bytes()
+            && self.candidate_nonce == candidate.decision_session_nonce()
+    }
+
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>, PrivateDecisionCarrierError> {
+        let total = 8usize
+            .checked_add(3 * 8 + 4 * 32 + 7 * 8)
+            .and_then(|fixed| fixed.checked_add(self.invariant_bytes.len()))
+            .and_then(|len| len.checked_add(self.state_x_bytes.len()))
+            .and_then(|len| len.checked_add(self.state_y_bytes.len()))
+            .ok_or(PrivateDecisionCarrierError::TooLarge)?;
+        if total > MAX_PRIVATE_DECISION_CARRIER_BYTES {
+            return Err(PrivateDecisionCarrierError::TooLarge);
+        }
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(PRIVATE_DECISION_CARRIER_MAGIC);
+        put_public_host_u64(&mut out, self.degree);
+        put_public_host_u64(&mut out, self.modulus_count);
+        put_public_host_u64(&mut out, self.plaintext_modulus);
+        out.extend_from_slice(&self.parameter_digest);
+        put_public_host_u64(&mut out, self.k);
+        out.extend_from_slice(&self.state_before_digest);
+        put_public_host_u64(&mut out, self.invariant_bound);
+        put_public_host_bytes(&mut out, &self.invariant_bytes);
+        put_public_host_u64(&mut out, self.state_x_bound);
+        put_public_host_bytes(&mut out, &self.state_x_bytes);
+        put_public_host_u64(&mut out, self.state_y_bound);
+        put_public_host_bytes(&mut out, &self.state_y_bytes);
+        out.extend_from_slice(&self.candidate_nonce);
+        out.extend_from_slice(&private_decision_carrier_checksum(&out));
+        Ok(out)
+    }
+
+    pub fn from_wire_bytes(
+        bytes: &[u8],
+        params: &Arc<BfvParameters>,
+    ) -> Result<Self, PrivateDecisionCarrierError> {
+        if bytes.len() > MAX_PRIVATE_DECISION_CARRIER_BYTES {
+            return Err(PrivateDecisionCarrierError::TooLarge);
+        }
+        const MIN_BYTES: usize = 8 + 3 * 8 + 4 * 32 + 7 * 8;
+        if bytes.len() < MIN_BYTES {
+            return Err(invalid_private_carrier("truncated fixed header"));
+        }
+        let content_end = bytes.len() - 32;
+        if bytes[content_end..] != private_decision_carrier_checksum(&bytes[..content_end]) {
+            return Err(invalid_private_carrier("checksum mismatch"));
+        }
+        let mut input = PrivateCarrierReader::new(&bytes[..content_end]);
+        if input.array::<8>()? != *PRIVATE_DECISION_CARRIER_MAGIC {
+            return Err(invalid_private_carrier("wrong version magic"));
+        }
+        let carrier = Self {
+            degree: input.u64()?,
+            modulus_count: input.u64()?,
+            plaintext_modulus: input.u64()?,
+            parameter_digest: input.array()?,
+            k: input.u64()?,
+            state_before_digest: input.array()?,
+            invariant_bound: input.u64()?,
+            invariant_bytes: input.bytes(MAX_POOL_CIPHERTEXT_BYTES)?.to_vec(),
+            state_x_bound: input.u64()?,
+            state_x_bytes: input.bytes(MAX_POOL_CIPHERTEXT_BYTES)?.to_vec(),
+            state_y_bound: input.u64()?,
+            state_y_bytes: input.bytes(MAX_POOL_CIPHERTEXT_BYTES)?.to_vec(),
+            candidate_nonce: input.array()?,
+        };
+        input.finish()?;
+        carrier.validate(params)?;
+        if carrier.to_wire_bytes()? != bytes {
+            return Err(invalid_private_carrier("wire is not canonical"));
+        }
+        Ok(carrier)
+    }
+
+    fn validate(&self, params: &Arc<BfvParameters>) -> Result<(), PrivateDecisionCarrierError> {
+        self.validate_parameter_identity(params)?;
+        if self.k == 0
+            || self.k >= self.plaintext_modulus
+            || self.invariant_bound >= self.plaintext_modulus
+            || self.state_x_bound >= self.plaintext_modulus
+            || self.state_y_bound >= self.plaintext_modulus
+        {
+            return Err(invalid_private_carrier(
+                "public value or bound leaves the plaintext domain",
+            ));
+        }
+        for bytes in [
+            &self.invariant_bytes,
+            &self.state_x_bytes,
+            &self.state_y_bytes,
+        ] {
+            decode_private_candidate_ciphertext(bytes, params)?;
+        }
+        let expected_nonce = private_candidate_nonce_from_parts(
+            self.k,
+            self.state_before_digest,
+            [
+                (self.invariant_bound, &self.invariant_bytes),
+                (self.state_x_bound, &self.state_x_bytes),
+                (self.state_y_bound, &self.state_y_bytes),
+            ],
+        );
+        if self.candidate_nonce != expected_nonce {
+            return Err(invalid_private_carrier(
+                "candidate nonce does not commit the exact carrier",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_parameter_identity(
+        &self,
+        params: &Arc<BfvParameters>,
+    ) -> Result<(), PrivateDecisionCarrierError> {
+        if self.degree != params.degree() as u64
+            || self.modulus_count != params.moduli().len() as u64
+            || self.plaintext_modulus != params.plaintext()
+            || self.parameter_digest != public_host_parameter_digest(params)
+        {
+            return Err(PrivateDecisionCarrierError::ParameterMismatch);
+        }
+        Ok(())
     }
 }
 
@@ -999,6 +1298,49 @@ fn encrypted_pool_state_digest(k: u64, state: &PoolCiphertexts) -> [u8; 32] {
     hash.finalize().into()
 }
 
+fn private_candidate_nonce_from_parts(
+    k: u64,
+    state_before_digest: [u8; 32],
+    parts: [(u64, &[u8]); 3],
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"fhegg/dark-amm-private-invariant-decision/v2");
+    hash.update(k.to_le_bytes());
+    hash.update(state_before_digest);
+    for (bound, bytes) in parts {
+        hash.update(bound.to_le_bytes());
+        hash.update((bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    }
+    hash.finalize().into()
+}
+
+fn private_decision_carrier_checksum(content: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(PRIVATE_DECISION_CARRIER_CHECKSUM_DOMAIN);
+    hash.update((content.len() as u64).to_le_bytes());
+    hash.update(content);
+    hash.finalize().into()
+}
+
+fn invalid_private_carrier(reason: impl Into<String>) -> PrivateDecisionCarrierError {
+    PrivateDecisionCarrierError::InvalidWire(reason.into())
+}
+
+fn decode_private_candidate_ciphertext(
+    bytes: &[u8],
+    params: &Arc<BfvParameters>,
+) -> Result<Ciphertext, PrivateDecisionCarrierError> {
+    let ciphertext = Ciphertext::from_bytes(bytes, params)
+        .map_err(|error| invalid_private_carrier(format!("ciphertext decode failed: {error}")))?;
+    if ciphertext.to_bytes() != bytes {
+        return Err(invalid_private_carrier(
+            "ciphertext is not canonically encoded",
+        ));
+    }
+    Ok(ciphertext)
+}
+
 fn public_host_parameter_digest(params: &BfvParameters) -> [u8; 32] {
     // Hash fhe.rs's complete canonical parameter encoding, not merely the
     // arithmetic dimensions used by evaluation.  In particular, that encoding
@@ -1033,6 +1375,60 @@ fn put_public_host_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
 struct PublicHostReader<'a> {
     bytes: &'a [u8],
     offset: usize,
+}
+
+struct PrivateCarrierReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PrivateCarrierReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], PrivateDecisionCarrierError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| invalid_private_carrier("truncated field"))?;
+        let value = self.bytes[self.offset..end]
+            .try_into()
+            .map_err(|_| invalid_private_carrier("invalid fixed-width field"))?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u64(&mut self) -> Result<u64, PrivateDecisionCarrierError> {
+        Ok(u64::from_le_bytes(self.array()?))
+    }
+
+    fn bytes(&mut self, max: usize) -> Result<&'a [u8], PrivateDecisionCarrierError> {
+        let len = usize::try_from(self.u64()?)
+            .map_err(|_| invalid_private_carrier("length does not fit usize"))?;
+        if len > max {
+            return Err(invalid_private_carrier(format!(
+                "field length {len} exceeds maximum {max}"
+            )));
+        }
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or_else(|| invalid_private_carrier("truncated length-delimited field"))?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn finish(self) -> Result<(), PrivateDecisionCarrierError> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(invalid_private_carrier("trailing bytes"))
+        }
+    }
 }
 
 impl<'a> PublicHostReader<'a> {

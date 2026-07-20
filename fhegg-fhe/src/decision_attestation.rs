@@ -71,8 +71,11 @@ impl CanonicalBytes {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionClaim {
     pub protocol_id: Digest32,
-    /// Candidate-bound nonce, for example
-    /// `PrivateAppliedSwap::decision_session_nonce()`.
+    /// Candidate/context-bound nonce. A process-local decision can use
+    /// `PrivateAppliedSwap::decision_session_nonce()` directly; a hosted
+    /// collective service uses the digest of its canonical decision task so
+    /// the claim also binds the table session, sequence, committed material,
+    /// and public collective identity.
     pub session_nonce: Digest32,
     pub roster_digest: Digest32,
     pub n_parties: u64,

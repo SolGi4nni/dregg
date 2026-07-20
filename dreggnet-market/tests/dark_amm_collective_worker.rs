@@ -12,8 +12,10 @@ use fhegg_fhe::attestation::{AuthenticatedQuorumVerifier, InMemoryReplayGuard};
 use fhegg_fhe::bfv_mul::BoundedCiphertext;
 use fhegg_fhe::dark_amm::{DarkPool, PrivateAppliedSwap};
 use fhegg_fhe::dark_amm_attested::{
-    AttestedPrivateDecisionPolicy, commit_attested_private_decision,
+    AttestedPrivateCommitError, AttestedPrivateDecisionPolicy, commit_attested_private_decision,
+    commit_attested_private_decision_in_context,
 };
+use fhegg_fhe::decision_attestation::{DecisionAttestationError, ExpectedDecisionContext};
 use fhegg_fhe::mpc_party::trusted_dealer_triples;
 use fhegg_fhe::threshold::relin::{RelinKeySession, generate_relinearization_key};
 use fhegg_fhe::threshold::{
@@ -22,7 +24,10 @@ use fhegg_fhe::threshold::{
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use dark_amm_collective_worker::{CollectiveDecisionWorkerError, MaskedCollectiveDecisionWorker};
+use dark_amm_collective_worker::{
+    CollectiveDecisionTask, CollectiveDecisionTaskContext, CollectiveDecisionTaskError,
+    CollectiveDecisionWorkerError, MaskedCollectiveDecisionWorker,
+};
 
 const N: usize = 3;
 const VALUE_BITS: usize = 19;
@@ -187,10 +192,177 @@ fn masked_threshold_worker_emits_only_attested_bit_and_commits_real_candidate() 
     // invariant, while pad removal stays inside each party thread.
     let fixture = Fixture::new();
     let mut pool = fixture.pool();
+    let committed_material = pool
+        .public_host_material()
+        .expect("canonical committed material");
     let before_x = pool.reserve_cts().ct_x.ct.to_bytes();
     let before_y = pool.reserve_cts().ct_y.ct.to_bytes();
     let candidate = fixture.candidate(&pool, 300);
     let candidate_nonce = candidate.decision_session_nonce();
+    let task_context = CollectiveDecisionTaskContext {
+        hosted_session: [0xb1; 32],
+        sequence: 7,
+        committed_root: [17, 18, 19, 20, 21, 22, 23, 24],
+        same_opening_claim_digest: [0xb2; 32],
+    };
+    let task = CollectiveDecisionTask::from_candidate(
+        task_context,
+        &committed_material,
+        &fixture.params,
+        &fixture.keygen,
+        &fixture.collective,
+        VALUE_BITS,
+        &candidate,
+    )
+    .expect("strict public decision task");
+    assert_eq!(task.context(), task_context);
+    assert_eq!(task.value_bits(), VALUE_BITS as u64);
+    assert_eq!(task.candidate_nonce(), candidate_nonce);
+    assert_eq!(task.candidate_carrier().candidate_nonce(), candidate_nonce);
+    assert!(task.matches_candidate(&candidate));
+    let task_nonce = task.attestation_nonce().expect("task digest");
+    assert_ne!(task_nonce, candidate_nonce);
+
+    let task_wire = task.to_wire_bytes().expect("strict task wire");
+    let roundtrip = CollectiveDecisionTask::from_wire_bytes(
+        &task_wire,
+        &committed_material,
+        &fixture.params,
+        &fixture.keygen,
+        &fixture.collective,
+        VALUE_BITS,
+    )
+    .expect("task wire roundtrip");
+    assert_eq!(roundtrip, task);
+    assert_eq!(roundtrip.attestation_nonce().unwrap(), task_nonce);
+    for end in [0usize, 1, 7, task_wire.len() - 33, task_wire.len() - 1] {
+        assert!(
+            CollectiveDecisionTask::from_wire_bytes(
+                &task_wire[..end],
+                &committed_material,
+                &fixture.params,
+                &fixture.keygen,
+                &fixture.collective,
+                VALUE_BITS,
+            )
+            .is_err()
+        );
+    }
+    let mut trailing = task_wire.clone();
+    trailing.push(0);
+    assert!(
+        CollectiveDecisionTask::from_wire_bytes(
+            &trailing,
+            &committed_material,
+            &fixture.params,
+            &fixture.keygen,
+            &fixture.collective,
+            VALUE_BITS,
+        )
+        .is_err()
+    );
+    let mut corrupt = task_wire.clone();
+    corrupt[48] ^= 1;
+    assert!(matches!(
+        CollectiveDecisionTask::from_wire_bytes(
+            &corrupt,
+            &committed_material,
+            &fixture.params,
+            &fixture.keygen,
+            &fixture.collective,
+            VALUE_BITS,
+        ),
+        Err(CollectiveDecisionTaskError::InvalidWire(
+            "checksum mismatch"
+        ))
+    ));
+    let wrong_keygen = KeygenSession::from_seed(N, [0xbf; 32]).expect("other DKG identity");
+    assert!(matches!(
+        CollectiveDecisionTask::from_wire_bytes(
+            &task_wire,
+            &committed_material,
+            &fixture.params,
+            &wrong_keygen,
+            &fixture.collective,
+            VALUE_BITS,
+        ),
+        Err(CollectiveDecisionTaskError::KeygenMismatch)
+    ));
+    let different_material = fixture
+        .pool()
+        .public_host_material()
+        .expect("different committed ciphertext state");
+    assert!(matches!(
+        CollectiveDecisionTask::from_wire_bytes(
+            &task_wire,
+            &different_material,
+            &fixture.params,
+            &fixture.keygen,
+            &fixture.collective,
+            VALUE_BITS,
+        ),
+        Err(CollectiveDecisionTaskError::CommittedMaterialMismatch)
+    ));
+
+    let altered_contexts = [
+        CollectiveDecisionTaskContext {
+            hosted_session: [0xb3; 32],
+            ..task_context
+        },
+        CollectiveDecisionTaskContext {
+            sequence: 8,
+            ..task_context
+        },
+        CollectiveDecisionTaskContext {
+            committed_root: [31, 32, 33, 34, 35, 36, 37, 38],
+            ..task_context
+        },
+        CollectiveDecisionTaskContext {
+            same_opening_claim_digest: [0xb4; 32],
+            ..task_context
+        },
+    ];
+    for altered in &altered_contexts {
+        let altered_task = CollectiveDecisionTask::from_candidate(
+            *altered,
+            &committed_material,
+            &fixture.params,
+            &fixture.keygen,
+            &fixture.collective,
+            VALUE_BITS,
+            &candidate,
+        )
+        .expect("same candidate in an altered hosted context");
+        assert_ne!(altered_task.attestation_nonce().unwrap(), task_nonce);
+        assert!(altered_task.validate_context(task_context).is_err());
+    }
+    let rerandomized_candidate = fixture.candidate(&pool, 300);
+    let rerandomized_task = CollectiveDecisionTask::from_candidate(
+        task_context,
+        &committed_material,
+        &fixture.params,
+        &fixture.keygen,
+        &fixture.collective,
+        VALUE_BITS,
+        &rerandomized_candidate,
+    )
+    .expect("same plaintext quote with a distinct encrypted carrier");
+    assert_ne!(rerandomized_task.candidate_nonce(), candidate_nonce);
+    assert_ne!(rerandomized_task.attestation_nonce().unwrap(), task_nonce);
+    assert!(!task.matches_candidate(&rerandomized_candidate));
+    let cross_context = altered_contexts[0];
+    let cross_task = CollectiveDecisionTask::from_candidate(
+        cross_context,
+        &committed_material,
+        &fixture.params,
+        &fixture.keygen,
+        &fixture.collective,
+        VALUE_BITS,
+        &candidate,
+    )
+    .expect("same candidate in another table/round");
+    assert_ne!(cross_task.attestation_nonce().unwrap(), task_nonce);
+    assert!(task.validate_context(cross_context).is_err());
 
     let worker = MaskedCollectiveDecisionWorker::new(
         &fixture.params,
@@ -201,17 +373,24 @@ fn masked_threshold_worker_emits_only_attested_bit_and_commits_real_candidate() 
         Duration::from_secs(5),
     )
     .expect("valid worker");
+    assert!(matches!(
+        worker.decision_session_for_task(&cross_task, &committed_material, task_context),
+        Err(CollectiveDecisionWorkerError::Task(
+            CollectiveDecisionTaskError::InvalidContext(_)
+        ))
+    ));
     let public_session = worker
-        .decision_session(&candidate)
-        .expect("candidate-bound preprocessing session");
+        .decision_session_for_task(&task, &committed_material, task_context)
+        .expect("task-bound preprocessing session");
+    assert_eq!(public_session.nonce(), task_nonce);
     let mut test_dealer = StdRng::seed_from_u64(0x91_92_93);
     let triples = trusted_dealer_triples(&public_session, &mut test_dealer)
         .expect("shape-only test preprocessing");
     let decision = worker
-        .decide_with_triples(&candidate, 90_000, triples)
+        .decide_task_with_triples(&task, &committed_material, task_context, triples)
         .expect("no-secret masked equality");
     assert!(decision.is_equal());
-    assert_eq!(decision.session().nonce(), candidate_nonce);
+    assert_eq!(decision.session().nonce(), task_nonce);
     assert!(decision.transcript().is_reveal_only(decision.session()));
 
     let (keys, verifier) = decision_authority();
@@ -229,8 +408,20 @@ fn masked_threshold_worker_emits_only_attested_bit_and_commits_real_candidate() 
     let receipt = decision
         .assemble_attested_receipt(&verifier, &signatures)
         .expect("strict FHDAR receipt");
-    assert_eq!(receipt.claim.session_nonce, candidate_nonce);
+    assert_eq!(receipt.claim.session_nonce, task_nonce);
     assert!(receipt.claim.equal);
+    let cross_session = worker
+        .decision_session_for_task(&cross_task, &committed_material, cross_context)
+        .expect("other hosted session task shape");
+    assert_eq!(
+        receipt.verify_binding(&ExpectedDecisionContext {
+            session: &cross_session,
+            roster_digest: verifier.roster_digest(),
+            transcript: decision.transcript(),
+            equal: true,
+        }),
+        Err(DecisionAttestationError::BindingMismatch)
+    );
 
     let policy = AttestedPrivateDecisionPolicy::new(
         VALUE_BITS,
@@ -239,9 +430,23 @@ fn masked_threshold_worker_emits_only_attested_bit_and_commits_real_candidate() 
         verifier,
     )
     .expect("host decision policy");
-    commit_attested_private_decision(
+    assert!(matches!(
+        commit_attested_private_decision(
+            &mut pool,
+            &candidate,
+            &policy,
+            decision.transcript(),
+            &receipt,
+            &mut InMemoryReplayGuard::default(),
+        ),
+        Err(AttestedPrivateCommitError::Attestation(
+            DecisionAttestationError::BindingMismatch
+        ))
+    ));
+    commit_attested_private_decision_in_context(
         &mut pool,
         &candidate,
+        task_nonce,
         &policy,
         decision.transcript(),
         &receipt,

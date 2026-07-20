@@ -25,16 +25,21 @@ use std::thread;
 use std::time::Duration;
 
 use fhe_traits::Serialize as FheSerialize;
+use fhegg_fhe::amm_same_opening::canonical_bfv_parameters_digest;
 use fhegg_fhe::attestation::{
     AuthenticatedQuorumVerifier, ComputationIntegrityEvidence, ComputationIntegrityResidual,
     PartyClaimSignature, QuorumVerifierError,
 };
 use fhegg_fhe::bfv_lean::LeanCiphertext;
+use fhegg_fhe::bfv_mul::BoundedCiphertext;
 use fhegg_fhe::boundary::{
     BoundaryError, EncryptedMaskContribution, MaskedBoundaryParty, MaskedDecryptCoordinator,
     MaskedDecryptSession, MaskedOpening,
 };
-use fhegg_fhe::dark_amm::PrivateAppliedSwap;
+use fhegg_fhe::dark_amm::{
+    DarkPoolPublicHostMaterial, MAX_PRIVATE_DECISION_CARRIER_BYTES, PrivateAppliedSwap,
+    PrivateAppliedSwapDecisionCarrier, PrivateDecisionCarrierError,
+};
 use fhegg_fhe::decision_attestation::{
     AttestedDecisionReceipt, DecisionAttestationError, ExpectedDecisionContext,
 };
@@ -49,6 +54,308 @@ use rand::rngs::OsRng;
 
 /// A production worker should not permit unbounded waits on a failed custodian.
 pub const MAX_COLLECTIVE_DECISION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+const COLLECTIVE_DECISION_TASK_MAGIC: &[u8; 8] = b"DBDTv001";
+const COLLECTIVE_DECISION_TASK_CHECKSUM_DOMAIN: &str =
+    "dregg-dark-amm-collective-decision-task-checksum-v1";
+const COLLECTIVE_DECISION_TASK_DIGEST_DOMAIN: &str = "dregg-dark-amm-collective-decision-task-v1";
+/// Complete public task size, dominated by its three BFV ciphertexts.
+pub const MAX_COLLECTIVE_DECISION_TASK_BYTES: usize = MAX_PRIVATE_DECISION_CARRIER_BYTES + 1024;
+
+/// Hosted state that must not be inferred from an untrusted worker task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CollectiveDecisionTaskContext {
+    pub hosted_session: [u8; 32],
+    pub sequence: u64,
+    pub committed_root: [u32; 8],
+    pub same_opening_claim_digest: [u8; 32],
+}
+
+/// Strict task transport and independently pinned-identity failures.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CollectiveDecisionTaskError {
+    TooLarge,
+    InvalidWire(&'static str),
+    InvalidContext(&'static str),
+    ParameterMismatch,
+    KeygenMismatch,
+    CollectiveKeyMismatch,
+    CommittedMaterialMismatch,
+    DecisionShapeMismatch,
+    Candidate(PrivateDecisionCarrierError),
+}
+
+impl fmt::Display for CollectiveDecisionTaskError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge => write!(f, "collective decision task exceeds its allocation limit"),
+            Self::InvalidWire(reason) => write!(f, "invalid collective decision task: {reason}"),
+            Self::InvalidContext(reason) => {
+                write!(f, "invalid collective decision task context: {reason}")
+            }
+            Self::ParameterMismatch => write!(f, "decision task BFV parameters do not match"),
+            Self::KeygenMismatch => write!(f, "decision task DKG identity does not match"),
+            Self::CollectiveKeyMismatch => {
+                write!(f, "decision task collective public key does not match")
+            }
+            Self::CommittedMaterialMismatch => {
+                write!(f, "decision task committed material does not match")
+            }
+            Self::DecisionShapeMismatch => {
+                write!(f, "decision task equality shape does not match")
+            }
+            Self::Candidate(error) => write!(f, "decision task candidate refused: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CollectiveDecisionTaskError {}
+
+impl From<PrivateDecisionCarrierError> for CollectiveDecisionTaskError {
+    fn from(error: PrivateDecisionCarrierError) -> Self {
+        Self::Candidate(error)
+    }
+}
+
+/// Canonical public work order for one independently hosted collective
+/// decision. Its digest is the FHDAR/party-MPC session nonce.
+///
+/// The task carries a digest of committed material rather than duplicating its
+/// potentially large public relinearization key. Parsing therefore requires
+/// the worker's independently obtained canonical material and checks the exact
+/// encrypted pre-state through the candidate carrier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectiveDecisionTask {
+    context: CollectiveDecisionTaskContext,
+    committed_material_digest: [u8; 32],
+    parameter_digest: [u8; 32],
+    keygen_parties: u64,
+    keygen_crp_seed: [u8; 32],
+    collective_public_key_digest: [u8; 32],
+    value_bits: u64,
+    candidate: PrivateAppliedSwapDecisionCarrier,
+}
+
+impl CollectiveDecisionTask {
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_candidate(
+        context: CollectiveDecisionTaskContext,
+        committed_material: &DarkPoolPublicHostMaterial,
+        params: &BfvParams,
+        keygen: &KeygenSession,
+        collective: &CollectivePublicKey,
+        value_bits: usize,
+        candidate: &PrivateAppliedSwap,
+    ) -> std::result::Result<Self, CollectiveDecisionTaskError> {
+        let task = Self {
+            context,
+            committed_material_digest: committed_material.material_digest(),
+            parameter_digest: canonical_bfv_parameters_digest(params.arc()),
+            keygen_parties: keygen.n_parties() as u64,
+            keygen_crp_seed: keygen.crp_seed(),
+            collective_public_key_digest: collective_public_key_digest(collective),
+            value_bits: value_bits as u64,
+            candidate: candidate.public_decision_carrier(params.arc(), committed_material)?,
+        };
+        task.validate(committed_material, params, keygen, collective, value_bits)?;
+        if task.to_wire_bytes()?.len() > MAX_COLLECTIVE_DECISION_TASK_BYTES {
+            return Err(CollectiveDecisionTaskError::TooLarge);
+        }
+        Ok(task)
+    }
+
+    pub const fn context(&self) -> CollectiveDecisionTaskContext {
+        self.context
+    }
+
+    pub const fn candidate_nonce(&self) -> [u8; 32] {
+        self.candidate.candidate_nonce()
+    }
+
+    pub const fn public_k(&self) -> u64 {
+        self.candidate.public_k()
+    }
+
+    pub const fn value_bits(&self) -> u64 {
+        self.value_bits
+    }
+
+    pub fn candidate_carrier(&self) -> &PrivateAppliedSwapDecisionCarrier {
+        &self.candidate
+    }
+
+    /// Host-side equality check against a freshly reconstructed authoritative
+    /// candidate. The task carrier itself has no conversion into host state.
+    pub fn matches_candidate(&self, candidate: &PrivateAppliedSwap) -> bool {
+        self.candidate.matches_candidate(candidate)
+    }
+
+    /// The exact contextual nonce signed by FHDAR authorities. Since it hashes
+    /// the complete canonical wire, it covers table/round, committed material,
+    /// public BFV/DKG/key identity, same-opening claim, and candidate carrier.
+    pub fn attestation_nonce(&self) -> std::result::Result<[u8; 32], CollectiveDecisionTaskError> {
+        let wire = self.to_wire_bytes()?;
+        let mut hash = blake3::Hasher::new_derive_key(COLLECTIVE_DECISION_TASK_DIGEST_DOMAIN);
+        hash.update(&(wire.len() as u64).to_le_bytes());
+        hash.update(&wire);
+        Ok(*hash.finalize().as_bytes())
+    }
+
+    pub fn validate_context(
+        &self,
+        expected: CollectiveDecisionTaskContext,
+    ) -> std::result::Result<(), CollectiveDecisionTaskError> {
+        if self.context != expected {
+            return Err(CollectiveDecisionTaskError::InvalidContext(
+                "hosted session, sequence, root, or same-opening claim differs",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn invariant(
+        &self,
+        params: &BfvParams,
+    ) -> std::result::Result<BoundedCiphertext, CollectiveDecisionTaskError> {
+        Ok(self.candidate.invariant(params.arc())?)
+    }
+
+    pub fn to_wire_bytes(&self) -> std::result::Result<Vec<u8>, CollectiveDecisionTaskError> {
+        let candidate = self.candidate.to_wire_bytes()?;
+        let total = 8usize
+            .checked_add(32 + 8 + 8 * 4 + 6 * 32 + 3 * 8 + candidate.len())
+            .ok_or(CollectiveDecisionTaskError::TooLarge)?;
+        if total > MAX_COLLECTIVE_DECISION_TASK_BYTES {
+            return Err(CollectiveDecisionTaskError::TooLarge);
+        }
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(COLLECTIVE_DECISION_TASK_MAGIC);
+        out.extend_from_slice(&self.context.hosted_session);
+        out.extend_from_slice(&self.context.sequence.to_le_bytes());
+        for lane in self.context.committed_root {
+            out.extend_from_slice(&lane.to_le_bytes());
+        }
+        out.extend_from_slice(&self.context.same_opening_claim_digest);
+        out.extend_from_slice(&self.committed_material_digest);
+        out.extend_from_slice(&self.parameter_digest);
+        out.extend_from_slice(&self.keygen_parties.to_le_bytes());
+        out.extend_from_slice(&self.keygen_crp_seed);
+        out.extend_from_slice(&self.collective_public_key_digest);
+        out.extend_from_slice(&self.value_bits.to_le_bytes());
+        put_task_bytes(&mut out, &candidate);
+        out.extend_from_slice(&collective_decision_task_checksum(&out));
+        Ok(out)
+    }
+
+    pub fn from_wire_bytes(
+        bytes: &[u8],
+        committed_material: &DarkPoolPublicHostMaterial,
+        params: &BfvParams,
+        keygen: &KeygenSession,
+        collective: &CollectivePublicKey,
+        value_bits: usize,
+    ) -> std::result::Result<Self, CollectiveDecisionTaskError> {
+        if bytes.len() > MAX_COLLECTIVE_DECISION_TASK_BYTES {
+            return Err(CollectiveDecisionTaskError::TooLarge);
+        }
+        const MIN_BYTES: usize = 8 + 32 + 8 + 8 * 4 + 5 * 32 + 3 * 8 + 32;
+        if bytes.len() < MIN_BYTES {
+            return Err(CollectiveDecisionTaskError::InvalidWire(
+                "truncated fixed header",
+            ));
+        }
+        let content_end = bytes.len() - 32;
+        if bytes[content_end..] != collective_decision_task_checksum(&bytes[..content_end]) {
+            return Err(CollectiveDecisionTaskError::InvalidWire(
+                "checksum mismatch",
+            ));
+        }
+        let mut input = TaskReader::new(&bytes[..content_end]);
+        if input.array::<8>()? != *COLLECTIVE_DECISION_TASK_MAGIC {
+            return Err(CollectiveDecisionTaskError::InvalidWire(
+                "wrong version magic",
+            ));
+        }
+        let hosted_session = input.array()?;
+        let sequence = input.u64()?;
+        let mut committed_root = [0u32; 8];
+        for lane in &mut committed_root {
+            *lane = input.u32()?;
+        }
+        let task = Self {
+            context: CollectiveDecisionTaskContext {
+                hosted_session,
+                sequence,
+                committed_root,
+                same_opening_claim_digest: input.array()?,
+            },
+            committed_material_digest: input.array()?,
+            parameter_digest: input.array()?,
+            keygen_parties: input.u64()?,
+            keygen_crp_seed: input.array()?,
+            collective_public_key_digest: input.array()?,
+            value_bits: input.u64()?,
+            candidate: PrivateAppliedSwapDecisionCarrier::from_wire_bytes(
+                input.bytes(MAX_PRIVATE_DECISION_CARRIER_BYTES)?,
+                params.arc(),
+            )?,
+        };
+        input.finish()?;
+        task.validate(committed_material, params, keygen, collective, value_bits)?;
+        if task.to_wire_bytes()? != bytes {
+            return Err(CollectiveDecisionTaskError::InvalidWire(
+                "wire is not canonical",
+            ));
+        }
+        Ok(task)
+    }
+
+    fn validate(
+        &self,
+        committed_material: &DarkPoolPublicHostMaterial,
+        params: &BfvParams,
+        keygen: &KeygenSession,
+        collective: &CollectivePublicKey,
+        value_bits: usize,
+    ) -> std::result::Result<(), CollectiveDecisionTaskError> {
+        if self.context.hosted_session == [0; 32]
+            || self.context.same_opening_claim_digest == [0; 32]
+        {
+            return Err(CollectiveDecisionTaskError::InvalidContext(
+                "hosted session and same-opening claim must be nonzero",
+            ));
+        }
+        if self.parameter_digest != canonical_bfv_parameters_digest(params.arc())
+            || self.candidate.parameter_digest() != committed_material.parameter_digest()
+        {
+            return Err(CollectiveDecisionTaskError::ParameterMismatch);
+        }
+        if self.keygen_parties != keygen.n_parties() as u64
+            || self.keygen_crp_seed != keygen.crp_seed()
+        {
+            return Err(CollectiveDecisionTaskError::KeygenMismatch);
+        }
+        if self.collective_public_key_digest != collective_public_key_digest(collective)
+            || committed_material.public_key_bytes() != collective.pk.to_bytes()
+        {
+            return Err(CollectiveDecisionTaskError::CollectiveKeyMismatch);
+        }
+        if self.committed_material_digest != committed_material.material_digest() {
+            return Err(CollectiveDecisionTaskError::CommittedMaterialMismatch);
+        }
+        self.candidate
+            .validate_committed_pre_state(params.arc(), committed_material)?;
+        if self.value_bits != value_bits as u64
+            || self.keygen_parties < 2
+            || !(1..=63).contains(&value_bits)
+            || params.plaintext_modulus() < (1u64 << value_bits)
+            || self.candidate.invariant_bound() >= (1u64 << value_bits)
+        {
+            return Err(CollectiveDecisionTaskError::DecisionShapeMismatch);
+        }
+        Ok(())
+    }
+}
 
 /// Fail-closed worker and attestation errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +372,7 @@ pub enum CollectiveDecisionWorkerError {
     RosterMismatch { have: usize, need: usize },
     Quorum(QuorumVerifierError),
     Attestation(DecisionAttestationError),
+    Task(CollectiveDecisionTaskError),
     WorkerPanicked,
 }
 
@@ -108,6 +416,7 @@ impl fmt::Display for CollectiveDecisionWorkerError {
             ),
             Self::Quorum(error) => write!(f, "decision authority quorum refused: {error}"),
             Self::Attestation(error) => write!(f, "decision receipt refused: {error}"),
+            Self::Task(error) => write!(f, "collective decision task refused: {error}"),
             Self::WorkerPanicked => write!(f, "a collective decision custodian panicked"),
         }
     }
@@ -145,6 +454,12 @@ impl From<DecisionAttestationError> for CollectiveDecisionWorkerError {
     }
 }
 
+impl From<CollectiveDecisionTaskError> for CollectiveDecisionWorkerError {
+    fn from(error: CollectiveDecisionTaskError) -> Self {
+        Self::Task(error)
+    }
+}
+
 type Result<T> = std::result::Result<T, CollectiveDecisionWorkerError>;
 
 struct EqualityCommand {
@@ -162,6 +477,7 @@ struct EqualityCommand {
 /// becoming a key-custody snapshot.
 pub struct MaskedCollectiveDecisionWorker<'a> {
     params: &'a BfvParams,
+    keygen: &'a KeygenSession,
     collective: &'a CollectivePublicKey,
     parties: &'a [ThresholdParty],
     value_bits: usize,
@@ -171,7 +487,7 @@ pub struct MaskedCollectiveDecisionWorker<'a> {
 impl<'a> MaskedCollectiveDecisionWorker<'a> {
     pub fn new(
         params: &'a BfvParams,
-        keygen: &KeygenSession,
+        keygen: &'a KeygenSession,
         collective: &'a CollectivePublicKey,
         parties: &'a [ThresholdParty],
         value_bits: usize,
@@ -213,6 +529,7 @@ impl<'a> MaskedCollectiveDecisionWorker<'a> {
 
         Ok(Self {
             params,
+            keygen,
             collective,
             parties,
             value_bits,
@@ -237,6 +554,46 @@ impl<'a> MaskedCollectiveDecisionWorker<'a> {
         )?)
     }
 
+    /// Reconstruct the task-digest session after checking every independently
+    /// configured BFV/DKG/collective identity field.
+    pub fn decision_session_for_task(
+        &self,
+        task: &CollectiveDecisionTask,
+        committed_material: &DarkPoolPublicHostMaterial,
+        expected_context: CollectiveDecisionTaskContext,
+    ) -> Result<PartyMpcSession> {
+        task.validate_context(expected_context)?;
+        task.validate(
+            committed_material,
+            self.params,
+            self.keygen,
+            self.collective,
+            self.value_bits,
+        )?;
+        Ok(PartyMpcSession::equality(
+            task.attestation_nonce()?,
+            self.parties.len(),
+            self.value_bits,
+            self.params.plaintext_modulus(),
+            self.timeout,
+        )?)
+    }
+
+    /// Decide a strict cross-process task. The resulting transcript and FHDAR
+    /// claim use the task digest—not the context-free candidate nonce—as their
+    /// session nonce.
+    pub fn decide_task_with_triples(
+        &self,
+        task: &CollectiveDecisionTask,
+        committed_material: &DarkPoolPublicHostMaterial,
+        expected_context: CollectiveDecisionTaskContext,
+        triples: Vec<TripleMaterial>,
+    ) -> Result<MaskedCollectiveDecision> {
+        let session = self.decision_session_for_task(task, committed_material, expected_context)?;
+        let invariant = task.invariant(self.params)?;
+        self.decide_target_with_triples(session, &invariant, task.public_k(), triples)
+    }
+
     /// Decide one candidate using externally supplied, correctly correlated
     /// Beaver material. Only the one-time-padded opening reaches the
     /// coordinator; every unpadded operand remains distributed.
@@ -246,12 +603,23 @@ impl<'a> MaskedCollectiveDecisionWorker<'a> {
         public_k: u64,
         triples: Vec<TripleMaterial>,
     ) -> Result<MaskedCollectiveDecision> {
+        let session = self.decision_session(candidate)?;
+        self.decide_target_with_triples(session, &candidate.invariant, public_k, triples)
+    }
+
+    fn decide_target_with_triples(
+        &self,
+        equality_session: PartyMpcSession,
+        invariant: &BoundedCiphertext,
+        public_k: u64,
+        triples: Vec<TripleMaterial>,
+    ) -> Result<MaskedCollectiveDecision> {
         let range_end = 1u64
             .checked_shl(self.value_bits as u32)
             .ok_or(CollectiveDecisionWorkerError::PublicTargetOutOfRange)?;
         if public_k >= range_end
             || public_k >= self.params.plaintext_modulus()
-            || candidate.invariant.plain_bound >= range_end
+            || invariant.plain_bound >= range_end
         {
             return Err(CollectiveDecisionWorkerError::PublicTargetOutOfRange);
         }
@@ -261,17 +629,15 @@ impl<'a> MaskedCollectiveDecisionWorker<'a> {
                 need: self.parties.len(),
             });
         }
-
-        let equality_session = self.decision_session(candidate)?;
         let target = LeanCiphertext::from_fhe_bytes(
-            &candidate.invariant.ct.to_bytes(),
+            &invariant.ct.to_bytes(),
             self.params.moduli(),
             self.params.degree(),
-            candidate.invariant.plain_bound,
+            invariant.plain_bound,
         )
         .map_err(|_| CollectiveDecisionWorkerError::CandidateCiphertextMalformed)?;
         let mask_session = MaskedDecryptSession::from_public(
-            candidate.decision_session_nonce(),
+            equality_session.nonce(),
             self.parties.len(),
             1,
             target,
@@ -485,4 +851,89 @@ fn receive<T>(receiver: &Receiver<T>, timeout: Duration, phase: &'static str) ->
         RecvTimeoutError::Timeout => CollectiveDecisionWorkerError::ChannelTimeout(phase),
         RecvTimeoutError::Disconnected => CollectiveDecisionWorkerError::ChannelClosed(phase),
     })
+}
+
+fn collective_public_key_digest(collective: &CollectivePublicKey) -> [u8; 32] {
+    let bytes = collective.pk.to_bytes();
+    let mut hash =
+        blake3::Hasher::new_derive_key("dregg-dark-amm-collective-decision-task-public-key-v1");
+    hash.update(&(bytes.len() as u64).to_le_bytes());
+    hash.update(&bytes);
+    *hash.finalize().as_bytes()
+}
+
+fn collective_decision_task_checksum(content: &[u8]) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new_derive_key(COLLECTIVE_DECISION_TASK_CHECKSUM_DOMAIN);
+    hash.update(&(content.len() as u64).to_le_bytes());
+    hash.update(content);
+    *hash.finalize().as_bytes()
+}
+
+fn put_task_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+struct TaskReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> TaskReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn array<const N: usize>(
+        &mut self,
+    ) -> std::result::Result<[u8; N], CollectiveDecisionTaskError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(CollectiveDecisionTaskError::InvalidWire(
+                "truncated fixed-width field",
+            ))?;
+        let value = self.bytes[self.offset..end]
+            .try_into()
+            .map_err(|_| CollectiveDecisionTaskError::InvalidWire("invalid fixed-width field"))?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u32(&mut self) -> std::result::Result<u32, CollectiveDecisionTaskError> {
+        Ok(u32::from_le_bytes(self.array()?))
+    }
+
+    fn u64(&mut self) -> std::result::Result<u64, CollectiveDecisionTaskError> {
+        Ok(u64::from_le_bytes(self.array()?))
+    }
+
+    fn bytes(&mut self, max: usize) -> std::result::Result<&'a [u8], CollectiveDecisionTaskError> {
+        let len = usize::try_from(self.u64()?)
+            .map_err(|_| CollectiveDecisionTaskError::InvalidWire("length does not fit usize"))?;
+        if len > max {
+            return Err(CollectiveDecisionTaskError::InvalidWire(
+                "length-delimited field exceeds its limit",
+            ));
+        }
+        let end = self
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= self.bytes.len())
+            .ok_or(CollectiveDecisionTaskError::InvalidWire(
+                "truncated length-delimited field",
+            ))?;
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn finish(self) -> std::result::Result<(), CollectiveDecisionTaskError> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(CollectiveDecisionTaskError::InvalidWire("trailing bytes"))
+        }
+    }
 }
