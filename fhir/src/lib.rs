@@ -51,7 +51,10 @@
 //! `FHQPB001` artifact. Its standalone verifier re-runs both checkers and
 //! requires their fixed-point `P` matrices to agree entry-for-entry, preventing
 //! transport code from accidentally retaining optimality evidence while
-//! dropping the PSD premise.
+//! dropping the PSD premise. [`qp_certificate::verify_certified_qp`] is the
+//! relying-party boundary: it accepts an externally produced artifact without
+//! running ADMM, but only after exact-lifting and matching the complete
+//! independently compiled public problem `(P,q,A,l,u)`.
 
 pub mod ast;
 pub mod compile;
@@ -66,7 +69,8 @@ pub use compile::{
     ExactSddPsdCertificateError,
 };
 pub use qp_certificate::{
-    run_certified_qp, ExactQpCertificateBundle, ExactQpCertificateBundleError,
+    run_certified_qp, verify_certified_qp, ExactQpCertificateBundle, ExactQpCertificateBundleError,
+    VerifiedExactQpCertificate,
 };
 pub use solver_bridge::{run, AggregationSourceBinding, RunOutcome};
 pub use tier::Tier;

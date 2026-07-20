@@ -57,7 +57,7 @@
 
 use serde::Serialize;
 
-use crate::qp::CertQp;
+use crate::qp::{CertQp, QpProblem};
 
 /// Largest supported `scale` (so `10^scale` and its square stay far inside
 /// `i128`; sums then overflow only via `checked_*`, which fails closed).
@@ -145,6 +145,32 @@ pub enum LiftError {
     ScaleTooLarge,
     /// ε < 0.
     NegativeEpsilon,
+}
+
+/// Why an otherwise valid exact KKT certificate cannot be attached to an
+/// independently supplied public QP.  The certificate carries a complete
+/// `(P,q,A,l,u)` image, but verify-not-find consumers must compare that image
+/// to the program they actually authorized rather than treating the embedded
+/// problem as self-authenticating.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QpProblemBindingError {
+    Lift(LiftError),
+    DimensionMismatch {
+        certificate_n: usize,
+        certificate_mc: usize,
+        program_n: usize,
+        program_mc: usize,
+    },
+    FieldMismatch {
+        field: &'static str,
+        index: usize,
+    },
+}
+
+impl From<LiftError> for QpProblemBindingError {
+    fn from(value: LiftError) -> Self {
+        Self::Lift(value)
+    }
 }
 
 /// `2^53` — the exact-integer boundary of f64.
@@ -256,6 +282,65 @@ impl CertQpExact {
                 }
             }
         }
+    }
+
+    /// Bind this certificate's complete public problem image to an independent
+    /// [`QpProblem`] at the certificate's exact fixed-point scale.
+    ///
+    /// This is deliberately stronger than comparing only `P`: PSD admission
+    /// attaches to `P`, but the KKT witness also depends on the linear objective
+    /// and every constraint `(q,A,l,u)`.  A certificate for a different mandate
+    /// with the same covariance matrix must not authorize this one.
+    pub fn verify_problem_binding(&self, problem: &QpProblem) -> Result<(), QpProblemBindingError> {
+        if self.scale > MAX_SCALE {
+            return Err(QpProblemBindingError::Lift(LiftError::ScaleTooLarge));
+        }
+        if !self.well_formed() {
+            return Err(QpProblemBindingError::Lift(LiftError::BadShape));
+        }
+        if self.n != problem.n || self.mc != problem.mc {
+            return Err(QpProblemBindingError::DimensionMismatch {
+                certificate_n: self.n,
+                certificate_mc: self.mc,
+                program_n: problem.n,
+                program_mc: problem.mc,
+            });
+        }
+        let shapes_ok = problem
+            .n
+            .checked_mul(problem.n)
+            .is_some_and(|nn| problem.p.len() == nn)
+            && problem
+                .mc
+                .checked_mul(problem.n)
+                .is_some_and(|mn| problem.a.len() == mn)
+            && problem.q.len() == problem.n
+            && problem.l.len() == problem.mc
+            && problem.u.len() == problem.mc;
+        if !shapes_ok {
+            return Err(QpProblemBindingError::Lift(LiftError::BadShape));
+        }
+
+        let scale = 10i128.pow(self.scale);
+        let compare = |field: &'static str,
+                       embedded: &[i128],
+                       public: &[f64]|
+         -> Result<(), QpProblemBindingError> {
+            let lifted = lift_slice(public, scale, field)?;
+            embedded
+                .iter()
+                .zip(&lifted)
+                .position(|(left, right)| left != right)
+                .map_or(Ok(()), |index| {
+                    Err(QpProblemBindingError::FieldMismatch { field, index })
+                })
+        };
+        compare("p", &self.p, &problem.p)?;
+        compare("q", &self.q, &problem.q)?;
+        compare("a", &self.a, &problem.a)?;
+        compare("l", &self.l, &problem.l)?;
+        compare("u", &self.u, &problem.u)?;
+        Ok(())
     }
 
     /// `(prim, dual, normal, tol)` at scale `S²`, or `None` on overflow.
@@ -435,6 +520,45 @@ mod tests {
         let mut exact = lift_cert(&cert, 9).expect("lifts");
         exact.x[0] += 10i128.pow(9) / 2; // +0.5 breaks budget + stationarity
         assert!(!exact.check().valid, "tampered x must be rejected");
+    }
+
+    #[test]
+    fn exact_certificate_binds_the_complete_independent_qp() {
+        let cert = qp_one(S, 0, 0);
+        let problem = QpProblem {
+            n: 1,
+            mc: 1,
+            p: vec![1.0],
+            q: vec![-1.0],
+            a: vec![1.0],
+            l: vec![0.0],
+            u: vec![2.0],
+        };
+        cert.verify_problem_binding(&problem)
+            .expect("the independent public QP is exactly the embedded problem");
+
+        // Same PSD matrix, different linear mandate.  Comparing only P would
+        // accept this substitution even though the optimum changes.
+        let mut different_objective = problem.clone();
+        different_objective.q[0] = -2.0;
+        assert_eq!(
+            cert.verify_problem_binding(&different_objective),
+            Err(QpProblemBindingError::FieldMismatch {
+                field: "q",
+                index: 0,
+            })
+        );
+
+        // And a changed feasible region cannot borrow the old certificate.
+        let mut different_constraints = problem;
+        different_constraints.u[0] = 3.0;
+        assert_eq!(
+            cert.verify_problem_binding(&different_constraints),
+            Err(QpProblemBindingError::FieldMismatch {
+                field: "u",
+                index: 0,
+            })
+        );
     }
 
     // ---- Fail-closed polarity ----

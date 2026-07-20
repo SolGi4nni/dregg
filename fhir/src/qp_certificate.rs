@@ -22,12 +22,13 @@ use crate::compile::{
     QP_CERT_EXACT_SCALE,
 };
 use crate::solver_bridge::{run, ExactCertQpVerdict, RunOutcome};
-use fhegg_solver::qp_exact::CertQpExact;
+use fhegg_solver::qp_exact::{CertQpExact, QpProblemBindingError};
 use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8; 8] = b"FHQPB001";
 const VERSION: u8 = 1;
 const CHECKSUM_DOMAIN: &[u8] = b"fhir/exact-qp-certificate-bundle/v1";
+const PROGRAM_DIGEST_DOMAIN: &[u8] = b"fhir/exact-qp-public-program/v1";
 const HEADER_LEN: usize = 8 + 1 + 4 + 4 + 4 + 4;
 const CHECKSUM_LEN: usize = 32;
 
@@ -58,6 +59,7 @@ pub enum ExactQpCertificateBundleError {
     MalformedWire,
     UnsupportedVersion { found: u8 },
     ChecksumMismatch,
+    ProgramBinding(QpProblemBindingError),
 }
 
 impl std::fmt::Display for ExactQpCertificateBundleError {
@@ -71,6 +73,42 @@ impl std::error::Error for ExactQpCertificateBundleError {}
 impl From<ExactSddPsdCertificateError> for ExactQpCertificateBundleError {
     fn from(value: ExactSddPsdCertificateError) -> Self {
         Self::Admission(value)
+    }
+}
+
+impl From<QpProblemBindingError> for ExactQpCertificateBundleError {
+    fn from(value: QpProblemBindingError) -> Self {
+        Self::ProgramBinding(value)
+    }
+}
+
+/// An externally supplied optimizer result that has been checked against the
+/// independently compiled fhIR program.  Construction is private: callers can
+/// obtain this authority only through [`verify_certified_qp`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedExactQpCertificate {
+    bundle: ExactQpCertificateBundle,
+    program_digest: [u8; 32],
+}
+
+impl VerifiedExactQpCertificate {
+    /// Digest of the exact fixed-point public problem `(P,q,A,l,u)` authorized
+    /// by the compiler.  It excludes the optimizer witness and tolerance.
+    pub fn program_digest(&self) -> [u8; 32] {
+        self.program_digest
+    }
+
+    pub fn bundle(&self) -> &ExactQpCertificateBundle {
+        &self.bundle
+    }
+
+    /// The verified fixed-point primal and dual witness plus its decimal scale.
+    pub fn solution(&self) -> (&[i128], &[i128], u32) {
+        (
+            &self.bundle.kkt.x,
+            &self.bundle.kkt.y,
+            self.bundle.kkt.scale,
+        )
     }
 }
 
@@ -134,10 +172,49 @@ impl ExactQpCertificateBundle {
         Ok(())
     }
 
+    /// Attach this internally consistent bundle to the exact fhIR QP that a
+    /// relying party independently compiled.
+    ///
+    /// [`verify`](Self::verify) establishes that the embedded problem and
+    /// witness form one valid PSD-plus-KKT object.  It does not establish that
+    /// the embedded public problem is the product the relying party intended.
+    /// This method closes that source-binding edge by comparing all of
+    /// `(P,q,A,l,u)`, after the same exact fixed-point lift, and by rechecking
+    /// the compiler's independent PSD admission carrier.
+    pub fn verify_against_compiled(
+        &self,
+        compiled: &Compiled,
+    ) -> Result<[u8; 32], ExactQpCertificateBundleError> {
+        self.verify()?;
+        self.bind_checked_bundle_to_compiled(compiled)
+    }
+
+    /// Program binding after this bundle has already passed [`Self::verify`].
+    /// Kept private so public callers cannot skip the certificate checks, while
+    /// decode/run paths avoid re-running the O(n²+mn) KKT verifier merely to
+    /// attach an already-checked object to its source program.
+    fn bind_checked_bundle_to_compiled(
+        &self,
+        compiled: &Compiled,
+    ) -> Result<[u8; 32], ExactQpCertificateBundleError> {
+        compiled.verify_exact_sdd_psd_certificate()?;
+        let ConvexProgram::Qp(problem) = &compiled.program else {
+            return Err(ExactQpCertificateBundleError::NotQp);
+        };
+        self.kkt.verify_problem_binding(problem)?;
+        Ok(exact_qp_program_digest(&self.kkt))
+    }
+
     /// Canonical, bounded, exact-EOF transport.  Every i128 uses network-order
     /// two's complement; all vector lengths are implied by `(n, mc)`.
     pub fn to_wire_bytes(&self) -> Result<Vec<u8>, ExactQpCertificateBundleError> {
         self.verify()?;
+        self.to_wire_bytes_checked()
+    }
+
+    /// Encode an already-verified bundle. Only private checked construction and
+    /// public `to_wire_bytes` reach this helper.
+    fn to_wire_bytes_checked(&self) -> Result<Vec<u8>, ExactQpCertificateBundleError> {
         let admission = self.admission.to_wire_bytes()?;
         let wire_len = exact_wire_len(&self.kkt, admission.len())?;
         let mut out = Vec::with_capacity(wire_len);
@@ -219,7 +296,7 @@ impl ExactQpCertificateBundle {
             return Err(ExactQpCertificateBundleError::MalformedWire);
         }
         let bundle = Self::new(admission, kkt)?;
-        if bundle.to_wire_bytes()?.as_slice() != bytes {
+        if bundle.to_wire_bytes_checked()?.as_slice() != bytes {
             return Err(ExactQpCertificateBundleError::MalformedWire);
         }
         Ok(bundle)
@@ -247,11 +324,33 @@ pub fn run_certified_qp(
         RunOutcome::CertQp {
             exact: ExactCertQpVerdict::Checked { cert, .. },
             ..
-        } => ExactQpCertificateBundle::new(admission, cert),
+        } => {
+            let bundle = ExactQpCertificateBundle::new(admission, cert)?;
+            bundle.bind_checked_bundle_to_compiled(compiled)?;
+            Ok(bundle)
+        }
         RunOutcome::InvalidCompiled { reason } => Err(reason.into()),
         RunOutcome::CertQp { .. } => Err(ExactQpCertificateBundleError::KktInvalid),
         _ => Err(ExactQpCertificateBundleError::NotQp),
     }
+}
+
+/// Verify an optimizer-produced `FHQPB001` artifact without running ADMM.
+///
+/// The wire decoder replays both certificate checkers; the final binding step
+/// then compares the certificate's complete exact public problem to the
+/// independently compiled fhIR product.  Only that conjunction mints the
+/// [`VerifiedExactQpCertificate`] consumed by settlement/application code.
+pub fn verify_certified_qp(
+    compiled: &Compiled,
+    wire: &[u8],
+) -> Result<VerifiedExactQpCertificate, ExactQpCertificateBundleError> {
+    let bundle = ExactQpCertificateBundle::from_wire_bytes(wire)?;
+    let program_digest = bundle.bind_checked_bundle_to_compiled(compiled)?;
+    Ok(VerifiedExactQpCertificate {
+        bundle,
+        program_digest,
+    })
 }
 
 fn push_i128s(out: &mut Vec<u8>, values: &[i128]) {
@@ -313,6 +412,22 @@ fn checksum(payload: &[u8]) -> [u8; 32] {
     hash.finalize().into()
 }
 
+fn exact_qp_program_digest(kkt: &CertQpExact) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update((PROGRAM_DIGEST_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(PROGRAM_DIGEST_DOMAIN);
+    hash.update((kkt.n as u64).to_be_bytes());
+    hash.update((kkt.mc as u64).to_be_bytes());
+    hash.update(kkt.scale.to_be_bytes());
+    for values in [&kkt.p, &kkt.q, &kkt.a, &kkt.l, &kkt.u] {
+        hash.update((values.len() as u64).to_be_bytes());
+        for value in values {
+            hash.update(value.to_be_bytes());
+        }
+    }
+    hash.finalize().into()
+}
+
 struct Cursor<'a> {
     bytes: &'a [u8],
     offset: usize,
@@ -356,6 +471,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::{Product, ProductBody};
     use crate::{compile, products};
 
     fn bundle() -> ExactQpCertificateBundle {
@@ -463,5 +579,82 @@ mod tests {
             run_certified_qp(&compiled),
             Err(ExactQpCertificateBundleError::NotQp)
         );
+    }
+
+    #[test]
+    fn external_optimizer_result_binds_the_entire_compiled_qp() {
+        let compiled = compile(&products::portfolio_qp_public()).expect("compile public QP");
+        let wire = run_certified_qp(&compiled)
+            .expect("run the untrusted optimizer once")
+            .to_wire_bytes()
+            .expect("canonical optimizer result");
+
+        // The relying side needs no optimizer run: strict decode + both exact
+        // checkers + full public-program binding mint the verified result.
+        let verified = verify_certified_qp(&compiled, &wire)
+            .expect("external certificate names this exact compiled product");
+        let (x, y, scale) = verified.solution();
+        assert_eq!(x.len(), 6);
+        assert_eq!(y.len(), 7);
+        assert_eq!(scale, QP_CERT_EXACT_SCALE);
+        assert_ne!(verified.program_digest(), [0; 32]);
+        assert_eq!(verified.bundle().to_wire_bytes().unwrap(), wire);
+    }
+
+    #[test]
+    fn same_psd_matrix_cannot_authorize_a_different_objective_or_feasible_region() {
+        let compiled = compile(&products::portfolio_qp_public()).expect("compile source QP");
+        let bundle = run_certified_qp(&compiled).expect("source certificate");
+        bundle
+            .verify()
+            .expect("the embedded problem is internally consistent");
+        let wire = bundle.to_wire_bytes().unwrap();
+
+        let ProductBody::Portfolio {
+            cov,
+            mut mu,
+            lambda,
+            w_max,
+        } = products::portfolio_qp_public().body
+        else {
+            unreachable!()
+        };
+        mu[0] += 0.01;
+        let changed_objective = compile(&Product::infer(
+            "same-P-different-q",
+            ProductBody::Portfolio {
+                cov: cov.clone(),
+                mu,
+                lambda,
+                w_max,
+            },
+        ))
+        .expect("the substituted QP is independently valid");
+        assert!(matches!(
+            verify_certified_qp(&changed_objective, &wire),
+            Err(ExactQpCertificateBundleError::ProgramBinding(
+                QpProblemBindingError::FieldMismatch { field: "q", .. }
+            ))
+        ));
+
+        let changed_constraints = compile(&Product::infer(
+            "same-P-different-box",
+            ProductBody::Portfolio {
+                cov,
+                mu: match products::portfolio_qp_public().body {
+                    ProductBody::Portfolio { mu, .. } => mu,
+                    _ => unreachable!(),
+                },
+                lambda,
+                w_max: 0.45,
+            },
+        ))
+        .expect("the changed feasible region is independently valid");
+        assert!(matches!(
+            verify_certified_qp(&changed_constraints, &wire),
+            Err(ExactQpCertificateBundleError::ProgramBinding(
+                QpProblemBindingError::FieldMismatch { field: "u", .. }
+            ))
+        ));
     }
 }
