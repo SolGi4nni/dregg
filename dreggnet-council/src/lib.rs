@@ -518,7 +518,13 @@ impl Offering for CouncilOffering {
     /// a forged board, an enacted effect that does not match its decision, or a phantom
     /// effect with no passing vote — fails.
     fn verify(&self, session: &CouncilSession) -> VerifyReport {
-        let turns = session.committed_turns();
+        // `VerifyReport::turns` is the cross-offering "genesis + committed steps" count (its
+        // own doc, and how every substrate-backed sibling reports it — the dungeon's
+        // `receipts_len` is `1 + steps`). The council cell is seeded with its genesis state at
+        // `open` (the `WriteOnce`/`Monotonic` program + the all-zero slots), so the verified
+        // chain is that genesis turn plus each committed governance turn. `committed_turns`
+        // stays the governance-only tally (propose + vote + enact); the genesis is the `+ 1`.
+        let turns = 1 + session.committed_turns();
         for (pi, p) in session.proposals.iter().enumerate() {
             // (1) board integrity: the stored monotone tally == the light-client recompute.
             let stored = match session.engine.tally(p.poll) {
