@@ -2435,6 +2435,280 @@ theorem landV4CorrespondenceB_of_sat
 
 end LandCorr
 
+/-! ## §22b — `mergeV2N_of_sat`: the confluence bit `cMergeV2`, semantically extracted.
+
+`cMergeV2 = cMc1V2 · cNotIdentV2 = (cBothCarryV2 · cResEqV2) · (1 − cIdentV2)`, with
+`cBothCarryV2 = cCv2 0 · cCv2 1`, `cIdentV2 = eq_ff · eq_tt` (sources coincide AND raw dests
+coincide, the identical-move exception). So the merge conflict fires exactly when BOTH pieces carry
+(in the corrected inclusive-occlusion sense), their CORRECTED landings coincide (`cResEqV2 = 1`), and
+the pair is NOT the identical move. Pure gate algebra over the twelve-gate `resV2LogicTail` (§14). -/
+section MergeV2
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+/-- **`mergeV2N_of_sat`.** The confluence bit is boolean and is `1` iff both pieces carry, the
+corrected landings coincide (`cResEqV2 = 1`), and the pair is not the identical move
+(`eq_ff = 0 ∨ eq_tt = 0`). -/
+theorem mergeV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (heqff : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 0)) = 0
+        ∨ (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 0)) = 1)
+    (heqtt : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 1)) = 0
+        ∨ (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 1)) = 1)
+    (hcv2a : (envAt t i).loc (NGen.cCv2 n 0) = 0 ∨ (envAt t i).loc (NGen.cCv2 n 0) = 1)
+    (hcv2b : (envAt t i).loc (NGen.cCv2 n 1) = 0 ∨ (envAt t i).loc (NGen.cCv2 n 1) = 1)
+    (hreseq : (envAt t i).loc (NGen.cResEqV2 n) = 0 ∨ (envAt t i).loc (NGen.cResEqV2 n) = 1) :
+    ((envAt t i).loc (NGen.cMergeV2 n) = 0 ∨ (envAt t i).loc (NGen.cMergeV2 n) = 1)
+      ∧ ((envAt t i).loc (NGen.cMergeV2 n) = 1 ↔
+          ((envAt t i).loc (NGen.cCv2 n 0) = 1 ∧ (envAt t i).loc (NGen.cCv2 n 1) = 1
+            ∧ (envAt t i).loc (NGen.cResEqV2 n) = 1
+            ∧ ((envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 0)) = 0
+                ∨ (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 1)) = 0))) := by
+  set e := envAt t i with he
+  -- cIdentV2 = eq_ff · eq_tt  (gate 0)
+  have hident : e.loc (NGen.cIdentV2 n)
+      = e.loc (NGen.cEqBit n (NGen.eqBase n 0)) * e.loc (NGen.cEqBit n (NGen.eqBase n 1)) :=
+    prodN_of_sat hsat hc i hi (NGen.cIdentV2 n) (NGen.cEqBit n (NGen.eqBase n 0))
+      (NGen.cEqBit n (NGen.eqBase n 1))
+      (resV2Lift (by show _ ∈ resV2LogicTail (n := n); exact List.mem_cons_self)) heqff heqtt
+  have hidentB : e.loc (NGen.cIdentV2 n) = 0 ∨ e.loc (NGen.cIdentV2 n) = 1 := by
+    rcases heqff with a | a <;> rcases heqtt with b | b <;> rw [hident, a, b] <;> norm_num
+  -- cBothCarryV2 = cCv2 0 · cCv2 1  (gate 1)
+  have hbc : e.loc (NGen.cBothCarryV2 n) = e.loc (NGen.cCv2 n 0) * e.loc (NGen.cCv2 n 1) :=
+    prodN_of_sat hsat hc i hi (NGen.cBothCarryV2 n) (NGen.cCv2 n 0) (NGen.cCv2 n 1)
+      (resV2Lift (by show _ ∈ resV2LogicTail (n := n)
+                     exact List.mem_cons_of_mem _ List.mem_cons_self)) hcv2a hcv2b
+  have hbcB : e.loc (NGen.cBothCarryV2 n) = 0 ∨ e.loc (NGen.cBothCarryV2 n) = 1 := by
+    rcases hcv2a with a | a <;> rcases hcv2b with b | b <;> rw [hbc, a, b] <;> norm_num
+  -- cMc1V2 = cBothCarryV2 · cResEqV2  (gate 2)
+  have hmc1 : e.loc (NGen.cMc1V2 n) = e.loc (NGen.cBothCarryV2 n) * e.loc (NGen.cResEqV2 n) :=
+    prodN_of_sat hsat hc i hi (NGen.cMc1V2 n) (NGen.cBothCarryV2 n) (NGen.cResEqV2 n)
+      (resV2Lift (by show _ ∈ resV2LogicTail (n := n)
+                     exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)))
+      hbcB hreseq
+  have hmc1B : e.loc (NGen.cMc1V2 n) = 0 ∨ e.loc (NGen.cMc1V2 n) = 1 := by
+    rcases hbcB with a | a <;> rcases hreseq with b | b <;> rw [hmc1, a, b] <;> norm_num
+  -- cNotIdentV2 = 1 − cIdentV2  (gate 3)
+  have hni : e.loc (NGen.cNotIdentV2 n) = 1 - e.loc (NGen.cIdentV2 n) :=
+    notBitN_of_sat hsat hc i hi (NGen.cNotIdentV2 n) (NGen.cIdentV2 n)
+      (resV2Lift (by show _ ∈ resV2LogicTail (n := n)
+                     exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+                       (List.mem_cons_of_mem _ List.mem_cons_self)))) hidentB
+  have hniB : e.loc (NGen.cNotIdentV2 n) = 0 ∨ e.loc (NGen.cNotIdentV2 n) = 1 := by
+    rcases hidentB with a | a <;> rw [hni, a] <;> norm_num
+  -- cMergeV2 = cMc1V2 · cNotIdentV2  (gate 4)
+  have hmerge : e.loc (NGen.cMergeV2 n) = e.loc (NGen.cMc1V2 n) * e.loc (NGen.cNotIdentV2 n) :=
+    prodN_of_sat hsat hc i hi (NGen.cMergeV2 n) (NGen.cMc1V2 n) (NGen.cNotIdentV2 n)
+      (resV2Lift (by show _ ∈ resV2LogicTail (n := n)
+                     exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+                       (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)))))
+      hmc1B hniB
+  refine ⟨?_, ?_⟩
+  · rcases hmc1B with a | a <;> rcases hniB with b | b <;> rw [hmerge, a, b] <;> norm_num
+  · rw [hmerge, hmc1, hni, hbc, hident]
+    rcases hcv2a with a | a <;> rcases hcv2b with b | b <;> rcases hreseq with c | c <;>
+      rcases heqff with d | d <;> rcases heqtt with f | f <;> rw [a, b, c, d, f] <;> simp
+
+end MergeV2
+
+/-! ## §22c — `resEqV2CoordN_of_sat`: the confluence comparator `cResEqV2` IS the equality of the two
+CORRECTED landing squares.
+
+`cResEqV2` is an `eq_coords` over the two INTERPOLATED corrected-landing coordinate columns
+(`cDestV2X/Y 0`, driven by `cFtV2A`; `cDestV2X/Y 1`, driven by `cFtV2B`). Threading the four
+`destHead`-pinning gates (`cDestV2 = to_own + ft·(to_other − to_own)`) through the boolean-`ft`
+selection and the `Int.toNat` coordinate bridge, the raw-integer equality the comparator tests IS the
+`Coord` equality of the two selected landings — the LANDING half the confluence bit `cMergeV2`
+consumes (§22b). -/
+section ResEqV2Coord
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+/-- **The `cDestV2` destHead pin.** A `cgH ((Head.lin 1 col).append ((destHead own other ftc).scale
+(-1)))` gate pins the interpolated landing column `col` to the boolean-`ftc` selection between the two
+witnessed coordinate columns — `col = if ftc = 1 then other else own`. -/
+theorem destV2PinN (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (col own other ftc : Nat)
+    (hmem : cgH ((Head.lin 1 col).append ((destHead own other ftc).scale (-1)))
+        ∈ (automataflResolveDescN n).constraints)
+    (hft : (envAt t i).loc ftc = 0 ∨ (envAt t i).loc ftc = 1) :
+    (envAt t i).loc col
+      = if (envAt t i).loc ftc = 1 then (envAt t i).loc other else (envAt t i).loc own := by
+  have hg := rgateHN hsat i hi hmem
+  rw [headToExpr_eval, evalH_append, evalH_lin, evalH_scale,
+    AutomataflResolveCapstone.destHead_select _ _ _ _ hft] at hg
+  refine eq_of_modEq_canon (canon_loc hc i _) ?_ ((gate_modEq_iff (by ring)).mp hg)
+  split <;> exact canon_loc hc i _
+
+/-- **`resEqV2CoordN_of_sat`.** The corrected-landing comparator `cResEqV2` is `1` exactly when the two
+`cFtV2`-selected landing squares coincide AS COORDS: `(if cFtV2A then mb.to else ma.to) = (if cFtV2B
+then ma.to else mb.to)`. -/
+theorem resEqV2CoordN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hfta : (envAt t i).loc (NGen.cFtV2A n) = 0 ∨ (envAt t i).loc (NGen.cFtV2A n) = 1)
+    (hftb : (envAt t i).loc (NGen.cFtV2B n) = 0 ∨ (envAt t i).loc (NGen.cFtV2B n) = 1) :
+    ((envAt t i).loc (NGen.cResEqV2 n) = 0 ∨ (envAt t i).loc (NGen.cResEqV2 n) = 1)
+      ∧ ((envAt t i).loc (NGen.cResEqV2 n) = 1 ↔
+      (if (envAt t i).loc (NGen.cFtV2A n) = 1
+        then (moveDecodeN n (envAt t i) 1).to else (moveDecodeN n (envAt t i) 0).to)
+      = (if (envAt t i).loc (NGen.cFtV2B n) = 1
+        then (moveDecodeN n (envAt t i) 0).to else (moveDecodeN n (envAt t i) 1).to)) := by
+  obtain ⟨hfxa, hfya, htxa, htya⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 0 (by norm_num)
+  obtain ⟨hfxb, hfyb, htxb, htyb⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 1 (by norm_num)
+  have hM : ∀ z : ℤ, 0 ≤ z ∧ z < (n : ℤ) → 0 ≤ z ∧ z ≤ (n : ℤ) - 1 := fun z h => ⟨h.1, by omega⟩
+  set e := envAt t i with he
+  -- the four `destHead` pins
+  have px0 : e.loc (NGen.cDestV2X n 0)
+      = if e.loc (NGen.cFtV2A n) = 1 then e.loc (NGen.cTx n (NGen.mvBase n 1))
+        else e.loc (NGen.cTx n (NGen.mvBase n 0)) :=
+    destV2PinN hsat hc i hi (NGen.cDestV2X n 0) (NGen.cTx n (NGen.mvBase n 0))
+      (NGen.cTx n (NGen.mvBase n 1)) (NGen.cFtV2A n)
+      (mem_resolve_of_mem_resolvableV2 (List.mem_append_left _ (List.mem_append_left _
+        List.mem_cons_self))) hfta
+  have py0 : e.loc (NGen.cDestV2Y n 0)
+      = if e.loc (NGen.cFtV2A n) = 1 then e.loc (NGen.cTy n (NGen.mvBase n 1))
+        else e.loc (NGen.cTy n (NGen.mvBase n 0)) :=
+    destV2PinN hsat hc i hi (NGen.cDestV2Y n 0) (NGen.cTy n (NGen.mvBase n 0))
+      (NGen.cTy n (NGen.mvBase n 1)) (NGen.cFtV2A n)
+      (mem_resolve_of_mem_resolvableV2 (List.mem_append_left _ (List.mem_append_left _
+        (List.mem_cons_of_mem _ List.mem_cons_self)))) hfta
+  have px1 : e.loc (NGen.cDestV2X n 1)
+      = if e.loc (NGen.cFtV2B n) = 1 then e.loc (NGen.cTx n (NGen.mvBase n 0))
+        else e.loc (NGen.cTx n (NGen.mvBase n 1)) :=
+    destV2PinN hsat hc i hi (NGen.cDestV2X n 1) (NGen.cTx n (NGen.mvBase n 1))
+      (NGen.cTx n (NGen.mvBase n 0)) (NGen.cFtV2B n)
+      (mem_resolve_of_mem_resolvableV2 (List.mem_append_left _ (List.mem_append_left _
+        (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))))) hftb
+  have py1 : e.loc (NGen.cDestV2Y n 1)
+      = if e.loc (NGen.cFtV2B n) = 1 then e.loc (NGen.cTy n (NGen.mvBase n 0))
+        else e.loc (NGen.cTy n (NGen.mvBase n 1)) :=
+    destV2PinN hsat hc i hi (NGen.cDestV2Y n 1) (NGen.cTy n (NGen.mvBase n 1))
+      (NGen.cTy n (NGen.mvBase n 0)) (NGen.cFtV2B n)
+      (mem_resolve_of_mem_resolvableV2 (List.mem_append_left _ (List.mem_append_left _
+        (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+          List.mem_cons_self)))))) hftb
+  -- the four coordinate bounds (both `if` branches are witnessed coords in `[0, n)`)
+  have bx0 : 0 ≤ e.loc (NGen.cDestV2X n 0) ∧ e.loc (NGen.cDestV2X n 0) ≤ (n : ℤ) - 1 := by
+    rw [px0]; split
+    · exact hM _ htxb
+    · exact hM _ htxa
+  have by0 : 0 ≤ e.loc (NGen.cDestV2Y n 0) ∧ e.loc (NGen.cDestV2Y n 0) ≤ (n : ℤ) - 1 := by
+    rw [py0]; split
+    · exact hM _ htyb
+    · exact hM _ htya
+  have bx1 : 0 ≤ e.loc (NGen.cDestV2X n 1) ∧ e.loc (NGen.cDestV2X n 1) ≤ (n : ℤ) - 1 := by
+    rw [px1]; split
+    · exact hM _ htxa
+    · exact hM _ htxb
+  have by1 : 0 ≤ e.loc (NGen.cDestV2Y n 1) ∧ e.loc (NGen.cDestV2Y n 1) ≤ (n : ℤ) - 1 := by
+    rw [py1]; split
+    · exact hM _ htya
+    · exact hM _ htyb
+  -- the two selected landings, as `⟨toNat, toNat⟩` of the pinned coordinate columns
+  have keyA : (if e.loc (NGen.cFtV2A n) = 1
+        then (moveDecodeN n e 1).to else (moveDecodeN n e 0).to)
+      = (⟨(e.loc (NGen.cDestV2X n 0)).toNat, (e.loc (NGen.cDestV2Y n 0)).toNat⟩ : Coord) := by
+    rw [px0, py0]; by_cases h : e.loc (NGen.cFtV2A n) = 1 <;> simp [h, moveDecodeN]
+  have keyB : (if e.loc (NGen.cFtV2B n) = 1
+        then (moveDecodeN n e 0).to else (moveDecodeN n e 1).to)
+      = (⟨(e.loc (NGen.cDestV2X n 1)).toNat, (e.loc (NGen.cDestV2Y n 1)).toNat⟩ : Coord) := by
+    rw [px1, py1]; by_cases h : e.loc (NGen.cFtV2B n) = 1 <;> simp [h, moveDecodeN]
+  -- the comparator, extracted over the raw integer columns
+  obtain ⟨hb, hiff⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cDestV2X n 0) (NGen.cDestV2Y n 0)
+    (NGen.cDestV2X n 1) (NGen.cDestV2Y n 1) (NGen.resEqV2Base n) ((n : ℤ) - 1)
+    (by have := W.base.sq999; linarith) bx0 by0 bx1 by1
+    (fun h => mem_resolve_of_mem_resolvableV2 (List.mem_append_left _ (List.mem_append_right _ h)))
+  have hcre : (envAt t i).loc (NGen.cResEqV2 n)
+      = (envAt t i).loc (NGen.cEqBit n (NGen.resEqV2Base n)) := rfl
+  refine ⟨by rw [hcre, ← he]; exact hb, ?_⟩
+  rw [hcre, ← he, hiff, keyA, keyB,
+    Coord.mk.injEq, AutomataflResolveCapstone.toNat_injN bx0.1 bx1.1,
+    AutomataflResolveCapstone.toNat_injN by0.1 by1.1]
+
+/-- **`mergeV2_zero_of_distinctDest`.** On a surviving round with distinct raw destinations the
+confluence bit vanishes: if both pieces carry (`cCv2 = 1`) the OTHER piece being occupied forces
+`cFtV2 = 0` for each, so the two corrected landings are exactly `ma.to` / `mb.to`, which differ —
+so the comparator `cResEqV2 = 0` and hence `cMergeV2 = 0`. (No `hne`; a `roundStep`-clean, non-fork
+distinct-dest pair never merges.) -/
+theorem mergeV2_zero_of_distinctDest
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hsurv : (envAt t i).loc (NGen.cSurv n) = 1)
+    (hdd : (moveDecodeN n (envAt t i) 0).to ≠ (moveDecodeN n (envAt t i) 1).to) :
+    (envAt t i).loc (NGen.cMergeV2 n) = 0 := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  obtain ⟨hfxa, hfya, htxa, htya⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 0 (by norm_num)
+  obtain ⟨hfxb, hfyb, htxb, htyb⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 1 (by norm_num)
+  have hM : ∀ z : ℤ, 0 ≤ z ∧ z < (n : ℤ) → 0 ≤ z ∧ z ≤ (n : ℤ) - 1 := fun z h => ⟨h.1, by omega⟩
+  set e := envAt t i with he
+  -- inclusive-occlusion booleans
+  have hocc0B : e.loc (NGen.cOccIncl n 0) = 0 ∨ e.loc (NGen.cOccIncl n 0) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 0 (NGen.occBase n 0)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 0 (NGen.occBase n 0))))
+      (canon_loc hc i _)
+  have hocc1B : e.loc (NGen.cOccIncl n 1) = 0 ∨ e.loc (NGen.cOccIncl n 1) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 1 (NGen.occBase n 1)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 1 (NGen.occBase n 1))))
+      (canon_loc hc i _)
+  -- the two pattern bits (eq_ff / eq_tt) and the two crossing bits (eq2 / eq3), as booleans
+  obtain ⟨heqffB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cFx n (NGen.mvBase n 0))
+    (NGen.cFy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 0) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ hfxa) (hM _ hfya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ h))))
+  obtain ⟨heqttB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cTx n (NGen.mvBase n 1)) (NGen.cTy n (NGen.mvBase n 1))
+    (NGen.eqBase n 1) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ htxb) (hM _ htyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))
+  obtain ⟨heq2B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 2) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_left _ (List.mem_append_right _ h)))
+  obtain ⟨heq3B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 1))
+    (NGen.cTy n (NGen.mvBase n 1)) (NGen.cFx n (NGen.mvBase n 0)) (NGen.cFy n (NGen.mvBase n 0))
+    (NGen.eqBase n 3) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxb) (hM _ htyb) (hM _ hfxa) (hM _ hfya)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_right _ h))
+  -- corrected flow-through bits (booleans + iffs), corrected carry seeds (booleans + iffs)
+  obtain ⟨hftaB, hftaI⟩ := ftV2AN_of_sat hsat hc i hi heq2B F.bnzB hocc1B heq3B (Or.inr hsurv)
+  obtain ⟨hftbB, hftbI⟩ := ftV2BN_of_sat hsat hc i hi heq3B F.anzB hocc0B heq2B (Or.inr hsurv)
+  obtain ⟨hcv2_0B, hcv2_0I⟩ := cv2ValN_of_sat hsat hc i hi 0 (by norm_num) (Or.inr hsurv) F.anzB hocc0B
+  obtain ⟨hcv2_1B, hcv2_1I⟩ := cv2ValN_of_sat hsat hc i hi 1 (by norm_num) (Or.inr hsurv) F.bnzB hocc1B
+  -- the comparator and the merge bit
+  obtain ⟨hreseqB, hreseqI⟩ := resEqV2CoordN_of_sat hsat hc i hi W hftaB hftbB
+  obtain ⟨hmergeB, hmergeI⟩ := mergeV2N_of_sat hsat hc i hi heqffB heqttB hcv2_0B hcv2_1B hreseqB
+  -- if the merge fired, both carry, so both flow-through bits are 0, so landings are `ma.to`/`mb.to`
+  rcases hmergeB with h0 | h1
+  · exact h0
+  · exfalso
+    obtain ⟨hc0, hc1, hre1, -⟩ := hmergeI.mp h1
+    -- cCv2 1 = 1 ⇒ cBnz = 1 ⇒ cFtV2A = 0
+    have hbnz1 : e.loc (NGen.cBnz n) = 1 := (hcv2_1I.mp hc1).2.1
+    have hfta0 : e.loc (NGen.cFtV2A n) = 0 := by
+      rcases hftaB with h | h
+      · exact h
+      · exact absurd (hftaI.mp h).2.1 (by rw [hbnz1]; norm_num)
+    -- cCv2 0 = 1 ⇒ cAnz = 1 ⇒ cFtV2B = 0
+    have hanz1 : e.loc (NGen.cAnz n) = 1 := (hcv2_0I.mp hc0).2.1
+    have hftb0 : e.loc (NGen.cFtV2B n) = 0 := by
+      rcases hftbB with h | h
+      · exact h
+      · exact absurd (hftbI.mp h).2.1 (by rw [hanz1]; norm_num)
+    -- so the two corrected landings are the raw destinations, which are distinct
+    have hland := hreseqI.mp hre1
+    rw [if_neg (by rw [hfta0]; norm_num), if_neg (by rw [hftb0]; norm_num)] at hland
+    exact hdd hland
+
+end ResEqV2Coord
+
 
 /-! ## §23 — THE CLASH-CASE CELL: a fork/collide row (`surv = 0`) leaves the FINAL board = OLD.
 
@@ -2660,6 +2934,12 @@ end Assembly
 -- §22 THE LANDING CORRESPONDENCE — all six landMap arms, both pieces (the capstone target).
 #assert_axioms landV4CorrespondenceA_of_sat
 #assert_axioms landV4CorrespondenceB_of_sat
+-- §22b/§22c THE CONFLUENCE EXTRACTION — cMergeV2 semantic characterization, the cResEqV2 Coord
+-- bridge, and the clean-case cMergeV2 = 0 (no confluence on a surviving distinct-dest pair).
+#assert_axioms mergeV2N_of_sat
+#assert_axioms destV2PinN
+#assert_axioms resEqV2CoordN_of_sat
+#assert_axioms mergeV2_zero_of_distinctDest
 -- §23 THE CLASH-CASE CELL — a fork/collide row leaves the FINAL board = OLD (roundStep re-entry).
 #assert_axioms midV4_old_of_surv_zero
 -- §24 THE ASSEMBLY CONNECTIVES — surv↔clash bridge, and the clash board branch (particle level).
