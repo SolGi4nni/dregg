@@ -3,18 +3,17 @@
 #
 # `dreggnet-saga` proved the eight feature crates COMPOSE (a synthetic errand
 # threaded through them). This crate goes one level up: it drives the REAL
-# flagship — `dreggnet_offerings::daily_descent::DailyDescentOffering` (the
-# beacon-seeded permadeath run + the persistent hardcore Character + the no-cheat
-# board) — as the game that EXERCISES every system:
+# flagship — `dreggnet_offerings::native_descent::NativeDescentOffering` (the
+# Lean-authored program + actor-bound replay journal + terminal bank settlement)
+# — as the game that EXERCISES every system:
 #   * BEFORE  — a party musters, the player equips GEAR + brings a COMPANION as the
 #               run LOADOUT, and a FACTION-gated quest-giver gates the run's start;
-#   * THE RUN — the ACTUAL DailyDescentOffering run plays, and the equipped gear
-#               ability / the level-N companion buff AID it CROSS-CELL (a real
-#               `ObservedFieldEquals`, refused without the loadout, non-vacuous);
-#   * AFTER   — the run's ONE `ugc_dregg::Completion` earns a CHEEVO, sums into the
-#               GUILD, and turns in the QUEST (object-identical: the SAME Completion
-#               into all three); the run's loot forges + trades as the SAME note-cell
-#               (craft -> trade); a season champion enters the dregg-season hall.
+#   * THE RUN — the ACTUAL NativeDescentOffering run plays through the emitted
+#               Lean program; loadout gates are honest ordered preconditions while
+#               their binding into the native cell remains an explicit seam;
+#   * AFTER   — the run's ONE `NativeDescentCompletion` is replayed by adventure-local
+#               adapters for cheevo / guild / quest / season; verified fair loot is
+#               forged + traded as the SAME note-cell.
 # It CONSUMES the feature crates + the flagship; it modifies NONE of them
 # (reconciliation wants are recorded as NAMED follow-ups in the lib docs). Additive.
 #
@@ -26,12 +25,12 @@
 name = "dreggnet-adventure"
 version = "0.1.0"
 edition = "2024"
-description = "The Descent integrated: the real DailyDescentOffering driven as one coherent verifiable RPG loop over the feature systems — loadout (gear + companion) in, faction-gated quest around, progression (cheevo + guild + quest turn-in over the SAME Completion) out, loot crafting + trading as the SAME note-cell, with object-identity handoffs on the shared substrate."
+description = "The Lean-native Descent integrated as one replay-verified RPG loop: party and loadout preconditions in, one NativeDescentCompletion through quest/cheevo/guild/season adapters, and verified loot through craft and trade as the same note-cell."
 
 [dependencies]
 # ── THE FLAGSHIP the loop is built around (consumed, never modified) ──
-# DailyDescentOffering / DailyRun (the real beacon-seeded permadeath run + the
-# persistent Character), DreggIdentity / Outcome / VerifyReport, the CharacterStore.
+# NativeDescentOffering / NativeDescentSession / NativeDescentCompletion, plus the
+# shared Offering surface and identity.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 
 # ── the feature systems the Descent EXERCISES (consumed, never modified) ──
@@ -39,11 +38,11 @@ dreggnet-party = { path = "../dreggnet-party" }        # the seated party roster
 dreggnet-quest = { path = "../dreggnet-quest" }        # the FactionGatedGiverWorld gating the run's start
 dreggnet-gear = { path = "../dreggnet-gear" }          # Loadout::equip — the cross-cell gear ability
 dreggnet-companion = { path = "../dreggnet-companion" } # the level-N companion buff cross-cell
-dreggnet-cheevo = { path = "../dreggnet-cheevo" }      # CheevoLedger::earn over the run's Completion
-dreggnet-guild = { path = "../dreggnet-guild" }        # GuildBoard::record_clear sums the verified clear
+dreggnet-cheevo = { path = "../dreggnet-cheevo" }      # shared Achievement / Witness vocabulary
+dreggnet-guild = { path = "../dreggnet-guild" }        # real guild capability set + aggregate stats type
 dreggnet-craft = { path = "../dreggnet-craft" }        # the run's loot forged into an item
 dreggnet-trade = { path = "../dreggnet-trade" }        # the crafted note traded (the SAME note-cell)
-dregg-season = { path = "../dregg-season" }            # a season champion -> the hall-of-fame
+dregg-season = { path = "../dregg-season" }            # real epoch/season manifest under the native board adapter
 
 # ── the ONE canonical player adapter, FOLDED IN from the saga ──
 # `PlayerIdentity` (native to this crate now) derives ONE name into the party seat's ed25519
@@ -53,7 +52,6 @@ dregg-season = { path = "../dregg-season" }            # a season champion -> th
 dregg-types = { path = "../types" }                 # PublicKey — the party seat's ballot key type
 
 # ── the shared substrate the handoffs ride ──
-ugc-dregg = { path = "../ugc-dregg" }              # the Completion / Universe run currency + verify_completion
 dreggnet-asset = { path = "../dreggnet-asset" }    # the AssetId item currency (loot -> craft -> trade)
 procgen-dregg = { path = "../procgen-dregg" }      # the CommittedSeed the day + the loot/hatch draws anchor to
 dungeon-on-dregg = { path = "../dungeon-on-dregg" } # loot.rs — the run's fair-drop loot as owned assets
