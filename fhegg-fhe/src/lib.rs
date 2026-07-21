@@ -121,6 +121,7 @@ pub mod private_book_distributed_prover;
 /// This is a prover-side relation checker, not transferable ZK evidence.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_relation;
+mod tfhe_blind_rotation_ntt_wgpu;
 mod tfhe_blind_rotation_wgpu;
 mod tfhe_ntt_wgpu;
 pub mod tfhe_wgpu;

@@ -66,20 +66,20 @@ pub(crate) fn multiply_signed_batch(
     }
 }
 
-struct RowPlan {
-    roots: Vec<u32>,
-    inverse_roots: Vec<u32>,
-    twists: Vec<u32>,
-    inverse_twists_times_n_inv: Vec<u32>,
-    q_inv: u32,
-    montgomery_r: u64,
+pub(crate) struct RowPlan {
+    pub(crate) roots: Vec<u32>,
+    pub(crate) inverse_roots: Vec<u32>,
+    pub(crate) twists: Vec<u32>,
+    pub(crate) inverse_twists_times_n_inv: Vec<u32>,
+    pub(crate) q_inv: u32,
+    pub(crate) montgomery_r: u64,
 }
 
-struct HostPlan {
-    rows: Vec<RowPlan>,
-    qdata: Vec<u32>,
-    roots: Vec<u32>,
-    twists: Vec<u32>,
+pub(crate) struct HostPlan {
+    pub(crate) rows: Vec<RowPlan>,
+    pub(crate) qdata: Vec<u32>,
+    pub(crate) roots: Vec<u32>,
+    pub(crate) twists: Vec<u32>,
 }
 
 fn mod_mul(a: u64, b: u64, modulus: u64) -> u64 {
@@ -173,7 +173,7 @@ fn build_row_plan(q: u64, degree: usize) -> Result<RowPlan, NttBatchError> {
     })
 }
 
-fn host_plan(degree: usize) -> Result<Arc<HostPlan>, NttBatchError> {
+pub(crate) fn host_plan(degree: usize) -> Result<Arc<HostPlan>, NttBatchError> {
     static PLANS: OnceLock<Mutex<HashMap<usize, Arc<HostPlan>>>> = OnceLock::new();
     let plans = PLANS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut plans = plans
@@ -190,7 +190,8 @@ fn host_plan(degree: usize) -> Result<Arc<HostPlan>, NttBatchError> {
     let mut roots = Vec::with_capacity(rows.len() * degree * 2);
     let mut twists = Vec::with_capacity(rows.len() * degree * 2);
     for (&q, row) in TORUS_NTT_MODULI.iter().zip(&rows) {
-        qdata.extend_from_slice(&[q as u32, row.q_inv, 0, 0]);
+        let r_squared = mod_mul(row.montgomery_r, row.montgomery_r, q) as u32;
+        qdata.extend_from_slice(&[q as u32, row.q_inv, r_squared, 0]);
         roots.extend(row.roots.iter().chain(&row.inverse_roots));
         twists.extend(row.twists.iter().chain(&row.inverse_twists_times_n_inv));
     }
@@ -204,7 +205,7 @@ fn host_plan(degree: usize) -> Result<Arc<HostPlan>, NttBatchError> {
     Ok(plan)
 }
 
-fn signed_residue(value: i64, modulus: u64) -> u64 {
+pub(crate) fn signed_residue(value: i64, modulus: u64) -> u64 {
     i128::from(value).rem_euclid(i128::from(modulus)) as u64
 }
 

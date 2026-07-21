@@ -25,8 +25,10 @@
 //! post-key-switch LWE ciphertext is read back. A dense gate now executes all 918
 //! deployed CMUX steps with genuine noisy GGSWs and a real encrypted LWE input.
 //! Reusable plans retain the full BSK/KSK; bounded command chunks retain both keys
-//! and accumulator on-device. Transform-resident blind rotation, default shortint
-//! key-order integration, and the [`crate::fhe_clear`] / `FheUint32` seam remain.
+//! and accumulator on-device. The exact transform plan additionally retains all
+//! four-prime BSK spectra and performs inverse/centered CRT on-device. Default
+//! shortint key-order integration and the [`crate::fhe_clear`] / `FheUint32` seam
+//! remain.
 //!
 //! The shader represents every torus coefficient as `(lo, hi)` `u32` limbs.  Its
 //! 16-bit-split multiply retains exactly the low 64 bits, so the result is bit-for-bit
@@ -41,6 +43,10 @@ use tfhe::core_crypto::algorithms::polynomial_algorithms::polynomial_wrapping_ad
 use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
 
+use crate::tfhe_blind_rotation_ntt_wgpu::{
+    prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu, PreparedTransformPbsGpuKeys,
+    TransformPbsGpuError,
+};
 use crate::tfhe_blind_rotation_wgpu::{
     prepare_extract_keyswitch as prepare_pbs_extract_keyswitch_gpu, run as blind_rotation_gpu,
     run_extract_keyswitch as pbs_extract_keyswitch_gpu,
@@ -92,6 +98,10 @@ pub enum TorusWgpuAlgorithm {
     /// Blind rotation, degree-zero sample extraction, and native-torus LWE key
     /// switch with device-resident intermediates and one final readback.
     ExactDeviceResidentPbsExtractKeyswitch,
+    /// Dense blind rotation with a one-time four-prime BSK transform, resident
+    /// digit/product spectra, exact GPU inverse/centered CRT, and one final
+    /// post-key-switch readback.
+    ExactTransformResidentPbs,
 }
 
 /// Algorithm selection for the complete standard-GGSW external product.
@@ -159,6 +169,27 @@ pub struct TorusPbsWgpuPlan {
     blind_mask_dimension: usize,
     external_params: TorusExternalProductParams,
     keyswitch_params: TorusKeyswitchParams,
+}
+
+/// Deployed exact PBS plan whose complete standard BSK is retained in
+/// four-prime NTT form. The accumulator and transform scratch remain on-device
+/// across every dependent CMUX; only the final post-key-switch LWE is read back.
+pub struct TorusPbsTransformWgpuPlan {
+    prepared: PreparedTransformPbsGpuKeys,
+    external_params: TorusExternalProductParams,
+    keyswitch_params: TorusKeyswitchParams,
+}
+
+impl fmt::Debug for TorusPbsTransformWgpuPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TorusPbsTransformWgpuPlan")
+            .field("blind_mask_dimension", &self.prepared.blind_mask_dimension)
+            .field("external_params", &self.external_params)
+            .field("keyswitch_params", &self.keyswitch_params)
+            .field("adapter", &self.prepared.adapter)
+            .field("backend", &self.prepared.backend)
+            .finish_non_exhaustive()
+    }
 }
 
 impl fmt::Debug for TorusPbsWgpuPlan {
@@ -1784,6 +1815,108 @@ pub fn torus_pbs_extract_keyswitch_prepared(
         }),
         Err(BlindRotationGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
         Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Validate, transform, and upload the complete deployed PBS evaluation keys.
+///
+/// This first transform-resident backend intentionally admits exactly the
+/// tfhe-rs parameter envelope used by fhEgg today. Unsupported shapes fail
+/// closed instead of being relabelled as transform execution.
+pub fn prepare_torus_pbs_transform_wgpu_plan(
+    blind_mask_dimension: usize,
+    standard_bsk: &[u64],
+    external_params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    keyswitch_params: TorusKeyswitchParams,
+) -> Result<TorusPbsTransformWgpuPlan, TorusMacError> {
+    let shape = validate_external_product_shape(external_params)?;
+    let expected_bsk = blind_mask_dimension
+        .checked_mul(shape.ggsw_coefficients)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if standard_bsk.len() != expected_bsk {
+        return Err(TorusMacError::BlindRotationKeyLength {
+            expected: expected_bsk,
+            actual: standard_bsk.len(),
+        });
+    }
+    let (_, output_lwe_size) = validate_keyswitch(standard_ksk, external_params, keyswitch_params)?;
+    let deployed = external_params
+        == (TorusExternalProductParams {
+            degree: 2048,
+            glwe_size: 2,
+            decomposition_base_log: 23,
+            decomposition_level_count: 1,
+        })
+        && blind_mask_dimension == 918
+        && keyswitch_params
+            == (TorusKeyswitchParams {
+                output_lwe_dimension: 918,
+                decomposition_base_log: 4,
+                decomposition_level_count: 4,
+            })
+        && exact_ntt_range_supported(shape);
+    if !deployed {
+        return Err(TorusMacError::WgpuRequired(
+            TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+        ));
+    }
+    match prepare_transform_pbs_gpu(
+        blind_mask_dimension,
+        standard_bsk,
+        external_params,
+        standard_ksk,
+        output_lwe_size,
+        keyswitch_params.decomposition_base_log,
+        keyswitch_params.decomposition_level_count,
+    ) {
+        Ok(prepared) => Ok(TorusPbsTransformWgpuPlan {
+            prepared,
+            external_params,
+            keyswitch_params,
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute one exact dense PBS against a pretransformed deployed evaluation key.
+pub fn torus_pbs_extract_keyswitch_transform_prepared(
+    plan: &TorusPbsTransformWgpuPlan,
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+) -> Result<TorusMacResult, TorusMacError> {
+    if lwe_mask.len() != plan.prepared.blind_mask_dimension {
+        return Err(TorusMacError::BlindRotationMaskLength {
+            expected: plan.prepared.blind_mask_dimension,
+            actual: lwe_mask.len(),
+        });
+    }
+    let expected_accumulator = plan
+        .external_params
+        .glwe_size
+        .checked_mul(plan.external_params.degree)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if accumulator.len() != expected_accumulator {
+        return Err(TorusMacError::GlweLength {
+            expected: expected_accumulator,
+            actual: accumulator.len(),
+        });
+    }
+    let (body_rotation, mask_rotations) =
+        blind_rotation_schedule(lwe_mask, lwe_body, plan.external_params.degree)?;
+    match transform_pbs_gpu(accumulator, body_rotation, &mask_rotations, &plan.prepared) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            },
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
     }
 }
 

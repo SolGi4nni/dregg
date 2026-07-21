@@ -209,15 +209,62 @@ curve is still essentially linear in the blind-rotation step count. The result i
 a strong exact baseline and a useful deployed fallback, not a substitute for
 transform-form residency.
 
+## Exact transform-resident dense PBS
+
+`TorusPbsTransformWgpuPlan` closes that named performance seam for the deployed
+shape. Plan construction interprets every standard BSK coefficient as a centered
+native-torus integer, maps it into the same four exact NTT primes, uploads the
+complete 114.75 MiB residue carrier, and forward-transforms all 14,688
+polynomial/modulus series once. The 57.44 MiB standard KSK and all root, twist,
+Montgomery, and CRT tables are retained by the same device plan.
+
+Each dependent CMUX then remains on-device:
+
+```text
+rotate / exact signed gadget decomposition
+    -> four-prime forward NTT of both digit polynomials
+    -> pointwise multiply-and-sum against resident BSK spectra
+    -> inverse NTT of both product polynomials
+    -> exact centered four-limb Garner CRT and native-torus add
+```
+
+The inverse path is not an approximate Fourier carrier. WGSL reconstructs the
+unique centered integer under the existing conservative convolution bound using
+four little-endian `u32` limbs, then retains its exact low 64 bits. Both
+accumulator buffers and the shared digit/product scratch remain resident across
+256-CMUX ordered command chunks. The final degree-zero sample extraction and full
+2048-to-918 key switch execute against the resident accumulator, followed by the
+only readback.
+
+The strict gate compares every one of the 919 final coefficients with the
+tfhe-rs/CPU authority for a genuinely dense 918-step encrypted input, repeats the
+full transform result three times, and checks 64-, 256-, and 512-step exact
+prefixes. Clearing the final noisy GGSW changes both CPU and a newly transformed
+plan, while the original plan remains unchanged after the host BSK mutation. Both
+coefficient and transform plans reject a 917-coefficient mask.
+
+The final hbox RX 6750 XT release run passed in 10.519 seconds. One-time transform
+plan construction took 259.949 ms. A one-CMUX call with the full output key switch
+took 10.326 ms; dense 918 took 165.838 ms on its first call and 115.746 ms at the
+three-sample warm median. In the same process the coefficient plan's warm median
+was 422.847 ms and the exact CPU authority was 1,380.391 ms: transform residency
+is about 3.65x faster than the portable coefficient GPU and 11.9x faster than CPU.
+
+Exact scaling with the full 2048-to-918 key switch at every point was: 64 active
+CMUX steps, 99.029 ms CPU / 43.780 ms coefficient GPU / 11.622 ms transform GPU;
+256 steps, 389.560 / 132.751 / 28.049 ms; 512 steps, 774.481 / 245.173 / 52.973
+ms; and 918 steps, 1,380.391 / 422.847 / 115.746 ms.
+
 This is still not a complete high-level `FheUint32` backend. The dense coefficient
-route is now an exact measured baseline, not the intended throughput carrier; the
-default shortint key order plus integer comparison integration remains. Those are
-named implementation boundaries.
+and transform routes are exact measured backends, but the default shortint key
+order plus integer comparison integration remains. The transform plan is
+deliberately restricted to the deployed `N=2048`, GLWE-two, PBS-23x1,
+KS-4x4, 918-by-918 shape; its spectrum memory and per-PBS latency are real costs.
+Those are named implementation boundaries.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
-described above. The next hard performance cut is to keep the accumulator and
-bootstrapping key in transform form across all 918 deployed blind-rotation steps,
-then wire the resulting PBS-shaped primitive below an integer comparison—not
-mistake the 421.617 ms coefficient baseline for the transform-form target.
+described above. The next hard cut is to wire this exact primitive below the
+default shortint/integer key order and qualify a real comparison—not infer
+high-level `FheUint32` throughput from one dense PBS.
