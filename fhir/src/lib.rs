@@ -85,6 +85,7 @@ pub use optimizer_protocol::{
 pub use qp_certificate::{
     run_certified_qp, verify_certified_qp, verify_zero_kkt_certified_qp, ExactQpCertificateBundle,
     ExactQpCertificateBundleError, VerifiedExactQpCertificate, VerifiedZeroKktQpCertificate,
+    VerifiedZeroKktQpView,
 };
 pub use solver_bridge::{run, AggregationSourceBinding, RunOutcome};
 pub use tier::Tier;

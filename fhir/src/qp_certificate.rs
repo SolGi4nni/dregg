@@ -23,8 +23,8 @@ use crate::compile::{
 };
 use crate::solver_bridge::{run, ExactCertQpVerdict, RunOutcome};
 use fhegg_solver::qp::CertQp;
-use fhegg_solver::qp_exact::{lift_cert, CertQpExact, QpProblemBindingError};
-use fhegg_solver::qp_strict::{verify_zero_kkt_qp, VerifiedZeroKktQp, ZeroKktQpError};
+use fhegg_solver::qp_exact::{lift_cert, CertQpExact, CertQpExactReport, QpProblemBindingError};
+use fhegg_solver::qp_strict::{verify_zero_kkt_qp_ref, ZeroKktQpError};
 use sha2::{Digest, Sha256};
 
 const MAGIC: &[u8; 8] = b"FHQPB001";
@@ -109,7 +109,37 @@ pub struct VerifiedExactQpCertificate {
 #[derive(Clone, Debug)]
 pub struct VerifiedZeroKktQpCertificate {
     certified: VerifiedExactQpCertificate,
-    zero_kkt: VerifiedZeroKktQp,
+    zero_kkt_report: CertQpExactReport,
+}
+
+/// Zero-copy view of the exact-zero KKT evidence embedded in one verified fhIR
+/// certificate.
+///
+/// The enclosing [`VerifiedZeroKktQpCertificate`] privately owns the canonical
+/// certificate. This view couples that exact owner to the freshly recomputed
+/// report without duplicating its dense `P` and `A` matrices.
+#[derive(Clone, Copy, Debug)]
+pub struct VerifiedZeroKktQpView<'a> {
+    certificate: &'a CertQpExact,
+    report: &'a CertQpExactReport,
+}
+
+impl<'a> VerifiedZeroKktQpView<'a> {
+    pub fn certificate(&self) -> &'a CertQpExact {
+        self.certificate
+    }
+
+    pub fn report(&self) -> &'a CertQpExactReport {
+        self.report
+    }
+
+    pub fn solution(&self) -> (&'a [i128], &'a [i128], u32) {
+        (
+            &self.certificate.x,
+            &self.certificate.y,
+            self.certificate.scale,
+        )
+    }
 }
 
 impl VerifiedZeroKktQpCertificate {
@@ -120,8 +150,11 @@ impl VerifiedZeroKktQpCertificate {
 
     /// Exact-zero residual evidence over the very KKT certificate embedded in
     /// [`Self::certified`].
-    pub fn zero_kkt(&self) -> &VerifiedZeroKktQp {
-        &self.zero_kkt
+    pub fn zero_kkt(&self) -> VerifiedZeroKktQpView<'_> {
+        VerifiedZeroKktQpView {
+            certificate: self.certified.bundle().kkt(),
+            report: &self.zero_kkt_report,
+        }
     }
 
     pub fn program_digest(&self) -> [u8; 32] {
@@ -129,7 +162,7 @@ impl VerifiedZeroKktQpCertificate {
     }
 
     pub fn solution(&self) -> (&[i128], &[i128], u32) {
-        self.zero_kkt.solution()
+        self.certified.solution()
     }
 }
 
@@ -450,14 +483,15 @@ pub fn verify_zero_kkt_certified_qp(
     let ConvexProgram::Qp(public_problem) = &compiled.program else {
         return Err(ExactQpCertificateBundleError::NotQp);
     };
-    let zero_kkt = verify_zero_kkt_qp(
-        certified.bundle().kkt().clone(),
+    let zero_kkt_report = verify_zero_kkt_qp_ref(
+        certified.bundle().kkt(),
         public_problem,
         QP_CERT_EXACT_SCALE,
-    )?;
+    )?
+    .into_report();
     Ok(VerifiedZeroKktQpCertificate {
         certified,
-        zero_kkt,
+        zero_kkt_report,
     })
 }
 
@@ -763,6 +797,10 @@ mod tests {
             .expect("one canonical artifact establishes admission, binding, and zero KKT");
 
         assert_eq!(verified.certified().bundle().to_wire_bytes().unwrap(), wire);
+        assert!(std::ptr::eq(
+            verified.certified().bundle().kkt(),
+            verified.zero_kkt().certificate(),
+        ));
         assert_eq!(
             verified.certified().bundle().admission().exact_entries(),
             verified.zero_kkt().certificate().p
