@@ -365,13 +365,20 @@ theorem output_only_attestation_does_not_bind_source :
 
 /-! ## 6. Composite private-proof receipt boundary. -/
 
+/-- The two typed input-reference variants in the canonical fhEgg claim. -/
+inductive CompositePrivateInput where
+  | ciphertext (digest : Nat)
+  | commitment (digest : Nat)
+  deriving DecidableEq, Repr
+
 /-- The claim fields at the current composite-receipt boundary.  The private
 proof statement binds `orderRoot` and `output`; the BFV ciphertext digests are
 listed alongside that statement, but are not yet inputs to the proof relation. -/
 structure CompositePrivateClaim where
   orderRoot : Nat
   output : CrossingLeakage
-  bfvCiphertextDigests : List Nat
+  bfvIdentity : Nat
+  orderedInputs : List CompositePrivateInput
   deriving DecidableEq, Repr
 
 /-- The two independently checked authorization facts and the public statement
@@ -381,16 +388,30 @@ structure CompositePrivateReceipt where
   privateProofVerified : Bool
   proofRoot : Nat
   proofOutput : CrossingLeakage
+  policyBfvIdentity : Nat
   deriving DecidableEq, Repr
 
+/-- Exact fixed-family claim layout mirrored by the Rust verifier: four ordered
+ciphertext rows and one terminal commitment to the proved root. -/
+def CompositePrivateClaim.CanonicalInputShape
+    (claim : CompositePrivateClaim) : Prop :=
+  ∃ c₀ c₁ c₂ c₃,
+    claim.orderedInputs =
+      [.ciphertext c₀, .ciphertext c₁, .ciphertext c₂, .ciphertext c₃,
+       .commitment claim.orderRoot]
+
 /-- Exact current acceptance rule: neither authorization alone is sufficient,
-and the verified private-proof statement must equal the claim root and output. -/
+the verified private-proof statement must equal the claim root and output, the
+BFV key domain is relying-party pinned, and the input vector has the exact
+fixed-family shape. -/
 def CompositePrivateReceipt.Accepts (receipt : CompositePrivateReceipt)
     (claim : CompositePrivateClaim) : Prop :=
   receipt.authenticatedQuorum = true ∧
   receipt.privateProofVerified = true ∧
   receipt.proofRoot = claim.orderRoot ∧
-  receipt.proofOutput = claim.output
+  receipt.proofOutput = claim.output ∧
+  claim.bfvIdentity = receipt.policyBfvIdentity ∧
+  claim.CanonicalInputShape
 
 /-- Acceptance exposes both independent checks and both statement bindings. -/
 theorem composite_receipt_acceptance_requires_both_and_binds_statement
@@ -399,34 +420,42 @@ theorem composite_receipt_acceptance_requires_both_and_binds_statement
     receipt.authenticatedQuorum = true ∧
     receipt.privateProofVerified = true ∧
     receipt.proofRoot = claim.orderRoot ∧
-    receipt.proofOutput = claim.output :=
+    receipt.proofOutput = claim.output ∧
+    claim.bfvIdentity = receipt.policyBfvIdentity ∧
+    claim.CanonicalInputShape :=
   h
 
 def compositeClaimA : CompositePrivateClaim :=
   { orderRoot := 41
     output := ⟨1, 8⟩
-    bfvCiphertextDigests := [101, 102] }
+    bfvIdentity := 17
+    orderedInputs :=
+      [.ciphertext 101, .ciphertext 102, .ciphertext 103, .ciphertext 104,
+       .commitment 41] }
 
 def compositeClaimB : CompositePrivateClaim :=
   { orderRoot := 41
     output := ⟨1, 8⟩
-    bfvCiphertextDigests := [201, 202] }
+    bfvIdentity := 17
+    orderedInputs :=
+      [.ciphertext 201, .ciphertext 202, .ciphertext 203, .ciphertext 204,
+       .commitment 41] }
 
 def compositeReceipt : CompositePrivateReceipt :=
   { authenticatedQuorum := true
     privateProofVerified := true
     proofRoot := 41
-    proofOutput := ⟨1, 8⟩ }
+    proofOutput := ⟨1, 8⟩
+    policyBfvIdentity := 17 }
 
 /-- Concrete residual seam: two claims with different separately listed BFV
 ciphertext digests are accepted by the same authenticated private proof. -/
 theorem composite_receipt_bfv_digest_collision :
-    compositeClaimA.bfvCiphertextDigests ≠
-        compositeClaimB.bfvCiphertextDigests ∧
+    compositeClaimA.orderedInputs ≠ compositeClaimB.orderedInputs ∧
     compositeReceipt.Accepts compositeClaimA ∧
     compositeReceipt.Accepts compositeClaimB := by
   simp [CompositePrivateReceipt.Accepts, compositeClaimA, compositeClaimB,
-    compositeReceipt]
+    compositeReceipt, CompositePrivateClaim.CanonicalInputShape]
 
 /-- **RED theorem.**  The current composite rule authenticates the quorum and
 private proof, but cannot claim that acceptance binds the separately listed BFV
@@ -435,7 +464,7 @@ theorem composite_receipt_does_not_bind_bfv_ciphertext_digests :
     ¬ ∀ (receipt : CompositePrivateReceipt)
         (claim₁ claim₂ : CompositePrivateClaim),
       receipt.Accepts claim₁ → receipt.Accepts claim₂ →
-      claim₁.bfvCiphertextDigests = claim₂.bfvCiphertextDigests := by
+      claim₁.orderedInputs = claim₂.orderedInputs := by
   intro hbind
   have h := hbind compositeReceipt compositeClaimA compositeClaimB
     composite_receipt_bfv_digest_collision.2.1

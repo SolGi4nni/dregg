@@ -21,7 +21,8 @@
 //!
 //! * the configured threshold of the exact ordered roster signed the complete
 //!   canonical claim (including every ciphertext/commitment digest);
-//! * the claim contains exactly one commitment to the proved private-book root;
+//! * the fixed four-order family carries exactly four ordered ciphertext rows
+//!   followed by exactly one commitment to the proved private-book root;
 //! * the HidingFRI proof verifies that `(p*, V*)` is the fixed rule's result for
 //!   some private book opening that root; and
 //! * session, rule, root, price, and volume agree across proof and claim.
@@ -97,35 +98,42 @@ pub fn private_claim_session_felt(session_nonce: Digest32) -> Option<u32> {
 /// private circuit proves integer clearing, while this policy prevents the same
 /// evidence from being silently reinterpreted under another MPC bit width or
 /// plaintext modulus.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateAttestedClearingPolicy {
     value_bits: u32,
-    plaintext_modulus: u64,
+    bfv: fhegg_fhe::attestation::BfvPublicIdentity,
 }
 
 impl PrivateAttestedClearingPolicy {
     pub fn new(
         value_bits: u32,
-        plaintext_modulus: u64,
+        bfv: fhegg_fhe::attestation::BfvPublicIdentity,
     ) -> Result<Self, PrivateAttestedVerifierConfigError> {
         let range = 1u64
             .checked_shl(value_bits)
             .ok_or(PrivateAttestedVerifierConfigError::InvalidRuleShape)?;
-        if value_bits < MIN_VOLUME_BITS || plaintext_modulus < range {
+        if value_bits < MIN_VOLUME_BITS
+            || bfv.plaintext_modulus < range
+            || bfv.degree == 0
+            || bfv.n_parties == 0
+            || bfv.opening_threshold == 0
+            || bfv.opening_threshold > bfv.n_parties
+        {
             return Err(PrivateAttestedVerifierConfigError::InvalidRuleShape);
         }
-        Ok(Self {
-            value_bits,
-            plaintext_modulus,
-        })
+        Ok(Self { value_bits, bfv })
     }
 
-    pub const fn value_bits(self) -> u32 {
+    pub const fn value_bits(&self) -> u32 {
         self.value_bits
     }
 
-    pub const fn plaintext_modulus(self) -> u64 {
-        self.plaintext_modulus
+    pub const fn plaintext_modulus(&self) -> u64 {
+        self.bfv.plaintext_modulus
+    }
+
+    pub const fn bfv(&self) -> &fhegg_fhe::attestation::BfvPublicIdentity {
+        &self.bfv
     }
 }
 
@@ -189,7 +197,13 @@ impl PrivateAttestedClearingVerifier {
         hasher.update(&(dark_bazaar_private::PRICE_COUNT as u64).to_be_bytes());
         hasher.update(&MIN_VOLUME_BITS.to_be_bytes());
         hasher.update(&policy.value_bits.to_be_bytes());
-        hasher.update(&policy.plaintext_modulus.to_be_bytes());
+        hasher.update(&policy.bfv.n_parties.to_be_bytes());
+        hasher.update(&policy.bfv.opening_threshold.to_be_bytes());
+        hasher.update(&policy.bfv.degree.to_be_bytes());
+        hasher.update(&policy.bfv.moduli_digest);
+        hasher.update(&policy.bfv.plaintext_modulus.to_be_bytes());
+        hasher.update(&policy.bfv.crp_seed);
+        hasher.update(&policy.bfv.collective_public_key_digest);
         hasher.update(&(MAX_QUORUM_EVIDENCE_BYTES as u64).to_be_bytes());
         hasher.update(&(MAX_PROOF_BYTES as u64).to_be_bytes());
         hasher.update(dark_bazaar_private::DARK_BAZAAR_PRIVATE_DESCRIPTOR_JSON.as_bytes());
@@ -215,7 +229,7 @@ impl PrivateAttestedClearingVerifier {
         proof: &DarkBazaarPrivateZkProof,
         statement: PublicStatement,
     ) -> Result<ComputationIntegrityEvidence, PrivateAttestedEvidenceError> {
-        statement_matches_claim(self.policy, claim, statement)
+        statement_matches_claim(&self.policy, claim, statement)
             .map_err(PrivateAttestedEvidenceError::ClaimMismatch)?;
         dark_bazaar_private::verify_zk(proof, statement)
             .map_err(PrivateAttestedEvidenceError::PrivateProof)?;
@@ -261,7 +275,7 @@ impl PrivateAttestedClearingVerifier {
         let Some((statement, quorum_evidence, proof_bytes)) = decode_evidence(evidence) else {
             return false;
         };
-        if statement_matches_claim(self.policy, claim, statement).is_err()
+        if statement_matches_claim(&self.policy, claim, statement).is_err()
             || !self.quorum.verify_claim(claim, quorum_evidence)
         {
             return false;
@@ -293,7 +307,7 @@ impl ComputationIntegrityVerifier for PrivateAttestedClearingVerifier {
 }
 
 fn statement_matches_claim(
-    policy: PrivateAttestedClearingPolicy,
+    policy: &PrivateAttestedClearingPolicy,
     claim: &ClearingClaim,
     statement: PublicStatement,
 ) -> Result<(), &'static str> {
@@ -310,8 +324,8 @@ fn statement_matches_claim(
         || claim.rule.buckets != dark_bazaar_private::PRICE_COUNT as u64
         || claim.rule.tie_break != ClearingTieBreak::LowestBucket
         || claim.rule.value_bits != policy.value_bits
-        || claim.rule.plaintext_modulus != policy.plaintext_modulus
-        || claim.bfv.plaintext_modulus != policy.plaintext_modulus
+        || claim.rule.plaintext_modulus != policy.bfv.plaintext_modulus
+        || claim.bfv != policy.bfv
     {
         return Err("claim clearing rule is incompatible with the private family");
     }
@@ -320,21 +334,19 @@ fn statement_matches_claim(
     {
         return Err("proof output differs from the canonical claim output");
     }
-    if !claim
-        .ordered_inputs
-        .iter()
-        .any(|input| input.kind == InputDigestKind::Ciphertext)
-    {
-        return Err("claim contains no ciphertext input");
-    }
     let root_digest = private_order_root_commitment(statement.order_root);
-    let root_count = claim
-        .ordered_inputs
-        .iter()
-        .filter(|input| input.kind == InputDigestKind::Commitment && input.digest == root_digest)
-        .count();
-    if root_count != 1 {
-        return Err("proved private-book root must occur exactly once in claim inputs");
+    let expected_inputs = dark_bazaar_private::ORDER_COUNT + 1;
+    if claim.ordered_inputs.len() != expected_inputs
+        || !claim.ordered_inputs[..dark_bazaar_private::ORDER_COUNT]
+            .iter()
+            .all(|input| input.kind == InputDigestKind::Ciphertext)
+        || claim.ordered_inputs[dark_bazaar_private::ORDER_COUNT].kind
+            != InputDigestKind::Commitment
+        || claim.ordered_inputs[dark_bazaar_private::ORDER_COUNT].digest != root_digest
+    {
+        return Err(
+            "claim inputs are not four ordered ciphertext rows followed by the proved private-book root",
+        );
     }
     Ok(())
 }

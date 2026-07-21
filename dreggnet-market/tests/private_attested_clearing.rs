@@ -31,7 +31,7 @@ fn keys() -> Vec<SigningKey> {
 fn bfv() -> BfvPublicIdentity {
     BfvPublicIdentity {
         n_parties: 3,
-        opening_threshold: 2,
+        opening_threshold: 3,
         degree: 4096,
         moduli_digest: [0x44; 32],
         plaintext_modulus: 65_537,
@@ -56,7 +56,9 @@ fn private_proof_and_quorum_are_one_claim_bound_replay_protected_receipt() {
         2,
     )
     .expect("strict 2-of-3 roster");
-    let policy = PrivateAttestedClearingPolicy::new(16, 65_537).expect("exact fhEgg rule policy");
+    let bfv = bfv();
+    let policy = PrivateAttestedClearingPolicy::new(16, bfv.clone())
+        .expect("exact fhEgg rule and BFV key policy");
     let verifier = PrivateAttestedClearingVerifier::new(quorum.clone(), policy);
 
     let proof_session = 0xDBA2;
@@ -90,8 +92,10 @@ fn private_proof_and_quorum_are_one_claim_bound_replay_protected_receipt() {
     assert_eq!((statement.p_star, statement.v_star), (1, 13));
 
     let ordered_inputs = vec![
-        InputDigest::ciphertext_bytes(b"canonical-private-demand-row"),
-        InputDigest::ciphertext_bytes(b"canonical-private-supply-row"),
+        InputDigest::ciphertext_bytes(b"canonical-private-order-row-0"),
+        InputDigest::ciphertext_bytes(b"canonical-private-order-row-1"),
+        InputDigest::ciphertext_bytes(b"canonical-private-order-row-2"),
+        InputDigest::ciphertext_bytes(b"canonical-private-order-row-3"),
         InputDigest::commitment(private_order_root_commitment(statement.order_root)),
     ];
     let crossing = Crossing {
@@ -99,7 +103,6 @@ fn private_proof_and_quorum_are_one_claim_bound_replay_protected_receipt() {
         v_star: statement.v_star as u64,
     };
     let public_transcript = transcript(&session, &crossing);
-    let bfv = bfv();
     let expected = ExpectedClearingContext {
         session: &session,
         ordered_roster: quorum.ordered_roster(),
@@ -173,7 +176,7 @@ fn private_proof_and_quorum_are_one_claim_bound_replay_protected_receipt() {
 
     // Even a freshly re-signed claim cannot rebind the proof's session, result,
     // or independently pinned root.
-    for mutation in 0..4 {
+    for mutation in 0..6 {
         let mut rebound = receipt.claim.clone();
         match mutation {
             0 => rebound.session_nonce[0] ^= 1,
@@ -183,6 +186,10 @@ fn private_proof_and_quorum_are_one_claim_bound_replay_protected_receipt() {
                     InputDigest::commitment([0xA5; 32]);
             }
             3 => rebound.rule.value_bits += 1,
+            4 => rebound.bfv.collective_public_key_digest[0] ^= 1,
+            5 => {
+                rebound.ordered_inputs[0] = InputDigest::commitment([0xA6; 32]);
+            }
             _ => unreachable!(),
         }
         let rebound_signatures = [
