@@ -65,7 +65,7 @@ default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit
 # poly-commitment's over-strict `rayon = "=1.10.0"` exact-pin. That pin is
 # relaxed via the emberian/proof-systems fork ([patch] above); the root is now
 # on rayon 1.12, so poly-commitment (storage kzg) and tfhe co-resolve.
-exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner"]
+exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner", "vendor/bulletproofs-r1cs-wgpu", "vendor/curve25519-dalek-dregg"]
 
 [workspace.package]
 version = "0.1.0"
@@ -176,6 +176,10 @@ mina-poseidon = { git = "https://github.com/emberian/proof-systems", rev = "c530
 mina-curves = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
 # ─────────────────────────────────────────────────────────────────────────────
 [patch.crates-io]
+# Exact curve25519-dalek 4.1.3 source with one additive, feature-gated
+# qualification API for canonical extended-coordinate GPU parity. All normal
+# dalek arithmetic and encodings remain upstream-identical.
+curve25519-dalek = { path = "vendor/curve25519-dalek-dregg" }
 # ark-serialize fork — the `serde_with` feature `dregg-hints` needs (emberian/algebra).
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
 ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
@@ -379,4 +383,3 @@ opt-level = 3
 # opt-level 3 it is the usual minutes. ALWAYS optimize it.
 [profile.dev.package.dregg-circuit-prove]
 opt-level = 3
-

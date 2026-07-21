@@ -259,9 +259,9 @@ fn run_process_case(nonce_byte: u8, final_right_share: u64, expected_equal: bool
             for frame in response.frames {
                 assert!(frame.sender <= N);
                 assert!(frame.recipient <= N);
-                // The supervisor routes opaque bytes using only public header
-                // metadata. In deployment, party-to-party legs need a
-                // confidential channel because their payload is a Boolean share.
+                // The supervisor routes signed, end-to-end-encrypted bytes
+                // using only public header metadata. It need not be trusted
+                // with any party's Boolean ingress shares.
                 assert!(frame.sequence < u64::MAX);
                 pending[frame.recipient].push(frame.wire_hex);
             }
@@ -311,9 +311,32 @@ fn run_process_case(nonce_byte: u8, final_right_share: u64, expected_equal: bool
         process.shutdown();
     }
 
-    // A party burns its Beaver row before it enters the protocol. Restoring an
-    // exact byte-for-byte copy after every role has exited cannot replay those
-    // one-time pads: the content-addressed tombstone survives the restart.
+    // A party burns its Beaver row before it enters the protocol. Moving an
+    // exact byte-for-byte replay into another directory still cannot evade the
+    // journal, because its authority is anchored beside stable party custody.
+    let moved_dir = temp.path.join("moved-replay");
+    fs::create_dir(&moved_dir).unwrap();
+    let moved_triples = moved_dir.join("party-0.triples");
+    write_secret(&moved_triples, &replayed_party_zero_triples);
+    let moved_replay = Command::new(worker)
+        .args([
+            "party",
+            config_path.to_str().unwrap(),
+            "0",
+            temp.path.join("party-0.custody").to_str().unwrap(),
+            moved_triples.to_str().unwrap(),
+        ])
+        .output()
+        .expect("launch moved consumed-preprocessing replay refusal");
+    assert!(!moved_replay.status.success());
+    assert!(
+        String::from_utf8_lossy(&moved_replay.stderr).contains("already been consumed"),
+        "unexpected moved replay refusal: {}",
+        String::from_utf8_lossy(&moved_replay.stderr)
+    );
+
+    // Restoring the row at its original path after every role has exited is
+    // likewise refused: the content-addressed tombstone survives the restart.
     let party_zero_triples = temp.path.join("party-0.triples");
     assert!(!party_zero_triples.exists());
     write_secret(&party_zero_triples, &replayed_party_zero_triples);

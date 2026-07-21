@@ -30,10 +30,13 @@
 //! protocol. [`trusted_dealer_triples`] is explicitly trusted preprocessing, but
 //! receives only public circuit shape and never receives input rows or aggregate
 //! curves. Input sharing is performed independently by each party over direct
-//! peer channels. The in-memory channels are unauthenticated and there are no MACs, signatures,
-//! replay storage, crash recovery, or dealer-free triple generation. The
-//! coordinator enforces a full `n`-party quorum and strict message order, but it
-//! cannot prove a malicious party used its assigned input/triple shares.
+//! peer channels. The bare [`local_channels`] harness is unauthenticated;
+//! [`transport`] supplies bounded signed frames, encrypted peer ingress, and
+//! strict session/sequence binding around the same runtime. Neither layer yet
+//! supplies persistent replay storage, crash recovery, dealer-free triple
+//! generation, or a proof that a malicious party used its assigned input/triple
+//! shares. The coordinator enforces a full `n`-party quorum and strict message
+//! order.
 //!
 //! The implementation opens one scalar Beaver gate per channel round. The
 //! transcript therefore distinguishes actual scalar opening rounds from the
@@ -47,7 +50,7 @@ use rand::Rng;
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
-/// Bounded authenticated process transport for the scalar equality runtime.
+/// Bounded authenticated process transport for equality and full crossing.
 /// Transport authentication does not upgrade the semi-honest MPC arithmetic
 /// to malicious security.
 pub mod transport;

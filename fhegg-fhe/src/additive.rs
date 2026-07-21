@@ -153,7 +153,8 @@ pub struct CollectiveFoldPhase {
     /// Exact upload/reduction plan when GPU ran; `None` on a labelled CPU fallback.
     pub plan: Option<ResidentFoldPlan>,
     pub backend: FoldBackend,
-    /// Whole FoldEngine call: validation + upload/dispatch/readback, or CPU arithmetic on fallback.
+    /// Whole paired FoldEngine call: validation + both folds + one shared GPU readback/device wait, or
+    /// both CPU folds on fallback. Demand and supply report the same shared wall time intentionally.
     pub elapsed: Duration,
 }
 
@@ -232,8 +233,25 @@ impl CollectiveOrderFoldEngine {
             return Err(CollectiveFoldError::EmptySide("supply"));
         }
 
-        let (d_ct, demand) = fold_one_side(&self.fold_engine, &demand_rows, plaintext_modulus)?;
-        let (s_ct, supply) = fold_one_side(&self.fold_engine, &supply_rows, plaintext_modulus)?;
+        // Demand and supply have the same BFV shape. Folding them as a pair keeps their kernels
+        // independent but concatenates the two resident outputs for one MAP_READ and one device wait.
+        let fold_started = Instant::now();
+        let (demand_execution, supply_execution) =
+            self.fold_engine
+                .fold_pair(&demand_rows, &supply_rows, plaintext_modulus)?;
+        let paired_elapsed = fold_started.elapsed();
+        let (d_ct, demand) = fold_phase(
+            &self.fold_engine,
+            &demand_rows,
+            demand_execution,
+            paired_elapsed,
+        )?;
+        let (s_ct, supply) = fold_phase(
+            &self.fold_engine,
+            &supply_rows,
+            supply_execution,
+            paired_elapsed,
+        )?;
         Ok(CollectiveFoldedBook {
             d_ct,
             s_ct,
@@ -314,27 +332,13 @@ fn validate_collective_lean(ct: &LeanCiphertext) -> CollectiveFoldResult<()> {
     Ok(())
 }
 
-fn fold_one_side(
+fn fold_phase(
     engine: &FoldEngine,
     rows: &[LeanCiphertext],
-    plaintext_modulus: u64,
+    execution: crate::gpu_arena::FoldExecution,
+    paired_elapsed: Duration,
 ) -> CollectiveFoldResult<(LeanCiphertext, CollectiveFoldPhase)> {
     let bytes = ciphertext_bytes(&rows[0])?;
-    // `bfv_lean::fold` checks wrap at each *addition*, so a one-row CPU fallback would otherwise skip
-    // the gate. Preflight the complete side here so CPU and GPU refuse the exact same envelope.
-    let bound_sum = rows.iter().fold(Some(0u128), |sum, row| {
-        sum.and_then(|value| value.checked_add(u128::from(row.plain_bound)))
-    });
-    if bound_sum.map_or(true, |sum| sum >= u128::from(plaintext_modulus)) {
-        return Err(BfvLeanError::WrapRefused {
-            bound_sum: bound_sum.unwrap_or(u128::MAX),
-            plaintext_modulus,
-        }
-        .into());
-    }
-    let t0 = Instant::now();
-    let execution = engine.fold(rows, plaintext_modulus)?;
-    let elapsed = t0.elapsed();
     let (capacity, plan) = match execution.backend {
         FoldBackend::GpuResident(plan) => {
             let capacity = engine
@@ -351,7 +355,7 @@ fn fold_one_side(
         capacity,
         plan,
         backend: execution.backend,
-        elapsed,
+        elapsed: paired_elapsed,
     };
     Ok((execution.ciphertext, phase))
 }

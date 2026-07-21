@@ -72,9 +72,14 @@
 //!   floor closes the named decryption-noise channel for the honest-party model;
 //!   the remaining malicious-robustness seam is the lattice shortness/range and
 //!   decrypt-share proof, not row consistency or the BFV public-key equation.
-//! - **Still separate:** locally derived mod-t shares must enter an authenticated
-//!   distributed MPC transport. [`a2b_mod_t`] and [`mpc_crossing`] implement the
-//!   algebra in one process; they do not supply that transport.
+//! - **Now composed at the next boundary:** locally derived mod-t shares can
+//!   enter [`crate::mpc_party::transport::CrossingPartyMachine`], whose peer
+//!   ingress is encrypted and whose gate/output frames are session-bound and
+//!   signed. [`crate::mpc_party::transport::verify_public_crossing_transcript`]
+//!   reconstructs the reveal-only transcript from the exact authenticated
+//!   frame set before computation signatures are issued. This closes the
+//!   previously missing transport composition; it does not prove malicious
+//!   input-share or Beaver-triple formation.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

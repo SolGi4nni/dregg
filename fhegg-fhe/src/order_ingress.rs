@@ -610,6 +610,7 @@ pub enum OrderIngressError {
     DuplicateSource { trader: usize, sequence: u64 },
     InvalidSignature { trader: usize },
     EncryptionOpeningMismatch { trader: usize },
+    DuplicatePrivateBookEncryptionSeed,
     InvalidSourceCertificate,
     MalformedWire,
     Fold(CollectiveFoldError),
@@ -725,6 +726,61 @@ impl SignedOrderSubmission {
         };
         submission.signature = signing_key.sign(&submission.signing_message()).to_bytes();
         Ok((submission, opening, timing))
+    }
+
+    /// Trader-local ingress for the canonical side-hiding private-book row.
+    ///
+    /// Unlike [`Self::encrypt_and_sign_with_opening`], this does **not** create
+    /// the older side-specific unary ciphertext.  The returned submission
+    /// carries the exact nine-live-slot ciphertext later consumed by the
+    /// private-root Bulletproof and by `fold_private_book_ciphertexts`.
+    /// `encryption_seed` is deliberately returned only by caller custody; it is
+    /// never serialized into the signed submission.
+    #[cfg(feature = "amm-input-binding")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn encrypt_and_sign_private_book_row(
+        session: &OrderIngressSession,
+        trader: usize,
+        sequence: u64,
+        private_order: dregg_circuit_prove::dark_bazaar_private::PrivateOrder,
+        encryption_seed: Digest32,
+        params: &BfvParams,
+        public_key: &CollectivePublicKey,
+        signing_key: &SigningKey,
+    ) -> Result<Self> {
+        use dregg_circuit_prove::dark_bazaar_private::{self, Side as PrivateSide};
+
+        if session.k != dark_bazaar_private::PRICE_COUNT
+            || trader >= dark_bazaar_private::ORDER_COUNT
+        {
+            return Err(OrderIngressError::InvalidParameters);
+        }
+        let rebuilt = OrderIngressSession::new(session.nonce, session.k, params, public_key)?;
+        if &rebuilt != session {
+            return Err(OrderIngressError::SessionMismatch);
+        }
+        let side = match private_order.side {
+            PrivateSide::Bid => Side::Bid,
+            PrivateSide::Ask => Side::Ask,
+        };
+        let ciphertext = crate::private_book_relation::encrypt_private_book_row(
+            trader,
+            private_order,
+            encryption_seed,
+            params,
+            public_key,
+        )
+        .map_err(|_| OrderIngressError::EncryptionOpeningMismatch { trader })?;
+        let mut submission = Self {
+            session_digest: session.digest,
+            trader,
+            sequence,
+            side,
+            ciphertext,
+            signature: [0; 64],
+        };
+        submission.signature = signing_key.sign(&submission.signing_message()).to_bytes();
+        Ok(submission)
     }
 
     pub fn trader(&self) -> usize {
@@ -932,6 +988,10 @@ pub struct AuthenticatedOrderBook {
     ordered_public_keys: Vec<[u8; 32]>,
     seen_sources: HashSet<(usize, u64)>,
     accepted: Vec<SignedOrderSubmission>,
+    #[cfg(feature = "amm-input-binding")]
+    private_book_sources: HashSet<(usize, u64)>,
+    #[cfg(feature = "amm-input-binding")]
+    private_book_seeds: HashSet<Digest32>,
 }
 
 impl AuthenticatedOrderBook {
@@ -958,6 +1018,10 @@ impl AuthenticatedOrderBook {
             ordered_public_keys,
             seen_sources: HashSet::new(),
             accepted: Vec::new(),
+            #[cfg(feature = "amm-input-binding")]
+            private_book_sources: HashSet::new(),
+            #[cfg(feature = "amm-input-binding")]
+            private_book_seeds: HashSet::new(),
         })
     }
 
@@ -1030,6 +1094,122 @@ impl AuthenticatedOrderBook {
         )?;
         self.seen_sources
             .insert((submission.trader, submission.sequence));
+        self.accepted.push(submission);
+        Ok(binding)
+    }
+
+    /// Finish canonical private-book ingress without retyping the side-hiding
+    /// ciphertexts as legacy [`CollectiveOrderRow`] values.
+    ///
+    /// The proof worker already retains the exact [`PrivateBookCiphertexts`]
+    /// that these inputs identify. Returning only signed message/ciphertext
+    /// digests prevents an accidental call to the older side-partitioning fold,
+    /// which would interpret the packed ask lanes incorrectly. Every accepted
+    /// submission must have passed [`Self::accept_private_book_opened`].
+    #[cfg(feature = "amm-input-binding")]
+    pub fn finish_private_book_source_inputs(mut self) -> Result<Vec<InputDigest>> {
+        if self.accepted.is_empty()
+            || self.accepted.len() > dregg_circuit_prove::dark_bazaar_private::ORDER_COUNT
+            || self.accepted.iter().any(|submission| {
+                !self
+                    .private_book_sources
+                    .contains(&(submission.trader, submission.sequence))
+            })
+        {
+            return Err(OrderIngressError::InvalidParameters);
+        }
+        self.accepted
+            .sort_by_key(|submission| (submission.trader, submission.sequence));
+        let mut ordered_inputs = Vec::with_capacity(self.accepted.len() * 2);
+        for submission in self.accepted {
+            ordered_inputs.push(InputDigest::commitment(submission.message_digest()));
+            ordered_inputs.push(InputDigest::ciphertext(&submission.ciphertext));
+        }
+        Ok(ordered_inputs)
+    }
+
+    /// Accept one exact canonical private-book ciphertext after verifying both
+    /// trader attribution and deterministic BFV reencryption.
+    ///
+    /// The resulting source certificate API is intentionally the same one used
+    /// by the live Dark Bazaar board, so its WriteOnce seal can bind the exact
+    /// proof row instead of a second side-specific encoding.  The current game
+    /// still exposes its public one-unit side/value through the action/certificate;
+    /// this method closes ciphertext equality, not that separate UI disclosure.
+    #[cfg(feature = "amm-input-binding")]
+    pub fn accept_private_book_opened(
+        &mut self,
+        submission: SignedOrderSubmission,
+        private_order: dregg_circuit_prove::dark_bazaar_private::PrivateOrder,
+        encryption_seed: Digest32,
+        params: &BfvParams,
+        public_key: &CollectivePublicKey,
+    ) -> Result<VerifiedOrderSourceBinding> {
+        use dregg_circuit_prove::dark_bazaar_private::{self, Side as PrivateSide};
+
+        self.validate_submission(&submission)?;
+        if self.session.k != dark_bazaar_private::PRICE_COUNT
+            || submission.trader >= dark_bazaar_private::ORDER_COUNT
+        {
+            return Err(OrderIngressError::InvalidParameters);
+        }
+        let expected = crate::private_book_relation::encrypt_private_book_row(
+            submission.trader,
+            private_order,
+            encryption_seed,
+            params,
+            public_key,
+        )
+        .map_err(|_| OrderIngressError::EncryptionOpeningMismatch {
+            trader: submission.trader,
+        })?;
+        let side_tag = match private_order.side {
+            PrivateSide::Bid => 0,
+            PrivateSide::Ask => 1,
+        };
+        let exact = submission.side_tag() == side_tag
+            && submission.ciphertext.plain_bound
+                == crate::private_book_relation::PRIVATE_BOOK_PUBLIC_BOUND
+            && submission.ciphertext.to_fhe_bytes() == expected.to_fhe_bytes();
+        if !exact {
+            return Err(OrderIngressError::EncryptionOpeningMismatch {
+                trader: submission.trader,
+            });
+        }
+        if self.private_book_seeds.contains(&encryption_seed) {
+            return Err(OrderIngressError::DuplicatePrivateBookEncryptionSeed);
+        }
+
+        let message_digest = submission.message_digest();
+        let ciphertext_digest = InputDigest::ciphertext(&submission.ciphertext).digest;
+        let binding_digest = verified_source_digest(
+            &self.session.nonce,
+            &submission.session_digest,
+            submission.trader,
+            submission.sequence,
+            side_tag,
+            private_order.limit as usize,
+            u16::from(private_order.qty),
+            &message_digest,
+            &ciphertext_digest,
+        );
+        let binding = VerifiedOrderSourceBinding {
+            session_nonce: self.session.nonce,
+            session_digest: submission.session_digest,
+            trader: submission.trader,
+            sequence: submission.sequence,
+            side_tag,
+            limit: private_order.limit as usize,
+            qty: u16::from(private_order.qty),
+            message_digest,
+            ciphertext_digest,
+            binding_digest,
+        };
+        self.seen_sources
+            .insert((submission.trader, submission.sequence));
+        self.private_book_sources
+            .insert((submission.trader, submission.sequence));
+        self.private_book_seeds.insert(encryption_seed);
         self.accepted.push(submission);
         Ok(binding)
     }

@@ -8,13 +8,16 @@
 //! `provision-party`/`provision-coordinator` bind protected custody to the exact
 //! public config and roster role without placing secret operands on argv.
 //! A party invocation durably burns its exact Beaver-row custody before starting
-//! the protocol: an adjacent content-addressed spent tombstone survives process
-//! crashes and refuses byte-for-byte restoration/replay at the same custody
-//! directory. A crash can therefore sacrifice availability, but cannot expose a
-//! second execution using the same one-time pads through this worker boundary.
-//! Peer-ingress frames contain plaintext Boolean shares and therefore require
-//! confidential direct party channels in deployment; they must not be relayed
-//! through an eavesdropping coordinator.
+//! the protocol: a content-addressed spent tombstone anchored beside the stable
+//! party custody survives process crashes and refuses byte-for-byte restoration
+//! even if the consumed row is moved to another directory. A crash can therefore
+//! sacrifice availability, but cannot expose a second execution using the same
+//! one-time pads through this worker boundary. Filesystem rollback of both the
+//! custody authority and its journal remains an external storage assumption.
+//! Peer-ingress frames are signed and end-to-end encrypted between party
+//! processes, so an untrusted supervisor may route them without learning the
+//! Boolean shares. Public route metadata, masked Beaver openings, and the final
+//! equality bit remain deliberately visible.
 //!
 //! The arithmetic remains semi-honest and uses trusted preprocessing. Ed25519
 //! authenticates transport; it does not prove honest share or triple formation.
@@ -28,14 +31,14 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use fhegg_fhe::mpc_party::transport::{
-    AuthenticatedEqualityFrame, EqualityCoordinatorMachine, EqualityPartyMachine,
-    EqualityTransportRoster,
+    fresh_preprocessing_seed, AuthenticatedEqualityFrame, EqualityCoordinatorMachine,
+    EqualityPartyMachine, EqualityTransportRoster,
 };
 use fhegg_fhe::mpc_party::{
     trusted_dealer_triples, PartyEqualityInput, PartyMpcSession, PartyReport, TripleMaterial,
     MAX_TRIPLE_MATERIAL_BYTES,
 };
-use rand::rngs::StdRng;
+use rand::rngs::{OsRng, StdRng};
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -241,6 +244,7 @@ fn read_coordinator_custody(path: &Path, config_digest: [u8; 32]) -> Result<[u8;
 
 fn read_preprocessing_custody(
     path: &Path,
+    spent_authority_dir: &Path,
     config_digest: [u8; 32],
     session: &PartyMpcSession,
     expected_party: usize,
@@ -283,7 +287,13 @@ fn read_preprocessing_custody(
         // content-addressed tombstone *before* returning it to the runtime. If
         // this process crashes after the claim, availability is lost but no
         // later worker can reuse the same row from this custody directory.
-        burn_preprocessing_slot(path, config_digest, expected_party, material_digest)?;
+        burn_preprocessing_slot(
+            path,
+            spent_authority_dir,
+            config_digest,
+            expected_party,
+            material_digest,
+        )?;
         Ok(material)
     })();
     bytes.fill(0);
@@ -292,12 +302,22 @@ fn read_preprocessing_custody(
 
 fn burn_preprocessing_slot(
     path: &Path,
+    spent_authority_dir: &Path,
     config_digest: [u8; 32],
     party: usize,
     material_digest: [u8; 32],
 ) -> Result<(), String> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let marker = parent.join(format!(
+    let row_parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let authority = fs::symlink_metadata(spent_authority_dir).map_err(|error| {
+        format!(
+            "cannot inspect preprocessing spent authority {}: {error}",
+            spent_authority_dir.display()
+        )
+    })?;
+    if authority.file_type().is_symlink() || !authority.file_type().is_dir() {
+        return Err("preprocessing spent authority must be a real directory".to_string());
+    }
+    let marker = spent_authority_dir.join(format!(
         "{PREPROCESSING_SPENT_PREFIX}{}",
         encode_hex(&material_digest)
     ));
@@ -325,6 +345,12 @@ fn burn_preprocessing_slot(
         }
     }
     tombstone.fill(0);
+    sync_directory(spent_authority_dir).map_err(|error| {
+        format!(
+            "cannot durably record preprocessing consumption in {}: {error}",
+            spent_authority_dir.display()
+        )
+    })?;
 
     // The tombstone is the durable authority. Removing the secret row reduces
     // accidental at-rest exposure. A crash between these operations leaves
@@ -335,10 +361,10 @@ fn burn_preprocessing_slot(
             path.display()
         )
     })?;
-    sync_directory(parent).map_err(|error| {
+    sync_directory(row_parent).map_err(|error| {
         format!(
-            "cannot durably record preprocessing consumption in {}: {error}",
-            parent.display()
+            "cannot durably record preprocessing row removal in {}: {error}",
+            row_parent.display()
         )
     })
 }
@@ -491,7 +517,14 @@ fn serve_party(
         return Err("party role is outside the public roster".to_string());
     }
     let mut custody = read_party_custody(custody_path, loaded.digest, party)?;
-    let triples = read_preprocessing_custody(triples_path, loaded.digest, &loaded.session, party)?;
+    let spent_authority_dir = custody_path.parent().unwrap_or_else(|| Path::new("."));
+    let triples = read_preprocessing_custody(
+        triples_path,
+        spent_authority_dir,
+        loaded.digest,
+        &loaded.session,
+        party,
+    )?;
     let construction = (|| {
         let mut ingress_rng = StdRng::from_seed(custody.ingress_seed);
         let input = PartyEqualityInput::new(
@@ -575,8 +608,12 @@ fn preprocess(
                 ));
             }
         }
-        let mut rng = StdRng::from_seed(seed);
+        let mut fresh_seed =
+            fresh_preprocessing_seed(&loaded.session, loaded.digest, &seed, &mut OsRng)
+                .map_err(|error| error.to_string())?;
         seed.fill(0);
+        let mut rng = StdRng::from_seed(fresh_seed);
+        fresh_seed.fill(0);
         let rows =
             trusted_dealer_triples(&loaded.session, &mut rng).map_err(|error| error.to_string())?;
         for (party, row) in rows.into_iter().enumerate() {
@@ -818,15 +855,38 @@ fn read_bounded_regular(
     max_bytes: u64,
     owner_only: bool,
 ) -> Result<Vec<u8>, String> {
-    let metadata = fs::symlink_metadata(path)
+    let path_metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("cannot inspect {label} {}: {error}", path.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+    if path_metadata.file_type().is_symlink() || !path_metadata.file_type().is_file() {
         return Err(format!(
             "{label} {} must be a regular non-symlink file",
             path.display()
         ));
     }
-    if metadata.len() > max_bytes {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot open {label} {}: {error}", path.display()))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect open {label} {}: {error}", path.display()))?;
+    if !opened_metadata.file_type().is_file() {
+        return Err(format!(
+            "{label} {} must open as a regular file",
+            path.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if path_metadata.dev() != opened_metadata.dev()
+            || path_metadata.ino() != opened_metadata.ino()
+        {
+            return Err(format!(
+                "{label} {} changed while it was being opened",
+                path.display()
+            ));
+        }
+    }
+    if opened_metadata.len() > max_bytes {
         return Err(format!(
             "{label} {} exceeds its {max_bytes}-byte bound",
             path.display()
@@ -835,7 +895,7 @@ fn read_bounded_regular(
     #[cfg(unix)]
     if owner_only {
         use std::os::unix::fs::MetadataExt;
-        let mode = metadata.mode() & 0o777;
+        let mode = opened_metadata.mode() & 0o777;
         if mode & 0o077 != 0 {
             return Err(format!(
                 "{label} {} has mode {mode:03o}; remove group/other permissions",
@@ -843,7 +903,18 @@ fn read_bounded_regular(
             ));
         }
     }
-    fs::read(path).map_err(|error| format!("cannot read {label} {}: {error}", path.display()))
+    let mut bytes = Vec::with_capacity(opened_metadata.len() as usize);
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    if bytes.len() as u64 > max_bytes {
+        bytes.fill(0);
+        return Err(format!(
+            "{label} {} grew beyond its {max_bytes}-byte bound while being read",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 fn write_new_secret(path: &Path, bytes: &[u8]) -> Result<(), String> {

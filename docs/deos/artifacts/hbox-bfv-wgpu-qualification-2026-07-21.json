@@ -1,0 +1,286 @@
+{
+  "report": "fhegg-bfv-wgpu-qualification-v1",
+  "host": "hbox",
+  "adapter": {
+    "status": "available",
+    "adapter": {
+      "name": "AMD Radeon RX 6750 XT",
+      "backend": "Vulkan",
+      "device_type": "DiscreteGpu",
+      "vendor_id": 4098,
+      "device_id": 29663,
+      "driver": "AMD open-source driver",
+      "driver_info": "2025.Q2.1 (LLPC)",
+      "limits": {
+        "max_buffer_size": 2147483647,
+        "max_storage_buffer_binding_size": 2147483647,
+        "effective_storage_bytes": 2147483647,
+        "max_compute_workgroups_per_dimension": 65535,
+        "max_compute_invocations_per_workgroup": 1024,
+        "max_compute_workgroup_size_x": 1024
+      }
+    }
+  },
+  "gpu_arena_ready": true,
+  "settings": {
+    "batch_sizes": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64,
+      128,
+      256
+    ],
+    "repetitions": 3,
+    "win_margin_basis_points": 500,
+    "confirmation_samples": 2,
+    "plaintext_modulus": 1099511627776,
+    "require_gpu": true,
+    "measurement_scope": "one retained-engine FoldEngine call: preflight + upload + dispatch + wait + readback",
+    "cpu_baseline": "direct bfv_lean::fold arithmetic path"
+  },
+  "samples": [
+    {
+      "input_ciphertexts": 1,
+      "input_bytes": 196608,
+      "cpu_median_ns": 5143,
+      "cpu_min_ns": 3437,
+      "selected_backend_median_ns": 234624,
+      "selected_backend_min_ns": 202540,
+      "gpu_median_ns": 234624,
+      "cpu_over_gpu_speedup": 0.02192017866884888,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 1,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 2,
+      "input_bytes": 393216,
+      "cpu_median_ns": 19288,
+      "cpu_min_ns": 17502,
+      "selected_backend_median_ns": 227139,
+      "selected_backend_min_ns": 223713,
+      "gpu_median_ns": 227139,
+      "cpu_over_gpu_speedup": 0.08491716526003901,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 2,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 4,
+      "input_bytes": 786432,
+      "cpu_median_ns": 54739,
+      "cpu_min_ns": 43358,
+      "selected_backend_median_ns": 317392,
+      "selected_backend_min_ns": 296890,
+      "gpu_median_ns": 317392,
+      "cpu_over_gpu_speedup": 0.17246496446035187,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 4,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 8,
+      "input_bytes": 1572864,
+      "cpu_median_ns": 114494,
+      "cpu_min_ns": 95391,
+      "selected_backend_median_ns": 412132,
+      "selected_backend_min_ns": 410163,
+      "gpu_median_ns": 412132,
+      "cpu_over_gpu_speedup": 0.27780905146894685,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 8,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 16,
+      "input_bytes": 3145728,
+      "cpu_median_ns": 199572,
+      "cpu_min_ns": 198614,
+      "selected_backend_median_ns": 617278,
+      "selected_backend_min_ns": 615734,
+      "gpu_median_ns": 617278,
+      "cpu_over_gpu_speedup": 0.32330975670605466,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 16,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 32,
+      "input_bytes": 6291456,
+      "cpu_median_ns": 412245,
+      "cpu_min_ns": 410991,
+      "selected_backend_median_ns": 1039847,
+      "selected_backend_min_ns": 968943,
+      "gpu_median_ns": 1039847,
+      "cpu_over_gpu_speedup": 0.3964477466396499,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 32,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 64,
+      "input_bytes": 12582912,
+      "cpu_median_ns": 904675,
+      "cpu_min_ns": 901738,
+      "selected_backend_median_ns": 2124240,
+      "selected_backend_min_ns": 1958074,
+      "gpu_median_ns": 2124240,
+      "cpu_over_gpu_speedup": 0.4258817271118141,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 64,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 128,
+      "input_bytes": 25165824,
+      "cpu_median_ns": 1943354,
+      "cpu_min_ns": 1939602,
+      "selected_backend_median_ns": 4524444,
+      "selected_backend_min_ns": 4051519,
+      "gpu_median_ns": 4524444,
+      "cpu_over_gpu_speedup": 0.429523274019968,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 128,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    },
+    {
+      "input_ciphertexts": 256,
+      "input_bytes": 50331648,
+      "cpu_median_ns": 4069560,
+      "cpu_min_ns": 4039050,
+      "selected_backend_median_ns": 9793707,
+      "selected_backend_min_ns": 9140073,
+      "gpu_median_ns": 9793707,
+      "cpu_over_gpu_speedup": 0.415528052860883,
+      "dispatch": {
+        "backend": "gpu_resident",
+        "plan": {
+          "input_ciphertexts": 256,
+          "ciphertexts_per_chunk": 10922,
+          "upload_chunks": 1,
+          "reduction_rounds": 0
+        },
+        "capacity": {
+          "max_storage_bytes": 2147483647,
+          "ciphertext_bytes": 196608,
+          "ciphertexts_per_chunk": 10922
+        }
+      },
+      "dispatch_stable": true,
+      "bit_exact": true
+    }
+  ],
+  "crossover": {
+    "status": "not_observed",
+    "required_margin_basis_points": 500
+  },
+  "all_bit_exact": true
+}

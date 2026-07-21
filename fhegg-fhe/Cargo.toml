@@ -10,7 +10,7 @@ default = []
 # Tier-1/operator-visible BFV↔HidingFri same-opening authority for the private
 # Dark AMM.  Keep the proof-production tower out of fhegg-fhe's default fast
 # surface; hosts opt into this producer/reference-verifier seam explicitly.
-amm-input-binding = ["dep:dregg-circuit-prove"]
+amm-input-binding = ["dep:dregg-circuit-prove", "dep:bulletproofs-r1cs"]
 
 # The NO-VIEWER stage: orders are submitted as TFHE ciphertexts (unary
 # price-bucket increments, Cryptobazaar-style) and the clearing is computed
@@ -54,13 +54,24 @@ serde_json = { workspace = true }
 # Authenticated computation-integrity quorum: strict Ed25519 signatures from the
 # declared ordered party roster over the exact canonical clearing-claim digest.
 ed25519-dalek = { version = "2", features = ["std"] }
+# PartyMPC v3 peer ingress: static Ed25519 identities are converted to a
+# transport-only Curve25519 DH key, expanded with HKDF-SHA256, and carried by
+# standard XChaCha20-Poly1305 AEAD before the outer frame signature.
+chacha20poly1305 = { workspace = true }
+hkdf = "0.12"
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 # The malicious-share threshold lane uses Pedersen commitments plus aggregated
 # Bulletproof range proofs.  The VSS transcript commits every party's exact BFV
 # share, and the opening proof links that commitment to h=c1*s+smudge while
 # proving the (81-bit, signed) smudge bound without revealing the smudge.
-bulletproofs = "5"
-curve25519-dalek = { version = "4", features = ["alloc", "rand_core"] }
+bulletproofs = { version = "5" }
+# Owned fork of zkcrypto/bulletproofs@04bce4e.  Besides the upstream CtOption
+# parser repair, it replaces the six hard-coded prover MSM calls with one
+# fail-closed dispatch seam and a portable wgpu scalar-window stage.  Dalek is
+# still the exact group-operation oracle/output today; the fork names that
+# boundary instead of claiming the bucket accumulation is already accelerated.
+bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["yoloproofs", "wgpu-msm"], optional = true }
+curve25519-dalek = { version = "4", features = ["alloc", "rand_core", "dregg-wgpu-coordinates"] }
 merlin = "3"
 ethnum = "1.5"
 # The Stage-1 untrusted solver's Cert-F IR: the checkable primal-dual optimality
@@ -108,6 +119,41 @@ path = "src/bin/boundary_bench.rs"
 [[bin]]
 name = "fhegg-equality-worker"
 path = "src/bin/equality_transport_worker.rs"
+
+[[test]]
+name = "private_book_relation"
+path = "tests/private_book_relation.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "private_book_bfv_zk"
+path = "tests/private_book_bfv_zk.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "private_book_distributed_inputs"
+path = "tests/private_book_distributed_inputs.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "private_book_distributed_prover"
+path = "tests/private_book_distributed_prover.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "private_book_canonical_backend"
+path = "tests/private_book_canonical_backend.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "ristretto_msm_wgpu_required"
+path = "tests/ristretto_msm_wgpu_required.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "ristretto_group_add_wgpu_required"
+path = "tests/ristretto_group_add_wgpu_required.rs"
+required-features = ["amm-input-binding"]
 
 [lints]
 workspace = true

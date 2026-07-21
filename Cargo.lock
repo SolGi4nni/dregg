@@ -3459,6 +3459,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulletproofs"
+version = "5.0.1"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "clear_on_drop",
+ "curve25519-dalek",
+ "digest 0.10.7",
+ "group",
+ "merlin",
+ "pollster 0.4.0",
+ "rand 0.8.6",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_derive",
+ "sha3",
+ "subtle",
+ "thiserror 1.0.69",
+ "wgpu 24.0.5",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4869,8 +4891,6 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 [[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
@@ -6029,7 +6049,7 @@ name = "dregg-cell-crypto"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "bulletproofs",
+ "bulletproofs 5.0.0",
  "chacha20poly1305",
  "curve25519-dalek",
  "dregg-cell",
@@ -8830,8 +8850,10 @@ name = "fhegg-fhe"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "bulletproofs",
+ "bulletproofs 5.0.0",
+ "bulletproofs 5.0.1",
  "bytemuck",
+ "chacha20poly1305",
  "curve25519-dalek",
  "dregg-circuit-prove",
  "ed25519-dalek",
@@ -8840,6 +8862,7 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "fhegg-solver",
+ "hkdf",
  "merlin",
  "pollster 0.4.0",
  "rand 0.8.6",

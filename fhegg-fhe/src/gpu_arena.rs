@@ -43,7 +43,7 @@
 //! Pool lifetime: resident buffers live in the arena's pool for the arena's lifetime (prototype — no free
 //! list; a `ResidentHandle` is an index into the pool, never dangling).
 
-use crate::bfv_lean::{fold, BfvLeanError, LeanCiphertext, RnsPoly};
+use crate::bfv_lean::{fold, BfvLeanError, LeanCiphertext, RnsPoly, FOLD_MODULI};
 use std::sync::Mutex;
 
 type Result<T> = std::result::Result<T, BfvLeanError>;
@@ -109,6 +109,9 @@ pub struct Arena {
     /// min(max_buffer_size, max_storage_buffer_binding_size), the actual input-binding ceiling.
     max_storage_bytes: u64,
     pool: Mutex<Vec<PoolEntry>>,
+    /// MAP_READ buffers are reusable after `unmap`. Retaining a small exact-size cache removes one device
+    /// allocation from every steady-state FoldEngine call without changing synchronization or bytes.
+    readback_cache: Mutex<Vec<wgpu::Buffer>>,
 }
 
 /// An on-device ciphertext-set — a buffer id into the arena pool, NEVER downloaded until `download`.
@@ -119,7 +122,10 @@ pub struct ResidentHandle {
     id: usize,
     n_cts: usize,
     shape: Shape,
-    variable_time: bool,
+    /// Per-resident-ciphertext flag. Keeping this parallel to `bounds` matters when independently folded
+    /// outputs are concatenated for one amortized readback: OR-ing the flags at concatenate time would
+    /// incorrectly taint every output when only one input group was variable-time.
+    variable_times: Vec<bool>,
     /// Per-resident-ciphertext plaintext bound, tracked in u128 so a fold's sum can never wrap silently.
     bounds: Vec<u128>,
 }
@@ -191,40 +197,117 @@ impl FoldEngine {
     /// Exact adapter capacity for a ciphertext shape, or `None` when this engine is explicitly/headlessly
     /// CPU-only. This is observation only; execution still validates the complete batch in [`Self::fold`].
     pub fn capacity(&self, ct: &LeanCiphertext) -> Option<Result<FoldCapacity>> {
-        self.gpu.as_ref().map(|gpu| gpu.capacity(ct))
+        self.gpu.as_ref().map(|gpu| {
+            let shape = Shape::of(ct);
+            if !gpu_shape_supported(&shape) {
+                return Err(BfvLeanError::GpuUnsupportedShape);
+            }
+            gpu.capacity_for_shape(&shape)
+        })
     }
 
     pub fn fold(&self, cts: &[LeanCiphertext], plaintext_modulus: u64) -> Result<FoldExecution> {
         let _run = self.run_lock.lock().unwrap();
-        let Some(first) = cts.first() else {
-            return Err(BfvLeanError::EmptyFold);
-        };
+        let shape = preflight_fold(cts, plaintext_modulus)?;
         let Some(gpu) = &self.gpu else {
             return Ok(FoldExecution {
                 ciphertext: fold(cts, plaintext_modulus)?,
                 backend: FoldBackend::CpuNoArena,
             });
         };
-        if first.moduli.len() != 3 {
+        if !gpu_shape_supported(&shape) {
             return Ok(FoldExecution {
                 ciphertext: fold(cts, plaintext_modulus)?,
                 backend: FoldBackend::CpuUnsupportedShape,
             });
         }
-        let (resident, plan) = gpu.fold_streaming(cts, plaintext_modulus)?;
-        let mut downloaded = gpu.download(&resident);
-        debug_assert_eq!(downloaded.len(), 1);
-        let execution = FoldExecution {
-            ciphertext: downloaded
-                .pop()
-                .expect("resident fold returns one ciphertext"),
-            backend: FoldBackend::GpuResident(plan),
-        };
+        let execution = (|| {
+            let (resident, plan) = gpu.fold_streaming_preflighted(cts, &shape)?;
+            let mut downloaded = gpu.download(&resident);
+            debug_assert_eq!(downloaded.len(), 1);
+            Ok(FoldExecution {
+                ciphertext: downloaded
+                    .pop()
+                    .expect("resident fold returns one ciphertext"),
+                backend: FoldBackend::GpuResident(plan),
+            })
+        })();
         // FoldEngine owns its arena privately, so no external ResidentHandle can alias these entries.
-        // download waited for the queue; reclaim all per-call buffers instead of growing the reusable
-        // engine's pool forever.
+        // On success, download waited for the queue. On error, wgpu's submitted command buffers retain
+        // their resources. Either way, reclaim every per-call host handle instead of leaking the pool.
         gpu.clear_pool();
-        Ok(execution)
+        execution
+    }
+
+    /// Fold two independent groups with one final GPU readback and one device wait.
+    ///
+    /// Demand and supply are the production consumer, but the primitive is deliberately stated in terms
+    /// of two same-shaped folds. Each group keeps its own bound and variable-time bookkeeping. When no
+    /// arena exists, or the exact deployed GPU modulus set is not in use, both results take the labelled
+    /// bit-exact CPU path. GPU failures are returned and never hidden by retrying on CPU.
+    pub(crate) fn fold_pair(
+        &self,
+        first: &[LeanCiphertext],
+        second: &[LeanCiphertext],
+        plaintext_modulus: u64,
+    ) -> Result<(FoldExecution, FoldExecution)> {
+        let _run = self.run_lock.lock().unwrap();
+        let first_shape = preflight_fold(first, plaintext_modulus)?;
+        let second_shape = preflight_fold(second, plaintext_modulus)?;
+        if first_shape != second_shape {
+            return Err(BfvLeanError::Incompatible(
+                "paired resident folds disagree on degree/moduli/polys/level",
+            ));
+        }
+
+        let cpu_pair = |backend| {
+            Ok((
+                FoldExecution {
+                    ciphertext: fold(first, plaintext_modulus)?,
+                    backend,
+                },
+                FoldExecution {
+                    ciphertext: fold(second, plaintext_modulus)?,
+                    backend,
+                },
+            ))
+        };
+        let Some(gpu) = &self.gpu else {
+            return cpu_pair(FoldBackend::CpuNoArena);
+        };
+        if !gpu_shape_supported(&first_shape) {
+            return cpu_pair(FoldBackend::CpuUnsupportedShape);
+        }
+
+        let executions = (|| {
+            let (first_resident, first_plan) =
+                gpu.fold_streaming_preflighted(first, &first_shape)?;
+            let (second_resident, second_plan) =
+                gpu.fold_streaming_preflighted(second, &second_shape)?;
+            // Two independent one-ciphertext outputs are copied together on-device. `download` then
+            // issues one COPY to one MAP_READ buffer and performs the pair's sole device wait.
+            let pair = gpu.concat_resident(&[first_resident, second_resident]);
+            let mut downloaded = gpu.download(&pair).into_iter();
+            let first_ciphertext = downloaded
+                .next()
+                .expect("paired resident fold returns its first ciphertext");
+            let second_ciphertext = downloaded
+                .next()
+                .expect("paired resident fold returns its second ciphertext");
+            debug_assert!(downloaded.next().is_none());
+            Ok((
+                FoldExecution {
+                    ciphertext: first_ciphertext,
+                    backend: FoldBackend::GpuResident(first_plan),
+                },
+                FoldExecution {
+                    ciphertext: second_ciphertext,
+                    backend: FoldBackend::GpuResident(second_plan),
+                },
+            ))
+        })();
+        gpu.clear_pool();
+        executions
     }
 }
 
@@ -297,6 +380,7 @@ pub fn arena() -> Option<Arena> {
         bgl,
         max_storage_bytes,
         pool: Mutex::new(Vec::new()),
+        readback_cache: Mutex::new(Vec::new()),
     })
 }
 
@@ -336,10 +420,17 @@ fn capacity_from_limits(max_storage_bytes: u64, ciphertext_bytes: u64) -> Result
     })
 }
 
+/// This shader is proved against the deployed three-prime BFV fold set, not merely "three values".
+/// Exact matching prevents adapter availability from selecting the split-u32 shader for an arbitrary
+/// large modulus whose addition could overflow the shader's two-word carry representation.
+fn gpu_shape_supported(shape: &Shape) -> bool {
+    shape.moduli.as_slice() == FOLD_MODULI
+}
+
 fn validate_storage_layout(ct: &LeanCiphertext) -> Result<()> {
-    if ct.polys.len() != 2 {
+    if ct.moduli.is_empty() || ct.degree == 0 || ct.polys.len() != 2 {
         return Err(BfvLeanError::Incompatible(
-            "resident fold: fold-path ciphertext must have exactly two polynomials",
+            "resident fold: ciphertext must have nonempty moduli/degree and exactly two polynomials",
         ));
     }
     for poly in &ct.polys {
@@ -349,9 +440,11 @@ fn validate_storage_layout(ct: &LeanCiphertext) -> Result<()> {
             ));
         }
         for (modulus_index, (row, &q)) in poly.rows.iter().zip(&ct.moduli).enumerate() {
-            if row.len() != ct.degree {
+            // `bfv_lean::add_row` relies on a+b fitting in u64. q <= 2^63 is the exact general
+            // carry-safe envelope; the GPU path is narrower still (`FOLD_MODULI` exactly).
+            if q == 0 || q > (1u64 << 63) || row.len() != ct.degree {
                 return Err(BfvLeanError::Incompatible(
-                    "resident fold: RNS row length differs from ciphertext degree",
+                    "resident fold: invalid/carry-unsafe modulus or RNS row length",
                 ));
             }
             if row.iter().any(|&coefficient| coefficient >= q) {
@@ -362,15 +455,79 @@ fn validate_storage_layout(ct: &LeanCiphertext) -> Result<()> {
     Ok(())
 }
 
+/// One backend-independent acceptance gate. In particular, a one-ciphertext CPU fold must not bypass
+/// wrap, structural, or residue validation merely because `bfv_lean::fold` performs no addition for it.
+fn preflight_fold(cts: &[LeanCiphertext], plaintext_modulus: u64) -> Result<Shape> {
+    let first = cts.first().ok_or(BfvLeanError::EmptyFold)?;
+    let shape = Shape::of(first);
+    validate_storage_layout(first)?;
+    let mut bound_sum = u128::from(first.plain_bound);
+    if bound_sum >= u128::from(plaintext_modulus) {
+        return Err(BfvLeanError::WrapRefused {
+            bound_sum,
+            plaintext_modulus,
+        });
+    }
+    for ct in &cts[1..] {
+        if Shape::of(ct) != shape {
+            return Err(BfvLeanError::Incompatible(
+                "resident fold: ciphertexts disagree on degree/moduli/polys/level",
+            ));
+        }
+        validate_storage_layout(ct)?;
+        bound_sum = bound_sum
+            .checked_add(u128::from(ct.plain_bound))
+            .unwrap_or(u128::MAX);
+        if bound_sum >= u128::from(plaintext_modulus) {
+            return Err(BfvLeanError::WrapRefused {
+                bound_sum,
+                plaintext_modulus,
+            });
+        }
+    }
+    Ok(shape)
+}
+
 impl Arena {
     fn clear_pool(&self) {
         self.pool.lock().unwrap().clear();
     }
 
+    fn acquire_readback(&self, size: u64) -> wgpu::Buffer {
+        let cached = {
+            let mut cache = self.readback_cache.lock().unwrap();
+            cache
+                .iter()
+                .position(|buffer| buffer.size() == size)
+                .map(|index| cache.swap_remove(index))
+        };
+        cached.unwrap_or_else(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("arena-read"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
+        })
+    }
+
+    fn release_readback(&self, buffer: wgpu::Buffer) {
+        // The retained engine normally needs one exact-size buffer. A small cap also keeps direct Arena
+        // users with several shapes from turning this allocation optimization into an unbounded cache.
+        let mut cache = self.readback_cache.lock().unwrap();
+        if cache.len() < 4 {
+            cache.push(buffer);
+        }
+    }
+
     /// Exact adapter capacity for one ciphertext shape. This is the public replacement for benchmark-side
     /// limit probing: callers can report and plan against the same ceiling the production path enforces.
     pub fn capacity(&self, ct: &LeanCiphertext) -> Result<FoldCapacity> {
-        self.capacity_for_shape(&Shape::of(ct))
+        let shape = Shape::of(ct);
+        if !gpu_shape_supported(&shape) {
+            return Err(BfvLeanError::GpuUnsupportedShape);
+        }
+        self.capacity_for_shape(&shape)
     }
 
     fn capacity_for_shape(&self, shape: &Shape) -> Result<FoldCapacity> {
@@ -401,11 +558,31 @@ impl Arena {
         plaintext_modulus: u64,
         chunk_limit: Option<usize>,
     ) -> Result<(ResidentHandle, ResidentFoldPlan)> {
-        let first = cts.first().ok_or(BfvLeanError::EmptyFold)?;
-        let shape = Shape::of(first);
-        if shape.moduli.len() != 3 {
+        let shape = preflight_fold(cts, plaintext_modulus)?;
+        if !gpu_shape_supported(&shape) {
             return Err(BfvLeanError::GpuUnsupportedShape);
         }
+        self.fold_streaming_preflighted_with_limit(cts, &shape, chunk_limit)
+    }
+
+    fn fold_streaming_preflighted(
+        &self,
+        cts: &[LeanCiphertext],
+        shape: &Shape,
+    ) -> Result<(ResidentHandle, ResidentFoldPlan)> {
+        self.fold_streaming_preflighted_with_limit(cts, shape, None)
+    }
+
+    /// Device portion of a fold whose complete batch has already passed [`preflight_fold`]. Keeping the
+    /// validation outside lets `FoldEngine::fold_pair` validate each side once, then share one readback.
+    fn fold_streaming_preflighted_with_limit(
+        &self,
+        cts: &[LeanCiphertext],
+        shape: &Shape,
+        chunk_limit: Option<usize>,
+    ) -> Result<(ResidentHandle, ResidentFoldPlan)> {
+        debug_assert!(!cts.is_empty());
+        debug_assert!(gpu_shape_supported(shape));
         let n_lanes = shape.checked_n_lanes().ok_or(BfvLeanError::Incompatible(
             "resident fold: ciphertext lane count overflows host address space",
         ))?;
@@ -419,29 +596,12 @@ impl Arena {
                 "resident fold: ciphertext lane count exceeds shader u32 metadata",
             ));
         }
-        validate_storage_layout(first)?;
-        for ct in &cts[1..] {
-            if Shape::of(ct) != shape {
-                return Err(BfvLeanError::Incompatible(
-                    "resident fold: ciphertexts disagree on degree/moduli/polys/level",
-                ));
-            }
-            validate_storage_layout(ct)?;
-        }
-        let mut bound_sum = 0u128;
-        for ct in cts {
-            bound_sum = bound_sum
-                .checked_add(u128::from(ct.plain_bound))
-                .unwrap_or(u128::MAX);
-            if bound_sum >= u128::from(plaintext_modulus) {
-                return Err(BfvLeanError::WrapRefused {
-                    bound_sum,
-                    plaintext_modulus,
-                });
-            }
-        }
+        let bound_sum = cts
+            .iter()
+            .map(|ct| u128::from(ct.plain_bound))
+            .sum::<u128>();
 
-        let capacity = self.capacity_for_shape(&shape)?;
+        let capacity = self.capacity_for_shape(shape)?;
         let per_chunk = chunk_limit
             .unwrap_or(capacity.ciphertexts_per_chunk)
             .min(capacity.ciphertexts_per_chunk)
@@ -535,7 +695,10 @@ impl Arena {
             id,
             n_cts,
             shape,
-            variable_time: handles.iter().any(|h| h.variable_time),
+            variable_times: handles
+                .iter()
+                .flat_map(|h| h.variable_times.iter().copied())
+                .collect(),
             bounds: handles
                 .iter()
                 .flat_map(|h| h.bounds.iter().copied())
@@ -607,7 +770,7 @@ impl Arena {
             id,
             n_cts: cts.len(),
             shape,
-            variable_time: cts.iter().any(|c| c.variable_time),
+            variable_times: cts.iter().map(|c| c.variable_time).collect(),
             bounds: cts.iter().map(|c| u128::from(c.plain_bound)).collect(),
         }
     }
@@ -696,7 +859,7 @@ impl Arena {
             id,
             n_cts: 1,
             shape: h.shape.clone(),
-            variable_time: h.variable_time,
+            variable_times: vec![h.variable_times.iter().any(|&flag| flag)],
             bounds: vec![bound_sum],
         }
     }
@@ -705,12 +868,7 @@ impl Arena {
     /// `LeanCiphertext`s (with the carried plain_bound / variable_time bookkeeping intact).
     pub fn download(&self, h: &ResidentHandle) -> Vec<LeanCiphertext> {
         let size = h.shape.ct_bytes() * h.n_cts as u64;
-        let read_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("arena-read"),
-            size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let read_buf = self.acquire_readback(size);
         {
             let pool = self.pool.lock().unwrap();
             let entry = &pool[h.id];
@@ -750,7 +908,7 @@ impl Arena {
                 moduli: h.shape.moduli.clone(),
                 degree: deg,
                 level: h.shape.level,
-                variable_time: h.variable_time,
+                variable_time: h.variable_times[ct_i],
                 polys,
                 plain_bound: u64::try_from(bound).unwrap_or_else(|_| {
                     panic!(
@@ -760,6 +918,7 @@ impl Arena {
                 }),
             });
         }
+        self.release_readback(read_buf);
         out
     }
 }
@@ -777,7 +936,7 @@ fn build_meta(n_cts: u32, n_lanes: u32, row_len: u32, moduli: &[u64]) -> [u32; 1
 mod tests {
     use super::*;
     use crate::bfv_lean::{fold, fold_add, BfvLeanError, FOLD_MODULI};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     /// Full-shape fresh-fold ciphertext (2 polys × 3 RNS rows × degree-4096) of deterministic canonical
     /// residues — same synth as the bfv_gpu parity test / gpu_saturate bench, so numbers are comparable.
@@ -864,6 +1023,166 @@ mod tests {
             Err(BfvLeanError::WrapRefused { .. })
         ));
         assert!(matches!(engine.fold(&[], t), Err(BfvLeanError::EmptyFold)));
+    }
+
+    #[test]
+    fn backend_independent_preflight_rejects_single_input_footguns() {
+        let t = 1u64 << 20;
+        let engine = FoldEngine::cpu_only();
+
+        let mut noncanonical = synth_ct(1, 1);
+        noncanonical.polys[0].rows[0][0] = noncanonical.moduli[0];
+        assert!(matches!(
+            engine.fold(&[noncanonical], t),
+            Err(BfvLeanError::NonCanonical { modulus_index: 0 })
+        ));
+
+        let mut zero_degree = synth_ct(2, 1);
+        zero_degree.degree = 0;
+        for poly in &mut zero_degree.polys {
+            for row in &mut poly.rows {
+                row.clear();
+            }
+        }
+        assert!(matches!(
+            engine.fold(&[zero_degree], t),
+            Err(BfvLeanError::Incompatible(_))
+        ));
+
+        let wraps_without_an_add = synth_ct(3, t);
+        assert!(matches!(
+            engine.fold(&[wraps_without_an_add], t),
+            Err(BfvLeanError::WrapRefused {
+                bound_sum,
+                plaintext_modulus,
+            }) if bound_sum == u128::from(t) && plaintext_modulus == t
+        ));
+
+        // The CPU oracle's one-subtract addition also assumes a+b cannot overflow u64. Refuse an
+        // arbitrary modulus outside that proved envelope before adapter presence can affect behavior.
+        let mut carry_unsafe = synth_ct(4, 1);
+        carry_unsafe.moduli[0] = (1u64 << 63) + 1;
+        assert!(matches!(
+            engine.fold(&[carry_unsafe], t),
+            Err(BfvLeanError::Incompatible(_))
+        ));
+    }
+
+    #[test]
+    fn paired_fold_matches_two_cpu_folds_and_keeps_metadata_separate() {
+        let t = 1u64 << 20;
+        let first: Vec<_> = (0..5).map(|i| synth_ct(i + 1, 2)).collect();
+        let mut second: Vec<_> = (0..7).map(|i| synth_ct(i + 101, 3)).collect();
+        second[0].variable_time = true;
+        let expected_first = fold(&first, t).expect("first CPU fold");
+        let expected_second = fold(&second, t).expect("second CPU fold");
+
+        let engine = FoldEngine::new();
+        let (got_first, got_second) = engine
+            .fold_pair(&first, &second, t)
+            .expect("paired retained fold");
+        assert_eq!(got_first.ciphertext, expected_first);
+        assert_eq!(got_second.ciphertext, expected_second);
+        assert!(!got_first.ciphertext.variable_time);
+        assert!(got_second.ciphertext.variable_time);
+        assert_eq!(got_first.ciphertext.plain_bound, 10);
+        assert_eq!(got_second.ciphertext.plain_bound, 21);
+        match (got_first.backend, got_second.backend) {
+            (FoldBackend::GpuResident(_), FoldBackend::GpuResident(_))
+            | (FoldBackend::CpuNoArena, FoldBackend::CpuNoArena) => {}
+            other => panic!("paired exact fold selected inconsistent backends: {other:?}"),
+        }
+    }
+
+    /// Production-shaped crossover probe: two independent book sides, comparing two CPU folds, two
+    /// separately synchronized retained-GPU folds, and the paired one-readback path. Run explicitly in
+    /// release on a real adapter; it is ignored so timing work never enters the default test loop.
+    #[test]
+    #[ignore = "bench — run release/ignored/no-capture on a real wgpu adapter"]
+    fn bench_paired_readback_crossover() {
+        let engine = FoldEngine::new();
+        if !engine.has_gpu_arena() {
+            eprintln!("no wgpu adapter — paired crossover bench SKIPPED (headless runner)");
+            return;
+        }
+        let t = 1u64 << 20;
+        let max_n = std::env::var("ARENA_PAIR_MAX_N")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(1024);
+        let reps = std::env::var("ARENA_PAIR_REPS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(3)
+            .max(1);
+        let sweep = [1usize, 2, 4, 8, 16, 64, 256, 1024]
+            .into_iter()
+            .filter(|&n| n <= max_n)
+            .collect::<Vec<_>>();
+
+        // Warm pipeline, queue, and the exact-size readback cache outside measurements.
+        let warm_first = vec![synth_ct(1, 1), synth_ct(2, 1)];
+        let warm_second = vec![synth_ct(3, 1), synth_ct(4, 1)];
+        engine
+            .fold_pair(&warm_first, &warm_second, t)
+            .expect("paired warmup");
+
+        eprintln!("\npaired resident crossover (two sides, best-of-{reps}; one ct = 196608 bytes)");
+        eprintln!(
+            "{:>6} {:>9} {:>12} {:>15} {:>15} {:>10} {:>10}",
+            "N/side",
+            "input MB",
+            "CPU pair",
+            "GPU separate",
+            "GPU one-read",
+            "pair/CPU",
+            "pair/sep"
+        );
+        for n in sweep {
+            let first = (0..n as u64)
+                .map(|i| synth_ct(i + 11, 1))
+                .collect::<Vec<_>>();
+            let second = (0..n as u64)
+                .map(|i| synth_ct(i + 10_011, 1))
+                .collect::<Vec<_>>();
+            let expected_first = fold(&first, t).expect("first CPU oracle");
+            let expected_second = fold(&second, t).expect("second CPU oracle");
+
+            let mut cpu_best = Duration::MAX;
+            let mut separate_best = Duration::MAX;
+            let mut paired_best = Duration::MAX;
+            for _ in 0..reps {
+                let started = Instant::now();
+                std::hint::black_box(fold(&first, t).expect("first CPU measurement"));
+                std::hint::black_box(fold(&second, t).expect("second CPU measurement"));
+                cpu_best = cpu_best.min(started.elapsed());
+
+                let started = Instant::now();
+                let separately_first = engine.fold(&first, t).expect("first retained GPU fold");
+                let separately_second = engine.fold(&second, t).expect("second retained GPU fold");
+                separate_best = separate_best.min(started.elapsed());
+                assert_eq!(separately_first.ciphertext, expected_first);
+                assert_eq!(separately_second.ciphertext, expected_second);
+
+                let started = Instant::now();
+                let (paired_first, paired_second) = engine
+                    .fold_pair(&first, &second, t)
+                    .expect("paired GPU fold");
+                paired_best = paired_best.min(started.elapsed());
+                assert_eq!(paired_first.ciphertext, expected_first);
+                assert_eq!(paired_second.ciphertext, expected_second);
+            }
+
+            let cpu_ms = cpu_best.as_secs_f64() * 1e3;
+            let separate_ms = separate_best.as_secs_f64() * 1e3;
+            let paired_ms = paired_best.as_secs_f64() * 1e3;
+            eprintln!(
+                "{n:>6} {:>9.1} {cpu_ms:>10.2}ms {separate_ms:>13.2}ms {paired_ms:>13.2}ms {:>9.2}x {:>9.2}x",
+                2.0 * n as f64 * 196_608.0 / 1e6,
+                paired_ms / cpu_ms,
+                paired_ms / separate_ms,
+            );
+        }
     }
 
     /// Force a tiny upload limit even on a large adapter so CI on a real GPU exercises the exact seam the

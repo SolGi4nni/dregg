@@ -59,6 +59,9 @@ pub mod bfv_lean;
 /// The MULTIPLICATIVE stone: wrap-guarded BFV ct×ct multiply + relinearization
 /// over fhe.rs's `Multiplicator`, oracle-anchored in `tests/bfv_mul_oracle.rs`.
 pub mod bfv_mul;
+/// Portable split-u32 wgpu negacyclic NTT/polynomial multiply over the exact
+/// power-basis RNS rows serialized by fhe.rs, with an explicit CPU fallback.
+pub mod bfv_ntt_gpu;
 pub mod boundary;
 /// Fail-closed Cert-F translation checking plus the explicit semantic-binder
 /// seam required before a certificate may satisfy a dark-clearing receipt's
@@ -84,6 +87,37 @@ pub mod dark_amm_dkg;
 pub mod decision_attestation;
 pub mod fhir;
 pub mod gpu_arena;
+pub mod gpu_qualification;
+/// Exact portable-GPU precompute for the private-book Bulletproof relation's
+/// 805M public signed message-table additions. The proof backend's Ristretto
+/// MSMs remain the named fork-level acceleration seam.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_bfv_wgpu;
+/// Transferable Bulletproof R1CS evidence that the same hidden N4K4 book opens
+/// both the exact private Poseidon statement and four deployed BFV ciphertexts.
+/// Kept behind the proof feature because the n=4096 prover is intentionally
+/// heavy; verification consumes only public parameters/key/rows/statement.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_bfv_zk;
+/// Deterministic concrete backend validating each worker's four exact
+/// Pedersen share openings without permitting arbitrary public output bytes.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_canonical_backend;
+/// Owner-local expansion and n-of-n additive sharing of the private BFV/root
+/// witness.  This removes centralized input collection while explicitly
+/// stopping short of claiming a distributed Bulletproof prover.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_distributed_inputs;
+/// One-share-per-process backend boundary and public-only coordinator for a
+/// future malicious-secure distributed private-book prover.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_distributed_prover;
+/// Exact N4K4 NP relation joining four BFV ciphertext openings to the same
+/// hidden orders and Poseidon root consumed by the private clearing proof.
+/// This is a prover-side relation checker, not transferable ZK evidence.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_relation;
+pub mod tfhe_wgpu;
 pub mod threshold;
 
 /// The OUTPUT-BOUNDARY MPC crossing (BFV / fhe.rs → additive shares → secret-shared
