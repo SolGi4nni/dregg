@@ -2153,6 +2153,7 @@ fn transport_session_digest(
     hash.update(session.quorum_timeout.as_secs().to_be_bytes());
     hash.update(session.quorum_timeout.subsec_nanos().to_be_bytes());
     hash.update([circuit_tag]);
+    hash.update(session.preprocessing_binding_bytes());
     hash.update((roster.party_keys.len() as u64).to_be_bytes());
     for key in &roster.party_keys {
         hash.update(key);
@@ -2514,8 +2515,10 @@ fn encoded_frame_recipient(bytes: &[u8]) -> Result<usize> {
 /// caller supplies an independently authenticated public context (normally the
 /// strict worker-config digest or Dark AMM task digest); this function also
 /// mixes fresh CSPRNG entropy so a retry of the exact same task receives an
-/// independent triple stream. This prevents accidental one-time-pad reuse. It
-/// does not replace the trusted dealer or prove that its output is well formed.
+/// independent triple stream. This prevents accidental one-time-pad reuse. A
+/// certified session additionally binds the preprocessing authority and audited
+/// batch digest; it does not replace that trusted authority with dealer-free
+/// preprocessing.
 pub fn fresh_preprocessing_seed<R: RngCore + CryptoRng>(
     session: &PartyMpcSession,
     public_context: [u8; 32],
@@ -2584,6 +2587,7 @@ fn fresh_preprocessing_seed_for<R: RngCore + CryptoRng>(
     hash.update(session.quorum_timeout.as_secs().to_be_bytes());
     hash.update(session.quorum_timeout.subsec_nanos().to_be_bytes());
     hash.update([circuit_tag]);
+    hash.update(session.preprocessing_binding_bytes());
     hash.update(public_context);
     hash.update(base_seed);
     hash.update(invocation);
