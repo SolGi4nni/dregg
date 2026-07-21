@@ -24,7 +24,10 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_4_to_1;
-use dregg_commit::poseidon2_tree::{EMPTY_LEAF, Poseidon2MerkleTree};
+use dregg_commit::poseidon2_tree::{
+    EMPTY_LEAF, Poseidon2MerkleTree, Poseidon2NoteTree16, commitment_to_lanes16, note_leaf16,
+    note_node8,
+};
 
 /// Padded leaf lookup — the image of Lean `leafAt` (and Rust `get_leaf`): EMPTY_LEAF out of bounds.
 fn leaf_at(leaves: &[BabyBear], i: usize) -> BabyBear {
@@ -256,4 +259,116 @@ fn tooth3_append_prefixes_equal_lean_golden() {
             "deployed prefix root != Lean golden at k={k}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tooth 4 — faithful-wide tree correspondence to `CommitmentTreeWide.lean`.
+//
+// These constants are COMPUTED and #guard-pinned by Lean over its KAT-locked implementation of
+// the real BabyBear Poseidon2 permutation. Rust does not carry a second reference algorithm here:
+// the deployed codec/hashes/tree must reproduce the Lean authority's exact protocol vectors.
+// ---------------------------------------------------------------------------------------------
+
+fn lane_values<const N: usize>(lanes: [BabyBear; N]) -> [u32; N] {
+    lanes.map(BabyBear::as_u32)
+}
+
+#[test]
+fn tooth4_faithful_wide_tree_matches_lean_protocol_vectors() {
+    let ascending = core::array::from_fn(|i| i as u8);
+    assert_eq!(
+        lane_values(commitment_to_lanes16(&ascending)),
+        [
+            256, 770, 1284, 1798, 2312, 2826, 3340, 3854, 4368, 4882, 5396, 5910, 6424, 6938, 7452,
+            7966,
+        ],
+        "32-byte -> sixteen-u16 codec diverged from Lean"
+    );
+
+    assert_eq!(
+        lane_values(note_leaf16(&commitment_to_lanes16(&ascending))),
+        [
+            632237414, 1106963827, 1981485531, 1378889390, 1941158165, 1606235884, 1135466672,
+            580799866,
+        ],
+        "wide domain-separated leaf hash diverged from Lean"
+    );
+
+    let zero = [0u8; 32];
+    let one = [1u8; 32];
+    let two = [2u8; 32];
+    let leaves = [
+        commitment_to_lanes16(&zero),
+        commitment_to_lanes16(&one),
+        commitment_to_lanes16(&two),
+    ];
+
+    // A depth-zero empty tree is exactly the wide empty-leaf domain hash.
+    let mut empty_tree = Poseidon2NoteTree16::with_depth(0);
+    let empty = empty_tree.root().limbs();
+    assert_eq!(
+        lane_values(empty),
+        [
+            494407780, 1177177705, 833862924, 528655941, 1124240900, 1779925736, 349643581,
+            774482890,
+        ],
+        "wide empty-leaf domain hash diverged from Lean"
+    );
+
+    let expected_node = [
+        1629098044, 955608484, 342148490, 1281461710, 1441002555, 770079181, 1611082324, 749516418,
+    ];
+    assert_eq!(
+        lane_values(note_node8(&[
+            note_leaf16(&leaves[0]),
+            note_leaf16(&leaves[1]),
+            note_leaf16(&leaves[2]),
+            empty,
+        ])),
+        expected_node,
+        "wide four-child node hash diverged from Lean"
+    );
+
+    let mut depth_one = Poseidon2NoteTree16::from_leaves(leaves.to_vec(), 1);
+    let depth_one_root = depth_one.root();
+    assert_eq!(lane_values(depth_one_root.limbs()), expected_node);
+
+    // Same proof as Lean `proofAtOne`: child position 1, siblings [leaf0, leaf2, empty].
+    let proof = depth_one.prove_membership(1).expect("position 1 exists");
+    assert_eq!(proof.positions, [1]);
+    assert!(Poseidon2NoteTree16::verify_membership(
+        depth_one_root,
+        leaves[1],
+        &proof
+    ));
+    assert!(!Poseidon2NoteTree16::verify_membership(
+        depth_one_root,
+        leaves[2],
+        &proof
+    ));
+
+    let mut invalid_position = proof.clone();
+    invalid_position.positions[0] = 4;
+    assert!(!Poseidon2NoteTree16::verify_membership(
+        depth_one_root,
+        leaves[1],
+        &invalid_position
+    ));
+    let mut mismatched_path = proof;
+    mismatched_path.positions.clear();
+    assert!(!Poseidon2NoteTree16::verify_membership(
+        depth_one_root,
+        leaves[1],
+        &mismatched_path
+    ));
+
+    let mut depth_two = Poseidon2NoteTree16::from_leaves(leaves.to_vec(), 2);
+    assert_eq!(
+        lane_values(depth_two.root().limbs()),
+        [
+            1872806112, 523477042, 958227429, 1604333445, 1888739704, 712153370, 1327012915,
+            1980467199,
+        ],
+        "wide depth-2 root diverged from Lean"
+    );
 }

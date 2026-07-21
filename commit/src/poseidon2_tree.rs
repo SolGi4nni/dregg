@@ -13,8 +13,9 @@
 
 use std::sync::LazyLock;
 
+use dregg_circuit::Faithful8;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::hash_4_to_1;
+use dregg_circuit::poseidon2::{hash_4_to_1, hash_many_8};
 use serde::{Deserialize, Serialize};
 
 /// Default tree depth (4^16 = ~4 billion leaves).
@@ -53,6 +54,317 @@ fn empty_hash_at_level(level: usize) -> BabyBear {
             h = hash_4_to_1(&[h, h, h, h]);
         }
         h
+    }
+}
+
+// =============================================================================
+// Faithful sixteen-lane note tree
+// =============================================================================
+
+/// Number of exact field lanes in a raw note leaf.
+///
+/// A 32-byte commitment is split into sixteen little-endian `u16` limbs.
+/// Unlike the legacy eight-`u32` codec, no limb is reduced modulo BabyBear:
+/// every `u16` is already canonical, so the pre-hash mapping is injective.
+pub const NOTE_TREE16_LANES: usize = 16;
+
+/// Number of lanes in every hashed node/root: the project-wide [`Faithful8`]
+/// geometry (~124-bit collision floor).
+pub const NOTE_TREE_ROOT_LANES: usize = 8;
+
+/// Exact raw note-commitment carrier, before cryptographic compression.
+pub type NoteTree16Digest = [BabyBear; NOTE_TREE16_LANES];
+/// Internal note-tree node carrier.
+pub type NoteTreeNode8 = [BabyBear; NOTE_TREE_ROOT_LANES];
+
+// Leaves, internal nodes, and empty leaves have distinct in-band domains.
+// Every hash consumes all inputs and squeezes a standard eight-felt root; there
+// is no one-felt intermediate and no post-hash "wide coat" over a scalar.
+const NOTE_LEAF_DOMAIN: u32 = 0x4e4c_4638; // "NLF8"
+const NOTE_NODE_DOMAIN: u32 = 0x4e4e_4438; // "NND8"
+const NOTE_EMPTY_DOMAIN: u32 = 0x4e45_4d38; // "NEM8"
+
+/// Injectively encode a 32-byte note commitment as sixteen canonical BabyBear
+/// lanes.  Lane `i` is the little-endian `u16` at bytes `2i..2i+2`.
+///
+/// This is deliberately not [`BabyBear::encode_hash`]: that legacy codec uses
+/// eight `u32` chunks, each reduced modulo `p`, and therefore identifies a raw
+/// chunk `x` with `x + p`.  Here every source limb is `< 2^16 < p`.
+#[inline]
+pub fn commitment_to_lanes16(commitment: &[u8; 32]) -> NoteTree16Digest {
+    core::array::from_fn(|i| {
+        let off = i * 2;
+        BabyBear::new(u16::from_le_bytes([commitment[off], commitment[off + 1]]) as u32)
+    })
+}
+
+fn hash_to_8(domain: u32, inputs: &[BabyBear]) -> NoteTreeNode8 {
+    let mut preimage = Vec::with_capacity(inputs.len() + 1);
+    preimage.push(BabyBear::new(domain));
+    preimage.extend_from_slice(inputs);
+    hash_many_8(&preimage)
+}
+
+fn faithful8_from_lanes(lanes: NoteTreeNode8) -> Faithful8 {
+    let mut bytes = [0u8; 32];
+    for (lane, felt) in lanes.iter().enumerate() {
+        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
+    // Every packed u32 is already a canonical BabyBear (< p), so the
+    // `Faithful8` byte constructor recovers these exact lanes.
+    Faithful8::from_bytes32(&bytes)
+}
+
+/// Domain-separated faithful-eight digest of one exact sixteen-lane note.
+#[inline]
+pub fn note_leaf16(commitment: &NoteTree16Digest) -> NoteTreeNode8 {
+    hash_to_8(NOTE_LEAF_DOMAIN, commitment)
+}
+
+/// Four-to-one Poseidon2 note-tree compression at faithful-eight width.
+///
+/// All 32 child lanes are absorbed by the domain-separated wide sponge and the
+/// output remains eight felts at every level. There is no scalar intermediate.
+pub fn note_node8(children: &[NoteTreeNode8; 4]) -> NoteTreeNode8 {
+    let mut preimage = Vec::with_capacity(4 * NOTE_TREE_ROOT_LANES);
+    for child in children {
+        preimage.extend_from_slice(child);
+    }
+    hash_to_8(NOTE_NODE_DOMAIN, &preimage)
+}
+
+fn empty_note_leaf8() -> NoteTreeNode8 {
+    hash_to_8(NOTE_EMPTY_DOMAIN, &[])
+}
+
+/// Precomputed empty faithful-eight subtree root at every supported level.
+static EMPTY_HASHES_8: LazyLock<Vec<NoteTreeNode8>> = LazyLock::new(|| {
+    let mut hashes = Vec::with_capacity(MAX_CACHED_DEPTH + 1);
+    hashes.push(empty_note_leaf8());
+    for _ in 1..=MAX_CACHED_DEPTH {
+        let previous = *hashes.last().unwrap();
+        hashes.push(note_node8(&[previous; 4]));
+    }
+    hashes
+});
+
+#[inline]
+fn empty_hash8_at_level(level: usize) -> NoteTreeNode8 {
+    if level <= MAX_CACHED_DEPTH {
+        EMPTY_HASHES_8[level]
+    } else {
+        let mut hash = EMPTY_HASHES_8[MAX_CACHED_DEPTH];
+        for _ in MAX_CACHED_DEPTH..level {
+            hash = note_node8(&[hash; 4]);
+        }
+        hash
+    }
+}
+
+/// Membership proof in the faithful sixteen-lane, 4-ary note tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Poseidon2NoteProof16 {
+    /// Raw sixteen-lane note commitment carried at this position.
+    pub leaf: NoteTree16Digest,
+    /// Three sibling faithful-eight digests at each level, leaf to root.
+    pub siblings: Vec<[NoteTreeNode8; 3]>,
+    /// Child position (0..3) at each level, leaf to root.
+    pub positions: Vec<u8>,
+}
+
+/// Append-only 4-ary note tree with exact sixteen-lane raw leaves and a
+/// faithful-eight carrier at every hashed leaf/node/root.
+#[derive(Clone, Debug)]
+pub struct Poseidon2NoteTree16 {
+    leaves: Vec<NoteTree16Digest>,
+    depth: usize,
+    cached_root: Option<NoteTreeNode8>,
+}
+
+impl Poseidon2NoteTree16 {
+    pub fn new() -> Self {
+        Self::with_depth(DEFAULT_DEPTH)
+    }
+
+    pub fn with_depth(depth: usize) -> Self {
+        Self {
+            leaves: Vec::new(),
+            depth,
+            cached_root: None,
+        }
+    }
+
+    /// Append an already-canonical sixteen-lane note commitment carrier.
+    pub fn append(&mut self, leaf: NoteTree16Digest) -> usize {
+        let max_capacity = 4usize.pow(self.depth as u32);
+        assert!(
+            self.leaves.len() < max_capacity,
+            "Poseidon2NoteTree16 is full: capacity {} reached (depth {})",
+            max_capacity,
+            self.depth
+        );
+        let position = self.leaves.len();
+        self.leaves.push(leaf);
+        self.cached_root = None;
+        position
+    }
+
+    /// Append a 32-byte note commitment through the injective sixteen-`u16`
+    /// codec.
+    pub fn append_commitment(&mut self, commitment: &[u8; 32]) -> usize {
+        self.append(commitment_to_lanes16(commitment))
+    }
+
+    pub fn len(&self) -> usize {
+        self.leaves.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.leaves.is_empty()
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn root(&mut self) -> Faithful8 {
+        faithful8_from_lanes(self.root_lanes())
+    }
+
+    fn root_lanes(&mut self) -> NoteTreeNode8 {
+        if let Some(root) = self.cached_root {
+            return root;
+        }
+        let root = self.compute_node_at_level(self.depth, 0);
+        self.cached_root = Some(root);
+        root
+    }
+
+    pub fn root_immutable(&self) -> Faithful8 {
+        faithful8_from_lanes(
+            self.cached_root
+                .unwrap_or_else(|| self.compute_node_at_level(self.depth, 0)),
+        )
+    }
+
+    pub fn prove_membership(&self, position: usize) -> Option<Poseidon2NoteProof16> {
+        if position >= self.leaves.len() {
+            return None;
+        }
+
+        let leaf = self.leaves[position];
+        let mut siblings = Vec::with_capacity(self.depth);
+        let mut positions = Vec::with_capacity(self.depth);
+        let mut index = position;
+
+        for level in 0..self.depth {
+            let sibling_base = (index / 4) * 4;
+            let position_in_group = (index % 4) as u8;
+            positions.push(position_in_group);
+
+            let mut level_siblings = [[BabyBear::ZERO; NOTE_TREE_ROOT_LANES]; 3];
+            let mut sibling_index = 0;
+            for child in 0..4 {
+                if child == position_in_group as usize {
+                    continue;
+                }
+                level_siblings[sibling_index] =
+                    self.compute_node_at_level(level, sibling_base + child);
+                sibling_index += 1;
+            }
+            siblings.push(level_siblings);
+            index /= 4;
+        }
+
+        Some(Poseidon2NoteProof16 {
+            leaf,
+            siblings,
+            positions,
+        })
+    }
+
+    pub fn verify_membership(
+        root: Faithful8,
+        leaf: NoteTree16Digest,
+        proof: &Poseidon2NoteProof16,
+    ) -> bool {
+        Self::recompose_membership(leaf, proof)
+            .map(|root8| faithful8_from_lanes(root8) == root)
+            .unwrap_or(false)
+    }
+
+    fn recompose_membership(
+        leaf: NoteTree16Digest,
+        proof: &Poseidon2NoteProof16,
+    ) -> Option<NoteTreeNode8> {
+        if proof.siblings.len() != proof.positions.len() || proof.leaf != leaf {
+            return None;
+        }
+
+        let mut current = note_leaf16(&leaf);
+        for (siblings, &position) in proof.siblings.iter().zip(&proof.positions) {
+            if position >= 4 {
+                return None;
+            }
+            let mut children = [[BabyBear::ZERO; NOTE_TREE_ROOT_LANES]; 4];
+            let mut sibling_index = 0;
+            for child in 0..4u8 {
+                if child == position {
+                    children[child as usize] = current;
+                } else {
+                    children[child as usize] = siblings[sibling_index];
+                    sibling_index += 1;
+                }
+            }
+            current = note_node8(&children);
+        }
+        Some(current)
+    }
+
+    pub fn from_leaves(leaves: Vec<NoteTree16Digest>, depth: usize) -> Self {
+        Self {
+            leaves,
+            depth,
+            cached_root: None,
+        }
+    }
+
+    pub fn from_commitments(commitments: &[[u8; 32]], depth: usize) -> Self {
+        Self::from_leaves(
+            commitments.iter().map(commitment_to_lanes16).collect(),
+            depth,
+        )
+    }
+
+    pub fn leaves(&self) -> &[NoteTree16Digest] {
+        &self.leaves
+    }
+
+    fn compute_node_at_level(&self, level: usize, index: usize) -> NoteTreeNode8 {
+        if level == 0 {
+            return self
+                .leaves
+                .get(index)
+                .map(note_leaf16)
+                .unwrap_or_else(empty_note_leaf8);
+        }
+
+        let first_leaf = index
+            .checked_mul(4usize.pow(level as u32))
+            .unwrap_or(usize::MAX);
+        if first_leaf >= self.leaves.len() {
+            return empty_hash8_at_level(level);
+        }
+
+        let children =
+            core::array::from_fn(|child| self.compute_node_at_level(level - 1, index * 4 + child));
+        note_node8(&children)
+    }
+}
+
+impl Default for Poseidon2NoteTree16 {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -453,6 +765,154 @@ mod tests {
         let c1 = [0x01; 32];
         let c2 = [0x02; 32];
         assert_ne!(commitment_to_field(&c1), commitment_to_field(&c2));
+    }
+
+    /// The exact legacy wound and the wide repair in one falsifier: a raw
+    /// four-byte chunk `x + p` reduces to the same BabyBear as `x`, so the
+    /// scalar bridge (and therefore a scalar note tree) aliases them.  The
+    /// sixteen-u16 codec binds the original bytes and the wide roots differ.
+    #[test]
+    fn note_tree16_distinguishes_legacy_x_plus_p_alias() {
+        let x = 1_000_000u32;
+        let x_plus_p = x.checked_add(dregg_circuit::field::BABYBEAR_P).unwrap();
+        let mut commitment_x = [0u8; 32];
+        let mut commitment_x_plus_p = [0u8; 32];
+        commitment_x[..4].copy_from_slice(&x.to_le_bytes());
+        commitment_x_plus_p[..4].copy_from_slice(&x_plus_p.to_le_bytes());
+
+        assert_eq!(
+            commitment_to_field(&commitment_x),
+            commitment_to_field(&commitment_x_plus_p),
+            "the hostile pair must exercise the real legacy modulo-p alias"
+        );
+        assert_ne!(
+            commitment_to_lanes16(&commitment_x),
+            commitment_to_lanes16(&commitment_x_plus_p),
+            "sixteen canonical u16 lanes must retain the source bytes"
+        );
+
+        let mut honest = Poseidon2NoteTree16::with_depth(4);
+        honest.append_commitment(&commitment_x);
+        let honest_root = honest.root();
+
+        let mut aliased = Poseidon2NoteTree16::with_depth(4);
+        aliased.append_commitment(&commitment_x_plus_p);
+        let alias_root = aliased.root();
+        assert_ne!(
+            honest_root, alias_root,
+            "x and x+p must produce distinct faithful-eight note roots"
+        );
+
+        let proof = honest.prove_membership(0).unwrap();
+        let honest_leaf = commitment_to_lanes16(&commitment_x);
+        let alias_leaf = commitment_to_lanes16(&commitment_x_plus_p);
+        assert!(Poseidon2NoteTree16::verify_membership(
+            honest_root,
+            honest_leaf,
+            &proof
+        ));
+        assert!(!Poseidon2NoteTree16::verify_membership(
+            honest_root,
+            alias_leaf,
+            &proof
+        ));
+
+        // Even an attacker who rewrites the proof's carried leaf cannot reuse
+        // the honest sibling path: the leaf hash changes and misses the root.
+        let mut forged = proof;
+        forged.leaf = alias_leaf;
+        assert!(!Poseidon2NoteTree16::verify_membership(
+            honest_root,
+            alias_leaf,
+            &forged
+        ));
+    }
+
+    #[test]
+    fn note_tree16_membership_binds_every_root_lane() {
+        let commitments: Vec<[u8; 32]> = (0..9)
+            .map(|i| {
+                let mut commitment = [0u8; 32];
+                commitment[0] = i;
+                commitment[17] = i.wrapping_mul(29);
+                commitment[31] = i.wrapping_mul(71);
+                commitment
+            })
+            .collect();
+        let mut tree = Poseidon2NoteTree16::from_commitments(&commitments, 4);
+        let root = tree.root();
+        let proof = tree.prove_membership(5).unwrap();
+        let leaf = commitment_to_lanes16(&commitments[5]);
+        assert!(Poseidon2NoteTree16::verify_membership(root, leaf, &proof));
+
+        for lane in 0..NOTE_TREE_ROOT_LANES {
+            let mut forged_bytes = root.to_bytes32();
+            let forged_lane = (root[lane].as_u32() + 1) % dregg_circuit::field::BABYBEAR_P;
+            forged_bytes[lane * 4..lane * 4 + 4].copy_from_slice(&forged_lane.to_le_bytes());
+            let forged_root = Faithful8::from_bytes32(&forged_bytes);
+            assert!(
+                !Poseidon2NoteTree16::verify_membership(forged_root, leaf, &proof),
+                "root lane {lane} must be load-bearing"
+            );
+        }
+
+        // The highest raw input lane is not padding. Mutating only lane 15
+        // changes the root and cannot reuse the honest membership path.
+        let mut high_lane_commitments = commitments.clone();
+        high_lane_commitments[5][31] ^= 1;
+        let high_lane_leaf = commitment_to_lanes16(&high_lane_commitments[5]);
+        assert_eq!(
+            leaf[..NOTE_TREE16_LANES - 1],
+            high_lane_leaf[..NOTE_TREE16_LANES - 1],
+            "test setup must preserve every lower raw note lane"
+        );
+        assert_ne!(
+            leaf[NOTE_TREE16_LANES - 1],
+            high_lane_leaf[NOTE_TREE16_LANES - 1],
+            "test setup must mutate raw note lane 15"
+        );
+        let mut high_lane_tree = Poseidon2NoteTree16::from_commitments(&high_lane_commitments, 4);
+        assert_ne!(
+            root,
+            high_lane_tree.root(),
+            "raw note lane 15 must reach the faithful root"
+        );
+        let mut forged_proof = proof;
+        forged_proof.leaf = high_lane_leaf;
+        assert!(!Poseidon2NoteTree16::verify_membership(
+            root,
+            high_lane_leaf,
+            &forged_proof
+        ));
+    }
+
+    #[test]
+    fn note_tree16_recovery_preserves_root_and_membership() {
+        let commitments: Vec<[u8; 32]> = (0..7)
+            .map(|i| {
+                let mut commitment = [0u8; 32];
+                commitment[..8].copy_from_slice(&(i as u64 * 0x1_0000_0001).to_le_bytes());
+                commitment[24..].copy_from_slice(&(i as u64 * 97).to_le_bytes());
+                commitment
+            })
+            .collect();
+
+        let mut original = Poseidon2NoteTree16::with_depth(4);
+        for commitment in &commitments {
+            original.append_commitment(commitment);
+        }
+        let original_root = original.root();
+
+        let mut recovered = Poseidon2NoteTree16::from_commitments(&commitments, 4);
+        assert_eq!(original_root, recovered.root());
+        for (position, commitment) in commitments.iter().enumerate() {
+            let proof = recovered.prove_membership(position).unwrap();
+            assert!(Poseidon2NoteTree16::verify_membership(
+                original_root,
+                commitment_to_lanes16(commitment),
+                &proof
+            ));
+        }
     }
 
     #[test]
