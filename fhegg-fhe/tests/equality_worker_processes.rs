@@ -170,6 +170,8 @@ fn run_process_case(nonce_byte: u8, final_right_share: u64, expected_equal: bool
         .status()
         .expect("launch trusted preprocessing role");
     assert!(status.success());
+    let mut replayed_party_zero_triples =
+        fs::read(temp.path.join("party-0.triples")).expect("retain adversarial replay copy");
 
     // The second invocation changes only the final right additive share, so
     // the public result exercises both reveal polarities without disclosing
@@ -308,6 +310,30 @@ fn run_process_case(nonce_byte: u8, final_right_share: u64, expected_equal: bool
     for process in processes {
         process.shutdown();
     }
+
+    // A party burns its Beaver row before it enters the protocol. Restoring an
+    // exact byte-for-byte copy after every role has exited cannot replay those
+    // one-time pads: the content-addressed tombstone survives the restart.
+    let party_zero_triples = temp.path.join("party-0.triples");
+    assert!(!party_zero_triples.exists());
+    write_secret(&party_zero_triples, &replayed_party_zero_triples);
+    let replay = Command::new(worker)
+        .args([
+            "party",
+            config_path.to_str().unwrap(),
+            "0",
+            temp.path.join("party-0.custody").to_str().unwrap(),
+            party_zero_triples.to_str().unwrap(),
+        ])
+        .output()
+        .expect("launch consumed-preprocessing replay refusal");
+    replayed_party_zero_triples.fill(0);
+    assert!(!replay.status.success());
+    assert!(
+        String::from_utf8_lossy(&replay.stderr).contains("already been consumed"),
+        "unexpected replay refusal: {}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
 }
 
 fn write_secret(path: &Path, bytes: &[u8]) {

@@ -7,6 +7,11 @@
 //! `preprocess` creates per-party trusted-dealer rows without inputs, while
 //! `provision-party`/`provision-coordinator` bind protected custody to the exact
 //! public config and roster role without placing secret operands on argv.
+//! A party invocation durably burns its exact Beaver-row custody before starting
+//! the protocol: an adjacent content-addressed spent tombstone survives process
+//! crashes and refuses byte-for-byte restoration/replay at the same custody
+//! directory. A crash can therefore sacrifice availability, but cannot expose a
+//! second execution using the same one-time pads through this worker boundary.
 //! Peer-ingress frames contain plaintext Boolean shares and therefore require
 //! confidential direct party channels in deployment; they must not be relayed
 //! through an eavesdropping coordinator.
@@ -45,10 +50,13 @@ const MAX_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 const PARTY_CUSTODY_MAGIC: &[u8; 8] = b"FHEQPC01";
 const COORDINATOR_CUSTODY_MAGIC: &[u8; 8] = b"FHEQCC01";
 const PREPROCESSING_CUSTODY_MAGIC: &[u8; 8] = b"FHEQTR01";
+const PREPROCESSING_SPENT_MAGIC: &[u8; 8] = b"FHEQSP01";
 const PARTY_CUSTODY_BYTES: usize = 8 + 32 + 4 + 32 + 32 + 8 + 8 + 32;
 const COORDINATOR_CUSTODY_BYTES: usize = 8 + 32 + 32 + 32;
 const PREPROCESSING_CUSTODY_OVERHEAD: usize = 8 + 32 + 4 + 8 + 32;
+const PREPROCESSING_SPENT_BYTES: usize = 8 + 32 + 4 + 32 + 32;
 const CUSTODY_CHECKSUM_DOMAIN: &[u8] = b"fhegg/equality-worker-custody-checksum/v1";
+const PREPROCESSING_SPENT_PREFIX: &str = ".fhegg-equality-spent-";
 
 fn main() {
     if let Err(error) = run() {
@@ -243,6 +251,7 @@ fn read_preprocessing_custody(
         (MAX_TRIPLE_MATERIAL_BYTES + PREPROCESSING_CUSTODY_OVERHEAD) as u64,
         true,
     )?;
+    let material_digest: [u8; 32] = Sha256::digest(&bytes).into();
     let result = (|| {
         if bytes.len() < PREPROCESSING_CUSTODY_OVERHEAD
             || &bytes[..8] != PREPROCESSING_CUSTODY_MAGIC
@@ -266,11 +275,76 @@ fn read_preprocessing_custody(
         if wire_len > MAX_TRIPLE_MATERIAL_BYTES || wire_end + 32 != bytes.len() {
             return Err("preprocessing custody has an invalid bounded length".to_string());
         }
-        TripleMaterial::from_wire_bytes(session, expected_party, &bytes[52..wire_end])
-            .map_err(|error| error.to_string())
+        let material =
+            TripleMaterial::from_wire_bytes(session, expected_party, &bytes[52..wire_end])
+                .map_err(|error| error.to_string())?;
+
+        // Beaver material is a one-time pad. Atomically create the durable
+        // content-addressed tombstone *before* returning it to the runtime. If
+        // this process crashes after the claim, availability is lost but no
+        // later worker can reuse the same row from this custody directory.
+        burn_preprocessing_slot(path, config_digest, expected_party, material_digest)?;
+        Ok(material)
     })();
     bytes.fill(0);
     result
+}
+
+fn burn_preprocessing_slot(
+    path: &Path,
+    config_digest: [u8; 32],
+    party: usize,
+    material_digest: [u8; 32],
+) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let marker = parent.join(format!(
+        "{PREPROCESSING_SPENT_PREFIX}{}",
+        encode_hex(&material_digest)
+    ));
+    let party = u32::try_from(party)
+        .map_err(|_| "preprocessing custody party does not fit its tombstone".to_string())?;
+    let mut tombstone = Vec::with_capacity(PREPROCESSING_SPENT_BYTES);
+    tombstone.extend_from_slice(PREPROCESSING_SPENT_MAGIC);
+    tombstone.extend_from_slice(&config_digest);
+    tombstone.extend_from_slice(&party.to_be_bytes());
+    tombstone.extend_from_slice(&material_digest);
+    append_custody_checksum(&mut tombstone);
+    debug_assert_eq!(tombstone.len(), PREPROCESSING_SPENT_BYTES);
+
+    match write_new_secret(&marker, &tombstone) {
+        Ok(()) => {}
+        Err(error) if fs::symlink_metadata(&marker).is_ok() => {
+            tombstone.fill(0);
+            return Err(format!(
+                "equality preprocessing has already been consumed: {error}"
+            ));
+        }
+        Err(error) => {
+            tombstone.fill(0);
+            return Err(error);
+        }
+    }
+    tombstone.fill(0);
+
+    // The tombstone is the durable authority. Removing the secret row reduces
+    // accidental at-rest exposure. A crash between these operations leaves
+    // both files, but the already-synced tombstone still refuses reuse.
+    fs::remove_file(path).map_err(|error| {
+        format!(
+            "preprocessing was durably consumed but its secret row {} could not be removed: {error}",
+            path.display()
+        )
+    })?;
+    sync_directory(parent).map_err(|error| {
+        format!(
+            "cannot durably record preprocessing consumption in {}: {error}",
+            parent.display()
+        )
+    })
+}
+
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 fn verify_custody_checksum(bytes: &[u8]) -> Result<(), String> {
