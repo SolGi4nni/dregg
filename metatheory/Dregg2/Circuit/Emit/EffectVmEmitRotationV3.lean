@@ -2305,17 +2305,49 @@ def nullifierInsertOp : MapOp :=
   , newRoot := afterNullifierRootGroup
   , op      := .aafiInsert }  -- gap-#5 AAFI (F1 flip: op=4, matches the deployed TSV; two-path forces sorted-preservation)
 
+/-- The spend row's DELEGATION-ANCESTOR revocation-id parameter column (`param3`, `prmCol 3` —
+free on a noteSpend row: the spend arm fills only params 0..2). The witness generator parks the
+spend's delegation-ancestor id here — the SAME `child_hash[0]` key domain `revokedInsertOp`
+(§5.RV) grows the limb-37 revoked set with on RevokeDelegation turns.
+
+CURRENT RESOLUTION (say it plainly): this column is a WITNESS column. The map-op below forces
+"the OPENED key is absent from the committed revoked set"; it does NOT yet force "the opened
+key IS the exercised capability's delegation ancestor" — that binding (a cross-constraint to
+the cap-open lineage, or a published-PI pin the verifier cross-checks like the C4 nullifier
+weld) is the named follow-up. Honest producers (the SDK/node — the only proof mints today)
+park the true ancestor; the gate then refuses a spend under a revoked ancestor. -/
+def SPEND_ANCESTOR_PARAM_COL : Nat := prmCol 3
+
+/-- **The DELEGATION-ANCESTOR freshness tooth (felt-width #11 fold-in — the carve-out).**
+The spend's delegation-ancestor id (`param3`) is a NON-MEMBER of the BEFORE revoked tree
+(limb 37, `B_REVOKED_ROOT` — the set `revokedInsertOp` grows on RevokeDelegation turns); an
+absent read leaves the root unchanged. Before this op the revoked set was only ever
+*inserted* into (§5.RV) and never *opened* on spends, so a spend exercising a REVOKED
+delegation chain still verified. Guarded by the spend selector, so non-spend / NoOp pad rows
+contribute nothing. -/
+def spendAncestorFreshOp : MapOp :=
+  { guard   := .var EffectVmEmitNoteSpend.SEL_NOTE_SPEND
+  , root    := beforeRevokedRootGroup
+  , key     := .var SPEND_ANCESTOR_PARAM_COL
+  , value   := .const 0
+  , newRoot := beforeRevokedRootGroup
+  , op      := .absent }
+
 /-- **`noteSpendV3`** — the rotated note-spend WITH the nullifier PI weld AND the KERNEL-SET
 GROW-GATE (the deployment-real set-insert + double-spend tooth). `piCount = 39` (the 38-PI
 rotated prefix + the appended nullifier slot). Past the graduated `rotateV3WithNullifierPin`
-descriptor, it appends the two map-ops that FORCE the nullifier set-insert on the live wire:
-`nullifierFreshOp` (the `.absent` double-spend tooth — `nf ∉ pre`) and `nullifierInsertOp` (the
-`.insert` set-insert — `after_root = insert(before_root, nf)`). These repoint limb 26 from a
-turn-invariant witness limb into a FORCED, grown, fresh nullifier root. -/
+descriptor, it appends the THREE map-ops that FORCE the spend's set discipline on the live wire:
+`nullifierFreshOp` (the `.absent` double-spend tooth — `nf ∉ pre`), `nullifierInsertOp` (the
+`.insert` set-insert — `after_root = insert(before_root, nf)`), and `spendAncestorFreshOp`
+(the felt-width #11 fold-in: the spend's delegation-ancestor id is `.absent` from the limb-37
+revoked set `revokedInsertOp` grows — a spend under a revoked delegation chain is UNSAT). The
+first two repoint limb 26 from a turn-invariant witness limb into a FORCED, grown, fresh
+nullifier root; the third finally OPENS limb 37 on the spend side. -/
 def noteSpendV3 : EffectVmDescriptor2 :=
   let base := graduateV1 (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
   { base with
-    constraints := base.constraints ++ [.mapOp nullifierFreshOp, .mapOp nullifierInsertOp] }
+    constraints := base.constraints
+      ++ [.mapOp nullifierFreshOp, .mapOp nullifierInsertOp, .mapOp spendAncestorFreshOp] }
 
 /-- **`noteSpendV3_grow_gate_forces_set_insert` — the live descriptor FORCES the nullifier
 set-insert + freshness (the deployment-real tooth).** On a satisfying `noteSpendV3` witness whose
@@ -2347,6 +2379,26 @@ theorem noteSpendV3_grow_gate_forces_set_insert (hash : List ℤ → ℤ)
   have ha := hfresh hspend
   have hw := hins hspend
   exact ⟨ha.1, hw⟩
+
+/-- **`noteSpendV3_opens_delegation_ancestor` — the live descriptor OPENS the limb-37 revoked
+set on every spend (felt-width #11 fold-in).** On a satisfying `noteSpendV3` witness whose
+spend selector fires, the appended `spendAncestorFreshOp` holds: the spend's delegation-ancestor
+id (`param3`) is ABSENT from the BEFORE revoked tree (limb 37 — the set the RevokeDelegation
+grow-gate `revokedInsertOp` maintains). Under CR the opening is FUNCTIONAL
+(`opensTo_functional` / `opensTo_some_excludes_none`), so a spend whose opened ancestor IS in
+the revoked set has no bracketing witness and cannot satisfy the descriptor. (The residual — the
+opened key column's binding to the exercised capability's genuine lineage — is documented at
+`SPEND_ANCESTOR_PARAM_COL`.) -/
+theorem noteSpendV3_opens_delegation_ancestor (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash noteSpendV3 minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length)
+    (hspend : (envAt t i).loc EffectVmEmitNoteSpend.SEL_NOTE_SPEND = 1) :
+    opensTo hash ((envAt t i).loc (EFFECT_VM_WIDTH + B_REVOKED_ROOT))
+        ((envAt t i).loc SPEND_ANCESTOR_PARAM_COL) none := by
+  have hrowc := hsat.rowConstraints i hi
+  have hanc := hrowc (.mapOp spendAncestorFreshOp) (by simp [noteSpendV3])
+  exact (hanc hspend).1
 
 /-- The appended pin is the only constraint past `rotateV3`'s, and it targets the new slot. -/
 theorem rotateV3WithNullifierPin_constraints (d : EffectVmDescriptor) :
@@ -2424,10 +2476,18 @@ theorem noteSpendV3_satisfiedVm_v1 (hash : List ℤ → ℤ)
 -- The rotated commit pins are UNDISTURBED at 34..37 (the fifth pin is strictly appended);
 -- `noteSpendV3` carries the four rotated commit pins PLUS one more PI pin (the nullifier weld)
 -- PLUS the two KERNEL-SET grow-gate map-ops (`nullifierFreshOp` `.absent` + `nullifierInsertOp`
--- `.insert` — the deployment-real set-insert + double-spend tooth) = +3 constraints in total.
-#guard noteSpendV3.constraints.length == (v3Of EffectVmEmitNoteSpend.noteSpendVmDescriptor).constraints.length + 1 + 2
--- The grow-gate map-ops ARE present on `noteSpendV3` (the live wire now carries the set-insert).
-#guard (mapOpsOf noteSpendV3).length == 2
+-- `.insert` — the deployment-real set-insert + double-spend tooth) PLUS the delegation-ancestor
+-- freshness op (`spendAncestorFreshOp` `.absent` on limb 37 — the felt-width #11 fold-in)
+-- = +4 constraints in total.
+#guard noteSpendV3.constraints.length == (v3Of EffectVmEmitNoteSpend.noteSpendVmDescriptor).constraints.length + 1 + 3
+-- The grow-gate map-ops ARE present on `noteSpendV3` (the live wire now carries the set-insert
+-- AND the limb-37 delegation-ancestor open).
+#guard (mapOpsOf noteSpendV3).length == 3
+-- The delegation-ancestor tooth: `.absent` (op=2) on the limb-37 revoked group, keyed by param3.
+#guard spendAncestorFreshOp.op.code == 2
+#guard SPEND_ANCESTOR_PARAM_COL == 71     -- PARAM_BASE (54+14) + 3
+#guard revokedRootGroupCol EFFECT_VM_WIDTH 0 == EFFECT_VM_WIDTH + B_REVOKED_ROOT
+#guard B_REVOKED_ROOT == 37
 -- BOTH POLARITIES of the soundness tooth, executable on the toy environment: a row whose
 -- param0 equals PI[46] PASSES the pin; a tampered one FAILS it. (`decEnv` toy: param col 68
 -- carries `n`, PI 46 carries `p`.)
@@ -6137,6 +6197,7 @@ theorem customV3_binds_proof (hash : List ℤ → ℤ)
 #assert_axioms proofBindsOf_customV3
 #assert_axioms customV3_binds_proof
 #assert_axioms noteSpendV3_grow_gate_forces_set_insert
+#assert_axioms noteSpendV3_opens_delegation_ancestor
 
 -- NON-VACUITY of the bound block, executable (Horner toy sponge): moving the heap-root limb
 -- (offset 27) or the iroot moves the chained commitment the appendix pins.
