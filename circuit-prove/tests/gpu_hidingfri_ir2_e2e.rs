@@ -26,7 +26,7 @@ use dregg_circuit::membership_descriptor_4ary::{
 use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 use dregg_circuit::stark_zk::DreggZkStarkConfig;
 use dregg_circuit_prove::gpu_backend::{
-    create_cpu_zk_config_seeded, create_gpu_zk_config_seeded, hiding_gpu_dispatch_counters,
+    GpuDft, create_cpu_zk_config_seeded, create_gpu_zk_config_seeded, hiding_gpu_dispatch_counters,
     lde_residency_counters, prove_vm_descriptor2_gpu_zk, require_hiding_gpu_dispatch_since,
 };
 
@@ -57,6 +57,9 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         Ok("1"),
         "this gate is meaningful only in the hard DREGG_REQUIRE_WGPU=1 posture"
     );
+    let adapter = GpuDft::default()
+        .adapter_name()
+        .expect("strict HidingFRI gate requires a named portable GPU adapter");
 
     let leaf = BabyBear::new(0x00c0_ffee);
     let witness = create_poseidon2_test_witness(leaf, DEPTH);
@@ -189,7 +192,7 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     );
 
     eprintln!(
-        "GPU HidingFRI IR2 depth={DEPTH}: proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, whole-tree readback batches +{} ({} layers), DFT dispatches +{}, resident LDE blits +{}",
+        "GPU HidingFRI IR2 adapter={adapter}: depth={DEPTH}, proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, whole-tree readback batches +{} ({} layers), DFT dispatches +{}, resident LDE blits +{}",
         gpu_bytes.len(),
         gpu_elapsed.as_secs_f64(),
         cpu_elapsed.as_secs_f64(),

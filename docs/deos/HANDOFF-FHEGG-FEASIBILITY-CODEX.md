@@ -83,7 +83,7 @@ classical seams into a post-quantum composition.
 | Lean-native Descent offering/campaign | **PENDING GATE** | HEAD targets contain 3 + 3 tests; no result supplied |
 | hbox build substrate | **QUALIFIED FOR GPU LANES** | current filesystem probe: 86GiB free after pruning four inactive, reconstructible build-lane copies; current GPU lane and deployed services were preserved |
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
-| Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; 6 resident blits; GPU 1.306s vs CPU 3.072s at depth 2048 |
+| Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable encrypted TFHE CMUX | **GATED PROTOTYPE** | CPU/hostile 4/4 and strict GPU 2/2 on hbox; degree-N external product is O(N²), not programmable bootstrapping |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
@@ -646,9 +646,12 @@ The portable GPU frontier is now broader and exactly scoped:
   is, only accelerates the transitional classical Bulletproof proof.
 
 The HidingFRI GPU path now retains LDE buffers device-to-device through salted
-leaf construction. At depth 2048 it produced the exact CPU proof with six
-resident blits and measured **1.306s GPU vs 3.072s CPU**; Merkle-layer readback
-remains, so this is not full proof residency. The TFHE path also has a portable
+leaf construction and keeps every Merkle digest layer resident until the root
+is complete. At depth 2048 it produced the exact CPU proof with six resident
+blits; five Merkle commits materialized 77 opening layers in exactly five
+whole-tree readback batches, and measured **0.717s GPU vs 3.081s CPU**. The FRI
+query/fold phase still consumes the materialized host tree, so this is not full
+proof residency. The TFHE path also has a portable
 encrypted CMUX/external-product prototype with 4/4 CPU/hostile and 2/2 strict-GPU
 gates. Its current kernel is quadratic in the polynomial degree and is not a
 programmable-bootstrap implementation.
@@ -800,7 +803,8 @@ from first principles.
 - collective_gpu_additive — **1/1 green** on the real RX 6750 XT with
   GpuResident via wgpu/Vulkan.
 - portable HidingFRI GPU — **2/2 exact parity green**, with the depth-2048 path
-  measuring **1.306s GPU vs 3.072s CPU** and retaining six device blits.
+  measuring **0.717s GPU vs 3.081s CPU**, retaining six device blits, and
+  reducing five Merkle trees to five whole-tree readback batches.
 - portable TFHE encrypted CMUX — **4/4 CPU/hostile + 2/2 strict GPU green**;
   quadratic external-product prototype, not PBS.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
