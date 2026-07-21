@@ -10795,8 +10795,21 @@ GPU routes across N=256..4096, included a hostile base-log-31/two-level case,
 and passed **3/3** with exact CPU/tfhe-rs parity. At deployed N=2048 the warm
 medians were **2.401ms CPU, 4.160ms quadratic GPU, 2.721ms exact-NTT GPU**; at
 N=4096 the GPU route crossed the CPU (**4.816ms vs 10.052ms**). This is exact
-CMUX, not blind rotation/PBS or a high-level `FheUint32` backend; a
-device-resident chained-rotation cut is active.
+CMUX, not by itself a high-level `FheUint32` backend. The next rung has now
+landed too: exact native modulus switching, LUT monomial rotation, signed gadget
+decomposition, and a dependent four-selector blind-rotation chain keep two
+accumulators and the standard BSK resident for one command submission and one
+final readback. The deployed N=2048 strict hbox gate passed the combined suite
+**4/4** with an independent tfhe-rs oracle and decrypted semantic check;
+**2.865ms warm GPU vs 5.914ms CPU** (71.087ms cold). The PBS-shaped successor
+continues on-device through exact degree-zero GLWE sample extraction and a
+standard native-torus LWE key switch, then reads back only the final LWE
+ciphertext. Its strict independent-tfhe-rs combined gate is **5/5**; at N=2048,
+GLWE size 2, full 2048-coordinate extracted input, and an 8-coordinate output,
+the retained-context GPU path measured **4.673ms warm** against **5.763ms CPU**
+(standalone warm median **6.474ms** against **13.377ms CPU**). Remaining are the
+full deployed 918-mask/918-output envelope, transform-form device chaining, and
+`FheUint32`/`fhe_clear` integration.
 
 The faithful note-tree substrate is now Lean-authored and banked. Exact 32-byte
 commitments map injectively to sixteen canonical `u16`/BabyBear lanes, while
@@ -10809,9 +10822,16 @@ persistence gate **6/6**. Authenticated faithful-root history is now banked too:
 versioned records bind exact session/federation/epoch, predecessor/successor
 eight-felt roots, height, note count, and block id under hybrid Ed25519 **and**
 ML-DSA authority; strict restart/replay/fork/truncation tests are **6/6**. The
-remaining live weld is narrower but still load-bearing: atomic finalized note
-append plus attestation publication, followed by create/spend/conservation
-authority over that root.
+live finalization path now reconstructs the note leaves from every nested
+`NoteCreate`, advances the faithful tree, plans/signs the exact successor edge,
+and commits the finalized record, receipt, leaves, authenticated history edge,
+eight-felt `StoredAttestedRoot`, and cursors in one redb transaction. Node
+publication occurs only after that transaction succeeds; restart reconstructs
+the depth-16 tree and replays the authenticated history. The remaining
+load-bearing cut is historical faithful-root membership for `NoteSpend` plus an
+atomic nullifier/root transition; the classical conservation proof, solo-mode
+bypass, committee rollover, and O(all-leaves) recovery are also still outside
+this live-root result.
 
 Active next cuts at this checkpoint are deliberately named rather than implied:
 the full private-clearing apex is being recaptured with native ML-DSA quorum,
@@ -10833,7 +10853,11 @@ and 4,218,560 bytes per n=256 verification, and 671.367µs vs 694.395µs in the
 500-iteration release harness while retaining hostile error precedence. Exact
 KKT revalidation now streams `Ax` as well: at n=256 it removes seven allocations
 and 8,128 bytes per check and measured 372.985µs vs 379.674µs in the same-
-process release tooth. Even after the GPU cuts above, the same-opening
+process release tooth. The typed exact-zero capability now borrows the bundle's
+one immutable certificate as well instead of cloning dense P/A matrices:
+**0 allocations/0 bytes vs 7 allocations/2,117,632 bytes** at n=256 and
+951.383µs vs 1,249.240µs in the same-process tooth; solver **118/118** and
+fhIR **69/69** remain green. Even after the GPU cuts above, the same-opening
 Bulletproof/Ristretto proof and distributed-custody commitments
 remain classical until a Lean-authored hash/lattice proof cut replaces them.
 
@@ -10847,19 +10871,37 @@ old-authorization/new-possession evidence commitments; its 108 public inputs,
 raw-key→BLAKE3 binding, exact rotation transcripts, both ML-DSA checks, and
 pre/post cell roots are composed.
 
-Distributed proving now at least begins from a fixed-size
-`ShareBoundProverRequest` that binds session, relation, certificate, joint
-commitment, worker roster, backend protocol, and context and refuses source-
-viewer mode or appended plaintext/openings (**5/5**). It still reconstructs the
-private witness inside the monolithic proof backend; share-native constraint
-evaluation and a real distributed same-opening proof remain active work.
+Distributed proving no longer accepts a worker's signed assertion that it saw a
+share. Each worker now emits four logarithmic Ristretto `LinearProof`s that its
+four additive vectors and blindings open the exact certificate commitments,
+plus three share-native random-linear-combination proofs that owners 1..3 have
+jointly zero root-blinding lanes. The Fiat--Shamir transcript binds the complete
+`ShareBoundProverRequest`, ordered certificate/commitment vector, roster,
+worker, owner/order, exact and padded widths, and generator namespace; fresh
+CSPRNG nonces enter before challenge derivation. Canonical and generic release
+targets are **5/5 in 0.359s** and **3/3 in 0.236s**, including cross-request,
+cross-certificate, cross-worker, owner-order, scalar-corruption, source-viewer,
+and appended-plaintext refusals. This proves distributed custody and the first
+linear relation without reconstructing shares. It does not yet prove nonlinear
+BFV equations, Poseidon/root opening, ranges, or clearing; the live apex still
+uses the monolithic classical Bulletproof backend for those constraints.
 
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame
 ML-DSA transport crossed the unchanged 1200s ceiling after 5,242 signs and 5,242
-live verifies. The replacement v5 transport now compiles remotely and reduces
+live verifies. The replacement v5 transport is now banked and reduces
 the n=2 crossing to six endpoint/link ML-DSA signs and six verifies, independent
 of 1,302 gates; semantic frames use direction-bound HMAC/XChaCha and are covered
-by dual-signed terminal route-root seals. This is not yet a green apex claim:
-the opaque verified-crossing token and strict same-ceiling run are still in
-progress.
+by dual-signed terminal route-root seals. The full small crossing, public
+reconstruction, exact full-claim-bound opaque token, quorum-signing barrier,
+missing/reordered seal, substituted-frame, asymmetric-route-count, and
+coordinator-key-alias teeth are green (**1/1 + 2/2 + 1/1 claim-source**); the
+strict typed-apex structural build is green as well. The unchanged-1200s strict
+full apex is now **1/1 GREEN** with `DREGG_REQUIRE_LEAN=1`,
+`DREGG_REQUIRE_PQ_CORES=1`, unaudited fallback unset, and all six extracted
+ML-DSA/ML-KEM cores installed: **85.923s proof, 7.956s packed fold + sealed
+PartyMPC, 167.008s internal total**. The crossing is about 151× faster than the
+v4 timeout. It performed exactly six transport signs + six transport verifies;
+the two unique claim signatures were each checked in four composite contexts.
+This run did not enable the GPU environment, so the classical same-opening
+Bulletproof remains the 85.9s bottleneck.

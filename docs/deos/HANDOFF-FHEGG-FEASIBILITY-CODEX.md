@@ -36,14 +36,14 @@ Bazaar/game consequences. The same-opening proof, composite verifier, hosted
 registry, live crossing, custody envelope, fhIR raid allocation, and the
 full-profile apex gate are green. The Warden's Keep crown consequence is also
 green at its exact heavy-release gate.
-The decisive hbox run passed 1/1 under the full nextest profile with both
-DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1 and no authority-core
-fallback.
+The decisive current hbox run passed 1/1 under the full nextest profile with
+both DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1 and no authority-core
+fallback: 85.923s proof, 7.956s sealed PartyMPC crossing, and 167.008s internal
+total.
 The newer composed-game evidence has also advanced: the complete offerings
 target is 117/117, the private-raid surface is 8/8 in one current invocation,
 the narrated private-raid relic capstone is 1/1, the incarnation-bound common
-game spine is 21/21,
-Telegram's combined game journey is 77 tests, and the viewer-safe web rail is
+game spine is 21/21, Telegram's combined game journey is 77 tests, and the viewer-safe web rail is
 green at its exact focused gates. The lower private-raid forest is now 2/2 at
 its focused engine gate; the Discord Chutes weld remains pending at this ledger
 checkpoint.
@@ -53,15 +53,16 @@ receives the complete private witness and BFV openings in one process; source
 verification sees plaintext orders and encryption randomness; PartyMPC arithmetic
 now refuses uncertified or malformed Beaver rows but still trusts the certifying
 preprocessing authority; and the distributed-custody
-surface now binds the exact share-mode request but still reconstructs the
-private witness/openings inside the monolithic Bulletproof/R1CS backend.
+surface now proves committed-share custody and the first three share-native
+linear zero constraints without reconstructing the witness. The nonlinear BFV,
+Poseidon/root, range, and clearing constraints still run inside the monolithic
+Bulletproof/R1CS backend.
 
 This is also **not an end-to-end post-quantum apex**. Native clearing quorum and
 PartyMPC transport now have separately green ML-DSA and ML-KEM-backed profiles,
-and BFV is lattice-based. The first composed recapture produced the proof, then
-the old per-frame ML-DSA transport crossed the unchanged 1200-second gate; a
-sealed route-root transport replacement is built but not yet apex-green. More
-importantly, the exact ciphertext/root relation is a
+and BFV is lattice-based. The sealed route-root replacement is now full-apex
+green with six transport signs and six verifies rather than thousands of per-
+frame operations. More importantly, the exact ciphertext/root relation is a
 Bulletproof over Ristretto/Pedersen with a discrete-log + Fiat–Shamir security
 floor, and distributed custody still uses Ristretto/Pedersen. HidingFRI,
 Poseidon, BFV, and the wide Lean/Rust bindings have their own stated
@@ -77,13 +78,13 @@ classical seams into a post-quantum composition.
 | Exact source rows and ingress weld | **GATED in Lean and the full-profile apex** | DarkBazaarPrivateIngressCutover: 11 clean; apex 1/1 green |
 | Public-only hosted verifier registry | **GATED** | two hostile registry tests: 2/2 green |
 | Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
-| Sealed native-PQ PartyMPC crossing | **BUILT, APEX GATE IN PROGRESS** | remote release lib check green; n=2 design reduces transport authentication from 5,242 signs + 5,242 live verifies to six signs + six verifies, with HMAC/XChaCha frames and dual-signed terminal route-root seals |
+| Sealed native-PQ PartyMPC crossing | **GATED IN STRICT FULL APEX** | protocol teeth above plus strict full apex 1/1; 7.956s crossing vs v4 1,202.240s timeout, exactly six transport signs + six verifies independent of 1,302 gates |
 | Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | authority-certified exact Beaver rows 3/3 hostile; legacy falsifier/audit compatibility 2/2 |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
-| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | exact timed hbox full-profile run 1/1 green in 124.159s; verified authority cores required; capture predates native quorum/transport cutovers and still uses the classical Bulletproof relation |
+| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | current strict v5 hbox run 1/1 in 167.054s nextest / 167.008s internal; proof 85.923s, sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
-| Distributed prover envelope | **GATED, MONOLITHIC PROOF BACKEND** | share-bound request/envelope hostile target 5/5; source-viewer payloads and appended plaintext/openings refuse; no share-native Bulletproof/R1CS backend |
+| Distributed proof custody | **GATED FOR COMMITTED SHARES + FIRST LINEAR LAYER** | four logarithmic share-opening PoKs and three share-native root-blinding-zero proofs per worker; canonical 5/5 in 0.359s, generic 3/3 in 0.236s; nonlinear relation remains monolithic |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
@@ -97,11 +98,11 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
-| Portable encrypted TFHE CMUX | **GATED EXACT NTT PROTOTYPE** | four-prime exact RNS-NTT plus coefficient route strict GPU 3/3; N4096 4.816ms GPU vs 10.052ms CPU; CMUX only, not blind rotation/PBS |
+| Portable encrypted TFHE PBS prefix | **GATED THROUGH EXTRACT + KEY SWITCH** | blind rotation, exact degree-zero sample extraction, and native-torus LWE key switch in one submission/readback; strict combined 5/5; retained-context warm 4.673ms GPU vs 5.763ms CPU; not full 918-mask/918-output or high-level integer integration |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree and history | **GATED SUBSTRATE, NOT LIVE AUTHORITY** | tree gates above plus hybrid-authenticated exact predecessor/successor root history 6/6; finalized append/attestation/create-spend weld remains active |
-| Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 117/117; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem comparison and KKT Ax revalidation stream with zero temporary allocations |
+| Faithful wide note tree and history | **LIVE FINALIZED/ATTESTED CREATE AUTHORITY** | finalized record, receipt, nested NoteCreate leaves, authenticated root edge, exact eight-felt attestation, and cursors commit atomically; restart reconstructs/replays; NoteSpend membership + nullifier/root atomicity remain active |
+| Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
 
@@ -326,19 +327,24 @@ simulate_public_transcript. It:
 This is the correct code-level crossing. The decisive hbox invocation used
 **--profile full**, **DREGG_REQUIRE_LEAN=1**, and
 **DREGG_REQUIRE_PQ_CORES=1**. The first verified run passed **1/1 in 114.033s**.
-The exact-attribution rerun passed **1/1 in 124.159s nextest elapsed**
+The pre-v5 exact-attribution rerun passed **1/1 in 124.159s nextest elapsed**
 (**124.116s** on the test's internal timer) with the current-source Lean splice
 and required verified ML-KEM/ML-DSA authority cores; no unaudited authority-core
 fallback was enabled. The BFV same-opening proof, HidingFRI proof, live PartyMPC
 crossing, hosted verifier reconstruction/restart, verified ML-DSA
 turn-authority core, atomic consequence, and replay refusal all ran.
 
+The current sealed-v5 recapture passed **1/1 in 167.054s nextest elapsed**
+(**167.008s** internal) under the same strict Lean/PQ-core requirements and
+unchanged 1200-second ceiling. Proof construction took **85.923s** and the
+packed fold plus complete sealed PartyMPC crossing **7.956s**, versus the v4
+per-frame-signature crossing's 1202.240-second timeout. The n=2 transport used
+exactly six ML-DSA signs and six verifies independent of 1,302 gates; the two
+quorum signatures were each checked in four composite verifier contexts.
+
 That is a verification statement about the required authority cores, not an
-end-to-end post-quantum claim. The captured full-apex run predates the later
-native quorum and PartyMPC transport cutovers and therefore exercised the then
-current Ed25519/Curve25519 boundary. Their replacement profiles are separately
-green but have not yet been recaptured inside this heavy apex. In every case the
-apex still depends on the classical Bulletproof/Ristretto/Pedersen
+end-to-end post-quantum claim. The apex still depends on the classical
+Bulletproof/Ristretto/Pedersen
 exact-relation seam and the separately stated HidingFRI/Poseidon soundness
 floors. BFV's lattice security does not remove those assumptions.
 
@@ -403,9 +409,20 @@ events; it is not the R1CS proof and does not establish the same-opening
 constraints.
 
 **fhegg-fhe/src/private_book_distributed_prover.rs** adds worker-process and
-coordinator APIs, but the current test backend returns public digests only.
-LocalOnlyBackend and FixtureVerifier test the custody/envelope boundary; they do
-not generate or verify the production Bulletproof.
+coordinator APIs. The coordinator API never accepts scalar shares or openings.
+The generic fixture backend still returns public digests only, but it is no
+longer the strongest backend.
+
+**fhegg-fhe/src/private_book_canonical_backend.rs** uses the owned Bulletproof
+fork's logarithmic `LinearProof` to prove four exact committed-share openings
+per worker. At degree 4096 each owner proof is 992 bytes rather than 12,299
+scalar responses. The same artifacts prove the first share-native constraint
+layer: for each owner 1..3, request-derived random coefficients compress the
+eight root-blinding coordinates and the verifier checks that the workers'
+committed linear images reconstruct to zero. The challenge is derived only
+after the complete request, certificate, ordered commitment vector, roster,
+worker/owner order, widths, and generator namespace are bound; prover nonces are
+fresh CSPRNG output committed before that challenge.
 
 ### Exact test inventory
 
@@ -438,11 +455,19 @@ four-test custody target without pretending they were one nine-test invocation.
 Captured result: **2/2 green**. This gates the process/custody envelope and its
 fixture backend, not a real distributed Bulletproof/R1CS prover.
 
+**fhegg-fhe/tests/private_book_canonical_backend.rs** exercises exact local
+openings, rejection of arbitrary digests and cross-certificate reuse,
+roster-signed corrupt-share proofs, and cross-worker/request/owner-order replay.
+The canonical target passed **5/5 release in 0.359s**; the generic distributed
+target passed **3/3 release in 0.236s** after the request-wire tooth was added.
+
 ### Exact residual before any no-single-viewer claim
 
-A production distributed R1CS/Bulletproof backend must consume shares without
-reconstructing the witness. It must then be used by the actual apex instead of
-prove_private_book_bfv_zk, whose API receives the complete witness and openings.
+A production distributed nonlinear backend must extend these same committed
+shares from custody and the first linear constraints through the exact BFV,
+Poseidon/root, range, and clearing relations. It must then be used by the actual
+apex instead of prove_private_book_bfv_zk, whose API receives the complete
+witness and openings.
 The system also still needs malicious share-formation and MPC-gate proofs,
 production authenticated private-packet wire transport, DKG/key-domain
 validation, and rollback/replay treatment. A colluding decryption threshold can
@@ -469,12 +494,11 @@ The implementation is in
 
 - private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequence
 
-Captured result: **1/1 full-stack integration green in 124.159s nextest
-elapsed** under the full profile with the verified ML-KEM/ML-DSA authority
-cores required and no fallback. This is not an end-to-end post-quantum result:
-the game path still crosses the classical exact-relation, authentication, and
-peer-DH seams in section 6. The handler-export caveat also remains load-bearing
-without negating the exact authority cores this target required and executed.
+Captured current result: **1/1 full-stack sealed-v5 integration green in
+167.054s nextest / 167.008s internal** under the full profile with verified
+ML-KEM/ML-DSA authority cores required and no fallback. This is not an end-to-
+end post-quantum result: the exact same-opening proof remains classical, and
+the game consequence is one-host atomic rather than distributed atomic commit.
 
 ### Warden's Keep crown
 
@@ -721,9 +745,21 @@ and an exact four-prime (~120-bit) RNS NTT. Portable WGSL performs exact
 16-bit-split Montgomery arithmetic; the forced coefficient/NTT matrix through
 N=4096 and a hostile base-log-31/two-level case passed **3/3**. At N=2048 the
 warm medians were **2.401ms CPU / 4.160ms quadratic GPU / 2.721ms NTT GPU**; at
-N=4096 exact NTT was **4.816ms GPU vs 10.052ms CPU**. This is still CMUX, not a
-device-resident blind rotation, programmable bootstrap, sample extraction, key
-switch, or high-level integer backend.
+N=4096 exact NTT was **4.816ms GPU vs 10.052ms CPU**. The next exact rung keeps
+two accumulators and a coefficient-domain standard BSK resident across one
+dependent blind-rotation chain: native modulus switch, LUT/monomial rotation,
+signed gadget decomposition, and four noisy GGSW selector steps use one command
+submission and one final readback. The combined N=2048 strict hbox suite passed
+**4/4** against an independent tfhe-rs oracle and decrypted semantic check;
+warm GPU was **2.865ms vs 5.914ms CPU** (71.087ms cold). The next PBS-shaped
+path continues in the same submission through exact degree-zero GLWE sample
+extraction and a standard native-torus LWE key switch, with one final
+post-key-switch LWE readback. The strict independent-tfhe-rs combined target
+passed **5/5**. At N=2048, GLWE size 2, full 2048-coordinate extracted input,
+and an 8-coordinate output, retained-context first execution was 57.652ms and
+the warm GPU path was **4.673ms vs 5.763ms CPU**; the standalone warm median was
+**6.474ms vs 13.377ms CPU**. The full deployed 918-mask/918-output envelope,
+transform-form device chaining, and high-level integer integration remain.
 
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
@@ -764,12 +800,20 @@ also binds exact session/federation/epoch, predecessor/successor faithful roots,
 height, note count, and block id; hybrid Ed25519-and-ML-DSA verification plus
 restart/replay/fork/truncation teeth are **6/6**.
 
-This is still a transitional weld, not the final PQ no-mint theorem. The live
-attestation/finalized-append/create-spend authority still accepts the older root,
-and the authoritative conservation proof remains
-Ristretto/Pedersen/Bulletproof-based. The next exact cut is to make authenticated
-root history and one combined Lean AIR for membership and conservation consume
-the faithful root, followed by replacement of the classical acceptance leg.
+The live finalization path now reconstructs all nested `NoteCreate` leaves,
+advances the faithful tree, plans and hybrid-signs the exact successor edge, and
+commits the finalized record/indexes, receipt, leaves, authenticated history
+edge, exact eight-felt `StoredAttestedRoot`, and cursors in one redb
+transaction. The node signs/publishes only after that transaction succeeds;
+restart rebuilds the depth-16 tree and replays the authenticated history.
+Forks, truncations, mismatched roots, unauthenticated records, and legacy scalar
+aliases fail closed.
+
+This is still not the final PQ no-mint theorem. `NoteSpend` does not yet carry a
+versioned historical membership opening against this root, and nullifier
+consumption is not yet in the same root-attestation transaction. The
+authoritative conservation proof remains Ristretto/Pedersen/Bulletproof-based;
+solo-mode bypass, committee rollover, and O(all-leaves) recovery also remain.
 
 ### Cell-owned PQ identity and rotation
 
@@ -889,23 +933,31 @@ from first principles.
 - then-current private_book_relation + private_book_distributed_inputs —
   **8/8 green before later hardening**.
 - custody-hardened private_book_distributed_inputs — **4/4 green**.
-- private_book_distributed_prover — original 2/2 plus the share-bound request/
-  envelope hostile target **5/5 green**; proof generation remains monolithic.
+- private_book_distributed_prover — generic request/envelope **3/3 release
+  green**; canonical committed-share backend **5/5 release green** with four
+  opening PoKs and three share-native linear constraints per worker. The
+  nonlinear relation and live apex proof generation remain monolithic.
 - fhegg_private_verifier_registry — **2/2 green**.
 - party_mpc_crossing_transport — **2/2 release green**, **1.099s**.
 - native PartyMPC PQ transport — **5/5 integration + 5/5 units green**;
   explicit unaudited test backend, so transcript/control-flow evidence only.
+- sealed native-PQ PartyMPC crossing — small full crossing/token/barrier hostile
+  **1/1**, route asymmetry + coordinator-key-alias **2/2**, strict claim-source
+  **1/1**, typed-apex structural build green, and strict full apex **1/1**.
 - native clearing quorum — **1/1 hostile native + 6/6 classical compatibility
   green**; the native authority transcript covers the complete canonical claim.
-- private_clearing_apex_e2e — **1/1 full-stack integration green**, exact timed
-  run **124.159s nextest / 124.116s internal**, under --profile full with
-  DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1; no authority-core
-  fallback. This verifies the required ML-KEM/ML-DSA cores, not end-to-end PQ.
+- private_clearing_apex_e2e — **1/1 strict v5 full-stack integration green**,
+  **167.054s nextest / 167.008s internal**, including 85.923s classical proof
+  and 7.956s sealed crossing; DREGG_REQUIRE_LEAN=1 and
+  DREGG_REQUIRE_PQ_CORES=1, unaudited fallback unset. This requires the real
+  ML-KEM/ML-DSA cores, not end-to-end PQ.
 - fhir_verified_raid_allocation — **6/6 release green**.
-- hostile external fhIR optimizer protocol — **69/69 fhir + 117/117
+- hostile external fhIR optimizer protocol — **69/69 fhir + 118/118
   fhegg-solver green**; streamed problem binding is zero-allocation at the
   comparison boundary; exact KKT `Ax` revalidation is also zero-allocation and
-  preserves hostile lift-error/overflow precedence.
+  preserves hostile lift-error/overflow precedence. The typed exact-zero view
+  borrows the bundle-owned certificate, eliminating the 2,117,632-byte dense
+  clone measured at n=256.
 - private_clearing_crown_consequence — **1/1 heavy-release green**.
 - dungeon_narrated_operation — **3/3 green**.
 - relic_oath_branch — repaired target **2/2 green**.
@@ -924,14 +976,18 @@ from first principles.
 - portable Ristretto verifier MSM — exact radix-16 Pippenger required-mode
   matrix **1/1 green** with dalek authority through 4096 terms; 4096-term GPU
   is 7.508s versus 9.918ms CPU and therefore disabled by default.
-- portable TFHE encrypted CMUX — exact coefficient/RNS-NTT strict GPU matrix
-  **3/3 green**, plus CRT/range 2/2 and release lib check; N=4096 exact NTT
-  crossed CPU, but this is not blind rotation/PBS.
+- portable TFHE encrypted PBS prefix — exact coefficient/RNS-NTT and
+  four-selector device-resident blind rotation combined strict GPU **4/4**,
+  then exact extraction/key-switch combined strict GPU **5/5**; warm retained
+  PBS-shaped path 4.673ms GPU vs 5.763ms CPU, not yet the full deployed
+  918-mask/918-output or high-level integer envelope.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
   **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
-  history **6/6**; not yet live finalized/attested root authority.
+  history **6/6**; live finalized `NoteCreate` leaves, history edge, exact
+  eight-felt attestation, receipt, and cursors now commit atomically. Historical
+  `NoteSpend` membership and nullifier/root atomicity remain.
 - cell-owned PQ identity — create/rotate/rollback **1/1**, restart **1/1**,
   enrollment/substitution **3/3**, SignedTurn hostile **4/4**, cell wire/
   commitment **3/3**, EffectVM fail-closed refusal **3/3**; Lean-authored
@@ -969,21 +1025,19 @@ from first principles.
 
 These are the next truth-producing gates:
 
-1. Finish hostile qualification of the sealed native-PQ crossing and recapture
-   the full private-clearing apex under the same 1200-second ceiling. The first
-   old-transport attempt completed proof creation in 55.777s but timed out after
-   5,242 per-frame ML-DSA signs and 5,242 live verifies; it is not a green.
-2. Capture the still-pending Discord Chutes→Dungeon target in section 9; do
+1. Capture the still-pending Discord Chutes→Dungeon target in section 9; do
    not inherit a green from its Dungeon/narrator organs.
-3. Replace the fixture-only distributed prover backend with a real distributed
-   same-opening prover and make the apex consume it before revisiting any
-   no-single-viewer language.
-4. Replace trusted-authority Beaver certification with malicious preprocessing
+2. Extend the committed-share backend beyond its opening PoKs and first linear
+   constraints through BFV, Poseidon/root, ranges, and clearing, then make the
+   apex consume it before revisiting any no-single-viewer language.
+3. Replace trusted-authority Beaver certification with malicious preprocessing
    and add private-input share-formation evidence; signed, encrypted routing
    alone cannot satisfy LiveMpcBackend.sound.
-5. Cut authenticated root history and live create/spend/conservation over the
-   faithful wide note root, then author the PQ-identity EffectVM/AIR authority
-   row before removing either proof-path refusal.
+4. Add historical faithful-root membership to `NoteSpend` and atomically commit
+   nullifier consumption with the successor root/attestation; then move
+   conservation authority to that carrier. Separately compose the landed PQ-
+   identity AIR row with both outer ML-DSA predicates before removing either
+   proof-path refusal.
 
 Heavy Rust proof gates belong in the release-only nextest heavy profile and on
 the build node. Lean stays local with the warm metatheory/.lake cache.
