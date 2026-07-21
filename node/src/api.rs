@@ -32,7 +32,8 @@ use std::convert::Infallible;
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 
-use dregg_sdk::{Attenuation, AuthRequest, BudgetSpec, CellId, SignedTurn};
+use dregg_sdk::{Attenuation, AuthRequest, CellId, SignedTurn};
+use dregg_token::BudgetSpec;
 use dregg_turn::{CallForest, Turn};
 
 use crate::state::{ActivityProofStatus, ActivityStatus, CommittedEvent, NodeEvent, NodeState};
@@ -656,7 +657,7 @@ pub struct CellDetailResponse {
     /// stamps this into the NEXT turn's `previous_receipt_hash` so the executor's
     /// per-agent chain check (`TurnExecutor::check_previous_receipt_hash`)
     /// accepts it under a PERSISTENT executor. Served from the node's persistent
-    /// receipt chain (`s.cclerk.receipt_chain()`), NOT projected from `s.ledger`
+    /// receipt log's per-agent index, NOT projected from `s.ledger`
     /// (a cell carries no receipt head) — that was the persistence time bomb:
     /// the head lives in the executor's `last_receipt_hash` map, and this exposes
     /// the authoritative persistent equivalent so the six `None`-hardcoding
@@ -3477,61 +3478,12 @@ async fn post_submit_signed_turn(
     crate::metrics::inc_turns_submitted();
     let start = Instant::now();
 
-    let signed: SignedTurn = match postcard::from_bytes(&body) {
+    let signed: SignedTurn = match crate::signed_turn_validation::decode_signed_turn(&body) {
         Ok(turn) => turn,
         Err(_) => return Err(StatusCode::BAD_REQUEST),
     };
 
     let turn_hash_bytes = signed.turn.hash();
-    if !signed.signer.verify(&turn_hash_bytes, &signed.signature) {
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(hex_encode(&turn_hash_bytes)),
-            signer: Some(hex_encode(&signed.signer.0)),
-            action_count: signed.turn.call_forest.action_count(),
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some("invalid turn signature".to_string()),
-        }));
-    }
-
-    // HYBRID perimeter (`dregg_turn::pq`): when the outer envelope carries a
-    // post-quantum half, verify it over the SAME turn hash the ed25519 half
-    // covers — fail-CLOSED. A present-but-invalid PQ half REJECTS the turn
-    // regardless of `require_pq` (never fail-open on a bad PQ half). Whether the
-    // PQ half is *required* is gated below off the submit executor's
-    // `require_pq` flag (staged, default off).
-    if !signed.pq_signature.is_empty()
-        && !dregg_turn::pq::ml_dsa_verify(&signed.pq_signer, &turn_hash_bytes, &signed.pq_signature)
-    {
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(hex_encode(&turn_hash_bytes)),
-            signer: Some(hex_encode(&signed.signer.0)),
-            action_count: signed.turn.call_forest.action_count(),
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some("invalid post-quantum turn signature".to_string()),
-        }));
-    }
-
-    let default_token_id = *blake3::hash(b"default").as_bytes();
-    let expected_agent = dregg_cell::CellId::derive_raw(&signed.signer.0, &default_token_id);
-    if signed.turn.agent != expected_agent {
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(hex_encode(&turn_hash_bytes)),
-            signer: Some(hex_encode(&signed.signer.0)),
-            action_count: signed.turn.call_forest.action_count(),
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some("turn agent does not match signer default cell".to_string()),
-        }));
-    }
-
     let turn_hash = hex_encode(&turn_hash_bytes);
     let signer = hex_encode(&signed.signer.0);
     let agent = hex_encode(&signed.turn.agent.0);
@@ -3543,25 +3495,36 @@ async fn post_submit_signed_turn(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
-    // Is the acting cell the node OPERATOR's own default cell? Only then does the
-    // node operator's cipherclerk chain (`s.cclerk`) authoritatively own the turn's
-    // receipt chain. A FOREIGN client's turn is decoupled: its receipt chain is its
-    // OWN, and its authoritative application is the finalized pass on every node
-    // (`execute_finalized_turn`, which provisions the actor + destinations
-    // deterministically). This is the external-client path (SUBMIT-PATH-DIAGNOSIS).
-    let is_operator_agent = signed.turn.agent == crate::executor_setup::local_agent_cell(&s);
+    // ONE outer SignedTurn predicate for every transport.  Run it under the
+    // same state guard that protects the impending ledger mutation, so an
+    // identity rotation cannot race validation.  The executor registry is
+    // populated only from independently anchored host state; never enroll from
+    // `signed.pq_signer` here.
+    let executor = crate::executor_setup::new_submit_executor(&s);
+    if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
+        &signed,
+        &executor,
+        s.ledger.get(&signed.turn.agent),
+    ) {
+        return Ok(Json(SubmitSignedTurnResponse {
+            accepted: false,
+            turn_hash: Some(turn_hash),
+            signer: Some(signer),
+            action_count,
+            proof_status: ActivityProofStatus::NotCommitted,
+            has_witness: false,
+            witness_count: 0,
+            error: Some(error.to_string()),
+        }));
+    }
 
-    // NODE-CHAIN prev gate — applies ONLY to the operator's own agent. Gating a
-    // foreign client's `previous_receipt_hash` against `s.cclerk` (the NODE head)
-    // serialized every client through one node-owned chain and rejected fresh
-    // clients whose chain is their own. For a client turn the finalized pass is
-    // authoritative, so we do not gate it on the node head here.
-    let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
-    if is_operator_agent
-        && let Some(claimed_prev) = signed.turn.previous_receipt_hash
-        && Some(claimed_prev) != expected_prev
-    {
+    let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
+    // Every agent has an independent immutable receipt chain in the node's
+    // global receipt log. Compare the complete Option, so `None` means genesis
+    // only; omitting the link after an accepted turn cannot reset a foreign
+    // agent to genesis.
+    let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
+    if signed.turn.previous_receipt_hash != expected_prev {
         return Ok(Json(SubmitSignedTurnResponse {
             accepted: false,
             turn_hash: Some(turn_hash),
@@ -3582,37 +3545,9 @@ async fn post_submit_signed_turn(
     // a remote agent's turn is covered by the verified Lean producer exactly
     // like a local one (its SDK stamps `valid_until`, so it does not fall off
     // the wire marshal).
-    let executor = crate::executor_setup::new_submit_executor(&s);
-    // HYBRID perimeter (DEPLOYED POSTURE — require_pq ON): the node requires the
-    // post-quantum half, so an outer envelope carrying no PQ signature is
-    // rejected here (presence enforcement; a present PQ half was already
-    // fail-closed-verified above). `require_pq()` is set true for every executor
-    // built through `executor_setup::configure_turn_executor` — the staged
-    // rollout is closed for the node's admission surface (both SDKs emit hybrid).
-    if executor.require_pq() && signed.pq_signature.is_empty() {
-        return Ok(Json(SubmitSignedTurnResponse {
-            accepted: false,
-            turn_hash: Some(turn_hash),
-            signer: Some(signer),
-            action_count,
-            proof_status: ActivityProofStatus::NotCommitted,
-            has_witness: false,
-            witness_count: 0,
-            error: Some("post-quantum turn signature required but absent".to_string()),
-        }));
-    }
-    // ChainHead seed: the operator's own agent binds to the NODE head; a FOREIGN
-    // client binds to ITS OWN claimed `previous_receipt_hash` (None for a first
-    // turn). `execute_finalized_turn` only seeds the LOCAL agent's head, so a
-    // foreign client's turn is finalized against its own claimed prev on every node
-    // — seeding the node head here would make the ingress receipt diverge from the
-    // uniform finalized outcome.
-    let seed_prev = if is_operator_agent {
-        expected_prev
-    } else {
-        signed.turn.previous_receipt_hash
-    };
-    seed_executor_receipt_head(&executor, signed.turn.agent, seed_prev);
+    // Seed only from independently stored node state, never from the turn's own
+    // claim. The executor rechecks exact equality before its prologue.
+    seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
     let lean_producer_enabled = s.lean_producer_enabled;
     // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
     // client turn — `execute_finalized_turn` runs identically on every node and
@@ -3675,14 +3610,13 @@ async fn post_submit_signed_turn(
             // committed this turn (the soundness boundary); no inline proving / no
             // inline re-check. The composed proof (rotated effect-vm leg) is built +
             // self-verified asynchronously off the lock by the prove pool below.
-            // Receipt-chain append: ONLY the operator's own agent (or solo, which is
-            // authoritative at submission) advances the node cipherclerk chain. A
-            // FOREIGN client's turn is decoupled — its authoritative receipt is the
-            // finalized pass on every node, mirroring the faucet's full-mode
-            // scratch-clone posture. Skipping the append avoids serializing clients
-            // through the node chain (and the node-head prev mismatch that would
-            // otherwise reject a client whose own chain differs from the node head).
-            if is_operator_agent || is_solo {
+            // In multi-party mode ingress is receipt-only and its ledger changes
+            // were rolled back: finalization is the sole authoritative append for
+            // every agent, including the operator. Solo ingress is authoritative
+            // and appends immediately. Appending an operator receipt here in full
+            // mode would leave an unapplied receipt at its causal head and make the
+            // later finalized execution look like a stale-link replay.
+            if is_solo {
                 if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
                     // SOLO: undo the in-place commit. MULTI-PARTY: already rolled
                     // back above (no-op). Either way the ledger ends pre-turn.
@@ -3900,8 +3834,8 @@ async fn post_aggregate_bundle(
 
     let signed_turn_bytes =
         hex_decode_var(&req.signed_turn).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let signed: SignedTurn =
-        postcard::from_bytes(&signed_turn_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let signed: SignedTurn = crate::signed_turn_validation::decode_signed_turn(&signed_turn_bytes)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     let turn = signed.turn;
 
     if req.entries.len() < 2 {
@@ -4321,25 +4255,20 @@ async fn get_cell_detail(
 }
 
 /// The agent's PERSISTENT receipt-chain head — the `receipt_hash()` of the last
-/// receipt in the node's cipherclerk chain whose `agent` is `cell_id`, or `None`.
+/// receipt in the node's indexed cipherclerk log for `cell_id`, or `None`.
 ///
 /// This is the authoritative, cross-request-durable equivalent of the executor's
 /// per-agent `last_receipt_hash` map (`TurnExecutor::get_last_receipt_hash`): the
-/// executor is rebuilt fresh per request, but `s.cclerk.receipt_chain()` persists,
-/// so scanning it for the agent's last receipt yields exactly the head a PERSISTENT
-/// executor would hold and check the next turn's `previous_receipt_hash` against.
+/// executor is rebuilt fresh per request, but the cipherclerk's immutable global
+/// log persists its per-agent head index, yielding exactly the head a persistent
+/// executor would check the next turn's `previous_receipt_hash` against.
 /// Deliberately reads the chain, NOT `s.ledger` — a cell carries no receipt head,
 /// which is why `/api/cell/{id}` could not serve it before (the persistence bomb).
 pub(crate) fn persistent_receipt_head(
     s: &crate::state::NodeStateInner,
     cell_id: &dregg_cell::CellId,
 ) -> Option<[u8; 32]> {
-    s.cclerk
-        .receipt_chain()
-        .iter()
-        .rev()
-        .find(|r| r.agent == *cell_id)
-        .map(|r| r.receipt_hash())
+    s.cclerk.agent_receipt_head_hash(cell_id)
 }
 
 /// Build the `CellDetailResponse` projection for a cell (or the not-found stub).

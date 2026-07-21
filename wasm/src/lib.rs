@@ -2203,9 +2203,9 @@ pub fn sign_turn_v3(
 // ============================================================================
 
 /// Assemble the canonical `SignedTurn` submission envelope — the exact bytes the
-/// node's `POST /api/turns/submit-signed` decodes with
-/// `postcard::from_bytes::<dregg_sdk::SignedTurn>` — from an encoded `Turn` and a
-/// 32-byte Ed25519 seed.
+/// node's `POST /api/turns/submit-signed` consumes with its strict postcard
+/// decoder (exactly one `dregg_sdk::SignedTurn`, with no trailing bytes) — from an
+/// encoded `Turn` and a 32-byte Ed25519 seed.
 ///
 /// This routes envelope assembly through the SDK's canonical
 /// [`AgentCipherclerk::sign_turn`] instead of the extension hand-rolling the

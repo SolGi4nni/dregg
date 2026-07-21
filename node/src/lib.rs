@@ -74,6 +74,7 @@ pub mod self_cell;
 pub mod shared_world;
 #[cfg(all(test, feature = "deos-host"))]
 mod shared_world_e2e;
+pub mod signed_turn_validation;
 pub mod slash_treasury_mirror;
 pub mod starbridge_seed;
 pub mod state;

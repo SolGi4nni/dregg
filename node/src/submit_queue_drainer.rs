@@ -291,40 +291,24 @@ async fn fetch_pending(client: &Client) -> Result<Vec<PendingSubmission>, String
 /// outcome to write back. This mirrors the admission gates of
 /// `api::post_submit_signed_turn` (the remote-ingress HTTP handler) exactly, so a
 /// pg-submitted turn is held to the identical bar as one arriving over HTTP:
-/// signature over the turn hash, agent == signer's default cell, receipt-chain
-/// continuity, then [`crate::executor_setup::execute_via_producer`] — the ONE
-/// executor gate (#171) routing through the verified Lean producer.
+/// complete shared outer authorization (Ed25519, signer→agent binding, and the
+/// enrolled/required ML-DSA half), receipt-chain continuity, then
+/// [`crate::executor_setup::execute_via_producer`] — the ONE executor gate
+/// (#171) routing through the verified Lean producer.
 async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutcome {
     // Decode the postcard SignedTurn bytes the pg-user enqueued.
-    let signed: SignedTurn = match postcard::from_bytes(signed_turn) {
+    let signed: SignedTurn = match crate::signed_turn_validation::decode_signed_turn(signed_turn) {
         Ok(s) => s,
         Err(e) => {
             return DrainOutcome::Refused {
-                error: format!("malformed SignedTurn bytes: {e}"),
+                error: e.to_string(),
             };
         }
     };
 
-    // Gate 1 — the signature must verify over the turn hash.
-    let turn_hash_bytes = signed.turn.hash();
-    if !signed.signer.verify(&turn_hash_bytes, &signed.signature) {
-        return DrainOutcome::Refused {
-            error: "invalid turn signature".to_string(),
-        };
-    }
-
-    // Gate 2 — the turn's agent must be the signer's default agent cell (the
-    // same derivation api.rs enforces: derive_raw(signer, blake3("default"))).
-    let default_token_id = *blake3::hash(b"default").as_bytes();
-    let expected_agent = dregg_cell::CellId::derive_raw(&signed.signer.0, &default_token_id);
-    if signed.turn.agent != expected_agent {
-        return DrainOutcome::Refused {
-            error: "turn agent does not match signer default cell".to_string(),
-        };
-    }
-
-    // Take the write lock and execute under it (same lock the HTTP submit path
-    // holds while executing — the ledger is the single authoritative writer).
+    // Take the write lock before validation and hold it through execution.  The
+    // enrolled identity and live cell epoch used by validation therefore cannot
+    // rotate between check and mutation.
     let mut s = state.write().await;
     if !s.unlocked {
         return DrainOutcome::Refused {
@@ -332,24 +316,36 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
         };
     }
 
-    // Gate 3 — receipt-chain continuity for the node's own agent chain (matches
-    // api.rs: if the turn claims a previous_receipt_hash it must equal the head).
-    let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
-    if let Some(claimed_prev) = signed.turn.previous_receipt_hash {
-        if Some(claimed_prev) != expected_prev {
-            return DrainOutcome::Refused {
-                error: "receipt chain mismatch".to_string(),
-            };
-        }
+    // The same complete application-payload predicate as HTTP admission and
+    // consensus finalization.  In required/native mode a self-carried key is
+    // never an authority: it must equal the independently enrolled key.
+    let executor = crate::executor_setup::new_submit_executor(&s);
+    if let Err(error) = crate::signed_turn_validation::validate_signed_turn(
+        &signed,
+        &executor,
+        s.ledger.get(&signed.turn.agent),
+    ) {
+        return DrainOutcome::Refused {
+            error: error.to_string(),
+        };
+    }
+
+    // Agent-scoped receipt continuity. Compare exact Options: `None` is valid
+    // only for this agent's genesis turn, never as an omitted-link reset.
+    let expected_prev = s.cclerk.agent_receipt_head_hash(&signed.turn.agent);
+    if signed.turn.previous_receipt_hash != expected_prev {
+        return DrainOutcome::Refused {
+            error: "receipt chain mismatch".to_string(),
+        };
     }
 
     // THE ONE executor gate (#171): execute through the producer-aware path —
     // the verified Lean producer is authoritative for the covered set, exactly
     // as for a locally- or HTTP-submitted turn. No new execution path.
-    let executor = crate::executor_setup::new_submit_executor(&s);
-    if let Some(head) = expected_prev {
-        executor.set_last_receipt_hash(signed.turn.agent, head);
-    }
+    crate::api::seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
+    // The queue drainer mutates authoritative state in-place, so weld its
+    // receipt-log append to that mutation with the ledger restore journal.
+    s.ledger.begin_restore_point();
     let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -360,14 +356,13 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {
-            // The receipt hash is the outcome carried back to the submitter. The
-            // node's own cclerk receipt chain is NOT appended to here: that chain
-            // tracks the node operator's own turns, and a pg-submitted turn is a
-            // foreign agent's (the same reason the HTTP `/turns/submit` handler
-            // only chains its gossip artifact, not this drainer's lane). The
-            // authoritative ledger mutation already happened inside
-            // `execute_via_producer`; the durable-commit + post-state mirror ride
-            // the existing finality path, not this module.
+            if let Err(error) = s.cclerk.append_receipt(receipt.clone()) {
+                s.ledger.rollback_restore_point();
+                return DrainOutcome::Refused {
+                    error: format!("receipt chain mismatch: {error}"),
+                };
+            }
+            s.ledger.commit_restore_point();
             let receipt_hash = receipt.receipt_hash();
             tracing::info!(
                 receipt_hash = %crate::trustline_service::hex_encode(&receipt_hash),
@@ -375,15 +370,24 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
             );
             DrainOutcome::Executed { receipt_hash }
         }
-        dregg_turn::TurnResult::Rejected { reason, .. } => DrainOutcome::Refused {
-            error: format!("turn rejected: {reason}"),
-        },
-        dregg_turn::TurnResult::Expired => DrainOutcome::Refused {
-            error: "turn expired".to_string(),
-        },
-        dregg_turn::TurnResult::Pending => DrainOutcome::Refused {
-            error: "turn pending (conditional turns are not queue-drainable)".to_string(),
-        },
+        dregg_turn::TurnResult::Rejected { reason, .. } => {
+            s.ledger.commit_restore_point();
+            DrainOutcome::Refused {
+                error: format!("turn rejected: {reason}"),
+            }
+        }
+        dregg_turn::TurnResult::Expired => {
+            s.ledger.commit_restore_point();
+            DrainOutcome::Refused {
+                error: "turn expired".to_string(),
+            }
+        }
+        dregg_turn::TurnResult::Pending => {
+            s.ledger.commit_restore_point();
+            DrainOutcome::Refused {
+                error: "turn pending (conditional turns are not queue-drainable)".to_string(),
+            }
+        }
     }
 }
 
@@ -440,6 +444,218 @@ async fn resolve_row(client: &Client, id: &str, outcome: DrainOutcome) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn operator_signed_empty_turn(state: &NodeState) -> SignedTurn {
+        let mut s = state.write().await;
+        s.unlocked = true;
+        let operator_pk = s.cclerk.public_key().0;
+        let operator = crate::executor_setup::local_agent_cell(&s);
+        let token = *blake3::hash(b"default").as_bytes();
+        if s.ledger.get(&operator).is_none() {
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    operator_pk,
+                    token,
+                    1_000_000,
+                ))
+                .expect("insert operator cell");
+        }
+        let federation_id = crate::executor_setup::federation_id_for_executor(&s);
+        let action = s
+            .cclerk
+            .make_action(operator, "pg-queue-noop", vec![], &federation_id);
+        let mut call_forest = dregg_turn::CallForest::new();
+        call_forest.add_root(action);
+        let mut turn = dregg_turn::Turn {
+            agent: operator,
+            nonce: s
+                .ledger
+                .get(&operator)
+                .expect("operator cell")
+                .state
+                .nonce(),
+            fee: 0,
+            memo: None,
+            valid_until: Some(i64::MAX / 2),
+            call_forest,
+            depends_on: vec![],
+            previous_receipt_hash: s.cclerk.agent_receipt_head_hash(&operator),
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: vec![],
+            cross_effect_dependencies: vec![],
+            effect_witness_index_map: vec![],
+        };
+        turn.fee = crate::executor_setup::new_submit_executor(&s).estimate_cost(&turn);
+        s.cclerk.sign_turn(&turn)
+    }
+
+    fn refusal_error(outcome: DrainOutcome) -> String {
+        match outcome {
+            DrainOutcome::Refused { error } => error,
+            DrainOutcome::Executed { .. } => panic!("hostile SignedTurn must be refused"),
+        }
+    }
+
+    /// The optional PostgreSQL transport is not a weaker alternate ingress:
+    /// absent, invalid, and attacker-substituted outer ML-DSA halves all die in
+    /// the same shared pre-mutation validator as HTTP/finalization.
+    #[tokio::test]
+    async fn drainer_rejects_stripped_invalid_and_substituted_outer_pq() {
+        assert!(
+            std::env::var("DREGG_REQUIRE_PQ")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true),
+            "hostile native-PQ gate must run with required PQ enabled"
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+        let signed = operator_signed_empty_turn(&state).await;
+
+        let mut stripped = signed.clone();
+        stripped.pq_signature.clear();
+        stripped.pq_signer.clear();
+        let stripped_bytes = postcard::to_stdvec(&stripped).expect("encode stripped");
+        assert_eq!(
+            refusal_error(execute_submission(&state, &stripped_bytes).await),
+            "post-quantum turn signature required but absent"
+        );
+
+        let mut invalid = signed.clone();
+        invalid.pq_signature[0] ^= 0x40;
+        let invalid_bytes = postcard::to_stdvec(&invalid).expect("encode invalid");
+        assert_eq!(
+            refusal_error(execute_submission(&state, &invalid_bytes).await),
+            "invalid post-quantum turn signature"
+        );
+
+        let attacker = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&[0xA9; 32]);
+        let mut substituted = signed.clone();
+        substituted.pq_signer = attacker.public_bytes();
+        substituted.pq_signature = attacker
+            .sign(&signed.turn.hash())
+            .expect("attacker produces valid ML-DSA signature under its own key");
+        assert!(
+            dregg_turn::pq::ml_dsa_verify(
+                &substituted.pq_signer,
+                &substituted.turn.hash(),
+                &substituted.pq_signature,
+            ),
+            "substitution fixture must be cryptographically valid under the attacker key"
+        );
+        let substituted_bytes = postcard::to_stdvec(&substituted).expect("encode substituted");
+        assert_eq!(
+            refusal_error(execute_submission(&state, &substituted_bytes).await),
+            "carried post-quantum signer does not match the independently enrolled identity"
+        );
+
+        let mut trailing = postcard::to_stdvec(&signed).expect("encode canonical SignedTurn");
+        trailing.extend_from_slice(&[0x00, 0x7F]);
+        assert_eq!(
+            refusal_error(execute_submission(&state, &trailing).await),
+            "trailing bytes after SignedTurn envelope: 2"
+        );
+    }
+
+    /// The optional PG ingress is an authoritative mutator, so each committed
+    /// receipt must advance the same agent-scoped durable log used by HTTP and
+    /// finalization.  Exact Option equality makes an omitted second-turn link a
+    /// pre-mutation refusal rather than a new genesis.
+    #[tokio::test]
+    async fn drainer_advances_agent_receipt_head_and_refuses_omitted_link() {
+        assert!(
+            std::env::var("DREGG_REQUIRE_PQ")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true),
+            "PG chain gate must run with native PQ required"
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+
+        let first = operator_signed_empty_turn(&state).await;
+        let first_bytes = postcard::to_stdvec(&first).expect("encode first");
+        assert!(matches!(
+            execute_submission(&state, &first_bytes).await,
+            DrainOutcome::Executed { .. }
+        ));
+
+        let second = operator_signed_empty_turn(&state).await;
+        assert!(second.turn.previous_receipt_hash.is_some());
+        let second_bytes = postcard::to_stdvec(&second).expect("encode second");
+        assert!(matches!(
+            execute_submission(&state, &second_bytes).await,
+            DrainOutcome::Executed { .. }
+        ));
+
+        let (operator, before_nonce, omitted) = {
+            let s = state.read().await;
+            let operator = crate::executor_setup::local_agent_cell(&s);
+            let before_nonce = s
+                .ledger
+                .get(&operator)
+                .expect("operator cell")
+                .state
+                .nonce();
+            let mut omitted_turn = second.turn.clone();
+            omitted_turn.nonce = before_nonce;
+            omitted_turn.previous_receipt_hash = None;
+            (operator, before_nonce, s.cclerk.sign_turn(&omitted_turn))
+        };
+        let omitted_bytes = postcard::to_stdvec(&omitted).expect("encode omitted link");
+        assert_eq!(
+            refusal_error(execute_submission(&state, &omitted_bytes).await),
+            "receipt chain mismatch"
+        );
+        let s = state.read().await;
+        assert_eq!(s.cclerk.agent_receipt_count(&operator), 2);
+        assert_eq!(
+            s.ledger
+                .get(&operator)
+                .expect("operator cell")
+                .state
+                .nonce(),
+            before_nonce,
+            "omitted link must be refused before nonce mutation"
+        );
+    }
+
+    /// Named crash falsifier for the remaining direct-PG architecture: the
+    /// receipt sink is durable-first and fail-closed on an I/O error, but its
+    /// redb transaction is not the finalized ledger/commit-log transaction.
+    /// Until PG submissions enter consensus finalization (or gain an equivalent
+    /// welded state commit), a crash can therefore restore a receipt whose
+    /// corresponding in-memory ledger mutation was never durably committed.
+    #[tokio::test]
+    #[ignore = "known residual: direct PG receipt and ledger state are not one durable transaction"]
+    async fn pg_direct_commit_restart_falsifier_receipt_must_not_outrun_ledger() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(dir.path(), vec![]).expect("node state");
+        let signed = operator_signed_empty_turn(&state).await;
+        let agent = signed.turn.agent;
+        let bytes = postcard::to_stdvec(&signed).expect("encode submission");
+        assert!(matches!(
+            execute_submission(&state, &bytes).await,
+            DrainOutcome::Executed { .. }
+        ));
+        drop(state);
+
+        let reopened = NodeState::new(dir.path(), vec![]).expect("reopen node state");
+        let s = reopened.read().await;
+        let durable_receipts = s.cclerk.agent_receipt_count(&agent) as u64;
+        let recovered_nonce = s
+            .ledger
+            .get(&agent)
+            .map(|cell| cell.state.nonce())
+            .unwrap_or(0);
+        assert!(
+            recovered_nonce >= durable_receipts,
+            "durable receipt head outran recovered ledger: receipts={durable_receipts}, nonce={recovered_nonce}"
+        );
+    }
 
     /// A drain pass that takes an explicit client (so the test drives the same
     /// `drain_all_pending` the live loop uses, without standing up the LISTEN

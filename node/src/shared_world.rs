@@ -444,7 +444,8 @@ impl<'a> SharedClient<'a> {
                 },
                 Effect::SetField {
                     cell: self.world.board,
-                    index: self.board_lane(),
+                    index: u64::try_from(self.board_lane())
+                        .expect("shared-world board lane index must fit the canonical u64 field"),
                     value: pack_u64(value),
                 },
                 Effect::SetField {

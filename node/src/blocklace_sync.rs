@@ -4427,6 +4427,66 @@ async fn persist_solo_finalized_attested_root(
     });
 }
 
+fn persist_finalized_payload_rejection(
+    s: &crate::state::NodeStateInner,
+    block_id: BlockId,
+    payload: &[u8],
+    turn_hash: Option<[u8; 32]>,
+    reason_code: &str,
+) {
+    let record = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::new(
+        block_id.0,
+        payload,
+        turn_hash,
+        reason_code,
+    );
+    let key =
+        crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(&block_id.0);
+    let encoded = match record.encode() {
+        Ok(encoded) => encoded,
+        Err(error) => {
+            error!(
+                block_id = %block_id,
+                reason_code,
+                error = %error,
+                "failed to encode deterministic finalized-payload rejection record"
+            );
+            return;
+        }
+    };
+    match s.store.get_config(&key) {
+        Ok(Some(existing)) if existing == encoded => return,
+        Ok(Some(_)) => {
+            // A block id names one immutable consensus payload.  Never replace
+            // an existing outcome with a contradictory local observation.
+            error!(
+                block_id = %block_id,
+                reason_code,
+                "refusing to overwrite a conflicting finalized-payload rejection record"
+            );
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            error!(
+                block_id = %block_id,
+                reason_code,
+                error = %error,
+                "failed to read finalized-payload rejection record before idempotent write"
+            );
+            return;
+        }
+    }
+    if let Err(error) = s.store.set_config(&key, &encoded) {
+        error!(
+            block_id = %block_id,
+            reason_code,
+            error = %error,
+            "failed to persist deterministic finalized-payload rejection record"
+        );
+    }
+}
+
 async fn execute_finalized_turn(
     state: &NodeState,
     handle: &BlocklaceHandle,
@@ -4436,31 +4496,24 @@ async fn execute_finalized_turn(
     block_executed_up_to: u64,
 ) {
     // Deserialize the signed turn.
-    let signed_turn: dregg_sdk::SignedTurn = match postcard::from_bytes(turn_data) {
+    let signed_turn: dregg_sdk::SignedTurn = match crate::signed_turn_validation::decode_signed_turn(
+        turn_data,
+    ) {
         Ok(st) => st,
         Err(e) => {
+            let s = state.read().await;
+            persist_finalized_payload_rejection(&s, block_id, turn_data, None, e.code());
             warn!(
                 block_id = %block_id,
                 error = %e,
-                "failed to deserialize turn from finalized block"
+                reason_code = e.code(),
+                "failed to strictly decode turn from finalized block (deterministic rejection recorded)"
             );
             return;
         }
     };
 
-    // Verify the turn signature.
     let computed_hash = signed_turn.turn.hash();
-    if !signed_turn
-        .signer
-        .verify(&computed_hash, &signed_turn.signature)
-    {
-        warn!(
-            block_id = %block_id,
-            "invalid signature on finalized turn, skipping"
-        );
-        return;
-    }
-
     let turn_hash_hex: String = computed_hash.iter().map(|b| format!("{b:02x}")).collect();
 
     // Resolve the Cordial Miners "round" (DAG depth) of this finalized block
@@ -4484,27 +4537,80 @@ async fn execute_finalized_turn(
     // authoritative cross-node commit path, matching the HTTP submit ingress.
     crate::executor_setup::require_pq_admission(&executor);
 
+    // Consensus authenticated the block producer, not the enclosed user turn.
+    // Re-run the exact HTTP/PG application predicate while holding the state
+    // guard and before any ledger/prologue mutation.  Required PQ is pinned to
+    // the host-enrolled signer identity; a substituted self-carried key is not
+    // an authority.  A bad finalized payload remains a consensus fact, so store
+    // a deterministic rejection record instead of silently skipping it.
+    if let Err(validation_error) = crate::signed_turn_validation::validate_signed_turn(
+        &signed_turn,
+        &executor,
+        s.ledger.get(&signed_turn.turn.agent),
+    ) {
+        persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            validation_error.code(),
+        );
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            reason_code = validation_error.code(),
+            reason = %validation_error,
+            "finalized SignedTurn failed application authorization before mutation (deterministic rejection recorded)"
+        );
+        return;
+    }
+
+    let agent = signed_turn.turn.agent;
+    // Solo ingress may already have applied and logged this exact turn; retain
+    // that idempotent finality-bookkeeping case. Every genuinely new finalized
+    // turn must name the independently stored head for its own agent.
+    let already_applied_solo_receipt = if s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo) {
+        s.cclerk
+            .agent_receipts(&agent)
+            .find(|receipt| receipt.turn_hash == computed_hash)
+            .cloned()
+    } else {
+        None
+    };
+    let expected_prev = s.cclerk.agent_receipt_head_hash(&agent);
+    if already_applied_solo_receipt.is_none()
+        && signed_turn.turn.previous_receipt_hash != expected_prev
+    {
+        persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            "receipt-chain-mismatch",
+        );
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            expected = ?expected_prev,
+            got = ?signed_turn.turn.previous_receipt_hash,
+            "finalized SignedTurn failed agent-scoped receipt continuity before mutation (deterministic rejection recorded)"
+        );
+        return;
+    }
+    crate::api::seed_executor_receipt_head(&executor, agent, expected_prev);
+
     // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
     // verified Lean shadow's clock / chain-head / budget legs are decided by THIS node's own state
     // (not the turn). `TurnExecutor::execute` reads these (`get_last_receipt_hash` / `budget_gate`
     // / `cell_migrations`) to build the `ShadowHostCtx`; without seeding they default to genesis /
     // no-gate (the diagnostic stub). Production overrides:
-    //   * stored receipt-chain HEAD — the node's authoritative head for the agent. For this node's
-    //     own agent it is the cipherclerk receipt chain's last receipt; the verified ChainHead leg
-    //     then checks the turn's claimed `prev` against it (a forked turn whose `prev` ≠ the node's
-    //     stored head is rejected). (Federated turns from OTHER agents carry their head in the
-    //     bundle the node already validated upstream; we seed the local-agent head here, the case
-    //     the node maintains independently.)
+    //   * stored receipt-chain HEAD — the node's authoritative per-agent head from
+    //     the immutable receipt log. The verified ChainHead leg checks the turn's
+    //     claimed `prev` against that state for local and foreign agents alike;
+    //     neither the wire claim nor the global observation-log tip is authority.
     //   * silo BUDGET slice — the agent's Stingray bounded-counter remaining slice for this silo;
     //     the verified Budget leg rejects `fee > budget`.
     {
-        let agent = signed_turn.turn.agent;
-        if let Some(head) = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()) {
-            // The local node's authoritative chain head (independent of the turn's claim).
-            if agent == crate::executor_setup::local_agent_cell(&s) {
-                executor.set_last_receipt_hash(agent, head);
-            }
-        }
         if let Some(remaining) = s
             .budget_coordinators
             .get(&agent)
@@ -4543,15 +4649,7 @@ async fn execute_finalized_turn(
     // ingress is receipt-only + rolled back (the receipt is NOT on the chain here),
     // so full-mode turns fall through to the authoritative SINGLE apply below —
     // exactly-once preserved.
-    if s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo)
-        && let Some(receipt) = s
-            .cclerk
-            .receipt_chain()
-            .iter()
-            .rev()
-            .find(|r| r.turn_hash == computed_hash)
-            .cloned()
-    {
+    if let Some(receipt) = already_applied_solo_receipt {
         // The already-applied turn is ALREADY counted in `solo.height` (ingress
         // advanced it), so the attested root records the CURRENT height
         // (`max(store, solo)`), NOT `executor.block_height` (= Next = base+1),
@@ -4889,6 +4987,21 @@ async fn execute_finalized_turn(
                 })
                 .collect();
 
+            // Reserve and validate the immutable global-log slot while the
+            // node-state lock excludes every other append.  The exact encoded
+            // receipt is welded into the finalized commit transaction below;
+            // in-memory indices advance only after that transaction succeeds.
+            // A durable replay never reaches this point: recovery restores both
+            // the welded receipt and the executed-block cursor atomically, and
+            // an anomalous direct re-entry is refused by the pre-mutation
+            // predecessor check above (the restored head is already this turn).
+            let receipt_log_index = s.cclerk.receipt_log_next_index();
+            s.cclerk
+                .validate_receipt_append(&receipt)
+                .expect("finalized executor receipt must match the prechecked agent head");
+            let encoded_receipt =
+                postcard::to_stdvec(&receipt).expect("TurnReceipt postcard encoding is infallible");
+
             // FRESHNESS: record this turn's spent note nullifiers into the node's
             // CANONICAL persisted nullifier set, so subsequent turns' freshness
             // proofs are bound against an up-to-date set (and double-spends are
@@ -4911,13 +5024,6 @@ async fn execute_finalized_turn(
                     }
                 }
             }
-
-            // Append receipt to cipherclerk. Strict mode: divergence between
-            // the local executor and the cipherclerk's chain is a serious
-            // bug (the receipt came from our own executor), so we expect.
-            s.cclerk
-                .append_receipt(receipt.clone())
-                .expect("local executor and cclerk chains must agree; divergence is a serious bug");
 
             // TYPED EFFECT ENRICHMENT on the CONSENSUS commit path — the same
             // `transfer`/`balance`/`granted` facts the direct-submit path records
@@ -5605,13 +5711,28 @@ async fn execute_finalized_turn(
                 // transaction (bug #58): the note leaves and the turn record land
                 // together-or-not-at-all in one fsync boundary, so a crash-retry
                 // can never double-append a note leaf.
-                match s.store.commit_finalized_turn_with_notes(
+                match s.store.commit_finalized_turn_with_notes_and_receipt(
                     expected_ordinal,
                     &commit_record,
                     &note_commitments,
+                    receipt_log_index,
+                    &encoded_receipt,
                 ) {
                     Ok(outcome) => {
                         let assigned = outcome.ordinal;
+                        if outcome.freshly_committed {
+                            s.cclerk
+                                .append_receipt_already_durable(
+                                    receipt_log_index,
+                                    receipt.clone(),
+                                )
+                                .expect(
+                                    "durably welded receipt must append at its reserved in-memory index",
+                                );
+                            crate::metrics::set_receipt_chain_length(
+                                s.cclerk.receipt_log_length() as f64
+                            );
+                        }
                         // Advance the in-RAM Poseidon2 note tree ONLY after the
                         // durable append succeeded, and ONLY when THIS call
                         // freshly wrote the leaves. On an idempotent replay of an
@@ -6835,6 +6956,397 @@ mod tests {
     // (a real finalized turn advances height 0 -> 1 through `execute_finalized_turn`
     // with A1) and the install mechanism + concurrency guard in isolation.
 
+    /// A Byzantine proposer may finalize arbitrary payload bytes, so the live
+    /// application path must not rely on HTTP having derived the agent.  Give a
+    /// fully hybrid-signed attacker envelope the victim's current nonce and a
+    /// non-zero fee; finalization must refuse it before the executor prologue can
+    /// debit value or consume that nonce, and must durably name the refusal.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn finalized_attacker_turn_cannot_charge_or_advance_victim() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+
+        let victim_clerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new([0x44; 32]));
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let victim_cell =
+            dregg_cell::Cell::with_balance(victim_clerk.public_key().0, default_token, 900_000);
+        let victim = victim_cell.id();
+        let (before_balance, before_nonce, signed) = {
+            let mut s = state.write().await;
+            s.ledger.insert_cell(victim_cell).expect("insert victim");
+            let attacker = crate::executor_setup::local_agent_cell(&s);
+            if s.ledger.get(&attacker).is_none() {
+                let attacker_pk = s.cclerk.public_key().0;
+                s.ledger
+                    .insert_cell(dregg_cell::Cell::with_balance(
+                        attacker_pk,
+                        default_token,
+                        100_000,
+                    ))
+                    .expect("insert attacker cell");
+            }
+            let before = s.ledger.get(&victim).expect("victim present");
+            let before_balance = before.state.balance();
+            let before_nonce = before.state.nonce();
+            let federation_id = crate::executor_setup::federation_id_for_executor(&s);
+            let attacker_action =
+                s.cclerk
+                    .make_action(attacker, "attacker_noop", vec![], &federation_id);
+            let mut forest = dregg_turn::CallForest::new();
+            forest.add_root(attacker_action);
+            let mut hostile = dregg_turn::Turn {
+                agent: victim,
+                nonce: before_nonce,
+                fee: 0,
+                memo: Some("byzantine proposer victim-fee attempt".to_string()),
+                valid_until: Some(i64::MAX / 2),
+                call_forest: forest,
+                depends_on: vec![],
+                previous_receipt_hash: None,
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: vec![],
+                cross_effect_dependencies: vec![],
+                effect_witness_index_map: vec![],
+            };
+            hostile.fee = crate::executor_setup::new_submit_executor(&s).estimate_cost(&hostile);
+            assert!(hostile.fee > 0, "hostile turn exercises a real fee debit");
+            // The attacker is the node operator here and therefore has an
+            // independently enrolled, valid ML-DSA identity.  Both signature
+            // halves are honest; only its authority over `victim` is false.
+            let signed = s.cclerk.sign_turn(&hostile);
+            (before_balance, before_nonce, signed)
+        };
+
+        let payload = postcard::to_stdvec(&signed).expect("encode hostile SignedTurn");
+        let self_key = [0xB7; 32];
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        let block_id = BlockId([0xD3; 32]);
+        execute_finalized_turn(&state, &handle, block_id, &payload, None, 0).await;
+
+        let s = state.read().await;
+        let after = s.ledger.get(&victim).expect("victim remains present");
+        assert_eq!(
+            after.state.balance(),
+            before_balance,
+            "rejected finalized payload must not debit the victim fee"
+        );
+        assert_eq!(
+            after.state.nonce(),
+            before_nonce,
+            "rejected finalized payload must not consume the victim nonce"
+        );
+
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &block_id.0,
+        );
+        let bytes = s
+            .store
+            .get_config(&key)
+            .expect("read rejection record")
+            .expect("finalized rejection is durable");
+        let record: crate::signed_turn_validation::FinalizedPayloadRejectionRecord =
+            postcard::from_bytes(&bytes).expect("decode rejection record");
+        assert_eq!(record.block_id, block_id.0);
+        assert_eq!(record.payload_hash, *blake3::hash(&payload).as_bytes());
+        assert_eq!(record.turn_hash, Some(signed.turn.hash()));
+        assert_eq!(record.reason_code, "agent-signer-mismatch");
+    }
+
+    /// Finalization enforces the full enrolled outer PQ identity, not merely
+    /// the block's committee signature.  Each hostile envelope remains a
+    /// finalized consensus artifact with its own deterministic refusal record,
+    /// while the operator cell is untouched.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn finalized_turn_rejects_stripped_invalid_and_substituted_outer_pq() {
+        assert!(
+            std::env::var("DREGG_REQUIRE_PQ")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true),
+            "hostile native-PQ gate must run with required PQ enabled"
+        );
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let (operator, before_balance, before_nonce, honest) = {
+            let mut s = state.write().await;
+            let operator_pk = s.cclerk.public_key().0;
+            let operator = crate::executor_setup::local_agent_cell(&s);
+            let token = *blake3::hash(b"default").as_bytes();
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(operator_pk, token, 800_000))
+                .expect("insert operator cell");
+            let before = s.ledger.get(&operator).expect("operator present");
+            let before_balance = before.state.balance();
+            let before_nonce = before.state.nonce();
+            let turn = dregg_turn::Turn {
+                agent: operator,
+                nonce: before_nonce,
+                fee: 60_000,
+                memo: None,
+                valid_until: Some(i64::MAX / 2),
+                call_forest: dregg_turn::CallForest::new(),
+                depends_on: vec![],
+                previous_receipt_hash: None,
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: vec![],
+                cross_effect_dependencies: vec![],
+                effect_witness_index_map: vec![],
+            };
+            (
+                operator,
+                before_balance,
+                before_nonce,
+                s.cclerk.sign_turn(&turn),
+            )
+        };
+
+        let mut stripped = honest.clone();
+        stripped.pq_signature.clear();
+        stripped.pq_signer.clear();
+
+        let mut invalid = honest.clone();
+        invalid.pq_signature[0] ^= 0x20;
+
+        let attacker = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&[0xE1; 32]);
+        let mut substituted = honest.clone();
+        substituted.pq_signer = attacker.public_bytes();
+        substituted.pq_signature = attacker
+            .sign(&honest.turn.hash())
+            .expect("attacker signature");
+
+        let cases = [
+            (stripped, BlockId([0xC1; 32]), "pq-signature-required"),
+            (invalid, BlockId([0xC2; 32]), "invalid-pq-signature"),
+            (
+                substituted,
+                BlockId([0xC3; 32]),
+                "substituted-pq-public-key",
+            ),
+        ];
+        let self_key = [0xB8; 32];
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        for (hostile, block_id, expected_code) in cases {
+            let payload = postcard::to_stdvec(&hostile).expect("encode hostile SignedTurn");
+            execute_finalized_turn(&state, &handle, block_id, &payload, None, 0).await;
+            let s = state.read().await;
+            let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                &block_id.0,
+            );
+            let bytes = s
+                .store
+                .get_config(&key)
+                .expect("read rejection record")
+                .expect("rejection record exists");
+            let record: crate::signed_turn_validation::FinalizedPayloadRejectionRecord =
+                postcard::from_bytes(&bytes).expect("decode rejection record");
+            assert_eq!(record.reason_code, expected_code);
+            let live = s.ledger.get(&operator).expect("operator remains present");
+            assert_eq!(live.state.balance(), before_balance);
+            assert_eq!(live.state.nonce(), before_nonce);
+        }
+
+        let trailing_block = BlockId([0xC4; 32]);
+        let mut trailing_payload =
+            postcard::to_stdvec(&honest).expect("encode canonical SignedTurn");
+        trailing_payload.extend_from_slice(&[0x00, 0x7F]);
+        execute_finalized_turn(&state, &handle, trailing_block, &trailing_payload, None, 0).await;
+        let s = state.read().await;
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &trailing_block.0,
+        );
+        let bytes = s
+            .store
+            .get_config(&key)
+            .expect("read trailing-byte rejection")
+            .expect("trailing-byte rejection is durable");
+        let record: crate::signed_turn_validation::FinalizedPayloadRejectionRecord =
+            postcard::from_bytes(&bytes).expect("decode rejection record");
+        assert_eq!(record.reason_code, "trailing-signed-turn-bytes");
+        let live = s.ledger.get(&operator).expect("operator remains present");
+        assert_eq!(live.state.balance(), before_balance);
+        assert_eq!(live.state.nonce(), before_nonce);
+    }
+
+    /// Finalization keeps one immutable observation log but independent causal
+    /// heads per foreign agent.  A/B/A interleaving must not cross-link the
+    /// chains, and an A turn that omits A's now-required predecessor must be
+    /// refused before nonce/state mutation with a durable reason.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn finalized_foreign_receipts_are_agent_scoped_and_omitted_link_is_refused() {
+        assert!(
+            std::env::var("DREGG_REQUIRE_PQ")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true),
+            "foreign-chain gate must run with native PQ required"
+        );
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let seed_a = [0x31; 32];
+        let seed_b = [0x52; 32];
+        let clerk_a = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(seed_a));
+        let clerk_b = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(seed_b));
+        let agent_a = clerk_a.cell_id("default");
+        let agent_b = clerk_b.cell_id("default");
+        let pq_a: [u8; dregg_pq::ML_DSA_PK_LEN] =
+            dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed_a)
+                .public_bytes()
+                .try_into()
+                .expect("fixed-size ML-DSA public key");
+        let pq_b: [u8; dregg_pq::ML_DSA_PK_LEN] =
+            dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed_b)
+                .public_bytes()
+                .try_into()
+                .expect("fixed-size ML-DSA public key");
+        {
+            let mut s = state.write().await;
+            let token = *blake3::hash(b"default").as_bytes();
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    clerk_a.public_key().0,
+                    token,
+                    700_000,
+                ))
+                .expect("insert foreign A");
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    clerk_b.public_key().0,
+                    token,
+                    700_000,
+                ))
+                .expect("insert foreign B");
+            s.set_federation_keys_hybrid(
+                vec![clerk_a.public_key(), clerk_b.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(pq_a),
+                    dregg_federation::frost::MlDsaPublicKey(pq_b),
+                ],
+            );
+        }
+
+        fn signed_noop(
+            clerk: &dregg_sdk::AgentCipherclerk,
+            agent: dregg_cell::CellId,
+            nonce: u64,
+            previous_receipt_hash: Option<[u8; 32]>,
+            federation_id: &[u8; 32],
+        ) -> dregg_sdk::SignedTurn {
+            let unsigned = dregg_turn::Action {
+                target: agent,
+                method: *blake3::hash(b"foreign-chain-noop").as_bytes(),
+                args: vec![],
+                authorization: dregg_turn::Authorization::Unchecked,
+                preconditions: Default::default(),
+                effects: vec![],
+                may_delegate: dregg_turn::DelegationMode::None,
+                commitment_mode: dregg_turn::CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: vec![],
+            };
+            let action = clerk.sign_action_hybrid(unsigned, federation_id, nonce);
+            let mut call_forest = dregg_turn::CallForest::new();
+            call_forest.add_root(action);
+            let mut turn = dregg_turn::Turn {
+                agent,
+                nonce,
+                fee: 0,
+                memo: None,
+                valid_until: Some(i64::MAX / 2),
+                call_forest,
+                depends_on: vec![],
+                previous_receipt_hash,
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: vec![],
+                cross_effect_dependencies: vec![],
+                effect_witness_index_map: vec![],
+            };
+            let estimator = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+            turn.fee = estimator.estimate_cost(&turn);
+            clerk.sign_turn(&turn)
+        }
+
+        let self_key = [0xB9; 32];
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        let federation_id = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
+        let signed_a1 = signed_noop(&clerk_a, agent_a, 0, None, &federation_id);
+        let payload_a1 = postcard::to_stdvec(&signed_a1).expect("encode A1");
+        execute_finalized_turn(&state, &handle, BlockId([0xA1; 32]), &payload_a1, None, 0).await;
+        let head_a1 = state
+            .read()
+            .await
+            .cclerk
+            .agent_receipt_head_hash(&agent_a)
+            .expect("A1 appended");
+
+        let signed_b1 = signed_noop(&clerk_b, agent_b, 0, None, &federation_id);
+        let payload_b1 = postcard::to_stdvec(&signed_b1).expect("encode B1");
+        execute_finalized_turn(&state, &handle, BlockId([0xB1; 32]), &payload_b1, None, 1).await;
+
+        let signed_a2 = signed_noop(&clerk_a, agent_a, 1, Some(head_a1), &federation_id);
+        let payload_a2 = postcard::to_stdvec(&signed_a2).expect("encode A2");
+        execute_finalized_turn(&state, &handle, BlockId([0xA2; 32]), &payload_a2, None, 2).await;
+
+        let before_omitted = state
+            .read()
+            .await
+            .ledger
+            .get(&agent_a)
+            .expect("A live")
+            .state
+            .nonce();
+        assert_eq!(before_omitted, 2);
+        let omitted = signed_noop(&clerk_a, agent_a, before_omitted, None, &federation_id);
+        let omitted_payload = postcard::to_stdvec(&omitted).expect("encode omitted-link A3");
+        let omitted_block = BlockId([0xA3; 32]);
+        execute_finalized_turn(&state, &handle, omitted_block, &omitted_payload, None, 3).await;
+
+        let s = state.read().await;
+        assert_eq!(s.cclerk.receipt_log_length(), 3);
+        assert_eq!(s.cclerk.agent_receipt_count(&agent_a), 2);
+        assert_eq!(s.cclerk.agent_receipt_count(&agent_b), 1);
+        let observed_agents: Vec<_> = s.cclerk.receipt_log().iter().map(|r| r.agent).collect();
+        assert_eq!(observed_agents, vec![agent_a, agent_b, agent_a]);
+        let a_receipts: Vec<_> = s.cclerk.agent_receipts(&agent_a).collect();
+        assert_eq!(a_receipts[0].previous_receipt_hash, None);
+        assert_eq!(a_receipts[1].previous_receipt_hash, Some(head_a1));
+        assert_eq!(
+            s.ledger.get(&agent_a).expect("A live").state.nonce(),
+            before_omitted,
+            "omitted predecessor must be rejected before nonce mutation"
+        );
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &omitted_block.0,
+        );
+        let bytes = s
+            .store
+            .get_config(&key)
+            .expect("read rejection record")
+            .expect("omitted-link rejection recorded");
+        let record: crate::signed_turn_validation::FinalizedPayloadRejectionRecord =
+            postcard::from_bytes(&bytes).expect("decode rejection record");
+        assert_eq!(record.reason_code, "receipt-chain-mismatch");
+    }
+
     /// THE MAKE-OR-BREAK: a finalized Transfer turn executes through the REAL
     /// `execute_finalized_turn` (the live commit path, now off-lock) and advances
     /// the attested height 0 -> 1 — the local confirmation that A1 unblocks
@@ -6854,29 +7366,40 @@ mod tests {
             s.lean_producer_enabled = false;
         }
 
-        // The federation id the node's executor binds (fresh state, not
-        // federation-configured): blake3(node cclerk pubkey). The turn's per-action
-        // signature MUST bind the SAME id or admission rejects.
-        let federation_id = {
-            let s = state.read().await;
-            *blake3::hash(s.cclerk.public_key().as_bytes()).as_bytes()
-        };
-
         // Fund a sender cell; the destination is fresh (materialized by the path).
-        let sender_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
-            *blake3::hash(b"a1-finalize:sender").as_bytes(),
-        ));
+        let sender_seed = *blake3::hash(b"a1-finalize:sender").as_bytes();
+        let sender_cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(sender_seed));
         let sender_pk = sender_cclerk.public_key().0;
-        let sender = dregg_cell::CellId::derive_raw(&sender_pk, &[0u8; 32]);
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let sender = dregg_cell::CellId::derive_raw(&sender_pk, &default_token);
         let dest = dregg_cell::CellId([0x3Cu8; 32]);
         {
             let mut s = state.write().await;
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(
-                    sender_pk, [0u8; 32], 1_000_000,
+                    sender_pk,
+                    default_token,
+                    1_000_000,
                 ))
                 .expect("fund sender");
+            let pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size ML-DSA public key");
+            s.set_federation_keys_hybrid(
+                vec![sender_cclerk.public_key()],
+                vec![dregg_federation::frost::MlDsaPublicKey(pq)],
+            );
         }
+
+        // The per-action signature binds the same hybrid federation id the
+        // configured finalized executor will use.
+        let federation_id = {
+            let s = state.read().await;
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
 
         let signed = signed_transfer_turn(&sender_cclerk, sender, dest, 4_200, 0, &federation_id);
         let turn_data = postcard::to_stdvec(&signed).expect("encode signed turn");
@@ -6975,32 +7498,43 @@ mod tests {
         // the finalized-turn sig-check both use here).
         let federation_id = [0u8; 32];
 
-        let sender_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
-            *blake3::hash(b"solo-idem:sender").as_bytes(),
-        ));
+        let sender_seed = *blake3::hash(b"solo-idem:sender").as_bytes();
+        let sender_cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(sender_seed));
         let sender_pk = sender_cclerk.public_key().0;
-        let sender = dregg_cell::CellId::derive_raw(&sender_pk, &[0u8; 32]);
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let sender = dregg_cell::CellId::derive_raw(&sender_pk, &default_token);
         // A PRE-EXISTING destination (so ingress needs no destination provisioning).
         let dest_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
             *blake3::hash(b"solo-idem:dest").as_bytes(),
         ));
         let dest_pk = dest_cclerk.public_key().0;
-        let dest = dregg_cell::CellId::derive_raw(&dest_pk, &[0u8; 32]);
+        let dest = dregg_cell::CellId::derive_raw(&dest_pk, &default_token);
         {
             let mut s = state.write().await;
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(
-                    sender_pk, [0u8; 32], 1_000_000,
+                    sender_pk,
+                    default_token,
+                    1_000_000,
                 ))
                 .expect("fund sender");
             s.ledger
-                .insert_cell(dregg_cell::Cell::with_balance(dest_pk, [0u8; 32], 0))
+                .insert_cell(dregg_cell::Cell::with_balance(dest_pk, default_token, 0))
                 .expect("seed destination");
+            let pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size ML-DSA public key");
+            s.set_federation_keys_hybrid(
+                vec![sender_cclerk.public_key()],
+                vec![dregg_federation::frost::MlDsaPublicKey(pq)],
+            );
         }
 
         let signed = signed_transfer_turn(&sender_cclerk, sender, dest, 4_200, 0, &federation_id);
         let fee = signed.turn.fee as i64;
-        let turn_hash = signed.turn.hash();
         let turn_data = postcard::to_stdvec(&signed).expect("encode signed turn");
 
         // ── SIMULATE SOLO INGRESS: the authoritative in-place commit + receipt
@@ -7015,10 +7549,9 @@ mod tests {
                 &mut s.ledger,
                 lean,
             ) {
-                dregg_turn::TurnResult::Committed { mut receipt, .. } => {
-                    // First turn on the fresh node chain: link to the (empty) head.
-                    receipt.previous_receipt_hash =
-                        s.cclerk.receipt_head().map(|r| r.receipt_hash());
+                dregg_turn::TurnResult::Committed { receipt, .. } => {
+                    // Preserve the executor-signed link byte-for-byte; append
+                    // validates it against this agent's independent head.
                     s.cclerk.append_receipt(receipt).expect("ingress append");
                     if let Some(ref mut solo) = s.solo_consensus {
                         solo.advance_height();
@@ -7122,18 +7655,37 @@ mod tests {
         // it 1 -> 2 (not stuck, not a hardcoded 1). This is the `/status` symptom.
         // A FRESH sender (its own first turn) so the manual harness needs no
         // per-cell authority-rotation bookkeeping — orthogonal to the height logic.
-        let sender2_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
-            *blake3::hash(b"solo-idem:sender2").as_bytes(),
-        ));
+        let sender2_seed = *blake3::hash(b"solo-idem:sender2").as_bytes();
+        let sender2_cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(sender2_seed));
         let sender2_pk = sender2_cclerk.public_key().0;
-        let sender2 = dregg_cell::CellId::derive_raw(&sender2_pk, &[0u8; 32]);
+        let sender2 = dregg_cell::CellId::derive_raw(&sender2_pk, &default_token);
         {
             let mut s = state.write().await;
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(
-                    sender2_pk, [0u8; 32], 1_000_000,
+                    sender2_pk,
+                    default_token,
+                    1_000_000,
                 ))
                 .expect("fund sender2");
+            let pq1: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size ML-DSA public key");
+            let pq2: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&sender2_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size ML-DSA public key");
+            s.set_federation_keys_hybrid(
+                vec![sender_cclerk.public_key(), sender2_cclerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(pq1),
+                    dregg_federation::frost::MlDsaPublicKey(pq2),
+                ],
+            );
         }
         let signed2 =
             signed_transfer_turn(&sender2_cclerk, sender2, dest, 1_000, 0, &federation_id);
@@ -7148,9 +7700,7 @@ mod tests {
                 &mut s.ledger,
                 lean,
             ) {
-                dregg_turn::TurnResult::Committed { mut receipt, .. } => {
-                    receipt.previous_receipt_hash =
-                        s.cclerk.receipt_head().map(|r| r.receipt_hash());
+                dregg_turn::TurnResult::Committed { receipt, .. } => {
                     s.cclerk.append_receipt(receipt).expect("ingress append 2");
                     if let Some(ref mut solo) = s.solo_consensus {
                         solo.advance_height();

@@ -212,8 +212,17 @@ impl SpawnedNode {
 /// mirroring `node::api::post_submit_signed_turn`'s checks. Returns the JSON body
 /// the client parses.
 fn handle_submit(node: &mut TestNode, body: &[u8]) -> serde_json::Value {
-    let signed: dregg_sdk::SignedTurn = match postcard::from_bytes(body) {
-        Ok(s) => s,
+    let signed: dregg_sdk::SignedTurn = match postcard::take_from_bytes(body) {
+        Ok((s, [])) => s,
+        Ok((_s, remainder)) => {
+            return serde_json::json!({
+                "accepted": false,
+                "error": format!(
+                    "trailing bytes after SignedTurn envelope: {}",
+                    remainder.len()
+                ),
+            });
+        }
         Err(_) => {
             return serde_json::json!({"accepted": false, "error": "malformed SignedTurn"});
         }
