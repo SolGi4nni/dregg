@@ -62,6 +62,7 @@ dregg-pq = { path = "../dregg-pq" }
 # standard XChaCha20-Poly1305 AEAD before the outer frame signature.
 chacha20poly1305 = { workspace = true }
 hkdf = "0.12"
+hmac = { workspace = true }
 dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 # The malicious-share threshold lane uses Pedersen commitments plus aggregated
 # Bulletproof range proofs.  The VSS transcript commits every party's exact BFV

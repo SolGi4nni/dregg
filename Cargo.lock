@@ -8864,6 +8864,7 @@ dependencies = [
  "fhe-traits",
  "fhegg-solver",
  "hkdf",
+ "hmac 0.12.1",
  "merlin",
  "pollster 0.4.0",
  "rand 0.8.6",

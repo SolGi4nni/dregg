@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256, Sha512};
 
 use crate::bfv_lean::LeanCiphertext;
 use crate::mpc::Crossing;
+use crate::mpc_party::transport::VerifiedPublicCrossingTranscript;
 use crate::mpc_party::{DistributedTranscript, PartyMpcSession};
 use crate::threshold::quorum::QuorumKeygenSession;
 use crate::threshold::{BfvParams, CollectivePublicKey, KeygenSession};
@@ -66,6 +67,8 @@ const NATIVE_PQ_PARTY_ID_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-party-id/
 const NATIVE_PQ_QUORUM_ROSTER_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-roster/v1";
 const NATIVE_PQ_QUORUM_VERIFIER_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-verifier/v1";
 const NATIVE_PQ_QUORUM_SIGNATURE_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-signature/v2";
+const NATIVE_PQ_VERIFIED_CROSSING_CLAIM_DOMAIN: &[u8] =
+    b"fhegg/attestation/native-pq-verified-crossing-claim/v1";
 const NATIVE_PQ_QUORUM_EVIDENCE_VERSION: u8 = 2;
 /// FIPS 204 context for the ML-DSA half of a native-PQ clearing endorsement.
 /// The separately domain-separated 512-bit authority message binds the exact
@@ -399,6 +402,54 @@ impl ClearingClaim {
     pub fn digest(&self) -> Digest32 {
         domain_digest(CLAIM_DOMAIN, &self.canonical_bytes())
     }
+
+    /// Full-width binding used by the opaque native-PQ transport capability.
+    /// The transport verifier records this only after reconstructing the exact
+    /// crossing, and the signing barrier compares it before using either key.
+    /// Keeping this crate-private prevents a second public claim encoding from
+    /// becoming protocol surface while still making the complete canonical
+    /// claim—not merely its session/output projection—part of the capability.
+    pub(crate) fn native_pq_verified_crossing_binding(&self) -> NativePqAuthorityDigest {
+        native_pq_authority_digest(
+            NATIVE_PQ_VERIFIED_CROSSING_CLAIM_DOMAIN,
+            &self.canonical_bytes(),
+        )
+    }
+
+    /// Validate every claim field that the public PartyMPC crossing verifier
+    /// can derive independently before it seals this claim into an opaque
+    /// capability. BFV digests and ordered input digests remain declarations
+    /// supplied by the local signer, but their exact values are subsequently
+    /// frozen by [`native_pq_verified_crossing_binding`](Self::native_pq_verified_crossing_binding).
+    pub(crate) fn matches_native_pq_verified_crossing_context(
+        &self,
+        session: &PartyMpcSession,
+        crossing: &Crossing,
+        transcript: &DistributedTranscript,
+        ordered_quorum_keys: &[NativePqPartyPublicKey],
+    ) -> bool {
+        self.protocol_id == CLEARING_ATTESTATION_PROTOCOL_ID
+            && self.session_nonce == session.nonce()
+            && self.n_parties == session.n_parties() as u64
+            && ordered_quorum_keys.len() == session.n_parties()
+            && self.ordered_roster.len() == ordered_quorum_keys.len()
+            && self
+                .ordered_roster
+                .iter()
+                .zip(ordered_quorum_keys)
+                .all(|(identity, key)| *identity == key.identity())
+            && self.bfv.opening_threshold == session.n_parties() as u64
+            && self.bfv.opening_threshold != 0
+            && self.bfv.opening_threshold <= self.bfv.n_parties
+            && self.bfv.plaintext_modulus == session.plaintext_modulus()
+            && !self.ordered_inputs.is_empty()
+            && self.rule == PublicClearingRule::for_session(session)
+            && self.transcript_digest == transcript_digest(transcript)
+            && self.outcome == ClearingOutcomeBinding::from_crossing(crossing)
+            && transcript.is_reveal_only(session)
+            && validate_output(session, crossing).is_ok()
+            && transcript_matches_crossing(transcript, crossing)
+    }
 }
 
 /// Honest residual carried by a receipt that has canonical binding but no
@@ -493,21 +544,58 @@ pub trait ComputationIntegrityVerifier {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QuorumVerifierError {
     EmptyRoster,
-    RosterTooLarge { roster_len: usize },
-    InvalidThreshold { threshold: usize, roster_len: usize },
-    InvalidPublicKey { index: usize },
-    DuplicatePublicKey { index: usize },
-    UnknownSigner { index: usize },
-    SignerKeyMismatch { index: usize },
-    DuplicateSigner { index: usize },
+    RosterTooLarge {
+        roster_len: usize,
+    },
+    InvalidThreshold {
+        threshold: usize,
+        roster_len: usize,
+    },
+    InvalidPublicKey {
+        index: usize,
+    },
+    DuplicatePublicKey {
+        index: usize,
+    },
+    UnknownSigner {
+        index: usize,
+    },
+    SignerKeyMismatch {
+        index: usize,
+    },
+    DuplicateSigner {
+        index: usize,
+    },
     NonCanonicalSignerOrder,
-    InsufficientSignatures { have: usize, need: usize },
-    InvalidSignature { index: usize },
-    InvalidPostQuantumPublicKey { index: usize, actual_len: usize },
-    DuplicatePostQuantumPublicKey { index: usize },
-    PostQuantumSignerKeyMismatch { index: usize },
-    PostQuantumSigningFailed { index: usize },
-    InvalidPostQuantumSignature { index: usize },
+    InsufficientSignatures {
+        have: usize,
+        need: usize,
+    },
+    InvalidSignature {
+        index: usize,
+    },
+    InvalidPostQuantumPublicKey {
+        index: usize,
+        actual_len: usize,
+    },
+    DuplicatePostQuantumPublicKey {
+        index: usize,
+    },
+    PostQuantumSignerKeyMismatch {
+        index: usize,
+    },
+    PostQuantumSigningFailed {
+        index: usize,
+    },
+    InvalidPostQuantumSignature {
+        index: usize,
+    },
+    /// The supplied claim is not the canonical claim reconstructed from the
+    /// independently supplied clearing context and this quorum's exact roster.
+    ClearingClaimContextMismatch,
+    /// The opaque transport-verification capability was issued for a different
+    /// PartyMPC session, output, or reveal-only public transcript.
+    VerifiedCrossingContextMismatch,
 }
 
 impl fmt::Display for QuorumVerifierError {
@@ -943,6 +1031,13 @@ impl NativePqAuthenticatedQuorumVerifier {
 
     /// Produce one paired endorsement, refusing either secret key unless its
     /// public key equals the key enrolled at `signer_index`.
+    ///
+    /// This generic primitive does not establish how a signer learned that a
+    /// PartyMPC crossing claim is the result of the authenticated transport.
+    /// A process signing a PartyMPC clearing result must instead use
+    /// [`sign_verified_crossing_claim`](Self::sign_verified_crossing_claim),
+    /// whose opaque capability can only be produced by successful native-PQ
+    /// public-transcript verification for that same full canonical claim.
     pub fn sign_claim(
         &self,
         claim: &ClearingClaim,
@@ -976,6 +1071,47 @@ impl NativePqAuthenticatedQuorumVerifier {
             ed25519_signature: ed25519_signing_key.sign(&message).to_bytes(),
             ml_dsa_signature,
         })
+    }
+
+    /// Endorse a PartyMPC crossing only after the native-PQ transport has
+    /// verified the complete public frame set.
+    ///
+    /// `verified_transcript` is deliberately not a boolean marker: its type has
+    /// no public constructor or clone operation, and the transport issues it
+    /// only after authenticating and reconstructing the exact public crossing
+    /// transcript. This method independently reconstructs the full canonical
+    /// claim (including BFV identity and ordered inputs), pins its roster to
+    /// this verifier, and then requires the capability to bind the same exact
+    /// full canonical claim, session (including certified preprocessing),
+    /// ordered transport-party Ed25519/ML-DSA authorities, crossing output,
+    /// and raw reveal-only transcript before either secret key is used.
+    pub fn sign_verified_crossing_claim(
+        &self,
+        claim: &ClearingClaim,
+        context: &ExpectedClearingContext<'_>,
+        verified_transcript: &VerifiedPublicCrossingTranscript,
+        signer_index: usize,
+        ed25519_signing_key: &SigningKey,
+        ml_dsa_signing_key: &MlDsaKey,
+    ) -> std::result::Result<NativePqPartyClaimSignature, QuorumVerifierError> {
+        let canonical_claim = claim_from_context(context)
+            .map_err(|_| QuorumVerifierError::ClearingClaimContextMismatch)?;
+        if claim != &canonical_claim
+            || context.ordered_roster != self.ordered_roster
+            || claim.ordered_roster != self.ordered_roster
+        {
+            return Err(QuorumVerifierError::ClearingClaimContextMismatch);
+        }
+        if !verified_transcript.matches_clearing_context(
+            claim,
+            context.session,
+            context.crossing,
+            context.transcript,
+            &self.ordered_public_keys,
+        ) {
+            return Err(QuorumVerifierError::VerifiedCrossingContextMismatch);
+        }
+        self.sign_claim(claim, signer_index, ed25519_signing_key, ml_dsa_signing_key)
     }
 
     pub fn assemble_evidence(
@@ -1483,4 +1619,114 @@ fn transcript_digest(transcript: &DistributedTranscript) -> Digest32 {
     out.u64(transcript.gate_share_messages as u64);
     out.u64(transcript.output_share_messages as u64);
     domain_digest(TRANSCRIPT_DOMAIN, &out.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::mpc_party::simulate_public_transcript;
+
+    #[test]
+    fn native_pq_claim_seal_rejects_derived_context_substitution() {
+        let session = PartyMpcSession::new([0x91; 32], 2, 2, 4, 17, Duration::from_secs(1))
+            .expect("valid compact crossing session");
+        let crossing = Crossing {
+            p_star: Some(1),
+            v_star: 3,
+        };
+        let transcript =
+            simulate_public_transcript(&crossing, &session, &mut StdRng::seed_from_u64(0x9292))
+                .expect("canonical reveal-only transcript");
+        let quorum_keys = vec![
+            NativePqPartyPublicKey::new([0xa1; 32], vec![0xb1; ML_DSA_PK_LEN]),
+            NativePqPartyPublicKey::new([0xa2; 32], vec![0xb2; ML_DSA_PK_LEN]),
+        ];
+        let roster = quorum_keys
+            .iter()
+            .map(NativePqPartyPublicKey::identity)
+            .collect::<Vec<_>>();
+        let bfv = BfvPublicIdentity {
+            n_parties: 2,
+            opening_threshold: 2,
+            degree: 8,
+            moduli_digest: [0xc1; 32],
+            plaintext_modulus: 17,
+            crp_seed: [0xc2; 32],
+            collective_public_key_digest: [0xc3; 32],
+        };
+        let inputs = vec![InputDigest::commitment([0xd1; 32])];
+        let context = ExpectedClearingContext {
+            session: &session,
+            ordered_roster: &roster,
+            bfv: &bfv,
+            ordered_inputs: &inputs,
+            transcript: &transcript,
+            crossing: &crossing,
+        };
+        let claim = AttestedClearingReceipt::issue(
+            &context,
+            ComputationIntegrityEvidence::BindingOnly(
+                ComputationIntegrityResidual::OutputOnlySelfAssertion,
+            ),
+        )
+        .expect("canonical claim")
+        .claim;
+        assert!(claim.matches_native_pq_verified_crossing_context(
+            &session,
+            &crossing,
+            &transcript,
+            &quorum_keys,
+        ));
+
+        let wrong_session = PartyMpcSession::new([0x93; 32], 2, 2, 4, 17, Duration::from_secs(1))
+            .expect("same shape but different session");
+        assert!(!claim.matches_native_pq_verified_crossing_context(
+            &wrong_session,
+            &crossing,
+            &transcript,
+            &quorum_keys,
+        ));
+
+        let wrong_crossing = Crossing {
+            p_star: Some(1),
+            v_star: 2,
+        };
+        assert!(!claim.matches_native_pq_verified_crossing_context(
+            &session,
+            &wrong_crossing,
+            &transcript,
+            &quorum_keys,
+        ));
+
+        let mut wrong_keys = quorum_keys.clone();
+        wrong_keys[1] = NativePqPartyPublicKey::new([0xaf; 32], vec![0xbf; ML_DSA_PK_LEN]);
+        assert!(!claim.matches_native_pq_verified_crossing_context(
+            &session,
+            &crossing,
+            &transcript,
+            &wrong_keys,
+        ));
+
+        let mut substituted_declaration = claim.clone();
+        substituted_declaration.ordered_inputs[0] = InputDigest::commitment([0xde; 32]);
+        substituted_declaration.bfv.collective_public_key_digest = [0xdf; 32];
+        assert!(
+            substituted_declaration.matches_native_pq_verified_crossing_context(
+                &session,
+                &crossing,
+                &transcript,
+                &quorum_keys,
+            )
+        );
+        assert_ne!(
+            claim.native_pq_verified_crossing_binding(),
+            substituted_declaration.native_pq_verified_crossing_binding(),
+            "the capability freezes exact signer-declared BFV and input bindings",
+        );
+    }
 }

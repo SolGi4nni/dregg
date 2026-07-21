@@ -29,7 +29,7 @@
 //! Beaver shares, or gate messages. The arithmetic claim remains the parent
 //! module's semi-honest/trusted-preprocessing claim.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
@@ -44,6 +44,7 @@ use dregg_pq::{
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha256, Sha512};
@@ -57,10 +58,21 @@ use super::{
 use crate::mpc::{index_bits, Crossing};
 
 const FRAME_MAGIC: &[u8; 8] = b"FHEQv004";
+const SEALED_FRAME_MAGIC: &[u8; 8] = b"FHEQv005";
+const LINK_CONTROL_MAGIC: &[u8; 8] = b"FHEHv005";
 const FRAME_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-signature/v4";
 const FRAME_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/frame/v4";
 const FRAME_CHECKSUM_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-checksum/v4";
 const SESSION_DOMAIN: &[u8] = b"fhegg/party-mpc-transport-session/v4";
+const V5_LINK_HELLO_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc/link-hello-signature/v5";
+const V5_LINK_HELLO_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/link-hello/v5";
+const V5_LINK_KEM_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/party-mpc/link-kem-transcript/v5";
+const V5_LINK_KEY_DOMAIN: &[u8] = b"fhegg/party-mpc/link-keys/v5";
+const V5_LINK_CONFIRM_DOMAIN: &[u8] = b"fhegg/party-mpc/link-confirm/v5";
+const V5_FRAME_MAC_DOMAIN: &[u8] = b"fhegg/party-mpc/frame-mac/v5";
+const V5_ROUTE_ROOT_DOMAIN: &[u8] = b"fhegg/party-mpc/route-root/v5";
+const V5_ENDPOINT_SEAL_DOMAIN: &[u8] = b"fhegg/party-mpc/endpoint-seal/v5";
+const V5_ENDPOINT_SEAL_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/endpoint-seal/v5";
 const PEER_KEY_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-key/classical-compat/v4";
 const PEER_HYBRID_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-hybrid-kem/v4";
 const PEER_AAD_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-aead/v4";
@@ -74,6 +86,7 @@ const PEER_AEAD_TAG_BYTES: usize = 16;
 const FIXED_CONTENT_BYTES: usize = 8 + 1 + 64 + 4 + 4 + 8 + 1 + 4;
 const CLASSICAL_TRAILER_BYTES: usize = 64 + 32;
 const NATIVE_PQ_TRAILER_BYTES: usize = 64 + ML_DSA_SIG_LEN + 32;
+const SEALED_TRAILER_BYTES: usize = 64 + 32;
 const ML_KEM_768_EK_BYTES: usize = 1_184;
 const ML_KEM_768_DK_BYTES: usize = 2_400;
 const ML_KEM_768_CT_BYTES: usize = 1_088;
@@ -85,6 +98,8 @@ const KIND_GATE_SHARE: u8 = 2;
 const KIND_GATE_OPENED: u8 = 3;
 const KIND_DECISION_SHARE: u8 = 4;
 const KIND_OUTPUT_SHARE: u8 = 5;
+const KIND_LINK_HELLO: u8 = 0x81;
+const KIND_LINK_CONFIRM: u8 = 0x82;
 
 /// Stable fail-closed surface for the authenticated PartyMPC transport.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +169,11 @@ pub enum TransportSecurityProfile {
     /// Mandatory Ed25519 + ML-DSA-65 authentication and X25519 + ML-KEM-768
     /// hybrid peer confidentiality.
     NativePostQuantum,
+    /// Crossing-only v5: one roster/session/preprocessing-bound hybrid
+    /// ML-KEM link setup, direction-separated per-frame HMAC-SHA512, and a
+    /// dual Ed25519/ML-DSA terminal seal from every endpoint.  This profile is
+    /// deliberately not accepted by the equality machines or v4 constructors.
+    NativePostQuantumSealedCrossing,
 }
 
 impl TransportSecurityProfile {
@@ -161,6 +181,7 @@ impl TransportSecurityProfile {
         match self {
             Self::ClassicalCompatibility => 0,
             Self::NativePostQuantum => 1,
+            Self::NativePostQuantumSealedCrossing => 2,
         }
     }
 
@@ -168,6 +189,7 @@ impl TransportSecurityProfile {
         match self {
             Self::ClassicalCompatibility => CLASSICAL_TRAILER_BYTES,
             Self::NativePostQuantum => NATIVE_PQ_TRAILER_BYTES,
+            Self::NativePostQuantumSealedCrossing => SEALED_TRAILER_BYTES,
         }
     }
 }
@@ -272,6 +294,13 @@ impl NativePqTransportIdentity {
             ml_kem_ek: self.ml_kem_ek.clone(),
         }
     }
+
+    /// Borrow the ML-DSA half of this enrolled identity for another protocol
+    /// that deliberately uses the same committee slot (for example the
+    /// native-PQ full-claim clearing quorum).  The secret bytes remain opaque.
+    pub fn ml_dsa_signing_key(&self) -> &MlDsaKey {
+        &self.ml_dsa
+    }
 }
 
 /// Ordered transport identities for one PartyMPC session.
@@ -311,8 +340,53 @@ impl EqualityTransportRoster {
         party_keys: Vec<NativePqTransportPublicIdentity>,
         coordinator_key: NativePqTransportPublicIdentity,
     ) -> Result<Self> {
+        Self::new_native_with_profile(
+            party_keys,
+            coordinator_key,
+            TransportSecurityProfile::NativePostQuantum,
+        )
+    }
+
+    /// Construct the v5 native-PQ sealed crossing roster. This cannot be used
+    /// by equality machines and cannot consume or emit v4 native-PQ frames.
+    pub fn new_native_post_quantum_sealed_crossing(
+        party_keys: Vec<NativePqTransportPublicIdentity>,
+        coordinator_key: NativePqTransportPublicIdentity,
+    ) -> Result<Self> {
+        Self::new_native_with_profile(
+            party_keys,
+            coordinator_key,
+            TransportSecurityProfile::NativePostQuantumSealedCrossing,
+        )
+    }
+
+    fn new_native_with_profile(
+        party_keys: Vec<NativePqTransportPublicIdentity>,
+        coordinator_key: NativePqTransportPublicIdentity,
+        profile: TransportSecurityProfile,
+    ) -> Result<Self> {
         let ed25519_party_keys: Vec<_> = party_keys.iter().map(|key| key.ed25519).collect();
         Self::validate_ed25519_roster(&ed25519_party_keys, coordinator_key.ed25519)?;
+        if profile == TransportSecurityProfile::NativePostQuantumSealedCrossing {
+            let mut seen_montgomery = HashSet::with_capacity(ed25519_party_keys.len() + 1);
+            for key in ed25519_party_keys
+                .iter()
+                .chain(std::iter::once(&coordinator_key.ed25519))
+            {
+                let montgomery = CompressedEdwardsY(*key)
+                    .decompress()
+                    .ok_or(EqualityTransportError::InvalidConfiguration(
+                        "sealed endpoint key cannot be converted for hybrid link setup",
+                    ))?
+                    .to_montgomery()
+                    .to_bytes();
+                if montgomery.iter().all(|byte| *byte == 0) || !seen_montgomery.insert(montgomery) {
+                    return Err(EqualityTransportError::InvalidConfiguration(
+                        "sealed endpoint keys must have distinct nonzero Montgomery identities",
+                    ));
+                }
+            }
+        }
         let mut seen_ml_dsa = HashSet::with_capacity(party_keys.len() + 1);
         let mut seen_ml_kem = HashSet::with_capacity(party_keys.len() + 1);
         for key in party_keys.iter().chain(std::iter::once(&coordinator_key)) {
@@ -329,7 +403,7 @@ impl EqualityTransportRoster {
         Ok(Self {
             party_keys: ed25519_party_keys,
             coordinator_key: coordinator_key.ed25519,
-            profile: TransportSecurityProfile::NativePostQuantum,
+            profile,
             native_party_keys: party_keys,
             native_coordinator_key: Some(coordinator_key),
         })
@@ -446,6 +520,1049 @@ pub struct AuthenticatedEqualityFrame {
 
 /// Crossing-specific spelling for the shared authenticated wire envelope.
 pub type AuthenticatedCrossingFrame = AuthenticatedEqualityFrame;
+
+#[derive(Clone, Copy)]
+struct RouteAccumulator {
+    count: u64,
+    root: [u8; 64],
+}
+
+impl Default for RouteAccumulator {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            root: [0; 64],
+        }
+    }
+}
+
+struct LinkKeys {
+    send_mac: [u8; 64],
+    receive_mac: [u8; 64],
+    send_aead: [u8; 32],
+    receive_aead: [u8; 32],
+    send_nonce: [u8; 64],
+    receive_nonce: [u8; 64],
+    confirm: [u8; 64],
+    ready: bool,
+}
+
+impl Drop for LinkKeys {
+    fn drop(&mut self) {
+        self.send_mac.fill(0);
+        self.receive_mac.fill(0);
+        self.send_aead.fill(0);
+        self.receive_aead.fill(0);
+        self.send_nonce.fill(0);
+        self.receive_nonce.fill(0);
+        self.confirm.fill(0);
+    }
+}
+
+struct SealedCrossingEndpoint {
+    endpoint: usize,
+    links: Vec<Option<LinkKeys>>,
+    pending_control: VecDeque<AuthenticatedEqualityFrame>,
+    sent: Vec<RouteAccumulator>,
+    accepted: Vec<RouteAccumulator>,
+    terminal_taken: bool,
+}
+
+/// One endpoint's final dual-authenticated statement over every semantic route
+/// it sent and accepted.  Fields are intentionally private: callers can carry
+/// seals to the public verifier but cannot synthesize or edit one.
+pub struct NativePqCrossingEndpointSeal {
+    endpoint: usize,
+    session_digest: TransportSessionDigest,
+    sent: Vec<RouteAccumulator>,
+    accepted: Vec<RouteAccumulator>,
+    ed25519_signature: [u8; 64],
+    ml_dsa_signature: Vec<u8>,
+}
+
+impl NativePqCrossingEndpointSeal {
+    pub fn endpoint(&self) -> usize {
+        self.endpoint
+    }
+}
+
+impl SealedCrossingEndpoint {
+    fn new(
+        endpoint: usize,
+        session_digest: TransportSessionDigest,
+        roster: &EqualityTransportRoster,
+        identity: &NativePqTransportIdentity,
+    ) -> Result<Self> {
+        if roster.profile != TransportSecurityProfile::NativePostQuantumSealedCrossing {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "sealed link state requires the v5 crossing profile",
+            ));
+        }
+        roster.validate_native_identity(endpoint, identity)?;
+        let endpoints = roster.n_parties() + 1;
+        let mut state = Self {
+            endpoint,
+            links: (0..endpoints).map(|_| None).collect(),
+            pending_control: VecDeque::new(),
+            sent: vec![RouteAccumulator::default(); endpoints],
+            accepted: vec![RouteAccumulator::default(); endpoints],
+            terminal_taken: false,
+        };
+        for recipient in (endpoint + 1)..endpoints {
+            let (frame, keys) =
+                make_link_hello(session_digest, endpoint, recipient, roster, identity)?;
+            state.links[recipient] = Some(keys);
+            state.pending_control.push_back(frame);
+        }
+        Ok(state)
+    }
+
+    fn all_links_ready(&self) -> bool {
+        self.links.iter().enumerate().all(|(peer, link)| {
+            peer == self.endpoint || link.as_ref().is_some_and(|link| link.ready)
+        })
+    }
+
+    fn try_next_control(&mut self) -> Option<AuthenticatedEqualityFrame> {
+        self.pending_control.pop_front()
+    }
+
+    fn seal_semantic_frame(
+        &mut self,
+        session_digest: TransportSessionDigest,
+        sender: usize,
+        recipient: usize,
+        sequence: u64,
+        mut payload: EncodedPayload,
+    ) -> Result<AuthenticatedEqualityFrame> {
+        if sender != self.endpoint || recipient == sender {
+            return Err(EqualityTransportError::SenderMismatch);
+        }
+        let link = self.links.get(recipient).and_then(Option::as_ref).ok_or(
+            EqualityTransportError::InvalidConfiguration("sealed route has no established link"),
+        )?;
+        if !link.ready {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "sealed route used before responder key confirmation",
+            ));
+        }
+        if payload.kind == KIND_PEER_INGRESS {
+            let mut plaintext = std::mem::take(&mut payload.bytes);
+            let encrypted = encrypt_v5_peer_payload(
+                &plaintext,
+                session_digest,
+                sender,
+                recipient,
+                sequence,
+                &link.send_aead,
+                &link.send_nonce,
+            );
+            plaintext.fill(0);
+            payload.bytes = encrypted?;
+        }
+        if payload.bytes.len() > MAX_PAYLOAD_BYTES {
+            return Err(EqualityTransportError::MalformedFrame(
+                "sealed payload exceeds its allocation limit",
+            ));
+        }
+        let mut wire =
+            Vec::with_capacity(FIXED_CONTENT_BYTES + payload.bytes.len() + SEALED_TRAILER_BYTES);
+        wire.extend_from_slice(SEALED_FRAME_MAGIC);
+        wire.push(TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag());
+        wire.extend_from_slice(&session_digest);
+        wire.extend_from_slice(&(sender as u32).to_be_bytes());
+        wire.extend_from_slice(&(recipient as u32).to_be_bytes());
+        wire.extend_from_slice(&sequence.to_be_bytes());
+        wire.push(payload.kind);
+        wire.extend_from_slice(&(payload.bytes.len() as u32).to_be_bytes());
+        wire.extend_from_slice(&payload.bytes);
+        let tag = v5_frame_mac(&link.send_mac, &wire)?;
+        wire.extend_from_slice(&tag);
+        wire.extend_from_slice(&frame_checksum(&wire));
+        if wire.len() > MAX_FRAME_BYTES {
+            return Err(EqualityTransportError::MalformedFrame(
+                "sealed frame exceeds its allocation limit",
+            ));
+        }
+        update_route_root(
+            session_digest,
+            sender,
+            recipient,
+            &mut self.sent[recipient],
+            &wire,
+        )?;
+        Ok(AuthenticatedEqualityFrame {
+            sender,
+            recipient,
+            sequence,
+            wire,
+        })
+    }
+
+    fn verify_semantic_frame<'a>(
+        &self,
+        bytes: &'a [u8],
+        session_digest: TransportSessionDigest,
+        expected_recipient: usize,
+    ) -> Result<DecodedFrame<'a>> {
+        if expected_recipient != self.endpoint
+            || bytes.len() < FIXED_CONTENT_BYTES + SEALED_TRAILER_BYTES
+        {
+            return Err(EqualityTransportError::RecipientMismatch);
+        }
+        let checksum_start = bytes.len() - 32;
+        if bytes[checksum_start..] != frame_checksum(&bytes[..checksum_start]) {
+            return Err(EqualityTransportError::MalformedFrame(
+                "sealed frame checksum mismatch",
+            ));
+        }
+        let mac_start = checksum_start - 64;
+        let content = &bytes[..mac_start];
+        let mut input = Reader::new(content);
+        if input.array::<8>()? != *SEALED_FRAME_MAGIC
+            || input.byte()? != TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag()
+        {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+        if input.array::<64>()? != session_digest {
+            return Err(EqualityTransportError::SessionMismatch);
+        }
+        let sender = input.u32()? as usize;
+        let recipient = input.u32()? as usize;
+        let sequence = input.u64()?;
+        let kind = input.byte()?;
+        let payload = input.bytes(MAX_PAYLOAD_BYTES)?;
+        input.finish()?;
+        if recipient != expected_recipient || sender == recipient {
+            return Err(EqualityTransportError::RecipientMismatch);
+        }
+        let link = self
+            .links
+            .get(sender)
+            .and_then(Option::as_ref)
+            .ok_or(EqualityTransportError::SenderMismatch)?;
+        if !link.ready {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+        let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(&link.receive_mac)
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+        mac.update(&v5_frame_mac_message(content));
+        let carried = &bytes[mac_start..checksum_start];
+        mac.verify_slice(carried)
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+        Ok(DecodedFrame {
+            sender,
+            recipient,
+            sequence,
+            kind,
+            payload,
+        })
+    }
+
+    fn note_accepted(
+        &mut self,
+        session_digest: TransportSessionDigest,
+        sender: usize,
+        bytes: &[u8],
+    ) -> Result<()> {
+        update_route_root(
+            session_digest,
+            sender,
+            self.endpoint,
+            &mut self.accepted[sender],
+            bytes,
+        )
+    }
+
+    fn accept_control(
+        &mut self,
+        bytes: &[u8],
+        session_digest: TransportSessionDigest,
+        roster: &EqualityTransportRoster,
+        signing_key: &SigningKey,
+        ml_kem_dk: &[u8],
+    ) -> Result<()> {
+        match link_control_kind(bytes)? {
+            KIND_LINK_HELLO => {
+                let control = verify_link_hello(bytes, session_digest, self.endpoint, roster)?;
+                if control.sender >= self.endpoint
+                    || control.payload.len() != ML_KEM_768_CT_BYTES
+                    || self.links[control.sender].is_some()
+                {
+                    return Err(EqualityTransportError::AuthenticationFailed);
+                }
+                let mut classical =
+                    peer_shared_secret(signing_key, roster.party_keys[control.sender])?;
+                let mut pq = ml_kem768_decaps(ml_kem_dk, control.payload)
+                    .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+                let transcript = v5_link_kem_transcript(
+                    session_digest,
+                    control.sender,
+                    self.endpoint,
+                    roster,
+                    control.payload,
+                )?;
+                let mut combined = combine_hybrid_kem(&classical, &pq, &transcript);
+                classical.fill(0);
+                pq.fill(0);
+                let mut keys = derive_v5_link_keys(
+                    &combined,
+                    session_digest,
+                    control.sender,
+                    self.endpoint,
+                    self.endpoint,
+                )?;
+                combined.fill(0);
+                let mut responder_nonce = [0u8; 32];
+                OsRng
+                    .try_fill_bytes(&mut responder_nonce)
+                    .map_err(|_| EqualityTransportError::EntropyUnavailable)?;
+                let frame = sign_link_confirmation(
+                    session_digest,
+                    self.endpoint,
+                    control.sender,
+                    responder_nonce,
+                    &keys.confirm,
+                )?;
+                finalize_v5_link_keys(
+                    &mut keys,
+                    session_digest,
+                    control.sender,
+                    self.endpoint,
+                    self.endpoint,
+                    responder_nonce,
+                )?;
+                keys.ready = true;
+                self.links[control.sender] = Some(keys);
+                self.pending_control.push_back(frame);
+                Ok(())
+            }
+            KIND_LINK_CONFIRM => {
+                let sender = encoded_control_sender(bytes)?;
+                if sender <= self.endpoint {
+                    return Err(EqualityTransportError::AuthenticationFailed);
+                }
+                let keys = self.links[sender]
+                    .as_mut()
+                    .ok_or(EqualityTransportError::AuthenticationFailed)?;
+                if keys.ready {
+                    return Err(EqualityTransportError::AuthenticationFailed);
+                }
+                let responder_nonce = verify_link_confirmation(
+                    bytes,
+                    session_digest,
+                    self.endpoint,
+                    sender,
+                    &keys.confirm,
+                )?;
+                finalize_v5_link_keys(
+                    keys,
+                    session_digest,
+                    self.endpoint,
+                    sender,
+                    self.endpoint,
+                    responder_nonce,
+                )?;
+                keys.ready = true;
+                Ok(())
+            }
+            _ => Err(EqualityTransportError::MalformedFrame(
+                "unknown sealed-link control kind",
+            )),
+        }
+    }
+
+    fn try_terminal_seal(
+        &mut self,
+        session: &PartyMpcSession,
+        roster: &EqualityTransportRoster,
+        signing_key: &SigningKey,
+        ml_dsa: &MlDsaKey,
+    ) -> Result<Option<NativePqCrossingEndpointSeal>> {
+        if self.terminal_taken {
+            return Ok(None);
+        }
+        if !self.pending_control.is_empty() || !self.all_links_ready() {
+            return Ok(None);
+        }
+        for peer in 0..=roster.coordinator() {
+            let (expected_sent, expected_accepted) =
+                expected_crossing_route_counts(session, roster, self.endpoint, peer)?;
+            if self.sent[peer].count != expected_sent
+                || self.accepted[peer].count != expected_accepted
+            {
+                return Ok(None);
+            }
+        }
+        let session_digest = transport_session_digest(session, roster)?;
+        let message =
+            endpoint_seal_message(session_digest, self.endpoint, &self.sent, &self.accepted)?;
+        let ed25519_signature = signing_key.sign(&message).to_bytes();
+        let ml_dsa_signature = ml_dsa
+            .try_sign(V5_ENDPOINT_SEAL_ML_DSA_CONTEXT, &message)
+            .ok_or(EqualityTransportError::EntropyUnavailable)?;
+        if ml_dsa_signature.len() != ML_DSA_SIG_LEN {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+        self.terminal_taken = true;
+        Ok(Some(NativePqCrossingEndpointSeal {
+            endpoint: self.endpoint,
+            session_digest,
+            sent: self.sent.clone(),
+            accepted: self.accepted.clone(),
+            ed25519_signature,
+            ml_dsa_signature,
+        }))
+    }
+}
+
+fn finalize_v5_link_keys(
+    keys: &mut LinkKeys,
+    session_digest: TransportSessionDigest,
+    initiator: usize,
+    responder: usize,
+    endpoint: usize,
+    responder_nonce: [u8; 32],
+) -> Result<()> {
+    let initiator_side = endpoint == initiator;
+    if !initiator_side && endpoint != responder {
+        return Err(EqualityTransportError::InvalidConfiguration(
+            "invalid final link role",
+        ));
+    }
+    let mut ikm = Vec::with_capacity(64 * 5 + 32 * 3);
+    let (lo_mac, hi_mac, lo_aead, hi_aead, lo_nonce, hi_nonce) = if initiator_side {
+        (
+            &keys.send_mac,
+            &keys.receive_mac,
+            &keys.send_aead,
+            &keys.receive_aead,
+            &keys.send_nonce,
+            &keys.receive_nonce,
+        )
+    } else {
+        (
+            &keys.receive_mac,
+            &keys.send_mac,
+            &keys.receive_aead,
+            &keys.send_aead,
+            &keys.receive_nonce,
+            &keys.send_nonce,
+        )
+    };
+    ikm.extend_from_slice(lo_mac);
+    ikm.extend_from_slice(hi_mac);
+    ikm.extend_from_slice(lo_aead);
+    ikm.extend_from_slice(hi_aead);
+    ikm.extend_from_slice(lo_nonce);
+    ikm.extend_from_slice(hi_nonce);
+    ikm.extend_from_slice(&keys.confirm);
+    ikm.extend_from_slice(&responder_nonce);
+    let hkdf = Hkdf::<Sha512>::new(Some(V5_LINK_CONFIRM_DOMAIN), &ikm);
+    let mut info = Vec::new();
+    info.extend_from_slice(&session_digest);
+    info.extend_from_slice(&(initiator as u64).to_be_bytes());
+    info.extend_from_slice(&(responder as u64).to_be_bytes());
+    info.extend_from_slice(&responder_nonce);
+    let mut expanded = [0u8; 64 + 64 + 32 + 32 + 64 + 64];
+    hkdf.expand(&info, &mut expanded)
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+    if initiator_side {
+        keys.send_mac.copy_from_slice(&expanded[0..64]);
+        keys.receive_mac.copy_from_slice(&expanded[64..128]);
+        keys.send_aead.copy_from_slice(&expanded[128..160]);
+        keys.receive_aead.copy_from_slice(&expanded[160..192]);
+        keys.send_nonce.copy_from_slice(&expanded[192..256]);
+        keys.receive_nonce.copy_from_slice(&expanded[256..320]);
+    } else {
+        keys.receive_mac.copy_from_slice(&expanded[0..64]);
+        keys.send_mac.copy_from_slice(&expanded[64..128]);
+        keys.receive_aead.copy_from_slice(&expanded[128..160]);
+        keys.send_aead.copy_from_slice(&expanded[160..192]);
+        keys.receive_nonce.copy_from_slice(&expanded[192..256]);
+        keys.send_nonce.copy_from_slice(&expanded[256..320]);
+    }
+    keys.confirm.fill(0);
+    expanded.fill(0);
+    ikm.fill(0);
+    Ok(())
+}
+
+fn v5_frame_mac(key: &[u8; 64], content: &[u8]) -> Result<[u8; 64]> {
+    hmac_sha512(key, &v5_frame_mac_message(content))
+}
+
+fn v5_frame_mac_message(content: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(V5_FRAME_MAC_DOMAIN.len() + 16 + content.len());
+    message.extend_from_slice(&(V5_FRAME_MAC_DOMAIN.len() as u64).to_be_bytes());
+    message.extend_from_slice(V5_FRAME_MAC_DOMAIN);
+    message.extend_from_slice(&(content.len() as u64).to_be_bytes());
+    message.extend_from_slice(content);
+    message
+}
+
+fn v5_peer_nonce(
+    key: &[u8; 64],
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+) -> Result<[u8; PEER_NONCE_BYTES]> {
+    let mut message = Vec::new();
+    message.extend_from_slice(&session_digest);
+    message.extend_from_slice(&(sender as u64).to_be_bytes());
+    message.extend_from_slice(&(recipient as u64).to_be_bytes());
+    message.extend_from_slice(&sequence.to_be_bytes());
+    let full = hmac_sha512(key, &message)?;
+    Ok(full[..PEER_NONCE_BYTES].try_into().unwrap())
+}
+
+fn encrypt_v5_peer_payload(
+    plaintext: &[u8],
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    key: &[u8; 32],
+    nonce_key: &[u8; 64],
+) -> Result<Vec<u8>> {
+    if plaintext.len() > MAX_PAYLOAD_BYTES.saturating_sub(PEER_AEAD_TAG_BYTES) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "sealed peer payload too large",
+        ));
+    }
+    let nonce = v5_peer_nonce(nonce_key, session_digest, sender, recipient, sequence)?;
+    let aad = peer_aead_aad(session_digest, sender, recipient, sequence, plaintext.len())?;
+    XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)?
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)
+}
+
+fn decrypt_v5_peer_payload(
+    encrypted: &[u8],
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    key: &[u8; 32],
+    nonce_key: &[u8; 64],
+) -> Result<Vec<u8>> {
+    let plaintext_len = encrypted
+        .len()
+        .checked_sub(PEER_AEAD_TAG_BYTES)
+        .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+    let nonce = v5_peer_nonce(nonce_key, session_digest, sender, recipient, sequence)?;
+    let aad = peer_aead_aad(session_digest, sender, recipient, sequence, plaintext_len)?;
+    XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)?
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: encrypted,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)
+}
+
+fn update_route_root(
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    accumulator: &mut RouteAccumulator,
+    wire: &[u8],
+) -> Result<()> {
+    let next = accumulator
+        .count
+        .checked_add(1)
+        .ok_or(EqualityTransportError::MalformedFrame(
+            "route frame count exhausted",
+        ))?;
+    let wire_digest = Sha512::digest(wire);
+    let mut hash = Sha512::new();
+    hash.update((V5_ROUTE_ROOT_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(V5_ROUTE_ROOT_DOMAIN);
+    hash.update(session_digest);
+    hash.update((sender as u64).to_be_bytes());
+    hash.update((recipient as u64).to_be_bytes());
+    hash.update(next.to_be_bytes());
+    hash.update(accumulator.root);
+    hash.update(wire_digest);
+    accumulator.root = hash.finalize().into();
+    accumulator.count = next;
+    Ok(())
+}
+
+struct DecodedLinkControl<'a> {
+    sender: usize,
+    payload: &'a [u8],
+}
+
+fn make_link_hello(
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    roster: &EqualityTransportRoster,
+    identity: &NativePqTransportIdentity,
+) -> Result<(AuthenticatedEqualityFrame, LinkKeys)> {
+    let recipient_key =
+        roster
+            .native_key(recipient)
+            .ok_or(EqualityTransportError::InvalidConfiguration(
+                "sealed link recipient has no ML-KEM key",
+            ))?;
+    let (ciphertext, mut pq) = ml_kem768_encaps(&recipient_key.ml_kem_ek)
+        .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+    if ciphertext.len() != ML_KEM_768_CT_BYTES {
+        pq.fill(0);
+        return Err(EqualityTransportError::ConfidentialityFailed);
+    }
+    let mut classical = peer_shared_secret(&identity.signing_key, recipient_key.ed25519)?;
+    let transcript =
+        v5_link_kem_transcript(session_digest, sender, recipient, roster, &ciphertext)?;
+    let mut combined = combine_hybrid_kem(&classical, &pq, &transcript);
+    classical.fill(0);
+    pq.fill(0);
+    let keys = derive_v5_link_keys(&combined, session_digest, sender, recipient, sender)?;
+    combined.fill(0);
+    let frame = sign_link_control(
+        session_digest,
+        sender,
+        recipient,
+        KIND_LINK_HELLO,
+        &ciphertext,
+        &identity.signing_key,
+        &identity.ml_dsa,
+        roster,
+    )?;
+    Ok((frame, keys))
+}
+
+fn derive_v5_link_keys(
+    shared: &[u8; 32],
+    session_digest: TransportSessionDigest,
+    initiator: usize,
+    responder: usize,
+    endpoint: usize,
+) -> Result<LinkKeys> {
+    if initiator >= responder || (endpoint != initiator && endpoint != responder) {
+        return Err(EqualityTransportError::InvalidConfiguration(
+            "sealed link roles are not canonical",
+        ));
+    }
+    const EXPANDED: usize = 64 + 64 + 32 + 32 + 64 + 64 + 64;
+    let hkdf = Hkdf::<Sha512>::new(Some(V5_LINK_KEY_DOMAIN), shared);
+    let mut info = Vec::with_capacity(V5_LINK_KEY_DOMAIN.len() + 64 + 16);
+    info.extend_from_slice(&(V5_LINK_KEY_DOMAIN.len() as u64).to_be_bytes());
+    info.extend_from_slice(V5_LINK_KEY_DOMAIN);
+    info.extend_from_slice(&session_digest);
+    info.extend_from_slice(&(initiator as u64).to_be_bytes());
+    info.extend_from_slice(&(responder as u64).to_be_bytes());
+    let mut expanded = [0u8; EXPANDED];
+    hkdf.expand(&info, &mut expanded)
+        .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+    let lo_mac: [u8; 64] = expanded[0..64].try_into().unwrap();
+    let hi_mac: [u8; 64] = expanded[64..128].try_into().unwrap();
+    let lo_aead: [u8; 32] = expanded[128..160].try_into().unwrap();
+    let hi_aead: [u8; 32] = expanded[160..192].try_into().unwrap();
+    let lo_nonce: [u8; 64] = expanded[192..256].try_into().unwrap();
+    let hi_nonce: [u8; 64] = expanded[256..320].try_into().unwrap();
+    let confirm: [u8; 64] = expanded[320..384].try_into().unwrap();
+    expanded.fill(0);
+    let initiator_side = endpoint == initiator;
+    Ok(LinkKeys {
+        send_mac: if initiator_side { lo_mac } else { hi_mac },
+        receive_mac: if initiator_side { hi_mac } else { lo_mac },
+        send_aead: if initiator_side { lo_aead } else { hi_aead },
+        receive_aead: if initiator_side { hi_aead } else { lo_aead },
+        send_nonce: if initiator_side { lo_nonce } else { hi_nonce },
+        receive_nonce: if initiator_side { hi_nonce } else { lo_nonce },
+        confirm,
+        ready: false,
+    })
+}
+
+fn v5_link_kem_transcript(
+    session_digest: TransportSessionDigest,
+    initiator: usize,
+    responder: usize,
+    roster: &EqualityTransportRoster,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    let initiator_key =
+        roster
+            .native_key(initiator)
+            .ok_or(EqualityTransportError::InvalidConfiguration(
+                "missing link initiator identity",
+            ))?;
+    let responder_key =
+        roster
+            .native_key(responder)
+            .ok_or(EqualityTransportError::InvalidConfiguration(
+                "missing link responder identity",
+            ))?;
+    let mut out = Vec::new();
+    out.extend_from_slice(&(V5_LINK_KEM_TRANSCRIPT_DOMAIN.len() as u64).to_be_bytes());
+    out.extend_from_slice(V5_LINK_KEM_TRANSCRIPT_DOMAIN);
+    out.extend_from_slice(&session_digest);
+    out.extend_from_slice(&(initiator as u64).to_be_bytes());
+    out.extend_from_slice(&(responder as u64).to_be_bytes());
+    out.extend_from_slice(&initiator_key.ed25519);
+    out.extend_from_slice(&initiator_key.ml_dsa);
+    out.extend_from_slice(&responder_key.ed25519);
+    out.extend_from_slice(&responder_key.ml_dsa);
+    out.extend_from_slice(&responder_key.ml_kem_ek);
+    out.extend_from_slice(ciphertext);
+    Ok(out)
+}
+
+fn sign_link_confirmation(
+    session_digest: TransportSessionDigest,
+    responder: usize,
+    initiator: usize,
+    responder_nonce: [u8; 32],
+    confirmation_key: &[u8; 64],
+) -> Result<AuthenticatedEqualityFrame> {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(LINK_CONTROL_MAGIC);
+    wire.push(TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag());
+    wire.extend_from_slice(&session_digest);
+    wire.extend_from_slice(&(responder as u32).to_be_bytes());
+    wire.extend_from_slice(&(initiator as u32).to_be_bytes());
+    wire.push(KIND_LINK_CONFIRM);
+    wire.extend_from_slice(&(responder_nonce.len() as u32).to_be_bytes());
+    wire.extend_from_slice(&responder_nonce);
+    let tag = hmac_sha512(confirmation_key, &link_confirmation_message(&wire))?;
+    wire.extend_from_slice(&tag);
+    wire.extend_from_slice(&frame_checksum(&wire));
+    Ok(AuthenticatedEqualityFrame {
+        sender: responder,
+        recipient: initiator,
+        sequence: 0,
+        wire,
+    })
+}
+
+fn verify_link_confirmation(
+    bytes: &[u8],
+    session_digest: TransportSessionDigest,
+    initiator: usize,
+    responder: usize,
+    confirmation_key: &[u8; 64],
+) -> Result<[u8; 32]> {
+    const HEADER: usize = 8 + 1 + 64 + 4 + 4 + 1 + 4;
+    if bytes.len() != HEADER + 32 + 64 + 32 {
+        return Err(EqualityTransportError::MalformedFrame(
+            "link confirmation length",
+        ));
+    }
+    let checksum_start = bytes.len() - 32;
+    if bytes[checksum_start..] != frame_checksum(&bytes[..checksum_start]) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "link confirmation checksum",
+        ));
+    }
+    let tag_start = checksum_start - 64;
+    let content = &bytes[..tag_start];
+    let mut input = Reader::new(content);
+    if input.array::<8>()? != *LINK_CONTROL_MAGIC
+        || input.byte()? != TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag()
+        || input.array::<64>()? != session_digest
+        || input.u32()? as usize != responder
+        || input.u32()? as usize != initiator
+        || input.byte()? != KIND_LINK_CONFIRM
+    {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    let nonce: [u8; 32] = input
+        .bytes(32)?
+        .try_into()
+        .map_err(|_| EqualityTransportError::MalformedFrame("link confirmation nonce"))?;
+    input.finish()?;
+    let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(confirmation_key)
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    mac.update(&link_confirmation_message(content));
+    mac.verify_slice(&bytes[tag_start..checksum_start])
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    Ok(nonce)
+}
+
+fn link_confirmation_message(content: &[u8]) -> Vec<u8> {
+    let mut message = Vec::with_capacity(V5_LINK_CONFIRM_DOMAIN.len() + 16 + content.len());
+    message.extend_from_slice(&(V5_LINK_CONFIRM_DOMAIN.len() as u64).to_be_bytes());
+    message.extend_from_slice(V5_LINK_CONFIRM_DOMAIN);
+    message.extend_from_slice(&(content.len() as u64).to_be_bytes());
+    message.extend_from_slice(content);
+    message
+}
+
+fn hmac_sha512(key: &[u8], message: &[u8]) -> Result<[u8; 64]> {
+    let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(key)
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    mac.update(message);
+    Ok(mac.finalize().into_bytes().into())
+}
+
+fn sign_link_control(
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    kind: u8,
+    payload: &[u8],
+    signing_key: &SigningKey,
+    ml_dsa: &MlDsaKey,
+    roster: &EqualityTransportRoster,
+) -> Result<AuthenticatedEqualityFrame> {
+    if payload.len() > MAX_PAYLOAD_BYTES || kind != KIND_LINK_HELLO {
+        return Err(EqualityTransportError::MalformedFrame(
+            "invalid link control payload",
+        ));
+    }
+    let mut wire = Vec::new();
+    wire.extend_from_slice(LINK_CONTROL_MAGIC);
+    wire.push(TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag());
+    wire.extend_from_slice(&session_digest);
+    wire.extend_from_slice(&(sender as u32).to_be_bytes());
+    wire.extend_from_slice(&(recipient as u32).to_be_bytes());
+    wire.push(kind);
+    wire.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    wire.extend_from_slice(payload);
+    let message = link_control_signing_message(&wire);
+    wire.extend_from_slice(&signing_key.sign(&message).to_bytes());
+    let pq = ml_dsa
+        .try_sign(V5_LINK_HELLO_ML_DSA_CONTEXT, &message)
+        .ok_or(EqualityTransportError::EntropyUnavailable)?;
+    if pq.len() != ML_DSA_SIG_LEN {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    wire.extend_from_slice(&pq);
+    wire.extend_from_slice(&frame_checksum(&wire));
+    if wire.len() > MAX_FRAME_BYTES
+        || roster.key(sender) != Some(signing_key.verifying_key().to_bytes())
+    {
+        return Err(EqualityTransportError::InvalidConfiguration(
+            "link-control signer does not match roster",
+        ));
+    }
+    Ok(AuthenticatedEqualityFrame {
+        sender,
+        recipient,
+        sequence: 0,
+        wire,
+    })
+}
+
+fn verify_link_hello<'a>(
+    bytes: &'a [u8],
+    session_digest: TransportSessionDigest,
+    expected_recipient: usize,
+    roster: &EqualityTransportRoster,
+) -> Result<DecodedLinkControl<'a>> {
+    let fixed = 8 + 1 + 64 + 4 + 4 + 1 + 4;
+    if bytes.len() < fixed + NATIVE_PQ_TRAILER_BYTES || bytes.len() > MAX_FRAME_BYTES {
+        return Err(EqualityTransportError::MalformedFrame(
+            "link control length",
+        ));
+    }
+    let checksum_start = bytes.len() - 32;
+    if bytes[checksum_start..] != frame_checksum(&bytes[..checksum_start]) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "link control checksum",
+        ));
+    }
+    let signature_start = checksum_start - 64 - ML_DSA_SIG_LEN;
+    let content = &bytes[..signature_start];
+    let mut input = Reader::new(content);
+    if input.array::<8>()? != *LINK_CONTROL_MAGIC
+        || input.byte()? != TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag()
+        || input.array::<64>()? != session_digest
+    {
+        return Err(EqualityTransportError::SessionMismatch);
+    }
+    let sender = input.u32()? as usize;
+    let recipient = input.u32()? as usize;
+    let kind = input.byte()?;
+    let payload = input.bytes(MAX_PAYLOAD_BYTES)?;
+    input.finish()?;
+    if recipient != expected_recipient || sender == recipient || kind != KIND_LINK_HELLO {
+        return Err(EqualityTransportError::RecipientMismatch);
+    }
+    let public = roster
+        .native_key(sender)
+        .ok_or(EqualityTransportError::SenderMismatch)?;
+    let message = link_control_signing_message(content);
+    let ed: [u8; 64] = bytes[signature_start..signature_start + 64]
+        .try_into()
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    VerifyingKey::from_bytes(&public.ed25519)
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?
+        .verify_strict(&message, &Signature::from_bytes(&ed))
+        .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    if !ml_dsa_verify(
+        &public.ml_dsa,
+        V5_LINK_HELLO_ML_DSA_CONTEXT,
+        &message,
+        &bytes[signature_start + 64..checksum_start],
+    ) {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    Ok(DecodedLinkControl { sender, payload })
+}
+
+fn link_control_kind(bytes: &[u8]) -> Result<u8> {
+    const KIND_OFFSET: usize = 8 + 1 + 64 + 4 + 4;
+    if !bytes.starts_with(LINK_CONTROL_MAGIC) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "not a v5 link control frame",
+        ));
+    }
+    bytes
+        .get(KIND_OFFSET)
+        .copied()
+        .ok_or(EqualityTransportError::MalformedFrame(
+            "truncated link control kind",
+        ))
+}
+
+fn encoded_control_sender(bytes: &[u8]) -> Result<usize> {
+    const SENDER_OFFSET: usize = 8 + 1 + 64;
+    Ok(u32::from_be_bytes(
+        bytes
+            .get(SENDER_OFFSET..SENDER_OFFSET + 4)
+            .ok_or(EqualityTransportError::MalformedFrame(
+                "truncated control sender",
+            ))?
+            .try_into()
+            .map_err(|_| EqualityTransportError::MalformedFrame("control sender"))?,
+    ) as usize)
+}
+
+fn link_control_signing_message(content: &[u8]) -> [u8; 64] {
+    let mut hash = Sha512::new();
+    hash.update((V5_LINK_HELLO_SIGNATURE_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(V5_LINK_HELLO_SIGNATURE_DOMAIN);
+    hash.update((content.len() as u64).to_be_bytes());
+    hash.update(content);
+    hash.finalize().into()
+}
+
+/// True only for v5 handshake/key-confirmation frames. Routers must forward
+/// these, but must not include them in the semantic public crossing evidence.
+pub fn is_native_post_quantum_crossing_control_frame(bytes: &[u8]) -> bool {
+    bytes.starts_with(LINK_CONTROL_MAGIC)
+}
+
+fn expected_crossing_route_counts(
+    session: &PartyMpcSession,
+    roster: &EqualityTransportRoster,
+    sender: usize,
+    recipient: usize,
+) -> Result<(u64, u64)> {
+    if sender == recipient {
+        return Ok((0, 0));
+    }
+    let gates = u64::try_from(session.exact_and_gates())
+        .map_err(|_| EqualityTransportError::MalformedFrame("gate count does not fit u64"))?;
+    let peer_ingress = u64::try_from(session.buckets)
+        .ok()
+        .and_then(|buckets| buckets.checked_mul(2))
+        .ok_or(EqualityTransportError::MalformedFrame(
+            "peer ingress count overflow",
+        ))?;
+    let coordinator = roster.coordinator();
+    let route_count = |from: usize, to: usize| -> Result<u64> {
+        if from == to {
+            Ok(0)
+        } else if from < coordinator && to < coordinator {
+            Ok(peer_ingress)
+        } else if from < coordinator && to == coordinator {
+            gates
+                .checked_add(1)
+                .ok_or(EqualityTransportError::MalformedFrame(
+                    "party route count overflow",
+                ))
+        } else if from == coordinator && to < coordinator {
+            Ok(gates)
+        } else {
+            Ok(0)
+        }
+    };
+    let sent = route_count(sender, recipient)?;
+    let accepted = route_count(recipient, sender)?;
+    Ok((sent, accepted))
+}
+
+fn endpoint_seal_message(
+    session_digest: TransportSessionDigest,
+    endpoint: usize,
+    sent: &[RouteAccumulator],
+    accepted: &[RouteAccumulator],
+) -> Result<[u8; 64]> {
+    if sent.len() != accepted.len() || endpoint >= sent.len() {
+        return Err(EqualityTransportError::MalformedFrame(
+            "endpoint seal has a malformed route vector",
+        ));
+    }
+    let mut hash = Sha512::new();
+    hash.update((V5_ENDPOINT_SEAL_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(V5_ENDPOINT_SEAL_DOMAIN);
+    hash.update(session_digest);
+    hash.update((endpoint as u64).to_be_bytes());
+    hash.update((sent.len() as u64).to_be_bytes());
+    for (peer, (outbound, inbound)) in sent.iter().zip(accepted).enumerate() {
+        hash.update((peer as u64).to_be_bytes());
+        hash.update(outbound.count.to_be_bytes());
+        hash.update(outbound.root);
+        hash.update(inbound.count.to_be_bytes());
+        hash.update(inbound.root);
+    }
+    Ok(hash.finalize().into())
+}
+
+/// Opaque authority capability issued only after the complete native-PQ
+/// crossing evidence has been authenticated and reconstructed.
+///
+/// The v5 verifier fills these private fields; keeping the type here while the
+/// verifier is assembled also gives the claim-signing barrier an atomic,
+/// compile-safe integration point.
+pub struct VerifiedPublicCrossingTranscript {
+    session: PartyMpcSession,
+    crossing: Crossing,
+    transcript: DistributedTranscript,
+    ordered_party_authorities: Vec<([u8; 32], Vec<u8>)>,
+    claim_binding: [u8; 64],
+}
+
+impl VerifiedPublicCrossingTranscript {
+    pub(crate) fn matches_clearing_context(
+        &self,
+        claim: &crate::attestation::ClearingClaim,
+        session: &PartyMpcSession,
+        crossing: &Crossing,
+        transcript: &DistributedTranscript,
+        ordered_quorum_keys: &[crate::attestation::NativePqPartyPublicKey],
+    ) -> bool {
+        self.session == *session
+            && &self.crossing == crossing
+            && &self.transcript == transcript
+            && self.claim_binding == claim.native_pq_verified_crossing_binding()
+            && self.ordered_party_authorities.len() == ordered_quorum_keys.len()
+            && self
+                .ordered_party_authorities
+                .iter()
+                .zip(ordered_quorum_keys)
+                .all(|((ed25519, ml_dsa), expected)| {
+                    ed25519 == expected.ed25519() && ml_dsa.as_slice() == expected.ml_dsa()
+                })
+    }
+}
 
 impl AuthenticatedEqualityFrame {
     pub fn sender(&self) -> usize {
@@ -650,8 +1767,7 @@ impl EqualityPartyMachine {
                     &self.roster,
                 )?))
             }
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Ok(None),
+            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => Ok(None),
         }
     }
 
@@ -721,6 +1837,8 @@ pub struct CrossingPartyMachine {
     result: Receiver<std::result::Result<PartyReport, PartyMpcError>>,
     outbound_sequences: Vec<u64>,
     inbound_sequences: Vec<u64>,
+    sealed_endpoint: Option<SealedCrossingEndpoint>,
+    result_completed: bool,
 }
 
 /// Prepare one PartyMPC crossing input directly from this party's mod-`t`
@@ -840,6 +1958,47 @@ impl CrossingPartyMachine {
         )
     }
 
+    /// Construct the v5 link-authenticated crossing endpoint.  Link handshakes
+    /// are emitted through `try_next_frame` before semantic frames; no v4
+    /// per-frame signature fallback is available under this roster profile.
+    pub fn new_native_post_quantum_sealed(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        identity: NativePqTransportIdentity,
+        input: PartyArithmeticInput,
+        preprocessing: TripleMaterial,
+    ) -> Result<Self> {
+        validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantumSealedCrossing {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "sealed native-PQ endpoint requires the v5 sealed crossing profile",
+            ));
+        }
+        roster.validate_native_identity(party, &identity)?;
+        let session_digest = transport_session_digest(&session, &roster)?;
+        let sealed_endpoint =
+            SealedCrossingEndpoint::new(party, session_digest, &roster, &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            ..
+        } = identity;
+        let mut machine = Self::new_with_crypto(
+            session,
+            roster,
+            party,
+            signing_key,
+            Some(ml_dsa),
+            Some(ml_kem_dk),
+            input,
+            preprocessing,
+        )?;
+        machine.sealed_endpoint = Some(sealed_endpoint);
+        Ok(machine)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new_with_crypto(
         session: PartyMpcSession,
@@ -898,6 +2057,8 @@ impl CrossingPartyMachine {
             result: result_rx,
             outbound_sequences: vec![0; roster.n_parties() + 1],
             inbound_sequences: vec![0; roster.n_parties() + 1],
+            sealed_endpoint: None,
+            result_completed: false,
         })
     }
 
@@ -906,33 +2067,90 @@ impl CrossingPartyMachine {
     }
 
     pub fn try_next_frame(&mut self) -> Result<Option<AuthenticatedEqualityFrame>> {
-        match self.outbound.try_recv() {
-            Ok(raw) => {
-                let (recipient, payload) = encode_party_outbound(&self.session, self.party, raw)?;
-                let sequence = self.outbound_sequences[recipient];
-                self.outbound_sequences[recipient] =
-                    sequence
-                        .checked_add(1)
-                        .ok_or(EqualityTransportError::MalformedFrame(
-                            "outbound sequence exhausted",
-                        ))?;
-                Ok(Some(sign_frame(
-                    self.session_digest,
-                    self.party,
-                    recipient,
-                    sequence,
-                    payload,
-                    &self.signing_key,
-                    self.ml_dsa.as_ref(),
-                    &self.roster,
-                )?))
+        if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+            if let Some(control) = endpoint.try_next_control() {
+                return Ok(Some(control));
             }
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => Ok(None),
+            if !endpoint.all_links_ready() {
+                return Ok(None);
+            }
+        }
+        loop {
+            match self.outbound.try_recv() {
+                Ok(raw) => {
+                    let raw = match raw {
+                        RawOutbound::Peer(message) if message.to == self.party => {
+                            if message.from != self.party
+                                || message.session != self.session.binding()
+                            {
+                                return Err(EqualityTransportError::SessionMismatch);
+                            }
+                            self.peer_in
+                                .send(message)
+                                .map_err(|_| EqualityTransportError::ChannelClosed)?;
+                            continue;
+                        }
+                        other => other,
+                    };
+                    let (recipient, payload) =
+                        encode_party_outbound(&self.session, self.party, raw)?;
+                    let sequence = self.outbound_sequences[recipient];
+                    self.outbound_sequences[recipient] =
+                        sequence
+                            .checked_add(1)
+                            .ok_or(EqualityTransportError::MalformedFrame(
+                                "outbound sequence exhausted",
+                            ))?;
+                    let frame = if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+                        endpoint.seal_semantic_frame(
+                            self.session_digest,
+                            self.party,
+                            recipient,
+                            sequence,
+                            payload,
+                        )?
+                    } else {
+                        sign_frame(
+                            self.session_digest,
+                            self.party,
+                            recipient,
+                            sequence,
+                            payload,
+                            &self.signing_key,
+                            self.ml_dsa.as_ref(),
+                            &self.roster,
+                        )?
+                    };
+                    return Ok(Some(frame));
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return Ok(None),
+            }
         }
     }
 
     pub fn accept_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        let decoded = verify_frame(bytes, self.session_digest, self.party, &self.roster)?;
+        if is_native_post_quantum_crossing_control_frame(bytes) {
+            let endpoint = self
+                .sealed_endpoint
+                .as_mut()
+                .ok_or(EqualityTransportError::AuthenticationFailed)?;
+            return endpoint.accept_control(
+                bytes,
+                self.session_digest,
+                &self.roster,
+                &self.signing_key,
+                self.ml_kem_dk
+                    .as_deref()
+                    .ok_or(EqualityTransportError::InvalidConfiguration(
+                        "sealed party is missing ML-KEM decapsulation material",
+                    ))?,
+            );
+        }
+        let decoded = if let Some(endpoint) = self.sealed_endpoint.as_ref() {
+            endpoint.verify_semantic_frame(bytes, self.session_digest, self.party)?
+        } else {
+            verify_frame(bytes, self.session_digest, self.party, &self.roster)?
+        };
         let expected = self
             .inbound_sequences
             .get(decoded.sender)
@@ -946,15 +2164,26 @@ impl CrossingPartyMachine {
             });
         }
         let sender = decoded.sender;
-        match decode_party_inbound(
-            &self.session,
-            self.session_digest,
-            self.party,
-            &self.signing_key,
-            self.ml_kem_dk.as_deref(),
-            &self.roster,
-            decoded,
-        )? {
+        let inbound = if self.sealed_endpoint.is_some() && decoded.kind == KIND_PEER_INGRESS {
+            decode_v5_party_peer_inbound(
+                &self.session,
+                self.session_digest,
+                self.party,
+                self.sealed_endpoint.as_ref().unwrap(),
+                decoded,
+            )?
+        } else {
+            decode_party_inbound(
+                &self.session,
+                self.session_digest,
+                self.party,
+                &self.signing_key,
+                self.ml_kem_dk.as_deref(),
+                &self.roster,
+                decoded,
+            )?
+        };
+        match inbound {
             PartyInbound::Peer(message) => self
                 .peer_in
                 .send(message)
@@ -964,16 +2193,47 @@ impl CrossingPartyMachine {
                 .send(message)
                 .map_err(|_| EqualityTransportError::ChannelClosed)?,
         }
+        if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+            endpoint.note_accepted(self.session_digest, sender, bytes)?;
+        }
         self.inbound_sequences[sender] = expected + 1;
         Ok(())
     }
 
     pub fn try_result(&mut self) -> Result<Option<PartyReport>> {
         match self.result.try_recv() {
-            Ok(result) => result.map(Some).map_err(Into::into),
+            Ok(result) => {
+                let report = result.map_err(EqualityTransportError::from)?;
+                self.result_completed = true;
+                Ok(Some(report))
+            }
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => Err(EqualityTransportError::WorkerPanicked),
         }
+    }
+
+    /// Produce this party's one-shot terminal route seal only after the exact
+    /// PartyMPC schedule has completed and every expected route is closed.
+    pub fn try_terminal_seal(&mut self) -> Result<Option<NativePqCrossingEndpointSeal>> {
+        if !self.result_completed {
+            return Ok(None);
+        }
+        let endpoint =
+            self.sealed_endpoint
+                .as_mut()
+                .ok_or(EqualityTransportError::InvalidConfiguration(
+                    "terminal seals require the v5 sealed crossing profile",
+                ))?;
+        endpoint.try_terminal_seal(
+            &self.session,
+            &self.roster,
+            &self.signing_key,
+            self.ml_dsa
+                .as_ref()
+                .ok_or(EqualityTransportError::InvalidConfiguration(
+                    "sealed crossing party is missing ML-DSA material",
+                ))?,
+        )
     }
 }
 
@@ -1157,11 +2417,14 @@ pub struct CrossingCoordinatorMachine {
     roster: EqualityTransportRoster,
     signing_key: SigningKey,
     ml_dsa: Option<MlDsaKey>,
+    ml_kem_dk: Option<Vec<u8>>,
     party_in: Sender<PartyMessage>,
     outbound: Receiver<RawOutbound>,
     result: Receiver<std::result::Result<DistributedRun, PartyMpcError>>,
     outbound_sequences: Vec<u64>,
     inbound_sequences: Vec<u64>,
+    sealed_endpoint: Option<SealedCrossingEndpoint>,
+    result_completed: bool,
 }
 
 impl CrossingCoordinatorMachine {
@@ -1204,6 +2467,34 @@ impl CrossingCoordinatorMachine {
         Self::new_with_crypto(session, roster, signing_key, Some(ml_dsa))
     }
 
+    pub fn new_native_post_quantum_sealed(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        identity: NativePqTransportIdentity,
+    ) -> Result<Self> {
+        validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantumSealedCrossing {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "sealed native-PQ coordinator requires the v5 sealed crossing profile",
+            ));
+        }
+        let coordinator = roster.coordinator();
+        roster.validate_native_identity(coordinator, &identity)?;
+        let session_digest = transport_session_digest(&session, &roster)?;
+        let sealed_endpoint =
+            SealedCrossingEndpoint::new(coordinator, session_digest, &roster, &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            ..
+        } = identity;
+        let mut machine = Self::new_with_crypto(session, roster, signing_key, Some(ml_dsa))?;
+        machine.ml_kem_dk = Some(ml_kem_dk);
+        machine.sealed_endpoint = Some(sealed_endpoint);
+        Ok(machine)
+    }
+
     fn new_with_crypto(
         session: PartyMpcSession,
         roster: EqualityTransportRoster,
@@ -1244,15 +2535,26 @@ impl CrossingCoordinatorMachine {
             roster: roster.clone(),
             signing_key,
             ml_dsa,
+            ml_kem_dk: None,
             party_in: party_in_tx,
             outbound: outbound_rx,
             result: result_rx,
             outbound_sequences: vec![0; roster.n_parties()],
             inbound_sequences: vec![0; roster.n_parties()],
+            sealed_endpoint: None,
+            result_completed: false,
         })
     }
 
     pub fn try_next_frame(&mut self) -> Result<Option<AuthenticatedEqualityFrame>> {
+        if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+            if let Some(control) = endpoint.try_next_control() {
+                return Ok(Some(control));
+            }
+            if !endpoint.all_links_ready() {
+                return Ok(None);
+            }
+        }
         match self.outbound.try_recv() {
             Ok(RawOutbound::Coordinator { recipient, message }) => {
                 let payload = encode_coordinator_outbound(&self.session, message)?;
@@ -1263,16 +2565,27 @@ impl CrossingCoordinatorMachine {
                         .ok_or(EqualityTransportError::MalformedFrame(
                             "outbound sequence exhausted",
                         ))?;
-                Ok(Some(sign_frame(
-                    self.session_digest,
-                    self.roster.coordinator(),
-                    recipient,
-                    sequence,
-                    payload,
-                    &self.signing_key,
-                    self.ml_dsa.as_ref(),
-                    &self.roster,
-                )?))
+                let frame = if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+                    endpoint.seal_semantic_frame(
+                        self.session_digest,
+                        self.roster.coordinator(),
+                        recipient,
+                        sequence,
+                        payload,
+                    )?
+                } else {
+                    sign_frame(
+                        self.session_digest,
+                        self.roster.coordinator(),
+                        recipient,
+                        sequence,
+                        payload,
+                        &self.signing_key,
+                        self.ml_dsa.as_ref(),
+                        &self.roster,
+                    )?
+                };
+                Ok(Some(frame))
             }
             Ok(_) => Err(EqualityTransportError::MalformedFrame(
                 "coordinator emitted a party message",
@@ -1282,12 +2595,33 @@ impl CrossingCoordinatorMachine {
     }
 
     pub fn accept_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        let decoded = verify_frame(
-            bytes,
-            self.session_digest,
-            self.roster.coordinator(),
-            &self.roster,
-        )?;
+        if is_native_post_quantum_crossing_control_frame(bytes) {
+            let endpoint = self
+                .sealed_endpoint
+                .as_mut()
+                .ok_or(EqualityTransportError::AuthenticationFailed)?;
+            return endpoint.accept_control(
+                bytes,
+                self.session_digest,
+                &self.roster,
+                &self.signing_key,
+                self.ml_kem_dk
+                    .as_deref()
+                    .ok_or(EqualityTransportError::InvalidConfiguration(
+                        "sealed coordinator is missing ML-KEM decapsulation material",
+                    ))?,
+            );
+        }
+        let decoded = if let Some(endpoint) = self.sealed_endpoint.as_ref() {
+            endpoint.verify_semantic_frame(bytes, self.session_digest, self.roster.coordinator())?
+        } else {
+            verify_frame(
+                bytes,
+                self.session_digest,
+                self.roster.coordinator(),
+                &self.roster,
+            )?
+        };
         if decoded.sender >= self.roster.n_parties() {
             return Err(EqualityTransportError::SenderMismatch);
         }
@@ -1304,16 +2638,45 @@ impl CrossingCoordinatorMachine {
         self.party_in
             .send(message)
             .map_err(|_| EqualityTransportError::ChannelClosed)?;
+        if let Some(endpoint) = self.sealed_endpoint.as_mut() {
+            endpoint.note_accepted(self.session_digest, sender, bytes)?;
+        }
         self.inbound_sequences[sender] = expected + 1;
         Ok(())
     }
 
     pub fn try_result(&mut self) -> Result<Option<DistributedRun>> {
         match self.result.try_recv() {
-            Ok(result) => result.map(Some).map_err(Into::into),
+            Ok(result) => {
+                let run = result.map_err(EqualityTransportError::from)?;
+                self.result_completed = true;
+                Ok(Some(run))
+            }
             Err(TryRecvError::Empty) => Ok(None),
             Err(TryRecvError::Disconnected) => Err(EqualityTransportError::WorkerPanicked),
         }
+    }
+
+    pub fn try_terminal_seal(&mut self) -> Result<Option<NativePqCrossingEndpointSeal>> {
+        if !self.result_completed {
+            return Ok(None);
+        }
+        let endpoint =
+            self.sealed_endpoint
+                .as_mut()
+                .ok_or(EqualityTransportError::InvalidConfiguration(
+                    "terminal seals require the v5 sealed crossing profile",
+                ))?;
+        endpoint.try_terminal_seal(
+            &self.session,
+            &self.roster,
+            &self.signing_key,
+            self.ml_dsa
+                .as_ref()
+                .ok_or(EqualityTransportError::InvalidConfiguration(
+                    "sealed crossing coordinator is missing ML-DSA material",
+                ))?,
+        )
     }
 }
 
@@ -1565,6 +2928,65 @@ fn decode_party_inbound(
     }
 }
 
+fn decode_v5_party_peer_inbound(
+    session: &PartyMpcSession,
+    session_digest: TransportSessionDigest,
+    party: usize,
+    endpoint: &SealedCrossingEndpoint,
+    frame: DecodedFrame<'_>,
+) -> Result<PartyInbound> {
+    if frame.kind != KIND_PEER_INGRESS
+        || frame.sender >= session.n_parties
+        || frame.recipient != party
+        || frame.sender == party
+    {
+        return Err(EqualityTransportError::RecipientMismatch);
+    }
+    let link = endpoint
+        .links
+        .get(frame.sender)
+        .and_then(Option::as_ref)
+        .ok_or(EqualityTransportError::SenderMismatch)?;
+    let mut plaintext = decrypt_v5_peer_payload(
+        frame.payload,
+        session_digest,
+        frame.sender,
+        party,
+        frame.sequence,
+        &link.receive_aead,
+        &link.receive_nonce,
+    )?;
+    let decoded = (|| {
+        let mut input = Reader::new(&plaintext);
+        let curve = match input.byte()? {
+            0 => CurveKind::Demand,
+            1 => CurveKind::Supply,
+            _ => return Err(EqualityTransportError::MalformedFrame("invalid curve tag")),
+        };
+        let bucket = input.usize()?;
+        let bits = input.bytes(MAX_PAYLOAD_BYTES)?.to_vec();
+        input.finish()?;
+        if bucket >= session.buckets
+            || bits.len() != session.ingress_bits()
+            || bits.iter().any(|bit| *bit > 1)
+        {
+            return Err(EqualityTransportError::MalformedFrame(
+                "sealed peer ingress shape mismatch",
+            ));
+        }
+        Ok(PartyInbound::Peer(PeerInputMessage {
+            session: session.binding(),
+            from: frame.sender,
+            to: party,
+            curve,
+            bucket,
+            bits,
+        }))
+    })();
+    plaintext.fill(0);
+    decoded
+}
+
 fn decode_coordinator_inbound(
     session: &PartyMpcSession,
     frame: DecodedFrame<'_>,
@@ -1708,7 +3130,8 @@ fn sign_frame(
                 ));
             }
         }
-        TransportSecurityProfile::NativePostQuantum => {
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => {
             let ml_dsa = ml_dsa.ok_or(EqualityTransportError::InvalidConfiguration(
                 "native-PQ frame requires ML-DSA signing material",
             ))?;
@@ -1754,7 +3177,8 @@ fn encrypt_peer_payload(
 ) -> Result<Vec<u8>> {
     let kem_overhead = match roster.profile {
         TransportSecurityProfile::ClassicalCompatibility => 0,
-        TransportSecurityProfile::NativePostQuantum => ML_KEM_768_CT_BYTES,
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => ML_KEM_768_CT_BYTES,
     };
     if plaintext.len()
         > MAX_PAYLOAD_BYTES.saturating_sub(kem_overhead + PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES)
@@ -1775,7 +3199,8 @@ fn encrypt_peer_payload(
         TransportSecurityProfile::ClassicalCompatibility => {
             derive_peer_key(shared, session_digest, sender, recipient)?
         }
-        TransportSecurityProfile::NativePostQuantum => {
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => {
             let recipient_key = roster.native_key(recipient).ok_or(
                 EqualityTransportError::InvalidConfiguration(
                     "native-PQ recipient has no enrolled KEM key",
@@ -1843,7 +3268,8 @@ fn decrypt_peer_payload(
 ) -> Result<Vec<u8>> {
     let kem_overhead = match roster.profile {
         TransportSecurityProfile::ClassicalCompatibility => 0,
-        TransportSecurityProfile::NativePostQuantum => ML_KEM_768_CT_BYTES,
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => ML_KEM_768_CT_BYTES,
     };
     if encrypted.len() < kem_overhead + PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES
         || encrypted.len() > MAX_PAYLOAD_BYTES
@@ -1878,7 +3304,8 @@ fn decrypt_peer_payload(
             }
             derive_peer_key(shared, session_digest, sender, recipient)?
         }
-        TransportSecurityProfile::NativePostQuantum => {
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => {
             let ml_kem_dk = ml_kem_dk.ok_or(EqualityTransportError::InvalidConfiguration(
                 "native-PQ peer ingress requires ML-KEM decapsulation material",
             ))?;
@@ -2099,7 +3526,8 @@ fn verify_frame<'a>(
                 ));
             }
         }
-        TransportSecurityProfile::NativePostQuantum => {
+        TransportSecurityProfile::NativePostQuantum
+        | TransportSecurityProfile::NativePostQuantumSealedCrossing => {
             let public_key = roster
                 .native_key(sender)
                 .ok_or(EqualityTransportError::AuthenticationFailed)?;
@@ -2494,6 +3922,325 @@ pub fn verify_public_crossing_transcript(
     Ok(())
 }
 
+/// Verify the v5 crossing evidence and issue the opaque authority capability
+/// consumed by the clearing-claim signing barrier.
+///
+/// HMAC keys remain endpoint-local. Public authentication therefore comes
+/// from the complete set of dual Ed25519/ML-DSA terminal seals: for every
+/// directed route the sender's final root/count must equal the recipient's,
+/// and every public route is recomputed from the supplied frame bytes. Private
+/// peer-ingress routes are not disclosed, but both endpoints independently
+/// seal the same exact nonzero root and the protocol-fixed frame count.
+pub fn verify_native_post_quantum_public_crossing_transcript(
+    session: &PartyMpcSession,
+    roster: &CrossingTransportRoster,
+    frames: &[Vec<u8>],
+    seals: &[NativePqCrossingEndpointSeal],
+    crossing: &Crossing,
+    transcript: &DistributedTranscript,
+    claim: &crate::attestation::ClearingClaim,
+) -> Result<VerifiedPublicCrossingTranscript> {
+    validate_crossing_transport_session(session, roster)?;
+    if roster.profile != TransportSecurityProfile::NativePostQuantumSealedCrossing {
+        return Err(EqualityTransportError::InvalidConfiguration(
+            "v5 crossing verification requires the sealed native-PQ profile",
+        ));
+    }
+    let ordered_quorum_keys = roster
+        .native_party_keys
+        .iter()
+        .map(|key| crate::attestation::NativePqPartyPublicKey::new(key.ed25519, key.ml_dsa.clone()))
+        .collect::<Vec<_>>();
+    if !claim.matches_native_pq_verified_crossing_context(
+        session,
+        crossing,
+        transcript,
+        &ordered_quorum_keys,
+    ) {
+        return Err(EqualityTransportError::InvalidConfiguration(
+            "clearing claim does not match the sealed crossing context",
+        ));
+    }
+    if !transcript.is_reveal_only(session) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "crossing transcript is not reveal-only for this session",
+        ));
+    }
+    let endpoints = roster.n_parties() + 1;
+    if seals.len() != endpoints {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    let session_digest = transport_session_digest(session, roster)?;
+    for (endpoint, seal) in seals.iter().enumerate() {
+        if seal.endpoint != endpoint
+            || seal.session_digest != session_digest
+            || seal.sent.len() != endpoints
+            || seal.accepted.len() != endpoints
+        {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+        for peer in 0..endpoints {
+            let (sent, accepted) = expected_crossing_route_counts(session, roster, endpoint, peer)?;
+            if seal.sent[peer].count != sent || seal.accepted[peer].count != accepted {
+                return Err(EqualityTransportError::AuthenticationFailed);
+            }
+        }
+        let message = endpoint_seal_message(session_digest, endpoint, &seal.sent, &seal.accepted)?;
+        let public = roster
+            .native_key(endpoint)
+            .ok_or(EqualityTransportError::AuthenticationFailed)?;
+        VerifyingKey::from_bytes(&public.ed25519)
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?
+            .verify_strict(&message, &Signature::from_bytes(&seal.ed25519_signature))
+            .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+        if !ml_dsa_verify(
+            &public.ml_dsa,
+            V5_ENDPOINT_SEAL_ML_DSA_CONTEXT,
+            &message,
+            &seal.ml_dsa_signature,
+        ) {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+    }
+    for sender in 0..endpoints {
+        for recipient in 0..endpoints {
+            if seals[sender].sent[recipient].count != seals[recipient].accepted[sender].count
+                || seals[sender].sent[recipient].root != seals[recipient].accepted[sender].root
+            {
+                return Err(EqualityTransportError::AuthenticationFailed);
+            }
+        }
+    }
+
+    let gates = session.exact_and_gates();
+    let gate_frames =
+        gates
+            .checked_mul(session.n_parties)
+            .ok_or(EqualityTransportError::MalformedFrame(
+                "crossing transcript frame count overflow",
+            ))?;
+    let expected_frames = gate_frames
+        .checked_mul(2)
+        .and_then(|count| count.checked_add(session.n_parties))
+        .ok_or(EqualityTransportError::MalformedFrame(
+            "crossing transcript frame count overflow",
+        ))?;
+    if frames.len() != expected_frames {
+        return Err(EqualityTransportError::MalformedFrame(
+            "crossing transcript has an incomplete sealed frame set",
+        ));
+    }
+    let output_sequence = u64::try_from(gates)
+        .map_err(|_| EqualityTransportError::MalformedFrame("gate count does not fit u64"))?;
+    let finished_sequence =
+        output_sequence
+            .checked_add(1)
+            .ok_or(EqualityTransportError::MalformedFrame(
+                "crossing sequence exhausted",
+            ))?;
+    let mut public_roots = vec![vec![RouteAccumulator::default(); endpoints]; endpoints];
+    let mut party_next = vec![0u64; session.n_parties];
+    let mut coordinator_next = vec![0u64; session.n_parties];
+    let mut gate_counts = vec![0usize; gates];
+    let mut masked = vec![(0u8, 0u8); gates];
+    let mut opened_counts = vec![0usize; gates];
+    let mut coordinator_opened = vec![None; gates];
+    let mut output_count = 0usize;
+    let mut pstar = vec![0u8; index_bits(session.buckets)];
+    let mut vstar = vec![0u8; session.value_bits];
+
+    for wire in frames {
+        if is_native_post_quantum_crossing_control_frame(wire) {
+            return Err(EqualityTransportError::MalformedFrame(
+                "link-control frame was included as public crossing evidence",
+            ));
+        }
+        let frame = parse_v5_public_frame(wire, session_digest)?;
+        if !((frame.sender < session.n_parties && frame.recipient == roster.coordinator())
+            || (frame.sender == roster.coordinator() && frame.recipient < session.n_parties))
+        {
+            return Err(EqualityTransportError::MalformedFrame(
+                "sealed public evidence contains a private or misrouted frame",
+            ));
+        }
+        update_route_root(
+            session_digest,
+            frame.sender,
+            frame.recipient,
+            &mut public_roots[frame.sender][frame.recipient],
+            wire,
+        )?;
+        if frame.sender < session.n_parties {
+            let expected = party_next[frame.sender];
+            if frame.sequence != expected {
+                return Err(EqualityTransportError::SequenceMismatch {
+                    sender: frame.sender,
+                    have: frame.sequence,
+                    need: expected,
+                });
+            }
+            party_next[frame.sender] = expected + 1;
+            match frame.kind {
+                KIND_GATE_SHARE if frame.sequence < output_sequence => {
+                    let (gate, d, e) = decode_gate(frame.payload)?;
+                    if gate != frame.sequence as usize {
+                        return Err(EqualityTransportError::MalformedFrame(
+                            "sealed gate share is out of canonical order",
+                        ));
+                    }
+                    gate_counts[gate] += 1;
+                    masked[gate].0 ^= d;
+                    masked[gate].1 ^= e;
+                }
+                KIND_OUTPUT_SHARE if frame.sequence == output_sequence => {
+                    let (p_share, v_share) = decode_output_share(frame.payload, session)?;
+                    for (out, share) in pstar.iter_mut().zip(p_share) {
+                        *out ^= share;
+                    }
+                    for (out, share) in vstar.iter_mut().zip(v_share) {
+                        *out ^= share;
+                    }
+                    output_count += 1;
+                }
+                _ => {
+                    return Err(EqualityTransportError::MalformedFrame(
+                        "sealed party frame has the wrong kind or phase",
+                    ))
+                }
+            }
+        } else {
+            let expected = coordinator_next[frame.recipient];
+            if frame.sequence != expected {
+                return Err(EqualityTransportError::SequenceMismatch {
+                    sender: frame.sender,
+                    have: frame.sequence,
+                    need: expected,
+                });
+            }
+            coordinator_next[frame.recipient] = expected + 1;
+            if frame.kind != KIND_GATE_OPENED || frame.sequence >= output_sequence {
+                return Err(EqualityTransportError::MalformedFrame(
+                    "sealed coordinator frame has the wrong kind or phase",
+                ));
+            }
+            let (gate, d, e) = decode_gate(frame.payload)?;
+            if gate != frame.sequence as usize
+                || coordinator_opened[gate].is_some_and(|opening| opening != (d, e))
+            {
+                return Err(EqualityTransportError::MalformedFrame(
+                    "sealed coordinator opening is noncanonical or inconsistent",
+                ));
+            }
+            coordinator_opened[gate] = Some((d, e));
+            opened_counts[gate] += 1;
+        }
+    }
+
+    for party in 0..session.n_parties {
+        let coordinator = roster.coordinator();
+        if public_roots[party][coordinator].count != seals[party].sent[coordinator].count
+            || public_roots[party][coordinator].root != seals[party].sent[coordinator].root
+            || public_roots[coordinator][party].count != seals[coordinator].sent[party].count
+            || public_roots[coordinator][party].root != seals[coordinator].sent[party].root
+        {
+            return Err(EqualityTransportError::AuthenticationFailed);
+        }
+    }
+    let index = super::decode_bits(&pstar).map_err(EqualityTransportError::Mpc)? as usize;
+    let volume = super::decode_bits(&vstar).map_err(EqualityTransportError::Mpc)?;
+    if index >= session.buckets || (volume == 0 && index != 0) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "sealed output shares reconstruct an invalid crossing",
+        ));
+    }
+    let reconstructed = Crossing {
+        p_star: (volume != 0).then_some(index),
+        v_star: volume,
+    };
+    if party_next
+        .iter()
+        .any(|sequence| *sequence != finished_sequence)
+        || coordinator_next
+            .iter()
+            .any(|sequence| *sequence != output_sequence)
+        || gate_counts.iter().any(|count| *count != session.n_parties)
+        || opened_counts
+            .iter()
+            .any(|count| *count != session.n_parties)
+        || coordinator_opened
+            .iter()
+            .enumerate()
+            .any(|(gate, opening)| *opening != Some(masked[gate]))
+        || output_count != session.n_parties
+        || &reconstructed != crossing
+        || transcript.revealed_pstar != pstar
+        || transcript.revealed_vstar != vstar
+        || transcript.masked.iter().enumerate().any(|(gate, opening)| {
+            opening.gate != gate || opening.d != masked[gate].0 || opening.e != masked[gate].1
+        })
+    {
+        return Err(EqualityTransportError::MalformedFrame(
+            "sealed frames do not reconstruct the crossing transcript",
+        ));
+    }
+    Ok(VerifiedPublicCrossingTranscript {
+        session: session.clone(),
+        crossing: crossing.clone(),
+        transcript: transcript.clone(),
+        ordered_party_authorities: roster
+            .native_party_keys
+            .iter()
+            .map(|key| (key.ed25519, key.ml_dsa.clone()))
+            .collect(),
+        claim_binding: claim.native_pq_verified_crossing_binding(),
+    })
+}
+
+fn parse_v5_public_frame<'a>(
+    bytes: &'a [u8],
+    session_digest: TransportSessionDigest,
+) -> Result<DecodedFrame<'a>> {
+    if bytes.len() < FIXED_CONTENT_BYTES + SEALED_TRAILER_BYTES || bytes.len() > MAX_FRAME_BYTES {
+        return Err(EqualityTransportError::MalformedFrame(
+            "sealed public frame length",
+        ));
+    }
+    let checksum_start = bytes.len() - 32;
+    if bytes[checksum_start..] != frame_checksum(&bytes[..checksum_start]) {
+        return Err(EqualityTransportError::MalformedFrame(
+            "sealed public frame checksum",
+        ));
+    }
+    let content = &bytes[..checksum_start - 64];
+    let mut input = Reader::new(content);
+    if input.array::<8>()? != *SEALED_FRAME_MAGIC
+        || input.byte()? != TransportSecurityProfile::NativePostQuantumSealedCrossing.wire_tag()
+    {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    if input.array::<64>()? != session_digest {
+        return Err(EqualityTransportError::SessionMismatch);
+    }
+    let sender = input.u32()? as usize;
+    let recipient = input.u32()? as usize;
+    let sequence = input.u64()?;
+    let kind = input.byte()?;
+    let payload = input.bytes(MAX_PAYLOAD_BYTES)?;
+    input.finish()?;
+    Ok(DecodedFrame {
+        sender,
+        recipient,
+        sequence,
+        kind,
+        payload,
+    })
+}
+
+/// Public router predicate for the exact v5 semantic crossing carrier.
+pub fn is_native_post_quantum_crossing_public_evidence_frame(bytes: &[u8]) -> bool {
+    bytes.starts_with(SEALED_FRAME_MAGIC)
+}
+
 fn encoded_frame_recipient(bytes: &[u8]) -> Result<usize> {
     const RECIPIENT_OFFSET: usize = 8 + 1 + 64 + 4;
     let end = RECIPIENT_OFFSET + 4;
@@ -2701,8 +4448,9 @@ mod tests {
     use super::{
         decrypt_peer_payload, encrypt_peer_payload, fresh_preprocessing_seed, peer_shared_secret,
         sign_frame, verify_public_decision_transcript, CompressedEdwardsY, EncodedPayload,
-        EqualityTransportError, EqualityTransportRoster, KIND_DECISION_SHARE, KIND_GATE_SHARE,
-        KIND_PEER_INGRESS, PEER_NONCE_BYTES,
+        EqualityTransportError, EqualityTransportRoster, NativePqTransportPublicIdentity,
+        TransportSecurityProfile, KIND_DECISION_SHARE, KIND_GATE_SHARE, KIND_PEER_INGRESS,
+        PEER_NONCE_BYTES,
     };
     use crate::mpc_party::{DecisionTranscript, MaskedOpening, PartyMpcSession};
 
@@ -2937,5 +4685,75 @@ mod tests {
             verify_public_decision_transcript(&session, &roster, &reordered, &transcript),
             Err(EqualityTransportError::SequenceMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn sealed_roster_rejects_a_coordinator_montgomery_alias_hidden_by_edwards_sign() {
+        let party_zero = SigningKey::from_bytes(&[0x75; 32]);
+        let party_one = SigningKey::from_bytes(&[0x76; 32]);
+        let mut coordinator_alias = party_zero.verifying_key().to_bytes();
+        coordinator_alias[31] ^= 0x80;
+        assert_ne!(coordinator_alias, party_zero.verifying_key().to_bytes());
+        assert_eq!(
+            CompressedEdwardsY(coordinator_alias)
+                .decompress()
+                .unwrap()
+                .to_montgomery(),
+            CompressedEdwardsY(party_zero.verifying_key().to_bytes())
+                .decompress()
+                .unwrap()
+                .to_montgomery(),
+        );
+        let public = |ed25519, byte| {
+            NativePqTransportPublicIdentity::from_parts(
+                ed25519,
+                vec![byte; super::ML_DSA_PK_LEN],
+                vec![byte.wrapping_add(1); super::ML_KEM_768_EK_BYTES],
+            )
+            .unwrap()
+        };
+        let parties = vec![
+            public(party_zero.verifying_key().to_bytes(), 1),
+            public(party_one.verifying_key().to_bytes(), 3),
+        ];
+        let coordinator = public(coordinator_alias, 5);
+        assert!(matches!(
+            EqualityTransportRoster::new_native_post_quantum_sealed_crossing(parties, coordinator,),
+            Err(EqualityTransportError::InvalidConfiguration(
+                "sealed endpoint keys must have distinct nonzero Montgomery identities"
+            ))
+        ));
+    }
+
+    #[test]
+    fn sealed_route_schedule_keeps_party_output_asymmetric_from_opening_broadcast() {
+        let keys = [
+            SigningKey::from_bytes(&[0x77; 32]),
+            SigningKey::from_bytes(&[0x78; 32]),
+        ];
+        let coordinator = SigningKey::from_bytes(&[0x79; 32]);
+        let roster = EqualityTransportRoster {
+            party_keys: keys
+                .iter()
+                .map(|key| key.verifying_key().to_bytes())
+                .collect(),
+            coordinator_key: coordinator.verifying_key().to_bytes(),
+            profile: TransportSecurityProfile::NativePostQuantumSealedCrossing,
+            native_party_keys: Vec::new(),
+            native_coordinator_key: None,
+        };
+        let session =
+            PartyMpcSession::new([0x7a; 32], 2, 1, 8, 257, Duration::from_secs(1)).unwrap();
+        let gates = session.exact_and_gates() as u64;
+        assert_eq!(
+            super::expected_crossing_route_counts(&session, &roster, 0, roster.coordinator())
+                .unwrap(),
+            (gates + 1, gates),
+        );
+        assert_eq!(
+            super::expected_crossing_route_counts(&session, &roster, roster.coordinator(), 0)
+                .unwrap(),
+            (gates, gates + 1),
+        );
     }
 }
