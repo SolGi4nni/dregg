@@ -15,6 +15,11 @@ use dungeon_on_dregg::descent::{
     BANKED, BREATH, CAP, CARRIED, DELVE, Descent, FLEE, FLOORS, LOOT, PROGRAM_JSON, RELICS, SMITE,
     Sim, UNLOCK, guard_hp,
 };
+#[cfg(feature = "private-fair-shuffle-operation")]
+use dungeon_on_dregg::private_fair_shuffle::{
+    DIGEST_WIDTH as SHUFFLE_DIGEST_WIDTH, FairCardOpening, FairShuffleAttemptOutcome,
+    FairShuffleReceipt, FairShuffleTable, PARTICIPANTS as SHUFFLE_PARTICIPANTS,
+};
 #[cfg(feature = "private-preference-operation")]
 use dungeon_on_dregg::private_preference::{
     PrivatePartyDecision, PrivatePreferenceReceipt, PrivatePreferenceSession,
@@ -31,7 +36,8 @@ use crate::{
 };
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 use crate::{
     BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
@@ -47,22 +53,26 @@ const EVENT_ROOT_DOMAIN: &str = "dregg.native-descent.event.v1";
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 const PRIVATE_OPERATION_WIRE_MAGIC: [u8; 8] = *b"DREGGNDO";
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 const PRIVATE_OPERATION_WIRE_VERSION: u8 = 1;
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 const MAX_NATIVE_DESCENT_PRIVATE_OPERATION_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 const BABYBEAR_P: u64 = 2_013_265_921;
 
@@ -81,6 +91,14 @@ pub const NATIVE_DESCENT_PRIVATE_RAID_MEDIA_TYPE: &str =
     "application/vnd.dregg.native-descent.private-raid-assignment.v1+binary";
 #[cfg(feature = "private-raid-operation")]
 pub const NATIVE_DESCENT_PRIVATE_RAID_DISCLOSURE: &str = "A Lean-authored HidingFri proof publishes the globally optimal admissible four-seat raid-role permutation while keeping the producer's suitability scores and admissibility matrix private. The canonical request binds that proof to this native Descent's authenticated player, exact revision, and exact journal root; stale, cross-player, and cross-root reuse refuses. This is Tier-1 proof production, not distributed private-input assembly.";
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+pub const NATIVE_DESCENT_PRIVATE_DEAL_OPERATION: &str = "descent.private-initiative-deal.v1";
+#[cfg(feature = "private-fair-shuffle-operation")]
+pub const NATIVE_DESCENT_PRIVATE_DEAL_MEDIA_TYPE: &str =
+    "application/vnd.dregg.native-descent.private-initiative-deal.v1+binary";
+#[cfg(feature = "private-fair-shuffle-operation")]
+pub const NATIVE_DESCENT_PRIVATE_DEAL_DISCLOSURE: &str = "A Lean-authored HidingFri proof certifies a bias-free eight-seat deal from eight committed private contributions. The full deal, rank, contributions, and seven unselected cards remain hidden; only the deal root and the fixed seat-zero initiative card are selectively opened. The canonical request binds the proof, all public commitments, and opening to this native Descent's authenticated player, exact revision, and exact journal root; stale, cross-player, cross-root, and duplicate submissions to the same run refuse. The retained request contains public commitments, the seat-zero opening (including its blinding and Merkle path), and the opaque proof. This is a Tier-1 local producer that sees every contribution, not distributed private-input assembly or MPC; its one-shot envelope does not establish the dungeon protocol's temporal multi-party commit-before-reveal, and unbiasedness assumes at least one contribution was uniform conditional on the others. Distinct hosted sessions with identical actor, seed, and move history have the same native proof context because the host SessionId is not part of the native journal.";
 
 /// One exact native Descent verb.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,7 +205,8 @@ pub struct NativeDescentCompletion {
 /// exact context equality is the cross-session/revision replay gate.
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeDescentPrivateContext {
@@ -249,6 +268,40 @@ impl NativeDescentPrivateRaid {
     }
 }
 
+/// One accepted bias-free private initiative deal at an exact native Descent
+/// head. The complete permutation and seven cards are absent; only the fixed
+/// seat-zero card deliberately opened for public initiative is retained.
+#[cfg(feature = "private-fair-shuffle-operation")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeDescentPrivateDeal {
+    context: NativeDescentPrivateContext,
+    deal_root: [u32; SHUFFLE_DIGEST_WIDTH],
+    initiative_card: u8,
+    receipt_id: [u8; 32],
+    canonical_request: Vec<u8>,
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+impl NativeDescentPrivateDeal {
+    pub fn context(&self) -> &NativeDescentPrivateContext {
+        &self.context
+    }
+
+    pub const fn deal_root(&self) -> [u32; SHUFFLE_DIGEST_WIDTH] {
+        self.deal_root
+    }
+
+    /// The selectively opened card at fixed seat zero. No other card crosses
+    /// the producer boundary.
+    pub const fn initiative_card(&self) -> u8 {
+        self.initiative_card
+    }
+
+    pub const fn receipt_id(&self) -> [u8; 32] {
+        self.receipt_id
+    }
+}
+
 /// Public restart record. Every field is re-derived from commands through a
 /// fresh Lean-program-backed executor; none is trusted as a state blob.
 #[derive(Clone, Debug)]
@@ -263,6 +316,8 @@ pub struct NativeDescentRecord {
     pub private_preference: Option<NativeDescentPrivatePreference>,
     #[cfg(feature = "private-raid-operation")]
     pub private_raid: Option<NativeDescentPrivateRaid>,
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    pub private_deal: Option<NativeDescentPrivateDeal>,
 }
 
 /// One live frontend-neutral session.
@@ -278,6 +333,8 @@ pub struct NativeDescentSession {
     private_preference: Option<NativeDescentPrivatePreference>,
     #[cfg(feature = "private-raid-operation")]
     private_raid: Option<NativeDescentPrivateRaid>,
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    private_deal: Option<NativeDescentPrivateDeal>,
 }
 
 impl NativeDescentSession {
@@ -314,7 +371,8 @@ impl NativeDescentSession {
     /// no private-party operation.
     #[cfg(any(
         feature = "private-preference-operation",
-        feature = "private-raid-operation"
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
     ))]
     pub fn private_operation_context(&self) -> Option<NativeDescentPrivateContext> {
         Some(NativeDescentPrivateContext {
@@ -334,6 +392,11 @@ impl NativeDescentSession {
         self.private_raid.as_ref()
     }
 
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    pub fn private_deal(&self) -> Option<&NativeDescentPrivateDeal> {
+        self.private_deal.as_ref()
+    }
+
     pub fn export_record(&self) -> NativeDescentRecord {
         NativeDescentRecord {
             seed: self.seed,
@@ -346,6 +409,8 @@ impl NativeDescentSession {
             private_preference: self.private_preference.clone(),
             #[cfg(feature = "private-raid-operation")]
             private_raid: self.private_raid.clone(),
+            #[cfg(feature = "private-fair-shuffle-operation")]
+            private_deal: self.private_deal.clone(),
         }
     }
 }
@@ -409,6 +474,37 @@ pub fn encode_native_descent_private_raid(
         .to_postcard()
         .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
     encode_private_operation(PrivateOperationKind::Raid, context, &proof)
+}
+
+/// Canonical BabyBear proof-session id for a private fair initiative deal at
+/// this exact native Descent head.
+#[cfg(feature = "private-fair-shuffle-operation")]
+pub fn native_descent_private_deal_proof_session(context: &NativeDescentPrivateContext) -> u32 {
+    private_proof_session(
+        "dregg.native-descent.private-initiative-deal.proof-session.v1",
+        context,
+    )
+}
+
+/// Wrap a proved eight-seat fair deal, its public commitment leaves, and the
+/// fixed seat-zero selective opening in the exact native-session envelope.
+/// Private contributions, rank, the full permutation, and the other cards do
+/// not enter this request.
+#[cfg(feature = "private-fair-shuffle-operation")]
+pub fn encode_native_descent_private_deal(
+    context: &NativeDescentPrivateContext,
+    commitments: [[u32; SHUFFLE_DIGEST_WIDTH]; SHUFFLE_PARTICIPANTS],
+    receipt: &FairShuffleReceipt,
+    initiative_opening: FairCardOpening,
+) -> Result<Vec<u8>, BinaryOperationError> {
+    if receipt.statement().session != native_descent_private_deal_proof_session(context) {
+        return Err(BinaryOperationError::Refused(
+            "private deal proof session is not derived from the supplied native Descent context"
+                .to_string(),
+        ));
+    }
+    let deal = encode_private_deal_payload(commitments, receipt, initiative_opening)?;
+    encode_private_operation(PrivateOperationKind::Deal, context, &deal)
 }
 
 /// The generic Offering adapter for the Lean-native Descent.
@@ -498,6 +594,16 @@ impl NativeDescentOffering {
                     false
                 }
             }
+            || {
+                #[cfg(feature = "private-fair-shuffle-operation")]
+                {
+                    record.private_deal != session.private_deal
+                }
+                #[cfg(not(feature = "private-fair-shuffle-operation"))]
+                {
+                    false
+                }
+            }
         {
             return VerifyReport::broken(turns, "record does not name the exact live session head");
         }
@@ -528,6 +634,8 @@ impl Offering for NativeDescentOffering {
             private_preference: None,
             #[cfg(feature = "private-raid-operation")]
             private_raid: None,
+            #[cfg(feature = "private-fair-shuffle-operation")]
+            private_deal: None,
         })
     }
 
@@ -727,6 +835,26 @@ impl Offering for NativeDescentOffering {
                 ],
             });
         }
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        if let Some(deal) = &session.private_deal {
+            children.push(ViewNode::Section {
+                title: "Shielded initiative deal".to_string(),
+                tag: "genuine".to_string(),
+                children: vec![
+                    ViewNode::Text(format!(
+                        "seat 0 drew initiative card {} at revision {} · root {}",
+                        deal.initiative_card,
+                        deal.context.revision,
+                        short_digest(deal.context.root)
+                    )),
+                    ViewNode::Text(format!("hidden deal root {:?}", deal.deal_root)),
+                    ViewNode::Text(
+                        "the full permutation, seven cards, rank, and contributions remain hidden"
+                            .to_string(),
+                    ),
+                ],
+            });
+        }
         Surface(ViewNode::Section {
             title: "The Descent — Lean-authored".to_string(),
             tag: "accent".to_string(),
@@ -736,7 +864,8 @@ impl Offering for NativeDescentOffering {
 
     #[cfg(any(
         feature = "private-preference-operation",
-        feature = "private-raid-operation"
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
     ))]
     fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
         let Some(context) = session.private_operation_context() else {
@@ -769,12 +898,23 @@ impl Offering for NativeDescentOffering {
                 disclosure: NATIVE_DESCENT_PRIVATE_RAID_DISCLOSURE.to_string(),
             });
         }
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        if session.private_deal.is_none() {
+            operations.push(BinaryOperationDescriptor {
+                name: NATIVE_DESCENT_PRIVATE_DEAL_OPERATION.to_string(),
+                title: format!("Prove a shielded initiative deal for {head}"),
+                input_media_type: NATIVE_DESCENT_PRIVATE_DEAL_MEDIA_TYPE.to_string(),
+                max_input_bytes: MAX_NATIVE_DESCENT_PRIVATE_OPERATION_BYTES,
+                disclosure: NATIVE_DESCENT_PRIVATE_DEAL_DISCLOSURE.to_string(),
+            });
+        }
         operations
     }
 
     #[cfg(any(
         feature = "private-preference-operation",
-        feature = "private-raid-operation"
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
     ))]
     fn binary_operation_replay_material(
         &self,
@@ -798,12 +938,21 @@ impl Offering for NativeDescentOffering {
                 NATIVE_DESCENT_PRIVATE_RAID_DISCLOSURE,
             )));
         }
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        if name == NATIVE_DESCENT_PRIVATE_DEAL_OPERATION {
+            let (_, _, canonical) = parse_private_deal_request(session, payload)?;
+            return Ok(Some(BinaryOperationReplayMaterial::new(
+                canonical,
+                NATIVE_DESCENT_PRIVATE_DEAL_DISCLOSURE,
+            )));
+        }
         Err(BinaryOperationError::UnknownOperation(name.to_string()))
     }
 
     #[cfg(any(
         feature = "private-preference-operation",
-        feature = "private-raid-operation"
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
     ))]
     fn invoke_binary_operation(
         &self,
@@ -819,6 +968,10 @@ impl Offering for NativeDescentOffering {
         #[cfg(feature = "private-raid-operation")]
         if name == NATIVE_DESCENT_PRIVATE_RAID_OPERATION {
             return apply_private_raid(session, payload, actor);
+        }
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        if name == NATIVE_DESCENT_PRIVATE_DEAL_OPERATION {
+            return apply_private_deal(session, payload, actor);
         }
         Err(BinaryOperationError::UnknownOperation(name.to_string()))
     }
@@ -852,7 +1005,8 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
     let mut root = genesis_root(record.seed, game.sim());
     #[cfg(any(
         feature = "private-preference-operation",
-        feature = "private-raid-operation"
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
     ))]
     let genesis = root;
     let mut actor: Option<DreggIdentity> = None;
@@ -937,6 +1091,11 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
         Some(expected) => Some(replay_private_raid(record, genesis, expected)?),
         None => None,
     };
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    let private_deal = match &record.private_deal {
+        Some(expected) => Some(replay_private_deal(record, genesis, expected)?),
+        None => None,
+    };
     Ok(NativeDescentSession {
         seed: record.seed,
         game,
@@ -949,28 +1108,34 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
         private_preference,
         #[cfg(feature = "private-raid-operation")]
         private_raid,
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        private_deal,
     })
 }
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PrivateOperationKind {
     Preference = 1,
     Raid = 2,
+    Deal = 3,
 }
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 impl PrivateOperationKind {
     fn from_byte(byte: u8) -> Result<Self, BinaryOperationError> {
         match byte {
             1 => Ok(Self::Preference),
             2 => Ok(Self::Raid),
+            3 => Ok(Self::Deal),
             other => Err(BinaryOperationError::Malformed(format!(
                 "unknown native Descent private-operation kind {other}"
             ))),
@@ -980,7 +1145,8 @@ impl PrivateOperationKind {
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 struct PrivateOperationEnvelope {
     context: NativeDescentPrivateContext,
@@ -989,7 +1155,8 @@ struct PrivateOperationEnvelope {
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn private_proof_session(domain: &str, context: &NativeDescentPrivateContext) -> u32 {
     let mut hasher = blake3::Hasher::new_derive_key(domain);
@@ -1004,7 +1171,8 @@ fn private_proof_session(domain: &str, context: &NativeDescentPrivateContext) ->
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn encode_private_operation(
     kind: PrivateOperationKind,
@@ -1067,7 +1235,8 @@ fn encode_private_operation(
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn decode_private_operation(
     expected_kind: PrivateOperationKind,
@@ -1144,7 +1313,8 @@ fn decode_private_operation(
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn validate_live_private_context(
     session: &NativeDescentSession,
@@ -1346,6 +1516,249 @@ fn apply_private_raid(
     })
 }
 
+#[cfg(feature = "private-fair-shuffle-operation")]
+struct PrivateDealPayload {
+    commitments: [[u32; SHUFFLE_DIGEST_WIDTH]; SHUFFLE_PARTICIPANTS],
+    receipt: FairShuffleReceipt,
+    opening: FairCardOpening,
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn encode_private_deal_payload(
+    commitments: [[u32; SHUFFLE_DIGEST_WIDTH]; SHUFFLE_PARTICIPANTS],
+    receipt: &FairShuffleReceipt,
+    opening: FairCardOpening,
+) -> Result<Vec<u8>, BinaryOperationError> {
+    let receipt_bytes = receipt
+        .to_postcard()
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
+    let opening_bytes = opening
+        .to_postcard()
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
+    let receipt_len = u64::try_from(receipt_bytes.len()).map_err(|_| {
+        BinaryOperationError::Malformed("private deal receipt length does not fit wire".to_string())
+    })?;
+    let opening_len = u64::try_from(opening_bytes.len()).map_err(|_| {
+        BinaryOperationError::Malformed("private deal opening length does not fit wire".to_string())
+    })?;
+    let mut bytes = Vec::with_capacity(
+        1 + SHUFFLE_PARTICIPANTS * SHUFFLE_DIGEST_WIDTH * 4
+            + 8
+            + receipt_bytes.len()
+            + 8
+            + opening_bytes.len(),
+    );
+    bytes.push(1);
+    for commitment in commitments {
+        for lane in commitment {
+            bytes.extend_from_slice(&lane.to_be_bytes());
+        }
+    }
+    bytes.extend_from_slice(&receipt_len.to_be_bytes());
+    bytes.extend_from_slice(&receipt_bytes);
+    bytes.extend_from_slice(&opening_len.to_be_bytes());
+    bytes.extend_from_slice(&opening_bytes);
+    if bytes.len() > MAX_NATIVE_DESCENT_PRIVATE_OPERATION_BYTES {
+        return Err(BinaryOperationError::Malformed(format!(
+            "private deal payload is {} bytes; maximum is {MAX_NATIVE_DESCENT_PRIVATE_OPERATION_BYTES}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn decode_private_deal_payload(bytes: &[u8]) -> Result<PrivateDealPayload, BinaryOperationError> {
+    let mut reader = PrivateOperationReader::new(bytes);
+    let version = reader.byte()?;
+    if version != 1 {
+        return Err(BinaryOperationError::Malformed(format!(
+            "unsupported native Descent private-deal payload version {version}"
+        )));
+    }
+    let mut commitments = [[0u32; SHUFFLE_DIGEST_WIDTH]; SHUFFLE_PARTICIPANTS];
+    for commitment in &mut commitments {
+        for lane in commitment {
+            *lane = reader.u32()?;
+        }
+    }
+    let receipt_len = usize::try_from(reader.u64()?).map_err(|_| {
+        BinaryOperationError::Malformed(
+            "private deal receipt length does not fit usize".to_string(),
+        )
+    })?;
+    let receipt_bytes = reader.bytes(receipt_len)?;
+    let receipt = FairShuffleReceipt::from_postcard(receipt_bytes)
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
+    if receipt
+        .to_postcard()
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?
+        != receipt_bytes
+    {
+        return Err(BinaryOperationError::Malformed(
+            "private deal receipt is not canonically encoded".to_string(),
+        ));
+    }
+    let opening_len = usize::try_from(reader.u64()?).map_err(|_| {
+        BinaryOperationError::Malformed(
+            "private deal opening length does not fit usize".to_string(),
+        )
+    })?;
+    let opening_bytes = reader.bytes(opening_len)?;
+    let opening = FairCardOpening::from_postcard(opening_bytes)
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?;
+    if opening
+        .to_postcard()
+        .map_err(|error| BinaryOperationError::Malformed(error.to_string()))?
+        != opening_bytes
+    {
+        return Err(BinaryOperationError::Malformed(
+            "private deal opening is not canonically encoded".to_string(),
+        ));
+    }
+    reader.finish()?;
+    let payload = PrivateDealPayload {
+        commitments,
+        receipt,
+        opening,
+    };
+    if encode_private_deal_payload(payload.commitments, &payload.receipt, payload.opening)? != bytes
+    {
+        return Err(BinaryOperationError::Malformed(
+            "private deal payload is not canonically encoded".to_string(),
+        ));
+    }
+    Ok(payload)
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn verify_private_deal_payload(
+    context: &NativeDescentPrivateContext,
+    payload: &[u8],
+) -> Result<([u32; SHUFFLE_DIGEST_WIDTH], u8), BinaryOperationError> {
+    let deal = decode_private_deal_payload(payload)?;
+    let expected_session = native_descent_private_deal_proof_session(context);
+    let statement = deal.receipt.statement();
+    if statement.session != expected_session {
+        return Err(BinaryOperationError::Refused(format!(
+            "private deal proof session mismatch: expected {expected_session}, claimed {}",
+            statement.session
+        )));
+    }
+    if statement.attempt != 0 {
+        return Err(BinaryOperationError::Refused(format!(
+            "native Descent initiative deal requires attempt 0, claimed {}",
+            statement.attempt
+        )));
+    }
+    if deal.opening.seat != 0 {
+        return Err(BinaryOperationError::Refused(format!(
+            "native Descent initiative reveals fixed seat 0, claimed seat {}",
+            deal.opening.seat
+        )));
+    }
+    let mut table = FairShuffleTable::new(expected_session)
+        .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
+    for (participant, commitment) in deal.commitments.into_iter().enumerate() {
+        table
+            .commit(participant, commitment)
+            .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
+    }
+    let outcome = table
+        .accept_attempt(&deal.receipt)
+        .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
+    if outcome != FairShuffleAttemptOutcome::Accepted {
+        return Err(BinaryOperationError::Refused(
+            "native Descent initiative requires an accepted bias-free deal; rejected attempt is not a deal"
+                .to_string(),
+        ));
+    }
+    let card = table
+        .reveal_card(deal.opening)
+        .map_err(|error| BinaryOperationError::Refused(error.to_string()))?;
+    Ok((statement.deal_root, card))
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn parse_private_deal_request(
+    session: &NativeDescentSession,
+    payload: &[u8],
+) -> Result<(NativeDescentPrivateContext, Vec<u8>, Vec<u8>), BinaryOperationError> {
+    let envelope = decode_private_operation(PrivateOperationKind::Deal, payload)?;
+    validate_live_private_context(session, &envelope.context)?;
+    if session.private_deal.is_some() {
+        return Err(BinaryOperationError::Refused(
+            "this native Descent already has a private initiative deal".to_string(),
+        ));
+    }
+    let deal = decode_private_deal_payload(&envelope.proof)?;
+    let statement = deal.receipt.statement();
+    let expected_session = native_descent_private_deal_proof_session(&envelope.context);
+    if statement.session != expected_session {
+        return Err(BinaryOperationError::Refused(format!(
+            "private deal proof session mismatch: expected {expected_session}, claimed {}",
+            statement.session
+        )));
+    }
+    if statement.attempt != 0 {
+        return Err(BinaryOperationError::Refused(format!(
+            "native Descent initiative deal requires attempt 0, claimed {}",
+            statement.attempt
+        )));
+    }
+    if deal.opening.seat != 0 {
+        return Err(BinaryOperationError::Refused(format!(
+            "native Descent initiative reveals fixed seat 0, claimed seat {}",
+            deal.opening.seat
+        )));
+    }
+    Ok((envelope.context, envelope.proof, payload.to_vec()))
+}
+
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn apply_private_deal(
+    session: &mut NativeDescentSession,
+    payload: &[u8],
+    actor: DreggIdentity,
+) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+    let (context, proof_payload, canonical_request) = parse_private_deal_request(session, payload)?;
+    if actor != context.actor {
+        return Err(BinaryOperationError::Refused(format!(
+            "private initiative deal was bound to actor {}; {} submitted it",
+            context.actor.as_str(),
+            actor.as_str()
+        )));
+    }
+    let (deal_root, initiative_card) = verify_private_deal_payload(&context, &proof_payload)?;
+    let receipt_id = private_operation_receipt_id(
+        "dregg.native-descent.private-initiative-deal.receipt.v1",
+        &canonical_request,
+    );
+    session.private_deal = Some(NativeDescentPrivateDeal {
+        context: context.clone(),
+        deal_root,
+        initiative_card,
+        receipt_id,
+        canonical_request,
+    });
+    Ok(BinaryOperationReceipt {
+        operation: NATIVE_DESCENT_PRIVATE_DEAL_OPERATION.to_string(),
+        receipt_id,
+        public_fields: vec![
+            ("actor".to_string(), context.actor.as_str().to_string()),
+            ("revision".to_string(), context.revision.to_string()),
+            ("root".to_string(), hex_digest(context.root)),
+            (
+                "proofSession".to_string(),
+                native_descent_private_deal_proof_session(&context).to_string(),
+            ),
+            ("dealRoot".to_string(), format!("{deal_root:?}")),
+            ("initiativeSeat".to_string(), "0".to_string()),
+            ("initiativeCard".to_string(), initiative_card.to_string()),
+        ],
+    })
+}
+
 #[cfg(feature = "private-preference-operation")]
 fn replay_private_preference(
     record: &NativeDescentRecord,
@@ -1427,9 +1840,42 @@ fn replay_private_raid(
     Ok(actual)
 }
 
+#[cfg(feature = "private-fair-shuffle-operation")]
+fn replay_private_deal(
+    record: &NativeDescentRecord,
+    genesis: [u8; 32],
+    expected: &NativeDescentPrivateDeal,
+) -> Result<NativeDescentPrivateDeal, String> {
+    validate_recorded_private_context(record, genesis, &expected.context)?;
+    let envelope =
+        decode_private_operation(PrivateOperationKind::Deal, &expected.canonical_request)
+            .map_err(|error| error.to_string())?;
+    if envelope.context != expected.context {
+        return Err("private deal envelope substituted its native context".to_string());
+    }
+    let (deal_root, initiative_card) =
+        verify_private_deal_payload(&expected.context, &envelope.proof)
+            .map_err(|error| error.to_string())?;
+    let actual = NativeDescentPrivateDeal {
+        context: expected.context.clone(),
+        deal_root,
+        initiative_card,
+        receipt_id: private_operation_receipt_id(
+            "dregg.native-descent.private-initiative-deal.receipt.v1",
+            &expected.canonical_request,
+        ),
+        canonical_request: expected.canonical_request.clone(),
+    };
+    if &actual != expected {
+        return Err("private initiative deal record differs from exact proof replay".to_string());
+    }
+    Ok(actual)
+}
+
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn validate_recorded_private_context(
     record: &NativeDescentRecord,
@@ -1458,7 +1904,8 @@ fn validate_recorded_private_context(
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn private_operation_receipt_id(domain: &str, canonical_request: &[u8]) -> [u8; 32] {
     *blake3::Hasher::new_derive_key(domain)
@@ -1469,7 +1916,8 @@ fn private_operation_receipt_id(domain: &str, canonical_request: &[u8]) -> [u8; 
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 struct PrivateOperationReader<'a> {
     bytes: &'a [u8],
@@ -1478,7 +1926,8 @@ struct PrivateOperationReader<'a> {
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 impl<'a> PrivateOperationReader<'a> {
     fn new(bytes: &'a [u8]) -> Self {
@@ -1508,6 +1957,11 @@ impl<'a> PrivateOperationReader<'a> {
 
     fn u16(&mut self) -> Result<u16, BinaryOperationError> {
         Ok(u16::from_be_bytes(self.array()?))
+    }
+
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    fn u32(&mut self) -> Result<u32, BinaryOperationError> {
+        Ok(u32::from_be_bytes(self.array()?))
     }
 
     fn u64(&mut self) -> Result<u64, BinaryOperationError> {
@@ -1646,7 +2100,8 @@ fn short_digest(digest: [u8; 32]) -> String {
 
 #[cfg(any(
     feature = "private-preference-operation",
-    feature = "private-raid-operation"
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
 ))]
 fn hex_digest(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()

@@ -8,6 +8,8 @@
 //! replay timeline, rather than calling the proof verifiers as a substitute
 //! for the offering boundary.
 
+#[cfg(feature = "private-fair-shuffle-operation")]
+use dreggnet_offerings::native_descent::NATIVE_DESCENT_PRIVATE_DEAL_OPERATION;
 use dreggnet_offerings::native_descent::{
     NATIVE_DESCENT_PRIVATE_PREFERENCE_OPERATION, NATIVE_DESCENT_PRIVATE_RAID_OPERATION,
     NativeDescentOffering, NativeDescentSession, encode_native_descent_private_preference,
@@ -101,7 +103,19 @@ fn private_party_proofs_are_exact_head_bound_and_restart_replayed() {
     let descriptors = host
         .binary_operations("descent", &id)
         .expect("private operations are discoverable");
-    assert_eq!(descriptors.len(), 2);
+    let mut descriptor_names: Vec<&str> = descriptors
+        .iter()
+        .map(|descriptor| descriptor.name.as_str())
+        .collect();
+    descriptor_names.sort_unstable();
+    let mut expected_names = vec![
+        NATIVE_DESCENT_PRIVATE_PREFERENCE_OPERATION,
+        NATIVE_DESCENT_PRIVATE_RAID_OPERATION,
+    ];
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    expected_names.push(NATIVE_DESCENT_PRIVATE_DEAL_OPERATION);
+    expected_names.sort_unstable();
+    assert_eq!(descriptor_names, expected_names);
     for descriptor in &descriptors {
         assert!(descriptor.title.contains("revision 1"));
         assert!(descriptor.title.contains("alice-cipherclerk"));
@@ -230,8 +244,21 @@ fn private_party_proofs_are_exact_head_bound_and_restart_replayed() {
             RaidRole::Pathfinder,
         ]
     );
+    let remaining: Vec<String> = host
+        .binary_operations("descent", &id)
+        .unwrap()
+        .into_iter()
+        .map(|descriptor| descriptor.name)
+        .collect();
+    #[cfg(feature = "private-fair-shuffle-operation")]
+    assert_eq!(
+        remaining,
+        [NATIVE_DESCENT_PRIVATE_DEAL_OPERATION.to_string()],
+        "the separate fair-deal slot remains discoverable"
+    );
+    #[cfg(not(feature = "private-fair-shuffle-operation"))]
     assert!(
-        host.binary_operations("descent", &id).unwrap().is_empty(),
+        remaining.is_empty(),
         "both one-shot private slots are filled"
     );
 
