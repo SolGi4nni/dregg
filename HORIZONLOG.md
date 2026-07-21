@@ -10819,9 +10819,21 @@ plan/upload was **125.152ms**, first execution **449.309ms**, and the warm media
 points remain essentially linear. One 1,836-dispatch Vulkan command exhausted
 command/descriptor allocation, so the route uses ordered chunks of at most 256
 CMUX steps while both accumulators, scratch, BSK, and KSK remain device-resident
-and only the final LWE is read back. This closes dense coefficient-domain
-execution, not the performance frontier: transform-form accumulator/BSK
-residency and shortint/`FheUint32`/`fhe_clear` integration remain.
+and only the final LWE is read back. That coefficient path is now the exact
+fallback/baseline rather than the performance carrier. The transform-resident
+successor precomputes the complete 918-slot BSK into four-prime NTT form once,
+keeps its roughly 114.75 MiB spectrum plus accumulator and scratch on-device,
+and executes per-CMUX signed decomposition, forward NTT, spectral product,
+inverse NTT, exact centered Garner CRT, accumulator addition, extraction, and
+full 2048→918 key switch before one final readback. The same real encrypted
+input, all 918 noisy GGSWs/nonzero rotations, and all 919 tfhe-rs outputs pass
+**1/1**; NTT/PBS regressions are **3/3**. On hbox the one-time transform plan was
+**259.949ms**, dense first call **165.838ms**, and warm median **115.746ms**
+against **422.847ms** coefficient GPU and **1,380.391ms CPU** (3.65× / 11.9×).
+Exact 64/256/512/918 transform points were 11.622/28.049/52.973/115.746ms. The
+remaining boundary is high-level shortint/`FheUint32` comparison and live
+`fhe_clear`/Dark Bazaar integration; the current deployed-shape evaluation-key
+residency is roughly 172 MiB total.
 
 `Dregg2.Circuit.TfhePbsRefinement` is now the Lean-first semantic authority for
 this boundary over the exact native `ZMod (2^64)` torus. It proves the
