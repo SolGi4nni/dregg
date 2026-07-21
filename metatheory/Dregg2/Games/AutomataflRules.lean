@@ -1165,6 +1165,18 @@ theorem blockedB_swap (b : Board) (m0 m1 m : Move) :
   funext c
   rw [Bool.or_comm (m0.frm == c) (m1.frm == c)]
 
+/-- A list is nonempty iff it has a member. -/
+theorem ne_nil_iff_exists {α : Type _} (l : List α) : l ≠ [] ↔ ∃ x, x ∈ l := by
+  constructor
+  · exact List.exists_mem_of_ne_nil l
+  · rintro ⟨x, hx⟩; exact List.ne_nil_of_mem hx
+
+/-- `dedup` preserves nonemptiness. -/
+theorem dedup_ne_nil_iff {α : Type _} [DecidableEq α] (l : List α) :
+    l.dedup ≠ [] ↔ l ≠ [] := by
+  rw [ne_nil_iff_exists, ne_nil_iff_exists]
+  exact exists_congr (fun _ => List.mem_dedup)
+
 section PairCollapse
 
 set_option autoImplicit false
@@ -1877,6 +1889,58 @@ theorem resolveMoves_cell_pair (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.
        | none   => if memB (movers b [ma, mb]) q then Particle.vacuum else b.cellAt q) := by
   rw [writeBoard_resolveMoves_cell b ma mb q hq,
     if_pos (resolvableB_pair b ma mb hne hlegA hlegB hdd hInA hInB)]
+
+/-! ### The clash ⟺ selection bridge
+
+`clashCoords` (fork/collide adjudication) on a two-move round fires exactly when the pair forks
+(shared source, different destinations) or collides (shared destination from two DISTINCT NON-VACUUM
+sources). This matches, arm for arm, the circuit's own `cSurv` condition
+(`AutomataflResolveCapstone.ResolveFactsN.survIff`): `cSurv = 1 ⟺ clashCoords b [ma,mb] = []`. -/
+
+/-- `forkAt` on a two-move round fires at `s` iff both sources are `s` and the destinations differ. -/
+theorem forkAt_pair (s : Coord) :
+    forkAt [ma, mb] s = true ↔ (ma.frm = s ∧ mb.frm = s ∧ ma.to ≠ mb.to) := by
+  simp only [forkAt, List.any_cons, List.any_nil, Bool.or_false, Bool.and_eq_true,
+    beq_iff_eq, bne_iff_ne, Bool.or_eq_true, ne_eq]
+  by_cases h1 : ma.frm = s <;> by_cases h2 : mb.frm = s <;> by_cases h3 : ma.to = mb.to <;>
+    simp_all
+
+/-- `collideAt` on a two-move round fires at `d` iff both destinations are `d` from two distinct,
+non-vacuum sources. -/
+theorem collideAt_pair (d : Coord) :
+    collideAt b [ma, mb] d = true ↔
+      (ma.to = d ∧ mb.to = d ∧ ma.frm ≠ mb.frm
+        ∧ carAt b ma.frm = true ∧ carAt b mb.frm = true) := by
+  simp only [collideAt, carAt, List.any_cons, List.any_nil, Bool.or_false, Bool.and_eq_true,
+    beq_iff_eq, bne_iff_ne, Bool.or_eq_true, ne_eq, Bool.not_eq_true']
+  by_cases h1 : ma.to = d <;> by_cases h2 : mb.to = d <;> by_cases h3 : ma.frm = mb.frm <;>
+    by_cases h4 : (b.cellAt ma.frm).isVacuum = false <;>
+    by_cases h5 : (b.cellAt mb.frm).isVacuum = false <;> simp_all
+
+/-- **THE CLASH BRIDGE.** `clashCoords b [ma,mb]` is nonempty exactly on a fork (shared source,
+different destinations) or a collide (shared destination, distinct non-vacuum sources) — arm for arm
+the negation of the circuit's `cSurv` survival condition. -/
+theorem clashCoords_pair_iff :
+    clashCoords b [ma, mb] ≠ [] ↔
+      ((ma.frm = mb.frm ∧ ma.to ≠ mb.to)
+        ∨ (ma.to = mb.to ∧ ma.frm ≠ mb.frm
+            ∧ carAt b ma.frm = true ∧ carAt b mb.frm = true)) := by
+  unfold clashCoords
+  rw [dedup_ne_nil_iff, ne_nil_iff_exists]
+  simp only [List.mem_filter, Bool.or_eq_true, forkAt_pair, collideAt_pair]
+  constructor
+  · rintro ⟨c, -, hc⟩
+    rcases hc with ⟨rfl, hb, hne⟩ | ⟨rfl, hb, hne, ca, cb⟩
+    · exact Or.inl ⟨hb.symm, hne⟩
+    · exact Or.inr ⟨hb.symm, hne, ca, cb⟩
+  · rintro (⟨heq, hne⟩ | ⟨heq, hne, ca, cb⟩)
+    · exact ⟨ma.frm, by simp [candidates], Or.inl ⟨rfl, heq.symm, hne⟩⟩
+    · exact ⟨ma.to, by simp [candidates], Or.inr ⟨rfl, heq.symm, hne, ca, cb⟩⟩
+
+-- The clash bridge and its two `any`-expansion helpers, kernel-clean.
+#assert_axioms forkAt_pair
+#assert_axioms collideAt_pair
+#assert_axioms clashCoords_pair_iff
 
 end PairCollapse
 

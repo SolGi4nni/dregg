@@ -2548,6 +2548,78 @@ theorem midV4_old_of_surv_zero
 
 end Clash
 
+/-! ## §24 — THE ASSEMBLY CONNECTIVES: the `surv ↔ clash` bridge and the clash board branch.
+
+Two connectives the round-board capstone rides on:
+
+* `surv_iff_clash_empty_of_sat` — the circuit's `cSurv = 1` bit IS the reference's "no fork/collide"
+  (`clashCoords = []`). This is `ResolveFactsN.survIff` composed, arm for arm, with the spec-side
+  `AutomataflRules.clashCoords_pair_iff` (fork ⟺ shared source / distinct dest; collide ⟺ shared
+  dest / distinct non-vacuum sources).
+* `midV4_cell_old_of_surv_zero` — on a clashing round (`surv = 0`), the decoded FINAL board cell IS
+  the decoded OLD cell (§23 lifted through `codeToParticle`). This is the board `roundStep` re-enters
+  with on a clash: `.again { board := rs.board … }` — the board is unchanged. -/
+section Assembly
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+open Dregg2.Games.AutomataflRules (clashCoords carAt clashCoords_pair_iff)
+
+/-- The decoded OLD board cell at an in-bounds coordinate IS `codeToParticle` of its `old` column. -/
+theorem oldCell_decode (x y : Nat) (e : VmRowEnv) (hx : x < n) (hy : y < n) :
+    codeToParticle (e.loc (NGen.old n (y * n + x)))
+      = (boardDecodeOldN n e).cellAt ⟨x, y⟩ := by
+  simp only [boardDecodeOldN, Board.cellAt]
+  rw [if_pos (show x < n ∧ y < n from ⟨hx, hy⟩)]
+
+/-- **THE SURV↔CLASH BRIDGE (circuit side).** Off a satisfying, canonical row, the survival bit is
+`1` exactly when the reference round has no fork/collide conflict — `cSurv = 1 ↔ clashCoords = []`. -/
+theorem surv_iff_clash_empty_of_sat
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n) :
+    (envAt t i).loc (NGen.cSurv n) = 1 ↔
+      clashCoords (boardDecodeOldN n (envAt t i))
+        [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1] = [] := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  set e := envAt t i with he
+  set bd := boardDecodeOldN n e with hbd
+  set ma := moveDecodeN n e 0 with hma
+  set mb := moveDecodeN n e 1 with hmb
+  have hbr := clashCoords_pair_iff bd ma mb
+  have hcaA : carAt bd ma.frm = true ↔ (bd.cellAt ma.frm).isVacuum = false := by simp [carAt]
+  have hcaB : carAt bd mb.frm = true ↔ (bd.cellAt mb.frm).isVacuum = false := by simp [carAt]
+  rw [F.survIff]
+  constructor
+  · intro hnd
+    by_contra hcl
+    apply hnd
+    rcases hbr.mp hcl with h | ⟨h1, h2, h3, h4⟩
+    · exact Or.inl h
+    · exact Or.inr ⟨h1, h2, hcaA.mp h3, hcaB.mp h4⟩
+  · intro hcl hd
+    refine (hbr.mpr ?_) hcl
+    rcases hd with h | ⟨h1, h2, h3, h4⟩
+    · exact Or.inl h
+    · exact Or.inr ⟨h1, h2, hcaA.mpr h3, hcaB.mpr h4⟩
+
+/-- **THE CLASH BOARD BRANCH.** On a clashing round (`surv = 0`) the decoded FINAL board cell IS the
+decoded OLD cell — the board `roundStep` re-enters with unchanged. §23 lifted through the alphabet. -/
+theorem midV4_cell_old_of_surv_zero
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hsurv : (envAt t i).loc (NGen.cSurv n) = 0) (x y : Nat) (hx : x < n) (hy : y < n) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 n (y * n + x)))
+      = (boardDecodeOldN n (envAt t i)).cellAt ⟨x, y⟩ := by
+  have hcK : y * n + x < NGen.KK n := by
+    simp only [NGen.KK]
+    have hle : (y + 1) * n ≤ n * n := Nat.mul_le_mul (by omega) (le_refl n)
+    have hexp : (y + 1) * n = y * n + n := by ring
+    omega
+  rw [midV4_old_of_surv_zero hsat hc i hi W hsurv (y * n + x) hcK]
+  exact oldCell_decode x y (envAt t i) hx hy
+
+end Assembly
+
 
 /-! ## §8 — Axiom hygiene. Every exported theorem, kernel-clean. -/
 
@@ -2590,5 +2662,8 @@ end Clash
 #assert_axioms landV4CorrespondenceB_of_sat
 -- §23 THE CLASH-CASE CELL — a fork/collide row leaves the FINAL board = OLD (roundStep re-entry).
 #assert_axioms midV4_old_of_surv_zero
+-- §24 THE ASSEMBLY CONNECTIVES — surv↔clash bridge, and the clash board branch (particle level).
+#assert_axioms surv_iff_clash_empty_of_sat
+#assert_axioms midV4_cell_old_of_surv_zero
 
 end Dregg2.Circuit.Emit.AutomataflResolveMovesCapstone
