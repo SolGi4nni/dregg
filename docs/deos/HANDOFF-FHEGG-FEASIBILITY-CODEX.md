@@ -99,7 +99,7 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
-| Portable encrypted TFHE PBS | **FULL 918×918 SHAPE GATED; DENSE ROTATION OPEN** | reusable plan owns full 57.38 MiB BSK + 57.44 MiB KSK and all 919 outputs; strict 2/2, 5.897ms warm with four far-separated active CMUX slots; dense 918-step transform-resident execution and high-level integers remain |
+| Portable encrypted TFHE PBS | **DENSE DEPLOYED ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs and nonzero rotations, full 57.38 MiB BSK + 57.44 MiB KSK, and all 919 outputs; strict 1/1, 421.617ms warm GPU vs 1,493.795ms CPU; transform-form residency and high-level integers remain |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE FINALIZED/ATTESTED CREATE AUTHORITY** | finalized record, receipt, nested NoteCreate leaves, authenticated root edge, exact eight-felt attestation, and cursors commit atomically; restart reconstructs/replays; NoteSpend membership + nullifier/root atomicity remain active |
@@ -774,17 +774,22 @@ post-key-switch LWE readback. The strict independent-tfhe-rs combined target
 passed **5/5**. At N=2048, GLWE size 2, full 2048-coordinate extracted input,
 and an 8-coordinate output, retained-context first execution was 57.652ms and
 the warm GPU path was **4.673ms vs 5.763ms CPU**; the standalone warm median was
-**6.474ms vs 13.377ms CPU**. A production-shaped prepared plan now qualifies
-the full envelope's actual memory
-and addressing geometry: all 918 input-mask slots, a 57.38 MiB standard BSK,
-the exact 2048→918 standard key switch with a 57.44 MiB KSK, all 919 output
-coefficients, first/middle/last BSK addressing, far-slot mutation sensitivity,
-host-after-upload ownership, and 917-vs-918 refusal. The strict hbox target
-passed **2/2**; one-time plan/upload was **111.710ms**, first prepared execution
-**15.003ms**, and warm median **5.897ms** versus **10.008ms CPU**. Only four
-far-separated CMUX slots are active in this shape gate. It is not evidence for
-dense 918-step performance; transform-form accumulator/BSK residency remains
-the exact next cut, followed by high-level integer integration.
+**6.474ms vs 13.377ms CPU**. A prepared plan owns the full envelope's actual
+memory and addressing geometry: all 918 input-mask slots, a 57.38 MiB standard
+BSK, the exact 2048→918 standard key switch with a 57.44 MiB KSK, and all 919
+output coefficients. Its dense deployed gate now uses a real encrypted input
+under a generated 918-bit LWE secret, a noisy GGSW for every BSK bit, and
+rejection-samples until every modulus-switched mask rotation is nonzero. The
+strict hbox target passed **1/1**; one-time plan/upload was **125.152ms**, first
+dense execution **449.309ms**, and the three-sample warm median **421.617ms**
+versus **1,493.795ms CPU**. All 919 outputs equal tfhe-rs; the far BSK slot is
+load-bearing, host mutation cannot change the uploaded plan, and a 917-slot mask
+is refused. The complete 1,836-dispatch command exceeds the deployed Vulkan
+command/descriptor allocation, so the exact route submits at most 256 ordered
+CMUX steps at a time while both accumulators, scratch, BSK, and KSK remain
+device-resident and only the final LWE is read back. This is the honest linear
+coefficient-domain baseline. Transform-form accumulator/BSK residency remains
+the next performance cut, followed by high-level integer integration.
 
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
@@ -1010,10 +1015,10 @@ from first principles.
   is 7.508s versus 9.918ms CPU and therefore disabled by default.
 - portable TFHE encrypted PBS — exact coefficient/RNS-NTT and
   four-selector device-resident blind rotation combined strict GPU **4/4**,
-  exact extraction/key-switch combined strict GPU **5/5**, and full 918×918
-  prepared-key/buffer geometry **2/2**; production-shaped warm median 5.897ms
-  with four active CMUX slots. Dense 918-step transform residency and high-level
-  integers remain.
+  exact extraction/key-switch combined strict GPU **5/5**, and the genuine
+  dense 918-CMUX deployed envelope **1/1**; all 919 outputs match tfhe-rs and
+  warm GPU was **421.617ms** versus **1,493.795ms CPU**. Transform-form residency
+  and high-level integers remain.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - faithful wide note tree/history — Lean authority green, Rust correspondence

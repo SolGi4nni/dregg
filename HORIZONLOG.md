@@ -10807,17 +10807,21 @@ standard native-torus LWE key switch, then reads back only the final LWE
 ciphertext. Its strict independent-tfhe-rs combined gate is **5/5**; at N=2048,
 GLWE size 2, full 2048-coordinate extracted input, and an 8-coordinate output,
 the retained-context GPU path measured **4.673ms warm** against **5.763ms CPU**
-(standalone warm median **6.474ms** against **13.377ms CPU**). The
-production-shaped prepared-plan gate now qualifies that full envelope's memory
-and addressing geometry without
-pretending sparse work is dense: all 918 mask slots, a 57.38 MiB BSK, the exact
-2048→918 key switch with a 57.44 MiB KSK, all 919 output coefficients, far-slot
-addressing, host-after-upload mutation isolation, and 917-vs-918 refusal. The
-strict hbox target is **2/2**; one-time plan/upload was **111.710ms**, first
-prepared execution **15.003ms**, and the warm median **5.897ms** against
-**10.008ms CPU**. Four distant CMUX slots are active; dense 918-step execution
-still requires transform-resident accumulator/BSK work, and the shortint/
-`FheUint32`/`fhe_clear` integration has not yet consumed this backend.
+(standalone warm median **6.474ms** against **13.377ms CPU**). The prepared-plan
+gate now executes that full envelope honestly: a generated 918-bit input secret,
+a genuinely noisy standard GGSW in every BSK slot, and a real encrypted LWE input
+whose 918 mask coefficients all modulus-switch to nonzero rotations. The plan
+owns the 57.38 MiB BSK and 57.44 MiB KSK, checks all 919 outputs against tfhe-rs,
+makes the far BSK slot load-bearing, survives host mutation after upload, and
+refuses a 917-slot mask. The strict dense hbox target is **1/1**; one-time
+plan/upload was **125.152ms**, first execution **449.309ms**, and the warm median
+**421.617ms** against **1,493.795ms CPU** (about 3.5×). Exact 64/256/512-step
+points remain essentially linear. One 1,836-dispatch Vulkan command exhausted
+command/descriptor allocation, so the route uses ordered chunks of at most 256
+CMUX steps while both accumulators, scratch, BSK, and KSK remain device-resident
+and only the final LWE is read back. This closes dense coefficient-domain
+execution, not the performance frontier: transform-form accumulator/BSK
+residency and shortint/`FheUint32`/`fhe_clear` integration remain.
 
 `Dregg2.Circuit.TfhePbsRefinement` is now the Lean-first semantic authority for
 this boundary over the exact native `ZMod (2^64)` torus. It proves the
