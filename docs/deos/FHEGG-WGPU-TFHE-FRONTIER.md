@@ -146,15 +146,40 @@ the host, so it cannot yet be substituted between dependent rotations without
 reintroducing a readback.  Closing that performance seam requires GPU-side CRT (or
 a transform-form accumulator/BSK representation) across the whole chain.
 
-It is also not yet a complete high-level `FheUint32` backend.  Sample extraction,
-key switching, the full deployed 918-mask BSK/runtime envelope, and an integration
-seam below tfhe-rs integer comparison remain.  Those are named implementation
-boundaries, not properties inferred from the four-step benchmark.
+The chain now has a PBS-shaped completion in
+`fhegg-fhe/src/shaders/torus_pbs_extract_keyswitch.wgsl`:
+
+```text
+resident blind-rotation accumulator
+    -> exact degree-zero GLWE sample extraction
+    -> exact standard native-torus LWE key switch
+    -> one final post-key-switch LWE readback
+```
+
+The CPU authority is bit-for-bit equal to tfhe-rs
+`extract_lwe_sample_from_glwe_ciphertext` plus `keyswitch_lwe_ciphertext`.  The
+strict GPU gate exercises the complete 2048-coefficient extracted input secret,
+base-log-four/level-four key decomposition, and a deliberately narrow
+eight-dimensional output key.  A standalone process on hbox's RX 6750 XT measured
+13.377 ms CPU, 275.945 ms process-cold GPU, and a 6.474 ms parity-checked warm GPU
+median.  In the combined strict regression, after the shared adapter and pipelines
+had already been initialized by the blind-rotation gate, the same PBS gate measured
+5.763 ms CPU, 57.652 ms for its first retained-context GPU call, and a 4.673 ms warm
+GPU median.  These are different startup conditions, not interchangeable "cold"
+measurements.  The standard KSK is load-bearing under mutation and the final
+ciphertext decrypts to the same rounded message as tfhe-rs.
+
+This is still not a complete high-level `FheUint32` backend.  The deployed
+918-mask blind-rotation/918-output-key envelope has not yet been qualified, and
+the default shortint key order plus integer comparison integration remains.  Those
+are named implementation boundaries, not properties inferred from the four-step,
+eight-output benchmark.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
 described above.  The next hard performance cut is to keep the accumulator and
 bootstrapping key in transform form across the full deployed blind rotation, then
-add sample extraction and key switching and measure an actual PBS and integer
-comparison—not extrapolate one from a short prefix.
+qualify the full deployed key dimensions and wire the resulting PBS-shaped
+primitive below an integer comparison—not extrapolate that result from a short
+prefix.

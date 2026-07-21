@@ -20,9 +20,11 @@
 //! decomposition fully onto-device is required before the RNS-NTT carrier can remain
 //! resident across the dependency chain.
 //!
-//! This is a real blind-rotation slice, but not a complete high-level PBS.  Sample
-//! extraction, key switching, the full deployed 918-mask performance envelope, and
-//! the [`crate::fhe_clear`] / `FheUint32` integration seam remain explicit.
+//! The PBS-shaped rung fuses degree-zero GLWE sample extraction and an exact standard
+//! native-torus LWE key switch after the blind rotation in that same submission, so
+//! only the post-key-switch LWE ciphertext is read back.  The full deployed 918-mask
+//! and 918-output envelope, default shortint key-order integration, and the
+//! [`crate::fhe_clear`] / `FheUint32` seam remain explicit.
 //!
 //! The shader represents every torus coefficient as `(lo, hi)` `u32` limbs.  Its
 //! 16-bit-split multiply retains exactly the low 64 bits, so the result is bit-for-bit
@@ -37,7 +39,10 @@ use tfhe::core_crypto::algorithms::polynomial_algorithms::polynomial_wrapping_ad
 use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
 
-use crate::tfhe_blind_rotation_wgpu::{run as blind_rotation_gpu, BlindRotationGpuError};
+use crate::tfhe_blind_rotation_wgpu::{
+    run as blind_rotation_gpu, run_extract_keyswitch as pbs_extract_keyswitch_gpu,
+    BlindRotationGpuError,
+};
 use crate::tfhe_ntt_wgpu::{multiply_signed_batch, NttBatchError, TORUS_NTT_MODULI};
 
 const WORKGROUP_SIZE: u32 = 64;
@@ -80,6 +85,9 @@ pub enum TorusWgpuAlgorithm {
     /// A complete exact blind-rotation chain whose accumulator and standard
     /// bootstrapping key stay device-resident until one final readback.
     ExactDeviceResidentBlindRotation,
+    /// Blind rotation, degree-zero sample extraction, and native-torus LWE key
+    /// switch in one submission with one post-key-switch readback.
+    ExactDeviceResidentPbsExtractKeyswitch,
 }
 
 /// Algorithm selection for the complete standard-GGSW external product.
@@ -128,6 +136,14 @@ pub struct TorusExternalProductParams {
     pub decomposition_level_count: usize,
 }
 
+/// Native-torus standard LWE key-switch shape appended to blind rotation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TorusKeyswitchParams {
+    pub output_lwe_dimension: usize,
+    pub decomposition_base_log: usize,
+    pub decomposition_level_count: usize,
+}
+
 /// Refusals at the portable primitive boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TorusMacError {
@@ -170,6 +186,12 @@ pub enum TorusMacError {
     },
     EmptyBlindRotationMask,
     BlindRotationKeyLength {
+        expected: usize,
+        actual: usize,
+    },
+    ZeroKeyswitchInputDimension,
+    ZeroKeyswitchOutputDimension,
+    KeyswitchKeyLength {
         expected: usize,
         actual: usize,
     },
@@ -239,6 +261,17 @@ impl fmt::Display for TorusMacError {
             Self::BlindRotationKeyLength { expected, actual } => write!(
                 f,
                 "flattened standard bootstrapping key has {actual} coefficients; expected exactly {expected}"
+            ),
+            Self::ZeroKeyswitchInputDimension => write!(
+                f,
+                "sample extraction produced a zero-dimensional LWE mask; GLWE size must include a mask polynomial"
+            ),
+            Self::ZeroKeyswitchOutputDimension => {
+                write!(f, "TFHE key switch requires a nonzero output LWE dimension")
+            }
+            Self::KeyswitchKeyLength { expected, actual } => write!(
+                f,
+                "flattened standard LWE keyswitch key has {actual} coefficients; expected exactly {expected}"
             ),
             Self::AddressSpaceOverflow => write!(
                 f,
@@ -1418,6 +1451,198 @@ pub fn torus_blind_rotate_with_policy(
     }
 }
 
+fn validate_keyswitch(
+    standard_ksk: &[u64],
+    external_params: TorusExternalProductParams,
+    keyswitch_params: TorusKeyswitchParams,
+) -> Result<(usize, usize), TorusMacError> {
+    let input_lwe_dimension = external_params
+        .glwe_size
+        .checked_sub(1)
+        .and_then(|dimension| dimension.checked_mul(external_params.degree))
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if input_lwe_dimension == 0 {
+        return Err(TorusMacError::ZeroKeyswitchInputDimension);
+    }
+    if keyswitch_params.output_lwe_dimension == 0 {
+        return Err(TorusMacError::ZeroKeyswitchOutputDimension);
+    }
+    if keyswitch_params.decomposition_base_log == 0 {
+        return Err(TorusMacError::ZeroDecompositionBaseLog);
+    }
+    if keyswitch_params.decomposition_base_log > 31 {
+        return Err(TorusMacError::DecompositionBaseLogTooWide {
+            base_log: keyswitch_params.decomposition_base_log,
+        });
+    }
+    if keyswitch_params.decomposition_level_count == 0 {
+        return Err(TorusMacError::ZeroDecompositionLevelCount);
+    }
+    let represented_bits = keyswitch_params
+        .decomposition_base_log
+        .checked_mul(keyswitch_params.decomposition_level_count)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if represented_bits >= u64::BITS as usize {
+        return Err(TorusMacError::DecompositionExhaustsTorus {
+            base_log: keyswitch_params.decomposition_base_log,
+            level_count: keyswitch_params.decomposition_level_count,
+        });
+    }
+    let output_lwe_size = keyswitch_params
+        .output_lwe_dimension
+        .checked_add(1)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    let expected = input_lwe_dimension
+        .checked_mul(keyswitch_params.decomposition_level_count)
+        .and_then(|count| count.checked_mul(output_lwe_size))
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if standard_ksk.len() != expected {
+        return Err(TorusMacError::KeyswitchKeyLength {
+            expected,
+            actual: standard_ksk.len(),
+        });
+    }
+    if input_lwe_dimension > u32::MAX as usize
+        || output_lwe_size > u32::MAX as usize
+        || expected > u32::MAX as usize
+    {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    Ok((input_lwe_dimension, output_lwe_size))
+}
+
+fn extract_degree_zero_lwe(glwe: &[u64], params: TorusExternalProductParams) -> Vec<u64> {
+    let input_lwe_dimension = (params.glwe_size - 1) * params.degree;
+    let mut lwe = Vec::with_capacity(input_lwe_dimension + 1);
+    for polynomial in 0..params.glwe_size - 1 {
+        let base = polynomial * params.degree;
+        lwe.push(glwe[base]);
+        for local in 1..params.degree {
+            lwe.push(glwe[base + params.degree - local].wrapping_neg());
+        }
+    }
+    lwe.push(glwe[(params.glwe_size - 1) * params.degree]);
+    lwe
+}
+
+/// Exact CPU authority for blind rotation followed by degree-zero sample
+/// extraction and a standard native-torus LWE key switch.
+pub fn torus_pbs_extract_keyswitch_cpu(
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+    standard_bsk: &[u64],
+    external_params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    keyswitch_params: TorusKeyswitchParams,
+) -> Result<Vec<u64>, TorusMacError> {
+    validate_blind_rotation(accumulator, lwe_mask, standard_bsk, external_params)?;
+    let (input_lwe_dimension, output_lwe_size) =
+        validate_keyswitch(standard_ksk, external_params, keyswitch_params)?;
+    let rotated = torus_blind_rotate_cpu(
+        accumulator,
+        lwe_mask,
+        lwe_body,
+        standard_bsk,
+        external_params,
+    )?;
+    let extracted = extract_degree_zero_lwe(&rotated, external_params);
+    let decomposer = SignedDecomposer::<u64>::new(
+        DecompositionBaseLog(keyswitch_params.decomposition_base_log),
+        DecompositionLevelCount(keyswitch_params.decomposition_level_count),
+    );
+    let mut output = vec![0u64; output_lwe_size];
+    output[output_lwe_size - 1] = extracted[input_lwe_dimension];
+    for (input_index, &mask_coefficient) in extracted[..input_lwe_dimension].iter().enumerate() {
+        for (level, term) in decomposer.decompose(mask_coefficient).enumerate() {
+            let key_start = (input_index * keyswitch_params.decomposition_level_count + level)
+                * output_lwe_size;
+            for (output_coefficient, &key_coefficient) in output
+                .iter_mut()
+                .zip(&standard_ksk[key_start..key_start + output_lwe_size])
+            {
+                *output_coefficient =
+                    (*output_coefficient).wrapping_sub(term.value().wrapping_mul(key_coefficient));
+            }
+        }
+    }
+    Ok(output)
+}
+
+/// PBS-shaped exact portable artifact: blind rotation, degree-zero sample
+/// extraction, and native-torus LWE key switch in one GPU submission and one
+/// final post-key-switch readback.
+#[allow(clippy::too_many_arguments)]
+pub fn torus_pbs_extract_keyswitch_with_policy(
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+    standard_bsk: &[u64],
+    external_params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    keyswitch_params: TorusKeyswitchParams,
+    policy: TorusMacPolicy,
+) -> Result<TorusMacResult, TorusMacError> {
+    let (_, ggsw_coefficients) =
+        validate_blind_rotation(accumulator, lwe_mask, standard_bsk, external_params)?;
+    let (_, output_lwe_size) = validate_keyswitch(standard_ksk, external_params, keyswitch_params)?;
+    if policy == TorusMacPolicy::CpuOnly {
+        return Ok(TorusMacResult {
+            coefficients: torus_pbs_extract_keyswitch_cpu(
+                accumulator,
+                lwe_mask,
+                lwe_body,
+                standard_bsk,
+                external_params,
+                standard_ksk,
+                keyswitch_params,
+            )?,
+            backend: TorusMacBackend::CpuOnly,
+        });
+    }
+    let (body_rotation, mask_rotations) =
+        blind_rotation_schedule(lwe_mask, lwe_body, external_params.degree)?;
+    match pbs_extract_keyswitch_gpu(
+        accumulator,
+        body_rotation,
+        &mask_rotations,
+        standard_bsk,
+        ggsw_coefficients,
+        external_params,
+        standard_ksk,
+        output_lwe_size,
+        keyswitch_params.decomposition_base_log,
+        keyswitch_params.decomposition_level_count,
+    ) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactDeviceResidentPbsExtractKeyswitch,
+            },
+        }),
+        Err(BlindRotationGpuError::Unavailable(reason))
+            if policy == TorusMacPolicy::RequireWgpu =>
+        {
+            Err(TorusMacError::WgpuRequired(reason))
+        }
+        Err(BlindRotationGpuError::Unavailable(reason)) => Ok(TorusMacResult {
+            coefficients: torus_pbs_extract_keyswitch_cpu(
+                accumulator,
+                lwe_mask,
+                lwe_body,
+                standard_bsk,
+                external_params,
+                standard_ksk,
+                keyswitch_params,
+            )?,
+            backend: TorusMacBackend::CpuFallback(reason),
+        }),
+        Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
 struct ExternalGpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -2003,6 +2228,26 @@ mod tests {
         assert_eq!(
             torus_blind_rotate_cpu(&accumulator, &[0], 0, &[0; 63], params),
             Err(TorusMacError::BlindRotationKeyLength {
+                expected: 64,
+                actual: 63,
+            })
+        );
+        let keyswitch_params = TorusKeyswitchParams {
+            output_lwe_dimension: 3,
+            decomposition_base_log: 4,
+            decomposition_level_count: 2,
+        };
+        assert_eq!(
+            torus_pbs_extract_keyswitch_cpu(
+                &accumulator,
+                &[0],
+                0,
+                &[0; 64],
+                params,
+                &[0; 63],
+                keyswitch_params,
+            ),
+            Err(TorusMacError::KeyswitchKeyLength {
                 expected: 64,
                 actual: 63,
             })

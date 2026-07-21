@@ -50,6 +50,35 @@ pub(crate) fn run(
     }
 }
 
+pub(crate) fn run_extract_keyswitch(
+    accumulator: &[u64],
+    body_rotation: usize,
+    mask_rotations: &[usize],
+    standard_bsk: &[u64],
+    ggsw_coefficients: usize,
+    params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    output_lwe_size: usize,
+    ks_base_log: usize,
+    ks_level_count: usize,
+) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
+    match gpu_state() {
+        GpuState::Ready(gpu) => gpu.run_extract_keyswitch(
+            accumulator,
+            body_rotation,
+            mask_rotations,
+            standard_bsk,
+            ggsw_coefficients,
+            params,
+            standard_ksk,
+            output_lwe_size,
+            ks_base_log,
+            ks_level_count,
+        ),
+        GpuState::Unavailable(reason) => Err(BlindRotationGpuError::Unavailable(reason.clone())),
+    }
+}
+
 struct GpuContext {
     _instance: wgpu::Instance,
     device: wgpu::Device,
@@ -61,6 +90,8 @@ struct GpuContext {
     rotate: wgpu::ComputePipeline,
     decompose: wgpu::ComputePipeline,
     external_product: wgpu::ComputePipeline,
+    keyswitch_bgl: wgpu::BindGroupLayout,
+    extract_keyswitch: wgpu::ComputePipeline,
 }
 
 impl GpuContext {
@@ -128,6 +159,35 @@ impl GpuContext {
         let rotate = make("monomial_rotate");
         let decompose = make("decompose_rotated_difference");
         let external_product = make("external_product_step");
+        let keyswitch_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("torus_pbs_extract_keyswitch.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/torus_pbs_extract_keyswitch.wgsl").into(),
+            ),
+        });
+        let keyswitch_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TFHE fused sample-extract/keyswitch bindings"),
+            entries: &[
+                buffer_entry(0, wgpu::BufferBindingType::Uniform),
+                buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(3, wgpu::BufferBindingType::Storage { read_only: true }),
+                buffer_entry(4, wgpu::BufferBindingType::Storage { read_only: false }),
+            ],
+        });
+        let keyswitch_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("TFHE fused sample-extract/keyswitch layout"),
+            bind_group_layouts: &[&keyswitch_bgl],
+            push_constant_ranges: &[],
+        });
+        let extract_keyswitch = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("extract_and_keyswitch"),
+            layout: Some(&keyswitch_layout),
+            module: &keyswitch_shader,
+            entry_point: Some("extract_and_keyswitch"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let context = Self {
             _instance: instance,
             device,
@@ -139,6 +199,8 @@ impl GpuContext {
             rotate,
             decompose,
             external_product,
+            keyswitch_bgl,
+            extract_keyswitch,
         };
         if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
             return GpuState::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(format!(
@@ -346,6 +408,305 @@ impl GpuContext {
                 "TFHE blind-rotation readback has {} limbs; expected {}",
                 limbs.len(),
                 glwe_coefficients * 2
+            )));
+        }
+        let coefficients = limbs
+            .chunks_exact(2)
+            .map(|pair| u64::from(pair[0]) | (u64::from(pair[1]) << 32))
+            .collect();
+        drop(mapped);
+        readback.unmap();
+        Ok(BlindRotationGpuResult {
+            coefficients,
+            adapter: self.adapter.clone(),
+            backend: self.backend.clone(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_extract_keyswitch(
+        &self,
+        accumulator: &[u64],
+        body_rotation: usize,
+        mask_rotations: &[usize],
+        standard_bsk: &[u64],
+        ggsw_coefficients: usize,
+        params: TorusExternalProductParams,
+        standard_ksk: &[u64],
+        output_lwe_size: usize,
+        ks_base_log: usize,
+        ks_level_count: usize,
+    ) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
+        let glwe_coefficients = accumulator.len();
+        let accumulator_bytes = byte_len(glwe_coefficients)?;
+        let bsk_bytes = byte_len(standard_bsk.len())?;
+        let ksk_bytes = byte_len(standard_ksk.len())?;
+        let output_bytes = byte_len(output_lwe_size)?;
+        let decomposed_coefficients = params
+            .decomposition_level_count
+            .checked_mul(glwe_coefficients)
+            .ok_or_else(|| {
+                BlindRotationGpuError::Execution("decomposition size overflow".into())
+            })?;
+        let decomposed_bytes = byte_len(decomposed_coefficients)?;
+        let binding_limit = self
+            .limits
+            .max_buffer_size
+            .min(u64::from(self.limits.max_storage_buffer_binding_size));
+        let blind_workgroups = u32::try_from(glwe_coefficients.div_ceil(WORKGROUP_SIZE as usize))
+            .map_err(|_| {
+            BlindRotationGpuError::Unavailable(TorusCpuFallbackReason::ShapeExceedsAdapterLimits)
+        })?;
+        let output_workgroups = u32::try_from(output_lwe_size.div_ceil(WORKGROUP_SIZE as usize))
+            .map_err(|_| {
+                BlindRotationGpuError::Unavailable(
+                    TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+                )
+            })?;
+        if [
+            accumulator_bytes,
+            bsk_bytes,
+            ksk_bytes,
+            decomposed_bytes,
+            output_bytes,
+        ]
+        .into_iter()
+        .any(|size| size > binding_limit)
+            || self.limits.max_storage_buffers_per_shader_stage < 4
+            || blind_workgroups > self.limits.max_compute_workgroups_per_dimension
+            || output_workgroups > self.limits.max_compute_workgroups_per_dimension
+        {
+            return Err(BlindRotationGpuError::Unavailable(
+                TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+            ));
+        }
+
+        let accumulator_limbs = to_limbs(accumulator);
+        let bsk_limbs = to_limbs(standard_bsk);
+        let ksk_limbs = to_limbs(standard_ksk);
+        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let accumulator_a = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE PBS accumulator A"),
+                contents: bytemuck::cast_slice(&accumulator_limbs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let accumulator_b = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE PBS accumulator B"),
+            size: accumulator_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let bsk = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE PBS resident standard bootstrapping key"),
+                contents: bytemuck::cast_slice(&bsk_limbs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let decomposed = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE PBS blind-rotation gadget digits"),
+            size: decomposed_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let ksk = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE PBS resident standard keyswitch key"),
+                contents: bytemuck::cast_slice(&ksk_limbs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE PBS post-keyswitch LWE"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE PBS final LWE readback"),
+            size: output_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("TFHE one-submit blind-rotate/extract/keyswitch"),
+            });
+        let degree = u32::try_from(params.degree)
+            .map_err(|_| BlindRotationGpuError::Execution("degree metadata overflow".into()))?;
+        let glwe_size = u32::try_from(params.glwe_size)
+            .map_err(|_| BlindRotationGpuError::Execution("GLWE metadata overflow".into()))?;
+        let base_log = u32::try_from(params.decomposition_base_log)
+            .map_err(|_| BlindRotationGpuError::Execution("base-log metadata overflow".into()))?;
+        let level_count = u32::try_from(params.decomposition_level_count)
+            .map_err(|_| BlindRotationGpuError::Execution("level metadata overflow".into()))?;
+        let mut dispatch = |pipeline: &wgpu::ComputePipeline,
+                            rotation: usize,
+                            key_offset: usize,
+                            input_buffer: u32|
+         -> Result<(), BlindRotationGpuError> {
+            let metadata = [
+                degree,
+                glwe_size,
+                base_log,
+                level_count,
+                u32::try_from(rotation).map_err(|_| {
+                    BlindRotationGpuError::Execution("rotation metadata overflow".into())
+                })?,
+                u32::try_from(key_offset).map_err(|_| {
+                    BlindRotationGpuError::Execution("key-offset metadata overflow".into())
+                })?,
+                input_buffer,
+                0,
+            ];
+            let metadata_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("TFHE PBS blind-rotation step metadata"),
+                        contents: bytemuck::cast_slice(&metadata),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    });
+            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("TFHE PBS blind-rotation step bindings"),
+                layout: &self.bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: metadata_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: accumulator_a.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: accumulator_b.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: bsk.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: decomposed.as_entire_binding(),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("TFHE PBS blind-rotation step"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            pass.dispatch_workgroups(blind_workgroups, 1, 1);
+            Ok(())
+        };
+
+        let mut current = 0u32;
+        if body_rotation != 0 {
+            dispatch(&self.rotate, body_rotation, 0, current)?;
+            current = 1;
+        }
+        for (step, &rotation) in mask_rotations.iter().enumerate() {
+            if rotation == 0 {
+                continue;
+            }
+            let key_offset = step.checked_mul(ggsw_coefficients).ok_or_else(|| {
+                BlindRotationGpuError::Execution("bootstrapping-key offset overflow".into())
+            })?;
+            dispatch(&self.decompose, rotation, key_offset, current)?;
+            dispatch(&self.external_product, rotation, key_offset, current)?;
+            current = 1 - current;
+        }
+        drop(dispatch);
+
+        let keyswitch_metadata = [
+            degree,
+            glwe_size,
+            u32::try_from(output_lwe_size).map_err(|_| {
+                BlindRotationGpuError::Execution("output LWE metadata overflow".into())
+            })?,
+            u32::try_from(ks_base_log).map_err(|_| {
+                BlindRotationGpuError::Execution("keyswitch base-log metadata overflow".into())
+            })?,
+            u32::try_from(ks_level_count).map_err(|_| {
+                BlindRotationGpuError::Execution("keyswitch level metadata overflow".into())
+            })?,
+            current,
+            0,
+            0,
+        ];
+        let keyswitch_metadata_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("TFHE fused extract/keyswitch metadata"),
+                    contents: bytemuck::cast_slice(&keyswitch_metadata),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let keyswitch_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TFHE fused extract/keyswitch bind group"),
+            layout: &self.keyswitch_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: keyswitch_metadata_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: accumulator_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: accumulator_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: ksk.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: output.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("TFHE fused degree-zero sample extract and key switch"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.extract_keyswitch);
+            pass.set_bind_group(0, &keyswitch_bind_group, &[]);
+            pass.dispatch_workgroups(output_workgroups, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, output_bytes);
+        self.queue.submit([encoder.finish()]);
+        self.device.poll(wgpu::Maintain::Wait);
+        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+            return Err(BlindRotationGpuError::Execution(format!(
+                "TFHE PBS-shaped dispatch failed: {error}"
+            )));
+        }
+
+        let slice = readback.slice(..);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        slice.map_async(wgpu::MapMode::Read, move |status| {
+            let _ = sender.send(status);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .recv()
+            .map_err(|error| BlindRotationGpuError::Execution(error.to_string()))?
+            .map_err(|error| BlindRotationGpuError::Execution(error.to_string()))?;
+        let mapped = slice.get_mapped_range();
+        let limbs: &[u32] = bytemuck::cast_slice(&mapped);
+        if limbs.len() != output_lwe_size * 2 {
+            return Err(BlindRotationGpuError::Execution(format!(
+                "TFHE PBS-shaped readback has {} limbs; expected {}",
+                limbs.len(),
+                output_lwe_size * 2
             )));
         }
         let coefficients = limbs
