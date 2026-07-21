@@ -13,9 +13,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dregg_circuit_prove::dark_amm_private::{PrivateAmmWitness, prove_zk};
 use dreggnet_market::dark_amm_collective::{
     CollectiveDarkAmmConfig, CollectiveDarkAmmError, CollectiveDarkAmmOffering,
-    CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
-    DARK_AMM_COLLECTIVE_COMMIT_OPERATION, DARK_AMM_COLLECTIVE_STAGE_OPERATION,
-    DARK_AMM_COLLECTIVE_TASK_ARTIFACT, DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
+    CollectiveDarkAmmSession, CollectiveDecisionBundle, DARK_AMM_COLLECTIVE_ABANDON_BYTES,
+    DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE, DARK_AMM_COLLECTIVE_ABANDON_MEDIA_TYPE,
+    DARK_AMM_COLLECTIVE_ABANDON_OPERATION, DARK_AMM_COLLECTIVE_COMMIT_OPERATION,
+    DARK_AMM_COLLECTIVE_STAGE_OPERATION, DARK_AMM_COLLECTIVE_TASK_ARTIFACT,
+    DARK_AMM_COLLECTIVE_TASK_MEDIA_TYPE,
 };
 use dreggnet_market::dark_amm_collective_worker::{
     CollectiveDecisionTask, CollectiveDecisionTaskContext,
@@ -813,6 +815,18 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         pending_operations[1].name,
         DARK_AMM_COLLECTIVE_ABANDON_OPERATION
     );
+    assert_eq!(
+        pending_operations[1].input_media_type,
+        DARK_AMM_COLLECTIVE_ABANDON_MEDIA_TYPE
+    );
+    assert_eq!(
+        pending_operations[1].max_input_bytes,
+        DARK_AMM_COLLECTIVE_ABANDON_BYTES
+    );
+    assert_eq!(
+        pending_operations[1].disclosure,
+        DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE
+    );
     let artifacts = offering.binary_artifacts(&game);
     assert_eq!(artifacts.len(), 1);
     assert_eq!(artifacts[0].name, DARK_AMM_COLLECTIVE_TASK_ARTIFACT);
@@ -832,6 +846,35 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
         .map(|(_, value)| decode_hex_digest(value))
         .unwrap();
 
+    // Journal preflight accepts only the exact current task identity and
+    // returns that same fixed-width public digest as canonical replay
+    // material. Preflight is read-only: neither owner nor encrypted state is
+    // changed before the operation is actually invoked.
+    let abandon_replay = offering
+        .binary_operation_replay_material(
+            &game,
+            DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+            &task_digest,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(abandon_replay.bytes, task_digest);
+    assert_eq!(
+        abandon_replay.disclosure,
+        DARK_AMM_COLLECTIVE_ABANDON_DISCLOSURE
+    );
+    assert!(game.has_pending_candidate());
+    assert!(
+        offering
+            .binary_operation_replay_material(
+                &game,
+                DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+                &task_digest[..31],
+            )
+            .is_err()
+    );
+    assert!(game.has_pending_candidate());
+
     // The staging identity owns this exact pending slot at the shared-surface
     // layer. Another web/Telegram/Discord identity cannot cancel it, and a
     // stale task digest cannot cancel a replacement candidate at the same
@@ -850,6 +893,15 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     assert!(game.has_pending_candidate());
     let mut wrong_task_digest = task_digest;
     wrong_task_digest[0] ^= 1;
+    assert!(
+        offering
+            .binary_operation_replay_material(
+                &game,
+                DARK_AMM_COLLECTIVE_ABANDON_OPERATION,
+                &wrong_task_digest,
+            )
+            .is_err()
+    );
     assert!(
         offering
             .invoke_binary_operation(
@@ -872,6 +924,30 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     assert_eq!(
         abandon_receipt.operation,
         DARK_AMM_COLLECTIVE_ABANDON_OPERATION
+    );
+    assert_eq!(
+        abandon_receipt
+            .public_fields
+            .iter()
+            .find(|(name, _)| name == "phase")
+            .map(|(_, value)| value.as_str()),
+        Some("abandoned")
+    );
+    assert_eq!(
+        abandon_receipt
+            .public_fields
+            .iter()
+            .find(|(name, _)| name == "decisionTaskDigest")
+            .map(|(_, value)| decode_hex_digest(value)),
+        Some(task_digest)
+    );
+    assert_eq!(
+        abandon_receipt
+            .public_fields
+            .iter()
+            .find(|(name, _)| name == "replaySlotsConsumed")
+            .map(|(_, value)| value.as_str()),
+        Some("0")
     );
     assert!(!game.has_pending_candidate());
     assert_eq!(
