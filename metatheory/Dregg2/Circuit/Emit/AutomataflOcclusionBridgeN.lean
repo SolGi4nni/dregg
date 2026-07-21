@@ -250,6 +250,33 @@ theorem evalH_msumHead (a : Nat → ℤ) (n o : Nat) :
       - a (NGen.cSeg n o k) * a (NGen.cOsrc n o k) * a (NGen.cLine n o k))]
   ring
 
+/-- `evalH` of the emitted INCLUSIVE `msumInclHead`: `cMsumIncl[w]` minus the exclusive `cMsum[o]`
+minus the destination endpoint fold `Σ_k eto[k]·((1 − osrc[k])·line[k])` — the exclusive masked sum
+plus the one extra endpoint term, UNCOLLAPSED (the `eto` one-hot collapses it later, in the
+`blockedB` bridge). The `blockedB`-analog of `evalH_msumHead`; the fold body matches `msumInclVal`'s
+endpoint summand exactly, so the gate pins `cMsumIncl` to `msumInclVal`. -/
+theorem evalH_msumInclHead (a : Nat → ℤ) (n w o : Nat) :
+    evalH (NGen.msumInclHead n w o) a
+      = a (NGen.cMsumIncl n w) - a (NGen.cMsum n o)
+        - ((List.range n).map (fun k =>
+            a (NGen.cEto n o k) * ((1 - a (NGen.cOsrc n o k)) * a (NGen.cLine n o k)))).sum := by
+  have hstep : ∀ (h : Head) (k : Nat),
+      evalH ((h.addProd (-1) [NGen.cEto n o k, NGen.cLine n o k]).addProd 1
+              [NGen.cEto n o k, NGen.cOsrc n o k, NGen.cLine n o k]) a
+        = evalH h a
+          + (-(a (NGen.cEto n o k) * ((1 - a (NGen.cOsrc n o k)) * a (NGen.cLine n o k)))) := by
+    intro h k
+    rw [evalH_addProd, evalH_addProd]
+    simp only [varsVal, List.foldl_cons, List.foldl_nil]
+    ring
+  rw [NGen.msumInclHead]
+  rw [evalH_foldl_step a ((Head.lin 1 (NGen.cMsumIncl n w)).addLin (-1) (NGen.cMsum n o))
+      (List.range n) _ _ hstep]
+  rw [evalH_addLin, evalH_lin,
+    neg_sum (List.range n) (fun k =>
+      a (NGen.cEto n o k) * ((1 - a (NGen.cOsrc n o k)) * a (NGen.cLine n o k)))]
+  ring
+
 /-! ## §C — `validateOcclusion` family-membership navigators (inline; swarm-safe: my own file).
 
 `validateOcclusion n b o ob` is the left-associative 13-way append P0..P12. `g ∈ Fᵢ → g ∈ spine` is
@@ -326,6 +353,52 @@ theorem vmN_srcCol_fam {g : VmConstraint2} (n b : Nat)
     (h : g ∈ oneHotAtCol (NGen.selColCols n b) (NGen.cFx n b)) : g ∈ NGen.validateMove n b := by
   rw [NGen.validateMove]
   exact List.mem_append_left _ (List.mem_append_right _ (h))
+
+/-! ### CHUNK-2 additive — the INCLUSIVE-occlusion family `inclOcclusionOne` navigators. The block is
+`[ cgH (msumInclHead w o) ] ++ forcedGe0Constraints ((lin 1 cMsumIncl[w]) − 1) cOccIncl[w] occInclBit`
+(a `forced_ge0` at the default `RBITS = 9`). These locate the msum head and the three `forced_ge0`
+gates, generically in `n w o`. -/
+
+/-- The inclusive masked-sum definition head. -/
+theorem voI_msumInclHead (n w o : Nat) :
+    cgH (NGen.msumInclHead n w o) ∈ NGen.inclOcclusionOne n w o := by
+  rw [NGen.inclOcclusionOne]
+  exact List.mem_append_left _ (List.mem_singleton.mpr rfl)
+
+/-- The `cOccIncl` boolean of the inclusive `forced_ge0`. -/
+theorem voI_occIncl_ib (n w o : Nat) :
+    cg (gBin (NGen.cOccIncl n w)) ∈ NGen.inclOcclusionOne n w o := by
+  rw [NGen.inclOcclusionOne]
+  exact List.mem_append_right _ (mem_forcedGe0N_ib _ (NGen.cOccIncl n w) (NGen.occInclBit n w 0) RBITS)
+
+/-- The k-th range bit of the inclusive `forced_ge0`. -/
+theorem voI_occIncl_bit (n w o k : Nat) (hk : k < RBITS) :
+    cg (gBin (NGen.occInclBit n w 0 + k)) ∈ NGen.inclOcclusionOne n w o := by
+  rw [NGen.inclOcclusionOne]
+  exact List.mem_append_right _
+    (mem_forcedGe0N_bit _ (NGen.cOccIncl n w) (NGen.occInclBit n w 0) RBITS k hk)
+
+/-- The recomposition head of the inclusive `forced_ge0`. -/
+theorem voI_occIncl_head (n w o : Nat) :
+    cgH ((List.range RBITS).foldl (fun acc k => acc.addLin (-((2 : ℤ) ^ k)) (NGen.occInclBit n w 0 + k))
+        (forcedGe0Term ((Head.lin 1 (NGen.cMsumIncl n w)).addConst (-1)) (NGen.cOccIncl n w)))
+      ∈ NGen.inclOcclusionOne n w o := by
+  rw [NGen.inclOcclusionOne]
+  exact List.mem_append_right _
+    (mem_forcedGe0N_head ((Head.lin 1 (NGen.cMsumIncl n w)).addConst (-1)) (NGen.cOccIncl n w)
+      (NGen.occInclBit n w 0) RBITS)
+
+/-- Lift an `inclOcclusionOne w o` membership to the descriptor, at either piece index `w < 2`
+(`o = occBase n w`), via `mem_resolve_of_mem_inclOcclusion` over the 2-way `inclOcclusionConstraints`
+append. This is the inclusive twin of the capstone's `occLift`; chunk 3 supplies it to
+`occ_iff_blocked_of_sat`'s `hincl`. -/
+theorem inclLiftN (n w o : Nat) (hw : w < 2) (ho : o = NGen.occBase n w) {g : VmConstraint2}
+    (h : g ∈ NGen.inclOcclusionOne n w o) : g ∈ (automataflResolveDescN n).constraints := by
+  apply mem_resolve_of_mem_inclOcclusion
+  rw [NGen.inclOcclusionConstraints]
+  subst ho; interval_cases w
+  · exact List.mem_append_left _ h
+  · exact List.mem_append_right _ h
 
 end
 
@@ -864,6 +937,143 @@ theorem occ_col_iff_msumValN (n : Nat)
     · exfalso; have := hocc0 h0; rw [hcMsum] at this; linarith
     · exact h1
 
+/-- **The exclusive masked sum, extracted.** `cMsum[o] = msumVal (segVal efrom eto) osrc line n` — the
+interior double-fold value, off the emitted `seg`/`msum` gates. Factored out of `occ_col_iff_msumValN`
+(ADDITIVE, does not touch it) so the INCLUSIVE column can reuse it. -/
+theorem cMsum_eq_msumValN (n : Nat)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (b o ob : Nat)
+    (hlift : ∀ {g : VmConstraint2}, g ∈ NGen.validateOcclusion n b o ob
+              → g ∈ (automataflResolveDescN n).constraints)
+    (hwin : 3 * (n : ℤ) ≤ 999)
+    {af at_ : Nat}
+    (hf : OneHotAt (fun j => (envAt t i).loc (NGen.cEfrom n o j)) n af)
+    (ht : OneHotAt (fun j => (envAt t i).loc (NGen.cEto n o j)) n at_)
+    (hosrc : ∀ k, k < n → (envAt t i).loc (NGen.cOsrc n o k) = 0
+      ∨ (envAt t i).loc (NGen.cOsrc n o k) = 1)
+    (hlineRange : ∀ k, k < n → 0 ≤ (envAt t i).loc (NGen.cLine n o k)
+      ∧ (envAt t i).loc (NGen.cLine n o k) ≤ 3) :
+    (envAt t i).loc (NGen.cMsum n o)
+      = msumVal (segVal (fun j => (envAt t i).loc (NGen.cEfrom n o j))
+          (fun j => (envAt t i).loc (NGen.cEto n o j)) n)
+          (fun k => (envAt t i).loc (NGen.cOsrc n o k))
+          (fun k => (envAt t i).loc (NGen.cLine n o k)) n := by
+  have hsegEq : ∀ k, k < n → (envAt t i).loc (NGen.cSeg n o k)
+      = segVal (fun j => (envAt t i).loc (NGen.cEfrom n o j))
+          (fun j => (envAt t i).loc (NGen.cEto n o j)) n k := fun k hk =>
+    segN_of_sat n hsat hc i hi o k (hlift (vo_seg n b o ob k hk)) hf ht
+  have hsegBool : ∀ k, k < n → (envAt t i).loc (NGen.cSeg n o k) = 0
+      ∨ (envAt t i).loc (NGen.cSeg n o k) = 1 := by
+    intro k hk; rw [hsegEq k hk, segVal_eq hf ht k]; split
+    · right; rfl
+    · left; rfl
+  have hmsumCongr : msumVal (fun k => (envAt t i).loc (NGen.cSeg n o k))
+        (fun k => (envAt t i).loc (NGen.cOsrc n o k))
+        (fun k => (envAt t i).loc (NGen.cLine n o k)) n
+      = msumVal (segVal (fun j => (envAt t i).loc (NGen.cEfrom n o j))
+          (fun j => (envAt t i).loc (NGen.cEto n o j)) n)
+          (fun k => (envAt t i).loc (NGen.cOsrc n o k))
+          (fun k => (envAt t i).loc (NGen.cLine n o k)) n :=
+    msumVal_congr hsegEq
+  have hbndM := msumVal_boundN hsegBool hosrc hlineRange
+  have hmsumEq : (envAt t i).loc (NGen.cMsum n o)
+      = msumVal (fun k => (envAt t i).loc (NGen.cSeg n o k))
+          (fun k => (envAt t i).loc (NGen.cOsrc n o k))
+          (fun k => (envAt t i).loc (NGen.cLine n o k)) n := by
+    have hg := ngateH hsat i hi (hlift (vo_msum n b o ob))
+    rw [headToExpr_eval, evalH_msumHead] at hg
+    exact eq_of_modEq_canon (canon_loc hc i _) ⟨hbndM.1, by linarith [hbndM.2, hwin]⟩
+      ((gate_modEq_iff (by ring)).mp hg)
+  rw [hmsumEq, hmsumCongr]
+
+/-- **`occIncl` column = the INCLUSIVE masked-sum threshold, n-generically.** The emitted `cOccIncl`
+bit is `1` exactly when `1 ≤ msumInclVal (segVal efrom eto) osrc line n` — the strict interior sum
+PLUS the destination endpoint term. The `blockedB`-analog of `occ_col_iff_msumValN`: the `cMsumIncl`
+gate pins the column to `cMsum[o] + Σ_k eto·((1−osrc)·line)`, and `cOccIncl = [cMsumIncl ≥ 1]` is read
+off the new `inclOcclusion` `forced_ge0`. Window `3n+3 ≤ 999` (the endpoint term adds ≤ 3 to the
+`[0, 3n]` interior, so `cMsumIncl ∈ [0, 3n+3]` fits the 9-bit `forced_ge0`; `n ≤ 332`, ≫ 11). -/
+theorem occ_col_iff_msumInclValN (n : Nat)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (b o ob w : Nat)
+    (hlift : ∀ {g : VmConstraint2}, g ∈ NGen.validateOcclusion n b o ob
+              → g ∈ (automataflResolveDescN n).constraints)
+    (hincl : ∀ {g : VmConstraint2}, g ∈ NGen.inclOcclusionOne n w o
+              → g ∈ (automataflResolveDescN n).constraints)
+    (hwinI : 3 * (n : ℤ) + 3 ≤ 999)
+    {af at_ : Nat}
+    (hf : OneHotAt (fun j => (envAt t i).loc (NGen.cEfrom n o j)) n af)
+    (ht : OneHotAt (fun j => (envAt t i).loc (NGen.cEto n o j)) n at_)
+    (hosrc : ∀ k, k < n → (envAt t i).loc (NGen.cOsrc n o k) = 0
+      ∨ (envAt t i).loc (NGen.cOsrc n o k) = 1)
+    (hlineRange : ∀ k, k < n → 0 ≤ (envAt t i).loc (NGen.cLine n o k)
+      ∧ (envAt t i).loc (NGen.cLine n o k) ≤ 3) :
+    ((envAt t i).loc (NGen.cOccIncl n w) = 1)
+      ↔ 1 ≤ msumInclVal (fun j => (envAt t i).loc (NGen.cEfrom n o j))
+              (fun j => (envAt t i).loc (NGen.cEto n o j))
+              (fun k => (envAt t i).loc (NGen.cOsrc n o k))
+              (fun k => (envAt t i).loc (NGen.cLine n o k)) n := by
+  set e := envAt t i with he
+  -- the interior masked sum
+  have hcMsum : e.loc (NGen.cMsum n o)
+      = msumVal (segVal (fun j => e.loc (NGen.cEfrom n o j))
+          (fun j => e.loc (NGen.cEto n o j)) n)
+          (fun k => e.loc (NGen.cOsrc n o k))
+          (fun k => e.loc (NGen.cLine n o k)) n :=
+    cMsum_eq_msumValN n hsat hc i hi b o ob hlift (by linarith) hf ht hosrc hlineRange
+  -- the endpoint fold, collapsed by the eto one-hot
+  have hcollapse : ((List.range n).map (fun k =>
+        e.loc (NGen.cEto n o k) * ((1 - e.loc (NGen.cOsrc n o k)) * e.loc (NGen.cLine n o k)))).sum
+      = (1 - e.loc (NGen.cOsrc n o at_)) * e.loc (NGen.cLine n o at_) := endpoint_collapse ht
+  have hatN : at_ < n := ht.1
+  -- msumInclVal collapses to interior + single endpoint term
+  have hIncl_eq : msumInclVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j))
+        (fun k => e.loc (NGen.cOsrc n o k)) (fun k => e.loc (NGen.cLine n o k)) n
+      = msumVal (segVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j)) n)
+          (fun k => e.loc (NGen.cOsrc n o k)) (fun k => e.loc (NGen.cLine n o k)) n
+        + (1 - e.loc (NGen.cOsrc n o at_)) * e.loc (NGen.cLine n o at_) := by
+    unfold msumInclVal; rw [hcollapse]
+  -- interior in [0,3n], endpoint in [0,3]
+  have hsegBool : ∀ k, k < n → segVal (fun j => e.loc (NGen.cEfrom n o j))
+        (fun j => e.loc (NGen.cEto n o j)) n k = 0
+      ∨ segVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j)) n k = 1 := by
+    intro k hk; rw [segVal_eq hf ht k]; split
+    · right; rfl
+    · left; rfl
+  have hbndInt := msumVal_boundN hsegBool hosrc hlineRange
+  have hendBnd : 0 ≤ (1 - e.loc (NGen.cOsrc n o at_)) * e.loc (NGen.cLine n o at_)
+      ∧ (1 - e.loc (NGen.cOsrc n o at_)) * e.loc (NGen.cLine n o at_) ≤ 3 := by
+    obtain ⟨hl0, hl3⟩ := hlineRange at_ hatN
+    rcases hosrc at_ hatN with h0 | h1
+    · rw [h0]; constructor <;> nlinarith [hl0, hl3]
+    · rw [h1]; constructor <;> nlinarith [hl0, hl3]
+  have hInclBnd : 0 ≤ msumInclVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j))
+        (fun k => e.loc (NGen.cOsrc n o k)) (fun k => e.loc (NGen.cLine n o k)) n
+      ∧ msumInclVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j))
+          (fun k => e.loc (NGen.cOsrc n o k)) (fun k => e.loc (NGen.cLine n o k)) n ≤ 3 * (n : ℤ) + 3 := by
+    rw [hIncl_eq]
+    exact ⟨by linarith [hbndInt.1, hendBnd.1], by linarith [hbndInt.2, hendBnd.2]⟩
+  -- the cMsumIncl gate pins the column to msumInclVal
+  have hcMsumIncl : e.loc (NGen.cMsumIncl n w)
+      = msumInclVal (fun j => e.loc (NGen.cEfrom n o j)) (fun j => e.loc (NGen.cEto n o j))
+          (fun k => e.loc (NGen.cOsrc n o k)) (fun k => e.loc (NGen.cLine n o k)) n := by
+    have hg := ngateH hsat i hi (hincl (voI_msumInclHead n w o))
+    rw [headToExpr_eval, evalH_msumInclHead, hcMsum, hcollapse] at hg
+    rw [hIncl_eq]
+    refine eq_of_modEq_canon (canon_loc hc i _)
+      ⟨by linarith [hbndInt.1, hendBnd.1], by linarith [hbndInt.2, hendBnd.2, hwinI]⟩
+      ((gate_modEq_iff (by ring)).mp hg)
+  obtain ⟨hoccB, hocc1, hocc0⟩ := ge0_9N_of_sat hsat hc i hi (NGen.cMsumIncl n w) (NGen.cOccIncl n w)
+    (NGen.occInclBit n w 0) (hincl (voI_occIncl_ib n w o))
+    (fun k hk => hincl (voI_occIncl_bit n w o k (by simpa [RBITS] using hk)))
+    (hincl (voI_occIncl_head n w o)) (by rw [hcMsumIncl]; linarith [hInclBnd.1])
+    (by rw [hcMsumIncl]; linarith [hInclBnd.2, hwinI])
+  constructor
+  · intro h; have := hocc1 h; rw [hcMsumIncl] at this; exact this
+  · intro h
+    rcases hoccB with h0 | h1
+    · exfalso; have := hocc0 h0; rw [hcMsumIncl] at this; linarith
+    · exact h1
+
 /-! ### §D.5 — `OsrcIsOtherSource`, the LAST occlusion bridge hypothesis, DISCHARGED n-generically.
 
 The emitted `oneHotGatedConstraints ((range n).map osrc) og idx` makes `osrc` an `og`-scaled one-hot at
@@ -1092,6 +1302,178 @@ theorem osrcMeansHorizN (n : Nat) (hn : (n : ℤ) < 2013265921)
     · intro h; norm_num at h
     · rintro ⟨_, h2⟩; exact absurd h2 hfyne
 
+/-! ### CHUNK-2 additive — the INCLUSIVE other-source masks (`OsrcIsOtherSourceVert/HorizIncl`).
+
+The `blockedB` twins of `osrcMeansVert/HorizN`: the SAME `og`-gated one-hot read, extended from the
+strict interior `Between af at_ k` to `Between af at_ k ∨ k = at_` (the destination endpoint). The
+one-hot argument is untouched — the ONLY new content is the `k = at_` case, which needs the along-axis
+distinctness (`fy ≠ ty` vertical / `fx ≠ tx` horizontal): the move's OWN source cannot sit on the
+destination (`frm ≠ to`), so at `k = at_` the mask `osrc[at_] = 1` iff the OTHER source is there — the
+`blockedB` mover-exemption. `ms` is the (abstract) move list and `hms` characterises its source
+membership by the two decoded froms (the caller supplies it from `moveDecodeN`). -/
+
+/-- **`OsrcIsOtherSourceVertIncl`, DISCHARGED at ARBITRARY `n`.** -/
+theorem osrcMeansVertInclN (n : Nat) (hn : (n : ℤ) < 2013265921)
+    (hsq : ((n : ℤ) - 1) * ((n : ℤ) - 1) ≤ 511)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (b o ob : Nat)
+    (hlift : ∀ {g : VmConstraint2}, g ∈ NGen.validateOcclusion n b o ob
+              → g ∈ (automataflResolveDescN n).constraints)
+    (fx fy ty fxOb fyOb : Nat)
+    (hfx : (envAt t i).loc (NGen.cFx n b) = (fx : ℤ)) (hfy : (envAt t i).loc (NGen.cFy n b) = (fy : ℤ))
+    (hfxOb : (envAt t i).loc (NGen.cFx n ob) = (fxOb : ℤ))
+    (hfyOb : (envAt t i).loc (NGen.cFy n ob) = (fyOb : ℤ))
+    (hfxN : fx < n) (hfyN : fy < n) (hfxObN : fxOb < n) (hfyObN : fyOb < n)
+    (hivb : (envAt t i).loc (NGen.cIv n o) = 0 ∨ (envAt t i).loc (NGen.cIv n o) = 1)
+    (hiv : (envAt t i).loc (NGen.cIv n o) = 1)
+    (hfyty : fy ≠ ty) (ms : List Move)
+    (hms : ∀ c : Coord, ((ms.any (fun m' => m'.frm == c)) = true)
+             ↔ ((⟨fx, fy⟩ : Coord) = c ∨ (⟨fxOb, fyOb⟩ : Coord) = c)) :
+    OsrcIsOtherSourceVertIncl (fun k => (envAt t i).loc (NGen.cOsrc n o k)) ms fx n fy ty := by
+  set e := envAt t i with he
+  obtain ⟨hbool, hsum, hwsum⟩ := osrc_arithN n hn hsat hc i hi b o ob hlift
+  rw [← he] at hbool hsum hwsum
+  obtain ⟨hogb, hogV, _⟩ := ogN_of_sat n hn hsq hsat hc i hi b o ob hlift fx fy fxOb fyOb
+    hfx hfy hfxOb hfyOb hfxN hfyN hfxObN hfyObN hivb
+  rw [← he] at hogb hogV
+  have hwv : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j))).sum
+      ≡ e.loc (NGen.cOg n o) * (fyOb : ℤ) [ZMOD 2013265921] := by
+    have heq : e.loc (NGen.cOg n o)
+        * (e.loc (NGen.cIv n o) * e.loc (NGen.cFy n ob) + e.loc (NGen.cFx n ob)
+           - e.loc (NGen.cIv n o) * e.loc (NGen.cFx n ob))
+        = e.loc (NGen.cOg n o) * (fyOb : ℤ) := by rw [hiv, hfyOb, hfxOb]; ring
+    exact heq ▸ hwsum
+  intro k hk hbetOr
+  have hfy_ne_k : fy ≠ k := by
+    intro h
+    rcases hbetOr with hbet | hkeq
+    · rw [h] at hbet; unfold Between at hbet; omega
+    · exact hfyty (h.trans hkeq)
+  -- the RAW one-hot characterisation (mirrors `osrcMeansVertN`)
+  have hraw : (e.loc (NGen.cOsrc n o k) = 1) ↔ (fxOb = fx ∧ fyOb = k) := by
+    by_cases hog1 : e.loc (NGen.cOg n o) = 1
+    · have hfxeq : fxOb = fx := (hogV hiv).mp hog1
+      have hsum1 : ((List.range n).map (fun j => e.loc (NGen.cOsrc n o j))).sum = 1 := by
+        rw [hsum, hog1]
+      obtain ⟨af, hone⟩ := oneHot_exists hbool hsum1
+      have hafeq : (af : ℤ) = (fyOb : ℤ) := by
+        have hdot : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j))).sum = (af : ℤ) := by
+          have hcomm : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j)))
+              = (List.range n).map (fun j : Nat => (fun j => e.loc (NGen.cOsrc n o j)) j * (j : ℤ)) := by
+            apply List.map_congr_left; intro j _; ring
+          rw [hcomm, dot_oneHot hone (fun j => (j : ℤ))]
+        have hcong : (af : ℤ) ≡ (fyOb : ℤ) [ZMOD 2013265921] := by
+          have := hwv; rw [hdot, hog1, one_mul] at this; exact this
+        exact eq_of_modEq_canon ⟨by positivity, lt_trans (by exact_mod_cast hone.1) hn⟩
+          ⟨by positivity, lt_trans (by exact_mod_cast hfyObN) hn⟩ hcong
+      have hafN : af = fyOb := by exact_mod_cast hafeq
+      have hok : e.loc (NGen.cOsrc n o k) = if k = fyOb then (1 : ℤ) else 0 := hafN ▸ hone.2 k hk
+      rw [hok]
+      constructor
+      · intro h; by_cases hkeq : k = fyOb
+        · exact ⟨hfxeq, hkeq.symm⟩
+        · rw [if_neg hkeq] at h; norm_num at h
+      · rintro ⟨_, h2⟩; rw [if_pos h2.symm]
+    · have hog0 : e.loc (NGen.cOg n o) = 0 := by
+        rcases hogb with h | h
+        · exact h
+        · exact absurd h hog1
+      have hall : ∀ j, j < n → e.loc (NGen.cOsrc n o j) = 0 :=
+        allZero_of_sum_zero hbool (by rw [hsum, hog0])
+      have hfxne : fxOb ≠ fx := fun h => hog1 ((hogV hiv).mpr h)
+      rw [hall k hk]
+      constructor
+      · intro h; norm_num at h
+      · rintro ⟨h1, _⟩; exact absurd h1 hfxne
+  -- bridge the raw characterisation to the `ms.any` source-membership form
+  show (e.loc (NGen.cOsrc n o k) = 1) ↔ ((ms.any (fun m' => m'.frm == (⟨fx, k⟩ : Coord))) = true)
+  rw [hraw, hms ⟨fx, k⟩]
+  constructor
+  · rintro ⟨h1, h2⟩; right; rw [Coord.mk.injEq]; exact ⟨h1, h2⟩
+  · rintro (h | h)
+    · rw [Coord.mk.injEq] at h; exact absurd h.2 hfy_ne_k
+    · rw [Coord.mk.injEq] at h; exact h
+
+/-- **`OsrcIsOtherSourceHorizIncl`, DISCHARGED at ARBITRARY `n`.** The row-scan mirror. -/
+theorem osrcMeansHorizInclN (n : Nat) (hn : (n : ℤ) < 2013265921)
+    (hsq : ((n : ℤ) - 1) * ((n : ℤ) - 1) ≤ 511)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (b o ob : Nat)
+    (hlift : ∀ {g : VmConstraint2}, g ∈ NGen.validateOcclusion n b o ob
+              → g ∈ (automataflResolveDescN n).constraints)
+    (fx fy tx fxOb fyOb : Nat)
+    (hfx : (envAt t i).loc (NGen.cFx n b) = (fx : ℤ)) (hfy : (envAt t i).loc (NGen.cFy n b) = (fy : ℤ))
+    (hfxOb : (envAt t i).loc (NGen.cFx n ob) = (fxOb : ℤ))
+    (hfyOb : (envAt t i).loc (NGen.cFy n ob) = (fyOb : ℤ))
+    (hfxN : fx < n) (hfyN : fy < n) (hfxObN : fxOb < n) (hfyObN : fyOb < n)
+    (hivb : (envAt t i).loc (NGen.cIv n o) = 0 ∨ (envAt t i).loc (NGen.cIv n o) = 1)
+    (hiv : (envAt t i).loc (NGen.cIv n o) = 0)
+    (hfxtx : fx ≠ tx) (ms : List Move)
+    (hms : ∀ c : Coord, ((ms.any (fun m' => m'.frm == c)) = true)
+             ↔ ((⟨fx, fy⟩ : Coord) = c ∨ (⟨fxOb, fyOb⟩ : Coord) = c)) :
+    OsrcIsOtherSourceHorizIncl (fun k => (envAt t i).loc (NGen.cOsrc n o k)) ms fy n fx tx := by
+  set e := envAt t i with he
+  obtain ⟨hbool, hsum, hwsum⟩ := osrc_arithN n hn hsat hc i hi b o ob hlift
+  rw [← he] at hbool hsum hwsum
+  obtain ⟨hogb, _, hogH⟩ := ogN_of_sat n hn hsq hsat hc i hi b o ob hlift fx fy fxOb fyOb
+    hfx hfy hfxOb hfyOb hfxN hfyN hfxObN hfyObN hivb
+  rw [← he] at hogb hogH
+  have hwv : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j))).sum
+      ≡ e.loc (NGen.cOg n o) * (fxOb : ℤ) [ZMOD 2013265921] := by
+    have heq : e.loc (NGen.cOg n o)
+        * (e.loc (NGen.cIv n o) * e.loc (NGen.cFy n ob) + e.loc (NGen.cFx n ob)
+           - e.loc (NGen.cIv n o) * e.loc (NGen.cFx n ob))
+        = e.loc (NGen.cOg n o) * (fxOb : ℤ) := by rw [hiv, hfxOb]; ring
+    exact heq ▸ hwsum
+  intro k hk hbetOr
+  have hfx_ne_k : fx ≠ k := by
+    intro h
+    rcases hbetOr with hbet | hkeq
+    · rw [h] at hbet; unfold Between at hbet; omega
+    · exact hfxtx (h.trans hkeq)
+  have hraw : (e.loc (NGen.cOsrc n o k) = 1) ↔ (fxOb = k ∧ fyOb = fy) := by
+    by_cases hog1 : e.loc (NGen.cOg n o) = 1
+    · have hfyeq : fyOb = fy := (hogH hiv).mp hog1
+      have hsum1 : ((List.range n).map (fun j => e.loc (NGen.cOsrc n o j))).sum = 1 := by
+        rw [hsum, hog1]
+      obtain ⟨af, hone⟩ := oneHot_exists hbool hsum1
+      have hafeq : (af : ℤ) = (fxOb : ℤ) := by
+        have hdot : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j))).sum = (af : ℤ) := by
+          have hcomm : ((List.range n).map (fun j : Nat => (j : ℤ) * e.loc (NGen.cOsrc n o j)))
+              = (List.range n).map (fun j : Nat => (fun j => e.loc (NGen.cOsrc n o j)) j * (j : ℤ)) := by
+            apply List.map_congr_left; intro j _; ring
+          rw [hcomm, dot_oneHot hone (fun j => (j : ℤ))]
+        have hcong : (af : ℤ) ≡ (fxOb : ℤ) [ZMOD 2013265921] := by
+          have := hwv; rw [hdot, hog1, one_mul] at this; exact this
+        exact eq_of_modEq_canon ⟨by positivity, lt_trans (by exact_mod_cast hone.1) hn⟩
+          ⟨by positivity, lt_trans (by exact_mod_cast hfxObN) hn⟩ hcong
+      have hafN : af = fxOb := by exact_mod_cast hafeq
+      have hok : e.loc (NGen.cOsrc n o k) = if k = fxOb then (1 : ℤ) else 0 := hafN ▸ hone.2 k hk
+      rw [hok]
+      constructor
+      · intro h; by_cases hkeq : k = fxOb
+        · exact ⟨hkeq.symm, hfyeq⟩
+        · rw [if_neg hkeq] at h; norm_num at h
+      · rintro ⟨h1, _⟩; rw [if_pos h1.symm]
+    · have hog0 : e.loc (NGen.cOg n o) = 0 := by
+        rcases hogb with h | h
+        · exact h
+        · exact absurd h hog1
+      have hall : ∀ j, j < n → e.loc (NGen.cOsrc n o j) = 0 :=
+        allZero_of_sum_zero hbool (by rw [hsum, hog0])
+      have hfyne : fyOb ≠ fy := fun h => hog1 ((hogH hiv).mpr h)
+      rw [hall k hk]
+      constructor
+      · intro h; norm_num at h
+      · rintro ⟨_, h2⟩; exact absurd h2 hfyne
+  show (e.loc (NGen.cOsrc n o k) = 1) ↔ ((ms.any (fun m' => m'.frm == (⟨k, fy⟩ : Coord))) = true)
+  rw [hraw, hms ⟨k, fy⟩]
+  constructor
+  · rintro ⟨h1, h2⟩; right; rw [Coord.mk.injEq]; exact ⟨h1, h2⟩
+  · rintro (h | h)
+    · rw [Coord.mk.injEq] at h; exact absurd h.1 hfx_ne_k
+    · rw [Coord.mk.injEq] at h; exact h
+
 /-! ### §D.6 — `occ_iff_occluded_of_sat`, ASSEMBLED at ARBITRARY `n`.
 
 The whole occlusion bridge, composed: the emitted threshold bit `cOcc` equals the reference
@@ -1192,6 +1574,130 @@ theorem occ_iff_occluded_of_sat (n which : Nat) (hn : (n : ℤ) < 2013265921)
       (b := boardDecodeOldN n e) (srcs := [⟨afx, afy⟩, ⟨fxOb, fyOb⟩])
       hhoriz hafxN hatxN hfoh htoh hosrcB hlineRange hlineRead hosrcMeans
 
+/-! ### §D.7 — `occ_iff_blocked_of_sat`, the INCLUSIVE capstone, ASSEMBLED at ARBITRARY `n` (CHUNK 2).
+
+The `blockedB` twin of `occ_iff_occluded_of_sat`: the emitted INCLUSIVE threshold bit `cOccIncl`
+equals the reference `AutomataflRules.blockedB` of the decoded board / move list / move, off
+`Satisfied2 (automataflResolveDescN n)`, UNCONDITIONALLY, at ANY board size. It composes exactly like
+the exclusive capstone — the same `efrom_oneHotN`/`eto_oneHotN`/`lineReadsVertN/HorizN`/`lineRangeN`
+extractions — but off the NEW inclusive column (`occ_col_iff_msumInclValN`) and the strengthened
+other-source masks (`osrcMeansVertInclN/HorizInclN`), and it lands on `AutomataflOcclusionGeneric.
+occ_eq_blockedB_vert/horiz`. The move list `ms = [moveDecodeN which, moveDecodeN (1−which)]` is the two
+resolving moves; `blockedB` reads it only through `.frm`. NON-VACUOUS at `n = 3`: a piece ON the
+DESTINATION now fires `cOccIncl = blockedB = true`, where the exclusive `cOcc`/`occluded` MISS it
+(§5b.4). ADDITIVE — leaves the exclusive `occ_iff_occluded_of_sat` untouched.
+
+`hincl` lifts the new `inclOcclusionOne` gates (chunk 3 supplies it from `inclLiftN`); `hvalid` is the
+move's reference `MoveValid` (the caller already extracts it via `validMoveN_of_sat`) — its `frm ≠ to`
+and rook-alignment give the along-axis distinctness the destination endpoint case needs. -/
+theorem occ_iff_blocked_of_sat (n which : Nat) (hn : (n : ℤ) < 2013265921)
+    (hsq : ((n : ℤ) - 1) * ((n : ℤ) - 1) ≤ 511) (hwinI : 3 * (n : ℤ) + 3 ≤ 999)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (hlift : ∀ {g : VmConstraint2},
+        g ∈ NGen.validateOcclusion n (NGen.mvBase n which) (NGen.occBase n which)
+              (NGen.mvBase n (1 - which))
+          → g ∈ (automataflResolveDescN n).constraints)
+    (hincl : ∀ {g : VmConstraint2},
+        g ∈ NGen.inclOcclusionOne n which (NGen.occBase n which)
+          → g ∈ (automataflResolveDescN n).constraints)
+    (hmv : ∀ {g : VmConstraint2}, g ∈ NGen.validateMove n (NGen.mvBase n which)
+            → g ∈ (automataflResolveDescN n).constraints)
+    (hmvo : ∀ {g : VmConstraint2}, g ∈ NGen.validateMove n (NGen.mvBase n (1 - which))
+            → g ∈ (automataflResolveDescN n).constraints)
+    (hvalid : Dregg2.Games.Automatafl.MoveValid (boardDecodeOldN n (envAt t i))
+                (moveDecodeN n (envAt t i) which)) :
+    ((envAt t i).loc (NGen.cOccIncl n which) = 1)
+      ↔ Dregg2.Games.AutomataflRules.blockedB (boardDecodeOldN n (envAt t i))
+          [moveDecodeN n (envAt t i) which, moveDecodeN n (envAt t i) (1 - which)]
+          (moveDecodeN n (envAt t i) which) = true := by
+  set e := envAt t i with he
+  set b := NGen.mvBase n which with hb
+  set o := NGen.occBase n which with ho
+  set ob := NGen.mvBase n (1 - which) with hob
+  obtain ⟨afy, hafyN, hfyE, hrowOH⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cSelRow n b) (NGen.cFy n b)
+      (fun h => hmv (vmN_srcRow_fam n b h))
+  obtain ⟨afx, hafxN, hfxE, hcolOH⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cSelCol n b) (NGen.cFx n b)
+      (fun h => hmv (vmN_srcCol_fam n b h))
+  obtain ⟨aty, hatyN, htyE, hetyOH⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cEty n o) (NGen.cTy n b)
+      (fun h => hlift (voN_ety_fam n b o ob h))
+  obtain ⟨atx, hatxN, htxE, hetxOH⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cEtx n o) (NGen.cTx n b)
+      (fun h => hlift (voN_etx_fam n b o ob h))
+  obtain ⟨fyOb, hfyObN, hfyObE, _⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cSelRow n ob) (NGen.cFy n ob)
+      (fun h => hmvo (vmN_srcRow_fam n ob h))
+  obtain ⟨fxOb, hfxObN, hfxObE, _⟩ :=
+    readOneHotN n hn hsat hc i hi (NGen.cSelCol n ob) (NGen.cFx n ob)
+      (fun h => hmvo (vmN_srcCol_fam n ob h))
+  obtain ⟨hivb, hivM⟩ := ivN_of_sat n hn hsq hsat hc i hi b o ob hlift afx atx hfxE htxE hafxN hatxN
+  obtain ⟨hosrcB, _, _⟩ := osrc_arithN n hn hsat hc i hi b o ob hlift
+  have halph4 : ∀ c, c < NGen.KK n → ((e.loc (NGen.old n c) = 0 ∨ e.loc (NGen.old n c) = 1
+      ∨ e.loc (NGen.old n c) = 2 ∨ e.loc (NGen.old n c) = 3)) := oldAlphabetN n hsat hc i hi
+  have halph : ∀ c, c < NGen.KK n → 0 ≤ e.loc (NGen.old n c) ∧ e.loc (NGen.old n c) ≤ 3 :=
+    fun c hcK => oldBoundN n hsat hc i hi c hcK
+  have hlineRange := lineRangeN n hsat hc i hi b o ob hlift afx afy hafxN hafyN hcolOH hrowOH halph hivb
+  have hfxNat : (e.loc (NGen.cFx n b)).toNat = afx := by rw [hfxE]; simp
+  have hfyNat : (e.loc (NGen.cFy n b)).toNat = afy := by rw [hfyE]; simp
+  have htxNat : (e.loc (NGen.cTx n b)).toNat = atx := by rw [htxE]; simp
+  have htyNat : (e.loc (NGen.cTy n b)).toNat = aty := by rw [htyE]; simp
+  have hmwhich : moveDecodeN n e which = Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩ := by
+    simp only [moveDecodeN, ← hb]; rw [hfxNat, hfyNat, htxNat, htyNat]
+  have hotherfrm : (moveDecodeN n e (1 - which)).frm = (⟨fxOb, fyOb⟩ : Coord) := by
+    simp only [moveDecodeN, ← hob]
+    rw [show (e.loc (NGen.cFx n ob)).toNat = fxOb by rw [hfxObE]; simp,
+      show (e.loc (NGen.cFy n ob)).toNat = fyOb by rw [hfyObE]; simp]
+  -- move distinctness + rook alignment (from the reference `MoveValid`)
+  obtain ⟨hne, hrook, -⟩ := hvalid
+  have hfrmC : (moveDecodeN n e which).frm = (⟨afx, afy⟩ : Coord) := by rw [hmwhich]
+  have htoC : (moveDecodeN n e which).to = (⟨atx, aty⟩ : Coord) := by rw [hmwhich]
+  -- the (post-`hmwhich`) two-move source-membership characterisation for `blockedB`
+  have hms : ∀ c : Coord,
+      (([Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩, moveDecodeN n e (1 - which)].any
+          (fun m' => m'.frm == c)) = true)
+        ↔ ((⟨afx, afy⟩ : Coord) = c ∨ (⟨fxOb, fyOb⟩ : Coord) = c) := by
+    intro c
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true, beq_iff_eq, hotherfrm]
+  rw [hmwhich]
+  by_cases hivv : e.loc (NGen.cIv n o) = 1
+  · -- VERTICAL branch (afx = atx): the destination endpoint case needs `afy ≠ aty`
+    have hvert : afx = atx := hivM.mp hivv
+    have hfyty : afy ≠ aty := by intro h; apply hne; rw [hfrmC, htoC, hvert, h]
+    have hfoh := (efrom_oneHotN n hsat hc i hi b o ob hlift afx afy hrowOH hcolOH hivb).1 hivv
+    have htoh := (eto_oneHotN n hsat hc i hi b o ob hlift atx aty hetyOH hetxOH hivb).1 hivv
+    have hlineRead := lineReadsVertN n hsat hc i hi b o ob hlift afx hafxN hcolOH halph4 hivv
+    have hosrcMeans := osrcMeansVertInclN n hn hsq hsat hc i hi b o ob hlift afx afy aty fxOb fyOb
+      hfxE hfyE hfxObE hfyObE hafxN hafyN hfxObN hfyObN hivb hivv hfyty
+      [Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩, moveDecodeN n e (1 - which)] hms
+    rw [occ_col_iff_msumInclValN n hsat hc i hi b o ob which hlift hincl hwinI hfoh htoh hosrcB
+      hlineRange]
+    exact occ_eq_blockedB_vert (m := Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩)
+      (b := boardDecodeOldN n e) (ms := [Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩, moveDecodeN n e (1 - which)])
+      hvert hafyN hatyN hfoh htoh hosrcB hlineRange hlineRead hosrcMeans
+  · -- HORIZONTAL branch (afx ≠ atx): rook alignment gives `afy = aty`
+    have hiv0 : e.loc (NGen.cIv n o) = 0 := by rcases hivb with h | h; exact h; exact absurd h hivv
+    have hhoriz : afx ≠ atx := by
+      intro h; rw [hivM.mpr h] at hiv0; exact absurd hiv0 (by norm_num)
+    have hrow : afy = aty := by
+      have hr := hrook; rw [hfrmC, htoC] at hr
+      rcases hr with h | h
+      · exact absurd h hhoriz
+      · exact h
+    have hfoh := (efrom_oneHotN n hsat hc i hi b o ob hlift afx afy hrowOH hcolOH hivb).2 hiv0
+    have htoh := (eto_oneHotN n hsat hc i hi b o ob hlift atx aty hetyOH hetxOH hivb).2 hiv0
+    have hlineRead := lineReadsHorizN n hsat hc i hi b o ob hlift afy hafyN hrowOH halph4 hiv0
+    have hosrcMeans := osrcMeansHorizInclN n hn hsq hsat hc i hi b o ob hlift afx afy atx fxOb fyOb
+      hfxE hfyE hfxObE hfyObE hafxN hafyN hfxObN hfyObN hivb hiv0 hhoriz
+      [Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩, moveDecodeN n e (1 - which)] hms
+    rw [occ_col_iff_msumInclValN n hsat hc i hi b o ob which hlift hincl hwinI hfoh htoh hosrcB
+      hlineRange]
+    exact occ_eq_blockedB_horiz (m := Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩)
+      (b := boardDecodeOldN n e) (ms := [Move.mk 0 ⟨afx, afy⟩ ⟨atx, aty⟩, moveDecodeN n e (1 - which)])
+      hhoriz hrow hafxN hatxN hfoh htoh hosrcB hlineRange hlineRead hosrcMeans
+
 /-! ## §E — Axiom hygiene for the discharged (n-generic) bridge hypotheses. -/
 
 #assert_axioms evalH_lineHead
@@ -1212,6 +1718,13 @@ theorem occ_iff_occluded_of_sat (n which : Nat) (hn : (n : ℤ) < 2013265921)
 #assert_axioms osrcMeansVertN
 #assert_axioms osrcMeansHorizN
 #assert_axioms occ_iff_occluded_of_sat
+#assert_axioms evalH_msumInclHead
+#assert_axioms cMsum_eq_msumValN
+#assert_axioms occ_col_iff_msumInclValN
+#assert_axioms osrcMeansVertInclN
+#assert_axioms osrcMeansHorizInclN
+#assert_axioms inclLiftN
+#assert_axioms occ_iff_blocked_of_sat
 
 end OccN
 
