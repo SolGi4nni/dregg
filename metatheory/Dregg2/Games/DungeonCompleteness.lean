@@ -23,64 +23,6 @@ open Dregg2.Exec (Value)
 /-! ## 1. Every deployed way exercises its corresponding key capability. -/
 
 open Dregg2.Exec in
-/-- Any admitted verb transition which changes a deployed keyed way (`2..4`) must
-be the lawful `0 -> 1` transition and must exhibit that way's carried key relic.
-
-The proof selects the one authored rider from the finite deployed registry; the
-constraint inversion itself is shared for all three ways. -/
-theorem way_flip_exhibits_key (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ FLOORS)
-    {m : Nat} (hm : m = 1 ∨ m = 2 ∨ m = 3 ∨ m = 4 ∨ m = 5)
-    {o n : Value} (h : RecordProgram.admits dungeonExec m o n = true)
-    (hflip : (o.scalar (wayName w) == n.scalar (wayName w)) = false) :
-    n.scalar (relicName (keyFor w)) = some (CARRIED : Int)
-      ∧ o.scalar (wayName w) = some 0 ∧ n.scalar (wayName w) = some 1 := by
-  have hmatch : (wayRider w).toExec.guard.matches m o n = true := by
-    rcases hm with rfl | rfl | rfl | rfl | rfl <;>
-      simp [wayRider, Case.toExec, Guard.toExec, verbs, methodIdx,
-            TransitionGuard.matches, Dregg2.Exec.allMatch,
-            Dregg2.Exec.anyMatch, hflip]
-  have hRiderMem : (wayRider w).toExec ∈ programCases.map Case.toExec := by
-    have hwHi' : w ≤ 4 := by exact hwHi
-    have hw : w = 2 ∨ w = 3 ∨ w = 4 := by omega
-    rcases hw with rfl | rfl | rfl <;> simp [programCases]
-  have hall := admits_cases_mem (tcs := programCases.map Case.toExec) h
-    hRiderMem hmatch
-  have hkey := hall
-    ((Constraint.heapField (.named (relicName (keyFor w))) (.equals CARRIED)).toExec)
-    (List.mem_map_of_mem (by simp [wayRider, List.mem_append]))
-  have htrans := hall
-    ((Constraint.allowedTransitions (wayName w) [(0, 1)]).toExec)
-    (List.mem_map_of_mem (by simp [wayRider, List.mem_append]))
-  have hkey' :
-      evalSimple (.fieldEquals (relicName (keyFor w)) (CARRIED : Int)) o n = true :=
-    hkey
-  have hKeyScalar :
-      n.scalar (relicName (keyFor w)) = some (CARRIED : Int) := by
-    simp only [evalSimple] at hkey'
-    cases hk : n.scalar (relicName (keyFor w)) with
-    | none => rw [hk] at hkey'; cases hkey'
-    | some k =>
-      rw [hk] at hkey'
-      rw [show k = (CARRIED : Int) from by simpa using hkey']
-  have hT : evalConstraint
-      (.allowedTransitions (wayName w) [((0 : Int), (1 : Int))]) o n = true :=
-    htrans
-  cases ha : o.scalar (wayName w) with
-  | none =>
-    simp only [evalConstraint, ha] at hT
-    exact absurd hT (by decide)
-  | some a =>
-    cases hb : n.scalar (wayName w) with
-    | none =>
-      simp only [evalConstraint, ha, hb] at hT
-      exact absurd hT (by decide)
-    | some b =>
-      simp only [evalConstraint, ha, hb, List.any_cons, List.any_nil,
-                 Bool.or_false, Bool.and_eq_true, beq_iff_eq] at hT
-      obtain ⟨h0, h1⟩ := hT
-      exact ⟨hKeyScalar, by rw [← h0], by rw [← h1]⟩
-
-open Dregg2.Exec in
 /-- Negative tooth: changing any deployed keyed way while mutating/omitting its
 required carried-key exhibit is refused. -/
 theorem way_flip_key_mutation_refused (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ FLOORS)
@@ -92,7 +34,9 @@ theorem way_flip_key_mutation_refused (w : Nat) (hwLo : 2 ≤ w) (hwHi : w ≤ F
   cases hadm : RecordProgram.admits dungeonExec m o n with
   | false => rfl
   | true =>
-    exact False.elim (hmut ((way_flip_exhibits_key w hwLo hwHi hm hadm hflip).1))
+    have hwHi' : w ≤ 4 := hwHi
+    have hw : w = 2 ∨ w = 3 ∨ w = 4 := by omega
+    exact False.elim (hmut ((way_flip_exhibits_key w hw hm hadm hflip).1))
 
 -- The generic theorem bites away from the old way-2-only canary: way 3 cannot be
 -- opened from genesis while key relic 2 remains in its floor-2 hoard.
