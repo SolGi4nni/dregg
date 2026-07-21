@@ -80,7 +80,7 @@ The unconditional facts here — 1, 2, 3 — do NOT use `hdom`. `fullKemApi_fips
 ## NON-VACUITY (the only `native_decide`s in this file, ISOLATED to concrete byte checks in §7)
 
 `realDk_good` checks — on the GENUINE `ml-kem` v0.2.3 crate key `MlKemCodec.realDk` and the pinned message
-`MlKemEncaps.mFixed` — that `goodKey` holds: the key is well-formed AND every one of the 256 decryption-noise
+`MlKemEncaps.acvpM` — that `goodKey` holds: the key is well-formed AND every one of the 256 decryption-noise
 coefficients is inside the window. It is a concrete KAT-shaped `Bool` evaluation over 2400+1088 real bytes, so
 it (with `ekOfDk_realDk` and the refutable tooth `zeroDk_not_good`) goes by `native_decide`
 (`Lean.ofReduceBool` + `Lean.trustCompiler`, the residual `MlKemCodec` / `MlKemDecaps` / `Keccak` already
@@ -511,8 +511,8 @@ The ONLY `native_decide` in this file, and it is a concrete byte check (`goodKey
 axiom set of any ∀-theorem above. Its trusted base is `Lean.ofReduceBool` + `Lean.trustCompiler`, the residual
 `MlKemCodec` / `MlKemDecaps` / `MlKemEncaps` / `Keccak` already name. -/
 
-/-- The pinned encapsulation message is the 32 bytes ML-KEM requires. -/
-theorem mFixed_len : MlKemEncaps.mFixed.toList.length = 32 := by decide
+/-- The pinned NIST ACVP encapsulation message is the 32 bytes ML-KEM requires. -/
+theorem acvpM_len : MlKemEncaps.acvpM.toList.length = 32 := by decide
 
 /-- The `ek` embedded in the REAL crate `dk` IS the REAL crate `ek` (the `dk_pke ‖ ek ‖ H(ek) ‖ z` layout). -/
 theorem ekOfDk_realDk : ekOfDk realDk.toList = realEk.toList := by native_decide
@@ -520,24 +520,24 @@ theorem ekOfDk_realDk : ekOfDk realDk.toList = realEk.toList := by native_decide
 /-- **NON-VACUITY**: the GENUINE `ml-kem` v0.2.3 crate decapsulation key is well-formed AND its decryption
 noise is inside the FIPS 203 window at all 256 coefficients — so the `δ`-correct key set is INHABITED and
 `fullKemApi_fips203` is not vacuous. A concrete byte check (`native_decide`, isolated). -/
-theorem realDk_good : goodKey MlKemEncaps.mFixed.toList realDk.toList = true := by native_decide
+theorem realDk_good : goodKey MlKemEncaps.acvpM.toList realDk.toList = true := by native_decide
 
 /-- The real crate key, as an inhabitant of the full-dimension API's decapsulation-key type. -/
-def realDk768 : Dk768 MlKemEncaps.mFixed.toList := ⟨realDk.toList, realDk_good⟩
+def realDk768 : Dk768 MlKemEncaps.acvpM.toList := ⟨realDk.toList, realDk_good⟩
 
 /-- **THE FULL-DIMENSION ROUND TRIP, ON THE REAL CRATE KEY** — `fullKemApi_fips203` FIRES: ML-KEM-768 decaps of
 the honest 1088-byte encapsulation under the genuine `ml-kem` crate key recovers the encapsulated 32-byte
 secret. (`MlKemEncaps.encaps_decaps_roundtrip` checks the same fact by compiled evaluation; here it is a
 CONSEQUENCE of the ∀-theorem, which is the point.) -/
 theorem realDk_roundtrip :
-    mlkemDecaps realDk.toList (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.mFixed.toList).1
-      = (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.mFixed.toList).2 := by
-  have h := fullKemApi_fips203 MlKemEncaps.mFixed.toList mFixed_len realDk768
+    mlkemDecaps realDk.toList (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).1
+      = (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).2 := by
+  have h := fullKemApi_fips203 MlKemEncaps.acvpM.toList acvpM_len realDk768
   simpa only [fullKemApi, realDk768] using h
 
 /-- **TOOTH — `goodKey` is REFUTABLE.** An all-zero 2400-byte `dk` (embedded hash field ≠ `H(ek)`) is NOT in
 the `δ`-correct set: `goodKey` genuinely rejects (`wfDk` fails), so it is not `fun _ _ => true`. -/
-theorem zeroDk_not_good : goodKey MlKemEncaps.mFixed.toList (List.replicate 2400 (0 : UInt8)) = false := by
+theorem zeroDk_not_good : goodKey MlKemEncaps.acvpM.toList (List.replicate 2400 (0 : UInt8)) = false := by
   native_decide
 
 /-- **NON-VACUITY of the `δ`-WIRED CORRECTNESS.** The domination hypothesis `hdom` of `roundtrip_fails_le_delta`
@@ -548,12 +548,12 @@ theorem is NOT vacuous. Carries the `native_decide` residual of `realDk_good`, s
 theorem roundtrip_fails_le_delta_nonvacuous :
     winProb (fun _ : MlKemDelta.mlkemΩ =>
         decide (mlkemDecaps realDk.toList
-            (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.mFixed.toList).1
-          ≠ (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.mFixed.toList).2))
+            (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).1
+          ≠ (mlkemEncaps (ekOfDk realDk.toList) MlKemEncaps.acvpM.toList).2))
       ≤ (2 : ℝ) ^ (-148 : ℤ) := by
   have hgood := realDk_good
   simp only [goodKey, Bool.and_eq_true] at hgood
-  exact roundtrip_fails_le_delta MlKemEncaps.mFixed.toList mFixed_len
+  exact roundtrip_fails_le_delta MlKemEncaps.acvpM.toList acvpM_len
     (fun _ => realDk.toList) (fun _ => hgood.1) (fun _ _ => hgood.2)
 
 /-! ## §8 — REUSABLE CORE toward DISCHARGING `hdom`: `intt`-linearity + `ntt ∘ intt = id`, and the NAMED
