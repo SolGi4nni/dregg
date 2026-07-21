@@ -756,6 +756,41 @@ pub fn verify_anonymous_presentation(
     }
 }
 
+/// Verify an [`UnlinkablePredicateProof`] the way a verifier holding the presented
+/// (fresh-blinded) commitment does: run the REAL predicate STARK
+/// ([`dregg_bridge::present::verify_predicate_proof`]), pinned to the commitment the
+/// proof carries.
+///
+/// This is the missing sibling of [`AgentCipherclerk::prove_predicate_unlinkable`] —
+/// proving had no verify entry in the SDK, so every consumer (the Discord
+/// `/credential verify` path) had to reach into the bridge itself. It returns `true`
+/// iff the value welded into `proof.predicate_proof.fact_commitment` satisfies the
+/// predicate.
+///
+/// # What this establishes — and what it does NOT (read before relying on it)
+///
+/// - **Establishes:** the committed value satisfies the predicate, and the proof is
+///   bound to the exact commitment it presents — the in-circuit blinded weld means a
+///   proof does not verify against a different commitment
+///   (`teasting/tests/privacy_unlinkability.rs`). Two proofs of the same fact carry
+///   DIFFERENT `blinded_fact_commitment`s, so a party seeing only commitments cannot
+///   correlate them (the unlinkability guarantee).
+/// - **Does NOT establish** that the commitment opens to a THIRD-PARTY-ISSUED
+///   credential. That is the attestation rung
+///   ([`dregg_bridge::present::verify_predicate_proof_third_party`], which requires a
+///   trusted `facts_root`); here the prover presents its own commitment, so the check
+///   is sound against a prover who does not control the value (the custodial holder
+///   proving about its own state) but says nothing about issuer provenance.
+/// - **Inherits the deployed STARK/FRI soundness floor**
+///   (`project-fri-soundness-reality`): it is a real proof, not an on-chain-settled
+///   fact.
+pub fn verify_predicate_unlinkable(proof: &UnlinkablePredicateProof) -> bool {
+    dregg_bridge::present::verify_predicate_proof(
+        &proof.predicate_proof,
+        proof.predicate_proof.fact_commitment,
+    )
+}
+
 /// Verify a non-revocation proof against a known revocation root.
 ///
 /// The verifier needs:
@@ -933,6 +968,59 @@ mod tests {
 
         // But the blinding factors should also differ.
         assert_ne!(proof1.blinding, proof2.blinding);
+    }
+
+    /// GATE for the new [`verify_predicate_unlinkable`] entry: an honest proof
+    /// ACCEPTS, and two independent forgeries are REFUSED — so the verifier is not a
+    /// trivial `true`. The forgeries are (1) relabeling a `≥1000` proof as `≥1_000_000`
+    /// (the bound is a bound public input, so the STARK is re-checked against the new
+    /// `pi` and fails) and (2) a bit-flip in the proof blob.
+    #[test]
+    fn test_verify_predicate_unlinkable_accepts_honest_rejects_forged() {
+        let mut cclerk = AgentCipherclerk::new();
+        let root_key = [0x5Au8; 32];
+        let token = cclerk.mint_token(&root_key, "verify-svc");
+
+        // Honest: 5000 >= 1000 is TRUE, so a real proof is produced and must verify.
+        let proof = cclerk
+            .prove_predicate_unlinkable(
+                &token,
+                "balance",
+                5000,
+                dregg_circuit::PredicateType::Gte,
+                BabyBear::new(1000),
+            )
+            .expect("a TRUE predicate produces a real proof");
+        assert!(
+            verify_predicate_unlinkable(&proof),
+            "an honest unlinkable predicate proof must verify"
+        );
+
+        // Forged 1 — relabel the SAME proof as proving a threshold it never proved.
+        let mut forged_bound = proof.clone();
+        forged_bound.predicate_proof.predicate = dregg_bridge::present::Predicate::Gte(1_000_000);
+        assert!(
+            !verify_predicate_unlinkable(&forged_bound),
+            "a ≥1000 proof relabeled as ≥1_000_000 must be REJECTED (bound is a public input)"
+        );
+
+        // Forged 2 — tamper the proof bytes (a decode/verify failure is a rejection).
+        let mut tampered = proof.clone();
+        if let dregg_bridge::present::BridgePredicateProofInner::Single(ref mut b) =
+            tampered.predicate_proof.proof
+        {
+            let mid = b.len() / 2;
+            b[mid] ^= 0xFF;
+        }
+        let tampered_rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            verify_predicate_unlinkable(&tampered)
+        }))
+        .map(|verified| !verified)
+        .unwrap_or(true);
+        assert!(
+            tampered_rejected,
+            "a tampered predicate proof blob must be REJECTED"
+        );
     }
 
     #[test]
