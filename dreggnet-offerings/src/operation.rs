@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::resume::{LoggedBinaryOperation, SessionMoveLog, SessionResumeStore};
 use crate::{DreggIdentity, SessionId};
 
 /// Absolute byte ceiling for an opaque operation submitted through an ordinary
@@ -676,3 +677,191 @@ impl std::fmt::Display for BinaryOperationError {
 }
 
 impl std::error::Error for BinaryOperationError {}
+
+/// Result of the one journal-aware opaque-operation transaction shared by
+/// [`crate::OfferingHost`] and typed frontend session stores.
+///
+/// `Quarantine` is deliberately distinct from an ordinary refusal: the
+/// concrete offering already returned success and may have mutated, but the
+/// returned receipt cannot safely be associated with the addressed operation
+/// (or could not be written through to an attached durable journal). The
+/// caller must make that live session unobservable before returning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JournaledBinaryOperation {
+    /// The operation landed and every applicable journal write completed.
+    Applied(BinaryOperationReceipt),
+    /// Nothing authoritative landed; the live session remains usable.
+    Refused(BinaryOperationError),
+    /// Mutation may have occurred but cannot safely remain live.
+    Quarantine(BinaryOperationError),
+}
+
+/// Apply one concrete offering operation under the host's exact durable
+/// journal policy.
+///
+/// The caller obtains `replay_material` from the live offering *before*
+/// mutation, and supplies the sole decoder/mutator as `invoke`. This function
+/// then owns the shared transaction law:
+///
+/// 1. an attached durable store requires offering-approved replay material and
+///    binary-operation support;
+/// 2. the ordinary-move cursor is fixed before mutation;
+/// 3. a successful receipt must name exactly the addressed operation;
+/// 4. the operation is appended to the in-memory timeline and written through
+///    to the attached store;
+/// 5. any post-mutation name confusion or write-through failure returns
+///    [`JournaledBinaryOperation::Quarantine`].
+///
+/// Keeping this transaction outside either frontend prevents Discord,
+/// Telegram, web, or the type-erased host from growing subtly different replay
+/// and quarantine rules.
+pub fn invoke_journaled_binary_operation(
+    key: &str,
+    id: &SessionId,
+    name: &str,
+    payload: &[u8],
+    actor: DreggIdentity,
+    log: &mut SessionMoveLog,
+    store: Option<&dyn SessionResumeStore>,
+    replay_material: Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError>,
+    invoke: impl FnOnce() -> Result<BinaryOperationReceipt, BinaryOperationError>,
+) -> JournaledBinaryOperation {
+    let replay_material = match replay_material {
+        Ok(material) => material,
+        Err(error) => return JournaledBinaryOperation::Refused(error),
+    };
+    if let Some(store) = store {
+        if replay_material.is_none() {
+            return JournaledBinaryOperation::Refused(BinaryOperationError::Refused(
+                "durable host refuses an operation without offering-selected safe replay material"
+                    .to_string(),
+            ));
+        }
+        if !store.supports_binary_operations() {
+            return JournaledBinaryOperation::Refused(BinaryOperationError::Refused(
+                "attached resume store does not support the binary-operation journal".to_string(),
+            ));
+        }
+    }
+    let after_moves = match u64::try_from(log.moves.len()) {
+        Ok(cursor) => cursor,
+        Err(_) => {
+            return JournaledBinaryOperation::Refused(BinaryOperationError::Refused(
+                "ordinary-move cursor exceeds the durable operation wire".to_string(),
+            ));
+        }
+    };
+    let receipt = match invoke() {
+        Ok(receipt) => receipt,
+        Err(error) => return JournaledBinaryOperation::Refused(error),
+    };
+    if receipt.operation != name {
+        return JournaledBinaryOperation::Quarantine(BinaryOperationError::Refused(format!(
+            "operation receipt named {:?}, but the host addressed {name:?}; session quarantined",
+            receipt.operation
+        )));
+    }
+
+    if let Some(material) = replay_material {
+        let operation = LoggedBinaryOperation {
+            after_moves,
+            name: name.to_string(),
+            actor,
+            payload_digest: *blake3::hash(payload).as_bytes(),
+            replay_digest: *blake3::hash(&material.bytes).as_bytes(),
+            replay_material: material.bytes,
+            replay_disclosure: material.disclosure,
+            replay_is_canonical_request: material.is_canonical_request,
+            receipt: receipt.clone(),
+        };
+        if let Some(store) = store {
+            if !store.record_binary_operation(key, id, &operation) {
+                // Keep the caller's in-memory journal at the exact pre-operation
+                // image too. A quarantined session must not become resumable from
+                // a ghost row merely because this process is still alive.
+                return JournaledBinaryOperation::Quarantine(BinaryOperationError::Refused(
+                    "durable operation journal write failed after mutation; session quarantined"
+                        .to_string(),
+                ));
+            }
+        }
+        log.record_binary_operation(operation);
+    }
+    JournaledBinaryOperation::Applied(receipt)
+}
+
+#[cfg(test)]
+mod journal_transaction_tests {
+    use super::*;
+    use crate::{Action, SessionConfig};
+
+    struct RefusingOperationStore;
+
+    impl SessionResumeStore for RefusingOperationStore {
+        fn record_open(&self, _key: &str, _id: &SessionId, _cfg: &SessionConfig) {}
+
+        fn record_landed(
+            &self,
+            _key: &str,
+            _id: &SessionId,
+            _action: &Action,
+            _actor: &DreggIdentity,
+        ) {
+        }
+
+        fn supports_binary_operations(&self) -> bool {
+            true
+        }
+
+        fn record_binary_operation(
+            &self,
+            _key: &str,
+            _id: &SessionId,
+            _operation: &LoggedBinaryOperation,
+        ) -> bool {
+            false
+        }
+
+        fn forget(&self, _key: &str, _id: &SessionId) {}
+
+        fn load(&self, _key: &str, _id: &SessionId) -> Option<SessionMoveLog> {
+            None
+        }
+
+        fn all(&self) -> Vec<SessionMoveLog> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn durable_write_failure_quarantines_without_ghosting_the_live_log() {
+        let id = SessionId::new("write-failure");
+        let mut log = SessionMoveLog::new("fixture", id.clone(), SessionConfig::default());
+        let result = invoke_journaled_binary_operation(
+            "fixture",
+            &id,
+            "apply.v1",
+            &[7],
+            DreggIdentity("alice".to_string()),
+            &mut log,
+            Some(&RefusingOperationStore),
+            Ok(Some(BinaryOperationReplayMaterial::new(
+                vec![7],
+                "the canonical public request",
+            ))),
+            || {
+                Ok(BinaryOperationReceipt {
+                    operation: "apply.v1".to_string(),
+                    receipt_id: [9; 32],
+                    public_fields: Vec::new(),
+                })
+            },
+        );
+
+        assert!(matches!(result, JournaledBinaryOperation::Quarantine(_)));
+        assert!(
+            log.operations.is_empty(),
+            "the in-process replay source must remain at the exact pre-operation image"
+        );
+    }
+}

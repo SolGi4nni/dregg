@@ -124,10 +124,10 @@ pub use operation::{
     AppliedBinaryOperation, BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError,
     BinaryArtifactVisibility, BinaryOperationDescriptor, BinaryOperationError,
     BinaryOperationReceipt, BinaryOperationReplayMaterial, ChatBinaryOperationError,
-    ChatBinaryOperationPolicy, MAX_CHAT_BINARY_OPERATION_BYTES, MAX_HOSTED_ARTIFACT_BYTES,
-    MAX_HOSTED_BINARY_OPERATION_BYTES, OperationConsequenceBook, OperationConsequenceEndpoint,
-    OperationConsequenceError, OperationConsequenceGrant, OperationConsequenceRule,
-    preflight_chat_binary_operation,
+    ChatBinaryOperationPolicy, JournaledBinaryOperation, MAX_CHAT_BINARY_OPERATION_BYTES,
+    MAX_HOSTED_ARTIFACT_BYTES, MAX_HOSTED_BINARY_OPERATION_BYTES, OperationConsequenceBook,
+    OperationConsequenceEndpoint, OperationConsequenceError, OperationConsequenceGrant,
+    OperationConsequenceRule, invoke_journaled_binary_operation, preflight_chat_binary_operation,
 };
 pub use resume::{
     FileResumeStore, InMemoryResumeStore, LoggedBinaryOperation, LoggedMove, SessionMoveLog,

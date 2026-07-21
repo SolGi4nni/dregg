@@ -36,15 +36,15 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_key};
-use crate::resume::{LoggedBinaryOperation, SessionMoveLog, SessionResumeStore};
+use crate::resume::{SessionMoveLog, SessionResumeStore};
 use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
 use crate::{
     Action, AppliedBinaryOperation, Audience, AudienceProjection, BinaryArtifact,
     BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
     BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
-    BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity, MAX_HOSTED_ARTIFACT_BYTES,
-    MAX_HOSTED_BINARY_OPERATION_BYTES, Offering, OfferingError, Outcome, RunCost, SessionConfig,
-    SessionId, Surface, VerifyReport,
+    BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity, JournaledBinaryOperation,
+    MAX_HOSTED_ARTIFACT_BYTES, MAX_HOSTED_BINARY_OPERATION_BYTES, Offering, OfferingError, Outcome,
+    RunCost, SessionConfig, SessionId, Surface, VerifyReport, invoke_journaled_binary_operation,
 };
 
 /// A **catalog entry** — one registered offering's public identity + its live-session count, for a
@@ -1261,10 +1261,6 @@ impl OfferingHost {
         payload: &[u8],
         actor: DreggIdentity,
     ) -> Result<BinaryOperationReceipt, HostOperationError> {
-        // The concrete offering, not the host, decides whether any request
-        // representation is safe to retain. A durable host refuses an
-        // operation that has no such representation, before mutation, rather
-        // than acknowledging state that will vanish on restart.
         let replay_material = {
             let slot = self
                 .slots
@@ -1275,88 +1271,46 @@ impl OfferingHost {
                     key: key.to_string(),
                     id: id.clone(),
                 })?
-                .map_err(HostOperationError::Operation)?
         };
-        if let Some(store) = &self.resume_store {
-            if replay_material.is_none() {
-                return Err(HostOperationError::Operation(
-                    BinaryOperationError::Refused(
-                        "durable host refuses an operation without offering-selected safe replay material"
-                            .to_string(),
-                    ),
-                ));
-            }
-            if !store.supports_binary_operations() {
-                return Err(HostOperationError::Operation(
-                    BinaryOperationError::Refused(
-                        "attached resume store does not support the binary-operation journal"
-                            .to_string(),
-                    ),
-                ));
-            }
-        }
+        let log = self
+            .logs
+            .entry((key.to_string(), id.clone()))
+            .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()));
         let slot = self
             .slots
             .get_mut(key)
             .ok_or_else(|| HostOperationError::UnknownOffering(key.to_string()))?;
-        let result = slot
-            .invoke_binary_operation(id, name, payload, actor.clone())
-            .ok_or_else(|| HostOperationError::UnknownSession {
+        if !slot.is_open(id) {
+            return Err(HostOperationError::UnknownSession {
                 key: key.to_string(),
                 id: id.clone(),
-            })?;
-        let receipt = result.map_err(HostOperationError::Operation)?;
-        if receipt.operation != name {
-            // The concrete offering has already had an opportunity to mutate.  A receipt for a
-            // different operation therefore cannot merely be returned as an error while leaving
-            // that unjournaled state live: downstream capability/consequence code could confuse
-            // the addressed operation with the one named by the receipt, and a later ordinary
-            // move could make the ghost mutation durable. Quarantine the live session. Its exact
-            // pre-operation journal remains intact and a durable host may resume from that record.
-            slot.close(id);
-            return Err(HostOperationError::Operation(
-                BinaryOperationError::Refused(format!(
-                    "operation receipt named {:?}, but the host addressed {name:?}; session quarantined",
-                    receipt.operation
-                )),
-            ));
+            });
         }
-
-        if let Some(material) = replay_material {
-            let after_moves = self
-                .logs
-                .get(&(key.to_string(), id.clone()))
-                .map(|log| log.moves.len())
-                .unwrap_or(0);
-            let after_moves = u64::try_from(after_moves).map_err(|_| {
-                HostOperationError::Operation(BinaryOperationError::Refused(
-                    "ordinary-move cursor exceeds the durable operation wire".to_string(),
-                ))
-            })?;
-            let operation = LoggedBinaryOperation {
-                after_moves,
-                name: name.to_string(),
-                actor,
-                payload_digest: *blake3::hash(payload).as_bytes(),
-                replay_digest: *blake3::hash(&material.bytes).as_bytes(),
-                replay_material: material.bytes,
-                replay_disclosure: material.disclosure,
-                replay_is_canonical_request: material.is_canonical_request,
-                receipt: receipt.clone(),
-            };
-            if let Some(log) = self.logs.get_mut(&(key.to_string(), id.clone())) {
-                log.record_binary_operation(operation.clone());
+        let transaction = invoke_journaled_binary_operation(
+            key,
+            id,
+            name,
+            payload,
+            actor.clone(),
+            log,
+            self.resume_store.as_deref(),
+            replay_material,
+            || {
+                slot.invoke_binary_operation(id, name, payload, actor)
+                    .expect("the live session was checked before the journal transaction")
+            },
+        );
+        match transaction {
+            JournaledBinaryOperation::Applied(receipt) => {
+                self.touch(key, id);
+                Ok(receipt)
             }
-            if let Some(store) = &self.resume_store {
-                // Existing move persistence has the same synchronous
-                // write-through contract. The store's capability gate above
-                // prevents silent downgrade to an implementation that drops
-                // opaque operations.
-                let _ = store.record_binary_operation(key, id, &operation);
+            JournaledBinaryOperation::Refused(error) => Err(HostOperationError::Operation(error)),
+            JournaledBinaryOperation::Quarantine(error) => {
+                slot.close(id);
+                Err(HostOperationError::Operation(error))
             }
         }
-        self.touch(key, id);
-        Ok(receipt)
     }
 
     /// Apply one operation and return its exact source-session binding for downstream game organs.
