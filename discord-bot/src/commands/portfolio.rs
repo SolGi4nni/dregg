@@ -40,6 +40,7 @@ use dregg_multiway_tug::Player;
 use dreggnet_compute::ComputeOffering;
 use dreggnet_market::DarkBazaarOffering;
 use dreggnet_names::NamesOffering;
+use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, OfferingError, SessionConfig};
 use dreggnet_surfaces::{
     CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
@@ -433,6 +434,16 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     }
 
     let opened: Result<(), OfferingError> = match key.as_str() {
+        "descent" => {
+            open_and_post::<NativeDescentOffering>(
+                ctx,
+                command,
+                NativeDescentOffering::new,
+                &viewer,
+                cfg,
+            )
+            .await
+        }
         "bazaar" => {
             open_and_post::<DarkBazaarOffering>(ctx, command, DarkBazaarOffering::new, &viewer, cfg)
                 .await
@@ -519,6 +530,7 @@ async fn handle_play_verify(
         return;
     }
     match key {
+        "descent" => offering::handle_verify::<NativeDescentOffering>(ctx, command).await,
         "bazaar" => offering::handle_verify::<DarkBazaarOffering>(ctx, command).await,
         "tug" => offering::handle_verify::<SeatedTug>(ctx, command).await,
         "automatafl" => offering::handle_verify::<AutomataflOffering>(ctx, command).await,
@@ -682,6 +694,11 @@ mod tests {
         // The world-backed surfaces each build their demo `SharedWorld` INSIDE the open factory
         // (the `Rc`-shared world is not `Send`; it is born on the store's thread) — matching the
         // module HONEST SCOPE note: each opens over its own world on this per-type surface.
+        check!(
+            NativeDescentOffering,
+            NativeDescentOffering::new(),
+            "descent"
+        );
         check!(SeatedTug, SeatedTug::new(), "tug");
         check!(DarkBazaarOffering, DarkBazaarOffering::new(), "bazaar");
         check!(AutomataflOffering, AutomataflOffering, "automatafl");
@@ -753,6 +770,7 @@ mod tests {
         }
         // The former hand-maintained list, preserved by the derivation (the regression pin).
         for want in [
+            "descent",
             "automatafl",
             "tug",
             "names",
@@ -896,9 +914,12 @@ mod tests {
             Driven::Fired(o) => assert!(o.landed(), "alice's comp lands + claims seat A: {o:?}"),
             other => panic!("alice's play must drive a turn, got {other:?}"),
         }
-        // Bob claims seat B by playing — lands or is a real turn-order refusal, either way seat B is
-        // his and his view is projected for him.
-        let _ = drive::<SeatedTug>(channel, &fire_id(SeatedTug::KEY, "secret", 0), bob.clone());
+        // Bob claims seat B only by LANDING the scheduled Competition. A refusal
+        // must never ghost-reserve a seat.
+        match drive::<SeatedTug>(channel, &fire_id(SeatedTug::KEY, "comp", 3), bob.clone()) {
+            Driven::Fired(o) => assert!(o.landed(), "bob's comp lands + claims seat B: {o:?}"),
+            other => panic!("bob's play must drive a turn, got {other:?}"),
+        }
 
         // AS ALICE (seat A): her own hand (card ids) is revealed, the opponent is fog.
         let alice_view = with_live::<SeatedTug, _>(channel, {

@@ -66,6 +66,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, _
         dreggnet_grain::GrainOffering,
         dreggnet_doc::DocOffering,
         dreggnet_offerings::dungeon::DungeonOffering,
+        dreggnet_offerings::native_descent::NativeDescentOffering,
         crate::commands::portfolio::SeatedTug,
         dregg_automatafl::AutomataflOffering,
         dreggnet_names::NamesOffering,

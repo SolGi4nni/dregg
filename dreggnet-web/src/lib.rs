@@ -2415,6 +2415,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // surfaces (the do-once render path), and the verifiable SERVICES. Any offering outside the
     // known sets falls into a catch-all "More" shelf (so a future registration still shows up).
     const GAMES: &[&str] = &[
+        "descent",
         "dungeon",
         "council",
         "market",
@@ -2512,7 +2513,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     };
 
     // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the
-    // featured game leads, and the 19-offering shelf below is honestly the lab, not the product.
+    // featured game leads, and the 20-offering shelf below is honestly the lab, not the product.
     // THE FUNNEL: the PLAY CTA leads (the served in-tab run at `/descent/play`) and the no-cheat
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
@@ -3770,7 +3771,7 @@ async fn index() -> Html<String> {
          {card_play}<a class=\"play\" href=\"/descent\">See today's no-cheat board \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-services\"><h3>🧪 The Lab</h3>\
-         <p class=\"tagline\">Experimental engine surfaces — six games, eight feature surfaces, \
+         <p class=\"tagline\">Experimental engine surfaces — seven games, eight feature surfaces, \
          five services. The parts the game is built from, on the shelf for the curious.</p>\
          <a class=\"play\" href=\"/offerings\">Browse the Lab \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\

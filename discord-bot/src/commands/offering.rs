@@ -1645,6 +1645,7 @@ macro_rules! for_each_generic_offering {
         $per!(dreggnet_hermes::HermesOffering);
         $per!(dreggnet_grain::GrainOffering);
         $per!(dreggnet_doc::DocOffering);
+        $per!(dreggnet_offerings::native_descent::NativeDescentOffering);
         $per!(crate::commands::portfolio::SeatedTug);
         $per!(dregg_automatafl::AutomataflOffering);
         $per!(dreggnet_names::NamesOffering);

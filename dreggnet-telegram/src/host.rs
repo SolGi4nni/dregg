@@ -996,11 +996,12 @@ impl<T: Transport> TelegramHost<T> {
 }
 
 /// **The default Telegram catalog host** — the FULL shared portfolio, from the ONE registrar
-/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the five games
-/// (dungeon · council · market · multiway-tug · automatafl, `tug` wrapped in the shared
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the seven games
+/// (native Descent · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl,
+/// `tug` wrapped in the shared
 /// seat-claiming [`crate::seated::SeatedTug`] adapter), the eight do-once RPG feature surfaces
 /// (trade · inventory · cheevos · guild · craft · companion · tavern · party), and the five
-/// service offerings (doc · names · compute · grain · hermes) — the same 18 the web catalog
+/// service offerings (doc · names · compute · grain · hermes) — the same 20 the web catalog
 /// (`dreggnet_web::demo_host`) serves, by construction rather than by a duplicated list
 /// (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread (inside
 /// [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay confined.

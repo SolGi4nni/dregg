@@ -1,10 +1,10 @@
-//! **The driven FULL-PORTFOLIO parity proof — Telegram registers the SAME 18 offerings the web
+//! **The driven FULL-PORTFOLIO parity proof — Telegram registers the SAME 20 offerings the web
 //! catalog does, and the viewer threads through the surface.**
 //!
 //! `multi_offering_through_telegram.rs` proved THREE heterogeneous offerings play through Telegram.
 //! This closes the gap the audit found: Telegram (and WeChat) registered only three each while the
-//! web catalog ([`dreggnet_web::demo_host`]) registers eighteen — the five games (incl. automatafl +
-//! multiway-tug) and the eight do-once RPG feature surfaces were ABSENT because their crates were not
+//! web catalog ([`dreggnet_web::demo_host`]) registers twenty — the seven games (including the
+//! Lean-authored Descent, automatafl, and multiway-tug) and the eight do-once RPG feature surfaces were ABSENT because their crates were not
 //! deps. Now [`telegram_default_host`] builds through the ONE shared registrar
 //! (`dreggnet_catalog::build_full_catalog` — docs/BOT-SHARED-BACKEND-DESIGN.md). This drives:
 //!
@@ -142,6 +142,50 @@ fn automatafl_is_reachable_and_renders_a_non_empty_surface_on_telegram() {
         HostPress::NotOffered => {}
         other => panic!("an automatafl press should advance or be NotOffered, got {other:?}"),
     }
+}
+
+/// The flagship game on Telegram is the Lean-authored custody Descent, not a
+/// chat-local imitation of the older daily crawl. Its first `delve` is admitted
+/// by the native executor, binds the Telegram-derived actor, re-renders the
+/// custody/light state, and the resulting chain replays.
+#[test]
+fn native_descent_drives_through_the_telegram_host() {
+    let mut h = host();
+    let chat: i64 = 731;
+    let sid = h
+        .open("descent", chat, None, ALICE)
+        .expect("native Descent opens on Telegram");
+    assert_eq!(h.active_offering(&sid), Some("descent"));
+    let genesis = last_text(&h);
+    assert!(genesis.contains("The Descent"), "{genesis}");
+    assert!(
+        genesis.contains("light") && genesis.contains("carried") && genesis.contains("banked"),
+        "the native custody state reaches Telegram: {genesis}"
+    );
+
+    let pressed = h.press(CallbackQuery::press(
+        chat,
+        ALICE,
+        encode_callback("delve", 0),
+    ));
+    assert!(
+        matches!(
+            &pressed,
+            HostPress::Advanced {
+                key,
+                outcome: Outcome::Landed { .. },
+                ..
+            } if key == "descent"
+        ),
+        "Telegram's typed delve reaches the native executor: {pressed:?}"
+    );
+    let after = last_text(&h);
+    assert!(
+        after.contains("depth 1"),
+        "the native state advanced: {after}"
+    );
+    let report = h.verify("descent", &sid).expect("the session is live");
+    assert!(report.verified, "{}", report.detail);
 }
 
 /// **The multiway-tug hidden hand threads the viewer through the Telegram surface — in a DM, the

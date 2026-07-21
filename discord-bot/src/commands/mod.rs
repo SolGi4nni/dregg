@@ -73,6 +73,10 @@ pub mod fiction;
 // uses), a beacon-verified daily reveal, and a no-cheat leaderboard a WON run posts to. Additive —
 // `/dungeon` (`fiction`) is untouched. See `crate::commands::descent`.
 pub mod descent;
+// `/play descent` — the generic, cross-surface mount of the Lean-authored custody dungeon.
+// The existing bespoke `/descent` command remains during the presentation/board migration, but
+// game turns on this path come only from `dungeon_on_dregg::descent`'s Lean-emitted program.
+pub mod native_descent;
 // The gov-* / name-* / queue-* slash families are retired (→ `/dregg` dashboard
 // Governance / Names / Subscription panels, which build the same actions). The
 // handlers are kept so the capability can be re-exposed without re-implementing.

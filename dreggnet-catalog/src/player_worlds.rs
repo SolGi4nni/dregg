@@ -30,7 +30,7 @@
 //! ## Which offerings belong here
 //!
 //! The seven identity-owned RPG feature surfaces ([`RPG_KEYS`]) and ONLY those. They are per-player
-//! by nature (an inventory is yours). The six games, `party`, and five service offerings in
+//! by nature (an inventory is yours). The seven games, `party`, and five service offerings in
 //! [`crate::build_full_catalog`] are shared tables — a council with one voter per host is not a
 //! council, and a party with one role per private host is not a party — so a frontend keeps routing
 //! those to its one global host and routes [`is_rpg_key`] keys here.
