@@ -171,7 +171,7 @@ impl std::error::Error for ProofError {}
 
 /// A generated selective-disclosure proof, ready to render in a Discord embed +
 /// persist as the (no-longer-null) presentation cryptographic material.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GeneratedProof {
     /// The parsed predicate this proof attests.
     pub predicate: ParsedPredicate,
@@ -260,6 +260,87 @@ pub fn generate_predicate_proof(
         .map_err(ProofError::Sdk)?;
 
     Ok(GeneratedProof { predicate, proof })
+}
+
+/// A generated proof together with the verifier's accept/reject verdict — so
+/// `/credential verify` can report an HONEST result rather than the old
+/// unconditional refusal. `verified == true` iff the real predicate STARK accepts
+/// the proof against the commitment it presents.
+#[derive(Debug, Clone)]
+pub struct VerifiedProof {
+    /// The freshly generated, fresh-blinded proof.
+    pub generated: GeneratedProof,
+    /// The verifier's verdict from [`verify_generated_proof`].
+    pub verified: bool,
+}
+
+/// **Verify** a generated proof the way a verifier holding the presented
+/// (fresh-blinded) commitment does — running the REAL predicate STARK via the SDK's
+/// [`dregg_sdk::privacy::verify_predicate_unlinkable`].
+///
+/// Returns `true` iff the value welded into the proof's fact commitment satisfies the
+/// predicate. See that SDK function for the exact boundary (it establishes the
+/// committed value satisfies the predicate and that two showings are unlinkable; it
+/// does NOT attest third-party issuer provenance, and it inherits the deployed
+/// STARK/FRI floor).
+pub fn verify_generated_proof(generated: &GeneratedProof) -> bool {
+    dregg_sdk::privacy::verify_predicate_unlinkable(&generated.proof)
+}
+
+/// **Generate AND verify** — the full `/credential verify` crypto path over an
+/// already-flat attribute map, factored so the command handler and its tests exercise
+/// the SAME code. An honest proof over a TRUE predicate returns `verified: true`; a
+/// FALSE predicate never reaches here (generation refuses with [`ProofError::Sdk`]).
+pub fn prove_and_verify(
+    subject_seed: &[u8; 32],
+    predicate_str: &str,
+    attributes_json: &str,
+) -> Result<VerifiedProof, ProofError> {
+    let generated = generate_predicate_proof(subject_seed, predicate_str, attributes_json)?;
+    let verified = verify_generated_proof(&generated);
+    Ok(VerifiedProof {
+        generated,
+        verified,
+    })
+}
+
+/// **Generate AND verify over a HELD credential's stored attributes** — the entry the
+/// `/credential verify` command calls.
+///
+/// The issuance path persists a credential's attributes as
+/// `dregg_credentials::CredentialAttributes` JSON
+/// (`{"attributes":[{"name":"verification_level","value":{"Integer":2}}, …]}`), but
+/// the predicate circuit compares a plain numeric map. [`flatten_credential_attributes`]
+/// bridges the two (the impedance mismatch that went uncaught while this path had no
+/// caller), then the flat map flows through [`prove_and_verify`].
+pub fn prove_and_verify_held(
+    subject_seed: &[u8; 32],
+    predicate_str: &str,
+    held_attributes_json: &str,
+) -> Result<VerifiedProof, ProofError> {
+    let flat = flatten_credential_attributes(held_attributes_json);
+    prove_and_verify(subject_seed, predicate_str, &flat)
+}
+
+/// Flatten stored [`dregg_credentials::CredentialAttributes`] JSON into the numeric
+/// `{name: value}` map [`attribute_value`] reads. Non-numeric attributes (`Text`) are
+/// dropped (a `>=`/`<` predicate cannot compare them). If the input is not the typed
+/// nested form (e.g. it is already a flat map), it is passed through unchanged, so
+/// both the real issuance form and a hand-written flat map work.
+pub fn flatten_credential_attributes(attributes_json: &str) -> String {
+    use starbridge_identity::CredentialAttributes;
+    match serde_json::from_str::<CredentialAttributes>(attributes_json) {
+        Ok(attrs) => {
+            let mut map = serde_json::Map::new();
+            for attr in attrs.attributes {
+                if let Some(v) = attr.value.to_predicate_value() {
+                    map.insert(attr.name, serde_json::Value::from(v));
+                }
+            }
+            serde_json::Value::Object(map).to_string()
+        }
+        Err(_) => attributes_json.to_string(),
+    }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -413,5 +494,90 @@ mod tests {
         let seed = [0x22u8; 32];
         let r = generate_predicate_proof(&seed, "age>=18", r#"{"height": 180}"#);
         assert!(matches!(r, Err(ProofError::AttributeMissing { .. })));
+    }
+
+    // ── verify: a real proof VERIFIES, a forged one is REFUSED ──
+
+    #[test]
+    fn a_real_proof_verifies_end_to_end() {
+        // The success path `/credential verify` now takes: generate a real proof AND
+        // verify it, reporting `verified: true`.
+        let seed = [0x33u8; 32];
+        let vp = prove_and_verify(&seed, "balance>=1000", r#"{"balance": 5000}"#)
+            .expect("a TRUE predicate proves");
+        assert!(
+            vp.verified,
+            "an honest proof of a TRUE predicate must VERIFY through the command path"
+        );
+        assert!(!vp.generated.blinded_commitment_hex().is_empty());
+    }
+
+    #[test]
+    fn a_forged_proof_is_refused() {
+        // Generate an honest proof, then corrupt the fact commitment it presents. The
+        // in-circuit weld binds the STARK to the ORIGINAL commitment, so the tampered
+        // proof no longer verifies — the soundness tooth of the verify path. (Corrupting
+        // a `BabyBear` needs no bridge types, so this stays at the bot's own surface.)
+        let seed = [0x44u8; 32];
+        let honest = generate_predicate_proof(&seed, "balance>=1000", r#"{"balance": 5000}"#)
+            .expect("a TRUE predicate proves");
+        assert!(
+            verify_generated_proof(&honest),
+            "the honest proof must verify"
+        );
+
+        let mut forged = honest.clone();
+        forged.proof.predicate_proof.fact_commitment += BabyBear::ONE;
+        assert!(
+            !verify_generated_proof(&forged),
+            "a proof whose presented commitment was altered must be REFUSED (the STARK is bound to \
+             the original commitment)"
+        );
+    }
+
+    #[test]
+    fn two_verifies_for_the_same_predicate_are_unlinkable_through_the_command_path() {
+        // THE LOAD-BEARING PROPERTY, end-to-end through `prove_and_verify_held` (what the
+        // command calls): two verify requests for the SAME predicate over the SAME held
+        // credential both VERIFY, yet publish DIFFERENT blinded commitments — so a party
+        // seeing the two receipts cannot correlate them. The stored form is the real
+        // nested `CredentialAttributes` JSON, exercising the flattener too.
+        let seed = [0x55u8; 32];
+        let held = r#"{"attributes":[{"name":"verification_level","value":{"Integer":3}}]}"#;
+
+        let a = prove_and_verify_held(&seed, "verification_level>=2", held).unwrap();
+        let b = prove_and_verify_held(&seed, "verification_level>=2", held).unwrap();
+
+        assert!(
+            a.verified && b.verified,
+            "both showings must verify (soundness)"
+        );
+        assert_ne!(
+            a.generated.blinded_commitment_hex(),
+            b.generated.blinded_commitment_hex(),
+            "two verifies of the same predicate must publish DIFFERENT blinded commitments \
+             (unlinkable) — the property the whole feature exists to surface"
+        );
+    }
+
+    #[test]
+    fn flattens_stored_credential_attributes() {
+        // The real issuance form (nested typed) flattens to a numeric map a predicate can
+        // compare; a Text attribute is dropped (unprovable by </>=); a value is preserved.
+        let stored = r#"{"attributes":[
+            {"name":"verification_level","value":{"Integer":2}},
+            {"name":"given_name","value":{"Text":"alice"}}
+        ]}"#;
+        let flat = flatten_credential_attributes(stored);
+        assert_eq!(attribute_value(&flat, "verification_level"), Some(2));
+        assert_eq!(
+            attribute_value(&flat, "given_name"),
+            None,
+            "Text is dropped"
+        );
+
+        // An already-flat map passes through unchanged.
+        let flat2 = flatten_credential_attributes(r#"{"age": 25}"#);
+        assert_eq!(attribute_value(&flat2, "age"), Some(25));
     }
 }

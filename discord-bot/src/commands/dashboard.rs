@@ -767,8 +767,16 @@ fn credential_issue_modal() -> CreateModal {
 
 fn credential_verify_modal() -> CreateModal {
     CreateModal::new(ID_CRED_VERIFY, "Request Credential Proof").components(vec![
-        short_row(short_input("subject", "Subject cell id", "64 hex chars").max_length(128)),
-        short_row(short_input("predicate", "Predicate", "age>=18").max_length(200)),
+        short_row(short_input("predicate", "Predicate", "verification_level>=2").max_length(200)),
+        short_row(
+            short_input(
+                "subject",
+                "Subject cell (defaults to you)",
+                "leave blank — the bot proves for your own held credential",
+            )
+            .max_length(128)
+            .required(false),
+        ),
     ])
 }
 
@@ -1046,24 +1054,131 @@ async fn submit_credential_issue(modal: &ModalInteraction, state: &BotState) -> 
     }
 }
 
+/// Emit a REAL unlinkable predicate STARK over the caller's held credential and
+/// VERIFY it — replacing the old unconditional "Proof Requests Unavailable" refusal.
+///
+/// The bot is a **custodial** holder: it reconstructs the caller's cipherclerk from
+/// the bot seed (`seed_for`), reads the attributes of a credential the caller was
+/// ISSUED (`identity_held_credentials`), and produces a fresh-blinded predicate proof
+/// via [`crate::identity_proof::prove_and_verify_held`]. A valid proof yields an
+/// honest success embed; a false / malformed / unheld predicate yields a legible
+/// refusal.
+///
+/// HONEST BOUNDARY (also in the embed): a real STARK, but it inherits the deployed
+/// STARK/FRI soundness floor (`project-fri-soundness-reality`) — NOT an on-chain fact
+/// — and attests the committed value satisfies the predicate as the custodial holder,
+/// not third-party issuer provenance. Two proofs of the same predicate publish
+/// different blinded commitments (unlinkable).
 async fn submit_credential_verify(modal: &ModalInteraction, state: &BotState) -> CreateEmbed {
-    let subject = modal_value(modal, "subject");
     let predicate = modal_value(modal, "predicate");
-    if let Err(embed) = user_cell(modal.user.id.get(), state).await {
+    let subject = modal_value(modal, "subject");
+    let user_id = modal.user.id.get();
+
+    // The bot proves as the caller's custodial holder — require the hosted identity.
+    if let Err(embed) = user_cell(user_id, state).await {
         return embed;
     }
-    match parse_cell_bytes(&subject) {
-        Ok(_) => {}
-        Err(embed) => return embed,
+
+    // Derive the caller's holder identity with the SAME derivation issuance used, so
+    // the held-credential lookup key matches the store key.
+    let cclerk =
+        UserCipherclerk::derive(&state.config.bot_secret, user_id, state.federation_id_bytes);
+    let holder_cell = cclerk.cell_id_hex().to_string();
+
+    // Custodial limit: the bot only holds the caller's seed, so it can only prove for
+    // the caller. A subject that is not the caller's own cell is an honest refusal.
+    let subject = subject.trim();
+    if !subject.is_empty() {
+        if let Err(embed) = parse_cell_bytes(subject) {
+            return embed;
+        }
+        if !subject.eq_ignore_ascii_case(&holder_cell) {
+            return embeds::warning_embed(
+                "Custodial Limit",
+                &format!(
+                    "This bot is custodial: it can prove predicates only about YOUR OWN held \
+                     credentials. Leave the subject blank, or enter your own cell {}.",
+                    short_cell(&holder_cell)
+                ),
+            );
+        }
     }
-    embeds::warning_embed(
-        "Proof Requests Unavailable",
-        &format!(
-            "Credential proof requests are not exposed by the current node API. Subject `{}` and predicate `{}` are valid inputs, but selective disclosure needs a holder-private credential store and proof/index read surface.",
-            short_cell(&subject),
-            truncate(&predicate, 120)
+
+    // Find a held credential whose attributes the predicate speaks about.
+    let held = match state
+        .db
+        .find_held_credential_for_predicate(&user_id.to_string(), &holder_cell, &predicate)
+        .await
+    {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            return embeds::warning_embed(
+                "No Matching Credential",
+                &format!(
+                    "You hold no credential whose attributes satisfy `{}`. Issue one first via \
+                     **Issue Credential**, then request a proof.",
+                    truncate(&predicate, 120)
+                ),
+            );
+        }
+        Err(e) => return embeds::error_embed("Database Error", &e.to_string()),
+    };
+
+    // Generate a REAL unlinkable predicate STARK over the held attributes, then verify.
+    let seed = crate::cipherclerk::seed_for(&state.config.bot_secret, user_id);
+    match crate::identity_proof::prove_and_verify_held(&seed, &predicate, &held.attributes_json) {
+        Ok(verified) if verified.verified => embeds::success_embed("Selective-Disclosure Proof Verified")
+            .field("Predicate", format!("`{}`", truncate(&predicate, 120)), true)
+            .field("Credential", short_cell(&held.credential_id), true)
+            .field("Schema", format!("`{}`", held.schema), true)
+            .field(
+                "Blinded commitment",
+                format!("`{}`", verified.generated.blinded_commitment_hex()),
+                false,
+            )
+            .field(
+                "What this proves",
+                "Your held credential's attribute satisfies the predicate — WITHOUT revealing the \
+                 value, which credential produced it, or any link to your other proofs. Fresh \
+                 blinding per request means two proofs of the same fact do not correlate.",
+                false,
+            )
+            .field(
+                "Boundary",
+                "A real unlinkable predicate STARK (BabyBear), verified here. It inherits the \
+                 deployed STARK/FRI soundness floor — this is NOT an on-chain-settled fact — and it \
+                 attests the committed value satisfies the predicate as the custodial holder; it \
+                 does not independently attest third-party issuer provenance.",
+                false,
+            ),
+        Ok(_) => embeds::error_embed(
+            "Proof Did Not Verify",
+            "A proof was generated but failed verification, so success is NOT reported. This should \
+             not happen for an honest credential — retry, or re-issue the credential.",
         ),
-    )
+        Err(crate::identity_proof::ProofError::Sdk(_)) => embeds::warning_embed(
+            "Predicate Not Satisfied",
+            &format!(
+                "`{}` is FALSE for your credential's value, so it is unprovable — a sound circuit \
+                 cannot prove a false statement. (This is the soundness guarantee, not a bug.)",
+                truncate(&predicate, 120)
+            ),
+        ),
+        Err(crate::identity_proof::ProofError::Parse(e)) => embeds::warning_embed(
+            "Invalid Predicate",
+            &format!("Could not parse `{}`: {e}", truncate(&predicate, 120)),
+        ),
+        Err(crate::identity_proof::ProofError::AttributeMissing { attribute }) => {
+            embeds::warning_embed(
+                "Attribute Not in Credential",
+                &format!(
+                    "Your matched credential has no numeric `{attribute}` attribute to prove `{}` \
+                     about.",
+                    truncate(&predicate, 120)
+                ),
+            )
+        }
+    }
 }
 
 /// Submit a proposal. On acceptance, ALSO records the durable `governance/propose` activity

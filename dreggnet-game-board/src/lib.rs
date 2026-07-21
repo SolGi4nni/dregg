@@ -85,6 +85,8 @@ use dregg_automatafl::build_d1_honest;
 use dregg_automatafl::reference::{Board, automaton_step};
 use dregg_multiway_tug::hidden_hand::HandTree;
 
+pub mod native_descent_board;
+
 pub use dregg_multiway_tug::fold::{LeafBundle, fold_match, membership_leaf_for_play};
 pub use ugc_dregg::{
     Accepted, Entry, ProofAnchor, ProofCompletion, Registry, RejectReason, Universe, UniverseId,

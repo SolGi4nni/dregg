@@ -47,3 +47,9 @@ dregg-circuit = { path = "../circuit" }
 game-turn-slice = { path = "../game-turn-slice" }
 # `StateConstraint` / `field_from_u64` — the teeth the win leaf lowers.
 dregg-cell = { path = "../cell" }
+# The Lean-native Descent Offering and its replay-verifiable public record.  This
+# powers the separately-labelled native season board; it is not routed through
+# the FULL-STARK `ugc-dregg` accept path above.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# Canonical snapshot corruption detection and stable board-entry identities.
+blake3 = "1"
