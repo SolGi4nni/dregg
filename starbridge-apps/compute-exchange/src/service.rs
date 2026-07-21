@@ -170,22 +170,22 @@ impl JobService {
         let effects = vec![
             Effect::SetField {
                 cell: self.cell,
-                index: REQUESTER_HASH_SLOT,
+                index: REQUESTER_HASH_SLOT as u64,
                 value: requester_h,
             },
             Effect::SetField {
                 cell: self.cell,
-                index: BUDGET_SLOT,
+                index: BUDGET_SLOT as u64,
                 value: budget_f,
             },
             Effect::SetField {
                 cell: self.cell,
-                index: SPEC_HASH_SLOT,
+                index: SPEC_HASH_SLOT as u64,
                 value: *spec,
             },
             Effect::SetField {
                 cell: self.cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: state_field(STATE_POSTED),
             },
             Effect::EmitEvent {

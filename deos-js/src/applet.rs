@@ -421,7 +421,7 @@ impl Applet {
         let nonce = model.nonce();
         let mut action = ActionBuilder::new_unchecked_for_tests(self.cell, affordance, self.cell);
         for (slot, value) in writes {
-            action = action.effect_set_field(self.cell, slot, value);
+            action = action.effect_set_field(self.cell, slot as u64, value);
         }
         // Bump the cell nonce so the next turn chains and the model witnesses the fire.
         let action = action.effect_increment_nonce(self.cell).build();

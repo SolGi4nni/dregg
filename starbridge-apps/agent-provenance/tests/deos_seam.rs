@@ -161,7 +161,7 @@ fn the_executor_re_enforces_a_rewound_head_is_refused() {
     // A REWOUND head: HEAD 1 -> 0. `Monotonic(HEAD)` refuses the rewind.
     let rewind = vec![Effect::SetField {
         cell,
-        index: HEAD_SLOT,
+        index: HEAD_SLOT as u64,
         value: field_from_u64(0),
     }];
     let action = cclerk.make_action(cell, "append_provenance", rewind);
@@ -209,7 +209,7 @@ fn the_executor_re_enforces_a_sealed_entry_overwrite_is_refused() {
     let forged = claim_digest(b"forged-overwrite");
     let overwrite = vec![Effect::SetField {
         cell,
-        index: entry_slot(0),
+        index: entry_slot(0) as u64,
         value: forged,
     }];
     let action = cclerk.make_action(cell, "tamper", overwrite);

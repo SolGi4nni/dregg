@@ -270,7 +270,7 @@ fn the_executor_re_enforces_a_phase_rewind_is_refused_strictmonotonic() {
     // REWIND: a curate that drives PHASE REVEAL -> SUBMISSION (the method case fires).
     let rewind = vec![Effect::SetField {
         cell,
-        index: PHASE_SLOT,
+        index: PHASE_SLOT as u64,
         value: field_from_u64(PHASE_SUBMISSION),
     }];
     let action = cclerk.make_action(cell, "curate", rewind);
@@ -288,7 +288,7 @@ fn the_executor_re_enforces_a_phase_rewind_is_refused_strictmonotonic() {
     // STALL: a curate that leaves PHASE at REVEAL (no advance) — strict bites.
     let stall = vec![Effect::SetField {
         cell,
-        index: PHASE_SLOT,
+        index: PHASE_SLOT as u64,
         value: field_from_u64(PHASE_REVEAL),
     }];
     let action = cclerk.make_action(cell, "curate", stall);

@@ -496,7 +496,11 @@ impl ToolGatewayTestAccess {
         // over-ceiling value the in-band check would have refused.
         gw.worker_for_test().execute_method(
             &gw.grant().tool_method,
-            vec![Effect::SetField { cell, index, value }],
+            vec![Effect::SetField {
+                cell,
+                index: index as u64,
+                value,
+            }],
         )
     }
 }

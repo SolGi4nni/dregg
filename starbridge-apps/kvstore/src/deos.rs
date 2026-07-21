@@ -81,7 +81,7 @@ pub fn kvstore_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
         WRITER_RIGHTS,
         Effect::SetField {
             cell: store,
-            index: crate::REG_MIN,
+            index: crate::REG_MIN as u64,
             value: field_from_u64(0),
         },
     );
@@ -93,7 +93,7 @@ pub fn kvstore_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
         WRITER_RIGHTS,
         Effect::SetField {
             cell: store,
-            index: crate::REG_MIN,
+            index: crate::REG_MIN as u64,
             value: field_from_u64(0),
         },
     );
@@ -187,27 +187,27 @@ pub fn fire_put(
     let effects = vec![
         Effect::SetField {
             cell,
-            index: crate::VERSION_SLOT,
+            index: crate::VERSION_SLOT as u64,
             value: field_from_u64(new_version),
         },
         Effect::SetField {
             cell,
-            index: crate::COUNT_SLOT,
+            index: crate::COUNT_SLOT as u64,
             value: field_from_u64(new_count),
         },
         Effect::SetField {
             cell,
-            index: crate::LAST_KEY_SLOT,
+            index: crate::LAST_KEY_SLOT as u64,
             value: field_from_u64(reg as u64),
         },
         Effect::SetField {
             cell,
-            index: crate::LAST_VALUE_SLOT,
+            index: crate::LAST_VALUE_SLOT as u64,
             value,
         },
         Effect::SetField {
             cell,
-            index: reg,
+            index: reg as u64,
             value,
         },
     ];
@@ -236,27 +236,27 @@ pub fn fire_delete(
     let effects = vec![
         Effect::SetField {
             cell,
-            index: crate::VERSION_SLOT,
+            index: crate::VERSION_SLOT as u64,
             value: field_from_u64(new_version),
         },
         Effect::SetField {
             cell,
-            index: crate::COUNT_SLOT,
+            index: crate::COUNT_SLOT as u64,
             value: field_from_u64(new_count),
         },
         Effect::SetField {
             cell,
-            index: crate::LAST_KEY_SLOT,
+            index: crate::LAST_KEY_SLOT as u64,
             value: field_from_u64(reg as u64),
         },
         Effect::SetField {
             cell,
-            index: crate::LAST_VALUE_SLOT,
+            index: crate::LAST_VALUE_SLOT as u64,
             value: [0u8; 32],
         },
         Effect::SetField {
             cell,
-            index: reg,
+            index: reg as u64,
             value: [0u8; 32],
         },
     ];

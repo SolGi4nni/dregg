@@ -1699,7 +1699,7 @@ fn parse_effect_descriptor(v: &serde_json::Value) -> Result<dregg_turn::action::
         .ok_or_else(|| format!("effect '{ty}': bad cell id '{cell_hex}'"))?;
     match ty {
         "setField" => {
-            let index = v.get("index").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+            let index = v.get("index").and_then(|x| x.as_u64()).unwrap_or(0);
             let value = v.get("value").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(Effect::SetField {
                 cell,
@@ -2030,7 +2030,7 @@ unsafe extern "C" fn native_server_set_field(
         };
         let effect = dregg_turn::action::Effect::SetField {
             cell,
-            index,
+            index: index as u64,
             value: crate::applet::pack_u64(value),
         };
         // Commit AS the governed cell (the GM acting on a cell of its own world — the

@@ -530,22 +530,22 @@ pub fn build_post_action(
     let effects = vec![
         Effect::SetField {
             cell: job_cell,
-            index: REQUESTER_HASH_SLOT,
+            index: REQUESTER_HASH_SLOT as u64,
             value: requester_h,
         },
         Effect::SetField {
             cell: job_cell,
-            index: BUDGET_SLOT,
+            index: BUDGET_SLOT as u64,
             value: budget_f,
         },
         Effect::SetField {
             cell: job_cell,
-            index: SPEC_HASH_SLOT,
+            index: SPEC_HASH_SLOT as u64,
             value: *spec,
         },
         Effect::SetField {
             cell: job_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_POSTED),
         },
         Effect::EmitEvent {
@@ -569,17 +569,17 @@ pub fn build_bid_action(
     let effects = vec![
         Effect::SetField {
             cell: job_cell,
-            index: PROVIDER_HASH_SLOT,
+            index: PROVIDER_HASH_SLOT as u64,
             value: provider_h,
         },
         Effect::SetField {
             cell: job_cell,
-            index: BID_SLOT,
+            index: BID_SLOT as u64,
             value: price_f,
         },
         Effect::SetField {
             cell: job_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_BID),
         },
         Effect::EmitEvent {
@@ -608,17 +608,17 @@ pub fn build_settle_action(
     let effects = vec![
         Effect::SetField {
             cell: job_cell,
-            index: PAID_SLOT,
+            index: PAID_SLOT as u64,
             value: paid_f,
         },
         Effect::SetField {
             cell: job_cell,
-            index: REFUNDED_SLOT,
+            index: REFUNDED_SLOT as u64,
             value: refunded_f,
         },
         Effect::SetField {
             cell: job_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SETTLED),
         },
         Effect::EmitEvent {
@@ -856,7 +856,7 @@ pub fn job_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
             PROVIDER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_BID),
             },
         ),
@@ -872,7 +872,7 @@ pub fn job_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
             REQUESTER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_SETTLED),
             },
         ),
@@ -929,17 +929,17 @@ pub fn bid_effects(cell: CellId, provider: &str, price: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: PROVIDER_HASH_SLOT,
+            index: PROVIDER_HASH_SLOT as u64,
             value: provider_h,
         },
         Effect::SetField {
             cell,
-            index: BID_SLOT,
+            index: BID_SLOT as u64,
             value: price_f,
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_BID),
         },
         Effect::EmitEvent {
@@ -961,17 +961,17 @@ pub fn settle_effects(cell: CellId, paid: u64, refunded: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: PAID_SLOT,
+            index: PAID_SLOT as u64,
             value: paid_f,
         },
         Effect::SetField {
             cell,
-            index: REFUNDED_SLOT,
+            index: REFUNDED_SLOT as u64,
             value: refunded_f,
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SETTLED),
         },
         Effect::EmitEvent {

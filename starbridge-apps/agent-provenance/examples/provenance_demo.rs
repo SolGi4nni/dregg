@@ -102,7 +102,7 @@ fn main() {
             "tamper",
             vec![Effect::SetField {
                 cell: log,
-                index: entry_slot(0),
+                index: entry_slot(0) as u64,
                 value: forged,
             }],
         )

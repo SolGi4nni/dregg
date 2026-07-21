@@ -462,17 +462,17 @@ pub fn build_append_action(
     let effects = vec![
         Effect::SetField {
             cell: log_cell,
-            index: entry_slot(i),
+            index: entry_slot(i) as u64,
             value: digest,
         },
         Effect::SetField {
             cell: log_cell,
-            index: HEAD_SLOT,
+            index: HEAD_SLOT as u64,
             value: field_from_u64((i + 1) as u64),
         },
         Effect::SetField {
             cell: log_cell,
-            index: TIP_SLOT,
+            index: TIP_SLOT as u64,
             value: digest,
         },
         Effect::EmitEvent {
@@ -495,7 +495,7 @@ pub fn build_advance_head_action(
     let effects = vec![
         Effect::SetField {
             cell: log_cell,
-            index: HEAD_SLOT,
+            index: HEAD_SLOT as u64,
             value: field_from_u64(new_head),
         },
         Effect::EmitEvent {
@@ -676,7 +676,7 @@ pub fn provenance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
             RECORDER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: HEAD_SLOT,
+                index: HEAD_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -738,17 +738,17 @@ pub fn append_effects(
     vec![
         Effect::SetField {
             cell,
-            index: entry_slot(i),
+            index: entry_slot(i) as u64,
             value: digest,
         },
         Effect::SetField {
             cell,
-            index: HEAD_SLOT,
+            index: HEAD_SLOT as u64,
             value: field_from_u64((i + 1) as u64),
         },
         Effect::SetField {
             cell,
-            index: TIP_SLOT,
+            index: TIP_SLOT as u64,
             value: digest,
         },
         Effect::EmitEvent {
@@ -963,15 +963,15 @@ mod tests {
         let expected = link_hash(&GENESIS_PREV, &claim);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, value, .. } if *index == entry_slot(0) && *value == expected
+            Effect::SetField { index, value, .. } if *index == entry_slot(0) as u64 && *value == expected
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, value, .. } if *index == HEAD_SLOT && *value == field_from_u64(1)
+            Effect::SetField { index, value, .. } if *index == HEAD_SLOT as u64 && *value == field_from_u64(1)
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, value, .. } if *index == TIP_SLOT && *value == expected
+            Effect::SetField { index, value, .. } if *index == TIP_SLOT as u64 && *value == expected
         ));
         match action.authorization {
             Authorization::HybridSignature { ed25519, .. } => assert!(ed25519 != [0u8; 64]),
@@ -1155,7 +1155,7 @@ mod tests {
             let forged = claim_digest(b"forged-rewrite");
             let effects = vec![Effect::SetField {
                 cell: log,
-                index: entry_slot(0),
+                index: entry_slot(0) as u64,
                 value: forged,
             }];
             cclerk.make_action(log, "tamper", effects)

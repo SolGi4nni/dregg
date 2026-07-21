@@ -111,7 +111,7 @@ pub fn delegate_mandate_effect(
 pub fn worker_step_effect(board: CellId) -> Effect {
     Effect::SetField {
         cell: board,
-        index: EPOCH_SLOT as usize,
+        index: EPOCH_SLOT as u64,
         value: crate::field_from_u64(2),
     }
 }
@@ -144,12 +144,12 @@ pub fn fire_worker_step(
         vec![
             Effect::SetField {
                 cell: board,
-                index: spend_slot,
+                index: spend_slot as u64,
                 value: crate::field_from_u64(live_spent.saturating_add(cost)),
             },
             Effect::SetField {
                 cell: board,
-                index: EPOCH_SLOT as usize,
+                index: EPOCH_SLOT as u64,
                 value: crate::field_from_u64(live_epoch.saturating_add(1)),
             },
         ]

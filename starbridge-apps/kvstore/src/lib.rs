@@ -300,23 +300,23 @@ impl KvStore {
         let effects = vec![
             Effect::SetField {
                 cell: self.cell,
-                index: VERSION_SLOT,
+                index: VERSION_SLOT as u64,
                 value: field_from_u64(new_version),
             },
             // The header signals: the last key touched + the value written.
             Effect::SetField {
                 cell: self.cell,
-                index: LAST_KEY_SLOT,
+                index: LAST_KEY_SLOT as u64,
                 value: field_from_u64(reg as u64),
             },
             Effect::SetField {
                 cell: self.cell,
-                index: LAST_VALUE_SLOT,
+                index: LAST_VALUE_SLOT as u64,
                 value,
             },
             Effect::SetField {
                 cell: self.cell,
-                index: reg,
+                index: reg as u64,
                 value,
             },
         ];
@@ -348,23 +348,23 @@ impl KvStore {
         let effects = vec![
             Effect::SetField {
                 cell: self.cell,
-                index: VERSION_SLOT,
+                index: VERSION_SLOT as u64,
                 value: field_from_u64(new_version),
             },
             // The header signals: the last key touched + a cleared value.
             Effect::SetField {
                 cell: self.cell,
-                index: LAST_KEY_SLOT,
+                index: LAST_KEY_SLOT as u64,
                 value: field_from_u64(reg as u64),
             },
             Effect::SetField {
                 cell: self.cell,
-                index: LAST_VALUE_SLOT,
+                index: LAST_VALUE_SLOT as u64,
                 value: [0u8; 32],
             },
             Effect::SetField {
                 cell: self.cell,
-                index: reg,
+                index: reg as u64,
                 value: [0u8; 32],
             },
         ];

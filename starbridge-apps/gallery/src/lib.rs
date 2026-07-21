@@ -581,7 +581,7 @@ pub fn gallery_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             ARTIST_RIGHTS,
             Effect::SetField {
                 cell,
-                index: submit_slot(0),
+                index: submit_slot(0) as u64,
                 value: field_from_u64(0),
             },
         ),
@@ -596,7 +596,7 @@ pub fn gallery_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             CURATOR_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PHASE_SLOT,
+                index: PHASE_SLOT as u64,
                 value: field_from_u64(PHASE_REVEAL),
             },
         ),
@@ -624,7 +624,7 @@ pub fn gallery_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             CURATOR_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PHASE_SLOT,
+                index: PHASE_SLOT as u64,
                 value: field_from_u64(PHASE_CURATED),
             },
         ),
@@ -676,7 +676,7 @@ pub fn submit_effects(cell: DeosCellId, slot: usize, seal: &Seal) -> Vec<Effect>
     vec![
         Effect::SetField {
             cell,
-            index: slot,
+            index: slot as u64,
             value: *seal,
         },
         Effect::EmitEvent {
@@ -693,7 +693,7 @@ pub fn close_submissions_effects(cell: DeosCellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_REVEAL),
         },
         Effect::EmitEvent {
@@ -727,17 +727,17 @@ pub fn curate_effects(
     vec![
         Effect::SetField {
             cell,
-            index: FEATURED_SLOT,
+            index: FEATURED_SLOT as u64,
             value: featured,
         },
         Effect::SetField {
             cell,
-            index: FEATURED_HASH_SLOT,
+            index: FEATURED_HASH_SLOT as u64,
             value: *featured_hash,
         },
         Effect::SetField {
             cell,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_CURATED),
         },
         Effect::EmitEvent {

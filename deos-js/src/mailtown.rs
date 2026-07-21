@@ -471,11 +471,11 @@ impl MailTown {
             .ok_or_else(|| MailError::UnknownAddress("sender".into()))?;
         let action = ActionBuilder::new_unchecked_for_tests(from, "mailtown:deliver", from)
             // recipient inbox witnesses
-            .effect_set_field(to, SLOT_INBOX_COUNT, pack_u64(inbox_n))
-            .effect_set_field(to, SLOT_LAST_DIGEST, pack_u64(digest))
-            .effect_set_field(to, SLOT_LAST_SENDER, pack_u64(sender_lo))
+            .effect_set_field(to, SLOT_INBOX_COUNT as u64, pack_u64(inbox_n))
+            .effect_set_field(to, SLOT_LAST_DIGEST as u64, pack_u64(digest))
+            .effect_set_field(to, SLOT_LAST_SENDER as u64, pack_u64(sender_lo))
             // sender outbox witness
-            .effect_set_field(from, SLOT_OUTBOX_COUNT, pack_u64(outbox_n))
+            .effect_set_field(from, SLOT_OUTBOX_COUNT as u64, pack_u64(outbox_n))
             .effect_increment_nonce(from)
             .build();
         let mut tb = TurnBuilder::new(from, nonce);
@@ -510,7 +510,7 @@ impl MailTown {
             .ok_or_else(|| MailError::UnknownAddress("turn-cell".into()))?;
         let mut action = ActionBuilder::new_unchecked_for_tests(cell, "mailtown", cell);
         for (slot, value) in writes {
-            action = action.effect_set_field(cell, *slot, pack_u64(*value));
+            action = action.effect_set_field(cell, *slot as u64, pack_u64(*value));
         }
         let action = action.effect_increment_nonce(cell).build();
         let mut tb = TurnBuilder::new(cell, nonce);

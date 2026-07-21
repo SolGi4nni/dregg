@@ -142,7 +142,7 @@ fn seed_phase_commit(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, auction: 
         "commit_bid", // a no-op-shaped commit turn that writes PHASE; Always allows it
         vec![Effect::SetField {
             cell: auction,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_COMMIT),
         }],
     );
@@ -273,7 +273,7 @@ fn factory_born_auction_refuses_overwriting_a_committed_bid() {
         "commit_bid",
         vec![Effect::SetField {
             cell: auction,
-            index: commit_slot(0),
+            index: commit_slot(0) as u64,
             value: switched.seal(),
         }],
     );
@@ -323,7 +323,7 @@ fn factory_born_auction_refuses_phase_rewind() {
         "resolve",
         vec![Effect::SetField {
             cell: auction,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_COMMIT),
         }],
     );

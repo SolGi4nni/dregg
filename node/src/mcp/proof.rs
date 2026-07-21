@@ -63,8 +63,7 @@ pub(super) fn parse_effect_json(value: &Value) -> Result<dregg_turn::Effect, Str
             let index = value
                 .get("index")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| "effect.set_field missing 'index'".to_string())?
-                as usize;
+                .ok_or_else(|| "effect.set_field missing 'index'".to_string())?;
             let value_u32 = value
                 .get("value")
                 .and_then(|v| v.as_u64())

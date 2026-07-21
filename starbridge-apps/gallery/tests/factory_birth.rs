@@ -72,7 +72,7 @@ fn seed_phase_submission(exec: &EmbeddedExecutor, cclerk: &AppCipherclerk, galle
         "submit", // a no-op-shaped submit turn that writes PHASE; Always allows it
         vec![Effect::SetField {
             cell: gallery,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_SUBMISSION),
         }],
     );
@@ -202,7 +202,7 @@ fn factory_born_gallery_refuses_swapping_a_committed_submission() {
         "submit",
         vec![Effect::SetField {
             cell: gallery,
-            index: submit_slot(0),
+            index: submit_slot(0) as u64,
             value: swapped.seal(),
         }],
     );
@@ -253,7 +253,7 @@ fn factory_born_gallery_refuses_phase_rewind() {
         "curate",
         vec![Effect::SetField {
             cell: gallery,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_SUBMISSION),
         }],
     );

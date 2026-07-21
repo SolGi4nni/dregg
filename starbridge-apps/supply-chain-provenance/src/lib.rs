@@ -631,7 +631,7 @@ fn mint_effects_for(item: CellId, first: FieldElement) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: item,
-            index: CUSTODIAN_SLOT as usize,
+            index: CUSTODIAN_SLOT as u64,
             value: first,
         },
         // mint at epoch 1 — the mint turn itself strictly advances 0 -> 1 (so the
@@ -639,25 +639,25 @@ fn mint_effects_for(item: CellId, first: FieldElement) -> Vec<Effect> {
         // handoffs then go 1 -> 2 -> 3 -> ….
         Effect::SetField {
             cell: item,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         // append the genesis custody link.
         Effect::SetField {
             cell: item,
-            index: link_slot(0),
+            index: link_slot(0) as u64,
             value: link,
         },
         // advance the provenance cursor 0 -> 1.
         Effect::SetField {
             cell: item,
-            index: HEAD_SLOT as usize,
+            index: HEAD_SLOT as u64,
             value: field_from_u64(1),
         },
         // point the chain tip at the genesis link.
         Effect::SetField {
             cell: item,
-            index: TIP_SLOT as usize,
+            index: TIP_SLOT as u64,
             value: link,
         },
         Effect::EmitEvent {
@@ -746,31 +746,31 @@ pub fn handoff_effects(
         // the custody register advances to the incoming holder (actor-bound).
         Effect::SetField {
             cell: item,
-            index: CUSTODIAN_SLOT as usize,
+            index: CUSTODIAN_SLOT as u64,
             value: to_id,
         },
         // the provenance epoch strictly advances (no replay).
         Effect::SetField {
             cell: item,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         // append the custody-receipt link.
         Effect::SetField {
             cell: item,
-            index: link_slot(i),
+            index: link_slot(i) as u64,
             value: link,
         },
         // advance the provenance cursor.
         Effect::SetField {
             cell: item,
-            index: HEAD_SLOT as usize,
+            index: HEAD_SLOT as u64,
             value: field_from_u64((i + 1) as u64),
         },
         // point the chain tip at the new link.
         Effect::SetField {
             cell: item,
-            index: TIP_SLOT as usize,
+            index: TIP_SLOT as u64,
             value: link,
         },
         Effect::EmitEvent {
@@ -961,7 +961,7 @@ pub fn item_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             CUSTODIAN_RIGHTS,
             Effect::SetField {
                 cell: item,
-                index: CUSTODIAN_SLOT as usize,
+                index: CUSTODIAN_SLOT as u64,
                 value: signer,
             },
         ),
@@ -978,7 +978,7 @@ pub fn item_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             MANUFACTURER_RIGHTS,
             Effect::SetField {
                 cell: item,
-                index: EPOCH_SLOT as usize,
+                index: EPOCH_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -1101,27 +1101,27 @@ pub fn accept_custody_effects(
     vec![
         Effect::SetField {
             cell: item,
-            index: CUSTODIAN_SLOT as usize,
+            index: CUSTODIAN_SLOT as u64,
             value: to,
         },
         Effect::SetField {
             cell: item,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::SetField {
             cell: item,
-            index: link_slot(i),
+            index: link_slot(i) as u64,
             value: link,
         },
         Effect::SetField {
             cell: item,
-            index: HEAD_SLOT as usize,
+            index: HEAD_SLOT as u64,
             value: field_from_u64((i + 1) as u64),
         },
         Effect::SetField {
             cell: item,
-            index: TIP_SLOT as usize,
+            index: TIP_SLOT as u64,
             value: link,
         },
         Effect::EmitEvent {
@@ -1565,15 +1565,15 @@ mod tests {
         let link = link_hash(&GENESIS_PREV, &event);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, value, .. } if *index == CUSTODIAN_SLOT as usize && *value == first
+            Effect::SetField { index, value, .. } if *index == CUSTODIAN_SLOT as u64 && *value == first
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as usize && *value == field_from_u64(1)
+            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as u64 && *value == field_from_u64(1)
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, value, .. } if *index == link_slot(0) && *value == link
+            Effect::SetField { index, value, .. } if *index == link_slot(0) as u64 && *value == link
         ));
     }
 
@@ -1592,11 +1592,11 @@ mod tests {
         assert_eq!(action.effects.len(), 6);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, value, .. } if *index == CUSTODIAN_SLOT as usize && *value == identity_field("warehouse-a")
+            Effect::SetField { index, value, .. } if *index == CUSTODIAN_SLOT as u64 && *value == identity_field("warehouse-a")
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as usize && *value == field_from_u64(2)
+            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as u64 && *value == field_from_u64(2)
         ));
     }
 

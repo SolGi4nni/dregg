@@ -131,7 +131,7 @@ impl CellAffordance {
 pub enum EffectSummary {
     SetField {
         cell: CellId,
-        index: usize,
+        index: u64,
     },
     Transfer {
         from: CellId,
@@ -964,7 +964,7 @@ mod tests {
     fn set_field(cell: CellId, index: usize) -> Effect {
         Effect::SetField {
             cell,
-            index,
+            index: index as u64,
             value: [7u8; 32],
         }
     }
@@ -1406,7 +1406,7 @@ mod tests {
             intent.effect_summary(),
             EffectSummary::SetField {
                 cell: doc,
-                index: STATUS_SLOT
+                index: STATUS_SLOT as u64
             }
         );
     }

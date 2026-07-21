@@ -1016,7 +1016,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
             FIGHTER_RIGHTS,
             Effect::SetField {
                 cell: figure,
-                index: COMMIT_SEAL_SLOT,
+                index: COMMIT_SEAL_SLOT as u64,
                 value: field_from_u64(0),
             },
         ),
@@ -1032,7 +1032,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
             FIGHTER_RIGHTS,
             Effect::SetField {
                 cell: figure,
-                index: slot::JOINT_BASE,
+                index: slot::JOINT_BASE as u64,
                 value: field_from_u64(DEFAULT_REVEAL_SYM),
             },
         ),
@@ -1048,7 +1048,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
             REFEREE_RIGHTS,
             Effect::SetField {
                 cell: figure,
-                index: PHASE_SLOT,
+                index: PHASE_SLOT as u64,
                 value: field_from_u64(RESOLVED),
             },
         ),
@@ -1156,7 +1156,7 @@ pub fn fire_commit_move(
             vec![
                 Effect::SetField {
                     cell: figure,
-                    index: COMMIT_SEAL_SLOT,
+                    index: COMMIT_SEAL_SLOT as u64,
                     value: seal,
                 },
                 Effect::EmitEvent {
@@ -1197,7 +1197,7 @@ pub fn fire_reveal_move(
             let mut effects: Vec<Effect> = (0..N_JOINTS)
                 .map(|j| Effect::SetField {
                     cell: figure,
-                    index: slot::JOINT_BASE + j,
+                    index: (slot::JOINT_BASE + j) as u64,
                     value: field_from_u64(joint_syms[j]),
                 })
                 .collect();
@@ -1262,17 +1262,17 @@ pub fn fire_resolve_frame(
             vec![
                 Effect::SetField {
                     cell: figure,
-                    index: slot::POSITION,
+                    index: slot::POSITION as u64,
                     value: field_from_u64(outcome.new_positions.0 as u64),
                 },
                 Effect::SetField {
                     cell: figure,
-                    index: slot::SCORE,
+                    index: slot::SCORE as u64,
                     value: field_from_u64((a_score + a_award) as u64),
                 },
                 Effect::SetField {
                     cell: figure,
-                    index: PHASE_SLOT,
+                    index: PHASE_SLOT as u64,
                     value: field_from_u64(RESOLVED),
                 },
                 Effect::EmitEvent {

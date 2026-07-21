@@ -346,7 +346,7 @@ fn the_whole_stack_coheres_into_one_world() {
         "trespass",
         vec![Effect::SetField {
             cell: vault_id,
-            index: REG_MIN,
+            index: REG_MIN as u64,
             value: [0xEE; 32],
         }],
     );

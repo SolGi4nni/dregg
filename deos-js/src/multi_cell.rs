@@ -474,7 +474,7 @@ impl MultiCellAuthor {
             Step::SetField {
                 cell, slot, value, ..
             } => {
-                action = action.effect_set_field(cell, slot, value);
+                action = action.effect_set_field(cell, slot as u64, value);
             }
             Step::GrantCap { from, to, cap, .. } => {
                 action = action.effect_grant_capability(from, to, cap);
