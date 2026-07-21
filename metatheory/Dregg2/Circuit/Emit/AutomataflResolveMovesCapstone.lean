@@ -5,8 +5,9 @@ The OLD capstone (`AutomataflResolveCapstone.resolve_sat_imp_resolveMid`) closes
 against the OLD `Automatafl.resolveMid`, and §6 of that file documents WHY it is not restatable at
 `n ≥ 3`: the OLD descriptor and the FIXED reference disagree on the OCCLUDED-STAYER class (defect #8).
 
-This file is the CHUNK-4 landing that closes that wound IN THE CIRCUIT. The chunk-1/chunk-3 emitter
-grew the corrected columns:
+This file is the CHUNK-4 landing that closes the DIRECT half of that wound IN THE CIRCUIT (the
+occluded STAYER — a piece whose own move is blocked keeps its cell). The chunk-1/chunk-3 emitter grew
+the corrected columns:
 
   * `cOccIncl` — the INCLUSIVE occlusion (destination endpoint included), which chunk 2
     (`AutomataflOcclusionBridgeN.occ_iff_blocked_of_sat`) proved equals the VALIDATED-game predicate
@@ -20,6 +21,16 @@ grew the corrected columns:
 This file consumes those columns off `Satisfied2 (automataflResolveDescN n)`. It is downstream of the
 bridge and of the OLD capstone, and is strictly ADDITIVE — it touches neither the OLD capstone nor the
 chunk-1/2/3 emit/bridge objects.
+
+The full `resolve_sat_imp_resolveMovesN` capstone is NOT assembled here: §7 exhibits a SECOND wound,
+disjoint from defect #8, that makes the unconditional statement FALSE at `n ≥ 3` against this
+descriptor. The DIRECT carry was corrected to inclusive occlusion (`cCarryV2` reads `cOccIncl =
+blockedB`), but the FLOW-THROUGH bit `cFtA`/`cFtB` — and the `cBadA`/`cBadB`/`cResolvable` surface it
+gates — still ride the EXCLUSIVE `cOcc = occluded`, so a piece riding into a downstream edge that is
+inclusive-blocked (a non-mover sits on the downstream destination) is mishandled and the round is
+wrongly declared unresolvable. `flowThroughOcclusionGap_witness_n3` is the executable falsifier.
+Assembling the capstone is chunk 5's obligation and requires re-emitting the flow-through / resolvable
+columns onto `cOccIncl` first.
 
 ## Axiom hygiene
 `#assert_axioms` subset `{propext, Classical.choice, Quot.sound}`. No `sorry`, no `native_decide`.
@@ -373,7 +384,88 @@ theorem writeCellV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) m
 
 end WriteCellV2
 
-/-! ## §7 — Axiom hygiene. Every exported theorem, kernel-clean. -/
+/-! ## §7 — THE FLOW-THROUGH OCCLUSION GAP: why `resolve_sat_imp_resolveMovesN` is NOT assembled
+here, and which descriptor column is STILL WRONG. (A SECOND wound, disjoint from defect #8.)
+
+Chunk 4 corrected the DIRECT carry: `cCarryV2 = surv · nz · (1 − cOccIncl) · (1 − cNonLeave)` reads
+the INCLUSIVE occlusion `cOccIncl = blockedB` (§2), so an occluded piece that STAYS is now kept — the
+defect-#8 occluded-stayer (`AutomataflResolveCapstone.occludedStayer_witness_n3`) resolves correctly.
+
+But the CONFLUENCE / FLOW-THROUGH surface was NOT switched to inclusive occlusion. The descriptor's
+flow-through bit `cFtA`/`cFtB` (`resolveFactsN_of_sat.ftAIff`/`ftBIff`) rides the EXCLUSIVE `occluded`
+of the OTHER piece — `occluded bd [sa, sb] mb = false` — to decide whether A rides through B's vacated
+source and continues along B's edge. `occluded` is INTERIOR-ONLY; the reference `landMap` uses
+`blockedB` = `pathCells = interior ++ [dst]`, DESTINATION INCLUDED. They disagree exactly when the
+downstream piece's move is clear through its interior but its DESTINATION holds a non-mover.
+
+THE CLASS (n ≥ 3, `flowThroughOcclusionGap_witness_n3`).  A on `sa` wants `da = sb`, B's EMPTY source;
+B nominally moves `sb → db` with `db` held by a non-mover `C`.  Then:
+
+  * `blockedB bd [ma,mb] mb = true` (C on B's destination) but `occluded bd [sa,sb] mb = false`
+    (B's interior is clear) — the exclusive/inclusive gap.
+  * The REFERENCE: B's edge is blocked, so A's walk dead-ends on the emptied waypoint `sb`, and
+    `landMap sa = da = sb`; the round is `resolvableB` and A moves `sa → sb`.
+  * The DESCRIPTOR: `ftAIff` fires (`da = sb`, `bnz = 0`, `surv = 1`, `¬occluded_b`, `db ≠ sa`), so the
+    ft-selected destination of A is `db` — the WRONG landing (it flows A through a blocked edge).
+    `cLandNz 0 = 1` (`db` occupied) and `cCarryB = 0` (`sb` vacuum ⇒ `bnz = 0`) force `cNonLeave 0 = 1`
+    (§4), hence `cBadA = cCarryA · cNonLeave 0 = 1`, hence `cResolvable = 0` (`resolvableConstraints`).
+    So `cMidV2 = cResolvable · cWBoardV2 + (1 − cResolvable) · old = old` — the circuit declares the
+    round UNRESOLVABLE and falls back to the IDENTITY board, while the reference moves A.
+
+So `codeToParticle (cMidV2 …) = (resolveMoves …).cellAt …` is FALSE at `sa` for this witness: LHS
+`= attractor` (A kept), RHS `= vacuum` (A vacated). The unconditional capstone is therefore NOT
+provable at `n ≥ 3` (hence not at `n = 11`) against THIS descriptor — not for want of assembly, but
+because `cFtA`/`cFtB` (and the `cBadA`/`cBadB`/`cResolvable` surface they gate) must be re-emitted to
+ride the INCLUSIVE `cOccIncl = blockedB`, not the exclusive `cOcc = occluded`. That re-emit is chunk
+5's obligation; the witness below is its executable falsifier — `decide`d entirely on the reference
+semantics and the exact `ftAIff` antecedent, so it goes red the moment the fixed descriptor makes the
+flow-through respect the blocked downstream destination. -/
+
+section FlowThroughGap
+open Dregg2.Games.AutomataflRules (blockedB carAt landMap resolvableB resolveMoves)
+
+/-- 3×3 witness. A at `(2,0)` (attractor) wants `(1,0)` — B's EMPTY source and A's own dead-end
+waypoint. B at `(1,0)` (vacuum source) nominally moves to `(0,0)`, held by a non-mover repulsor `C`.
+A's onward edge through `(1,0)` into `(0,0)` is INCLUSIVE-blocked (`C` on B's destination) but
+EXCLUSIVE-clear (B's interior is empty). The automaton sits at `(2,2)`, off both moves. -/
+def ftBoard : Board :=
+  Dregg2.Games.Automatafl.mkBoard 3
+    [(⟨2, 0⟩, Particle.attractor), (⟨0, 0⟩, Particle.repulsor)] ⟨2, 2⟩
+def ftMA : Move := Move.mk 0 ⟨2, 0⟩ ⟨1, 0⟩
+def ftMB : Move := Move.mk 1 ⟨1, 0⟩ ⟨0, 0⟩
+
+/-- **THE FLOW-THROUGH GAP IS NOT EMPTY, AT `n = 3`.** Both moves are legal with distinct sources and
+distinct raw destinations. B's move is INCLUSIVE-blocked yet EXCLUSIVE-clear (the gap), and the exact
+`cFtA` antecedent (`ftAIff`) holds — `da = sb`, `carAt sb = false` (`bnz = 0`), `¬occluded_b`,
+`db ≠ sa` — with `db` occupied by a non-mover, so the descriptor sets `cLandNz 0 = 1 ⇒ cBadA = 1 ⇒
+cResolvable = 0` and emits the IDENTITY board. The REFERENCE instead resolves cleanly
+(`resolvableB = true`) and lands A on the emptied waypoint (`landMap sa = da`, `resolveMoves` moves
+A off `sa`). Every clause `decide`d on the reference semantics. -/
+theorem flowThroughOcclusionGap_witness_n3 :
+    MoveValid ftBoard ftMA ∧ MoveValid ftBoard ftMB
+      ∧ ftMA.frm ≠ ftMB.frm ∧ ftMA.to ≠ ftMB.to
+      ∧ ftMA.frm ≠ ftMA.to ∧ ftMB.frm ≠ ftMB.to
+      -- THE GAP: B's move is inclusive-blocked but exclusive-clear.
+      ∧ blockedB ftBoard [ftMA, ftMB] ftMB = true
+      ∧ occluded ftBoard [ftMA.frm, ftMB.frm] ftMB = false
+      -- the exact `ftAIff` antecedent, so the descriptor's flow-through FIRES and points A at `db`:
+      ∧ ftMA.to = ftMB.frm
+      ∧ carAt ftBoard ftMB.frm = false
+      ∧ ftMB.to ≠ ftMA.frm
+      -- the ft-selected landing `db` is occupied by a non-mover, firing `cLandNz`/`cBadA`:
+      ∧ carAt ftBoard ftMB.to = true
+      ∧ carAt ftBoard ftMA.frm = true
+      -- yet the REFERENCE resolves cleanly and MOVES A onto the emptied waypoint:
+      ∧ resolvableB ftBoard [ftMA, ftMB] = true
+      ∧ landMap ftBoard [ftMA, ftMB] ftMA.frm = ftMA.to
+      ∧ (resolveMoves ftBoard [ftMA, ftMB]).cellAt ftMA.frm = Particle.vacuum
+      ∧ (resolveMoves ftBoard [ftMA, ftMB]).cellAt ftMA.to = Particle.attractor
+      ∧ ftBoard.cellAt ftMA.frm = Particle.attractor := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+end FlowThroughGap
+
+/-! ## §8 — Axiom hygiene. Every exported theorem, kernel-clean. -/
 
 #assert_axioms movesWindow_three
 #assert_axioms blockedV2N_of_sat
@@ -381,5 +473,6 @@ end WriteCellV2
 #assert_axioms nonLeaveGateN_of_sat
 #assert_axioms midV2CellN_of_sat
 #assert_axioms writeCellV2N_of_sat
+#assert_axioms flowThroughOcclusionGap_witness_n3
 
 end Dregg2.Circuit.Emit.AutomataflResolveMovesCapstone
