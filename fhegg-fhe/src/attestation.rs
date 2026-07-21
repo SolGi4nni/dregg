@@ -31,7 +31,7 @@ use sha2::{Digest, Sha256, Sha512};
 use crate::bfv_lean::LeanCiphertext;
 use crate::mpc::Crossing;
 use crate::mpc_party::transport::VerifiedPublicCrossingTranscript;
-use crate::mpc_party::{DistributedTranscript, PartyMpcSession};
+use crate::mpc_party::{CertifiedPreprocessingBinding, DistributedTranscript, PartyMpcSession};
 use crate::threshold::quorum::QuorumKeygenSession;
 use crate::threshold::{BfvParams, CollectivePublicKey, KeygenSession};
 
@@ -373,6 +373,10 @@ pub struct ClearingClaim {
     pub ordered_roster: Vec<PartyIdentity>,
     pub bfv: BfvPublicIdentity,
     pub ordered_inputs: Vec<InputDigest>,
+    /// Exact hybrid preprocessing authority, audited batch, and base
+    /// circuit/session digest. `None` explicitly names the legacy trusted
+    /// dealer profile; strict shielded-market verifiers require `Some`.
+    pub preprocessing: Option<CertifiedPreprocessingBinding>,
     pub rule: PublicClearingRule,
     pub transcript_digest: Digest32,
     pub outcome: ClearingOutcomeBinding,
@@ -392,6 +396,13 @@ impl ClearingClaim {
         out.u64(self.ordered_inputs.len() as u64);
         for input in &self.ordered_inputs {
             input.encode(&mut out);
+        }
+        match &self.preprocessing {
+            Some(binding) => {
+                out.u8(1);
+                out.bytes(&binding.canonical_bytes());
+            }
+            None => out.u8(0),
         }
         self.rule.encode(&mut out);
         out.digest(&self.transcript_digest);
@@ -443,6 +454,7 @@ impl ClearingClaim {
             && self.bfv.opening_threshold <= self.bfv.n_parties
             && self.bfv.plaintext_modulus == session.plaintext_modulus()
             && !self.ordered_inputs.is_empty()
+            && self.preprocessing.as_ref() == session.preprocessing_binding()
             && self.rule == PublicClearingRule::for_session(session)
             && self.transcript_digest == transcript_digest(transcript)
             && self.outcome == ClearingOutcomeBinding::from_crossing(crossing)
@@ -1533,6 +1545,7 @@ fn claim_from_context(context: &ExpectedClearingContext<'_>) -> Result<ClearingC
         ordered_roster: context.ordered_roster.to_vec(),
         bfv: context.bfv.clone(),
         ordered_inputs: context.ordered_inputs.to_vec(),
+        preprocessing: context.session.preprocessing_binding().cloned(),
         rule: PublicClearingRule::for_session(context.session),
         transcript_digest: transcript_digest(context.transcript),
         outcome: ClearingOutcomeBinding::from_crossing(context.crossing),

@@ -11,6 +11,10 @@ default = []
 # Dark AMM.  Keep the proof-production tower out of fhegg-fhe's default fast
 # surface; hosts opt into this producer/reference-verifier seam explicitly.
 amm-input-binding = ["dep:dregg-circuit-prove", "dep:bulletproofs-r1cs"]
+# Explicit archive-linked hostile tests for the certified-preprocessing
+# authority. Kept out of the default fast test graph so ordinary fhegg-fhe
+# checks do not link the verified Lean runtime merely to compile.
+verified-pq-runtime-tests = ["dep:dregg-lean-ffi"]
 
 # The NO-VIEWER stage: orders are submitted as TFHE ciphertexts (unary
 # price-bucket increments, Cryptobazaar-style) and the clearing is computed
@@ -57,6 +61,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 # Native-PQ clearing quorum and PartyMPC transport: counted signers and frame
 # endpoints use roster-enrolled ML-DSA/ML-KEM material rather than self-carried keys.
 dregg-pq = { path = "../dregg-pq" }
+dregg-lean-ffi = { path = "../dregg-lean-ffi", optional = true }
 # PartyMPC v3 peer ingress: static Ed25519 identities are converted to a
 # transport-only Curve25519 DH key, expanded with HKDF-SHA256, and carried by
 # standard XChaCha20-Poly1305 AEAD before the outer frame signature.
@@ -149,6 +154,11 @@ required-features = ["amm-input-binding"]
 name = "private_book_canonical_backend"
 path = "tests/private_book_canonical_backend.rs"
 required-features = ["amm-input-binding"]
+
+[[test]]
+name = "party_mpc_certified_preprocessing"
+path = "tests/party_mpc_certified_preprocessing.rs"
+required-features = ["verified-pq-runtime-tests"]
 
 [[test]]
 name = "ristretto_msm_wgpu_required"

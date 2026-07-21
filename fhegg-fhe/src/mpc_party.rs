@@ -51,6 +51,10 @@ use std::fmt;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use dregg_pq::{
+    lean_keygen_core_real_installed, lean_sign_core_real_installed,
+    lean_verify_core_real_installed, ml_dsa_verify, MlDsaKey, ML_DSA_PK_LEN, ML_DSA_SIG_LEN,
+};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use sha2::{Digest, Sha256};
@@ -73,10 +77,11 @@ const MASKED_OPENING_WIRE_BYTES: usize = 8 + 1 + 1;
 /// boundary. This is secret preprocessing, never a coordinator artifact.
 pub const MAX_TRIPLE_MATERIAL_BYTES: usize = 16 * 1024 * 1024;
 const TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI001";
-const CERTIFIED_TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI002";
+const CERTIFIED_TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI003";
 const TRIPLE_MATERIAL_FIXED_BYTES: usize = 8 + 32 + 8 * 7 + 4 + 1;
 const TRIPLE_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-row/v2";
-const TRIPLE_BATCH_CERTIFICATE_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-batch/v2";
+const TRIPLE_BATCH_CERTIFICATE_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-batch/v3";
+const TRIPLE_BATCH_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/triple-batch/ml-dsa/v3";
 const BASE_SESSION_BINDING_DOMAIN: &[u8] = b"fhegg/party-mpc/base-session/v2";
 
 /// Public circuit/session parameters. The nonce is a routing/replay-domain tag,
@@ -94,7 +99,7 @@ pub struct PartyMpcSession {
     plaintext_modulus: u64,
     quorum_timeout: Duration,
     circuit: CircuitKind,
-    preprocessing: Option<PreprocessingBinding>,
+    preprocessing: Option<CertifiedPreprocessingBinding>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +109,7 @@ enum CircuitKind {
     LessThan,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SessionBinding {
     nonce: [u8; 32],
     n_parties: usize,
@@ -112,19 +117,57 @@ struct SessionBinding {
     value_bits: usize,
     plaintext_modulus: u64,
     circuit: CircuitKind,
-    preprocessing: Option<PreprocessingBinding>,
+    preprocessing: Option<CertifiedPreprocessingBinding>,
 }
 
-/// Authority and exact batch named by a certified-preprocessing session.
+/// Hybrid authority and exact batch named by a certified-preprocessing
+/// session.
 ///
-/// The authority is the already-trusted preprocessing boundary; its signature
-/// prevents a router or one custody party from rewriting a row after the
-/// complete GF(2) Beaver relation was checked.  This does not make a malicious
-/// preprocessing authority honest.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PreprocessingBinding {
-    authority_key: [u8; 32],
+/// This value is deliberately public and first-class: receipt construction can
+/// commit the exact preprocessing authority, batch, and base circuit context
+/// instead of hiding them behind a transport-only session hash.  The authority
+/// is still the trusted preprocessing boundary; the hybrid signatures prevent
+/// a router or custody peer from rewriting its audited rows, not a dishonest
+/// authority from generating bad material.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertifiedPreprocessingBinding {
+    base_session_digest: [u8; 32],
+    ed25519_authority_key: [u8; 32],
+    ml_dsa_authority_key: Vec<u8>,
     batch_digest: [u8; 32],
+}
+
+impl CertifiedPreprocessingBinding {
+    pub fn base_session_digest(&self) -> [u8; 32] {
+        self.base_session_digest
+    }
+
+    pub fn ed25519_authority_key(&self) -> [u8; 32] {
+        self.ed25519_authority_key
+    }
+
+    pub fn ml_dsa_authority_key(&self) -> &[u8] {
+        &self.ml_dsa_authority_key
+    }
+
+    pub fn batch_digest(&self) -> [u8; 32] {
+        self.batch_digest
+    }
+
+    /// Canonical public identity used by transport, receipts, and hosted
+    /// verifier configuration.  Version 0 is reserved for the one-byte legacy
+    /// encoding emitted by an uncertified session; version 3 is mandatory
+    /// Ed25519 + ML-DSA-65 certified preprocessing.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(1 + 32 + 32 + 8 + ML_DSA_PK_LEN + 32);
+        encoded.push(3);
+        encoded.extend_from_slice(&self.base_session_digest);
+        encoded.extend_from_slice(&self.ed25519_authority_key);
+        encoded.extend_from_slice(&(self.ml_dsa_authority_key.len() as u64).to_be_bytes());
+        encoded.extend_from_slice(&self.ml_dsa_authority_key);
+        encoded.extend_from_slice(&self.batch_digest);
+        encoded
+    }
 }
 
 impl PartyMpcSession {
@@ -277,22 +320,19 @@ impl PartyMpcSession {
     /// Canonical transport-domain binding for certified Beaver
     /// preprocessing.  `None` identifies the legacy trusted-dealer profile;
     /// callers that require certified preprocessing must reject that profile.
-    pub fn preprocessing_binding(&self) -> Option<([u8; 32], [u8; 32])> {
-        self.preprocessing
-            .map(|binding| (binding.authority_key, binding.batch_digest))
+    pub fn preprocessing_binding(&self) -> Option<&CertifiedPreprocessingBinding> {
+        self.preprocessing.as_ref()
     }
 
-    /// Injective fixed-width encoding for transport/KDF transcripts.  Byte
-    /// zero is the profile tag (`0` legacy, `1` certified), followed by the
-    /// authority key and batch digest or sixty-four zero bytes.
-    pub fn preprocessing_binding_bytes(&self) -> [u8; 65] {
-        let mut encoded = [0u8; 65];
-        if let Some(binding) = self.preprocessing {
-            encoded[0] = 1;
-            encoded[1..33].copy_from_slice(&binding.authority_key);
-            encoded[33..].copy_from_slice(&binding.batch_digest);
-        }
-        encoded
+    /// Injective canonical encoding for transport/KDF and clearing claims.
+    /// The one-byte `0` encoding is the legacy uncertified profile; certified
+    /// sessions carry the complete v3 hybrid authority, exact batch identity,
+    /// and base circuit/session digest.
+    pub fn preprocessing_binding_bytes(&self) -> Vec<u8> {
+        self.preprocessing
+            .as_ref()
+            .map(CertifiedPreprocessingBinding::canonical_bytes)
+            .unwrap_or_else(|| vec![0])
     }
 
     /// Fail closed when a host policy requires relation-audited preprocessing.
@@ -312,7 +352,7 @@ impl PartyMpcSession {
             value_bits: self.value_bits,
             plaintext_modulus: self.plaintext_modulus,
             circuit: self.circuit,
-            preprocessing: self.preprocessing,
+            preprocessing: self.preprocessing.clone(),
         }
     }
 
@@ -342,6 +382,14 @@ pub enum ProtocolPhase {
     InputIngress,
     BeaverGate(usize),
     OutputReveal,
+}
+
+/// Verified native ML-DSA operation required by certified preprocessing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreprocessingPqOperation {
+    Keygen,
+    Sign,
+    Verify,
 }
 
 /// Fail-closed runtime errors. Certified preprocessing checks the authority's
@@ -387,6 +435,9 @@ pub enum PartyMpcError {
     MalformedTripleMaterialWire,
     MissingCertifiedPreprocessing,
     InvalidTripleFormationCertificate,
+    VerifiedPostQuantumRuntimeUnavailable {
+        operation: PreprocessingPqOperation,
+    },
     TripleRelationMismatch {
         gate: usize,
     },
@@ -453,12 +504,14 @@ struct TripleMaterialCertification {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TripleFormationCertificate {
     base_session_digest: [u8; 32],
-    authority_key: [u8; 32],
+    ed25519_authority_key: [u8; 32],
+    ml_dsa_authority_key: Vec<u8>,
     n_parties: usize,
     gates: usize,
     row_commitments: Vec<[u8; 32]>,
     digest: [u8; 32],
-    signature: [u8; 64],
+    ed25519_signature: [u8; 64],
+    ml_dsa_signature: Vec<u8>,
 }
 
 impl TripleFormationCertificate {
@@ -467,7 +520,11 @@ impl TripleFormationCertificate {
     }
 
     pub fn authority_key(&self) -> [u8; 32] {
-        self.authority_key
+        self.ed25519_authority_key
+    }
+
+    pub fn ml_dsa_authority_key(&self) -> &[u8] {
+        &self.ml_dsa_authority_key
     }
 
     pub fn n_parties(&self) -> usize {
@@ -659,11 +716,13 @@ impl TripleMaterial {
         certification: &TripleMaterialCertification,
     ) -> Result<Vec<u8>> {
         let certificate = &certification.certificate;
-        let Some(binding) = self.session.preprocessing else {
+        let Some(binding) = self.session.preprocessing.as_ref() else {
             return Err(PartyMpcError::MissingCertifiedPreprocessing);
         };
-        if binding.authority_key != certificate.authority_key
+        if binding.ed25519_authority_key != certificate.ed25519_authority_key
+            || binding.ml_dsa_authority_key != certificate.ml_dsa_authority_key
             || binding.batch_digest != certificate.digest
+            || binding.base_session_digest != certificate.base_session_digest
             || certificate.base_session_digest != self.session.base_binding_digest()
             || certificate.n_parties != self.session.n_parties
             || certificate.gates != self.session.exact_and_gates()
@@ -690,7 +749,7 @@ impl TripleMaterial {
             return Err(PartyMpcError::InvalidTripleFormationCertificate);
         }
         let encoded_len = 8usize
-            .checked_add(32 + 32 + 8 + 8)
+            .checked_add(32 + 32 + ML_DSA_PK_LEN + 8 + 8)
             .and_then(|len| {
                 certificate
                     .row_commitments
@@ -698,7 +757,7 @@ impl TripleMaterial {
                     .checked_mul(32)
                     .and_then(|rows| len.checked_add(rows))
             })
-            .and_then(|len| len.checked_add(32 + 64 + 8 + 32))
+            .and_then(|len| len.checked_add(32 + 64 + ML_DSA_SIG_LEN + 8 + 32))
             .and_then(|len| len.checked_add(triple_bytes.len()))
             .ok_or(PartyMpcError::ArithmeticOverflow)?;
         if encoded_len > MAX_TRIPLE_MATERIAL_BYTES {
@@ -707,14 +766,16 @@ impl TripleMaterial {
         let mut out = Vec::with_capacity(encoded_len);
         out.extend_from_slice(CERTIFIED_TRIPLE_MATERIAL_MAGIC);
         out.extend_from_slice(&certificate.base_session_digest);
-        out.extend_from_slice(&certificate.authority_key);
+        out.extend_from_slice(&certificate.ed25519_authority_key);
+        out.extend_from_slice(&certificate.ml_dsa_authority_key);
         put_triple_usize(&mut out, certificate.n_parties)?;
         put_triple_usize(&mut out, certificate.gates)?;
         for commitment in &certificate.row_commitments {
             out.extend_from_slice(commitment);
         }
         out.extend_from_slice(&certificate.digest);
-        out.extend_from_slice(&certificate.signature);
+        out.extend_from_slice(&certificate.ed25519_signature);
+        out.extend_from_slice(&certificate.ml_dsa_signature);
         put_triple_usize(&mut out, self.party)?;
         out.extend_from_slice(&certification.row_salt);
         out.extend_from_slice(&triple_bytes);
@@ -727,7 +788,7 @@ impl TripleMaterial {
         expected_party: usize,
         bytes: &[u8],
     ) -> Result<Self> {
-        let Some(expected_binding) = expected_session.preprocessing else {
+        let Some(expected_binding) = expected_session.preprocessing.as_ref() else {
             return Err(PartyMpcError::SessionMismatch);
         };
         let mut input = TripleWireReader::new(bytes);
@@ -735,13 +796,16 @@ impl TripleMaterial {
             return Err(PartyMpcError::MalformedTripleMaterialWire);
         }
         let base_session_digest = input.array::<32>()?;
-        let authority_key = input.array::<32>()?;
+        let ed25519_authority_key = input.array::<32>()?;
+        let ml_dsa_authority_key = input.take(ML_DSA_PK_LEN)?.to_vec();
         let n_parties = input.usize()?;
         let gates = input.usize()?;
         if n_parties != expected_session.n_parties
             || gates != expected_session.exact_and_gates()
             || base_session_digest != expected_session.base_binding_digest()
-            || authority_key != expected_binding.authority_key
+            || base_session_digest != expected_binding.base_session_digest
+            || ed25519_authority_key != expected_binding.ed25519_authority_key
+            || ml_dsa_authority_key != expected_binding.ml_dsa_authority_key
         {
             return Err(PartyMpcError::SessionMismatch);
         }
@@ -757,7 +821,8 @@ impl TripleMaterial {
             })
             .collect::<Result<Vec<[u8; 32]>>>()?;
         let digest = input.array::<32>()?;
-        let signature = input.array::<64>()?;
+        let ed25519_signature = input.array::<64>()?;
+        let ml_dsa_signature = input.take(ML_DSA_SIG_LEN)?.to_vec();
         let party = input.usize()?;
         let row_salt = input.array::<32>()?;
         if party != expected_party || party >= n_parties || digest != expected_binding.batch_digest
@@ -772,12 +837,14 @@ impl TripleMaterial {
         let triples = decode_local_triples(triple_bytes)?;
         let certificate = TripleFormationCertificate {
             base_session_digest,
-            authority_key,
+            ed25519_authority_key,
+            ml_dsa_authority_key,
             n_parties,
             gates,
             row_commitments,
             digest,
-            signature,
+            ed25519_signature,
+            ml_dsa_signature,
         };
         verify_triple_certificate(&certificate)?;
         if triple_row_commitment(base_session_digest, party, gates, row_salt, triple_bytes)
@@ -1456,8 +1523,12 @@ pub fn trusted_dealer_triples<R: Rng>(
 pub fn certified_dealer_triples<R: Rng>(
     base_session: &PartyMpcSession,
     rng: &mut R,
-    authority: &SigningKey,
+    ed25519_authority: &SigningKey,
+    ml_dsa_authority: &MlDsaKey,
 ) -> Result<CertifiedTripleBatch> {
+    require_preprocessing_pq_runtime(PreprocessingPqOperation::Keygen)?;
+    require_preprocessing_pq_runtime(PreprocessingPqOperation::Sign)?;
+    require_preprocessing_pq_runtime(PreprocessingPqOperation::Verify)?;
     if base_session.preprocessing.is_some() {
         return Err(PartyMpcError::InvalidParameters(
             "cannot certify an already-certified preprocessing session",
@@ -1484,7 +1555,11 @@ pub fn certified_dealer_triples<R: Rng>(
     }
 
     let base_session_digest = base_session.base_binding_digest();
-    let authority_key = authority.verifying_key().to_bytes();
+    let ed25519_authority_key = ed25519_authority.verifying_key().to_bytes();
+    let ml_dsa_authority_key = ml_dsa_authority.public_bytes();
+    if ml_dsa_authority_key.len() != ML_DSA_PK_LEN {
+        return Err(PartyMpcError::InvalidTripleFormationCertificate);
+    }
     let mut salts = Vec::with_capacity(n_parties);
     let mut row_commitments = Vec::with_capacity(n_parties);
     for material in &materials {
@@ -1502,26 +1577,42 @@ pub fn certified_dealer_triples<R: Rng>(
     }
     let digest = triple_batch_digest(
         base_session_digest,
-        authority_key,
+        ed25519_authority_key,
+        &ml_dsa_authority_key,
         n_parties,
         gates,
         &row_commitments,
     );
-    let signature = authority.sign(&digest).to_bytes();
+    let authority_message = triple_batch_authority_message(
+        base_session_digest,
+        ed25519_authority_key,
+        &ml_dsa_authority_key,
+        n_parties,
+        gates,
+        &row_commitments,
+    );
+    let ed25519_signature = ed25519_authority.sign(&authority_message).to_bytes();
+    let ml_dsa_signature = ml_dsa_authority
+        .try_sign_deterministic(TRIPLE_BATCH_ML_DSA_CONTEXT, &authority_message)
+        .ok_or(PartyMpcError::InvalidTripleFormationCertificate)?;
     let certificate = TripleFormationCertificate {
         base_session_digest,
-        authority_key,
+        ed25519_authority_key,
+        ml_dsa_authority_key: ml_dsa_authority_key.clone(),
         n_parties,
         gates,
         row_commitments,
         digest,
-        signature,
+        ed25519_signature,
+        ml_dsa_signature,
     };
     verify_triple_certificate(&certificate)?;
 
     let mut session = base_session.clone();
-    session.preprocessing = Some(PreprocessingBinding {
-        authority_key,
+    session.preprocessing = Some(CertifiedPreprocessingBinding {
+        base_session_digest,
+        ed25519_authority_key,
+        ml_dsa_authority_key,
         batch_digest: digest,
     });
     for (material, row_salt) in materials.iter_mut().zip(salts) {
@@ -1586,32 +1677,68 @@ fn triple_row_commitment(
 
 fn triple_batch_digest(
     base_session_digest: [u8; 32],
-    authority_key: [u8; 32],
+    ed25519_authority_key: [u8; 32],
+    ml_dsa_authority_key: &[u8],
     n_parties: usize,
     gates: usize,
     row_commitments: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update((TRIPLE_BATCH_CERTIFICATE_DOMAIN.len() as u64).to_be_bytes());
-    hash.update(TRIPLE_BATCH_CERTIFICATE_DOMAIN);
-    hash.update(base_session_digest);
-    hash.update(authority_key);
-    hash.update((n_parties as u64).to_be_bytes());
-    hash.update((gates as u64).to_be_bytes());
-    hash.update((row_commitments.len() as u64).to_be_bytes());
+    Sha256::digest(triple_batch_authority_message(
+        base_session_digest,
+        ed25519_authority_key,
+        ml_dsa_authority_key,
+        n_parties,
+        gates,
+        row_commitments,
+    ))
+    .into()
+}
+
+fn triple_batch_authority_message(
+    base_session_digest: [u8; 32],
+    ed25519_authority_key: [u8; 32],
+    ml_dsa_authority_key: &[u8],
+    n_parties: usize,
+    gates: usize,
+    row_commitments: &[[u8; 32]],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        8 + TRIPLE_BATCH_CERTIFICATE_DOMAIN.len()
+            + 32
+            + 32
+            + 8
+            + ml_dsa_authority_key.len()
+            + 8
+            + 8
+            + 8
+            + row_commitments.len() * 32,
+    );
+    out.extend_from_slice(&(TRIPLE_BATCH_CERTIFICATE_DOMAIN.len() as u64).to_be_bytes());
+    out.extend_from_slice(TRIPLE_BATCH_CERTIFICATE_DOMAIN);
+    out.extend_from_slice(&base_session_digest);
+    out.extend_from_slice(&ed25519_authority_key);
+    out.extend_from_slice(&(ml_dsa_authority_key.len() as u64).to_be_bytes());
+    out.extend_from_slice(ml_dsa_authority_key);
+    out.extend_from_slice(&(n_parties as u64).to_be_bytes());
+    out.extend_from_slice(&(gates as u64).to_be_bytes());
+    out.extend_from_slice(&(row_commitments.len() as u64).to_be_bytes());
     for commitment in row_commitments {
-        hash.update(commitment);
+        out.extend_from_slice(commitment);
     }
-    hash.finalize().into()
+    out
 }
 
 fn verify_triple_certificate(certificate: &TripleFormationCertificate) -> Result<()> {
+    require_preprocessing_pq_runtime(PreprocessingPqOperation::Verify)?;
     if certificate.n_parties < 2
         || certificate.gates == 0
+        || certificate.ml_dsa_authority_key.len() != ML_DSA_PK_LEN
+        || certificate.ml_dsa_signature.len() != ML_DSA_SIG_LEN
         || certificate.row_commitments.len() != certificate.n_parties
         || triple_batch_digest(
             certificate.base_session_digest,
-            certificate.authority_key,
+            certificate.ed25519_authority_key,
+            &certificate.ml_dsa_authority_key,
             certificate.n_parties,
             certificate.gates,
             &certificate.row_commitments,
@@ -1619,14 +1746,44 @@ fn verify_triple_certificate(certificate: &TripleFormationCertificate) -> Result
     {
         return Err(PartyMpcError::InvalidTripleFormationCertificate);
     }
-    let authority = VerifyingKey::from_bytes(&certificate.authority_key)
+    let authority_message = triple_batch_authority_message(
+        certificate.base_session_digest,
+        certificate.ed25519_authority_key,
+        &certificate.ml_dsa_authority_key,
+        certificate.n_parties,
+        certificate.gates,
+        &certificate.row_commitments,
+    );
+    let authority = VerifyingKey::from_bytes(&certificate.ed25519_authority_key)
         .map_err(|_| PartyMpcError::InvalidTripleFormationCertificate)?;
     authority
         .verify_strict(
-            &certificate.digest,
-            &ed25519_dalek::Signature::from_bytes(&certificate.signature),
+            &authority_message,
+            &ed25519_dalek::Signature::from_bytes(&certificate.ed25519_signature),
         )
-        .map_err(|_| PartyMpcError::InvalidTripleFormationCertificate)
+        .map_err(|_| PartyMpcError::InvalidTripleFormationCertificate)?;
+    if !ml_dsa_verify(
+        &certificate.ml_dsa_authority_key,
+        TRIPLE_BATCH_ML_DSA_CONTEXT,
+        &authority_message,
+        &certificate.ml_dsa_signature,
+    ) {
+        return Err(PartyMpcError::InvalidTripleFormationCertificate);
+    }
+    Ok(())
+}
+
+fn require_preprocessing_pq_runtime(operation: PreprocessingPqOperation) -> Result<()> {
+    let installed = match operation {
+        PreprocessingPqOperation::Keygen => lean_keygen_core_real_installed(),
+        PreprocessingPqOperation::Sign => lean_sign_core_real_installed(),
+        PreprocessingPqOperation::Verify => lean_verify_core_real_installed(),
+    };
+    if installed {
+        Ok(())
+    } else {
+        Err(PartyMpcError::VerifiedPostQuantumRuntimeUnavailable { operation })
+    }
 }
 
 /// Execute one party's circuit. This function reconstructs neither input nor

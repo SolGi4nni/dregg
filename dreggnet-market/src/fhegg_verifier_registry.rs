@@ -34,6 +34,8 @@ use fhegg_fhe::attestation::{
     BfvPublicIdentity, InputDigest, NativePqAuthenticatedQuorumVerifier, NativePqPartyPublicKey,
 };
 #[cfg(feature = "private-attested-clearing")]
+use fhegg_fhe::mpc_party::CertifiedPreprocessingBinding;
+#[cfg(feature = "private-attested-clearing")]
 use fhegg_fhe::private_book_relation::PrivateBookCiphertexts;
 #[cfg(feature = "private-attested-clearing")]
 use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey};
@@ -273,6 +275,7 @@ pub struct PrivateBfvHostedVerifierConfig {
     public_key: CollectivePublicKey,
     ciphertexts: PrivateBookCiphertexts,
     source_inputs: Vec<InputDigest>,
+    required_preprocessing: Option<CertifiedPreprocessingBinding>,
     required_tail_inputs: Vec<InputDigest>,
 }
 
@@ -323,6 +326,7 @@ impl PrivateBfvHostedVerifierConfig {
             public_key,
             ciphertexts,
             source_inputs,
+            required_preprocessing: None,
             required_tail_inputs: Vec::new(),
         }
     }
@@ -342,6 +346,7 @@ impl PrivateBfvHostedVerifierConfig {
         public_key: CollectivePublicKey,
         ciphertexts: PrivateBookCiphertexts,
         source_inputs: Vec<InputDigest>,
+        required_preprocessing: CertifiedPreprocessingBinding,
         required_tail_inputs: Vec<InputDigest>,
     ) -> Self {
         Self {
@@ -356,6 +361,7 @@ impl PrivateBfvHostedVerifierConfig {
             public_key,
             ciphertexts,
             source_inputs,
+            required_preprocessing: Some(required_preprocessing),
             required_tail_inputs,
         }
     }
@@ -397,6 +403,9 @@ impl PrivateBfvHostedVerifierConfig {
                     self.public_key.clone(),
                     self.ciphertexts.clone(),
                     self.source_inputs.clone(),
+                    self.required_preprocessing
+                        .clone()
+                        .expect("native-PQ hosted config pins certified preprocessing"),
                     self.required_tail_inputs.clone(),
                 )?
             }

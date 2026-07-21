@@ -50,6 +50,7 @@ use fhegg_fhe::attestation::{
     InputDigest, InputDigestKind, NativePqAuthenticatedQuorumVerifier, NativePqPartyClaimSignature,
     PartyClaimSignature, QuorumVerifierError,
 };
+use fhegg_fhe::mpc_party::CertifiedPreprocessingBinding;
 use fhegg_fhe::private_book_bfv_zk::{PrivateBookBfvZkProof, verify_private_book_bfv_zk};
 use fhegg_fhe::private_book_relation::{
     PRIVATE_BOOK_BFV_CODEC_ID, PRIVATE_BOOK_PUBLIC_BOUND, PrivateBookCiphertexts,
@@ -417,6 +418,10 @@ pub struct PrivateBfvAttestedClearingVerifier {
     /// Deterministically derived packed homomorphic fold of the exact proof
     /// rows. Present iff this verifier uses the live source-bound layout.
     packed_fold_input: Option<InputDigest>,
+    /// Independently provisioned hybrid preprocessing authority, audited
+    /// batch, and base circuit/session digest. Strict native-PQ settlement
+    /// compares the claim's first-class binding against this exact value.
+    required_preprocessing: Option<CertifiedPreprocessingBinding>,
     /// `Some` selects an exact tail after the packed fold (or proof prefix for
     /// proof-only mode). Native-PQ hosted settlement uses this to pin the
     /// certified-preprocessing authority/batch and source-board commitment.
@@ -446,6 +451,7 @@ impl PrivateBfvAttestedClearingVerifier {
             params,
             public_key,
             ciphertexts,
+            None,
             None,
             None,
         )
@@ -481,6 +487,7 @@ impl PrivateBfvAttestedClearingVerifier {
             ciphertexts,
             Some(source_inputs),
             None,
+            None,
         )
     }
 
@@ -504,6 +511,7 @@ impl PrivateBfvAttestedClearingVerifier {
             public_key,
             ciphertexts,
             None,
+            None,
             Some(Vec::new()),
         )
     }
@@ -519,6 +527,7 @@ impl PrivateBfvAttestedClearingVerifier {
         public_key: CollectivePublicKey,
         ciphertexts: PrivateBookCiphertexts,
         source_inputs: Vec<InputDigest>,
+        required_preprocessing: CertifiedPreprocessingBinding,
         required_tail_inputs: Vec<InputDigest>,
     ) -> Result<Self, PrivateBfvAttestedVerifierConfigError> {
         Self::new_inner(
@@ -530,6 +539,7 @@ impl PrivateBfvAttestedClearingVerifier {
             public_key,
             ciphertexts,
             Some(source_inputs),
+            Some(required_preprocessing),
             Some(required_tail_inputs),
         )
     }
@@ -544,6 +554,7 @@ impl PrivateBfvAttestedClearingVerifier {
         public_key: CollectivePublicKey,
         ciphertexts: PrivateBookCiphertexts,
         source_inputs: Option<Vec<InputDigest>>,
+        required_preprocessing: Option<CertifiedPreprocessingBinding>,
         required_tail_inputs: Option<Vec<InputDigest>>,
     ) -> Result<Self, PrivateBfvAttestedVerifierConfigError> {
         validate_configuration(&policy, &params, &public_key, &ciphertexts)?;
@@ -569,6 +580,7 @@ impl PrivateBfvAttestedClearingVerifier {
             &row_inputs,
             source_inputs.as_deref(),
             packed_fold_input,
+            required_preprocessing.as_ref(),
             required_tail_inputs.as_deref(),
         );
         Ok(Self {
@@ -582,6 +594,7 @@ impl PrivateBfvAttestedClearingVerifier {
             row_inputs,
             source_inputs,
             packed_fold_input,
+            required_preprocessing,
             required_tail_inputs,
             verifier_id,
         })
@@ -825,6 +838,11 @@ impl PrivateBfvAttestedClearingVerifier {
     }
 
     fn claim_matches_public(&self, claim: &ClearingClaim) -> Result<(), &'static str> {
+        if self.required_preprocessing.as_ref() != claim.preprocessing.as_ref() {
+            return Err(
+                "claim preprocessing authority/batch/circuit differs from the verifier pin",
+            );
+        }
         if claim.protocol_id != CLEARING_ATTESTATION_PROTOCOL_ID {
             return Err("protocol id is not fhEgg clearing v1");
         }
@@ -1131,6 +1149,7 @@ fn derive_verifier_id(
     row_inputs: &[InputDigest; dark_bazaar_private::ORDER_COUNT],
     source_inputs: Option<&[InputDigest]>,
     packed_fold_input: Option<InputDigest>,
+    required_preprocessing: Option<&CertifiedPreprocessingBinding>,
     required_tail_inputs: Option<&[InputDigest]>,
 ) -> Digest32 {
     let mut hasher = blake3::Hasher::new_derive_key(VERIFIER_ID_DOMAIN);
@@ -1168,6 +1187,17 @@ fn derive_verifier_id(
         None => {
             debug_assert!(packed_fold_input.is_none());
             hasher.update(b"proof-only-legacy-layout");
+        }
+    }
+    match required_preprocessing {
+        Some(binding) => {
+            hasher.update(&[1]);
+            let bytes = binding.canonical_bytes();
+            hasher.update(&(bytes.len() as u64).to_be_bytes());
+            hasher.update(&bytes);
+        }
+        None => {
+            hasher.update(&[0]);
         }
     }
     match required_tail_inputs {

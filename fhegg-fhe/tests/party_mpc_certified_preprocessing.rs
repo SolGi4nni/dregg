@@ -7,22 +7,85 @@
 //! equivocate one row into another certified session before the MPC output is
 //! formed.
 
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+use dregg_pq::{
+    install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
+    install_verified_mldsa_verify_core, MlDsaKey, MlDsaKeygenCoreRealInstall,
+    MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall, ML_DSA_PK_LEN,
+};
 use ed25519_dalek::SigningKey;
+use fhegg_fhe::attestation::{
+    AttestationError, AttestedClearingReceipt, BfvPublicIdentity, ComputationIntegrityEvidence,
+    ComputationIntegrityVerifier, ExpectedClearingContext, InMemoryReplayGuard, InputDigest,
+    PartyIdentity,
+};
+use fhegg_fhe::mpc::Crossing;
 use fhegg_fhe::mpc_party::transport::{
     EqualityPartyMachine, EqualityTransportError, EqualityTransportRoster,
 };
 use fhegg_fhe::mpc_party::{
-    certified_dealer_triples, local_channels, run_party_equality, PartyEqualityInput,
-    PartyMpcError, PartyMpcSession, TripleMaterial,
+    certified_dealer_triples, local_channels, run_party_equality, simulate_public_transcript,
+    PartyEqualityInput, PartyMpcError, PartyMpcSession, PreprocessingPqOperation, TripleMaterial,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 const N: usize = 3;
 const MODULUS: u64 = 257;
+
+struct AcceptExactEvidence([u8; 32]);
+
+impl ComputationIntegrityVerifier for AcceptExactEvidence {
+    fn verifier_id(&self) -> [u8; 32] {
+        self.0
+    }
+
+    fn verify(&self, _claim_digest: &[u8; 32], evidence: &[u8]) -> bool {
+        evidence == b"exact-certified-preprocessing"
+    }
+}
+
+fn in_verified_pq_child(test_name: &str, child_marker: &str, body: impl FnOnce()) {
+    if std::env::var_os(child_marker).is_some() {
+        assert!(
+            std::env::var_os("DREGG_ALLOW_UNAUDITED_PQ").is_none(),
+            "hybrid certificate tests must use the verified runtime"
+        );
+        assert!(matches!(
+            install_verified_mldsa_keygen_core_real(
+                dregg_lean_ffi::mldsa_keygen_real_core_available,
+                |wire| dregg_lean_ffi::shadow_mldsa_keygen_real(wire).ok(),
+            ),
+            MlDsaKeygenCoreRealInstall::Installed | MlDsaKeygenCoreRealInstall::AlreadyInstalled
+        ));
+        assert!(matches!(
+            install_verified_mldsa_sign_core_real(
+                dregg_lean_ffi::fips204_sign_real_core_available,
+                |wire| dregg_lean_ffi::shadow_fips204_sign_real(wire).ok(),
+            ),
+            MlDsaSignCoreRealInstall::Installed | MlDsaSignCoreRealInstall::AlreadyInstalled
+        ));
+        assert!(matches!(
+            install_verified_mldsa_verify_core(
+                dregg_lean_ffi::fips204_verify_real_core_available,
+                |wire| dregg_lean_ffi::shadow_fips204_verify_real(wire).ok(),
+            ),
+            MlDsaVerifyCoreInstall::Installed | MlDsaVerifyCoreInstall::AlreadyInstalled
+        ));
+        body();
+        return;
+    }
+    let status = Command::new(std::env::current_exe().expect("current test binary"))
+        .args(["--exact", test_name, "--nocapture"])
+        .env(child_marker, "1")
+        .env_remove("DREGG_ALLOW_UNAUDITED_PQ")
+        .status()
+        .expect("spawn isolated hybrid-certificate test child");
+    assert!(status.success(), "hybrid-certificate test child failed");
+}
 
 fn base_session(tag: u8) -> PartyMpcSession {
     PartyMpcSession::equality([tag; 32], N, 8, MODULUS, Duration::from_secs(2)).unwrap()
@@ -33,11 +96,26 @@ fn certified_batch(
     seed: u64,
 ) -> fhegg_fhe::mpc_party::CertifiedTripleBatch {
     let authority = SigningKey::from_bytes(&[0x41; 32]);
-    certified_dealer_triples(base, &mut StdRng::seed_from_u64(seed), &authority).unwrap()
+    let ml_dsa_authority = MlDsaKey::from_ed25519_seed(&authority.to_bytes());
+    certified_dealer_triples(
+        base,
+        &mut StdRng::seed_from_u64(seed),
+        &authority,
+        &ml_dsa_authority,
+    )
+    .unwrap()
 }
 
 #[test]
 fn certified_rows_complete_honest_equality_and_bind_the_exact_batch() {
+    in_verified_pq_child(
+        "certified_rows_complete_honest_equality_and_bind_the_exact_batch",
+        "FHEGG_CERTIFIED_PREPROCESSING_HONEST_CHILD",
+        certified_rows_complete_honest_equality_and_bind_the_exact_batch_body,
+    );
+}
+
+fn certified_rows_complete_honest_equality_and_bind_the_exact_batch_body() {
     let base = base_session(0x71);
     let batch = certified_batch(&base, 0x7172);
     let (session, certificate, materials) = batch.into_parts();
@@ -46,7 +124,7 @@ fn certified_rows_complete_honest_equality_and_bind_the_exact_batch() {
     assert_eq!(certificate.gates(), session.exact_and_gates());
     assert_eq!(certificate.row_commitments().len(), N);
     assert_eq!(
-        session.preprocessing_binding().unwrap().1,
+        session.preprocessing_binding().unwrap().batch_digest(),
         certificate.digest()
     );
 
@@ -95,6 +173,14 @@ fn certified_rows_complete_honest_equality_and_bind_the_exact_batch() {
 
 #[test]
 fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate() {
+    in_verified_pq_child(
+        "malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate",
+        "FHEGG_CERTIFIED_PREPROCESSING_HOSTILE_CHILD",
+        malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body,
+    );
+}
+
+fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body() {
     let base_a = base_session(0x81);
     let batch_a = certified_batch(&base_a, 0x8182);
     let (session_a, certificate_a, materials_a) = batch_a.into_parts();
@@ -114,13 +200,27 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate() {
         Err(PartyMpcError::InvalidTripleFormationCertificate)
     ));
 
-    // The authority signature is checked independently of the row hash.
-    let signature_offset = 8 + 32 + 32 + 8 + 8 + N * 32 + 32;
+    // Both authority signatures are mandatory and checked independently of
+    // the row hash. There is no Ed-only downgrade for a v3 custody wire.
+    let ed25519_signature_offset = 8 + 32 + 32 + ML_DSA_PK_LEN + 8 + 8 + N * 32 + 32;
     let mut forged_certificate = wires_a[0].clone();
-    forged_certificate[signature_offset] ^= 1;
+    forged_certificate[ed25519_signature_offset] ^= 1;
     assert!(matches!(
         TripleMaterial::from_wire_bytes(&session_a, 0, &forged_certificate),
         Err(PartyMpcError::InvalidTripleFormationCertificate)
+    ));
+    let mut missing_pq_half = wires_a[0].clone();
+    missing_pq_half[ed25519_signature_offset + 64] ^= 1;
+    assert!(matches!(
+        TripleMaterial::from_wire_bytes(&session_a, 0, &missing_pq_half),
+        Err(PartyMpcError::InvalidTripleFormationCertificate)
+    ));
+    let mut downgraded_v2 = wires_a[0].clone();
+    downgraded_v2[..8].copy_from_slice(b"FHTRI002");
+    assert!(matches!(
+        TripleMaterial::from_wire_bytes(&session_a, 0, &downgraded_v2),
+        Err(PartyMpcError::MissingCertifiedPreprocessing)
+            | Err(PartyMpcError::MalformedTripleMaterialWire)
     ));
 
     assert!(matches!(
@@ -146,6 +246,29 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate() {
         session_a.preprocessing_binding(),
         same_context_session.preprocessing_binding()
     );
+
+    // The exact same random row stream signed by a different paired authority
+    // is a different session. A valid attacker certificate cannot substitute
+    // for the relying party's pinned hybrid authority.
+    let attacker_ed25519 = SigningKey::from_bytes(&[0x42; 32]);
+    let attacker_ml_dsa = MlDsaKey::from_ed25519_seed(&attacker_ed25519.to_bytes());
+    let attacker_batch = certified_dealer_triples(
+        &base_a,
+        &mut StdRng::seed_from_u64(0x8182),
+        &attacker_ed25519,
+        &attacker_ml_dsa,
+    )
+    .unwrap();
+    let (attacker_session, _, mut attacker_materials) = attacker_batch.into_parts();
+    assert_ne!(
+        session_a.preprocessing_binding(),
+        attacker_session.preprocessing_binding()
+    );
+    let attacker_wire = attacker_materials.remove(0).to_wire_bytes().unwrap();
+    assert!(matches!(
+        TripleMaterial::from_wire_bytes(&session_a, 0, &attacker_wire),
+        Err(PartyMpcError::SessionMismatch)
+    ));
     let input_a =
         PartyEqualityInput::new(&session_a, 0, 20, 10, &mut StdRng::seed_from_u64(0x8485)).unwrap();
     let (_coordinator, mut endpoints) = local_channels(&session_a);
@@ -165,6 +288,14 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate() {
 
 #[test]
 fn authenticated_peer_frames_cannot_cross_certified_batch_domains() {
+    in_verified_pq_child(
+        "authenticated_peer_frames_cannot_cross_certified_batch_domains",
+        "FHEGG_CERTIFIED_PREPROCESSING_TRANSPORT_CHILD",
+        authenticated_peer_frames_cannot_cross_certified_batch_domains_body,
+    );
+}
+
+fn authenticated_peer_frames_cannot_cross_certified_batch_domains_body() {
     let base = base_session(0x91);
     let (session_a, _, mut materials_a) = certified_batch(&base, 0x9192).into_parts();
     let (session_b, _, mut materials_b) = certified_batch(&base, 0x9293).into_parts();
@@ -226,4 +357,143 @@ fn authenticated_peer_frames_cannot_cross_certified_batch_domains() {
         party_b.accept_frame(frame_for_b.as_bytes()),
         Err(EqualityTransportError::SessionMismatch)
     );
+}
+
+#[test]
+fn receipt_claim_refuses_authority_or_batch_substitution_and_replay() {
+    in_verified_pq_child(
+        "receipt_claim_refuses_authority_or_batch_substitution_and_replay",
+        "FHEGG_CERTIFIED_PREPROCESSING_RECEIPT_CHILD",
+        receipt_claim_refuses_authority_or_batch_substitution_and_replay_body,
+    );
+}
+
+fn receipt_claim_refuses_authority_or_batch_substitution_and_replay_body() {
+    let base = PartyMpcSession::new([0xb1; 32], N, 2, 8, MODULUS, Duration::from_secs(2)).unwrap();
+    let (session_a, _, _) = certified_batch(&base, 0xb2b3).into_parts();
+    let (session_b, _, _) = certified_batch(&base, 0xb3b4).into_parts();
+    let crossing = Crossing {
+        p_star: Some(1),
+        v_star: 3,
+    };
+    let transcript_a =
+        simulate_public_transcript(&crossing, &session_a, &mut StdRng::seed_from_u64(0xb4b5))
+            .unwrap();
+    let transcript_b =
+        simulate_public_transcript(&crossing, &session_b, &mut StdRng::seed_from_u64(0xb4b5))
+            .unwrap();
+    let roster = (0..N)
+        .map(|party| PartyIdentity::from_public_identity_bytes(&[0xc0 + party as u8; 32]))
+        .collect::<Vec<_>>();
+    let bfv = BfvPublicIdentity {
+        n_parties: N as u64,
+        opening_threshold: N as u64,
+        degree: 8,
+        moduli_digest: [0xc4; 32],
+        plaintext_modulus: MODULUS,
+        crp_seed: [0xc5; 32],
+        collective_public_key_digest: [0xc6; 32],
+    };
+    let inputs = vec![InputDigest::commitment([0xc7; 32])];
+    let context_a = ExpectedClearingContext {
+        session: &session_a,
+        ordered_roster: &roster,
+        bfv: &bfv,
+        ordered_inputs: &inputs,
+        transcript: &transcript_a,
+        crossing: &crossing,
+    };
+    let context_b = ExpectedClearingContext {
+        session: &session_b,
+        ordered_roster: &roster,
+        bfv: &bfv,
+        ordered_inputs: &inputs,
+        transcript: &transcript_b,
+        crossing: &crossing,
+    };
+    let verifier = AcceptExactEvidence([0xc8; 32]);
+    let receipt = AttestedClearingReceipt::issue(
+        &context_a,
+        ComputationIntegrityEvidence::External {
+            verifier_id: verifier.verifier_id(),
+            evidence: b"exact-certified-preprocessing".to_vec(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        receipt.claim.preprocessing.as_ref(),
+        session_a.preprocessing_binding()
+    );
+    assert_eq!(
+        receipt.verify_binding(&context_b),
+        Err(AttestationError::BindingMismatch),
+        "a fresh certified batch under the same nonce must alter the canonical claim"
+    );
+
+    let attacker_ed25519 = SigningKey::from_bytes(&[0xc9; 32]);
+    let attacker_ml_dsa = MlDsaKey::from_ed25519_seed(&attacker_ed25519.to_bytes());
+    let (attacker_session, _, _) = certified_dealer_triples(
+        &base,
+        &mut StdRng::seed_from_u64(0xb2b3),
+        &attacker_ed25519,
+        &attacker_ml_dsa,
+    )
+    .unwrap()
+    .into_parts();
+    let attacker_transcript = simulate_public_transcript(
+        &crossing,
+        &attacker_session,
+        &mut StdRng::seed_from_u64(0xb4b5),
+    )
+    .unwrap();
+    let attacker_context = ExpectedClearingContext {
+        session: &attacker_session,
+        ordered_roster: &roster,
+        bfv: &bfv,
+        ordered_inputs: &inputs,
+        transcript: &attacker_transcript,
+        crossing: &crossing,
+    };
+    assert_eq!(
+        receipt.verify_binding(&attacker_context),
+        Err(AttestationError::BindingMismatch),
+        "a valid certificate from an unpinned authority must alter the canonical claim"
+    );
+
+    let mut replay = InMemoryReplayGuard::default();
+    receipt
+        .verify_full(&context_a, &verifier, &mut replay)
+        .unwrap();
+    assert_eq!(
+        receipt.verify_full(&context_a, &verifier, &mut replay),
+        Err(AttestationError::ReplayDetected)
+    );
+}
+
+#[test]
+fn certified_generator_refuses_the_explicit_unaudited_pq_escape_hatch() {
+    const MARKER: &str = "FHEGG_CERTIFIED_PREPROCESSING_NO_CORE_CHILD";
+    const TEST: &str = "certified_generator_refuses_the_explicit_unaudited_pq_escape_hatch";
+    if std::env::var_os(MARKER).is_some() {
+        assert!(std::env::var_os("DREGG_ALLOW_UNAUDITED_PQ").is_some());
+        let base = base_session(0xa1);
+        let ed25519 = SigningKey::from_bytes(&[0xa2; 32]);
+        // The explicit test escape hatch permits construction of the fallback
+        // key, but the protocol authority must still refuse before signing.
+        let ml_dsa = MlDsaKey::from_ed25519_seed(&ed25519.to_bytes());
+        assert!(matches!(
+            certified_dealer_triples(&base, &mut StdRng::seed_from_u64(0xa3a4), &ed25519, &ml_dsa,),
+            Err(PartyMpcError::VerifiedPostQuantumRuntimeUnavailable {
+                operation: PreprocessingPqOperation::Keygen,
+            })
+        ));
+        return;
+    }
+    let status = Command::new(std::env::current_exe().expect("current test binary"))
+        .args(["--exact", TEST, "--nocapture"])
+        .env(MARKER, "1")
+        .env("DREGG_ALLOW_UNAUDITED_PQ", "1")
+        .status()
+        .expect("spawn isolated no-core refusal child");
+    assert!(status.success(), "no-core refusal child failed");
 }
