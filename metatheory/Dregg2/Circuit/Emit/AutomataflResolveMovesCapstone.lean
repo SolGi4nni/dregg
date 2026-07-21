@@ -1652,6 +1652,115 @@ theorem writeCellV4N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) m
 
 end V4Extract
 
+/-! ## §20 — THE SEVENTH WOUND: the VACUUM-FAR 2-CYCLE (README 3.5b), which V4's `cTwoCyc` MISSES.
+
+The V4 `cTwoCyc` detector (§19) fires on `eqAb · eqBa · ¬occIncl1 · ¬occIncl0 · anz · bnz` — it requires
+BOTH sources to carry (`anz = carSa`, `bnz = carSb`). But the VALIDATED-game `twoCyc` (`AutomataflRules`
+line 214, ruling C / README 3.5b) fires on the mere EXISTENCE of the two reversed unblocked edges:
+`E sa = some sb` (needs `¬BA`) and `E sb = some sa` (needs `da = sb`, `db = sa`, `¬BB`) — with NO
+occupancy requirement. `edgeOf` is blind to `carAt` of a source, so a move FROM a VACUUM square still
+contributes its edge. So on the README's own named case 3.5b — *"a move from an empty square directly
+back to some source square — the piece simply doesn't move"* — the far source `sb` is VACUUM
+(`carSb = false`, so `bnz = 0`), yet the reference STILL detects the 2-cycle and STAYS A
+(`landMap sa = sa`, `resolveMoves` keeps A). The circuit's `cTwoCyc` reads `bnz = 0` ⇒ `cTwoCyc = 0`, so
+`cCarryV4 0 = cCarryV3 0 · ¬cTwoCyc = 1` (A's seed carry `cCv2 0 = surv · carSa · ¬BA = 1` survives the
+corrected non-leaver because the landing `sb` is VACUUM, `cLandNzV2 0 = carAt sb = 0`) — the circuit
+MOVES A into the empty `sb`. So `codeToParticle (cMidV4 sa) = (resolveMoves …).cellAt sa` is FALSE at
+`sa` for this witness: LHS `= vacuum` (A vacated), RHS `= attractor` (A kept). The full landing
+correspondence is therefore NOT provable at the 2-cycle arm against THIS descriptor — the fix is a
+CHUNK-7 emitter obligation: `cTwoCyc` must DROP the `anz · bnz` conjuncts and fire on
+`eqAb · eqBa · ¬occIncl1 · ¬occIncl0` alone (exactly the reference `twoCyc` firing condition — no
+occupancy). The witness below is its executable falsifier, `decide`d entirely on the reference
+semantics, and goes red the moment the fixed descriptor keeps A on the vacuum-far 2-cycle. -/
+section VacuumTwoCycleWound
+open Dregg2.Games.AutomataflRules (blockedB carAt landMap resolvableB resolveMoves)
+
+/-- 3×3 witness. A (attractor) at `(0,0)` wants `(1,0)`; the phantom move B goes `(1,0) → (0,0)` FROM AN
+EMPTY square (`(1,0)` is vacuum — the ONLY board piece is A at `(0,0)`). Both legal, distinct sources,
+distinct raw destinations, both unblocked, forming the symmetric 2-cycle (`da = sb`, `db = sa`) — but
+`carSb = false` (the far source is vacuum), so the V4 `cTwoCyc` (which requires `bnz = carSb = 1`) does
+NOT fire. The automaton sits at `(2,2)`, off both moves. -/
+def vtcBoard : Board :=
+  Dregg2.Games.Automatafl.mkBoard 3 [(⟨0, 0⟩, Particle.attractor)] ⟨2, 2⟩
+def vtcMA : Move := Move.mk 0 ⟨0, 0⟩ ⟨1, 0⟩
+def vtcMB : Move := Move.mk 1 ⟨1, 0⟩ ⟨0, 0⟩
+
+/-- **THE VACUUM-FAR 2-CYCLE IS NOT EMPTY, AT `n = 3`, AND V4 GETS IT WRONG.** Both moves are legal with
+distinct sources and distinct raw destinations, both unblocked, forming the symmetric 2-cycle
+(`da = sb`, `db = sa`). A carries (`carSa = true`); the far source is VACUUM (`carSb = false`, the
+distinguishing clause: the V4 `cTwoCyc = … · anz · bnz` needs `bnz = carSb = 1`, which FAILS here). The
+REFERENCE keeps A in place (`landMap sa = sa`, `resolvableB = true`, `resolveMoves` keeps A on `sa` and
+leaves `sb` vacuum — ruling C / README 3.5b), where the descriptor's V4 surface (with `cTwoCyc = 0`)
+CARRIES A onto the empty `sb`. Every clause `decide`d on the reference semantics. -/
+theorem vacuumTwoCycleStay_witness_n3 :
+    MoveValid vtcBoard vtcMA ∧ MoveValid vtcBoard vtcMB
+      ∧ vtcMA.frm ≠ vtcMB.frm ∧ vtcMA.to ≠ vtcMB.to
+      ∧ vtcMA.frm ≠ vtcMA.to ∧ vtcMB.frm ≠ vtcMB.to
+      -- the symmetric 2-cycle, both unblocked:
+      ∧ vtcMA.to = vtcMB.frm ∧ vtcMB.to = vtcMA.frm
+      ∧ blockedB vtcBoard [vtcMA, vtcMB] vtcMA = false
+      ∧ blockedB vtcBoard [vtcMA, vtcMB] vtcMB = false
+      -- A carries, but the FAR source is VACUUM (the clause the V4 `cTwoCyc` requires and this row lacks):
+      ∧ carAt vtcBoard vtcMA.frm = true
+      ∧ carAt vtcBoard vtcMB.frm = false
+      -- the REFERENCE STAYS A (ruling C, README 3.5b — the reversed edges exist despite the vacuum source):
+      ∧ landMap vtcBoard [vtcMA, vtcMB] vtcMA.frm = vtcMA.frm
+      ∧ resolvableB vtcBoard [vtcMA, vtcMB] = true
+      ∧ (resolveMoves vtcBoard [vtcMA, vtcMB]).cellAt vtcMA.frm = Particle.attractor
+      ∧ (resolveMoves vtcBoard [vtcMA, vtcMB]).cellAt vtcMB.frm = Particle.vacuum
+      ∧ vtcBoard.cellAt vtcMA.frm = Particle.attractor := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+end VacuumTwoCycleWound
+
+/-! ## §21 — WHY the FORK/COLLIDE reference is `roundStep`, NOT raw `resolveMoves`.
+
+The unconditional capstone quantifies over rows where the two decoded moves FORK (`sa = sb`) or COLLIDE
+(`da = db`, both sources non-vacuum). On such a row the descriptor sets `surv = 0` (`selectionN_of_sat`'s
+`survIff`), so every carry vanishes and `cWBoardV4 = old` — the emitted MID board is the OLD board
+(identity). The task framed the matching reference as `resolveMoves b [ma, mb] = b`, but that is FALSE:
+the game's `AutomataflRules.roundStep` detects the fork/collide clash FIRST (`clashCoords`, via the
+SYNTACTIC `forkAt`/`collideAt` — blocking-INDEPENDENT) and re-enters the round with the board UNCHANGED
+(`.again { board := rs.board, … }`); it NEVER calls `resolveMoves` on a clashing round. Raw
+`resolveMoves` on such a pair does NOT give identity when exactly ONE move is blocked: it moves the
+SURVIVING (unblocked) piece. So the emitted `cWBoardV4 = old` corresponds to `roundStep`'s re-entry
+board, and the fork/collide capstone arm must target `roundStep` (board unchanged that round), not raw
+`resolveMoves`. The witness below `decide`s that raw `resolveMoves` MOVES the unblocked piece on a
+one-blocked collide, pinning that the reference target is `roundStep`. -/
+section ForkCollideRawResolve
+open Dregg2.Games.AutomataflRules (blockedB carAt landMap resolvableB resolveMoves)
+
+/-- 3×3 witness. A (attractor) at `(1,2)` and B (repulsor) at `(0,0)` both target `D = (1,0)` (a COLLIDE:
+`da = db`, both sources non-vacuum). A move `(1,2) → (1,0)` is BLOCKED by the static piece at the
+interior `(1,1)`; B move `(0,0) → (1,0)` is clear. -/
+def cobBoard : Board :=
+  Dregg2.Games.Automatafl.mkBoard 3
+    [(⟨1, 2⟩, Particle.attractor), (⟨0, 0⟩, Particle.repulsor), (⟨1, 1⟩, Particle.attractor)] ⟨2, 2⟩
+def cobMA : Move := Move.mk 0 ⟨1, 2⟩ ⟨1, 0⟩
+def cobMB : Move := Move.mk 1 ⟨0, 0⟩ ⟨1, 0⟩
+
+/-- **RAW `resolveMoves` IS NOT IDENTITY ON A ONE-BLOCKED COLLIDE.** The pair collides (`da = db`, both
+non-vacuum), so `roundStep` would re-enter with the board UNCHANGED (matching the descriptor's
+`surv = 0 ⇒ cWBoardV4 = old`). But A is blocked and B is not, so RAW `resolveMoves` MOVES B onto the
+shared destination `(1,0)` and VACATES B's source `(0,0)` — proving the fork/collide reference must be
+`roundStep`, not raw `resolveMoves` (the task's item (3) `resolveMoves = b` is the wrong target). Every
+clause `decide`d on the reference semantics. -/
+theorem collideOneBlocked_rawResolveMoves_moves_witness :
+    MoveValid cobBoard cobMA ∧ MoveValid cobBoard cobMB
+      ∧ cobMA.to = cobMB.to                       -- COLLIDE: same destination
+      ∧ cobMA.frm ≠ cobMB.frm
+      ∧ carAt cobBoard cobMA.frm = true ∧ carAt cobBoard cobMB.frm = true
+      ∧ blockedB cobBoard [cobMA, cobMB] cobMA = true    -- A blocked (interior `(1,1)`)
+      ∧ blockedB cobBoard [cobMA, cobMB] cobMB = false   -- B unblocked
+      -- raw `resolveMoves` MOVES B (NOT identity): B vacates `(0,0)`, lands `(1,0)`:
+      ∧ resolvableB cobBoard [cobMA, cobMB] = true
+      ∧ (resolveMoves cobBoard [cobMA, cobMB]).cellAt cobMB.frm = Particle.vacuum
+      ∧ (resolveMoves cobBoard [cobMA, cobMB]).cellAt cobMB.to = Particle.repulsor
+      ∧ cobBoard.cellAt cobMB.frm = Particle.repulsor := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+end ForkCollideRawResolve
+
 /-! ## §8 — Axiom hygiene. Every exported theorem, kernel-clean. -/
 
 #assert_axioms movesWindow_three
@@ -1683,5 +1792,9 @@ end V4Extract
 #assert_axioms carryV4ArithN_of_sat
 #assert_axioms midV4CellN_of_sat
 #assert_axioms writeCellV4N_of_sat
+-- THE SEVENTH WOUND (vacuum-far 2-cycle, README 3.5b): the V4 `cTwoCyc` misses it (`anz · bnz` too strict).
+#assert_axioms vacuumTwoCycleStay_witness_n3
+-- WHY the fork/collide reference is `roundStep`, not raw `resolveMoves`.
+#assert_axioms collideOneBlocked_rawResolveMoves_moves_witness
 
 end Dregg2.Circuit.Emit.AutomataflResolveMovesCapstone
