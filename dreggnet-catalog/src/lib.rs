@@ -1,7 +1,7 @@
 //! # `dreggnet-catalog` — the ONE statement of what the DreggNet offering catalog is.
 //!
-//! [`build_full_catalog`] registers the full 22-offering portfolio — the eight games
-//! (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl), the nine do-once RPG
+//! [`build_full_catalog`] registers the full 23-offering portfolio — the nine games
+//! (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl · private raid), the nine do-once RPG
 //! feature surfaces ([`dreggnet_surfaces::register_surfaces`]: trade · inventory · cheevos ·
 //! guild · craft · companion · quest · tavern · party), and the five service offerings (doc · names ·
 //! compute · grain · hermes) — into a caller-supplied [`OfferingHost`]. Every frontend builds its
@@ -44,6 +44,7 @@ use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dregg_automatafl::AutomataflOffering;
 use dreggnet_council::{CandidateProposal, CouncilOffering};
 use dreggnet_market::{DarkBazaarOffering, MarketOffering};
+use dreggnet_surfaces::private_raid::HostedProofAssignedRaidOffering;
 
 pub mod game_spine;
 pub mod player_worlds;
@@ -109,8 +110,8 @@ impl CatalogConfig {
     }
 }
 
-/// **THE seam: register the full DreggNet portfolio into `host`.** Eight games + nine RPG
-/// feature surfaces + five service offerings = the 22 every frontend exposes. Call it inside
+/// **THE seam: register the full DreggNet portfolio into `host`.** Nine games + nine RPG
+/// feature surfaces + five service offerings = the 23 every frontend exposes. Call it inside
 /// the frontend's host-build closure (on the host's owning thread) so `!Send` offering
 /// internals are born confined, exactly as the four per-frontend registrars do today.
 pub fn build_full_catalog(host: &mut OfferingHost, cfg: &CatalogConfig) {
@@ -127,8 +128,8 @@ pub fn full_catalog_host(cfg: &CatalogConfig) -> OfferingHost {
     host
 }
 
-/// **The eight portfolio games** — native Descent · Descent campaign · dungeon · council ·
-/// market · Dark Bazaar · tug · automatafl.
+/// **The nine portfolio games** — native Descent · Descent campaign · dungeon · council ·
+/// market · Dark Bazaar · tug · automatafl · proof-assigned tactical raid.
 /// Port source (titles + shapes, byte-identical across the three existing copies):
 /// `dreggnet-web/src/lib.rs:1232-1282` / `dreggnet-telegram/src/host.rs:419-451`.
 pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
@@ -180,6 +181,11 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         "Automatafl — the simultaneous-move board (seal a move · reveal · the automaton steps)",
         AutomataflOffering,
     );
+    host.register(
+        dreggnet_surfaces::private_raid::KEY,
+        "The Ash Gate Raid — muster four identities · verify a shielded optimal role assignment · fight through real party capabilities",
+        HostedProofAssignedRaidOffering::new(),
+    );
 }
 
 /// **The nine do-once RPG feature surfaces** — trade · inventory · cheevos · guild · craft ·
@@ -227,11 +233,11 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
 }
 
-/// The 22 catalog keys, in registration order — the parity contract. Every frontend's
+/// The 23 catalog keys, in registration order — the parity contract. Every frontend's
 /// "which offerings exist" question resolves to this ONE list; the test below pins
 /// `full_catalog_host` to it, and a frontend cutover test can pin its old registrar against
 /// the same constant before deleting it.
-pub const CATALOG_KEYS: [&str; 22] = [
+pub const CATALOG_KEYS: [&str; 23] = [
     // games
     "descent",
     DescentCampaignOffering::KEY,
@@ -241,6 +247,7 @@ pub const CATALOG_KEYS: [&str; 22] = [
     "bazaar",
     "tug",
     "automatafl",
+    dreggnet_surfaces::private_raid::KEY,
     // feature surfaces (dreggnet_surfaces::register_surfaces order)
     "trade",
     "inventory",
@@ -265,7 +272,7 @@ pub const CATALOG_KEYS: [&str; 22] = [
 
 /// **The Lab intro** — the honest framing every catalog LISTING leads with, on every front
 /// door (web `GET /offerings`, the Mini App `/tg` fragment, Telegram `/offerings`, Discord
-/// `/play`). The 22 offerings are the engine's proving ground — real verifiable turns,
+/// `/play`). The 23 offerings are the engine's proving ground — real verifiable turns,
 /// deliberately rough — not the polished game. ONE string, so the three front doors cannot
 /// drift into three different stories about what the catalog is.
 pub fn lab_intro() -> &'static str {
@@ -286,7 +293,7 @@ pub fn flagship_pointer() -> &'static str {
 mod tests {
     use super::*;
 
-    /// The parity contract: the full catalog registers exactly [`CATALOG_KEYS`] — the same 22
+    /// The parity contract: the full catalog registers exactly [`CATALOG_KEYS`] — the same 23
     /// `dreggnet_web::demo_host()` serves today. (Once the frontends delegate here, this is the
     /// single test that "add an offering" must update, and drift is a compile-time/test failure
     /// instead of a fourfold folklore.)

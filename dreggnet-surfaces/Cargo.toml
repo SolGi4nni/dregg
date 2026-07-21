@@ -24,6 +24,16 @@ description = "The do-once frontend batch: game-infra features (trade/inventory/
 [lints]
 workspace = true
 
+[features]
+default = []
+# Heavy proof consumer remains opt-in for direct surface-only users. The shared
+# catalog deliberately enables it because the raid is now one of its game tables.
+private-raid = [
+    "dungeon-on-dregg/private-raid-assignment",
+    "dep:blake3",
+    "dep:fhir",
+]
+
 [dependencies]
 # THE OFFERING CORE — the frontend-agnostic `Offering` trait (open/actions/advance/verify/
 # render->Surface/price), `Action`/`Outcome`/`Surface`/`DreggIdentity`/`VerifyReport`, plus
@@ -82,6 +92,13 @@ procgen-dregg = { path = "../procgen-dregg" }
 # (dreggnet-party folds its full receipt to a turn-hash through its public ActOutcome API).
 # default-features=false = gpui-free.
 dregg-app-framework = { path = "../app-framework", default-features = false }
+# Context-bind the verified raid receipt, exact public roster order, and hosted
+# session seed into one public operation id. The HidingFri verifier remains the
+# source of the assignment; this hash is the surrounding host/replay binding.
+blake3 = { version = "1", optional = true }
+# The private-raid consumer verifies exact-QP roster/objective allocation
+# claims; keeping it optional preserves the lightweight default surfaces set.
+fhir = { path = "../fhir", optional = true }
 
 [dev-dependencies]
 # THE LIGHT CROSS-CHANNEL BACKENDS — the SAME `deos-view` dependency, with its gpui-free,
@@ -93,3 +110,8 @@ dregg-app-framework = { path = "../app-framework", default-features = false }
 # Every one is serde-only (no gpui / no SpiderMonkey), so the do-once ViewNode of each surface is
 # driven through the REAL renderers a frontend uses — a broken surface fails a golden assertion.
 deos-view = { path = "../deos-view", default-features = false, features = ["telegram", "wechat", "web"] }
+
+[[test]]
+name = "private_raid"
+path = "tests/private_raid.rs"
+required-features = ["private-raid"]

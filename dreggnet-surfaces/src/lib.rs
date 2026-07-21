@@ -70,6 +70,8 @@ pub mod craft;
 pub mod guild;
 pub mod inventory;
 pub mod party;
+#[cfg(feature = "private-raid")]
+pub mod private_raid;
 pub mod quest;
 pub mod tavern;
 pub mod trade;
@@ -84,6 +86,8 @@ pub use craft::CraftOffering;
 pub use guild::GuildPage;
 pub use inventory::{InventoryItem, InventoryOffering};
 pub use party::PartyOffering;
+#[cfg(feature = "private-raid")]
+pub use private_raid::{HostedProofAssignedRaidOffering, ProofAssignedRaidOffering};
 pub use quest::AshenmoorErrandOffering;
 pub use tavern::TavernOffering;
 pub use trade::TradeOffering;

@@ -19,7 +19,7 @@
 name = "dreggnet-catalog"
 version = "0.1.0"
 edition = "2024"
-description = "The shared DreggNet offering-catalog registrar: build_full_catalog(host, cfg) registers the ONE 22-offering portfolio (8 games, 9 RPG feature surfaces, 5 service offerings) every frontend (web, Telegram, WeChat, Discord) exposes, plus the single SeatedTug seat-claiming adapter — replacing four drifting per-frontend copies."
+description = "The shared DreggNet offering-catalog registrar: build_full_catalog(host, cfg) registers the ONE 23-offering portfolio (9 games, 9 RPG feature surfaces, 5 service offerings) every frontend (web, Telegram, WeChat, Discord) exposes, plus the single SeatedTug seat-claiming adapter — replacing four drifting per-frontend copies."
 
 [dependencies]
 # The Offering trait + OfferingHost — the frontend-agnostic core this crate populates.
@@ -39,7 +39,7 @@ dregg-multiway-tug = { path = "../dregg-multiway-tug" }
 # companion · quest · tavern · party) — registered via the already-shared
 # `dreggnet_surfaces::register_surfaces`, which mounts ONE SharedWorld across
 # trade/inventory/craft (the composition Discord's per-type stores currently sever).
-dreggnet-surfaces = { path = "../dreggnet-surfaces" }
+dreggnet-surfaces = { path = "../dreggnet-surfaces", features = ["private-raid"] }
 
 # The five non-game service offerings.
 dreggnet-doc = { path = "../dreggnet-doc" }
