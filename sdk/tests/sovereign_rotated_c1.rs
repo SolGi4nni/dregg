@@ -1503,7 +1503,7 @@ mod wall_a {
             effects: vm_effects,
             membership: None,
             conservation: None,
-            non_revocation: None,
+            spent_nullifiers: None,
             cap_membership: None,
             turn_hash: *blake3::hash(b"wallA-turn").as_bytes(),
             rotation: Some(rotation),

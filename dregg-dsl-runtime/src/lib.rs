@@ -24,7 +24,6 @@ pub use dregg_circuit::dsl::garbled;
 pub use dregg_circuit::dsl::membership;
 pub use dregg_circuit::dsl::note_spending;
 pub use dregg_circuit::dsl::predicates;
-pub use dregg_circuit::dsl::revocation;
 pub use dregg_circuit::dsl::temporal_absence;
 
 // Re-export the composition module which stays here (no circuit dependency needed
@@ -58,11 +57,9 @@ pub use dregg_circuit::dsl::garbled::{ExtendedGateRecord, GateType as GarbledGat
 // Re-export production temporal absence API.
 pub use dregg_circuit::dsl::temporal_absence::{DslTimelineEntry, TemporalAbsenceDslWitness};
 
-// Re-export production non-revocation proving API.
-pub use dregg_circuit::dsl::revocation::{
-    DslRevocationTree, NonMembershipWitnessDsl, REVOCATION_TREE_DEPTH, SENTINEL_MAX, SENTINEL_MIN,
-    TREE_DEPTH, generate_non_revocation_trace, revocation_hash_to_field,
-};
+// (The 1-felt non-revocation rail re-export is RETIRED — felt-width #11 fold-in.
+// Spend freshness is the limb-26 grow-gate and delegation-ancestor revocation the
+// limb-37 `.absent` open, both in-circuit on `noteSpendVmDescriptor2R24`.)
 
 // Re-export DSL-native fold proving API.
 pub use dregg_circuit::dsl::fold::{FOLD_DSL_PI_COUNT, FOLD_DSL_WIDTH, generate_fold_trace};

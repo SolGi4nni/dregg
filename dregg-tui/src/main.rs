@@ -41,8 +41,8 @@
 //!     `WitnessedReceipt`'s `proof_bytes` — `TurnProofComponents` and
 //!     `turn_hash` are not inside the serialized `ComposedProof`.
 //!   * **No trusted endpoints.** `verify_full_turn_bound` takes the
-//!     `expected_old_commit` / `expected_new_commit` (and the canonical
-//!     `expected_revocation_root`) that the verifier TRUSTS. A light client with
+//!     `expected_old_commit` / `expected_new_commit` that the verifier TRUSTS
+//!     (a spend's freshness set binding rides the OLD commit). A light client with
 //!     only this node's HTTP API has no authenticated source for them; taking
 //!     them from the proof's own PI would make the check circular and worthless.
 //!   * **Feature reach.** This crate pulls `dregg-sdk` with
@@ -411,7 +411,7 @@ fn verify_receipt(client: &Client, receipt: &ReceiptInfo) -> VerifyReport {
     );
     push(
         &mut lines,
-        "   expected_new_commit / expected_revocation_root that does not come from".into(),
+        "   expected_new_commit (which carry the spend freshness binding) not from".into(),
         Color::DarkGray,
     );
     push(

@@ -178,7 +178,7 @@ fn witness(
         effects: effects.to_vec(),
         membership: None,
         conservation: None,
-        non_revocation: None,
+        spent_nullifiers: None,
         cap_membership: Some(cap),
         turn_hash: [0xC2u8; 32],
         rotation: Some(rot),

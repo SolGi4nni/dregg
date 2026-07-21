@@ -26,17 +26,17 @@
 //! `circuit/tests/cap_root_cell_circuit_differential.rs` is the guard that pins
 //! it (the A2 gate).
 //!
-//! ## The scheme (mirrors the proven [`crate::dsl::revocation::DslRevocationTree`])
+//! ## The scheme (the sorted, sentinel-bracketed openable-tree family)
 //!
 //! A SORTED binary Merkle tree over the c-list, **keyed by `slot_hash`** (the
 //! slot is unique per c-list — the executor's `validate_capability_uniqueness`
 //! enforces it — so the key is injective: exactly one leaf per slot). The
 //! keys are sorted, deduplicated, and bracketed by the
-//! [`SENTINEL_MIN`](crate::dsl::revocation::SENTINEL_MIN) /
-//! [`SENTINEL_MAX`](crate::dsl::revocation::SENTINEL_MAX) sentinels (so a
+//! [`SENTINEL_MIN`](crate::heap_root::SENTINEL_MIN) /
+//! [`SENTINEL_MAX`](crate::heap_root::SENTINEL_MAX) sentinels (so a
 //! Phase-B non-membership proof can bracket any absent key). The tree is
 //! padded to `2^DEPTH` positions; internal nodes are
-//! `hash_fact(left, [right])` — the SAME node hash the revocation tree uses.
+//! `hash_fact(left, [right])` — the SAME node hash [`crate::heap_root`] uses.
 //!
 //! Each leaf is `Poseidon2(slot_hash, target, auth_tag, mask_lo, mask_hi,
 //! expiry, breadstuff)` — the 7 [`CapLeaf`] fields:
@@ -70,7 +70,7 @@ use crate::field::BabyBear;
 use crate::poseidon2::{Poseidon2State, hash_many};
 use std::sync::LazyLock;
 
-pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
+pub use crate::heap_root::{SENTINEL_MAX, SENTINEL_MIN};
 
 /// The `hash_fact` domain-separation marker (`poseidon2.rs::hash_fact` state[5]),
 /// here absorbed as the FIRST RATE input of the cap node's arity-3 chip absorb
@@ -306,9 +306,10 @@ fn sentinel_leaf(key: BabyBear) -> CapLeaf {
 }
 
 /// The canonical capability tree: a sorted binary Poseidon2 Merkle tree over
-/// the c-list leaves, keyed by `slot_hash` and sentinel-bracketed. Mirrors
-/// [`crate::dsl::revocation::DslRevocationTree`] (sorted, sentinel-bracketed,
-/// `hash_fact` nodes) but stores the 7-field capability leaf at each position.
+/// the c-list leaves, keyed by `slot_hash` and sentinel-bracketed (the same
+/// sorted / sentinel-bracketed / `hash_fact`-node scheme as
+/// [`crate::heap_root::CanonicalHeapTree8`]) but storing the 7-field
+/// capability leaf at each position.
 #[derive(Clone, Debug)]
 pub struct CanonicalCapTree {
     /// All levels, bottom-up, stored **sparsely** as the non-empty PREFIX of
@@ -517,7 +518,7 @@ impl CanonicalCapTree {
     /// Generate a Merkle **membership** path for the leaf at the given padded
     /// position: `(siblings, directions)` where `directions[i] == 0` if the
     /// current node is the LEFT child at level `i` (sibling on the right), `1`
-    /// otherwise. Mirrors [`crate::dsl::revocation::DslRevocationTree::prove_membership`].
+    /// otherwise. Mirrors [`crate::heap_root::CanonicalHeapTree8::prove_membership`].
     pub fn prove_membership(
         &self,
         position: usize,

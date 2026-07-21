@@ -17,8 +17,9 @@
 //!   commitments it publishes. A garbage or tampered artifact fails loudly.
 //! * **Deliberately NOT established (named seam):** that those bound commitments equal the
 //!   chain's canonical committed state for this turn — that binding needs a checkpoint /
-//!   attested root the caller trusts (`verify_full_turn_bound` with the canonical revocation
-//!   root on the spend path). The expected commits handed to the verifier here are the ones
+//!   attested root the caller trusts (the canonical `expected_old_commit`, which also carries
+//!   spend freshness: the limb-26 BEFORE nullifier root is absorbed into it). The expected
+//!   commits handed to the verifier here are the ones
 //!   the proof itself publishes ([`extract_commits`]), so this check is internal-soundness +
 //!   VK-binding — exactly what a stranger with only the artifact can check, which is the
 //!   honest claim the surface makes.
@@ -68,7 +69,8 @@ pub fn check_proof_hex(proof_hex: &str, turn_hash_hex: &str) -> Result<ProofChec
         has_state_transition: legs.iter().any(|l| l.starts_with("effect-vm")),
         has_membership: legs.iter().any(|l| l == "membership"),
         has_conservation: legs.iter().any(|l| l == "conservation"),
-        has_non_revocation: legs.iter().any(|l| l == "non-revocation"),
+        // (has_non_revocation RETIRED — felt-width #11 fold-in: freshness is
+        // in-circuit on the rotated note-spend leg, not a separate leg.)
         has_cap_membership: legs.iter().any(|l| l == "cap-membership"),
     };
 
@@ -211,8 +213,8 @@ pub fn offline_recheck_text(node_url: &str, turn_hash_hex: &str) -> String {
     format!(
         "```\ncurl {base}/api/turn/{turn_hash_hex}/proof | jq -r .proof_hex\n```\nDecode the hex \
          and hand the bytes to `dregg_sdk::verify_full_turn` (`sdk/src/full_turn_proof.rs`) — \
-         the same call this bot just made. A spend turn's freshness leg additionally wants the \
-         canonical revocation root pinned (`verify_full_turn_bound`).",
+         the same call this bot just made. Spend freshness is in-circuit; binding it to the \
+         canonical spent set means pinning the canonical `expected_old_commit`.",
         base = node_url.trim_end_matches('/'),
     )
 }

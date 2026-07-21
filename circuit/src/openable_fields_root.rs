@@ -80,7 +80,7 @@ use crate::cap_root::{CAP_TREE_DEPTH, cap_node};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_many;
 
-pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
+pub use crate::heap_root::{SENTINEL_MAX, SENTINEL_MIN};
 
 /// Tree depth for the canonical openable fields tree. Matches
 /// [`CAP_TREE_DEPTH`] (16): `2^16 - 2 = 65534` overflow entries (two positions

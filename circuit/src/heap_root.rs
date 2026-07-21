@@ -45,7 +45,15 @@ use crate::field::BabyBear;
 use crate::poseidon2::{hash_fact, hash_many};
 use std::sync::LazyLock;
 
-pub use crate::dsl::revocation::{SENTINEL_MAX, SENTINEL_MIN};
+/// Sentinel min key (0) for the sorted openable trees (heap / cap / fields):
+/// the fixed low bracket every sorted-gap non-membership opening straddles.
+/// (Home moved here from the retired 1-felt `dsl::revocation` rail — the
+/// sentinels are load-bearing for the LIVE 8-felt `CanonicalHeapTree8` family.)
+pub const SENTINEL_MIN: BabyBear = BabyBear::ZERO;
+
+/// Sentinel max key (p-1) for the sorted openable trees: the terminal
+/// `next_addr` pointer / high bracket.
+pub const SENTINEL_MAX: BabyBear = BabyBear(2013265920);
 
 /// Tree depth for the canonical heap tree. Matches
 /// [`crate::cap_root::CAP_TREE_DEPTH`]: a binary tree of depth 16 holds

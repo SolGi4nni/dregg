@@ -84,10 +84,10 @@ pub fn mint_provenance() -> [u8; 32] {
 ///
 /// # Why BLAKE3 (not the doc's aspirational Poseidon2)
 ///
-/// The DEPLOYED non-revocation circuit (`dregg_circuit::dsl::revocation`) does
-/// NOT recompute this hash in-circuit — it queries a FOLDED field element
-/// (`fold_bytes32_to_bb(cred_nul(provenance))`) for non-membership against the
-/// committed revocation root. So the preimage hash need not be
+/// The DEPLOYED freshness/revocation opens (the limb-26/limb-37 map-ops on the
+/// rotated note-spend descriptor) do NOT recompute this hash in-circuit — they
+/// query a FOLDED field element (`fold_bytes32_to_bb(cred_nul(provenance))`) for
+/// non-membership against the committed accumulator root. So the preimage hash need not be
 /// arithmetization-friendly; it only needs to agree byte-for-byte between the
 /// on-cap value and any off-chain CDT reconstruction. BLAKE3 is what every
 /// sibling CDT/receipt hash already uses, and provenance MUST equal

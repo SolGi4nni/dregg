@@ -15,9 +15,9 @@
 //! inside the committed fact (Poseidon2 collision resistance).
 //!
 //! Driven through the DEPLOYED, AUDITED Plonky3 prover `prove_dsl_p3`/`verify_dsl_p3`
-//! (real Poseidon2 aux blocks for the `Hash`/`Hash2to1` gates), exactly like
-//! `non_revocation_p3_boundary.rs`. No hand-written descriptor: the descriptor is
-//! the production welded one; only the adversarial TRACE is hand-built.
+//! (real Poseidon2 aux blocks for the `Hash`/`Hash2to1` gates). No hand-written
+//! descriptor: the descriptor is the production welded one; only the adversarial
+//! TRACE is hand-built.
 
 use std::panic::AssertUnwindSafe;
 

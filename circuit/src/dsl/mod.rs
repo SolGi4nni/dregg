@@ -39,9 +39,9 @@ pub mod dfa_routing;
 pub mod dyck_stack;
 // `dsl_p3_air` routes DSL circuits through the audited Plonky3 batch-STARK
 // prover/verifier; it requires `p3-air` / `p3-batch-stark` — both verify-floor
-// deps, now always-on. Its prove/verify functions (`revocation::*_p3`,
-// `derivation::*_p3`) ride it; the recursion-free batch STARK is part of the
-// verify floor (`p3-batch-stark`'s `verify_batch` is prover-free), so this module
+// deps, now always-on. Its prove/verify functions (`derivation::*_p3` et al.)
+// ride it; the recursion-free batch STARK is part of the verify floor
+// (`p3-batch-stark`'s `verify_batch` is prover-free), so this module
 // is unconditional.
 pub mod descriptors;
 pub mod dsl_p3_air;
@@ -51,9 +51,7 @@ pub mod membership;
 pub mod note_spending;
 pub mod openable_fields_insertion;
 pub mod predicates;
-pub mod revocation;
 pub mod temporal_absence;
-pub mod tiered_revocation;
 
 // Re-export primary smart contract runtime types.
 pub use circuit::{
@@ -73,11 +71,11 @@ pub use dfa_routing::{
     build_routing_witness, compute_table_commitment, dfa_routing_circuit, dfa_routing_descriptor,
 };
 
-// Re-export production non-revocation proving API.
-pub use revocation::{
-    DslRevocationTree, NonMembershipWitnessDsl, REVOCATION_TREE_DEPTH, SENTINEL_MAX, SENTINEL_MIN,
-    TREE_DEPTH, generate_non_revocation_trace, revocation_hash_to_field,
-};
+// (The 1-felt non-revocation rail — `revocation::{DslRevocationTree, …}` — is RETIRED
+// (felt-width #11 fold-in): spend freshness is the limb-26 `.absent`/`.aafiInsert`
+// grow-gate over the 8-felt `CanonicalHeapTree8`, and delegation-ancestor revocation
+// is the limb-37 `.absent` open, both in `EffectVmEmitRotationV3.noteSpendV3`. The
+// sorted-tree sentinels now live in `crate::heap_root::{SENTINEL_MIN, SENTINEL_MAX}`.)
 
 // Re-export DSL-native fold proving API.
 pub use fold::{
@@ -110,6 +108,3 @@ pub use derivation::{
     BODY_HASH_INV_START, EXTENDED_TRACE_WIDTH, MULTI_STEP_DSL_WIDTH, derivation_circuit_descriptor,
     derivation_dsl_circuit, generate_derivation_trace_dsl, generate_multi_step_trace_dsl,
 };
-
-// Re-export tiered revocation API.
-pub use tiered_revocation::{CHECKPOINT_INTERVAL, DEFAULT_HOT_CAPACITY, TieredRevocationSet};

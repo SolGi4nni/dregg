@@ -200,7 +200,7 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
         effects: vm_effects,
         membership: None,
         conservation: None,
-        non_revocation: None,
+        spent_nullifiers: None,
         cap_membership: None,
         turn_hash: *blake3::hash(b"perf-rotated-turn").as_bytes(),
         rotation: Some(rotation),

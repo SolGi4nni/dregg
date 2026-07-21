@@ -45,8 +45,6 @@ import Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
 import Dregg2.Circuit.Emit.FieldDeltaRangeEmit
 import Dregg2.Circuit.Emit.MerkleMembership4aryEmit
 import Dregg2.Circuit.Emit.MerkleMembershipEmit
-import Dregg2.Circuit.Emit.NonRevocationAdjacencyEmit
-import Dregg2.Circuit.Emit.NonRevocationEmit
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
@@ -125,10 +123,6 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.MerkleMembership4aryEmit.membership4aryDesc)
   , ("merkle-membership-depth2.json",
       Dregg2.Circuit.Emit.MerkleMembershipEmit.merkleMembershipDesc)
-  , ("non-revocation-adjacency.json",
-      Dregg2.Circuit.Emit.NonRevocationAdjacencyEmit.nonRevocationAdjacencyDesc)
-  , ("non-revocation.json",
-      Dregg2.Circuit.Emit.NonRevocationEmit.nonRevocationDesc)
   , ("note-spend-leaf.json",
       Dregg2.Circuit.Emit.NoteSpendingLeafEmit.noteSpendLeafDesc)
   , ("poseidon2-hash-arity2.json",

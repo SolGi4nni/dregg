@@ -571,7 +571,7 @@ fn flagday_transfer_witness(
         effects: vm_effects.clone(),
         membership: None,
         conservation: None,
-        non_revocation: None,
+        spent_nullifiers: None,
         cap_membership: None,
         turn_hash: *blake3::hash(b"flagday-turn").as_bytes(),
         rotation: Some(rotation),

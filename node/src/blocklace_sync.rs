@@ -4894,7 +4894,7 @@ async fn execute_finalized_turn(
             // proofs are bound against an up-to-date set (and double-spends are
             // rejected). This is the authoritative set
             // `turn_proving::prove_and_verify_finalized_turn_freshness` derives its
-            // sorted-Merkle canonical revocation root from. Done AFTER capturing
+            // in-circuit limb-26 spent-set opening (and OLD-commit anchor) from. Done AFTER capturing
             // `full_turn_previously_spent` above (this turn's own freshness is
             // proven against the pre-this-turn set).
             {
@@ -4976,8 +4976,9 @@ async fn execute_finalized_turn(
             //    its freshness leg (the nullifier is threaded through).
             //  - A turn that SPENDS a note (carries a `NoteSpend`) routes through
             //    the FRESHNESS path (`prove_and_verify_finalized_turn_freshness`):
-            //    non-revocation sub-proof + canonical revocation root pinned, so
-            //    the no-double-spend bindings (a)+(b) FIRE.
+            //    the canonical spent set is threaded to the IN-CIRCUIT limb-26
+            //    grow-gate and the canonical-set-derived OLD commit is pinned, so
+            //    the no-double-spend binding FIRES (felt-width #11 fold-in).
             //  - Everything else stays on the self-sovereign Effect-VM path (the
             //    correct trust model for an owner-authorized turn).
             //  - A BEARER-delegation turn (a consumed witness whose `holder` is
@@ -5329,7 +5330,7 @@ async fn execute_finalized_turn(
                             spend = is_spend,
                             freshness_bound = is_spend,
                             "full-turn proof generated and verified (commit path); \
-                             spend turns are FRESHNESS-bound to the canonical revocation root"
+                             spend turns are FRESHNESS-bound in-circuit to the canonical spent set"
                         );
                         Some(proof_bytes)
                     }
@@ -5340,17 +5341,17 @@ async fn execute_finalized_turn(
                         },
                     ) => {
                         // KNOWN LIMITATION (not a soundness failure): the canonical
-                        // nullifier set outgrew the fixed-depth non-revocation circuit.
+                        // nullifier set outgrew the openable heap tree (65534 entries).
                         // We do not silently truncate the set (that could hide a
                         // double-spend), so the spend turn carries no freshness-bound
-                        // proof until a depth-parameterized non-revocation AIR lands.
+                        // proof.
                         warn!(
                             turn_hash = %turn_hash_hex,
                             block_id = %block_id,
                             have,
                             max,
                             "spend turn NOT freshness-proven: canonical nullifier set exceeds \
-                             the non-revocation circuit capacity (needs a deeper AIR); turn \
+                             the openable heap tree capacity; turn \
                              committed without a freshness-bound proof"
                         );
                         None

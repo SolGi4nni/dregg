@@ -6,7 +6,7 @@ fn bench_descriptor_by_name_parse() {
         "note-spend-leaf::dregg-note-spending-dsl-v3",
         "dregg-membership-adjacency::poseidon2-v1",
         "dregg-delegate::v2",
-        "dregg-non-revocation-sorted-tree::poseidon2-v1",
+        "dregg-accumulator-nonrev-emit-v2",
     ];
     for name in names {
         let _ = dregg_circuit::descriptor_by_name::descriptor_by_name(name);

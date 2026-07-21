@@ -62,6 +62,24 @@ readiness claim. Captured here so they ride the same campaign.
   Rust `hash_many_8`/`digest8_to_bytes32`). Anti-laundering: the fold accumulator must be 8-felt
   end-to-end, not just the final squeeze. Severity MODERATE (discovery/factory-identity, not funds).
 
+## Update log — 2026-07-20
+
+- **#11 freshness/revocation rail — FOLD-IN LANDED (ember chose ①c(b)).** Redundancy premise
+  CONFIRMED by read: the limb-26 `nullifierFreshOp` `.absent` map-op is the freshness authority over
+  EXACTLY the set the deleted `DslRevocationTree::revoked_leaves` seeded (`full_turn_proof.rs`
+  threads `FullTurnWitness::spent_nullifiers` → the limb-26 BEFORE tree; the `.absent` key IS the
+  published nullifier `param0`; the BEFORE root8 is absorbed into the pinned OLD commit; forge
+  test `circuit/tests/vk_epoch_notes_light_client_binding.rs`). DELETED: the whole 1-felt rail
+  (`circuit/src/dsl/revocation.rs`, `non_revocation{,_adjacency}_witness.rs`,
+  `NonRevocation{,Adjacency}Emit.lean` + the Refine/Rung2 satellite proofs + `descriptor_by_name`
+  registration + the SDK `NonRevocationProof`/`NonRevocationWitness` component + verifier bindings
+  (a)/(b) + `expected_revocation_root` threading). ADDED: `spendAncestorFreshOp` — the limb-37
+  delegation-ancestor `.absent` open on spend turns (`EffectVmEmitRotationV3.noteSpendV3`, Lean
+  single-file-checked; theorem `noteSpendV3_opens_delegation_ancestor`, #assert_axioms-clean).
+  RESIDUALS (named): the ancestor key column (`param3`) is not yet in-circuit-bound to the cap
+  lineage; registry re-emit + Rust spend-generator threading (param3 fill + revoked map-heap) are
+  the integrator's; keys stay 31-bit (#5's lane). Freshness capacity 14 → 65534.
+
 ## Update log — 2026-07-19 (post-pricing, verified reads)
 
 - **#6 CI exit_code — FIXED + VERIFIED GREEN.** `ci_verdict_public_inputs` now returns `Option`

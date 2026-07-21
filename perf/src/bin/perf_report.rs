@@ -215,11 +215,10 @@ fn main() {
             fmt_bytes(proof.proof_bytes.len())
         );
         println!(
-            "  components: state_transition={} membership={} conservation={} non_revocation={}",
+            "  components: state_transition={} membership={} conservation={}",
             proof.components.has_state_transition,
             proof.components.has_membership,
             proof.components.has_conservation,
-            proof.components.has_non_revocation
         );
         println!("  NOTE: self-sovereign turn = EffectVM sub-proof + PI-binding main proof.");
         println!(

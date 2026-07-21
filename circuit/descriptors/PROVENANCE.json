@@ -119,8 +119,6 @@
     "field-delta-result-range.json": "2038274b162dc192a097f79305b7912a101597114821710c16f5ea1f64828840",
     "merkle-membership-4ary-general.json": "0b0382db9e80e9985c24482b4bd4b7c6c8591f808203053c7431ed262c0be782",
     "merkle-membership-depth2.json": "3224180db93c8d59a0aadfbe6f9ad1833f89f1635895a464cc4d90622c29f1d7",
-    "non-revocation-adjacency.json": "2ef661f3a2ab303bef12d42d73e2c0113dc96b3af84d48e10f6e680bad403993",
-    "non-revocation.json": "2b2362c626c36543e626c3f1ec4a315cbc000d8340d35c567ff40a63827107a7",
     "note-spend-leaf.json": "f5a5683bd0d2cfdeba90d6585bd6aeb275e933c961da004e2ac5684e37b18ee1",
     "poseidon2-hash-arity2.json": "a6d83cebc30903678ffb03e94c68325e81a1791a16ad67ff7ee04fac42b090b2",
     "predicate-arith-gt.json": "a3ccc4bf4bd5247555f1749850f8eb6e254540a1874e43bfe5963a6b6f07228b",

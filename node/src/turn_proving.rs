@@ -2,13 +2,13 @@
 //!
 //! This module carries the public claim — *every committed state transition is proven* —
 //! for the running node, with **one named exception stated here at the headline rather
-//! than 70 lines downstream**: a `NoteSpend` whose canonical nullifier set exceeds the
-//! non-revocation AIR's hardwired `TREE_DEPTH = 4` (i.e. more than 14 entries) is
-//! **committed with NO freshness-bound proof**. The circuit refuses to truncate the set
-//! (that would be unsound) and `canonical_revocation_root_for_set` returns
-//! `Err(RevocationCapacityExceeded)`; the turn still commits, logged loudly. So the
-//! freshness leg is a 14-nullifier toy until the depth-parameterized non-revocation AIR
-//! lands. See "Capacity bound (honest)" below for the full statement.
+//! than 70 lines downstream**: a `NoteSpend` whose canonical spent-nullifier set exceeds
+//! the openable heap tree's capacity (`2^HEAP_TREE_DEPTH − 2 = 65534` entries) is
+//! **committed with NO freshness-bound proof**. The prover refuses to truncate the set
+//! (that would be unsound) and [`canonical_spent_nullifier_set`] returns
+//! `Err(RevocationCapacityExceeded)`; the turn still commits, logged loudly.
+//! (Felt-width #11 fold-in: the retired depth-4 1-felt rail capped this at 14 —
+//! the in-circuit limb-26 accumulator lifts it to 65534.)
 //!
 //! When the devnet enables full-turn proving,
 //! [`crate::blocklace_sync::execute_finalized_turn`] calls
@@ -45,51 +45,49 @@
 //! rests on. Cross-cell / multi-root aggregation is the Silver→Gold vision and
 //! is tracked separately — it does not weaken what is proven here.
 //!
-//! ## FRESHNESS / no-double-spend (the LIVE binding this module wires)
+//! ## FRESHNESS / no-double-spend (IN-CIRCUIT — felt-width #11 fold-in)
 //!
 //! A finalized turn that SPENDS a note (carries an [`dregg_turn::Effect::NoteSpend`])
-//! is routed through [`prove_and_verify_finalized_turn_freshness`] instead of the
-//! plain self-sovereign path. That function attaches a **non-revocation** sub-proof
-//! whose sorted-Merkle tree is built from the node's CANONICAL spent-nullifier set
-//! (the persisted [`dregg_persist::Store`] nullifier set, folded into the field the
-//! Effect-VM uses), and then verifies the composed proof through
-//! [`dregg_sdk::verify_full_turn_bound`] with `expected_revocation_root` pinned to
-//! that canonical root. This makes the SDK's two no-double-spend teeth FIRE on the
-//! live commit path:
+//! is routed through [`prove_and_verify_finalized_turn_freshness`]. The node's
+//! CANONICAL spent-nullifier set (the persisted [`dregg_persist::Store`] nullifier
+//! set, folded into the Effect-VM field) is threaded as
+//! `FullTurnWitness::spent_nullifiers`; it seeds the limb-26 BEFORE nullifier
+//! accumulator the rotated note-spend descriptor's `.absent`/`.aafiInsert`
+//! grow-gate opens IN-CIRCUIT (`EffectVmEmitRotationV3.noteSpendV3`), and the
+//! BEFORE root is absorbed into the OLD commit this module derives from the SAME
+//! canonical set and pins through [`dregg_sdk::verify_full_turn_bound`]:
 //!
-//! - **binding (a)** [`FullTurnVerifyError::RevocationRootMismatch`]: the freshness
-//!   proof must be against THE canonical nullifier set the node maintains — a
-//!   prover-chosen (empty/stale) accumulator is rejected;
-//! - **binding (b)** [`FullTurnVerifyError::NullifierMismatch`]: the item proved
-//!   fresh must be THIS turn's spent nullifier, not some other item.
+//! - **set binding** (the former binding (a)): a prover opening any other set
+//!   publishes a different absorbed OLD commit and is rejected
+//!   ([`FullTurnVerifyError::CommitmentMismatch`]) — at the 8-felt width;
+//! - **item identity** (the former binding (b)): the `.absent` op's key IS the
+//!   spend row's folded nullifier `param0`, cross-bound to the published
+//!   `ROT_NULLIFIER_PI` — in-circuit, no host cross-check;
+//! - **double-spend**: a present nullifier has no bracketing witness; the prove
+//!   REFUSES ([`FullTurnProvingError::NullifierAlreadyRevoked`]);
+//! - **delegation-ancestor revocation**: the limb-37 `.absent` open
+//!   (`spendAncestorFreshOp`) rides the same descriptor.
 //!
-//! ### Accumulator reconciliation (PolynomialAccumulator vs sorted-Merkle)
+//! ### Accumulator reconciliation (PolynomialAccumulator vs the spent set)
 //!
 //! The node has two distinct "absence" structures for two distinct sets:
 //! `NodeState::revocation_accumulator` (a `PolynomialAccumulator` over revoked
 //! capability-token hashes) and the persisted note-nullifier set (double-spend
-//! prevention for `NoteSpend`). They are NOT the same set. The circuit's
-//! non-revocation AIR ([`dregg_circuit::dsl::revocation`]) is a fixed-capacity
-//! sorted-Merkle tree, so for note-spend freshness we make the **sorted-Merkle
-//! tree derived from the persisted nullifier set** the canonical structure the
-//! verifier pins. The derived root is a deterministic function of the node's
-//! authoritative set (built here via [`canonical_revocation_root_for_set`]), so a
-//! peer/light-client re-deriving it from the same set obtains the same root: the
-//! verifier's `revocation_root` check is against the node's REAL set, never a
-//! prover-chosen tree.
+//! prevention for `NoteSpend`). They are NOT the same set. For note-spend
+//! freshness the canonical structure is the openable 8-felt heap tree
+//! (`CanonicalHeapTree8`) derived from the persisted nullifier set via
+//! [`canonical_spent_nullifier_set`]; a peer/light-client re-deriving the OLD
+//! commit from the same set obtains the same anchor.
 //!
 //! ### Capacity bound (honest)
 //!
-//! The audited non-revocation circuit is hardwired to
-//! [`dregg_circuit::dsl::revocation::TREE_DEPTH`] (`= 4`, a 16-leaf tree, so at
-//! most `16 - 2 = 14` revoked entries after the two sentinels). When the canonical
-//! nullifier set exceeds that capacity, a single fixed-depth proof cannot cover it
-//! WITHOUT a deeper circuit (a circuit change, out of scope here). Rather than
-//! silently truncate the canonical set (which would be UNSOUND — it could omit the
-//! very nullifier being re-spent), [`canonical_revocation_root_for_set`] returns
-//! `Err(RevocationCapacityExceeded)` and the spend turn is committed but carries NO
-//! freshness-bound proof, logged loudly as a real limitation. Closing this needs a
-//! depth-parameterized non-revocation AIR (tracked, not faked).
+//! The openable heap tree is hardwired to
+//! [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`] (`= 16`, so at most
+//! `2^16 − 2 = 65534` entries after the two sentinels). When the canonical set
+//! exceeds that, a single fixed-depth opening cannot cover it. Rather than
+//! silently truncate (UNSOUND — it could omit the very nullifier being re-spent),
+//! [`canonical_spent_nullifier_set`] returns `Err(RevocationCapacityExceeded)` and
+//! the spend turn is committed but carries NO freshness-bound proof, logged loudly.
 //!
 //! ## AUTHORITY leg — WIRED (cap Phase D; the former blocker here is CLOSED)
 //!
@@ -106,26 +104,26 @@
 //! the circuit seeds from (Phase A), and the executor DOES thread the consumed
 //! witness (Phase C) — so the leg is a real binding, not a free body-fact wire.
 
-use dregg_circuit::dsl::revocation::{DslRevocationTree, TREE_DEPTH};
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::{CellState, generate_effect_vm_trace};
 use dregg_sdk::{
     AgentCipherclerk, CapMembershipExpectation, CapMembershipWitness, FullTurnProof,
-    FullTurnVerifyError, FullTurnWitness, NonRevocationWitness, prove_full_turn,
-    prove_turn_self_sovereign_rotated, verify_full_turn_bound,
+    FullTurnVerifyError, FullTurnWitness, prove_full_turn, prove_turn_self_sovereign_rotated,
+    verify_full_turn_bound,
 };
 use dregg_types::CellId;
 
-/// Maximum number of revoked entries the audited non-revocation circuit can
-/// authenticate in a single proof: the sorted-Merkle tree is hardwired to
-/// [`TREE_DEPTH`] (`= 4`, a `2^4 = 16`-leaf tree) and reserves two leaves for the
-/// `SENTINEL_MIN`/`SENTINEL_MAX` ordering sentinels, leaving `16 - 2 = 14`.
+/// Maximum number of spent-nullifier entries the in-circuit limb-26 accumulator
+/// can authenticate in one opening: the openable heap tree is hardwired to
+/// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`] (`= 16`) and reserves two leaves
+/// for the `SENTINEL_MIN`/`SENTINEL_MAX` ordering sentinels, leaving
+/// `2^16 − 2 = 65534`.
 ///
-/// This is a CIRCUIT capacity, not a node policy: building the canonical tree at
-/// any other depth would not match the verifier's AIR. See the module-level
-/// "Capacity bound" note.
-pub const MAX_REVOCATION_TREE_ENTRIES: usize = (1usize << TREE_DEPTH) - 2;
+/// This is a CIRCUIT capacity, not a node policy. (Felt-width #11 fold-in: the
+/// retired depth-4 1-felt rail capped this at 14.)
+pub const MAX_REVOCATION_TREE_ENTRIES: usize =
+    (1usize << dregg_circuit::heap_root::HEAP_TREE_DEPTH) - 2;
 
 /// Widen a single-felt commitment into the 8-felt anchor the wide verifier compares against for a
 /// NARROW (v1 / cap-open) effect-vm leg: the verifier broadcasts such a leg's 1-felt commit into
@@ -164,12 +162,11 @@ pub enum FullTurnProvingError {
     /// pre/post commitments. Acceptance is gated on this: a turn whose proof
     /// does not verify is not accepted as proven.
     Verify(FullTurnVerifyError),
-    /// The canonical spent-nullifier set is larger than the audited
-    /// non-revocation circuit's fixed capacity ([`MAX_REVOCATION_TREE_ENTRIES`]).
-    /// A single fixed-depth freshness proof cannot soundly cover it (omitting any
+    /// The canonical spent-nullifier set is larger than the openable heap
+    /// tree's fixed capacity ([`MAX_REVOCATION_TREE_ENTRIES`] = 65534). A single
+    /// fixed-depth in-circuit opening cannot soundly cover it (omitting any
     /// entry could hide a double-spend), so the freshness-bound proof is NOT
-    /// produced for this turn. Closing this needs a depth-parameterized
-    /// non-revocation AIR.
+    /// produced for this turn.
     RevocationCapacityExceeded { have: usize, max: usize },
     /// The turn was routed to the freshness path but the prover could not build a
     /// non-membership witness — the spent nullifier is ALREADY in the canonical
@@ -192,8 +189,8 @@ impl std::fmt::Display for FullTurnProvingError {
             Self::Verify(e) => write!(f, "full-turn proof verification failed: {e}"),
             Self::RevocationCapacityExceeded { have, max } => write!(
                 f,
-                "canonical nullifier set ({have}) exceeds the non-revocation circuit capacity \
-                 ({max}); freshness-bound proof not produced (needs a deeper non-revocation AIR)"
+                "canonical nullifier set ({have}) exceeds the openable heap tree capacity \
+                 ({max}); freshness-bound proof not produced"
             ),
             Self::NullifierAlreadyRevoked => write!(
                 f,
@@ -214,7 +211,7 @@ impl std::error::Error for FullTurnProvingError {}
 /// Prove a finalized NON-SPEND turn and gate acceptance on the proof verifying.
 ///
 /// This is the self-sovereign path: it carries ONLY the Effect-VM state-transition
-/// leg (no authorization / membership / non-revocation sub-proofs), which is the
+/// leg (no authorization / membership sub-proofs), which is the
 /// correct trust model for an owner-authorized turn that spends no note. A turn
 /// that spends a note (`NoteSpend`) must instead go through
 /// [`prove_and_verify_finalized_turn_freshness`] so the no-double-spend bindings
@@ -888,61 +885,59 @@ pub fn nullifier_to_field(nullifier: &[u8; 32]) -> BabyBear {
     fold_bytes32_to_bb(nullifier)
 }
 
-/// Build the canonical [`DslRevocationTree`] from the node's authoritative
-/// spent-nullifier set (the raw 32-byte nullifiers), folding each into the
-/// Effect-VM field. Returns the tree (whose `root()` is the canonical revocation
-/// root) or [`FullTurnProvingError::RevocationCapacityExceeded`] when the set is
-/// too large for the fixed-depth circuit.
+/// Build the canonical SPENT-NULLIFIER SET (sorted, deduplicated felts) from the
+/// node's authoritative persisted set (the raw 32-byte nullifiers), folding each
+/// into the Effect-VM field. This is the set that seeds the in-circuit limb-26
+/// nullifier accumulator (`FullTurnWitness::spent_nullifiers`) AND the OLD-commit
+/// anchor derivation, so a peer/light client re-deriving from the same set
+/// obtains the same absorbed anchor. Returns
+/// [`FullTurnProvingError::RevocationCapacityExceeded`] when the set exceeds the
+/// openable heap tree's capacity.
 ///
 /// The set passed in is the previously-spent nullifiers — i.e. it must EXCLUDE
 /// the nullifier of the turn currently being proven (freshness = "not yet in the
 /// set"). The caller is responsible for capturing the set before recording this
 /// turn's spend.
-pub fn canonical_revocation_tree_for_set(
+pub fn canonical_spent_nullifier_set(
     previously_spent: &[[u8; 32]],
-) -> Result<DslRevocationTree, FullTurnProvingError> {
+) -> Result<Vec<BabyBear>, FullTurnProvingError> {
     if previously_spent.len() > MAX_REVOCATION_TREE_ENTRIES {
         return Err(FullTurnProvingError::RevocationCapacityExceeded {
             have: previously_spent.len(),
             max: MAX_REVOCATION_TREE_ENTRIES,
         });
     }
-    let leaves: Vec<BabyBear> = previously_spent.iter().map(nullifier_to_field).collect();
-    Ok(DslRevocationTree::new(leaves, TREE_DEPTH))
-}
-
-/// Canonical revocation root for a spent-nullifier set: the root of the
-/// sorted-Merkle tree the audited non-revocation circuit authenticates against,
-/// derived deterministically from the node's authoritative set. A peer/light
-/// client re-deriving from the same set obtains the same root.
-pub fn canonical_revocation_root_for_set(
-    previously_spent: &[[u8; 32]],
-) -> Result<BabyBear, FullTurnProvingError> {
-    Ok(canonical_revocation_tree_for_set(previously_spent)?.root())
+    let mut leaves: Vec<BabyBear> = previously_spent.iter().map(nullifier_to_field).collect();
+    leaves.sort_by_key(|h| h.as_u32());
+    leaves.dedup();
+    Ok(leaves)
 }
 
 /// Prove a finalized SPEND turn and gate acceptance on the freshness-bound
-/// verifier (`verify_full_turn_bound` with the canonical revocation root pinned).
+/// verifier (the canonical-set-derived OLD commit pinned; freshness is
+/// IN-CIRCUIT — felt-width #11 fold-in).
 ///
 /// This is the no-double-spend path. In addition to the Effect-VM post-state
 /// binding [`prove_and_verify_finalized_turn`] establishes, it:
 ///
-/// 1. builds the canonical [`DslRevocationTree`] from `previously_spent` (the
-///    node's authoritative set of nullifiers spent BEFORE this turn);
-/// 2. attaches a non-revocation sub-proof of freshness for `spent_nullifier`
-///    (this turn's nullifier, folded into the Effect-VM field);
-/// 3. verifies through [`verify_full_turn_bound`] with `expected_revocation_root`
-///    pinned to the canonical root — so the SDK's binding-(a)
-///    ([`FullTurnVerifyError::RevocationRootMismatch`]) and binding-(b)
-///    ([`FullTurnVerifyError::NullifierMismatch`]) teeth FIRE on the live path.
+/// 1. builds the canonical spent set via [`canonical_spent_nullifier_set`] from
+///    `previously_spent` (the node's authoritative set of nullifiers spent
+///    BEFORE this turn);
+/// 2. threads it as `FullTurnWitness::spent_nullifiers`, seeding the limb-26
+///    BEFORE accumulator the rotated note-spend descriptor's
+///    `.absent`/`.aafiInsert` grow-gate opens in-circuit;
+/// 3. derives the expected OLD/NEW commit anchors from the SAME canonical set
+///    and verifies through [`verify_full_turn_bound`] — a proof opening any
+///    other set publishes a different absorbed OLD commit and is rejected
+///    ([`FullTurnVerifyError::CommitmentMismatch`]).
 ///
 /// `spent_nullifier` is the raw 32-byte nullifier of THIS turn's `NoteSpend`
-/// (the executor already rejected a genuine double-spend; this proof attests
-/// freshness against the canonical set so a light client can re-check it).
+/// (the executor already rejected a genuine double-spend; the in-circuit
+/// `.absent` op re-attests freshness so a light client can re-check it).
 ///
 /// Returns the proven turn, or:
 /// - [`FullTurnProvingError::RevocationCapacityExceeded`] if the canonical set is
-///   too large for the fixed-depth circuit (turn carries no freshness proof);
+///   too large for the openable heap tree (turn carries no freshness proof);
 /// - [`FullTurnProvingError::NullifierAlreadyRevoked`] if the nullifier is already
 ///   in the canonical set (double-spend; no non-membership witness);
 /// - [`FullTurnProvingError::Prove`] / [`FullTurnProvingError::Verify`] on the
@@ -957,16 +952,19 @@ pub fn prove_and_verify_finalized_turn_freshness(
     spent_nullifier: &[u8; 32],
     previously_spent: &[[u8; 32]],
 ) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
-    // Canonical revocation tree from the node's authoritative set (built from the
-    // set BEFORE this turn's nullifier is recorded — freshness is non-membership).
-    let tree = canonical_revocation_tree_for_set(previously_spent)?;
-    let canonical_root = tree.root();
+    // Canonical spent set from the node's authoritative store (captured BEFORE
+    // this turn's nullifier is recorded — freshness is non-membership).
+    let spent_set = canonical_spent_nullifier_set(previously_spent)?;
     let item_hash = nullifier_to_field(spent_nullifier);
 
-    // A genuine double-spend has no non-membership witness; refuse rather than
-    // attach an unsound/absent proof. (The executor's NullifierSet should already
-    // have rejected this turn; this is defence in depth.)
-    if tree.contains(&item_hash) {
+    // A genuine double-spend has no in-circuit `.absent` bracketing witness;
+    // refuse EARLY with the named error rather than let the trace generator
+    // fail. (The executor's NullifierSet should already have rejected this
+    // turn; this is defence in depth.)
+    if spent_set
+        .binary_search_by_key(&item_hash.as_u32(), |h| h.as_u32())
+        .is_ok()
+    {
         return Err(FullTurnProvingError::NullifierAlreadyRevoked);
     }
 
@@ -1004,12 +1002,11 @@ pub fn prove_and_verify_finalized_turn_freshness(
     // wide chain endpoints when the spend rotates (the wide leg), else the v1 leg's single felts
     // broadcast into slot 0 (the narrow leg the verifier widens the same way). This is a NoteSpend turn,
     // so the wide note-spend producer opens the limb-26 grow-gate against the BEFORE nullifier-set
-    // leaves — thread the SAME canonical-tree leaves `prove_full_turn` threads (from the non-revocation
-    // witness), so the published 8-felt commit matches. Derived before the witness MOVES `tree`/`rotation`.
-    let before_nullifiers = tree.revoked_leaves();
+    // leaves — derive the anchors from the SAME canonical set the witness threads below, so the
+    // absorbed OLD commit the verifier pins IS the canonical-set anchor (the set binding).
     let (old_commit, new_commit) = match &rotation {
         Some(rot) => rot
-            .wide_commit_anchors(&initial_vm_state, &vm_effects, Some(&before_nullifiers))
+            .wide_commit_anchors(&initial_vm_state, &vm_effects, Some(&spent_set))
             .map_err(FullTurnProvingError::Prove)?,
         None => (
             wide_from_felt(initial_vm_state.state_commitment),
@@ -1017,13 +1014,14 @@ pub fn prove_and_verify_finalized_turn_freshness(
         ),
     };
 
-    // Compose the full-turn proof WITH the non-revocation leg.
+    // Compose the full-turn proof with the canonical spent set threaded (the
+    // in-circuit freshness witness).
     let witness = FullTurnWitness {
         initial_cell_state: initial_vm_state,
         effects: vm_effects,
         membership: None,
         conservation: None,
-        non_revocation: Some(NonRevocationWitness { tree, item_hash }),
+        spent_nullifiers: Some(spent_set),
         cap_membership: None,
         turn_hash,
         rotation,
@@ -1032,10 +1030,11 @@ pub fn prove_and_verify_finalized_turn_freshness(
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
-    // VERIFY → ACCEPT leg, BOUND to the canonical revocation root. Acceptance is
-    // gated on this Ok: a freshness proof against any other (prover-chosen) root,
-    // or for any item other than this turn's nullifier, is rejected here.
-    verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None)
+    // VERIFY → ACCEPT leg, BOUND to the canonical-set-derived anchors. Acceptance
+    // is gated on this Ok: a freshness opening against any other (prover-chosen)
+    // set moves the absorbed OLD commit and is rejected here; the item identity
+    // (`.absent` key == published nullifier) is in-circuit.
+    verify_full_turn_bound(&proof, old_commit, new_commit, None)
         .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
@@ -1071,7 +1070,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
 ///    ([`FullTurnVerifyError::CapLeafMismatch`] tooth).
 ///
 /// A capability-gated turn that ALSO spends a note keeps its freshness leg:
-/// pass `spent_nullifier` + `previously_spent` and the non-revocation sub-proof
+/// pass `spent_nullifier` + `previously_spent` and the in-circuit freshness set
 /// is attached and bound exactly as in
 /// [`prove_and_verify_finalized_turn_freshness`] (no-degrade: cap routing never
 /// drops the no-double-spend teeth).
@@ -1266,19 +1265,21 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         });
     }
 
-    // Optional freshness leg (a cap-gated turn that also spends a note).
-    let non_revocation = match spent_nullifier {
+    // Optional in-circuit freshness set (a cap-gated turn that also spends a note).
+    let spent_set: Option<Vec<BabyBear>> = match spent_nullifier {
         Some(nf) => {
-            let tree = canonical_revocation_tree_for_set(previously_spent)?;
+            let set = canonical_spent_nullifier_set(previously_spent)?;
             let item_hash = nullifier_to_field(nf);
-            if tree.contains(&item_hash) {
+            if set
+                .binary_search_by_key(&item_hash.as_u32(), |h| h.as_u32())
+                .is_ok()
+            {
                 return Err(FullTurnProvingError::NullifierAlreadyRevoked);
             }
-            Some((tree, item_hash))
+            Some(set)
         }
         None => None,
     };
-    let canonical_revocation_root = non_revocation.as_ref().map(|(tree, _)| tree.root());
 
     // Effect-VM pre-state, seeded with the ACTOR's REAL canonical capability root
     // (cap Phase A) — `pre_capability_root`. NOTE the actor/holder split: the
@@ -1338,10 +1339,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     // the producer absorbs), threading the BEFORE nullifier-set leaves for a cap-turn that also spends.
     // The ~31-bit waist is GONE for cap-gated turns. (Without a rotation witness the retired v1 cap leg
     // runs and the verifier broadcasts its 1-felt commit into slot 0 — matched by `wide_from_felt`.)
-    let before_nullifiers: Vec<BabyBear> = non_revocation
-        .as_ref()
-        .map(|(tree, _)| tree.revoked_leaves())
-        .unwrap_or_default();
+    let before_nullifiers: Vec<BabyBear> = spent_set.clone().unwrap_or_default();
     let (old_commit, new_commit) = match &rotation {
         Some(rot) => rot
             .wide_commit_anchors(&initial_vm_state, &vm_effects, Some(&before_nullifiers))
@@ -1396,8 +1394,7 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
         effects: vm_effects,
         membership: None,
         conservation: None,
-        non_revocation: non_revocation
-            .map(|(tree, item_hash)| NonRevocationWitness { tree, item_hash }),
+        spent_nullifiers: spent_set,
         // cap-WRITE light-client axis: thread the holder's FULL c-list as the cap-tree write witness.
         // When non-empty AND the effect routes a write wrapper (e.g. RevokeDelegation → the cap-tree
         // REMOVE), the SDK proves the `…WriteCapOpenVmDescriptor2R24` so the post-cap-root is on the
@@ -1421,22 +1418,17 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
 
     // VERIFY → ACCEPT leg, BOUND to the canonical pre-state capability root and
-    // the receipt-disclosed consumed-cap leaf (and, for a spend, the canonical
-    // revocation root). Acceptance is gated on this Ok: a membership path into
-    // any other (prover-chosen / spliced) tree, or for any leaf other than the
-    // disclosed consumed capability, is rejected here.
+    // the receipt-disclosed consumed-cap leaf. For a spend, freshness rides
+    // IN-CIRCUIT (the limb-26 grow-gate over the canonical set threaded above,
+    // absorbed into the pinned OLD commit). Acceptance is gated on this Ok: a
+    // membership path into any other (prover-chosen / spliced) tree, or for any
+    // leaf other than the disclosed consumed capability, is rejected here.
     let expectation = CapMembershipExpectation {
         leaf: consumed.cap_leaf(),
         cap_root: holder_cap_root,
     };
-    verify_full_turn_bound(
-        &proof,
-        old_commit,
-        new_commit,
-        canonical_revocation_root,
-        Some(&expectation),
-    )
-    .map_err(FullTurnProvingError::Verify)?;
+    verify_full_turn_bound(&proof, old_commit, new_commit, Some(&expectation))
+        .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
         proof,
@@ -2548,9 +2540,9 @@ mod tests {
         );
     }
 
-    /// CONTROL (honest spend): a NoteSpend turn whose freshness is proven against
-    /// the node's canonical spent-nullifier set VERIFIES through the bound
-    /// verify→accept leg.
+    /// CONTROL (honest spend): a NoteSpend turn whose freshness is opened
+    /// IN-CIRCUIT against the node's canonical spent-nullifier set (the limb-26
+    /// grow-gate) VERIFIES through the bound verify→accept leg.
     #[test]
     fn honest_spend_freshness_verifies() {
         let alice = CellId::from_bytes([0xA1; 32]);
@@ -2571,33 +2563,27 @@ mod tests {
         )
         .expect("honest spend (fresh against the canonical set) must prove + bound-verify");
 
-        assert!(proven.proof.components.has_non_revocation);
         assert!(!proven.proof_bytes().is_empty());
 
-        // Independent re-verification against the SAME canonical root the node
-        // would derive (a light client's path).
-        let canonical_root = canonical_revocation_root_for_set(&previously).unwrap();
-        verify_full_turn_bound(
-            &proven.proof,
-            proven.old_commit,
-            proven.new_commit,
-            Some(canonical_root),
-            None,
-        )
-        .expect("light-client re-verify against the canonical root must accept");
+        // Independent re-verification against the canonical-set-derived anchors
+        // (a light client's path — the OLD anchor absorbs the canonical set's
+        // limb-26 root, so pinning it IS the set binding).
+        verify_full_turn_bound(&proven.proof, proven.old_commit, proven.new_commit, None)
+            .expect("light-client re-verify against the canonical anchors must accept");
     }
 
-    /// ANTI-FORGERY binding (a) — RevocationRootMismatch: an honest spend proof
-    /// is REJECTED when re-verified against a DIFFERENT (stale / wrong) revocation
-    /// root than the one its freshness was proven against. This is exactly the
-    /// counterfeiting hole the bound verify closes on the live path: a proof of
-    /// freshness against one nullifier set must not be accepted as freshness
-    /// against another.
+    /// ANTI-FORGERY set binding (the former binding (a)): an honest spend proof
+    /// is REJECTED when re-verified against anchors derived from a DIFFERENT
+    /// (stale / wrong) spent set than the one its in-circuit freshness opened.
+    /// The limb-26 BEFORE root rides the absorbed OLD commit, so a different set
+    /// ⇒ a different pinned anchor ⇒ `CommitmentMismatch` — the counterfeiting
+    /// hole stays closed, now at the 8-felt width.
     #[test]
-    fn spend_against_wrong_revocation_root_is_rejected() {
+    fn spend_against_wrong_spent_set_anchor_is_rejected() {
         let alice = CellId::from_bytes([0xA1; 32]);
         let nf = [0x22u8; 32];
         let previously: Vec<[u8; 32]> = (1..=6u8).map(|i| [i; 32]).collect();
+        let turn_hash = [0xB0u8; 32];
 
         let effects = vec![note_spend_effect(nf, 500)];
         let proven = prove_and_verify_finalized_turn_freshness(
@@ -2605,53 +2591,59 @@ mod tests {
             1000,
             0,
             &effects,
-            [0xB0u8; 32],
+            turn_hash,
             &nf,
             &previously,
         )
         .expect("honest spend proves");
 
-        // A DIFFERENT canonical set (e.g. a staler view that already includes nf,
-        // or simply a different set) yields a different canonical root.
+        // A DIFFERENT canonical set (e.g. a staler view) yields different
+        // canonical-set-derived anchors: derive them the same way the prover
+        // does (the generate-only wide anchors over the other set).
         let other_set: Vec<[u8; 32]> = (1..=8u8).map(|i| [i; 32]).collect();
-        let wrong_root = canonical_revocation_root_for_set(&other_set).unwrap();
-        let honest_root = canonical_revocation_root_for_set(&previously).unwrap();
-        assert_ne!(wrong_root, honest_root);
-
-        let result = verify_full_turn_bound(
-            &proven.proof,
-            proven.old_commit,
-            proven.new_commit,
-            Some(wrong_root),
-            None,
+        let other_felts = canonical_spent_nullifier_set(&other_set).unwrap();
+        let rot = rotation_witness_for_cap_less_turn(&alice, 1000, 0, &effects, &[turn_hash])
+            .expect("single-spend turn yields a rotation witness");
+        let vm_effects = AgentCipherclerk::convert_effects_to_vm(&alice, &effects);
+        let initial = CellState::new(1000, 0);
+        let (wrong_old, wrong_new) = rot
+            .wide_commit_anchors(&initial, &vm_effects, Some(&other_felts))
+            .expect("anchors derive for the other set");
+        assert_ne!(
+            wrong_old, proven.old_commit,
+            "a different spent set must move the absorbed OLD anchor",
         );
+
+        let result = verify_full_turn_bound(&proven.proof, wrong_old, wrong_new, None);
         match result {
-            Err(FullTurnVerifyError::RevocationRootMismatch { expected, got }) => {
-                assert_eq!(expected, wrong_root);
-                assert_eq!(got, honest_root);
-            }
+            Err(FullTurnVerifyError::CommitmentMismatch { .. }) => {}
             Ok(()) => panic!(
-                "SOUNDNESS (no-double-spend binding a): a freshness proof against one nullifier \
-                 set was ACCEPTED against a DIFFERENT root — the counterfeiting hole is OPEN!"
+                "SOUNDNESS (no-double-spend set binding): a freshness opening against one \
+                 nullifier set was ACCEPTED against another set's anchors — the counterfeiting \
+                 hole is OPEN!"
             ),
-            Err(other) => panic!("expected RevocationRootMismatch, got {other:?}"),
+            Err(other) => panic!("expected CommitmentMismatch, got {other:?}"),
         }
     }
 
-    /// ANTI-FORGERY binding (b) — NullifierMismatch: a spend turn whose Effect-VM
-    /// nullifier is N, but whose attached freshness proof attests a DIFFERENT item
-    /// M, is REJECTED by the bound verify→accept leg. We drive this through the
-    /// live freshness fn by passing a `spent_nullifier` (the freshness item) that
-    /// differs from the turn's actual NoteSpend nullifier (the Effect-VM PI).
+    /// THE ITEM IS STRUCTURAL (the former binding (b), now unrepresentable as a
+    /// forgery): the in-circuit `.absent` op is keyed by the spend row's OWN
+    /// folded nullifier `param0` — there is no separate "freshness item" a
+    /// caller/prover could substitute. Concretely: a spend of N whose nullifier
+    /// N is ALREADY in the canonical set cannot dodge the double-spend refusal
+    /// by declaring a different `spent_nullifier` M to the freshness fn — the
+    /// early host check passes (M ∉ set), but the trace generator's in-circuit
+    /// `.absent` witness for N fails and the prove REFUSES.
     #[test]
-    fn spend_freshness_for_wrong_item_is_rejected() {
+    fn spend_freshness_item_cannot_be_substituted() {
         let alice = CellId::from_bytes([0xA1; 32]);
-        // The turn genuinely spends N.
+        // The turn genuinely spends N — and N is ALREADY in the canonical set.
         let n = [0x33u8; 32];
-        // The prover attaches freshness for a DIFFERENT item M.
+        // The caller declares a DIFFERENT item M (not in the set).
         let m = [0x44u8; 32];
         assert_ne!(n, m);
-        let previously: Vec<[u8; 32]> = (1..=6u8).map(|i| [i + 100; 32]).collect();
+        let mut previously: Vec<[u8; 32]> = (1..=6u8).map(|i| [i + 100; 32]).collect();
+        previously.push(n);
 
         let effects = vec![note_spend_effect(n, 500)];
         let result = prove_and_verify_finalized_turn_freshness(
@@ -2663,20 +2655,12 @@ mod tests {
             &m,
             &previously,
         );
-        match result {
-            Err(FullTurnProvingError::Verify(FullTurnVerifyError::NullifierMismatch {
-                proven_item,
-                effect_nullifier,
-            })) => {
-                assert_eq!(proven_item, nullifier_to_field(&m));
-                assert_eq!(effect_nullifier, nullifier_to_field(&n));
-            }
-            Ok(_) => panic!(
-                "SOUNDNESS (no-double-spend binding b): a spend of N whose freshness attests a \
-                 DIFFERENT item M was ACCEPTED — the verify→accept gate did not fire!"
-            ),
-            Err(other) => panic!("expected Verify(NullifierMismatch), got {other:?}"),
-        }
+        assert!(
+            result.is_err(),
+            "SOUNDNESS (no-double-spend, structural item): declaring a different freshness \
+             item M must NOT let a double-spend of N through — the in-circuit `.absent` is \
+             keyed by the spend row's own nullifier; got {result:?}",
+        );
     }
 
     /// C4 CLOSE — a single-spend NoteSpend turn now proves ROTATED: the freshness path
@@ -2722,7 +2706,6 @@ mod tests {
             "the v1 effect-vm leg must NOT be present on the rotated note-spend turn; \
              sub-proofs = {labels:?}"
         );
-        assert!(proven.proof.components.has_non_revocation);
     }
 
     /// C4 ANTI-GHOST (the rotated no-double-spend tooth, made EXPLICIT) — the freshness leg's
@@ -2736,12 +2719,10 @@ mod tests {
     ///      binding, not a free wire. (`honest_spend_freshness_verifies` proves the turn verifies;
     ///      this asserts the binding LIVES on the rotated leg specifically.)
     ///
-    ///  (2) FORGED: a turn that genuinely spends N but whose attached freshness proof attests a
-    ///      DIFFERENT item M is REJECTED by the bound verify→accept leg with `NullifierMismatch`,
-    ///      and — because this single-spend turn rotates — `effect_nullifier` is read from the
-    ///      ROTATED PI[38] (it equals `fold(N)`), proving the rejection fired on the rotated
-    ///      step-8 tooth (not the v1 offset-198 one). This is the anti-ghost evidence that the C4
-    ///      rotation did NOT weaken no-double-spend: a forged/substituted nullifier still UNSAT.
+    ///  (2) STRUCTURAL: the in-circuit `.absent` key IS the spend row's own folded nullifier
+    ///      (`param0`, cross-bound to the published PI[38]) — a caller-declared substitute item
+    ///      never reaches the circuit, so the published nullifier stays `fold(N)` regardless.
+    ///      (The double-spend refusal itself is `spend_freshness_item_cannot_be_substituted`.)
     #[test]
     fn flow_b_note_spend_rotated_nullifier_pin_is_antighost() {
         use dregg_circuit::effect_vm::trace_rotated::{ROT_NULLIFIER_PI, ROT_NULLIFIER_PI_COUNT};
@@ -2788,44 +2769,37 @@ mod tests {
             "rotated PI[ROT_NULLIFIER_PI] must pin the spend row's folded nullifier (EffectVmEmitRotationV3.noteSpendV3)"
         );
 
-        // ── (2) FORGED: a freshness proof for a DIFFERENT item M is rejected THROUGH the rotated
-        // leg (effect_nullifier read from rotated PI[38] == fold(N)). ──
+        // ── (2) STRUCTURAL: the in-circuit `.absent` key IS the spend row's own
+        // folded nullifier (`param0`, cross-bound to the published PI[38]) — a
+        // caller declaring a DIFFERENT item M cannot repoint the opened key. The
+        // turn still proves, and the rotated leg still pins fold(N) (not fold(M))
+        // at ROT_NULLIFIER_PI. (The double-spend refusal for a present N is
+        // `spend_freshness_item_cannot_be_substituted`.) ──
         let m = [0x4Du8; 32];
         assert_ne!(n, m);
-        let result = prove_and_verify_finalized_turn_freshness(
+        let proven_m = prove_and_verify_finalized_turn_freshness(
             &alice,
             1000,
             0,
             &effects, // genuinely spends N
             [0x9Fu8; 32],
-            &m, // but the prover attaches freshness for M
+            &m, // the caller declares M — it cannot repoint the in-circuit key
             &previously,
+        )
+        .expect("the declared item does not enter the circuit; the honest spend still proves");
+        let leg = proven_m
+            .proof
+            .composed
+            .sub_proofs
+            .iter()
+            .find(|sp| sp.label == "effect-vm-rotated")
+            .expect("rotated leg");
+        assert_eq!(
+            leg.sub_public_inputs[ROT_NULLIFIER_PI],
+            nullifier_to_field(&n),
+            "the published nullifier is the TURN's own fold(N) — the declared M never reaches \
+             the circuit (the item is structural, not caller-supplied)"
         );
-        match result {
-            Err(FullTurnProvingError::Verify(FullTurnVerifyError::NullifierMismatch {
-                proven_item,
-                effect_nullifier,
-            })) => {
-                assert_eq!(
-                    proven_item,
-                    nullifier_to_field(&m),
-                    "the freshness leg proved item M fresh"
-                );
-                assert_eq!(
-                    effect_nullifier,
-                    nullifier_to_field(&n),
-                    "the cross-checked nullifier is THIS turn's N, read from the ROTATED PI[38] — \
-                     the rotated step-8 tooth fired (no-double-spend survived the C4 rotation)"
-                );
-            }
-            Ok(_) => panic!(
-                "ANTI-GHOST (rotated no-double-spend): a spend of N whose freshness attests a \
-                 DIFFERENT item M was ACCEPTED on the rotated leg — the C4 weld weakened the tooth!"
-            ),
-            Err(other) => {
-                panic!("expected Verify(NullifierMismatch) on the rotated leg, got {other:?}")
-            }
-        }
     }
 
     /// SOUNDNESS — the single-spend invariant survives the rotation. A turn with MORE THAN ONE
@@ -2885,23 +2859,24 @@ mod tests {
         );
     }
 
-    /// The canonical revocation tree honours the fixed-depth circuit capacity:
+    /// The canonical spent set honours the openable heap tree's capacity:
     /// a set within capacity builds; a set over capacity is refused (we never
     /// silently truncate, which could hide a double-spend).
     #[test]
-    fn revocation_tree_respects_circuit_capacity() {
-        let within: Vec<[u8; 32]> = (0..MAX_REVOCATION_TREE_ENTRIES as u8)
-            .map(|i| [i; 32])
-            .collect();
+    fn spent_set_respects_heap_capacity() {
+        let nf_bytes = |i: usize| -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a[..4].copy_from_slice(&(i as u32).to_le_bytes());
+            a
+        };
+        let within: Vec<[u8; 32]> = (0..MAX_REVOCATION_TREE_ENTRIES).map(nf_bytes).collect();
         assert!(
-            canonical_revocation_tree_for_set(&within).is_ok(),
+            canonical_spent_nullifier_set(&within).is_ok(),
             "a set at the capacity bound must build",
         );
 
-        let over: Vec<[u8; 32]> = (0..=MAX_REVOCATION_TREE_ENTRIES as u8)
-            .map(|i| [i; 32])
-            .collect();
-        match canonical_revocation_tree_for_set(&over) {
+        let over: Vec<[u8; 32]> = (0..=MAX_REVOCATION_TREE_ENTRIES).map(nf_bytes).collect();
+        match canonical_spent_nullifier_set(&over) {
             Err(FullTurnProvingError::RevocationCapacityExceeded { have, max }) => {
                 assert_eq!(have, over.len());
                 assert_eq!(max, MAX_REVOCATION_TREE_ENTRIES);
@@ -3247,7 +3222,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         )
         .expect("light-client re-verify with the cap expectation must accept");
@@ -3335,7 +3309,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         ) {
             Err(FullTurnVerifyError::CapRootMismatch { expected, got }) => {
@@ -3445,7 +3418,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         ) {
             Err(FullTurnVerifyError::CapLeafMismatch { expected, got }) => {
@@ -3547,7 +3519,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         );
         assert!(
@@ -3634,7 +3605,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         );
         assert!(
@@ -3779,7 +3749,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         )
         .expect("light-client re-verify of the ROTATED cap turn with the expectation must accept");
@@ -3908,7 +3877,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         ) {
             Err(FullTurnVerifyError::CapLeafMismatch { expected, got }) => {
@@ -4267,7 +4235,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         )
         .expect("light-client re-verify against the delegator's root must accept");
@@ -4385,7 +4352,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         ) {
             Err(FullTurnVerifyError::CapRootMismatch { expected, got }) => {
@@ -4620,7 +4586,6 @@ mod tests {
             &proven.proof,
             proven.old_commit,
             proven.new_commit,
-            None,
             Some(&expectation),
         )
         .expect("light-client re-verify of the cross-vat proof must accept");

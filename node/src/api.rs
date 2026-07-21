@@ -323,7 +323,7 @@ pub enum TurnEffectSpec {
         /// Hex cell id. Defaults to the action's target.
         #[serde(default)]
         cell: Option<String>,
-        index: usize,
+        index: u64,
         /// Hex-encoded value: a full 64-char hex field element, or a shorter
         /// hex/decimal scalar that is left-padded into a little-endian u64.
         value: String,
@@ -2492,12 +2492,12 @@ async fn get_receipt_witnesses(
 ///
 /// The proof bytes are persisted by the commit path under
 /// `full_turn_proof:{turn_hash}` (see
-/// [`crate::turn_proving::turn_proof_config_key`]). A spend turn's proof carries
-/// the FRESHNESS-bound non-revocation leg; a light client re-verifying it MUST
-/// pass `expected_revocation_root` = the canonical revocation root derived from
-/// the node's authoritative spent-nullifier set (served via
-/// `nullifier_set_root` on the checkpoint endpoints) into
-/// `dregg_sdk::verify_full_turn_bound`.
+/// [`crate::turn_proving::turn_proof_config_key`]). A spend turn's freshness is
+/// IN-CIRCUIT (the limb-26 grow-gate over the canonical spent set — felt-width
+/// #11 fold-in); a light client re-verifying it MUST pass the CANONICAL
+/// `expected_old_commit` (derived from the authoritative pre-state INCLUDING the
+/// canonical spent-set root) into `dregg_sdk::verify_full_turn_bound` — that
+/// anchor is what binds the opened set to the node's authoritative one.
 ///
 /// Returns the hex-encoded proof bytes plus the turn hash. 404 if no proof was
 /// persisted for that turn (e.g. proving disabled, or the turn carried no

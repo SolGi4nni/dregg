@@ -24,7 +24,7 @@
 //! | `Temporal`        | `dregg-temporal-predicate-gte::dsl-v1` (TemporalPredicate)             |
 //! | `MerkleMembership`| `merkle-membership-depth2-4ary::poseidon2-v1` + the depth-GENERAL builder |
 //! | `NonMembership`   | `dregg-membership-adjacency::poseidon2-v1` + `quantified-absence-…`     |
-//! | `BlindedSet`      | `dregg-non-revocation-sorted-tree::poseidon2-v1` + `dregg-accumulator-nonrev-emit-v2` |
+//! | `BlindedSet`      | `dregg-accumulator-nonrev-emit-v2`                                      |
 //! | `BridgePredicate` | `bridge-action-leaf::bridge_action_air_v1` + `dregg-predicate-arith-ge::threshold-v1` |
 //! | `Custom`          | `dregg-effectvm-custom-v1` (customVmDescriptor2)                        |
 //! | `PedersenEquality`| NONE — off-STARK Schnorr, no descriptor (returns `&[]` / `None`)        |
@@ -99,14 +99,6 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "quantified-absence-quotient-accumulator::babybear4-v1",
         QUANTIFIED_ABSENCE_JSON,
     ),
-    (
-        "dregg-non-revocation-sorted-tree::poseidon2-v1",
-        NON_REVOCATION_JSON,
-    ),
-    (
-        "dregg-non-revocation-adjacency::poseidon2-fact-v1",
-        NON_REVOCATION_ADJACENCY_JSON,
-    ),
     ("dregg-turn-chain-binding-v2", TURN_CHAIN_BINDING_JSON),
     ("dregg-accumulator-nonrev-emit-v2", ACCUMULATOR_NONREV_JSON),
     (
@@ -174,12 +166,6 @@ const ADJACENCY_MEMBERSHIP_JSON: &str =
     include_str!("../descriptors/by-name/adjacency-membership.json");
 const QUANTIFIED_ABSENCE_JSON: &str =
     include_str!("../descriptors/by-name/quantified-absence.json");
-const NON_REVOCATION_JSON: &str = include_str!("../descriptors/by-name/non-revocation.json");
-/// The deployed depth-general sorted-tree non-revocation descriptor: two private fact-domain
-/// membership paths + internalized reconstructed-index consecutiveness + strict ordering, composed
-/// and proved in `NonRevocationAdjacencyEmit.lean`.
-const NON_REVOCATION_ADJACENCY_JSON: &str =
-    include_str!("../descriptors/by-name/non-revocation-adjacency.json");
 /// The **turn-chain binding** family (`dregg-turn-chain-binding-v2`), authored in
 /// `metatheory/Dregg2/Circuit/Emit/EffectVmEmitTurnChainBinding.lean` (proved there, with refutation
 /// teeth for forged continuity / idx-step / real_count). Byte source: `metatheory/EmitTurnChain.lean`.
@@ -318,11 +304,9 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
             "dregg-membership-adjacency::poseidon2-v1",
             "quantified-absence-quotient-accumulator::babybear4-v1",
         ],
-        PredicateKind::BlindedSet => &[
-            "dregg-non-revocation-adjacency::poseidon2-fact-v1",
-            "dregg-non-revocation-sorted-tree::poseidon2-v1",
-            "dregg-accumulator-nonrev-emit-v2",
-        ],
+        // (The 1-felt sorted-tree non-revocation descriptors are RETIRED — felt-width #11
+        // fold-in. The polynomial-accumulator freshness leg remains.)
+        PredicateKind::BlindedSet => &["dregg-accumulator-nonrev-emit-v2"],
         PredicateKind::BridgePredicate => &[
             "bridge-action-leaf::bridge_action_air_v1",
             "dregg-predicate-arith-ge::threshold-v1",

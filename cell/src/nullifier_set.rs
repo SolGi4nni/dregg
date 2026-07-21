@@ -446,7 +446,7 @@ impl NullifierSet {
     /// (`trace_rotated.rs::generate_rotated_note_spend_trace_with_nullifier_tree`,
     /// lines ~1204/1225): `addr` is the folded nullifier felt
     /// (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME `nullifier_to_field`
-    /// fold the freshness path / `DslRevocationTree` use — matching the spend row's
+    /// fold the node freshness path uses — matching the spend row's
     /// `PARAM_BASE + param::NULLIFIER` column), and `value` is the spent note value
     /// folded through the circuit's `split_u64(value).0` — the identical
     /// `PARAM_BASE + param::NOTE_VALUE_LO` felt (the low 30 bits) the grow-gate reads
