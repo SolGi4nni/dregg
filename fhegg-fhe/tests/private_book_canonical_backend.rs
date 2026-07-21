@@ -1,4 +1,4 @@
-//! Exact and hostile gates for the deterministic share-opening backend.
+//! Exact and hostile gates for the logarithmic share-opening proof backend.
 
 #[path = "../src/private_book_canonical_backend.rs"]
 mod private_book_canonical_backend;
@@ -17,9 +17,11 @@ use private_book_distributed_inputs::{
 };
 use private_book_distributed_prover::{
     DistributedProverCoordinator, DistributedProverError, ShareBoundProverRequest,
-    WorkerLocalProofBackend, WorkerProofContext, WorkerProofContribution, WorkerProofProcess,
+    WorkerLocalProofBackend, WorkerProofArtifact, WorkerProofContext, WorkerProofContribution,
+    WorkerProofProcess,
 };
 
+use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::SigningKey;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -132,9 +134,129 @@ impl WorkerLocalProofBackend for ArbitraryDigestBackend {
         _context: &WorkerProofContext,
         _input_certificate: &DistributedInputCertificate,
         _witness: PreparedWitnessShare,
-    ) -> Result<[u8; 32], Self::Error> {
-        Ok([0x99; 32])
+    ) -> Result<WorkerProofArtifact, Self::Error> {
+        WorkerProofArtifact::new(vec![0x99; 32]).map_err(|_| ())
     }
+}
+
+struct CorruptProofBackend {
+    inner: CanonicalShareOpeningBackend,
+    mutation: Option<ArtifactMutation>,
+}
+
+#[derive(Clone, Copy)]
+enum ArtifactMutation {
+    ResponseScalar,
+    SwapOwnerProofs,
+}
+
+impl WorkerLocalProofBackend for CorruptProofBackend {
+    type Error = ();
+
+    fn protocol_id(&self) -> [u8; 32] {
+        canonical_share_opening_protocol_id()
+    }
+
+    fn prove_local(
+        &mut self,
+        context: &WorkerProofContext,
+        input_certificate: &DistributedInputCertificate,
+        witness: PreparedWitnessShare,
+    ) -> Result<WorkerProofArtifact, Self::Error> {
+        let honest = self
+            .inner
+            .prove_local(context, input_certificate, witness)
+            .map_err(|_| ())?;
+        let Some(mutation) = self.mutation else {
+            return Ok(honest);
+        };
+        let mut bytes = honest.as_bytes().to_vec();
+        let proof_len = u32::from_be_bytes(bytes[86..90].try_into().unwrap()) as usize;
+        match mutation {
+            ArtifactMutation::ResponseScalar => {
+                // Substitute one canonical response scalar while leaving both
+                // codecs valid. Add one to avoid even negligible equality with
+                // the honestly sampled response.
+                let response_start = 90 + proof_len - 32;
+                let original = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+                    bytes[response_start..response_start + 32]
+                        .try_into()
+                        .unwrap(),
+                ))
+                .unwrap();
+                bytes[response_start..response_start + 32]
+                    .copy_from_slice(&(original + Scalar::ONE).to_bytes());
+            }
+            ArtifactMutation::SwapOwnerProofs => {
+                // Proof lengths are fixed for a given padded vector width. Swap
+                // owner 0 and owner 1 proof bodies while retaining canonical
+                // framing; owner/order transcript binding must reject it.
+                let second_len_start = 90 + proof_len;
+                assert_eq!(
+                    u32::from_be_bytes(
+                        bytes[second_len_start..second_len_start + 4]
+                            .try_into()
+                            .unwrap()
+                    ) as usize,
+                    proof_len
+                );
+                let first = bytes[90..90 + proof_len].to_vec();
+                let second_start = second_len_start + 4;
+                let second = bytes[second_start..second_start + proof_len].to_vec();
+                bytes[90..90 + proof_len].copy_from_slice(&second);
+                bytes[second_start..second_start + proof_len].copy_from_slice(&first);
+            }
+        }
+        refresh_artifact_checksum(&mut bytes);
+        WorkerProofArtifact::new(bytes).map_err(|_| ())
+    }
+}
+
+struct ReplayArtifactBackend {
+    artifact: WorkerProofArtifact,
+}
+
+impl WorkerLocalProofBackend for ReplayArtifactBackend {
+    type Error = ();
+
+    fn protocol_id(&self) -> [u8; 32] {
+        canonical_share_opening_protocol_id()
+    }
+
+    fn prove_local(
+        &mut self,
+        _context: &WorkerProofContext,
+        _input_certificate: &DistributedInputCertificate,
+        _witness: PreparedWitnessShare,
+    ) -> Result<WorkerProofArtifact, Self::Error> {
+        Ok(self.artifact.clone())
+    }
+}
+
+fn refresh_artifact_checksum(bytes: &mut [u8]) {
+    let checksum_start = bytes.len() - 32;
+    let mut hasher =
+        blake3::Hasher::new_derive_key("fhegg/private-book-share-opening-pok/artifact/v2");
+    hasher.update(&(checksum_start as u64).to_be_bytes());
+    hasher.update(&bytes[..checksum_start]);
+    let checksum = *hasher.finalize().as_bytes();
+    bytes[checksum_start..].copy_from_slice(&checksum);
+}
+
+fn envelope_from_contributions(
+    session: &DistributedWitnessSession,
+    certificate: &DistributedInputCertificate,
+    contributions: Vec<WorkerProofContribution>,
+) -> private_book_distributed_prover::DistributedProverEnvelope {
+    let request =
+        ShareBoundProverRequest::new(session, certificate, canonical_share_opening_protocol_id())
+            .unwrap();
+    let mut coordinator =
+        DistributedProverCoordinator::new(session.clone(), &request, certificate).unwrap();
+    for contribution in contributions {
+        coordinator.accept(contribution).unwrap();
+    }
+    coordinator.finish().unwrap()
 }
 
 #[test]
@@ -162,6 +284,9 @@ fn exact_local_openings_produce_the_only_publicly_accepted_contributions() {
         .collect::<Vec<_>>();
     assert_eq!(digests.len(), session.n_workers());
     assert!(digests.iter().all(|digest| *digest != [0; 32]));
+    assert!(envelope
+        .worker_public_artifacts()
+        .all(|(_, artifact)| artifact.len() < 8 * 1024));
 }
 
 #[test]
@@ -214,6 +339,177 @@ fn arbitrary_digest_and_cross_certificate_verifier_fail_closed() {
     let other_envelope = other_coordinator.finish().unwrap();
     assert_eq!(
         other_envelope.verify_backend(&session, &other_request, &other_certificate, &verifier),
+        Err(DistributedProverError::BackendRejected)
+    );
+}
+
+#[test]
+fn roster_signed_corrupt_share_proof_is_rejected_by_cryptographic_verifier() {
+    let owner_keys = keys::<ORDER_COUNT>(0x12);
+    let worker_keys = keys::<3>(0x32);
+    let session = session(&owner_keys, &worker_keys);
+    let (certificate, shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x90);
+    let protocol_id = canonical_share_opening_protocol_id();
+    let request = ShareBoundProverRequest::new(&session, &certificate, protocol_id).unwrap();
+    let contributions = shares
+        .into_iter()
+        .enumerate()
+        .map(|(worker, share)| {
+            let backend = CorruptProofBackend {
+                inner: CanonicalShareOpeningBackend::new(worker),
+                mutation: (worker == 0).then_some(ArtifactMutation::ResponseScalar),
+            };
+            let contribution = WorkerProofProcess::new(
+                session.clone(),
+                worker,
+                worker_keys[worker].clone(),
+                backend,
+            )
+            .unwrap()
+            .run(&request, &certificate, share)
+            .unwrap();
+            (worker, contribution)
+        })
+        .collect::<Vec<_>>();
+
+    let mut coordinator =
+        DistributedProverCoordinator::new(session.clone(), &request, &certificate).unwrap();
+    for (_, contribution) in contributions {
+        coordinator.accept(contribution).unwrap();
+    }
+    let envelope = coordinator.finish().unwrap();
+    // The roster signatures and generic artifact hashes are genuine.  The
+    // proof verifier, not the worker attestation, rejects the forged opening.
+    envelope
+        .verify_envelope(&session, &request, &certificate)
+        .unwrap();
+    let verifier = CanonicalShareOpeningVerifier::new(&certificate).unwrap();
+    assert_eq!(
+        envelope.verify_backend(&session, &request, &certificate, &verifier),
+        Err(DistributedProverError::BackendRejected)
+    );
+}
+
+#[test]
+fn proof_artifacts_are_not_replayable_across_worker_request_or_owner_order() {
+    let owner_keys = keys::<ORDER_COUNT>(0x13);
+    let worker_keys = keys::<3>(0x33);
+    let session = session(&owner_keys, &worker_keys);
+    let (certificate, shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0xa0);
+    let honest_contributions =
+        canonical_contributions(&session, &certificate, &worker_keys, shares);
+    let honest_envelope = envelope_from_contributions(&session, &certificate, honest_contributions);
+    let artifacts = honest_envelope
+        .worker_public_artifacts()
+        .map(|(_, bytes)| WorkerProofArtifact::new(bytes.to_vec()).unwrap())
+        .collect::<Vec<_>>();
+
+    // Re-sign worker 1's proof artifact as worker 0. Generic contribution
+    // authentication succeeds, but the worker-bound proof transcript fails.
+    let (same_certificate, replay_shares) =
+        prepare_inputs(&session, &owner_keys, &worker_keys, 0xa0);
+    assert_eq!(certificate.to_bytes(), same_certificate.to_bytes());
+    let request = ShareBoundProverRequest::new(
+        &session,
+        &certificate,
+        canonical_share_opening_protocol_id(),
+    )
+    .unwrap();
+    let cross_worker = replay_shares
+        .into_iter()
+        .enumerate()
+        .map(|(worker, share)| {
+            let artifact = if worker == 0 {
+                artifacts[1].clone()
+            } else {
+                artifacts[worker].clone()
+            };
+            WorkerProofProcess::new(
+                session.clone(),
+                worker,
+                worker_keys[worker].clone(),
+                ReplayArtifactBackend { artifact },
+            )
+            .unwrap()
+            .run(&request, &certificate, share)
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let envelope = envelope_from_contributions(&session, &certificate, cross_worker);
+    envelope
+        .verify_envelope(&session, &request, &certificate)
+        .unwrap();
+    let verifier = CanonicalShareOpeningVerifier::new(&certificate).unwrap();
+    assert_eq!(
+        envelope.verify_backend(&session, &request, &certificate, &verifier),
+        Err(DistributedProverError::BackendRejected)
+    );
+
+    // Re-sign artifacts from certificate/request A under a fresh request B.
+    // The exact internal request/certificate/commitment binding rejects them.
+    let (other_certificate, other_shares) =
+        prepare_inputs(&session, &owner_keys, &worker_keys, 0xb0);
+    let other_request = ShareBoundProverRequest::new(
+        &session,
+        &other_certificate,
+        canonical_share_opening_protocol_id(),
+    )
+    .unwrap();
+    let cross_request = other_shares
+        .into_iter()
+        .enumerate()
+        .map(|(worker, share)| {
+            WorkerProofProcess::new(
+                session.clone(),
+                worker,
+                worker_keys[worker].clone(),
+                ReplayArtifactBackend {
+                    artifact: artifacts[worker].clone(),
+                },
+            )
+            .unwrap()
+            .run(&other_request, &other_certificate, share)
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let envelope = envelope_from_contributions(&session, &other_certificate, cross_request);
+    envelope
+        .verify_envelope(&session, &other_request, &other_certificate)
+        .unwrap();
+    let verifier = CanonicalShareOpeningVerifier::new(&other_certificate).unwrap();
+    assert_eq!(
+        envelope.verify_backend(&session, &other_request, &other_certificate, &verifier),
+        Err(DistributedProverError::BackendRejected)
+    );
+
+    // Finally retain the right worker/request/artifact framing but swap two
+    // owner proofs. The public verifier must enforce canonical owner order.
+    let (_, owner_swap_shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0xa0);
+    let owner_swapped = owner_swap_shares
+        .into_iter()
+        .enumerate()
+        .map(|(worker, share)| {
+            WorkerProofProcess::new(
+                session.clone(),
+                worker,
+                worker_keys[worker].clone(),
+                CorruptProofBackend {
+                    inner: CanonicalShareOpeningBackend::new(worker),
+                    mutation: (worker == 0).then_some(ArtifactMutation::SwapOwnerProofs),
+                },
+            )
+            .unwrap()
+            .run(&request, &certificate, share)
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let envelope = envelope_from_contributions(&session, &certificate, owner_swapped);
+    envelope
+        .verify_envelope(&session, &request, &certificate)
+        .unwrap();
+    let certificate_verifier = CanonicalShareOpeningVerifier::new(&certificate).unwrap();
+    assert_eq!(
+        envelope.verify_backend(&session, &request, &certificate, &certificate_verifier),
         Err(DistributedProverError::BackendRejected)
     );
 }

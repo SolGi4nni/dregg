@@ -12,8 +12,8 @@ use private_book_distributed_inputs::{
 };
 use private_book_distributed_prover::{
     DistributedProverCoordinator, DistributedProverError, PublicDistributedProofVerifier,
-    ShareBoundProverRequest, WorkerLocalProofBackend, WorkerProofContext, WorkerProofContribution,
-    WorkerProofProcess,
+    ShareBoundProverRequest, WorkerLocalProofBackend, WorkerProofArtifact, WorkerProofContext,
+    WorkerProofContribution, WorkerProofProcess,
 };
 
 use ed25519_dalek::SigningKey;
@@ -108,7 +108,7 @@ impl WorkerLocalProofBackend for LocalOnlyBackend {
         context: &WorkerProofContext,
         input_certificate: &DistributedInputCertificate,
         witness: PreparedWitnessShare,
-    ) -> Result<[u8; 32], Self::Error> {
+    ) -> Result<WorkerProofArtifact, Self::Error> {
         if witness.worker() != self.worker
             || witness.session_digest() != context.session_digest()
             || input_certificate.transcript_digest() != context.input_certificate_digest()
@@ -129,7 +129,8 @@ impl WorkerLocalProofBackend for LocalOnlyBackend {
             blake3::Hasher::new_derive_key("fhegg/private-book-distributed-prover/test-backend/v1");
         hasher.update(&context.digest());
         hasher.update(&(self.worker as u64).to_be_bytes());
-        Ok(*hasher.finalize().as_bytes())
+        WorkerProofArtifact::new(hasher.finalize().as_bytes().to_vec())
+            .map_err(|_| "invalid fixture artifact")
     }
 }
 
@@ -142,13 +143,15 @@ impl PublicDistributedProofVerifier for FixtureVerifier {
         PROTOCOL_ID
     }
 
-    fn verify_transcript_digests(
+    fn verify_public_artifacts(
         &self,
         context: &WorkerProofContext,
-        transcript_digests: &[[u8; 32]],
+        artifacts: &[WorkerProofArtifact],
     ) -> Result<(), Self::Error> {
-        if transcript_digests.len() != context.n_workers()
-            || transcript_digests.iter().any(|digest| *digest == [0; 32])
+        if artifacts.len() != context.n_workers()
+            || artifacts
+                .iter()
+                .any(|artifact| artifact.as_bytes().len() != 32)
         {
             return Err("incomplete fixture transcript");
         }

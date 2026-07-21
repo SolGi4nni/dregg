@@ -10,34 +10,36 @@
 //! only admitted custody mode is distributed shares, and appended plaintext
 //! witness/opening bytes are not representable.  The public
 //! [`DistributedProverCoordinator`] has no method or field that accepts a
-//! private share; it collects only roster-signed 32-byte backend transcript
-//! digests.  Canonical proof bytes stay in the backend's public-verification
-//! plane rather than turning the coordinator into a proof-data or witness-data
-//! plane.
+//! private share; it collects only bounded public proof artifacts plus their
+//! roster-signed transcript digests.  A proof artifact is an explicitly public
+//! backend output, never a witness-data plane.
 //! Deployments put one `WorkerProofProcess` and its backend in each proof
 //! worker's isolated process and give the coordinator only
 //! [`WorkerProofContribution`] values.
 //!
 //! # Exact cryptographic guarantee
 //!
-//! The resulting [`DistributedProverEnvelope`] attests only that every worker
-//! key in the input ceremony signed one backend transcript digest under the same
+//! The resulting [`DistributedProverEnvelope`] binds every worker's bounded
+//! public backend proof under the same
 //! session, relation digest, input-certificate transcript, joint hiding input
 //! commitment, worker count, and backend protocol identifier.  Ed25519
 //! authenticates participation and BLAKE3 binds the transcript.  Moving the
 //! non-`Clone` share into a worker-local backend prevents this coordinator API
 //! from materializing the full witness.
 //!
-//! This envelope is **not** an R1CS proof, is not evidence that a backend ran
-//! correct MPC, and does not make a malicious backend zero knowledge.  A real
-//! backend must implement [`WorkerLocalProofBackend`] and a public verifier
-//! must implement [`PublicDistributedProofVerifier`].  Until such a backend is
-//! deployed, `private_book_bfv_zk::prove_private_book_bfv_zk` remains the
-//! explicit Tier-1 reference path: its one prover process sees all four orders
-//! and BFV seeds.  The fixed-size digest prevents bulk scalar-witness transfer
-//! through this coordinator interface, but a malicious backend can still use
-//! any public output as a covert channel for low-entropy secrets; the final
-//! no-leak claim therefore belongs to the concrete MPC backend and proof wire.
+//! This envelope is **not by itself** an R1CS proof, is not evidence that a
+//! backend ran correct MPC, and does not make a malicious backend zero
+//! knowledge. A concrete backend must implement [`WorkerLocalProofBackend`]
+//! and its direct public verifier must implement
+//! [`PublicDistributedProofVerifier`]. The canonical share-opening backend
+//! proves committed-share custody plus its named linear constraints, but not
+//! yet the full nonlinear BFV/Poseidon/range/clearing relation. The monolithic
+//! `private_book_bfv_zk::prove_private_book_bfv_zk` therefore remains the
+//! explicit Tier-1 full-relation path: its one prover process sees all four
+//! orders and BFV seeds. Public artifact bytes are size-bounded, but a
+//! malicious backend can still use any public output as a covert channel for
+//! low-entropy secrets; the final no-leak claim belongs to the concrete
+//! distributed backend and proof wire.
 
 use std::fmt;
 use std::iter;
@@ -53,15 +55,19 @@ const CONTEXT_DOMAIN: &str = "fhegg/private-book-distributed-prover/context/v1";
 const REQUEST_CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-prover/request-checksum/v1";
 const CONTRIBUTION_DOMAIN: &str = "fhegg/private-book-distributed-prover/contribution/v1";
 const BUNDLE_DOMAIN: &str = "fhegg/private-book-distributed-prover/bundle/v1";
+const BACKEND_ARTIFACT_DOMAIN: &str = "fhegg/private-book-distributed-prover/backend-artifact/v1";
 const WIRE_CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-prover/wire-checksum/v1";
 const SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-prover/signature/v1";
 const REQUEST_MAGIC: &[u8; 8] = b"FHPRQ001";
 const REQUEST_VERSION: u16 = 1;
 const DISTRIBUTED_SHARES_MODE: u8 = 1;
 const REQUEST_WIRE_LEN: usize = 8 + 2 + 1 + 1 + 5 * 32 + 2 + 32 + 32;
-const CONTRIBUTION_MAGIC: &[u8; 8] = b"FHPWC001";
-const CONTRIBUTION_VERSION: u16 = 1;
-const CONTRIBUTION_WIRE_LEN: usize = 8 + 2 + 2 + 6 * 32 + 64 + 32;
+const CONTRIBUTION_MAGIC: &[u8; 8] = b"FHPWC002";
+const CONTRIBUTION_VERSION: u16 = 2;
+const CONTRIBUTION_FIXED_WIRE_LEN: usize = 8 + 2 + 2 + 4 + 6 * 32 + 64 + 32;
+/// Exhaustion ceiling for one worker's public backend proof.  The current
+/// logarithmic share-opening proof is below 8 KiB at degree 4096.
+pub const MAX_PUBLIC_BACKEND_ARTIFACT_BYTES: usize = 2 * 1024 * 1024;
 
 /// Fail-closed errors at the distributed-prover custody boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +83,7 @@ pub enum DistributedProverError {
     InputCertificateMismatch,
     ProtocolMismatch,
     InvalidBackendTranscript,
+    InvalidBackendArtifact,
     ContributionDigestMismatch,
     InvalidSignature,
     MalformedContribution,
@@ -118,6 +125,9 @@ impl fmt::Display for DistributedProverError {
             Self::InvalidBackendTranscript => {
                 write!(f, "backend returned an invalid public transcript digest")
             }
+            Self::InvalidBackendArtifact => {
+                write!(f, "backend returned a malformed public proof artifact")
+            }
             Self::ContributionDigestMismatch => {
                 write!(f, "worker contribution transcript does not match")
             }
@@ -148,6 +158,38 @@ impl From<DistributedInputError> for DistributedProverError {
 }
 
 type Result<T> = std::result::Result<T, DistributedProverError>;
+
+/// Bounded public output of one worker-local proof backend.
+///
+/// The type deliberately owns bytes: a coordinator may transport and verify a
+/// zero-knowledge proof, but cannot use this API to request a private share or
+/// commitment opening.  Backends remain responsible for proving that their
+/// chosen public artifact is non-leaking; the generic boundary only enforces a
+/// strict size and non-empty encoding.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerProofArtifact {
+    bytes: Vec<u8>,
+}
+
+impl WorkerProofArtifact {
+    pub fn new(bytes: Vec<u8>) -> Result<Self> {
+        if bytes.is_empty() || bytes.len() > MAX_PUBLIC_BACKEND_ARTIFACT_BYTES {
+            return Err(DistributedProverError::InvalidBackendArtifact);
+        }
+        Ok(Self { bytes })
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn transcript_digest(&self, context: &WorkerProofContext, worker: usize) -> [u8; 32] {
+        hash_parts(
+            BACKEND_ARTIFACT_DOMAIN,
+            &[&context.digest, &(worker as u64).to_be_bytes(), &self.bytes],
+        )
+    }
+}
 
 /// Public, exact context supplied identically to every worker-local backend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,9 +409,8 @@ impl ShareBoundProverRequest {
 ///
 /// The backend may run an interactive MPC protocol over worker-only channels,
 /// but it receives exactly one worker's additive capability.  Its public
-/// result is only the digest of its canonical public transcript; raw scalar
-/// shares, commitment blindings, and proof bytes never enter the coordinator
-/// API.
+/// result is one bounded canonical public proof artifact; raw scalar shares and
+/// commitment blindings never enter the coordinator API.
 pub trait WorkerLocalProofBackend {
     type Error;
 
@@ -382,13 +423,13 @@ pub trait WorkerLocalProofBackend {
         context: &WorkerProofContext,
         input_certificate: &DistributedInputCertificate,
         witness: PreparedWitnessShare,
-    ) -> std::result::Result<[u8; 32], Self::Error>;
+    ) -> std::result::Result<WorkerProofArtifact, Self::Error>;
 }
 
-/// Public verifier for one backend's ordered worker transcript digests.
+/// Public verifier for one backend's ordered worker proof artifacts.
 ///
-/// The verifier implementation owns or retrieves the canonical public proof
-/// transcript out of band and checks it against these worker-signed digests.
+/// It receives the bounded public bytes carried inside the signed envelope and
+/// must verify the concrete cryptographic protocol directly against `context`.
 pub trait PublicDistributedProofVerifier {
     type Error;
 
@@ -396,10 +437,10 @@ pub trait PublicDistributedProofVerifier {
     fn protocol_id(&self) -> [u8; 32];
 
     /// Verify the complete ordered set against the canonical public proof.
-    fn verify_transcript_digests(
+    fn verify_public_artifacts(
         &self,
         context: &WorkerProofContext,
-        transcript_digests: &[[u8; 32]],
+        artifacts: &[WorkerProofArtifact],
     ) -> std::result::Result<(), Self::Error>;
 }
 
@@ -441,7 +482,7 @@ impl<B: WorkerLocalProofBackend> WorkerProofProcess<B> {
     }
 
     /// Verify all custody bindings, move the share into the local backend, and
-    /// release only its signed public transcript digest.
+    /// release only its bounded public proof artifact and signed digest.
     pub fn run(
         mut self,
         request: &ShareBoundProverRequest,
@@ -454,10 +495,16 @@ impl<B: WorkerLocalProofBackend> WorkerProofProcess<B> {
         }
         witness.verify_certificate_binding(input_certificate)?;
         let context = request.context;
-        let backend_transcript_digest = self
+        let backend_artifact = self
             .backend
             .prove_local(&context, input_certificate, witness)
             .map_err(|_| DistributedProverError::BackendRejected)?;
+        if backend_artifact.bytes.is_empty()
+            || backend_artifact.bytes.len() > MAX_PUBLIC_BACKEND_ARTIFACT_BYTES
+        {
+            return Err(DistributedProverError::InvalidBackendArtifact);
+        }
+        let backend_transcript_digest = backend_artifact.transcript_digest(&context, self.worker);
         if backend_transcript_digest == [0; 32] {
             return Err(DistributedProverError::InvalidBackendTranscript);
         }
@@ -468,6 +515,7 @@ impl<B: WorkerLocalProofBackend> WorkerProofProcess<B> {
             context_digest: context.digest(),
             protocol_id: self.protocol_id,
             worker: self.worker,
+            backend_artifact,
             backend_transcript_digest,
             digest,
             signature: self
@@ -480,7 +528,7 @@ impl<B: WorkerLocalProofBackend> WorkerProofProcess<B> {
     }
 }
 
-/// Public, fixed-size roster-authenticated output from one proof worker.
+/// Public, bounded roster-authenticated output from one proof worker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkerProofContribution {
     session_digest: [u8; 32],
@@ -488,6 +536,7 @@ pub struct WorkerProofContribution {
     context_digest: [u8; 32],
     protocol_id: [u8; 32],
     worker: usize,
+    backend_artifact: WorkerProofArtifact,
     backend_transcript_digest: [u8; 32],
     digest: [u8; 32],
     signature: [u8; 64],
@@ -509,23 +558,30 @@ impl WorkerProofContribution {
         self.digest
     }
 
-    /// Strict fixed-size public wire emitted by a separate worker process.
-    /// Private scalar shares and proof bytes are not representable here.
+    /// Strict bounded public wire emitted by a separate worker process.
+    /// Private scalar shares are not representable here; the length-delimited
+    /// backend artifact is explicitly public proof material.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(CONTRIBUTION_WIRE_LEN);
+        let mut out =
+            Vec::with_capacity(CONTRIBUTION_FIXED_WIRE_LEN + self.backend_artifact.bytes.len());
         out.extend_from_slice(CONTRIBUTION_MAGIC);
         out.extend_from_slice(&CONTRIBUTION_VERSION.to_be_bytes());
         out.extend_from_slice(&(self.worker as u16).to_be_bytes());
+        out.extend_from_slice(&(self.backend_artifact.bytes.len() as u32).to_be_bytes());
         out.extend_from_slice(&self.session_digest);
         out.extend_from_slice(&self.input_certificate_digest);
         out.extend_from_slice(&self.context_digest);
         out.extend_from_slice(&self.protocol_id);
         out.extend_from_slice(&self.backend_transcript_digest);
+        out.extend_from_slice(&self.backend_artifact.bytes);
         out.extend_from_slice(&self.digest);
         out.extend_from_slice(&self.signature);
         let checksum = hash_parts(WIRE_CHECKSUM_DOMAIN, &[&out]);
         out.extend_from_slice(&checksum);
-        debug_assert_eq!(out.len(), CONTRIBUTION_WIRE_LEN);
+        debug_assert_eq!(
+            out.len(),
+            CONTRIBUTION_FIXED_WIRE_LEN + self.backend_artifact.bytes.len()
+        );
         out
     }
 
@@ -537,7 +593,9 @@ impl WorkerProofContribution {
         input_certificate: &DistributedInputCertificate,
         request: &ShareBoundProverRequest,
     ) -> Result<Self> {
-        if bytes.len() != CONTRIBUTION_WIRE_LEN {
+        if bytes.len() < CONTRIBUTION_FIXED_WIRE_LEN
+            || bytes.len() > CONTRIBUTION_FIXED_WIRE_LEN + MAX_PUBLIC_BACKEND_ARTIFACT_BYTES
+        {
             return Err(DistributedProverError::MalformedContribution);
         }
         let checksum_start = bytes.len() - 32;
@@ -552,13 +610,39 @@ impl WorkerProofContribution {
             return Err(DistributedProverError::MalformedContribution);
         }
         let worker = u16::from_be_bytes(take::<2>(bytes, &mut offset)?) as usize;
+        let artifact_len = u32::from_be_bytes(take::<4>(bytes, &mut offset)?) as usize;
+        if artifact_len == 0 || artifact_len > MAX_PUBLIC_BACKEND_ARTIFACT_BYTES {
+            return Err(DistributedProverError::InvalidBackendArtifact);
+        }
+        let expected_len = CONTRIBUTION_FIXED_WIRE_LEN
+            .checked_add(artifact_len)
+            .ok_or(DistributedProverError::MalformedContribution)?;
+        if bytes.len() != expected_len {
+            return Err(DistributedProverError::MalformedContribution);
+        }
+        let session_digest = take::<32>(bytes, &mut offset)?;
+        let input_certificate_digest = take::<32>(bytes, &mut offset)?;
+        let context_digest = take::<32>(bytes, &mut offset)?;
+        let protocol_id = take::<32>(bytes, &mut offset)?;
+        let backend_transcript_digest = take::<32>(bytes, &mut offset)?;
+        let artifact_end = offset
+            .checked_add(artifact_len)
+            .ok_or(DistributedProverError::MalformedContribution)?;
+        let backend_artifact = WorkerProofArtifact::new(
+            bytes
+                .get(offset..artifact_end)
+                .ok_or(DistributedProverError::MalformedContribution)?
+                .to_vec(),
+        )?;
+        offset = artifact_end;
         let contribution = Self {
-            session_digest: take::<32>(bytes, &mut offset)?,
-            input_certificate_digest: take::<32>(bytes, &mut offset)?,
-            context_digest: take::<32>(bytes, &mut offset)?,
-            protocol_id: take::<32>(bytes, &mut offset)?,
+            session_digest,
+            input_certificate_digest,
+            context_digest,
+            protocol_id,
             worker,
-            backend_transcript_digest: take::<32>(bytes, &mut offset)?,
+            backend_artifact,
+            backend_transcript_digest,
             digest: take::<32>(bytes, &mut offset)?,
             signature: take::<64>(bytes, &mut offset)?,
         };
@@ -595,6 +679,13 @@ impl WorkerProofContribution {
         }
         if self.backend_transcript_digest == [0; 32] {
             return Err(DistributedProverError::InvalidBackendTranscript);
+        }
+        if self.backend_transcript_digest
+            != self
+                .backend_artifact
+                .transcript_digest(context, self.worker)
+        {
+            return Err(DistributedProverError::InvalidBackendArtifact);
         }
         let expected_digest =
             contribution_digest(context, self.worker, &self.backend_transcript_digest);
@@ -647,7 +738,7 @@ impl DistributedProverCoordinator {
         })
     }
 
-    /// Accept one public signed backend transcript digest.
+    /// Accept one roster-signed bounded backend proof artifact.
     pub fn accept(&mut self, contribution: WorkerProofContribution) -> Result<()> {
         contribution.verify(&self.session, &self.context)?;
         let slot = &mut self.contributions[contribution.worker];
@@ -679,8 +770,8 @@ impl DistributedProverCoordinator {
 
 /// Complete ordered public transcript from the distributed-prover boundary.
 ///
-/// This is an authenticated carrier for backend transcript digests, not itself
-/// a proof that the hidden relation is satisfied.
+/// This is an authenticated carrier for backend public proofs, not itself a
+/// proof that the hidden relation is satisfied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistributedProverEnvelope {
     context: WorkerProofContext,
@@ -713,8 +804,18 @@ impl DistributedProverEnvelope {
             .map(|contribution| (contribution.worker, contribution.backend_transcript_digest))
     }
 
+    /// Ordered bounded public proof artifacts, never private shares/openings.
+    pub fn worker_public_artifacts(&self) -> impl ExactSizeIterator<Item = (usize, &[u8])> + '_ {
+        self.contributions.iter().map(|contribution| {
+            (
+                contribution.worker,
+                contribution.backend_artifact.as_bytes(),
+            )
+        })
+    }
+
     /// Verify input binding, roster completeness, signatures, and transcript.
-    /// This deliberately does not interpret the backend transcript digests.
+    /// This deliberately does not interpret the backend proof artifacts.
     pub fn verify_envelope(
         &self,
         session: &DistributedWitnessSession,
@@ -753,13 +854,13 @@ impl DistributedProverEnvelope {
         if verifier.protocol_id() != self.context.protocol_id {
             return Err(DistributedProverError::ProtocolMismatch);
         }
-        let transcript_digests = self
+        let artifacts = self
             .contributions
             .iter()
-            .map(|contribution| contribution.backend_transcript_digest)
+            .map(|contribution| contribution.backend_artifact.clone())
             .collect::<Vec<_>>();
         verifier
-            .verify_transcript_digests(&self.context, &transcript_digests)
+            .verify_public_artifacts(&self.context, &artifacts)
             .map_err(|_| DistributedProverError::BackendRejected)
     }
 }
