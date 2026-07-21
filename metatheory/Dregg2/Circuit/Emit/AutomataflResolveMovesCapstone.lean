@@ -1117,6 +1117,300 @@ theorem dstIndV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) mini
 
 end DstIndV2
 
+/-! ## §17 — `landOldV2N_of_sat` / `landNzV2N_of_sat`: the CORRECTED-landing occupancy read.
+
+`cLandOldV2 i` is the OLD-board code at the square the CORRECTED flow-through bit selects (own `.to`
+when `cFtV2 = 0`, the OTHER piece's `.to` when `cFtV2 = 1`): the emitted `landOldV2Head` masked
+double-sum, collapsed through the corrected-landing one-hot (`dstIndV2N_of_sat`). `cLandNzV2 i` is its
+`≥ 1` bit, which the particle-alphabet envelope makes exactly `carAt` at that landing square. Clean
+parametric read lemmas — the flow-through boolean and the two `.to` coordinate bounds are handed in
+(as `dstIndV2N_of_sat` itself takes them), so the correspondence caller supplies them off the facts. -/
+section LandV2
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+open Dregg2.Circuit.Emit.AutomataflCoord (evalH evalH_foldl_step evalH_addProd evalH_lin varsVal
+  dot_oneHot2 headToExpr_eval)
+open Dregg2.Circuit.Emit.AutomataflOcclusionGeneric (OneHotAt)
+
+/-- The clean semantic value of `landOldV2Head`, the twin of `evalH_sourceReadHead`. -/
+theorem evalH_landOldV2Head (a : Nat → ℤ) (i : Nat) :
+    evalH (NGen.landOldV2Head n i) a
+      = a (NGen.cLandOldV2 n i)
+        + ((List.range n).map (fun y => ((List.range n).map (fun x =>
+            a (NGen.wDstV2Row n i y) * a (NGen.wDstV2Col n i x)
+              * (- a (NGen.old n (y * n + x))))).sum)).sum := by
+  have hinner : ∀ (h : Head) (y : Nat),
+      evalH ((List.range n).foldl (fun h2 x =>
+          h2.addProd (-1) [NGen.wDstV2Row n i y, NGen.wDstV2Col n i x, NGen.old n (y * n + x)]) h) a
+        = evalH h a
+          + ((List.range n).map (fun x =>
+              a (NGen.wDstV2Row n i y) * a (NGen.wDstV2Col n i x)
+                * (- a (NGen.old n (y * n + x))))).sum := by
+    intro h y
+    exact evalH_foldl_step a h (List.range n)
+      (fun h2 x => h2.addProd (-1) [NGen.wDstV2Row n i y, NGen.wDstV2Col n i x, NGen.old n (y * n + x)])
+      (fun x => a (NGen.wDstV2Row n i y) * a (NGen.wDstV2Col n i x) * (- a (NGen.old n (y * n + x))))
+      (by intro h2 x; rw [evalH_addProd]; simp only [varsVal, List.foldl_cons, List.foldl_nil]; ring)
+  rw [NGen.landOldV2Head,
+    evalH_foldl_step a (Head.lin 1 (NGen.cLandOldV2 n i)) (List.range n)
+      (fun h y => (List.range n).foldl (fun h2 x =>
+          h2.addProd (-1) [NGen.wDstV2Row n i y, NGen.wDstV2Col n i x, NGen.old n (y * n + x)]) h)
+      (fun y => ((List.range n).map (fun x =>
+          a (NGen.wDstV2Row n i y) * a (NGen.wDstV2Col n i x) * (- a (NGen.old n (y * n + x))))).sum)
+      hinner,
+    evalH_lin]
+  ring
+
+/-- **Grid collapse of a product-indicator masked double-sum.** If `row y · col x` is the indicator of
+`⟨lx, ly⟩` on the `n × n` grid, the masked board double-sum picks out `payload ly lx`. Pure. -/
+theorem gridProdInd_collapse (row col : Nat → ℤ) (payload : Nat → Nat → ℤ)
+    (lx ly : Nat) (hlx : lx < n) (hly : ly < n)
+    (hind : ∀ x y, x < n → y < n → row y * col x = if (⟨x, y⟩ : Coord) = ⟨lx, ly⟩ then 1 else 0) :
+    ((List.range n).map (fun y => ((List.range n).map (fun x =>
+        row y * col x * payload y x)).sum)).sum = payload ly lx := by
+  have hcollapse := dot_oneHot2 (rv := fun y => if y = ly then (1:ℤ) else 0)
+    (cv := fun x => if x = lx then (1:ℤ) else 0) (n := n) (ay := ly) (ax := lx)
+    ⟨hly, fun j _ => rfl⟩ ⟨hlx, fun j _ => rfl⟩ payload
+  rw [← hcollapse]
+  refine congrArg List.sum ?_
+  apply List.map_congr_left; intro y hy; have hyn := List.mem_range.mp hy
+  refine congrArg List.sum ?_
+  apply List.map_congr_left; intro x hx; have hxn := List.mem_range.mp hx
+  rw [hind x y hxn hyn]
+  by_cases hxy : (⟨x, y⟩ : Coord) = ⟨lx, ly⟩
+  · have hx' : x = lx := ((Coord.mk.injEq x y lx ly).mp hxy).1
+    have hy' : y = ly := ((Coord.mk.injEq x y lx ly).mp hxy).2
+    rw [if_pos hxy, if_pos hy', if_pos hx']; ring
+  · rw [if_neg hxy]
+    have hz : (if y = ly then (1:ℤ) else 0) * (if x = lx then (1:ℤ) else 0) = 0 := by
+      by_cases hy' : y = ly
+      · by_cases hx' : x = lx
+        · exact absurd ((Coord.mk.injEq x y lx ly).mpr ⟨hx', hy'⟩) hxy
+        · rw [if_neg hx', mul_zero]
+      · rw [if_neg hy', zero_mul]
+    rw [hz]
+
+/-- **`landOldV2N_of_sat`.** The corrected-landing OLD-board code column IS the OLD board cell at the
+square the corrected flow-through bit selects. Stated as an exact integer equality (both sides
+canonical). `which = 0` reads `cFtV2A`, `which = 1` reads `cFtV2B`. -/
+theorem landOldV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (hw : which < 2)
+    (hn : (n : ℤ) < 2013265921)
+    (hft : (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 0
+        ∨ (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 1)
+    (hx0 : 0 ≤ (envAt t i).loc (NGen.cTx n (NGen.mvBase n which))
+        ∧ (envAt t i).loc (NGen.cTx n (NGen.mvBase n which)) < (n : ℤ))
+    (hy0 : 0 ≤ (envAt t i).loc (NGen.cTy n (NGen.mvBase n which))
+        ∧ (envAt t i).loc (NGen.cTy n (NGen.mvBase n which)) < (n : ℤ))
+    (hx1 : 0 ≤ (envAt t i).loc (NGen.cTx n (NGen.mvBase n (1 - which)))
+        ∧ (envAt t i).loc (NGen.cTx n (NGen.mvBase n (1 - which))) < (n : ℤ))
+    (hy1 : 0 ≤ (envAt t i).loc (NGen.cTy n (NGen.mvBase n (1 - which)))
+        ∧ (envAt t i).loc (NGen.cTy n (NGen.mvBase n (1 - which))) < (n : ℤ)) :
+    (envAt t i).loc (NGen.cLandOldV2 n which)
+      = (envAt t i).loc (NGen.old n
+          (((if (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 1
+              then (moveDecodeN n (envAt t i) (1 - which)).to
+              else (moveDecodeN n (envAt t i) which).to).y) * n
+           + (if (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 1
+              then (moveDecodeN n (envAt t i) (1 - which)).to
+              else (moveDecodeN n (envAt t i) which).to).x)) := by
+  set e := envAt t i with he
+  set ftc := (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) with hftc
+  set L : Coord := (if e.loc ftc = 1 then (moveDecodeN n e (1 - which)).to
+                    else (moveDecodeN n e which).to) with hL
+  have hLx : L.x < n := by
+    rw [hL]; by_cases hf : e.loc ftc = 1
+    · rw [if_pos hf]; show (e.loc (NGen.cTx n (NGen.mvBase n (1 - which)))).toNat < n; omega
+    · rw [if_neg hf]; show (e.loc (NGen.cTx n (NGen.mvBase n which))).toNat < n; omega
+  have hLy : L.y < n := by
+    rw [hL]; by_cases hf : e.loc ftc = 1
+    · rw [if_pos hf]; show (e.loc (NGen.cTy n (NGen.mvBase n (1 - which)))).toNat < n; omega
+    · rw [if_neg hf]; show (e.loc (NGen.cTy n (NGen.mvBase n which))).toNat < n; omega
+  -- the corrected-landing indicator
+  have hdi := dstIndV2N_of_sat hsat hc i hi which hw hn hft hx0 hy0 hx1 hy1
+  rw [← he, ← hftc, ← hL] at hdi
+  -- the masked double-sum gate
+  have hmem : cgH (NGen.landOldV2Head n which) ∈ (automataflResolveDescN n).constraints :=
+    nlV2Lift which hw (List.mem_append_left _ (List.mem_append_left _ List.mem_cons_self))
+  have hg := rgateHN hsat i hi hmem
+  rw [headToExpr_eval, evalH_landOldV2Head] at hg
+  have hcollapse : ((List.range n).map (fun y => ((List.range n).map (fun x =>
+        e.loc (NGen.wDstV2Row n which y) * e.loc (NGen.wDstV2Col n which x)
+          * (- e.loc (NGen.old n (y * n + x))))).sum)).sum
+      = - e.loc (NGen.old n (L.y * n + L.x)) := by
+    have := gridProdInd_collapse (n := n) (fun y => e.loc (NGen.wDstV2Row n which y))
+      (fun x => e.loc (NGen.wDstV2Col n which x))
+      (fun y x => - e.loc (NGen.old n (y * n + x))) L.x L.y hLx hLy
+      (fun x y hx hy => by rw [hdi x y hx hy])
+    simpa using this
+  rw [hcollapse] at hg
+  refine eq_of_modEq_canon (canon_loc hc i _) (canon_loc hc i _) ?_
+  exact (gate_modEq_iff (by ring)).mp hg
+
+/-- **`landNzV2N_of_sat`.** The corrected-landing occupancy bit is boolean and is `1` iff the OLD
+board carries a piece (`carAt = true`) at the square the corrected flow-through bit selects. -/
+theorem landNzV2N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (hw : which < 2)
+    (hn : (n : ℤ) < 2013265921)
+    (hft : (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 0
+        ∨ (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 1)
+    (hx0 : 0 ≤ (envAt t i).loc (NGen.cTx n (NGen.mvBase n which))
+        ∧ (envAt t i).loc (NGen.cTx n (NGen.mvBase n which)) < (n : ℤ))
+    (hy0 : 0 ≤ (envAt t i).loc (NGen.cTy n (NGen.mvBase n which))
+        ∧ (envAt t i).loc (NGen.cTy n (NGen.mvBase n which)) < (n : ℤ))
+    (hx1 : 0 ≤ (envAt t i).loc (NGen.cTx n (NGen.mvBase n (1 - which)))
+        ∧ (envAt t i).loc (NGen.cTx n (NGen.mvBase n (1 - which))) < (n : ℤ))
+    (hy1 : 0 ≤ (envAt t i).loc (NGen.cTy n (NGen.mvBase n (1 - which)))
+        ∧ (envAt t i).loc (NGen.cTy n (NGen.mvBase n (1 - which))) < (n : ℤ)) :
+    ((envAt t i).loc (NGen.cLandNzV2 n which) = 0 ∨ (envAt t i).loc (NGen.cLandNzV2 n which) = 1)
+      ∧ ((envAt t i).loc (NGen.cLandNzV2 n which) = 1 ↔
+          Dregg2.Games.AutomataflRules.carAt (boardDecodeOldN n (envAt t i))
+            (if (envAt t i).loc (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) = 1
+             then (moveDecodeN n (envAt t i) (1 - which)).to
+             else (moveDecodeN n (envAt t i) which).to) = true) := by
+  set e := envAt t i with he
+  set ftc := (if which == 0 then NGen.cFtV2A n else NGen.cFtV2B n) with hftc
+  set L : Coord := (if e.loc ftc = 1 then (moveDecodeN n e (1 - which)).to
+                    else (moveDecodeN n e which).to) with hL
+  have hLx : L.x < n := by
+    rw [hL]; by_cases hf : e.loc ftc = 1
+    · rw [if_pos hf]; show (e.loc (NGen.cTx n (NGen.mvBase n (1 - which)))).toNat < n; omega
+    · rw [if_neg hf]; show (e.loc (NGen.cTx n (NGen.mvBase n which))).toNat < n; omega
+  have hLy : L.y < n := by
+    rw [hL]; by_cases hf : e.loc ftc = 1
+    · rw [if_pos hf]; show (e.loc (NGen.cTy n (NGen.mvBase n (1 - which)))).toNat < n; omega
+    · rw [if_neg hf]; show (e.loc (NGen.cTy n (NGen.mvBase n which))).toNat < n; omega
+  have hLc : L.y * n + L.x < NGen.KK n := by
+    simp only [NGen.KK]
+    have hle : (L.y + 1) * n ≤ n * n := Nat.mul_le_mul_right n (by omega : L.y + 1 ≤ n)
+    have hexp : (L.y + 1) * n = L.y * n + n := by ring
+    omega
+  -- the read value: cLandOldV2 = old at the landing cell
+  have hread := landOldV2N_of_sat hsat hc i hi which hw hn hft hx0 hy0 hx1 hy1
+  rw [← he, ← hftc, ← hL] at hread
+  -- alphabet of the landing cell
+  have halpha : e.loc (NGen.old n (L.y * n + L.x)) = 0 ∨ e.loc (NGen.old n (L.y * n + L.x)) = 1
+      ∨ e.loc (NGen.old n (L.y * n + L.x)) = 2 ∨ e.loc (NGen.old n (L.y * n + L.x)) = 3 :=
+    Dregg2.Circuit.Emit.AutomataflStepRefine.mem4_of_gate
+      (rgateN hsat i hi (mem_resolve_of_mem_boardRange (br_old n (L.y * n + L.x) hLc)))
+      (canon_loc hc i _)
+  have hbnd : -99 ≤ e.loc (NGen.cLandOldV2 n which) ∧ e.loc (NGen.cLandOldV2 n which) ≤ 99 := by
+    rw [hread]; rcases halpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  -- the ≥1 bit
+  obtain ⟨hb, h1, h0⟩ :=
+    ge0_5N_of_sat hsat hc i hi (NGen.cLandOldV2 n which) (NGen.cLandNzV2 n which)
+      (NGen.landNzV2Bit n which 0)
+      (nlV2Lift which hw (List.mem_append_left _ (List.mem_append_right _ (mem_forcedGe0N_ib _ _ _ _))))
+      (fun k hk => nlV2Lift which hw
+        (List.mem_append_left _ (List.mem_append_right _ (mem_forcedGe0N_bit _ _ _ _ k hk))))
+      (nlV2Lift which hw (List.mem_append_left _ (List.mem_append_right _ (mem_forcedGe0N_head _ _ _ _))))
+      hbnd.1 hbnd.2
+  rw [← he] at hb h1 h0
+  -- cLandNzV2 = 1 ↔ the landing OLD cell is nonzero
+  have hiff_old : e.loc (NGen.cLandNzV2 n which) = 1 ↔ e.loc (NGen.old n (L.y * n + L.x)) ≠ 0 := by
+    rw [hread] at h1 h0
+    rcases halpha with h | h | h | h <;> rw [h] at h1 h0 ⊢
+    · constructor
+      · intro hone; exact absurd (h1 hone) (by norm_num)
+      · intro hne; exact absurd rfl hne
+    all_goals
+      constructor
+      · intro _; norm_num
+      · intro _
+        rcases hb with hz | ho
+        · exact absurd (h0 hz) (by norm_num)
+        · exact ho
+  -- the landing cell decodes to the OLD board cell there, and `carAt` reads its non-vacuity
+  have hcarr : Dregg2.Games.AutomataflRules.carAt (boardDecodeOldN n e) L = true
+      ↔ e.loc (NGen.old n (L.y * n + L.x)) ≠ 0 := by
+    have hcode : (boardDecodeOldN n e).cellAt L
+        = codeToParticle (e.loc (NGen.old n (L.y * n + L.x))) := by
+      simp only [boardDecodeOldN, Board.cellAt]
+      rw [if_pos (⟨hLx, hLy⟩ : L.x < n ∧ L.y < n)]
+    rw [Dregg2.Games.AutomataflRules.carAt, hcode]
+    rcases halpha with h | h | h | h <;> rw [h] <;> decide
+  exact ⟨hb, hiff_old.trans hcarr.symm⟩
+
+end LandV2
+
+/-! ## §18 — THE THIRD WOUND: the 2-CYCLE STAY, which the V3 surface does NOT close.
+
+Chunks 4–5 corrected two configuration classes against the VALIDATED game: the occluded STAYER
+(defect #8, §2/§3/§15) and the FLOW-THROUGH gap (§7/§9/§15). Casing the CORRECTED carry `cCarryV3`
+against the reference `landMap_pair_a/b` 5-config if-tree discharges FIVE of the six landing arms —
+blocked-stays, independent-own-dest, occluded-stayer, caterpillar, flow-through — but the SIXTH arm,
+the **2-CYCLE** (`landMap_pair_twoCycle_a/b`), MISMATCHES.
+
+THE CLASS (n ≥ 2). A carries at `sa`, wants `da = sb`; B carries at `sb`, wants `db = sa`; both
+unblocked, distinct sources, distinct raw destinations. This is the symmetric 2-cycle A→B, B→A.
+
+  * The FIXED reference (`AutomataflRules.landMap`, ruling C / audit divergence 3.5a — *"2-cycles:
+    Always stay in place"*, the `twoCyc` dead-end in `leaves`) keeps BOTH pieces: `landMap sa = sa`,
+    `landMap sb = sb`, `movers = []`, `resolvableB = true`, `resolveMoves = identity`.
+  * The DESCRIPTOR SWAPS. `cFtV2A = 0` (the `¬eq_ba` conjunct is false in a 2-cycle), so A's corrected
+    landing is `da = sb`; `cCv2 0 = surv·carSa·¬BA = 1`; `cLandNzV2 0 = carAt sb = 1`; the corrected
+    non-leaver reads the OTHER piece's SEED carry `cCv2 1 = surv·carSb·¬BB = 1`, so
+    `cNonLeaveV2 0 = cLandNzV2 0 · (1 − cCv2 1) = 1 · 0 = 0`, whence `cCarryV3 0 = cCv2 0 · ¬cNonLeaveV2 0
+    = 1` — A CARRIES onto `sb`. Symmetrically `cCarryV3 1 = 1` carries B onto `sa`. And
+    `cResolvableV2 = 1` (no merge — the two corrected dests `da = sb`, `db = sa` are DISTINCT — and no
+    bad journey). So the emitted board writes the SWAP `mid[sa] = p_b`, `mid[sb] = p_a`.
+
+The root cause: the corrected non-leaver `cNonLeaveV2 = landNzV2 · (1 − cCv2_other)` proxies "the piece
+on my landing square does not itself leave" by the OTHER piece's SEED carry `cCv2` — but in a 2-cycle
+BOTH seed carries are `1` even though BOTH pieces ultimately STAY (a mutual, recursive disposition the
+reference captures with its dedicated `twoCyc` bit + the `leaves` fixpoint). The V3 surface has NO
+two-cycle column, so the mutual stay is unmodeled. Closing it is a FOURTH emitter obligation: a
+`cTwoCyc_i = eq_ab · eq_ba · ¬BA · ¬BB · carSa · carSb` bit ANDed as `¬cTwoCyc` into each carry
+(equivalently `cCarryV4 = cCarryV3 · ¬cTwoCyc`), so a detected 2-cycle forces the carry to `0` and the
+pieces are kept — exactly the reference's ruling C.
+
+`twoCycleStay_witness_n3` is the executable falsifier, `decide`d entirely on the reference semantics:
+the reference STAYS (identity board) where the descriptor SWAPS, so with `p_a ≠ p_b` the unconditional
+`codeToParticle (cMidV3 …) = (resolveMoves …).cellAt …` is FALSE at `sa` (LHS `= p_b` from the swap,
+RHS `= p_a` from the stay). Hence the full capstone is STILL NOT assemblable at `n ≥ 3` against this
+descriptor — the landing correspondence closes 5 of 6 arms; the 2-cycle arm is the residual. -/
+section TwoCycleWound
+open Dregg2.Games.AutomataflRules (blockedB carAt landMap resolvableB resolveMoves)
+
+/-- 3×3 witness. A (attractor) at `(0,0)` wants `(1,0)`; B (repulsor) at `(1,0)` wants `(0,0)`. Both
+carry, both unblocked (each source is the OTHER's passable waypoint), rook-aligned in row 0. The
+automaton sits at `(2,2)`, off both moves. This is the symmetric 2-cycle A→B, B→A. -/
+def tcBoard : Board :=
+  Dregg2.Games.Automatafl.mkBoard 3
+    [(⟨0, 0⟩, Particle.attractor), (⟨1, 0⟩, Particle.repulsor)] ⟨2, 2⟩
+def tcMA : Move := Move.mk 0 ⟨0, 0⟩ ⟨1, 0⟩
+def tcMB : Move := Move.mk 1 ⟨1, 0⟩ ⟨0, 0⟩
+
+/-- **THE 2-CYCLE STAY IS NOT EMPTY, AT `n = 3`, AND V3 GETS IT WRONG.** Both moves are legal with
+distinct sources and distinct raw destinations, both unblocked, both carrying, forming the symmetric
+2-cycle (`da = sb`, `db = sa`). The REFERENCE keeps BOTH pieces in place (`landMap sa = sa`,
+`landMap sb = sb`, `resolvableB = true`, `resolveMoves = identity`). The descriptor's corrected surface
+instead SWAPS them (see the section note: `cCarryV3 0 = cCarryV3 1 = 1`, `cResolvableV2 = 1`), so
+`codeToParticle (cMidV3 …) = (resolveMoves …).cellAt …` is FALSE at `sa` — attractor kept by the
+reference, repulsor written by the descriptor. Every clause `decide`d on the reference semantics. -/
+theorem twoCycleStay_witness_n3 :
+    MoveValid tcBoard tcMA ∧ MoveValid tcBoard tcMB
+      ∧ tcMA.frm ≠ tcMB.frm ∧ tcMA.to ≠ tcMB.to
+      ∧ tcMA.frm ≠ tcMA.to ∧ tcMB.frm ≠ tcMB.to
+      -- the symmetric 2-cycle, both unblocked:
+      ∧ tcMA.to = tcMB.frm ∧ tcMB.to = tcMA.frm
+      ∧ blockedB tcBoard [tcMA, tcMB] tcMA = false
+      ∧ blockedB tcBoard [tcMA, tcMB] tcMB = false
+      ∧ carAt tcBoard tcMA.frm = true ∧ carAt tcBoard tcMB.frm = true
+      -- the REFERENCE STAYS both pieces (ruling C, audit 3.5a):
+      ∧ landMap tcBoard [tcMA, tcMB] tcMA.frm = tcMA.frm
+      ∧ landMap tcBoard [tcMA, tcMB] tcMB.frm = tcMB.frm
+      ∧ resolvableB tcBoard [tcMA, tcMB] = true
+      ∧ (resolveMoves tcBoard [tcMA, tcMB]).cellAt tcMA.frm = Particle.attractor
+      ∧ (resolveMoves tcBoard [tcMA, tcMB]).cellAt tcMB.frm = Particle.repulsor
+      ∧ tcBoard.cellAt tcMA.frm = Particle.attractor
+      ∧ tcBoard.cellAt tcMB.frm = Particle.repulsor
+      ∧ Particle.attractor ≠ Particle.repulsor := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+end TwoCycleWound
+
 /-! ## §8 — Axiom hygiene. Every exported theorem, kernel-clean. -/
 
 #assert_axioms movesWindow_three
@@ -1137,5 +1431,11 @@ end DstIndV2
 #assert_axioms resolvableV2ArithN_of_sat
 #assert_axioms dstIndV2N_of_sat
 #assert_axioms ftV2A_inclBlocked_kills_flowThrough
+-- CHUNK-5 corrected-landing occupancy read (the connective the landing correspondence consumes):
+#assert_axioms gridProdInd_collapse
+#assert_axioms landOldV2N_of_sat
+#assert_axioms landNzV2N_of_sat
+-- THE THIRD WOUND (2-cycle STAY): the spec-side falsifier the V3 surface does not close.
+#assert_axioms twoCycleStay_witness_n3
 
 end Dregg2.Circuit.Emit.AutomataflResolveMovesCapstone

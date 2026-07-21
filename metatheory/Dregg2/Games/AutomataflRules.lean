@@ -1153,6 +1153,18 @@ Nothing here changes an existing definition; §10's audit witnesses re-appear at
 conformance block, computed against these closed forms (`landMap`/`movers`/`resolvableB` and the
 firing theorems). -/
 
+/-- **`blockedB_swap`.** `blockedB` depends on the mover set only through MEMBERSHIP of the sources
+(`ms.any (·.frm == c)`), so swapping the two-element mover list leaves it unchanged — the mirror of
+`AutomataflResolveCapstone.occluded_swap` for the inclusive `pathCells` predicate. This is what lets
+the emitted descriptor (which pins the OTHER piece via `cOccIncl (1 - which)`, i.e. builds the mover
+list in each move's own order `[which, 1 - which]`) meet the reference's fixed order `[m0, m1]`. -/
+theorem blockedB_swap (b : Board) (m0 m1 m : Move) :
+    blockedB b [m0, m1] m = blockedB b [m1, m0] m := by
+  simp only [blockedB, List.any_cons, List.any_nil, Bool.or_false]
+  congr 1
+  funext c
+  rw [Bool.or_comm (m0.frm == c) (m1.frm == c)]
+
 section PairCollapse
 
 set_option autoImplicit false
