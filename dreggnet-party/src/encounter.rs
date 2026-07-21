@@ -16,16 +16,28 @@
 //! [`PartyArenaEncounter::resume`] rebuilds both worlds and the vote engine from
 //! semantic commands, refusing a forged receipt, actor, target, state, or root.
 //!
-//! ## Boundary
+//! ## Atomic publication boundary
 //!
-//! The two world commits are serial in one process and the encounter root binds
-//! their receipts after both land. This is strong replay-verifiable application
-//! authorization, but it is not yet one atomic multi-cell/hyperedge commit: a
-//! process crash in the narrow interval between the party and Arena commits needs
-//! the durable host to discard the unjournaled prefix and resume from the last
-//! encounter root.
+//! Party and Arena still use two independently-owned embedded executors, so this
+//! module does not pretend their receipts are one kernel forest receipt. Instead a
+//! contribution is executed against an isolated encounter rebuilt from the last
+//! admitted record. Only after BOTH real executor turns land, the complete event
+//! is hash-chained, and an optional commit hook accepts it is that candidate image
+//! swapped into the live encounter. A party-only prefix is therefore never visible
+//! through the authoritative [`PartyArenaEncounter`]. A crash merely loses the
+//! detached candidate and leaves the last admitted record authoritative.
+//!
+//! [`PreparedContribution`] adds a bounded checksummed intent anchored to the exact
+//! pre-revision/root. It can be persisted before execution and recovered
+//! idempotently: an exact base completes the contribution; a record already
+//! carrying that command verifies as committed; a stale or conflicting record is
+//! refused. This is a crash-safe application transaction over two local engines,
+//! not a distributed atomic hyperedge across independently publishing federations.
 
 use std::collections::BTreeMap;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use collective_choice::PollId;
 use dregg_app_framework::TurnReceipt;
@@ -42,6 +54,16 @@ use crate::{
 
 const GENESIS_DOMAIN: &[u8] = b"dregg.party-arena.genesis.v1";
 const EVENT_DOMAIN: &[u8] = b"dregg.party-arena.event.v1";
+const CONTRIBUTION_INTENT_DOMAIN: &str = "dregg.party-arena.contribution-intent.v1";
+const PREPARED_MAGIC: &[u8; 8] = b"DPAINT01";
+const PREPARED_VERSION: u8 = 1;
+const PREPARED_CHECKSUM_DOMAIN: &str = "dregg.party-arena.prepared-wire.v1";
+const JOURNAL_FILE: &str = "party-arena-contribution.bin";
+const JOURNAL_TEMP: &str = "party-arena-contribution.tmp";
+const JOURNAL_LOCK: &str = "party-arena-contribution.lock";
+const MAX_ACTOR_BYTES: usize = 256;
+pub const MAX_PREPARED_CONTRIBUTION_BYTES: usize =
+    8 + 1 + 8 + 32 + 1 + 2 + MAX_ACTOR_BYTES + 32 + 32;
 
 /// Bounded encounter history. A gate assault is deliberately finite: four
 /// once-per-encounter role contributions plus votes, resolution, and enemy turns.
@@ -111,6 +133,312 @@ pub struct EncounterRecord {
     pub events: Vec<EncounterEvent>,
 }
 
+/// A bounded, persistable compare-and-swap intent for one paired contribution.
+///
+/// The anchor prevents a command prepared at one encounter head from being
+/// replayed onto another. `intent` binds every field and is independently
+/// recomputed when decoding or committing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedContribution {
+    pub base_revision: u64,
+    pub base_root: [u8; 32],
+    pub actor: String,
+    pub role: Role,
+    pub intent: [u8; 32],
+}
+
+impl PreparedContribution {
+    fn new(base_revision: u64, base_root: [u8; 32], actor: String, role: Role) -> Self {
+        let intent = contribution_intent(base_revision, base_root, &actor, role);
+        Self {
+            base_revision,
+            base_root,
+            actor,
+            role,
+            intent,
+        }
+    }
+
+    fn validate(&self) -> Result<(), EncounterError> {
+        if self.actor.is_empty() || self.actor.len() > MAX_ACTOR_BYTES {
+            return Err(EncounterError::MalformedPrepared(
+                "actor is empty or exceeds 256 bytes".to_string(),
+            ));
+        }
+        let expected =
+            contribution_intent(self.base_revision, self.base_root, &self.actor, self.role);
+        if self.intent != expected {
+            return Err(EncounterError::MalformedPrepared(
+                "intent digest does not bind the prepared fields".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Canonical bounded wire image suitable for durable host storage.
+    pub fn to_wire_bytes(&self) -> Result<Vec<u8>, EncounterError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(MAX_PREPARED_CONTRIBUTION_BYTES);
+        out.extend_from_slice(PREPARED_MAGIC);
+        out.push(PREPARED_VERSION);
+        out.extend_from_slice(&self.base_revision.to_be_bytes());
+        out.extend_from_slice(&self.base_root);
+        out.push(role_tag(self.role));
+        out.extend_from_slice(&(self.actor.len() as u16).to_be_bytes());
+        out.extend_from_slice(self.actor.as_bytes());
+        out.extend_from_slice(&self.intent);
+        let checksum = blake3::derive_key(PREPARED_CHECKSUM_DOMAIN, &out);
+        out.extend_from_slice(&checksum);
+        debug_assert!(out.len() <= MAX_PREPARED_CONTRIBUTION_BYTES);
+        Ok(out)
+    }
+
+    /// Decode and integrity-check the canonical prepared-intent wire image.
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, EncounterError> {
+        const MIN: usize = 8 + 1 + 8 + 32 + 1 + 2 + 1 + 32 + 32;
+        if bytes.len() < MIN || bytes.len() > MAX_PREPARED_CONTRIBUTION_BYTES {
+            return Err(EncounterError::MalformedPrepared(
+                "prepared wire length is outside its fixed bound".to_string(),
+            ));
+        }
+        let (body, encoded_checksum) = bytes.split_at(bytes.len() - 32);
+        if blake3::derive_key(PREPARED_CHECKSUM_DOMAIN, body).as_slice() != encoded_checksum {
+            return Err(EncounterError::MalformedPrepared(
+                "prepared wire checksum mismatch".to_string(),
+            ));
+        }
+        let mut cursor = PreparedCursor::new(body);
+        if cursor.take::<8>()? != *PREPARED_MAGIC || cursor.byte()? != PREPARED_VERSION {
+            return Err(EncounterError::MalformedPrepared(
+                "unsupported prepared wire format".to_string(),
+            ));
+        }
+        let base_revision = u64::from_be_bytes(cursor.take()?);
+        let base_root = cursor.take()?;
+        let role = role_from_tag(cursor.byte()?)?;
+        let actor_len = u16::from_be_bytes(cursor.take()?) as usize;
+        if actor_len == 0 || actor_len > MAX_ACTOR_BYTES {
+            return Err(EncounterError::MalformedPrepared(
+                "prepared actor length is invalid".to_string(),
+            ));
+        }
+        let actor = cursor.string(actor_len)?;
+        let intent = cursor.take()?;
+        if !cursor.finished() {
+            return Err(EncounterError::MalformedPrepared(
+                "prepared wire has trailing bytes".to_string(),
+            ));
+        }
+        let prepared = Self {
+            base_revision,
+            base_root,
+            actor,
+            role,
+            intent,
+        };
+        prepared.validate()?;
+        Ok(prepared)
+    }
+}
+
+/// Publication checkpoints for deterministic crash/failure injection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContributionCheckpoint {
+    /// The role-capability turn landed in the detached party image.
+    AfterParty,
+    /// The tactical turn landed in the detached Arena image.
+    AfterArena,
+    /// Both receipts and the complete event exist, immediately before live swap.
+    BeforePublish,
+}
+
+/// Optional durable-host/fault-injection hook. An error drops the detached image;
+/// the live encounter is byte-for-byte at its prior semantic head.
+pub trait ContributionCommitHook {
+    fn checkpoint(&mut self, point: ContributionCheckpoint) -> Result<(), String>;
+}
+
+#[derive(Default)]
+pub struct NoContributionCommitHook;
+
+impl ContributionCommitHook for NoContributionCommitHook {
+    fn checkpoint(&mut self, _point: ContributionCheckpoint) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// What recovery learned about a durable prepared contribution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContributionRecovery {
+    /// The record was at the exact prepared base; recovery executed and published it.
+    Applied,
+    /// The durable record already contained the exact prepared command.
+    AlreadyCommitted,
+}
+
+/// Single-intent file journal for a durable encounter host.
+///
+/// Reservation is write+fsync+atomic-rename+directory-fsync under an advisory
+/// lock. The host persists the resulting [`EncounterRecord`] before calling
+/// [`Self::clear`]. A crash before that persistence replays from the old exact
+/// anchor; a crash after it is classified as [`ContributionRecovery::AlreadyCommitted`].
+#[derive(Clone, Debug)]
+pub struct FileContributionJournal {
+    root: PathBuf,
+}
+
+impl FileContributionJournal {
+    pub fn open(root: impl AsRef<Path>) -> Result<Self, EncounterError> {
+        std::fs::create_dir_all(root.as_ref())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        let root = std::fs::canonicalize(root.as_ref())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        File::open(&root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        Ok(Self { root })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Reserve exactly one contribution intent. Repeating the same reservation
+    /// is idempotent; a different outstanding intent is refused.
+    pub fn reserve(&self, prepared: &PreparedContribution) -> Result<(), EncounterError> {
+        let replacement = prepared.to_wire_bytes()?;
+        self.with_lock(|journal| {
+            if let Some(current) = journal.read_unlocked()? {
+                if current == replacement {
+                    return Ok(());
+                }
+                return Err(EncounterError::Journal(
+                    "another contribution intent is already reserved".to_string(),
+                ));
+            }
+            journal.write_unlocked(&replacement)
+        })
+    }
+
+    pub fn load(&self) -> Result<Option<PreparedContribution>, EncounterError> {
+        self.with_lock(|journal| {
+            journal
+                .read_unlocked()?
+                .map(|wire| PreparedContribution::from_wire_bytes(&wire))
+                .transpose()
+        })
+    }
+
+    /// Clear only the exact intent the host has durably incorporated into its
+    /// encounter record. A stale clearer cannot erase a newer reservation.
+    pub fn clear(&self, expected: &PreparedContribution) -> Result<(), EncounterError> {
+        let expected = expected.to_wire_bytes()?;
+        self.with_lock(|journal| {
+            let Some(current) = journal.read_unlocked()? else {
+                return Ok(());
+            };
+            if current != expected {
+                return Err(EncounterError::Journal(
+                    "prepared journal changed before clear".to_string(),
+                ));
+            }
+            std::fs::remove_file(journal.state_path())
+                .map_err(|error| EncounterError::Journal(error.to_string()))?;
+            File::open(&journal.root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| EncounterError::Journal(error.to_string()))
+        })
+    }
+
+    fn state_path(&self) -> PathBuf {
+        self.root.join(JOURNAL_FILE)
+    }
+
+    fn temp_path(&self) -> PathBuf {
+        self.root.join(JOURNAL_TEMP)
+    }
+
+    fn lock_path(&self) -> PathBuf {
+        self.root.join(JOURNAL_LOCK)
+    }
+
+    fn with_lock<T>(
+        &self,
+        operation: impl FnOnce(&Self) -> Result<T, EncounterError>,
+    ) -> Result<T, EncounterError> {
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.lock_path())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        lock.lock()
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        let result = operation(self);
+        let unlock = lock
+            .unlock()
+            .map_err(|error| EncounterError::Journal(error.to_string()));
+        match (result, unlock) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    fn read_unlocked(&self) -> Result<Option<Vec<u8>>, EncounterError> {
+        let mut file = match File::open(self.state_path()) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(EncounterError::Journal(error.to_string())),
+        };
+        let length = usize::try_from(
+            file.metadata()
+                .map_err(|error| EncounterError::Journal(error.to_string()))?
+                .len(),
+        )
+        .map_err(|_| EncounterError::Journal("journal length exceeds usize".to_string()))?;
+        if length == 0 || length > MAX_PREPARED_CONTRIBUTION_BYTES {
+            return Err(EncounterError::Journal(
+                "journal length is outside its fixed bound".to_string(),
+            ));
+        }
+        let mut wire = Vec::with_capacity(length);
+        Read::by_ref(&mut file)
+            .take((MAX_PREPARED_CONTRIBUTION_BYTES + 1) as u64)
+            .read_to_end(&mut wire)
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        if wire.len() != length {
+            return Err(EncounterError::Journal(
+                "journal changed while locked".to_string(),
+            ));
+        }
+        Ok(Some(wire))
+    }
+
+    fn write_unlocked(&self, wire: &[u8]) -> Result<(), EncounterError> {
+        let temp = self.temp_path();
+        match std::fs::remove_file(&temp) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(EncounterError::Journal(error.to_string())),
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        file.write_all(wire)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        std::fs::rename(temp, self.state_path())
+            .map_err(|error| EncounterError::Journal(error.to_string()))?;
+        File::open(&self.root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| EncounterError::Journal(error.to_string()))
+    }
+}
+
 /// Why an encounter command or replay was refused. Every ordinary command
 /// refusal happens before an event is appended and leaves the encounter root
 /// unchanged.
@@ -149,6 +477,17 @@ pub enum EncounterError {
     ForkRefused(String),
     /// The tactical Arena executor refused.
     ArenaRefused(String),
+    /// A detached candidate was deliberately interrupted at a commit checkpoint.
+    CommitInterrupted {
+        point: ContributionCheckpoint,
+        reason: String,
+    },
+    /// The prepared compare-and-swap anchor no longer names this encounter head.
+    StalePrepared,
+    /// A prepared intent was malformed, corrupt, or non-canonical.
+    MalformedPrepared(String),
+    /// Durable journal I/O or compare-and-swap failed.
+    Journal(String),
     /// A re-driven event differs from its recorded complete receipts or state.
     ReplayDiverged { event: usize, detail: String },
     /// Record genesis was malformed.
@@ -177,6 +516,14 @@ impl std::fmt::Display for EncounterError {
             Self::VoteRefused(reason) => write!(f, "vote engine refused: {reason}"),
             Self::ForkRefused(reason) => write!(f, "fork refused: {reason}"),
             Self::ArenaRefused(reason) => write!(f, "Arena executor refused: {reason}"),
+            Self::CommitInterrupted { point, reason } => {
+                write!(f, "contribution interrupted at {point:?}: {reason}")
+            }
+            Self::StalePrepared => write!(f, "prepared contribution anchor is stale"),
+            Self::MalformedPrepared(reason) => {
+                write!(f, "malformed prepared contribution: {reason}")
+            }
+            Self::Journal(reason) => write!(f, "contribution journal failed: {reason}"),
             Self::ReplayDiverged { event, detail } => {
                 write!(f, "encounter replay diverged at event {event}: {detail}")
             }
@@ -393,6 +740,158 @@ impl PartyArenaEncounter {
         actor: &str,
         requested: Role,
     ) -> Result<&EncounterEvent, EncounterError> {
+        self.contribute_with_hook(actor, requested, &mut NoContributionCommitHook)
+    }
+
+    /// Execute a paired contribution on an isolated replayed image and publish
+    /// it only after both real executor turns and every hook checkpoint succeed.
+    pub fn contribute_with_hook<H: ContributionCommitHook>(
+        &mut self,
+        actor: &str,
+        requested: Role,
+        hook: &mut H,
+    ) -> Result<&EncounterEvent, EncounterError> {
+        let prepared =
+            PreparedContribution::new(self.revision(), self.root(), actor.to_string(), requested);
+        self.commit_prepared_with_hook(&prepared, hook)
+    }
+
+    /// Validate and return a durable contribution intent without mutating the
+    /// live encounter. Validation executes both legs against a disposable
+    /// candidate, so a returned prepare is known to be admissible at its anchor.
+    pub fn prepare_contribution(
+        &self,
+        actor: &str,
+        requested: Role,
+    ) -> Result<PreparedContribution, EncounterError> {
+        let prepared =
+            PreparedContribution::new(self.revision(), self.root(), actor.to_string(), requested);
+        prepared.validate()?;
+        let mut candidate = Self::resume_at(
+            &self.export_record(),
+            prepared.base_revision,
+            prepared.base_root,
+        )?;
+        candidate.contribute_in_place_with_hook(
+            &prepared.actor,
+            prepared.role,
+            &mut NoContributionCommitHook,
+        )?;
+        Ok(prepared)
+    }
+
+    /// Validate a contribution and fsync its exact intent before any live
+    /// mutation. Repeating the same call is idempotent at the journal boundary.
+    pub fn prepare_contribution_durable(
+        &self,
+        actor: &str,
+        requested: Role,
+        journal: &FileContributionJournal,
+    ) -> Result<PreparedContribution, EncounterError> {
+        let prepared = self.prepare_contribution(actor, requested)?;
+        journal.reserve(&prepared)?;
+        Ok(prepared)
+    }
+
+    /// Compare-and-swap a prepared intent onto the exact encounter head.
+    pub fn commit_prepared(
+        &mut self,
+        prepared: &PreparedContribution,
+    ) -> Result<&EncounterEvent, EncounterError> {
+        self.commit_prepared_with_hook(prepared, &mut NoContributionCommitHook)
+    }
+
+    pub fn commit_prepared_with_hook<H: ContributionCommitHook>(
+        &mut self,
+        prepared: &PreparedContribution,
+        hook: &mut H,
+    ) -> Result<&EncounterEvent, EncounterError> {
+        prepared.validate()?;
+        if self.revision() != prepared.base_revision || self.root() != prepared.base_root {
+            return Err(EncounterError::StalePrepared);
+        }
+
+        // The candidate owns both temporary engines. A refusal or process death
+        // before the final assignment cannot expose either prefix through `self`.
+        let mut candidate = Self::resume_at(
+            &self.export_record(),
+            prepared.base_revision,
+            prepared.base_root,
+        )?;
+        candidate.contribute_in_place_with_hook(&prepared.actor, prepared.role, hook)?;
+        hook.checkpoint(ContributionCheckpoint::BeforePublish)
+            .map_err(|reason| EncounterError::CommitInterrupted {
+                point: ContributionCheckpoint::BeforePublish,
+                reason,
+            })?;
+        *self = candidate;
+        Ok(self
+            .events
+            .last()
+            .expect("a committed prepared contribution appended one event"))
+    }
+
+    /// Recover one checksummed prepared intent against an untrusted durable
+    /// encounter record. This is idempotent across every crash interval.
+    pub fn recover_prepared(
+        record: &EncounterRecord,
+        prepared: &PreparedContribution,
+    ) -> Result<(Self, ContributionRecovery), EncounterError> {
+        prepared.validate()?;
+        let mut encounter = Self::resume(record)?;
+        let record_revision = encounter.revision();
+
+        if record_revision == prepared.base_revision {
+            if encounter.root() != prepared.base_root {
+                return Err(EncounterError::StalePrepared);
+            }
+            encounter.commit_prepared(prepared)?;
+            return Ok((encounter, ContributionRecovery::Applied));
+        }
+
+        if record_revision > prepared.base_revision {
+            let base_matches = root_at_revision(record, prepared.base_revision)
+                .is_some_and(|root| root == prepared.base_root);
+            let command_matches = usize::try_from(prepared.base_revision)
+                .ok()
+                .and_then(|index| record.events.get(index))
+                .is_some_and(|event| {
+                    event.command
+                        == (EncounterCommand::Contribute {
+                            actor: prepared.actor.clone(),
+                            role: prepared.role,
+                        })
+                });
+            if base_matches && command_matches {
+                return Ok((encounter, ContributionRecovery::AlreadyCommitted));
+            }
+        }
+        Err(EncounterError::StalePrepared)
+    }
+
+    /// Load and recover the journal's outstanding command. The returned intent
+    /// remains reserved: the host first durably replaces its [`EncounterRecord`]
+    /// with `encounter.export_record()`, then calls
+    /// [`FileContributionJournal::clear`] with that exact intent.
+    pub fn recover_journaled(
+        record: &EncounterRecord,
+        journal: &FileContributionJournal,
+    ) -> Result<Option<(Self, PreparedContribution, ContributionRecovery)>, EncounterError> {
+        let Some(prepared) = journal.load()? else {
+            return Ok(None);
+        };
+        let (encounter, recovery) = Self::recover_prepared(record, &prepared)?;
+        Ok(Some((encounter, prepared, recovery)))
+    }
+
+    /// The serial work performed only inside a detached candidate or during
+    /// replay. Callers must use the transactional wrappers above.
+    fn contribute_in_place_with_hook<H: ContributionCommitHook>(
+        &mut self,
+        actor: &str,
+        requested: Role,
+        hook: &mut H,
+    ) -> Result<&EncounterEvent, EncounterError> {
         self.check_event_capacity()?;
         let target = self.target.ok_or(EncounterError::TargetNotResolved)?;
         self.party
@@ -436,6 +935,12 @@ impl PartyArenaEncounter {
                 )
             })?;
 
+        hook.checkpoint(ContributionCheckpoint::AfterParty)
+            .map_err(|reason| EncounterError::CommitInterrupted {
+                point: ContributionCheckpoint::AfterParty,
+                reason,
+            })?;
+
         let arena_receipt = match requested {
             Role::Tank | Role::Healer => self.arena.guard(active),
             Role::Scout if self.arena.hp(target) <= FINISH_THRESHOLD => {
@@ -445,6 +950,12 @@ impl PartyArenaEncounter {
             Role::Mage => self.arena.heavy(active, target).map(|hit| hit.receipt),
         }
         .map_err(|error| EncounterError::ArenaRefused(error.to_string()))?;
+
+        hook.checkpoint(ContributionCheckpoint::AfterArena)
+            .map_err(|reason| EncounterError::CommitInterrupted {
+                point: ContributionCheckpoint::AfterArena,
+                reason,
+            })?;
 
         Ok(self.append(
             EncounterCommand::Contribute {
@@ -521,7 +1032,8 @@ impl PartyArenaEncounter {
             let actual = match &expected.command {
                 EncounterCommand::Vote { actor, option } => replay.vote(actor, *option),
                 EncounterCommand::Resolve { actor } => replay.resolve(actor),
-                EncounterCommand::Contribute { actor, role } => replay.contribute(actor, *role),
+                EncounterCommand::Contribute { actor, role } => replay
+                    .contribute_in_place_with_hook(actor, *role, &mut NoContributionCommitHook),
                 EncounterCommand::AdvanceEnemy { actor } => replay.advance_enemy(actor),
             }
             .map_err(|error| EncounterError::ReplayDiverged {
@@ -945,4 +1457,92 @@ fn party_state(party: &Party) -> Vec<u64> {
     ];
     state.extend((0..party.seat_count()).map(|idx| party.loot_share(idx)));
     state
+}
+
+fn contribution_intent(
+    base_revision: u64,
+    base_root: [u8; 32],
+    actor: &str,
+    role: Role,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(CONTRIBUTION_INTENT_DOMAIN);
+    hasher.update(&base_revision.to_be_bytes());
+    hasher.update(&base_root);
+    hasher.update(&[role_tag(role)]);
+    hasher.update(&(actor.len() as u16).to_be_bytes());
+    hasher.update(actor.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+fn role_tag(role: Role) -> u8 {
+    role.index() as u8
+}
+
+fn role_from_tag(tag: u8) -> Result<Role, EncounterError> {
+    Role::ALL
+        .get(tag as usize)
+        .copied()
+        .ok_or_else(|| EncounterError::MalformedPrepared("unknown role tag".to_string()))
+}
+
+fn root_at_revision(record: &EncounterRecord, revision: u64) -> Option<[u8; 32]> {
+    if revision == 0 {
+        return PartyArenaEncounter::new(
+            record.roster.clone(),
+            record.leader.clone(),
+            record.arena_seed,
+        )
+        .ok()
+        .map(|encounter| encounter.root());
+    }
+    usize::try_from(revision)
+        .ok()
+        .and_then(|revision| revision.checked_sub(1))
+        .and_then(|index| record.events.get(index))
+        .map(|event| event.root)
+}
+
+struct PreparedCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PreparedCursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], EncounterError> {
+        let end = self.offset.checked_add(N).ok_or_else(|| {
+            EncounterError::MalformedPrepared("prepared wire offset overflow".to_string())
+        })?;
+        let value = self.bytes.get(self.offset..end).ok_or_else(|| {
+            EncounterError::MalformedPrepared("prepared wire is truncated".to_string())
+        })?;
+        self.offset = end;
+        value.try_into().map_err(|_| {
+            EncounterError::MalformedPrepared("prepared wire field has wrong width".to_string())
+        })
+    }
+
+    fn byte(&mut self) -> Result<u8, EncounterError> {
+        Ok(self.take::<1>()?[0])
+    }
+
+    fn string(&mut self, length: usize) -> Result<String, EncounterError> {
+        let end = self.offset.checked_add(length).ok_or_else(|| {
+            EncounterError::MalformedPrepared("prepared actor offset overflow".to_string())
+        })?;
+        let value = self.bytes.get(self.offset..end).ok_or_else(|| {
+            EncounterError::MalformedPrepared("prepared actor is truncated".to_string())
+        })?;
+        self.offset = end;
+        std::str::from_utf8(value)
+            .map(str::to_string)
+            .map_err(|_| EncounterError::MalformedPrepared("actor is not UTF-8".to_string()))
+    }
+
+    fn finished(&self) -> bool {
+        self.offset == self.bytes.len()
+    }
 }
