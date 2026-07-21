@@ -313,7 +313,7 @@ pub struct VoteOption {
     /// The button label (e.g. `"Press on into the plundered hall"`, `"🔒 Trade blows"`).
     pub label: String,
     /// The scene choice index (within the current passage) this option applies.
-    pub choice_index: usize,
+    pub choice_index: u64,
 }
 
 /// The rendered ballot options for a live collective round — the round's frozen candidate
@@ -324,16 +324,17 @@ fn ballot_options(round: &CollectiveRound) -> Vec<VoteOption> {
     round
         .options
         .iter()
-        .map(|a| {
+        .filter_map(|a| {
+            let choice_index = u64::try_from(a.arg).ok()?;
             let label = if a.enabled {
                 a.label.clone()
             } else {
                 format!("🔒 {}", a.label)
             };
-            VoteOption {
+            Some(VoteOption {
                 label: truncate(&label, 80),
-                choice_index: a.arg as usize,
-            }
+                choice_index,
+            })
         })
         .collect()
 }

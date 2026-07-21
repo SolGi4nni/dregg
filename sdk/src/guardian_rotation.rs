@@ -240,7 +240,7 @@ pub fn guardian_rotatable_identity_descriptor(
 fn set(cell: CellId, index: u8, value: FieldElement) -> Effect {
     Effect::SetField {
         cell,
-        index: index as usize,
+        index: index as u64,
         value,
     }
 }
@@ -401,7 +401,7 @@ mod tests {
         let effects = rotate_council_effects(member(0xAB), &new);
         match &effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, COUNCIL_COMMIT_SLOT as usize);
+                assert_eq!(*index, COUNCIL_COMMIT_SLOT as u64);
                 assert_eq!(*value, new.members_commitment());
             }
             other => panic!("expected a SetField on the council slot, got {other:?}"),

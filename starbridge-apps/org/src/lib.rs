@@ -329,12 +329,12 @@ pub fn transfer_effects(org_cell: CellId, new_owner: &str, new_seq: u64) -> Vec<
     vec![
         Effect::SetField {
             cell: org_cell,
-            index: OWNER_SLOT as usize,
+            index: OWNER_SLOT as u64,
             value: subject_tag(new_owner),
         },
         Effect::SetField {
             cell: org_cell,
-            index: SEQ_SLOT as usize,
+            index: SEQ_SLOT as u64,
             value: field_from_u64(new_seq),
         },
         Effect::EmitEvent {
@@ -363,12 +363,12 @@ pub fn membership_effects(
     vec![
         Effect::SetField {
             cell: org_cell,
-            index: SEQ_SLOT as usize,
+            index: SEQ_SLOT as u64,
             value: field_from_u64(new_seq),
         },
         Effect::SetField {
             cell: org_cell,
-            index: MEMBER_COUNT_SLOT as usize,
+            index: MEMBER_COUNT_SLOT as u64,
             value: field_from_u64(member_count),
         },
         Effect::EmitEvent {
@@ -393,17 +393,17 @@ pub fn build_found_org_action(cipherclerk: &AppCipherclerk, org: &Org) -> Action
     let effects = vec![
         Effect::SetField {
             cell: org_cell,
-            index: ROOT_PUBKEY_SLOT as usize,
+            index: ROOT_PUBKEY_SLOT as u64,
             value: root_pubkey_field(org),
         },
         Effect::SetField {
             cell: org_cell,
-            index: NAME_SLOT as usize,
+            index: NAME_SLOT as u64,
             value: name_tag(&org.name),
         },
         Effect::SetField {
             cell: org_cell,
-            index: OWNER_SLOT as usize,
+            index: OWNER_SLOT as u64,
             value: subject_tag(&org.owner),
         },
         Effect::EmitEvent {
@@ -507,7 +507,7 @@ pub fn org_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
             OWNER_RIGHTS,
             Effect::SetField {
                 cell: org_cell,
-                index: OWNER_SLOT as usize,
+                index: OWNER_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -701,12 +701,12 @@ mod tests {
         assert!(matches!(
         &effects[0],
         Effect::SetField { index, value, .. }
-        if *index == OWNER_SLOT as usize && *value == subject_tag("dregg:bob")
+        if *index == OWNER_SLOT as u64 && *value == subject_tag("dregg:bob")
         ));
         assert!(matches!(
         &effects[1],
         Effect::SetField { index, value, .. }
-        if *index == SEQ_SLOT as usize && *value == field_from_u64(7)
+        if *index == SEQ_SLOT as u64 && *value == field_from_u64(7)
         ));
     }
 

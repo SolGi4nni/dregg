@@ -699,12 +699,12 @@ pub fn build_propose_table_update_action(
     let effects = vec![
         Effect::SetField {
             cell: namespace_cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: proposal_root,
         },
         Effect::SetField {
             cell: namespace_cell,
-            index: DISPUTE_WINDOW_HEIGHT_SLOT as usize,
+            index: DISPUTE_WINDOW_HEIGHT_SLOT as u64,
             value: window_field,
         },
         Effect::EmitEvent {
@@ -754,7 +754,7 @@ pub fn build_vote_on_proposal_action(
     let effects = vec![
         Effect::SetField {
             cell: namespace_cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: new_proposal_root,
         },
         Effect::EmitEvent {
@@ -843,18 +843,18 @@ pub fn build_commit_table_update_action(
     let effects = vec![
         Effect::SetField {
             cell: namespace_cell,
-            index: ROUTE_TABLE_ROOT_SLOT as usize,
+            index: ROUTE_TABLE_ROOT_SLOT as u64,
             value: new_root,
         },
         Effect::SetField {
             cell: namespace_cell,
-            index: VERSION_SLOT as usize,
+            index: VERSION_SLOT as u64,
             value: new_version_field,
         },
         // Clear the pending proposal — the commit consumed it.
         Effect::SetField {
             cell: namespace_cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: [0u8; 32],
         },
         Effect::EmitEvent {
@@ -1471,12 +1471,12 @@ pub mod committee_board {
         vec![
             Effect::SetField {
                 cell: namespace_cell,
-                index: member_id_key(index) as usize,
+                index: member_id_key(index) as u64,
                 value: member_id,
             },
             Effect::SetField {
                 cell: namespace_cell,
-                index: member_vote_key(index) as usize,
+                index: member_vote_key(index) as u64,
                 value: field_from_u64(1),
             },
         ]
@@ -1498,12 +1498,12 @@ pub mod committee_board {
         let effects = vec![
             Effect::SetField {
                 cell: namespace_cell,
-                index: ROUTE_TABLE_ROOT_SLOT as usize,
+                index: ROUTE_TABLE_ROOT_SLOT as u64,
                 value: new_root,
             },
             Effect::SetField {
                 cell: namespace_cell,
-                index: VERSION_SLOT as usize,
+                index: VERSION_SLOT as u64,
                 value: field_from_u64(new_version),
             },
             Effect::EmitEvent {
@@ -1682,7 +1682,7 @@ pub fn governance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
         ADMIN_RIGHTS,
         Effect::SetField {
             cell,
-            index: ROUTE_TABLE_ROOT_SLOT as usize,
+            index: ROUTE_TABLE_ROOT_SLOT as u64,
             value: field_from_bytes(b"committed-route-table-root"),
         },
     );
@@ -1700,7 +1700,7 @@ pub fn governance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
             COMMITTEE_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+                index: PENDING_PROPOSAL_ROOT_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -1718,7 +1718,7 @@ pub fn governance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
             COMMITTEE_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+                index: PENDING_PROPOSAL_ROOT_SLOT as u64,
                 value: field_from_u64(2),
             },
         ),
@@ -1841,7 +1841,7 @@ pub fn fire_propose(
             vec![
                 Effect::SetField {
                     cell,
-                    index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+                    index: PENDING_PROPOSAL_ROOT_SLOT as u64,
                     value: new_pending,
                 },
                 Effect::EmitEvent {
@@ -1948,7 +1948,7 @@ pub fn fire_vote(
             vec![
                 Effect::SetField {
                     cell,
-                    index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+                    index: PENDING_PROPOSAL_ROOT_SLOT as u64,
                     value: new_pending,
                 },
                 Effect::EmitEvent {
@@ -2345,11 +2345,11 @@ mod tests {
         assert_eq!(action.effects.len(), 3);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == PENDING_PROPOSAL_ROOT_SLOT as usize
+            Effect::SetField { index, .. } if *index == PENDING_PROPOSAL_ROOT_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == DISPUTE_WINDOW_HEIGHT_SLOT as usize
+            Effect::SetField { index, .. } if *index == DISPUTE_WINDOW_HEIGHT_SLOT as u64
         ));
         assert!(matches!(&action.effects[2], Effect::EmitEvent { .. }));
     }
@@ -2366,7 +2366,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, PENDING_PROPOSAL_ROOT_SLOT as usize);
+                assert_eq!(*index, PENDING_PROPOSAL_ROOT_SLOT as u64);
                 assert_ne!(*value, prior_root, "vote must advance the root");
                 assert_ne!(*value, [0u8; 32], "advanced root is non-zero");
             }
@@ -2397,7 +2397,7 @@ mod tests {
         // The first effect writes the new route-table root.
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, ROUTE_TABLE_ROOT_SLOT as usize);
+                assert_eq!(*index, ROUTE_TABLE_ROOT_SLOT as u64);
                 assert_eq!(*value, route_table_commitment(&table));
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -2405,7 +2405,7 @@ mod tests {
         // The second effect bumps version.
         match &action.effects[1] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, VERSION_SLOT as usize);
+                assert_eq!(*index, VERSION_SLOT as u64);
                 assert_eq!(*value, field_from_u64(1));
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -2413,7 +2413,7 @@ mod tests {
         // The third effect clears the pending proposal root.
         match &action.effects[2] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, PENDING_PROPOSAL_ROOT_SLOT as usize);
+                assert_eq!(*index, PENDING_PROPOSAL_ROOT_SLOT as u64);
                 assert_eq!(*value, [0u8; 32]);
             }
             other => panic!("expected SetField, got {other:?}"),

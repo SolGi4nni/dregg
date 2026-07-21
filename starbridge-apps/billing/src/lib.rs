@@ -331,7 +331,7 @@ pub fn charge_effects(
     vec![
         Effect::SetField {
             cell: billing_cell,
-            index: SPENT_SLOT as usize,
+            index: SPENT_SLOT as u64,
             value: field_from_u64(new_spent.max(0) as u64),
         },
         Effect::Transfer {
@@ -361,7 +361,7 @@ pub fn seal_invoice_effects(billing_cell: CellId, body_hash: [u8; 32], total: i6
     vec![
         Effect::SetField {
             cell: billing_cell,
-            index: INVOICE_DIGEST_SLOT as usize,
+            index: INVOICE_DIGEST_SLOT as u64,
             value: body_hash,
         },
         Effect::EmitEvent {
@@ -506,17 +506,17 @@ pub fn build_open_billing_action(
     let effects = vec![
         Effect::SetField {
             cell: account,
-            index: CAP_SLOT as usize,
+            index: CAP_SLOT as u64,
             value: field_from_u64(cap_units.max(0) as u64),
         },
         Effect::SetField {
             cell: account,
-            index: PROVIDER_SLOT as usize,
+            index: PROVIDER_SLOT as u64,
             value: cell_tag(provider),
         },
         Effect::SetField {
             cell: account,
-            index: START_SLOT as usize,
+            index: START_SLOT as u64,
             value: field_from_u64(start.max(0) as u64),
         },
         Effect::EmitEvent {
@@ -697,7 +697,7 @@ mod tests {
         let effects = charge_effects(cid(7), cid(2), 60, 60);
         assert!(matches!(
             effects[0],
-            Effect::SetField { index, .. } if index == SPENT_SLOT as usize
+            Effect::SetField { index, .. } if index == SPENT_SLOT as u64
         ));
         assert!(matches!(
             effects[1],
@@ -718,7 +718,7 @@ mod tests {
         assert!(matches!(
             effects[0],
             Effect::SetField { index, value, .. }
-                if index == INVOICE_DIGEST_SLOT as usize && value == inv.body_hash()
+                if index == INVOICE_DIGEST_SLOT as u64 && value == inv.body_hash()
         ));
     }
 

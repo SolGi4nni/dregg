@@ -138,10 +138,8 @@ pub fn meta_hero_story() -> CompiledStory {
     // Register the two meta slots so `read_var` / `seed_var` resolve them by name.
     story
         .var_slots
-        .insert("echoes".to_string(), ECHOES_SLOT as usize);
-    story
-        .var_slots
-        .insert("boon".to_string(), BOON_SLOT as usize);
+        .insert("echoes".to_string(), ECHOES_SLOT as u64);
+    story.var_slots.insert("boon".to_string(), BOON_SLOT as u64);
 
     let CellProgram::Cases(cases) = &mut story.program else {
         panic!("the hero story is a Cases program");
@@ -252,7 +250,7 @@ pub fn grant_echoes(world: &WorldCell, depth: u64) -> Result<TurnReceipt, WorldE
         GRANT_ECHOES_METHOD,
         vec![Effect::SetField {
             cell,
-            index: ECHOES_SLOT as usize,
+            index: ECHOES_SLOT as u64,
             value: field_from_u64(new_echoes),
         }],
     )
@@ -268,7 +266,7 @@ pub fn claim_boon(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         CLAIM_BOON_METHOD,
         vec![Effect::SetField {
             cell,
-            index: BOON_SLOT as usize,
+            index: BOON_SLOT as u64,
             value: field_from_u64(BOON_VALUE),
         }],
     )
@@ -432,7 +430,7 @@ mod meta_tests {
             GRANT_ECHOES_METHOD,
             vec![Effect::SetField {
                 cell,
-                index: ECHOES_SLOT as usize,
+                index: ECHOES_SLOT as u64,
                 value: field_from_u64(1),
             }],
         );
@@ -479,7 +477,7 @@ mod meta_tests {
             CLAIM_BOON_METHOD,
             vec![Effect::SetField {
                 cell,
-                index: BOON_SLOT as usize,
+                index: BOON_SLOT as u64,
                 value: field_from_u64(2),
             }],
         );
@@ -506,7 +504,7 @@ mod meta_tests {
             "cheat/inject_echoes",
             vec![Effect::SetField {
                 cell,
-                index: ECHOES_SLOT as usize,
+                index: ECHOES_SLOT as u64,
                 value: field_from_u64(9_999),
             }],
         );
@@ -567,13 +565,13 @@ mod meta_tests {
                 // The echoes write — entirely legitimate on its own.
                 Effect::SetField {
                     cell,
-                    index: ECHOES_SLOT as usize,
+                    index: ECHOES_SLOT as u64,
                     value: field_from_u64(echoes_amount),
                 },
                 // The stapled-on free unlock.
                 Effect::SetField {
                     cell,
-                    index: BOON_SLOT as usize,
+                    index: BOON_SLOT as u64,
                     value: field_from_u64(BOON_VALUE),
                 },
             ],
@@ -600,7 +598,7 @@ mod meta_tests {
             progression::GAIN_XP_METHOD,
             vec![Effect::SetField {
                 cell,
-                index: BOON_SLOT as usize,
+                index: BOON_SLOT as u64,
                 value: field_from_u64(BOON_VALUE),
             }],
         );

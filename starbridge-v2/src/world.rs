@@ -1728,10 +1728,17 @@ fn collect_effect_events(action: &Action, out: &mut Vec<WorldEvent>) {
                 });
             }
             Effect::SetField { cell, index, .. } => {
-                out.push(WorldEvent::FieldSet {
-                    cell: *cell,
-                    index: *index,
-                });
+                if *index < dregg_cell::state::STATE_SLOTS as u64 {
+                    out.push(WorldEvent::FieldSet {
+                        cell: *cell,
+                        index: *index as usize,
+                    });
+                } else {
+                    // Heap/wide-key writes do not name one of the viewer's fixed
+                    // register slots. Invalidate the cell conservatively rather
+                    // than truncating the canonical u64 key into a local usize.
+                    out.push(WorldEvent::CellMutated { cell: *cell });
+                }
             }
             Effect::CellSeal { target, .. } => {
                 out.push(WorldEvent::CellSealed { cell: *target });
@@ -1944,7 +1951,11 @@ pub fn create_cell(seed: u8) -> Effect {
 
 /// Convenience: write `value` into state slot `index` of `cell`.
 pub fn set_field(cell: CellId, index: usize, value: dregg_cell::FieldElement) -> Effect {
-    Effect::SetField { cell, index, value }
+    Effect::SetField {
+        cell,
+        index: index as u64,
+        value,
+    }
 }
 
 /// Convenience: advance `cell`'s nonce by one (the loop's step counter — the

@@ -68,7 +68,7 @@ fn deploy_strong(seed: u8) -> WorldCell {
     w
 }
 
-fn set_field(cell: CellId, index: usize, value: u64) -> Effect {
+fn set_field(cell: CellId, index: u64, value: u64) -> Effect {
     Effect::SetField {
         cell,
         index,
@@ -78,8 +78,8 @@ fn set_field(cell: CellId, index: usize, value: u64) -> Effect {
 
 /// The `gold` var's compiled field key (a plain var, no per-slot guard) — the staple
 /// target that proves it is the GENESIS guard biting, not a leftover per-slot tooth.
-fn gold_key(world: &WorldCell) -> usize {
-    world.story().var_key("gold").expect("gold has a slot") as usize
+fn gold_key(world: &WorldCell) -> u64 {
+    world.story().var_key("gold").expect("gold has a slot")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ fn legit_deploy_seeds_then_genesis_is_a_refused_write_hatch() {
         GENESIS_METHOD,
         vec![
             set_field(cell, gold, 1000),
-            set_field(cell, GENESIS_DONE_EXT_KEY as usize, 1),
+            set_field(cell, GENESIS_DONE_EXT_KEY, 1),
         ],
     );
     assert!(
@@ -229,7 +229,7 @@ fn no_other_method_can_reset_the_genesis_sentinel() {
     // door to re-open genesis.
     let via_choice = world.apply_raw(
         &choice_method("gate", 1),
-        vec![set_field(cell, GENESIS_DONE_EXT_KEY as usize, 0)],
+        vec![set_field(cell, GENESIS_DONE_EXT_KEY, 0)],
     );
     assert!(
         matches!(via_choice, Err(WorldError::Refused(_))),
@@ -239,7 +239,7 @@ fn no_other_method_can_reset_the_genesis_sentinel() {
     // Nor can the heap hatch reset it.
     let via_hatch = world.apply_raw(
         HEAP_HATCH_METHOD,
-        vec![set_field(cell, GENESIS_DONE_EXT_KEY as usize, 0)],
+        vec![set_field(cell, GENESIS_DONE_EXT_KEY, 0)],
     );
     assert!(
         matches!(via_hatch, Err(WorldError::Refused(_))),

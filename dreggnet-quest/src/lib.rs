@@ -373,7 +373,8 @@ pub fn reached_quest_win(story: &CompiledStory, state: &[u64]) -> bool {
         story
             .var_slots
             .get(name)
-            .and_then(|&slot| state.get(slot))
+            .and_then(|&slot| usize::try_from(slot).ok())
+            .and_then(|slot| state.get(slot))
             .is_some_and(|&got| got == *want)
     })
 }
@@ -758,17 +759,17 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: step1 as usize,
+                    index: step1 as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: steps_done as usize,
+                    index: steps_done as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: reward as usize,
+                    index: reward as u64,
                     value: field_from_u64(REWARD_VALUE),
                 },
             ],

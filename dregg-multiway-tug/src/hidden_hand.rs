@@ -864,7 +864,7 @@ impl HiddenHandLedger {
         let mut set = |name: &str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.reg(name) as usize,
+                index: self.dep.reg(name) as u64,
                 value: field_from_u64(v),
             });
         };

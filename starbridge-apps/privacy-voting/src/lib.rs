@@ -411,7 +411,7 @@ pub fn build_open_poll_action(
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: QUESTION_HASH_SLOT,
+            index: QUESTION_HASH_SLOT as u64,
             value: q,
         },
         Effect::EmitEvent {
@@ -448,12 +448,12 @@ pub fn build_cast_vote_action(
     let effects = vec![
         Effect::SetField {
             cell: ballot_cell,
-            index: POLL_REF_SLOT,
+            index: POLL_REF_SLOT as u64,
             value: poll_ref,
         },
         Effect::SetField {
             cell: ballot_cell,
-            index: VOTE_SLOT,
+            index: VOTE_SLOT as u64,
             value: choice_field,
         },
         Effect::EmitEvent {
@@ -494,12 +494,12 @@ pub fn build_record_tally_action(
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: tally_slot,
+            index: tally_slot as u64,
             value: field_from_u64(new_tally),
         },
         Effect::SetField {
             cell: poll_cell,
-            index: ballots_slot_for_choice(choice),
+            index: ballots_slot_for_choice(choice) as u64,
             value: count_ge_set_commitment(ballots),
         },
         Effect::EmitEvent {
@@ -529,7 +529,7 @@ pub fn build_close_poll_action(cipherclerk: &AppCipherclerk, poll_cell: CellId) 
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: CLOSED_SLOT,
+            index: CLOSED_SLOT as u64,
             value: marker,
         },
         Effect::EmitEvent {
@@ -809,7 +809,7 @@ pub fn voting_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             VOTER_RIGHTS,
             Effect::SetField {
                 cell: ballot,
-                index: VOTE_SLOT,
+                index: VOTE_SLOT as u64,
                 value: field_from_u64(VOTE_YES),
             },
         ),
@@ -825,7 +825,7 @@ pub fn voting_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             ADMINISTRATOR_RIGHTS,
             Effect::SetField {
                 cell: poll,
-                index: TALLY_YES_SLOT,
+                index: TALLY_YES_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -841,7 +841,7 @@ pub fn voting_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             ADMINISTRATOR_RIGHTS,
             Effect::SetField {
                 cell: poll,
-                index: CLOSED_SLOT,
+                index: CLOSED_SLOT as u64,
                 value: field_from_u64(CLOSED_MARKER),
             },
         ),
@@ -967,12 +967,12 @@ pub fn fire_cast_vote(
         vec![
             Effect::SetField {
                 cell: ballot,
-                index: POLL_REF_SLOT,
+                index: POLL_REF_SLOT as u64,
                 value: poll_ref_value,
             },
             Effect::SetField {
                 cell: ballot,
-                index: VOTE_SLOT,
+                index: VOTE_SLOT as u64,
                 value: choice_field,
             },
             Effect::EmitEvent {
@@ -1021,12 +1021,12 @@ pub fn fire_record_tally(
                 vec![
                     Effect::SetField {
                         cell: poll,
-                        index: tally_slot,
+                        index: tally_slot as u64,
                         value: field_from_u64(live_tally.saturating_add(1)),
                     },
                     Effect::SetField {
                         cell: poll,
-                        index: ballots_slot_for_choice(choice),
+                        index: ballots_slot_for_choice(choice) as u64,
                         value: commitment,
                     },
                     Effect::EmitEvent {
@@ -1060,7 +1060,7 @@ pub fn fire_close_poll(
         vec![
             Effect::SetField {
                 cell: poll,
-                index: CLOSED_SLOT,
+                index: CLOSED_SLOT as u64,
                 value: marker,
             },
             Effect::EmitEvent {
@@ -1328,11 +1328,11 @@ mod tests {
         assert_eq!(action.effects.len(), 3);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == POLL_REF_SLOT
+            Effect::SetField { index, .. } if *index == POLL_REF_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == VOTE_SLOT
+            Effect::SetField { index, .. } if *index == VOTE_SLOT as u64
         ));
         // real signature, not a placeholder
         match action.authorization {
@@ -1350,13 +1350,13 @@ mod tests {
         assert!(matches!(
             &action.effects[0],
             Effect::SetField { index, value, .. }
-                if *index == TALLY_YES_SLOT && *value == field_from_u64(1)
+                if *index == TALLY_YES_SLOT as u64 && *value == field_from_u64(1)
         ));
         // The ballot-set commitment rides the SAME turn…
         assert!(matches!(
             &action.effects[1],
             Effect::SetField { index, value, .. }
-                if *index == TALLY_YES_BALLOTS_SLOT
+                if *index == TALLY_YES_BALLOTS_SLOT as u64
                     && *value == count_ge_set_commitment(&ballots)
         ));
         // …and the exhibited set rides as the unique Cleartext witness blob.

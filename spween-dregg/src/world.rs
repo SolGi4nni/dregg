@@ -55,12 +55,9 @@ const DECISION_DOMAIN: &[u8] = b"spween-dregg/collective/decision-binding-v1";
 /// clashes. Absent on a single-player turn; [`WorldCell::read_decision`] reads it back
 /// and [`crate::verify_collective_certified`] checks it against the certified winner.
 /// Reserved collective-decision key in the high, schema-unallocated part of the
-/// cross-target field-index space.  This MUST fit in `u32`: turns currently carry
-/// field indices as `usize`, and a wider value would truncate on `wasm32` before
-/// reaching the executor.
+/// canonical `u64` field-index space.
 pub const DECISION_EXT_KEY: u64 = 0x0000_0000_7000_0010;
 
-const _: () = assert!(DECISION_EXT_KEY <= u32::MAX as u64);
 const _: () = assert!(DECISION_EXT_KEY != GENESIS_DONE_EXT_KEY);
 
 /// **The canonical commitment of a quorum-certified decision** — the value a collective
@@ -412,7 +409,7 @@ impl WorldCell {
         let method = choice_method(passage_name, choice_index);
         self.require_fully_gated(&method)?;
         let mut effects = self.choice_effects(choice)?;
-        effects.push(set_field(self.cell, DECISION_EXT_KEY as usize, commitment));
+        effects.push(set_field(self.cell, DECISION_EXT_KEY, commitment));
         self.commit(&method, effects)
     }
 
@@ -461,7 +458,7 @@ impl WorldCell {
                     if let Some(key) = self.story.var_key(s.var.as_str()) {
                         let v = value_to_u64(&s.value);
                         local.insert(key, v);
-                        effects.push(set_field(self.cell, key as usize, field_from_u64(v)));
+                        effects.push(set_field(self.cell, key, field_from_u64(v)));
                     }
                 }
                 spween::Effect::Modify(m) => {
@@ -469,7 +466,7 @@ impl WorldCell {
                         let cur = *local.get(&key).unwrap_or(&self.read_key(key));
                         let nv = (cur as i64 + m.delta).max(0) as u64;
                         local.insert(key, nv);
-                        effects.push(set_field(self.cell, key as usize, field_from_u64(nv)));
+                        effects.push(set_field(self.cell, key, field_from_u64(nv)));
                     }
                 }
                 spween::Effect::Call(c) => {
@@ -482,7 +479,11 @@ impl WorldCell {
             }
         }
         let pidx = self.nav_index(choice)?;
-        effects.push(set_field(self.cell, PASSAGE_SLOT, field_from_u64(pidx)));
+        effects.push(set_field(
+            self.cell,
+            PASSAGE_SLOT as u64,
+            field_from_u64(pidx),
+        ));
         Ok(effects)
     }
 
@@ -575,7 +576,7 @@ impl WorldCell {
         if method == GENESIS_METHOD && self.genesis_sentinel {
             effects.push(set_field(
                 self.cell,
-                GENESIS_DONE_EXT_KEY as usize,
+                GENESIS_DONE_EXT_KEY,
                 field_from_u64(1),
             ));
         }
@@ -611,7 +612,7 @@ impl WorldCell {
 }
 
 /// A `SetField` effect on the world-cell.
-fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
+fn set_field(cell: CellId, index: u64, value: FieldElement) -> Effect {
     Effect::SetField { cell, index, value }
 }
 
@@ -689,7 +690,7 @@ impl EffectHandler for CellHandler {
         // write path nothing but the O(n) `fields_root` rebuild the executor does.
         if let Some(key) = self.story.var_key(name) {
             self.pending
-                .push(set_field(self.cell, key as usize, value_to_field(&value)));
+                .push(set_field(self.cell, key, value_to_field(&value)));
         }
         // ...and update the read overlay so subsequent reads in this choice see it.
         self.overlay.insert(name.to_string(), value);
@@ -925,17 +926,13 @@ impl<'s> Driver<'s> {
         };
         effects.push(set_field(
             self.world.cell,
-            PASSAGE_SLOT,
+            PASSAGE_SLOT as u64,
             field_from_u64(pidx),
         ));
         // Pin the certified-decision commitment (a collective turn) in the SAME turn as
         // the passage advance — the world commits to which decision authored it.
         if let Some(commitment) = self.pending_decision {
-            effects.push(set_field(
-                self.world.cell,
-                DECISION_EXT_KEY as usize,
-                commitment,
-            ));
+            effects.push(set_field(self.world.cell, DECISION_EXT_KEY, commitment));
         }
         self.world.commit(method, effects)
     }

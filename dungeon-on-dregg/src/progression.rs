@@ -354,11 +354,11 @@ pub fn hero_story() -> CompiledStory {
     CompiledStory {
         scene_id: HERO_SCENE_ID.to_string(),
         var_slots: [
-            ("xp".to_string(), XP_SLOT as usize),
-            ("level".to_string(), LEVEL_SLOT as usize),
-            ("class".to_string(), CLASS_SLOT as usize),
-            ("abilities_used".to_string(), ABILITY_SLOT as usize),
-            ("dead".to_string(), DEAD_SLOT as usize),
+            ("xp".to_string(), XP_SLOT as u64),
+            ("level".to_string(), LEVEL_SLOT as u64),
+            ("class".to_string(), CLASS_SLOT as u64),
+            ("abilities_used".to_string(), ABILITY_SLOT as u64),
+            ("dead".to_string(), DEAD_SLOT as u64),
         ]
         .into_iter()
         .collect(),
@@ -389,7 +389,7 @@ pub fn choose_class(world: &WorldCell, class_id: u64) -> Result<TurnReceipt, Wor
         CHOOSE_CLASS_METHOD,
         vec![Effect::SetField {
             cell,
-            index: CLASS_SLOT as usize,
+            index: CLASS_SLOT as u64,
             value: field_from_u64(class_id),
         }],
     )
@@ -406,7 +406,7 @@ pub fn gain_xp(world: &WorldCell, amount: u64) -> Result<TurnReceipt, WorldError
         GAIN_XP_METHOD,
         vec![Effect::SetField {
             cell,
-            index: XP_SLOT as usize,
+            index: XP_SLOT as u64,
             value: field_from_u64(new_xp),
         }],
     )
@@ -423,7 +423,7 @@ pub fn level_up(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         &level_up_method(target),
         vec![Effect::SetField {
             cell,
-            index: LEVEL_SLOT as usize,
+            index: LEVEL_SLOT as u64,
             value: field_from_u64(target),
         }],
     )
@@ -440,7 +440,7 @@ pub fn use_ability(world: &WorldCell, class_id: u64) -> Result<TurnReceipt, Worl
         &ability_method(class_id),
         vec![Effect::SetField {
             cell,
-            index: ABILITY_SLOT as usize,
+            index: ABILITY_SLOT as u64,
             value: field_from_u64(next),
         }],
     )
@@ -456,7 +456,7 @@ pub fn perish(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         HARDCORE_PERISH_METHOD,
         vec![Effect::SetField {
             cell,
-            index: DEAD_SLOT as usize,
+            index: DEAD_SLOT as u64,
             value: field_from_u64(1),
         }],
     )
@@ -472,7 +472,7 @@ pub fn attempt_resurrect(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         HARDCORE_RESURRECT_METHOD,
         vec![Effect::SetField {
             cell,
-            index: DEAD_SLOT as usize,
+            index: DEAD_SLOT as u64,
             value: field_from_u64(0),
         }],
     )
@@ -622,7 +622,7 @@ mod tests {
             &level_up_method(5),
             vec![Effect::SetField {
                 cell,
-                index: LEVEL_SLOT as usize,
+                index: LEVEL_SLOT as u64,
                 value: field_from_u64(5),
             }],
         );
@@ -743,12 +743,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: XP_SLOT as usize,
+                    index: XP_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: LEVEL_SLOT as usize,
+                    index: LEVEL_SLOT as u64,
                     value: field_from_u64(MAX_LEVEL),
                 },
             ],
@@ -772,12 +772,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: XP_SLOT as usize,
+                    index: XP_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: LEVEL_SLOT as usize,
+                    index: LEVEL_SLOT as u64,
                     value: field_from_u64(2),
                 },
             ],

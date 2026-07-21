@@ -71,7 +71,7 @@ impl Reactor for GuardAbuseReactor {
         let mut new_consumed: Option<FieldElement> = None;
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect
-                && *index == CONSUMED_SLOT as usize
+                && *index == CONSUMED_SLOT as u64
             {
                 new_consumed = Some(*value);
             }
@@ -150,7 +150,7 @@ mod tests {
             method: symbol(WATCHED_METHOD),
             effects: vec![Effect::SetField {
                 cell: account,
-                index: CONSUMED_SLOT as usize,
+                index: CONSUMED_SLOT as u64,
                 value: field_from_u64(1),
             }],
             turn_hash: receipt.turn_hash,
@@ -201,7 +201,7 @@ mod tests {
             method: symbol(WATCHED_METHOD),
             effects: vec![Effect::SetField {
                 cell: account,
-                index: CONSUMED_SLOT as usize,
+                index: CONSUMED_SLOT as u64,
                 value: field_from_u64(1),
             }],
             turn_hash: [7u8; 32],

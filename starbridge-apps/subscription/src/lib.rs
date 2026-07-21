@@ -606,17 +606,17 @@ pub fn build_publish_action(
     let effects = vec![
         Effect::SetField {
             cell: subscription_cell,
-            index: SEQ_HEAD_SLOT as usize,
+            index: SEQ_HEAD_SLOT as u64,
             value: new_head,
         },
         Effect::SetField {
             cell: subscription_cell,
-            index: MESSAGE_ROOT_SLOT as usize,
+            index: MESSAGE_ROOT_SLOT as u64,
             value: new_message_root,
         },
         Effect::SetField {
             cell: subscription_cell,
-            index: LATEST_PAYLOAD_SLOT as usize,
+            index: LATEST_PAYLOAD_SLOT as u64,
             value: payload_hash,
         },
         Effect::EmitEvent {
@@ -660,7 +660,7 @@ pub fn build_consume_action(
     let effects = vec![
         Effect::SetField {
             cell: subscription_cell,
-            index: SEQ_TAIL_SLOT as usize,
+            index: SEQ_TAIL_SLOT as u64,
             value: new_tail,
         },
         Effect::EmitEvent {
@@ -703,7 +703,7 @@ pub fn build_grant_publisher_action(
     let effects = vec![
         Effect::SetField {
             cell: subscription_cell,
-            index: PUBLISHERS_ROOT_SLOT as usize,
+            index: PUBLISHERS_ROOT_SLOT as u64,
             value: new_publishers_root,
         },
         Effect::EmitEvent {
@@ -731,7 +731,7 @@ pub fn build_grant_consumer_action(
     let effects = vec![
         Effect::SetField {
             cell: subscription_cell,
-            index: CONSUMERS_ROOT_SLOT as usize,
+            index: CONSUMERS_ROOT_SLOT as u64,
             value: new_consumers_root,
         },
         Effect::EmitEvent {
@@ -1021,7 +1021,7 @@ pub fn subscription_deos_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedEx
             PUBLISHER_RIGHTS,
             Effect::SetField {
                 cell: feed,
-                index: SEQ_HEAD_SLOT as usize,
+                index: SEQ_HEAD_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -1038,7 +1038,7 @@ pub fn subscription_deos_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedEx
             CONSUMER_RIGHTS,
             Effect::SetField {
                 cell: feed,
-                index: SEQ_TAIL_SLOT as usize,
+                index: SEQ_TAIL_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -1051,7 +1051,7 @@ pub fn subscription_deos_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedEx
         OWNER_RIGHTS,
         Effect::SetField {
             cell: feed,
-            index: PUBLISHERS_ROOT_SLOT as usize,
+            index: PUBLISHERS_ROOT_SLOT as u64,
             value: field_from_u64(1),
         },
     );
@@ -1060,7 +1060,7 @@ pub fn subscription_deos_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedEx
         OWNER_RIGHTS,
         Effect::SetField {
             cell: feed,
-            index: CONSUMERS_ROOT_SLOT as usize,
+            index: CONSUMERS_ROOT_SLOT as u64,
             value: field_from_u64(1),
         },
     );
@@ -1134,17 +1134,17 @@ pub fn publish_effects(
     vec![
         Effect::SetField {
             cell: feed,
-            index: SEQ_HEAD_SLOT as usize,
+            index: SEQ_HEAD_SLOT as u64,
             value: field_from_u64(new_head),
         },
         Effect::SetField {
             cell: feed,
-            index: MESSAGE_ROOT_SLOT as usize,
+            index: MESSAGE_ROOT_SLOT as u64,
             value: new_message_root,
         },
         Effect::SetField {
             cell: feed,
-            index: LATEST_PAYLOAD_SLOT as usize,
+            index: LATEST_PAYLOAD_SLOT as u64,
             value: payload_hash,
         },
         Effect::EmitEvent {
@@ -1165,7 +1165,7 @@ pub fn consume_effects(feed: CellId, new_tail: u64, consumed_payload: FieldEleme
     vec![
         Effect::SetField {
             cell: feed,
-            index: SEQ_TAIL_SLOT as usize,
+            index: SEQ_TAIL_SLOT as u64,
             value: field_from_u64(new_tail),
         },
         Effect::EmitEvent {
@@ -1636,15 +1636,15 @@ mod tests {
         assert_eq!(action.effects.len(), 4, "publish has 3 SetField + 1 Event");
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == SEQ_HEAD_SLOT as usize
+            Effect::SetField { index, .. } if *index == SEQ_HEAD_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == MESSAGE_ROOT_SLOT as usize
+            Effect::SetField { index, .. } if *index == MESSAGE_ROOT_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == LATEST_PAYLOAD_SLOT as usize
+            Effect::SetField { index, .. } if *index == LATEST_PAYLOAD_SLOT as u64
         ));
         assert!(matches!(&action.effects[3], Effect::EmitEvent { .. }));
     }
@@ -1660,7 +1660,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == SEQ_TAIL_SLOT as usize
+            Effect::SetField { index, .. } if *index == SEQ_TAIL_SLOT as u64
         ));
         assert!(matches!(&action.effects[1], Effect::EmitEvent { .. }));
     }
@@ -1677,7 +1677,7 @@ mod tests {
         assert!(matches!(
             &action.effects[0],
             Effect::SetField { index, value, .. }
-            if *index == PUBLISHERS_ROOT_SLOT as usize && *value == new_root
+            if *index == PUBLISHERS_ROOT_SLOT as u64 && *value == new_root
         ));
     }
 
@@ -1693,7 +1693,7 @@ mod tests {
         assert!(matches!(
             &action.effects[0],
             Effect::SetField { index, value, .. }
-            if *index == CONSUMERS_ROOT_SLOT as usize && *value == new_root
+            if *index == CONSUMERS_ROOT_SLOT as u64 && *value == new_root
         ));
     }
 
@@ -1960,7 +1960,7 @@ mod tests {
         // Payload-bearing SetField is the third effect (LATEST_PAYLOAD_SLOT).
         match &action.effects[2] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, LATEST_PAYLOAD_SLOT as usize);
+                assert_eq!(*index, LATEST_PAYLOAD_SLOT as u64);
                 assert_eq!(
                     *value,
                     bounty_state_payload_hash(

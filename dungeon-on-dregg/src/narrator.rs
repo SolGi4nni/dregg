@@ -388,7 +388,7 @@ fn lower_choice_effects(world: &WorldCell, choice: &Choice) -> Vec<Effect> {
     };
     effects.push(Effect::SetField {
         cell,
-        index: PASSAGE_SLOT,
+        index: PASSAGE_SLOT as u64,
         value: field_from_u64(pidx),
     });
     effects

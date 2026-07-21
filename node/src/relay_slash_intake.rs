@@ -299,13 +299,13 @@ mod tests {
         assert!(action.effects.iter().any(|e| matches!(e,
             Effect::SetField { cell, index, value }
             if *cell == relay_cell
-                && *index == BOND_AMOUNT_SLOT as usize
+                && *index == BOND_AMOUNT_SLOT as u64
                 && *value == u64_to_field(9_500)
         )));
         assert!(action.effects.iter().any(|e| matches!(e,
             Effect::SetField { cell, index, value }
             if *cell == relay_cell
-                && *index == DISPUTE_COUNT_SLOT as usize
+                && *index == DISPUTE_COUNT_SLOT as u64
                 && *value == u64_to_field(1)
         )));
 
@@ -502,7 +502,7 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell: relay_id,
-                    index: BOND_AMOUNT_SLOT as usize,
+                    index: BOND_AMOUNT_SLOT as u64,
                     value: u64_to_field(9_500),
                 },
                 Effect::Transfer {

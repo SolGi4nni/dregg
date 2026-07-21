@@ -223,11 +223,11 @@ pub fn adventurer_story() -> CompiledStory {
     CompiledStory {
         scene_id: ADVENTURER_SCENE_ID.to_string(),
         var_slots: [
-            ("stat".to_string(), STAT_SLOT as usize),
-            ("check_total".to_string(), CHECK_TOTAL_SLOT as usize),
-            ("door".to_string(), DOOR_SLOT as usize),
-            ("checks".to_string(), CHECKS_SLOT as usize),
-            ("dc".to_string(), DC_SLOT as usize),
+            ("stat".to_string(), STAT_SLOT as u64),
+            ("check_total".to_string(), CHECK_TOTAL_SLOT as u64),
+            ("door".to_string(), DOOR_SLOT as u64),
+            ("checks".to_string(), CHECKS_SLOT as u64),
+            ("dc".to_string(), DC_SLOT as u64),
         ]
         .into_iter()
         .collect(),
@@ -255,12 +255,12 @@ pub fn create_adventurer(world: &WorldCell, stat: u64, dc: u64) -> Result<TurnRe
         vec![
             Effect::SetField {
                 cell,
-                index: STAT_SLOT as usize,
+                index: STAT_SLOT as u64,
                 value: field_from_u64(stat),
             },
             Effect::SetField {
                 cell,
-                index: DC_SLOT as usize,
+                index: DC_SLOT as u64,
                 value: field_from_u64(dc),
             },
         ],
@@ -399,12 +399,12 @@ pub fn resolve_check(world: &WorldCell, draw: &CheckDraw) -> Result<CheckReceipt
     let effects = vec![
         Effect::SetField {
             cell,
-            index: CHECK_TOTAL_SLOT as usize,
+            index: CHECK_TOTAL_SLOT as u64,
             value: field_from_u64(draw.total),
         },
         Effect::SetField {
             cell,
-            index: CHECKS_SLOT as usize,
+            index: CHECKS_SLOT as u64,
             value: field_from_u64(next_checks),
         },
         check_event_effect(cell, draw),
@@ -434,7 +434,7 @@ pub fn open_door(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         OPEN_DOOR_METHOD,
         vec![Effect::SetField {
             cell,
-            index: DOOR_SLOT as usize,
+            index: DOOR_SLOT as u64,
             value: field_from_u64(1),
         }],
     )
@@ -716,12 +716,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: CHECKS_SLOT as usize,
+                    index: CHECKS_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: DOOR_SLOT as usize,
+                    index: DOOR_SLOT as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -767,12 +767,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: CHECKS_SLOT as usize,
+                    index: CHECKS_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: CHECK_TOTAL_SLOT as usize,
+                    index: CHECK_TOTAL_SLOT as u64,
                     value: field_from_u64(9_999),
                 },
             ],
@@ -794,12 +794,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: CHECKS_SLOT as usize,
+                    index: CHECKS_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: CHECK_TOTAL_SLOT as usize,
+                    index: CHECK_TOTAL_SLOT as u64,
                     value: field_from_u64(stat + SKILL_DIE_SIDES),
                 },
             ],

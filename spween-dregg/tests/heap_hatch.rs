@@ -28,13 +28,13 @@ use spween_dregg::{
 fn heap_effect(cell: CellId, key: u64, value: u64) -> Effect {
     Effect::SetField {
         cell,
-        index: key as usize,
+        index: key,
         value: field_from_u64(value),
     }
 }
 
 /// A raw `Effect::SetField` into a REGISTER slot (`index < STATE_SLOTS`).
-fn slot_effect(cell: CellId, index: usize, value: u64) -> Effect {
+fn slot_effect(cell: CellId, index: u64, value: u64) -> Effect {
     Effect::SetField {
         cell,
         index,
@@ -159,7 +159,10 @@ fn heap_hatch_cannot_overwrite_a_register_slot() {
     let cell = world.cell_id();
 
     let before = world.snapshot()[PASSAGE_SLOT];
-    let refused = world.apply_raw(HEAP_HATCH_METHOD, vec![slot_effect(cell, PASSAGE_SLOT, 7)]);
+    let refused = world.apply_raw(
+        HEAP_HATCH_METHOD,
+        vec![slot_effect(cell, PASSAGE_SLOT as u64, 7)],
+    );
     assert!(
         matches!(refused, Err(WorldError::Refused(_))),
         "a hatch turn that writes a register slot is refused (Immutable confinement): \
@@ -194,7 +197,7 @@ fn unknown_and_forged_choice_methods_still_refused() {
     // A FORGED choice method: `start` has one choice (index 0); index 9 names no case.
     let forged = world.apply_raw(
         &choice_method("start", 9),
-        vec![slot_effect(cell, PASSAGE_SLOT, 3)],
+        vec![slot_effect(cell, PASSAGE_SLOT as u64, 3)],
     );
     assert!(
         matches!(forged, Err(WorldError::Refused(_))),

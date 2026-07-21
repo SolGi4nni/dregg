@@ -391,27 +391,27 @@ pub fn open_board_effects(board: CellId, lead: &str, budget: u64) -> Vec<Effect>
     vec![
         Effect::SetField {
             cell: board,
-            index: LEAD_SLOT as usize,
+            index: LEAD_SLOT as u64,
             value: identity_field(lead),
         },
         Effect::SetField {
             cell: board,
-            index: BUDGET_SLOT as usize,
+            index: BUDGET_SLOT as u64,
             value: field_from_u64(budget),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_A_SLOT as usize,
+            index: SPENT_A_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_B_SLOT as usize,
+            index: SPENT_B_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {
@@ -466,12 +466,12 @@ pub fn worker_step_effects(
     vec![
         Effect::SetField {
             cell: board,
-            index: worker.spend_slot() as usize,
+            index: worker.spend_slot() as u64,
             value: field_from_u64(new_spent),
         },
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::EmitEvent {
@@ -1077,7 +1077,7 @@ pub fn audit_run(
         ));
         let binds_spend = effects.iter().any(|&f| {
             matches!(f, Effect::SetField { index, value, .. }
-                if *index == e.step.worker.spend_slot() as usize
+                if *index == e.step.worker.spend_slot() as u64
                     && *value == field_from_u64(e.spent_after))
         });
         let binds_call = effects.iter().any(|&f| {
@@ -1374,12 +1374,12 @@ mod tests {
         assert!(matches!(
             &action.effects[0],
             Effect::SetField { index, value, .. }
-                if *index == SPENT_A_SLOT as usize && *value == field_from_u64(300)
+                if *index == SPENT_A_SLOT as u64 && *value == field_from_u64(300)
         ));
         assert!(matches!(
             &action.effects[1],
             Effect::SetField { index, value, .. }
-                if *index == EPOCH_SLOT as usize && *value == field_from_u64(2)
+                if *index == EPOCH_SLOT as u64 && *value == field_from_u64(2)
         ));
     }
 

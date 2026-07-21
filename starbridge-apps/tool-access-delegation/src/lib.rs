@@ -342,22 +342,22 @@ pub fn build_grant_action(
     let effects = vec![
         Effect::SetField {
             cell: mandate_cell,
-            index: TOOL_ID_SLOT as usize,
+            index: TOOL_ID_SLOT as u64,
             value: tool_id_field(tool),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: RATE_LIMIT_SLOT as usize,
+            index: RATE_LIMIT_SLOT as u64,
             value: field_from_u64(rate_limit),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: DEADLINE_SLOT as usize,
+            index: DEADLINE_SLOT as u64,
             value: field_from_u64(deadline),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::EmitEvent {
@@ -389,7 +389,7 @@ pub fn build_invoke_action(
     let effects = vec![
         Effect::SetField {
             cell: mandate_cell,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(new_count),
         },
         Effect::EmitEvent {
@@ -582,7 +582,7 @@ pub fn tad_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
             WORKER_RIGHTS,
             Effect::SetField {
                 cell: mandate,
-                index: CALLS_MADE_SLOT as usize,
+                index: CALLS_MADE_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -622,7 +622,7 @@ pub fn invoke_effects(mandate: CellId, new_calls: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: mandate,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(new_calls),
         },
         Effect::EmitEvent {
@@ -898,15 +898,15 @@ mod tests {
         assert_eq!(action.effects.len(), 5);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == TOOL_ID_SLOT as usize
+            Effect::SetField { index, .. } if *index == TOOL_ID_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == RATE_LIMIT_SLOT as usize
+            Effect::SetField { index, .. } if *index == RATE_LIMIT_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == DEADLINE_SLOT as usize
+            Effect::SetField { index, .. } if *index == DEADLINE_SLOT as u64
         ));
     }
 
@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, CALLS_MADE_SLOT as usize);
+                assert_eq!(*index, CALLS_MADE_SLOT as u64);
                 assert_eq!(*value, field_from_u64(3));
             }
             other => panic!("expected SetField, got {other:?}"),

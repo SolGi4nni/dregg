@@ -211,7 +211,7 @@ fn finalized_take_root() -> [u8; 32] {
         driver,
         lantern,
         "take",
-        vec![set_field(lantern, OWNER_SLOT as usize, tag)],
+        vec![set_field(lantern, u64::from(OWNER_SLOT), tag)],
         vec![],
     )
     .expect("the dry-run take commits");
@@ -224,7 +224,7 @@ fn finalized_take_root() -> [u8; 32] {
 }
 
 /// A `SetField` effect on `cell`'s slot `index`.
-fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
+fn set_field(cell: CellId, index: u64, value: FieldElement) -> Effect {
     Effect::SetField { cell, index, value }
 }
 
@@ -335,7 +335,7 @@ impl World {
             self.driver,
             self.shore,
             "enter",
-            vec![set_field(self.shore, PRESENCE_SLOT, tag)],
+            vec![set_field(self.shore, PRESENCE_SLOT as u64, tag)],
             vec![],
         )
     }
@@ -351,7 +351,7 @@ impl World {
             self.driver,
             self.lantern,
             "take",
-            vec![set_field(self.lantern, OWNER_SLOT as usize, tag)],
+            vec![set_field(self.lantern, u64::from(OWNER_SLOT), tag)],
             vec![],
         )
     }
@@ -371,7 +371,7 @@ impl World {
             self.driver,
             self.lantern,
             "take",
-            vec![set_field(self.lantern, OWNER_SLOT as usize, rival_tag)],
+            vec![set_field(self.lantern, u64::from(OWNER_SLOT), rival_tag)],
             vec![],
         )
     }
@@ -396,7 +396,7 @@ impl World {
             self.driver,
             self.stair,
             "open",
-            vec![set_field(self.stair, DOOR_SLOT as usize, door_value)],
+            vec![set_field(self.stair, u64::from(DOOR_SLOT), door_value)],
             blobs,
         )
     }

@@ -777,7 +777,7 @@ pub fn deploy_keep(seed: u8) -> WorldCell {
 pub fn stash_effect(cell: dregg_app_framework::CellId, key: u64, value: u64) -> Effect {
     Effect::SetField {
         cell,
-        index: key as usize,
+        index: key as u64,
         value: field_from_u64(value),
     }
 }
@@ -826,7 +826,7 @@ mod tests {
             constraints.iter().any(|c| matches!(
                 c,
                 StateConstraint::FieldGte { index, value }
-                    if *index as usize == lantern_slot
+                    if *index as u64 == lantern_slot
                         && *value == dregg_app_framework::field_from_u64(1)
             )),
             "descend gate is FieldGte(has_lantern, 1); got {constraints:?}"

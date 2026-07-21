@@ -292,7 +292,7 @@ impl Deployment {
     pub fn story_with(&self, program: CellProgram) -> CompiledStory {
         let mut var_slots = BTreeMap::new();
         for name in REGISTERS {
-            var_slots.insert(name.to_string(), self.reg(name) as usize);
+            var_slots.insert(name.to_string(), self.reg(name) as u64);
         }
         CompiledStory {
             scene_id: SCENE_ID.to_string(),
@@ -400,7 +400,7 @@ impl AutomataflGame {
         let mut set = |name: &str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.reg(name) as usize,
+                index: self.dep.reg(name) as u64,
                 value: field_from_u64(v),
             });
         };
@@ -423,7 +423,7 @@ impl AutomataflGame {
         for idx in 0..CELLS {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.cell_key(idx) as usize,
+                index: self.dep.cell_key(idx) as u64,
                 value: field_from_u64(st.cells[idx] as u64),
             });
         }
@@ -454,7 +454,7 @@ impl AutomataflGame {
     pub fn reg_effect(&self, name: &str, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.reg(name) as usize,
+            index: self.dep.reg(name) as u64,
             value: field_from_u64(v),
         }
     }
@@ -463,7 +463,7 @@ impl AutomataflGame {
     pub fn cell_effect(&self, idx: usize, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.cell_key(idx) as usize,
+            index: self.dep.cell_key(idx) as u64,
             value: field_from_u64(v),
         }
     }

@@ -329,7 +329,7 @@ fn room_prose(source: &str, room: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MoveOption {
     label: String,
-    index: usize,
+    index: u64,
     enabled: bool,
 }
 
@@ -364,7 +364,7 @@ fn ballot(run: &DailyRun) -> Vec<MoveOption> {
         .map(|(index, label)| MoveOption {
             enabled: choice_enabled(run, &room, index),
             label,
-            index,
+            index: u64::try_from(index).expect("room choice index fits the stable u64 wire format"),
         })
         .collect()
 }
@@ -2911,7 +2911,7 @@ mod tests {
         let opts = ballot(&run);
         let press = opts
             .iter()
-            .find(|o| o.index == GATE_PRESS)
+            .find(|o| o.index == u64::try_from(GATE_PRESS).unwrap())
             .expect("press-past present");
         assert!(
             !press.enabled,
@@ -2919,7 +2919,7 @@ mod tests {
         );
         let measured = opts
             .iter()
-            .find(|o| o.index == GATE_MEASURED)
+            .find(|o| o.index == u64::try_from(GATE_MEASURED).unwrap())
             .expect("measured present");
         assert!(measured.enabled, "a measured blow is available at full HP");
 
@@ -2935,17 +2935,18 @@ mod tests {
             777,
             &[MoveOption {
                 label: "Measured blow".into(),
-                index: 0,
+                index: u64::MAX,
                 enabled: true,
             }],
         );
         // Rebuild the id the button carries and parse it exactly as `handle_component` does.
-        let id = format!("descent:move:{}:{}", 777, 0);
+        let id = format!("descent:move:{}:{}", 777, u64::MAX);
         let parts: Vec<&str> = id.split(':').collect();
         assert_eq!(parts.len(), 4);
         assert_eq!(parts[1], "move");
         assert_eq!(parts[2].parse::<u64>().unwrap(), 777);
-        assert_eq!(parts[3].parse::<usize>().unwrap(), 0);
+        assert_eq!(parts[3].parse::<u64>().unwrap(), u64::MAX);
+        assert!("-1".parse::<u64>().is_err(), "negative actions fail closed");
         assert!(!rows.is_empty());
     }
 }

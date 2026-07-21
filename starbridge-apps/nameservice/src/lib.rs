@@ -520,12 +520,12 @@ pub fn build_register_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: NAME_HASH_SLOT,
+            index: NAME_HASH_SLOT as u64,
             value: name_hash,
         },
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_HASH_SLOT,
+            index: OWNER_HASH_SLOT as u64,
             value: owner_hash,
         },
         // The authority register: the raw owner pubkey the
@@ -535,12 +535,12 @@ pub fn build_register_action(
         // names" tooth (see `owner_authorization_constraints`).
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_PK_SLOT,
+            index: OWNER_PK_SLOT as u64,
             value: owner,
         },
         Effect::SetField {
             cell: registry_cell,
-            index: EXPIRY_SLOT,
+            index: EXPIRY_SLOT as u64,
             value: expiry_field,
         },
         Effect::EmitEvent {
@@ -574,7 +574,7 @@ pub fn build_renew_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: EXPIRY_SLOT,
+            index: EXPIRY_SLOT as u64,
             value: new_expiry_field,
         },
         Effect::EmitEvent {
@@ -623,7 +623,7 @@ pub fn build_transfer_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_HASH_SLOT,
+            index: OWNER_HASH_SLOT as u64,
             value: new_hash,
         },
         // Stage the incoming owner's raw key — the accept half
@@ -631,7 +631,7 @@ pub fn build_transfer_action(
         // register ONLY to this owner-authorized value.
         Effect::SetField {
             cell: registry_cell,
-            index: PENDING_OWNER_PK_SLOT,
+            index: PENDING_OWNER_PK_SLOT as u64,
             value: new_owner,
         },
         Effect::EmitEvent {
@@ -674,7 +674,7 @@ pub fn build_accept_transfer_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_PK_SLOT,
+            index: OWNER_PK_SLOT as u64,
             value: new_owner,
         },
         Effect::EmitEvent {
@@ -711,7 +711,7 @@ pub fn build_revoke_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: REVOKED_SLOT,
+            index: REVOKED_SLOT as u64,
             value: tombstone,
         },
         Effect::EmitEvent {
@@ -747,7 +747,7 @@ pub fn build_set_target_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: RESOLVE_TARGET_SLOT,
+            index: RESOLVE_TARGET_SLOT as u64,
             value: target,
         },
         Effect::EmitEvent {
@@ -945,7 +945,7 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
         OWNER_RIGHTS,
         Effect::SetField {
             cell,
-            index: OWNER_HASH_SLOT,
+            index: OWNER_HASH_SLOT as u64,
             value: signer_owner_hash(cipherclerk),
         },
     );
@@ -961,7 +961,7 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             OWNER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: EXPIRY_SLOT,
+                index: EXPIRY_SLOT as u64,
                 value: field_from_u64(DEFAULT_RENT_EPOCH_BLOCKS),
             },
         ),
@@ -976,7 +976,7 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             OWNER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: REVOKED_SLOT,
+                index: REVOKED_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -992,7 +992,7 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             OWNER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: RESOLVE_TARGET_SLOT,
+                index: RESOLVE_TARGET_SLOT as u64,
                 value: resolve_target("dregg://cell/placeholder"),
             },
         ),
@@ -1076,7 +1076,7 @@ pub fn fire_renew(
         vec![
             Effect::SetField {
                 cell: name_cell,
-                index: EXPIRY_SLOT,
+                index: EXPIRY_SLOT as u64,
                 value: field_from_u64(new_expiry),
             },
             Effect::EmitEvent {
@@ -1103,7 +1103,7 @@ pub fn fire_revoke(
         vec![
             Effect::SetField {
                 cell: name_cell,
-                index: REVOKED_SLOT,
+                index: REVOKED_SLOT as u64,
                 value: field_from_u64(1),
             },
             Effect::EmitEvent {
@@ -1137,7 +1137,7 @@ pub fn fire_set_target(
             vec![
                 Effect::SetField {
                     cell: name_cell,
-                    index: RESOLVE_TARGET_SLOT,
+                    index: RESOLVE_TARGET_SLOT as u64,
                     value: target,
                 },
                 Effect::EmitEvent {
@@ -1460,12 +1460,12 @@ pub fn build_register_with_credential_action(
     let effects = vec![
         Effect::SetField {
             cell: registry_cell,
-            index: NAME_HASH_SLOT,
+            index: NAME_HASH_SLOT as u64,
             value: name_hash_val,
         },
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_HASH_SLOT,
+            index: OWNER_HASH_SLOT as u64,
             value: owner_hash,
         },
         // The authority register — mirrors `build_register_action`; the
@@ -1473,12 +1473,12 @@ pub fn build_register_with_credential_action(
         // owner image without its raw-key authority register.
         Effect::SetField {
             cell: registry_cell,
-            index: OWNER_PK_SLOT,
+            index: OWNER_PK_SLOT as u64,
             value: owner,
         },
         Effect::SetField {
             cell: registry_cell,
-            index: EXPIRY_SLOT,
+            index: EXPIRY_SLOT as u64,
             value: expiry_field,
         },
         Effect::EmitEvent {
@@ -1867,22 +1867,22 @@ mod tests {
         assert_eq!(action.effects.len(), 5);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == NAME_HASH_SLOT
+            Effect::SetField { index, .. } if *index == NAME_HASH_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == OWNER_HASH_SLOT
+            Effect::SetField { index, .. } if *index == OWNER_HASH_SLOT as u64
         ));
         // The authority register rides the registration atomically (the
         // owner-authorization caveats refuse an image without it).
         assert!(matches!(
             &action.effects[2],
             Effect::SetField { index, value, .. }
-                if *index == OWNER_PK_SLOT && *value == [3u8; 32]
+                if *index == OWNER_PK_SLOT as u64 && *value == [3u8; 32]
         ));
         assert!(matches!(
             &action.effects[3],
-            Effect::SetField { index, .. } if *index == EXPIRY_SLOT
+            Effect::SetField { index, .. } if *index == EXPIRY_SLOT as u64
         ));
         assert!(matches!(&action.effects[4], Effect::EmitEvent { .. }));
     }
@@ -2274,11 +2274,11 @@ mod tests {
         // authority register).
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == NAME_HASH_SLOT
+            Effect::SetField { index, .. } if *index == NAME_HASH_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == OWNER_PK_SLOT
+            Effect::SetField { index, .. } if *index == OWNER_PK_SLOT as u64
         ));
         // Last effect is the attested event with issuer + schema fields.
         match &action.effects[4] {

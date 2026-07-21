@@ -163,7 +163,7 @@ impl Deployment {
     pub fn story(&self) -> CompiledStory {
         let mut var_slots = BTreeMap::new();
         for name in REGISTERS {
-            var_slots.insert(name.to_string(), self.reg(name) as usize);
+            var_slots.insert(name.to_string(), self.reg(name) as u64);
         }
         CompiledStory {
             scene_id: SCENE_ID.to_string(),
@@ -630,7 +630,7 @@ impl Descent {
         let mut set_reg = |name: &str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.reg(name) as usize,
+                index: self.dep.reg(name) as u64,
                 value: field_from_u64(v),
             });
         };
@@ -651,7 +651,7 @@ impl Descent {
         for (i, &c) in sim.custody.iter().enumerate() {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.relic_key(i) as usize,
+                index: self.dep.relic_key(i) as u64,
                 value: field_from_u64(c),
             });
         }
@@ -699,7 +699,7 @@ impl Descent {
     pub fn reg_effect(&self, name: &str, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.reg(name) as usize,
+            index: self.dep.reg(name) as u64,
             value: field_from_u64(v),
         }
     }
@@ -708,7 +708,7 @@ impl Descent {
     pub fn relic_effect(&self, i: usize, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.relic_key(i) as usize,
+            index: self.dep.relic_key(i) as u64,
             value: field_from_u64(v),
         }
     }

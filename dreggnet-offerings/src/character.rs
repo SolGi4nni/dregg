@@ -615,7 +615,7 @@ mod tests {
             "cheat/inject_xp",
             vec![Effect::SetField {
                 cell,
-                index: progression::XP_SLOT as usize,
+                index: progression::XP_SLOT as u64,
                 value: field_from_u64(9_999),
             }],
         );
@@ -831,7 +831,7 @@ mod tests {
                 "cheat/inject_echoes",
                 vec![Effect::SetField {
                     cell,
-                    index: dungeon_on_dregg::meta::ECHOES_SLOT as usize,
+                    index: dungeon_on_dregg::meta::ECHOES_SLOT as u64,
                     value: field_from_u64(9_999),
                 }],
             );

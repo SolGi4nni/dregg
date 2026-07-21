@@ -66,7 +66,7 @@ impl Reactor for MandateAuditReactor {
         let mut new_calls: Option<FieldElement> = None;
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect
-                && *index == CALLS_MADE_SLOT as usize
+                && *index == CALLS_MADE_SLOT as u64
             {
                 new_calls = Some(*value);
             }
@@ -144,7 +144,7 @@ mod tests {
             method: symbol(crate::service::METHOD_EXERCISE),
             effects: vec![Effect::SetField {
                 cell: service.cell,
-                index: CALLS_MADE_SLOT as usize,
+                index: CALLS_MADE_SLOT as u64,
                 value: field_from_u64(1),
             }],
             turn_hash: receipt.turn_hash,
@@ -197,7 +197,7 @@ mod tests {
             method: symbol(crate::service::METHOD_EXERCISE),
             effects: vec![Effect::SetField {
                 cell: service.cell,
-                index: CALLS_MADE_SLOT as usize,
+                index: CALLS_MADE_SLOT as u64,
                 value: field_from_u64(1),
             }],
             turn_hash: [7u8; 32],

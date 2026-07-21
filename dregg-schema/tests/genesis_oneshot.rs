@@ -45,7 +45,7 @@ const OWNER: u64 = 1000;
 const SHIELD: u64 = 5;
 const ITEMS: u64 = 3;
 
-fn set_field(cell: CellId, index: usize, value: u64) -> Effect {
+fn set_field(cell: CellId, index: u64, value: u64) -> Effect {
     Effect::SetField {
         cell,
         index,
@@ -56,10 +56,10 @@ fn set_field(cell: CellId, index: usize, value: u64) -> Effect {
 /// `hp`'s register index (a `Stat` capped at 20). It carries NO per-slot tooth under the
 /// genesis case, so a refused genesis staple on it is the GENESIS guard biting — and a
 /// value of 1000 (past the `move` cap) makes the hatch's power vivid.
-fn hp_index() -> usize {
+fn hp_index() -> u64 {
     let layout = check_layout(&descent_schema()).expect("layout");
     match layout.resolve("hp").expect("hp resolves") {
-        Slot::Register(r) => r as usize,
+        Slot::Register(r) => u64::from(r),
         Slot::Heap(_) => panic!("hp is a register stat"),
     }
 }
@@ -191,10 +191,7 @@ fn no_move_can_reset_the_genesis_sentinel() {
 
     // A move that tries to reset the sentinel to 0 is REFUSED by the `Immutable` freeze
     // on the move case — a move is not a back door to re-open genesis.
-    let via_move = world.apply_raw(
-        MOVE_METHOD,
-        vec![set_field(cell, GENESIS_DONE_EXT_KEY as usize, 0)],
-    );
+    let via_move = world.apply_raw(MOVE_METHOD, vec![set_field(cell, GENESIS_DONE_EXT_KEY, 0)]);
     assert!(
         matches!(via_move, Err(WorldError::Refused(_))),
         "a move cannot reset the sentinel (Immutable freeze); got {via_move:?}"

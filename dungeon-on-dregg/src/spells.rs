@@ -285,12 +285,12 @@ pub fn caster_story() -> CompiledStory {
     CompiledStory {
         scene_id: CASTER_SCENE_ID.to_string(),
         var_slots: [
-            ("class".to_string(), CLASS_SLOT as usize),
-            ("mana_spent".to_string(), MANA_SPENT_SLOT as usize),
-            ("mana_budget".to_string(), MANA_BUDGET_SLOT as usize),
-            ("hp".to_string(), HP_SLOT as usize),
-            ("buff".to_string(), BUFF_SLOT as usize),
-            ("damage".to_string(), DAMAGE_SLOT as usize),
+            ("class".to_string(), CLASS_SLOT as u64),
+            ("mana_spent".to_string(), MANA_SPENT_SLOT as u64),
+            ("mana_budget".to_string(), MANA_BUDGET_SLOT as u64),
+            ("hp".to_string(), HP_SLOT as u64),
+            ("buff".to_string(), BUFF_SLOT as u64),
+            ("damage".to_string(), DAMAGE_SLOT as u64),
         ]
         .into_iter()
         .collect(),
@@ -321,17 +321,17 @@ pub fn create_caster(
         vec![
             Effect::SetField {
                 cell,
-                index: CLASS_SLOT as usize,
+                index: CLASS_SLOT as u64,
                 value: field_from_u64(class_id),
             },
             Effect::SetField {
                 cell,
-                index: MANA_BUDGET_SLOT as usize,
+                index: MANA_BUDGET_SLOT as u64,
                 value: field_from_u64(mana_budget),
             },
             Effect::SetField {
                 cell,
-                index: HP_SLOT as usize,
+                index: HP_SLOT as u64,
                 value: field_from_u64(hp),
             },
         ],
@@ -360,12 +360,12 @@ pub fn cast(world: &WorldCell, spell: Spell) -> Result<TurnReceipt, WorldError> 
         vec![
             Effect::SetField {
                 cell,
-                index: MANA_SPENT_SLOT as usize,
+                index: MANA_SPENT_SLOT as u64,
                 value: field_from_u64(new_spent),
             },
             Effect::SetField {
                 cell,
-                index: effect_slot as usize,
+                index: effect_slot as u64,
                 value: field_from_u64(new_effect),
             },
         ],
@@ -500,12 +500,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: MANA_SPENT_SLOT as usize,
+                    index: MANA_SPENT_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: DAMAGE_SLOT as usize,
+                    index: DAMAGE_SLOT as u64,
                     value: field_from_u64(1000),
                 },
             ],
@@ -601,17 +601,17 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: MANA_SPENT_SLOT as usize,
+                    index: MANA_SPENT_SLOT as u64,
                     value: field_from_u64(4),
                 },
                 Effect::SetField {
                     cell,
-                    index: DAMAGE_SLOT as usize,
+                    index: DAMAGE_SLOT as u64,
                     value: field_from_u64(8),
                 },
                 Effect::SetField {
                     cell,
-                    index: HP_SLOT as usize,
+                    index: HP_SLOT as u64,
                     value: field_from_u64(1030),
                 },
             ],
@@ -654,17 +654,17 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell: mcell,
-                    index: MANA_SPENT_SLOT as usize,
+                    index: MANA_SPENT_SLOT as u64,
                     value: field_from_u64(4),
                 },
                 Effect::SetField {
                     cell: mcell,
-                    index: DAMAGE_SLOT as usize,
+                    index: DAMAGE_SLOT as u64,
                     value: field_from_u64(8),
                 },
                 Effect::SetField {
                     cell: mcell,
-                    index: BUFF_SLOT as usize,
+                    index: BUFF_SLOT as u64,
                     value: field_from_u64(9),
                 },
             ],
@@ -685,17 +685,17 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell: wcell,
-                    index: MANA_SPENT_SLOT as usize,
+                    index: MANA_SPENT_SLOT as u64,
                     value: field_from_u64(2),
                 },
                 Effect::SetField {
                     cell: wcell,
-                    index: BUFF_SLOT as usize,
+                    index: BUFF_SLOT as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell: wcell,
-                    index: DAMAGE_SLOT as usize,
+                    index: DAMAGE_SLOT as u64,
                     value: field_from_u64(500),
                 },
             ],

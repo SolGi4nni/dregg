@@ -782,7 +782,7 @@ impl Board {
                     // unit's index; value = the packed destination coordinate.
                     let effect = Effect::SetField {
                         cell: self.cell,
-                        index: i,
+                        index: i as u64,
                         value: pack_coord(dest),
                     };
                     surface = surface.declare(CellAffordance::new(
@@ -906,6 +906,7 @@ impl Board {
             // move (treated as no unit there).
             _ => return Err(IllegalMove::NoUnitThere),
         };
+        let unit_index = usize::try_from(unit_index).map_err(|_| IllegalMove::NoUnitThere)?;
         let unit = self
             .units
             .get(unit_index)

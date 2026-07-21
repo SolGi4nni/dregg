@@ -375,12 +375,12 @@ pub fn register_effects(cell: CellId, domain: &str, owner: &str) -> Vec<Effect> 
     vec![
         Effect::SetField {
             cell,
-            index: DOMAIN_SLOT as usize,
+            index: DOMAIN_SLOT as u64,
             value: domain_tag(domain),
         },
         Effect::SetField {
             cell,
-            index: OWNER_SLOT as usize,
+            index: OWNER_SLOT as u64,
             value: owner_tag(owner),
         },
         Effect::EmitEvent {
@@ -401,12 +401,12 @@ pub fn bind_effects(cell: CellId, site: &str, nonce: &str) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: SITE_SLOT as usize,
+            index: SITE_SLOT as u64,
             value: site_tag(site),
         },
         Effect::SetField {
             cell,
-            index: CHALLENGE_NONCE_SLOT as usize,
+            index: CHALLENGE_NONCE_SLOT as u64,
             value: nonce_tag(nonce),
         },
         Effect::EmitEvent {
@@ -430,12 +430,12 @@ pub fn verify_effects(cell: CellId, verified_seq: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: VERIFICATION_STATE_SLOT as usize,
+            index: VERIFICATION_STATE_SLOT as u64,
             value: state_field(VerificationState::Verified),
         },
         Effect::SetField {
             cell,
-            index: VERIFIED_SEQ_SLOT as usize,
+            index: VERIFIED_SEQ_SLOT as u64,
             value: field_from_u64(verified_seq),
         },
         Effect::EmitEvent {
@@ -488,7 +488,7 @@ pub fn repoint_effects(cell: CellId, site: &str) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: SITE_SLOT as usize,
+            index: SITE_SLOT as u64,
             value: site_tag(site),
         },
         Effect::EmitEvent {
@@ -509,12 +509,12 @@ pub fn revoke_effects(cell: CellId, revoked_seq: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: VERIFICATION_STATE_SLOT as usize,
+            index: VERIFICATION_STATE_SLOT as u64,
             value: state_field(VerificationState::Revoked),
         },
         Effect::SetField {
             cell,
-            index: VERIFIED_SEQ_SLOT as usize,
+            index: VERIFIED_SEQ_SLOT as u64,
             value: field_from_u64(revoked_seq),
         },
         Effect::EmitEvent {
@@ -608,7 +608,7 @@ pub fn domain_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
         OWNER_RIGHTS,
         Effect::SetField {
             cell,
-            index: OWNER_SLOT as usize,
+            index: OWNER_SLOT as u64,
             value: owner_tag("owner"),
         },
     );
@@ -617,7 +617,7 @@ pub fn domain_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
         OWNER_RIGHTS,
         Effect::SetField {
             cell,
-            index: CHALLENGE_NONCE_SLOT as usize,
+            index: CHALLENGE_NONCE_SLOT as u64,
             value: nonce_tag("challenge"),
         },
     );
@@ -627,7 +627,7 @@ pub fn domain_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             OWNER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: VERIFICATION_STATE_SLOT as usize,
+                index: VERIFICATION_STATE_SLOT as u64,
                 value: state_field(VerificationState::Verified),
             },
         ),
@@ -957,12 +957,12 @@ mod tests {
         assert!(matches!(
             &effects[0],
             Effect::SetField { index, value, .. }
-                if *index == DOMAIN_SLOT as usize && *value == domain_tag("blog.acme.dev")
+                if *index == DOMAIN_SLOT as u64 && *value == domain_tag("blog.acme.dev")
         ));
         assert!(matches!(
             &effects[1],
             Effect::SetField { index, value, .. }
-                if *index == OWNER_SLOT as usize && *value == owner_tag("dregg:alice")
+                if *index == OWNER_SLOT as u64 && *value == owner_tag("dregg:alice")
         ));
         assert!(matches!(&effects[2], Effect::EmitEvent { .. }));
     }
@@ -975,13 +975,13 @@ mod tests {
         assert!(matches!(
             &effects[0],
             Effect::SetField { index, value, .. }
-                if *index == VERIFICATION_STATE_SLOT as usize
+                if *index == VERIFICATION_STATE_SLOT as u64
                     && *value == state_field(VerificationState::Verified)
         ));
         assert!(matches!(
             &effects[1],
             Effect::SetField { index, value, .. }
-                if *index == VERIFIED_SEQ_SLOT as usize && *value == field_from_u64(7)
+                if *index == VERIFIED_SEQ_SLOT as u64 && *value == field_from_u64(7)
         ));
     }
 

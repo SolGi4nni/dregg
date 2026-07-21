@@ -511,22 +511,22 @@ pub fn build_constitute_action(
     let effects = vec![
         Effect::SetField {
             cell: account_cell,
-            index: SUBJECT_SLOT as usize,
+            index: SUBJECT_SLOT as u64,
             value: subject_id_field(subject),
         },
         Effect::SetField {
             cell: account_cell,
-            index: CEILING_SLOT as usize,
+            index: CEILING_SLOT as u64,
             value: field_from_u64(ceiling),
         },
         Effect::SetField {
             cell: account_cell,
-            index: GOVERNANCE_ROOT_SLOT as usize,
+            index: GOVERNANCE_ROOT_SLOT as u64,
             value: governance_root,
         },
         Effect::SetField {
             cell: account_cell,
-            index: CONSUMED_SLOT as usize,
+            index: CONSUMED_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::EmitEvent {
@@ -554,7 +554,7 @@ pub fn build_consume_action(
     let effects = vec![
         Effect::SetField {
             cell: account_cell,
-            index: CONSUMED_SLOT as usize,
+            index: CONSUMED_SLOT as u64,
             value: field_from_u64(new_consumed),
         },
         Effect::EmitEvent {
@@ -582,7 +582,7 @@ pub fn build_set_standing_action(
     let effects = vec![
         Effect::SetField {
             cell: account_cell,
-            index: STANDING_SLOT as usize,
+            index: STANDING_SLOT as u64,
             value: field_from_u64(new_standing.code()),
         },
         Effect::EmitEvent {
@@ -678,7 +678,7 @@ pub fn guard_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
         GOVERNANCE_RIGHTS,
         Effect::SetField {
             cell: account,
-            index: STANDING_SLOT as usize,
+            index: STANDING_SLOT as u64,
             value: field_from_u64(STANDING_SUSPENDED),
         },
     );
@@ -692,7 +692,7 @@ pub fn guard_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
             SUBJECT_RIGHTS,
             Effect::SetField {
                 cell: account,
-                index: CONSUMED_SLOT as usize,
+                index: CONSUMED_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -722,7 +722,7 @@ pub fn consume_effects(account: CellId, new_consumed: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: account,
-            index: CONSUMED_SLOT as usize,
+            index: CONSUMED_SLOT as u64,
             value: field_from_u64(new_consumed),
         },
         Effect::EmitEvent {
@@ -1041,15 +1041,15 @@ mod tests {
         assert_eq!(action.effects.len(), 5);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == SUBJECT_SLOT as usize
+            Effect::SetField { index, .. } if *index == SUBJECT_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == CEILING_SLOT as usize
+            Effect::SetField { index, .. } if *index == CEILING_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == GOVERNANCE_ROOT_SLOT as usize
+            Effect::SetField { index, .. } if *index == GOVERNANCE_ROOT_SLOT as u64
         ));
     }
 
@@ -1061,7 +1061,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, CONSUMED_SLOT as usize);
+                assert_eq!(*index, CONSUMED_SLOT as u64);
                 assert_eq!(*value, field_from_u64(3));
             }
             other => panic!("expected SetField, got {other:?}"),
@@ -1077,7 +1077,7 @@ mod tests {
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
-                assert_eq!(*index, STANDING_SLOT as usize);
+                assert_eq!(*index, STANDING_SLOT as u64);
                 assert_eq!(*value, field_from_u64(STANDING_SUSPENDED));
             }
             other => panic!("expected SetField, got {other:?}"),

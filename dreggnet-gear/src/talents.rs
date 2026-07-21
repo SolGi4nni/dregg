@@ -204,7 +204,7 @@ pub fn talent_tree_story() -> CompiledStory {
 
     // Register the talent slots so `read_var` resolves them by name.
     for t in TALENT_TREE {
-        story.var_slots.insert(t.var.to_string(), t.slot as usize);
+        story.var_slots.insert(t.var.to_string(), t.slot as u64);
     }
 
     let CellProgram::Cases(cases) = &mut story.program else {
@@ -338,11 +338,11 @@ pub fn respec_talent_tree_story() -> CompiledStory {
     let mut story = meta::meta_hero_story();
 
     for t in TALENT_TREE {
-        story.var_slots.insert(t.var.to_string(), t.slot as usize);
+        story.var_slots.insert(t.var.to_string(), t.slot as u64);
     }
     story
         .var_slots
-        .insert(RESPEC_VAR.to_string(), RESPEC_SLOT as usize);
+        .insert(RESPEC_VAR.to_string(), RESPEC_SLOT as u64);
 
     let CellProgram::Cases(cases) = &mut story.program else {
         panic!("the meta hero story is a Cases program");
@@ -405,7 +405,7 @@ pub fn claim_talent_gen(world: &WorldCell, talent: Talent) -> Result<TurnReceipt
         talent.method,
         vec![Effect::SetField {
             cell,
-            index: talent.slot as usize,
+            index: talent.slot as u64,
             value: field_from_u64(marker),
         }],
     )
@@ -429,7 +429,7 @@ pub fn respec(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
         RESPEC_METHOD,
         vec![Effect::SetField {
             cell,
-            index: RESPEC_SLOT as usize,
+            index: RESPEC_SLOT as u64,
             value: field_from_u64(next),
         }],
     )
@@ -446,7 +446,7 @@ pub fn claim_talent(world: &WorldCell, talent: Talent) -> Result<TurnReceipt, Wo
         talent.method,
         vec![Effect::SetField {
             cell,
-            index: talent.slot as usize,
+            index: talent.slot as u64,
             value: field_from_u64(1),
         }],
     )
@@ -582,7 +582,7 @@ mod tests {
             IRONHIDE.method,
             vec![Effect::SetField {
                 cell,
-                index: IRONHIDE.slot as usize,
+                index: IRONHIDE.slot as u64,
                 value: field_from_u64(2),
             }],
         );
@@ -663,7 +663,7 @@ mod tests {
             "shop/buy_talent_with_dregg",
             vec![Effect::SetField {
                 cell,
-                index: IRONHIDE.slot as usize,
+                index: IRONHIDE.slot as u64,
                 value: field_from_u64(1),
             }],
         );
@@ -724,13 +724,13 @@ mod tests {
                 // The normal echoes write — this part is entirely legitimate.
                 Effect::SetField {
                     cell,
-                    index: ECHOES_SLOT as usize,
+                    index: ECHOES_SLOT as u64,
                     value: field_from_u64(echoes_amount),
                 },
                 // The stapled-on free talent.
                 Effect::SetField {
                     cell,
-                    index: IRONHIDE.slot as usize,
+                    index: IRONHIDE.slot as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -760,7 +760,7 @@ mod tests {
                 // even though this turn never presents a talent method.
                 Effect::SetField {
                     cell,
-                    index: BATTLE_FURY.slot as usize,
+                    index: BATTLE_FURY.slot as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -781,12 +781,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: ECHOES_SLOT as usize,
+                    index: ECHOES_SLOT as u64,
                     value: field_from_u64(meta::echoes(&world) + 60),
                 },
                 Effect::SetField {
                     cell,
-                    index: DEEP_DELVER.slot as usize,
+                    index: DEEP_DELVER.slot as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -823,12 +823,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: ECHOES_SLOT as usize,
+                    index: ECHOES_SLOT as u64,
                     value: field_from_u64(meta::echoes_for_depth(1)), // 15 < IRONHIDE.price
                 },
                 Effect::SetField {
                     cell,
-                    index: IRONHIDE.slot as usize,
+                    index: IRONHIDE.slot as u64,
                     value: field_from_u64(1), // generation 0 -> a valid gen+1 marker
                 },
             ],
@@ -910,7 +910,7 @@ mod tests {
             IRONHIDE.method,
             vec![Effect::SetField {
                 cell,
-                index: IRONHIDE.slot as usize,
+                index: IRONHIDE.slot as u64,
                 value: field_from_u64(2), // gen+1 is 1, not 2
             }],
         );
