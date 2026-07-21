@@ -1941,7 +1941,7 @@ before they were hypotheses (`hAC`, `hBD`) ruling the configurations out as unsa
 theorem cellAlgebra {oldc midc pa pb A B C D : ℤ}
     (hA : A = 0 ∨ A = 1) (hB : B = 0 ∨ B = 1) (hC : C = 0 ∨ C = 1) (hD : D = 0 ∨ D = 1)
     (hAB : A * B = 0) (hCD : C * D = 0)
-    (hold : 0 ≤ oldc ∧ oldc ≤ 3) (hmid : 0 ≤ midc ∧ midc ≤ 3)
+    (hold : 0 ≤ oldc ∧ oldc ≤ 3) (hmid : Canon midc)
     (hpa : 0 ≤ pa ∧ pa ≤ 3) (hpb : 0 ≤ pb ∧ pb ≤ 3)
     (hmod : midc ≡ (1 - A - B - C - D + A * D + C * B + A * C + B * D) * oldc
               + B * pa + D * pb - B * D * pb [ZMOD 2013265921]) :
@@ -1952,7 +1952,7 @@ theorem cellAlgebra {oldc midc pa pb A B C D : ℤ}
     first
       | (exfalso; simp only [mul_one, one_mul, mul_zero, zero_mul] at hAB hCD; omega)
       | (norm_num at hmod ⊢;
-         refine eq_of_modEq_canon (hcan _ hmid.1 hmid.2) ?_ hmod;
+         refine eq_of_modEq_canon hmid ?_ hmod;
          first
            | exact hcan _ hold.1 hold.2
            | exact hcan _ hpa.1 hpa.2
@@ -2605,8 +2605,8 @@ theorem midCell_of_facts (F : ResolveFacts e) (x y c : Nat)
     · simp [q]
   have holdA : 0 ≤ e.loc (old c) ∧ e.loc (old c) ≤ 3 := by
     rcases F.alphaOld c hkK with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
-  have hmidA : 0 ≤ e.loc (mid c) ∧ e.loc (mid c) ≤ 3 := by
-    rcases F.alphaMid c hkK with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have hmidA : Canon (e.loc (mid c)) := by
+    rcases F.alphaMid c hkK with h | h | h | h <;> rw [h] <;> exact ⟨by norm_num, by norm_num⟩
   have hpaA : 0 ≤ e.loc (particleCol 0) ∧ e.loc (particleCol 0) ≤ 3 := by
     rcases F.paAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
   have hpbA : 0 ≤ e.loc (particleCol 1) ∧ e.loc (particleCol 1) ≤ 3 := by

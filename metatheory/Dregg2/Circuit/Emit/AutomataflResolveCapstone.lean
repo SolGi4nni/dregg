@@ -943,9 +943,10 @@ theorem writeCell_forces_other {oldc midc pa pb : ℤ}
     (hmod : midc ≡ (1 - 0 - 0 - 0 - 1 + 0 * 1 + 0 * 0 + 0 * 0 + 0 * 1) * oldc
               + 0 * pa + 1 * pb - 0 * 1 * pb [ZMOD 2013265921]) :
     midc = pb := by
+  have hmidC : Canon midc := ⟨hmid.1, by have := hmid.2; omega⟩
   have h := cellAlgebra (A := 0) (B := 0) (C := 0) (D := 1) (oldc := oldc) (midc := midc)
     (pa := pa) (pb := pb) (Or.inl rfl) (Or.inl rfl) (Or.inl rfl) (Or.inr rfl)
-    (by norm_num) (by norm_num) hold hmid hpa hpb hmod
+    (by norm_num) (by norm_num) hold hmidC hpa hpb hmod
   simpa using h
 
 /-- The 3×3 witness board: A carries an attractor at `(0,0)` and wants `(0,2)`, but `(0,1)` holds a
