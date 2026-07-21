@@ -282,4 +282,109 @@ theorem via_fold_brackets_accepts : ReplayAccepts dyck [rBracket, rEmpty] [op, c
 
 end Reference
 
+/-! ## One-time preprocessing custody — claim-before-run replay law.
+
+The process PartyMPC worker stores a content-addressed tombstone before it hands
+one Beaver row to the runtime.  This small state machine pins the security
+ordering independently of the Rust filesystem implementation: a successful
+claim makes the exact `(config, party, material)` slot spent, completion and
+crash retain that ledger, and a restart cannot claim the slot again.
+
+This does not model rollback-resistant storage as free cryptography.  The host
+must persist the returned ledger/tombstone; restoring an earlier ledger is an
+explicit environmental violation, exactly as restoring an earlier cell root
+would be.
+-/
+
+namespace OneTimePreprocessing
+
+variable {Digest : Type} [DecidableEq Digest]
+
+/-- Content-addressed identity of one party's one-time preprocessing row. -/
+@[ext] structure SlotKey (Digest : Type) where
+  configDigest : Digest
+  party : Nat
+  materialDigest : Digest
+  deriving DecidableEq
+
+/-- Durable spent-set.  Rust realizes one member as an owner-only synced
+`FHEQSP01` tombstone adjacent to the protected preprocessing custody. -/
+structure Ledger (Digest : Type) where
+  spent : SlotKey Digest → Bool
+
+/-- Claim happens before protocol execution.  A spent slot fails closed. -/
+def burn (ledger : Ledger Digest) (key : SlotKey Digest) : Option (Ledger Digest) :=
+  if ledger.spent key then none
+  else some ⟨Function.update ledger.spent key true⟩
+
+theorem burn_fresh {ledger : Ledger Digest} {key : SlotKey Digest}
+    (h : ledger.spent key = false) :
+    burn ledger key = some ⟨Function.update ledger.spent key true⟩ := by
+  simp [burn, h]
+
+theorem burn_spent {ledger : Ledger Digest} {key : SlotKey Digest}
+    (h : ledger.spent key = true) : burn ledger key = none := by
+  simp [burn, h]
+
+/-- A successful worker start has already persisted the exact slot as spent. -/
+theorem burn_success_marks_spent {before after : Ledger Digest}
+    {key : SlotKey Digest} (h : burn before key = some after) :
+    after.spent key = true := by
+  cases hk : before.spent key
+  · simp [burn, hk] at h
+    cases h
+    simp [Function.update]
+  · simp [burn, hk] at h
+
+/-- The one-time-pad law: after one successful claim, the same exact row cannot
+authorize a second process execution. -/
+theorem burn_once {before after : Ledger Digest} {key : SlotKey Digest}
+    (h : burn before key = some after) : burn after key = none :=
+  burn_spent (burn_success_marks_spent h)
+
+/-- Burning one row does not spend any distinct content-addressed row. -/
+theorem burn_preserves_other {before after : Ledger Digest}
+    {key other : SlotKey Digest} (h : burn before key = some after)
+    (hne : other ≠ key) :
+    after.spent other = before.spent other := by
+  cases hk : before.spent key
+  · simp [burn, hk] at h
+    cases h
+    simp [Function.update, hne]
+  · simp [burn, hk] at h
+
+/-- Whether the claimed worker completes or crashes is irrelevant to the
+already-durable spent set. -/
+inductive WorkerOutcome where
+  | completed
+  | crashed
+  deriving DecidableEq
+
+def retainedAfter (_ : WorkerOutcome) (claimed : Ledger Digest) : Ledger Digest := claimed
+
+theorem completion_or_crash_refuses_restart {before claimed : Ledger Digest}
+    {key : SlotKey Digest} (h : burn before key = some claimed)
+    (outcome : WorkerOutcome) :
+    burn (retainedAfter outcome claimed) key = none := by
+  simpa [retainedAfter] using burn_once h
+
+/-- Non-vacuity: an empty ledger admits a fresh row and then refuses it. -/
+theorem fresh_then_refused (key : SlotKey Digest) :
+    ∃ claimed,
+      burn (⟨fun _ => false⟩ : Ledger Digest) key = some claimed ∧
+      burn claimed key = none := by
+  refine ⟨⟨Function.update (fun _ => false) key true⟩, ?_, ?_⟩
+  · simp [burn]
+  · simp [burn, Function.update]
+
+#assert_axioms burn_fresh
+#assert_axioms burn_spent
+#assert_axioms burn_success_marks_spent
+#assert_axioms burn_once
+#assert_axioms burn_preserves_other
+#assert_axioms completion_or_crash_refuses_restart
+#assert_axioms fresh_then_refused
+
+end OneTimePreprocessing
+
 end Dregg2.Crypto.ReplayAsCert
