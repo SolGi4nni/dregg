@@ -129,7 +129,7 @@ impl DeosDesktop {
                 fe[..8].copy_from_slice(&1u64.to_le_bytes());
                 Effect::SetField {
                     cell: subject,
-                    index: DOC_REV_SLOT,
+                    index: DOC_REV_SLOT as u64,
                     value: fe,
                 }
             }

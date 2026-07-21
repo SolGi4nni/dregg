@@ -173,7 +173,7 @@ mod live {
         len_felt[0..8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
         effects.push(Effect::SetField {
             cell: file,
-            index: LEN_KEY as usize,
+            index: LEN_KEY as u64,
             value: len_felt,
         });
 
@@ -185,7 +185,7 @@ mod live {
             felt[..end - start].copy_from_slice(&bytes[start..end]);
             effects.push(Effect::SetField {
                 cell: file,
-                index: (CHUNK_BASE + i as u64) as usize,
+                index: CHUNK_BASE + i as u64,
                 value: felt,
             });
         }
@@ -200,7 +200,7 @@ mod live {
         for i in new_chunks..old_chunks {
             effects.push(Effect::SetField {
                 cell: file,
-                index: (CHUNK_BASE + i as u64) as usize,
+                index: CHUNK_BASE + i as u64,
                 value: [0u8; 32],
             });
         }

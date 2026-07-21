@@ -914,7 +914,7 @@ fn build_tally_bump(
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: TALLY_BASE as usize + option,
+            index: TALLY_BASE as u64 + option as u64,
             value: field_from_u64(new_val),
         },
         Effect::EmitEvent {
@@ -940,12 +940,12 @@ fn build_tally_bump_with_commitment(
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: TALLY_BASE as usize + option,
+            index: TALLY_BASE as u64 + option as u64,
             value: field_from_u64(new_val),
         },
         Effect::SetField {
             cell: poll_cell,
-            index: VOTER_SET_COMMITMENT_SLOT as usize,
+            index: VOTER_SET_COMMITMENT_SLOT as u64,
             value: commitment,
         },
         Effect::EmitEvent {
@@ -960,7 +960,7 @@ fn build_resolve_action(clerk: &AppCipherclerk, poll_cell: CellId) -> Action {
     let effects = vec![
         Effect::SetField {
             cell: poll_cell,
-            index: RESOLVED_SLOT as usize,
+            index: RESOLVED_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {

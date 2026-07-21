@@ -126,7 +126,7 @@ fn main() {
             AuthRequired::Either,
             Effect::SetField {
                 cell: proposal,
-                index: STATUS_SLOT,
+                index: STATUS_SLOT as u64,
                 value: fe(RESOLVED),
             },
         ),

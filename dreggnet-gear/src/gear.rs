@@ -351,7 +351,11 @@ fn finalized_equip_root(gear_token: [u8; 32]) -> [u8; 32] {
 
 /// A `SetField` effect on `cell`'s slot `index`.
 pub(crate) fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
-    Effect::SetField { cell, index, value }
+    Effect::SetField {
+        cell,
+        index: index as u64,
+        value,
+    }
 }
 
 /// Build, sign (over the attached witness blobs), wrap, and submit one turn — a real

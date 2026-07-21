@@ -231,7 +231,7 @@ fn agree_gauntlet_set_field_register_corpus() {
             0,
             vec![Effect::SetField {
                 cell: agent_id,
-                index: slot,
+                index: slot as u64,
                 value: bytes(v),
             }],
         );
@@ -276,7 +276,7 @@ fn agree_gauntlet_set_field_overflow_corpus() {
             0,
             vec![Effect::SetField {
                 cell: agent_id,
-                index: slot,
+                index: slot as u64,
                 value: bytes(v),
             }],
         );

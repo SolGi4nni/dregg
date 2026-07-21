@@ -718,7 +718,7 @@ impl TurnBuilder {
     /// hex (a full field element).
     fn write<'py>(
         mut slf: PyRefMut<'py, Self>,
-        index: usize,
+        index: u64,
         value: &Bound<'py, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let value = if let Ok(n) = value.extract::<u64>() {
@@ -732,7 +732,7 @@ impl TurnBuilder {
     }
 
     /// `write` with a numeric value (explicit-name twin of the Rust verb).
-    fn write_u64(mut slf: PyRefMut<'_, Self>, index: usize, value: u64) -> PyRefMut<'_, Self> {
+    fn write_u64(mut slf: PyRefMut<'_, Self>, index: u64, value: u64) -> PyRefMut<'_, Self> {
         let cell = slf.acting_cell(slf.py());
         slf.effects.push(Effect::SetField {
             cell,

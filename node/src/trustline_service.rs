@@ -883,7 +883,7 @@ pub(crate) async fn open_trustline(
     // step UNINIT → OPEN.
     let set = |index: u8, value: [u8; 32]| Effect::SetField {
         cell: trustline,
-        index: index as usize,
+        index: index as u64,
         value,
     };
     turn_hashes.push(run_signed_turn(
@@ -1036,12 +1036,12 @@ async fn post_trustline_draw(
         vec![
             Effect::SetField {
                 cell: trustline,
-                index: TL_DRAWN_SLOT as usize,
+                index: TL_DRAWN_SLOT as u64,
                 value: field_u64(new_drawn),
             },
             Effect::SetField {
                 cell: trustline,
-                index: TL_DIGEST_SLOT as usize,
+                index: TL_DIGEST_SLOT as u64,
                 value: digest,
             },
             Effect::EmitEvent {
@@ -1130,7 +1130,7 @@ async fn post_trustline_repay(
         vec![
             Effect::SetField {
                 cell: trustline,
-                index: TL_DRAWN_SLOT as usize,
+                index: TL_DRAWN_SLOT as u64,
                 value: field_u64(new_drawn),
             },
             Effect::EmitEvent {
@@ -1228,7 +1228,7 @@ async fn post_trustline_settle(
             vec![
                 Effect::SetField {
                     cell: agent,
-                    index: TL_SETTLED_SLOT as usize,
+                    index: TL_SETTLED_SLOT as u64,
                     value: field_u64(new_settled),
                 },
                 Effect::Transfer {
@@ -1385,7 +1385,7 @@ async fn post_trustline_close(
             if outstanding > 0 {
                 effects.push(Effect::SetField {
                     cell: trustline,
-                    index: TL_SETTLED_SLOT as usize,
+                    index: TL_SETTLED_SLOT as u64,
                     value: field_u64(position.drawn),
                 });
                 effects.push(Effect::Transfer {
@@ -1413,7 +1413,7 @@ async fn post_trustline_close(
     };
     effects.push(Effect::SetField {
         cell: trustline,
-        index: TL_STATE_SLOT as usize,
+        index: TL_STATE_SLOT as u64,
         value: field_u64(TL_STATE_CLOSED),
     });
     effects.push(Effect::EmitEvent {
@@ -1897,7 +1897,7 @@ mod tests {
             "trustline_draw",
             vec![Effect::SetField {
                 cell: tl,
-                index: TL_DRAWN_SLOT as usize,
+                index: TL_DRAWN_SLOT as u64,
                 value: field_u64(LINE + 1),
             }],
             None,
@@ -1921,7 +1921,7 @@ mod tests {
             "trustline_tamper",
             vec![Effect::SetField {
                 cell: tl,
-                index: TL_CEILING_SLOT as usize,
+                index: TL_CEILING_SLOT as u64,
                 value: field_u64(LINE * 10),
             }],
             None,

@@ -168,7 +168,7 @@ fn settlement_plan(
     }];
     let set = |index: u8, value: FieldElement| Effect::SetField {
         cell: cell_id,
-        index: index as usize,
+        index: index as u64,
         value,
     };
     // `value` is caller-controlled; a wrapping `+ ADOPT_TURN_FEE` would fund the
@@ -240,13 +240,13 @@ fn resolve_effects(
     if let Some(w) = witness {
         effects.push(Effect::SetField {
             cell,
-            index: WITNESS_SLOT as usize,
+            index: WITNESS_SLOT as u64,
             value: w,
         });
     }
     effects.push(Effect::SetField {
         cell,
-        index: STATE_SLOT as usize,
+        index: STATE_SLOT as u64,
         value: field_from_u64(next_state),
     });
     effects.push(Effect::Transfer {

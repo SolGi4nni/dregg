@@ -189,32 +189,32 @@ pub fn open_effects(
     let mut effects = vec![
         Effect::SetField {
             cell,
-            index: CH_MEMBER_ROOT_SLOT as usize,
+            index: CH_MEMBER_ROOT_SLOT as u64,
             value: root,
         },
         Effect::SetField {
             cell,
-            index: CH_EPOCH_SLOT as usize,
+            index: CH_EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::SetField {
             cell,
-            index: CH_KEY_COMMIT_SLOT as usize,
+            index: CH_KEY_COMMIT_SLOT as u64,
             value: channel_key_commitment(1, key),
         },
         Effect::SetField {
             cell,
-            index: CH_ADMIN_SLOT as usize,
+            index: CH_ADMIN_SLOT as u64,
             value: admin_pk,
         },
         Effect::SetField {
             cell,
-            index: CH_TAG_SLOT as usize,
+            index: CH_TAG_SLOT as u64,
             value: tag,
         },
         Effect::SetField {
             cell,
-            index: CH_STATE_SLOT as usize,
+            index: CH_STATE_SLOT as u64,
             value: field_from_u64(STATE_OPEN),
         },
         Effect::RevokeDelegation { child: anchor },
@@ -243,17 +243,17 @@ pub fn epoch_step_effects(
     let mut effects = vec![
         Effect::SetField {
             cell,
-            index: CH_MEMBER_ROOT_SLOT as usize,
+            index: CH_MEMBER_ROOT_SLOT as u64,
             value: root,
         },
         Effect::SetField {
             cell,
-            index: CH_EPOCH_SLOT as usize,
+            index: CH_EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::SetField {
             cell,
-            index: CH_KEY_COMMIT_SLOT as usize,
+            index: CH_KEY_COMMIT_SLOT as u64,
             value: channel_key_commitment(new_epoch, key),
         },
         // THE UNIFICATION: the same turn bumps the capability freshness
@@ -1124,7 +1124,7 @@ mod tests {
             ch.cell,
             vec![Effect::SetField {
                 cell: ch.cell,
-                index: CH_MEMBER_ROOT_SLOT as usize,
+                index: CH_MEMBER_ROOT_SLOT as u64,
                 value: roster_root(&forged),
             }],
         );
@@ -1143,7 +1143,7 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell: ch.cell,
-                    index: CH_EPOCH_SLOT as usize,
+                    index: CH_EPOCH_SLOT as u64,
                     value: field_from_u64(2),
                 },
                 Effect::RevokeDelegation { child: ch.anchor },
@@ -1162,7 +1162,7 @@ mod tests {
             ch.cell,
             vec![Effect::SetField {
                 cell: ch.cell,
-                index: CH_EPOCH_SLOT as usize,
+                index: CH_EPOCH_SLOT as u64,
                 value: field_from_u64(0),
             }],
         );

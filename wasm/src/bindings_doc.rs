@@ -430,7 +430,7 @@ fn publish_doc_graph(
     let effects = vec![
         Effect::SetField {
             cell: cell_id,
-            index: PUBLISH_SLOT,
+            index: PUBLISH_SLOT as u64,
             value: boundary,
         },
         Effect::IncrementNonce { cell: cell_id },

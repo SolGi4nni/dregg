@@ -380,17 +380,17 @@ pub fn build_send_action(
     let effects = vec![
         Effect::SetField {
             cell: inbox_cell,
-            index: HEAD_SEQ_SLOT as usize,
+            index: HEAD_SEQ_SLOT as u64,
             value: new_head,
         },
         Effect::SetField {
             cell: inbox_cell,
-            index: TOTAL_DEPOSITS_SLOT as usize,
+            index: TOTAL_DEPOSITS_SLOT as u64,
             value: new_total_deposits,
         },
         Effect::SetField {
             cell: inbox_cell,
-            index: MESSAGE_ROOT_SLOT as usize,
+            index: MESSAGE_ROOT_SLOT as u64,
             value: new_ring_root,
         },
         Effect::EmitEvent {
@@ -423,12 +423,12 @@ pub fn build_dequeue_action(
     let effects = vec![
         Effect::SetField {
             cell: inbox_cell,
-            index: TAIL_SEQ_SLOT as usize,
+            index: TAIL_SEQ_SLOT as u64,
             value: new_tail,
         },
         Effect::SetField {
             cell: inbox_cell,
-            index: TOTAL_DEPOSITS_SLOT as usize,
+            index: TOTAL_DEPOSITS_SLOT as u64,
             value: new_total_deposits,
         },
         Effect::EmitEvent {
@@ -460,7 +460,7 @@ pub fn build_grant_sender_action(
     let effects = vec![
         Effect::SetField {
             cell: inbox_cell,
-            index: SENDER_SET_ROOT_SLOT as usize,
+            index: SENDER_SET_ROOT_SLOT as u64,
             value: new_sender_set_root,
         },
         Effect::EmitEvent {

@@ -314,22 +314,22 @@ pub fn build_open_board_action(
     let effects = vec![
         Effect::SetField {
             cell: board,
-            index: LEAD_SLOT as usize,
+            index: LEAD_SLOT as u64,
             value: identity_field(lead),
         },
         Effect::SetField {
             cell: board,
-            index: BUDGET_SLOT as usize,
+            index: BUDGET_SLOT as u64,
             value: field_from_u64(budget),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_A_SLOT as usize,
+            index: SPENT_A_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_B_SLOT as usize,
+            index: SPENT_B_SLOT as u64,
             value: field_from_u64(0),
         },
         // open at epoch 1 — the open turn itself strictly advances the epoch 0 -> 1 (so the
@@ -337,7 +337,7 @@ pub fn build_open_board_action(
         // go 1 -> 2 -> 3 -> ….
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {
@@ -376,13 +376,13 @@ pub fn build_dispatch_action(
         // advance the worker's cumulative spend meter (Monotonic; summed by the budget gate).
         Effect::SetField {
             cell: board,
-            index: worker.spend_slot() as usize,
+            index: worker.spend_slot() as u64,
             value: field_from_u64(new_spent),
         },
         // advance the dispatch epoch (StrictMonotonic — no replay).
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         // the ASYNC NOTIFY EDGE: wake the worker cell with the sub-task topic. The worker drains
@@ -413,7 +413,7 @@ pub fn build_drain_action(
     let effects = vec![
         Effect::SetField {
             cell: worker_cell,
-            index: ack_slot as usize,
+            index: ack_slot as u64,
             value: wake_digest,
         },
         Effect::EmitEvent {
@@ -575,7 +575,7 @@ pub fn board_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
             LEAD_RIGHTS,
             Effect::SetField {
                 cell: board,
-                index: SPENT_A_SLOT as usize,
+                index: SPENT_A_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -592,7 +592,7 @@ pub fn board_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
             LEAD_RIGHTS,
             Effect::SetField {
                 cell: board,
-                index: EPOCH_SLOT as usize,
+                index: EPOCH_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -674,27 +674,27 @@ pub fn open_board_effects(board: CellId, lead: &str, budget: u64) -> Vec<Effect>
     vec![
         Effect::SetField {
             cell: board,
-            index: LEAD_SLOT as usize,
+            index: LEAD_SLOT as u64,
             value: identity_field(lead),
         },
         Effect::SetField {
             cell: board,
-            index: BUDGET_SLOT as usize,
+            index: BUDGET_SLOT as u64,
             value: field_from_u64(budget),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_A_SLOT as usize,
+            index: SPENT_A_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell: board,
-            index: SPENT_B_SLOT as usize,
+            index: SPENT_B_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {
@@ -727,12 +727,12 @@ pub fn dispatch_effects(
     vec![
         Effect::SetField {
             cell: board,
-            index: worker.spend_slot() as usize,
+            index: worker.spend_slot() as u64,
             value: field_from_u64(new_spent),
         },
         Effect::SetField {
             cell: board,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::EmitEvent {
@@ -1029,11 +1029,11 @@ mod tests {
         assert_eq!(action.effects.len(), 6);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, value, .. } if *index == LEAD_SLOT as usize && *value == identity_field("lead-pk")
+            Effect::SetField { index, value, .. } if *index == LEAD_SLOT as u64 && *value == identity_field("lead-pk")
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, value, .. } if *index == BUDGET_SLOT as usize && *value == field_from_u64(1000)
+            Effect::SetField { index, value, .. } if *index == BUDGET_SLOT as u64 && *value == field_from_u64(1000)
         ));
     }
 
@@ -1055,11 +1055,11 @@ mod tests {
         assert_eq!(action.effects.len(), 3);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, value, .. } if *index == SPENT_A_SLOT as usize && *value == field_from_u64(300)
+            Effect::SetField { index, value, .. } if *index == SPENT_A_SLOT as u64 && *value == field_from_u64(300)
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as usize && *value == field_from_u64(1)
+            Effect::SetField { index, value, .. } if *index == EPOCH_SLOT as u64 && *value == field_from_u64(1)
         ));
         // the wake targets the WORKER cell (the async notify edge), not the board.
         assert!(matches!(

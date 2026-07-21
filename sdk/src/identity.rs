@@ -55,7 +55,7 @@ use dregg_cell::field_from_u64;
 fn set(cell: CellId, index: u8, value: FieldElement) -> Effect {
     Effect::SetField {
         cell,
-        index: index as usize,
+        index: index as u64,
         value,
     }
 }

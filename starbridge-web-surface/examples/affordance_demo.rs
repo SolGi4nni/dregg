@@ -63,7 +63,7 @@ fn emit_event(cell: CellId) -> Effect {
 fn set_field(cell: CellId, index: usize) -> Effect {
     Effect::SetField {
         cell,
-        index,
+        index: index as u64,
         value: [7u8; 32],
     }
 }

@@ -659,7 +659,7 @@ pub fn lease_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
             AGENT_RIGHTS,
             Effect::SetField {
                 cell: lease,
-                index: STEP_SLOT as usize,
+                index: STEP_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -678,7 +678,7 @@ pub fn lease_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
         PROVIDER_RIGHTS,
         Effect::SetField {
             cell: lease,
-            index: LAPSED_SLOT as usize,
+            index: LAPSED_SLOT as u64,
             value: field_from_u64(1),
         },
     );
@@ -717,12 +717,12 @@ pub fn advance_effects(lease: CellId, new_step: u64, new_digest: FieldElement) -
     vec![
         Effect::SetField {
             cell: lease,
-            index: STEP_SLOT as usize,
+            index: STEP_SLOT as u64,
             value: field_from_u64(new_step),
         },
         Effect::SetField {
             cell: lease,
-            index: STATE_DIGEST_SLOT as usize,
+            index: STATE_DIGEST_SLOT as u64,
             value: new_digest,
         },
         Effect::EmitEvent {
@@ -857,22 +857,22 @@ pub fn build_open_lease_action(
     let effects = vec![
         Effect::SetField {
             cell: lease,
-            index: RENT_SLOT as usize,
+            index: RENT_SLOT as u64,
             value: field_from_u64(terms.rent_per_period),
         },
         Effect::SetField {
             cell: lease,
-            index: PERIOD_SLOT as usize,
+            index: PERIOD_SLOT as u64,
             value: field_from_u64(terms.period as u64),
         },
         Effect::SetField {
             cell: lease,
-            index: PROVIDER_SLOT as usize,
+            index: PROVIDER_SLOT as u64,
             value: cell_tag(terms.provider),
         },
         Effect::SetField {
             cell: lease,
-            index: STATE_DIGEST_SLOT as usize,
+            index: STATE_DIGEST_SLOT as u64,
             value: genesis_digest,
         },
         Effect::EmitEvent {

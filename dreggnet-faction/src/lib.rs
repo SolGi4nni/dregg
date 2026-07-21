@@ -852,12 +852,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: rep_embers as usize,
+                    index: rep_embers as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: ember_quest as usize,
+                    index: ember_quest as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -919,7 +919,7 @@ mod tests {
             &hall_method(LN_BETRAY_EMBERS),
             vec![Effect::SetField {
                 cell,
-                index: rep_embers as usize,
+                index: rep_embers as u64,
                 value: field_from_u64(0),
             }],
         );

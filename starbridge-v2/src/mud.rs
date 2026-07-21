@@ -335,7 +335,7 @@ pub fn move_through(
         mover.cell,
         vec![Effect::SetField {
             cell: dest.cell,
-            index: presence_slot,
+            index: presence_slot as u64,
             value: tag,
         }],
     );

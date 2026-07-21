@@ -366,7 +366,7 @@ fn region_delta_effects(
         if cell.state.get_field_ext(fk) != Some(value) {
             effects.push(Effect::SetField {
                 cell: region,
-                index: fk as usize,
+                index: fk as u64,
                 value,
             });
         }
@@ -385,7 +385,7 @@ fn region_delta_effects(
             if !desired.contains_key(&(coll, key)) {
                 effects.push(Effect::SetField {
                     cell: region,
-                    index: k as usize,
+                    index: k as u64,
                     value: [0u8; 32],
                 });
             }

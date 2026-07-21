@@ -954,7 +954,7 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: figure,
-                                        index: t::COMMIT_SEAL_SLOT,
+                                        index: t::COMMIT_SEAL_SLOT as u64,
                                         value: seal,
                                     },
                                     dregg_app_framework::Effect::EmitEvent {
@@ -1066,14 +1066,14 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: board,
-                                        index: spend_slot,
+                                        index: spend_slot as u64,
                                         value: dregg_app_framework::field_from_u64(
                                             live_spent.saturating_add(1),
                                         ),
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: board,
-                                        index: o::EPOCH_SLOT as usize,
+                                        index: o::EPOCH_SLOT as u64,
                                         value: dregg_app_framework::field_from_u64(
                                             live_epoch.saturating_add(1),
                                         ),
@@ -1429,7 +1429,7 @@ impl AppRegistry {
                                     live_expiry.saturating_add(n::DEFAULT_RENT_EPOCH_BLOCKS);
                                 vec![dregg_app_framework::Effect::SetField {
                                     cell: name_cell,
-                                    index: n::EXPIRY_SLOT,
+                                    index: n::EXPIRY_SLOT as u64,
                                     value: dregg_app_framework::field_from_u64(new_expiry),
                                 }]
                             })?;
@@ -1503,7 +1503,7 @@ impl AppRegistry {
                                 let live_tally = field_tail_u64(&live.fields[tally_slot]);
                                 vec![dregg_app_framework::Effect::SetField {
                                     cell: poll,
-                                    index: tally_slot,
+                                    index: tally_slot as u64,
                                     value: dregg_app_framework::field_from_u64(
                                         live_tally.saturating_add(1),
                                     ),
@@ -2008,27 +2008,27 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: item,
-                                        index: sc::CUSTODIAN_SLOT as usize,
+                                        index: sc::CUSTODIAN_SLOT as u64,
                                         value: custodian,
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: item,
-                                        index: sc::EPOCH_SLOT as usize,
+                                        index: sc::EPOCH_SLOT as u64,
                                         value: dregg_app_framework::field_from_u64(2),
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: item,
-                                        index: sc::link_slot(1),
+                                        index: sc::link_slot(1) as u64,
                                         value: link,
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: item,
-                                        index: sc::HEAD_SLOT as usize,
+                                        index: sc::HEAD_SLOT as u64,
                                         value: dregg_app_framework::field_from_u64(2),
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: item,
-                                        index: sc::TIP_SLOT as usize,
+                                        index: sc::TIP_SLOT as u64,
                                         value: link,
                                     },
                                 ]
@@ -2113,7 +2113,7 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: issuer,
-                                        index: id::ISSUANCE_COUNTER_SLOT,
+                                        index: id::ISSUANCE_COUNTER_SLOT as u64,
                                         value: dregg_app_framework::field_from_u64(new_counter),
                                     },
                                     dregg_app_framework::Effect::EmitEvent {
@@ -2221,7 +2221,7 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: board,
-                                        index: gn::PENDING_PROPOSAL_ROOT_SLOT as usize,
+                                        index: gn::PENDING_PROPOSAL_ROOT_SLOT as u64,
                                         value: new_pending,
                                     },
                                     dregg_app_framework::Effect::EmitEvent {
@@ -2312,19 +2312,19 @@ impl AppRegistry {
                                 vec![
                                     dregg_app_framework::Effect::SetField {
                                         cell: gov_cell,
-                                        index: starbridge_polis::STATE_SLOT as usize,
+                                        index: starbridge_polis::STATE_SLOT as u64,
                                         value: dregg_app_framework::field_from_u64(
                                             council::STATE_PROPOSED,
                                         ),
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: gov_cell,
-                                        index: council::PROPOSAL_HASH_SLOT as usize,
+                                        index: council::PROPOSAL_HASH_SLOT as u64,
                                         value: proposal_hash,
                                     },
                                     dregg_app_framework::Effect::SetField {
                                         cell: gov_cell,
-                                        index: council::MEMBERS_COMMIT_SLOT as usize,
+                                        index: council::MEMBERS_COMMIT_SLOT as u64,
                                         value: members_commit,
                                     },
                                 ]

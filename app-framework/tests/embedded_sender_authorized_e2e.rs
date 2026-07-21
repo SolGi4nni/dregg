@@ -92,7 +92,7 @@ fn witnessed_setfield(
         "set_field",
         vec![Effect::SetField {
             cell: cclerk.cell_id(),
-            index: FREE_SLOT as usize,
+            index: FREE_SLOT as u64,
             value: field_from_u64(value),
         }],
     );

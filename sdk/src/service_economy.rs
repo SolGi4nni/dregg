@@ -388,7 +388,7 @@ impl ExecutionLease {
         let mut effects = Vec::with_capacity(work.len() + 1);
         effects.push(Effect::SetField {
             cell: self.lease_cell,
-            index: LEASE_STEP_SLOT as usize,
+            index: LEASE_STEP_SLOT as u64,
             value: field_from_u64(next as u64),
         });
         effects.extend(work);

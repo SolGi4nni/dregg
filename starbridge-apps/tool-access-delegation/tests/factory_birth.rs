@@ -159,7 +159,7 @@ fn factory_born_mandate_refuses_meter_rollback_and_ceiling_raise() {
         "invoke_tool",
         vec![Effect::SetField {
             cell: mandate,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(0),
         }],
     );
@@ -178,7 +178,7 @@ fn factory_born_mandate_refuses_meter_rollback_and_ceiling_raise() {
         "grant_tool_access",
         vec![Effect::SetField {
             cell: mandate,
-            index: RATE_LIMIT_SLOT as usize,
+            index: RATE_LIMIT_SLOT as u64,
             value: field_from_u64(100),
         }],
     );
@@ -197,7 +197,7 @@ fn factory_born_mandate_refuses_meter_rollback_and_ceiling_raise() {
         "grant_tool_access",
         vec![Effect::SetField {
             cell: mandate,
-            index: starbridge_tool_access_delegation::TOOL_ID_SLOT as usize,
+            index: starbridge_tool_access_delegation::TOOL_ID_SLOT as u64,
             value: tool_id_field("exfiltrate-mcp"),
         }],
     );

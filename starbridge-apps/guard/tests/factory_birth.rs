@@ -146,7 +146,7 @@ fn factory_born_account_refuses_meter_rollback_and_ceiling_raise() {
         "consume_quota",
         vec![Effect::SetField {
             cell: account,
-            index: CONSUMED_SLOT as usize,
+            index: CONSUMED_SLOT as u64,
             value: field_from_u64(0),
         }],
     );
@@ -165,7 +165,7 @@ fn factory_born_account_refuses_meter_rollback_and_ceiling_raise() {
         "constitute",
         vec![Effect::SetField {
             cell: account,
-            index: CEILING_SLOT as usize,
+            index: CEILING_SLOT as u64,
             value: field_from_u64(100),
         }],
     );

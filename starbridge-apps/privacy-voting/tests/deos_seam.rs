@@ -202,7 +202,7 @@ fn the_executor_re_enforces_a_double_vote_is_refused() {
     // A double vote: rewrite the committed VOTE from YES to NO. `WriteOnce(VOTE)` refuses it.
     let rewrite = vec![dregg_app_framework::Effect::SetField {
         cell: ballot,
-        index: VOTE_SLOT,
+        index: VOTE_SLOT as u64,
         value: field_from_u64(VOTE_NO),
     }];
     let action = cclerk.make_action(ballot, "cast_vote", rewrite);
@@ -268,7 +268,7 @@ fn the_executor_re_enforces_a_tally_rewind_is_refused() {
     // A rewind: tally := 0 (< the committed 1). `Monotonic(TALLY_YES)` refuses 1 -> 0.
     let rewind = vec![dregg_app_framework::Effect::SetField {
         cell: poll,
-        index: TALLY_YES_SLOT,
+        index: TALLY_YES_SLOT as u64,
         value: field_from_u64(0),
     }];
     let action = cclerk.make_action(poll, "record_tally", rewind);
@@ -334,7 +334,7 @@ fn the_executor_re_enforces_reopening_a_closed_poll_is_refused() {
     // A reopen: CLOSED := 0 (rewriting the committed 1). `WriteOnce(CLOSED)` refuses 1 -> 0.
     let reopen = vec![dregg_app_framework::Effect::SetField {
         cell: poll,
-        index: CLOSED_SLOT,
+        index: CLOSED_SLOT as u64,
         value: field_from_u64(0),
     }];
     let action = cclerk.make_action(poll, "close_poll", reopen);

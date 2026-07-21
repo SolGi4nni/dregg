@@ -593,7 +593,7 @@ fn deploy_leveling(exec: &EmbeddedExecutor, driver: CellId, seed: u32) -> CellId
 fn set_field(cell: CellId, index: u8, value: FieldElement) -> Effect {
     Effect::SetField {
         cell,
-        index: index as usize,
+        index: index as u64,
         value,
     }
 }

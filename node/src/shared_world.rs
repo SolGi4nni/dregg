@@ -416,7 +416,7 @@ impl<'a> SharedClient<'a> {
             "present",
             vec![Effect::SetField {
                 cell: self.seat_cell(),
-                index: SEAT_PRESENT,
+                index: SEAT_PRESENT as u64,
                 value: pack_u64(1),
             }],
         )
@@ -439,7 +439,7 @@ impl<'a> SharedClient<'a> {
             vec![
                 Effect::SetField {
                     cell: self.world.board,
-                    index: BOARD_POST_COUNT,
+                    index: BOARD_POST_COUNT as u64,
                     value: pack_u64(count + 1),
                 },
                 Effect::SetField {
@@ -449,7 +449,7 @@ impl<'a> SharedClient<'a> {
                 },
                 Effect::SetField {
                     cell: self.seat_cell(),
-                    index: SEAT_LAST_POSTED,
+                    index: SEAT_LAST_POSTED as u64,
                     value: pack_u64(value),
                 },
             ],
@@ -464,7 +464,7 @@ impl<'a> SharedClient<'a> {
             "touch-private",
             vec![Effect::SetField {
                 cell: self.world.private_a,
-                index: PRIVATE_TOUCHED,
+                index: PRIVATE_TOUCHED as u64,
                 value: pack_u64(1),
             }],
         )

@@ -258,7 +258,7 @@ pub async fn handle_council_approve(ctx: &Context, command: &CommandInteraction,
         "council-approve",
         vec![Effect::SetField {
             cell: proposal_cell,
-            index: slot,
+            index: slot as u64,
             value: field_from_u64(1),
         }],
     );

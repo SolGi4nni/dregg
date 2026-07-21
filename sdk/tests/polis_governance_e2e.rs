@@ -131,7 +131,7 @@ fn assert_program_violation(result: Result<TurnReceipt, SdkError>, what: &str) {
 fn set_field(cell: CellId, slot: u8, value: [u8; 32]) -> Vec<Effect> {
     vec![Effect::SetField {
         cell,
-        index: slot as usize,
+        index: slot as u64,
         value,
     }]
 }

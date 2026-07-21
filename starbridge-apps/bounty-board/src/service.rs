@@ -292,7 +292,7 @@ impl BountyService {
     fn set(&self, index: usize, value: FieldElement) -> Effect {
         Effect::SetField {
             cell: self.cell,
-            index,
+            index: index as u64,
             value,
         }
     }

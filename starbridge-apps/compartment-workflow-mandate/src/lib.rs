@@ -449,22 +449,22 @@ pub fn build_init_mandate_action(
     let effects = vec![
         Effect::SetField {
             cell: mandate_cell,
-            index: COMMITMENT_ANCHOR_SLOT as usize,
+            index: COMMITMENT_ANCHOR_SLOT as u64,
             value: field_from_u64(commitment_anchor),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: CHARTER_TERMINAL_SLOT as usize,
+            index: CHARTER_TERMINAL_SLOT as u64,
             value: field_from_u64(charter_terminal),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: CLEARANCE_GRAPH_ROOT_SLOT as usize,
+            index: CLEARANCE_GRAPH_ROOT_SLOT as u64,
             value: clearance_graph_root,
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: SPEND_POLICY_SLOT as usize,
+            index: SPEND_POLICY_SLOT as u64,
             value: field_from_u64(spend_policy),
         },
         Effect::EmitEvent {
@@ -645,21 +645,21 @@ pub fn advance_effects(
     vec![
         Effect::SetField {
             cell,
-            index: STEP_CURSOR_SLOT as usize,
+            index: STEP_CURSOR_SLOT as u64,
             value: new_field,
         },
         // The acting officer presents their clearance label — the executor's
         // ClearanceDominates checks it dominates the entered step's compartment.
         Effect::SetField {
             cell,
-            index: ACTOR_CLEARANCE_SLOT as usize,
+            index: ACTOR_CLEARANCE_SLOT as u64,
             value: actor_clearance,
         },
         // The compartment of the step being ENTERED — the box the clearance check
         // reads (the per-step `needsAll [step.compartment]` of `stepClearanceOK`).
         Effect::SetField {
             cell,
-            index: STEP_COMPARTMENT_SLOT as usize,
+            index: STEP_COMPARTMENT_SLOT as u64,
             value: new_anchor,
         },
         Effect::EmitEvent {
@@ -722,7 +722,7 @@ pub fn workflow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
             OPERATOR_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STEP_CURSOR_SLOT as usize,
+                index: STEP_CURSOR_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -1015,15 +1015,15 @@ mod tests {
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == STEP_CURSOR_SLOT as usize
+            Effect::SetField { index, .. } if *index == STEP_CURSOR_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == ACTOR_CLEARANCE_SLOT as usize
+            Effect::SetField { index, .. } if *index == ACTOR_CLEARANCE_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == STEP_COMPARTMENT_SLOT as usize
+            Effect::SetField { index, .. } if *index == STEP_COMPARTMENT_SLOT as u64
         ));
         assert!(matches!(&action.effects[3], Effect::EmitEvent { .. }));
     }

@@ -150,7 +150,7 @@ pub fn plan_flash_well(
     }];
     let set = |index: u8, value: FieldElement| Effect::SetField {
         cell: cell_id,
-        index: index as usize,
+        index: index as u64,
         value,
     };
     let open_effects = vec![
@@ -377,7 +377,7 @@ impl FlashWell {
                 inner_effects: vec![
                     Effect::SetField {
                         cell: self.cell,
-                        index: FW_STATE_SLOT as usize,
+                        index: FW_STATE_SLOT as u64,
                         value: field_from_u64(FW_STATE_CLOSED),
                     },
                     Effect::Transfer {
@@ -454,7 +454,7 @@ impl<'rt> FlashRing<'rt> {
                 cap_slot: self.cap_slot,
                 inner_effects: vec![Effect::SetField {
                     cell: self.well,
-                    index: FW_RATCHET_SLOT as usize,
+                    index: FW_RATCHET_SLOT as u64,
                     value: field_from_u64(self.next_ratchet),
                 }],
             })
@@ -565,7 +565,7 @@ mod tests {
                 cap_slot: well.cap_slot,
                 inner_effects: vec![Effect::SetField {
                     cell: well.cell,
-                    index: FW_RATCHET_SLOT as usize,
+                    index: FW_RATCHET_SLOT as u64,
                     value: field_from_u64(r),
                 }],
             });
@@ -745,7 +745,7 @@ mod tests {
         let reopen = runtime
             .turn()
             .on(well.cell)
-            .write_u64(FW_STATE_SLOT as usize, STATE_OPEN)
+            .write_u64(FW_STATE_SLOT as u64, STATE_OPEN)
             .sign()
             .expect("sign")
             .submit();

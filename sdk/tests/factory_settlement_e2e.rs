@@ -147,13 +147,13 @@ fn step_state_only(cell: CellId, witness: Option<[u8; 32]>, next_state: u64) -> 
     if let Some(w) = witness {
         effects.push(Effect::SetField {
             cell,
-            index: dregg_cell::blueprint::WITNESS_SLOT as usize,
+            index: dregg_cell::blueprint::WITNESS_SLOT as u64,
             value: w,
         });
     }
     effects.push(Effect::SetField {
         cell,
-        index: STATE_SLOT as usize,
+        index: STATE_SLOT as u64,
         value: field_from_u64(next_state),
     });
     effects
@@ -246,7 +246,7 @@ fn escrow_release_without_condition_rejected_by_program() {
     let no_witness = vec![
         Effect::SetField {
             cell: plan.cell_id,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_RESOLVED_A),
         },
         Effect::Transfer {
@@ -386,7 +386,7 @@ fn escrow_term_rewrite_rejected() {
             plan.cell_id,
             vec![Effect::SetField {
                 cell: plan.cell_id,
-                index: PARTY_B_SLOT as usize,
+                index: PARTY_B_SLOT as u64,
                 value: party_field(agent), // re-point the beneficiary to myself
             }],
         ),
@@ -480,7 +480,7 @@ fn obligation_slash_gates_on_deadline_and_condition() {
         0,
         Effect::SetField {
             cell: plan.cell_id,
-            index: dregg_cell::blueprint::WITNESS_SLOT as usize,
+            index: dregg_cell::blueprint::WITNESS_SLOT as u64,
             value: terms.condition,
         },
     );
@@ -558,7 +558,7 @@ fn bridge_finalize_requires_finality_witness() {
             vec![
                 Effect::SetField {
                     cell: plan.cell_id,
-                    index: STATE_SLOT as usize,
+                    index: STATE_SLOT as u64,
                     value: field_from_u64(STATE_RESOLVED_A),
                 },
                 Effect::Transfer {

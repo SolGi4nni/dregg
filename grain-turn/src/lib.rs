@@ -516,22 +516,22 @@ impl GrainTurnMinter for ToolGatewayMinter {
             // receipt is pinned by the NEXT turn's state (see HISTORY_ROOT_SLOT).
             Effect::SetField {
                 cell,
-                index: HISTORY_ROOT_SLOT,
+                index: HISTORY_ROOT_SLOT as u64,
                 value: grain_history_root(&self.receipt_log),
             },
             Effect::SetField {
                 cell,
-                index: CONSUMED_SLOT,
+                index: CONSUMED_SLOT as u64,
                 value: field_from_u64(consumed_after.max(0) as u64),
             },
             Effect::SetField {
                 cell,
-                index: HEAP_ROOT_SLOT,
+                index: HEAP_ROOT_SLOT as u64,
                 value: cell_root,
             },
             Effect::SetField {
                 cell,
-                index: ACTION_SLOT,
+                index: ACTION_SLOT as u64,
                 value: action_commit(label, cost),
             },
         ];
@@ -542,7 +542,7 @@ impl GrainTurnMinter for ToolGatewayMinter {
         if let Some(commitment) = self.pending_attestation {
             work.push(Effect::SetField {
                 cell,
-                index: ATTESTATION_SLOT,
+                index: ATTESTATION_SLOT as u64,
                 value: commitment,
             });
         }
@@ -554,7 +554,7 @@ impl GrainTurnMinter for ToolGatewayMinter {
         let mut committed_effects = Vec::with_capacity(work.len() + 1);
         committed_effects.push(Effect::SetField {
             cell,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64((self.gateway.calls_made() + 1) as u64),
         });
         committed_effects.extend(work.iter().cloned());

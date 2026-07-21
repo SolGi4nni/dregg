@@ -331,22 +331,22 @@ pub fn advance_effects(
     vec![
         Effect::SetField {
             cell,
-            index: JOB_CURSOR_SLOT as usize,
+            index: JOB_CURSOR_SLOT as u64,
             value: new_field,
         },
         Effect::SetField {
             cell,
-            index: SPEND_ACCUM_SLOT as usize,
+            index: SPEND_ACCUM_SLOT as u64,
             value: field_from_u64(new_spend),
         },
         Effect::SetField {
             cell,
-            index: ACTOR_CLEARANCE_SLOT as usize,
+            index: ACTOR_CLEARANCE_SLOT as u64,
             value: actor_clearance,
         },
         Effect::SetField {
             cell,
-            index: STEP_COMPARTMENT_SLOT as usize,
+            index: STEP_COMPARTMENT_SLOT as u64,
             value: verb_compartment,
         },
         Effect::EmitEvent {

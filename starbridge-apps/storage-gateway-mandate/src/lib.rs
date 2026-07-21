@@ -451,17 +451,17 @@ pub fn build_storage_op_action(
     let effects = vec![
         Effect::SetField {
             cell: mandate_cell,
-            index: OBJECT_KEY_SLOT as usize,
+            index: OBJECT_KEY_SLOT as u64,
             value: key_field,
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: LAST_OP_SLOT as usize,
+            index: LAST_OP_SLOT as u64,
             value: op_field,
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: VOLUME_SPENT_SLOT as usize,
+            index: VOLUME_SPENT_SLOT as u64,
             value: spent_field,
         },
         Effect::EmitEvent {
@@ -538,22 +538,22 @@ pub fn build_init_gateway_action(
     let effects = vec![
         Effect::SetField {
             cell: mandate_cell,
-            index: COMMITMENT_ANCHOR_SLOT as usize,
+            index: COMMITMENT_ANCHOR_SLOT as u64,
             value: field_from_u64(commitment_anchor),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: VOLUME_CEILING_SLOT as usize,
+            index: VOLUME_CEILING_SLOT as u64,
             value: field_from_u64(volume_ceiling),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: KEY_PREFIX_HASH_SLOT as usize,
+            index: KEY_PREFIX_HASH_SLOT as u64,
             value: key_prefix_field(key_prefix),
         },
         Effect::SetField {
             cell: mandate_cell,
-            index: READ_COMPARTMENT_SLOT as usize,
+            index: READ_COMPARTMENT_SLOT as u64,
             value: field_from_bytes(read_compartment.as_bytes()),
         },
         Effect::EmitEvent {
@@ -742,7 +742,7 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             READER_RIGHTS,
             Effect::SetField {
                 cell: gateway,
-                index: ACTOR_CLEARANCE_SLOT as usize,
+                index: ACTOR_CLEARANCE_SLOT as u64,
                 value: writer_label(),
             },
         ),
@@ -771,7 +771,7 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             WRITER_RIGHTS,
             Effect::SetField {
                 cell: gateway,
-                index: VOLUME_SPENT_SLOT as usize,
+                index: VOLUME_SPENT_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -861,17 +861,17 @@ pub fn put_effects(
     vec![
         Effect::SetField {
             cell: gateway,
-            index: OBJECT_KEY_SLOT as usize,
+            index: OBJECT_KEY_SLOT as u64,
             value: key_field,
         },
         Effect::SetField {
             cell: gateway,
-            index: LAST_OP_SLOT as usize,
+            index: LAST_OP_SLOT as u64,
             value: op_field,
         },
         Effect::SetField {
             cell: gateway,
-            index: VOLUME_SPENT_SLOT as usize,
+            index: VOLUME_SPENT_SLOT as u64,
             value: spent_field,
         },
         Effect::EmitEvent {
@@ -933,19 +933,19 @@ pub fn get_effects(gateway: CellId, key: &str, actor_clearance: FieldElement) ->
     vec![
         Effect::SetField {
             cell: gateway,
-            index: OBJECT_KEY_SLOT as usize,
+            index: OBJECT_KEY_SLOT as u64,
             value: key_field,
         },
         Effect::SetField {
             cell: gateway,
-            index: LAST_OP_SLOT as usize,
+            index: LAST_OP_SLOT as u64,
             value: op_field,
         },
         // The reader presents their clearance label — the executor's ClearanceDominates
         // checks it dominates the frozen READ_COMPARTMENT_SLOT box.
         Effect::SetField {
             cell: gateway,
-            index: ACTOR_CLEARANCE_SLOT as usize,
+            index: ACTOR_CLEARANCE_SLOT as u64,
             value: actor_clearance,
         },
         Effect::EmitEvent {
@@ -1205,15 +1205,15 @@ mod tests {
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == OBJECT_KEY_SLOT as usize
+            Effect::SetField { index, .. } if *index == OBJECT_KEY_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == LAST_OP_SLOT as usize
+            Effect::SetField { index, .. } if *index == LAST_OP_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, .. } if *index == VOLUME_SPENT_SLOT as usize
+            Effect::SetField { index, .. } if *index == VOLUME_SPENT_SLOT as u64
         ));
         assert!(matches!(&action.effects[3], Effect::EmitEvent { .. }));
     }

@@ -177,12 +177,12 @@ pub fn propose_effects(
     vec![
         Effect::SetField {
             cell,
-            index: DISPUTE_WINDOW_HEIGHT_SLOT as usize,
+            index: DISPUTE_WINDOW_HEIGHT_SLOT as u64,
             value: window_f,
         },
         Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::EmitEvent {
@@ -206,7 +206,7 @@ pub fn vote_effects(
     vec![
         Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: tally_f,
         },
         Effect::EmitEvent {
@@ -230,17 +230,17 @@ pub fn commit_effects(cell: CellId, new_root: FieldElement, new_version: u64) ->
     vec![
         Effect::SetField {
             cell,
-            index: ROUTE_TABLE_ROOT_SLOT as usize,
+            index: ROUTE_TABLE_ROOT_SLOT as u64,
             value: new_root,
         },
         Effect::SetField {
             cell,
-            index: VERSION_SLOT as usize,
+            index: VERSION_SLOT as u64,
             value: version_f,
         },
         Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: [0u8; 32],
         },
         Effect::EmitEvent {

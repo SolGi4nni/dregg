@@ -266,12 +266,12 @@ impl NameService {
         let effects = vec![
             Effect::SetField {
                 cell: self.cell,
-                index: VERSION_SLOT,
+                index: VERSION_SLOT as u64,
                 value: field_from_u64(new_version),
             },
             Effect::SetField {
                 cell: self.cell,
-                index: name_slot(name),
+                index: name_slot(name) as u64,
                 value: target_felt(target),
             },
         ];
@@ -303,12 +303,12 @@ impl NameService {
         let effects = vec![
             Effect::SetField {
                 cell: self.cell,
-                index: VERSION_SLOT,
+                index: VERSION_SLOT as u64,
                 value: field_from_u64(new_version),
             },
             Effect::SetField {
                 cell: self.cell,
-                index: name_slot(name),
+                index: name_slot(name) as u64,
                 value: [0u8; 32],
             },
         ];

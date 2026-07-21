@@ -216,12 +216,12 @@ fn a_stapled_roster_unlock_cannot_ride_a_pledge() {
             vec![
                 Effect::SetField {
                     cell,
-                    index: rep as usize,
+                    index: rep as u64,
                     value: field_from_u64(1),
                 },
                 Effect::SetField {
                     cell,
-                    index: quest as usize,
+                    index: quest as u64,
                     value: field_from_u64(1),
                 },
             ],
@@ -283,7 +283,7 @@ fn a_roster_rep_write_down_cannot_ride_a_nonpledge_method() {
         &hall_method(el.betray),
         vec![Effect::SetField {
             cell,
-            index: rep as usize,
+            index: rep as u64,
             value: field_from_u64(0),
         }],
     );

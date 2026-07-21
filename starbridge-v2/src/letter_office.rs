@@ -695,7 +695,7 @@ pub fn deliver_now(world: &mut World, letter: CellId) -> Result<MailReceipt, Mai
 fn set_slot(cell: CellId, slot: usize, value: u64) -> Effect {
     Effect::SetField {
         cell,
-        index: slot,
+        index: slot as u64,
         value: pack_u64(value),
     }
 }

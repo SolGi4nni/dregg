@@ -80,12 +80,12 @@ fn configure_action(
     let effects = vec![
         Effect::SetField {
             cell: sub_cell,
-            index: CAPACITY_SLOT as usize,
+            index: CAPACITY_SLOT as u64,
             value: field_from_u64(capacity),
         },
         Effect::SetField {
             cell: sub_cell,
-            index: OWNER_PK_HASH_SLOT as usize,
+            index: OWNER_PK_HASH_SLOT as u64,
             value: field_from_bytes(owner_pk),
         },
     ];
@@ -137,7 +137,7 @@ fn factory_born_subscription_accepts_publish_and_refuses_rewind_and_rebind() {
         "publish",
         vec![Effect::SetField {
             cell: sub,
-            index: SEQ_HEAD_SLOT as usize,
+            index: SEQ_HEAD_SLOT as u64,
             value: field_from_u64(0),
         }],
     );
@@ -156,7 +156,7 @@ fn factory_born_subscription_accepts_publish_and_refuses_rewind_and_rebind() {
         "configure",
         vec![Effect::SetField {
             cell: sub,
-            index: CAPACITY_SLOT as usize,
+            index: CAPACITY_SLOT as u64,
             value: field_from_u64(64),
         }],
     );
@@ -194,7 +194,7 @@ fn factory_born_subscription_refuses_tail_overrun() {
         "consume",
         vec![Effect::SetField {
             cell: sub,
-            index: SEQ_TAIL_SLOT as usize,
+            index: SEQ_TAIL_SLOT as u64,
             value: field_from_u64(5),
         }],
     );

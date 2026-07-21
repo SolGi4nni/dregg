@@ -451,7 +451,7 @@ impl InspectorWorld {
         let effects = vec![
             Effect::SetField {
                 cell: cell_id,
-                index: slot,
+                index: slot as u64,
                 value: pack_u64(value),
             },
             Effect::IncrementNonce { cell: cell_id },
@@ -706,7 +706,7 @@ impl TallyWorld {
         let effects = vec![
             Effect::SetField {
                 cell: cell_id,
-                index: slot,
+                index: slot as u64,
                 value: pack_u64(value),
             },
             Effect::IncrementNonce { cell: cell_id },
@@ -1092,12 +1092,12 @@ impl KvStoreWorld {
         Ok(vec![
             Effect::SetField {
                 cell: self.store,
-                index: app_programs::KV_VERSION_SLOT as usize,
+                index: app_programs::KV_VERSION_SLOT as u64,
                 value: fe_be(new_version),
             },
             Effect::SetField {
                 cell: self.store,
-                index: reg,
+                index: reg as u64,
                 value: fe_be(value),
             },
         ])
@@ -1437,7 +1437,7 @@ impl PollWorld {
         let effects = vec![
             Effect::SetField {
                 cell: ballot,
-                index: BALLOT_VOTE_SLOT,
+                index: BALLOT_VOTE_SLOT as u64,
                 value: fe_be(current + 1),
             },
             Effect::IncrementNonce { cell: ballot },
@@ -1484,7 +1484,7 @@ impl PollWorld {
         let effects = vec![
             Effect::SetField {
                 cell: poll,
-                index: POLL_RESOLVED_SLOT,
+                index: POLL_RESOLVED_SLOT as u64,
                 value: fe_be(1),
             },
             Effect::IncrementNonce { cell: poll },
@@ -1633,7 +1633,7 @@ impl PollWorld {
         let ballot_effects = vec![
             Effect::SetField {
                 cell: ballot,
-                index: BALLOT_VOTE_SLOT,
+                index: BALLOT_VOTE_SLOT as u64,
                 value: fe_be(choice),
             },
             Effect::IncrementNonce { cell: ballot },
@@ -1666,12 +1666,12 @@ impl PollWorld {
         let tally_effects = vec![
             Effect::SetField {
                 cell: poll,
-                index: POLL_TALLY_BASE + option,
+                index: (POLL_TALLY_BASE + option) as u64,
                 value: fe_be(live + 1),
             },
             Effect::SetField {
                 cell: poll,
-                index: POLL_VOTER_SET_COMMITMENT_SLOT,
+                index: POLL_VOTER_SET_COMMITMENT_SLOT as u64,
                 value: commitment,
             },
             Effect::IncrementNonce { cell: poll },
@@ -1828,7 +1828,7 @@ mod poll_forgery_tests {
         let forge = vec![
             Effect::SetField {
                 cell: poll_cell,
-                index: POLL_TALLY_BASE,
+                index: POLL_TALLY_BASE as u64,
                 value: fe_be(m),
             },
             Effect::IncrementNonce { cell: poll_cell },

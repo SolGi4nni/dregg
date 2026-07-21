@@ -886,7 +886,7 @@ fn main() {
         builder.set_fee(10000);
         let action =
             ActionBuilder::new_unchecked_for_tests(agent_id, &format!("audit_step_{i}"), agent_id)
-                .effect_set_field(agent_id, (i as usize) % 8, field_val)
+                .effect_set_field(agent_id, i % 8, field_val)
                 .build();
         builder.add_action(action);
         let turn = builder.build();

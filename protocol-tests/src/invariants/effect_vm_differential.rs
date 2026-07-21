@@ -491,7 +491,7 @@ proptest! {
         // meaningfully (nonzero) rather than in a byte range the bridge ignores.
         let mut value = [0u8; 32];
         value[28..32].copy_from_slice(&v0.to_be_bytes());
-        let effect = Effect::SetField { cell: actor, index: idx, value };
+        let effect = Effect::SetField { cell: actor, index: idx as u64, value };
         let turn = one_effect_turn(actor, nonce, effect);
         let claim = air_claim(actor_cell, &turn);
 

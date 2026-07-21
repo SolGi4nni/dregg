@@ -170,7 +170,7 @@ fn factory_born_job_refuses_minting_tampering_and_double_settle() {
         "bid",
         vec![Effect::SetField {
             cell: job,
-            index: BID_SLOT as usize,
+            index: BID_SLOT as u64,
             value: field_from_u64(500),
         }],
     );

@@ -291,12 +291,12 @@ fn committee_board_duplicate_padded_forge_rejected_by_executor() {
         let effects = vec![
             dregg_app_framework::Effect::SetField {
                 cell: board,
-                index: id_key as usize,
+                index: id_key as u64,
                 value: forged_id,
             },
             dregg_app_framework::Effect::SetField {
                 cell: board,
-                index: vote_key as usize,
+                index: vote_key as u64,
                 value: field_from_u64(1),
             },
         ];

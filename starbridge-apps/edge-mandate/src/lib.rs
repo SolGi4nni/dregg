@@ -759,37 +759,37 @@ pub fn enrol_effects(cell: CellId, minted: &CapMandate, ssh_pubkey: &str) -> Vec
     vec![
         Effect::SetField {
             cell,
-            index: SUBJECT_SLOT as usize,
+            index: SUBJECT_SLOT as u64,
             value: field_from_bytes(normalize_key(ssh_pubkey).as_bytes()),
         },
         Effect::SetField {
             cell,
-            index: ACCOUNT_SLOT as usize,
+            index: ACCOUNT_SLOT as u64,
             value: field_from_bytes(minted.subject.as_bytes()),
         },
         Effect::SetField {
             cell,
-            index: BUDGET_SLOT as usize,
+            index: BUDGET_SLOT as u64,
             value: field_from_u64(minted.budget),
         },
         Effect::SetField {
             cell,
-            index: SPENT_SLOT as usize,
+            index: SPENT_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell,
-            index: CAPS_DIGEST_SLOT as usize,
+            index: CAPS_DIGEST_SLOT as u64,
             value: field_from_bytes(caps.as_bytes()),
         },
         Effect::SetField {
             cell,
-            index: REVOKED_SLOT as usize,
+            index: REVOKED_SLOT as u64,
             value: field_from_u64(0),
         },
         Effect::SetField {
             cell,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {
@@ -814,12 +814,12 @@ pub fn spend_effects(cell: CellId, new_spent: u64, cost: u64, new_epoch: u64) ->
     vec![
         Effect::SetField {
             cell,
-            index: SPENT_SLOT as usize,
+            index: SPENT_SLOT as u64,
             value: field_from_u64(new_spent),
         },
         Effect::SetField {
             cell,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::EmitEvent {
@@ -839,12 +839,12 @@ pub fn revoke_effects(cell: CellId, new_epoch: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: REVOKED_SLOT as usize,
+            index: REVOKED_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::SetField {
             cell,
-            index: EPOCH_SLOT as usize,
+            index: EPOCH_SLOT as u64,
             value: field_from_u64(new_epoch),
         },
         Effect::EmitEvent {

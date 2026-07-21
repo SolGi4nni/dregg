@@ -414,7 +414,7 @@ fn factory_born_swarm_refuses_widening_the_mandate_or_capturing_the_lead() {
         "open_board",
         vec![Effect::SetField {
             cell: board,
-            index: BUDGET_SLOT as usize,
+            index: BUDGET_SLOT as u64,
             value: field_from_u64(100_000),
         }],
     );

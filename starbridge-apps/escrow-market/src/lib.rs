@@ -537,17 +537,17 @@ pub fn build_list_action(
     let effects = vec![
         Effect::SetField {
             cell: escrow_cell,
-            index: SELLER_HASH_SLOT,
+            index: SELLER_HASH_SLOT as u64,
             value: seller_h,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: CEILING_SLOT,
+            index: CEILING_SLOT as u64,
             value: ceiling_f,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_LISTED),
         },
         Effect::EmitEvent {
@@ -571,17 +571,17 @@ pub fn build_fund_action(
     let effects = vec![
         Effect::SetField {
             cell: escrow_cell,
-            index: BUYER_HASH_SLOT,
+            index: BUYER_HASH_SLOT as u64,
             value: buyer_h,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: ESCROWED_SLOT,
+            index: ESCROWED_SLOT as u64,
             value: amount_f,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_FUNDED),
         },
         Effect::EmitEvent {
@@ -603,12 +603,12 @@ pub fn build_ship_action(
     let effects = vec![
         Effect::SetField {
             cell: escrow_cell,
-            index: DELIVERY_HASH_SLOT,
+            index: DELIVERY_HASH_SLOT as u64,
             value: *sealed_delivery,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SHIPPED),
         },
         Effect::EmitEvent {
@@ -638,17 +638,17 @@ pub fn build_settle_action(
     let effects = vec![
         Effect::SetField {
             cell: escrow_cell,
-            index: RELEASED_SLOT,
+            index: RELEASED_SLOT as u64,
             value: released_f,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: REFUNDED_SLOT,
+            index: REFUNDED_SLOT as u64,
             value: refunded_f,
         },
         Effect::SetField {
             cell: escrow_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SETTLED),
         },
         Effect::EmitEvent {
@@ -905,7 +905,7 @@ pub fn escrow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             BUYER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_FUNDED),
             },
         ),
@@ -920,7 +920,7 @@ pub fn escrow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             SELLER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_SHIPPED),
             },
         ),
@@ -935,7 +935,7 @@ pub fn escrow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             SELLER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_SETTLED),
             },
         ),
@@ -990,17 +990,17 @@ pub fn fund_effects(cell: CellId, buyer: &str, amount: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: BUYER_HASH_SLOT,
+            index: BUYER_HASH_SLOT as u64,
             value: buyer_h,
         },
         Effect::SetField {
             cell,
-            index: ESCROWED_SLOT,
+            index: ESCROWED_SLOT as u64,
             value: amount_f,
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_FUNDED),
         },
         Effect::EmitEvent {
@@ -1017,12 +1017,12 @@ pub fn ship_effects(cell: CellId, sealed_delivery: &FieldElement) -> Vec<Effect>
     vec![
         Effect::SetField {
             cell,
-            index: DELIVERY_HASH_SLOT,
+            index: DELIVERY_HASH_SLOT as u64,
             value: *sealed_delivery,
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SHIPPED),
         },
         Effect::EmitEvent {
@@ -1043,17 +1043,17 @@ pub fn settle_effects(cell: CellId, released: u64, refunded: u64) -> Vec<Effect>
     vec![
         Effect::SetField {
             cell,
-            index: RELEASED_SLOT,
+            index: RELEASED_SLOT as u64,
             value: released_f,
         },
         Effect::SetField {
             cell,
-            index: REFUNDED_SLOT,
+            index: REFUNDED_SLOT as u64,
             value: refunded_f,
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SETTLED),
         },
         Effect::EmitEvent {

@@ -369,7 +369,7 @@ pub fn build_register_inbox_action(
     let effects = vec![
         Effect::SetField {
             cell: relay_cell,
-            index: HOSTED_INBOX_ROOT_SLOT as usize,
+            index: HOSTED_INBOX_ROOT_SLOT as u64,
             value: new_hosted_inbox_root,
         },
         Effect::EmitEvent {
@@ -400,7 +400,7 @@ pub fn build_relay_action(
     let effects = vec![
         Effect::SetField {
             cell: relay_cell,
-            index: BYTES_RELAYED_THIS_EPOCH_SLOT as usize,
+            index: BYTES_RELAYED_THIS_EPOCH_SLOT as u64,
             value: new_bytes_relayed,
         },
         Effect::EmitEvent {
@@ -432,12 +432,12 @@ pub fn build_slash_action(
     let effects = vec![
         Effect::SetField {
             cell: relay_cell,
-            index: BOND_AMOUNT_SLOT as usize,
+            index: BOND_AMOUNT_SLOT as u64,
             value: new_bond_amount,
         },
         Effect::SetField {
             cell: relay_cell,
-            index: DISPUTE_COUNT_SLOT as usize,
+            index: DISPUTE_COUNT_SLOT as u64,
             value: new_dispute_count,
         },
         Effect::EmitEvent {

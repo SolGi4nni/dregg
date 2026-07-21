@@ -355,17 +355,17 @@ impl GrainTurnMinter for NodeMinter {
         let mut work = vec![
             Effect::SetField {
                 cell,
-                index: CONSUMED_SLOT,
+                index: CONSUMED_SLOT as u64,
                 value: field_from_u64(consumed_after.max(0) as u64),
             },
             Effect::SetField {
                 cell,
-                index: HEAP_ROOT_SLOT,
+                index: HEAP_ROOT_SLOT as u64,
                 value: cell_root,
             },
             Effect::SetField {
                 cell,
-                index: ACTION_SLOT,
+                index: ACTION_SLOT as u64,
                 value: action_commit(label, cost),
             },
         ];
@@ -375,7 +375,7 @@ impl GrainTurnMinter for NodeMinter {
         if let Some(commitment) = self.pending_attestation {
             work.push(Effect::SetField {
                 cell,
-                index: ATTESTATION_SLOT,
+                index: ATTESTATION_SLOT as u64,
                 value: commitment,
             });
         }

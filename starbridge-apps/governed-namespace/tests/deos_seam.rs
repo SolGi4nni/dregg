@@ -248,7 +248,7 @@ fn the_executor_re_enforces_a_rewound_pending_root_on_propose_is_refused() {
         "propose_table_update",
         vec![dregg_app_framework::Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(6),
         }],
     );
@@ -272,7 +272,7 @@ fn the_executor_re_enforces_a_rewound_pending_root_on_propose_is_refused() {
         "propose_table_update",
         vec![dregg_app_framework::Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -328,7 +328,7 @@ fn the_executor_re_enforces_a_vote_that_swaps_the_table_is_refused() {
         "vote_on_proposal",
         vec![dregg_app_framework::Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(2),
         }],
     );
@@ -345,13 +345,13 @@ fn the_executor_re_enforces_a_vote_that_swaps_the_table_is_refused() {
         vec![
             dregg_app_framework::Effect::SetField {
                 cell,
-                index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+                index: PENDING_PROPOSAL_ROOT_SLOT as u64,
                 value: field_from_u64(2),
             },
             // The forge: a vote that tries to swap the live route table.
             dregg_app_framework::Effect::SetField {
                 cell,
-                index: ROUTE_TABLE_ROOT_SLOT as usize,
+                index: ROUTE_TABLE_ROOT_SLOT as u64,
                 value: field_from_bytes(b"forged-route-table-via-vote"),
             },
         ],
@@ -421,7 +421,7 @@ fn a_non_member_signer_is_refused_at_the_real_sender_authorized_stark() {
         "propose_table_update",
         vec![dregg_app_framework::Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -459,7 +459,7 @@ fn a_non_member_signer_is_refused_at_the_real_sender_authorized_stark() {
         "propose_table_update",
         vec![dregg_app_framework::Effect::SetField {
             cell,
-            index: PENDING_PROPOSAL_ROOT_SLOT as usize,
+            index: PENDING_PROPOSAL_ROOT_SLOT as u64,
             value: field_from_u64(1),
         }],
     );

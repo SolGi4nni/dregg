@@ -356,7 +356,7 @@ fn main() {
             .delegation(DelegationMode::None)
             .effect(Effect::SetField {
                 cell: target_id,
-                index: i,
+                index: i as u64,
                 value: result_hash,
             })
             .build();

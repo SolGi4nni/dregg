@@ -449,7 +449,7 @@ fn the_referee_resolves_the_frame_advancing_the_phase_and_a_rewind_is_refused() 
         "rewind_phase",
         vec![dregg_app_framework::Effect::SetField {
             cell: figure_a,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(REVEAL), // 2 < 3 — a rewind
         }],
     );

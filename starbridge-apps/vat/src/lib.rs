@@ -360,12 +360,12 @@ pub fn vat_transition_effects(vat: CellId, target: VatState) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: vat,
-            index: VAT_PHASE_SLOT as usize,
+            index: VAT_PHASE_SLOT as u64,
             value: field_from_u64(target.phase().rank()),
         },
         Effect::SetField {
             cell: vat,
-            index: VAT_UP_SLOT as usize,
+            index: VAT_UP_SLOT as u64,
             value: field_from_u64(target.is_up() as u64),
         },
     ]

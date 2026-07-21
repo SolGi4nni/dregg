@@ -218,7 +218,11 @@ fn assemble(grant_root: Option<[u8; 32]>) -> (EmbeddedExecutor, AppCipherclerk, 
 
 /// A `SetField` effect on `cell`'s slot `index`.
 fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
-    Effect::SetField { cell, index, value }
+    Effect::SetField {
+        cell,
+        index: index as u64,
+        value,
+    }
 }
 
 /// Build, sign (over the attached witness blobs), wrap, and submit one turn — the real

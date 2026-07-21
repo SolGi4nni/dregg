@@ -207,17 +207,17 @@ pub fn build_post_action(
     let effects = vec![
         Effect::SetField {
             cell: bounty_cell,
-            index: TITLE_HASH_SLOT,
+            index: TITLE_HASH_SLOT as u64,
             value: title_h,
         },
         Effect::SetField {
             cell: bounty_cell,
-            index: REWARD_SLOT,
+            index: REWARD_SLOT as u64,
             value: reward_f,
         },
         Effect::SetField {
             cell: bounty_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_OPEN),
         },
         Effect::EmitEvent {
@@ -243,12 +243,12 @@ pub fn build_claim_action(
     let effects = vec![
         Effect::SetField {
             cell: bounty_cell,
-            index: CLAIMANT_HASH_SLOT,
+            index: CLAIMANT_HASH_SLOT as u64,
             value: claimant_h,
         },
         Effect::SetField {
             cell: bounty_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_CLAIMED),
         },
         Effect::EmitEvent {
@@ -272,12 +272,12 @@ pub fn build_submit_action(
     let effects = vec![
         Effect::SetField {
             cell: bounty_cell,
-            index: SUBMISSION_HASH_SLOT,
+            index: SUBMISSION_HASH_SLOT as u64,
             value: artifact_h,
         },
         Effect::SetField {
             cell: bounty_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SUBMITTED),
         },
         Effect::EmitEvent {
@@ -298,7 +298,7 @@ pub fn build_payout_action(cipherclerk: &AppCipherclerk, bounty_cell: CellId) ->
     let effects = vec![
         Effect::SetField {
             cell: bounty_cell,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: paid,
         },
         Effect::EmitEvent {
@@ -467,7 +467,7 @@ pub fn bounty_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             WORKER_RIGHTS,
             Effect::SetField {
                 cell: bounty,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_CLAIMED),
             },
         ),
@@ -482,7 +482,7 @@ pub fn bounty_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             WORKER_RIGHTS,
             Effect::SetField {
                 cell: bounty,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_SUBMITTED),
             },
         ),
@@ -498,7 +498,7 @@ pub fn bounty_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
             POSTER_RIGHTS,
             Effect::SetField {
                 cell: bounty,
-                index: STATE_SLOT,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_PAID),
             },
         ),
@@ -557,12 +557,12 @@ pub fn claim_effects(bounty: CellId, claimant: &str) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: bounty,
-            index: CLAIMANT_HASH_SLOT,
+            index: CLAIMANT_HASH_SLOT as u64,
             value: claimant_h,
         },
         Effect::SetField {
             cell: bounty,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_CLAIMED),
         },
         Effect::EmitEvent {
@@ -580,12 +580,12 @@ pub fn submit_effects(bounty: CellId, artifact_uri: &str) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: bounty,
-            index: SUBMISSION_HASH_SLOT,
+            index: SUBMISSION_HASH_SLOT as u64,
             value: artifact_h,
         },
         Effect::SetField {
             cell: bounty,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_SUBMITTED),
         },
         Effect::EmitEvent {
@@ -602,7 +602,7 @@ pub fn payout_effects(bounty: CellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell: bounty,
-            index: STATE_SLOT,
+            index: STATE_SLOT as u64,
             value: paid,
         },
         Effect::EmitEvent {
@@ -1019,15 +1019,15 @@ mod tests {
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
             &action.effects[0],
-            Effect::SetField { index, .. } if *index == TITLE_HASH_SLOT
+            Effect::SetField { index, .. } if *index == TITLE_HASH_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[1],
-            Effect::SetField { index, .. } if *index == REWARD_SLOT
+            Effect::SetField { index, .. } if *index == REWARD_SLOT as u64
         ));
         assert!(matches!(
             &action.effects[2],
-            Effect::SetField { index, value, .. } if *index == STATE_SLOT && *value == state_field(STATE_OPEN)
+            Effect::SetField { index, value, .. } if *index == STATE_SLOT as u64 && *value == state_field(STATE_OPEN)
         ));
         match action.authorization {
             Authorization::HybridSignature { ed25519, .. } => assert!(ed25519 != [0u8; 64]),

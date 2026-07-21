@@ -271,7 +271,7 @@ mod tests {
             AuthRequired::Either,
             Effect::SetField {
                 cell,
-                index: TALLY_SLOT,
+                index: TALLY_SLOT as u64,
                 value: [0u8; 32],
             },
         )

@@ -243,7 +243,7 @@ mod tests {
         let effects = vec![
             Effect::SetField {
                 cell: agent,
-                index: COUNTER_SLOT,
+                index: COUNTER_SLOT as u64,
                 value: pack_u64(cur + arg),
             },
             Effect::IncrementNonce { cell: agent },

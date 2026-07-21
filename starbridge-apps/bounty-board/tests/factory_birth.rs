@@ -160,7 +160,7 @@ fn factory_born_bounty_refuses_theft_replay_and_reward_tampering() {
         "claim_bounty",
         vec![Effect::SetField {
             cell: bounty,
-            index: CLAIMANT_HASH_SLOT as usize,
+            index: CLAIMANT_HASH_SLOT as u64,
             value: claimant_hash("mallory"),
         }],
     );
@@ -179,7 +179,7 @@ fn factory_born_bounty_refuses_theft_replay_and_reward_tampering() {
         "claim_bounty",
         vec![Effect::SetField {
             cell: bounty,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_CLAIMED),
         }],
     );
@@ -198,7 +198,7 @@ fn factory_born_bounty_refuses_theft_replay_and_reward_tampering() {
         "post_bounty",
         vec![Effect::SetField {
             cell: bounty,
-            index: REWARD_SLOT as usize,
+            index: REWARD_SLOT as u64,
             value: reward_field(1),
         }],
     );
@@ -252,7 +252,7 @@ fn factory_born_bounty_refuses_state_regression_and_double_payout() {
         "post_bounty",
         vec![Effect::SetField {
             cell: bounty,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_OPEN),
         }],
     );

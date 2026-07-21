@@ -108,17 +108,17 @@ pub fn propose_effects(
     vec![
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_PROPOSED),
         },
         Effect::SetField {
             cell,
-            index: PROPOSAL_HASH_SLOT as usize,
+            index: PROPOSAL_HASH_SLOT as u64,
             value: proposal_hash,
         },
         Effect::SetField {
             cell,
-            index: MEMBERS_COMMIT_SLOT as usize,
+            index: MEMBERS_COMMIT_SLOT as u64,
             value: members_commit,
         },
         Effect::EmitEvent {
@@ -136,7 +136,7 @@ pub fn approve_effects(cell: CellId, member_index: usize, running_count: u64) ->
     vec![
         Effect::SetField {
             cell,
-            index: FIRST_APPROVAL_SLOT as usize + member_index,
+            index: FIRST_APPROVAL_SLOT as u64 + member_index,
             value: field_from_u64(1),
         },
         Effect::EmitEvent {
@@ -161,12 +161,12 @@ pub fn certify_effects(cell: CellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: APPROVED_FLAG_SLOT as usize,
+            index: APPROVED_FLAG_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_APPROVED),
         },
         Effect::EmitEvent {
@@ -181,7 +181,7 @@ pub fn reject_effects(cell: CellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_REJECTED),
         },
         Effect::EmitEvent {
@@ -198,7 +198,7 @@ pub fn execute_effects(cell: CellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_EXECUTED),
         },
         Effect::EmitEvent {

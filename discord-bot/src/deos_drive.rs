@@ -181,7 +181,7 @@ pub fn build_presence_action(cclerk: &UserCipherclerk, epoch: u64) -> Action {
         "attest_presence",
         vec![Effect::SetField {
             cell,
-            index: PRESENCE_SLOT,
+            index: PRESENCE_SLOT as u64,
             value: field_from_u64(epoch),
         }],
     )
@@ -263,19 +263,19 @@ pub fn build_command_action(req: &DriveRequest, seq: u64) -> Action {
     let mut effects = vec![
         Effect::SetField {
             cell,
-            index: CMD_SEQ_SLOT,
+            index: CMD_SEQ_SLOT as u64,
             value: field_from_u64(seq),
         },
         Effect::SetField {
             cell,
-            index: CMD_LEN_SLOT,
+            index: CMD_LEN_SLOT as u64,
             value: field_from_u64(payload.len() as u64),
         },
     ];
     for (i, chunk) in chunks.iter().enumerate() {
         effects.push(Effect::SetField {
             cell,
-            index: CMD_PAYLOAD_BASE + i,
+            index: (CMD_PAYLOAD_BASE + i) as u64,
             value: *chunk,
         });
     }

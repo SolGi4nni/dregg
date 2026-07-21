@@ -564,7 +564,7 @@ impl<'a> Patron<'a> {
             "enter",
             vec![Effect::SetField {
                 cell: self.seat_cell(),
-                index: SEAT_PRESENT,
+                index: SEAT_PRESENT as u64,
                 value: pack_u64(1),
             }],
         )
@@ -585,7 +585,7 @@ impl<'a> Patron<'a> {
             vec![
                 Effect::SetField {
                     cell: self.cells.board,
-                    index: BOARD_POST_COUNT,
+                    index: BOARD_POST_COUNT as u64,
                     value: pack_u64(count + 1),
                 },
                 Effect::SetField {
@@ -595,7 +595,7 @@ impl<'a> Patron<'a> {
                 },
                 Effect::SetField {
                     cell: self.seat_cell(),
-                    index: SEAT_LAST_POSTED,
+                    index: SEAT_LAST_POSTED as u64,
                     value: pack_u64(value),
                 },
             ],
@@ -612,12 +612,12 @@ impl<'a> Patron<'a> {
             vec![
                 Effect::SetField {
                     cell: self.own_stall(),
-                    index: STALL_PRICE,
+                    index: STALL_PRICE as u64,
                     value: pack_u64(price),
                 },
                 Effect::SetField {
                     cell: self.own_stall(),
-                    index: STALL_LISTED,
+                    index: STALL_LISTED as u64,
                     value: pack_u64(1),
                 },
             ],
@@ -638,7 +638,7 @@ impl<'a> Patron<'a> {
             vec![
                 Effect::SetField {
                     cell: self.cells.party,
-                    index: PARTY_SIZE,
+                    index: PARTY_SIZE as u64,
                     value: pack_u64(size + 1),
                 },
                 Effect::SetField {
@@ -660,7 +660,7 @@ impl<'a> Patron<'a> {
             "poke_stall",
             vec![Effect::SetField {
                 cell: self.cells.stalls[owner_index],
-                index: STALL_PRICE,
+                index: STALL_PRICE as u64,
                 value: pack_u64(value),
             }],
         )
@@ -677,7 +677,7 @@ impl<'a> Patron<'a> {
             "enter",
             vec![Effect::SetField {
                 cell: self.cells.seats[index],
-                index: SEAT_PRESENT,
+                index: SEAT_PRESENT as u64,
                 value: pack_u64(1),
             }],
         )

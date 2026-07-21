@@ -141,7 +141,11 @@ fn setfields_from_state(fields: &[String]) -> Vec<Effect> {
         .filter_map(|(index, hex_field)| {
             let bytes = hex::decode(hex_field.trim()).ok()?;
             let value: [u8; 32] = bytes.try_into().ok()?;
-            Some(Effect::SetField { cell, index, value })
+            Some(Effect::SetField {
+                cell,
+                index: index as u64,
+                value,
+            })
         })
         .collect()
 }

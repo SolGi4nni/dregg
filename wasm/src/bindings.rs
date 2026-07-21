@@ -3145,7 +3145,7 @@ struct RawAction {
     from: Option<String>,
     cell: Option<String>,
     amount: Option<u64>,
-    index: Option<usize>,
+    index: Option<u64>,
     value_hex: Option<String>,
     /// `emit_event`: event topic (plaintext name; hashed via `symbol()`).
     topic: Option<String>,

@@ -518,7 +518,7 @@ impl<'a> MudClient<'a> {
             "move",
             vec![Effect::SetField {
                 cell: self.world.character,
-                index: CHAR_ROOM,
+                index: CHAR_ROOM as u64,
                 value: pack_u64(HALL_ROOM),
             }],
         )
@@ -531,7 +531,7 @@ impl<'a> MudClient<'a> {
             "gain-xp",
             vec![Effect::SetField {
                 cell: self.world.character,
-                index: CHAR_XP,
+                index: CHAR_XP as u64,
                 value: pack_u64(GAIN_XP_VALUE),
             }],
         )
@@ -553,7 +553,7 @@ impl<'a> MudClient<'a> {
                 "go",
                 vec![Effect::SetField {
                     cell: self.world.character,
-                    index: CHAR_ROOM,
+                    index: CHAR_ROOM as u64,
                     value: pack_u64(dest),
                 }],
             )
@@ -581,7 +581,7 @@ impl<'a> MudClient<'a> {
                 "take",
                 vec![Effect::SetField {
                     cell: item,
-                    index: ITEM_HELD,
+                    index: ITEM_HELD as u64,
                     value: pack_u64(1),
                 }],
             )
@@ -605,12 +605,12 @@ impl<'a> MudClient<'a> {
                 vec![
                     Effect::SetField {
                         cell: item,
-                        index: ITEM_HELD,
+                        index: ITEM_HELD as u64,
                         value: pack_u64(0),
                     },
                     Effect::SetField {
                         cell: item,
-                        index: ITEM_ROOM,
+                        index: ITEM_ROOM as u64,
                         value: pack_u64(room),
                     },
                 ],
@@ -629,7 +629,7 @@ impl<'a> MudClient<'a> {
             "say",
             vec![Effect::SetField {
                 cell: self.world.character,
-                index: CHAR_SAY_COUNT,
+                index: CHAR_SAY_COUNT as u64,
                 value: pack_u64(count + 1),
             }],
         )
@@ -667,7 +667,7 @@ impl<'a> MudClient<'a> {
                 "descend",
                 vec![Effect::SetField {
                     cell: self.world.dungeon,
-                    index: DUNGEON_DESCENDED,
+                    index: DUNGEON_DESCENDED as u64,
                     value: pack_u64(1),
                 }],
             )
@@ -695,7 +695,7 @@ impl<'a> MudClient<'a> {
                 "descend",
                 vec![Effect::SetField {
                     cell: self.world.sealed_dungeon,
-                    index: DUNGEON_DESCENDED,
+                    index: DUNGEON_DESCENDED as u64,
                     value: pack_u64(1),
                 }],
             )
@@ -710,7 +710,7 @@ impl<'a> MudClient<'a> {
             "forge-npc",
             vec![Effect::SetField {
                 cell: self.world.watchman,
-                index: NPC_MOOD,
+                index: NPC_MOOD as u64,
                 value: pack_u64(99),
             }],
         )

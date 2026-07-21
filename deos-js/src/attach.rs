@@ -314,7 +314,7 @@ impl AttachedApplet {
             vec![
                 Effect::SetField {
                     cell: self.agent,
-                    index: self.counter_slot,
+                    index: self.counter_slot as u64,
                     value,
                 },
                 Effect::IncrementNonce { cell: self.agent },
@@ -704,7 +704,7 @@ impl AttachedComposer {
                     .into_iter()
                     .map(|(index, value)| Effect::SetField {
                         cell: id,
-                        index,
+                        index: index as u64,
                         value,
                     })
                     .collect();
@@ -718,7 +718,7 @@ impl AttachedComposer {
                 let effects = vec![
                     Effect::SetField {
                         cell,
-                        index: slot,
+                        index: slot as u64,
                         value: crate::applet::pack_u64(value),
                     },
                     Effect::IncrementNonce { cell },

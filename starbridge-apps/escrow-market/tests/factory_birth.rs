@@ -179,7 +179,7 @@ fn factory_born_escrow_refuses_minting_tampering_and_double_settle() {
         "ship",
         vec![Effect::SetField {
             cell: escrow,
-            index: DELIVERY_HASH_SLOT as usize,
+            index: DELIVERY_HASH_SLOT as u64,
             value: sealed_delivery_digest(b"swapped-goods"),
         }],
     );

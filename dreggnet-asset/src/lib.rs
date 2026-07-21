@@ -757,7 +757,7 @@ impl AssetWorld {
         // ownership gate.
         let effects = vec![Effect::SetField {
             cell: tail.cell,
-            index: self.slots.spent as usize,
+            index: self.slots.spent as u64,
             value: field_from_u64(1),
         }];
         let action =
@@ -816,7 +816,7 @@ impl AssetWorld {
         let holder = &self.holders[&v.holder];
         let effects = vec![Effect::SetField {
             cell: v.cell,
-            index: self.slots.spent as usize,
+            index: self.slots.spent as u64,
             value: field_from_u64(1),
         }];
         let action = holder.cclerk.make_action(v.cell, TRANSFER_METHOD, effects);
@@ -900,7 +900,7 @@ impl AssetWorld {
         // The real gated burn: a minter-signed spend on the origin, no successor.
         let effects = vec![Effect::SetField {
             cell: tail.cell,
-            index: self.slots.spent as usize,
+            index: self.slots.spent as u64,
             value: field_from_u64(1),
         }];
         let action =

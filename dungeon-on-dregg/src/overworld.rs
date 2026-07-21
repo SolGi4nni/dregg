@@ -594,7 +594,7 @@ impl RegionCell {
             &clear_method(loc),
             vec![Effect::SetField {
                 cell: self.cell,
-                index: cleared_slot(i) as usize,
+                index: cleared_slot(i) as u64,
                 value: field_from_u64(1),
             }],
         )
@@ -613,7 +613,7 @@ impl RegionCell {
             &travel_method(dest),
             vec![Effect::SetField {
                 cell: self.cell,
-                index: CURRENT_SLOT as usize,
+                index: CURRENT_SLOT as u64,
                 value: field_from_u64(di as u64),
             }],
         )
@@ -632,7 +632,7 @@ impl RegionCell {
             &forge_method(loc),
             vec![Effect::SetField {
                 cell: self.cell,
-                index: cleared_slot(i) as usize,
+                index: cleared_slot(i) as u64,
                 value: field_from_u64(1),
             }],
         )

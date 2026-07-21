@@ -302,17 +302,17 @@ pub fn build_publish_action(
     let effects = vec![
         Effect::SetField {
             cell: topic_cell,
-            index: HEAD_SEQ_SLOT as usize,
+            index: HEAD_SEQ_SLOT as u64,
             value: new_head,
         },
         Effect::SetField {
             cell: topic_cell,
-            index: EVENT_ROOT_SLOT as usize,
+            index: EVENT_ROOT_SLOT as u64,
             value: new_event_root,
         },
         Effect::SetField {
             cell: topic_cell,
-            index: DEDUP_ROOT_SLOT as usize,
+            index: DEDUP_ROOT_SLOT as u64,
             value: new_dedup_root,
         },
         Effect::EmitEvent {
@@ -339,7 +339,7 @@ pub fn build_subscribe_action(
     let effects = vec![
         Effect::SetField {
             cell: topic_cell,
-            index: SUBSCRIBER_CURSORS_ROOT_SLOT as usize,
+            index: SUBSCRIBER_CURSORS_ROOT_SLOT as u64,
             value: new_subscriber_cursors_root,
         },
         Effect::EmitEvent {
@@ -365,7 +365,7 @@ pub fn build_grant_subscriber_action(
     let effects = vec![
         Effect::SetField {
             cell: topic_cell,
-            index: SUBSCRIBER_SET_ROOT_SLOT as usize,
+            index: SUBSCRIBER_SET_ROOT_SLOT as u64,
             value: new_subscriber_set_root,
         },
         Effect::EmitEvent {

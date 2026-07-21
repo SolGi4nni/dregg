@@ -321,7 +321,7 @@ impl MandateService {
     fn set(&self, index: u8, value: FieldElement) -> Effect {
         Effect::SetField {
             cell: self.cell,
-            index: index as usize,
+            index: index as u64,
             value,
         }
     }

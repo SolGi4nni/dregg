@@ -754,7 +754,7 @@ pub fn auction_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             BIDDER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: commit_slot(0),
+                index: commit_slot(0) as u64,
                 value: field_from_u64(0),
             },
         ),
@@ -769,7 +769,7 @@ pub fn auction_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             AUCTIONEER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PHASE_SLOT,
+                index: PHASE_SLOT as u64,
                 value: field_from_u64(PHASE_REVEAL),
             },
         ),
@@ -797,7 +797,7 @@ pub fn auction_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             AUCTIONEER_RIGHTS,
             Effect::SetField {
                 cell,
-                index: PHASE_SLOT,
+                index: PHASE_SLOT as u64,
                 value: field_from_u64(PHASE_RESOLVED),
             },
         ),
@@ -847,7 +847,7 @@ pub fn commit_bid_effects(cell: DeosCellId, slot: usize, seal: &Seal) -> Vec<Eff
     vec![
         Effect::SetField {
             cell,
-            index: slot,
+            index: u64::try_from(slot).expect("auction slot index exceeds u64"),
             value: *seal,
         },
         Effect::EmitEvent {
@@ -863,7 +863,7 @@ pub fn close_commit_effects(cell: DeosCellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_REVEAL),
         },
         Effect::EmitEvent {
@@ -894,17 +894,17 @@ pub fn resolve_effects(cell: DeosCellId, winner: FieldElement, high_bid: u64) ->
     vec![
         Effect::SetField {
             cell,
-            index: WINNER_SLOT,
+            index: WINNER_SLOT as u64,
             value: winner,
         },
         Effect::SetField {
             cell,
-            index: HIGH_BID_SLOT,
+            index: HIGH_BID_SLOT as u64,
             value: high_f,
         },
         Effect::SetField {
             cell,
-            index: PHASE_SLOT,
+            index: PHASE_SLOT as u64,
             value: field_from_u64(PHASE_RESOLVED),
         },
         Effect::EmitEvent {

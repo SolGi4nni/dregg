@@ -196,7 +196,7 @@ pub fn plan_trustline_collateral(
     let adopt_effects = vec![self_cap(operator), self_cap(holder)];
     let set = |index: u8, value: FieldElement| Effect::SetField {
         cell: cell_id,
-        index: index as usize,
+        index: index as u64,
         value,
     };
     let mut open_effects = vec![
@@ -388,12 +388,12 @@ impl Trustline {
             vec![
                 Effect::SetField {
                     cell: self.cell,
-                    index: TL_DRAWN_SLOT as usize,
+                    index: TL_DRAWN_SLOT as u64,
                     value: field_from_u64(new_drawn),
                 },
                 Effect::SetField {
                     cell: self.cell,
-                    index: TL_DIGEST_SLOT as usize,
+                    index: TL_DIGEST_SLOT as u64,
                     value: digest,
                 },
                 Effect::EmitEvent {
@@ -428,7 +428,7 @@ impl Trustline {
             vec![
                 Effect::SetField {
                     cell: self.cell,
-                    index: TL_DRAWN_SLOT as usize,
+                    index: TL_DRAWN_SLOT as u64,
                     value: field_from_u64(status.drawn - amount),
                 },
                 Effect::EmitEvent {
@@ -484,7 +484,7 @@ impl Trustline {
                     vec![
                         Effect::SetField {
                             cell: self.cell,
-                            index: TL_SETTLED_SLOT as usize,
+                            index: TL_SETTLED_SLOT as u64,
                             value: field_from_u64(status.drawn),
                         },
                         Effect::Transfer {
@@ -521,7 +521,7 @@ impl Trustline {
                     vec![
                         Effect::SetField {
                             cell: self.cell,
-                            index: TL_DRAWN_SLOT as usize,
+                            index: TL_DRAWN_SLOT as u64,
                             value: field_from_u64(status.settled),
                         },
                         Effect::EmitEvent {
@@ -565,7 +565,7 @@ impl Trustline {
                 if outstanding > 0 {
                     effects.push(Effect::SetField {
                         cell: self.cell,
-                        index: TL_SETTLED_SLOT as usize,
+                        index: TL_SETTLED_SLOT as u64,
                         value: field_from_u64(status.drawn),
                     });
                     effects.push(Effect::Transfer {
@@ -596,7 +596,7 @@ impl Trustline {
         };
         effects.push(Effect::SetField {
             cell: self.cell,
-            index: TL_STATE_SLOT as usize,
+            index: TL_STATE_SLOT as u64,
             value: field_from_u64(TL_STATE_CLOSED),
         });
         effects.push(Effect::EmitEvent {
@@ -747,7 +747,7 @@ mod tests {
             tl.cell,
             vec![Effect::SetField {
                 cell: tl.cell,
-                index: TL_DRAWN_SLOT as usize,
+                index: TL_DRAWN_SLOT as u64,
                 value: field_from_u64(LINE + 1),
             }],
         );
@@ -759,7 +759,7 @@ mod tests {
             tl.cell,
             vec![Effect::SetField {
                 cell: tl.cell,
-                index: TL_CEILING_SLOT as usize,
+                index: TL_CEILING_SLOT as u64,
                 value: field_from_u64(LINE * 10),
             }],
         );
@@ -859,7 +859,7 @@ mod tests {
             tl.cell,
             vec![Effect::SetField {
                 cell: tl.cell,
-                index: TL_SETTLED_SLOT as usize,
+                index: TL_SETTLED_SLOT as u64,
                 value: field_from_u64(0),
             }],
         );
@@ -934,7 +934,7 @@ mod tests {
             tl.cell,
             vec![Effect::SetField {
                 cell: tl.cell,
-                index: TL_DRAWN_SLOT as usize,
+                index: TL_DRAWN_SLOT as u64,
                 value: field_from_u64(31),
             }],
         );
@@ -1060,7 +1060,7 @@ mod tests {
             tl.cell,
             vec![Effect::SetField {
                 cell: tl.cell,
-                index: TL_COLLATERAL_SLOT as usize,
+                index: TL_COLLATERAL_SLOT as u64,
                 value: field_from_u64(0),
             }],
         );

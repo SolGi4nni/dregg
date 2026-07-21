@@ -935,7 +935,7 @@ impl ToolGateway {
         let mut effects = Vec::with_capacity(charged.len() + 1);
         effects.push(Effect::SetField {
             cell: self.worker_cell,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(new as u64),
         });
         effects.extend(charged);
@@ -1021,7 +1021,7 @@ impl ToolGateway {
         let mut effects = Vec::with_capacity(charged_work.len() + 1);
         effects.push(Effect::SetField {
             cell: self.worker_cell,
-            index: CALLS_MADE_SLOT as usize,
+            index: CALLS_MADE_SLOT as u64,
             value: field_from_u64(new as u64),
         });
         effects.extend(charged_work);
@@ -1099,7 +1099,7 @@ impl ToolGateway {
             let mut effects = Vec::with_capacity(charged_work.len() + 1);
             effects.push(Effect::SetField {
                 cell: self.worker_cell,
-                index: CALLS_MADE_SLOT as usize,
+                index: CALLS_MADE_SLOT as u64,
                 value: field_from_u64(item.new_count as u64),
             });
             effects.extend(charged_work);

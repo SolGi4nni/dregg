@@ -138,7 +138,7 @@ pub(crate) fn bootstrap_plan(
 fn set(cell: CellId, index: u8, value: FieldElement) -> Effect {
     Effect::SetField {
         cell,
-        index: index as usize,
+        index: index as u64,
         value,
     }
 }

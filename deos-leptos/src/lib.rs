@@ -173,7 +173,7 @@ pub fn council(status: u64, tally: u64) -> CellState {
 fn set_field(cell: CellId, index: usize, value: u64) -> Effect {
     Effect::SetField {
         cell,
-        index,
+        index: index as u64,
         value: fe(value),
     }
 }

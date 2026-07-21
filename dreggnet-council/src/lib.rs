@@ -713,7 +713,7 @@ impl CouncilOffering {
         let effects = vec![
             Effect::SetField {
                 cell: session.council_cell,
-                index: PROPOSALS_OPENED_SLOT,
+                index: PROPOSALS_OPENED_SLOT as u64,
                 value: field_from_u64(live + 1),
             },
             Effect::EmitEvent {

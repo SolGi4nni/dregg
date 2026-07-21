@@ -163,7 +163,7 @@ fn factory_born_mandate_refuses_rollback_and_anchor_rebind() {
         "advance_step",
         vec![Effect::SetField {
             cell: mandate,
-            index: STEP_CURSOR_SLOT as usize,
+            index: STEP_CURSOR_SLOT as u64,
             value: field_from_u64(0),
         }],
     );
@@ -182,7 +182,7 @@ fn factory_born_mandate_refuses_rollback_and_anchor_rebind() {
         "init_mandate",
         vec![Effect::SetField {
             cell: mandate,
-            index: COMMITMENT_ANCHOR_SLOT as usize,
+            index: COMMITMENT_ANCHOR_SLOT as u64,
             value: field_from_u64(DEFAULT_COMMITMENT_ANCHOR + 1),
         }],
     );

@@ -153,7 +153,11 @@ pub fn emit_event(cell: CellId, topic: [u8; 32]) -> Effect {
 
 /// A real `SetField` effect (an edit/approve turn) writing slot `index` of `cell`.
 pub fn set_field(cell: CellId, index: usize, value: [u8; 32]) -> Effect {
-    Effect::SetField { cell, index, value }
+    Effect::SetField {
+        cell,
+        index: index as u64,
+        value,
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

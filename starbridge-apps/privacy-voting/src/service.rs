@@ -346,7 +346,11 @@ impl VotingService {
 
 /// A `SetField` effect on `cell`.
 fn set(cell: CellId, index: usize, value: FieldElement) -> Effect {
-    Effect::SetField { cell, index, value }
+    Effect::SetField {
+        cell,
+        index: index as u64,
+        value,
+    }
 }
 
 /// Why a [`VotingService`] invocation could not be built.

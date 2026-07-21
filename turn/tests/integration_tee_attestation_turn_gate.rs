@@ -162,7 +162,7 @@ fn tee_gated_turn(cell: CellId, witness_blobs: Vec<WitnessBlob>) -> Turn {
         preconditions: Default::default(),
         effects: vec![Effect::SetField {
             cell,
-            index: MUTATED_SLOT as usize,
+            index: MUTATED_SLOT as u64,
             value: field_from_u64(7),
         }],
         may_delegate: DelegationMode::None,

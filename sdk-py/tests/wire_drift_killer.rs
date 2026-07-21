@@ -175,7 +175,7 @@ fn python_write_reaches_the_wide_ext_plane_beyond_the_16_fixed_slots() {
         &clerk,
         vec![Effect::SetField {
             cell: agent_id,
-            index: WIDE_KEY as usize,
+            index: WIDE_KEY as u64,
             value: dregg_cell::field_from_u64(99),
         }],
         0,

@@ -377,12 +377,12 @@ pub fn build_issue_credential_action(
     let effects = vec![
         Effect::SetField {
             cell: issuer_cell,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: counter_field,
         },
         Effect::SetField {
             cell: issuer_cell,
-            index: REVOCATION_ROOT_SLOT,
+            index: REVOCATION_ROOT_SLOT as u64,
             value: revocation_root,
         },
         Effect::EmitEvent {
@@ -424,7 +424,7 @@ pub fn build_revoke_credential_action(
     let effects = vec![
         Effect::SetField {
             cell: issuer_cell,
-            index: REVOCATION_ROOT_SLOT,
+            index: REVOCATION_ROOT_SLOT as u64,
             value: new_root,
         },
         Effect::EmitEvent {
@@ -837,7 +837,7 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
             ISSUER_RIGHTS,
             Effect::SetField {
                 cell: issuer,
-                index: ISSUANCE_COUNTER_SLOT,
+                index: ISSUANCE_COUNTER_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -853,7 +853,7 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
             ISSUER_RIGHTS,
             Effect::SetField {
                 cell: issuer,
-                index: REVOCATION_ROOT_SLOT,
+                index: REVOCATION_ROOT_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -999,7 +999,7 @@ pub fn fire_issue(
     let effects = vec![
         Effect::SetField {
             cell: issuer,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: field_from_u64(new_counter),
         },
         Effect::EmitEvent {
@@ -1053,12 +1053,12 @@ pub fn fire_revoke(
     let effects = vec![
         Effect::SetField {
             cell: issuer,
-            index: REVOCATION_ROOT_SLOT,
+            index: REVOCATION_ROOT_SLOT as u64,
             value: field_from_u64(new_root),
         },
         Effect::SetField {
             cell: issuer,
-            index: ISSUANCE_COUNTER_SLOT,
+            index: ISSUANCE_COUNTER_SLOT as u64,
             value: field_from_u64(new_counter),
         },
         Effect::EmitEvent {

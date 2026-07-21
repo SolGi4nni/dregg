@@ -705,7 +705,7 @@ mod tests {
             method: "bump".to_string(),
             effects: vec![Effect::SetField {
                 cell: user,
-                index: AGENT_COUNTER_SLOT,
+                index: AGENT_COUNTER_SLOT as u64,
                 value: field,
             }],
         };

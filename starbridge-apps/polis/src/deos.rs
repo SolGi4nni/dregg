@@ -197,7 +197,7 @@ pub fn council_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             PARTICIPANT_RIGHTS,
             Effect::SetField {
                 cell: proposal,
-                index: council::FIRST_APPROVAL_SLOT as usize,
+                index: council::FIRST_APPROVAL_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -212,7 +212,7 @@ pub fn council_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             AUTHORITY_RIGHTS,
             Effect::SetField {
                 cell: proposal,
-                index: council::APPROVED_FLAG_SLOT as usize,
+                index: council::APPROVED_FLAG_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -360,7 +360,7 @@ pub fn amendment_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) 
             AUTHORITY_RIGHTS,
             Effect::SetField {
                 cell: amendment,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(council::STATE_EXECUTED),
             },
         ),
@@ -463,7 +463,7 @@ pub fn fire_amendment_ratify(
         vec![
             Effect::SetField {
                 cell: amendment,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(council::STATE_EXECUTED),
             },
             Effect::EmitEvent {
@@ -521,7 +521,7 @@ pub fn constitution_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecuto
             AUTHORITY_RIGHTS,
             Effect::SetField {
                 cell: constitution,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(constitution::STATE_SUPERSEDED),
             },
         ),
@@ -599,12 +599,12 @@ pub fn fire_constitution_amend(
         vec![
             Effect::SetField {
                 cell,
-                index: constitution::SUCCESSOR_HASH_SLOT as usize,
+                index: constitution::SUCCESSOR_HASH_SLOT as u64,
                 value: successor_hash,
             },
             Effect::SetField {
                 cell,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(constitution::STATE_SUPERSEDED),
             },
             Effect::EmitEvent {
@@ -631,7 +631,7 @@ pub fn fire_constitution_anon_supersede_attempt(
         // No successor-hash effect — the supersession is anonymous (REFUSED).
         vec![Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(constitution::STATE_SUPERSEDED),
         }]
     })
@@ -685,7 +685,7 @@ pub fn mandate_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             PARTICIPANT_RIGHTS,
             Effect::SetField {
                 cell: worker,
-                index: mandate::SLICE_SLOT as usize,
+                index: mandate::SLICE_SLOT as u64,
                 value: field_from_u64(0),
             },
         ),
@@ -699,7 +699,7 @@ pub fn mandate_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             AUTHORITY_RIGHTS,
             Effect::SetField {
                 cell: worker,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(mandate::STATE_REVOKED),
             },
         ),
@@ -792,7 +792,7 @@ pub fn fire_mandate_overspend_attempt(
     fire_gated(app, "invoke", held, cipherclerk, executor, move |_state| {
         vec![Effect::SetField {
             cell,
-            index: mandate::SLICE_SLOT as usize,
+            index: mandate::SLICE_SLOT as u64,
             value: field_from_u64(inflated_slice),
         }]
     })
@@ -813,7 +813,7 @@ pub fn fire_mandate_revoke(
         vec![
             Effect::SetField {
                 cell,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(mandate::STATE_REVOKED),
             },
             Effect::EmitEvent {
@@ -888,7 +888,7 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
             AUTHORITY_RIGHTS,
             Effect::SetField {
                 cell: id,
-                index: identity::NEXT_KEYS_DIGEST_SLOT as usize,
+                index: identity::NEXT_KEYS_DIGEST_SLOT as u64,
                 value: field_from_u64(1),
             },
         ),
@@ -991,17 +991,17 @@ pub fn fire_identity_rotate(
     let effects = vec![
         Effect::SetField {
             cell: id,
-            index: identity::CURRENT_KEYS_COMMIT_SLOT as usize,
+            index: identity::CURRENT_KEYS_COMMIT_SLOT as u64,
             value: preimage,
         },
         Effect::SetField {
             cell: id,
-            index: identity::NEXT_KEYS_DIGEST_SLOT as usize,
+            index: identity::NEXT_KEYS_DIGEST_SLOT as u64,
             value: fresh_digest,
         },
         Effect::SetField {
             cell: id,
-            index: identity::LAST_ROTATED_AT_SLOT as usize,
+            index: identity::LAST_ROTATED_AT_SLOT as u64,
             value: field_from_u64(height),
         },
         Effect::EmitEvent {

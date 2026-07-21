@@ -273,7 +273,7 @@ fn umem_witness_set_heap_field_round_trip() {
         0,
         Effect::SetField {
             cell: target_id,
-            index: slot as usize,
+            index: slot as u64,
             value,
         },
     );

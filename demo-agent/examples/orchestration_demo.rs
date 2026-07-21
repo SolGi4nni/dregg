@@ -645,7 +645,7 @@ fn main() {
         let r = orchestrator
             .execute(vec![Effect::SetField {
                 cell: orchestrator.cell_id(),
-                index: (j as usize) % 8,
+                index: (j as u64) % 8,
                 value: v,
             }])
             .expect("orchestrator audit turn must commit");

@@ -370,7 +370,7 @@ impl<'rt, T: MailboxTransport> MailboxCrank<'rt, T> {
             .turn()
             .on(self.inbox_cell)
             .method("grant_sender")
-            .write(SENDER_SET_ROOT_SLOT, root)
+            .write(SENDER_SET_ROOT_SLOT as u64, root)
             .sign()?
             .submit()?;
         // Only adopt the opening once the executor committed the root.

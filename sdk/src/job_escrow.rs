@@ -191,12 +191,12 @@ impl JobEscrow {
         vec![
             Effect::SetField {
                 cell: self.cell,
-                index: WITNESS_SLOT as usize,
+                index: WITNESS_SLOT as u64,
                 value: approval,
             },
             Effect::SetField {
                 cell: self.cell,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_RESOLVED_A),
             },
             Effect::Transfer {

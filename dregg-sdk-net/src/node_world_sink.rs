@@ -531,7 +531,7 @@ mod tests {
                     "set_slot",
                     vec![Effect::SetField {
                         cell: agent,
-                        index: slot,
+                        index: slot as u64,
                         value: new_value,
                     }],
                 )

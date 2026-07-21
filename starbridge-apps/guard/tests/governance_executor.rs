@@ -86,7 +86,7 @@ fn an_unwitnessed_set_standing_is_refused_the_self_write_fails_closed() {
         "set_standing",
         vec![dregg_app_framework::Effect::SetField {
             cell: account,
-            index: STANDING_SLOT as usize,
+            index: STANDING_SLOT as u64,
             value: field_from_u64(STANDING_SUSPENDED),
         }],
     );

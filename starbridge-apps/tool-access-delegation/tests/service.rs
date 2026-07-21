@@ -185,7 +185,7 @@ fn the_delegated_cap_cannot_be_amplified() {
         "exercise",
         vec![Effect::SetField {
             cell: service.cell,
-            index: RATE_LIMIT_SLOT as usize,
+            index: RATE_LIMIT_SLOT as u64,
             value: field_from_u64(100),
         }],
     );

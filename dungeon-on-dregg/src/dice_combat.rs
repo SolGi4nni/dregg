@@ -309,13 +309,13 @@ pub fn resolve_blow(world: &WorldCell, draw: &CombatDraw) -> Result<CombatReceip
     let effects = vec![
         Effect::SetField {
             cell,
-            index: hp_slot as usize,
+            index: hp_slot as u64,
             value: field_from_u64(hp_after),
         },
         // The trade-blows self-loop keeps the player in the gatehall.
         Effect::SetField {
             cell,
-            index: PASSAGE_SLOT,
+            index: PASSAGE_SLOT as u64,
             value: field_from_u64(gatehall_idx),
         },
         dice_event_effect(cell, draw),

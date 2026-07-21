@@ -918,12 +918,12 @@ mod tests {
             vec![
                 Effect::SetField {
                     cell,
-                    index: disposition as usize,
+                    index: disposition as u64,
                     value: field_from_u64(4),
                 },
                 Effect::SetField {
                     cell,
-                    index: passage_open as usize,
+                    index: passage_open as u64,
                     value: field_from_u64(1),
                 },
             ],

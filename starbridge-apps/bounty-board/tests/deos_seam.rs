@@ -172,7 +172,7 @@ fn the_executor_re_enforces_a_no_advance_state_is_refused() {
     // A NO-ADVANCE STATE: set STATE := OPEN again (1 -> 1). StrictMonotonic(STATE) refuses it.
     let no_advance = vec![dregg_app_framework::Effect::SetField {
         cell: bounty,
-        index: STATE_SLOT,
+        index: STATE_SLOT as u64,
         value: state_field(STATE_OPEN),
     }];
     let action = cclerk.make_action(bounty, "claim", no_advance);

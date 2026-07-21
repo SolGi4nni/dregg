@@ -82,7 +82,7 @@ fn poll_operator_forges_a_tally_with_zero_ballots_cast() {
         "record_tally",
         vec![dregg_app_framework::Effect::SetField {
             cell: poll,
-            index: TALLY_YES_SLOT,
+            index: TALLY_YES_SLOT as u64,
             value: field_from_u64(1_000_000),
         }],
     );

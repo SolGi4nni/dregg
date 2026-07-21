@@ -114,7 +114,7 @@ fn state_commitment(runtime: &AgentRuntime, cell: CellId) -> [u8; 32] {
 fn set_field(cell: CellId, key: u64, value: [u8; 32]) -> Vec<Effect> {
     vec![Effect::SetField {
         cell,
-        index: key as usize,
+        index: key as u64,
         value,
     }]
 }
@@ -125,12 +125,12 @@ fn cast_approval(cell: CellId, charter: &LargeCouncilCharter, i: usize) -> Vec<E
     vec![
         Effect::SetField {
             cell,
-            index: charter.member_id_key(i) as usize,
+            index: charter.member_id_key(i) as u64,
             value: charter.members[i],
         },
         Effect::SetField {
             cell,
-            index: charter.member_vote_key(i) as usize,
+            index: charter.member_vote_key(i) as u64,
             value: field_from_u64(1),
         },
     ]
@@ -143,17 +143,17 @@ fn propose(cell: CellId, charter: &LargeCouncilCharter, action_hash: [u8; 32]) -
     vec![
         Effect::SetField {
             cell,
-            index: PROPOSAL_HASH_SLOT as usize,
+            index: PROPOSAL_HASH_SLOT as u64,
             value: action_hash,
         },
         Effect::SetField {
             cell,
-            index: MEMBERS_COMMIT_SLOT as usize,
+            index: MEMBERS_COMMIT_SLOT as u64,
             value: charter.members_commitment(),
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_PROPOSED),
         },
     ]
@@ -166,12 +166,12 @@ fn certify(cell: CellId) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: APPROVED_FLAG_SLOT as usize,
+            index: APPROVED_FLAG_SLOT as u64,
             value: field_from_u64(1),
         },
         Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_APPROVED),
         },
     ]
@@ -239,7 +239,7 @@ fn large_council_5_members_3of5_full_lifecycle_through_executor() {
     runtime
         .execute(vec![Effect::SetField {
             cell,
-            index: STATE_SLOT as usize,
+            index: STATE_SLOT as u64,
             value: field_from_u64(STATE_EXECUTED),
         }])
         .expect("execute must commit");

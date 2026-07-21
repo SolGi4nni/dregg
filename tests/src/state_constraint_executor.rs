@@ -80,7 +80,7 @@ fn build_set_field_turn_with_witnesses(
         preconditions: Default::default(),
         effects: vec![Effect::SetField {
             cell: agent,
-            index: field_idx as usize,
+            index: field_idx as u64,
             value,
         }],
         may_delegate: DelegationMode::None,

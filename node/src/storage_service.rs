@@ -484,22 +484,22 @@ pub fn ensure_gateway_initialized(
         let effects = vec![
             Effect::SetField {
                 cell: gateway,
-                index: COMMITMENT_ANCHOR_SLOT as usize,
+                index: COMMITMENT_ANCHOR_SLOT as u64,
                 value: field_u64(cfg.commitment_anchor),
             },
             Effect::SetField {
                 cell: gateway,
-                index: VOLUME_CEILING_SLOT as usize,
+                index: VOLUME_CEILING_SLOT as u64,
                 value: field_u64(cfg.volume_ceiling),
             },
             Effect::SetField {
                 cell: gateway,
-                index: KEY_PREFIX_HASH_SLOT as usize,
+                index: KEY_PREFIX_HASH_SLOT as u64,
                 value: key_prefix_field(&cfg.key_prefix),
             },
             Effect::SetField {
                 cell: gateway,
-                index: READ_COMPARTMENT_SLOT as usize,
+                index: READ_COMPARTMENT_SLOT as u64,
                 value: field_from_bytes(cfg.read_compartment.as_bytes()),
             },
             Effect::EmitEvent {
@@ -663,17 +663,17 @@ pub fn commit_storage_op(
     let effects = vec![
         Effect::SetField {
             cell: gateway,
-            index: OBJECT_KEY_SLOT as usize,
+            index: OBJECT_KEY_SLOT as u64,
             value: key_field,
         },
         Effect::SetField {
             cell: gateway,
-            index: LAST_OP_SLOT as usize,
+            index: LAST_OP_SLOT as u64,
             value: op_field,
         },
         Effect::SetField {
             cell: gateway,
-            index: VOLUME_SPENT_SLOT as usize,
+            index: VOLUME_SPENT_SLOT as u64,
             value: spent_field,
         },
         Effect::EmitEvent {

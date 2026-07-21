@@ -214,7 +214,7 @@ fn bridged_fire_lands_on_the_served_worlds_ledger() {
             vec![
                 Effect::SetField {
                     cell: agent,
-                    index: COUNTER_SLOT,
+                    index: COUNTER_SLOT as u64,
                     value: pack_u64(7),
                 },
                 Effect::IncrementNonce { cell: agent },

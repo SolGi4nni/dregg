@@ -81,12 +81,12 @@ fn constitute_action(
     let effects = vec![
         Effect::SetField {
             cell: ns_cell,
-            index: GOVERNANCE_COMMITTEE_ROOT_SLOT as usize,
+            index: GOVERNANCE_COMMITTEE_ROOT_SLOT as u64,
             value: field_from_bytes(committee_tag),
         },
         Effect::SetField {
             cell: ns_cell,
-            index: THRESHOLD_SLOT as usize,
+            index: THRESHOLD_SLOT as u64,
             value: field_from_u64(threshold),
         },
     ];
@@ -130,7 +130,7 @@ fn factory_born_namespace_accepts_constitution_and_refuses_threshold_rebind() {
         "constitute",
         vec![Effect::SetField {
             cell: ns,
-            index: THRESHOLD_SLOT as usize,
+            index: THRESHOLD_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -164,7 +164,7 @@ fn factory_born_namespace_refuses_version_rollback_and_reserved_writes() {
         "commit_table_update",
         vec![Effect::SetField {
             cell: ns,
-            index: VERSION_SLOT as usize,
+            index: VERSION_SLOT as u64,
             value: field_from_u64(1),
         }],
     );
@@ -177,7 +177,7 @@ fn factory_born_namespace_refuses_version_rollback_and_reserved_writes() {
         "commit_table_update",
         vec![Effect::SetField {
             cell: ns,
-            index: VERSION_SLOT as usize,
+            index: VERSION_SLOT as u64,
             value: field_from_u64(0),
         }],
     );
@@ -196,7 +196,7 @@ fn factory_born_namespace_refuses_version_rollback_and_reserved_writes() {
         "constitute",
         vec![Effect::SetField {
             cell: ns,
-            index: RESERVED_SLOT_6 as usize,
+            index: RESERVED_SLOT_6 as u64,
             value: field_from_u64(7),
         }],
     );

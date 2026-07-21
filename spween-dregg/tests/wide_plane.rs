@@ -793,7 +793,7 @@ fn the_heap_hatch_cannot_overwrite_a_spilled_story_var() {
         HEAP_HATCH_METHOD,
         vec![Effect::SetField {
             cell,
-            index: gold as usize,
+            index: gold as u64,
             value: field_from_u64(1_000_000),
         }],
     );
@@ -811,7 +811,7 @@ fn the_heap_hatch_cannot_overwrite_a_spilled_story_var() {
             HEAP_HATCH_METHOD,
             vec![Effect::SetField {
                 cell,
-                index: free_key as usize,
+                index: free_key as u64,
                 value: field_from_u64(42),
             }],
         )

@@ -383,12 +383,12 @@ fn advance_to(inner: &mut NodeStateInner, ceremony: CellId, target: u64) -> Resu
             vec![
                 Effect::SetField {
                     cell: ceremony,
-                    index: root_slot as usize,
+                    index: root_slot as u64,
                     value: root,
                 },
                 Effect::SetField {
                     cell: ceremony,
-                    index: DKG_PHASE_SLOT as usize,
+                    index: DKG_PHASE_SLOT as u64,
                     value: field_u64(next_phase),
                 },
             ],
@@ -637,42 +637,42 @@ async fn post_start(
         vec![
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_PARAMS_SLOT as usize,
+                index: DKG_PARAMS_SLOT as u64,
                 value: dkg_params_field(terms.n, terms.t),
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_ROSTER_SLOT as usize,
+                index: DKG_ROSTER_SLOT as u64,
                 value: terms.roster_root,
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_ADMIN_SLOT as usize,
+                index: DKG_ADMIN_SLOT as u64,
                 value: terms.admin,
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_TAG_SLOT as usize,
+                index: DKG_TAG_SLOT as u64,
                 value: terms.tag,
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_DEALING_DEADLINE_SLOT as usize,
+                index: DKG_DEALING_DEADLINE_SLOT as u64,
                 value: field_u64(terms.dealing_deadline),
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_COMPLAINT_DEADLINE_SLOT as usize,
+                index: DKG_COMPLAINT_DEADLINE_SLOT as u64,
                 value: field_u64(terms.complaint_deadline),
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_REVEAL_DEADLINE_SLOT as usize,
+                index: DKG_REVEAL_DEADLINE_SLOT as u64,
                 value: field_u64(terms.reveal_deadline),
             },
             Effect::SetField {
                 cell: ceremony,
-                index: DKG_PHASE_SLOT as usize,
+                index: DKG_PHASE_SLOT as u64,
                 value: field_u64(DKG_PHASE_DEALING),
             },
         ],
@@ -1006,17 +1006,17 @@ async fn post_finalize(
                 vec![
                     Effect::SetField {
                         cell: ceremony,
-                        index: DKG_REVEALS_ROOT_SLOT as usize,
+                        index: DKG_REVEALS_ROOT_SLOT as u64,
                         value: reveals_root,
                     },
                     Effect::SetField {
                         cell: ceremony,
-                        index: DKG_OUTPUT_SLOT as usize,
+                        index: DKG_OUTPUT_SLOT as u64,
                         value: commitment,
                     },
                     Effect::SetField {
                         cell: ceremony,
-                        index: DKG_PHASE_SLOT as usize,
+                        index: DKG_PHASE_SLOT as u64,
                         value: field_u64(DKG_PHASE_FINAL),
                     },
                 ],
@@ -1050,12 +1050,12 @@ async fn post_finalize(
                 vec![
                     Effect::SetField {
                         cell: ceremony,
-                        index: DKG_REVEALS_ROOT_SLOT as usize,
+                        index: DKG_REVEALS_ROOT_SLOT as u64,
                         value: reveals_root,
                     },
                     Effect::SetField {
                         cell: ceremony,
-                        index: DKG_PHASE_SLOT as usize,
+                        index: DKG_PHASE_SLOT as u64,
                         value: field_u64(DKG_PHASE_ABORTED),
                     },
                 ],

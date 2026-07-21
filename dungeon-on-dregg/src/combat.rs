@@ -801,7 +801,7 @@ pub struct FightRecord {
 fn set_reg(cell: CellId, slot: u8, v: u64) -> Effect {
     Effect::SetField {
         cell,
-        index: slot as usize,
+        index: slot as u64,
         value: field_from_u64(v),
     }
 }
@@ -809,7 +809,7 @@ fn set_reg(cell: CellId, slot: u8, v: u64) -> Effect {
 fn set_heap(cell: CellId, key: u64, v: u64) -> Effect {
     Effect::SetField {
         cell,
-        index: key as usize,
+        index: key as u64,
         value: field_from_u64(v),
     }
 }

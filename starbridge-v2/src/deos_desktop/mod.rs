@@ -2534,7 +2534,7 @@ impl DeosDesktop {
                 cell,
                 vec![dregg_turn::action::Effect::SetField {
                     cell,
-                    index,
+                    index: index as u64,
                     value: fe,
                 }],
             )

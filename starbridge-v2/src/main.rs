@@ -5105,7 +5105,7 @@ fn voting_card_fire(
                 let t = field_tail_u64_le(&live.fields[slot]);
                 vec![dregg_app_framework::Effect::SetField {
                     cell,
-                    index: slot,
+                    index: slot as u64,
                     value: dregg_app_framework::field_from_u64(t.saturating_add(1)),
                 }]
             },
@@ -5243,7 +5243,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                             let t = field_tail_u64_le(&st.fields[slot]);
                             vec![dregg_app_framework::Effect::SetField {
                                 cell,
-                                index: slot,
+                                index: slot as u64,
                                 value: dregg_app_framework::field_from_u64(t.saturating_add(1)),
                             }]
                         },
@@ -5317,7 +5317,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                         vec![
                             dregg_app_framework::Effect::SetField {
                                 cell: board,
-                                index: gn::PENDING_PROPOSAL_ROOT_SLOT as usize,
+                                index: gn::PENDING_PROPOSAL_ROOT_SLOT as u64,
                                 value: np,
                             },
                             dregg_app_framework::Effect::EmitEvent {
@@ -5575,17 +5575,17 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
                     vec![
                         dregg_app_framework::Effect::SetField {
                             cell,
-                            index: el::STEP_SLOT as usize,
+                            index: el::STEP_SLOT as u64,
                             value: dregg_app_framework::field_from_u64(step),
                         },
                         dregg_app_framework::Effect::SetField {
                             cell,
-                            index: el::STATE_DIGEST_SLOT as usize,
+                            index: el::STATE_DIGEST_SLOT as u64,
                             value: dregg_app_framework::field_from_u64(0xD00D + step),
                         },
                         dregg_app_framework::Effect::SetField {
                             cell,
-                            index: el::PERIODS_PAID_SLOT as usize,
+                            index: el::PERIODS_PAID_SLOT as u64,
                             value: dregg_app_framework::field_from_u64(paid),
                         },
                         dregg_app_framework::Effect::EmitEvent {

@@ -220,7 +220,7 @@ fn orchestrate_two_workers_slices_and_revocation() {
             worker_b.cell_id,
             vec![Effect::SetField {
                 cell: worker_b.cell_id,
-                index: STATE_SLOT as usize,
+                index: STATE_SLOT as u64,
                 value: field_from_u64(STATE_ACTIVE),
             }],
         ),
@@ -285,7 +285,7 @@ fn worker_mandate_terms_pinned() {
             worker.cell_id,
             vec![Effect::SetField {
                 cell: worker.cell_id,
-                index: TOOL_SCOPE_SLOT as usize,
+                index: TOOL_SCOPE_SLOT as u64,
                 value: tool_scope_commitment(&["search", "deploy", "rm-rf"]),
             }],
         ),

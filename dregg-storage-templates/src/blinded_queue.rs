@@ -375,12 +375,12 @@ pub fn build_add_action(
     let effects = vec![
         Effect::SetField {
             cell: queue_cell,
-            index: COMMITMENTS_ROOT_SLOT as usize,
+            index: COMMITMENTS_ROOT_SLOT as u64,
             value: new_commitments_root,
         },
         Effect::SetField {
             cell: queue_cell,
-            index: COMMITMENT_COUNT_SLOT as usize,
+            index: COMMITMENT_COUNT_SLOT as u64,
             value: new_commitment_count,
         },
         Effect::EmitEvent {
@@ -417,12 +417,12 @@ pub fn build_consume_action(
     let effects = vec![
         Effect::SetField {
             cell: queue_cell,
-            index: NULLIFIER_ROOT_SLOT as usize,
+            index: NULLIFIER_ROOT_SLOT as u64,
             value: new_nullifier_root,
         },
         Effect::SetField {
             cell: queue_cell,
-            index: NULLIFIER_COUNT_SLOT as usize,
+            index: NULLIFIER_COUNT_SLOT as u64,
             value: new_nullifier_count,
         },
         Effect::EmitEvent {

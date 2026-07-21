@@ -54,7 +54,7 @@ impl MultiwayTug {
         let mut set = |name: &str, v: u64| {
             effects.push(Effect::SetField {
                 cell,
-                index: self.dep.reg(name) as usize,
+                index: self.dep.reg(name) as u64,
                 value: field_from_u64(v),
             });
         };
@@ -84,7 +84,7 @@ impl MultiwayTug {
             ] {
                 effects.push(Effect::SetField {
                     cell,
-                    index: self.dep.flag_key(p, a) as usize,
+                    index: self.dep.flag_key(p, a) as u64,
                     value: field_from_u64(proj.flag[p.idx()][a.idx()]),
                 });
             }
@@ -93,7 +93,7 @@ impl MultiwayTug {
             for p in [Player::A, Player::B] {
                 effects.push(Effect::SetField {
                     cell,
-                    index: self.dep.score_key(g, p) as usize,
+                    index: self.dep.score_key(g, p) as u64,
                     value: field_from_u64(proj.score[g][p.idx()]),
                 });
             }
@@ -133,7 +133,7 @@ impl MultiwayTug {
     pub fn reg_effect(&self, name: &str, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: self.dep.reg(name) as usize,
+            index: self.dep.reg(name) as u64,
             value: field_from_u64(v),
         }
     }
@@ -142,7 +142,7 @@ impl MultiwayTug {
     pub fn heap_effect(&self, key: u64, v: u64) -> Effect {
         Effect::SetField {
             cell: self.cell(),
-            index: key as usize,
+            index: key as u64,
             value: field_from_u64(v),
         }
     }

@@ -1167,17 +1167,27 @@ fn effect_to_wire(
     let id_map = &pre.id_map;
     let id = |c: &CellId| id_map.get(c).copied();
     Some(match eff {
-        Effect::SetField { cell, index, value } => WireAction::SetField {
-            actor,
-            cell: id(cell)?,
-            field: field_index_to_name(*index),
-            // FAIL-CLOSED (docs/FINDING-state-field-truncation.md): a SetField value that exceeds the
-            // low-64 wire carrier (a full 32-byte digest / cell_tag, ≥ 2^64) has NO faithful wire
-            // image — `?` marks the whole turn ineligible so it falls to the Rust path (full-width
-            // native) rather than committing a silently-truncated value the Rust executor would
-            // diverge from. Widening the carrier to full 32 bytes is the v13 faithful-fields epoch.
-            v: field_to_i128_checked(value)?,
-        },
+        Effect::SetField { cell, index, value } => {
+            // The current Lean shadow reconstitution carries only the sixteen
+            // fixed registers. A committed-map key has no faithful post-state
+            // extraction yet, so keep the turn on the Rust path instead of
+            // narrowing the canonical u64 key or pretending it was applied.
+            let fixed_index = usize::try_from(*index).ok()?;
+            if fixed_index >= dregg_cell::state::STATE_SLOTS {
+                return None;
+            }
+            WireAction::SetField {
+                actor,
+                cell: id(cell)?,
+                field: field_index_to_name(fixed_index),
+                // FAIL-CLOSED (docs/FINDING-state-field-truncation.md): a SetField value that exceeds the
+                // low-64 wire carrier (a full 32-byte digest / cell_tag, ≥ 2^64) has NO faithful wire
+                // image — `?` marks the whole turn ineligible so it falls to the Rust path (full-width
+                // native) rather than committing a silently-truncated value the Rust executor would
+                // diverge from. Widening the carrier to full 32 bytes is the v13 faithful-fields epoch.
+                v: field_to_i128_checked(value)?,
+            }
+        }
         Effect::Transfer { from, to, amount } => WireAction::Balance {
             actor,
             src: id(from)?,

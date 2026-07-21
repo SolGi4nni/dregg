@@ -246,7 +246,7 @@ impl DeosExecutorCell {
                         AuthRequired::Either,
                         Effect::SetField {
                             cell: self.cell_id,
-                            index: TALLY_SLOT,
+                            index: TALLY_SLOT as u64,
                             value: fe(live.tally + 1),
                         },
                     ),
@@ -266,7 +266,7 @@ impl DeosExecutorCell {
                         AuthRequired::Either,
                         Effect::SetField {
                             cell: self.cell_id,
-                            index: STATUS_SLOT,
+                            index: STATUS_SLOT as u64,
                             value: fe(RESOLVED),
                         },
                     ),
