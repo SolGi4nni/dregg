@@ -242,7 +242,7 @@ fn a_full_round_drives_through_the_offering() {
     let off = TugOffering;
     let mut session = off.open(SessionConfig::with_seed(9)).expect("open");
     let mut landed = 0;
-    while !session.ended() {
+    while !session.engine.round_complete() {
         let seat = session.to_move();
         let a = session.scheduled_action().expect("scheduled");
         let out = off.advance(
@@ -254,5 +254,108 @@ fn a_full_round_drives_through_the_offering() {
         landed += 1;
     }
     assert_eq!(landed, 8, "eight action-turns played");
+    assert_eq!(session.projection().scored, 0);
+    let scoring = off.actions(&session);
+    assert_eq!(scoring.len(), 1, "SCORE is the one remaining turn");
+    assert_eq!((scoring[0].turn.as_str(), scoring[0].arg), ("score", 4));
+    let scorer = TugOffering::seat_identity(session.to_move());
+    match off.advance(&mut session, scoring[0].clone(), scorer) {
+        Outcome::Landed { ended, .. } => {
+            assert!(ended, "the explicit SCORE turn ends the round");
+            landed += 1;
+        }
+        Outcome::Refused(reason) => panic!("the SCORE turn was refused: {reason}"),
+    }
+    assert_eq!(landed, 9, "eight actions plus one SCORE turn");
+    let projection = session.projection();
+    assert_eq!(projection.scored, 1, "the SCORE turn really committed");
+    assert_eq!(projection.secret_count, [0, 0], "secrets were revealed");
+    assert_eq!(
+        projection.round_actions, 8,
+        "scoring does not forge a ninth player action"
+    );
+    assert!(session.ended());
+    assert!(off.actions(&session).is_empty());
+
+    let report = off.verify(&session);
+    assert!(report.verified, "{}", report.detail);
+    assert_eq!(report.turns, 10, "genesis + eight plays + SCORE");
+
+    let terminal = rendered_text(&off.render(&session));
+    assert!(terminal.contains("ROUND COMPLETE"), "{terminal}");
+    assert!(
+        terminal.contains("WINNER:") || terminal.contains("DRAW"),
+        "the terminal surface names the actual result: {terminal}"
+    );
+    assert!(
+        terminal.contains("Influence A:"),
+        "final scoring is visible"
+    );
+}
+
+/// Method and argument are one canonical action identity. A transport cannot
+/// splice a valid method onto a different menu argument and still claim a
+/// landed receipt; the refusal leaves the engine, hand root, and replay log
+/// untouched.
+#[test]
+fn method_argument_splice_is_refused_without_a_ghost_step() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(13)).expect("open");
+    let seat = session.to_move();
+    let action = session.scheduled_action().expect("scheduled");
+    let before_projection = session.projection();
+    let before_root = session.hands[seat.idx()].root_bytes();
+
+    let refused = off.advance(
+        &mut session,
+        Action::new("spliced", action.method(), (action.idx() + 1) as i64, true),
+        TugOffering::seat_identity(seat),
+    );
+    assert!(matches!(refused, Outcome::Refused(_)));
+    assert_eq!(session.projection(), before_projection);
+    assert_eq!(session.hands[seat.idx()].root_bytes(), before_root);
+    assert!(session.history.is_empty());
     assert!(off.verify(&session).verified);
+}
+
+/// `/verify` is a fresh confined replay, not a conservation-only spot check.
+/// Corrupting the accepted input log makes the same live projection fail
+/// verification because the forged first move refuses during replay.
+#[test]
+fn verification_replays_accepted_inputs_and_rejects_history_tamper() {
+    let off = TugOffering;
+    let mut session = off.open(SessionConfig::with_seed(17)).expect("open");
+    for _ in 0..3 {
+        let seat = session.to_move();
+        let action = session.scheduled_action().expect("scheduled");
+        assert!(
+            off.advance(
+                &mut session,
+                Action::new("", action.method(), action.idx() as i64, true),
+                TugOffering::seat_identity(seat),
+            )
+            .landed()
+        );
+    }
+    let honest = off.verify(&session);
+    assert!(honest.verified, "{}", honest.detail);
+
+    let original = session.history[0];
+    session.history[0] = LandedInput::Play {
+        seat: Player::A,
+        action: ActionKind::Gift,
+    };
+    let forged = off.verify(&session);
+    assert!(!forged.verified, "forged history must not replay");
+    assert!(
+        forged.detail.contains("refused during replay"),
+        "{}",
+        forged.detail
+    );
+
+    session.history[0] = original;
+    assert!(
+        off.verify(&session).verified,
+        "the honest record still replays"
+    );
 }

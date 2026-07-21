@@ -76,6 +76,14 @@ impl SeatedTugSession {
         None
     }
 
+    /// The seat a not-yet-seated viewer would claim on their first accepted
+    /// move. This is read-only: rendering never reserves a seat.
+    fn claimable_seat(&self) -> Option<Player> {
+        [Player::A, Player::B]
+            .into_iter()
+            .find(|seat| self.seats[seat.idx()].is_none())
+    }
+
     /// The live tug round (read-only).
     pub fn inner(&self) -> &TugSession {
         &self.inner
@@ -99,11 +107,21 @@ impl Offering for SeatedTug {
     /// Claim a seat for `actor` (first-come: A, then B), then resolve the move on the REAL executor
     /// as that seat. A third identity is a spectator — refused, nothing commits.
     fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome {
-        let Some(seat) = session.claim(&actor) else {
+        let existing = session.seat_of(&actor);
+        let Some(seat) = existing.or_else(|| session.claimable_seat()) else {
             return Outcome::Refused("both seats are taken — you are a spectator".to_string());
         };
-        self.inner
-            .advance(&mut session.inner, input, TugOffering::seat_identity(seat))
+        let outcome =
+            self.inner
+                .advance(&mut session.inner, input, TugOffering::seat_identity(seat));
+        // A refusal commits nothing, including no lobby ownership. This closes
+        // the ghost-seat attack where an invalid first press permanently
+        // occupied a seat despite producing no receipt.
+        if existing.is_none() && outcome.landed() {
+            let claimed = session.claim(&actor);
+            debug_assert_eq!(claimed, Some(seat));
+        }
+        outcome
     }
 
     fn verify(&self, session: &Self::Session) -> VerifyReport {
@@ -121,7 +139,10 @@ impl Offering for SeatedTug {
             Some(seat) => self
                 .inner
                 .render_for(&session.inner, &TugOffering::seat_identity(seat)),
-            None => self.inner.render(&session.inner),
+            None => match session.claimable_seat() {
+                Some(seat) => session.inner.surface_claim(seat),
+                None => self.inner.render(&session.inner),
+            },
         }
     }
 
@@ -133,5 +154,40 @@ impl Offering for SeatedTug {
 
     fn price(&self, input: &Action) -> RunCost {
         self.inner.price(input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn actor(name: &str) -> DreggIdentity {
+        DreggIdentity(format!("player:{name}"))
+    }
+
+    #[test]
+    fn refused_first_press_does_not_ghost_claim_a_seat() {
+        let offering = SeatedTug::new();
+        let mut session = offering.open(SessionConfig::with_seed(0x51)).expect("open");
+        let alice = actor("alice");
+        let bob = actor("bob");
+
+        let refused = offering.advance(
+            &mut session,
+            Action::new("wrong", "gift", 2, true),
+            alice.clone(),
+        );
+        assert!(matches!(refused, Outcome::Refused(_)));
+        assert_eq!(session.seat_of(&alice), None, "a refusal owns no seat");
+
+        let landed = offering.advance(
+            &mut session,
+            Action::new("Competition", "comp", 3, true),
+            bob.clone(),
+        );
+        assert!(landed.landed());
+        assert_eq!(session.seat_of(&bob), Some(Player::A));
+        assert_eq!(session.seat_of(&alice), None);
+        assert!(offering.verify(&session).verified);
     }
 }

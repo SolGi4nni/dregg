@@ -315,3 +315,55 @@ async fn a_tug_play_lands_for_a_browser_user() {
         "the committed tug round verifies: {body}"
     );
 }
+
+/// A browser match now reaches an executor-scored terminal result rather than
+/// stopping after the eighth placement with no winner, no charm, and a stale
+/// "to move" banner. Both browser identities keep their claimed seats across
+/// the full alternating round. The browser then fires the separately surfaced
+/// SCORE affordance, preserving the Offering invariant that one press is one
+/// executor turn and one receipt; `/verify` re-drives all nine inputs.
+#[tokio::test]
+async fn a_full_tug_match_scores_and_replays_through_the_web_surface() {
+    let app = app();
+    let base = "/offerings/tug/session/tug-full-scored";
+    let schedule = [
+        ("comp", 3, "alice"),
+        ("comp", 3, "bob"),
+        ("gift", 2, "alice"),
+        ("gift", 2, "bob"),
+        ("discard", 1, "alice"),
+        ("discard", 1, "bob"),
+        ("secret", 0, "alice"),
+        ("secret", 0, "bob"),
+    ];
+
+    for (turn, arg, actor) in schedule {
+        let (status, body) = post(&app, &format!("{base}/act"), turn, arg, actor).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("Turn committed"), "{actor}/{turn}: {body}");
+    }
+
+    let (status, body) = post(&app, &format!("{base}/act"), "score", 4, "alice").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Turn committed"), "score: {body}");
+
+    let (status, body) = get(&app, base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("ROUND COMPLETE"), "{body}");
+    assert!(
+        body.contains("WINNER:") || body.contains("DRAW"),
+        "the public result is explicit: {body}"
+    );
+    assert!(
+        body.contains("Influence A:"),
+        "final influence renders: {body}"
+    );
+
+    let (status, body) = get(&app, &format!("{base}/verify")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("\"verified\":true"), "{body}");
+    assert!(
+        body.contains("\"turns\":10"),
+        "genesis + eight plays + score replay: {body}"
+    );
+}

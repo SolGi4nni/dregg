@@ -186,6 +186,7 @@ impl SplitMix64 {
 
 /// The reference engine: card identities, placements, and the fixed deterministic
 /// strategy that produces a full round of [`ResolvedMove`]s.
+#[derive(Clone)]
 pub struct Engine {
     deck: Vec<u8>,
     hands: [Vec<u8>; 2],

@@ -71,6 +71,9 @@ impl TugOffering {
 /// A live multiway-tug round: the REAL executor game, the reference mover, and each player's
 /// committed hidden hand (the source of the per-viewer reveal + the opponent fog).
 pub struct TugSession {
+    /// Deterministic deployment/deal seed. Replay verification opens a fresh
+    /// confined game from this exact seed and re-drives every accepted input.
+    seed: u64,
     /// The deployed executor game — a play commits its projection as one real verified turn.
     game: MultiwayTug,
     /// The reference mover — card identities + the next projection each play commits.
@@ -89,6 +92,16 @@ pub struct TugSession {
     /// The ordered card ids each seat has PLAYED (each was membership-proven under the
     /// then-current remaining-hand root when it landed) — the other half of the match record.
     plays: [Vec<u64>; 2],
+    /// Accepted player inputs, in order. Refusals never enter this log. This is
+    /// deliberately action-level rather than a trusted projection snapshot:
+    /// [`Offering::verify`] replays it through a fresh engine and executor.
+    history: Vec<LandedInput>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LandedInput {
+    Play { seat: Player, action: ActionKind },
+    Score { seat: Player },
 }
 
 impl TugSession {
@@ -106,7 +119,7 @@ impl TugSession {
 
     /// Whether the round has ended.
     pub fn ended(&self) -> bool {
-        self.ended || self.engine.round_complete()
+        self.ended || self.engine.projection().scored == 1
     }
 
     /// THE MATCH-RECORD SEAM — the seat's dealt hidden hand, exactly as committed at open: the
@@ -262,15 +275,20 @@ impl TugSession {
     fn surface_for(&self, viewer: Option<Player>) -> Surface {
         let proj = self.projection();
         let to_move = if proj.current == 0 { "A" } else { "B" };
-        let winner = match proj.winner {
-            1 => " · WINNER: A",
-            2 => " · WINNER: B",
-            _ => "",
+        let status = match (proj.scored, proj.winner) {
+            (1, 1) => "ROUND COMPLETE · WINNER: A".to_string(),
+            (1, 2) => "ROUND COMPLETE · WINNER: B".to_string(),
+            (1, _) => "ROUND COMPLETE · DRAW".to_string(),
+            (_, _) if self.engine.round_complete() => {
+                "All favors placed · awaiting reveal and score".to_string()
+            }
+            _ => format!("action {}/8 · to move: {to_move}", proj.round_actions),
         };
         let mut kids = vec![
+            ViewNode::Text(format!("Multiway-Tug — {status}")),
             ViewNode::Text(format!(
-                "Multiway-Tug — action {}/8 · to move: {to_move}{winner}",
-                proj.round_actions
+                "Influence A:{} / B:{} · guilds A:{} / B:{}",
+                proj.charm[0], proj.charm[1], proj.guilds_controlled[0], proj.guilds_controlled[1]
             )),
             ViewNode::Section {
                 title: "Guilds".to_string(),
@@ -285,7 +303,18 @@ impl TugSession {
                 kids.push(self.own_hand(seat));
                 kids.push(self.hand_fog(seat.other(), "Opponent (hidden hand)"));
                 // The viewer's action menu (greyed by used-flags).
-                kids.push(self.action_menu(seat));
+                if !self.engine.round_complete() {
+                    kids.push(self.action_menu(seat));
+                } else if proj.scored == 0 {
+                    kids.push(ViewNode::Menu {
+                        items: vec![MenuItem {
+                            label: "Reveal secrets & score".to_string(),
+                            turn: "score".to_string(),
+                            arg: 4,
+                            enabled: true,
+                        }],
+                    });
+                }
             }
             None => {
                 // A spectator: BOTH hands are fog (no reveal to a non-seat).
@@ -308,7 +337,18 @@ impl TugSession {
             return self.surface_for(None);
         };
         if !self.ended() {
-            kids.push(self.action_menu(claimant));
+            if self.engine.round_complete() {
+                kids.push(ViewNode::Menu {
+                    items: vec![MenuItem {
+                        label: "Reveal secrets & score".to_string(),
+                        turn: "score".to_string(),
+                        arg: 4,
+                        enabled: true,
+                    }],
+                });
+            } else {
+                kids.push(self.action_menu(claimant));
+            }
         }
         Surface(ViewNode::VStack(kids))
     }
@@ -364,18 +404,23 @@ impl Offering for TugOffering {
         // dealt hand, so the open-time record is what `TugMatch` consumes.
         let dealt = [hand_openings(&hands[0]), hand_openings(&hands[1])];
         Ok(TugSession {
+            seed,
             game,
             engine,
             hands,
             ended: false,
             dealt,
             plays: [Vec::new(), Vec::new()],
+            history: Vec::new(),
         })
     }
 
     fn actions(&self, session: &Self::Session) -> Vec<Action> {
-        if session.ended || session.engine.round_complete() {
+        if session.ended() {
             return Vec::new();
+        }
+        if session.engine.round_complete() {
+            return vec![Action::new("Reveal secrets & score", "score", 4, true)];
         }
         let seat = session.engine.current_player();
         [
@@ -401,8 +446,29 @@ impl Offering for TugOffering {
         let Some(seat) = TugOffering::seat_of(&actor) else {
             return Outcome::Refused("actor holds no seat in this round".to_string());
         };
-        if session.ended || session.engine.round_complete() {
+        if session.ended() {
             return Outcome::Refused("the round is already complete".to_string());
+        }
+        if session.engine.round_complete() {
+            if input.turn != "score" || input.arg != 4 {
+                return Outcome::Refused(
+                    "all action turns are complete; reveal and score the round".to_string(),
+                );
+            }
+            let mut scored = session.engine.clone();
+            let _ = scored.score();
+            return match session.game.commit_score(&scored.projection()) {
+                Ok(receipt) => {
+                    session.engine = scored;
+                    session.ended = true;
+                    session.history.push(LandedInput::Score { seat });
+                    Outcome::Landed {
+                        receipt,
+                        ended: true,
+                    }
+                }
+                Err(error) => Outcome::Refused(error.to_string()),
+            };
         }
         // The fired action.
         let action = match input.turn.as_str() {
@@ -412,6 +478,14 @@ impl Offering for TugOffering {
             "comp" => ActionKind::Competition,
             other => return Outcome::Refused(format!("unknown action method `{other}`")),
         };
+        if input.arg != action.idx() as i64 {
+            return Outcome::Refused(format!(
+                "action method `{}` requires argument {}, got {}",
+                action.method(),
+                action.idx(),
+                input.arg
+            ));
+        }
         // The executor is the referee, but the offering first checks the turn order + the
         // once-per-round schedule (an out-of-turn / out-of-order fire commits nothing — anti-ghost).
         if seat != session.engine.current_player() {
@@ -426,10 +500,11 @@ impl Offering for TugOffering {
         // Play the scheduled move on the mover, then commit its projection as ONE real executor
         // turn under the action method. A legal projection lands a receipt; the teeth would refuse
         // an illegal one.
-        let mv = session.engine.play_next();
-        let proj = session.engine.projection();
+        let mut next_engine = session.engine.clone();
+        let mv = next_engine.play_next();
+        let proj = next_engine.projection();
         match session.game.commit_projection(mv.action().method(), &proj) {
-            Ok(receipt) => {
+            Ok(action_receipt) => {
                 // Advance the acting seat's hidden hand: remove a played card so the remaining-hand
                 // root moves (the hidden-hand fold update — a replay of that card now fails
                 // membership under the new root).
@@ -439,9 +514,19 @@ impl Offering for TugOffering {
                     // The match record: this card landed under the pre-removal root, in order.
                     session.plays[seat.idx()].push(played);
                 }
-                let ended = session.engine.round_complete();
-                session.ended = ended;
-                Outcome::Landed { receipt, ended }
+                session.engine = next_engine;
+                session.history.push(LandedInput::Play { seat, action });
+
+                // SCORE is deliberately a separate affordance/advance. The
+                // Offering contract says one accepted action yields one real
+                // executor turn and one receipt; silently committing SCORE here
+                // would make the eighth press perform two turns while exposing
+                // only the second receipt. The terminal surface now presents
+                // the exact `score(4)` turn explicitly.
+                Outcome::Landed {
+                    receipt: action_receipt,
+                    ended: false,
+                }
             }
             Err(e) => Outcome::Refused(e.to_string()),
         }
@@ -449,15 +534,68 @@ impl Offering for TugOffering {
 
     fn verify(&self, session: &Self::Session) -> VerifyReport {
         let proj = session.projection();
-        let turns = proj.round_actions as usize + 1; // genesis + committed actions
-        if proj.conservation_sum() == 21 {
-            VerifyReport::ok(turns)
-        } else {
-            VerifyReport::broken(
+        let turns = 1 + proj.round_actions as usize + proj.scored as usize;
+        if proj != session.engine.projection() {
+            return VerifyReport::broken(
+                turns,
+                "executor projection differs from the reference engine",
+            );
+        }
+        if proj.conservation_sum() != 21 {
+            return VerifyReport::broken(
                 turns,
                 format!("conservation broke: sum = {}", proj.conservation_sum()),
-            )
+            );
         }
+
+        let mut replay = match self.open(SessionConfig::with_seed(session.seed)) {
+            Ok(replay) => replay,
+            Err(error) => return VerifyReport::broken(0, error.to_string()),
+        };
+        for (index, input) in session.history.iter().copied().enumerate() {
+            let (seat, action) = match input {
+                LandedInput::Play { seat, action } => (
+                    seat,
+                    Action::new("", action.method(), action.idx() as i64, true),
+                ),
+                LandedInput::Score { seat } => (
+                    seat,
+                    Action::new("Reveal secrets & score", "score", 4, true),
+                ),
+            };
+            let outcome = self.advance(&mut replay, action, TugOffering::seat_identity(seat));
+            if !outcome.landed() {
+                return VerifyReport::broken(
+                    index + 1,
+                    format!("accepted tug input {index} refused during replay: {outcome:?}"),
+                );
+            }
+        }
+        let same_hands = [Player::A, Player::B].into_iter().all(|seat| {
+            replay.hands[seat.idx()].root_bytes() == session.hands[seat.idx()].root_bytes()
+                && replay.hands[seat.idx()].card_ids() == session.hands[seat.idx()].card_ids()
+        });
+        if replay.projection() != proj
+            || replay.engine.projection() != session.engine.projection()
+            || !same_hands
+            || replay.dealt != session.dealt
+            || replay.plays != session.plays
+            || replay.ended != session.ended
+            || replay.history != session.history
+        {
+            return VerifyReport::broken(
+                turns,
+                "fresh-seed replay differs from the live projection, hidden-hand roots, or match record",
+            );
+        }
+        let mut report = VerifyReport::ok(turns);
+        report.detail = format!(
+            "replayed {} accepted player input(s) through a fresh executor; {} real turn(s) including genesis{}",
+            session.history.len(),
+            turns,
+            if proj.scored == 1 { " and scoring" } else { "" }
+        );
+        report
     }
 
     /// The PUBLIC surface — both hands are fog (no viewer to reveal to).

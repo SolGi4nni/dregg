@@ -306,13 +306,13 @@ fn a_dm_still_serves_the_player_their_own_hidden_hand() {
     );
 }
 
-/// **Why the signal is DECLARED and not a render differential.** At the moment the decision must
-/// be made — before opening, before a seat is claimed — tug's per-viewer projection is identical
-/// to its public one. A differential would answer "nothing private here, go ahead" and only start
-/// disagreeing after the first hand is dealt, one turn too late. This test pins that: the
-/// differential is silent, the declaration is not.
+/// **Why the signal is DECLARED and not inferred from a render differential.** A fresh tug
+/// viewer now receives a safe claim affordance, so that projection may differ from the public
+/// one before a seat exists. Neither projection contains card ids, however; presentation details
+/// still cannot tell a shared frontend whether a later seated projection carries secrets. The
+/// explicit declaration remains the policy boundary.
 #[test]
-fn the_open_render_differential_would_have_said_safe_but_the_declaration_does_not() {
+fn the_open_claim_surface_is_safe_but_the_offering_still_declares_future_secrets() {
     use dreggnet_offerings::{DreggIdentity, SessionConfig};
 
     let tug = dreggnet_telegram::seated::SeatedTug::new();
@@ -321,10 +321,17 @@ fn the_open_render_differential_would_have_said_safe_but_the_declaration_does_no
 
     let public = format!("{:?}", tug.render(&session).view());
     let per_viewer = format!("{:?}", tug.render_for(&session, &viewer).view());
-    assert_eq!(
-        public, per_viewer,
-        "at open the two projections agree — which is exactly why a differential cannot be the \
-         signal a frontend decides on"
+    assert!(
+        !public.contains("card #"),
+        "the public opening leaks no hand"
+    );
+    assert!(
+        !per_viewer.contains("card #"),
+        "the pre-seat claim surface leaks no hand"
+    );
+    assert!(
+        per_viewer.contains("Competition"),
+        "a fresh private viewer gets a usable seat-claim affordance"
     );
 
     assert!(
