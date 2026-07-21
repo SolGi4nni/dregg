@@ -66,9 +66,11 @@
 //!   `coset_lde_batch` parks its output on the device (the final transpose
 //!   kernel writes a dedicated retained buffer) and `GpuBn254Mmcs::commit`
 //!   consumes it with a device→device blit into the leaf arena, skipping the
-//!   host staging copy + `write_buffer` re-upload. The host READBACK remains
-//!   by structure: the PCS seam (`.to_row_major_matrix()`) and the FRI
-//!   query/fold phases read the committed matrix on the host. See the
+//!   host staging copy + `write_buffer` re-upload. Merkle leaves and every
+//!   internal digest layer remain on-device through root completion; the
+//!   opening layers are then materialized by one batched copy/map/poll for the
+//!   host FRI query phase. The PCS seam (`.to_row_major_matrix()`) and FRI
+//!   fold/query work still read the committed matrix on the host. See the
 //!   "LDE device-residency" section below for the binding contract.
 //! - The all-BabyBear inner (apex-fold) MMCS + DFT are wired through the
 //!   production recursion-layer dispatch below.  Native uses wgpu when an
@@ -331,6 +333,13 @@ static GPU_DFT_DISPATCHES: AtomicU64 = AtomicU64::new(0);
 /// Successful native Poseidon2-BabyBear Merkle commits.  This is the tree
 /// engine shared by the recursion PCS and the salted HidingFRI PCS below.
 static GPU_BABYBEAR_MMCS_COMMITS: AtomicU64 = AtomicU64::new(0);
+/// Host-synchronizing readback batches used to materialize completed
+/// Poseidon2-BabyBear Merkle trees for the CPU FRI query phase.  A GPU commit
+/// must add exactly one batch, regardless of the number of tree levels.
+static GPU_BABYBEAR_MMCS_READBACK_BATCHES: AtomicU64 = AtomicU64::new(0);
+/// Number of Merkle layers copied in those batches.  This distinguishes one
+/// genuine whole-tree batch from a root-only readback.
+static GPU_BABYBEAR_MMCS_READBACK_LAYERS: AtomicU64 = AtomicU64::new(0);
 
 /// (hits, misses) of the device-resident LDE hand-off across the process —
 /// a hit is one leaf-arena upload replaced by a device→device blit.
@@ -351,12 +360,17 @@ pub fn lde_residency_counters() -> (u64, u64) {
 pub struct HidingGpuDispatchCounters {
     pub dft_dispatches: u64,
     pub babybear_merkle_commits: u64,
+    pub babybear_merkle_readback_batches: u64,
+    pub babybear_merkle_readback_layers: u64,
 }
 
 pub fn hiding_gpu_dispatch_counters() -> HidingGpuDispatchCounters {
     HidingGpuDispatchCounters {
         dft_dispatches: GPU_DFT_DISPATCHES.load(Ordering::Relaxed),
         babybear_merkle_commits: GPU_BABYBEAR_MMCS_COMMITS.load(Ordering::Relaxed),
+        babybear_merkle_readback_batches: GPU_BABYBEAR_MMCS_READBACK_BATCHES
+            .load(Ordering::Relaxed),
+        babybear_merkle_readback_layers: GPU_BABYBEAR_MMCS_READBACK_LAYERS.load(Ordering::Relaxed),
     }
 }
 
@@ -3321,36 +3335,89 @@ impl BbHashCtx {
         }
     }
 
-    /// Read `n_digests` Montgomery digests (8 u32 each) back from `buf`.
-    fn read_digests(&self, buf: &wgpu::Buffer, n_digests: usize) -> Vec<[u32; 8]> {
-        let bytes = (n_digests * 32) as u64;
-        let read = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("bb_dig_read"),
-            size: bytes.max(32),
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+    /// Materialize every completed Merkle layer for the host FRI query phase
+    /// with one queue submission and one device poll.
+    ///
+    /// The old path called `read_digests` after every level, turning the
+    /// device-resident tree build into `log2(height)` GPU/host barriers.  Each
+    /// level now has its own resident buffer until the root is complete.  We
+    /// enqueue all device-to-host copies together, request all mappings, and
+    /// synchronize exactly once.  Separate staging buffers avoid imposing a
+    /// new whole-tree `max_buffer_size` requirement on large recursion trees.
+    fn read_digest_layers_batched(&self, layers: &[(wgpu::Buffer, usize)]) -> Vec<Vec<[u32; 8]>> {
+        assert!(
+            !layers.is_empty(),
+            "Merkle tree must contain a digest layer"
+        );
+        assert!(
+            layers.iter().all(|(_, count)| *count > 0),
+            "Merkle digest layers must be non-empty"
+        );
+
+        let reads = layers
+            .iter()
+            .enumerate()
+            .map(|(level, (_, count))| {
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("bb_dig_read_level_{level}")),
+                    size: (*count as u64) * 32,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect::<Vec<_>>();
+
         let mut enc = self.device.create_command_encoder(&Default::default());
-        enc.copy_buffer_to_buffer(buf, 0, &read, 0, bytes);
+        for ((resident, count), read) in layers.iter().zip(&reads) {
+            enc.copy_buffer_to_buffer(resident, 0, read, 0, (*count as u64) * 32);
+        }
         self.queue.submit([enc.finish()]);
-        let slice = read.slice(..bytes);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+
+        let receivers = reads
+            .iter()
+            .map(|read| {
+                let (send, receive) = std::sync::mpsc::sync_channel(1);
+                read.slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        let _ = send.send(result);
+                    });
+                receive
+            })
+            .collect::<Vec<_>>();
         self.device.poll(wgpu::Maintain::Wait);
-        let out: Vec<[u32; 8]> = {
-            let mapped = slice.get_mapped_range();
-            let words: &[u32] = bytemuck::cast_slice(&mapped);
-            words
-                .chunks_exact(8)
-                .map(|c| c.try_into().unwrap())
-                .collect()
-        };
-        read.unmap();
+
+        let mut out = Vec::with_capacity(layers.len());
+        for (((_, count), read), receive) in layers.iter().zip(&reads).zip(receivers) {
+            receive
+                .recv()
+                .expect("BabyBear Merkle readback callback disappeared")
+                .expect("BabyBear Merkle readback mapping failed");
+            let layer = {
+                let mapped = read.slice(..).get_mapped_range();
+                let words: &[u32] = bytemuck::cast_slice(&mapped);
+                assert_eq!(
+                    words.len(),
+                    count * 8,
+                    "BabyBear Merkle readback length changed after preflight"
+                );
+                words
+                    .chunks_exact(8)
+                    .map(|chunk| chunk.try_into().expect("eight-word digest chunk"))
+                    .collect::<Vec<[u32; 8]>>()
+            };
+            read.unmap();
+            out.push(layer);
+        }
+
+        GPU_BABYBEAR_MMCS_READBACK_BATCHES.fetch_add(1, Ordering::Relaxed);
+        GPU_BABYBEAR_MMCS_READBACK_LAYERS.fetch_add(layers.len() as u64, Ordering::Relaxed);
         out
     }
 }
 
-/// The GPU-built BabyBear Merkle tree: original matrices + all digest layers
-/// (Montgomery u32x8; reinterpreted to `[BabyBear; 8]` at root/open time).
+/// The GPU-built BabyBear Merkle tree after its one whole-tree readback:
+/// original matrices + all digest layers (Montgomery u32x8; reinterpreted to
+/// `[BabyBear; 8]` at root/open time).
 pub struct GpuBbMerkleTree<M> {
     leaves: Vec<M>,
     digest_layers: Vec<Vec<[u32; 8]>>,
@@ -3539,34 +3606,32 @@ impl GpuBabyBearMmcs {
             };
 
         let desc_buf = ctx.storage_buffer("bb_desc", 4 + 2 * leaves.len().max(2), true);
-        let dig_a = ctx.storage_buffer("bb_dig_a", max_h * 8, true);
-        let dig_b = ctx.storage_buffer("bb_dig_b", max_h * 8, true);
+        let leaf_digests = ctx.storage_buffer("bb_dig_level_0", max_h * 8, true);
         let inj = ctx.storage_buffer("bb_dig_inj", (max_h / 2).max(1) * 8, true);
 
-        hash_group(&groups[0].1, max_h, &dig_a, &desc_buf);
-        let mut digest_layers: Vec<Vec<[u32; 8]>> = vec![ctx.read_digests(&dig_a, max_h)];
+        hash_group(&groups[0].1, max_h, &leaf_digests, &desc_buf);
+        let mut resident_layers = vec![(leaf_digests, max_h)];
 
         let mut next_group = 1usize;
         let mut cur_len = max_h;
-        let mut cur_is_a = true;
         while cur_len > 1 {
             let next_len = cur_len / 2;
-            let (src, dst) = if cur_is_a {
-                (&dig_a, &dig_b)
-            } else {
-                (&dig_b, &dig_a)
-            };
-            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, dst, next_len);
+            let dst = ctx.storage_buffer("bb_dig_next_level", next_len * 8, true);
+            let src = &resident_layers
+                .last()
+                .expect("current Merkle layer exists")
+                .0;
+            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, &dst, next_len);
             if next_group < groups.len() && groups[next_group].0 == next_len {
                 hash_group(&groups[next_group].1, next_len, &inj, &desc_buf);
-                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, dst, next_len);
+                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, &dst, next_len);
                 next_group += 1;
             }
-            digest_layers.push(ctx.read_digests(dst, next_len));
+            resident_layers.push((dst, next_len));
             cur_len = next_len;
-            cur_is_a = !cur_is_a;
         }
         assert_eq!(next_group, groups.len(), "all height groups consumed");
+        let digest_layers = ctx.read_digest_layers_batched(&resident_layers);
 
         GpuBbMerkleTree {
             leaves,
@@ -3698,38 +3763,36 @@ impl GpuBabyBearMmcs {
             };
 
         let desc_buf = ctx.storage_buffer("bb_hiding_desc", 4 + 4 * leaves.len().max(2), true);
-        let dig_a = ctx.storage_buffer("bb_hiding_dig_a", max_h * 8, true);
-        let dig_b = ctx.storage_buffer("bb_hiding_dig_b", max_h * 8, true);
+        let leaf_digests = ctx.storage_buffer("bb_hiding_dig_level_0", max_h * 8, true);
         let inj = ctx.storage_buffer("bb_hiding_dig_inj", (max_h / 2).max(1) * 8, true);
 
-        hash_group(&groups[0].1, max_h, &dig_a, &desc_buf);
-        let mut digest_layers: Vec<Vec<[u32; 8]>> = vec![ctx.read_digests(&dig_a, max_h)];
+        hash_group(&groups[0].1, max_h, &leaf_digests, &desc_buf);
+        let mut resident_layers = vec![(leaf_digests, max_h)];
 
         let mut next_group = 1usize;
         let mut cur_len = max_h;
-        let mut cur_is_a = true;
         while cur_len > 1 {
             let next_len = cur_len / 2;
-            let (src, dst) = if cur_is_a {
-                (&dig_a, &dig_b)
-            } else {
-                (&dig_b, &dig_a)
-            };
-            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, dst, next_len);
+            let dst = ctx.storage_buffer("bb_hiding_dig_next_level", next_len * 8, true);
+            let src = &resident_layers
+                .last()
+                .expect("current hiding Merkle layer exists")
+                .0;
+            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, &dst, next_len);
             if next_group < groups.len() && groups[next_group].0 == next_len {
                 hash_group(&groups[next_group].1, next_len, &inj, &desc_buf);
-                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, dst, next_len);
+                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, &dst, next_len);
                 next_group += 1;
             }
-            digest_layers.push(ctx.read_digests(dst, next_len));
+            resident_layers.push((dst, next_len));
             cur_len = next_len;
-            cur_is_a = !cur_is_a;
         }
         assert_eq!(
             next_group,
             groups.len(),
             "all hiding height groups consumed"
         );
+        let digest_layers = ctx.read_digest_layers_batched(&resident_layers);
 
         GpuBbMerkleTree {
             leaves,
@@ -4131,8 +4194,17 @@ pub fn prove_vm_descriptor2_gpu_zk(
 
     let encoded = postcard::to_allocvec(&proof)
         .map_err(|error| format!("GPU HidingFRI proof encode failed: {error}"))?;
-    let cpu_proof = postcard::from_bytes(&encoded)
+    let (cpu_proof, remainder): (
+        dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::stark_zk::DreggZkStarkConfig>,
+        &[u8],
+    ) = postcard::take_from_bytes(&encoded)
         .map_err(|error| format!("GPU HidingFRI proof CPU re-tag failed: {error}"))?;
+    if !remainder.is_empty() {
+        return Err(format!(
+            "GPU HidingFRI proof CPU re-tag left {} trailing bytes",
+            remainder.len()
+        ));
+    }
     let cpu_config = dregg_circuit::stark_zk::create_zk_config();
     dregg_circuit::descriptor_ir2::verify_vm_descriptor2_with_config(
         descriptor,
@@ -4179,6 +4251,16 @@ pub fn require_hiding_gpu_dispatch_since(
     if after.babybear_merkle_commits <= before.babybear_merkle_commits {
         return Err(
             "HidingFRI proof completed without a portable GPU Poseidon2 Merkle commit".to_string(),
+        );
+    }
+    if after.babybear_merkle_readback_batches <= before.babybear_merkle_readback_batches {
+        return Err(
+            "HidingFRI GPU Merkle commit completed without a whole-tree readback batch".to_string(),
+        );
+    }
+    if after.babybear_merkle_readback_layers <= before.babybear_merkle_readback_layers {
+        return Err(
+            "HidingFRI GPU Merkle readback did not materialize any opening layer".to_string(),
         );
     }
     Ok(after)

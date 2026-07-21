@@ -37,6 +37,18 @@ const DEPTH: usize = 2048;
 const MMCS_SEED: [u8; 32] = [0x4d; 32];
 const PCS_SEED: [u8; 32] = [0x5a; 32];
 
+fn decode_cpu_proof_exact(bytes: &[u8]) -> Result<Ir2BatchProof<DreggZkStarkConfig>, String> {
+    let (proof, remainder) = postcard::take_from_bytes(bytes)
+        .map_err(|error| format!("proof decode failed: {error}"))?;
+    if !remainder.is_empty() {
+        return Err(format!(
+            "proof decode left {} trailing bytes",
+            remainder.len()
+        ));
+    }
+    Ok(proof)
+}
+
 #[test]
 #[ignore = "GPU + proof-heavy: run on hbox with DREGG_REQUIRE_WGPU=1 and --run-ignored all"]
 fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
@@ -79,6 +91,19 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     let gpu_elapsed = gpu_started.elapsed();
     let after = require_hiding_gpu_dispatch_since(before)
         .expect("strict proof interval must contain a GPU Poseidon2 Merkle commit");
+    let commit_delta = after.babybear_merkle_commits - before.babybear_merkle_commits;
+    let readback_batch_delta =
+        after.babybear_merkle_readback_batches - before.babybear_merkle_readback_batches;
+    let readback_layer_delta =
+        after.babybear_merkle_readback_layers - before.babybear_merkle_readback_layers;
+    assert_eq!(
+        readback_batch_delta, commit_delta,
+        "each GPU Merkle commit must cross the host boundary exactly once"
+    );
+    assert!(
+        readback_layer_delta > readback_batch_delta,
+        "whole-tree readback counter did not include opening layers"
+    );
     let (resident_hits_after, _) = lde_residency_counters();
     assert!(
         resident_hits_after > resident_hits_before,
@@ -108,8 +133,7 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         "portable GPU HidingFRI proof diverged from the seeded CPU proof"
     );
 
-    let as_cpu: Ir2BatchProof<DreggZkStarkConfig> =
-        postcard::from_bytes(&gpu_bytes).expect("GPU proof re-tags to the CPU config");
+    let as_cpu = decode_cpu_proof_exact(&gpu_bytes).expect("GPU proof re-tags exactly");
     verify_vm_descriptor2_with_config(&descriptor, &as_cpu, &public, &cpu_config)
         .expect("untouched CPU HidingFRI verifier accepts GPU-minted bytes");
 
@@ -119,6 +143,28 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         verify_vm_descriptor2_with_config(&descriptor, &as_cpu, &wrong_public, &cpu_config)
             .is_err(),
         "CPU verifier accepted the GPU proof for a changed membership leaf"
+    );
+
+    let mut changed_proof_bytes = gpu_bytes.clone();
+    let changed_index = changed_proof_bytes.len() / 2;
+    changed_proof_bytes[changed_index] ^= 0x01;
+    let changed_proof_accepted = decode_cpu_proof_exact(&changed_proof_bytes).is_ok_and(|proof| {
+        verify_vm_descriptor2_with_config(&descriptor, &proof, &public, &cpu_config).is_ok()
+    });
+    assert!(
+        !changed_proof_accepted,
+        "CPU verifier accepted a mutated GPU HidingFRI proof"
+    );
+
+    assert!(
+        decode_cpu_proof_exact(&gpu_bytes[..gpu_bytes.len() - 1]).is_err(),
+        "exact proof decoder accepted a truncated GPU proof"
+    );
+    let mut trailing_proof = gpu_bytes.clone();
+    trailing_proof.push(0);
+    assert!(
+        decode_cpu_proof_exact(&trailing_proof).is_err(),
+        "exact proof decoder accepted a trailing byte"
     );
 
     // The production bridge draws fresh OS entropy, enforces the same strict
@@ -143,11 +189,13 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     );
 
     eprintln!(
-        "GPU HidingFRI IR2 depth={DEPTH}: proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, DFT dispatches +{}, resident LDE blits +{}",
+        "GPU HidingFRI IR2 depth={DEPTH}: proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, whole-tree readback batches +{} ({} layers), DFT dispatches +{}, resident LDE blits +{}",
         gpu_bytes.len(),
         gpu_elapsed.as_secs_f64(),
         cpu_elapsed.as_secs_f64(),
-        after.babybear_merkle_commits - before.babybear_merkle_commits,
+        commit_delta,
+        readback_batch_delta,
+        readback_layer_delta,
         after.dft_dispatches - before.dft_dispatches,
         resident_hits_after - resident_hits_before,
     );
