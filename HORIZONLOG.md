@@ -7917,8 +7917,13 @@ discipline. Design lands as docs/VISITOR-VERIFY-WELD.md when grounded.
   existing Rust verify cores, cockpit verdict UX slots). Both scouts feed docs/VISITOR-VERIFY-WELD.md.
 
 ## 2026-07-09 — NO-PRE-QUANTUM sweep (goal: leave no classical-only load-bearing crypto standing)
-Every load-bearing SIGNATURE surface is now hybrid (ed25519 ∧ ML-DSA-65, ENROLLED+PINNED, adversarial-tested)
-and the CapTP transport is hybrid-KEM (X25519+ML-KEM-768, X-Wing combiner). Commits:
+Every load-bearing SIGNATURE surface **in the scope of this 2026-07-09 sweep**
+was made hybrid (ed25519 ∧ ML-DSA-65, ENROLLED+PINNED,
+adversarial-tested), and the **CapTP** transport was made hybrid-KEM
+(X25519+ML-KEM-768, X-Wing combiner). This was never evidence that future
+protocol surfaces were automatically PQ: the later fhEgg/Dark Bazaar apex added
+the classical Bulletproof/Ristretto, clearing-quorum, and PartyMPC seams recorded
+in the 2026-07-21 PQ assumption correction below. Commits:
 - Finality: GAP #0 pin-enrolled-roster (04ba2901d) · blocklace lib::Block (78c1d2081) · LIVE finality::Block
   (a840498bf) + node enforcement (22951c72b, re-verify owed).
 - Capability/authority: CapTP handoff (1868c2180) · biscuit/credential (526ff41d1) · cell-crypto cap-proof
@@ -10525,3 +10530,209 @@ reserve/product validity.
 The apex sentence remains: a private witness proof and authenticated authorization now coexist in one
 claim-bound receipt, while the cryptographic BFV-ciphertext-to-private-root same-opening/range/validity
 relation and distributed no-single-viewer proof-witness production remain the Tier-0 construction frontier.
+
+## 2026-07-21 — exact BFV/root live apex and composed-game burn-down
+
+**This entry supersedes the immediately preceding apex sentence.** HEAD now has
+the cryptographic BFV-ciphertext-to-private-root same-opening proof and exact
+source-row composition. The remaining frontier is narrower: distributed
+proof-witness production without reconstruction, malicious MPC/input/preprocessing
+validity, and the handler-cutover export residual named below.
+
+Evidence rule for this entry: source presence is **BUILT**, a captured target
+result is **GREEN**, and a build that selects zero tests is **NOT A GATE**. A
+green organ does not promote a composed target.
+
+**GREEN, captured:**
+
+- **fhegg-fhe/tests/private_book_bfv_zk.rs** — 2/2 release; the hostile
+  same-opening proof/substitution test took 65.765s. The fixed N4K4 proof binds
+  the same private witness/root opening to the exact four full public-key BFV
+  rows. Its 2^-128 term is only the transcript-derived equation compression,
+  not total protocol security.
+- **dreggnet-market/tests/private_bfv_attested_clearing.rs** — 1/1 release,
+  62.958s. The relying-party verifier requires quorum + HidingFRI + BFV/root
+  same-opening and exact source-bound rows. This target's clearing transcript is
+  simulated; it is not the live-MPC gate.
+- **dreggnet-market/tests/fhegg_private_verifier_registry.rs** — 2/2. Trusted
+  public configuration reconstructs the complete private verifier and refuses
+  pin, statement, BFV identity, row/source, roster, threshold, and value-bit
+  substitutions without retaining witness, seeds, secret key, or shares.
+- **fhegg-fhe/tests/party_mpc_crossing_transport.rs** — 2/2 release, 1.099s.
+  Exact proof rows are folded, masked/threshold-opened only as a one-time-padded
+  carrier, shared into the authenticated PartyMPC crossing, and checked against
+  the public (p*, V*) transcript. Arithmetic is still semi-honest with trusted
+  Beaver preprocessing; authenticated encrypted routing is not a malicious-MPC
+  proof.
+- **fhegg-fhe/tests/collective_gpu_additive.rs** — 1/1 on hbox's real AMD RX
+  6750 XT. Both collective additive fold phases reported GpuResident, matched
+  the CPU byte oracle, and fed the party-owned masked threshold boundary. The
+  current stack is wgpu/Vulkan, not ROCm/HIP; this does not imply every BFV/MPC
+  operation is GPU-resident.
+- **fhegg-fhe/tests/private_book_distributed_inputs.rs** — custody-hardened 4/4.
+  **fhegg-fhe/tests/private_book_distributed_prover.rs** — 2/2 for the
+  process/custody envelope. The latter uses a fixture backend and does not
+  produce the real Bulletproof/R1CS proof.
+- **circuit-prove/tests/fhir_verified_raid_allocation.rs** — 6/6 release. The
+  exact-zero FHQPB001 capability binds the full QP, exact objective, ordered
+  roster, selected one-hot assignment, and real executor slot. This is a
+  separate optimizer/game consequence, not evidence for the private BFV apex.
+- Lean aggregate **lake build Market** is green at 8747 jobs. Direct inventories:
+  DarkBazaarPrivateIngressCutover 11 clean, DarkBazaarLiveApexHost 16 clean,
+  FhIRRaidAllocationBinding 7 clean.
+
+**VERIFIED APEX, captured:**
+
+- **dreggnet-market/tests/private_clearing_apex_e2e.rs** — **1/1 GREEN in
+  114.033s** on hbox under **--profile full**, **DREGG_REQUIRE_LEAN=1**, and
+  **DREGG_REQUIRE_PQ_CORES=1**, with no unaudited fallback. It executed exact
+  source rows, BFV/root
+  same-opening, HidingFRI, live authenticated PartyMPC, public-only hosted
+  verifier reconstruction after durable replay, atomic transfer of the exact
+  provenance-carrying Descent asset plus 3 DREGG, verified turn/PQ cores, and
+  replay refusal.
+- A later instrumented CPU baseline of the same full apex was **1/1 GREEN in
+  124.159s nextest / 124.116s internal**. The same-opening Bulletproof prove was
+  63.153s and its four complete verifies totaled 28.998s: 92.151s, or 74.2% of
+  the apex. Removing relation synthesis/rebuild leaves about 60.838s prove plus
+  19.959s verify in generic Bulletproof curve work (~80.8s). By comparison,
+  HidingFRI was 22ms and the packed fold plus PartyMPC crossing 621ms. WGPU
+  precompute was unset. This makes Ristretto MSM the immediate performance
+  target for the current prototype, while the PQ correction below makes clear
+  that it is not the final no-curve proof architecture. Captured artifact:
+  `/tmp/private-clearing-apex-cpu-timed.log`.
+- The first hbox invocation used the default nextest profile. It built the
+  current-source Lean material but selected **0 tests** because the heavy apex
+  target is excluded there. That is build evidence only; the full-profile run is
+  the decisive gate.
+- The archive used by that apex run warned about **five unresolved initializers**
+  and did not export **dregg_exec_handler_turn**. This was subsequently repaired:
+  the handler export now preserves `lowerForestG` credentials, runs the four-leg
+  gate on the exact pre-state before each registered-handler dispatch, and is
+  fail-closed under `DREGG_TEST_REQUIRE_LEAN=1`. The exact hbox ABI tooth accepted
+  the genuine credential and rejected the forged one in 0.188s; the rebuilt
+  archive defines `dregg_exec_handler_turn` and has zero unresolved non-toolchain
+  initializers. The resumable bounded-parallel closure rebuild is 44.60s warm.
+- The earlier 63.951s run with DREGG_ALLOW_UNAUDITED_PQ=1 remains semantic
+  history and is superseded by this verified gate. The local archive-closure,
+  remote install-abort, and compiled-out attempts remain non-gate diagnostics.
+
+**PQ ASSUMPTION CORRECTION — verified PQ authority cores do not make this an
+end-to-end post-quantum apex:**
+
+- The verified run installed and exercised the current-source ML-DSA keygen,
+  sign, and verify cores for the ML-DSA half of the hybrid game-turn
+  authorization. That is real component evidence. It is not yet an independent
+  PQ identity boundary: the turn verifier binds Ed25519 to the target cell but
+  verifies ML-DSA against a public key carried inside the authorization, and
+  `require_pq` defaults off (`turn/src/executor/authorize.rs`,
+  `turn/src/executor/mod.rs`). `DREGG_REQUIRE_PQ_CORES=1` gates those exported
+  cores; it does not certify every cryptographic component reached by the test.
+- The BFV/private-root same-opening proof is currently Bulletproofs R1CS over
+  Ristretto/Pedersen and explicitly relies on discrete-log hardness plus the
+  Fiat-Shamir transform (`fhegg-fhe/src/private_book_bfv_zk.rs`). It is **not
+  post-quantum**. GPU MSM work accelerates this classical bridge; it does not
+  change its security assumption.
+- The deployed `Effect::ShieldedTransfer` verifier is also still classical at
+  its no-mint boundary: `turn/src/executor/apply.rs::apply_shielded_transfer`
+  calls `verify_full_conservation_bytes` (Ristretto/Pedersen, Schnorr, and
+  Bulletproof range proofs). The Poseidon/HidingFRI ring-clearing organ is built
+  but has not replaced that live acceptance path. Moreover, the experimental
+  `value_link_binding` is only one BabyBear felt: it reduces both u64 `value`
+  and `asset_type` modulo p, so `x` and `x+p` alias, and its output has no
+  security-strength collision margin. It is test/compatibility code, not an
+  authoritative PQ commitment. The replacement needs faithful multi-limb inputs,
+  a wide hash commitment, and executor cutover before the DLog TCB is retired.
+- The clearing quorum authenticates party claims with Ed25519
+  (`fhegg-fhe/src/attestation.rs`). PartyMPC authenticates with Ed25519 and
+  derives peer transport keys from static Curve25519 DH
+  (`fhegg-fhe/src/mpc_party/transport.rs`). The distributed-custody organ also
+  uses Ristretto/Pedersen commitments and Ed25519 acknowledgements
+  (`fhegg-fhe/src/private_book_distributed_inputs.rs`), and is not the live proof
+  backend. These are additional classical-only boundaries.
+- BFV and the separate TFHE path are lattice-based PQ candidates. HidingFRI,
+  Poseidon2, SHA-256, and BLAKE3 are hash-based/PQ-shaped rather than
+  discrete-log constructions. Neither label promotes them to a proved
+  whole-system PQ theorem: BFV parameter/DKG/decryption claims and the named FRI
+  adversarial-soundness floors remain explicit. The X25519+ML-KEM hybrid KEM in
+  `dregg-pq` is not used by the current PartyMPC transport.
+- The shortest existing-code replacement path is to express the exact BFV
+  equations plus a faithfully encoded, wide private-root opening in the existing
+  Lean-emitted AIR and prove it with `DreggZkStarkConfig` / `HidingFriPcs`, using
+  the current BFV relation/table as the witness generator and differential
+  oracle. Then make the clearing quorum, PartyMPC transport, and custody
+  authentication hybrid Ed25519-and-ML-DSA, and replace PartyMPC's Curve25519-only
+  key agreement with the existing X25519+ML-KEM hybrid construction. Until those
+  cutovers and their gates land, the precise claim is: **verified ML-DSA turn
+  cores inside a composed apex with a staged turn-identity binding and classical
+  proof, quorum, and transport seams**.
+
+**BUILT BUT UNGATED / OPEN:**
+
+- **dreggnet-market/tests/private_clearing_crown_consequence.rs** is present
+  with one both-polarity WriteOnce Warden's Keep crown test; no captured result.
+  It consumes the older operator-visible Tier-1 private-clearing receipt, not the
+  transferable BFV composite verifier.
+- No production distributed R1CS/Bulletproof backend consumes the custody
+  shares. The live apex still calls the monolithic prover with the whole witness
+  and BFV openings. Source verification sees plaintext and randomness. “No
+  single viewer” is false for the deployed path.
+- DKG/key-domain validity, malicious share formation/gate evaluation/triples,
+  production private-packet wire, rollback anchoring, and threshold-collusion
+  consequences remain explicit residuals.
+
+**COMPOSED GAME LANE RESULTS — HEAD paths verified, evidence remains
+target-local:**
+
+- Narrated Dungeon: **dreggnet-offerings/tests/dungeon_narrated_operation.rs**
+  has 3 tests for typed closed commands, receipt-bound prose, anti-ghost
+  refusals, and narrator-view confinement. **3/3 GREEN.**
+- Relic-oath substrate: **dungeon-on-dregg/tests/relic_oath_branch.rs** has 2
+  tests for the Sunblade/mercy and Thorn-Crown/tribute branches. The earlier
+  0/2 LinkageBroken result was repaired; current gate **2/2 GREEN**.
+- Private raid executor organ:
+  **dungeon-on-dregg/tests/private_raid_atomic_forest.rs** has 2 tests for the
+  HidingFRI proof sigil + party role/focus + Arena forest. **PENDING GATE.**
+- Private raid player surface: **dreggnet-surfaces/tests/private_raid.rs** has 8
+  tests for fhIR/hiding assignment, roster capabilities, real Arena spend,
+  restart, lobby, and web/chat transport. Seven tests were green in the prior
+  suite; the repaired focused
+  web_binary_and_chat_streaming_reach_one_join_proof_claim_burn_act_game path
+  is now **GREEN**. Current suite evidence is **7 prior + 1 focused current**,
+  not one newly captured 8/8 invocation. The canonical 310,767-byte proof's
+  earlier “public raid seat 1 receipt changed on replay” failure is closed by
+  the focused result.
+- Cross-lane relic capstone:
+  **dungeon-on-dregg/tests/relic_raid_narrated_forest.rs** has 1 test composing
+  the proof-selected Mender and receipt-bound narration in one atomic awakening
+  forest and replay chain. **1/1 GREEN.**
+- Chutes weld: **discord-bot/tests/dungeon_chutes_weld.rs** has 3 tests for the
+  production OpenAI-compatible client against a loopback Chutes-shaped server,
+  Dungeon executor authority, credit release, and wrong-room/injection refusal.
+  **PENDING GATE.** This is not an external-service deployment test.
+- Native Descent: **dreggnet-offerings/tests/native_descent_offering.rs** has 3
+  tests for the full crowned run, replay/tamper refusal, actor binding, and
+  anti-ghost affordances. **PENDING GATE.**
+- Descent campaign: **dreggnet-offerings/tests/descent_campaign.rs** has 3 tests
+  composing the native run with region-cell progress, crown-only travel unlock,
+  terminal-without-crown refusal, and restart/substitution replay. **PENDING
+  GATE.**
+
+Four targets remain **UNKNOWN AT THE GATE**: private_raid_atomic_forest,
+dungeon_chutes_weld, native_descent_offering, and descent_campaign. Do not infer
+compile or pass from their HEAD files, from the fhIR raid 6/6, or from the
+private apex 1/1. The two repaired lanes are now green at their exact replacement
+gates; the private-raid surface evidence remains split as 7 prior + 1 focused
+current rather than a single current 8/8 run.
+
+**HBOX / ARTIFACT-CUSTODY GROUND TRUTH:**
+
+- hbox is an Intel i9-12900 host with 24 hardware threads and 123 GiB RAM. Its
+  AMD RX 6750 XT is Vulkan-visible. ROCm/HIP is not installed.
+- It now has **55 GiB free**; the earlier 100%-full/1.9-MB-free blocker is
+  resolved. The verified apex and real GpuResident fold above are execution
+  evidence, not hardware discovery alone. The older RX-6700 shorthand elsewhere
+  in this log is superseded by the observed RX 6750 XT identity.
+- The PQ lane supplied the apex-required verified cores. Artifact custody alone
+  carries no green; the later credential-polarity ABI tooth and static archive
+  audit are the evidence that closed the initializer/handler-export residual.
