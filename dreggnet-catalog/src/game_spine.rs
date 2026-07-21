@@ -75,6 +75,58 @@ pub fn game_kind(offering: &str) -> Option<GameKind> {
     }
 }
 
+/// A stable deployment/federation incarnation.
+///
+/// This value is routing authority, not actor authentication. A deployment
+/// persists it across ordinary process restarts and replaces it when a new
+/// host/federation is meant to be a distinct authority. The all-zero value is
+/// refused so an uninitialised deployment cannot silently share an identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GameHostIncarnation([u8; 32]);
+
+impl GameHostIncarnation {
+    pub fn new(bytes: [u8; 32]) -> Result<Self, GameSpineError> {
+        if bytes == [0; 32] {
+            return Err(GameSpineError::InvalidReference(
+                "host incarnation must not be the all-zero sentinel".to_string(),
+            ));
+        }
+        Ok(Self(bytes))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+/// The authority epoch carried by a game-session address.
+///
+/// `Bound` is the deployable form: it distinguishes two hosts with the same
+/// human session name and distinguishes close/reopen generations within one
+/// host. `LegacyUnbound` exists only so the already-deployed frontend adapters
+/// can migrate without pretending their old two-field addresses are hardened.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GameSessionBinding {
+    LegacyUnbound,
+    Bound {
+        host_incarnation: GameHostIncarnation,
+        session_generation: u64,
+    },
+}
+
+impl GameSessionBinding {
+    pub const fn bound(host_incarnation: GameHostIncarnation, session_generation: u64) -> Self {
+        Self::Bound {
+            host_incarnation,
+            session_generation,
+        }
+    }
+
+    pub const fn is_bound(&self) -> bool {
+        matches!(self, Self::Bound { .. })
+    }
+}
+
 /// The exact, surface-independent address of one game session.
 ///
 /// This is an address, never an authorization capability. It is intentionally
@@ -87,11 +139,36 @@ pub fn game_kind(offering: &str) -> Option<GameKind> {
 pub struct GameSessionRef {
     offering: String,
     session: SessionId,
+    binding: GameSessionBinding,
 }
 
 impl GameSessionRef {
-    /// Address `session` under a registered game `offering`.
+    /// Address `session` under a registered game `offering` using the legacy
+    /// two-field route. Bound APIs reject this compatibility form.
     pub fn new(offering: impl Into<String>, session: SessionId) -> Result<Self, GameSpineError> {
+        Self::with_binding(offering, session, GameSessionBinding::LegacyUnbound)
+    }
+
+    /// Address one exact generation under a stable host/federation
+    /// incarnation. This is the form new durable adapters should persist.
+    pub fn bound(
+        offering: impl Into<String>,
+        session: SessionId,
+        host_incarnation: GameHostIncarnation,
+        session_generation: u64,
+    ) -> Result<Self, GameSpineError> {
+        Self::with_binding(
+            offering,
+            session,
+            GameSessionBinding::bound(host_incarnation, session_generation),
+        )
+    }
+
+    fn with_binding(
+        offering: impl Into<String>,
+        session: SessionId,
+        binding: GameSessionBinding,
+    ) -> Result<Self, GameSpineError> {
         let offering = offering.into();
         if offering.is_empty()
             || session.0.is_empty()
@@ -108,7 +185,11 @@ impl GameSessionRef {
         if game_kind(&offering).is_none() {
             return Err(GameSpineError::NotAGame(offering));
         }
-        Ok(Self { offering, session })
+        Ok(Self {
+            offering,
+            session,
+            binding,
+        })
     }
 
     pub fn offering(&self) -> &str {
@@ -117,6 +198,10 @@ impl GameSessionRef {
 
     pub fn session_id(&self) -> &SessionId {
         &self.session
+    }
+
+    pub fn binding(&self) -> &GameSessionBinding {
+        &self.binding
     }
 
     pub fn kind(&self) -> GameKind {
@@ -155,6 +240,27 @@ impl GameActionRef {
 
     fn matches(&self, action: &Action) -> bool {
         self.turn == action.turn && self.arg == action.arg && self.text == action.text
+    }
+
+    /// Domain-separated identity of the exact router action preimage.
+    ///
+    /// This includes the host incarnation and session generation carried by
+    /// `session`, as well as the complete executor-resolved action and observed
+    /// head. It does not replace the underlying signed-turn envelope.
+    pub fn routing_preimage_id(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("dregg.game-action-preimage.v2");
+        hash_session_ref(&mut hasher, &self.session);
+        hash_field(&mut hasher, self.turn.as_bytes());
+        hash_field(&mut hasher, &self.arg.to_be_bytes());
+        match &self.text {
+            Some(text) => {
+                hash_field(&mut hasher, &[1]);
+                hash_field(&mut hasher, text.as_bytes());
+            }
+            None => hash_field(&mut hasher, &[0]),
+        }
+        hash_field(&mut hasher, &self.expected_pre_head);
+        *hasher.finalize().as_bytes()
     }
 }
 
@@ -256,6 +362,31 @@ pub struct GameSessionView {
 
 /// Inspect a live game through one audience-safe, surface-independent call.
 pub fn inspect_game_session(
+    host: &OfferingHost,
+    session: GameSessionRef,
+    audience: &GameAudience,
+) -> Result<GameSessionView, GameSpineError> {
+    require_legacy_binding(&session)?;
+    inspect_game_session_inner(host, session, audience)
+}
+
+/// Inspect one authority-bound game session.
+///
+/// `live_generation` comes from the deployment's durable session-name epoch
+/// ledger. A restart supplies the same persisted host incarnation and current
+/// generation; a replacement host or a close/reopen supplies a different one.
+pub fn inspect_bound_game_session(
+    host: &OfferingHost,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+    session: GameSessionRef,
+    audience: &GameAudience,
+) -> Result<GameSessionView, GameSpineError> {
+    require_live_binding(&session, host_incarnation, live_generation)?;
+    inspect_game_session_inner(host, session, audience)
+}
+
+fn inspect_game_session_inner(
     host: &OfferingHost,
     session: GameSessionRef,
     audience: &GameAudience,
@@ -400,7 +531,11 @@ pub enum GameReceipt {
         attribution: Attribution,
         /// The actual executor cell carried by the underlying TurnReceipt.
         executor_agent: [u8; 32],
-        receipt_id: [u8; 32],
+        /// Router receipt over the full action preimage, provenance, and the
+        /// concrete receipt. This is the ID exposed by [`Self::receipt_id`].
+        bound_receipt_id: [u8; 32],
+        /// Receipt produced by the concrete offering before router binding.
+        inner_receipt_id: [u8; 32],
         previous_receipt_id: Option<[u8; 32]>,
         ended: bool,
     },
@@ -426,14 +561,16 @@ pub enum GameReceipt {
 impl GameReceipt {
     pub fn receipt_id(&self) -> [u8; 32] {
         match self {
-            Self::Turn { receipt_id, .. } => *receipt_id,
+            Self::Turn {
+                bound_receipt_id, ..
+            } => *bound_receipt_id,
             Self::Operation {
                 bound_receipt_id, ..
             } => *bound_receipt_id,
         }
     }
 
-    /// The concrete operation receipt before host-address binding.
+    /// The concrete operation receipt before router binding.
     pub fn inner_receipt_id(&self) -> Option<[u8; 32]> {
         match self {
             Self::Turn { .. } => None,
@@ -457,34 +594,56 @@ impl GameReceipt {
         }
     }
 
-    /// Recompute the host-address binding carried by an operation receipt.
+    /// Recompute the complete router binding carried by any landed receipt.
     ///
     /// This checks envelope integrity only. An `Asserted` actor remains
     /// asserted even when the digest is internally consistent.
+    pub fn routing_binding_valid(&self) -> bool {
+        match self {
+            Self::Turn {
+                action,
+                attribution,
+                executor_agent,
+                bound_receipt_id,
+                inner_receipt_id,
+                previous_receipt_id,
+                ended,
+            } => {
+                turn_routing_receipt_id(
+                    action,
+                    attribution,
+                    *executor_agent,
+                    *inner_receipt_id,
+                    *previous_receipt_id,
+                    *ended,
+                ) == *bound_receipt_id
+            }
+            Self::Operation {
+                operation,
+                attribution,
+                bound_receipt_id,
+                inner_receipt_id,
+                payload_digest,
+                before,
+                after,
+                ..
+            } => {
+                operation_routing_receipt_id(
+                    &operation.session,
+                    attribution,
+                    &operation.operation,
+                    *payload_digest,
+                    *inner_receipt_id,
+                    before,
+                    after,
+                ) == *bound_receipt_id
+            }
+        }
+    }
+
+    /// Compatibility name for operation-only callers.
     pub fn operation_routing_binding_valid(&self) -> bool {
-        let Self::Operation {
-            operation,
-            attribution,
-            bound_receipt_id,
-            inner_receipt_id,
-            payload_digest,
-            before,
-            after,
-            ..
-        } = self
-        else {
-            return true;
-        };
-        operation_routing_receipt_id(
-            operation.session.offering(),
-            operation.session.session_id(),
-            &attribution.identity(),
-            &operation.operation,
-            *payload_digest,
-            *inner_receipt_id,
-            before,
-            after,
-        ) == *bound_receipt_id
+        !matches!(self, Self::Operation { .. }) || self.routing_binding_valid()
     }
 }
 
@@ -520,6 +679,30 @@ pub fn execute_asserted_game_command(
     command: GameCommand,
     actor: DreggIdentity,
 ) -> Result<GameResult, GameSpineError> {
+    require_legacy_binding(session)?;
+    execute_asserted_game_command_inner(host, session, command, actor)
+}
+
+/// Execute an adapter-attributed command under an exact live host/session
+/// authority epoch.
+pub fn execute_bound_asserted_game_command(
+    host: &mut OfferingHost,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+    session: &GameSessionRef,
+    command: GameCommand,
+    actor: DreggIdentity,
+) -> Result<GameResult, GameSpineError> {
+    require_live_binding(session, host_incarnation, live_generation)?;
+    execute_asserted_game_command_inner(host, session, command, actor)
+}
+
+fn execute_asserted_game_command_inner(
+    host: &mut OfferingHost,
+    session: &GameSessionRef,
+    command: GameCommand,
+    actor: DreggIdentity,
+) -> Result<GameResult, GameSpineError> {
     if command.session() != session {
         return Err(GameSpineError::AddressMismatch {
             expected: session.clone(),
@@ -545,14 +728,28 @@ pub fn execute_asserted_game_command(
                 )
                 .ok_or_else(|| GameSpineError::UnknownSession(session.clone()))?;
             Ok(match outcome {
-                Outcome::Landed { receipt, ended } => GameResult::Landed(GameReceipt::Turn {
-                    action: reference,
-                    attribution: Attribution::from(actor),
-                    executor_agent: *receipt.agent.as_bytes(),
-                    receipt_id: receipt.receipt_hash(),
-                    previous_receipt_id: receipt.previous_receipt_hash,
-                    ended,
-                }),
+                Outcome::Landed { receipt, ended } => {
+                    let attribution = Attribution::from(actor);
+                    let executor_agent = *receipt.agent.as_bytes();
+                    let inner_receipt_id = receipt.receipt_hash();
+                    let bound_receipt_id = turn_routing_receipt_id(
+                        &reference,
+                        &attribution,
+                        executor_agent,
+                        inner_receipt_id,
+                        receipt.previous_receipt_hash,
+                        ended,
+                    );
+                    GameResult::Landed(GameReceipt::Turn {
+                        action: reference,
+                        attribution,
+                        executor_agent,
+                        bound_receipt_id,
+                        inner_receipt_id,
+                        previous_receipt_id: receipt.previous_receipt_hash,
+                        ended,
+                    })
+                }
                 Outcome::Refused(reason) => GameResult::Refused {
                     session: session.clone(),
                     reason,
@@ -625,9 +822,8 @@ pub fn execute_asserted_game_command(
                         ));
                     }
                     let bound_receipt_id = operation_routing_receipt_id(
-                        &applied.offering,
-                        &applied.session,
-                        &applied.actor,
+                        &reference.session,
+                        &Attribution::from(applied.actor.clone()),
                         &applied.receipt.operation,
                         payload_digest,
                         applied.receipt.receipt_id,
@@ -662,6 +858,31 @@ pub fn execute_signed_game_turn(
     reference: GameActionRef,
     signed: SignedAction,
 ) -> Result<GameResult, GameSpineError> {
+    require_legacy_binding(session)?;
+    execute_signed_game_turn_inner(host, session, reference, signed)
+}
+
+/// Execute a signed ordinary turn under an exact live host/session authority
+/// epoch. The router binding is additional to (and does not change) the
+/// offering's existing signed-turn wire.
+pub fn execute_bound_signed_game_turn(
+    host: &mut OfferingHost,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+    session: &GameSessionRef,
+    reference: GameActionRef,
+    signed: SignedAction,
+) -> Result<GameResult, GameSpineError> {
+    require_live_binding(session, host_incarnation, live_generation)?;
+    execute_signed_game_turn_inner(host, session, reference, signed)
+}
+
+fn execute_signed_game_turn_inner(
+    host: &mut OfferingHost,
+    session: &GameSessionRef,
+    reference: GameActionRef,
+    signed: SignedAction,
+) -> Result<GameResult, GameSpineError> {
     if &reference.session != session {
         return Err(GameSpineError::AddressMismatch {
             expected: session.clone(),
@@ -679,14 +900,28 @@ pub fn execute_signed_game_turn(
         .advance_signed(session.offering(), session.session_id(), signed)
         .map_err(|error| GameSpineError::Host(error.to_string()))?;
     Ok(match outcome {
-        Outcome::Landed { receipt, ended } => GameResult::Landed(GameReceipt::Turn {
-            action: reference,
-            attribution: Attribution::Signed { pubkey_hex: signer },
-            executor_agent: *receipt.agent.as_bytes(),
-            receipt_id: receipt.receipt_hash(),
-            previous_receipt_id: receipt.previous_receipt_hash,
-            ended,
-        }),
+        Outcome::Landed { receipt, ended } => {
+            let attribution = Attribution::Signed { pubkey_hex: signer };
+            let executor_agent = *receipt.agent.as_bytes();
+            let inner_receipt_id = receipt.receipt_hash();
+            let bound_receipt_id = turn_routing_receipt_id(
+                &reference,
+                &attribution,
+                executor_agent,
+                inner_receipt_id,
+                receipt.previous_receipt_hash,
+                ended,
+            );
+            GameResult::Landed(GameReceipt::Turn {
+                action: reference,
+                attribution,
+                executor_agent,
+                bound_receipt_id,
+                inner_receipt_id,
+                previous_receipt_id: receipt.previous_receipt_hash,
+                ended,
+            })
+        }
         Outcome::Refused(reason) => GameResult::Refused {
             session: session.clone(),
             reason,
@@ -712,30 +947,104 @@ fn check_expected_head(
     Ok(())
 }
 
+fn require_legacy_binding(session: &GameSessionRef) -> Result<(), GameSpineError> {
+    if session.binding().is_bound() {
+        return Err(GameSpineError::BindingContextRequired(session.clone()));
+    }
+    Ok(())
+}
+
+fn require_live_binding(
+    session: &GameSessionRef,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+) -> Result<(), GameSpineError> {
+    let expected = GameSessionBinding::bound(host_incarnation, live_generation);
+    if session.binding() != &expected {
+        return Err(GameSpineError::AuthorityEpochMismatch {
+            session: session.clone(),
+            expected,
+            presented: session.binding().clone(),
+        });
+    }
+    Ok(())
+}
+
+fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    hasher.update(&(bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+}
+
+fn hash_session_ref(hasher: &mut blake3::Hasher, session: &GameSessionRef) {
+    hash_field(hasher, session.offering().as_bytes());
+    hash_field(hasher, session.session_id().0.as_bytes());
+    match session.binding() {
+        GameSessionBinding::LegacyUnbound => hash_field(hasher, &[0]),
+        GameSessionBinding::Bound {
+            host_incarnation,
+            session_generation,
+        } => {
+            hash_field(hasher, &[1]);
+            hash_field(hasher, host_incarnation.as_bytes());
+            hash_field(hasher, &session_generation.to_be_bytes());
+        }
+    }
+}
+
+fn hash_attribution(hasher: &mut blake3::Hasher, attribution: &Attribution) {
+    match attribution {
+        Attribution::Asserted { label } => {
+            hash_field(hasher, &[0]);
+            hash_field(hasher, label.as_bytes());
+        }
+        Attribution::Signed { pubkey_hex } => {
+            hash_field(hasher, &[1]);
+            hash_field(hasher, pubkey_hex.as_bytes());
+        }
+    }
+}
+
+fn turn_routing_receipt_id(
+    action: &GameActionRef,
+    attribution: &Attribution,
+    executor_agent: [u8; 32],
+    inner_receipt_id: [u8; 32],
+    previous_receipt_id: Option<[u8; 32]>,
+    ended: bool,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("dregg.game-turn-routing-receipt.v2");
+    hash_field(&mut hasher, &action.routing_preimage_id());
+    hash_attribution(&mut hasher, attribution);
+    hash_field(&mut hasher, &executor_agent);
+    hash_field(&mut hasher, &inner_receipt_id);
+    match previous_receipt_id {
+        Some(previous) => {
+            hash_field(&mut hasher, &[1]);
+            hash_field(&mut hasher, &previous);
+        }
+        None => hash_field(&mut hasher, &[0]),
+    }
+    hash_field(&mut hasher, &[u8::from(ended)]);
+    *hasher.finalize().as_bytes()
+}
+
 fn operation_routing_receipt_id(
-    offering: &str,
-    session: &SessionId,
-    actor: &DreggIdentity,
+    session: &GameSessionRef,
+    attribution: &Attribution,
     operation: &str,
     payload_digest: [u8; 32],
     inner_receipt_id: [u8; 32],
     before: &[u8],
     after: &[u8],
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg.game-operation-routing-receipt.v1");
-    for bytes in [
-        offering.as_bytes(),
-        session.0.as_bytes(),
-        actor.0.as_bytes(),
-        operation.as_bytes(),
-        payload_digest.as_slice(),
-        inner_receipt_id.as_slice(),
-        before,
-        after,
-    ] {
-        hasher.update(&(bytes.len() as u64).to_be_bytes());
-        hasher.update(bytes);
-    }
+    let mut hasher = blake3::Hasher::new_derive_key("dregg.game-operation-routing-receipt.v2");
+    hash_session_ref(&mut hasher, session);
+    hash_attribution(&mut hasher, attribution);
+    hash_field(&mut hasher, operation.as_bytes());
+    hash_field(&mut hasher, &payload_digest);
+    hash_field(&mut hasher, &inner_receipt_id);
+    hash_field(&mut hasher, before);
+    hash_field(&mut hasher, after);
     *hasher.finalize().as_bytes()
 }
 
@@ -743,6 +1052,14 @@ fn operation_routing_receipt_id(
 pub enum GameSpineError {
     InvalidReference(String),
     NotAGame(String),
+    /// A bound reference was presented through the compatibility API, where no
+    /// live authority epoch is available for comparison.
+    BindingContextRequired(GameSessionRef),
+    AuthorityEpochMismatch {
+        session: GameSessionRef,
+        expected: GameSessionBinding,
+        presented: GameSessionBinding,
+    },
     UnknownSession(GameSessionRef),
     AmbiguousAffordance(String),
     AddressMismatch {
@@ -779,6 +1096,22 @@ impl std::fmt::Display for GameSpineError {
         match self {
             Self::InvalidReference(reason) => write!(f, "invalid game reference: {reason}"),
             Self::NotAGame(key) => write!(f, "catalog key {key:?} is not a game"),
+            Self::BindingContextRequired(session) => write!(
+                f,
+                "bound game session {} / {} requires an authority-aware spine call",
+                session.offering(),
+                session.session_id().0
+            ),
+            Self::AuthorityEpochMismatch {
+                session,
+                expected,
+                presented,
+            } => write!(
+                f,
+                "game authority epoch mismatch for {} / {}: expected {expected:?}, presented {presented:?}",
+                session.offering(),
+                session.session_id().0
+            ),
             Self::UnknownSession(session) => write!(
                 f,
                 "unknown game session {} / {}",

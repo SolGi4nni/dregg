@@ -52,9 +52,10 @@ pub mod seated;
 
 pub use game_spine::{
     GameActionRef, GameAffordance, GameArtifact, GameArtifactRef, GameAudience, GameCommand,
-    GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionRef, GameSessionView,
-    GameSpineError, execute_asserted_game_command, execute_signed_game_turn, game_kind,
-    inspect_game_session,
+    GameHostIncarnation, GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionBinding,
+    GameSessionRef, GameSessionView, GameSpineError, execute_asserted_game_command,
+    execute_bound_asserted_game_command, execute_bound_signed_game_turn, execute_signed_game_turn,
+    game_kind, inspect_bound_game_session, inspect_game_session,
 };
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 

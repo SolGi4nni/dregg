@@ -1,9 +1,9 @@
 use deos_view::ViewNode;
 use dreggnet_catalog::{
-    CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameCommand, GameKind,
-    GameOperationRef, GameReceipt, GameResult, GameSessionRef, GameSpineError,
-    execute_asserted_game_command, execute_signed_game_turn, full_catalog_host,
-    inspect_game_session,
+    CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameCommand, GameHostIncarnation,
+    GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionRef, GameSpineError,
+    execute_asserted_game_command, execute_bound_asserted_game_command, execute_signed_game_turn,
+    full_catalog_host, inspect_bound_game_session, inspect_game_session,
 };
 use dreggnet_offerings::{
     Action, Attribution, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
@@ -745,4 +745,284 @@ fn spine_refuses_an_unjournalable_operation_before_it_can_mutate() {
             .operations
             .is_empty()
     );
+}
+
+#[test]
+fn bound_session_rejects_cross_incarnation_and_generation_rollback_before_mutation() {
+    let incarnation_a = GameHostIncarnation::new([0xA1; 32]).unwrap();
+    let incarnation_b = GameHostIncarnation::new([0xB2; 32]).unwrap();
+    let id = SessionId::new("same-human-name-and-state");
+    let mut host = OfferingHost::new();
+    host.register("dungeon", "authority epoch fixture", ChoiceDungeon);
+    host.open_session("dungeon", id.clone(), SessionConfig::with_seed(91))
+        .unwrap();
+
+    let generation_seven = GameSessionRef::bound("dungeon", id.clone(), incarnation_a, 7).unwrap();
+    let view = inspect_bound_game_session(
+        &host,
+        incarnation_a,
+        7,
+        generation_seven.clone(),
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    let (captured_reference, captured_action) = primary_turn(&view);
+    let captured_head = view.surface_commitment.clone();
+
+    let cross_host = execute_bound_asserted_game_command(
+        &mut host,
+        incarnation_b,
+        7,
+        &generation_seven,
+        GameCommand::Turn {
+            reference: captured_reference.clone(),
+            action: captured_action.clone(),
+        },
+        DreggIdentity("asserted:cross-host".to_string()),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        cross_host,
+        GameSpineError::AuthorityEpochMismatch { .. }
+    ));
+    assert_eq!(host.verify("dungeon", &id).unwrap().turns, 0);
+
+    assert!(host.close("dungeon", &id));
+    host.open_session("dungeon", id.clone(), SessionConfig::with_seed(91))
+        .unwrap();
+    assert_eq!(
+        host.commitment("dungeon", &id).unwrap(),
+        captured_head,
+        "the hostile reopen deliberately recreates the same presentation head"
+    );
+    let rollback = execute_bound_asserted_game_command(
+        &mut host,
+        incarnation_a,
+        8,
+        &generation_seven,
+        GameCommand::Turn {
+            reference: captured_reference,
+            action: captured_action,
+        },
+        DreggIdentity("asserted:generation-rollback".to_string()),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        rollback,
+        GameSpineError::AuthorityEpochMismatch { .. }
+    ));
+    assert_eq!(host.verify("dungeon", &id).unwrap().turns, 0);
+
+    let generation_eight = GameSessionRef::bound("dungeon", id, incarnation_a, 8).unwrap();
+    let current = inspect_bound_game_session(
+        &host,
+        incarnation_a,
+        8,
+        generation_eight,
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    assert_ne!(
+        primary_turn(&view).0.routing_preimage_id(),
+        primary_turn(&current).0.routing_preimage_id(),
+        "generation is part of the exact action router preimage even when state is identical"
+    );
+}
+
+#[test]
+fn same_incarnation_and_generation_resume_exactly_across_host_restart() {
+    let incarnation = GameHostIncarnation::new([0xC3; 32]).unwrap();
+    let store = InMemoryResumeStore::new();
+    let id = SessionId::new("durable-bound-restart");
+    let session = GameSessionRef::bound("dungeon", id.clone(), incarnation, 19).unwrap();
+
+    let expected_after = {
+        let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+        host.register("dungeon", "authority restart fixture", ChoiceDungeon);
+        host.open_session("dungeon", id.clone(), SessionConfig::with_seed(123))
+            .unwrap();
+        let view = inspect_bound_game_session(
+            &host,
+            incarnation,
+            19,
+            session.clone(),
+            &GameAudience::Shared,
+        )
+        .unwrap();
+        let (reference, action) = primary_turn(&view);
+        let landed = execute_bound_asserted_game_command(
+            &mut host,
+            incarnation,
+            19,
+            &session,
+            GameCommand::Turn { reference, action },
+            DreggIdentity("asserted:durable-player".to_string()),
+        )
+        .unwrap();
+        let receipt = landed.receipt().unwrap();
+        assert!(receipt.routing_binding_valid());
+        inspect_bound_game_session(
+            &host,
+            incarnation,
+            19,
+            session.clone(),
+            &GameAudience::Shared,
+        )
+        .unwrap()
+        .surface_commitment
+    };
+
+    let mut restarted = OfferingHost::new().with_resume_store(Box::new(store));
+    restarted.register("dungeon", "authority restart fixture", ChoiceDungeon);
+    assert_eq!(restarted.resume_all().len(), 1);
+    let resumed =
+        inspect_bound_game_session(&restarted, incarnation, 19, session, &GameAudience::Shared)
+            .unwrap();
+    assert_eq!(resumed.surface_commitment, expected_after);
+    assert_eq!(resumed.landed_steps, 1);
+}
+
+#[test]
+fn receipt_binding_rejects_session_projection_substitution() {
+    let incarnation = GameHostIncarnation::new([0xD4; 32]).unwrap();
+    let other_incarnation = GameHostIncarnation::new([0xE5; 32]).unwrap();
+    let id = SessionId::new("receipt-projection-binding");
+    let session = GameSessionRef::bound("dungeon", id.clone(), incarnation, 3).unwrap();
+    let mut host = OfferingHost::new();
+    host.register("dungeon", "receipt projection fixture", ChoiceDungeon);
+    host.open_session("dungeon", id.clone(), SessionConfig::with_seed(7))
+        .unwrap();
+    let view = inspect_bound_game_session(
+        &host,
+        incarnation,
+        3,
+        session.clone(),
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    let (reference, action) = primary_turn(&view);
+    let landed = execute_bound_asserted_game_command(
+        &mut host,
+        incarnation,
+        3,
+        &session,
+        GameCommand::Turn { reference, action },
+        DreggIdentity("asserted:projection-player".to_string()),
+    )
+    .unwrap();
+    let receipt = landed.receipt().unwrap();
+    assert_eq!(receipt.session(), &view.session);
+    assert!(receipt.routing_binding_valid());
+
+    let mut substituted = receipt.clone();
+    let GameReceipt::Turn {
+        action: projected_action,
+        ..
+    } = &mut substituted
+    else {
+        panic!("choice fixture returns a turn receipt")
+    };
+    projected_action.session = GameSessionRef::bound("dungeon", id, other_incarnation, 3).unwrap();
+    assert!(
+        !substituted.routing_binding_valid(),
+        "moving an otherwise intact receipt beneath another projected session breaks its envelope"
+    );
+
+    assert!(matches!(
+        inspect_game_session(&host, view.session, &GameAudience::Shared),
+        Err(GameSpineError::BindingContextRequired(_))
+    ));
+}
+
+#[test]
+fn identical_opaque_operation_on_replacement_host_has_a_distinct_bound_receipt() {
+    let incarnation_a = GameHostIncarnation::new([0x16; 32]).unwrap();
+    let incarnation_b = GameHostIncarnation::new([0x27; 32]).unwrap();
+    let id = SessionId::new("same-operation-replacement-host");
+    let actor = DreggIdentity("asserted:same-actor".to_string());
+    let session_a = GameSessionRef::bound("dungeon", id.clone(), incarnation_a, 5).unwrap();
+    let session_b = GameSessionRef::bound("dungeon", id.clone(), incarnation_b, 5).unwrap();
+    let mut host_a = bound_operation_host();
+    let mut host_b = bound_operation_host();
+    for host in [&mut host_a, &mut host_b] {
+        host.open_session("dungeon", id.clone(), SessionConfig::with_seed(44))
+            .unwrap();
+    }
+
+    let view_a = inspect_bound_game_session(
+        &host_a,
+        incarnation_a,
+        5,
+        session_a.clone(),
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    let reference_a = primary_operation(&view_a);
+    let captured = execute_bound_asserted_game_command(
+        &mut host_b,
+        incarnation_b,
+        5,
+        &session_a,
+        GameCommand::Operation {
+            reference: reference_a.clone(),
+            payload: vec![7],
+        },
+        actor.clone(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        captured,
+        GameSpineError::AuthorityEpochMismatch { .. }
+    ));
+    assert_eq!(host_b.verify("dungeon", &id).unwrap().turns, 0);
+
+    let receipt_a = execute_bound_asserted_game_command(
+        &mut host_a,
+        incarnation_a,
+        5,
+        &session_a,
+        GameCommand::Operation {
+            reference: reference_a,
+            payload: vec![7],
+        },
+        actor.clone(),
+    )
+    .unwrap()
+    .receipt()
+    .unwrap()
+    .clone();
+    let view_b = inspect_bound_game_session(
+        &host_b,
+        incarnation_b,
+        5,
+        session_b.clone(),
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    let receipt_b = execute_bound_asserted_game_command(
+        &mut host_b,
+        incarnation_b,
+        5,
+        &session_b,
+        GameCommand::Operation {
+            reference: primary_operation(&view_b),
+            payload: vec![7],
+        },
+        actor,
+    )
+    .unwrap()
+    .receipt()
+    .unwrap()
+    .clone();
+    assert_eq!(receipt_a.inner_receipt_id(), receipt_b.inner_receipt_id());
+    assert_ne!(receipt_a.receipt_id(), receipt_b.receipt_id());
+    assert!(receipt_a.routing_binding_valid());
+    assert!(receipt_b.routing_binding_valid());
+
+    let mut substituted = receipt_a;
+    let GameReceipt::Operation { operation, .. } = &mut substituted else {
+        panic!("binary fixture returns an operation receipt")
+    };
+    operation.session = session_b;
+    assert!(!substituted.routing_binding_valid());
 }
