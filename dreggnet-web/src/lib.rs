@@ -83,6 +83,8 @@ pub mod discord_activity;
 /// independently feature-gated.
 #[cfg(feature = "hosted-binary-operations")]
 pub mod fhegg_operation;
+/// The one browser interaction grammar shared by every game offering.
+pub mod game_session;
 /// Prometheus metrics for the web surface (the `node/src/metrics.rs` pattern): the idempotent
 /// process-global recorder + the `GET /metrics` handler + the named emit helpers this surface's
 /// call sites bump (session opens/evictions, policy refusals, executor refusals, anchor + resume
@@ -777,6 +779,18 @@ strong{font-weight:700;color:var(--fg)}
 .binary-operation button{padding:.58rem .8rem;border-radius:10px;border:1px solid rgba(168,126,255,.45);background:rgba(79,55,126,.55);color:#efe9ff;font:inherit;font-weight:700;cursor:pointer}
 .binary-operation [role=status]{grid-column:1/-1;min-height:1.2em;color:var(--fg-3);font-size:var(--t-xs);overflow-wrap:anywhere}
 .binary-operation.pending{opacity:.7;cursor:progress}
+/* ═══ ONE GAME SESSION GRAMMAR ══════════════════════════════════════════ */
+.game-session-rail{display:grid;grid-template-columns:minmax(11rem,.8fr) minmax(18rem,1.4fr);gap:.8rem 1.2rem;align-items:center;margin:0 0 var(--s4);padding:.8rem .95rem;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:linear-gradient(110deg,rgba(12,19,34,.9),rgba(29,24,48,.58));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.game-session-resume{display:grid;grid-template-columns:auto 1fr;gap:.12rem .55rem;align-items:baseline;min-width:0}
+.game-session-kicker{grid-column:1/-1;color:var(--fg-3);font-size:var(--t-micro);font-weight:800;letter-spacing:.13em;text-transform:uppercase}
+.game-session-resume strong{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:var(--t-xs);color:var(--fg-2)}
+.game-session-resume a{justify-self:end;color:var(--accent);font-size:var(--t-xs);font-weight:750;text-decoration:none}
+.game-session-resume a:hover{text-decoration:underline}
+.game-session-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.35rem;margin:0;padding:0;list-style:none}
+.game-session-steps li{display:flex;gap:.38rem;align-items:center;min-width:0;color:var(--fg-3);font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.05em}
+.game-session-steps b{display:grid;place-items:center;flex:0 0 1.35rem;height:1.35rem;border:1px solid rgba(79,220,160,.3);border-radius:50%;color:var(--good);font-family:var(--mono);font-size:.62rem}
+.game-session-boundary{grid-column:1/-1;display:flex;gap:.55rem;align-items:flex-start;margin:0;padding-top:.65rem;border-top:1px solid var(--line-soft);color:var(--fg-3);font-size:var(--t-xs);line-height:1.5}
+.game-session-boundary span{color:var(--violet);font-size:1rem;line-height:1.1}
 /* ═══ NOTICE — what just happened ════════════════════════════════════════ */
 .notice{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-md);margin:0 0 var(--s4);font-size:var(--t-sm);font-weight:600;border:1px solid var(--line);animation:notice-in .26s var(--ease) both}
 .notice::before{flex:0 0 auto;width:1.15rem;height:1.15rem;border-radius:50%;display:grid;place-items:center;font-size:.7rem;font-weight:800;margin-top:.06rem}
@@ -926,6 +940,9 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .binary-operation{grid-template-columns:1fr}
 .binary-operation label,.binary-operation .operation-disclosure,.binary-operation [role=status]{grid-column:1}
 .binary-operation button{min-height:2.85rem}
+.game-session-rail{grid-template-columns:1fr}
+.game-session-steps{grid-template-columns:1fr}
+.game-session-boundary{grid-column:1}
 .kv{grid-template-columns:repeat(auto-fit,minmax(7rem,1fr))}
 }
 @media (max-width:26rem){.topnav a{padding:.35rem .45rem}}
@@ -1919,7 +1936,8 @@ fn render_operation_uploaders(
         out.push_str(&format!(
             "<form class=\"binary-operation\" method=\"post\" \
              action=\"/offerings/{key}/session/{id}/operations/{name}\" \
-             data-media=\"{media}\">\
+             data-media=\"{media}\" data-session-action=\"private-operation\" \
+             data-private-boundary=\"opaque-upload\">\
              <label for=\"operation-file-{index}\">{title}</label>\
              <p class=\"operation-disclosure\">{disclosure} Maximum canonical input: {max} bytes.</p>\
              <input id=\"operation-file-{index}\" type=\"file\" required \
@@ -1931,7 +1949,7 @@ fn render_operation_uploaders(
             id = esc(id),
             name = esc(&operation.name),
             media = esc(&operation.input_media_type),
-            title = esc(&operation.title),
+            title = esc(game_session::public_operation_title(&operation.name)),
             disclosure = esc(&operation.disclosure),
             max = operation.max_input_bytes,
         ));
@@ -1965,7 +1983,7 @@ fn render_offering_page(
         return page_missing(id);
     };
     let title = offering_title(state, key);
-    offering_page(&title, id, &surface)
+    offering_page(key, &title, id, &surface)
 }
 
 /// Render an offering-session response, choosing the surface by the `X-Fragment: 1` request header:
@@ -2356,7 +2374,8 @@ fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
         (" disabled", "affordance dimmed")
     };
     format!(
-        "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\">\
+        "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\" \
+         data-session-action=\"turn\" data-turn=\"{turn}\">\
          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
          <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" step=\"1\" \
          inputmode=\"numeric\" aria-label=\"{turn} value\"{disabled}>\
@@ -2423,6 +2442,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         "bazaar",
         "tug",
         "automatafl",
+        "private-raid",
     ];
     // NOTE `cheevos`, not `cheevo`: `dreggnet_surfaces::register_surfaces` registers the
     // achievements surface under the PLURAL key. The singular never matched, so Achievements has
@@ -2515,7 +2535,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     };
 
     // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the
-    // featured game leads, and the 22-offering shelf below is honestly the lab, not the product.
+    // featured game leads, and the 23-offering shelf below is honestly the lab, not the product.
     // THE FUNNEL: the PLAY CTA leads (the served in-tab run at `/descent/play`) and the no-cheat
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
@@ -2578,7 +2598,7 @@ fn split_title(title: &str) -> (&str, &str) {
 /// output (notice + forms + receipt) — embedded VERBATIM here, so the full page and the swapped
 /// fragment render the identical surface (ONE render path). The static chrome (crumb, name,
 /// tagline) sits OUTSIDE the region: it never changes across a turn, so it is never re-sent.
-fn offering_page(title: &str, id: &SessionId, surface: &str) -> String {
+fn offering_page(key: &str, title: &str, id: &SessionId, surface: &str) -> String {
     // The crumb names the offering; the surface's own sections carry the rest. The full registered
     // title still reaches the page (name + tagline), so a reader — and the portfolio test — sees it.
     let (name, tagline) = split_title(title);
@@ -2597,11 +2617,14 @@ fn offering_page(title: &str, id: &SessionId, surface: &str) -> String {
     let body = format!(
         "{crumb}<main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>{name}</h1>{tagline}</div>\
-         <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" aria-live=\"polite\">{surface}</div>\
+         {session_rail}\
+         <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" aria-live=\"polite\" \
+         data-result-kind=\"surface-and-receipt\">{surface}</div>\
          </main>",
         crumb = crumb(name, id),
         name = esc(name),
         tagline = tagline_html,
+        session_rail = game_session::session_rail(key, &id.0).unwrap_or_default(),
         surface = surface,
     );
     document(&format!("DreggNet Cloud — {title}"), "offerings", &body)
@@ -3868,7 +3891,7 @@ async fn index() -> Html<String> {
          {card_play}<a class=\"play\" href=\"/descent\">See today's no-cheat board \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-services\"><h3>🧪 The Lab</h3>\
-         <p class=\"tagline\">Experimental engine surfaces — eight games, nine feature surfaces, \
+         <p class=\"tagline\">Experimental engine surfaces — nine games, nine feature surfaces, \
          five services. The parts the game is built from, on the shelf for the curious.</p>\
          <a class=\"play\" href=\"/offerings\">Browse the Lab \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\

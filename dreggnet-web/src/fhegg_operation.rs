@@ -3,8 +3,10 @@
 //! There is one decoder and mutator: the `dreggnet-market` binary operation
 //! installed in the live `OfferingHost`.  This module supplies transport policy
 //! (content type and bounded body), discovery JSON, and status mapping. Platform
-//! modules authenticate their own request and call [`execute_upload`]; none of
-//! them parses or interprets the bundle.
+//! wrappers establish actor attribution at their stated grade and call
+//! [`execute_upload`]; none of them parses or interprets the bundle. The web
+//! cookie is asserted, while Telegram and Discord verify their native envelopes
+//! before calling the shared mutator.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -53,9 +55,10 @@ struct ArtifactDescriptorWire {
 
 impl From<BinaryArtifactDescriptor> for ArtifactDescriptorWire {
     fn from(value: BinaryArtifactDescriptor) -> Self {
+        let title = crate::game_session::public_operation_title(&value.name).to_string();
         Self {
             name: value.name,
-            title: value.title,
+            title,
             media_type: value.media_type,
             max_bytes: value.max_bytes,
             disclosure: value.disclosure,
@@ -83,14 +86,15 @@ struct OperationDescriptorWire {
 
 impl From<BinaryOperationDescriptor> for OperationDescriptorWire {
     fn from(value: BinaryOperationDescriptor) -> Self {
+        let title = crate::game_session::public_operation_title(&value.name).to_string();
         Self {
             name: value.name,
-            title: value.title,
+            title,
             input_media_type: value.input_media_type,
             max_input_bytes: value.max_input_bytes,
             disclosure: value.disclosure,
             upload_path_suffix: UPLOAD_PATH_SUFFIX,
-            authentication: "surface-authenticated actor; exact live offering/session path",
+            authentication: "surface-attributed actor; web labels are asserted, while native adapters verify their own envelopes; exact live offering/session path",
             replay_scope: "durable hosts journal only offering-selected safe replay material; otherwise the operation is refused before mutation",
             durability: "public receipt plus policy-approved replay material restore in timeline order; arbitrary upload bytes are never inferred safe",
         }
@@ -307,8 +311,8 @@ pub(crate) fn export_artifact(
     }
 }
 
-/// Web wrapper: public artifacts remain anonymously reachable; authenticated
-/// artifacts receive the existing attributed cookie/query identity or refuse.
+/// Web wrapper: public artifacts remain anonymously reachable; identity-scoped
+/// artifacts receive the existing asserted cookie/query actor or refuse.
 async fn get_web_artifact(
     State(catalog): State<Arc<CatalogState>>,
     Path((key, id, name)): Path<(String, String, String)>,
@@ -339,7 +343,7 @@ async fn read_bundle(
             format!("content-type must be {expected}"),
         ));
     }
-    if let Some(length) = request.headers().get(header::CONTENT_LENGTH) {
+    let declared_length = if let Some(length) = request.headers().get(header::CONTENT_LENGTH) {
         let length = length
             .to_str()
             .ok()
@@ -351,7 +355,10 @@ async fn read_bundle(
                 "operation input exceeds the hosted operation limit",
             ));
         }
-    }
+        Some(length)
+    } else {
+        None
+    };
     let bytes = to_bytes(request.into_body(), descriptor.max_input_bytes)
         .await
         .map_err(|_| {
@@ -360,11 +367,24 @@ async fn read_bundle(
                 "operation input exceeds the hosted operation limit",
             )
         })?;
+    if let Some(declared_length) = declared_length
+        && declared_length != bytes.len() as u64
+    {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "operation input changed size during upload ({declared_length} declared, {} received)",
+                bytes.len()
+            ),
+        ));
+    }
     Ok(bytes.to_vec())
 }
 
-/// The single upload implementation consumed by all surface authentication
-/// wrappers. `actor` must already be derived/verified by that surface.
+/// The single upload implementation consumed by all surface-attribution
+/// wrappers. `actor` must already be selected according to that surface's
+/// documented grade; this function does not upgrade asserted web labels into
+/// authenticated principals.
 pub(crate) async fn execute_upload(
     catalog: Arc<CatalogState>,
     key: String,
@@ -432,7 +452,7 @@ pub(crate) async fn execute_upload(
             status: "applied",
             operation: receipt.operation,
             receipt_id: hex32(&receipt.receipt_id),
-            public_fields: receipt.public_fields.into_iter().collect(),
+            public_fields: crate::game_session::public_operation_fields(receipt.public_fields),
         })
         .into_response(),
         Err(HostOperationError::UnknownOffering(_)) => {
@@ -453,9 +473,10 @@ pub(crate) async fn execute_upload(
     }
 }
 
-/// Browser-cookie wrapper. The existing web catalog's identity is explicitly
-/// asserted rather than cryptographic; anonymous uploads are refused. Telegram
-/// and Discord call [`execute_upload`] only after their stronger native gates.
+/// Browser-cookie wrapper. The existing web catalog's actor label is explicitly
+/// asserted rather than authenticated; requests with no attributed label are
+/// refused. Telegram and Discord call [`execute_upload`] only after their
+/// stronger native gates.
 async fn post_web_upload(
     State(catalog): State<Arc<CatalogState>>,
     Path((key, id, name)): Path<(String, String, String)>,
