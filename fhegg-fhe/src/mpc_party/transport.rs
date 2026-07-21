@@ -10,15 +10,21 @@
 //! back to one party. The only reconstructed result is either the equality bit
 //! in `DecisionTranscript` or `(p*, V*)` in `DistributedTranscript`.
 //!
-//! Ed25519 authenticates the exact session/sender/recipient/sequence/ciphertext
-//! bytes. Party peers derive a separately domain-bound Curve25519 key from those
-//! authenticated identities and encrypt-then-MAC each ingress payload under a
-//! fresh OS nonce. The receiver verifies the key-confirmation tag before it
-//! parses any plaintext and enforces strict in-order delivery. This closes
-//! router observation, transport spoofing, cross-session, duplicate, reorder,
-//! wrong-key acceptance, and misrouting seams.
-//! The converted identities are static and classical: this layer does not
-//! provide forward secrecy or post-quantum confidentiality.
+//! [`TransportSecurityProfile::NativePostQuantum`] authenticates every exact
+//! session/sender/recipient/sequence/role/ciphertext frame with both Ed25519 and
+//! roster-pinned ML-DSA-65. Each peer-ingress frame performs a fresh ML-KEM-768
+//! encapsulation to the named roster key and combines that secret with the
+//! existing X25519 shared secret using dregg's canonical hybrid combiner before
+//! XChaCha20-Poly1305. The receiver authenticates and key-confirms before parsing
+//! plaintext, then enforces strict in-order delivery. A different roster key or
+//! security profile changes the session digest, so key substitution, downgrade,
+//! cross-session replay, duplicate/reorder, and misrouting fail closed.
+//!
+//! [`TransportSecurityProfile::ClassicalCompatibility`] retains Ed25519 plus
+//! static converted-X25519 as an explicitly named compatibility profile.
+//! Neither profile claims forward secrecy: both use long-lived identity DH
+//! material, and native-PQ uses a long-lived recipient ML-KEM key even though
+//! each frame has a fresh encapsulation.
 //! It does **not** prove that a malicious party formed honest input shares,
 //! Beaver shares, or gate messages. The arithmetic claim remains the parent
 //! module's semi-honest/trusted-preprocessing claim.
@@ -31,6 +37,11 @@ use std::thread;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use curve25519_dalek::edwards::CompressedEdwardsY;
+use dregg_pq::hybrid_kem::combine as combine_hybrid_kem;
+use dregg_pq::{
+    ml_dsa_verify, ml_kem768_decaps, ml_kem768_encaps, ml_kem768_keygen, MlDsaKey, ML_DSA_PK_LEN,
+    ML_DSA_SIG_LEN,
+};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
@@ -45,12 +56,14 @@ use super::{
 };
 use crate::mpc::{index_bits, Crossing};
 
-const FRAME_MAGIC: &[u8; 8] = b"FHEQv003";
-const FRAME_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-frame-signature/v3";
-const FRAME_CHECKSUM_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-frame-checksum/v3";
-const SESSION_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-transport-session/v3";
-const PEER_KEY_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-peer-key/v3";
-const PEER_AAD_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-peer-aead/v3";
+const FRAME_MAGIC: &[u8; 8] = b"FHEQv004";
+const FRAME_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-signature/v4";
+const FRAME_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/frame/v4";
+const FRAME_CHECKSUM_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-checksum/v4";
+const SESSION_DOMAIN: &[u8] = b"fhegg/party-mpc-transport-session/v4";
+const PEER_KEY_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-key/classical-compat/v4";
+const PEER_HYBRID_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-hybrid-kem/v4";
+const PEER_AAD_DOMAIN: &[u8] = b"fhegg/party-mpc-peer-aead/v4";
 const PREPROCESSING_SEED_DOMAIN: &[u8] = b"fhegg/party-mpc-equality-fresh-preprocessing/v1";
 const CROSSING_PREPROCESSING_SEED_DOMAIN: &[u8] =
     b"fhegg/party-mpc-crossing-fresh-preprocessing/v1";
@@ -58,8 +71,14 @@ const MAX_FRAME_BYTES: usize = 64 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 const PEER_NONCE_BYTES: usize = 24;
 const PEER_AEAD_TAG_BYTES: usize = 16;
-const FIXED_CONTENT_BYTES: usize = 8 + 32 + 4 + 4 + 8 + 1 + 4;
-const TRAILER_BYTES: usize = 64 + 32;
+const FIXED_CONTENT_BYTES: usize = 8 + 1 + 64 + 4 + 4 + 8 + 1 + 4;
+const CLASSICAL_TRAILER_BYTES: usize = 64 + 32;
+const NATIVE_PQ_TRAILER_BYTES: usize = 64 + ML_DSA_SIG_LEN + 32;
+const ML_KEM_768_EK_BYTES: usize = 1_184;
+const ML_KEM_768_DK_BYTES: usize = 2_400;
+const ML_KEM_768_CT_BYTES: usize = 1_088;
+
+type TransportSessionDigest = [u8; 64];
 
 const KIND_PEER_INGRESS: u8 = 1;
 const KIND_GATE_SHARE: u8 = 2;
@@ -124,6 +143,137 @@ impl From<PartyMpcError> for EqualityTransportError {
 
 type Result<T> = std::result::Result<T, EqualityTransportError>;
 
+/// Cryptographic envelope selected for an entire ordered PartyMPC roster.
+///
+/// This tag is hashed into the transport session and encoded in every frame;
+/// it is not a negotiable per-connection preference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransportSecurityProfile {
+    /// Ed25519 authentication plus static converted-X25519 confidentiality.
+    ClassicalCompatibility,
+    /// Mandatory Ed25519 + ML-DSA-65 authentication and X25519 + ML-KEM-768
+    /// hybrid peer confidentiality.
+    NativePostQuantum,
+}
+
+impl TransportSecurityProfile {
+    fn wire_tag(self) -> u8 {
+        match self {
+            Self::ClassicalCompatibility => 0,
+            Self::NativePostQuantum => 1,
+        }
+    }
+
+    fn trailer_bytes(self) -> usize {
+        match self {
+            Self::ClassicalCompatibility => CLASSICAL_TRAILER_BYTES,
+            Self::NativePostQuantum => NATIVE_PQ_TRAILER_BYTES,
+        }
+    }
+}
+
+/// Roster-pinned public half of one native-PQ transport identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativePqTransportPublicIdentity {
+    ed25519: [u8; 32],
+    ml_dsa: Vec<u8>,
+    ml_kem_ek: Vec<u8>,
+}
+
+impl NativePqTransportPublicIdentity {
+    /// Construct an enrollment record from externally persisted public bytes.
+    /// Cryptographic decoding remains fail-closed at signature/KEM use; this
+    /// boundary rejects wrong deployed lengths before a roster can be formed.
+    pub fn from_parts(ed25519: [u8; 32], ml_dsa: Vec<u8>, ml_kem_ek: Vec<u8>) -> Result<Self> {
+        if ml_dsa.len() != ML_DSA_PK_LEN || ml_kem_ek.len() != ML_KEM_768_EK_BYTES {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ public identity has malformed deployed key material",
+            ));
+        }
+        Ok(Self {
+            ed25519,
+            ml_dsa,
+            ml_kem_ek,
+        })
+    }
+
+    pub fn ed25519(&self) -> [u8; 32] {
+        self.ed25519
+    }
+
+    pub fn ml_dsa(&self) -> &[u8] {
+        &self.ml_dsa
+    }
+
+    pub fn ml_kem_encapsulation_key(&self) -> &[u8] {
+        &self.ml_kem_ek
+    }
+}
+
+/// Secret endpoint material for one native-PQ roster slot.
+///
+/// The X25519 and ML-DSA identities are deterministically bound to the same
+/// Ed25519 seed. The ML-KEM recipient key is independently generated and must
+/// be persisted with the roster enrollment. Long-lived material means this is
+/// harvest-now resistant under ML-KEM, but it does not provide forward secrecy.
+#[derive(Clone)]
+pub struct NativePqTransportIdentity {
+    signing_key: SigningKey,
+    ml_dsa: MlDsaKey,
+    ml_kem_ek: Vec<u8>,
+    ml_kem_dk: Vec<u8>,
+}
+
+impl fmt::Debug for NativePqTransportIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativePqTransportIdentity(..)")
+    }
+}
+
+impl NativePqTransportIdentity {
+    /// Generate a fresh ML-KEM-768 recipient key and derive the ML-DSA-65 key
+    /// from this endpoint's enrolled Ed25519 seed.
+    pub fn generate(signing_key: SigningKey) -> Self {
+        let ml_dsa = MlDsaKey::from_ed25519_seed(&signing_key.to_bytes());
+        let (ml_kem_ek, ml_kem_dk) = ml_kem768_keygen();
+        Self {
+            signing_key,
+            ml_dsa,
+            ml_kem_ek,
+            ml_kem_dk,
+        }
+    }
+
+    /// Restore persisted endpoint material. Exact deployed ML-KEM lengths are
+    /// checked here; possession/correspondence is key-confirmed by AEAD on use.
+    pub fn from_material(
+        signing_key: SigningKey,
+        ml_kem_ek: Vec<u8>,
+        ml_kem_dk: Vec<u8>,
+    ) -> Result<Self> {
+        if ml_kem_ek.len() != ML_KEM_768_EK_BYTES || ml_kem_dk.len() != ML_KEM_768_DK_BYTES {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ identity has malformed ML-KEM-768 material",
+            ));
+        }
+        let ml_dsa = MlDsaKey::from_ed25519_seed(&signing_key.to_bytes());
+        Ok(Self {
+            signing_key,
+            ml_dsa,
+            ml_kem_ek,
+            ml_kem_dk,
+        })
+    }
+
+    pub fn public_identity(&self) -> NativePqTransportPublicIdentity {
+        NativePqTransportPublicIdentity {
+            ed25519: self.signing_key.verifying_key().to_bytes(),
+            ml_dsa: self.ml_dsa.public_bytes(),
+            ml_kem_ek: self.ml_kem_ek.clone(),
+        }
+    }
+}
+
 /// Ordered transport identities for one PartyMPC session.
 ///
 /// Party indices are `0..n`; the coordinator's wire sender id is exactly `n`.
@@ -131,10 +281,61 @@ type Result<T> = std::result::Result<T, EqualityTransportError>;
 pub struct EqualityTransportRoster {
     party_keys: Vec<[u8; 32]>,
     coordinator_key: [u8; 32],
+    profile: TransportSecurityProfile,
+    native_party_keys: Vec<NativePqTransportPublicIdentity>,
+    native_coordinator_key: Option<NativePqTransportPublicIdentity>,
 }
 
 impl EqualityTransportRoster {
+    /// Legacy spelling retained for source compatibility. The resulting roster
+    /// is explicitly tagged classical on the wire and in the session digest.
     pub fn new(party_keys: Vec<[u8; 32]>, coordinator_key: [u8; 32]) -> Result<Self> {
+        Self::new_classical_compatibility(party_keys, coordinator_key)
+    }
+
+    pub fn new_classical_compatibility(
+        party_keys: Vec<[u8; 32]>,
+        coordinator_key: [u8; 32],
+    ) -> Result<Self> {
+        Self::validate_ed25519_roster(&party_keys, coordinator_key)?;
+        Ok(Self {
+            party_keys,
+            coordinator_key,
+            profile: TransportSecurityProfile::ClassicalCompatibility,
+            native_party_keys: Vec::new(),
+            native_coordinator_key: None,
+        })
+    }
+
+    pub fn new_native_post_quantum(
+        party_keys: Vec<NativePqTransportPublicIdentity>,
+        coordinator_key: NativePqTransportPublicIdentity,
+    ) -> Result<Self> {
+        let ed25519_party_keys: Vec<_> = party_keys.iter().map(|key| key.ed25519).collect();
+        Self::validate_ed25519_roster(&ed25519_party_keys, coordinator_key.ed25519)?;
+        let mut seen_ml_dsa = HashSet::with_capacity(party_keys.len() + 1);
+        let mut seen_ml_kem = HashSet::with_capacity(party_keys.len() + 1);
+        for key in party_keys.iter().chain(std::iter::once(&coordinator_key)) {
+            if key.ml_dsa.len() != ML_DSA_PK_LEN
+                || key.ml_kem_ek.len() != ML_KEM_768_EK_BYTES
+                || !seen_ml_dsa.insert(key.ml_dsa.clone())
+                || !seen_ml_kem.insert(key.ml_kem_ek.clone())
+            {
+                return Err(EqualityTransportError::InvalidConfiguration(
+                    "native-PQ roster keys must have deployed lengths and be distinct",
+                ));
+            }
+        }
+        Ok(Self {
+            party_keys: ed25519_party_keys,
+            coordinator_key: coordinator_key.ed25519,
+            profile: TransportSecurityProfile::NativePostQuantum,
+            native_party_keys: party_keys,
+            native_coordinator_key: Some(coordinator_key),
+        })
+    }
+
+    fn validate_ed25519_roster(party_keys: &[[u8; 32]], coordinator_key: [u8; 32]) -> Result<()> {
         if party_keys.len() < 2 || party_keys.len() > u32::MAX as usize {
             return Err(EqualityTransportError::InvalidConfiguration(
                 "transport requires 2..=u32::MAX parties",
@@ -156,7 +357,7 @@ impl EqualityTransportRoster {
         // u-coordinate. Reject that alias (and zero) at roster construction so
         // two logical parties can never collapse onto one confidentiality key.
         let mut seen_montgomery = HashSet::with_capacity(party_keys.len());
-        for key in &party_keys {
+        for key in party_keys {
             let montgomery = CompressedEdwardsY(*key)
                 .decompress()
                 .ok_or(EqualityTransportError::InvalidConfiguration(
@@ -170,10 +371,7 @@ impl EqualityTransportRoster {
                 ));
             }
         }
-        Ok(Self {
-            party_keys,
-            coordinator_key,
-        })
+        Ok(())
     }
 
     pub fn n_parties(&self) -> usize {
@@ -184,12 +382,46 @@ impl EqualityTransportRoster {
         self.party_keys.len()
     }
 
+    pub fn security_profile(&self) -> TransportSecurityProfile {
+        self.profile
+    }
+
     fn key(&self, sender: usize) -> Option<[u8; 32]> {
         if sender == self.coordinator() {
             Some(self.coordinator_key)
         } else {
             self.party_keys.get(sender).copied()
         }
+    }
+
+    fn native_key(&self, sender: usize) -> Option<&NativePqTransportPublicIdentity> {
+        if sender == self.coordinator() {
+            self.native_coordinator_key.as_ref()
+        } else {
+            self.native_party_keys.get(sender)
+        }
+    }
+
+    fn validate_native_identity(
+        &self,
+        sender: usize,
+        identity: &NativePqTransportIdentity,
+    ) -> Result<()> {
+        let expected =
+            self.native_key(sender)
+                .ok_or(EqualityTransportError::InvalidConfiguration(
+                    "native-PQ endpoint used outside a native-PQ roster",
+                ))?;
+        if identity.signing_key.verifying_key().to_bytes() != expected.ed25519
+            || identity.ml_dsa.public_bytes() != expected.ml_dsa
+            || identity.ml_kem_ek != expected.ml_kem_ek
+            || identity.ml_kem_dk.len() != ML_KEM_768_DK_BYTES
+        {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ endpoint identity does not match its roster slot",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -250,10 +482,12 @@ enum RawOutbound {
 /// its local mod-t operands; no operand/share accessor is exposed.
 pub struct EqualityPartyMachine {
     session: PartyMpcSession,
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     roster: EqualityTransportRoster,
     party: usize,
     signing_key: SigningKey,
+    ml_dsa: Option<MlDsaKey>,
+    ml_kem_dk: Option<Vec<u8>>,
     outbound: Receiver<RawOutbound>,
     peer_in: Sender<PeerInputMessage>,
     coordinator_in: Sender<CoordinatorMessage>,
@@ -272,6 +506,11 @@ impl EqualityPartyMachine {
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
         validate_equality_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::ClassicalCompatibility {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ roster requires native-PQ endpoint credentials",
+            ));
+        }
         if party >= roster.n_parties()
             || signing_key.verifying_key().to_bytes() != roster.party_keys[party]
         {
@@ -279,7 +518,62 @@ impl EqualityPartyMachine {
                 "party signing key does not match its roster slot",
             ));
         }
+        Self::new_with_crypto(
+            session,
+            roster,
+            party,
+            signing_key,
+            None,
+            None,
+            input,
+            preprocessing,
+        )
+    }
 
+    pub fn new_native_post_quantum(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        identity: NativePqTransportIdentity,
+        input: PartyEqualityInput,
+        preprocessing: TripleMaterial,
+    ) -> Result<Self> {
+        validate_equality_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ endpoint requires a native-PQ roster",
+            ));
+        }
+        roster.validate_native_identity(party, &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            ..
+        } = identity;
+        Self::new_with_crypto(
+            session,
+            roster,
+            party,
+            signing_key,
+            Some(ml_dsa),
+            Some(ml_kem_dk),
+            input,
+            preprocessing,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_crypto(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        signing_key: SigningKey,
+        ml_dsa: Option<MlDsaKey>,
+        ml_kem_dk: Option<Vec<u8>>,
+        input: PartyEqualityInput,
+        preprocessing: TripleMaterial,
+    ) -> Result<Self> {
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
         let (peer_in_tx, peer_in_rx) = mpsc::channel();
@@ -319,6 +613,8 @@ impl EqualityPartyMachine {
             roster: roster.clone(),
             party,
             signing_key,
+            ml_dsa,
+            ml_kem_dk,
             outbound: outbound_rx,
             peer_in: peer_in_tx,
             coordinator_in: coordinator_in_tx,
@@ -350,6 +646,7 @@ impl EqualityPartyMachine {
                     sequence,
                     payload,
                     &self.signing_key,
+                    self.ml_dsa.as_ref(),
                     &self.roster,
                 )?))
             }
@@ -378,6 +675,7 @@ impl EqualityPartyMachine {
             self.session_digest,
             self.party,
             &self.signing_key,
+            self.ml_kem_dk.as_deref(),
             &self.roster,
             decoded,
         )? {
@@ -411,10 +709,12 @@ impl EqualityPartyMachine {
 /// gate shares plus the final `(p*, V*)` XOR shares.
 pub struct CrossingPartyMachine {
     session: PartyMpcSession,
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     roster: EqualityTransportRoster,
     party: usize,
     signing_key: SigningKey,
+    ml_dsa: Option<MlDsaKey>,
+    ml_kem_dk: Option<Vec<u8>>,
     outbound: Receiver<RawOutbound>,
     peer_in: Sender<PeerInputMessage>,
     coordinator_in: Sender<CoordinatorMessage>,
@@ -483,6 +783,11 @@ impl CrossingPartyMachine {
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
         validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::ClassicalCompatibility {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ roster requires native-PQ endpoint credentials",
+            ));
+        }
         if party >= roster.n_parties()
             || signing_key.verifying_key().to_bytes() != roster.party_keys[party]
         {
@@ -490,7 +795,62 @@ impl CrossingPartyMachine {
                 "party signing key does not match its roster slot",
             ));
         }
+        Self::new_with_crypto(
+            session,
+            roster,
+            party,
+            signing_key,
+            None,
+            None,
+            input,
+            preprocessing,
+        )
+    }
 
+    pub fn new_native_post_quantum(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        identity: NativePqTransportIdentity,
+        input: PartyArithmeticInput,
+        preprocessing: TripleMaterial,
+    ) -> Result<Self> {
+        validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ endpoint requires a native-PQ roster",
+            ));
+        }
+        roster.validate_native_identity(party, &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            ..
+        } = identity;
+        Self::new_with_crypto(
+            session,
+            roster,
+            party,
+            signing_key,
+            Some(ml_dsa),
+            Some(ml_kem_dk),
+            input,
+            preprocessing,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_crypto(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        signing_key: SigningKey,
+        ml_dsa: Option<MlDsaKey>,
+        ml_kem_dk: Option<Vec<u8>>,
+        input: PartyArithmeticInput,
+        preprocessing: TripleMaterial,
+    ) -> Result<Self> {
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
         let (peer_in_tx, peer_in_rx) = mpsc::channel();
@@ -530,6 +890,8 @@ impl CrossingPartyMachine {
             roster: roster.clone(),
             party,
             signing_key,
+            ml_dsa,
+            ml_kem_dk,
             outbound: outbound_rx,
             peer_in: peer_in_tx,
             coordinator_in: coordinator_in_tx,
@@ -561,6 +923,7 @@ impl CrossingPartyMachine {
                     sequence,
                     payload,
                     &self.signing_key,
+                    self.ml_dsa.as_ref(),
                     &self.roster,
                 )?))
             }
@@ -588,6 +951,7 @@ impl CrossingPartyMachine {
             self.session_digest,
             self.party,
             &self.signing_key,
+            self.ml_kem_dk.as_deref(),
             &self.roster,
             decoded,
         )? {
@@ -617,9 +981,10 @@ impl CrossingPartyMachine {
 /// has no endpoint capable of accepting peer-ingress or raw mod-t operands.
 pub struct EqualityCoordinatorMachine {
     session: PartyMpcSession,
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     roster: EqualityTransportRoster,
     signing_key: SigningKey,
+    ml_dsa: Option<MlDsaKey>,
     party_in: Sender<PartyMessage>,
     outbound: Receiver<RawOutbound>,
     result: Receiver<std::result::Result<DistributedDecisionRun, PartyMpcError>>,
@@ -634,11 +999,45 @@ impl EqualityCoordinatorMachine {
         signing_key: SigningKey,
     ) -> Result<Self> {
         validate_equality_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::ClassicalCompatibility {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ roster requires native-PQ endpoint credentials",
+            ));
+        }
         if signing_key.verifying_key().to_bytes() != roster.coordinator_key {
             return Err(EqualityTransportError::InvalidConfiguration(
                 "coordinator signing key does not match the roster",
             ));
         }
+        Self::new_with_crypto(session, roster, signing_key, None)
+    }
+
+    pub fn new_native_post_quantum(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        identity: NativePqTransportIdentity,
+    ) -> Result<Self> {
+        validate_equality_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ endpoint requires a native-PQ roster",
+            ));
+        }
+        roster.validate_native_identity(roster.coordinator(), &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ..
+        } = identity;
+        Self::new_with_crypto(session, roster, signing_key, Some(ml_dsa))
+    }
+
+    fn new_with_crypto(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        signing_key: SigningKey,
+        ml_dsa: Option<MlDsaKey>,
+    ) -> Result<Self> {
         let (party_in_tx, party_in_rx) = mpsc::channel();
         let (outbound_tx, outbound_rx) = mpsc::channel();
         let mut to_parties = Vec::with_capacity(roster.n_parties());
@@ -672,6 +1071,7 @@ impl EqualityCoordinatorMachine {
             session,
             roster: roster.clone(),
             signing_key,
+            ml_dsa,
             party_in: party_in_tx,
             outbound: outbound_rx,
             result: result_rx,
@@ -698,6 +1098,7 @@ impl EqualityCoordinatorMachine {
                     sequence,
                     payload,
                     &self.signing_key,
+                    self.ml_dsa.as_ref(),
                     &self.roster,
                 )?))
             }
@@ -752,9 +1153,10 @@ impl EqualityCoordinatorMachine {
 /// authenticated gate and final output shares.
 pub struct CrossingCoordinatorMachine {
     session: PartyMpcSession,
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     roster: EqualityTransportRoster,
     signing_key: SigningKey,
+    ml_dsa: Option<MlDsaKey>,
     party_in: Sender<PartyMessage>,
     outbound: Receiver<RawOutbound>,
     result: Receiver<std::result::Result<DistributedRun, PartyMpcError>>,
@@ -769,11 +1171,45 @@ impl CrossingCoordinatorMachine {
         signing_key: SigningKey,
     ) -> Result<Self> {
         validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::ClassicalCompatibility {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ roster requires native-PQ endpoint credentials",
+            ));
+        }
         if signing_key.verifying_key().to_bytes() != roster.coordinator_key {
             return Err(EqualityTransportError::InvalidConfiguration(
                 "coordinator signing key does not match the roster",
             ));
         }
+        Self::new_with_crypto(session, roster, signing_key, None)
+    }
+
+    pub fn new_native_post_quantum(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        identity: NativePqTransportIdentity,
+    ) -> Result<Self> {
+        validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantum {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "native-PQ endpoint requires a native-PQ roster",
+            ));
+        }
+        roster.validate_native_identity(roster.coordinator(), &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ..
+        } = identity;
+        Self::new_with_crypto(session, roster, signing_key, Some(ml_dsa))
+    }
+
+    fn new_with_crypto(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        signing_key: SigningKey,
+        ml_dsa: Option<MlDsaKey>,
+    ) -> Result<Self> {
         let (party_in_tx, party_in_rx) = mpsc::channel();
         let (outbound_tx, outbound_rx) = mpsc::channel();
         let mut to_parties = Vec::with_capacity(roster.n_parties());
@@ -807,6 +1243,7 @@ impl CrossingCoordinatorMachine {
             session,
             roster: roster.clone(),
             signing_key,
+            ml_dsa,
             party_in: party_in_tx,
             outbound: outbound_rx,
             result: result_rx,
@@ -833,6 +1270,7 @@ impl CrossingCoordinatorMachine {
                     sequence,
                     payload,
                     &self.signing_key,
+                    self.ml_dsa.as_ref(),
                     &self.roster,
                 )?))
             }
@@ -1055,9 +1493,10 @@ struct DecodedFrame<'a> {
 
 fn decode_party_inbound(
     session: &PartyMpcSession,
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     party: usize,
     signing_key: &SigningKey,
+    ml_kem_dk: Option<&[u8]>,
     roster: &EqualityTransportRoster,
     frame: DecodedFrame<'_>,
 ) -> Result<PartyInbound> {
@@ -1073,6 +1512,7 @@ fn decode_party_inbound(
                 frame.recipient,
                 frame.sequence,
                 signing_key,
+                ml_kem_dk,
                 roster,
             )?;
             let decoded = (|| {
@@ -1209,12 +1649,13 @@ fn decode_gate(payload: &[u8]) -> Result<(usize, u8, u8)> {
 }
 
 fn sign_frame(
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     sender: usize,
     recipient: usize,
     sequence: u64,
     mut payload: EncodedPayload,
     signing_key: &SigningKey,
+    ml_dsa: Option<&MlDsaKey>,
     roster: &EqualityTransportRoster,
 ) -> Result<AuthenticatedEqualityFrame> {
     if payload.bytes.len() > MAX_PAYLOAD_BYTES {
@@ -1244,8 +1685,11 @@ fn sign_frame(
         .map_err(|_| EqualityTransportError::MalformedFrame("recipient does not fit u32"))?;
     let payload_len = u32::try_from(payload.bytes.len())
         .map_err(|_| EqualityTransportError::MalformedFrame("payload length does not fit u32"))?;
-    let mut wire = Vec::with_capacity(FIXED_CONTENT_BYTES + payload.bytes.len() + TRAILER_BYTES);
+    let mut wire = Vec::with_capacity(
+        FIXED_CONTENT_BYTES + payload.bytes.len() + roster.profile.trailer_bytes(),
+    );
     wire.extend_from_slice(FRAME_MAGIC);
+    wire.push(roster.profile.wire_tag());
     wire.extend_from_slice(&session_digest);
     wire.extend_from_slice(&sender_u32.to_be_bytes());
     wire.extend_from_slice(&recipient_u32.to_be_bytes());
@@ -1253,8 +1697,30 @@ fn sign_frame(
     wire.push(payload.kind);
     wire.extend_from_slice(&payload_len.to_be_bytes());
     wire.extend_from_slice(&payload.bytes);
-    let signature = signing_key.sign(&frame_signing_message(&wire));
+    let signing_message = frame_signing_message(&wire);
+    let signature = signing_key.sign(&signing_message);
     wire.extend_from_slice(&signature.to_bytes());
+    match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => {
+            if ml_dsa.is_some() {
+                return Err(EqualityTransportError::InvalidConfiguration(
+                    "classical transport received native-PQ signing material",
+                ));
+            }
+        }
+        TransportSecurityProfile::NativePostQuantum => {
+            let ml_dsa = ml_dsa.ok_or(EqualityTransportError::InvalidConfiguration(
+                "native-PQ frame requires ML-DSA signing material",
+            ))?;
+            let signature = ml_dsa
+                .try_sign(FRAME_ML_DSA_CONTEXT, &signing_message)
+                .ok_or(EqualityTransportError::EntropyUnavailable)?;
+            if signature.len() != ML_DSA_SIG_LEN {
+                return Err(EqualityTransportError::AuthenticationFailed);
+            }
+            wire.extend_from_slice(&signature);
+        }
+    }
     wire.extend_from_slice(&frame_checksum(&wire));
     if wire.len() > MAX_FRAME_BYTES {
         return Err(EqualityTransportError::MalformedFrame(
@@ -1279,14 +1745,20 @@ fn sign_frame(
 /// sessions therefore does not reuse a peer-ingress key or nonce domain.
 fn encrypt_peer_payload(
     plaintext: &[u8],
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     sender: usize,
     recipient: usize,
     sequence: u64,
     signing_key: &SigningKey,
     roster: &EqualityTransportRoster,
 ) -> Result<Vec<u8>> {
-    if plaintext.len() > MAX_PAYLOAD_BYTES.saturating_sub(PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES) {
+    let kem_overhead = match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => 0,
+        TransportSecurityProfile::NativePostQuantum => ML_KEM_768_CT_BYTES,
+    };
+    if plaintext.len()
+        > MAX_PAYLOAD_BYTES.saturating_sub(kem_overhead + PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES)
+    {
         return Err(EqualityTransportError::MalformedFrame(
             "peer-ingress plaintext exceeds its allocation limit",
         ));
@@ -1297,8 +1769,39 @@ fn encrypt_peer_payload(
     if signing_key.verifying_key().to_bytes() != roster.party_keys[sender] {
         return Err(EqualityTransportError::SenderMismatch);
     }
-    let shared = peer_shared_secret(signing_key, roster.party_keys[recipient])?;
-    let mut peer_key = derive_peer_key(shared, session_digest, sender, recipient)?;
+    let mut shared = peer_shared_secret(signing_key, roster.party_keys[recipient])?;
+    let mut kem_ciphertext = Vec::new();
+    let mut peer_key = match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => {
+            derive_peer_key(shared, session_digest, sender, recipient)?
+        }
+        TransportSecurityProfile::NativePostQuantum => {
+            let recipient_key = roster.native_key(recipient).ok_or(
+                EqualityTransportError::InvalidConfiguration(
+                    "native-PQ recipient has no enrolled KEM key",
+                ),
+            )?;
+            let (ciphertext, mut ml_kem_shared) = ml_kem768_encaps(&recipient_key.ml_kem_ek)
+                .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+            if ciphertext.len() != ML_KEM_768_CT_BYTES {
+                ml_kem_shared.fill(0);
+                return Err(EqualityTransportError::ConfidentialityFailed);
+            }
+            let transcript = peer_hybrid_transcript(
+                session_digest,
+                sender,
+                recipient,
+                sequence,
+                roster,
+                &ciphertext,
+            )?;
+            let combined = combine_hybrid_kem(&shared, &ml_kem_shared, &transcript);
+            ml_kem_shared.fill(0);
+            kem_ciphertext = ciphertext;
+            combined
+        }
+    };
+    shared.fill(0);
     let mut nonce = [0u8; PEER_NONCE_BYTES];
     OsRng
         .try_fill_bytes(&mut nonce)
@@ -1319,7 +1822,9 @@ fn encrypt_peer_payload(
     })();
     peer_key.fill(0);
     let ciphertext = encryption?;
-    let mut encrypted = Vec::with_capacity(PEER_NONCE_BYTES + ciphertext.len());
+    let mut encrypted =
+        Vec::with_capacity(kem_ciphertext.len() + PEER_NONCE_BYTES + ciphertext.len());
+    encrypted.extend_from_slice(&kem_ciphertext);
     encrypted.extend_from_slice(&nonce);
     encrypted.extend_from_slice(&ciphertext);
     nonce.fill(0);
@@ -1328,14 +1833,19 @@ fn encrypt_peer_payload(
 
 fn decrypt_peer_payload(
     encrypted: &[u8],
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     sender: usize,
     recipient: usize,
     sequence: u64,
     signing_key: &SigningKey,
+    ml_kem_dk: Option<&[u8]>,
     roster: &EqualityTransportRoster,
 ) -> Result<Vec<u8>> {
-    if encrypted.len() < PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES
+    let kem_overhead = match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => 0,
+        TransportSecurityProfile::NativePostQuantum => ML_KEM_768_CT_BYTES,
+    };
+    if encrypted.len() < kem_overhead + PEER_NONCE_BYTES + PEER_AEAD_TAG_BYTES
         || encrypted.len() > MAX_PAYLOAD_BYTES
     {
         return Err(EqualityTransportError::MalformedFrame(
@@ -1348,16 +1858,47 @@ fn decrypt_peer_payload(
     {
         return Err(EqualityTransportError::RecipientMismatch);
     }
-    let nonce: [u8; PEER_NONCE_BYTES] = encrypted[..PEER_NONCE_BYTES]
+    let nonce_start = kem_overhead;
+    let nonce_end = nonce_start + PEER_NONCE_BYTES;
+    let nonce: [u8; PEER_NONCE_BYTES] = encrypted[nonce_start..nonce_end]
         .try_into()
         .map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
-    let ciphertext = &encrypted[PEER_NONCE_BYTES..];
+    let ciphertext = &encrypted[nonce_end..];
     let plaintext_len = ciphertext
         .len()
         .checked_sub(PEER_AEAD_TAG_BYTES)
         .ok_or(EqualityTransportError::ConfidentialityFailed)?;
-    let shared = peer_shared_secret(signing_key, roster.party_keys[sender])?;
-    let mut peer_key = derive_peer_key(shared, session_digest, sender, recipient)?;
+    let mut shared = peer_shared_secret(signing_key, roster.party_keys[sender])?;
+    let mut peer_key = match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => {
+            if ml_kem_dk.is_some() {
+                return Err(EqualityTransportError::InvalidConfiguration(
+                    "classical transport received native-PQ decapsulation material",
+                ));
+            }
+            derive_peer_key(shared, session_digest, sender, recipient)?
+        }
+        TransportSecurityProfile::NativePostQuantum => {
+            let ml_kem_dk = ml_kem_dk.ok_or(EqualityTransportError::InvalidConfiguration(
+                "native-PQ peer ingress requires ML-KEM decapsulation material",
+            ))?;
+            let kem_ciphertext = &encrypted[..ML_KEM_768_CT_BYTES];
+            let mut ml_kem_shared = ml_kem768_decaps(ml_kem_dk, kem_ciphertext)
+                .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+            let transcript = peer_hybrid_transcript(
+                session_digest,
+                sender,
+                recipient,
+                sequence,
+                roster,
+                kem_ciphertext,
+            )?;
+            let combined = combine_hybrid_kem(&shared, &ml_kem_shared, &transcript);
+            ml_kem_shared.fill(0);
+            combined
+        }
+    };
+    shared.fill(0);
     let aad = peer_aead_aad(session_digest, sender, recipient, sequence, plaintext_len)?;
     let decrypt = (|| {
         let cipher = XChaCha20Poly1305::new_from_slice(&peer_key)
@@ -1374,6 +1915,51 @@ fn decrypt_peer_payload(
     })();
     peer_key.fill(0);
     decrypt
+}
+
+fn peer_hybrid_transcript(
+    session_digest: TransportSessionDigest,
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    roster: &EqualityTransportRoster,
+    kem_ciphertext: &[u8],
+) -> Result<Vec<u8>> {
+    let sender_u32 =
+        u32::try_from(sender).map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+    let recipient_u32 =
+        u32::try_from(recipient).map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
+    let sender_key = roster
+        .native_key(sender)
+        .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+    let recipient_key = roster
+        .native_key(recipient)
+        .ok_or(EqualityTransportError::ConfidentialityFailed)?;
+    let mut transcript = Vec::with_capacity(
+        PEER_HYBRID_TRANSCRIPT_DOMAIN.len()
+            + 64
+            + 4
+            + 4
+            + 8
+            + 64
+            + sender_key.ml_dsa.len()
+            + recipient_key.ml_dsa.len()
+            + recipient_key.ml_kem_ek.len()
+            + kem_ciphertext.len(),
+    );
+    transcript.extend_from_slice(&(PEER_HYBRID_TRANSCRIPT_DOMAIN.len() as u64).to_be_bytes());
+    transcript.extend_from_slice(PEER_HYBRID_TRANSCRIPT_DOMAIN);
+    transcript.extend_from_slice(&session_digest);
+    transcript.extend_from_slice(&sender_u32.to_be_bytes());
+    transcript.extend_from_slice(&recipient_u32.to_be_bytes());
+    transcript.extend_from_slice(&sequence.to_be_bytes());
+    transcript.extend_from_slice(&sender_key.ed25519);
+    transcript.extend_from_slice(&recipient_key.ed25519);
+    transcript.extend_from_slice(&sender_key.ml_dsa);
+    transcript.extend_from_slice(&recipient_key.ml_dsa);
+    transcript.extend_from_slice(&recipient_key.ml_kem_ek);
+    transcript.extend_from_slice(kem_ciphertext);
+    Ok(transcript)
 }
 
 /// Standard Ed25519-secret / Ed25519-public conversion to a Curve25519 shared
@@ -1400,7 +1986,7 @@ fn peer_shared_secret(signing_key: &SigningKey, peer_public: [u8; 32]) -> Result
 
 fn derive_peer_key(
     mut shared: [u8; 32],
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     sender: usize,
     recipient: usize,
 ) -> Result<[u8; 32]> {
@@ -1409,7 +1995,7 @@ fn derive_peer_key(
     let recipient =
         u32::try_from(recipient).map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
     let hkdf = Hkdf::<Sha256>::new(Some(PEER_KEY_DOMAIN), &shared);
-    let mut info = Vec::with_capacity(PEER_KEY_DOMAIN.len() + 8 + 32 + 4 + 4);
+    let mut info = Vec::with_capacity(PEER_KEY_DOMAIN.len() + 8 + 64 + 4 + 4);
     info.extend_from_slice(&(PEER_KEY_DOMAIN.len() as u64).to_be_bytes());
     info.extend_from_slice(PEER_KEY_DOMAIN);
     info.extend_from_slice(&session_digest);
@@ -1426,7 +2012,7 @@ fn derive_peer_key(
 
 #[allow(clippy::too_many_arguments)]
 fn peer_aead_aad(
-    session_digest: [u8; 32],
+    session_digest: TransportSessionDigest,
     sender: usize,
     recipient: usize,
     sequence: u64,
@@ -1438,7 +2024,7 @@ fn peer_aead_aad(
         u32::try_from(recipient).map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
     let plaintext_len =
         u64::try_from(plaintext_len).map_err(|_| EqualityTransportError::ConfidentialityFailed)?;
-    let mut aad = Vec::with_capacity(8 + PEER_AAD_DOMAIN.len() + 32 + 4 + 4 + 8 + 8);
+    let mut aad = Vec::with_capacity(8 + PEER_AAD_DOMAIN.len() + 64 + 4 + 4 + 8 + 8);
     aad.extend_from_slice(&(PEER_AAD_DOMAIN.len() as u64).to_be_bytes());
     aad.extend_from_slice(PEER_AAD_DOMAIN);
     aad.extend_from_slice(&session_digest);
@@ -1451,11 +2037,12 @@ fn peer_aead_aad(
 
 fn verify_frame<'a>(
     bytes: &'a [u8],
-    expected_session: [u8; 32],
+    expected_session: TransportSessionDigest,
     expected_recipient: usize,
     roster: &EqualityTransportRoster,
 ) -> Result<DecodedFrame<'a>> {
-    if bytes.len() < FIXED_CONTENT_BYTES + TRAILER_BYTES || bytes.len() > MAX_FRAME_BYTES {
+    let trailer_bytes = roster.profile.trailer_bytes();
+    if bytes.len() < FIXED_CONTENT_BYTES + trailer_bytes || bytes.len() > MAX_FRAME_BYTES {
         return Err(EqualityTransportError::MalformedFrame(
             "frame length is outside its bounds",
         ));
@@ -1466,7 +2053,9 @@ fn verify_frame<'a>(
             "frame checksum mismatch",
         ));
     }
-    let signature_start = checksum_start - 64;
+    let signature_start = checksum_start.checked_sub(trailer_bytes - 32).ok_or(
+        EqualityTransportError::MalformedFrame("frame signature trailer underflow"),
+    )?;
     let content = &bytes[..signature_start];
     let mut input = Reader::new(content);
     if input.array::<8>()? != *FRAME_MAGIC {
@@ -1474,7 +2063,10 @@ fn verify_frame<'a>(
             "wrong frame version",
         ));
     }
-    if input.array::<32>()? != expected_session {
+    if input.byte()? != roster.profile.wire_tag() {
+        return Err(EqualityTransportError::AuthenticationFailed);
+    }
+    if input.array::<64>()? != expected_session {
         return Err(EqualityTransportError::SessionMismatch);
     }
     let sender = input.u32()? as usize;
@@ -1491,15 +2083,37 @@ fn verify_frame<'a>(
         .ok_or(EqualityTransportError::SenderMismatch)?;
     let verifying = VerifyingKey::from_bytes(&public_key)
         .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
-    let signature_bytes: [u8; 64] = bytes[signature_start..checksum_start]
+    let ed25519_end = signature_start + 64;
+    let signature_bytes: [u8; 64] = bytes[signature_start..ed25519_end]
         .try_into()
         .map_err(|_| EqualityTransportError::MalformedFrame("invalid signature length"))?;
+    let signing_message = frame_signing_message(content);
     verifying
-        .verify_strict(
-            &frame_signing_message(content),
-            &Signature::from_bytes(&signature_bytes),
-        )
+        .verify_strict(&signing_message, &Signature::from_bytes(&signature_bytes))
         .map_err(|_| EqualityTransportError::AuthenticationFailed)?;
+    match roster.profile {
+        TransportSecurityProfile::ClassicalCompatibility => {
+            if ed25519_end != checksum_start {
+                return Err(EqualityTransportError::MalformedFrame(
+                    "classical frame has a non-canonical signature trailer",
+                ));
+            }
+        }
+        TransportSecurityProfile::NativePostQuantum => {
+            let public_key = roster
+                .native_key(sender)
+                .ok_or(EqualityTransportError::AuthenticationFailed)?;
+            let pq_signature = &bytes[ed25519_end..checksum_start];
+            if !ml_dsa_verify(
+                &public_key.ml_dsa,
+                FRAME_ML_DSA_CONTEXT,
+                &signing_message,
+                pq_signature,
+            ) {
+                return Err(EqualityTransportError::AuthenticationFailed);
+            }
+        }
+    }
     Ok(DecodedFrame {
         sender,
         recipient,
@@ -1512,7 +2126,7 @@ fn verify_frame<'a>(
 fn transport_session_digest(
     session: &PartyMpcSession,
     roster: &EqualityTransportRoster,
-) -> Result<[u8; 32]> {
+) -> Result<TransportSessionDigest> {
     let circuit_tag = match session.circuit {
         CircuitKind::Crossing => 0,
         CircuitKind::Equality => 1,
@@ -1527,9 +2141,10 @@ fn transport_session_digest(
             "session and transport roster sizes differ",
         ));
     }
-    let mut hash = Sha256::new();
+    let mut hash = Sha512::new();
     hash.update((SESSION_DOMAIN.len() as u64).to_be_bytes());
     hash.update(SESSION_DOMAIN);
+    hash.update([roster.profile.wire_tag()]);
     hash.update(session.nonce);
     hash.update((session.n_parties as u64).to_be_bytes());
     hash.update((session.buckets as u64).to_be_bytes());
@@ -1543,6 +2158,23 @@ fn transport_session_digest(
         hash.update(key);
     }
     hash.update(roster.coordinator_key);
+    if roster.profile == TransportSecurityProfile::NativePostQuantum {
+        for key in &roster.native_party_keys {
+            hash.update((key.ml_dsa.len() as u64).to_be_bytes());
+            hash.update(&key.ml_dsa);
+            hash.update((key.ml_kem_ek.len() as u64).to_be_bytes());
+            hash.update(&key.ml_kem_ek);
+        }
+        let coordinator = roster.native_coordinator_key.as_ref().ok_or(
+            EqualityTransportError::InvalidConfiguration(
+                "native-PQ roster is missing its coordinator key",
+            ),
+        )?;
+        hash.update((coordinator.ml_dsa.len() as u64).to_be_bytes());
+        hash.update(&coordinator.ml_dsa);
+        hash.update((coordinator.ml_kem_ek.len() as u64).to_be_bytes());
+        hash.update(&coordinator.ml_kem_ek);
+    }
     Ok(hash.finalize().into())
 }
 
@@ -1862,7 +2494,7 @@ pub fn verify_public_crossing_transcript(
 }
 
 fn encoded_frame_recipient(bytes: &[u8]) -> Result<usize> {
-    const RECIPIENT_OFFSET: usize = 8 + 32 + 4;
+    const RECIPIENT_OFFSET: usize = 8 + 1 + 64 + 4;
     let end = RECIPIENT_OFFSET + 4;
     let field = bytes
         .get(RECIPIENT_OFFSET..end)
@@ -1959,8 +2591,8 @@ fn fresh_preprocessing_seed_for<R: RngCore + CryptoRng>(
     Ok(hash.finalize().into())
 }
 
-fn frame_signing_message(content: &[u8]) -> [u8; 32] {
-    let mut hash = Sha256::new();
+fn frame_signing_message(content: &[u8]) -> [u8; 64] {
+    let mut hash = Sha512::new();
     hash.update((FRAME_SIGNATURE_DOMAIN.len() as u64).to_be_bytes());
     hash.update(FRAME_SIGNATURE_DOMAIN);
     hash.update((content.len() as u64).to_be_bytes());
@@ -2106,11 +2738,11 @@ mod tests {
         assert_ne!(first, second, "fresh frame nonces must randomize the wire");
         assert_ne!(&first[PEER_NONCE_BYTES..], plaintext.bytes);
         assert_eq!(
-            decrypt_peer_payload(&first, session_digest, 0, 1, 0, &keys[1], &roster).unwrap(),
+            decrypt_peer_payload(&first, session_digest, 0, 1, 0, &keys[1], None, &roster).unwrap(),
             plaintext.bytes
         );
         assert_eq!(
-            decrypt_peer_payload(&first, session_digest, 0, 1, 0, &keys[2], &roster),
+            decrypt_peer_payload(&first, session_digest, 0, 1, 0, &keys[2], None, &roster),
             Err(EqualityTransportError::RecipientMismatch)
         );
 
@@ -2118,13 +2750,13 @@ mod tests {
             let mut corrupted = first.clone();
             corrupted[index] ^= 1;
             assert_eq!(
-                decrypt_peer_payload(&corrupted, session_digest, 0, 1, 0, &keys[1], &roster),
+                decrypt_peer_payload(&corrupted, session_digest, 0, 1, 0, &keys[1], None, &roster,),
                 Err(EqualityTransportError::ConfidentialityFailed),
                 "nonce, ciphertext, and Poly1305-tag corruption must all fail closed"
             );
         }
         assert_eq!(
-            decrypt_peer_payload(&first, session_digest, 0, 1, 1, &keys[1], &roster),
+            decrypt_peer_payload(&first, session_digest, 0, 1, 1, &keys[1], None, &roster),
             Err(EqualityTransportError::ConfidentialityFailed),
             "the AEAD associated data binds sequence"
         );
@@ -2240,6 +2872,7 @@ mod tests {
                             bytes,
                         },
                         &keys[party],
+                        None,
                         &roster,
                     )
                     .unwrap()
@@ -2259,6 +2892,7 @@ mod tests {
                         bytes: vec![share],
                     },
                     &keys[party],
+                    None,
                     &roster,
                 )
                 .unwrap()

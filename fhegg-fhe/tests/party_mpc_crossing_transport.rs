@@ -148,9 +148,10 @@ fn exact_private_book_boundary() -> (BfvParams, [u8; 32], [[u64; 9]; 2]) {
 }
 
 fn public_frame_route(frame: &[u8]) -> (usize, usize, u64) {
-    let sender = u32::from_be_bytes(frame[40..44].try_into().expect("sender field")) as usize;
-    let recipient = u32::from_be_bytes(frame[44..48].try_into().expect("recipient field")) as usize;
-    let sequence = u64::from_be_bytes(frame[48..56].try_into().expect("sequence field"));
+    // v4: magic || security-profile || 64-byte session digest || route.
+    let sender = u32::from_be_bytes(frame[73..77].try_into().expect("sender field")) as usize;
+    let recipient = u32::from_be_bytes(frame[77..81].try_into().expect("recipient field")) as usize;
+    let sequence = u64::from_be_bytes(frame[81..89].try_into().expect("sequence field"));
     (sender, recipient, sequence)
 }
 

@@ -54,6 +54,9 @@ serde_json = { workspace = true }
 # Authenticated computation-integrity quorum: strict Ed25519 signatures from the
 # declared ordered party roster over the exact canonical clearing-claim digest.
 ed25519-dalek = { version = "2", features = ["std"] }
+# Native-PQ clearing quorum and PartyMPC transport: counted signers and frame
+# endpoints use roster-enrolled ML-DSA/ML-KEM material rather than self-carried keys.
+dregg-pq = { path = "../dregg-pq" }
 # PartyMPC v3 peer ingress: static Ed25519 identities are converted to a
 # transport-only Curve25519 DH key, expanded with HKDF-SHA256, and carried by
 # standard XChaCha20-Poly1305 AEAD before the outer frame signature.
