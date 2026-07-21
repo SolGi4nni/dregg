@@ -63,6 +63,7 @@
 
 pub mod ast;
 pub mod compile;
+pub mod optimizer_protocol;
 pub mod products;
 pub mod qp_certificate;
 pub mod solver_bridge;
@@ -72,6 +73,14 @@ pub mod types;
 pub use compile::{
     compile, most_private_admissible, Compiled, ConvexProgram, ExactSddPsdCertificate,
     ExactSddPsdCertificateError,
+};
+pub use optimizer_protocol::{
+    encode_optimizer_worker_result, verify_optimizer_worker_result,
+    verify_qp_optimizer_worker_result, InMemoryOptimizerReplayGuard, OptimizerCertificateKind,
+    OptimizerJobRequest, OptimizerProtocolError, OptimizerReplayGuard, SolverIdentity,
+    VerifiedOptimizerResult, FHQPB001_CERTIFICATE_VERSION, MAX_CANONICAL_PROBLEM_BYTES,
+    MAX_OPTIMIZER_CERTIFICATE_BYTES, MAX_OPTIMIZER_RESULT_BYTES, MAX_SOLVER_MANIFEST_BYTES,
+    OPTIMIZER_PROTOCOL_VERSION,
 };
 pub use qp_certificate::{
     run_certified_qp, verify_certified_qp, verify_zero_kkt_certified_qp, ExactQpCertificateBundle,

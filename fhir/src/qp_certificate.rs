@@ -22,7 +22,8 @@ use crate::compile::{
     QP_CERT_EXACT_SCALE,
 };
 use crate::solver_bridge::{run, ExactCertQpVerdict, RunOutcome};
-use fhegg_solver::qp_exact::{CertQpExact, QpProblemBindingError};
+use fhegg_solver::qp::CertQp;
+use fhegg_solver::qp_exact::{lift_cert, CertQpExact, QpProblemBindingError};
 use fhegg_solver::qp_strict::{verify_zero_kkt_qp, VerifiedZeroKktQp, ZeroKktQpError};
 use sha2::{Digest, Sha256};
 
@@ -374,6 +375,41 @@ pub fn run_certified_qp(
         RunOutcome::CertQp { .. } => Err(ExactQpCertificateBundleError::KktInvalid),
         _ => Err(ExactQpCertificateBundleError::NotQp),
     }
+}
+
+/// Canonical digest of the independently compiled exact QP public problem.
+///
+/// This is available before an optimizer runs and excludes every solver-owned
+/// value (`x`, `y`, tolerance, diagnostics).  It uses the same fixed-point lift
+/// and domain-separated `(P,q,A,l,u)` encoding that
+/// [`VerifiedExactQpCertificate::program_digest`] returns after certificate
+/// verification, so an external-worker request and its checked result name one
+/// bit-exact problem.
+pub fn canonical_qp_program_digest(
+    compiled: &Compiled,
+) -> Result<[u8; 32], ExactQpCertificateBundleError> {
+    compiled.verify_exact_sdd_psd_certificate()?;
+    let ConvexProgram::Qp(problem) = &compiled.program else {
+        return Err(ExactQpCertificateBundleError::NotQp);
+    };
+    let public_image = CertQp {
+        n: problem.n,
+        mc: problem.mc,
+        p: problem.p.clone(),
+        q: problem.q.clone(),
+        a: problem.a.clone(),
+        l: problem.l.clone(),
+        u: problem.u.clone(),
+        x: vec![0.0; problem.n],
+        y: vec![0.0; problem.mc],
+        epsilon: 0.0,
+        objective: 0.0,
+        prim_res: 0.0,
+        dual_res: 0.0,
+    };
+    let exact = lift_cert(&public_image, QP_CERT_EXACT_SCALE)
+        .map_err(|error| QpProblemBindingError::Lift(error))?;
+    Ok(exact_qp_program_digest(&exact))
 }
 
 /// Verify an optimizer-produced `FHQPB001` artifact without running ADMM.
