@@ -440,6 +440,7 @@ fn torus_mac_randomized_wraparound_matrix_matches_cpu_bit_for_bit() {
             TorusMacBackend::Wgpu {
                 adapter_name,
                 backend,
+                ..
             } => {
                 assert!(!adapter_name.is_empty());
                 assert!(!backend.is_empty());

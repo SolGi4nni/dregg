@@ -195,6 +195,7 @@ fn portable_encrypted_cmux_matches_tfhe_at_deployed_degree() {
         TorusMacBackend::Wgpu {
             adapter_name,
             backend,
+            ..
         } => {
             assert!(!adapter_name.is_empty());
             assert!(!backend.is_empty());

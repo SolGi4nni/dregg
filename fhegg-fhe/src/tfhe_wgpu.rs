@@ -26,11 +26,14 @@
 //! O(N^2) parity rung.  Replacing it with a subquadratic transform while preserving
 //! this gate is the next performance step.
 
+use ethnum::I256;
 use std::fmt;
 use std::sync::{mpsc, OnceLock};
 use tfhe::core_crypto::algorithms::polynomial_algorithms::polynomial_wrapping_add_mul_assign;
 use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
+
+use crate::tfhe_ntt_wgpu::{multiply_signed_batch, NttBatchError, TORUS_NTT_MODULI};
 
 const WORKGROUP_SIZE: u32 = 64;
 
@@ -53,10 +56,37 @@ pub enum TorusMacBackend {
     Wgpu {
         adapter_name: String,
         backend: String,
+        algorithm: TorusWgpuAlgorithm,
     },
     /// The caller explicitly selected the deterministic CPU implementation.
     CpuOnly,
     CpuFallback(TorusCpuFallbackReason),
+}
+
+/// The arithmetic route that actually ran on the portable GPU.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TorusWgpuAlgorithm {
+    /// Direct, bit-exact coefficient convolution.  This is the small-shape
+    /// oracle and remains useful below the transform crossover.
+    CoefficientDomain,
+    /// Exact negacyclic RNS NTT under four primes, followed by a bounded CRT
+    /// reconstruction of the native 64-bit torus coefficient.
+    ExactRnsNtt,
+}
+
+/// Algorithm selection for the complete standard-GGSW external product.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TorusExternalProductMode {
+    /// Use the exact RNS-NTT route when its CRT range and adapter are sufficient;
+    /// otherwise retain the coefficient-domain GPU path.
+    #[default]
+    Auto,
+    /// Force the original quadratic GPU kernel (or the ordinary labelled CPU
+    /// capability fallback selected by [`TorusMacPolicy`]).
+    CoefficientDomain,
+    /// Require the exact transform route.  It never silently relabels the
+    /// coefficient kernel as an NTT result.
+    ExactRnsNtt,
 }
 
 /// Backend-selection policy for deterministic tests and fail-closed GPU jobs.
@@ -341,6 +371,7 @@ pub fn torus_negacyclic_mac_with_policy(
             backend: TorusMacBackend::Wgpu {
                 adapter_name: gpu.adapter_name.clone(),
                 backend: gpu.backend.clone(),
+                algorithm: TorusWgpuAlgorithm::CoefficientDomain,
             },
         }),
         Ok(_) if policy == TorusMacPolicy::RequireWgpu => Err(TorusMacError::WgpuRequired(
@@ -805,15 +836,205 @@ pub fn torus_external_product_cpu(
     ))
 }
 
+fn mod_pow_u64(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
+    let mut output = 1u64;
+    while exponent != 0 {
+        if exponent & 1 != 0 {
+            output = ((u128::from(output) * u128::from(base)) % u128::from(modulus)) as u64;
+        }
+        exponent >>= 1;
+        if exponent != 0 {
+            base = ((u128::from(base) * u128::from(base)) % u128::from(modulus)) as u64;
+        }
+    }
+    output
+}
+
+struct CrtPlan {
+    modulus: I256,
+    terms: [I256; TORUS_NTT_MODULI.len()],
+}
+
+impl CrtPlan {
+    fn new() -> Self {
+        let modulus = TORUS_NTT_MODULI
+            .iter()
+            .fold(I256::ONE, |product, &q| product * I256::from(q));
+        let terms = std::array::from_fn(|row| {
+            let q = TORUS_NTT_MODULI[row];
+            let partial = modulus / I256::from(q);
+            let partial_mod_q = (partial % I256::from(q)).as_u64();
+            let inverse = mod_pow_u64(partial_mod_q, q - 2, q);
+            partial * I256::from(inverse)
+        });
+        Self { modulus, terms }
+    }
+
+    fn reconstruct_signed(&self, residues: [u64; TORUS_NTT_MODULI.len()]) -> I256 {
+        let mut value = I256::ZERO;
+        for (residue, term) in residues.into_iter().zip(self.terms) {
+            value += I256::from(residue) * term;
+        }
+        value %= self.modulus;
+        if value > self.modulus / I256::from(2u8) {
+            value -= self.modulus;
+        }
+        value
+    }
+}
+
+/// The four fixed RNS primes carry about 120 bits.  The transform is exact
+/// only when their centered product uniquely contains the worst-case signed
+/// convolution before reduction modulo 2^64.  This guard is deliberately
+/// conservative: standard-GGSW coefficients are centered in [-2^63, 2^63),
+/// gadget digits in [-2^(b-1), 2^(b-1)), and one output sums N*k*L terms.
+fn exact_ntt_range_supported(shape: ExternalShape) -> bool {
+    let p = shape.params;
+    if p.degree < 8 || p.degree > 4096 {
+        return false;
+    }
+    let Some(root_order) = p.degree.checked_mul(2).and_then(|n| u64::try_from(n).ok()) else {
+        return false;
+    };
+    if TORUS_NTT_MODULI.iter().any(|q| (q - 1) % root_order != 0) {
+        return false;
+    }
+    let Some(term_count) = p
+        .degree
+        .checked_mul(p.glwe_size)
+        .and_then(|n| n.checked_mul(p.decomposition_level_count))
+    else {
+        return false;
+    };
+    let Ok(term_count) = u64::try_from(term_count) else {
+        return false;
+    };
+    let Some(max_digit) = I256::ONE.checked_shl((p.decomposition_base_log - 1) as u32) else {
+        return false;
+    };
+    let max_centered_torus = I256::ONE << 63;
+    let Some(bound) = I256::from(term_count)
+        .checked_mul(max_digit)
+        .and_then(|n| n.checked_mul(max_centered_torus))
+    else {
+        return false;
+    };
+    let crt_modulus = TORUS_NTT_MODULI
+        .iter()
+        .fold(I256::ONE, |product, &q| product * I256::from(q));
+    bound < crt_modulus / I256::from(2u8)
+}
+
+enum NttExternalProduct {
+    Executed {
+        coefficients: Vec<u64>,
+        adapter: String,
+        backend: String,
+    },
+    Unavailable,
+}
+
+fn external_product_ntt_gpu(
+    accumulator: &[u64],
+    glwe: &[u64],
+    standard_ggsw: &[u64],
+    shape: ExternalShape,
+) -> Result<NttExternalProduct, TorusMacError> {
+    if !exact_ntt_range_supported(shape) {
+        return Ok(NttExternalProduct::Unavailable);
+    }
+    let p = shape.params;
+    let decomposed = decompose_glwe_tfhe_oracle(glwe, shape);
+    let mut lhs = Vec::with_capacity(p.decomposition_level_count * p.glwe_size * p.glwe_size);
+    let mut rhs = Vec::with_capacity(lhs.capacity());
+    let mut output_polynomials = Vec::with_capacity(lhs.capacity());
+    for level in 0..p.decomposition_level_count {
+        for row in 0..p.glwe_size {
+            let digit_start = level * shape.glwe_coefficients + row * p.degree;
+            let digit = decomposed[digit_start..digit_start + p.degree]
+                .iter()
+                .map(|&value| value as i64)
+                .collect::<Vec<_>>();
+            for output_polynomial in 0..p.glwe_size {
+                let ggsw_start =
+                    ((level * p.glwe_size + row) * p.glwe_size + output_polynomial) * p.degree;
+                lhs.push(digit.clone());
+                rhs.push(
+                    standard_ggsw[ggsw_start..ggsw_start + p.degree]
+                        .iter()
+                        .map(|&value| value as i64)
+                        .collect(),
+                );
+                output_polynomials.push(output_polynomial);
+            }
+        }
+    }
+
+    let batch = match multiply_signed_batch(&lhs, &rhs, p.degree) {
+        Ok(batch) => batch,
+        Err(NttBatchError::Unavailable) => return Ok(NttExternalProduct::Unavailable),
+        Err(NttBatchError::Execution(error)) => {
+            return Err(TorusMacError::GpuExecution(error));
+        }
+    };
+
+    let crt = CrtPlan::new();
+    let mut coefficients = accumulator.to_vec();
+    for output_polynomial in 0..p.glwe_size {
+        for coefficient in 0..p.degree {
+            let mut residues = [0u64; TORUS_NTT_MODULI.len()];
+            for (product, &product_output) in batch.residues.iter().zip(&output_polynomials) {
+                if product_output != output_polynomial {
+                    continue;
+                }
+                for (row, &modulus) in TORUS_NTT_MODULI.iter().enumerate() {
+                    let sum = residues[row] + product[row][coefficient];
+                    residues[row] = if sum >= modulus { sum - modulus } else { sum };
+                }
+            }
+            let reconstructed = crt.reconstruct_signed(residues);
+            let index = output_polynomial * p.degree + coefficient;
+            coefficients[index] = coefficients[index].wrapping_add(reconstructed.as_u64());
+        }
+    }
+    Ok(NttExternalProduct::Executed {
+        coefficients,
+        adapter: batch.adapter,
+        backend: batch.backend,
+    })
+}
+
 /// Execute a complete native-torus external product under an explicit backend
 /// policy.  The wgpu path performs gadget decomposition and all GLWE output rows
-/// in a single command submission.
+/// in a single command submission on the coefficient route.  The exact RNS-NTT
+/// route uses one retained portable GPU context and bounded CRT reconstruction.
 pub fn torus_external_product_with_policy(
     accumulator: &[u64],
     glwe: &[u64],
     standard_ggsw: &[u64],
     params: TorusExternalProductParams,
     policy: TorusMacPolicy,
+) -> Result<TorusMacResult, TorusMacError> {
+    torus_external_product_with_mode(
+        accumulator,
+        glwe,
+        standard_ggsw,
+        params,
+        policy,
+        TorusExternalProductMode::Auto,
+    )
+}
+
+/// Execute a complete external product with an explicit arithmetic algorithm.
+/// This is the qualification seam used to measure the transform crossover
+/// against the frozen coefficient-domain oracle on the same adapter.
+pub fn torus_external_product_with_mode(
+    accumulator: &[u64],
+    glwe: &[u64],
+    standard_ggsw: &[u64],
+    params: TorusExternalProductParams,
+    policy: TorusMacPolicy,
+    mode: TorusExternalProductMode,
 ) -> Result<TorusMacResult, TorusMacError> {
     let shape = validate_external_product(accumulator, glwe, standard_ggsw, params)?;
     if policy == TorusMacPolicy::CpuOnly {
@@ -822,12 +1043,52 @@ pub fn torus_external_product_with_policy(
             backend: TorusMacBackend::CpuOnly,
         });
     }
+    let try_ntt = mode == TorusExternalProductMode::ExactRnsNtt
+        || (mode == TorusExternalProductMode::Auto && params.degree >= 2048);
+    if try_ntt {
+        match external_product_ntt_gpu(accumulator, glwe, standard_ggsw, shape)? {
+            NttExternalProduct::Executed {
+                coefficients,
+                adapter,
+                backend,
+            } => {
+                return Ok(TorusMacResult {
+                    coefficients,
+                    backend: TorusMacBackend::Wgpu {
+                        adapter_name: adapter,
+                        backend,
+                        algorithm: TorusWgpuAlgorithm::ExactRnsNtt,
+                    },
+                });
+            }
+            NttExternalProduct::Unavailable if mode == TorusExternalProductMode::ExactRnsNtt => {
+                if policy == TorusMacPolicy::RequireWgpu {
+                    return Err(TorusMacError::WgpuRequired(
+                        TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+                    ));
+                }
+                return Ok(TorusMacResult {
+                    coefficients: external_product_cpu_validated(
+                        accumulator,
+                        glwe,
+                        standard_ggsw,
+                        shape,
+                    ),
+                    backend: TorusMacBackend::CpuFallback(
+                        TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+                    ),
+                });
+            }
+            NttExternalProduct::Unavailable => {}
+        }
+    }
     match external_gpu_context() {
         Ok(gpu) if gpu.supports(shape) => Ok(TorusMacResult {
             coefficients: gpu.run(accumulator, glwe, standard_ggsw, shape)?,
             backend: TorusMacBackend::Wgpu {
                 adapter_name: gpu.adapter_name.clone(),
                 backend: gpu.backend.clone(),
+                algorithm: TorusWgpuAlgorithm::CoefficientDomain,
             },
         }),
         Ok(_) if policy == TorusMacPolicy::RequireWgpu => Err(TorusMacError::WgpuRequired(
@@ -883,6 +1144,26 @@ pub fn torus_cmux_with_policy(
     params: TorusExternalProductParams,
     policy: TorusMacPolicy,
 ) -> Result<TorusMacResult, TorusMacError> {
+    torus_cmux_with_mode(
+        ct0,
+        ct1,
+        standard_ggsw,
+        params,
+        policy,
+        TorusExternalProductMode::Auto,
+    )
+}
+
+/// CMUX with an explicit external-product algorithm, used by the same-device
+/// crossover and hostile differential gates.
+pub fn torus_cmux_with_mode(
+    ct0: &[u64],
+    ct1: &[u64],
+    standard_ggsw: &[u64],
+    params: TorusExternalProductParams,
+    policy: TorusMacPolicy,
+    mode: TorusExternalProductMode,
+) -> Result<TorusMacResult, TorusMacError> {
     validate_external_product(ct0, ct1, standard_ggsw, params)?;
     let difference: Vec<u64> = ct1
         .iter()
@@ -891,7 +1172,7 @@ pub fn torus_cmux_with_policy(
             then_coefficient.wrapping_sub(else_coefficient)
         })
         .collect();
-    torus_external_product_with_policy(ct0, &difference, standard_ggsw, params, policy)
+    torus_external_product_with_mode(ct0, &difference, standard_ggsw, params, policy, mode)
 }
 
 struct ExternalGpuContext {
@@ -1359,5 +1640,63 @@ mod tests {
         assert_eq!(selected, ct1);
         let selected = torus_cmux_cpu(&ct0, &ct1, &[0u64; 32], params).unwrap();
         assert_eq!(selected, ct0);
+    }
+
+    #[test]
+    fn exact_ntt_crt_range_is_load_bearing() {
+        let deployed = ExternalShape {
+            params: TorusExternalProductParams {
+                degree: 2048,
+                glwe_size: 2,
+                decomposition_base_log: 23,
+                decomposition_level_count: 1,
+            },
+            glwe_coefficients: 4096,
+            ggsw_coefficients: 8192,
+            decomposed_coefficients: 4096,
+        };
+        assert!(exact_ntt_range_supported(deployed));
+
+        // Keep every arithmetic parameter locally valid while making the
+        // worst-case convolution wider than the 120-bit CRT carrier. This
+        // must select the exact coefficient route rather than alias modulo M.
+        let too_wide = ExternalShape {
+            params: TorusExternalProductParams {
+                degree: 4096,
+                glwe_size: 1 << 14,
+                decomposition_base_log: 31,
+                decomposition_level_count: 2,
+            },
+            glwe_coefficients: 0,
+            ggsw_coefficients: 0,
+            decomposed_coefficients: 0,
+        };
+        assert!(!exact_ntt_range_supported(too_wide));
+    }
+
+    #[test]
+    fn crt_reconstruction_preserves_signed_value_and_low_torus_bits() {
+        let crt = CrtPlan::new();
+        for value in [
+            I256::ZERO,
+            I256::ONE,
+            I256::from(-1),
+            I256::ONE << 96u32,
+            -(I256::ONE << 96u32),
+            (I256::ONE << 118u32) - I256::ONE,
+            -((I256::ONE << 118u32) - I256::ONE),
+        ] {
+            let residues = std::array::from_fn(|row| {
+                let q = I256::from(TORUS_NTT_MODULI[row]);
+                let mut residue = value % q;
+                if residue < I256::ZERO {
+                    residue += q;
+                }
+                residue.as_u64()
+            });
+            let reconstructed = crt.reconstruct_signed(residues);
+            assert_eq!(reconstructed, value);
+            assert_eq!(reconstructed.as_u64(), value.as_u64());
+        }
     }
 }

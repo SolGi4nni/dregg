@@ -118,6 +118,7 @@ pub mod private_book_distributed_prover;
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_relation;
 pub mod tfhe_wgpu;
+mod tfhe_ntt_wgpu;
 pub mod threshold;
 
 /// The OUTPUT-BOUNDARY MPC crossing (BFV / fhe.rs → additive shares → secret-shared

@@ -69,10 +69,11 @@ ROCm/HIP installed.  Its AMD RX 6750 XT is available through Vulkan, which is
 exactly the portable wgpu route.  Older `HBOX-24CORE-ENVELOPE.md` prose predates
 that GPU observation and is a CPU measurement, not current hardware discovery.
 
-## The implemented first TFHE primitive
+## The implemented portable TFHE rung
 
-`fhegg-fhe/src/tfhe_wgpu.rs` and
-`fhegg-fhe/src/shaders/torus_negacyclic_mac.wgsl` implement:
+`fhegg-fhe/src/tfhe_wgpu.rs` first implemented the coefficient-domain
+native-torus polynomial MAC in
+`fhegg-fhe/src/shaders/torus_negacyclic_mac.wgsl`:
 
 ```text
 out = accumulator + sum_t lhs_t * rhs_t
@@ -81,16 +82,46 @@ out = accumulator + sum_t lhs_t * rhs_t
 
 The shader uses two `u32` limbs per torus coefficient and 16-bit partial products,
 so every multiplication, carry, borrow, and negacyclic sign agrees bit-for-bit
-with wrapping `u64`.  The gate compares both the CPU reference and the selected
-portable backend directly with tfhe-rs at `N=2048` and the two-product shape of one
-default external-product output row.  Zero/non-power-of-two degree, empty batches,
-length disagreement, partial polynomials, and address-space overflow fail before
-dispatch.  No adapter, no device, or insufficient adapter limits take an explicit
-CPU fallback; a failure after GPU execution begins is returned.
+with wrapping `u64`.  On top of that primitive the module now implements signed
+TFHE gadget decomposition, the complete standard-domain GGSW-by-GLWE external
+product, and encrypted CMUX.  The default-shape qualification gate compares the
+CPU result, the portable backend, and an independent tfhe-rs core-crypto oracle at
+`N=2048`, GLWE size two, base log 23, level count one.
 
-This is only the coefficient-domain polynomial-MAC rung.  It is O(N^2), is not
-wired into `FheUint32`, and does not implement signed gadget decomposition, a fast
-transform, a complete GGSW external product, CMUX, blind rotation, sample
-extraction, PBS, or integer comparison.  The next credible speed frontier is a
-subquadratic exact transform (or a carefully parity-bounded Fourier carrier), then
-the default-shape external product behind the same tfhe-rs differential gate.
+The coefficient route is still quadratic, so the same public API now also owns an
+exact subquadratic route in `fhegg-fhe/src/tfhe_ntt_wgpu.rs` and
+`fhegg-fhe/src/shaders/torus_ntt_montgomery.wgsl`.  It performs a negacyclic RNS
+NTT under four fixed primes whose product carries about 120 bits.  WGSL has no
+portable native `u64`, so the shader implements exact `u32` Montgomery arithmetic
+with 16-bit-split products; it does not use an approximate Fourier carrier or a
+vendor extension.  All standard-GGSW product pairs are packed into one command
+submission and one readback.  Host plans and GPU pipelines are retained, and the
+root/twist plan is cached by degree.
+
+CRT reconstruction is only admitted when a conservative signed-convolution bound
+fits uniquely inside the centered four-prime product.  Unsupported degree/root
+order, excessive parameter bounds, adapter limits, and malformed shapes fail
+before dispatch or take an explicitly labelled capability fallback according to
+the caller's policy.  A failure after the GPU is selected is returned; it is not
+silently recomputed and reported as GPU work.  The qualification suite forces
+both GPU algorithms, uses full-width random torus coefficients, and compares them
+bit-for-bit with the CPU authority across `N=256..4096`; a second hostile case
+uses two decomposition levels and base log 31.  It also reports process-cold cost
+and parity-checked five-sample warm medians on the selected adapter.
+
+## The remaining PBS boundary
+
+This is a real exact external product and CMUX, but it is not yet a complete
+programmable bootstrap or a high-level `FheUint32` backend.  Gadget decomposition
+and CRT reconstruction currently happen on the host, and one readback remains per
+external product.  Blind rotation would chain hundreds of dependent CMUX steps;
+making that useful requires a device-resident accumulator, a transform-form
+bootstrapping key, rotation/modulus-switch kernels, sample extraction, key switch,
+and an integration seam below tfhe-rs integer comparison.
+
+Consequently GPU output is still an accelerator result, never independent
+protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
+oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
+described above.  The next hard performance cut is to keep the accumulator and
+bootstrapping key resident across an entire blind rotation, then measure an actual
+PBS and integer comparison—not extrapolate one from a single CMUX.
