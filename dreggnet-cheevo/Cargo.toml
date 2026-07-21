@@ -42,6 +42,9 @@ dregg-season = { path = "../dregg-season" }
 # The SOULBOUND mint: an earned cheevo mints a `dreggnet-asset` note owned by the earner.
 # Soulbound is enforced at this layer (no transfer path; the note stays owner-bound).
 dreggnet-asset = { path = "../dreggnet-asset" }
+# Game-neutral replay handoff. Concrete games keep their own verifier and return
+# actor/program/world/root-bound facts for this ledger to consume.
+dreggnet-verified-completion = { path = "../dreggnet-verified-completion" }
 # Domain-separated content addressing: the run anchor + the soulbound seal (which binds
 # earner|achievement|universe|run|witness and is the note's content-addressing mint seed).
 blake3 = "1"

@@ -32,6 +32,9 @@ description = "The Lean-native Descent integrated as one replay-verified RPG loo
 # NativeDescentOffering / NativeDescentSession / NativeDescentCompletion, plus the
 # shared Offering surface and identity.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+# The shared verifier-generic handoff implemented by NativeDescentRun and consumed
+# directly by the cheevo + guild feature crates.
+dreggnet-verified-completion = { path = "../dreggnet-verified-completion" }
 
 # ── the feature systems the Descent EXERCISES (consumed, never modified) ──
 dreggnet-party = { path = "../dreggnet-party" }        # the seated party roster (loadout: party-up)

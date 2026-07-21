@@ -1,0 +1,8 @@
+[package]
+name = "dreggnet-verified-completion"
+version = "0.1.0"
+edition = "2024"
+description = "A game-neutral handoff for progression consumers: facts returned only after a game's own completion verifier replays its committed record."
+
+[lints]
+workspace = true

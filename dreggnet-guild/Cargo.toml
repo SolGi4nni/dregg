@@ -83,6 +83,9 @@ starbridge-v2 = { path = "../starbridge-v2", default-features = false, features 
 dregg-cell = { path = "../cell" }
 dregg-turn = { path = "../turn" }
 dregg-types = { path = "../types" }
+# Game-neutral replay handoff for clears outside the UGC scene language. The board
+# calls the concrete game's verifier; it never accepts client-authored facts.
+dreggnet-verified-completion = { path = "../dreggnet-verified-completion" }
 # The real quorum-certified vote engine behind optional officer governance — the
 # `PollId`/`Tally`/`TurnReceipt`/`Decision` the `collective` round returns. Already in
 # the build graph (dungeon-on-dregg consumes it); named here so governance can spell

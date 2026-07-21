@@ -32,6 +32,12 @@
 //! tampered / re-bound (laundered onto a buyer) cheevo record is refused
 //! ([`CheevoError::Tampered`]).
 //!
+//! Games outside the UGC scene language use [`CheevoLedger::earn_verified`] and
+//! [`CheevoLedger::reverify_verified`]. Those methods call the game's own
+//! [`CompletionVerifier`] and bind the credential to its program id, genesis root, exact
+//! terminal root, actor, turn count, and replay-derived metric trajectory. They reuse this
+//! same predicate evaluator, seal, asset ledger, and ISA-enforced soulbound mint.
+//!
 //! ## Provenance-bound
 //!
 //! A cheevo carries the [`Cheevo::completion_id`] (the run anchor over the receipt chain)
@@ -62,11 +68,14 @@
 use blake3::Hasher;
 use dregg_season::{Champion, Season};
 use dreggnet_asset::{AssetError, AssetId, AssetWorld};
+use dreggnet_verified_completion::{CompletionVerifier, VerifiedCompletion};
 use spween_dregg::{Playthrough, compile_scene, parse};
 use ugc_dregg::{Completion, RejectReason, Universe, UniverseId, verify_completion};
 
 /// Domain tag for the run anchor (over the player + the receipt chain).
 const DOMAIN_RUN_ANCHOR: &[u8] = b"dreggnet-cheevo/run-anchor/v1";
+/// Domain tag for a verifier-generic run anchor over program, world, and terminal roots.
+const DOMAIN_VERIFIED_RUN_ANCHOR: &[u8] = b"dreggnet-cheevo/verified-run-anchor/v1";
 /// Domain tag for a champion anchor (over the season + universe + identity + turns).
 const DOMAIN_CHAMPION_ANCHOR: &[u8] = b"dreggnet-cheevo/champion-anchor/v1";
 /// Domain tag for the soulbound seal (binds earner|achievement|universe|run|witness).
@@ -506,6 +515,9 @@ pub enum CheevoError {
     /// **The anchored run failed the ugc no-cheat verify** — a forged / edited / incomplete
     /// / result-tampered run. It earns NOTHING. This is the no-cheat tooth biting.
     RunRejected(RejectReason),
+    /// A non-UGC game's own completion verifier refused the submitted record.  The
+    /// verifier is responsible for fresh replay and terminal-success checking.
+    VerifierRejected(String),
     /// The run verified, but it **does not satisfy the achievement predicate** (the peak
     /// depth was too shallow, the hazard was tripped, the clear was too slow). NON-VACUOUS.
     PredicateNotMet(String),
@@ -526,6 +538,12 @@ impl std::fmt::Display for CheevoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CheevoError::RunRejected(r) => write!(f, "the anchored run is not a verified win: {r}"),
+            CheevoError::VerifierRejected(reason) => {
+                write!(
+                    f,
+                    "the anchored run was refused by its game verifier: {reason}"
+                )
+            }
             CheevoError::PredicateNotMet(why) => {
                 write!(f, "the run verified but did not earn the cheevo: {why}")
             }
@@ -605,6 +623,33 @@ impl CheevoLedger {
         let player = completion.player.clone();
         let anchor = run_anchor(&player, &completion.play);
         Ok(self.mint_cheevo(achievement, witness, player, universe.id(), anchor, turns))
+    }
+
+    /// Earn a cheevo from any game that implements the shared replay-verifier boundary.
+    ///
+    /// The ledger calls the game's verifier itself on every earn. It receives the exact
+    /// actor, program identity, genesis root, terminal root, turn count, and committed
+    /// metric trajectories derived by that replay; no `ugc_dregg::Completion` mirror is
+    /// manufactured. The existing achievement vocabulary and ISA-enforced soulbound mint
+    /// are then reused unchanged.
+    pub fn earn_verified<V: CompletionVerifier>(
+        &mut self,
+        completion: &V,
+        achievement: Achievement,
+    ) -> Result<Cheevo, CheevoError> {
+        let facts = completion
+            .verify_completion()
+            .map_err(|error| CheevoError::VerifierRejected(error.to_string()))?;
+        let witness = eval_verified_predicate(&facts, &achievement)?;
+        let anchor = verified_run_anchor(&facts);
+        Ok(self.mint_cheevo(
+            achievement,
+            witness,
+            facts.actor().to_string(),
+            UniverseId::from_bytes(facts.program_id()),
+            anchor,
+            facts.turns(),
+        ))
     }
 
     /// **EARN a season-champion cheevo** — the champion predicate over a season's no-cheat
@@ -762,6 +807,40 @@ impl CheevoLedger {
         // (5) The soulbound note is still owned by the earner (never transferred away).
         self.check_soulbound_owner(cheevo)?;
         Ok(())
+    }
+
+    /// Independently re-run a game-generic cheevo's concrete verifier, predicate,
+    /// program/world/terminal-root anchor, seal, and soulbound ownership checks.
+    pub fn reverify_verified<V: CompletionVerifier>(
+        &self,
+        cheevo: &Cheevo,
+        completion: &V,
+    ) -> Result<(), CheevoError> {
+        if !cheevo.seal_intact() {
+            return Err(CheevoError::Tampered(
+                "seal does not match the record's fields".into(),
+            ));
+        }
+        let facts = completion
+            .verify_completion()
+            .map_err(|error| CheevoError::VerifierRejected(error.to_string()))?;
+        let witness = eval_verified_predicate(&facts, &cheevo.achievement)?;
+        if witness != cheevo.witness {
+            return Err(CheevoError::Tampered(format!(
+                "witness changed on re-check: {witness:?} != {:?}",
+                cheevo.witness
+            )));
+        }
+        if cheevo.player != facts.actor()
+            || cheevo.universe != UniverseId::from_bytes(facts.program_id())
+            || cheevo.completion_id != verified_run_anchor(&facts)
+            || cheevo.turns != facts.turns()
+        {
+            return Err(CheevoError::Tampered(
+                "credential is not bound to this actor/program/world/completion".into(),
+            ));
+        }
+        self.check_soulbound_owner(cheevo)
     }
 
     /// **Re-verify an earned champion-cheevo** against the season's live hall-of-fame: the
@@ -1005,6 +1084,94 @@ fn eval_run_predicate(
     }
 }
 
+/// Evaluate the existing authorable achievement language over trajectory facts returned
+/// by a concrete game's own replay verifier.
+fn eval_verified_predicate(
+    facts: &VerifiedCompletion,
+    achievement: &Achievement,
+) -> Result<Witness, CheevoError> {
+    let metric = |name: &str| {
+        facts
+            .metric(name)
+            .ok_or_else(|| CheevoError::UnknownVar(name.to_string()))
+    };
+    match achievement {
+        Achievement::ReachedDepth { var, min } => {
+            let peak = metric(var)?.iter().copied().max().unwrap_or(0);
+            if peak >= *min {
+                Ok(Witness::Depth { peak, min: *min })
+            } else {
+                Err(CheevoError::PredicateNotMet(format!(
+                    "peak `{var}` was {peak}, below the required {min}"
+                )))
+            }
+        }
+        Achievement::NoDeathClear { flag } => {
+            if metric(flag)?.iter().any(|value| *value != 0) {
+                Err(CheevoError::PredicateNotMet(format!(
+                    "`{flag}` was tripped during the run — not a flawless clear"
+                )))
+            } else {
+                Ok(Witness::NoDeath { flag: flag.clone() })
+            }
+        }
+        Achievement::SpeedClear { max_turns } => {
+            if facts.turns() <= *max_turns {
+                Ok(Witness::Speed {
+                    turns: facts.turns(),
+                    max_turns: *max_turns,
+                })
+            } else {
+                Err(CheevoError::PredicateNotMet(format!(
+                    "the clear took {} turns, above the max {max_turns}",
+                    facts.turns()
+                )))
+            }
+        }
+        Achievement::VarThreshold {
+            var,
+            agg,
+            cmp,
+            value,
+            label,
+        } => {
+            let observed = agg.reduce(metric(var)?);
+            if cmp.holds(observed, *value) {
+                Ok(Witness::Threshold {
+                    var: var.clone(),
+                    observed,
+                })
+            } else {
+                Err(CheevoError::PredicateNotMet(format!(
+                    "`{label}`: {agg} `{var}` was {observed}, not {cmp} {value}",
+                    agg = agg.slug(),
+                    cmp = cmp.slug(),
+                )))
+            }
+        }
+        Achievement::All { label, parts } => {
+            if parts.is_empty() {
+                return Err(CheevoError::PredicateNotMet(format!(
+                    "`{label}`: a composite cheevo needs at least one predicate"
+                )));
+            }
+            let mut witnesses = Vec::with_capacity(parts.len());
+            for part in parts {
+                if !part.is_single_run() {
+                    return Err(CheevoError::PredicateNotMet(format!(
+                        "`{label}`: a season-champion cannot be a part of a single-run composite"
+                    )));
+                }
+                witnesses.push(eval_verified_predicate(facts, part)?);
+            }
+            Ok(Witness::Composite { parts: witnesses })
+        }
+        Achievement::SeasonChampion { .. } => Err(CheevoError::PredicateNotMet(
+            "a season-champion cheevo is earned from a season board, not one run".into(),
+        )),
+    }
+}
+
 /// The run's committed state trajectory: genesis, then each step's post-state. Each is the
 /// world-cell's full slot vector, so a var slot indexes directly into it.
 fn trajectory(play: &Playthrough) -> impl Iterator<Item = &Vec<u64>> {
@@ -1051,6 +1218,16 @@ fn run_anchor(player: &str, play: &Playthrough) -> [u8; 32] {
     for r in play.receipts() {
         h.update(&r.turn_hash);
     }
+    *h.finalize().as_bytes()
+}
+
+/// The cross-game run anchor. Program, genesis, and exact terminal journal head all enter
+/// independently, so neither cross-rules nor cross-world substitution can preserve it.
+fn verified_run_anchor(facts: &VerifiedCompletion) -> [u8; 32] {
+    let mut h = domain_hasher(DOMAIN_VERIFIED_RUN_ANCHOR);
+    field(&mut h, &facts.program_id());
+    field(&mut h, &facts.world_root());
+    field(&mut h, &facts.completion_root());
     *h.finalize().as_bytes()
 }
 

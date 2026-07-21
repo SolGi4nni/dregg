@@ -7,32 +7,32 @@
 //! [`NativeDescentRun`], whose [`NativeDescentCompletion`] names the actor, exact terminal
 //! journal root, settlement receipt, and banked relics.
 //!
-//! The older feature APIs for cheevos, guild ranking, quests, and seasons are specialized
-//! to `ugc_dregg::Completion`, a different executable language.  This crate therefore does
-//! not manufacture a synthetic UGC mirror of the native run.  Its small native adapters
-//! ([`NativeCheevoLedger`], [`NativeGuild`], [`CompletionGatedQuest`], and
-//! [`NativeSeason`]) all call [`NativeDescentRun::verify_crowned`] and bind their records to
-//! the exact native completion root.  They reuse the real soulbound asset, guild-capability,
-//! faction-giver, and season-manifest primitives while the shared feature crates acquire a
-//! verifier-generic completion interface.
+//! `NativeDescentRun` implements the shared verifier-generic completion interface, so the
+//! real cheevo ledger and guild board consume its own fresh replay directly without a
+//! synthetic `ugc_dregg::Completion`. The still game-specific quest and season adapters
+//! ([`CompletionGatedQuest`] and [`NativeSeason`]) likewise call
+//! [`NativeDescentRun::verify_crowned`] and bind their records to the exact native root.
+//! [`NativeCheevoLedger`] and [`NativeGuild`] remain compatibility adapters for callers of
+//! the earlier API; the main [`Adventure`] loop now crosses the shared interface.
 //!
 //! Party and loadout are enforced preconditions of [`Adventure::play`].  They are not yet
 //! folded into the native Descent world cell: the native offering intentionally exposes no
 //! external loadout commitment input.  That remaining composition seam is named rather than
 //! represented as if a separate aid cell altered the Lean-native run.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use dregg_types::PublicKey;
 use dreggnet_asset::{AssetId, AssetWorld};
-use dreggnet_cheevo::{Achievement, Aggregate, Cmp, Witness};
+use dreggnet_cheevo::{Achievement, Aggregate, CheevoLedger, Cmp, Witness};
 use dreggnet_guild::{Guild, GuildStats};
 use dreggnet_offerings::native_descent::{
     NativeDescentCompletion, NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
 };
 use dreggnet_offerings::{Action, Offering, Outcome, RecordVerify, SessionConfig};
+use dreggnet_verified_completion::{CompletionVerifier, VerifiedCompletion};
 use dungeon_on_dregg::collective::Custodian;
-use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE, UNLOCK};
+use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, PROGRAM_JSON, SMITE, UNLOCK};
 use dungeon_on_dregg::loot::{LootDraw, roll_drop};
 use procgen_dregg::CommittedSeed;
 
@@ -40,6 +40,7 @@ pub use dreggnet_offerings::DreggIdentity;
 
 const NATIVE_CHEEVO_DOMAIN: &str = "dreggnet-adventure/native-cheevo/v1";
 const NATIVE_WORLD_SEED_DOMAIN: &str = "dreggnet-adventure/native-world-seed/v1";
+const NATIVE_PROGRAM_ID_DOMAIN: &str = "dreggnet-adventure/native-program-id/v1";
 
 /// The exact eighteen-move crowned line driven by the Lean model's own test battery.
 pub const CROWNED_LINE: [(&str, i64); 18] = [
@@ -298,6 +299,42 @@ impl NativeDescentRun {
 
     pub fn completion_root(&self) -> [u8; 32] {
         self.completion.root
+    }
+}
+
+impl CompletionVerifier for NativeDescentRun {
+    type Error = String;
+
+    /// Re-run the exact Lean-emitted native program and expose only facts derived from
+    /// that accepted replay. Progression callers invoke this independently; they never
+    /// receive a synthetic UGC completion or a client-authored score summary.
+    fn verify_completion(&self) -> Result<VerifiedCompletion, Self::Error> {
+        let facts = self.verify_crowned()?;
+        let mut metrics = BTreeMap::new();
+        for name in ["depth", "spent", "wounds", "fate", "pack", "bank"] {
+            let mut values = vec![0];
+            values.extend(self.record.events.iter().map(|event| match name {
+                "depth" => event.post.depth,
+                "spent" => event.post.spent,
+                "wounds" => event.post.wounds,
+                "fate" => event.post.fate,
+                "pack" => event.post.pack(),
+                "bank" => event.post.bank(),
+                _ => unreachable!("the metric vocabulary is fixed above"),
+            }));
+            metrics.insert(name.to_string(), values);
+        }
+        let mut program = blake3::Hasher::new_derive_key(NATIVE_PROGRAM_ID_DOMAIN);
+        program.update(PROGRAM_JSON.as_bytes());
+        VerifiedCompletion::new(
+            *program.finalize().as_bytes(),
+            self.world.root,
+            self.completion_root(),
+            facts.actor.as_str(),
+            facts.turns,
+            metrics,
+        )
+        .map_err(str::to_string)
     }
 }
 
@@ -804,7 +841,6 @@ fn eval_native_achievement(
 pub struct NativeGuild {
     guild: Guild,
     seen: HashSet<[u8; 32]>,
-    stats: GuildStats,
 }
 
 impl NativeGuild {
@@ -812,13 +848,11 @@ impl NativeGuild {
         Self {
             guild: Guild::form(name),
             seen: HashSet::new(),
-            stats: GuildStats::default(),
         }
     }
 
     pub fn admit(&mut self, who: &DreggIdentity) {
         self.guild.admit(who);
-        self.stats.members = self.guild.roster().count();
     }
 
     pub fn record_clear(
@@ -846,15 +880,17 @@ impl NativeGuild {
         if !self.guild.act_on_guild(member_cell).committed() {
             return Err("the member's cap-gated guild handoff did not commit".to_string());
         }
+        let turns = self
+            .guild
+            .board_mut()
+            .record_verified_clear(who, run)
+            .map_err(|error| error.to_string())?;
         self.seen.insert(run.completion_root());
-        self.stats.verified_clears += 1;
-        self.stats.total_turns += facts.turns;
-        self.stats.survivors += 1;
-        Ok(facts.turns)
+        Ok(turns)
     }
 
     pub fn stats(&self) -> GuildStats {
-        self.stats
+        self.guild.board().stats()
     }
 }
 
@@ -1260,19 +1296,19 @@ impl Adventure {
             .map_err(|error| AdventureError::at("run", error))?;
 
         // All progression consumes the same native completion root and independently replays.
-        let mut cheevos = NativeCheevoLedger::new();
+        let mut cheevos = CheevoLedger::new();
         let cheevo = cheevos
-            .earn(
+            .earn_verified(
                 &run,
                 Achievement::ReachedDepth {
                     var: "depth".to_string(),
                     min: DEPTH_CHEEVO_MIN,
                 },
             )
-            .map_err(|error| AdventureError::at("cheevo", error))?;
+            .map_err(|error| AdventureError::at("cheevo", error.to_string()))?;
         cheevos
-            .reverify(&cheevo, &run)
-            .map_err(|error| AdventureError::at("cheevo", error))?;
+            .reverify_verified(&cheevo, &run)
+            .map_err(|error| AdventureError::at("cheevo", error.to_string()))?;
 
         let mut guild = NativeGuild::form("The Native Descent Vanguard");
         guild.admit(&hero.guild_member());
@@ -1326,7 +1362,8 @@ impl Adventure {
         season
             .submit(&run)
             .map_err(|error| AdventureError::at("season", error))?;
-        let champion = cheevos
+        let mut champion_cheevos = NativeCheevoLedger::new();
+        let champion = champion_cheevos
             .earn_champion(&season, hero.name(), 3)
             .map_err(|error| AdventureError::at("season", error))?;
         if champion.completion_root != run.completion_root() {

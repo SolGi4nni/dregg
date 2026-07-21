@@ -19,11 +19,16 @@
 //! And the roster is the cap set: only a member's clears count. A clear recorded for a
 //! non-member is refused ([`ClearError::NotAMember`]) — you cannot inflate a guild with
 //! a stranger's runs either.
+//!
+//! [`GuildBoard::record_verified_clear`] is the same aggregate boundary for games outside
+//! the UGC scene language. It calls that game's own [`CompletionVerifier`], binds the
+//! replay-derived actor, and deduplicates the exact program/world/terminal-root tuple.
 
 use std::collections::{HashMap, HashSet};
 
 use dreggnet_offerings::DreggIdentity;
 use dreggnet_offerings::character::CharacterSheet;
+use dreggnet_verified_completion::{CompletionVerifier, VerifiedCompletionKey};
 use ugc_dregg::{Completion, RejectReason, Universe, verify_completion};
 
 use crate::versus::GuildStats;
@@ -38,6 +43,15 @@ pub enum ClearError {
     /// incomplete / result-tampered run. Carries the exact refusal
     /// ([`ugc_dregg::RejectReason`]); it counts for NOTHING.
     NoCheat(RejectReason),
+    /// A non-UGC game's own replay verifier refused the submitted completion.
+    VerifierRejected(String),
+    /// The replayed completion is bound to a different actor than the enrolled member.
+    ActorMismatch {
+        expected: DreggIdentity,
+        actual: String,
+    },
+    /// This exact program/world/terminal-root tuple was already counted.
+    AlreadyCounted(VerifiedCompletionKey),
 }
 
 impl std::fmt::Display for ClearError {
@@ -49,6 +63,21 @@ impl std::fmt::Display for ClearError {
             ClearError::NoCheat(reason) => {
                 write!(f, "clear rejected by the no-cheat verify: {reason}")
             }
+            ClearError::VerifierRejected(reason) => {
+                write!(f, "clear rejected by its game verifier: {reason}")
+            }
+            ClearError::ActorMismatch { expected, actual } => write!(
+                f,
+                "verified clear actor {actual} does not match guild member {}",
+                expected.as_str()
+            ),
+            ClearError::AlreadyCounted(key) => write!(
+                f,
+                "completion {:02x?}/{:02x?}/{:02x?} was already counted",
+                &key.program_id[..4],
+                &key.world_root[..4],
+                &key.completion_root[..4]
+            ),
         }
     }
 }
@@ -75,6 +104,7 @@ struct MemberRecord {
 pub struct GuildBoard {
     members: HashSet<DreggIdentity>,
     records: HashMap<DreggIdentity, MemberRecord>,
+    verified_completions: HashSet<VerifiedCompletionKey>,
 }
 
 impl GuildBoard {
@@ -116,6 +146,40 @@ impl GuildBoard {
         rec.verified_clears += 1;
         rec.total_turns += turns;
         Ok(turns)
+    }
+
+    /// Record a clear from any game exposing the shared replay-verifier boundary.
+    ///
+    /// The board invokes the concrete verifier itself, checks that its replay-derived
+    /// actor is the enrolled member, and deduplicates the exact program/world/terminal
+    /// tuple before changing aggregate state. A refused, substituted, or replayed run
+    /// contributes nothing.
+    pub fn record_verified_clear<V: CompletionVerifier>(
+        &mut self,
+        who: &DreggIdentity,
+        completion: &V,
+    ) -> Result<usize, ClearError> {
+        if !self.members.contains(who) {
+            return Err(ClearError::NotAMember(who.clone()));
+        }
+        let facts = completion
+            .verify_completion()
+            .map_err(|error| ClearError::VerifierRejected(error.to_string()))?;
+        if facts.actor() != who.as_str() {
+            return Err(ClearError::ActorMismatch {
+                expected: who.clone(),
+                actual: facts.actor().to_string(),
+            });
+        }
+        let key = facts.key();
+        if self.verified_completions.contains(&key) {
+            return Err(ClearError::AlreadyCounted(key));
+        }
+        let rec = self.records.entry(who.clone()).or_default();
+        rec.verified_clears += 1;
+        rec.total_turns += facts.turns();
+        self.verified_completions.insert(key);
+        Ok(facts.turns())
     }
 
     /// **Record a member's survived-run fact** off the character's WriteOnce-final `dead`

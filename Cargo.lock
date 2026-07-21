@@ -7584,9 +7584,9 @@ dependencies = [
  "dreggnet-party",
  "dreggnet-quest",
  "dreggnet-trade",
+ "dreggnet-verified-completion",
  "dungeon-on-dregg",
  "procgen-dregg",
- "ugc-dregg",
 ]
 
 [[package]]
@@ -7633,6 +7633,7 @@ dependencies = [
  "dregg-epoch",
  "dregg-season",
  "dreggnet-asset",
+ "dreggnet-verified-completion",
  "dungeon-on-dregg",
  "spween-dregg",
  "ugc-dregg",
@@ -7771,6 +7772,7 @@ dependencies = [
  "dregg-turn",
  "dregg-types",
  "dreggnet-offerings",
+ "dreggnet-verified-completion",
  "dungeon-on-dregg",
  "starbridge-escrow-market",
  "starbridge-v2",
@@ -7999,6 +8001,10 @@ dependencies = [
  "dreggnet-asset",
  "starbridge-escrow-market",
 ]
+
+[[package]]
+name = "dreggnet-verified-completion"
+version = "0.1.0"
 
 [[package]]
 name = "dreggnet-web"
