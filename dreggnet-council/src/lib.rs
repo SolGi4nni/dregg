@@ -870,7 +870,8 @@ impl CouncilOffering {
         let effects = vec![
             Effect::SetField {
                 cell: session.council_cell,
-                index: POLICY_BASE + catalog_index,
+                index: u64::try_from(POLICY_BASE + catalog_index)
+                    .expect("council policy slot fits the stable u64 wire format"),
                 value: field_from_u64(value),
             },
             Effect::EmitEvent {
