@@ -22,10 +22,24 @@
 //!
 //! The widget is a **static snapshot re-rendered + pushed server-side** on every vote (not an in-tab
 //! wasm executor like the deos live cards) — right for an overlay whose data comes from the stream,
-//! not from the viewer's tab. Resolving a window into a certified world turn ([`OverlayState::close_tick`])
-//! needs a live game `WorldCell` + `Scene` and a timer; the demo mount exercises ingest→push, and a
-//! deployment supplies the world + interval (see [`OverlayState::close_tick`]). Platform API keys, an
-//! OBS instance, and a LIVE-enabled channel are ember's.
+//! not from the viewer's tab.
+//!
+//! Resolving a window into a certified world turn ([`OverlayState::close_tick`] /
+//! [`OverlayState::drive_close`]) needs a live game `WorldCell` + `Scene` and a timer. Two mounts
+//! exist, chosen by [`overlay_mount_from_env`]:
+//! * **default (`OVERLAY_LIVE_WORLD` unset)** — the [`demo_state_from_env`] TALLY BOARD: ingest→push
+//!   only, no world resolve (honestly labeled). Byte-identical to before.
+//! * **opt-in (`OVERLAY_LIVE_WORLD` set)** — a [`LiveCloseLoop`] over a live demo Warden's Keep
+//!   `WorldCell` + `Scene`, whose [`LiveCloseLoop::run`] drives [`OverlayState::drive_close`] on a
+//!   [`tokio::time::interval`] (`OVERLAY_ROUND_SECONDS`): each window ingests → tallies → at close
+//!   resolves the quorum-certified winner into the world as ONE real [`CertifiedTurn`] → pushes the
+//!   (reset) tally over SSE. The stuck-window case (a quorum-certified but ILLEGAL command) is
+//!   dropped so the round is never bricked; a below-quorum window is retained for retry.
+//!
+//! **"Certified" here means quorum-certified + executor-admitted, NOT FRI-sound-on-chain** — it
+//! inherits the deployed ledger's undischarged FRI/STARK floor. The mounted world is a small **demo**
+//! (the Keep), a poll-driven scene the crowd steers; a real deployment supplies its own game world.
+//! Platform API keys, an OBS instance, and a LIVE-enabled channel are ember's.
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
@@ -49,9 +63,10 @@ use deos_view::{ViewNode, render_html};
 use dregg_stream_ingest::{
     PlatformAdapter, StreamEvent, YouTubeAdapter, YouTubeLivePage, parse_youtube_live_page,
 };
-use dungeon_on_dregg::collective::{CertifiedTurn, Proposal, QUORUM};
+use dungeon_on_dregg::collective::{CertifiedTurn, CollectiveError, Proposal, QUORUM};
 use dungeon_on_dregg::narrator::Command;
-use spween_dregg::{Scene, WorldCell};
+use dungeon_on_dregg::{deploy_keep, keep_scene};
+use spween_dregg::{Scene, Value, WorldCell};
 
 use crate::crowd_round::{CrowdCloseError, CrowdRound, TallyPreview};
 
@@ -198,10 +213,11 @@ impl OverlayState {
     ///
     /// The close runs the whole electorate's sign+verify synchronously under the round mutex; the
     /// per-voter weight cap + [`WeightShaping`](crate::crowd_round::WeightShaping) keep it bounded,
-    /// but a deployment driving this from an async timer should still wrap the call in
+    /// but a deployment driving this from an async timer wraps the call in
     /// [`tokio::task::spawn_blocking`] (holding the `world`/`scene` in an `Arc`) so a large window
-    /// never stalls the reactor. Wiring that timer over a live `WorldCell` is the named
-    /// live-game close-loop residual.
+    /// never stalls the reactor — exactly what [`LiveCloseLoop::run`] does. Prefer
+    /// [`drive_close`](Self::drive_close) as the deployment tick: it adds stuck-window recovery
+    /// (a quorum-certified but illegal command is dropped, not left to brick the round).
     pub fn close_tick(
         &self,
         world: &WorldCell,
@@ -214,6 +230,54 @@ impl OverlayState {
         };
         self.publish(&preview);
         result
+    }
+
+    /// **One deployment close-tick — the timer's per-window step, with stuck-window recovery.**
+    /// Closes the window into `world`/`scene` under the round mutex ([`CrowdRound::close_into_world`])
+    /// and classifies the outcome so the round can NEVER be bricked by a repeatedly-certified illegal
+    /// command:
+    ///
+    /// * [`CloseTick::Landed`] — the quorum-certified winner resolved into the world as ONE real
+    ///   [`CertifiedTurn`]; the window advanced (buffer reset). The world moved.
+    /// * [`CloseTick::Retained`] — the window fell short of the distinct-voter floor or the weight
+    ///   quorum. It is **left intact** so more votes next window can carry it (the retry case). The
+    ///   world did not move.
+    /// * [`CloseTick::Skipped`] — the crowd quorum-certified a command the GAME executor REFUSED
+    ///   ([`CollectiveError::World`]) — or an unexpected engine/signature error. The window is
+    ///   **dropped** (advanced) so the round is not stuck re-certifying the same losing command every
+    ///   tick. Distinct from `Retained`: a `Retained` window keeps its ballots, a `Skipped` window is
+    ///   thrown away. The world did not move.
+    ///
+    /// The whole close + recovery runs under ONE lock acquisition (so an ingest racing between the
+    /// close and the drop cannot lose a next-window event), and the fresh tally is pushed over SSE
+    /// exactly once. Directly callable with no timer, so the deploy close-path is unit-testable end
+    /// to end.
+    pub fn drive_close(&self, world: &WorldCell, scene: &Scene) -> CloseTick {
+        let (tick, preview) = {
+            let mut round = self.round.lock().unwrap();
+            let tick = match round.close_into_world(world, scene) {
+                Ok(cert) => CloseTick::Landed(cert),
+                // Below the distinct-voter floor or the weight quorum — keep the window for retry.
+                Err(CrowdCloseError::DistinctFloor { voters, required }) => {
+                    CloseTick::Retained(CrowdCloseError::DistinctFloor { voters, required })
+                }
+                Err(CrowdCloseError::Collective(CollectiveError::BelowQuorum)) => {
+                    CloseTick::Retained(CrowdCloseError::Collective(CollectiveError::BelowQuorum))
+                }
+                // A quorum-certified ILLEGAL command (the executor's teeth), or an unexpected
+                // engine/signature error: DROP this window so the round is not bricked
+                // re-certifying it forever. `close_into_world` did not advance on this error path,
+                // so we advance here — under the SAME lock.
+                Err(other) => {
+                    round.advance();
+                    CloseTick::Skipped(other)
+                }
+            };
+            let preview = round.preview();
+            (tick, preview)
+        };
+        self.publish(&preview);
+        tick
     }
 
     /// Render + store + broadcast a tally snapshot. `send` returns `Err` only when no overlay is
@@ -298,6 +362,252 @@ pub fn demo_state_from_env() -> Arc<OverlayState> {
         );
     }
     demo_state().with_ingest_token(token)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The DEPLOYMENT close-loop — a live game World cell the crowd STEERS, closed on a timer.
+//
+// The default mount ([`demo_state_from_env`]) is a tally board with NO world resolve. Setting
+// `OVERLAY_LIVE_WORLD` swaps in a [`LiveCloseLoop`] over a live demo Warden's Keep world/scene:
+// `close_tick`/`drive_close` — which fold a crowd tally into ONE certified `TurnReceipt` — are now
+// DRIVEN on a `tokio::time::interval`, so on a running server a crowd round actually
+// ingests → tallies → at window close resolves the quorum-certified winner into the world → pushes
+// the reset tally over SSE. This is the missing close-loop: the thing that was only demonstrated in
+// `#[cfg(test)]` is now the deploy path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The env var that OPTS IN to the live-world close-loop mount (any non-empty, non-`0`/`false`/`off`
+/// value). UNSET (the default) ⇒ the [`demo_state_from_env`] tally board mounts, byte-identical to
+/// before. See [`overlay_mount_from_env`].
+pub const OVERLAY_LIVE_WORLD_ENV: &str = "OVERLAY_LIVE_WORLD";
+
+/// The env var setting the live-world round window in SECONDS (the interval on which the close-loop
+/// resolves a window into ONE certified world turn). Unset/invalid ⇒ [`DEFAULT_ROUND_SECONDS`];
+/// floored at [`MIN_ROUND_SECONDS`] so a typo can never spin a tight close loop.
+pub const OVERLAY_ROUND_SECONDS_ENV: &str = "OVERLAY_ROUND_SECONDS";
+
+/// The default live-world round window (seconds) when [`OVERLAY_ROUND_SECONDS_ENV`] is unset.
+const DEFAULT_ROUND_SECONDS: u64 = 30;
+/// The floor the configured round window is clamped up to — a guard against a `0`/tiny value
+/// spinning a tight close loop under the round mutex.
+const MIN_ROUND_SECONDS: u64 = 1;
+/// The deterministic deploy seed for the demo Keep world the live overlay steers (the same seed the
+/// crowd-round tests deploy, so the demo world's identity/state hashes are reproducible).
+const KEEP_LIVE_SEED: u8 = 30;
+
+/// The honesty label the LIVE-WORLD overlay wears on the `GET /overlay` page — it says plainly that
+/// (a) the mounted world is a **demo**, and (b) "certified" means quorum-certified + executor-admitted,
+/// NOT FRI-sound-on-chain (the deployed ledger's undischarged FRI/STARK floor is inherited).
+pub const LIVE_OVERLAY_LABEL: &str = "Live demo world — the crowd steers a demo Warden's Keep: each round window the quorum-certified \
+     winner lands ONE real world turn. \"Certified\" = quorum-certified + executor-admitted, NOT \
+     FRI-sound-on-chain; the world is a demo.";
+
+/// **The outcome of one deployment close-tick** ([`OverlayState::drive_close`]) — the classification
+/// that lets the timer never brick the round.
+#[derive(Debug)]
+pub enum CloseTick {
+    /// The quorum-certified winner resolved into the world as ONE real [`CertifiedTurn`]; the window
+    /// advanced (buffer reset). The world moved.
+    Landed(CertifiedTurn),
+    /// The window fell short (distinct-voter floor / weight quorum). It is left intact for retry next
+    /// window. The world did not move.
+    Retained(CrowdCloseError),
+    /// The crowd quorum-certified a command the executor REFUSED (or an unexpected engine error) —
+    /// the window is DROPPED so the round is not stuck re-certifying it. The world did not move.
+    Skipped(CrowdCloseError),
+}
+
+impl CloseTick {
+    /// Whether this tick landed a real certified world turn.
+    pub fn landed(&self) -> bool {
+        matches!(self, CloseTick::Landed(_))
+    }
+}
+
+/// **The live-world close-loop** — the deploy-path binding of a [`CrowdRound`] overlay to a live
+/// game `WorldCell` + `Scene` and a round-window timer. [`run`](Self::run) drives
+/// [`OverlayState::drive_close`] on a [`tokio::time::interval`]; each window resolves the
+/// quorum-certified winner into the world as ONE real [`CertifiedTurn`] and pushes the fresh tally
+/// over SSE. Build one with [`keep_live_overlay`] (the demo Keep world), mount its router with
+/// [`router`](Self::router), and start the timer with [`spawn`](Self::spawn).
+pub struct LiveCloseLoop {
+    overlay: Arc<OverlayState>,
+    world: Arc<WorldCell>,
+    scene: Arc<Scene>,
+    window: Duration,
+}
+
+impl LiveCloseLoop {
+    /// The shared overlay state (the SSE + ingest surface). Clone-cheap (`Arc`).
+    pub fn overlay(&self) -> Arc<OverlayState> {
+        Arc::clone(&self.overlay)
+    }
+
+    /// The live game world cell the close-loop resolves certified turns into. Clone-cheap (`Arc`);
+    /// a deployment can read/verify its committed chain (`read_var` / `verify`) alongside the loop.
+    pub fn world(&self) -> Arc<WorldCell> {
+        Arc::clone(&self.world)
+    }
+
+    /// The round window the timer closes on.
+    pub fn window(&self) -> Duration {
+        self.window
+    }
+
+    /// The overlay router (`GET /overlay`, `/overlay/sse`, `POST /overlay/ingest[/youtube]`) over
+    /// this live state — what `make_app` merges.
+    pub fn router(&self) -> Router {
+        overlay_router(self.overlay())
+    }
+
+    /// **One deployment close-tick over the live world** — what the timer runs each window. Directly
+    /// callable with NO timer, so the deploy close-path is unit-testable end to end. See
+    /// [`OverlayState::drive_close`] for the outcome classification (Landed / Retained / Skipped).
+    pub fn drive_once(&self) -> CloseTick {
+        self.overlay.drive_close(&self.world, &self.scene)
+    }
+
+    /// **Spawn the close-loop timer** on the current tokio runtime (fire-and-forget). The loop lives
+    /// for the process; the server holds no handle (the overlay state is already shared via its
+    /// router). If no runtime is in scope (only possible when the env gate is set outside an async
+    /// context) the loop is not started and a warning is logged — the router still serves as a tally
+    /// board.
+    pub fn spawn(self) {
+        if tokio::runtime::Handle::try_current().is_err() {
+            tracing::warn!(
+                "{OVERLAY_LIVE_WORLD_ENV} set but no tokio runtime in scope — the overlay \
+                 close-loop timer was not started (the overlay still serves as a tally board)"
+            );
+            return;
+        }
+        tokio::spawn(self.run());
+    }
+
+    /// **The close-loop — drive [`OverlayState::drive_close`] on a round-window
+    /// [`tokio::time::interval`].** The first interval tick fires immediately and is consumed so
+    /// voters get a full window before the first resolve. Each subsequent tick runs the close (which
+    /// signs+verifies the whole electorate synchronously) OFF the async reactor via
+    /// [`tokio::task::spawn_blocking`], so a large window never stalls request handling.
+    pub async fn run(self) {
+        let mut ticker = tokio::time::interval(self.window);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick is immediate — consume it so the first REAL close is one window in.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let overlay = Arc::clone(&self.overlay);
+            let world = Arc::clone(&self.world);
+            let scene = Arc::clone(&self.scene);
+            match tokio::task::spawn_blocking(move || overlay.drive_close(&world, &scene)).await {
+                Ok(CloseTick::Landed(cert)) => tracing::info!(
+                    winner = cert.decision.winner,
+                    winner_tally = cert.decision.winner_tally,
+                    total = cert.decision.total,
+                    "overlay close-loop: quorum-certified winner landed ONE real world turn \
+                     (certified = quorum-certified + executor-admitted, NOT FRI-sound-on-chain)"
+                ),
+                Ok(CloseTick::Retained(why)) => tracing::debug!(
+                    reason = %why,
+                    "overlay close-loop: window below quorum/floor — retained for retry"
+                ),
+                Ok(CloseTick::Skipped(why)) => tracing::warn!(
+                    reason = %why,
+                    "overlay close-loop: quorum-certified command refused by the executor — \
+                     window dropped to unstick the round"
+                ),
+                Err(e) => {
+                    tracing::error!(error = %e, "overlay close-loop: close task panicked/cancelled")
+                }
+            }
+        }
+    }
+}
+
+/// **Build a LIVE demo-world overlay** — the keep round tally over a freshly deployed demo Warden's
+/// Keep `WorldCell` + `Scene` the crowd steers. The overlay is honestly labeled a live *demo* world
+/// ([`LIVE_OVERLAY_LABEL`]) and gated with the operator `ingest_token` (unset ⇒ POST ingest
+/// fail-closed; the server-side authenticated feed is still the [`YouTubePoller`]). Drive the
+/// returned [`LiveCloseLoop`] on a `window` interval to land certified turns.
+///
+/// The demo world is a demo: it seeds the gate-warden fight at 50 HP, and the crowd's certified
+/// trade-blows / press-on turns move THAT real world state. A real deployment builds its own
+/// [`LiveCloseLoop`] over the game it streams (its own `WorldCell`/`Scene`/proposals).
+pub fn keep_live_overlay(window: Duration, ingest_token: Option<String>) -> LiveCloseLoop {
+    let mut world = deploy_keep(KEEP_LIVE_SEED);
+    // The gate-warden fight begins at 50 HP — the certified crowd turns move this real state.
+    world.seed_var("hp", Value::Int(50));
+    let scene = keep_scene();
+    let overlay = OverlayState::new(demo_round())
+        .with_label(Some(LIVE_OVERLAY_LABEL.to_string()))
+        .with_ingest_token(ingest_token);
+    LiveCloseLoop {
+        overlay,
+        world: Arc::new(world),
+        scene: Arc::new(scene),
+        window,
+    }
+}
+
+/// **Resolve the overlay mount from the environment** — the env-gated choice `make_app` makes:
+///
+/// * `OVERLAY_LIVE_WORLD` unset (the default) ⇒ `(`[`demo_state_from_env`]` tally-board router,
+///   None)` — no world, no timer, byte-identical to before.
+/// * `OVERLAY_LIVE_WORLD` set ⇒ `(the live-world router, Some(`[`LiveCloseLoop`]`))` — a live demo
+///   Keep world the crowd steers, on an `OVERLAY_ROUND_SECONDS`-second window. The caller merges the
+///   router and calls [`LiveCloseLoop::spawn`] to start the timer.
+///
+/// The operator ingest bearer [`OVERLAY_INGEST_TOKEN_ENV`] is honored in both modes (unset ⇒ POST
+/// ingest fail-closed).
+pub fn overlay_mount_from_env() -> (Router, Option<LiveCloseLoop>) {
+    if !env_live_world_enabled() {
+        return (overlay_router(demo_state_from_env()), None);
+    }
+    let token = std::env::var(OVERLAY_INGEST_TOKEN_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if token.is_some() {
+        tracing::info!(
+            "overlay ingest gated behind {OVERLAY_INGEST_TOKEN_ENV} (operator bearer required)"
+        );
+    } else {
+        tracing::info!(
+            "overlay ingest fail-closed — {OVERLAY_INGEST_TOKEN_ENV} unset (POST /overlay/ingest \
+             refused; votes still feed via the server-side YouTubePoller)"
+        );
+    }
+    let window = round_window_from_env();
+    let live = keep_live_overlay(window, token);
+    tracing::info!(
+        round_secs = window.as_secs(),
+        "overlay LIVE demo world mounted ({OVERLAY_LIVE_WORLD_ENV}) — the crowd steers a demo \
+         Warden's Keep; the close-loop lands ONE quorum-certified world turn per window \
+         (certified = quorum-certified + executor-admitted, NOT FRI-sound-on-chain; the world is a \
+         demo)"
+    );
+    let router = live.router();
+    (router, Some(live))
+}
+
+/// Whether [`OVERLAY_LIVE_WORLD_ENV`] opts in to the live-world mount — set to any value other than
+/// empty / `0` / `false` / `off` (case-insensitive).
+fn env_live_world_enabled() -> bool {
+    std::env::var(OVERLAY_LIVE_WORLD_ENV)
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v.is_empty() || v == "0" || v == "false" || v == "off")
+        })
+        .unwrap_or(false)
+}
+
+/// The live-world round window from [`OVERLAY_ROUND_SECONDS_ENV`] (default [`DEFAULT_ROUND_SECONDS`],
+/// floored at [`MIN_ROUND_SECONDS`]).
+fn round_window_from_env() -> Duration {
+    let secs = std::env::var(OVERLAY_ROUND_SECONDS_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_ROUND_SECONDS)
+        .max(MIN_ROUND_SECONDS);
+    Duration::from_secs(secs)
 }
 
 /// `GET /overlay` — the transparent OBS page, first-painted at the current tally, carrying the
@@ -943,6 +1253,196 @@ mod tests {
             poller.polling_interval(),
             Duration::from_millis(MIN_POLL_INTERVAL_MILLIS),
             "an absent pollingIntervalMillis floors to the guard"
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // The DEPLOYMENT close-loop — the crowd steers a LIVE world, closed on a timer.
+    // What was demonstrated only in `#[cfg(test)]` (close→resolve→advance) is now the
+    // deploy path: `drive_close`/`LiveCloseLoop` over a live demo Keep world.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn chat(author: &str, text: &str) -> StreamEvent {
+        StreamEvent {
+            platform: "youtube".into(),
+            author_id: author.into(),
+            kind: dregg_stream_ingest::EventKind::Chat,
+            amount_micros: 0,
+            text: text.into(),
+            ts: 0,
+        }
+    }
+
+    /// **THE DEPLOY PATH — the live close-loop lands a real certified turn end to end.** A windowed
+    /// round over a LIVE demo Keep world: three distinct voters back trade-blows (weight quorum +
+    /// distinct floor both met), the deployment close-tick resolves the quorum-certified winner INTO
+    /// the world as ONE real [`CertifiedTurn`], and the world state MOVES (hp 50 → 30). This is
+    /// exactly the fold that was only demonstrated in `#[cfg(test)]` — now [`OverlayState::drive_close`]
+    /// / [`LiveCloseLoop`], the deploy tick.
+    #[test]
+    fn live_close_loop_lands_a_certified_turn_into_the_world() {
+        let live = keep_live_overlay(Duration::from_secs(30), None);
+        assert_eq!(
+            live.world().read_var("hp"),
+            50,
+            "the demo Keep begins at 50 HP"
+        );
+        let overlay = live.overlay();
+
+        // Three distinct voters back trade-blows: weight 3 ≥ quorum, 3 distinct ≥ floor.
+        overlay.ingest_events(vec![
+            chat("A", "trade blows"),
+            chat("B", "trade blows"),
+            chat("C", "trade blows"),
+        ]);
+
+        let cert = match live.drive_once() {
+            CloseTick::Landed(cert) => cert,
+            other => panic!("a quorum-met window must land a certified turn, got {other:?}"),
+        };
+        assert_eq!(
+            cert.command,
+            Command::trade_blows(),
+            "trade-blows certified + resolved"
+        );
+        assert_ne!(
+            cert.receipt.turn_hash, [0u8; 32],
+            "a genuine committed world turn"
+        );
+        assert_eq!(
+            live.world().read_var("hp"),
+            30,
+            "the world resolved trade-blows (50 → 30) — the deploy path moved a REAL world"
+        );
+        assert_eq!(
+            overlay.round.lock().unwrap().buffered(),
+            0,
+            "the window advanced (buffer reset) after the close"
+        );
+        assert_eq!(
+            overlay.round.lock().unwrap().landed().len(),
+            1,
+            "the certified turn is recorded"
+        );
+    }
+
+    /// **A below-quorum window does NOT move the world — it is retained for retry.** Two distinct
+    /// voters clear the distinct floor but their weight (2) is below the quorum (3): the tick is
+    /// [`CloseTick::Retained`], the world is unmoved, and the window keeps its ballots so a third
+    /// voter next window carries it (then it lands).
+    #[test]
+    fn below_quorum_window_does_not_move_the_world() {
+        let live = keep_live_overlay(Duration::from_secs(30), None);
+        let overlay = live.overlay();
+        overlay.ingest_events(vec![chat("A", "trade blows"), chat("B", "trade blows")]);
+
+        match live.drive_once() {
+            CloseTick::Retained(CrowdCloseError::Collective(CollectiveError::BelowQuorum)) => {}
+            other => {
+                panic!("a below-quorum window must be retained (world unmoved), got {other:?}")
+            }
+        }
+        assert_eq!(live.world().read_var("hp"), 50, "the world did not move");
+        assert_eq!(
+            overlay.round.lock().unwrap().buffered(),
+            2,
+            "a retained window is left intact for retry"
+        );
+
+        // The third distinct voter arrives → quorum met → the retried window carries.
+        overlay.ingest_events(vec![chat("C", "trade blows")]);
+        assert!(
+            live.drive_once().landed(),
+            "once quorum is met the retained window lands a certified turn"
+        );
+        assert_eq!(
+            live.world().read_var("hp"),
+            30,
+            "the world moved on the carried retry"
+        );
+    }
+
+    /// **A stuck illegal-command window RECOVERS — it is not bricked.** The demo Keep is seeded at
+    /// 20 HP, so trade-blows (`hp -= 20`, gated `FieldGte(hp,1)` on the post-state) is a killing blow
+    /// the executor REFUSES. Three voters quorum-certify it anyway; the tick is [`CloseTick::Skipped`]
+    /// (the executor's teeth), the world is unmoved, and — the recovery — the window is DROPPED so the
+    /// next tick does NOT re-certify the same losing command (it falls to the distinct floor). The
+    /// round moves on; it is not stuck re-refusing the illegal winner forever.
+    #[test]
+    fn stuck_illegal_command_window_recovers() {
+        let mut world = deploy_keep(KEEP_LIVE_SEED);
+        world.seed_var("hp", Value::Int(20)); // trade-blows (−20 → 0) fails FieldGte(hp,1).
+        let world = std::sync::Arc::new(world);
+        let scene = keep_scene();
+        let overlay = OverlayState::new(demo_round());
+
+        overlay.ingest_events(vec![
+            chat("A", "trade blows"),
+            chat("B", "trade blows"),
+            chat("C", "trade blows"),
+        ]);
+
+        // The window quorum-certifies trade-blows, the executor REFUSES it, and the window is DROPPED.
+        match overlay.drive_close(&world, &scene) {
+            CloseTick::Skipped(CrowdCloseError::Collective(CollectiveError::World(_))) => {}
+            other => panic!("a quorum-certified illegal command must be Skipped, got {other:?}"),
+        }
+        assert_eq!(
+            world.read_var("hp"),
+            20,
+            "the world did not move (the illegal blow was refused)"
+        );
+        assert_eq!(
+            overlay.round.lock().unwrap().buffered(),
+            0,
+            "the illegal window was dropped (not left to brick the round)"
+        );
+
+        // RECOVERY: no fresh votes ⇒ the round does NOT re-certify the illegal command — it falls to
+        // the distinct floor and moves on. The round is unstuck.
+        match overlay.drive_close(&world, &scene) {
+            CloseTick::Retained(CrowdCloseError::DistinctFloor { voters: 0, .. }) => {}
+            other => panic!("after the skip the round must move on (no re-certify), got {other:?}"),
+        }
+        assert_eq!(world.read_var("hp"), 20, "still unmoved after recovery");
+    }
+
+    /// **The `tokio::time::interval` timer actually drives the close on a running server.** Spawn the
+    /// real [`LiveCloseLoop`] with a short window and a pre-seeded quorum: a certified turn lands INTO
+    /// the world with NO manual `drive_*` call, and the reset tally is pushed over SSE — proving the
+    /// deploy path is the timer, not a test-only poke.
+    #[tokio::test]
+    async fn timer_driven_close_loop_lands_a_turn_on_a_running_server() {
+        let live = keep_live_overlay(Duration::from_millis(60), None);
+        let overlay = live.overlay();
+        let world = live.world();
+        overlay.ingest_events(vec![
+            chat("A", "trade blows"),
+            chat("B", "trade blows"),
+            chat("C", "trade blows"),
+        ]);
+        // Subscribe BEFORE the close so we can confirm the reset tally is pushed over SSE.
+        let mut rx = overlay.subscribe();
+
+        live.spawn(); // starts the `tokio::time::interval` close-loop on this runtime.
+
+        // The first interval tick is immediate (consumed); the first REAL close is ~one window in.
+        // Give the timer + off-reactor close ample slack.
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        assert_eq!(
+            world.read_var("hp"),
+            30,
+            "the timer drove a quorum-certified trade-blows INTO the world (50 → 30)"
+        );
+        assert_eq!(
+            overlay.round.lock().unwrap().landed().len(),
+            1,
+            "exactly one certified turn landed on the timer"
+        );
+        assert!(
+            rx.try_recv().is_ok(),
+            "the close pushed the updated (reset) tally over SSE"
         );
     }
 }

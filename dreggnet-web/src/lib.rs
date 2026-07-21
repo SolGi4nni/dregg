@@ -3574,6 +3574,18 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
         resolve_player_worlds,
     ));
 
+    // THE CROWD-STREAM OVERLAY (docs/CROWD-STREAM-ENGINE-DESIGN.md) — the transparent OBS vote
+    // overlay + its server→browser SSE tally push (`GET /overlay`, `GET /overlay/sse`,
+    // `POST /overlay/ingest[/youtube]`), gated behind the operator bearer `OVERLAY_INGEST_TOKEN`
+    // (unset ⇒ fail-closed). Two mounts, chosen by `OVERLAY_LIVE_WORLD` (env-gated):
+    //   * unset (default) → a tally board over the keep round, honestly labeled "no world resolve";
+    //   * set → a LIVE demo Warden's Keep the crowd STEERS — its `LiveCloseLoop` drives
+    //     `OverlayState::drive_close` on an `OVERLAY_ROUND_SECONDS`-second `tokio::time::interval`,
+    //     so on a running server each window ingests → tallies → resolves the quorum-certified
+    //     winner into the world as ONE real certified TurnReceipt → pushes the reset tally over SSE.
+    // Certified = quorum-certified + executor-admitted, NOT FRI-sound-on-chain; the world is a demo.
+    let (overlay_router, overlay_live) = overlay::overlay_mount_from_env();
+
     let app = Router::new()
         .route("/", get(index))
         .route("/health", get(health))
@@ -3585,15 +3597,7 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
         // overlap with `descent_router`'s board/run/submit surface.
         .merge(descent_play::descent_play_router())
         .merge(sprite::sprite_router())
-        // THE CROWD-STREAM OVERLAY (docs/CROWD-STREAM-ENGINE-DESIGN.md) — the transparent OBS vote
-        // overlay + its server→browser SSE tally push (`GET /overlay`, `GET /overlay/sse`,
-        // `POST /overlay/ingest[/youtube]`). The demo state is the keep round, honestly labeled a
-        // tally board with no world resolve, and the ingest routes are gated behind the operator
-        // bearer `OVERLAY_INGEST_TOKEN` (unset ⇒ fail-closed). A deployment builds its own
-        // `overlay::OverlayState` over the game's live World cell, feeds it from the server-side
-        // `overlay::YouTubePoller` (authenticated) and/or the token-gated POST, and drives a
-        // close→resolve→advance timer via `OverlayState::close_tick`.
-        .merge(overlay::overlay_router(overlay::demo_state_from_env()));
+        .merge(overlay_router);
     #[cfg(feature = "hosted-binary-operations")]
     let app = app.merge(fhegg_operation::router(Arc::clone(&catalog)));
     // THE TELEGRAM MINI APP surface — mounted iff `TELEGRAM_BOT_TOKEN` is set (the same ops gate
@@ -3611,6 +3615,15 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
         Some(da) => app.merge(da),
         None => app,
     };
+    // START THE OVERLAY LIVE-WORLD CLOSE-LOOP TIMER (only when `OVERLAY_LIVE_WORLD` mounted one).
+    // The default demo mount is a tally board with no world → `None` → nothing spawned, so the
+    // committed (unconfigured) path is byte-identical. When present, this drives
+    // `OverlayState::drive_close` on the round-window interval — the deploy-path close-loop. Spawned
+    // here (inside the bin's tokio runtime, like the session-lifecycle sweep) so a running server
+    // actually lands certified turns; `spawn` no-ops with a warning if no runtime is in scope.
+    if let Some(live) = overlay_live {
+        live.spawn();
+    }
     (app, catalog)
 }
 

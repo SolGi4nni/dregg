@@ -71,6 +71,35 @@ stream events (YouTube Super Chat / Twitch cheer / TikTok gift + chat)
    base; NEW = `apply(verdict)` to advance base, an N-way/sequential fold, and wiring it onto the durable
    `World::open` image (the three exist but are disjoint).
 
+## LANDED (2026-07-20) — the close-loop runs on a DEPLOY PATH, not only in tests
+
+NEW items #2 (round driver over live events + a close-on-a-timer) and #3 (a live SSE push) are
+built and wired into the served app (`dreggnet-web`), env-gated so the default is unchanged:
+
+- `dreggnet_web::crowd_round::CrowdRound` feeds live stream events into the real
+  `CollectiveRound` and folds a window into ONE certified `TurnReceipt` (`close_into_world`).
+- `dreggnet_web::overlay::OverlayState` is the SSE surface (`GET /overlay`, `/overlay/sse`,
+  `POST /overlay/ingest[/youtube]`, operator-bearer-gated). Its `drive_close` is the deployment
+  close-tick: close → resolve the quorum-certified winner into the world → push the reset tally.
+- `dreggnet_web::overlay::LiveCloseLoop` binds an `OverlayState` to a live game `WorldCell` +
+  `Scene` and drives `drive_close` on a `tokio::time::interval` (round window). `make_app` mounts
+  it via `overlay_mount_from_env`:
+  - **`OVERLAY_LIVE_WORLD` unset (default)** → the tally board (ingest→push only, no world resolve),
+    byte-identical to before;
+  - **`OVERLAY_LIVE_WORLD` set** → a LIVE demo Warden's Keep the crowd steers, closing every
+    `OVERLAY_ROUND_SECONDS` seconds into one certified world turn.
+- **Stuck-window handling:** a quorum-certified but ILLEGAL command (the executor's teeth) is
+  *dropped* (the round is never bricked re-certifying it), distinct from a below-quorum window,
+  which is *retained* for retry.
+
+**Honest labeling (unchanged posture):** "certified" here means **quorum-certified +
+executor-admitted, NOT FRI-sound-on-chain** — it inherits the deployed ledger's undischarged
+FRI/STARK floor. The mounted world is a **demo** (the Keep); a real deployment supplies its own
+game world (`WorldCell`/`Scene`/proposals) — the demo is a poll-driven scene, not the product's
+persistent RPG-Wednesday world. The viewer overlay page carries this caveat as page chrome
+(`LIVE_OVERLAY_LABEL`). Electorate scaling (#5: dynamic roster + real per-viewer custody, not
+platform-held keys) and the async multi-group fold (#6) remain the named net-new pieces.
+
 ## Multi-group / RPG-Wednesday async model
 Each streaming group runs its own `branch-stitch` branch off a shared persistent `World` (`World::open`);
 a group's crowd rounds land turns on its branch; periodically the branches fold back into base via the
