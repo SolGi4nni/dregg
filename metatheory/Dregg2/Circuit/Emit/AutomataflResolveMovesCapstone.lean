@@ -1361,9 +1361,11 @@ on my landing square does not itself leave" by the OTHER piece's SEED carry `cCv
 BOTH seed carries are `1` even though BOTH pieces ultimately STAY (a mutual, recursive disposition the
 reference captures with its dedicated `twoCyc` bit + the `leaves` fixpoint). The V3 surface has NO
 two-cycle column, so the mutual stay is unmodeled. Closing it is a FOURTH emitter obligation: a
-`cTwoCyc_i = eq_ab · eq_ba · ¬BA · ¬BB · carSa · carSb` bit ANDed as `¬cTwoCyc` into each carry
-(equivalently `cCarryV4 = cCarryV3 · ¬cTwoCyc`), so a detected 2-cycle forces the carry to `0` and the
-pieces are kept — exactly the reference's ruling C.
+`cTwoCyc_i = eq_ab · eq_ba · ¬BA · ¬BB` bit ANDed as `¬cTwoCyc` into each carry (equivalently
+`cCarryV4 = cCarryV3 · ¬cTwoCyc`), so a detected 2-cycle forces the carry to `0` and the pieces are
+kept — exactly the reference's ruling C. (The detector is OCCUPANCY-BLIND: the `carSa · carSb` source
+conjuncts are OMITTED — seventh-wound repair, §20 — so it also fires on the vacuum-far 2-cycle, README
+3.5b, exactly like the reference `twoCyc`.)
 
 `twoCycleStay_witness_n3` is the executable falsifier, `decide`d entirely on the reference semantics:
 the reference STAYS (identity board) where the descriptor SWAPS, so with `p_a ≠ p_b` the unconditional
@@ -1431,10 +1433,11 @@ theorem cv4Lift {g : VmConstraint2} (h : g ∈ NGen.carryV4Constraints n) :
     g ∈ (automataflResolveDescN n).constraints := mem_resolve_of_mem_carryV4 h
 
 /-- **`twoCycN_of_sat`.** The mutual 2-cycle detector `cTwoCyc` is boolean and is `1` iff both raw
-destinations point at the other source (`eqAb = eqBa = 1`), neither move is inclusive-blocked
-(`cOccIncl 1 = cOccIncl 0 = 0`, the `cNOccIb`/`cNOccIa` NOT bits emitted by `flowThroughV2`) and both
-sources carry (`cAnz = cBnz = 1`). This is the circuit's rendering of the reference `twoCyc` dead-end
-(ruling C). -/
+destinations point at the other source (`eqAb = eqBa = 1`) and neither move is inclusive-blocked
+(`cOccIncl 1 = cOccIncl 0 = 0`, the `cNOccIb`/`cNOccIa` NOT bits emitted by `flowThroughV2`).
+OCCUPANCY-BLIND — the `cAnz`/`cBnz` source-carry conjuncts are DROPPED (seventh-wound repair), so the
+detector fires on the two reversed unblocked edges alone, exactly like the reference
+`AutomataflRules.twoCyc` (which also detects the VACUUM-FAR 2-cycle, README 3.5b, ruling C). -/
 theorem twoCycN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
     (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
     (hab : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 2)) = 0
@@ -1442,15 +1445,12 @@ theorem twoCycN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit 
     (hba : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 3)) = 0
         ∨ (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 3)) = 1)
     (hocc1 : (envAt t i).loc (NGen.cOccIncl n 1) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 1) = 1)
-    (hocc0 : (envAt t i).loc (NGen.cOccIncl n 0) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 0) = 1)
-    (hanz : (envAt t i).loc (NGen.cAnz n) = 0 ∨ (envAt t i).loc (NGen.cAnz n) = 1)
-    (hbnz : (envAt t i).loc (NGen.cBnz n) = 0 ∨ (envAt t i).loc (NGen.cBnz n) = 1) :
+    (hocc0 : (envAt t i).loc (NGen.cOccIncl n 0) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 0) = 1) :
     ((envAt t i).loc (NGen.cTwoCyc n) = 0 ∨ (envAt t i).loc (NGen.cTwoCyc n) = 1)
       ∧ ((envAt t i).loc (NGen.cTwoCyc n) = 1 ↔
           ((envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 2)) = 1
             ∧ (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 3)) = 1
-            ∧ (envAt t i).loc (NGen.cOccIncl n 1) = 0 ∧ (envAt t i).loc (NGen.cOccIncl n 0) = 0
-            ∧ (envAt t i).loc (NGen.cAnz n) = 1 ∧ (envAt t i).loc (NGen.cBnz n) = 1)) := by
+            ∧ (envAt t i).loc (NGen.cOccIncl n 1) = 0 ∧ (envAt t i).loc (NGen.cOccIncl n 0) = 0)) := by
   set e := envAt t i with he
   -- the inclusive-occlusion NOT bits (gate 0 and gate 5 of `flowThroughV2Constraints`)
   have hnoccb : e.loc (NGen.cNOccIb n) = 1 - e.loc (NGen.cOccIncl n 1) :=
@@ -1465,7 +1465,7 @@ theorem twoCycN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit 
                       (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)))))) hocc0
   have hnoccaB : e.loc (NGen.cNOccIa n) = 0 ∨ e.loc (NGen.cNOccIa n) = 1 := by
     rcases hocc0 with h | h <;> rw [hnocca, h] <;> norm_num
-  -- the five-product 2-cycle chain
+  -- the three-product 2-cycle chain (OCCUPANCY-BLIND: no `cAnz`/`cBnz`)
   have htc1 : e.loc (NGen.cTwoCyc1 n)
       = e.loc (NGen.cEqBit n (NGen.eqBase n 2)) * e.loc (NGen.cEqBit n (NGen.eqBase n 3)) :=
     prodN_of_sat hsat hc i hi (NGen.cTwoCyc1 n) (NGen.cEqBit n (NGen.eqBase n 2))
@@ -1479,38 +1479,23 @@ theorem twoCycN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) minit 
       htc1B hnoccbB
   have htc2B : e.loc (NGen.cTwoCyc2 n) = 0 ∨ e.loc (NGen.cTwoCyc2 n) = 1 := by
     rcases htc1B with a | a <;> rcases hnoccbB with b | b <;> rw [htc2, a, b] <;> norm_num
-  have htc3 : e.loc (NGen.cTwoCyc3 n) = e.loc (NGen.cTwoCyc2 n) * e.loc (NGen.cNOccIa n) :=
-    prodN_of_sat hsat hc i hi (NGen.cTwoCyc3 n) (NGen.cTwoCyc2 n) (NGen.cNOccIa n)
+  have htc : e.loc (NGen.cTwoCyc n) = e.loc (NGen.cTwoCyc2 n) * e.loc (NGen.cNOccIa n) :=
+    prodN_of_sat hsat hc i hi (NGen.cTwoCyc n) (NGen.cTwoCyc2 n) (NGen.cNOccIa n)
       (tcLift (by rw [NGen.twoCycConstraints]
                   exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)))
       htc2B hnoccaB
-  have htc3B : e.loc (NGen.cTwoCyc3 n) = 0 ∨ e.loc (NGen.cTwoCyc3 n) = 1 := by
-    rcases htc2B with a | a <;> rcases hnoccaB with b | b <;> rw [htc3, a, b] <;> norm_num
-  have htc4 : e.loc (NGen.cTwoCyc4 n) = e.loc (NGen.cTwoCyc3 n) * e.loc (NGen.cAnz n) :=
-    prodN_of_sat hsat hc i hi (NGen.cTwoCyc4 n) (NGen.cTwoCyc3 n) (NGen.cAnz n)
-      (tcLift (by rw [NGen.twoCycConstraints]
-                  exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
-                    List.mem_cons_self)))) htc3B hanz
-  have htc4B : e.loc (NGen.cTwoCyc4 n) = 0 ∨ e.loc (NGen.cTwoCyc4 n) = 1 := by
-    rcases htc3B with a | a <;> rcases hanz with b | b <;> rw [htc4, a, b] <;> norm_num
-  have htc : e.loc (NGen.cTwoCyc n) = e.loc (NGen.cTwoCyc4 n) * e.loc (NGen.cBnz n) :=
-    prodN_of_sat hsat hc i hi (NGen.cTwoCyc n) (NGen.cTwoCyc4 n) (NGen.cBnz n)
-      (tcLift (by rw [NGen.twoCycConstraints]
-                  exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
-                    (List.mem_cons_of_mem _ List.mem_cons_self))))) htc4B hbnz
   have hval : e.loc (NGen.cTwoCyc n)
       = e.loc (NGen.cEqBit n (NGen.eqBase n 2)) * e.loc (NGen.cEqBit n (NGen.eqBase n 3))
-        * (1 - e.loc (NGen.cOccIncl n 1)) * (1 - e.loc (NGen.cOccIncl n 0))
-        * e.loc (NGen.cAnz n) * e.loc (NGen.cBnz n) := by
-    rw [htc, htc4, htc3, htc2, htc1, hnoccb, hnocca]
+        * (1 - e.loc (NGen.cOccIncl n 1)) * (1 - e.loc (NGen.cOccIncl n 0)) := by
+    rw [htc, htc2, htc1, hnoccb, hnocca]
   refine ⟨?_, ?_⟩
   · rcases hab with a | a <;> rcases hba with b | b <;> rcases hocc1 with c | c <;>
-      rcases hocc0 with d | d <;> rcases hanz with f | f <;> rcases hbnz with g | g <;>
-      rw [hval, a, b, c, d, f, g] <;> norm_num
+      rcases hocc0 with d | d <;>
+      rw [hval, a, b, c, d] <;> norm_num
   · rw [hval]
     rcases hab with a | a <;> rcases hba with b | b <;> rcases hocc1 with c | c <;>
-      rcases hocc0 with d | d <;> rcases hanz with f | f <;> rcases hbnz with g | g <;>
-      rw [a, b, c, d, f, g] <;> norm_num
+      rcases hocc0 with d | d <;>
+      rw [a, b, c, d] <;> norm_num
 
 /-- **`carryV4ArithN_of_sat`.** `cCarryV4[which] = cCarryV3[which] · (1 − cTwoCyc)` is boolean and is
 `1` iff `cCarryV3[which] = 1` and `cTwoCyc = 0` — the FINAL carry, forced to `0` on a detected
@@ -1529,7 +1514,7 @@ theorem carryV4ArithN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) 
     notBitN_of_sat hsat hc i hi (NGen.cNTwoCyc n) (NGen.cTwoCyc n)
       (tcLift (by rw [NGen.twoCycConstraints]
                   exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
-                    (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)))))) htc
+                    List.mem_cons_self)))) htc
   have hntcB : e.loc (NGen.cNTwoCyc n) = 0 ∨ e.loc (NGen.cNTwoCyc n) = 1 := by
     rcases htc with h | h <;> rw [hntc, h] <;> norm_num
   have hcarry : e.loc (NGen.cCarryV4 n which)
@@ -1652,46 +1637,49 @@ theorem writeCellV4N_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) m
 
 end V4Extract
 
-/-! ## §20 — THE SEVENTH WOUND: the VACUUM-FAR 2-CYCLE (README 3.5b), which V4's `cTwoCyc` MISSES.
+/-! ## §20 — THE SEVENTH WOUND, CLOSED: the VACUUM-FAR 2-CYCLE (README 3.5b), now KEPT by `cTwoCyc`.
 
-The V4 `cTwoCyc` detector (§19) fires on `eqAb · eqBa · ¬occIncl1 · ¬occIncl0 · anz · bnz` — it requires
-BOTH sources to carry (`anz = carSa`, `bnz = carSb`). But the VALIDATED-game `twoCyc` (`AutomataflRules`
-line 214, ruling C / README 3.5b) fires on the mere EXISTENCE of the two reversed unblocked edges:
-`E sa = some sb` (needs `¬BA`) and `E sb = some sa` (needs `da = sb`, `db = sa`, `¬BB`) — with NO
-occupancy requirement. `edgeOf` is blind to `carAt` of a source, so a move FROM a VACUUM square still
-contributes its edge. So on the README's own named case 3.5b — *"a move from an empty square directly
-back to some source square — the piece simply doesn't move"* — the far source `sb` is VACUUM
-(`carSb = false`, so `bnz = 0`), yet the reference STILL detects the 2-cycle and STAYS A
-(`landMap sa = sa`, `resolveMoves` keeps A). The circuit's `cTwoCyc` reads `bnz = 0` ⇒ `cTwoCyc = 0`, so
-`cCarryV4 0 = cCarryV3 0 · ¬cTwoCyc = 1` (A's seed carry `cCv2 0 = surv · carSa · ¬BA = 1` survives the
-corrected non-leaver because the landing `sb` is VACUUM, `cLandNzV2 0 = carAt sb = 0`) — the circuit
-MOVES A into the empty `sb`. So `codeToParticle (cMidV4 sa) = (resolveMoves …).cellAt sa` is FALSE at
-`sa` for this witness: LHS `= vacuum` (A vacated), RHS `= attractor` (A kept). The full landing
-correspondence is therefore NOT provable at the 2-cycle arm against THIS descriptor — the fix is a
-CHUNK-7 emitter obligation: `cTwoCyc` must DROP the `anz · bnz` conjuncts and fire on
-`eqAb · eqBa · ¬occIncl1 · ¬occIncl0` alone (exactly the reference `twoCyc` firing condition — no
-occupancy). The witness below is its executable falsifier, `decide`d entirely on the reference
-semantics, and goes red the moment the fixed descriptor keeps A on the vacuum-far 2-cycle. -/
+The ORIGINAL V4 `cTwoCyc` detector fired on `eqAb · eqBa · ¬occIncl1 · ¬occIncl0 · anz · bnz` — it
+required BOTH sources to carry (`anz = carSa`, `bnz = carSb`). But the VALIDATED-game `twoCyc`
+(`AutomataflRules` line 214, ruling C / README 3.5b) fires on the mere EXISTENCE of the two reversed
+unblocked edges: `E sa = some sb` (needs `¬BA`) and `E sb = some sa` (needs `da = sb`, `db = sa`,
+`¬BB`) — with NO occupancy requirement. `edgeOf` is blind to `carAt` of a source, so a move FROM a
+VACUUM square still contributes its edge. On the README's own named case 3.5b — *"a move from an empty
+square directly back to some source square — the piece simply doesn't move"* — the far source `sb` is
+VACUUM (`carSb = false`, so `bnz = 0`), yet the reference STILL detects the 2-cycle and STAYS A
+(`landMap sa = sa`, `resolveMoves` keeps A). The old `anz · bnz`-gated `cTwoCyc` read `bnz = 0` ⇒
+`cTwoCyc = 0` and MOVED A into the empty `sb` — a mismatch that blocked the 2-cycle arm.
+
+THE REPAIR (this landing): `AutomataflResolveEmit.twoCycConstraints` now emits
+`cTwoCyc = eqAb · eqBa · (1 − cOccIncl 1) · (1 − cOccIncl 0)` — the `cAnz · cBnz` conjuncts DROPPED, so
+the detector is OCCUPANCY-BLIND, firing on the two reversed unblocked edges alone (the exact reference
+`twoCyc` condition). `twoCycN_of_sat` (§19) now PROVES `cTwoCyc = 1 ↔ eqAb=1 ∧ eqBa=1 ∧ cOccIncl 1=0 ∧
+cOccIncl 0=0` — no source-carry hypothesis. On this vacuum-far witness the detector FIRES
+(`cTwoCyc = 1`), so `carryV4ArithN_of_sat` gives `cCarryV4 0 = cCarryV3 0 · ¬cTwoCyc = 0` and
+`writeCellV4`/`cMidV4` KEEP A on `sa` — matching `resolveMoves`. The witness below now anchors that
+correspondence (reference keeps A, and the fixed occupancy-blind `cTwoCyc` keeps A too); the gate-level
+`cTwoCyc = 1` at `cBnz = 0` is exhibited by `AutomataflResolveEmit`'s SEVENTH-WOUND-FLIPPED canary. -/
 section VacuumTwoCycleWound
 open Dregg2.Games.AutomataflRules (blockedB carAt landMap resolvableB resolveMoves)
 
 /-- 3×3 witness. A (attractor) at `(0,0)` wants `(1,0)`; the phantom move B goes `(1,0) → (0,0)` FROM AN
 EMPTY square (`(1,0)` is vacuum — the ONLY board piece is A at `(0,0)`). Both legal, distinct sources,
-distinct raw destinations, both unblocked, forming the symmetric 2-cycle (`da = sb`, `db = sa`) — but
-`carSb = false` (the far source is vacuum), so the V4 `cTwoCyc` (which requires `bnz = carSb = 1`) does
-NOT fire. The automaton sits at `(2,2)`, off both moves. -/
+distinct raw destinations, both unblocked, forming the symmetric 2-cycle (`da = sb`, `db = sa`) — and
+`carSb = false` (the far source is vacuum), the case the OLD `anz · bnz`-gated `cTwoCyc` missed and the
+fixed OCCUPANCY-BLIND `cTwoCyc` now catches. The automaton sits at `(2,2)`, off both moves. -/
 def vtcBoard : Board :=
   Dregg2.Games.Automatafl.mkBoard 3 [(⟨0, 0⟩, Particle.attractor)] ⟨2, 2⟩
 def vtcMA : Move := Move.mk 0 ⟨0, 0⟩ ⟨1, 0⟩
 def vtcMB : Move := Move.mk 1 ⟨1, 0⟩ ⟨0, 0⟩
 
-/-- **THE VACUUM-FAR 2-CYCLE IS NOT EMPTY, AT `n = 3`, AND V4 GETS IT WRONG.** Both moves are legal with
-distinct sources and distinct raw destinations, both unblocked, forming the symmetric 2-cycle
-(`da = sb`, `db = sa`). A carries (`carSa = true`); the far source is VACUUM (`carSb = false`, the
-distinguishing clause: the V4 `cTwoCyc = … · anz · bnz` needs `bnz = carSb = 1`, which FAILS here). The
-REFERENCE keeps A in place (`landMap sa = sa`, `resolvableB = true`, `resolveMoves` keeps A on `sa` and
-leaves `sb` vacuum — ruling C / README 3.5b), where the descriptor's V4 surface (with `cTwoCyc = 0`)
-CARRIES A onto the empty `sb`. Every clause `decide`d on the reference semantics. -/
+/-- **THE VACUUM-FAR 2-CYCLE STAYS, AT `n = 3`, AND THE FIXED `cTwoCyc` NOW KEEPS IT.** Both moves are
+legal with distinct sources and distinct raw destinations, both unblocked, forming the symmetric
+2-cycle (`da = sb`, `db = sa`). A carries (`carSa = true`); the far source is VACUUM (`carSb = false`) —
+the case the ORIGINAL `cTwoCyc = … · anz · bnz` missed (it needed `bnz = carSb = 1`). The REFERENCE
+keeps A in place (`landMap sa = sa`, `resolvableB = true`, `resolveMoves` keeps A on `sa` and leaves
+`sb` vacuum — ruling C / README 3.5b); the seventh-wound repair makes the occupancy-blind `cTwoCyc`
+FIRE on this row (`twoCycN_of_sat`, no source-carry hypothesis), so `cCarryV4 0 = 0` and `cMidV4` KEEP A
+too — the two now AGREE. Every clause `decide`d on the reference semantics. -/
 theorem vacuumTwoCycleStay_witness_n3 :
     MoveValid vtcBoard vtcMA ∧ MoveValid vtcBoard vtcMB
       ∧ vtcMA.frm ≠ vtcMB.frm ∧ vtcMA.to ≠ vtcMB.to
@@ -1792,7 +1780,8 @@ end ForkCollideRawResolve
 #assert_axioms carryV4ArithN_of_sat
 #assert_axioms midV4CellN_of_sat
 #assert_axioms writeCellV4N_of_sat
--- THE SEVENTH WOUND (vacuum-far 2-cycle, README 3.5b): the V4 `cTwoCyc` misses it (`anz · bnz` too strict).
+-- THE SEVENTH WOUND, CLOSED (vacuum-far 2-cycle, README 3.5b): the occupancy-blind `cTwoCyc` (`anz · bnz`
+-- dropped) now KEEPS A, matching the reference — this witness anchors that agreement.
 #assert_axioms vacuumTwoCycleStay_witness_n3
 -- WHY the fork/collide reference is `roundStep`, not raw `resolveMoves`.
 #assert_axioms collideOneBlocked_rawResolveMoves_moves_witness
