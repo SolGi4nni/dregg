@@ -75,7 +75,7 @@ bulletproofs = { version = "5" }
 # bounded complete public-scalar verifier MSM. Dalek remains the exact group
 # oracle/output; witness-derived prover group MSM stays on CPU because the
 # verifier bit-bucket kernel is deliberately variable-time.
-bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["yoloproofs", "wgpu-msm"], optional = true }
+bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["yoloproofs", "wgpu-msm", "parallel-prover"], optional = true }
 curve25519-dalek = { version = "4", features = ["alloc", "rand_core", "dregg-wgpu-coordinates"] }
 merlin = "3"
 ethnum = "1.5"
@@ -163,6 +163,11 @@ required-features = ["amm-input-binding"]
 [[test]]
 name = "ristretto_full_msm_wgpu_required"
 path = "tests/ristretto_full_msm_wgpu_required.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "ristretto_parallel_prover"
+path = "tests/ristretto_parallel_prover.rs"
 required-features = ["amm-input-binding"]
 
 [lints]

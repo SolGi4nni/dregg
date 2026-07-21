@@ -458,34 +458,45 @@ impl<'g, T: BorrowMut<Transcript>> Prover<'g, T> {
         let mut s_L1: Vec<Scalar> = (0..n1).map(|_| Scalar::random(&mut rng)).collect();
         let mut s_R1: Vec<Scalar> = (0..n1).map(|_| Scalar::random(&mut rng)).collect();
 
-        // A_I = <a_L, G> + <a_R, H> + i_blinding * B_blinding
-        let A_I1 = crate::msm_backend::multiscalar_mul(
-            iter::once(&i_blinding1)
-                .chain(self.secrets.a_L.iter())
-                .chain(self.secrets.a_R.iter()),
-            iter::once(&self.pc_gens.B_blinding)
-                .chain(gens.G(n1))
-                .chain(gens.H(n1)),
-        )?
-        .compress();
-
-        // A_O = <a_O, G> + o_blinding * B_blinding
-        let A_O1 = crate::msm_backend::multiscalar_mul(
-            iter::once(&o_blinding1).chain(self.secrets.a_O.iter()),
-            iter::once(&self.pc_gens.B_blinding).chain(gens.G(n1)),
-        )?
-        .compress();
-
-        // S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
-        let S1 = crate::msm_backend::multiscalar_mul(
-            iter::once(&s_blinding1)
-                .chain(s_L1.iter())
-                .chain(s_R1.iter()),
-            iter::once(&self.pc_gens.B_blinding)
-                .chain(gens.G(n1))
-                .chain(gens.H(n1)),
-        )?
-        .compress();
+        // The three commitments are transcript-independent siblings.  Their
+        // exact dalek MSM results are deterministic, so a parallel host may
+        // schedule them together without changing proof bytes or challenges.
+        // Bind only the arithmetic slices here: capturing `self` would also
+        // capture the intentionally non-Sync deferred randomized-constraint
+        // closures, even though commitment construction never touches them.
+        let phase1_a_L = &self.secrets.a_L[..n1];
+        let phase1_a_R = &self.secrets.a_R[..n1];
+        let phase1_a_O = &self.secrets.a_O[..n1];
+        let pc_blinding = &self.pc_gens.B_blinding;
+        let make_A_I1 = || {
+            crate::msm_backend::multiscalar_mul(
+                iter::once(&i_blinding1)
+                    .chain(phase1_a_L.iter())
+                    .chain(phase1_a_R.iter()),
+                iter::once(pc_blinding).chain(gens.G(n1)).chain(gens.H(n1)),
+            )
+        };
+        let make_A_O1 = || {
+            crate::msm_backend::multiscalar_mul(
+                iter::once(&o_blinding1).chain(phase1_a_O.iter()),
+                iter::once(pc_blinding).chain(gens.G(n1)),
+            )
+        };
+        let make_S1 = || {
+            crate::msm_backend::multiscalar_mul(
+                iter::once(&s_blinding1)
+                    .chain(s_L1.iter())
+                    .chain(s_R1.iter()),
+                iter::once(pc_blinding).chain(gens.G(n1)).chain(gens.H(n1)),
+            )
+        };
+        #[cfg(feature = "parallel-prover")]
+        let (A_I1, (A_O1, S1)) = rayon::join(make_A_I1, || rayon::join(make_A_O1, make_S1));
+        #[cfg(not(feature = "parallel-prover"))]
+        let (A_I1, (A_O1, S1)) = (make_A_I1(), (make_A_O1(), make_S1()));
+        let A_I1 = A_I1?.compress();
+        let A_O1 = A_O1?.compress();
+        let S1 = S1?.compress();
 
         let transcript = self.transcript.borrow_mut();
         transcript.append_point(b"A_I1", &A_I1);
@@ -525,34 +536,40 @@ impl<'g, T: BorrowMut<Transcript>> Prover<'g, T> {
         let mut s_R2: Vec<Scalar> = (0..n2).map(|_| Scalar::random(&mut rng)).collect();
 
         let (A_I2, A_O2, S2) = if has_2nd_phase_commitments {
-            (
-                // A_I = <a_L, G> + <a_R, H> + i_blinding * B_blinding
+            let phase2_a_L = &self.secrets.a_L[n1..n];
+            let phase2_a_R = &self.secrets.a_R[n1..n];
+            let phase2_a_O = &self.secrets.a_O[n1..n];
+            let make_A_I2 = || {
                 crate::msm_backend::multiscalar_mul(
                     iter::once(&i_blinding2)
-                        .chain(self.secrets.a_L.iter().skip(n1))
-                        .chain(self.secrets.a_R.iter().skip(n1)),
-                    iter::once(&self.pc_gens.B_blinding)
+                        .chain(phase2_a_L.iter())
+                        .chain(phase2_a_R.iter()),
+                    iter::once(pc_blinding)
                         .chain(gens.G(n).skip(n1))
                         .chain(gens.H(n).skip(n1)),
-                )?
-                .compress(),
-                // A_O = <a_O, G> + o_blinding * B_blinding
+                )
+            };
+            let make_A_O2 = || {
                 crate::msm_backend::multiscalar_mul(
-                    iter::once(&o_blinding2).chain(self.secrets.a_O.iter().skip(n1)),
-                    iter::once(&self.pc_gens.B_blinding).chain(gens.G(n).skip(n1)),
-                )?
-                .compress(),
-                // S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
+                    iter::once(&o_blinding2).chain(phase2_a_O.iter()),
+                    iter::once(pc_blinding).chain(gens.G(n).skip(n1)),
+                )
+            };
+            let make_S2 = || {
                 crate::msm_backend::multiscalar_mul(
                     iter::once(&s_blinding2)
                         .chain(s_L2.iter())
                         .chain(s_R2.iter()),
-                    iter::once(&self.pc_gens.B_blinding)
+                    iter::once(pc_blinding)
                         .chain(gens.G(n).skip(n1))
                         .chain(gens.H(n).skip(n1)),
-                )?
-                .compress(),
-            )
+                )
+            };
+            #[cfg(feature = "parallel-prover")]
+            let (A_I2, (A_O2, S2)) = rayon::join(make_A_I2, || rayon::join(make_A_O2, make_S2));
+            #[cfg(not(feature = "parallel-prover"))]
+            let (A_I2, (A_O2, S2)) = (make_A_I2(), (make_A_O2(), make_S2()));
+            (A_I2?.compress(), A_O2?.compress(), S2?.compress())
         } else {
             // Since we are using zero blinding factors and
             // there are no variables to commit,

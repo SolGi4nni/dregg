@@ -9,11 +9,84 @@ use alloc::vec::Vec;
 use core::iter;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::VartimeMultiscalarMul;
+use curve25519_dalek::traits::{Identity, VartimeMultiscalarMul};
 use merlin::Transcript;
 
 use crate::errors::ProofError;
 use crate::transcript::TranscriptProtocol;
+
+#[cfg(feature = "parallel-prover")]
+use rayon::prelude::*;
+
+#[cfg(feature = "parallel-prover")]
+const PARALLEL_IPP_MSM_CHUNK_TERMS: usize = 32_768;
+
+#[cfg(feature = "parallel-prover")]
+fn prover_vartime_multiscalar_mul<I, J>(scalars: I, points: J) -> RistrettoPoint
+where
+    I: IntoIterator,
+    I::Item: Borrow<Scalar>,
+    J: IntoIterator,
+    J::Item: Borrow<RistrettoPoint>,
+{
+    let scalar_values: Vec<Scalar> = scalars.into_iter().map(|s| *s.borrow()).collect();
+    let point_values: Vec<RistrettoPoint> = points.into_iter().map(|p| *p.borrow()).collect();
+    assert_eq!(scalar_values.len(), point_values.len());
+    if scalar_values.len() < PARALLEL_IPP_MSM_CHUNK_TERMS {
+        return RistrettoPoint::vartime_multiscalar_mul(&scalar_values, &point_values);
+    }
+    scalar_values
+        .par_chunks(PARALLEL_IPP_MSM_CHUNK_TERMS)
+        .zip(point_values.par_chunks(PARALLEL_IPP_MSM_CHUNK_TERMS))
+        .map(|(scalar_chunk, point_chunk)| {
+            RistrettoPoint::vartime_multiscalar_mul(scalar_chunk, point_chunk)
+        })
+        .reduce(RistrettoPoint::identity, |left, right| left + right)
+}
+
+#[cfg(not(feature = "parallel-prover"))]
+fn prover_vartime_multiscalar_mul<I, J>(scalars: I, points: J) -> RistrettoPoint
+where
+    I: IntoIterator,
+    I::Item: Borrow<Scalar>,
+    J: IntoIterator,
+    J::Item: Borrow<RistrettoPoint>,
+{
+    RistrettoPoint::vartime_multiscalar_mul(scalars, points)
+}
+
+#[cfg(feature = "parallel-prover")]
+fn paired_inner_products(
+    a_L: &[Scalar],
+    a_R: &[Scalar],
+    b_L: &[Scalar],
+    b_R: &[Scalar],
+) -> (Scalar, Scalar) {
+    rayon::join(
+        || {
+            a_L.par_iter()
+                .zip(b_R.par_iter())
+                .map(|(a, b)| a * b)
+                .reduce(|| Scalar::ZERO, |left, right| left + right)
+        },
+        || {
+            a_R.par_iter()
+                .zip(b_L.par_iter())
+                .map(|(a, b)| a * b)
+                .reduce(|| Scalar::ZERO, |left, right| left + right)
+        },
+    )
+}
+
+#[cfg(not(feature = "parallel-prover"))]
+fn paired_inner_products(
+    a_L: &[Scalar],
+    a_R: &[Scalar],
+    b_L: &[Scalar],
+    b_R: &[Scalar],
+) -> (Scalar, Scalar) {
+    (inner_product(a_L, b_R), inner_product(a_R, b_L))
+}
 
 #[derive(Clone, Debug)]
 pub struct InnerProductProof {
@@ -81,36 +154,42 @@ impl InnerProductProof {
             let (G_L, G_R) = G.split_at_mut(n);
             let (H_L, H_R) = H.split_at_mut(n);
 
-            let c_L = inner_product(&a_L, &b_R);
-            let c_R = inner_product(&a_R, &b_L);
+            let (c_L, c_R) = paired_inner_products(a_L, a_R, b_L, b_R);
 
-            let L = RistrettoPoint::vartime_multiscalar_mul(
-                a_L.iter()
-                    .zip(G_factors[n..2 * n].into_iter())
-                    .map(|(a_L_i, g)| a_L_i * g)
-                    .chain(
-                        b_R.iter()
-                            .zip(H_factors[0..n].into_iter())
-                            .map(|(b_R_i, h)| b_R_i * h),
-                    )
-                    .chain(iter::once(c_L)),
-                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
-            )
-            .compress();
-
-            let R = RistrettoPoint::vartime_multiscalar_mul(
-                a_R.iter()
-                    .zip(G_factors[0..n].into_iter())
-                    .map(|(a_R_i, g)| a_R_i * g)
-                    .chain(
-                        b_L.iter()
-                            .zip(H_factors[n..2 * n].into_iter())
-                            .map(|(b_L_i, h)| b_L_i * h),
-                    )
-                    .chain(iter::once(c_R)),
-                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
-            )
-            .compress();
+            let make_l = || {
+                prover_vartime_multiscalar_mul(
+                    a_L.iter()
+                        .zip(G_factors[n..2 * n].iter())
+                        .map(|(a_L_i, g)| a_L_i * g)
+                        .chain(
+                            b_R.iter()
+                                .zip(H_factors[0..n].iter())
+                                .map(|(b_R_i, h)| b_R_i * h),
+                        )
+                        .chain(iter::once(c_L)),
+                    G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
+                )
+                .compress()
+            };
+            let make_r = || {
+                prover_vartime_multiscalar_mul(
+                    a_R.iter()
+                        .zip(G_factors[0..n].iter())
+                        .map(|(a_R_i, g)| a_R_i * g)
+                        .chain(
+                            b_L.iter()
+                                .zip(H_factors[n..2 * n].iter())
+                                .map(|(b_L_i, h)| b_L_i * h),
+                        )
+                        .chain(iter::once(c_R)),
+                    G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
+                )
+                .compress()
+            };
+            #[cfg(feature = "parallel-prover")]
+            let (L, R) = rayon::join(make_l, make_r);
+            #[cfg(not(feature = "parallel-prover"))]
+            let (L, R) = (make_l(), make_r());
 
             L_vec.push(L);
             R_vec.push(R);
@@ -121,6 +200,54 @@ impl InnerProductProof {
             let u = transcript.challenge_scalar(b"u");
             let u_inv = u.invert();
 
+            #[cfg(feature = "parallel-prover")]
+            {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || {
+                                a_L.par_iter_mut()
+                                    .zip(a_R.par_iter())
+                                    .for_each(|(left, right)| *left = *left * u + u_inv * right)
+                            },
+                            || {
+                                b_L.par_iter_mut()
+                                    .zip(b_R.par_iter())
+                                    .for_each(|(left, right)| *left = *left * u_inv + u * right)
+                            },
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || {
+                                G_L.par_iter_mut()
+                                    .zip(G_R.par_iter())
+                                    .zip(G_factors[..n].par_iter())
+                                    .zip(G_factors[n..2 * n].par_iter())
+                                    .for_each(|(((left, right), left_factor), right_factor)| {
+                                        *left = RistrettoPoint::vartime_multiscalar_mul(
+                                            &[u_inv * left_factor, u * right_factor],
+                                            &[*left, *right],
+                                        );
+                                    })
+                            },
+                            || {
+                                H_L.par_iter_mut()
+                                    .zip(H_R.par_iter())
+                                    .zip(H_factors[..n].par_iter())
+                                    .zip(H_factors[n..2 * n].par_iter())
+                                    .for_each(|(((left, right), left_factor), right_factor)| {
+                                        *left = RistrettoPoint::vartime_multiscalar_mul(
+                                            &[u * left_factor, u_inv * right_factor],
+                                            &[*left, *right],
+                                        );
+                                    })
+                            },
+                        )
+                    },
+                );
+            }
+            #[cfg(not(feature = "parallel-prover"))]
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
                 b_L[i] = b_L[i] * u_inv + u * b_R[i];
@@ -147,20 +274,26 @@ impl InnerProductProof {
             let (G_L, G_R) = G.split_at_mut(n);
             let (H_L, H_R) = H.split_at_mut(n);
 
-            let c_L = inner_product(&a_L, &b_R);
-            let c_R = inner_product(&a_R, &b_L);
+            let (c_L, c_R) = paired_inner_products(a_L, a_R, b_L, b_R);
 
-            let L = RistrettoPoint::vartime_multiscalar_mul(
-                a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),
-                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
-            )
-            .compress();
-
-            let R = RistrettoPoint::vartime_multiscalar_mul(
-                a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),
-                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
-            )
-            .compress();
+            let make_l = || {
+                prover_vartime_multiscalar_mul(
+                    a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),
+                    G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
+                )
+                .compress()
+            };
+            let make_r = || {
+                prover_vartime_multiscalar_mul(
+                    a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),
+                    G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
+                )
+                .compress()
+            };
+            #[cfg(feature = "parallel-prover")]
+            let (L, R) = rayon::join(make_l, make_r);
+            #[cfg(not(feature = "parallel-prover"))]
+            let (L, R) = (make_l(), make_r());
 
             L_vec.push(L);
             R_vec.push(R);
@@ -171,6 +304,50 @@ impl InnerProductProof {
             let u = transcript.challenge_scalar(b"u");
             let u_inv = u.invert();
 
+            #[cfg(feature = "parallel-prover")]
+            {
+                rayon::join(
+                    || {
+                        rayon::join(
+                            || {
+                                a_L.par_iter_mut()
+                                    .zip(a_R.par_iter())
+                                    .for_each(|(left, right)| *left = *left * u + u_inv * right)
+                            },
+                            || {
+                                b_L.par_iter_mut()
+                                    .zip(b_R.par_iter())
+                                    .for_each(|(left, right)| *left = *left * u_inv + u * right)
+                            },
+                        )
+                    },
+                    || {
+                        rayon::join(
+                            || {
+                                G_L.par_iter_mut()
+                                    .zip(G_R.par_iter())
+                                    .for_each(|(left, right)| {
+                                        *left = RistrettoPoint::vartime_multiscalar_mul(
+                                            &[u_inv, u],
+                                            &[*left, *right],
+                                        )
+                                    })
+                            },
+                            || {
+                                H_L.par_iter_mut()
+                                    .zip(H_R.par_iter())
+                                    .for_each(|(left, right)| {
+                                        *left = RistrettoPoint::vartime_multiscalar_mul(
+                                            &[u, u_inv],
+                                            &[*left, *right],
+                                        )
+                                    })
+                            },
+                        )
+                    },
+                );
+            }
+            #[cfg(not(feature = "parallel-prover"))]
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
                 b_L[i] = b_L[i] * u_inv + u * b_R[i];

@@ -24,6 +24,9 @@ use curve25519_dalek::ristretto::{CompressedRistretto, DreggExtendedCoordinates,
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{Identity, MultiscalarMul, VartimeMultiscalarMul};
 
+#[cfg(feature = "parallel-prover")]
+use rayon::prelude::*;
+
 use crate::errors::R1CSError;
 
 /// The number of aligned radix-256 windows in a canonical 32-byte scalar.
@@ -34,6 +37,93 @@ pub const RADIX_256_WINDOWS: usize = 32;
 /// This comfortably covers small and medium Bulletproof verifier checks while
 /// making hostile serialized dimensions fail before allocating device buffers.
 pub const MAX_WGPU_MSM_TERMS: usize = 4096;
+
+/// Chunk size for exact constant-time dalek MSM scheduling on the host.
+///
+/// Each chunk remains one ordinary dalek MSM.  Rayon only schedules independent
+/// chunk results and adds them in the Ristretto group, so this changes neither
+/// the arithmetic definition nor the proof transcript.
+#[cfg(feature = "parallel-prover")]
+const PARALLEL_PROVER_MSM_CHUNK_TERMS: usize = 16_384;
+
+#[cfg(feature = "parallel-prover")]
+fn dalek_multiscalar_mul<I, J>(scalars: I, points: J) -> Result<RistrettoPoint, MsmBackendError>
+where
+    I: IntoIterator,
+    I::Item: Borrow<Scalar>,
+    J: IntoIterator,
+    J::Item: Borrow<RistrettoPoint>,
+{
+    let scalar_values: Vec<Scalar> = scalars.into_iter().map(|s| *s.borrow()).collect();
+    let point_values: Vec<RistrettoPoint> = points.into_iter().map(|p| *p.borrow()).collect();
+    if scalar_values.len() != point_values.len() {
+        return Err(MsmBackendError::LengthMismatch {
+            scalars: scalar_values.len(),
+            points: point_values.len(),
+        });
+    }
+    if scalar_values.len() < PARALLEL_PROVER_MSM_CHUNK_TERMS {
+        return Ok(RistrettoPoint::multiscalar_mul(
+            &scalar_values,
+            &point_values,
+        ));
+    }
+    Ok(scalar_values
+        .par_chunks(PARALLEL_PROVER_MSM_CHUNK_TERMS)
+        .zip(point_values.par_chunks(PARALLEL_PROVER_MSM_CHUNK_TERMS))
+        .map(|(scalar_chunk, point_chunk)| {
+            RistrettoPoint::multiscalar_mul(scalar_chunk, point_chunk)
+        })
+        .reduce(RistrettoPoint::identity, |left, right| left + right))
+}
+
+/// Exact serialized qualification/use seam for the constant-time parallel
+/// dalek MSM used by prover commitments.
+///
+/// Scalars and points are canonically decoded first.  The returned compressed
+/// point is the same Ristretto group sum as one ordinary dalek MSM; the only
+/// change is host scheduling of independent fixed-size chunks.
+#[cfg(feature = "parallel-prover")]
+pub fn constant_time_multiscalar_mul_parallel(
+    scalar_bytes: &[[u8; 32]],
+    point_bytes: &[[u8; 32]],
+) -> Result<[u8; 32], MsmBackendError> {
+    const MAX_TERMS: usize = 1 << 20;
+    if scalar_bytes.len() > MAX_TERMS {
+        return Err(MsmBackendError::TooManyTerms {
+            terms: scalar_bytes.len(),
+            maximum: MAX_TERMS,
+        });
+    }
+    let (scalars, points) = validate_canonical_inputs(scalar_bytes, point_bytes)?;
+    Ok(
+        constant_time_multiscalar_mul_parallel_typed(&scalars, &points)?
+            .compress()
+            .to_bytes(),
+    )
+}
+
+/// Typed form of [`constant_time_multiscalar_mul_parallel`], used when the
+/// caller already holds canonical dalek values and needs no serialization
+/// boundary.
+#[cfg(feature = "parallel-prover")]
+pub fn constant_time_multiscalar_mul_parallel_typed(
+    scalars: &[Scalar],
+    points: &[RistrettoPoint],
+) -> Result<RistrettoPoint, MsmBackendError> {
+    dalek_multiscalar_mul(scalars, points)
+}
+
+#[cfg(not(feature = "parallel-prover"))]
+fn dalek_multiscalar_mul<I, J>(scalars: I, points: J) -> Result<RistrettoPoint, MsmBackendError>
+where
+    I: IntoIterator,
+    I::Item: Borrow<Scalar>,
+    J: IntoIterator,
+    J::Item: Borrow<RistrettoPoint>,
+{
+    Ok(RistrettoPoint::multiscalar_mul(scalars, points))
+}
 
 /// Result of the exact GPU-preparation stage.
 #[derive(Debug, Eq, PartialEq)]
@@ -110,6 +200,86 @@ struct CompleteMsmContext {
     queue: wgpu::Queue,
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::ComputePipeline,
+}
+
+#[cfg(feature = "wgpu-msm")]
+struct ScalarPreparationContext {
+    adapter_name: String,
+    is_hardware: bool,
+    limits: wgpu::Limits,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+/// Retain the scalar-preparation adapter, device, and compiled pipeline across
+/// all six prover commitments.  Per-call witness buffers are still allocated,
+/// scrubbed, and awaited independently; only public device state is cached.
+#[cfg(feature = "wgpu-msm")]
+fn scalar_preparation_context() -> Result<&'static ScalarPreparationContext, MsmBackendError> {
+    static CONTEXT: std::sync::OnceLock<Result<ScalarPreparationContext, String>> =
+        std::sync::OnceLock::new();
+    CONTEXT
+        .get_or_init(|| {
+            let instance = wgpu::Instance::default();
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..Default::default()
+                }))
+                .ok_or_else(|| "no adapter".to_owned())?;
+            let adapter_info = adapter.get_info();
+            let adapter_name = adapter_info.name;
+            let is_hardware = !matches!(adapter_info.device_type, wgpu::DeviceType::Cpu);
+            let limits = adapter.limits();
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("bulletproofs-ristretto-msm-window-device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: limits.clone(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            ))
+            .map_err(|error| error.to_string())?;
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("bulletproofs-ristretto-msm-window-shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/msm_windows.wgsl").into()),
+            });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bulletproofs-ristretto-msm-window-bind-layout"),
+                entries: &[
+                    buffer_entry(0, wgpu::BufferBindingType::Uniform),
+                    buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                    buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
+                ],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bulletproofs-ristretto-msm-window-pipeline-layout"),
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bulletproofs-ristretto-msm-window-pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            Ok(ScalarPreparationContext {
+                adapter_name,
+                is_hardware,
+                limits,
+                device,
+                queue,
+                layout,
+                pipeline,
+            })
+        })
+        .as_ref()
+        .map_err(|reason| MsmBackendError::WgpuUnavailable(reason.clone()))
 }
 
 #[cfg(feature = "wgpu-msm")]
@@ -372,30 +542,14 @@ pub fn prepare_scalar_windows_wgpu(
         });
     }
 
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .ok_or_else(|| MsmBackendError::WgpuUnavailable("no adapter".to_owned()))?;
-    let adapter_info = adapter.get_info();
-    let adapter_name = adapter_info.name;
-    let is_hardware = !matches!(adapter_info.device_type, wgpu::DeviceType::Cpu);
-    let limits = adapter.limits();
+    let context = scalar_preparation_context()?;
+    let device = &context.device;
+    let queue = &context.queue;
+    let limits = &context.limits;
     let workgroups = scalar_count.div_ceil(64);
     if workgroups > limits.max_compute_workgroups_per_dimension {
         return Err(MsmBackendError::DimensionOverflow);
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("bulletproofs-ristretto-msm-window-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits.clone(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .map_err(|error| MsmBackendError::WgpuUnavailable(error.to_string()))?;
 
     use wgpu::util::DeviceExt;
     let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -446,34 +600,9 @@ pub fn prepare_scalar_windows_wgpu(
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("bulletproofs-ristretto-msm-window-shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/msm_windows.wgsl").into()),
-    });
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bulletproofs-ristretto-msm-window-bind-layout"),
-        entries: &[
-            buffer_entry(0, wgpu::BufferBindingType::Uniform),
-            buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
-            buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: false }),
-        ],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("bulletproofs-ristretto-msm-window-pipeline-layout"),
-        bind_group_layouts: &[&layout],
-        push_constant_ranges: &[],
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("bulletproofs-ristretto-msm-window-pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bulletproofs-ristretto-msm-window-bind-group"),
-        layout: &layout,
+        layout: &context.layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -498,7 +627,7 @@ pub fn prepare_scalar_windows_wgpu(
             label: Some("bulletproofs-ristretto-msm-window-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&pipeline);
+        pass.set_pipeline(&context.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(workgroups, 1, 1);
     }
@@ -561,8 +690,8 @@ pub fn prepare_scalar_windows_wgpu(
     }
 
     Ok(WgpuPreparation {
-        adapter_name,
-        is_hardware,
+        adapter_name: context.adapter_name.clone(),
+        is_hardware: context.is_hardware,
         scalar_count: scalar_bytes.len(),
         windows,
     })
@@ -1436,7 +1565,7 @@ where
 {
     let policy = wgpu_policy();
     if policy == WgpuPolicy::Disabled {
-        return Ok(RistrettoPoint::multiscalar_mul(scalars, points));
+        return dalek_multiscalar_mul(scalars, points).map_err(r1cs_error);
     }
 
     let scalar_values: Vec<Scalar> = scalars.into_iter().map(|s| *s.borrow()).collect();
@@ -1463,10 +1592,7 @@ where
             Ok(_) => {}
             Err(error) if policy == WgpuPolicy::Required => return Err(r1cs_error(error)),
             Err(_) => {
-                return Ok(RistrettoPoint::multiscalar_mul(
-                    &scalar_values,
-                    &point_values,
-                ))
+                return dalek_multiscalar_mul(&scalar_values, &point_values).map_err(r1cs_error)
             }
         }
     }
@@ -1479,10 +1605,7 @@ where
         }
     }
 
-    Ok(RistrettoPoint::multiscalar_mul(
-        &scalar_values,
-        &point_values,
-    ))
+    dalek_multiscalar_mul(&scalar_values, &point_values).map_err(r1cs_error)
 }
 
 #[cfg(test)]

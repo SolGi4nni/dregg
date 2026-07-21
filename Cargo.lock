@@ -3472,6 +3472,7 @@ dependencies = [
  "pollster 0.4.0",
  "rand 0.8.6",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "serde_derive",
  "sha3",
