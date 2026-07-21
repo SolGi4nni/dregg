@@ -50,6 +50,12 @@ pub mod certified_clearing;
 #[cfg(feature = "private-clearing")]
 pub mod private_clearing;
 
+/// Composite integrity verifier: the same canonical fhEgg receipt must carry
+/// both an authenticated roster quorum and the fixed private-book HidingFRI
+/// proof. The BFV-ciphertext/private-root same-opening relation remains named.
+#[cfg(feature = "private-attested-clearing")]
+pub mod private_attested_clearing;
+
 /// Authenticated co-endorsement weld between the complete certified market
 /// receipt and fhegg-fhe's exact canonical MPC claim. This does not prove that
 /// the ciphertexts open to the certified book. It is an opt-in heavy surface.

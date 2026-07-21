@@ -297,6 +297,24 @@ pub struct DarkBazaarPrivateZkProof {
     proof: Ir2BatchProof<DreggZkStarkConfig>,
 }
 
+impl DarkBazaarPrivateZkProof {
+    /// Canonical opaque proof body for worker, receipt, and file transport.
+    /// The public statement is deliberately transported separately and must be
+    /// supplied independently to [`verify_zk`].
+    pub fn to_postcard(&self) -> Result<Vec<u8>, String> {
+        postcard::to_allocvec(&self.proof)
+            .map_err(|error| format!("private Dark Bazaar proof encode failed: {error}"))
+    }
+
+    /// Decode an opaque proof body. This performs no verification and trusts no
+    /// public values from the body; callers must still invoke [`verify_zk`].
+    pub fn from_postcard(bytes: &[u8]) -> Result<Self, String> {
+        let proof = postcard::from_bytes(bytes)
+            .map_err(|error| format!("private Dark Bazaar proof decode failed: {error}"))?;
+        Ok(Self { proof })
+    }
+}
+
 pub fn descriptor() -> Result<EffectVmDescriptor2, String> {
     let desc = parse_vm_descriptor2(DARK_BAZAAR_PRIVATE_DESCRIPTOR_JSON)?;
     if desc.name != "dark-bazaar-private-n4k4::wide-poseidon2-v2"
@@ -634,6 +652,15 @@ mod tests {
     fn dark_bazaar_private_hiding_proves_randomizes_and_public_tampers_refuse() {
         let (proof, public) = prove_zk(99, &fixture()).expect("honest private book proves hiding");
         verify_zk(&proof, public).expect("honest hiding proof verifies");
+        let proof_wire = proof.to_postcard().expect("proof transport encodes");
+        let transported =
+            DarkBazaarPrivateZkProof::from_postcard(&proof_wire).expect("proof transport decodes");
+        assert_eq!(
+            transported.to_postcard().expect("proof re-encodes"),
+            proof_wire,
+            "the accepted proof wire has one canonical postcard encoding"
+        );
+        verify_zk(&transported, public).expect("transported proof verifies");
         assert!(
             proof.proof.commitments.random.is_some(),
             "the batch proof must carry the ZK random-polynomial commitment"

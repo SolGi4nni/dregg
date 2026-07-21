@@ -14,6 +14,14 @@ certified-clearing = ["dep:dregg-circuit-prove", "dep:fhegg-solver"]
 # existing executor-backed SETTLE path.  Kept separate from `certified-clearing`
 # because it consumes neither the public Cert-F program nor fhegg-solver.
 private-clearing = ["dep:dregg-circuit-prove"]
+# One canonical receipt must pass both the fixed private-book HidingFRI proof
+# and the exact authenticated roster quorum. This composes the two existing
+# opt-in towers without pulling the public Cert-F book.
+private-attested-clearing = [
+    "private-clearing",
+    "dep:fhegg-fhe",
+    "dep:ed25519-dalek",
+]
 # Authenticated Dark Bazaar receipt: co-endorse the complete certified settlement
 # and ciphertext digests in fhegg-fhe's canonical claim, under a selected quorum.
 # The feature does not prove the ciphertexts open to the certified order book.

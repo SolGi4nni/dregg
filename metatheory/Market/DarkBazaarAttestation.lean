@@ -363,7 +363,86 @@ theorem output_only_attestation_does_not_bind_source :
     output_only_collision.2.1 output_only_collision.2.2
   exact output_only_collision.1 h
 
-/-! ## 6. Tier-1/Tier-0 separation. -/
+/-! ## 6. Composite private-proof receipt boundary. -/
+
+/-- The claim fields at the current composite-receipt boundary.  The private
+proof statement binds `orderRoot` and `output`; the BFV ciphertext digests are
+listed alongside that statement, but are not yet inputs to the proof relation. -/
+structure CompositePrivateClaim where
+  orderRoot : Nat
+  output : CrossingLeakage
+  bfvCiphertextDigests : List Nat
+  deriving DecidableEq, Repr
+
+/-- The two independently checked authorization facts and the public statement
+actually verified by the private clearing proof. -/
+structure CompositePrivateReceipt where
+  authenticatedQuorum : Bool
+  privateProofVerified : Bool
+  proofRoot : Nat
+  proofOutput : CrossingLeakage
+  deriving DecidableEq, Repr
+
+/-- Exact current acceptance rule: neither authorization alone is sufficient,
+and the verified private-proof statement must equal the claim root and output. -/
+def CompositePrivateReceipt.Accepts (receipt : CompositePrivateReceipt)
+    (claim : CompositePrivateClaim) : Prop :=
+  receipt.authenticatedQuorum = true ∧
+  receipt.privateProofVerified = true ∧
+  receipt.proofRoot = claim.orderRoot ∧
+  receipt.proofOutput = claim.output
+
+/-- Acceptance exposes both independent checks and both statement bindings. -/
+theorem composite_receipt_acceptance_requires_both_and_binds_statement
+    {receipt : CompositePrivateReceipt} {claim : CompositePrivateClaim}
+    (h : receipt.Accepts claim) :
+    receipt.authenticatedQuorum = true ∧
+    receipt.privateProofVerified = true ∧
+    receipt.proofRoot = claim.orderRoot ∧
+    receipt.proofOutput = claim.output :=
+  h
+
+def compositeClaimA : CompositePrivateClaim :=
+  { orderRoot := 41
+    output := ⟨1, 8⟩
+    bfvCiphertextDigests := [101, 102] }
+
+def compositeClaimB : CompositePrivateClaim :=
+  { orderRoot := 41
+    output := ⟨1, 8⟩
+    bfvCiphertextDigests := [201, 202] }
+
+def compositeReceipt : CompositePrivateReceipt :=
+  { authenticatedQuorum := true
+    privateProofVerified := true
+    proofRoot := 41
+    proofOutput := ⟨1, 8⟩ }
+
+/-- Concrete residual seam: two claims with different separately listed BFV
+ciphertext digests are accepted by the same authenticated private proof. -/
+theorem composite_receipt_bfv_digest_collision :
+    compositeClaimA.bfvCiphertextDigests ≠
+        compositeClaimB.bfvCiphertextDigests ∧
+    compositeReceipt.Accepts compositeClaimA ∧
+    compositeReceipt.Accepts compositeClaimB := by
+  simp [CompositePrivateReceipt.Accepts, compositeClaimA, compositeClaimB,
+    compositeReceipt]
+
+/-- **RED theorem.**  The current composite rule authenticates the quorum and
+private proof, but cannot claim that acceptance binds the separately listed BFV
+ciphertext digests. -/
+theorem composite_receipt_does_not_bind_bfv_ciphertext_digests :
+    ¬ ∀ (receipt : CompositePrivateReceipt)
+        (claim₁ claim₂ : CompositePrivateClaim),
+      receipt.Accepts claim₁ → receipt.Accepts claim₂ →
+      claim₁.bfvCiphertextDigests = claim₂.bfvCiphertextDigests := by
+  intro hbind
+  have h := hbind compositeReceipt compositeClaimA compositeClaimB
+    composite_receipt_bfv_digest_collision.2.1
+    composite_receipt_bfv_digest_collision.2.2
+  exact composite_receipt_bfv_digest_collision.1 h
+
+/-! ## 7. Tier-1/Tier-0 separation. -/
 
 /-- An abstract distributed carrier for the still-separate Tier-0 protocol. -/
 structure Tier0DistributedProtocol (C : OrderCommitmentCarrier) where
@@ -435,6 +514,9 @@ theorem tier1_world_hiding_does_not_hide_solver_input :
   Market.DarkBazaarAttestation.end_to_end_binding,
   Market.DarkBazaarAttestation.output_only_collision,
   Market.DarkBazaarAttestation.output_only_attestation_does_not_bind_source,
+  Market.DarkBazaarAttestation.composite_receipt_acceptance_requires_both_and_binds_statement,
+  Market.DarkBazaarAttestation.composite_receipt_bfv_digest_collision,
+  Market.DarkBazaarAttestation.composite_receipt_does_not_bind_bfv_ciphertext_digests,
   Market.DarkBazaarAttestation.tier1_world_hiding_does_not_hide_solver_input]
 
 end Market.DarkBazaarAttestation
