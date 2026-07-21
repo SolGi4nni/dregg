@@ -20,6 +20,7 @@ private-clearing = ["dep:dregg-circuit-prove"]
 private-attested-clearing = [
     "private-clearing",
     "dep:fhegg-fhe",
+    "fhegg-fhe/amm-input-binding",
     "dep:ed25519-dalek",
 ]
 # Authenticated Dark Bazaar receipt: co-endorse the complete certified settlement
@@ -50,6 +51,26 @@ dark-amm-game = [
 name = "dark-amm-tool"
 path = "src/bin/dark-amm-tool.rs"
 required-features = ["dark-amm-game"]
+
+[[test]]
+name = "private_bfv_attested_clearing"
+path = "tests/private_bfv_attested_clearing.rs"
+required-features = ["private-attested-clearing"]
+
+[[test]]
+name = "private_clearing_apex_e2e"
+path = "tests/private_clearing_apex_e2e.rs"
+required-features = ["private-attested-clearing", "fhegg-settlement"]
+
+[[test]]
+name = "private_clearing_crown_consequence"
+path = "tests/private_clearing_crown_consequence.rs"
+required-features = ["private-clearing"]
+
+[[test]]
+name = "private_clearing_guild_allocation"
+path = "tests/private_clearing_guild_allocation.rs"
+required-features = ["private-clearing"]
 
 [dependencies]
 # THE OFFERING CORE — the frontend-agnostic `Offering` trait (open/actions/advance/
@@ -101,6 +122,7 @@ ed25519-dalek = { version = "2", features = ["std"], optional = true }
 
 [dev-dependencies]
 rand = "0.8"
+dregg-sdk = { path = "../sdk" }
 dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 procgen-dregg = { path = "../procgen-dregg" }
 

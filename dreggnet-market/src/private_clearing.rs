@@ -26,6 +26,9 @@
 //! registry/FHE-MPC transcript. That cross-commitment relation remains explicit,
 //! rather than being implied by this API.
 
+#[path = "private_batch_optimizer.rs"]
+pub mod batch_optimizer;
+
 use dregg_circuit_prove::dark_bazaar_private::{
     self, DarkBazaarPrivateZkProof, PrivateOrder, PublicStatement,
 };

@@ -106,8 +106,8 @@ fn list_bid_settle_clears_to_the_winning_bid_conserved() {
         rep.detail
     );
     assert!(
-        rep.turns >= 6,
-        "genesis birth + 3 commits + close + 3 reveals + resolve"
+        rep.turns >= 5,
+        "genesis birth + 3 commits + one atomic close/reveals/resolve turn"
     );
 }
 
@@ -160,26 +160,28 @@ fn a_bid_after_close_is_refused() {
     assert_eq!(s.bid_count(), 2, "the late bid committed nothing");
 }
 
-/// A bid after the commit phase closes but BEFORE clearing is refused too — isolate the phase gate
-/// from the settled gate by closing without a full clear (a below-reserve settle leaves REVEAL).
+/// A below-reserve refusal is atomic: it does not close COMMIT, so the auction can still receive a
+/// bid that meets reserve and settle normally.
 #[test]
-fn a_bid_in_reveal_phase_is_refused() {
+fn a_below_reserve_refusal_does_not_close_commit() {
     let off = MarketOffering::new();
     let mut s = off.open(SessionConfig::with_seed(29)).expect("opens");
     assert!(list(&off, &mut s, 100).landed()); // reserve 100 — below-reserve so no sale
     assert!(bid(&off, &mut s, "a", 20).landed());
-    // A below-reserve settle closes the commit phase (REVEAL) but does NOT clear.
+    let receipts_before = s.receipts_len();
     assert!(
         matches!(settle(&off, &mut s), Outcome::Refused(_)),
         "below-reserve does not settle"
     );
     assert!(!s.is_settled());
-    // Now in REVEAL, a fresh bid is refused (commit phase closed) — not the settled gate.
-    let out = bid(&off, &mut s, "b", 40);
+    assert_eq!(s.receipts_len(), receipts_before);
+
+    let out = bid(&off, &mut s, "b", 140);
     assert!(
-        matches!(out, Outcome::Refused(_)),
-        "a bid in REVEAL must be refused, got {out:?}"
+        out.landed(),
+        "the refusal must leave COMMIT open for a qualifying bid, got {out:?}"
     );
+    assert!(settle(&off, &mut s).landed());
 }
 
 /// THE RESERVE TOOTH: a high sealed bid below the reserve does NOT settle — no value moves.

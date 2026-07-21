@@ -50,11 +50,37 @@ pub mod certified_clearing;
 #[cfg(feature = "private-clearing")]
 pub mod private_clearing;
 
+/// Receipt-bound, replay-safe game consequences sourced from a verified private
+/// clearing. The target game still executes the state change through its own
+/// executor; the gate pins the exact settlement statement, winner, target, and
+/// landed receipt, with restart recovery for the post-turn persistence window.
+#[cfg(feature = "private-clearing")]
+pub mod private_clearing_consequence;
+
+/// Ordered-roster guild and raid rewards driven by an exact verified private
+/// clearing winner. The allocation digest binds the winning actor to their
+/// character cell and named reward before the ordinary consequence gate runs.
+#[cfg(feature = "private-clearing")]
+pub mod private_clearing_guild_allocation;
+
 /// Composite integrity verifier: the same canonical fhEgg receipt must carry
 /// both an authenticated roster quorum and the fixed private-book HidingFRI
 /// proof. The BFV-ciphertext/private-root same-opening relation remains named.
 #[cfg(feature = "private-attested-clearing")]
 pub mod private_attested_clearing;
+
+/// Apex composite verifier requiring authenticated quorum, HidingFRI clearing
+/// semantics, and transferable BFV/private-root same-opening evidence in one
+/// canonical envelope. Live markets use its source-bound constructor, which
+/// requires every signed board ciphertext to byte-identify a distinct canonical
+/// proof row; the older proof-only constructor remains for non-market callers.
+#[cfg(feature = "private-attested-clearing")]
+pub mod private_bfv_attested_clearing;
+
+/// Typed apex from the complete private BFV/HidingFRI/quorum verifier into the
+/// existing atomic market + provenance-carrying game asset consequence.
+#[cfg(all(feature = "private-attested-clearing", feature = "fhegg-settlement"))]
+pub mod private_bfv_live_apex;
 
 /// Authenticated co-endorsement weld between the complete certified market
 /// receipt and fhegg-fhe's exact canonical MPC claim. This does not prove that
@@ -85,6 +111,11 @@ pub mod fhegg_source_binding;
 #[cfg(feature = "fhegg-settlement")]
 pub mod fhegg_transport;
 
+/// Host-selected computation-integrity registry for the frontend-neutral
+/// settlement operation. Uploaded bundles never choose or weaken this policy.
+#[cfg(feature = "fhegg-settlement")]
+pub mod fhegg_verifier_registry;
+
 /// Owner-gated settlement of a real provenance-carrying asset (for example a
 /// Descent loot note) to the sealed auction's already-verified winner.
 pub mod asset_backed;
@@ -109,9 +140,9 @@ use dreggnet_offerings::{
 };
 
 #[cfg(feature = "fhegg-settlement")]
-use fhegg_fhe::attestation::{
-    AuthenticatedQuorumVerifier, InMemoryReplayGuard, QuorumVerifierError,
-};
+use fhegg_fhe::attestation::{InMemoryReplayGuard, QuorumVerifierError};
+#[cfg(feature = "fhegg-settlement")]
+use fhegg_verifier_registry::FheggVerifierRegistry;
 #[cfg(feature = "fhegg-settlement")]
 use std::cell::RefCell;
 
@@ -124,10 +155,10 @@ use dregg_intent::verified_settle::VerifiedLedger;
 
 use starbridge_sealed_auction::CellId as AuctionCellId;
 use starbridge_sealed_auction::{
-    AUCTION_FACTORY_VK, AssetId, Auction, AuctionError, Bid, COMMIT_BASE, HIGH_BID_SLOT,
-    PHASE_SLOT, Phase, SELLER_SLOT, Seal, WINNER_SLOT, auction_child_program_vk,
-    auction_factory_descriptor, close_commit_effects, commit_bid_effects, commit_slot, fund_ledger,
-    resolve_effects, reveal_bid_effects,
+    AUCTION_FACTORY_VK, AssetId, Auction, AuctionError, Bid, COMMIT_BASE, COMMIT_CAPACITY,
+    HIGH_BID_SLOT, PHASE_COMMIT, PHASE_SLOT, Phase, SELLER_SLOT, Seal, WINNER_SLOT,
+    auction_child_program_vk, auction_factory_descriptor, close_commit_effects, commit_bid_effects,
+    commit_slot, fund_ledger, resolve_effects, reveal_bid_effects,
 };
 
 use deos_view::{MenuItem, ViewNode};
@@ -155,8 +186,10 @@ pub const TURN_BIND_FHEGG_SUPPLY: &str = "bind-fhegg-supply";
 /// source whenever one is installed. Source-bound bidder slots begin after it.
 pub const FHEGG_LISTING_SOURCE_SLOT: usize = COMMIT_BASE;
 
-/// The affordance verb the **auctioneer** fires to close the commit phase, reveal, and clear to the
-/// winning sealed bid (the value moves, conservation-checked). `arg` is unused.
+/// The affordance verb the listing **seller** fires to close the commit phase, reveal, and clear to
+/// the winning sealed bid (the value moves, conservation-checked). `arg` is unused. A different
+/// actor is refused before mutation; deterministic no-sale/protocol refusals are preflighted before
+/// `COMMIT → REVEAL` lands.
 pub const TURN_SETTLE: &str = "settle";
 
 /// Stable host/catalog key for the distinct Dark Bazaar crawl offering.
@@ -267,12 +300,20 @@ impl Clearing {
     }
 }
 
+/// A side-effect-free settlement dry run. The auction mirror and value ledger
+/// are advanced only on these private copies, so every policy refusal can be
+/// returned before the first executor turn mutates the live session.
+struct SettlementPlan {
+    auction: Auction,
+    clearing: Clearing,
+}
+
 /// **A live market/auction session over the REAL sealed-auction substrate.** Owns the embedded
 /// verified executor + the born auction cell (the listing's on-ledger handle, carrying the auction
 /// policy for life), the in-process [`Auction`] commit/reveal/settle mirror (the executable witness
 /// of the sealed-bid crypto — whose `settle` clears through the verified per-asset ring), the placed
 /// sealed bids, the reserve price, and the accumulated [`TurnReceipt`] chain (the birth + each
-/// commit + close + reveals + resolve — every one a real verified turn).
+/// commit + the atomic close/reveals/resolve settlement).
 pub struct MarketSession {
     /// The agent driving the market (the auction cell's owner; signs every turn).
     cclerk: AppCipherclerk,
@@ -295,7 +336,7 @@ pub struct MarketSession {
     fhegg_listing_source: Option<FheggListingSourceBinding>,
     /// A monotone nonce counter — each sealed bid gets a fresh blinding nonce.
     next_nonce: u64,
-    /// The committed receipt chain (birth + commits + close + reveals + resolve).
+    /// The committed receipt chain (birth + commits + atomic settlement).
     receipts: Vec<dregg_app_framework::TurnReceipt>,
     /// The cleared auction (`Some` once SETTLE clears to a winner) — the conserved value move.
     clearing: Option<Clearing>,
@@ -324,7 +365,7 @@ impl MarketSession {
         self.bids.len()
     }
 
-    /// The number of real verified turns committed (birth + commits + close + reveals + resolve).
+    /// The number of real verified turns committed (birth + commits + atomic settlement).
     pub fn receipts_len(&self) -> usize {
         self.receipts.len()
     }
@@ -595,106 +636,39 @@ impl MarketOffering {
     /// SETTLE — the auctioneer closes the commit phase, reveals every sealed bid, and clears to the
     /// winning bid. The value moves through the VERIFIED per-asset ring settlement (conserved). A
     /// below-reserve high bid or a no-valid-bid auction does NOT settle (no value moves, no resolve).
+    ///
+    /// The public action path authenticates the listing seller before calling this method. The
+    /// private clearing paths call it only after their stronger proof/receipt authorization gates.
     fn do_settle(&self, s: &mut MarketSession) -> Outcome {
         let Some(cell) = s.auction_cell else {
             return Outcome::Refused("nothing is listed yet — LIST first".into());
         };
-        if s.is_settled() {
-            return Outcome::Refused("the auction has already settled".into());
-        }
-        if s.bids.is_empty() {
-            return Outcome::Refused("no sealed bids were placed — nothing to settle".into());
-        }
 
-        // (1) Close the commit phase — a real verified turn (StrictMonotonic advances COMMIT→REVEAL).
-        if s.auction.as_ref().map(|a| a.phase) == Some(Phase::Commit) {
-            let action = s
-                .cclerk
-                .make_action(cell, "close_commit", close_commit_effects(cell));
-            match s.executor.submit_action(&s.cclerk, action) {
-                Ok(r) => s.receipts.push(r),
-                Err(e) => {
-                    return Outcome::Refused(format!("closing the commit phase was refused: {e}"));
-                }
-            }
-            if let Some(a) = s.auction.as_mut() {
-                a.seal_commit_phase();
-            }
-        }
+        // Resolve every deterministic refusal on private state before COMMIT→REVEAL lands on the
+        // executor. In particular, reserve failure must not close bidding, append receipts, or
+        // desynchronise the in-process phase from the on-ledger phase.
+        let SettlementPlan { auction, clearing } = match self.preflight_settlement(s) {
+            Ok(plan) => plan,
+            Err(why) => return Outcome::Refused(why),
+        };
+        let winner = clearing.winner;
 
-        // (2) Reveal every sealed bid — each a real verified turn; mirror into the in-process auction
-        // (a reveal binds ONLY a committed seal — the substrate's uncommitted-cannot-open tooth).
-        let bids = s.bids.clone();
-        for placed in &bids {
+        // Build the full lifecycle as one executor turn. The call forest is journaled atomically:
+        // close + every reveal + resolve either all commit or all roll back.
+        let mut actions = Vec::with_capacity(s.bids.len() + 2);
+        actions.push(
+            s.cclerk
+                .make_action(cell, "close_commit", close_commit_effects(cell)),
+        );
+        for placed in &s.bids {
             let b = placed.bid;
-            let action = s.cclerk.make_action(
+            actions.push(s.cclerk.make_action(
                 cell,
                 "reveal_bid",
                 reveal_bid_effects(cell, field_from_u64(b.bidder as u64), b.value.max(0) as u64),
-            );
-            match s.executor.submit_action(&s.cclerk, action) {
-                Ok(r) => s.receipts.push(r),
-                Err(e) => return Outcome::Refused(format!("a reveal was refused: {e}")),
-            }
-            if let Some(a) = s.auction.as_mut() {
-                let revealed = match placed.fhegg_source {
-                    Some(source) => a.reveal_source_bound(b, &source.binding_digest),
-                    None => a.reveal(b),
-                };
-                if let Err(e) = revealed {
-                    return Outcome::Refused(format!(
-                        "a reveal was refused by the auction protocol: {e}"
-                    ));
-                }
-            }
-        }
-
-        // (3) Clear to the winner through the VERIFIED per-asset ring settlement (conservation-
-        //     checked). The award ring is folded through the verified executor by `Auction::settle`.
-        let ledger = s.fund_settlement();
-        let pay_before = ledger.total_asset(&PAY);
-        let good_before = ledger.total_asset(&GOOD);
-
-        let (post, winner) = {
-            let a = s.auction.as_mut().expect("listed");
-            match a.settle(&ledger) {
-                Ok(pw) => pw,
-                Err(AuctionError::NoWinner) => {
-                    return Outcome::Refused(
-                        "no valid revealed bid — the auction does not settle".into(),
-                    );
-                }
-                Err(e) => {
-                    return Outcome::Refused(format!(
-                        "settlement rejected by the verified executor: {e}"
-                    ));
-                }
-            }
-        };
-
-        // (3b) THE RESERVE TOOTH — a winning bid below the reserve does NOT clear. The verified
-        //      settlement above already folded, but a below-reserve outcome is not a sale: we do NOT
-        //      commit the resolve turn and we leave the session UNSETTLED (the ledger clear is
-        //      discarded; the on-ledger cell stays in REVEAL — no WINNER announced).
-        if winner.value < s.reserve {
-            // Roll the in-process auction back out of Settled so the session stays clearable/honest.
-            // (Auction::settle set phase = Settled on success; re-open reveal so state reflects "no sale".)
-            if let Some(a) = s.auction.as_mut() {
-                a.phase = Phase::Reveal;
-            }
-            return Outcome::Refused(format!(
-                "the high sealed bid {} is below the reserve {} — no sale, nothing settles",
-                winner.value, s.reserve
             ));
         }
-
-        let pay_after = post.total_asset(&PAY);
-        let good_after = post.total_asset(&GOOD);
-
-        // (4) Resolve — announce the winner on-ledger (a real verified turn: StrictMonotonic
-        //     advances REVEAL→RESOLVED; WriteOnce freezes WINNER / HIGH_BID). This is the Landed
-        //     receipt for SETTLE.
-        let action = s.cclerk.make_action(
+        actions.push(s.cclerk.make_action(
             cell,
             "resolve",
             resolve_effects(
@@ -702,22 +676,131 @@ impl MarketOffering {
                 field_from_u64(winner.bidder as u64),
                 winner.value.max(0) as u64,
             ),
-        );
-        let receipt = match s.executor.submit_action(&s.cclerk, action) {
+        ));
+        let turn = s.cclerk.make_turn_with_actions(actions);
+        let receipt = match s.executor.submit_turn(&turn) {
             Ok(r) => r,
-            Err(e) => return Outcome::Refused(format!("announcing the winner was refused: {e}")),
+            Err(e) => {
+                return Outcome::Refused(format!("the atomic settlement turn was refused: {e}"));
+            }
         };
         s.receipts.push(receipt.clone());
-        s.clearing = Some(Clearing {
-            winner,
-            post,
-            pay_conserved: (pay_before, pay_after),
-            good_conserved: (good_before, good_after),
-        });
+        s.auction = Some(auction);
+        s.clearing = Some(clearing);
         Outcome::Landed {
             receipt,
             ended: true,
         }
+    }
+
+    /// Exercise every deterministic reveal/settlement gate on private copies.
+    /// An error from here is therefore a strictly read-only refusal.
+    fn preflight_settlement(&self, s: &MarketSession) -> Result<SettlementPlan, String> {
+        if s.is_settled() {
+            return Err("the auction has already settled".into());
+        }
+        if s.bids.is_empty() {
+            return Err("no sealed bids were placed — nothing to settle".into());
+        }
+        if s.phase() != Some(Phase::Commit) {
+            return Err("the auction is not in the commit phase — settlement cannot start".into());
+        }
+        let cell = s
+            .auction_cell
+            .ok_or_else(|| "the listed auction cell is missing".to_string())?;
+        let state = s
+            .executor
+            .cell_state(cell)
+            .ok_or_else(|| "the listed auction cell is missing from the ledger".to_string())?;
+        if state.fields[PHASE_SLOT] != field_from_u64(PHASE_COMMIT) {
+            return Err(
+                "the on-ledger auction is not in the commit phase — settlement cannot start".into(),
+            );
+        }
+        if state.fields[SELLER_SLOT] != field_from_u64(SELLER_HANDLE as u64) {
+            return Err("the on-ledger seller binding differs from the live auction".into());
+        }
+        if state.fields[WINNER_SLOT] != field_from_u64(0)
+            || state.fields[HIGH_BID_SLOT] != field_from_u64(0)
+        {
+            return Err("the on-ledger result registers are already occupied".into());
+        }
+
+        // Settlement must consume exactly the board represented by this session: no altered
+        // recorded seal and no untracked/ghost commitment can influence a different book. This
+        // also catches a stale or spliced replay image before submitting the atomic turn (and thus
+        // before even the executor's refusal nonce/fee path can move).
+        let listing_source = s.fhegg_listing_source_seal();
+        for slot in COMMIT_BASE..COMMIT_BASE + COMMIT_CAPACITY {
+            let expected = if slot == FHEGG_LISTING_SOURCE_SLOT {
+                listing_source
+            } else {
+                None
+            }
+            .or_else(|| {
+                s.bids
+                    .iter()
+                    .find(|placed| placed.slot == slot)
+                    .map(PlacedBid::seal)
+            })
+            .unwrap_or([0; 32]);
+            if state.fields[slot] != expected {
+                return Err(format!(
+                    "the on-ledger commit board differs from the recorded sealed book at slot {slot}"
+                ));
+            }
+        }
+
+        let mut auction = s
+            .auction
+            .clone()
+            .ok_or_else(|| "the listed auction mirror is missing".to_string())?;
+        auction.seal_commit_phase();
+        for placed in &s.bids {
+            let revealed = match placed.fhegg_source {
+                Some(source) => auction.reveal_source_bound(placed.bid, &source.binding_digest),
+                None => auction.reveal(placed.bid),
+            };
+            if let Err(error) = revealed {
+                return Err(format!(
+                    "a reveal was refused by the auction protocol: {error}"
+                ));
+            }
+        }
+
+        let ledger = s.fund_settlement();
+        let pay_before = ledger.total_asset(&PAY);
+        let good_before = ledger.total_asset(&GOOD);
+        let (post, winner) = match auction.settle(&ledger) {
+            Ok(settlement) => settlement,
+            Err(AuctionError::NoWinner) => {
+                return Err("no valid revealed bid — the auction does not settle".into());
+            }
+            Err(error) => {
+                return Err(format!(
+                    "settlement rejected by the verified executor: {error}"
+                ));
+            }
+        };
+
+        if winner.value < s.reserve {
+            return Err(format!(
+                "the high sealed bid {} is below the reserve {} — no sale, nothing settles",
+                winner.value, s.reserve
+            ));
+        }
+
+        let pay_after = post.total_asset(&PAY);
+        let good_after = post.total_asset(&GOOD);
+        Ok(SettlementPlan {
+            auction,
+            clearing: Clearing {
+                winner,
+                post,
+                pay_conserved: (pay_before, pay_after),
+                good_conserved: (good_before, good_after),
+            },
+        })
     }
 }
 
@@ -768,10 +851,10 @@ impl Offering for MarketOffering {
         vec![
             Action::new("Place a sealed bid", TURN_BID, 0, in_commit),
             Action::new(
-                "Settle — reveal and clear to the winning bid",
+                "Seller settle — reveal and clear to the winning bid",
                 TURN_SETTLE,
                 0,
-                !session.bids.is_empty(),
+                in_commit && !session.bids.is_empty(),
             ),
         ]
     }
@@ -780,7 +863,12 @@ impl Offering for MarketOffering {
         match input.turn.as_str() {
             TURN_LIST => self.do_list(session, &input, actor),
             TURN_BID => self.do_bid(session, &input, actor),
-            TURN_SETTLE => self.do_settle(session),
+            TURN_SETTLE => match session.seller.as_ref() {
+                Some(seller) if seller != &actor => {
+                    Outcome::Refused("only the listing seller may settle this auction".to_string())
+                }
+                _ => self.do_settle(session),
+            },
             other => Outcome::Refused(format!("unknown market affordance: {other}")),
         }
     }
@@ -788,32 +876,69 @@ impl Offering for MarketOffering {
     /// Re-verify the cleared chain: re-derive the settlement from the recorded sealed bids and
     /// confirm (a) the winner is the real high bid, (b) the value move conserves every asset
     /// (per-asset Σδ = 0), and (c) the on-ledger WINNER / HIGH_BID registers match the real winner.
-    /// Before settlement, verify confirms every recorded seal is frozen on the on-ledger commit board.
+    /// Before settlement, verify confirms the seller binding and the exact sealed book (including
+    /// the absence of untracked commitments) match the on-ledger image.
     fn verify(&self, session: &MarketSession) -> VerifyReport {
         let turns = session.receipts_len();
         let Some(cell) = session.auction_cell else {
             return VerifyReport::broken(turns, "nothing listed — no chain to verify");
         };
 
-        // (a) Every recorded seal must be frozen on the on-ledger WriteOnce commit board.
+        // (a) The seller binding and the entire WriteOnce board must match this exact session book.
         let Some(state) = session.executor.cell_state(cell) else {
             return VerifyReport::broken(turns, "the listing cell is not in the ledger");
         };
-        for pb in &session.bids {
-            if state.fields[pb.slot] != pb.seal() {
+        let expected_phase = match session.phase() {
+            Some(Phase::Commit) => 0,
+            Some(Phase::Reveal) => 1,
+            Some(Phase::Settled) => 2,
+            None => return VerifyReport::broken(turns, "the listed auction mirror is missing"),
+        };
+        if field_to_u64(&state.fields[PHASE_SLOT]) != expected_phase {
+            return VerifyReport::broken(
+                turns,
+                "the in-process and on-ledger auction phases differ",
+            );
+        }
+        if state.fields[SELLER_SLOT] != field_from_u64(SELLER_HANDLE as u64) {
+            return VerifyReport::broken(
+                turns,
+                "the on-ledger seller binding differs from the live auction",
+            );
+        }
+        let listing_source = session.fhegg_listing_source_seal();
+        for slot in COMMIT_BASE..COMMIT_BASE + COMMIT_CAPACITY {
+            let expected = if slot == FHEGG_LISTING_SOURCE_SLOT {
+                listing_source
+            } else {
+                None
+            }
+            .or_else(|| {
+                session
+                    .bids
+                    .iter()
+                    .find(|placed| placed.slot == slot)
+                    .map(PlacedBid::seal)
+            })
+            .unwrap_or([0; 32]);
+            if state.fields[slot] != expected {
                 return VerifyReport::broken(
                     turns,
-                    format!("commit slot {} does not hold the recorded seal", pb.slot),
+                    format!(
+                        "the on-ledger commit board differs from the recorded sealed book at slot {slot}"
+                    ),
                 );
             }
         }
-        if let Some(expected) = session.fhegg_listing_source_seal() {
-            if state.fields[FHEGG_LISTING_SOURCE_SLOT] != expected {
-                return VerifyReport::broken(
-                    turns,
-                    "the reserved listing-source slot does not hold the recorded seal",
-                );
-            }
+
+        if session.clearing.is_none()
+            && (state.fields[WINNER_SLOT] != field_from_u64(0)
+                || state.fields[HIGH_BID_SLOT] != field_from_u64(0))
+        {
+            return VerifyReport::broken(
+                turns,
+                "an unsettled auction has occupied on-ledger result registers",
+            );
         }
 
         let Some(clearing) = &session.clearing else {
@@ -992,7 +1117,7 @@ pub struct DarkBazaarOffering {
     /// Relying-party policy, selected by the host rather than the uploaded
     /// receipt. `None` keeps the default crawl unable to accept fhEgg bundles.
     #[cfg(feature = "fhegg-settlement")]
-    fhegg_verifier: Option<AuthenticatedQuorumVerifier>,
+    fhegg_verifier: Option<FheggVerifierRegistry>,
     /// Live-process replay floor for the hosted operation. An OfferingHost with
     /// a binary-operation-capable resume store reconstructs this floor on boot
     /// by re-verifying/replaying its durable operation journal; callers that
@@ -1039,15 +1164,32 @@ impl DarkBazaarOffering {
         ordered_public_keys: Vec<[u8; 32]>,
         threshold: usize,
     ) -> Result<Self, QuorumVerifierError> {
-        Ok(Self {
+        Ok(Self::with_fhegg_verifier_registry(
+            FheggVerifierRegistry::authenticated_quorum(ordered_public_keys, threshold)?,
+        ))
+    }
+
+    /// Install one already reconstructed relying-party verifier registry. The
+    /// registry's constructors are the policy boundary; uploaded operation
+    /// bytes cannot replace this value.
+    #[cfg(feature = "fhegg-settlement")]
+    pub fn with_fhegg_verifier_registry(registry: FheggVerifierRegistry) -> Self {
+        Self {
             market: MarketOffering::new(),
             fhegg_source_verifier: None,
-            fhegg_verifier: Some(AuthenticatedQuorumVerifier::new(
-                ordered_public_keys,
-                threshold,
-            )?),
+            fhegg_verifier: Some(registry),
             fhegg_replay: RefCell::new(InMemoryReplayGuard::default()),
-        })
+        }
+    }
+
+    /// Reconstruct and install the complete private-BFV receipt verifier from
+    /// pinned public deployment configuration. Any public-preimage or verifier-
+    /// id mismatch fails before the hosted operation is advertised.
+    #[cfg(all(feature = "fhegg-settlement", feature = "private-attested-clearing"))]
+    pub fn with_private_bfv_attested_registry(
+        config: fhegg_verifier_registry::PrivateBfvHostedVerifierConfig,
+    ) -> Result<Self, fhegg_verifier_registry::FheggVerifierRegistryError> {
+        Ok(Self::with_fhegg_verifier_registry(config.install()?))
     }
 
     /// The canonical key a heterogeneous [`dreggnet_offerings::OfferingHost`] can
@@ -1133,7 +1275,9 @@ impl Offering for DarkBazaarOffering {
                 action.label = match action.turn.as_str() {
                     TURN_LIST => "Open a Dark Bazaar listing (real auction cell)".into(),
                     TURN_BID => "Place a sealed bid (operator sees it at SETTLE)".into(),
-                    TURN_SETTLE => "SETTLE — reveal to operator and clear check-level".into(),
+                    TURN_SETTLE => {
+                        "Seller SETTLE — reveal to operator and clear check-level".into()
+                    }
                     _ => action.label,
                 };
                 action
@@ -1303,6 +1447,9 @@ fn field_to_u64(f: &[u8; 32]) -> u64 {
     b.copy_from_slice(&f[24..32]);
     u64::from_be_bytes(b)
 }
+
+#[cfg(test)]
+mod settlement_refusal_tests;
 
 #[cfg(test)]
 mod dark_bazaar_tests {
