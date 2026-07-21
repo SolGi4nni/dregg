@@ -99,8 +99,9 @@ pub mod private_book_bfv_wgpu;
 /// heavy; verification consumes only public parameters/key/rows/statement.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_bfv_zk;
-/// Deterministic concrete backend validating each worker's four exact
-/// Pedersen share openings without permitting arbitrary public output bytes.
+/// Concrete public backend validating each worker's four logarithmic Pedersen
+/// share-opening proofs plus three named share-native root constraints, without
+/// accepting shares, openings, or arbitrary public assertion bytes.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_canonical_backend;
 /// Owner-local expansion and n-of-n additive sharing of the private BFV/root
@@ -108,8 +109,9 @@ pub mod private_book_canonical_backend;
 /// stopping short of claiming a distributed Bulletproof prover.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_distributed_inputs;
-/// One-share-per-process backend boundary and public-only coordinator for a
-/// future malicious-secure distributed private-book prover.
+/// One-share-per-process backend boundary and public-only coordinator. The
+/// current prover establishes committed-share custody and three linear root
+/// constraints; nonlinear BFV/Poseidon/range/clearing authority remains named.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_distributed_prover;
 /// Exact N4K4 NP relation joining four BFV ciphertext openings to the same
