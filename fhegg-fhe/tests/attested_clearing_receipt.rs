@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use fhegg_fhe::attestation::{
-    AttestationError, AttestedClearingReceipt, AuthenticatedQuorumVerifier, BfvPublicIdentity,
-    ComputationIntegrityEvidence, ComputationIntegrityResidual, ComputationIntegrityVerifier,
-    Digest32, ExpectedClearingContext, InMemoryReplayGuard, InputDigest, PartyIdentity,
-    QuorumVerifierError,
+    AttestationError, AttestedClearingReceipt, BfvPublicIdentity,
+    ClassicalCompatibilityQuorumVerifier, ComputationIntegrityEvidence,
+    ComputationIntegrityResidual, ComputationIntegrityVerifier, Digest32, ExpectedClearingContext,
+    InMemoryReplayGuard, InputDigest, PartyIdentity, QuorumVerifierError,
 };
 use fhegg_fhe::mpc::Crossing;
 use fhegg_fhe::mpc_party::{simulate_public_transcript, DistributedTranscript, PartyMpcSession};
@@ -93,8 +93,8 @@ fn quorum_keys() -> Vec<SigningKey> {
         .collect()
 }
 
-fn quorum_verifier(keys: &[SigningKey], threshold: usize) -> AuthenticatedQuorumVerifier {
-    AuthenticatedQuorumVerifier::new(
+fn quorum_verifier(keys: &[SigningKey], threshold: usize) -> ClassicalCompatibilityQuorumVerifier {
+    ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(
         keys.iter()
             .map(|key| key.verifying_key().to_bytes())
             .collect(),
@@ -147,7 +147,7 @@ fn authenticated_quorum_endorses_the_exact_claim_once() {
         Err(AttestationError::ReplayDetected)
     );
 
-    let reordered = AuthenticatedQuorumVerifier::new(
+    let reordered = ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(
         [keys[1].clone(), keys[0].clone(), keys[2].clone()]
             .iter()
             .map(|key| key.verifying_key().to_bytes())
@@ -260,29 +260,36 @@ fn authenticated_quorum_configuration_fails_closed() {
         .map(|key| key.verifying_key().to_bytes())
         .collect();
     assert_eq!(
-        AuthenticatedQuorumVerifier::new(Vec::new(), 1).unwrap_err(),
+        ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(Vec::new(), 1)
+            .unwrap_err(),
         QuorumVerifierError::EmptyRoster
     );
     assert_eq!(
-        AuthenticatedQuorumVerifier::new(public.clone(), 0).unwrap_err(),
+        ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(public.clone(), 0)
+            .unwrap_err(),
         QuorumVerifierError::InvalidThreshold {
             threshold: 0,
             roster_len: 3,
         }
     );
     assert_eq!(
-        AuthenticatedQuorumVerifier::new(public.clone(), 4).unwrap_err(),
+        ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(public.clone(), 4)
+            .unwrap_err(),
         QuorumVerifierError::InvalidThreshold {
             threshold: 4,
             roster_len: 3,
         }
     );
     assert_eq!(
-        AuthenticatedQuorumVerifier::new(vec![public[0], public[0]], 1).unwrap_err(),
+        ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(
+            vec![public[0], public[0]],
+            1,
+        )
+        .unwrap_err(),
         QuorumVerifierError::DuplicatePublicKey { index: 1 }
     );
     assert_eq!(
-        AuthenticatedQuorumVerifier::new(
+        ClassicalCompatibilityQuorumVerifier::new_classical_compatibility(
             vec![[
                 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0

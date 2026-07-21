@@ -13,7 +13,9 @@
 //! inputs. [`ComputationIntegrityEvidence::BindingOnly`] names that residual and
 //! can never pass [`AttestedClearingReceipt::verify_full`]. Full verification
 //! requires a host-supplied [`ComputationIntegrityVerifier`] to validate external
-//! evidence over the exact claim digest. This module does not pretend that an
+//! evidence over the exact claim. The classical compatibility verifier signs its
+//! SHA-256 digest; the native-PQ verifier signs a SHA-512 authority transcript
+//! containing the full canonical claim. This module does not pretend that an
 //! output-only self-assertion is a proof, signature, SNARK, or MPC MAC.
 //!
 //! [`DistributedTranscript::is_reveal_only`]: crate::mpc_party::DistributedTranscript::is_reveal_only
@@ -21,9 +23,10 @@
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 
+use dregg_pq::{ml_dsa_verify, MlDsaKey, ML_DSA_PK_LEN, ML_DSA_SIG_LEN};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use fhe_traits::Serialize as FheSerialize;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 use crate::bfv_lean::LeanCiphertext;
 use crate::mpc::Crossing;
@@ -40,6 +43,12 @@ pub const CLEARING_RULE_VERSION: u32 = 1;
 
 pub type Digest32 = [u8; 32];
 
+/// Full-width authority digest used by native-PQ clearing endorsements.
+///
+/// Its preimage contains the full canonical claim and raw enrolled key pairs,
+/// rather than merely wrapping the classical 256-bit claim/verifier digests.
+pub type NativePqAuthorityDigest = [u8; 64];
+
 const PARTY_ID_DOMAIN: &[u8] = b"fhegg/attestation/party-id/v1";
 const CIPHERTEXT_DOMAIN: &[u8] = b"fhegg/attestation/input-ciphertext/v1";
 const MODULI_DOMAIN: &[u8] = b"fhegg/attestation/bfv-moduli/v1";
@@ -53,12 +62,30 @@ const QUORUM_ROSTER_DOMAIN: &[u8] = b"fhegg/attestation/quorum-roster/v1";
 const QUORUM_VERIFIER_DOMAIN: &[u8] = b"fhegg/attestation/quorum-verifier/v1";
 const QUORUM_SIGNATURE_DOMAIN: &[u8] = b"fhegg/attestation/quorum-signature/v1";
 const QUORUM_EVIDENCE_VERSION: u8 = 1;
+const NATIVE_PQ_PARTY_ID_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-party-id/v1";
+const NATIVE_PQ_QUORUM_ROSTER_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-roster/v1";
+const NATIVE_PQ_QUORUM_VERIFIER_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-verifier/v1";
+const NATIVE_PQ_QUORUM_SIGNATURE_DOMAIN: &[u8] = b"fhegg/attestation/native-pq-quorum-signature/v2";
+const NATIVE_PQ_QUORUM_EVIDENCE_VERSION: u8 = 2;
+/// FIPS 204 context for the ML-DSA half of a native-PQ clearing endorsement.
+/// The separately domain-separated 512-bit authority message binds the exact
+/// enrolled key-pair roster, threshold, and full canonical clearing claim.
+pub const NATIVE_PQ_CLEARING_ML_DSA_CONTEXT: &[u8] = b"fhegg/clearing-quorum/native-pq/ml-dsa/v2";
 const REPLAY_SNAPSHOT_MAGIC: &[u8; 8] = b"FHRSv001";
 const REPLAY_SNAPSHOT_DOMAIN: &[u8] = b"fhegg/replay-snapshot/v1";
 const MAX_REPLAY_SNAPSHOT_ENTRIES: usize = 1_000_000;
 
 fn domain_digest(domain: &[u8], bytes: &[u8]) -> Digest32 {
     let mut hasher = Sha256::new();
+    hasher.update((domain.len() as u64).to_be_bytes());
+    hasher.update(domain);
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    hasher.finalize().into()
+}
+
+fn native_pq_authority_digest(domain: &[u8], bytes: &[u8]) -> NativePqAuthorityDigest {
+    let mut hasher = Sha512::new();
     hasher.update((domain.len() as u64).to_be_bytes());
     hasher.update(domain);
     hasher.update((bytes.len() as u64).to_be_bytes());
@@ -476,6 +503,11 @@ pub enum QuorumVerifierError {
     NonCanonicalSignerOrder,
     InsufficientSignatures { have: usize, need: usize },
     InvalidSignature { index: usize },
+    InvalidPostQuantumPublicKey { index: usize, actual_len: usize },
+    DuplicatePostQuantumPublicKey { index: usize },
+    PostQuantumSignerKeyMismatch { index: usize },
+    PostQuantumSigningFailed { index: usize },
+    InvalidPostQuantumSignature { index: usize },
 }
 
 impl fmt::Display for QuorumVerifierError {
@@ -493,8 +525,8 @@ pub struct PartyClaimSignature {
     pub signature: [u8; 64],
 }
 
-/// Production computation-integrity verifier backed by a declared ordered
-/// Ed25519 party roster and a `threshold`-of-`n` signature policy.
+/// Classical-compatibility computation-integrity verifier backed by a declared
+/// ordered Ed25519 party roster and a `threshold`-of-`n` signature policy.
 ///
 /// # Precise trust statement
 ///
@@ -504,6 +536,9 @@ pub struct PartyClaimSignature {
 /// UC/malicious-MPC correctness proof. Interpreting acceptance as computation
 /// correctness requires the deployment policy to ensure the accepted quorum
 /// contains an honest party that verified the computation before signing.
+/// This verifier is not post-quantum: native-PQ deployments must use
+/// [`NativePqAuthenticatedQuorumVerifier`], which requires a roster-bound
+/// ML-DSA signature alongside every counted Ed25519 signature.
 #[derive(Clone, Debug)]
 pub struct AuthenticatedQuorumVerifier {
     ordered_public_keys: Vec<[u8; 32]>,
@@ -514,6 +549,14 @@ pub struct AuthenticatedQuorumVerifier {
 }
 
 impl AuthenticatedQuorumVerifier {
+    /// Construct the explicitly classical compatibility profile.
+    pub fn new_classical_compatibility(
+        ordered_public_keys: Vec<[u8; 32]>,
+        threshold: usize,
+    ) -> std::result::Result<Self, QuorumVerifierError> {
+        Self::new(ordered_public_keys, threshold)
+    }
+
     pub fn new(
         ordered_public_keys: Vec<[u8; 32]>,
         threshold: usize,
@@ -721,6 +764,359 @@ impl AuthenticatedQuorumVerifier {
             });
         }
         self.verify_signatures(claim_digest, &signatures).is_ok()
+    }
+}
+
+/// Explicit name for the Ed25519-only compatibility verifier.  The historical
+/// [`AuthenticatedQuorumVerifier`] name remains source-compatible, but callers
+/// selecting a security profile should use this name so a classical receipt is
+/// never mistaken for native-PQ evidence.
+pub type ClassicalCompatibilityQuorumVerifier = AuthenticatedQuorumVerifier;
+
+/// Explicit name for an Ed25519-only clearing endorsement.
+pub type ClassicalCompatibilityPartyClaimSignature = PartyClaimSignature;
+
+/// One roster slot in the native-PQ clearing quorum.  The two public keys are
+/// enrolled as one indivisible identity: neither half is accepted from evidence
+/// or from a self-carried claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativePqPartyPublicKey {
+    ed25519: [u8; 32],
+    ml_dsa: Vec<u8>,
+}
+
+impl NativePqPartyPublicKey {
+    pub fn new(ed25519: [u8; 32], ml_dsa: Vec<u8>) -> Self {
+        Self { ed25519, ml_dsa }
+    }
+
+    pub fn ed25519(&self) -> &[u8; 32] {
+        &self.ed25519
+    }
+
+    pub fn ml_dsa(&self) -> &[u8] {
+        &self.ml_dsa
+    }
+
+    fn identity(&self) -> PartyIdentity {
+        let mut identity = CanonicalBytes::default();
+        identity.bytes(&self.ed25519);
+        identity.bytes(&self.ml_dsa);
+        PartyIdentity(domain_digest(NATIVE_PQ_PARTY_ID_DOMAIN, &identity.finish()))
+    }
+}
+
+/// One party's paired endorsement.  A record counts toward the threshold only
+/// when both signatures authenticate the same message at the same enrolled
+/// roster index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativePqPartyClaimSignature {
+    pub signer_index: u32,
+    pub ed25519_signature: [u8; 64],
+    pub ml_dsa_signature: Vec<u8>,
+}
+
+/// Native-PQ computation-integrity verifier for a canonical clearing claim.
+///
+/// Each roster slot permanently pairs one Ed25519 public key with one ML-DSA-65
+/// public key.  Acceptance requires `threshold` distinct, canonically ordered
+/// slots, and every counted slot must supply **both** valid signatures over the
+/// same domain-separated 512-bit authority message over the full claim and raw
+/// roster. Consequently an attacker cannot satisfy the PQ half by attaching a
+/// fresh self-chosen key to a forged classical identity, and the native path does
+/// not inherit the 256-bit digest-only compatibility path's collision ceiling.
+///
+/// This authenticates quorum attribution/agreement.  As with the classical
+/// verifier, malicious-computation correctness additionally relies on what the
+/// endorsing parties checked before signing.
+#[derive(Clone, Debug)]
+pub struct NativePqAuthenticatedQuorumVerifier {
+    ordered_public_keys: Vec<NativePqPartyPublicKey>,
+    ordered_roster: Vec<PartyIdentity>,
+    threshold: usize,
+    roster_digest: Digest32,
+    verifier_id: Digest32,
+}
+
+impl NativePqAuthenticatedQuorumVerifier {
+    pub fn new(
+        ordered_public_keys: Vec<NativePqPartyPublicKey>,
+        threshold: usize,
+    ) -> std::result::Result<Self, QuorumVerifierError> {
+        if ordered_public_keys.is_empty() {
+            return Err(QuorumVerifierError::EmptyRoster);
+        }
+        if ordered_public_keys.len() > u32::MAX as usize {
+            return Err(QuorumVerifierError::RosterTooLarge {
+                roster_len: ordered_public_keys.len(),
+            });
+        }
+        if threshold == 0 || threshold > ordered_public_keys.len() {
+            return Err(QuorumVerifierError::InvalidThreshold {
+                threshold,
+                roster_len: ordered_public_keys.len(),
+            });
+        }
+
+        let mut seen_ed25519 = HashSet::with_capacity(ordered_public_keys.len());
+        let mut seen_ml_dsa = HashSet::with_capacity(ordered_public_keys.len());
+        let mut ordered_roster = Vec::with_capacity(ordered_public_keys.len());
+        for (index, key_pair) in ordered_public_keys.iter().enumerate() {
+            let verifying_key = VerifyingKey::from_bytes(&key_pair.ed25519)
+                .map_err(|_| QuorumVerifierError::InvalidPublicKey { index })?;
+            if verifying_key.is_weak() {
+                return Err(QuorumVerifierError::InvalidPublicKey { index });
+            }
+            if !seen_ed25519.insert(key_pair.ed25519) {
+                return Err(QuorumVerifierError::DuplicatePublicKey { index });
+            }
+            if key_pair.ml_dsa.len() != ML_DSA_PK_LEN {
+                return Err(QuorumVerifierError::InvalidPostQuantumPublicKey {
+                    index,
+                    actual_len: key_pair.ml_dsa.len(),
+                });
+            }
+            if !seen_ml_dsa.insert(key_pair.ml_dsa.clone()) {
+                return Err(QuorumVerifierError::DuplicatePostQuantumPublicKey { index });
+            }
+            ordered_roster.push(key_pair.identity());
+        }
+
+        let mut roster = CanonicalBytes::default();
+        roster.u64(ordered_public_keys.len() as u64);
+        for key_pair in &ordered_public_keys {
+            roster.bytes(&key_pair.ed25519);
+            roster.bytes(&key_pair.ml_dsa);
+        }
+        let roster_digest = domain_digest(NATIVE_PQ_QUORUM_ROSTER_DOMAIN, &roster.finish());
+        let mut verifier = CanonicalBytes::default();
+        verifier.digest(&roster_digest);
+        verifier.u64(threshold as u64);
+        let verifier_id = domain_digest(NATIVE_PQ_QUORUM_VERIFIER_DOMAIN, &verifier.finish());
+
+        Ok(Self {
+            ordered_public_keys,
+            ordered_roster,
+            threshold,
+            roster_digest,
+            verifier_id,
+        })
+    }
+
+    pub fn ordered_roster(&self) -> &[PartyIdentity] {
+        &self.ordered_roster
+    }
+
+    pub fn ordered_public_keys(&self) -> &[NativePqPartyPublicKey] {
+        &self.ordered_public_keys
+    }
+
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    pub fn roster_digest(&self) -> Digest32 {
+        self.roster_digest
+    }
+
+    /// The single exact 512-bit authority message authenticated by both
+    /// signature schemes.
+    ///
+    /// The SHA-512 preimage contains the raw enrolled key pairs and the full
+    /// canonical claim. In particular, this must not accept `claim.digest()`:
+    /// wrapping that 256-bit value would retain its generic quantum collision
+    /// ceiling instead of providing a native-PQ authority boundary.
+    pub fn signing_message(&self, claim: &ClearingClaim) -> NativePqAuthorityDigest {
+        let mut message = CanonicalBytes::default();
+        message.u8(NATIVE_PQ_QUORUM_EVIDENCE_VERSION);
+        message.digest(&self.verifier_id);
+        message.digest(&self.roster_digest);
+        message.u64(self.ordered_public_keys.len() as u64);
+        for key_pair in &self.ordered_public_keys {
+            message.bytes(&key_pair.ed25519);
+            message.bytes(&key_pair.ml_dsa);
+        }
+        message.u64(self.threshold as u64);
+        message.bytes(&claim.canonical_bytes());
+        native_pq_authority_digest(NATIVE_PQ_QUORUM_SIGNATURE_DOMAIN, &message.finish())
+    }
+
+    /// Produce one paired endorsement, refusing either secret key unless its
+    /// public key equals the key enrolled at `signer_index`.
+    pub fn sign_claim(
+        &self,
+        claim: &ClearingClaim,
+        signer_index: usize,
+        ed25519_signing_key: &SigningKey,
+        ml_dsa_signing_key: &MlDsaKey,
+    ) -> std::result::Result<NativePqPartyClaimSignature, QuorumVerifierError> {
+        let expected = self.ordered_public_keys.get(signer_index).ok_or(
+            QuorumVerifierError::UnknownSigner {
+                index: signer_index,
+            },
+        )?;
+        if ed25519_signing_key.verifying_key().to_bytes() != expected.ed25519 {
+            return Err(QuorumVerifierError::SignerKeyMismatch {
+                index: signer_index,
+            });
+        }
+        if ml_dsa_signing_key.public_bytes() != expected.ml_dsa {
+            return Err(QuorumVerifierError::PostQuantumSignerKeyMismatch {
+                index: signer_index,
+            });
+        }
+        let message = self.signing_message(claim);
+        let ml_dsa_signature = ml_dsa_signing_key
+            .try_sign(NATIVE_PQ_CLEARING_ML_DSA_CONTEXT, &message)
+            .ok_or(QuorumVerifierError::PostQuantumSigningFailed {
+                index: signer_index,
+            })?;
+        Ok(NativePqPartyClaimSignature {
+            signer_index: signer_index as u32,
+            ed25519_signature: ed25519_signing_key.sign(&message).to_bytes(),
+            ml_dsa_signature,
+        })
+    }
+
+    pub fn assemble_evidence(
+        &self,
+        claim: &ClearingClaim,
+        signatures: &[NativePqPartyClaimSignature],
+    ) -> std::result::Result<ComputationIntegrityEvidence, QuorumVerifierError> {
+        self.verify_signatures(claim, signatures)?;
+        let mut evidence = CanonicalBytes::default();
+        evidence.u8(NATIVE_PQ_QUORUM_EVIDENCE_VERSION);
+        evidence.digest(&self.roster_digest);
+        evidence.u32(self.threshold as u32);
+        evidence.u32(signatures.len() as u32);
+        for signature in signatures {
+            evidence.u32(signature.signer_index);
+            evidence.0.extend_from_slice(&signature.ed25519_signature);
+            evidence.bytes(&signature.ml_dsa_signature);
+        }
+        Ok(ComputationIntegrityEvidence::External {
+            verifier_id: self.verifier_id,
+            evidence: evidence.finish(),
+        })
+    }
+
+    fn verify_signatures(
+        &self,
+        claim: &ClearingClaim,
+        signatures: &[NativePqPartyClaimSignature],
+    ) -> std::result::Result<(), QuorumVerifierError> {
+        if signatures.len() < self.threshold {
+            return Err(QuorumVerifierError::InsufficientSignatures {
+                have: signatures.len(),
+                need: self.threshold,
+            });
+        }
+        if signatures.len() > self.ordered_public_keys.len() {
+            return Err(QuorumVerifierError::UnknownSigner {
+                index: self.ordered_public_keys.len(),
+            });
+        }
+        let message = self.signing_message(claim);
+        let mut previous = None;
+        for signature in signatures {
+            let index = signature.signer_index as usize;
+            if let Some(prior) = previous {
+                if index == prior {
+                    return Err(QuorumVerifierError::DuplicateSigner { index });
+                }
+                if index < prior {
+                    return Err(QuorumVerifierError::NonCanonicalSignerOrder);
+                }
+            }
+            previous = Some(index);
+            let key_pair = self
+                .ordered_public_keys
+                .get(index)
+                .ok_or(QuorumVerifierError::UnknownSigner { index })?;
+            let verifying_key = VerifyingKey::from_bytes(&key_pair.ed25519)
+                .map_err(|_| QuorumVerifierError::InvalidPublicKey { index })?;
+            verifying_key
+                .verify_strict(
+                    &message,
+                    &Signature::from_bytes(&signature.ed25519_signature),
+                )
+                .map_err(|_| QuorumVerifierError::InvalidSignature { index })?;
+            if !ml_dsa_verify(
+                &key_pair.ml_dsa,
+                NATIVE_PQ_CLEARING_ML_DSA_CONTEXT,
+                &message,
+                &signature.ml_dsa_signature,
+            ) {
+                return Err(QuorumVerifierError::InvalidPostQuantumSignature { index });
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_and_verify(&self, claim: &ClearingClaim, evidence: &[u8]) -> bool {
+        const HEADER_LEN: usize = 1 + 32 + 4 + 4;
+        const RECORD_LEN: usize = 4 + 64 + 8 + ML_DSA_SIG_LEN;
+        if evidence.len() < HEADER_LEN || evidence[0] != NATIVE_PQ_QUORUM_EVIDENCE_VERSION {
+            return false;
+        }
+        let mut roster_digest = [0u8; 32];
+        roster_digest.copy_from_slice(&evidence[1..33]);
+        if roster_digest != self.roster_digest {
+            return false;
+        }
+        let threshold = u32::from_be_bytes(evidence[33..37].try_into().expect("fixed width"));
+        let count = u32::from_be_bytes(evidence[37..41].try_into().expect("fixed width")) as usize;
+        let Some(expected_len) = count
+            .checked_mul(RECORD_LEN)
+            .and_then(|records_len| HEADER_LEN.checked_add(records_len))
+        else {
+            return false;
+        };
+        if threshold as usize != self.threshold
+            || count < self.threshold
+            || count > self.ordered_public_keys.len()
+            || evidence.len() != expected_len
+        {
+            return false;
+        }
+
+        let mut signatures = Vec::with_capacity(count);
+        for record in evidence[HEADER_LEN..].chunks_exact(RECORD_LEN) {
+            let signer_index = u32::from_be_bytes(record[..4].try_into().expect("fixed width"));
+            let mut ed25519_signature = [0u8; 64];
+            ed25519_signature.copy_from_slice(&record[4..68]);
+            let ml_dsa_len =
+                u64::from_be_bytes(record[68..76].try_into().expect("fixed width")) as usize;
+            if ml_dsa_len != ML_DSA_SIG_LEN {
+                return false;
+            }
+            signatures.push(NativePqPartyClaimSignature {
+                signer_index,
+                ed25519_signature,
+                ml_dsa_signature: record[76..].to_vec(),
+            });
+        }
+        self.verify_signatures(claim, &signatures).is_ok()
+    }
+}
+
+impl ComputationIntegrityVerifier for NativePqAuthenticatedQuorumVerifier {
+    fn verifier_id(&self) -> Digest32 {
+        self.verifier_id
+    }
+
+    fn verify(&self, _claim_digest: &Digest32, _evidence: &[u8]) -> bool {
+        // Native-PQ evidence deliberately has no digest-only verification path:
+        // accepting a 256-bit claim digest here would reintroduce the authority
+        // bottleneck this verifier exists to remove. `verify_full` dispatches to
+        // `verify_claim`, which supplies the full canonical claim.
+        false
+    }
+
+    fn verify_claim(&self, claim: &ClearingClaim, evidence: &[u8]) -> bool {
+        claim.n_parties == self.ordered_roster.len() as u64
+            && claim.ordered_roster == self.ordered_roster
+            && self.decode_and_verify(claim, evidence)
     }
 }
 
