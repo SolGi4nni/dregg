@@ -41,22 +41,27 @@ DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1 and no authority-core
 fallback.
 The newer composed-game evidence has also advanced: the complete offerings
 target is 117/117, the private-raid surface is 8/8 in one current invocation,
-the narrated private-raid relic capstone is 1/1, the common game spine is 8/8,
+the narrated private-raid relic capstone is 1/1, the incarnation-bound common
+game spine is 21/21,
 Telegram's combined game journey is 77 tests, and the viewer-safe web rail is
-green at its exact focused gates. The lower private-raid forest and the Discord
-Chutes weld remain pending at this ledger checkpoint.
+green at its exact focused gates. The lower private-raid forest is now 2/2 at
+its focused engine gate; the Discord Chutes weld remains pending at this ledger
+checkpoint.
 
 This is **not** a no-single-viewer system. The deployed same-opening prover still
 receives the complete private witness and BFV openings in one process; source
 verification sees plaintext orders and encryption randomness; PartyMPC arithmetic
 now refuses uncertified or malformed Beaver rows but still trusts the certifying
 preprocessing authority; and the distributed-custody
-surface does not yet produce the real Bulletproof/R1CS proof.
+surface now binds the exact share-mode request but still reconstructs the
+private witness/openings inside the monolithic Bulletproof/R1CS backend.
 
 This is also **not an end-to-end post-quantum apex**. Native clearing quorum and
 PartyMPC transport now have separately green ML-DSA and ML-KEM-backed profiles,
-and BFV is lattice-based, but the full apex has not been rerun since those
-transport cutovers. More importantly, its exact ciphertext/root relation is a
+and BFV is lattice-based. The first composed recapture produced the proof, then
+the old per-frame ML-DSA transport crossed the unchanged 1200-second gate; a
+sealed route-root transport replacement is built but not yet apex-green. More
+importantly, the exact ciphertext/root relation is a
 Bulletproof over Ristretto/Pedersen with a discrete-log + Fiat–Shamir security
 floor, and distributed custody still uses Ristretto/Pedersen. HidingFRI,
 Poseidon, BFV, and the wide Lean/Rust bindings have their own stated
@@ -72,30 +77,31 @@ classical seams into a post-quantum composition.
 | Exact source rows and ingress weld | **GATED in Lean and the full-profile apex** | DarkBazaarPrivateIngressCutover: 11 clean; apex 1/1 green |
 | Public-only hosted verifier registry | **GATED** | two hostile registry tests: 2/2 green |
 | Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
+| Sealed native-PQ PartyMPC crossing | **BUILT, APEX GATE IN PROGRESS** | remote release lib check green; n=2 design reduces transport authentication from 5,242 signs + 5,242 live verifies to six signs + six verifies, with HMAC/XChaCha frames and dual-signed terminal route-root seals |
 | Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | authority-certified exact Beaver rows 3/3 hostile; legacy falsifier/audit compatibility 2/2 |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
-| Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; PROOF PATH FAILS CLOSED** | create/rotate/rollback 1/1; restart 1/1; enrollment/substitution 3/3; SignedTurn hostile 4/4; cell wire/commitment 3/3; EffectVM refusal 3/3 |
+| Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | exact timed hbox full-profile run 1/1 green in 124.159s; verified authority cores required; capture predates native quorum/transport cutovers and still uses the classical Bulletproof relation |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
-| Distributed prover envelope | **GATED, FIXTURE BACKEND ONLY** | private_book_distributed_prover: 2/2 green; no distributed Bulletproof/R1CS backend |
+| Distributed prover envelope | **GATED, MONOLITHIC PROOF BACKEND** | share-bound request/envelope hostile target 5/5; source-viewer payloads and appended plaintext/openings refuse; no share-native Bulletproof/R1CS backend |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
 | Narrated Dungeon and relic-oath composition | **GATED BY TARGET** | narrated Dungeon 3/3; repaired relic oath 2/2 |
-| Common game-operation spine | **GATED** | exact session/actor/op/payload/pre-head/result/post-head binding 8/8 |
+| Common game-operation spine | **GATED WITH DEPLOYMENT CUSTODY RESIDUAL** | bound host incarnation/session generation, complete action preimage and outer routing receipts 21/21; adapters still need durable epoch custody/migration |
 | Telegram and viewer-safe web journey | **GATED BY TARGET** | Telegram combined 77 tests; web session rail 2/2 and no-viewer 2/2 |
-| Private-raid capability/Arena and narrated-relic composition | **PARTIALLY GATED** | relic capstone 1/1; surface 8/8 in one current invocation; lower forest pending |
+| Private-raid capability/Arena and narrated-relic composition | **GATED BY TARGET** | relic capstone 1/1; surface 8/8; lower atomic forest 2/2 (engine semantics only; its persvati fixture opted into the unaudited PQ test backend) |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **GATED** | both targets are green inside the current dreggnet-offerings 117/117 invocation |
 | hbox build substrate | **QUALIFIED FOR GPU LANES** | current filesystem probe: 86GiB free after pruning four inactive, reconstructible build-lane copies; current GPU lane and deployed services were preserved |
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
-| Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | strict hbox group-add and full MSM/R1CS gates green with dalek authority; 17 terms ~66µs CPU vs 0.78–0.81s GPU, so disabled by default |
-| Portable encrypted TFHE CMUX | **GATED PROTOTYPE** | CPU/hostile 4/4 and strict GPU 2/2 on hbox; degree-N external product is O(N²), not programmable bootstrapping |
+| Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
+| Portable encrypted TFHE CMUX | **GATED EXACT NTT PROTOTYPE** | four-prime exact RNS-NTT plus coefficient route strict GPU 3/3; N4096 4.816ms GPU vs 10.052ms CPU; CMUX only, not blind rotation/PBS |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree | **GATED SUBSTRATE, NOT LIVE AUTHORITY** | Lean codec inverse/injectivity and membership semantics; Rust↔Lean vectors 8/8; dregg-commit 141/141 and focused persist 6/6 |
-| Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 115/115; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem binding now streams with zero temporary allocations |
+| Faithful wide note tree and history | **GATED SUBSTRATE, NOT LIVE AUTHORITY** | tree gates above plus hybrid-authenticated exact predecessor/successor root history 6/6; finalized append/attestation/create-spend weld remains active |
+| Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 117/117; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem comparison and KKT Ax revalidation stream with zero temporary allocations |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
 
@@ -537,7 +543,7 @@ Captured status:
 - relic_oath_branch — the prior 0/2 LinkageBroken run was repaired; the current
   target is **2/2 GREEN**.
 
-### Private raid, party capability, Arena, and narrated relic — partially gated
+### Private raid, party capability, Arena, and narrated relic — gated by target
 
 **dungeon-on-dregg/tests/private_raid_atomic_forest.rs** is the lower-level
 executor composition of a real HidingFRI raid-assignment receipt, proof sigil,
@@ -574,7 +580,12 @@ narration awakens the relic. Its exact test is:
 
 Captured status:
 
-- private_raid_atomic_forest — **PENDING GATE**; no result supplied.
+- private_raid_atomic_forest — **2/2 GREEN** in one focused persvati invocation.
+  That fixture uses `AuthRequired::None`; persvati lacked the verified ML-DSA
+  archive, so the run explicitly set `DREGG_REQUIRE_LEAN=0` and
+  `DREGG_ALLOW_UNAUDITED_PQ=1`. It qualifies the executor/HidingFRI/customVK/
+  journal composition, not a strict PQ production runtime or distributed
+  finality.
 - dreggnet-surfaces private_raid — **8/8 GREEN** in one current feature-enabled
   invocation. The prior 310,767-byte proof replay failure is closed.
 - relic_raid_narrated_forest — **1/1 GREEN**.
@@ -627,18 +638,24 @@ a Descent loot asset, and from the fhIR raid-allocation target.
 `dreggnet-catalog::game_spine` gives Dungeon, Descent, private raid, and Bazaar
 operations one resumable descriptor/receipt shape. It binds the exact session,
 actor, operation, payload, prior head, result, and successor head, rechecks the
-operation descriptor/capability, and preflights replay material. Its hostile
-target is **8/8**. `dreggnet-telegram` carries the same game journeys, including
+operation descriptor/capability, and preflights replay material. The later
+authority-bound route additionally carries a nonzero host/federation
+incarnation and monotone session generation through action preimages and outer
+receipts. Cross-incarnation replay, close/reopen generation rollback, and
+receipt/session substitution refuse; same-incarnation restart replay remains
+exact. The expanded hostile target is **21/21**. `dreggnet-telegram` carries the same game journeys, including
 the canonical private-raid proof through Telegram's document/getFile path; its
 combined current evidence is **77 tests**. The web session rail and reviewed
 no-viewer projection are **2/2 + 2/2**.
 
 These are coherent routing/presentation and replay boundaries, not actor
 authentication. Current chat actor values are asserted, the presentation head
-is not the canonical ledger root, the consequence book is process-local, and
-host/federation incarnation is not yet carried to prevent ABA. Discord's direct
-binary path is being moved to the same durable journal rather than promoted from
-its current in-memory/stamp-only behavior.
+is not the canonical ledger root, and the consequence book is process-local.
+Deployment custody and monotone allocation of the new incarnation/generation
+values remain external; existing Telegram/web callers are explicitly
+`LegacyUnbound` until migrated. Discord's direct binary path is being moved to
+the same durable journal rather than promoted from its current in-memory/stamp-
+only behavior.
 
 ### hbox and artifact custody — operational facts, not build evidence
 
@@ -683,14 +700,14 @@ The portable GPU frontier is now broader and exactly scoped:
   hbox qualification; persistent residency wins at larger repeated shapes, so
   batching/residency—not magical dispatch—is the optimization contract; and
 - the current Bulletproof fork now has a complete portable public-scalar
-  verifier mega-MSM path as well as the extended-Edwards group-add tooth. Strict
-  hbox group-add and full MSM/R1CS gates are green, and dalek independently
-  recomputes the returned point. This is correctness qualification only: for a
-  representative 17-term verification MSM, CPU was about **66µs** while GPU
-  submit was **0.78–0.81s** (roughly 12,000× slower). The backend is therefore
-  disabled by default behind explicit fail-closed policy; the active successor
-  is device-resident windowed/Pippenger, not a speed claim. In every case this
-  only accelerates the transitional classical Bulletproof proof.
+  verifier mega-MSM path as well as the extended-Edwards group-add tooth. Its
+  exact radix-16 Pippenger follow-up uses 64 windows, four ordered dispatches,
+  and one readback and passed the required-mode 17/256/1024/4096 matrix plus a
+  real R1CS verification. Dalek independently recomputes the returned point.
+  This remains a performance red: at 4096 terms CPU was **9.918ms** and GPU
+  **7.508s**, with roughly 103–120s process-cold shader compilation. The backend
+  therefore remains disabled by default. In every case this only accelerates
+  the transitional classical Bulletproof proof.
 
 The HidingFRI GPU path now retains LDE buffers device-to-device through salted
 leaf construction and keeps every Merkle digest layer resident until the root
@@ -699,9 +716,14 @@ blits; five Merkle commits materialized 77 opening layers in exactly five
 whole-tree readback batches, and measured **0.717s GPU vs 3.081s CPU**. The FRI
 query/fold phase still consumes the materialized host tree, so this is not full
 proof residency. The TFHE path also has a portable
-encrypted CMUX/external-product prototype with 4/4 CPU/hostile and 2/2 strict-GPU
-gates. Its current kernel is quadratic in the polynomial degree and is not a
-programmable-bootstrap implementation.
+encrypted CMUX/external-product implementation with signed gadget decomposition
+and an exact four-prime (~120-bit) RNS NTT. Portable WGSL performs exact
+16-bit-split Montgomery arithmetic; the forced coefficient/NTT matrix through
+N=4096 and a hostile base-log-31/two-level case passed **3/3**. At N=2048 the
+warm medians were **2.401ms CPU / 4.160ms quadratic GPU / 2.721ms NTT GPU**; at
+N=4096 exact NTT was **4.816ms GPU vs 10.052ms CPU**. This is still CMUX, not a
+device-resident blind rotation, programmable bootstrap, sample extraction, key
+switch, or high-level integer backend.
 
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
@@ -737,10 +759,13 @@ eight-lane Poseidon2 leaf/node/root and fail-closed 4-ary membership semantics,
 and pins Lean-computed protocol vectors. The Rust tree and persistence wrapper
 match those vectors **8/8**, `dregg-commit` is **141/141**, and the focused
 persistence recovery/hostile target is **6/6**. The legacy and faithful trees
-advance together during the transition.
+advance together during the transition. A strict authenticated history now
+also binds exact session/federation/epoch, predecessor/successor faithful roots,
+height, note count, and block id; hybrid Ed25519-and-ML-DSA verification plus
+restart/replay/fork/truncation teeth are **6/6**.
 
 This is still a transitional weld, not the final PQ no-mint theorem. The live
-attestation/root-history/create-spend authority still accepts the older root,
+attestation/finalized-append/create-spend authority still accepts the older root,
 and the authoritative conservation proof remains
 Ristretto/Pedersen/Bulletproof-based. The next exact cut is to make authenticated
 root history and one combined Lean AIR for membership and conservation consume
@@ -762,8 +787,14 @@ Exact gates: create/rotate/hostile later-effect rollback **1/1**; node restart
 **1/1**; enrollment/no-TOFU/substitution **3/3**; hostile SignedTurn validator
 **4/4**; cell identity/commitment/wire **3/3**; Rust registry **3/3 + 1/1** and
 Lean registry green. Both proof producer and verifier projection explicitly
-refuse these effects **3/3** because no PQ-authority EffectVM/AIR row exists;
-they are committed classical-runtime transitions, never a silent `NoOp`.
+refuse these effects **3/3** because the PQ-authority row is not yet composed
+with its outer cryptographic boundary; they are committed classical-runtime
+transitions, never a silent `NoOp`. The Lean-authored rotation descriptor now
+exists and is gated: it losslessly carries every 32-byte object as sixteen
+canonical u16 limbs, every epoch as four limbs, and proves exact target/
+expected-epoch continuity, overflow-free +1, and key change over a 127-column,
+108-public-input row. ML-DSA authorization and new-key possession remain
+explicit outer predicates, not a prover-chosen verified bit.
 Pre-v10 postcard snapshots need a store migration, and unknown agents cannot
 self-admit their first outer SignedTurn without a sponsor.
 
@@ -858,8 +889,8 @@ from first principles.
 - then-current private_book_relation + private_book_distributed_inputs —
   **8/8 green before later hardening**.
 - custody-hardened private_book_distributed_inputs — **4/4 green**.
-- private_book_distributed_prover — **2/2 green** for the fixture-backed
-  process/custody envelope.
+- private_book_distributed_prover — original 2/2 plus the share-bound request/
+  envelope hostile target **5/5 green**; proof generation remains monolithic.
 - fhegg_private_verifier_registry — **2/2 green**.
 - party_mpc_crossing_transport — **2/2 release green**, **1.099s**.
 - native PartyMPC PQ transport — **5/5 integration + 5/5 units green**;
@@ -871,9 +902,10 @@ from first principles.
   DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1; no authority-core
   fallback. This verifies the required ML-KEM/ML-DSA cores, not end-to-end PQ.
 - fhir_verified_raid_allocation — **6/6 release green**.
-- hostile external fhIR optimizer protocol — **69/69 fhir + 115/115
+- hostile external fhIR optimizer protocol — **69/69 fhir + 117/117
   fhegg-solver green**; streamed problem binding is zero-allocation at the
-  comparison boundary and preserves hostile lift-error precedence.
+  comparison boundary; exact KKT `Ax` revalidation is also zero-allocation and
+  preserves hostile lift-error/overflow precedence.
 - private_clearing_crown_consequence — **1/1 heavy-release green**.
 - dungeon_narrated_operation — **3/3 green**.
 - relic_oath_branch — repaired target **2/2 green**.
@@ -882,27 +914,29 @@ from first principles.
   invocation.
 - dreggnet-offerings — **117/117 green**, including native Descent/campaign and
   typed private-game consequences.
-- common game spine — **8/8 green**; Telegram combined journey **77 tests**;
+- incarnation-bound common game spine — **21/21 green**; Telegram combined journey **77 tests**;
   web session/no-viewer rails **2/2 + 2/2**.
 - collective_gpu_additive — **1/1 green** on the real RX 6750 XT with
   GpuResident via wgpu/Vulkan.
 - portable HidingFRI GPU — **2/2 exact parity green**, with the depth-2048 path
   measuring **0.717s GPU vs 3.081s CPU**, retaining six device blits, and
   reducing five Merkle trees to five whole-tree readback batches.
-- portable Ristretto verifier MSM — strict hbox group-add and full MSM/R1CS
-  correctness gates green with dalek authority; representative 17-term GPU is
-  roughly **12,000× slower** than CPU and therefore disabled by default.
-- portable TFHE encrypted CMUX — **4/4 CPU/hostile + 2/2 strict GPU green**;
-  quadratic external-product prototype, not PBS.
+- portable Ristretto verifier MSM — exact radix-16 Pippenger required-mode
+  matrix **1/1 green** with dalek authority through 4096 terms; 4096-term GPU
+  is 7.508s versus 9.918ms CPU and therefore disabled by default.
+- portable TFHE encrypted CMUX — exact coefficient/RNS-NTT strict GPU matrix
+  **3/3 green**, plus CRT/range 2/2 and release lib check; N=4096 exact NTT
+  crossed CPU, but this is not blind rotation/PBS.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
-- faithful wide note tree — Lean authority green, Rust correspondence **8/8**,
-  dregg-commit **141/141**, focused persistence **6/6**; not yet live root
-  authority.
+- faithful wide note tree/history — Lean authority green, Rust correspondence
+  **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
+  history **6/6**; not yet live finalized/attested root authority.
 - cell-owned PQ identity — create/rotate/rollback **1/1**, restart **1/1**,
   enrollment/substitution **3/3**, SignedTurn hostile **4/4**, cell wire/
-  commitment **3/3**, EffectVM fail-closed refusal **3/3**; no authority AIR row
-  yet.
+  commitment **3/3**, EffectVM fail-closed refusal **3/3**; Lean-authored
+  rotation authority row and Rust parser canary green, outer ML-DSA composition
+  still absent.
 - lake build Market — **8745 jobs green** before the final live-host/optimizer
   additions, then **8747 jobs green** afterward.
 - direct Lean: private ingress **11 clean**, live apex host **16 clean**, fhIR
@@ -929,18 +963,18 @@ from first principles.
 
 ### Pending composed-game gates
 
-- private_raid_atomic_forest — 2 tests present; result pending.
 - dungeon_chutes_weld — 3 tests present; result pending.
 
 ## 13. Executable closure gates
 
 These are the next truth-producing gates:
 
-1. Recapture the full private-clearing apex with the native PQ quorum and native
-   PartyMPC transport profiles installed together; their independent greens do
-   not retroactively alter the older apex capture.
-2. Capture the two still-pending composed-game targets in section 9; do not
-   merge their counts or inherit greens from their organs.
+1. Finish hostile qualification of the sealed native-PQ crossing and recapture
+   the full private-clearing apex under the same 1200-second ceiling. The first
+   old-transport attempt completed proof creation in 55.777s but timed out after
+   5,242 per-frame ML-DSA signs and 5,242 live verifies; it is not a green.
+2. Capture the still-pending Discord Chutes→Dungeon target in section 9; do
+   not inherit a green from its Dungeon/narrator organs.
 3. Replace the fixture-only distributed prover backend with a real distributed
    same-opening prover and make the apex consume it before revisiting any
    no-single-viewer language.

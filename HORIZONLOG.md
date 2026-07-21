@@ -10747,11 +10747,17 @@ Descent, Chutes, private raid, and Bazaar-shaped operations; private raid is a
 catalog-mounted capability/Arena game; Telegram carries the canonical proof as
 a document and resumes the same receipt chain; and the web rail is deliberately
 viewer-safe. Named current gates were: offerings **117/117**, private-raid
-surface **8/8**, Telegram combined evidence **77 tests**, game spine **8/8**,
-and the web rail/no-viewer targets **2/2 + 2/2**. These results do not promote
+surface **8/8**, Telegram combined evidence **77 tests**, the original game
+spine **8/8**, and the web rail/no-viewer targets **2/2 + 2/2**. These results do not promote
 asserted chat identities into cryptographic actors: actor authority, host
-incarnation/ABA resistance, durable consequence/nullifier storage, and a common
-Discord host journal remain explicit integration work.
+incarnation custody, durable consequence/nullifier storage, and a common Discord
+host journal remain explicit integration work. A later bound-routing cut now
+carries a nonzero host/federation incarnation plus monotone session generation
+through action preimages and outer receipts. Cross-incarnation replay,
+close/reopen generation rollback, and receipt/session substitution refuse while
+same-incarnation restart replay remains exact; the expanded catalog target is
+**21/21**. Deployments must still durably own those epochs, and existing
+Telegram/web adapters remain visibly `LegacyUnbound` until migrated.
 
 The portable HidingFRI path now keeps its salted Merkle layers on the GPU and
 performs one readback/poll per commitment rather than one per tree level. On the
@@ -10771,13 +10777,26 @@ the authority is trusted, the batch certificate is presently Ed25519/classical,
 malicious input provenance is not proved, and durable exact-session rollback
 tombstones are still required.
 
-The portable Ristretto verifier MSM is also qualified for correctness, not
+The portable Ristretto verifier MSM is qualified for correctness, not
 performance. hbox passed the strict group-add and full MSM/R1CS gates with dalek
-independently recomputing the returned result, but a 17-term proof measured about
-**66µs on CPU vs 0.78–0.81s GPU submission** (roughly 12,000× slower). The
-backend therefore remains disabled by default and fail-closed behind explicit
-GPU policy. A device-resident windowed/Pippenger successor is active; no speed
-claim is carried forward from the correctness gate.
+independently recomputing the returned result. The follow-up exact radix-16
+Pippenger uses four ordered dispatches and one readback and passed the real
+required-mode verifier matrix at 17/256/1024/4096 terms, but still measured
+**1.402/1.825/2.901/7.508s GPU** against
+**0.206/1.037/2.967/9.918ms CPU**. Process-cold shader compilation was about
+103–120s. The backend therefore remains disabled by default; this is a banked
+falsifier and optimization substrate, not a speed claim.
+
+The TFHE rung is no longer only the quadratic torus MAC. It now implements
+signed gadget decomposition, complete standard GGSW×GLWE external product, and
+CMUX, plus an exact four-prime (~120-bit) RNS NTT with 16-bit-split Montgomery
+arithmetic in portable WGSL. The strict hbox matrix forced coefficient and NTT
+GPU routes across N=256..4096, included a hostile base-log-31/two-level case,
+and passed **3/3** with exact CPU/tfhe-rs parity. At deployed N=2048 the warm
+medians were **2.401ms CPU, 4.160ms quadratic GPU, 2.721ms exact-NTT GPU**; at
+N=4096 the GPU route crossed the CPU (**4.816ms vs 10.052ms**). This is exact
+CMUX, not blind rotation/PBS or a high-level `FheUint32` backend; a
+device-resident chained-rotation cut is active.
 
 The faithful note-tree substrate is now Lean-authored and banked. Exact 32-byte
 commitments map injectively to sixteen canonical `u16`/BabyBear lanes, while
@@ -10786,9 +10805,13 @@ Poseidon2 carrier through the whole 4-ary tree. Lean proves the codec inverse an
 injectivity and defines fail-closed membership replay; Rust matches Lean-computed
 codec/hash/root/proof vectors **8/8** and the runtime/persistence hostile gates
 reject the old `x` / `x+p` alias. `dregg-commit` was **141/141** and the focused
-persistence gate **6/6**. This is substrate, not the final shielded cut: node
-attestation, authenticated root history, live note create/spend/conservation,
-and the executor authority still have to adopt the faithful root.
+persistence gate **6/6**. Authenticated faithful-root history is now banked too:
+versioned records bind exact session/federation/epoch, predecessor/successor
+eight-felt roots, height, note count, and block id under hybrid Ed25519 **and**
+ML-DSA authority; strict restart/replay/fork/truncation tests are **6/6**. The
+remaining live weld is narrower but still load-bearing: atomic finalized note
+append plus attestation publication, followed by create/spend/conservation
+authority over that root.
 
 Active next cuts at this checkpoint are deliberately named rather than implied:
 the full private-clearing apex is being recaptured with native ML-DSA quorum,
@@ -10799,14 +10822,44 @@ SignedTurn hostile validation **4/4**, cell wire/commitment **3/3**, EffectVM
 refusal **3/3**, and the Rust/Lean verb-registry gates are green. The live cell
 commitment—not carried key bytes—is authority; rotation requires the old key
 and proof of possession by the next key. Proof producers/verifiers explicitly
-refuse both effects until their Lean/AIR authority row lands. Pre-v10 postcard
+refuse both effects until their Lean/AIR row and the outer ML-DSA boundary are
+composed. The row has since landed as recorded below; the composed verifier has
+not. Pre-v10 postcard
 snapshots still require store migration and first enrollment remains sponsor-
 mediated. Discord is acquiring the same durable operation journal. The FhIR
 exact problem-binding hot path is now banked with a single-pass comparison:
-**115/115 fhegg-solver + 69/69 fhir**, zero temporary allocations instead of 51
+**117/117 fhegg-solver + 69/69 fhir**, zero temporary allocations instead of 51
 and 4,218,560 bytes per n=256 verification, and 671.367µs vs 694.395µs in the
-500-iteration release harness while retaining hostile error precedence. TFHE
-has a dedicated portable-WGPU optimization lane; and the Bulletproof MSM lane
-is pursuing a real crossover rather than merely a green kernel. Even after
-those land, the same-opening Bulletproof/Ristretto proof and distributed-custody commitments
+500-iteration release harness while retaining hostile error precedence. Exact
+KKT revalidation now streams `Ax` as well: at n=256 it removes seven allocations
+and 8,128 bytes per check and measured 372.985µs vs 379.674µs in the same-
+process release tooth. Even after the GPU cuts above, the same-opening
+Bulletproof/Ristretto proof and distributed-custody commitments
 remain classical until a Lean-authored hash/lattice proof cut replaces them.
+
+The PQ-identity proof row has also landed after the runtime cut above. The
+Lean-authored IR2 descriptor losslessly carries target and target-Ed25519,
+old/expected/new four-limb epochs, old/new key commitments, and distinct
+old-authorization/new-possession evidence commitments; its 108 public inputs,
+120 constraints, and 111 range checks prove exact expected=old, overflow-free
+`+1`, target continuity, and key change. ML-DSA remains an explicit outer
+`CryptoBoundary`, so runtime proof production continues to refuse until the
+raw-key→BLAKE3 binding, exact rotation transcripts, both ML-DSA checks, and
+pre/post cell roots are composed.
+
+Distributed proving now at least begins from a fixed-size
+`ShareBoundProverRequest` that binds session, relation, certificate, joint
+commitment, worker roster, backend protocol, and context and refuses source-
+viewer mode or appended plaintext/openings (**5/5**). It still reconstructs the
+private witness inside the monolithic proof backend; share-native constraint
+evaluation and a real distributed same-opening proof remain active work.
+
+The first native-PQ full-apex recapture exposed a performance defect rather than
+a protocol red: proof creation completed in 55.777s, then the old per-frame
+ML-DSA transport crossed the unchanged 1200s ceiling after 5,242 signs and 5,242
+live verifies. The replacement v5 transport now compiles remotely and reduces
+the n=2 crossing to six endpoint/link ML-DSA signs and six verifies, independent
+of 1,302 gates; semantic frames use direction-bound HMAC/XChaCha and are covered
+by dual-signed terminal route-root seals. This is not yet a green apex claim:
+the opaque verified-crossing token and strict same-ceiling run are still in
+progress.
