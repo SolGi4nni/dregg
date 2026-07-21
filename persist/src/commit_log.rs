@@ -96,6 +96,22 @@ pub struct FinalizedFaithfulRootWeld<'a> {
     pub author_committee: &'a [PublicKey],
     pub author_ml_dsa_committee: &'a [MlDsaPublicKey],
     pub attested_root: &'a StoredAttestedRoot,
+    /// Every `NoteSpend` finalized by this turn, in deterministic DFS effect
+    /// order.  These records are inserted into the durable nullifier
+    /// accumulator in the same transaction as the carrying commit and root.
+    pub spent_nullifiers: &'a [FinalizedNullifierRecord],
+}
+
+/// The public accumulator input carried by one finalized `NoteSpend`.
+///
+/// `value` is already public in the deployed note-spend statement.  Persisting
+/// it is necessary because the circuit-faithful nullifier leaf commits to both
+/// the revealed nullifier and this value; a bare presence bit cannot reproduce
+/// the accepted root after restart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinalizedNullifierRecord {
+    pub nullifier: [u8; 32],
+    pub value: u64,
 }
 
 /// One durable record of a finalized turn this node applied to its ledger.
@@ -252,6 +268,170 @@ fn validate_faithful_commit_coordinates(
         return Err(StoreError::Integrity(
             "faithful note-root/commit/attestation coordinates disagree".to_string(),
         ));
+    }
+    Ok(())
+}
+
+fn decode_nullifier_record(bytes: &[u8; 16]) -> (u64, u64) {
+    let mut value = [0u8; 8];
+    value.copy_from_slice(&bytes[..8]);
+    let mut seq = [0u8; 8];
+    seq.copy_from_slice(&bytes[8..]);
+    (u64::from_le_bytes(value), u64::from_le_bytes(seq))
+}
+
+fn encode_nullifier_record(value: u64, seq: u64) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    out[..8].copy_from_slice(&value.to_le_bytes());
+    out[8..].copy_from_slice(&seq.to_le_bytes());
+    out
+}
+
+/// Reconstruct the exact circuit-facing nullifier accumulator from the two
+/// durable tables inside the caller's write snapshot.  A legacy image with
+/// presence rows but no value/sequence rows is intentionally refused: those
+/// missing public inputs cannot be recovered honestly.
+fn durable_faithful_nullifier_set_in(
+    write: &redb::WriteTransaction,
+) -> Result<dregg_cell::nullifier_set::NullifierSet> {
+    let presence = write.open_table(tables::NULLIFIERS)?;
+    let records = write.open_table(tables::NULLIFIER_RECORDS_V1)?;
+    let presence_len = presence.len()?;
+    let records_len = records.len()?;
+    if presence_len != records_len {
+        return Err(StoreError::Integrity(format!(
+            "nullifier presence/record table lengths disagree ({presence_len} != {records_len}); \
+             legacy nonempty images require an explicit value/sequence migration"
+        )));
+    }
+
+    let record_capacity = usize::try_from(records_len).map_err(|_| {
+        StoreError::Integrity("nullifier record count does not fit usize".to_string())
+    })?;
+    let mut decoded = Vec::with_capacity(record_capacity);
+    let mut seen_seq = vec![false; record_capacity];
+    for entry in records.iter()? {
+        let entry = entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+        let nullifier = *entry.0.value();
+        if presence.get(&nullifier)?.is_none() {
+            return Err(StoreError::Integrity(
+                "nullifier record has no matching spent-presence row".to_string(),
+            ));
+        }
+        let (value, seq) = decode_nullifier_record(entry.1.value());
+        let seq_index = usize::try_from(seq).map_err(|_| {
+            StoreError::Integrity("nullifier append sequence does not fit usize".to_string())
+        })?;
+        if seq_index >= record_capacity || seen_seq[seq_index] {
+            return Err(StoreError::Integrity(
+                "nullifier append sequence is duplicated or outside the dense durable range"
+                    .to_string(),
+            ));
+        }
+        seen_seq[seq_index] = true;
+        decoded.push((dregg_cell::note::Nullifier(nullifier), value, seq));
+    }
+    if seen_seq.iter().any(|seen| !seen) {
+        return Err(StoreError::Integrity(
+            "nullifier append sequence has a durable gap".to_string(),
+        ));
+    }
+    dregg_cell::nullifier_set::NullifierSet::from_records(decoded).map_err(|e| {
+        StoreError::Integrity(format!(
+            "durable nullifier accumulator cannot be reconstructed: {e}"
+        ))
+    })
+}
+
+fn require_attested_nullifier_root(
+    faithful: &FinalizedFaithfulRootWeld<'_>,
+    set: &dregg_cell::nullifier_set::NullifierSet,
+) -> Result<()> {
+    let expected = set.root8().to_bytes32();
+    if faithful.attested_root.nullifier_set_root != Some(expected) {
+        return Err(StoreError::Integrity(
+            "attested nullifier root does not equal the exact durable successor accumulator"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_fresh_nullifiers_in(
+    write: &redb::WriteTransaction,
+    faithful: &FinalizedFaithfulRootWeld<'_>,
+) -> Result<u64> {
+    let mut set = durable_faithful_nullifier_set_in(write)?;
+    let first_seq = u64::try_from(set.len()).map_err(|_| {
+        StoreError::Integrity("nullifier accumulator length does not fit u64".to_string())
+    })?;
+    for spend in faithful.spent_nullifiers {
+        set.insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
+            .map_err(|_| {
+                StoreError::Integrity(
+                    "nullifier already spent or duplicated within finalized turn".to_string(),
+                )
+            })?;
+    }
+    require_attested_nullifier_root(faithful, &set)?;
+    Ok(first_seq)
+}
+
+fn verify_replayed_nullifiers_in(
+    write: &redb::WriteTransaction,
+    faithful: &FinalizedFaithfulRootWeld<'_>,
+) -> Result<()> {
+    let set = durable_faithful_nullifier_set_in(write)?;
+    let replay_len = u64::try_from(faithful.spent_nullifiers.len()).map_err(|_| {
+        StoreError::Integrity("replayed nullifier count does not fit u64".to_string())
+    })?;
+    let total = u64::try_from(set.len()).map_err(|_| {
+        StoreError::Integrity("durable nullifier count does not fit u64".to_string())
+    })?;
+    let first_seq = total.checked_sub(replay_len).ok_or_else(|| {
+        StoreError::Integrity("replayed nullifier suffix exceeds durable accumulator".to_string())
+    })?;
+    for (offset, spend) in faithful.spent_nullifiers.iter().enumerate() {
+        let nullifier = dregg_cell::note::Nullifier(spend.nullifier);
+        let expected_seq = first_seq
+            .checked_add(u64::try_from(offset).map_err(|_| {
+                StoreError::Integrity("replayed nullifier offset does not fit u64".to_string())
+            })?)
+            .ok_or_else(|| StoreError::Integrity("nullifier sequence overflow".to_string()))?;
+        if set.value_of(&nullifier) != Some(spend.value)
+            || set.seq_of(&nullifier) != Some(expected_seq)
+        {
+            return Err(StoreError::Integrity(
+                "replayed nullifier/value sequence is not the exact durable tail".to_string(),
+            ));
+        }
+    }
+    require_attested_nullifier_root(faithful, &set)
+}
+
+fn append_fresh_nullifiers_in(
+    write: &redb::WriteTransaction,
+    spends: &[FinalizedNullifierRecord],
+    first_seq: u64,
+) -> Result<()> {
+    let mut presence = write.open_table(tables::NULLIFIERS)?;
+    let mut records = write.open_table(tables::NULLIFIER_RECORDS_V1)?;
+    for (offset, spend) in spends.iter().enumerate() {
+        if presence.get(&spend.nullifier)?.is_some() || records.get(&spend.nullifier)?.is_some() {
+            return Err(StoreError::Integrity(
+                "nullifier changed between validation and atomic insertion".to_string(),
+            ));
+        }
+        let seq = first_seq
+            .checked_add(u64::try_from(offset).map_err(|_| {
+                StoreError::Integrity("nullifier append offset does not fit u64".to_string())
+            })?)
+            .ok_or_else(|| {
+                StoreError::Integrity("nullifier append sequence overflow".to_string())
+            })?;
+        let encoded = encode_nullifier_record(spend.value, seq);
+        presence.insert(&spend.nullifier, ())?;
+        records.insert(&spend.nullifier, &encoded)?;
     }
     Ok(())
 }
@@ -712,6 +892,7 @@ impl PersistentStore {
                                         note_commitments,
                                         durable_note_count,
                                     )?;
+                                    verify_replayed_nullifiers_in(&write_txn, faithful)?;
                                     crate::faithful_note_root_history::append_faithful_note_root_verified_in(
                                         &write_txn,
                                         faithful.envelope,
@@ -751,6 +932,16 @@ impl PersistentStore {
                      is {cursor}; refusing to write a gap (torn-state guard)"
                 )));
             }
+
+            // Validate the complete durable predecessor and compute the exact
+            // successor nullifier root before writing even the commit record.
+            // The later inserts use the returned dense append rank inside this
+            // same transaction, so an attested root can never float free of the
+            // nullifier mutation it claims.
+            let fresh_nullifier_seq = faithful
+                .as_ref()
+                .map(|faithful| verify_fresh_nullifiers_in(&write_txn, faithful))
+                .transpose()?;
 
             assigned = cursor;
             let stored_record = CommitRecord {
@@ -849,6 +1040,14 @@ impl PersistentStore {
                 meta_bytes.remove(tables::META_NOTE_TREE_ROOT_CACHE)?;
             }
 
+            // 3c. Insert the spent-nullifier presence rows AND the public
+            // value/append-sequence records that reconstruct the attested
+            // eight-felt accumulator. This shares the carrying turn's atomic
+            // boundary; duplicate/replayed nullifiers cannot be warned away.
+            if let (Some(faithful), Some(first_seq)) = (faithful.as_ref(), fresh_nullifier_seq) {
+                append_fresh_nullifiers_in(&write_txn, faithful.spent_nullifiers, first_seq)?;
+            }
+
             // `store_attested_root_in` also updates the latest-root coordinate
             // in METADATA. redb deliberately refuses a second open of the same
             // table while this handle is live, so release it before entering
@@ -856,7 +1055,7 @@ impl PersistentStore {
             // commit cursor is reopened and advanced last below.
             drop(meta);
 
-            // 3c. The exact faithful root edge and its signed live attestation
+            // 3d. The exact faithful root edge and its signed live attestation
             // share the note leaves' atomic boundary.  Verify both roots from
             // the durable pre-image before mutating the history table.
             if let Some(faithful) = faithful.as_ref() {
@@ -873,7 +1072,7 @@ impl PersistentStore {
                 )?;
             }
 
-            // 3d. Weld the immutable receipt-log entry into this same atomic
+            // 3e. Weld the immutable receipt-log entry into this same atomic
             // transaction. This is deliberately before the cursor advance;
             // redb commits all writes together or none of them.
             if let Some((receipt_index, encoded_receipt)) = receipt_entry {
@@ -2039,7 +2238,11 @@ mod tests {
         signer.sign_attested(StoredAttestedRoot {
             merkle_root: record.ledger_root,
             note_tree_root: Some(edge.successor.to_bytes()),
-            nullifier_set_root: None,
+            nullifier_set_root: Some(
+                dregg_cell::nullifier_set::NullifierSet::new()
+                    .root8()
+                    .to_bytes32(),
+            ),
             height: record.height,
             timestamp: 1_700_000_000,
             blocklace_block_id: Some(record.block_id),
@@ -2051,6 +2254,17 @@ mod tests {
             receipt_stream_root: Some([0x61; 32]),
             finalization_quorum: Vec::new(),
         })
+    }
+
+    fn test_attested_with_nullifier_root(
+        signer: &FaithfulSigner,
+        record: &CommitRecord,
+        edge: &crate::FaithfulNoteRootRecordV1,
+        nullifier_root: [u8; 32],
+    ) -> StoredAttestedRoot {
+        let mut attested = test_attested(signer, record, edge);
+        attested.nullifier_set_root = Some(nullifier_root);
+        signer.sign_attested(attested)
     }
 
     fn faithful_commit_record(ordinal: u64, block_id: [u8; 32]) -> CommitRecord {
@@ -3537,6 +3751,7 @@ mod tests {
                         author_committee: &[signer.ed_pk],
                         author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                         attested_root: &attested,
+                        spent_nullifiers: &[],
                     },
                 )
                 .unwrap();
@@ -3555,6 +3770,7 @@ mod tests {
                         author_committee: &[signer.ed_pk],
                         author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                         attested_root: &attested,
+                        spent_nullifiers: &[],
                     },
                 )
                 .unwrap();
@@ -3605,6 +3821,7 @@ mod tests {
                     author_committee: &[signer.ed_pk],
                     author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                     attested_root: &first_attested,
+                    spent_nullifiers: &[],
                 },
             )
             .unwrap();
@@ -3629,6 +3846,7 @@ mod tests {
                         author_committee: &[signer.ed_pk],
                         author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                         attested_root: &sibling_attested,
+                        spent_nullifiers: &[],
                     },
                 )
                 .is_err()
@@ -3671,6 +3889,7 @@ mod tests {
                         author_committee: &[signer.ed_pk],
                         author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                         attested_root: &attested,
+                        spent_nullifiers: &[],
                     },
                 )
                 .unwrap();
@@ -3738,6 +3957,7 @@ mod tests {
                         author_committee: &[signer.ed_pk],
                         author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
                         attested_root: &alias_attested,
+                        spent_nullifiers: &[],
                     },
                 )
                 .is_err(),
@@ -3746,5 +3966,219 @@ mod tests {
         assert_eq!(store.commit_cursor().unwrap(), 0);
         assert_eq!(store.note_count().unwrap(), 0);
         assert!(store.latest_attested_root().unwrap().is_none());
+    }
+
+    #[test]
+    fn faithful_root_weld_atomically_persists_nullifier_tail_and_exact_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("faithful-nullifiers.redb");
+        let signer = FaithfulSigner::new(0x25);
+        let spends = [
+            FinalizedNullifierRecord {
+                nullifier: [0x51; 32],
+                value: 700,
+            },
+            FinalizedNullifierRecord {
+                nullifier: [0x52; 32],
+                value: 900,
+            },
+        ];
+        let expected_root;
+
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            expected_root = store.plan_faithful_nullifier_successor(&spends).unwrap();
+            let block_id = [0x36; 32];
+            let commit = faithful_commit_record(0, block_id);
+            let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[]);
+            let envelope = signer.sign_edge(edge.clone());
+            let attested =
+                test_attested_with_nullifier_root(&signer, &commit, &edge, expected_root);
+            let weld = || FinalizedFaithfulRootWeld {
+                initial_anchor: Some(&anchor),
+                envelope: &envelope,
+                author_committee: std::slice::from_ref(&signer.ed_pk),
+                author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                attested_root: &attested,
+                spent_nullifiers: &spends,
+            };
+
+            let outcome = store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[],
+                    0,
+                    b"receipt-nullifiers",
+                    weld(),
+                )
+                .unwrap();
+            assert!(outcome.freshly_committed);
+            assert_eq!(store.faithful_nullifier_root().unwrap(), expected_root);
+            assert_eq!(
+                store.load_faithful_nullifier_records().unwrap(),
+                vec![
+                    (dregg_cell::note::Nullifier([0x51; 32]), 700, 0),
+                    (dregg_cell::note::Nullifier([0x52; 32]), 900, 1),
+                ]
+            );
+
+            let replay = store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[],
+                    0,
+                    b"receipt-nullifiers",
+                    weld(),
+                )
+                .unwrap();
+            assert!(!replay.freshly_committed);
+
+            let conflicting = [
+                spends[0],
+                FinalizedNullifierRecord {
+                    nullifier: spends[1].nullifier,
+                    value: spends[1].value + 1,
+                },
+            ];
+            assert!(
+                store
+                    .commit_finalized_turn_with_faithful_root(
+                        0,
+                        &commit,
+                        &[],
+                        0,
+                        b"receipt-nullifiers",
+                        FinalizedFaithfulRootWeld {
+                            spent_nullifiers: &conflicting,
+                            ..weld()
+                        },
+                    )
+                    .is_err(),
+                "an exact replay cannot substitute a different public note value"
+            );
+            assert_eq!(store.commit_cursor().unwrap(), 1);
+        }
+
+        let reopened = PersistentStore::open(&path).unwrap();
+        assert_eq!(reopened.faithful_nullifier_root().unwrap(), expected_root);
+        assert_eq!(reopened.commit_cursor().unwrap(), 1);
+    }
+
+    #[test]
+    fn faithful_root_weld_refuses_duplicate_or_wrong_nullifier_root_without_partial_commit() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = FaithfulSigner::new(0x26);
+        let block_id = [0x37; 32];
+        let commit = faithful_commit_record(0, block_id);
+        let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[[0x53; 32]]);
+        let envelope = signer.sign_edge(edge.clone());
+        let duplicate = FinalizedNullifierRecord {
+            nullifier: [0x54; 32],
+            value: 111,
+        };
+        let attested = test_attested(&signer, &commit, &edge);
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[[0x53; 32]],
+                    0,
+                    b"receipt-duplicate",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: std::slice::from_ref(&signer.ed_pk),
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                        spent_nullifiers: &[duplicate, duplicate],
+                    },
+                )
+                .is_err(),
+            "a within-turn duplicate must refuse before any durable write"
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert_eq!(store.note_count().unwrap(), 0);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        assert!(store.latest_attested_root().unwrap().is_none());
+
+        let one = [duplicate];
+        let true_root = store.plan_faithful_nullifier_successor(&one).unwrap();
+        assert_ne!(attested.nullifier_set_root, Some(true_root));
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[[0x53; 32]],
+                    0,
+                    b"receipt-wrong-root",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: std::slice::from_ref(&signer.ed_pk),
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                        spent_nullifiers: &one,
+                    },
+                )
+                .is_err(),
+            "an attestation over the predecessor root must not authorize a spend"
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert_eq!(store.note_count().unwrap(), 0);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn faithful_nullifier_record_truncation_refuses_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("faithful-nullifier-truncated.redb");
+        let signer = FaithfulSigner::new(0x27);
+        let spend = FinalizedNullifierRecord {
+            nullifier: [0x55; 32],
+            value: 31337,
+        };
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let block_id = [0x38; 32];
+            let commit = faithful_commit_record(0, block_id);
+            let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[]);
+            let envelope = signer.sign_edge(edge.clone());
+            let expected = store.plan_faithful_nullifier_successor(&[spend]).unwrap();
+            let attested = test_attested_with_nullifier_root(&signer, &commit, &edge, expected);
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[],
+                    0,
+                    b"receipt-truncated-nullifier",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: std::slice::from_ref(&signer.ed_pk),
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                        spent_nullifiers: &[spend],
+                    },
+                )
+                .unwrap();
+            let write = store.db.begin_write().unwrap();
+            {
+                let mut records = write.open_table(tables::NULLIFIER_RECORDS_V1).unwrap();
+                records.remove(&spend.nullifier).unwrap();
+            }
+            write.commit().unwrap();
+        }
+
+        let reopened = PersistentStore::open(&path).unwrap();
+        assert!(reopened.faithful_nullifier_root().is_err());
+        assert!(
+            reopened.plan_faithful_nullifier_successor(&[]).is_err(),
+            "a truncated accumulator must not be silently accepted as a prefix"
+        );
     }
 }

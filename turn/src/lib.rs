@@ -102,6 +102,7 @@ pub mod error;
 pub mod eventual;
 pub mod execution_path;
 pub mod executor;
+pub mod faithful_note_spend;
 pub mod fast_path;
 pub mod forest;
 pub(crate) mod journal;

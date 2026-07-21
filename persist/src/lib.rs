@@ -49,7 +49,7 @@ use std::path::Path;
 use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub use blocklace_store::BlocklaceMeta;
-pub use commit_log::{CellOverlayOp, CommitRecord, IndexAuditReport};
+pub use commit_log::{CellOverlayOp, CommitRecord, FinalizedNullifierRecord, IndexAuditReport};
 pub use faithful_note_root_history::{
     CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1,
     FaithfulNoteRootExpectationV1, FaithfulNoteRootHistoryError, FaithfulNoteRootHistoryV1,
@@ -231,6 +231,7 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
             let _ = write_txn.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
+            let _ = write_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
@@ -644,6 +645,106 @@ impl PersistentStore {
             nullifiers.push(dregg_cell::note::Nullifier(*entry.0.value()));
         }
         Ok(nullifiers)
+    }
+
+    /// Load the complete circuit-facing nullifier accumulator record.
+    ///
+    /// Unlike [`Self::load_all_nullifiers`], this retains the public spent-note
+    /// value and canonical append sequence needed to reconstruct the same
+    /// eight-felt accumulator after restart. A nonempty legacy presence table
+    /// without these additive rows is refused rather than guessed.
+    pub fn load_faithful_nullifier_records(
+        &self,
+    ) -> Result<Vec<(dregg_cell::note::Nullifier, u64, u64)>> {
+        let read_txn = self.db.begin_read()?;
+        let presence = read_txn.open_table(tables::NULLIFIERS)?;
+        let records = read_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
+        let presence_len = presence.len()?;
+        let records_len = records.len()?;
+        if presence_len != records_len {
+            return Err(StoreError::Integrity(format!(
+                "nullifier presence/record table lengths disagree ({presence_len} != {records_len}); \
+                 legacy nonempty images require an explicit value/sequence migration"
+            )));
+        }
+
+        let capacity = usize::try_from(records_len).map_err(|_| {
+            StoreError::Integrity("nullifier record count does not fit usize".to_string())
+        })?;
+        let mut out = Vec::with_capacity(capacity);
+        let mut seen_seq = vec![false; capacity];
+        for entry in records.iter()? {
+            let entry =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            let nullifier = *entry.0.value();
+            if presence.get(&nullifier)?.is_none() {
+                return Err(StoreError::Integrity(
+                    "nullifier record has no matching spent-presence row".to_string(),
+                ));
+            }
+            let bytes = entry.1.value();
+            let mut value = [0u8; 8];
+            value.copy_from_slice(&bytes[..8]);
+            let mut seq = [0u8; 8];
+            seq.copy_from_slice(&bytes[8..]);
+            let value = u64::from_le_bytes(value);
+            let seq = u64::from_le_bytes(seq);
+            let seq_index = usize::try_from(seq).map_err(|_| {
+                StoreError::Integrity("nullifier append sequence does not fit usize".to_string())
+            })?;
+            if seq_index >= capacity || seen_seq[seq_index] {
+                return Err(StoreError::Integrity(
+                    "nullifier append sequence is duplicated or outside the dense durable range"
+                        .to_string(),
+                ));
+            }
+            seen_seq[seq_index] = true;
+            out.push((dregg_cell::note::Nullifier(nullifier), value, seq));
+        }
+        if seen_seq.iter().any(|seen| !seen) {
+            return Err(StoreError::Integrity(
+                "nullifier append sequence has a durable gap".to_string(),
+            ));
+        }
+        out.sort_by_key(|(nullifier, _, seq)| (*seq, *nullifier));
+        Ok(out)
+    }
+
+    /// Exact durable eight-felt nullifier-accumulator root used by live root
+    /// attestation. This is separate from [`Self::nullifier_set_root`], the
+    /// legacy BLAKE3 key-only non-membership tree.
+    pub fn faithful_nullifier_root(&self) -> Result<[u8; 32]> {
+        let records = self.load_faithful_nullifier_records()?;
+        let set = dregg_cell::nullifier_set::NullifierSet::from_records(records).map_err(|e| {
+            StoreError::Integrity(format!(
+                "durable nullifier accumulator cannot be reconstructed: {e}"
+            ))
+        })?;
+        Ok(set.root8().to_bytes32())
+    }
+
+    /// Compute, without mutating the store, the nullifier root that must be
+    /// attested if `spends` are atomically appended to the current durable set.
+    pub fn plan_faithful_nullifier_successor(
+        &self,
+        spends: &[commit_log::FinalizedNullifierRecord],
+    ) -> Result<[u8; 32]> {
+        let records = self.load_faithful_nullifier_records()?;
+        let mut set =
+            dregg_cell::nullifier_set::NullifierSet::from_records(records).map_err(|e| {
+                StoreError::Integrity(format!(
+                    "durable nullifier accumulator cannot be reconstructed: {e}"
+                ))
+            })?;
+        for spend in spends {
+            set.insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
+                .map_err(|_| {
+                    StoreError::Integrity(
+                        "nullifier already spent or duplicated within finalized turn".to_string(),
+                    )
+                })?;
+        }
+        Ok(set.root8().to_bytes32())
     }
 
     /// Compute the nullifier set root from all stored nullifiers.

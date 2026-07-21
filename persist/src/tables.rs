@@ -41,6 +41,16 @@ pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =
 /// Value: empty (presence in the table means the note is spent).
 pub const NULLIFIERS: TableDefinition<&[u8; 32], ()> = TableDefinition::new("nullifiers");
 
+/// Circuit-faithful nullifier accumulator records.
+///
+/// Key: the exact 32-byte revealed nullifier. Value: `value_le_u64 || seq_le_u64`.
+/// The value is the public spent-note value consumed by the deployed grow-gate;
+/// the sequence is the canonical finalized append rank.  Keeping this additive
+/// record beside the legacy presence table lets restart reconstruct the same
+/// eight-felt accumulator root instead of silently inventing values/order.
+pub const NULLIFIER_RECORDS_V1: TableDefinition<&[u8; 32], &[u8; 16]> =
+    TableDefinition::new("nullifier_records_v1");
+
 /// Checkpoints: height (u64) -> serialized Checkpoint.
 ///
 /// Key: checkpoint height (always a multiple of the checkpoint interval).

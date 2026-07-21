@@ -4468,6 +4468,97 @@ fn finalized_note_commitments(forest: &dregg_turn::CallForest) -> Vec<[u8; 32]> 
         .collect()
 }
 
+/// Public nullifier-accumulator inputs of every finalized NoteSpend, including
+/// capability-wrapped inner effects, in deterministic DFS/effect order.
+///
+/// The value is already part of the note-spend statement.  Carrying it here is
+/// required to reconstruct the deployed accumulator leaf after restart; a bare
+/// nullifier presence bit is not the same committed state.
+fn finalized_note_spends(
+    forest: &dregg_turn::CallForest,
+) -> Vec<dregg_persist::FinalizedNullifierRecord> {
+    fn collect(
+        effect: &dregg_turn::Effect,
+        out: &mut Vec<dregg_persist::FinalizedNullifierRecord>,
+    ) {
+        match effect {
+            dregg_turn::Effect::NoteSpend {
+                nullifier, value, ..
+            } => out.push(dregg_persist::FinalizedNullifierRecord {
+                nullifier: nullifier.0,
+                value: *value,
+            }),
+            dregg_turn::Effect::ExerciseViaCapability { inner_effects, .. } => {
+                for inner in inner_effects {
+                    collect(inner, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    for effect in forest.total_effects() {
+        collect(effect, &mut out);
+    }
+    out
+}
+
+/// Decode every NoteSpend's strict versioned carrier and lift its root bytes
+/// into the canonical eight-felt type wall. The opaque inner proof remains for
+/// the note-spend verifier; this boundary decides only which authenticated
+/// historical frontier that proof claims to open.
+fn finalized_faithful_spend_claims(
+    forest: &dregg_turn::CallForest,
+) -> Result<Vec<(u64, dregg_persist::CanonicalFaithfulRoot)>, ()> {
+    fn collect(
+        effect: &dregg_turn::Effect,
+        out: &mut Vec<(u64, dregg_persist::CanonicalFaithfulRoot)>,
+    ) -> Result<(), ()> {
+        match effect {
+            dregg_turn::Effect::NoteSpend {
+                note_tree_root,
+                spending_proof,
+                ..
+            } => {
+                let carrier =
+                    dregg_turn::faithful_note_spend::FaithfulNoteSpendProofCarrier::decode(
+                        spending_proof,
+                    )
+                    .map_err(|_| ())?;
+                let root = dregg_persist::CanonicalFaithfulRoot::from_bytes(*note_tree_root)
+                    .map_err(|_| ())?;
+                out.push((carrier.root_height(), root));
+            }
+            dregg_turn::Effect::ExerciseViaCapability { inner_effects, .. } => {
+                for inner in inner_effects {
+                    collect(inner, out)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let mut out = Vec::new();
+    for effect in forest.total_effects() {
+        collect(effect, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn faithful_history_contains_pair(
+    history: &dregg_persist::FaithfulNoteRootHistoryV1,
+    height: u64,
+    root: dregg_persist::CanonicalFaithfulRoot,
+) -> bool {
+    (history.anchor().height == height && history.anchor().root == root)
+        || history
+            .envelopes()
+            .iter()
+            .any(|envelope| envelope.record.height == height && envelope.record.successor == root)
+}
+
 fn persist_finalized_payload_rejection(
     s: &crate::state::NodeStateInner,
     block_id: BlockId,
@@ -4605,6 +4696,187 @@ async fn execute_finalized_turn(
         );
         return;
     }
+
+    // HISTORICAL NOTE-ROOT ADMISSION: the signed effect carries a strict FNSP
+    // envelope whose height selects one exact faithful-eight root. Re-authenticate
+    // and replay the sealed local history before accepting that pair. A canonical
+    // root with no authenticated row is not enough; wrong height, sibling root,
+    // truncation, fork, bad hybrid signature, and legacy unversioned proof bytes
+    // all refuse before ledger or executor state changes.
+    let faithful_spend_claims = match finalized_faithful_spend_claims(&signed_turn.turn.call_forest)
+    {
+        Ok(claims) => claims,
+        Err(()) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-note-spend-proof-required",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                "finalized NoteSpend lacks a canonical FNSP height carrier or faithful-eight root"
+            );
+            return;
+        }
+    };
+    if !faithful_spend_claims.is_empty() {
+        let expected = match s.store.faithful_note_root_expectation() {
+            Ok(Some(expected)) => expected,
+            Ok(None) => {
+                persist_finalized_payload_rejection(
+                    &s,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "faithful-note-root-not-authenticated",
+                );
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    "finalized NoteSpend names a root before an authenticated faithful history exists"
+                );
+                return;
+            }
+            Err(e) => {
+                persist_finalized_payload_rejection(
+                    &s,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "faithful-note-root-history-malformed",
+                );
+                error!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %e,
+                    "faithful note-root history seal is malformed; finalized NoteSpend refused"
+                );
+                return;
+            }
+        };
+        let local_pk = s.cclerk.public_key();
+        let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+        let (local_ml_dsa_pk, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(&local_seed);
+        let history = match s.store.load_faithful_note_root_history_hybrid(
+            std::slice::from_ref(&local_pk),
+            std::slice::from_ref(&local_ml_dsa_pk),
+            1,
+            expected,
+        ) {
+            Ok(history) => history,
+            Err(e) => {
+                persist_finalized_payload_rejection(
+                    &s,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "faithful-note-root-history-malformed",
+                );
+                error!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %e,
+                    "faithful note-root history failed exact hybrid replay; finalized NoteSpend refused"
+                );
+                return;
+            }
+        };
+        if let Some((height, root)) = faithful_spend_claims
+            .iter()
+            .copied()
+            .find(|(height, root)| !faithful_history_contains_pair(&history, *height, *root))
+        {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-note-root-not-authenticated",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                root_height = height,
+                root = %dregg_types::hex_encode(root.as_bytes()),
+                "finalized NoteSpend names a height/root pair absent from the authenticated faithful history"
+            );
+            return;
+        }
+    }
+
+    // SPENT-STATE ADMISSION: rebuild the executor's production nullifier set
+    // from the durable `(nullifier, public value, append-seq)` records before
+    // execution. A fresh per-turn executor must not begin from empty or a spend
+    // accepted at height N becomes spendable again at N+1. The exact successor
+    // root is computed now and later signed/welded with this carrying commit.
+    let finalized_nullifier_spends = finalized_note_spends(&signed_turn.turn.call_forest);
+    let durable_nullifier_records = match s.store.load_faithful_nullifier_records() {
+        Ok(records) => records,
+        Err(e) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-nullifier-state-malformed",
+            );
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "durable faithful nullifier accumulator is malformed; finalized turn refused before mutation"
+            );
+            return;
+        }
+    };
+    let durable_nullifier_set = match dregg_cell::nullifier_set::NullifierSet::from_records(
+        durable_nullifier_records,
+    ) {
+        Ok(set) => set,
+        Err(e) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-nullifier-state-malformed",
+            );
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "durable faithful nullifier accumulator reconstruction failed; finalized turn refused"
+            );
+            return;
+        }
+    };
+    let mut successor_nullifier_set = durable_nullifier_set.clone();
+    for spend in &finalized_nullifier_spends {
+        if successor_nullifier_set
+            .insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
+            .is_err()
+        {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "nullifier-already-spent",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                nullifier = %dregg_types::hex_encode(&spend.nullifier),
+                "finalized NoteSpend duplicates a durable or within-turn nullifier; refused before mutation"
+            );
+            return;
+        }
+    }
+    let planned_nullifier_root = successor_nullifier_set.root8().to_bytes32();
+    *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
 
     let agent = signed_turn.turn.agent;
     // Solo ingress may already have applied and logged this exact turn; retain
@@ -5032,29 +5304,6 @@ async fn execute_finalized_turn(
                 .expect("finalized executor receipt must match the prechecked agent head");
             let encoded_receipt =
                 postcard::to_stdvec(&receipt).expect("TurnReceipt postcard encoding is infallible");
-
-            // FRESHNESS: record this turn's spent note nullifiers into the node's
-            // CANONICAL persisted nullifier set, so subsequent turns' freshness
-            // proofs are bound against an up-to-date set (and double-spends are
-            // rejected). This is the authoritative set
-            // `turn_proving::prove_and_verify_finalized_turn_freshness` derives its
-            // in-circuit limb-26 spent-set opening (and OLD-commit anchor) from. Done AFTER capturing
-            // `full_turn_previously_spent` above (this turn's own freshness is
-            // proven against the pre-this-turn set).
-            {
-                let spent: Vec<dregg_turn::Effect> = signed_turn
-                    .turn
-                    .call_forest
-                    .total_effects()
-                    .into_iter()
-                    .cloned()
-                    .collect();
-                for nf in crate::turn_proving::spent_nullifiers(&spent) {
-                    if let Err(e) = s.store.store_nullifier(&dregg_cell::note::Nullifier(nf)) {
-                        warn!(error = %e, "failed to persist spent note nullifier");
-                    }
-                }
-            }
 
             // TYPED EFFECT ENRICHMENT on the CONSENSUS commit path — the same
             // `transfer`/`balance`/`granted` facts the direct-submit path records
@@ -5684,7 +5933,7 @@ async fn execute_finalized_turn(
             let mut attested = dregg_types::AttestedRoot {
                 merkle_root,
                 note_tree_root,
-                nullifier_set_root: None,
+                nullifier_set_root: Some(planned_nullifier_root),
                 height: new_height,
                 timestamp: timestamp_for_root,
                 blocklace_block_id: Some(block_id.0),
@@ -5857,6 +6106,7 @@ async fn execute_finalized_turn(
                         author_committee: std::slice::from_ref(&local_pk),
                         author_ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
                         attested_root: &stored,
+                        spent_nullifiers: &finalized_nullifier_spends,
                     },
                 ) {
                     Ok(outcome) => {
@@ -6175,6 +6425,80 @@ mod tests {
             finalized_note_commitments(&forest),
             vec![[0x11; 32], [0x21; 32], [0x31; 32]],
             "every executed NoteCreate becomes one positional faithful leaf"
+        );
+    }
+
+    #[test]
+    fn finalized_note_spend_admission_carries_height_root_and_public_nullifier_tail() {
+        fn action(tag: u8, effects: Vec<dregg_turn::Effect>) -> dregg_turn::Action {
+            dregg_turn::Action {
+                target: dregg_cell::CellId([tag; 32]),
+                method: [tag.wrapping_add(1); 32],
+                args: Vec::new(),
+                authorization: dregg_turn::Authorization::Unchecked,
+                preconditions: Default::default(),
+                effects,
+                may_delegate: dregg_turn::DelegationMode::None,
+                commitment_mode: dregg_turn::CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: Vec::new(),
+            }
+        }
+        fn spend(tag: u8, value: u64, height: u64, root: [u8; 32]) -> dregg_turn::Effect {
+            let carrier = dregg_turn::faithful_note_spend::FaithfulNoteSpendProofCarrier::new(
+                height,
+                vec![tag, tag.wrapping_add(1)],
+            )
+            .unwrap();
+            dregg_turn::Effect::NoteSpend {
+                nullifier: dregg_cell::note::Nullifier([tag; 32]),
+                note_tree_root: root,
+                value,
+                asset_type: 7,
+                spending_proof: carrier.encode(),
+                value_commitment: None,
+            }
+        }
+
+        let root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            dregg_persist::Poseidon2NoteTree::with_depth(16).faithful_root_immutable(),
+        );
+        let mut forest = dregg_turn::CallForest::new();
+        let top = forest.add_root(action(0x40, vec![spend(0x41, 700, 9, root.to_bytes())]));
+        top.add_child(action(0x50, vec![spend(0x51, 900, 12, root.to_bytes())]));
+
+        assert_eq!(
+            finalized_note_spends(&forest),
+            vec![
+                dregg_persist::FinalizedNullifierRecord {
+                    nullifier: [0x41; 32],
+                    value: 700,
+                },
+                dregg_persist::FinalizedNullifierRecord {
+                    nullifier: [0x51; 32],
+                    value: 900,
+                },
+            ]
+        );
+        assert_eq!(
+            finalized_faithful_spend_claims(&forest).unwrap(),
+            vec![(9, root), (12, root)]
+        );
+
+        let anchor =
+            dregg_persist::FaithfulNoteRootAnchorV1::new([1; 32], [2; 32], 3, 9, 0, root).unwrap();
+        let history = dregg_persist::FaithfulNoteRootHistoryV1::new(anchor);
+        assert!(faithful_history_contains_pair(&history, 9, root));
+        assert!(!faithful_history_contains_pair(&history, 10, root));
+
+        if let dregg_turn::Effect::NoteSpend { spending_proof, .. } =
+            &mut forest.roots[0].action.effects[0]
+        {
+            spending_proof.push(0);
+        }
+        assert!(
+            finalized_faithful_spend_claims(&forest).is_err(),
+            "a trailing byte must make the signed FNSP carrier noncanonical"
         );
     }
 
