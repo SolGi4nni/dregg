@@ -189,6 +189,37 @@ impl TurnExecutor {
                 token_id,
                 balance,
             } => self.apply_create_cell(ledger, path, journal, public_key, token_id, *balance),
+            Effect::CreateHybridCell {
+                public_key,
+                token_id,
+                balance,
+                ml_dsa_public_key,
+                pq_possession_signature,
+            } => self.apply_create_hybrid_cell(
+                ledger,
+                path,
+                journal,
+                public_key,
+                token_id,
+                *balance,
+                ml_dsa_public_key,
+                pq_possession_signature,
+            ),
+            Effect::RotatePqIdentity {
+                cell,
+                expected_epoch,
+                new_ml_dsa_public_key,
+                new_key_possession_signature,
+            } => self.apply_rotate_pq_identity(
+                ledger,
+                path,
+                action_target,
+                journal,
+                cell,
+                *expected_epoch,
+                new_ml_dsa_public_key,
+                new_key_possession_signature,
+            ),
             Effect::SetPermissions {
                 cell,
                 new_permissions,
@@ -975,6 +1006,136 @@ impl TurnExecutor {
             .insert_cell(new_cell)
             .map_err(|_| (TurnError::CellAlreadyExists { id }, path.to_vec()))?;
         journal.record_create_cell(id);
+        Ok(())
+    }
+
+    fn apply_create_hybrid_cell(
+        &self,
+        ledger: &mut Ledger,
+        path: &[usize],
+        journal: &mut LedgerJournal,
+        public_key: &[u8; 32],
+        token_id: &[u8; 32],
+        balance: u64,
+        ml_dsa_public_key: &[u8],
+        pq_possession_signature: &[u8],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        let id = CellId::derive_raw(public_key, token_id);
+        if balance != 0 {
+            return Err((
+                TurnError::CreateCellNonZeroBalance { cell: id, balance },
+                path.to_vec(),
+            ));
+        }
+        let possession_message =
+            crate::pq::cell_pq_creation_message(id, public_key, token_id, ml_dsa_public_key)
+                .ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "CreateHybridCell requires an exact ML-DSA-65 public key"
+                                .into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+        if !crate::pq::ml_dsa_verify(
+            ml_dsa_public_key,
+            &possession_message,
+            pq_possession_signature,
+        ) {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "CreateHybridCell new-key possession signature failed".into(),
+                },
+                path.to_vec(),
+            ));
+        }
+        let new_cell = Cell::with_hybrid_balance(*public_key, ml_dsa_public_key, *token_id, 0)
+            .map_err(|error| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: format!("CreateHybridCell identity refused: {error}"),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+        ledger
+            .insert_cell(new_cell)
+            .map_err(|_| (TurnError::CellAlreadyExists { id }, path.to_vec()))?;
+        journal.record_create_cell(id);
+        Ok(())
+    }
+
+    fn apply_rotate_pq_identity(
+        &self,
+        ledger: &mut Ledger,
+        path: &[usize],
+        action_target: &CellId,
+        journal: &mut LedgerJournal,
+        cell: &CellId,
+        expected_epoch: u64,
+        new_ml_dsa_public_key: &[u8],
+        new_key_possession_signature: &[u8],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        if cell != action_target {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "RotatePqIdentity cell must match the action target".into(),
+                },
+                path.to_vec(),
+            ));
+        }
+        let target = ledger
+            .get(cell)
+            .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
+        if !target.is_live() {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "RotatePqIdentity target must be live".into(),
+                },
+                path.to_vec(),
+            ));
+        }
+        let possession_message = crate::pq::cell_pq_rotation_message(
+            *cell,
+            target.public_key(),
+            expected_epoch,
+            new_ml_dsa_public_key,
+        )
+        .ok_or_else(|| {
+            (
+                TurnError::InvalidEffect {
+                    reason: "RotatePqIdentity epoch overflow or malformed ML-DSA-65 key".into(),
+                },
+                path.to_vec(),
+            )
+        })?;
+        if !crate::pq::ml_dsa_verify(
+            new_ml_dsa_public_key,
+            &possession_message,
+            new_key_possession_signature,
+        ) {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "RotatePqIdentity new-key possession signature failed".into(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        let old_identity = target.pq_identity().cloned();
+        let target = ledger.get_mut(cell).expect("checked live target");
+        target
+            .rotate_pq_identity(expected_epoch, new_ml_dsa_public_key)
+            .map_err(|error| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: format!("RotatePqIdentity refused: {error}"),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+        journal.record_set_pq_identity(*cell, old_identity);
         Ok(())
     }
 

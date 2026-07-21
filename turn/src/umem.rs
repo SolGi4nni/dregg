@@ -1538,6 +1538,12 @@ enum Touch {
 
 fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
     match e {
+        // PQ identity is committed through the cell authority residue, outside
+        // the current universal-memory key planes.  The Effect-VM bridge
+        // refuses to claim a proved RotatePqIdentity row until that authority
+        // plane exists; the runtime journal still provides atomic rollback and
+        // durable touched-cell capture.
+        JournalEntry::SetPqIdentity { .. } => Vec::new(),
         JournalEntry::SetField {
             cell,
             index,

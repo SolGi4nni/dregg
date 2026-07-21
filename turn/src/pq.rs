@@ -46,6 +46,50 @@ pub const ML_DSA_PK_LEN: usize = dregg_pq::ML_DSA_PK_LEN;
 /// Serialized length of an ML-DSA-65 signature (FIPS 204).
 pub const ML_DSA_SIG_LEN: usize = dregg_pq::ML_DSA_SIG_LEN;
 
+/// Possession transcript for a PQ identity installed at cell birth.
+///
+/// The creator's current hybrid authorization binds the whole effect; this
+/// second signature proves the newly committed key is not a typo or a key for
+/// which nobody holds the secret half.
+pub fn cell_pq_creation_message(
+    cell: dregg_cell::CellId,
+    ed25519: &[u8; 32],
+    token_id: &[u8; 32],
+    ml_dsa_public_key: &[u8],
+) -> Option<[u8; 32]> {
+    if ml_dsa_public_key.len() != ML_DSA_PK_LEN {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-cell-pq-creation-v1");
+    hasher.update(cell.as_bytes());
+    hasher.update(ed25519);
+    hasher.update(token_id);
+    hasher.update(&(ml_dsa_public_key.len() as u32).to_le_bytes());
+    hasher.update(ml_dsa_public_key);
+    Some(*hasher.finalize().as_bytes())
+}
+
+/// Possession transcript for one monotone cell-owned PQ key rotation.
+pub fn cell_pq_rotation_message(
+    cell: dregg_cell::CellId,
+    ed25519: &[u8; 32],
+    expected_epoch: u64,
+    new_ml_dsa_public_key: &[u8],
+) -> Option<[u8; 32]> {
+    let next_epoch = expected_epoch.checked_add(1)?;
+    if new_ml_dsa_public_key.len() != ML_DSA_PK_LEN {
+        return None;
+    }
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-cell-pq-rotation-v1");
+    hasher.update(cell.as_bytes());
+    hasher.update(ed25519);
+    hasher.update(&expected_epoch.to_le_bytes());
+    hasher.update(&next_epoch.to_le_bytes());
+    hasher.update(&(new_ml_dsa_public_key.len() as u32).to_le_bytes());
+    hasher.update(new_ml_dsa_public_key);
+    Some(*hasher.finalize().as_bytes())
+}
+
 /// An ML-DSA identity enrolled by the host *before* an authorization is
 /// checked.
 ///

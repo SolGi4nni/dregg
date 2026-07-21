@@ -93,7 +93,12 @@ use crate::state::{CellState, FieldVisibility};
 /// is a uniform no-op for them, it just re-domain-separates so no stale
 /// post-revoke commitment can collide cross-version.
 ///
-/// NB — this `v9` is the BLAKE3 *context-string* version (an axis that has
+/// `v9 → v10` (hybrid authorization): absorb the cell-owned ML-DSA key
+/// commitment and its dedicated key epoch.  This is the durable authorization
+/// anchor checked against the raw key carried by a signed turn; it must move the
+/// ledger root independently of capability-snapshot `delegation_epoch`.
+///
+/// NB — this `v10` is the BLAKE3 *context-string* version (an axis that has
 /// counted v1→v9 over the commitment's history); it is ORTHOGONAL to the
 /// rotated-Poseidon2 commitment's `V9_*` constants below (which name the
 /// 24-register rotation "generation 9", not this string). The rotated
@@ -107,7 +112,7 @@ use crate::state::{CellState, FieldVisibility};
 /// would not meaningfully reflect) a tombstone bump. The cryptographic
 /// invalidation of stale post-revoke roots is enforced by the changed cap-root
 /// VALUE flowing into this commitment's PI face, not by a VK-string change.
-pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v9";
+pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v10";
 
 /// Domain-separation context for the canonical capability-set root.
 ///
@@ -208,6 +213,16 @@ pub fn compute_canonical_state_commitment(cell: &Cell) -> [u8; 32] {
     hasher.update(cell.id.as_bytes());
     hasher.update(&cell.public_key);
     hasher.update(&cell.token_id);
+    match &cell.pq_identity {
+        Some(identity) => {
+            hasher.update(&[1]);
+            hasher.update(&identity.key_epoch.to_le_bytes());
+            hasher.update(&identity.ml_dsa_key_commitment);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
 
     // ---- Mode ----
     let mode_byte: u8 = match cell.mode {
@@ -943,6 +958,16 @@ pub fn authority_residue_bytes(cell: &Cell) -> Vec<u8> {
     bytes.extend_from_slice(cell.id.as_bytes());
     bytes.extend_from_slice(&cell.public_key);
     bytes.extend_from_slice(&cell.token_id);
+    if let Some(identity) = &cell.pq_identity {
+        // Preserve the established residue of an unaudited/unbound fixture,
+        // while giving every bound identity a domain-separated extension.
+        // Thus existing non-PQ rotated descriptors remain byte-stable, but a
+        // bound key/epoch cannot be omitted or substituted without moving all
+        // eight authority-digest lanes.
+        bytes.extend_from_slice(b"dregg-cell:pq-identity-v1");
+        bytes.extend_from_slice(&identity.key_epoch.to_le_bytes());
+        bytes.extend_from_slice(&identity.ml_dsa_key_commitment);
+    }
 
     // ---- Mode ----
     bytes.push(match cell.mode {
@@ -1416,6 +1441,41 @@ mod tests {
         let mut t = [0u8; 32];
         t[1] = b;
         t
+    }
+
+    #[test]
+    fn pq_identity_and_rotation_move_canonical_and_all_authority_lanes() {
+        let mut cell = Cell::new(test_key(7), test_token(11));
+        let unbound_commitment = compute_canonical_state_commitment(&cell);
+        let unbound_authority = compute_authority_digest_8(&cell);
+
+        let first_key = vec![0x31; crate::cell::ML_DSA_65_PUBLIC_KEY_LEN];
+        cell.install_pq_identity(&first_key)
+            .expect("install identity");
+        let epoch0_commitment = compute_canonical_state_commitment(&cell);
+        let epoch0_authority = compute_authority_digest_8(&cell);
+        assert_ne!(unbound_commitment, epoch0_commitment);
+        assert!(
+            unbound_authority
+                .iter()
+                .zip(epoch0_authority.iter())
+                .all(|(before, after)| before != after),
+            "installing a PQ identity must move every faithful authority lane"
+        );
+
+        let second_key = vec![0x72; crate::cell::ML_DSA_65_PUBLIC_KEY_LEN];
+        cell.rotate_pq_identity(0, &second_key)
+            .expect("rotate identity");
+        let epoch1_commitment = compute_canonical_state_commitment(&cell);
+        let epoch1_authority = compute_authority_digest_8(&cell);
+        assert_ne!(epoch0_commitment, epoch1_commitment);
+        assert!(
+            epoch0_authority
+                .iter()
+                .zip(epoch1_authority.iter())
+                .all(|(before, after)| before != after),
+            "rotating key+epoch must move every faithful authority lane"
+        );
     }
 
     /// Adversarial test (audit P0-2 remediation): assert that the three

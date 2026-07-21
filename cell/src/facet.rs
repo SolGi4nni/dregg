@@ -107,6 +107,11 @@ pub const EFFECT_REACTIVE_OPS: EffectMask = 1 << 25;
 /// while destroying your own value is permissionless-by-default.
 pub const EFFECT_MINT: EffectMask = 1 << 26;
 
+/// Rotate the cell-owned ML-DSA authorization anchor.  This is distinct from
+/// program/VK rotation: it changes who can produce a hybrid signature, not
+/// which proof verifier or transition program is installed.
+pub const EFFECT_ROTATE_PQ_IDENTITY: EffectMask = 1 << 27;
+
 /// All effect kinds permitted (equivalent to no restriction).
 pub const EFFECT_ALL: EffectMask = 0xFFFF_FFFF;
 
@@ -122,7 +127,8 @@ pub const FACET_TRANSFER_ONLY: EffectMask = EFFECT_TRANSFER;
 pub const FACET_STATE_WRITER: EffectMask = EFFECT_SET_FIELD | EFFECT_EMIT_EVENT;
 
 /// Admin facet: allows permission and key management.
-pub const FACET_ADMIN: EffectMask = EFFECT_SET_PERMISSIONS | EFFECT_SET_VERIFICATION_KEY;
+pub const FACET_ADMIN: EffectMask =
+    EFFECT_SET_PERMISSIONS | EFFECT_SET_VERIFICATION_KEY | EFFECT_ROTATE_PQ_IDENTITY;
 
 /// Full delegation facet: grant/revoke capabilities + introduce.
 pub const FACET_DELEGATOR: EffectMask =

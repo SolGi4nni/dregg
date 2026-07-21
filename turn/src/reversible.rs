@@ -386,6 +386,12 @@ impl Effect {
             Effect::CreateCell { .. } => {
                 Inversion::Committed(CommittedReason::GenerativeOrProofCarrying)
             }
+            Effect::CreateHybridCell { .. } => {
+                Inversion::Committed(CommittedReason::GenerativeOrProofCarrying)
+            }
+            Effect::RotatePqIdentity { .. } => {
+                Inversion::Committed(CommittedReason::AuthorityRevoked)
+            }
             Effect::CreateCellFromFactory { .. } => {
                 Inversion::Committed(CommittedReason::GenerativeOrProofCarrying)
             }

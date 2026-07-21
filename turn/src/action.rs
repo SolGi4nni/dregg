@@ -1578,6 +1578,28 @@ pub enum Effect {
         program_vk_hash: [u8; 32],
         proof_commitment: [u8; 32],
     },
+    /// Create a cell with a canonical epoch-zero ML-DSA identity anchor.
+    /// APPENDED after `Custom`: postcard enum discriminants are positional, so
+    /// new protocol variants must never be inserted among existing variants.
+    CreateHybridCell {
+        public_key: [u8; 32],
+        token_id: [u8; 32],
+        balance: u64,
+        ml_dsa_public_key: Vec<u8>,
+        /// Signature by the new ML-DSA key over
+        /// [`crate::pq::cell_pq_creation_message`].
+        pq_possession_signature: Vec<u8>,
+    },
+    /// Rotate the target's committed ML-DSA identity exactly one epoch.
+    /// The action authorizes under the old hybrid key; the new key separately
+    /// proves possession over [`crate::pq::cell_pq_rotation_message`].
+    /// APPENDED after `CreateHybridCell` for the same wire-compatibility law.
+    RotatePqIdentity {
+        cell: CellId,
+        expected_epoch: u64,
+        new_ml_dsa_public_key: Vec<u8>,
+        new_key_possession_signature: Vec<u8>,
+    },
 }
 
 /// Why a [`Effect::Refusal`] was issued. Refusals are *evidence of
@@ -1869,6 +1891,7 @@ impl Effect {
 
             // -- Monotonic: scalar counters / refcounts going up. --
             Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
+            Effect::RotatePqIdentity { .. } => LinearityClass::Monotonic,
             // (The retired CapTP verbs — ExportSturdyRef / EnlivenRef /
             // ValidateHandoff — were monotonic counter bumps; they no longer
             // exist as effects. Caps-in-slots replaced them.)
@@ -1914,6 +1937,7 @@ impl Effect {
             // lives in the bridge protocol, not in this federation).
             Effect::BridgeMint { .. } => LinearityClass::Generative,
             Effect::CreateCell { .. } => LinearityClass::Generative,
+            Effect::CreateHybridCell { .. } => LinearityClass::Generative,
             Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
             Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
 
@@ -2019,6 +2043,36 @@ impl Effect {
                 hasher.update(public_key);
                 hasher.update(token_id);
                 hasher.update(&balance.to_le_bytes());
+            }
+            Effect::CreateHybridCell {
+                public_key,
+                token_id,
+                balance,
+                ml_dsa_public_key,
+                pq_possession_signature,
+            } => {
+                hasher.update(&[65u8]);
+                hasher.update(public_key);
+                hasher.update(token_id);
+                hasher.update(&balance.to_le_bytes());
+                hasher.update(&(ml_dsa_public_key.len() as u64).to_le_bytes());
+                hasher.update(ml_dsa_public_key);
+                hasher.update(&(pq_possession_signature.len() as u64).to_le_bytes());
+                hasher.update(pq_possession_signature);
+            }
+            Effect::RotatePqIdentity {
+                cell,
+                expected_epoch,
+                new_ml_dsa_public_key,
+                new_key_possession_signature,
+            } => {
+                hasher.update(&[66u8]);
+                hasher.update(cell.as_bytes());
+                hasher.update(&expected_epoch.to_le_bytes());
+                hasher.update(&(new_ml_dsa_public_key.len() as u64).to_le_bytes());
+                hasher.update(new_ml_dsa_public_key);
+                hasher.update(&(new_key_possession_signature.len() as u64).to_le_bytes());
+                hasher.update(new_key_possession_signature);
             }
             Effect::SetPermissions {
                 cell,
@@ -2500,6 +2554,16 @@ impl Effect {
             Effect::EmitEvent { event, .. } => 32 + 32 + event.data.len() * 32,
             Effect::IncrementNonce { .. } => 32,
             Effect::CreateCell { .. } => 32 + 32 + 8,
+            Effect::CreateHybridCell {
+                ml_dsa_public_key,
+                pq_possession_signature,
+                ..
+            } => 32 + 32 + 8 + ml_dsa_public_key.len() + pq_possession_signature.len(),
+            Effect::RotatePqIdentity {
+                new_ml_dsa_public_key,
+                new_key_possession_signature,
+                ..
+            } => 32 + 8 + new_ml_dsa_public_key.len() + new_key_possession_signature.len(),
             Effect::SetPermissions { .. } => 32 + 8 * 1, // cell + 8 permission fields
             Effect::SetVerificationKey { new_vk, .. } => {
                 32 + new_vk.as_ref().map_or(1, |vk| 1 + vk.data.len())
@@ -2509,7 +2573,8 @@ impl Effect {
                 value_commitment,
                 ..
             } => {
-                32 + 32 + 8 + 8 + spending_proof.len() + value_commitment.map_or(0, |_| 32) // nullifier + root + value + asset_type + proof + opt commitment
+                32 + 32 + 8 + 8 + spending_proof.len() + value_commitment.map_or(0, |_| 32)
+                // nullifier + root + value + asset_type + proof + opt commitment
             }
             Effect::NoteCreate {
                 encrypted_note,
@@ -2643,6 +2708,7 @@ impl Effect {
             Effect::SetPermissions { .. }
                 | Effect::SetVerificationKey { .. }
                 | Effect::SetProgram { .. }
+                | Effect::RotatePqIdentity { .. }
         )
     }
 
@@ -2660,6 +2726,8 @@ impl Effect {
             Effect::EmitEvent { .. } => dregg_cell::EFFECT_EMIT_EVENT,
             Effect::IncrementNonce { .. } => dregg_cell::EFFECT_INCREMENT_NONCE,
             Effect::CreateCell { .. } => dregg_cell::EFFECT_CREATE_CELL,
+            Effect::CreateHybridCell { .. } => dregg_cell::EFFECT_CREATE_CELL,
+            Effect::RotatePqIdentity { .. } => dregg_cell::EFFECT_ROTATE_PQ_IDENTITY,
             Effect::SetPermissions { .. } => dregg_cell::EFFECT_SET_PERMISSIONS,
             Effect::SetVerificationKey { .. } => dregg_cell::EFFECT_SET_VERIFICATION_KEY,
             // A program install (rewriting the cell's caveat program) is its OWN

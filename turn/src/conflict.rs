@@ -224,6 +224,17 @@ fn extract_tree_access(
                 let id = CellId::derive_raw(public_key, token_id);
                 write_set.push(id);
             }
+            Effect::CreateHybridCell {
+                public_key,
+                token_id,
+                ..
+            } => {
+                let id = CellId::derive_raw(public_key, token_id);
+                write_set.push(id);
+            }
+            Effect::RotatePqIdentity { cell, .. } => {
+                write_set.push(*cell);
+            }
             Effect::SetPermissions { cell, .. } => {
                 write_set.push(*cell);
             }

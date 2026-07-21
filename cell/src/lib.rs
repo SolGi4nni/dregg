@@ -90,7 +90,10 @@ pub use blueprint::{
 pub use capability::{
     AttenuatedCap, CapabilityCaveat, CapabilityRef, CapabilitySet, is_attenuation,
 };
-pub use cell::{Cell, CellConfig, CellMode, VerificationKey, VerificationKeyIntegrityError};
+pub use cell::{
+    Cell, CellConfig, CellMode, CellPqIdentity, CellPqIdentityError, ML_DSA_65_PUBLIC_KEY_LEN,
+    VerificationKey, VerificationKeyIntegrityError, ml_dsa_public_key_commitment,
+};
 pub use commitment::{
     CANONICAL_CAP_ROOT_CONTEXT, CANONICAL_COMMITMENT_CONTEXT, authority_residue_bytes,
     canonical_to_babybear_pi, cap_ref_to_leaf, capability_ref_leaf_commitment,
@@ -125,11 +128,12 @@ pub use facet::{
     EFFECT_CREATE_CELL, EFFECT_DELEGATION_OPS, EFFECT_EMIT_EVENT, EFFECT_ESCROW_OPS,
     EFFECT_GRANT_CAPABILITY, EFFECT_INCREMENT_NONCE, EFFECT_INTRODUCE, EFFECT_LIFECYCLE_OPS,
     EFFECT_MINT, EFFECT_NOTE_CREATE, EFFECT_NOTE_SPEND, EFFECT_OBLIGATION_OPS, EFFECT_QUEUE_OPS,
-    EFFECT_REACTIVE_OPS, EFFECT_REFUSAL, EFFECT_REVOKE_CAPABILITY, EFFECT_SEAL_OPS,
-    EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS, EFFECT_SET_PROGRAM, EFFECT_SET_VERIFICATION_KEY,
-    EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectContext, EffectMask, ExtendedFacet, FACET_ADMIN,
-    FACET_DELEGATOR, FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY, FacetBuilder,
-    FacetConstraint, FacetViolation, is_effect_permitted, is_facet_attenuation,
+    EFFECT_REACTIVE_OPS, EFFECT_REFUSAL, EFFECT_REVOKE_CAPABILITY, EFFECT_ROTATE_PQ_IDENTITY,
+    EFFECT_SEAL_OPS, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS, EFFECT_SET_PROGRAM,
+    EFFECT_SET_VERIFICATION_KEY, EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectContext, EffectMask,
+    ExtendedFacet, FACET_ADMIN, FACET_DELEGATOR, FACET_READ_ONLY, FACET_STATE_WRITER,
+    FACET_TRANSFER_ONLY, FacetBuilder, FacetConstraint, FacetViolation, is_effect_permitted,
+    is_facet_attenuation,
 };
 pub use factory::{
     CapGrant, CapTarget, CapTemplate, ChildVkStrategy, FactoryCreationParams, FactoryDescriptor,

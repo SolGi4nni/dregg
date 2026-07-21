@@ -121,6 +121,25 @@ fn effect_body(effect: &Effect) -> String {
             hx32(public_key),
             hx32(token_id)
         ),
+        Effect::CreateHybridCell {
+            public_key,
+            token_id,
+            balance,
+            ..
+        } => format!(
+            "create a new cell (owner 0x{}, token 0x{}) with balance {balance} and a committed ML-DSA identity",
+            hx32(public_key),
+            hx32(token_id)
+        ),
+        Effect::RotatePqIdentity {
+            cell,
+            expected_epoch,
+            ..
+        } => format!(
+            "rotate the committed ML-DSA identity of cell {} from key epoch {expected_epoch} to key epoch {}",
+            hx32(cell.as_bytes()),
+            expected_epoch.saturating_add(1)
+        ),
         Effect::SetPermissions { cell, .. } => format!(
             "set the permissions of cell {} (applied last in the action)",
             hx32(cell.as_bytes())

@@ -11,6 +11,14 @@ impl TurnExecutor {
         let extra = match effect {
             Effect::Transfer { .. } => self.costs.transfer,
             Effect::CreateCell { .. } => self.costs.create_cell,
+            Effect::CreateHybridCell { .. } => self
+                .costs
+                .create_cell
+                .saturating_add(self.costs.proof_verify),
+            Effect::RotatePqIdentity { .. } => self
+                .costs
+                .effect_base
+                .saturating_add(self.costs.proof_verify),
             Effect::SetField { .. } => 0,
             Effect::GrantCapability { .. } => self.costs.effect_base,
             Effect::RevokeCapability { .. } => 0,
@@ -599,6 +607,17 @@ impl TurnExecutor {
                     // currently; tracked via the cell's state. (The in-circuit
                     // witness — a descriptor rung binding the program write — is
                     // the VK-affecting follow-up.)
+                }
+                JournalEntry::SetPqIdentity { cell, .. } => {
+                    // The durable commit log snapshots every id in
+                    // `delta.updated` as a complete post-state Cell.  Keep an
+                    // otherwise-empty delta entry so a pure PQ-key rotation is
+                    // not omitted from the crash-recovery overlay.
+                    if !created_cells.contains(cell) {
+                        updated_cells
+                            .entry(*cell)
+                            .or_insert_with(CellStateDelta::empty);
+                    }
                 }
                 JournalEntry::SetDelegation { .. }
                 | JournalEntry::SetDelegationEpoch { .. }

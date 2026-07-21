@@ -993,13 +993,14 @@ impl TurnExecutor {
     ///
     /// HYBRID, `classical ∧ pq`, fail-CLOSED:
     /// - The ed25519 half MUST verify against the target cell's identity.
-    /// - In required/native-PQ mode, the target cell MUST have an independent
-    ///   host enrollment at its live authorization epoch, the carried
-    ///   `ml_dsa_pk` MUST equal that enrolled key, and verification uses the
-    ///   enrolled key. A self-carried key is never its own trust anchor.
-    /// - In explicit unaudited classical test/library mode, a present key is
-    ///   still checked against an enrollment when one exists; only an
-    ///   as-yet-unenrolled target uses the legacy self-carried-key behavior.
+    /// - In required/native-PQ mode, the target cell MUST carry a canonical
+    ///   committed PQ identity anchor. The carried `ml_dsa_pk` is hashed and
+    ///   compared to that independently persisted anchor before verification.
+    ///   A self-carried key is never its own trust anchor.
+    /// - A legacy pre-v10 unbound cell may use an independently configured
+    ///   local/committee registry during migration; it never learns from wire
+    ///   bytes. Only explicit unaudited mode permits an unanchored carried key.
+    ///   A bound cell always uses its own committed anchor.
     /// - If the ML-DSA half is ABSENT (`ml_dsa` empty): accepted on the ed25519
     ///   half alone only when `require_pq` is explicitly off; rejected when it
     ///   is on. Native node admission keeps it on.
@@ -1052,38 +1053,47 @@ impl TurnExecutor {
                 )
             })?;
 
-        // Post-quantum half — STAGED. The key in the action is UNTRUSTED wire
-        // material. Native/required PQ gets its authority from the executor's
-        // host-fed enrollment registry, keyed by the target cell.
+        // Post-quantum half. The key in the action is UNTRUSTED wire material.
+        // Native/required PQ gets its authority from the canonical identity
+        // commitment in the live target Cell, not from process-local state.
         let pq_present = !ml_dsa.is_empty();
         if pq_present {
-            let enrolled = self.enrolled_pq_identity(&target_cell.id());
-            let verification_key: &[u8] = if let Some(enrolled) = enrolled.as_ref() {
-                if enrolled.target_ed25519 != *target_cell.public_key() {
+            let legacy_enrolled = if target_cell.pq_identity().is_none() {
+                self.enrolled_pq_identity(&target_cell.id())
+            } else {
+                None
+            };
+            let verification_key: &[u8] = if let Some(identity) = target_cell.pq_identity() {
+                let carried_commitment = dregg_cell::ml_dsa_public_key_commitment(ml_dsa_pk)
+                    .map_err(|_| {
+                        (
+                            TurnError::InvalidAuthorization {
+                                reason: "hybrid: carried ML-DSA key has invalid length".to_string(),
+                            },
+                            path.to_vec(),
+                        )
+                    })?;
+                if carried_commitment != identity.ml_dsa_key_commitment {
                     return Err((
                         TurnError::InvalidAuthorization {
-                            reason: "hybrid: enrolled PQ identity does not bind the live target-cell Ed25519 identity"
+                            reason: "hybrid: carried ML-DSA key does not match the target cell's committed identity"
                                 .to_string(),
                         },
                         path.to_vec(),
                     ));
                 }
-                if enrolled.epoch != target_cell.state.delegation_epoch() {
+                ml_dsa_pk
+            } else if let Some(enrolled) = legacy_enrolled.as_ref() {
+                // Migration bridge for pre-v10 cells whose key came from an
+                // independent local/committee configuration source. This is
+                // never TOFU: executor setup does not inspect the carried key,
+                // and a Cell-owned commitment always takes precedence.
+                if enrolled.target_ed25519 != *target_cell.public_key()
+                    || enrolled.public_key.as_slice() != ml_dsa_pk
+                {
                     return Err((
                         TurnError::InvalidAuthorization {
-                            reason: format!(
-                                "hybrid: enrolled PQ identity epoch {} is stale for target-cell epoch {}",
-                                enrolled.epoch,
-                                target_cell.state.delegation_epoch()
-                            ),
-                        },
-                        path.to_vec(),
-                    ));
-                }
-                if enrolled.public_key.as_slice() != ml_dsa_pk {
-                    return Err((
-                        TurnError::InvalidAuthorization {
-                            reason: "hybrid: carried ML-DSA key does not match the independently enrolled target-cell identity"
+                            reason: "hybrid: carried ML-DSA key does not match the legacy enrolled identity"
                                 .to_string(),
                         },
                         path.to_vec(),
@@ -1093,16 +1103,12 @@ impl TurnExecutor {
             } else if self.require_pq() {
                 return Err((
                     TurnError::InvalidAuthorization {
-                        reason: "hybrid: required post-quantum target-cell identity is not independently enrolled"
+                        reason: "hybrid: required post-quantum target-cell identity is not committed in the live cell"
                             .to_string(),
                     },
                     path.to_vec(),
                 ));
             } else {
-                // Explicit unaudited classical test/library compatibility:
-                // before a target is enrolled, preserve the old behavior, but
-                // still fail closed on an invalid present signature. Required
-                // native mode never reaches this branch.
                 ml_dsa_pk
             };
 
@@ -2398,7 +2404,7 @@ impl TurnExecutor {
                         has_set_permissions = true;
                     }
                 }
-                Effect::SetVerificationKey { .. } => {
+                Effect::SetVerificationKey { .. } | Effect::RotatePqIdentity { .. } => {
                     if !has_program_authority {
                         result.push((
                             dregg_cell::permissions::Action::SetVerificationKey,
@@ -2474,6 +2480,7 @@ impl TurnExecutor {
                 Effect::EmitEvent { .. }
                 | Effect::ReceiptArchive { .. }
                 | Effect::CreateCell { .. }
+                | Effect::CreateHybridCell { .. }
                 | Effect::CreateCellFromFactory { .. }
                 | Effect::SpawnWithDelegation { .. }
                 | Effect::NoteSpend { .. }
@@ -3277,7 +3284,7 @@ mod hybrid_pq_tests {
     //! perimeter (`crate::pq`). Pins:
     //!   (a) a hybrid-signed action verifies (BOTH halves) through
     //!       `verify_authorization`, in explicit classical test mode and
-    //!       enrolled/native mode;
+    //!       cell-anchored/native mode;
     //!   (b) a VALID ed25519 half + a FORGED ML-DSA half is REJECTED (present-
     //!       but-bad PQ → fail-closed) EVEN with require_pq=false;
     //!   (c) require_pq=true rejects a classical-only `Signature`; the bare
@@ -3285,8 +3292,8 @@ mod hybrid_pq_tests {
     //!       require_pq=true rejects a hybrid whose PQ half is absent;
     //!   (d) a forged Ed25519 half paired with an attacker-owned VALID ML-DSA
     //!       signature is rejected because its key is not the independently
-    //!       enrolled target-cell key;
-    //!   (e) enrollment is identity- and epoch-bound and updates monotonically.
+    //!       committed target-cell key;
+    //!   (e) delegation epochs are independent of the dedicated PQ-key epoch.
     use super::*;
     use crate::action::{Authorization, CommitmentMode, DelegationMode, Effect};
     use crate::executor::{ComputronCosts, TurnExecutor};
@@ -3303,25 +3310,17 @@ mod hybrid_pq_tests {
         e
     }
 
-    fn enrolled_exec(require_pq: bool, cell: &Cell, seed: [u8; 32]) -> TurnExecutor {
-        let e = exec(require_pq);
-        let pq = crate::pq::MlDsaTurnKey::from_ed25519_seed(&seed);
-        e.enroll_pq_identity(
-            cell.id(),
-            *cell.public_key(),
-            cell.state.delegation_epoch(),
-            pq.public_bytes(),
-        )
-        .expect("trusted test enrollment");
-        e
-    }
-
     /// A cell whose `set_state` requires a Signature; its owner key is the
     /// ed25519 seed `[seed; 32]` (so the ML-DSA half derives from the same seed).
     fn owner_cell(seed: u8) -> (Cell, [u8; 32]) {
         let sk = SigningKey::from_bytes(&[seed; 32]);
         let pk = sk.verifying_key().to_bytes();
-        (Cell::new(pk, [0u8; 32]), [seed; 32])
+        let pq = crate::pq::MlDsaTurnKey::from_ed25519_seed(&[seed; 32]);
+        (
+            Cell::with_hybrid_balance(pk, &pq.public_bytes(), [0u8; 32], 0)
+                .expect("valid canonical ML-DSA key"),
+            [seed; 32],
+        )
     }
 
     fn set_field_action(target: CellId, authorization: Authorization) -> Action {
@@ -3410,7 +3409,7 @@ mod hybrid_pq_tests {
         );
         // And when the PQ half is mandatory it still verifies.
         assert!(
-            run(&enrolled_exec(true, &cell, seed), &cell, auth).is_ok(),
+            run(&exec(true), &cell, auth).is_ok(),
             "hybrid (require_pq=on) must verify"
         );
     }
@@ -3449,7 +3448,7 @@ mod hybrid_pq_tests {
     fn require_pq_rejects_absent_pq_half() {
         let (cell, seed) = owner_cell(11);
         let auth = hybrid_auth(seed, cell.id(), false, /*omit_pq=*/ true);
-        let res = run(&enrolled_exec(true, &cell, seed), &cell, auth);
+        let res = run(&exec(true), &cell, auth);
         assert!(
             matches!(res, Err(TurnError::InvalidAuthorization { .. })),
             "a hybrid with no PQ half MUST be rejected when require_pq=on, got {res:?}"
@@ -3471,24 +3470,22 @@ mod hybrid_pq_tests {
             /*forge_pq=*/ false,
             /*omit_pq=*/ false,
         );
-        let res = run(
-            &enrolled_exec(true, &cell, victim_seed),
-            &cell,
-            attacker_auth,
-        );
+        let res = run(&exec(true), &cell, attacker_auth);
         assert!(
             matches!(
                 &res,
                 Err(TurnError::InvalidAuthorization { reason })
-                    if reason.contains("does not match the independently enrolled")
+                    if reason.contains("does not match the target cell's committed identity")
             ),
             "valid attacker ML-DSA under a forged victim Ed25519 half must not become the target identity: {res:?}"
         );
     }
 
     #[test]
-    fn native_pq_rejects_even_honest_pair_without_independent_enrollment() {
-        let (cell, seed) = owner_cell(11);
+    fn native_pq_rejects_even_honest_pair_without_committed_identity() {
+        let seed = [11u8; 32];
+        let sk = SigningKey::from_bytes(&seed);
+        let cell = Cell::new(sk.verifying_key().to_bytes(), [0u8; 32]);
         let res = run(
             &exec(true),
             &cell,
@@ -3498,25 +3495,26 @@ mod hybrid_pq_tests {
             matches!(
                 &res,
                 Err(TurnError::InvalidAuthorization { reason })
-                    if reason.contains("not independently enrolled")
+                    if reason.contains("not committed in the live cell")
             ),
             "required PQ must fail closed when the only key is self-carried: {res:?}"
         );
     }
 
     #[test]
-    fn enrollment_is_bound_to_live_target_epoch() {
+    fn delegation_epoch_is_independent_of_pq_key_epoch() {
         let (mut cell, seed) = owner_cell(11);
-        let e = enrolled_exec(true, &cell, seed);
         cell.state.set_delegation_epoch(1);
-        let res = run(&e, &cell, hybrid_auth(seed, cell.id(), false, false));
-        assert!(
-            matches!(
-                &res,
-                Err(TurnError::InvalidAuthorization { reason }) if reason.contains("is stale")
-            ),
-            "a target-cell epoch change must invalidate the prior enrollment: {res:?}"
+        let res = run(
+            &exec(true),
+            &cell,
+            hybrid_auth(seed, cell.id(), false, false),
         );
+        assert!(
+            res.is_ok(),
+            "delegation revocation must not silently rotate the independent PQ identity: {res:?}"
+        );
+        assert_eq!(cell.pq_identity().expect("bound identity").key_epoch, 0);
     }
 
     #[test]
@@ -3567,7 +3565,7 @@ mod hybrid_pq_tests {
         // The cell's owner seed IS [11;32]; a hybrid built from it verifies.
         assert!(
             run(
-                &enrolled_exec(true, &cell, seed),
+                &exec(true),
                 &cell,
                 hybrid_auth(seed, cell.id(), false, false)
             )

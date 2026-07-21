@@ -93,6 +93,8 @@ effect_roster!(
     Mint,
     ShieldedTransfer,
     Custom,
+    CreateHybridCell,
+    RotatePqIdentity,
 );
 
 /// The Lean registry source — the pin target (see module header, link (2)).

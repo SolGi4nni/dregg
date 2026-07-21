@@ -8,8 +8,8 @@
 use std::sync::Mutex;
 
 use dregg_cell::{
-    CapabilityRef, Cell, CellId, CellProgram, CommitmentSet, DelegatedRef, Ledger, NoteCommitment,
-    Nullifier, Permissions, RevokedSet, VerificationKey,
+    CapabilityRef, Cell, CellId, CellPqIdentity, CellProgram, CommitmentSet, DelegatedRef, Ledger,
+    NoteCommitment, Nullifier, Permissions, RevokedSet, VerificationKey,
     lifecycle::CellLifecycle,
     nullifier_set::NullifierSet,
     permissions::AuthRequired,
@@ -71,6 +71,11 @@ pub(crate) enum JournalEntry {
     SetProgram {
         cell: CellId,
         old_program: CellProgram,
+    },
+    /// A cell's canonical PQ authorization anchor was rotated.
+    SetPqIdentity {
+        cell: CellId,
+        old_identity: Option<CellPqIdentity>,
     },
     /// A cell's delegation was changed. Records the old delegation.
     SetDelegation {
@@ -209,6 +214,7 @@ impl LedgerJournal {
                 | JournalEntry::SetPermissions { cell, .. }
                 | JournalEntry::SetVerificationKey { cell, .. }
                 | JournalEntry::SetProgram { cell, .. }
+                | JournalEntry::SetPqIdentity { cell, .. }
                 | JournalEntry::SetDelegation { cell, .. }
                 | JournalEntry::SetDelegationEpoch { cell, .. }
                 | JournalEntry::SetCommittedHeight { cell, .. }
@@ -326,6 +332,13 @@ impl LedgerJournal {
     pub fn record_set_program(&mut self, cell: CellId, old_program: CellProgram) {
         self.entries
             .push(JournalEntry::SetProgram { cell, old_program });
+    }
+
+    /// Record a PQ identity rotation so a later effect failure restores the
+    /// exact pre-turn key commitment and epoch.
+    pub fn record_set_pq_identity(&mut self, cell: CellId, old_identity: Option<CellPqIdentity>) {
+        self.entries
+            .push(JournalEntry::SetPqIdentity { cell, old_identity });
     }
 
     /// Record a delegation change.
@@ -511,6 +524,11 @@ impl LedgerJournal {
                 JournalEntry::SetProgram { cell, old_program } => {
                     if let Some(c) = ledger.get_mut(&cell) {
                         c.program = old_program;
+                    }
+                }
+                JournalEntry::SetPqIdentity { cell, old_identity } => {
+                    if let Some(c) = ledger.get_mut(&cell) {
+                        c.restore_pq_identity(old_identity);
                     }
                 }
                 JournalEntry::SetDelegation {

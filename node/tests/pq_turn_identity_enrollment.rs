@@ -1,10 +1,10 @@
 //! Native-PQ Turn identity enrollment at the node boundary.
 //!
-//! A required-PQ executor must derive its ML-DSA trust anchor from host state,
-//! never from the authorization it is about to verify.  This test constructs
-//! the same executor every node admission surface uses and pins both poles:
-//! locally owned target cells are enrolled from the cipherclerk's held seed;
-//! an unrelated external cell is not silently TOFU-enrolled.
+//! A required-PQ executor must derive its ML-DSA trust anchor from the canonical
+//! live Cell, never from the authorization it is about to verify. Pre-v10 cells
+//! may use an independently configured host enrollment as a migration bridge;
+//! it is not TOFU and never overrides a Cell-committed identity. These tests pin
+//! durable restart, that migration bridge, and hostile carried-key substitution.
 
 use std::collections::HashMap;
 
@@ -44,6 +44,39 @@ fn install_mldsa_runtime() {
             "an explicit test-only fallback opt-in is required when the verified cores are absent"
         );
     }
+}
+
+#[tokio::test]
+async fn committed_cell_pq_identity_survives_checkpoint_restart() {
+    install_mldsa_runtime();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let seed = [0x2d; 32];
+    let ed = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    let pq = MlDsaTurnKey::from_ed25519_seed(&seed);
+    let mut cell = Cell::with_hybrid_balance(ed, &pq.public_bytes(), [0x91; 32], 123)
+        .expect("valid canonical identity");
+    let rotated = MlDsaTurnKey::from_ed25519_seed(&[0x3e; 32]);
+    cell.rotate_pq_identity(0, &rotated.public_bytes())
+        .expect("rotate before checkpoint");
+    let cell_id = cell.id();
+    let expected_identity = cell.pq_identity().cloned().unwrap();
+    let expected_commitment = cell.state_commitment();
+
+    {
+        let state = NodeState::new(dir.path(), Vec::new()).expect("node state");
+        let mut inner = state.write().await;
+        inner.ledger.insert_cell(cell).expect("insert bound cell");
+        inner
+            .store
+            .checkpoint_ledger(&inner.ledger, 17)
+            .expect("durable checkpoint");
+    }
+
+    let restarted = NodeState::new(dir.path(), Vec::new()).expect("restart node state");
+    let inner = restarted.read().await;
+    let recovered = inner.ledger.get(&cell_id).expect("cell recovered");
+    assert_eq!(recovered.pq_identity(), Some(&expected_identity));
+    assert_eq!(recovered.state_commitment(), expected_commitment);
 }
 
 #[tokio::test]
@@ -157,7 +190,14 @@ fn required_pq_rejects_forged_ed25519_plus_attacker_owned_valid_ml_dsa() {
     let victim_seed = [0x31; 32];
     let attacker_seed = [0xa4; 32];
     let victim_ed = SigningKey::from_bytes(&victim_seed);
-    let target = Cell::with_balance(victim_ed.verifying_key().to_bytes(), [0x61; 32], 100);
+    let victim_pq = MlDsaTurnKey::from_ed25519_seed(&victim_seed);
+    let target = Cell::with_hybrid_balance(
+        victim_ed.verifying_key().to_bytes(),
+        &victim_pq.public_bytes(),
+        [0x61; 32],
+        100,
+    )
+    .expect("valid canonical ML-DSA key");
     let target_id = target.id();
     let fed = [0x71; 32];
 
@@ -218,15 +258,7 @@ fn required_pq_rejects_forged_ed25519_plus_attacker_owned_valid_ml_dsa() {
     let mut executor = TurnExecutor::new(ComputronCosts::zero());
     executor.set_local_federation_id(fed);
     executor.set_require_pq(true);
-    let victim_pq = MlDsaTurnKey::from_ed25519_seed(&victim_seed);
-    executor
-        .enroll_pq_identity(
-            target_id,
-            *target.public_key(),
-            target.state.delegation_epoch(),
-            victim_pq.public_bytes(),
-        )
-        .expect("independent victim enrollment");
+    assert!(executor.enrolled_pq_identity(&target_id).is_none());
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(target).expect("target insert");
@@ -237,7 +269,7 @@ fn required_pq_rejects_forged_ed25519_plus_attacker_owned_valid_ml_dsa() {
             TurnResult::Rejected {
                 reason: TurnError::InvalidAuthorization { reason },
                 ..
-            } if reason.contains("does not match the independently enrolled")
+            } if reason.contains("does not match the target cell's committed identity")
         ),
         "attacker-owned valid ML-DSA key must not authenticate the victim target: {result:?}"
     );

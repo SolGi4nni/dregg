@@ -554,6 +554,8 @@ impl TurnExecutor {
             E::SetVerificationKey { .. } => 0x05,
             E::SetPermissions { .. } => 0x06,
             E::CreateCell { .. } => 0x07,
+            E::CreateHybridCell { .. } => 0x0C,
+            E::RotatePqIdentity { .. } => 0x0D,
             E::GrantCapability { .. } => 0x08,
             E::RevokeCapability { .. } => 0x09,
             E::EmitEvent { .. } => 0x0A,

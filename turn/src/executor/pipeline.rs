@@ -176,6 +176,11 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
                     *cell = *resolved;
                 }
             }
+            Effect::RotatePqIdentity { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
             Effect::SetProgram { cell, .. } => {
                 if cell == placeholder {
                     *cell = *resolved;
@@ -265,6 +270,7 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             Effect::React { .. } => {}
             // No CellId fields to rewrite (or birth effects whose ids are derived).
             Effect::CreateCell { .. }
+            | Effect::CreateHybridCell { .. }
             | Effect::NoteSpend { .. }
             | Effect::NoteCreate { .. }
             | Effect::BridgeMint { .. }
@@ -449,6 +455,14 @@ fn extract_tree_outputs(
     for effect in &tree.action.effects {
         match effect {
             crate::action::Effect::CreateCell {
+                public_key,
+                token_id,
+                ..
+            } => {
+                let cell_id = dregg_cell::CellId::derive_raw(public_key, token_id);
+                outputs.push(TurnOutput::CreatedCell { cell: cell_id });
+            }
+            crate::action::Effect::CreateHybridCell {
                 public_key,
                 token_id,
                 ..

@@ -101,7 +101,9 @@ impl core::fmt::Display for SignedTurnValidationError {
                 f.write_str("post-quantum turn signature and public key must both be present")
             }
             Self::PqIdentityNotEnrolled => {
-                f.write_str("required post-quantum signer identity is not independently enrolled")
+                f.write_str(
+                    "required post-quantum signer identity is neither Cell-committed nor independently enrolled for migration",
+                )
             }
             Self::EnrolledPqSignerMismatch => {
                 f.write_str("enrolled post-quantum identity does not bind the outer Ed25519 signer")
@@ -114,7 +116,7 @@ impl core::fmt::Display for SignedTurnValidationError {
                 "enrolled post-quantum identity epoch {enrolled} is stale for live agent epoch {live}"
             ),
             Self::SubstitutedPqPublicKey => f.write_str(
-                "carried post-quantum signer does not match the independently enrolled identity",
+                "carried post-quantum signer does not match the canonical or migration identity",
             ),
             Self::InvalidPqSignature => f.write_str("invalid post-quantum turn signature"),
         }
@@ -133,12 +135,11 @@ pub struct ValidatedSignedTurn {
 /// Validate the complete outer `SignedTurn` perimeter.
 ///
 /// `live_agent` is independently loaded node state, never reconstructed from
-/// the envelope.  The executor's PQ registry is likewise host-fed by
-/// `executor_setup`; this function never enrolls a carried key.  Required-PQ
-/// mode therefore fails closed when no enrollment exists.  The explicit
-/// unaudited test/library mode (`require_pq == false`) may exercise an unenrolled
-/// optional PQ half while still rejecting a malformed present half. Native node
-/// admission requires PQ and never enters that branch.
+/// the envelope. Required-PQ mode anchors the carried ML-DSA public key in that
+/// Cell's persisted identity commitment and fails closed when the cell or anchor
+/// is absent. Pre-v10 local/committee cells may use the independently configured
+/// host registry as a migration bridge; it is never populated from this wire
+/// envelope and never overrides a Cell-owned commitment.
 pub fn validate_signed_turn(
     signed: &SignedTurn,
     executor: &TurnExecutor,
@@ -168,34 +169,50 @@ pub fn validate_signed_turn(
         };
     }
 
-    let enrolled = executor.enrolled_pq_identity(&expected_agent);
-    let verification_key: &[u8] = if let Some(enrolled) = enrolled.as_ref() {
-        if enrolled.target_ed25519 != signed.signer.0 {
-            return Err(SignedTurnValidationError::EnrolledPqSignerMismatch);
+    let legacy_enrolled = if live_agent.and_then(|cell| cell.pq_identity()).is_none() {
+        executor.enrolled_pq_identity(&expected_agent)
+    } else {
+        None
+    };
+    let verification_key: &[u8] = if let Some(cell) = live_agent {
+        if *cell.public_key() != signed.signer.0 {
+            return Err(SignedTurnValidationError::LiveAgentSignerMismatch);
         }
-        if let Some(cell) = live_agent {
-            if *cell.public_key() != signed.signer.0 {
-                return Err(SignedTurnValidationError::LiveAgentSignerMismatch);
+        if let Some(identity) = cell.pq_identity() {
+            let carried_commitment = dregg_cell::ml_dsa_public_key_commitment(&signed.pq_signer)
+                .map_err(|_| SignedTurnValidationError::SubstitutedPqPublicKey)?;
+            if carried_commitment != identity.ml_dsa_key_commitment {
+                return Err(SignedTurnValidationError::SubstitutedPqPublicKey);
             }
-            let live_epoch = cell.state.delegation_epoch();
-            if enrolled.epoch != live_epoch {
-                return Err(SignedTurnValidationError::StalePqIdentityEpoch {
-                    enrolled: enrolled.epoch,
-                    live: live_epoch,
-                });
+            signed.pq_signer.as_slice()
+        } else if let Some(enrolled) = legacy_enrolled.as_ref() {
+            if enrolled.target_ed25519 != signed.signer.0 {
+                return Err(SignedTurnValidationError::EnrolledPqSignerMismatch);
             }
+            if enrolled.public_key.as_slice() != signed.pq_signer.as_slice() {
+                return Err(SignedTurnValidationError::SubstitutedPqPublicKey);
+            }
+            enrolled.public_key.as_slice()
+        } else {
+            return Err(SignedTurnValidationError::PqIdentityNotEnrolled);
         }
-        if enrolled.public_key.as_slice() != signed.pq_signer.as_slice() {
-            return Err(SignedTurnValidationError::SubstitutedPqPublicKey);
-        }
-        enrolled.public_key.as_slice()
     } else if executor.require_pq() {
         return Err(SignedTurnValidationError::PqIdentityNotEnrolled);
     } else {
-        // Explicit unaudited test/library mode only: the carried key has no
-        // independent authority, but a present signature must still verify
-        // rather than fail open.
-        signed.pq_signer.as_slice()
+        // Explicit unaudited compatibility only. A host registry may anchor an
+        // old unbound fixture, but native required-PQ admission never reaches
+        // this branch.
+        if let Some(enrolled) = legacy_enrolled.as_ref() {
+            if enrolled.target_ed25519 != signed.signer.0 {
+                return Err(SignedTurnValidationError::EnrolledPqSignerMismatch);
+            }
+            if enrolled.public_key.as_slice() != signed.pq_signer.as_slice() {
+                return Err(SignedTurnValidationError::SubstitutedPqPublicKey);
+            }
+            enrolled.public_key.as_slice()
+        } else {
+            signed.pq_signer.as_slice()
+        }
     };
 
     if !dregg_turn::pq::ml_dsa_verify(verification_key, &turn_hash, &signed.pq_signature) {
@@ -278,35 +295,30 @@ mod tests {
     fn signed_fixture(seed: [u8; 32]) -> (AgentCipherclerk, SignedTurn, dregg_cell::Cell) {
         let clerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(seed));
         let token = *blake3::hash(b"default").as_bytes();
-        let cell = dregg_cell::Cell::with_balance(clerk.public_key().0, token, 1_000_000);
+        let pq = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed);
+        let cell = dregg_cell::Cell::with_hybrid_balance(
+            clerk.public_key().0,
+            &pq.public_bytes(),
+            token,
+            1_000_000,
+        )
+        .expect("valid canonical ML-DSA key");
         let signed = clerk.sign_turn(&empty_turn(cell.id()));
         (clerk, signed, cell)
     }
 
-    fn required_executor_for(
-        signed: &SignedTurn,
-        cell: &dregg_cell::Cell,
-        independently_derived_pq_key: Vec<u8>,
-    ) -> TurnExecutor {
+    fn required_executor() -> TurnExecutor {
         let executor = TurnExecutor::new(ComputronCosts::default());
         executor.set_require_pq(true);
-        executor
-            .enroll_pq_identity(
-                signed.turn.agent,
-                signed.signer.0,
-                cell.state.delegation_epoch(),
-                independently_derived_pq_key,
-            )
-            .expect("fixture enrollment");
         executor
     }
 
     #[test]
-    fn required_hybrid_accepts_only_the_enrolled_outer_identity() {
+    fn required_hybrid_accepts_the_cell_committed_outer_identity_without_registry() {
         let seed = [7; 32];
         let (_clerk, signed, cell) = signed_fixture(seed);
-        let enrolled = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed).public_bytes();
-        let executor = required_executor_for(&signed, &cell, enrolled);
+        let executor = required_executor();
+        assert!(executor.enrolled_pq_identity(&cell.id()).is_none());
         assert!(validate_signed_turn(&signed, &executor, Some(&cell)).is_ok());
     }
 
@@ -314,8 +326,7 @@ mod tests {
     fn hostile_outer_pq_variants_fail_closed() {
         let seed = [8; 32];
         let (_clerk, signed, cell) = signed_fixture(seed);
-        let enrolled = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&seed).public_bytes();
-        let executor = required_executor_for(&signed, &cell, enrolled);
+        let executor = required_executor();
 
         let mut stripped = signed.clone();
         stripped.pq_signature.clear();

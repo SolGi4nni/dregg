@@ -198,6 +198,47 @@ impl<'rt> TurnBuilder<'rt> {
         self
     }
 
+    /// Create a cell whose epoch-zero ML-DSA identity is committed at birth.
+    /// `pq_possession_signature` must be made by `ml_dsa_public_key` over
+    /// [`dregg_turn::pq::cell_pq_creation_message`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_hybrid_cell(
+        mut self,
+        public_key: [u8; 32],
+        token_id: [u8; 32],
+        balance: u64,
+        ml_dsa_public_key: Vec<u8>,
+        pq_possession_signature: Vec<u8>,
+    ) -> Self {
+        self.effects.push(Effect::CreateHybridCell {
+            public_key,
+            token_id,
+            balance,
+            ml_dsa_public_key,
+            pq_possession_signature,
+        });
+        self
+    }
+
+    /// Rotate the acting cell's committed ML-DSA identity exactly one epoch.
+    /// The action is authorized by the current hybrid key; the carried new-key
+    /// signature proves possession of the replacement key.
+    pub fn rotate_pq_identity(
+        mut self,
+        expected_epoch: u64,
+        new_ml_dsa_public_key: Vec<u8>,
+        new_key_possession_signature: Vec<u8>,
+    ) -> Self {
+        let cell = self.acting_cell();
+        self.effects.push(Effect::RotatePqIdentity {
+            cell,
+            expected_epoch,
+            new_ml_dsa_public_key,
+            new_key_possession_signature,
+        });
+        self
+    }
+
     /// Replace the acting cell's permissions (lowers to
     /// [`Effect::SetPermissions`]). SECURITY: the executor applies this
     /// LAST within the action and checks every effect against the
@@ -602,6 +643,53 @@ mod typed_verb_teeth {
                 assert_eq!(public_key, [3u8; 32]);
                 assert_eq!(token_id, [4u8; 32]);
                 assert_eq!(balance, 555);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hybrid_identity_verbs_lower_and_roundtrip() {
+        let create_rt = rt("verb-create-hybrid-cell");
+        let pq_key = vec![5u8; dregg_turn::pq::ML_DSA_PK_LEN];
+        let possession = vec![6u8; dregg_turn::pq::ML_DSA_SIG_LEN];
+        match lowered_roundtripped(create_rt.turn().create_hybrid_cell(
+            [3u8; 32],
+            [4u8; 32],
+            0,
+            pq_key.clone(),
+            possession.clone(),
+        )) {
+            Effect::CreateHybridCell {
+                public_key,
+                token_id,
+                balance,
+                ml_dsa_public_key,
+                pq_possession_signature,
+            } => {
+                assert_eq!(public_key, [3u8; 32]);
+                assert_eq!(token_id, [4u8; 32]);
+                assert_eq!(balance, 0);
+                assert_eq!(ml_dsa_public_key, pq_key);
+                assert_eq!(pq_possession_signature, possession);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+
+        let rotate_rt = rt("verb-rotate-pq-identity");
+        let me = rotate_rt.cell_id();
+        match lowered_roundtripped(rotate_rt.turn().rotate_pq_identity(
+            7,
+            vec![8u8; dregg_turn::pq::ML_DSA_PK_LEN],
+            vec![9u8; dregg_turn::pq::ML_DSA_SIG_LEN],
+        )) {
+            Effect::RotatePqIdentity {
+                cell,
+                expected_epoch,
+                ..
+            } => {
+                assert_eq!(cell, me);
+                assert_eq!(expected_epoch, 7);
             }
             other => panic!("wrong variant: {other:?}"),
         }

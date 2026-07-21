@@ -9,6 +9,32 @@ use crate::action::Effect;
 use crate::forest::CallTree;
 use crate::turn::Turn;
 
+/// A runtime effect which the current EffectVM AIR cannot represent faithfully.
+///
+/// Keeping this typed (rather than silently projecting to `NoOp`) is a security
+/// boundary: a classical committed transition may exist before its proof lane
+/// does, but it must never be mislabeled as an EffectVM-proven transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EffectVmProjectionError {
+    WideFieldIndex(u64),
+    PqIdentityEffect(&'static str),
+}
+
+impl core::fmt::Display for EffectVmProjectionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::WideFieldIndex(index) => write!(
+                f,
+                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+            ),
+            Self::PqIdentityEffect(effect) => write!(
+                f,
+                "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
+            ),
+        }
+    }
+}
+
 /// Project a turn's call-forest effects into the sequence of circuit-level VM effects the Effect VM
 /// AIR consumes (the intentionally lossy turn→circuit bridge). Exposed so a proof PRODUCER can mint a
 /// sovereign leg over the EXACT VM-effect projection the executor reconstructs at verify time — the
@@ -688,14 +714,26 @@ fn convert_turn_effects_to_vm_unchecked(
 pub fn try_convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
-) -> Result<Vec<dregg_circuit::effect_vm::Effect>, u64> {
-    fn check(tree: &CallTree, cell_id: &CellId) -> Result<(), u64> {
+) -> Result<Vec<dregg_circuit::effect_vm::Effect>, EffectVmProjectionError> {
+    fn check(tree: &CallTree, cell_id: &CellId) -> Result<(), EffectVmProjectionError> {
         for effect in &tree.action.effects {
-            if let Effect::SetField { cell, index, .. } = effect
-                && cell == cell_id
-                && *index > u32::MAX as u64
-            {
-                return Err(*index);
+            match effect {
+                Effect::SetField { cell, index, .. }
+                    if cell == cell_id && *index > u32::MAX as u64 =>
+                {
+                    return Err(EffectVmProjectionError::WideFieldIndex(*index));
+                }
+                Effect::CreateHybridCell { .. } => {
+                    return Err(EffectVmProjectionError::PqIdentityEffect(
+                        "CreateHybridCell",
+                    ));
+                }
+                Effect::RotatePqIdentity { .. } => {
+                    return Err(EffectVmProjectionError::PqIdentityEffect(
+                        "RotatePqIdentity",
+                    ));
+                }
+                _ => {}
             }
         }
         for child in &tree.children {
@@ -717,9 +755,8 @@ pub fn convert_turn_effects_to_vm(
     cell_id: &CellId,
     turn: &Turn,
 ) -> Vec<dregg_circuit::effect_vm::Effect> {
-    try_convert_turn_effects_to_vm(cell_id, turn).expect(
-        "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
-    )
+    try_convert_turn_effects_to_vm(cell_id, turn)
+        .expect("EffectVM projection refused an effect outside the current AIR domain")
 }
 
 #[cfg(test)]
@@ -731,18 +768,14 @@ mod tests {
     use crate::forest::CallForest;
     use crate::{Preconditions, Turn};
 
-    fn turn_with_set_field(cell: CellId, index: u64) -> Turn {
+    fn turn_with_effect(cell: CellId, effect: Effect) -> Turn {
         let action = Action {
             target: cell,
             method: [0; 32],
             args: Vec::new(),
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
-            effects: vec![Effect::SetField {
-                cell,
-                index,
-                value: [7; 32],
-            }],
+            effects: vec![effect],
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
@@ -771,13 +804,48 @@ mod tests {
         }
     }
 
+    fn turn_with_set_field(cell: CellId, index: u64) -> Turn {
+        turn_with_effect(
+            cell,
+            Effect::SetField {
+                cell,
+                index,
+                value: [7; 32],
+            },
+        )
+    }
+
     #[test]
     fn checked_projection_refuses_a_wide_key_instead_of_truncating_it() {
         let cell = CellId([0x51; 32]);
         let wide = u32::MAX as u64 + 1;
         let turn = turn_with_set_field(cell, wide);
 
-        assert_eq!(try_convert_turn_effects_to_vm(&cell, &turn), Err(wide));
+        assert_eq!(
+            try_convert_turn_effects_to_vm(&cell, &turn),
+            Err(EffectVmProjectionError::WideFieldIndex(wide))
+        );
+    }
+
+    #[test]
+    fn checked_projection_refuses_unmodeled_pq_identity_effects() {
+        let cell = CellId([0x53; 32]);
+        let turn = turn_with_effect(
+            cell,
+            Effect::RotatePqIdentity {
+                cell,
+                expected_epoch: 0,
+                new_ml_dsa_public_key: vec![0; dregg_cell::ML_DSA_65_PUBLIC_KEY_LEN],
+                new_key_possession_signature: Vec::new(),
+            },
+        );
+
+        assert_eq!(
+            try_convert_turn_effects_to_vm(&cell, &turn),
+            Err(EffectVmProjectionError::PqIdentityEffect(
+                "RotatePqIdentity"
+            ))
+        );
     }
 
     #[test]

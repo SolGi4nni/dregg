@@ -237,6 +237,73 @@ impl PartialEq for LeafDigestCache {
 }
 impl Eq for LeafDigestCache {}
 
+/// Exact serialized public-key length for ML-DSA-65 (FIPS 204).
+///
+/// The cell crate deliberately stores only a commitment to this public key;
+/// signed turns carry the 1,952 public bytes needed for verification.  Keeping
+/// the fixed length here lets the committed identity object reject a malformed
+/// key before it can become authority without pulling a signing implementation
+/// into the state-model crate.
+pub const ML_DSA_65_PUBLIC_KEY_LEN: usize = 1_952;
+
+/// The post-quantum authorization anchor committed by a cell.
+///
+/// The raw ML-DSA key stays on the signed wire.  A validator hashes those bytes
+/// with [`ml_dsa_public_key_commitment`] and compares the result with this
+/// independently persisted value before verifying the signature.  `key_epoch`
+/// is a dedicated identity counter; it is intentionally distinct from
+/// `CellState::delegation_epoch`, which revokes capability snapshots.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellPqIdentity {
+    pub key_epoch: u64,
+    pub ml_dsa_key_commitment: [u8; 32],
+}
+
+/// Failure to install or rotate a cell's committed PQ identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CellPqIdentityError {
+    InvalidPublicKeyLength { got: usize },
+    AlreadyInstalled,
+    NotInstalled,
+    EpochMismatch { expected: u64, actual: u64 },
+    EpochOverflow,
+    UnchangedKey,
+}
+
+impl core::fmt::Display for CellPqIdentityError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidPublicKeyLength { got } => write!(
+                f,
+                "ML-DSA-65 public key must be {ML_DSA_65_PUBLIC_KEY_LEN} bytes, got {got}"
+            ),
+            Self::AlreadyInstalled => f.write_str("cell PQ identity is already installed"),
+            Self::NotInstalled => f.write_str("cell PQ identity is not installed"),
+            Self::EpochMismatch { expected, actual } => write!(
+                f,
+                "cell PQ identity epoch mismatch: expected {expected}, live {actual}"
+            ),
+            Self::EpochOverflow => f.write_str("cell PQ identity epoch overflow"),
+            Self::UnchangedKey => f.write_str("cell PQ identity rotation must install a new key"),
+        }
+    }
+}
+
+impl std::error::Error for CellPqIdentityError {}
+
+/// Domain-separated commitment to one exact-length ML-DSA-65 public key.
+pub fn ml_dsa_public_key_commitment(public_key: &[u8]) -> Result<[u8; 32], CellPqIdentityError> {
+    if public_key.len() != ML_DSA_65_PUBLIC_KEY_LEN {
+        return Err(CellPqIdentityError::InvalidPublicKeyLength {
+            got: public_key.len(),
+        });
+    }
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-cell-ml-dsa-key-v1");
+    hasher.update(&(public_key.len() as u32).to_le_bytes());
+    hasher.update(public_key);
+    Ok(*hasher.finalize().as_bytes())
+}
+
 /// A Cell is an isolated agent execution context.
 /// This is the agent-model analog of a Mina zkApp account.
 ///
@@ -289,6 +356,16 @@ pub struct Cell {
     /// lifecycle explicit going forward.
     #[serde(default)]
     pub lifecycle: CellLifecycle,
+    /// Canonical post-quantum authorization anchor. Native required-PQ
+    /// authorization refuses a cell with no anchor; `None` remains useful only
+    /// for deliberately unaudited low-level fixtures and non-signing stubs.
+    ///
+    /// This is the final serialized field, keeping the v10 schema extension
+    /// localized at the wire tail. Postcard is positional and does not accept a
+    /// missing trailing struct field, so pre-v10 durable snapshots require the
+    /// store-level schema migration rather than silently decoding as unbound.
+    #[serde(default)]
+    pub(crate) pq_identity: Option<CellPqIdentity>,
     /// Cached canonical Merkle-leaf digest (`.docs-history-noclaude/INCREMENTAL-COMMITMENT.md`
     /// step 3). Read ONLY by `Ledger::hash_cell`; invalidated at every ledger
     /// `&mut`-handoff seam. `#[serde(skip)]` ⇒ reconstructs dirty on decode;
@@ -381,6 +458,7 @@ impl Cell {
         Cell {
             id,
             public_key,
+            pq_identity: None,
             state: CellState::default(),
             permissions: Permissions::default(),
             verification_key: None,
@@ -403,6 +481,7 @@ impl Cell {
         Cell {
             id,
             public_key,
+            pq_identity: None,
             state: CellState::default(),
             permissions: Permissions::default(),
             verification_key: None,
@@ -425,6 +504,7 @@ impl Cell {
         Cell {
             id,
             public_key,
+            pq_identity: None,
             state: CellState::new(balance),
             permissions: Permissions::default(),
             verification_key: None,
@@ -491,6 +571,7 @@ impl Cell {
         Cell {
             id,
             public_key,
+            pq_identity: None,
             state: CellState::new(balance),
             permissions: Permissions::default(),
             verification_key: None,
@@ -511,6 +592,7 @@ impl Cell {
         Cell {
             id,
             public_key,
+            pq_identity: None,
             state: CellState::new(config.balance),
             permissions: config.permissions.unwrap_or_default(),
             verification_key: config.verification_key,
@@ -550,6 +632,81 @@ impl Cell {
     #[inline]
     pub fn public_key(&self) -> &[u8; 32] {
         &self.public_key
+    }
+
+    /// Construct a hosted cell whose ML-DSA identity is committed at birth.
+    pub fn with_hybrid_balance(
+        public_key: [u8; 32],
+        ml_dsa_public_key: &[u8],
+        token_id: [u8; 32],
+        balance: i64,
+    ) -> Result<Self, CellPqIdentityError> {
+        let mut cell = Self::with_balance(public_key, token_id, balance);
+        cell.install_pq_identity(ml_dsa_public_key)?;
+        Ok(cell)
+    }
+
+    /// Read the canonical PQ authorization anchor committed by this cell.
+    #[inline]
+    pub fn pq_identity(&self) -> Option<&CellPqIdentity> {
+        self.pq_identity.as_ref()
+    }
+
+    /// Install the epoch-zero PQ identity on a newly-created cell.
+    pub fn install_pq_identity(
+        &mut self,
+        ml_dsa_public_key: &[u8],
+    ) -> Result<(), CellPqIdentityError> {
+        if self.pq_identity.is_some() {
+            return Err(CellPqIdentityError::AlreadyInstalled);
+        }
+        self.pq_identity = Some(CellPqIdentity {
+            key_epoch: 0,
+            ml_dsa_key_commitment: ml_dsa_public_key_commitment(ml_dsa_public_key)?,
+        });
+        self.invalidate_leaf_cache();
+        Ok(())
+    }
+
+    /// Rotate to a new committed ML-DSA key and advance exactly one epoch.
+    /// Authorization and new-key possession are checked by the turn executor
+    /// before it calls this state transition.
+    pub fn rotate_pq_identity(
+        &mut self,
+        expected_epoch: u64,
+        new_ml_dsa_public_key: &[u8],
+    ) -> Result<(), CellPqIdentityError> {
+        let new_commitment = ml_dsa_public_key_commitment(new_ml_dsa_public_key)?;
+        let current = self
+            .pq_identity
+            .as_ref()
+            .ok_or(CellPqIdentityError::NotInstalled)?;
+        if current.key_epoch != expected_epoch {
+            return Err(CellPqIdentityError::EpochMismatch {
+                expected: expected_epoch,
+                actual: current.key_epoch,
+            });
+        }
+        if current.ml_dsa_key_commitment == new_commitment {
+            return Err(CellPqIdentityError::UnchangedKey);
+        }
+        let next_epoch = current
+            .key_epoch
+            .checked_add(1)
+            .ok_or(CellPqIdentityError::EpochOverflow)?;
+        self.pq_identity = Some(CellPqIdentity {
+            key_epoch: next_epoch,
+            ml_dsa_key_commitment: new_commitment,
+        });
+        self.invalidate_leaf_cache();
+        Ok(())
+    }
+
+    /// Restore a previously journaled identity image during atomic rollback.
+    #[doc(hidden)]
+    pub fn restore_pq_identity(&mut self, old: Option<CellPqIdentity>) {
+        self.pq_identity = old;
+        self.invalidate_leaf_cache();
     }
 
     /// Read accessor for the cell's token-domain ID. Sealed for P0-1.
@@ -784,6 +941,7 @@ impl Cell {
         Cell {
             id,
             public_key: child_public_key,
+            pq_identity: None,
             state: CellState::default(),
             permissions: Permissions::default(),
             verification_key: None,
@@ -826,6 +984,7 @@ impl Cell {
         Cell {
             id,
             public_key: child_public_key,
+            pq_identity: None,
             state: CellState::default(),
             permissions: Permissions::default(),
             verification_key: None,
@@ -851,6 +1010,63 @@ impl Cell {
             lifecycle: CellLifecycle::Live,
             leaf_cache: LeafDigestCache::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod pq_identity_tests {
+    use super::*;
+
+    fn key(byte: u8) -> Vec<u8> {
+        vec![byte; ML_DSA_65_PUBLIC_KEY_LEN]
+    }
+
+    #[test]
+    fn identity_rotation_is_exactly_monotone_and_rejects_rollback() {
+        let mut cell = Cell::new([1u8; 32], [2u8; 32]);
+        cell.install_pq_identity(&key(3))
+            .expect("epoch-zero install");
+        let epoch0 = cell.pq_identity().cloned().expect("installed identity");
+        assert_eq!(epoch0.key_epoch, 0);
+
+        assert!(matches!(
+            cell.rotate_pq_identity(1, &key(4)),
+            Err(CellPqIdentityError::EpochMismatch {
+                expected: 1,
+                actual: 0
+            })
+        ));
+        assert_eq!(cell.pq_identity(), Some(&epoch0));
+
+        cell.rotate_pq_identity(0, &key(4))
+            .expect("one-step rotation");
+        let epoch1 = cell.pq_identity().expect("rotated identity");
+        assert_eq!(epoch1.key_epoch, 1);
+        assert_eq!(
+            epoch1.ml_dsa_key_commitment,
+            ml_dsa_public_key_commitment(&key(4)).unwrap()
+        );
+        assert!(matches!(
+            cell.rotate_pq_identity(0, &key(5)),
+            Err(CellPqIdentityError::EpochMismatch {
+                expected: 0,
+                actual: 1
+            })
+        ));
+        assert!(matches!(
+            cell.rotate_pq_identity(1, &key(4)),
+            Err(CellPqIdentityError::UnchangedKey)
+        ));
+    }
+
+    #[test]
+    fn identity_is_durable_across_canonical_wire_roundtrip() {
+        let bound =
+            Cell::with_hybrid_balance([7u8; 32], &key(8), [9u8; 32], 42).expect("bound cell");
+        let encoded = postcard::to_stdvec(&bound).expect("encode current cell");
+        let decoded: Cell = postcard::from_bytes(&encoded).expect("decode current cell");
+        assert_eq!(decoded.pq_identity(), bound.pq_identity());
+        assert_eq!(decoded.state_commitment(), bound.state_commitment());
     }
 }
 

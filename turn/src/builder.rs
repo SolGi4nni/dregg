@@ -748,6 +748,41 @@ impl<S> ActionBuilder<S> {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn effect_create_hybrid_cell(
+        mut self,
+        public_key: [u8; 32],
+        token_id: [u8; 32],
+        balance: u64,
+        ml_dsa_public_key: Vec<u8>,
+        pq_possession_signature: Vec<u8>,
+    ) -> Self {
+        self.effects.push(Effect::CreateHybridCell {
+            public_key,
+            token_id,
+            balance,
+            ml_dsa_public_key,
+            pq_possession_signature,
+        });
+        self
+    }
+
+    pub fn effect_rotate_pq_identity(
+        mut self,
+        cell: CellId,
+        expected_epoch: u64,
+        new_ml_dsa_public_key: Vec<u8>,
+        new_key_possession_signature: Vec<u8>,
+    ) -> Self {
+        self.effects.push(Effect::RotatePqIdentity {
+            cell,
+            expected_epoch,
+            new_ml_dsa_public_key,
+            new_key_possession_signature,
+        });
+        self
+    }
+
     pub fn effect_create_cell_from_factory(
         mut self,
         factory_vk: [u8; 32],

@@ -7205,6 +7205,15 @@ impl AgentCipherclerk {
         cell_id: &CellId,
         effects: &[Effect],
     ) -> Result<Vec<dregg_circuit::effect_vm::Effect>, SdkError> {
+        if let Some(effect) = effects.iter().find_map(|effect| match effect {
+            Effect::CreateHybridCell { .. } => Some("CreateHybridCell"),
+            Effect::RotatePqIdentity { .. } => Some("RotatePqIdentity"),
+            _ => None,
+        }) {
+            return Err(SdkError::InvalidWitness(format!(
+                "EffectVM cannot yet prove {effect}: the PQ identity authority plane has no AIR row"
+            )));
+        }
         if let Some(index) = effects.iter().find_map(|effect| match effect {
             Effect::SetField { cell, index, .. } if cell == cell_id && *index > u32::MAX as u64 => {
                 Some(*index)
@@ -7595,6 +7604,24 @@ mod tests {
         assert!(
             matches!(error, SdkError::InvalidWitness(message) if message.contains(&wide.to_string())),
             "the refusal must name the unsupported key"
+        );
+    }
+
+    #[test]
+    fn checked_effect_vm_projection_refuses_unmodeled_pq_identity_effects() {
+        let cell = CellId([0x62; 32]);
+        let effects = [Effect::RotatePqIdentity {
+            cell,
+            expected_epoch: 0,
+            new_ml_dsa_public_key: vec![0; dregg_cell::ML_DSA_65_PUBLIC_KEY_LEN],
+            new_key_possession_signature: Vec::new(),
+        }];
+
+        let error = AgentCipherclerk::try_convert_effects_to_vm(&cell, &effects)
+            .expect_err("an unmodeled authority mutation must never project to NoOp");
+        assert!(
+            matches!(error, SdkError::InvalidWitness(message) if message.contains("RotatePqIdentity")),
+            "the refusal must name the unmodeled effect"
         );
     }
 
