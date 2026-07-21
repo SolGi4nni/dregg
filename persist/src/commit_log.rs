@@ -68,9 +68,35 @@ use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
 
 use dregg_cell::{Cell, CellId};
+use dregg_federation::frost::MlDsaPublicKey;
+use dregg_types::PublicKey;
 
 use crate::tables;
+use crate::{
+    FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1, Poseidon2NoteTree, StoredAttestedRoot,
+};
 use crate::{PersistentStore, Result, StoreError};
+
+/// Production note-tree depth.  The live node and durable reconstruction must
+/// use the same positional shape or a correct leaf sequence would attest a
+/// different root after restart.
+const LIVE_NOTE_TREE_DEPTH: usize = 16;
+
+/// The faithful-root half of one finalized atomic commit.
+///
+/// `author_*` is the exact enrolled node identity that hybrid-authenticated the
+/// history record.  It is intentionally a one-author authentication boundary,
+/// not mislabeled as the later federation finality quorum: the carrying block
+/// supplies finality, while this signature prevents an offline store attacker
+/// without the node's keys from forging a history row across restart.
+pub struct FinalizedFaithfulRootWeld<'a> {
+    /// Required only for the first record of a migrated/fresh v1 segment.
+    pub initial_anchor: Option<&'a FaithfulNoteRootAnchorV1>,
+    pub envelope: &'a FaithfulNoteRootEnvelopeV1,
+    pub author_committee: &'a [PublicKey],
+    pub author_ml_dsa_committee: &'a [MlDsaPublicKey],
+    pub attested_root: &'a StoredAttestedRoot,
+}
 
 /// One durable record of a finalized turn this node applied to its ledger.
 ///
@@ -208,6 +234,150 @@ pub struct CommitOutcome {
     /// True iff this call freshly wrote the record (and its welded notes/burns).
     /// False on an idempotent replay of an already-committed turn (no writes).
     pub freshly_committed: bool,
+}
+
+fn validate_faithful_commit_coordinates(
+    record: &CommitRecord,
+    faithful: &FinalizedFaithfulRootWeld<'_>,
+) -> Result<()> {
+    let edge = &faithful.envelope.record;
+    let attested = faithful.attested_root;
+    if edge.height != record.height
+        || edge.block_id != record.block_id
+        || attested.height != record.height
+        || attested.blocklace_block_id != Some(record.block_id)
+        || attested.federation_id.0 != edge.federation_id
+        || attested.note_tree_root != Some(edge.successor.to_bytes())
+    {
+        return Err(StoreError::Integrity(
+            "faithful note-root/commit/attestation coordinates disagree".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn durable_note_prefix_in(
+    write: &redb::WriteTransaction,
+    limit: u64,
+    require_exact_len: bool,
+) -> Result<Vec<[u8; 32]>> {
+    let table = write.open_table(tables::NOTE_COMMITMENTS)?;
+    if require_exact_len && table.len()? != limit {
+        return Err(StoreError::Integrity(format!(
+            "faithful note table length {} differs from sealed note count {limit}",
+            table.len()?
+        )));
+    }
+    let limit_usize = usize::try_from(limit).map_err(|_| {
+        StoreError::Integrity("faithful note prefix does not fit usize".to_string())
+    })?;
+    let mut out = Vec::with_capacity(limit_usize);
+    for position in 0..limit {
+        let commitment = table.get(position)?.ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "faithful note table has a gap at position {position}"
+            ))
+        })?;
+        out.push(*commitment.value());
+    }
+    Ok(out)
+}
+
+fn verify_faithful_roots_for_prefixes(
+    envelope: &FaithfulNoteRootEnvelopeV1,
+    predecessor_leaves: &[[u8; 32]],
+    successor_leaves: &[[u8; 32]],
+) -> Result<()> {
+    let predecessor =
+        Poseidon2NoteTree::from_blake3_commitments(predecessor_leaves, LIVE_NOTE_TREE_DEPTH)
+            .faithful_root_immutable();
+    let successor =
+        Poseidon2NoteTree::from_blake3_commitments(successor_leaves, LIVE_NOTE_TREE_DEPTH)
+            .faithful_root_immutable();
+    if crate::CanonicalFaithfulRoot::from_faithful(predecessor) != envelope.record.predecessor
+        || crate::CanonicalFaithfulRoot::from_faithful(successor) != envelope.record.successor
+    {
+        return Err(StoreError::Integrity(
+            "faithful note-root edge does not match durable note prefixes".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_fresh_faithful_notes_in(
+    write: &redb::WriteTransaction,
+    envelope: &FaithfulNoteRootEnvelopeV1,
+    new_commitments: &[[u8; 32]],
+    durable_count: u64,
+) -> Result<()> {
+    let edge = &envelope.record;
+    if durable_count != edge.previous_note_count {
+        return Err(StoreError::Integrity(format!(
+            "faithful predecessor count {} differs from durable note count {durable_count}",
+            edge.previous_note_count
+        )));
+    }
+    let added = u64::try_from(new_commitments.len())
+        .map_err(|_| StoreError::Integrity("faithful append count does not fit u64".to_string()))?;
+    if edge.note_count
+        != durable_count
+            .checked_add(added)
+            .ok_or_else(|| StoreError::Integrity("faithful note count overflow".to_string()))?
+    {
+        return Err(StoreError::Integrity(
+            "faithful successor count does not equal exact append length".to_string(),
+        ));
+    }
+    let predecessor = durable_note_prefix_in(write, durable_count, true)?;
+    let mut successor = predecessor.clone();
+    successor.extend_from_slice(new_commitments);
+    verify_faithful_roots_for_prefixes(envelope, &predecessor, &successor)
+}
+
+fn verify_replayed_faithful_notes_in(
+    write: &redb::WriteTransaction,
+    envelope: &FaithfulNoteRootEnvelopeV1,
+    replayed_commitments: &[[u8; 32]],
+    durable_count: u64,
+) -> Result<()> {
+    let edge = &envelope.record;
+    if durable_count != edge.note_count {
+        return Err(StoreError::Integrity(format!(
+            "faithful replay note count {} differs from durable note count {durable_count}",
+            edge.note_count
+        )));
+    }
+    let expected_added = edge
+        .note_count
+        .checked_sub(edge.previous_note_count)
+        .ok_or_else(|| StoreError::Integrity("faithful replay count regressed".to_string()))?;
+    if usize::try_from(expected_added).ok() != Some(replayed_commitments.len()) {
+        return Err(StoreError::Integrity(
+            "faithful replay append length differs from durable edge".to_string(),
+        ));
+    }
+    let successor = durable_note_prefix_in(write, edge.note_count, true)?;
+    let predecessor = successor
+        .get(
+            ..usize::try_from(edge.previous_note_count).map_err(|_| {
+                StoreError::Integrity(
+                    "faithful replay predecessor count does not fit usize".to_string(),
+                )
+            })?,
+        )
+        .ok_or_else(|| {
+            StoreError::Integrity("faithful replay predecessor exceeds successor".to_string())
+        })?
+        .to_vec();
+    if successor
+        .get(predecessor.len()..)
+        .is_none_or(|suffix| suffix != replayed_commitments)
+    {
+        return Err(StoreError::Integrity(
+            "faithful replay note leaves differ from durable edge".to_string(),
+        ));
+    }
+    verify_faithful_roots_for_prefixes(envelope, &predecessor, &successor)
 }
 
 impl CommitRecord {
@@ -377,7 +547,14 @@ impl PersistentStore {
         record: &CommitRecord,
         note_commitments: &[[u8; 32]],
     ) -> Result<CommitOutcome> {
-        self.commit_finalized_turn_welded(expected_ordinal, record, &[], note_commitments, None)
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            note_commitments,
+            None,
+            None,
+        )
     }
 
     /// [`Self::commit_finalized_turn_with_notes`] PLUS the exact serialized
@@ -403,6 +580,53 @@ impl PersistentStore {
             &[],
             note_commitments,
             Some((receipt_index, encoded_receipt)),
+            None,
+        )
+    }
+
+    /// The live faithful-root apex: commit record, exact note leaves, receipt,
+    /// hybrid-authenticated faithful history edge, exact-root attestation, and
+    /// every cursor in one redb transaction.
+    ///
+    /// The store independently reconstructs predecessor and successor roots
+    /// from its durable positional note table.  A caller cannot pair a validly
+    /// signed but unrelated root edge with different leaves, or publish the old
+    /// one-felt alias as the live attestation root.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+    ) -> Result<CommitOutcome> {
+        if !faithful.envelope.verify_hybrid(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+            1,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root author hybrid signature failed".to_string(),
+            ));
+        }
+        if !faithful.attested_root.has_any_valid_committee_signature(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root attestation has no valid author signature".to_string(),
+            ));
+        }
+        validate_faithful_commit_coordinates(record, &faithful)?;
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            note_commitments,
+            Some((receipt_index, encoded_receipt)),
+            Some(faithful),
         )
     }
 
@@ -423,7 +647,7 @@ impl PersistentStore {
         record: &CommitRecord,
         burns: &[(u8, [u8; 32], [u8; 32])],
     ) -> Result<u64> {
-        self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[], None)
+        self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[], None, None)
             .map(|o| o.ordinal)
     }
 
@@ -440,6 +664,7 @@ impl PersistentStore {
         burns: &[(u8, [u8; 32], [u8; 32])],
         note_commitments: &[[u8; 32]],
         receipt_entry: Option<(u64, &[u8])>,
+        faithful: Option<FinalizedFaithfulRootWeld<'_>>,
     ) -> Result<CommitOutcome> {
         let write_txn = self.db.begin_write()?;
         let assigned;
@@ -468,6 +693,35 @@ impl PersistentStore {
                                         receipt_index,
                                         encoded_receipt,
                                         false,
+                                    )?;
+                                }
+                                if let Some(faithful) = faithful.as_ref() {
+                                    let durable_note_count = meta
+                                        .get(tables::META_NOTE_TREE_SIZE)?
+                                        .map(|guard| guard.value())
+                                        .unwrap_or(0);
+                                    // The replay checks below include the
+                                    // attested-root table, whose helper updates
+                                    // METADATA on fresh writes and therefore
+                                    // intentionally refuses a concurrently-live
+                                    // table handle even for exact replay.
+                                    drop(meta);
+                                    verify_replayed_faithful_notes_in(
+                                        &write_txn,
+                                        faithful.envelope,
+                                        note_commitments,
+                                        durable_note_count,
+                                    )?;
+                                    crate::faithful_note_root_history::append_faithful_note_root_verified_in(
+                                        &write_txn,
+                                        faithful.envelope,
+                                        faithful.initial_anchor,
+                                        true,
+                                    )?;
+                                    crate::federation::store_attested_root_in(
+                                        &write_txn,
+                                        faithful.attested_root,
+                                        crate::federation::AttestedRootWrite::ExactReplay,
                                     )?;
                                 }
                                 // Already durably committed; nothing to do. The
@@ -552,6 +806,23 @@ impl PersistentStore {
                 }
             }
 
+            // Reconstruct the faithful predecessor/successor from the exact
+            // durable leaf prefix BEFORE adding the new leaves.  This is the
+            // semantic check that keeps the signed edge from floating free of
+            // the mutation it authorizes.
+            if let Some(faithful) = faithful.as_ref() {
+                let durable_note_count = meta
+                    .get(tables::META_NOTE_TREE_SIZE)?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0);
+                verify_fresh_faithful_notes_in(
+                    &write_txn,
+                    faithful.envelope,
+                    note_commitments,
+                    durable_note_count,
+                )?;
+            }
+
             // 3b. Append note-tree leaves in the SAME transaction (the
             //     same-transaction NOTE weld, bug #58): the record and every
             //     `NoteCreate` commitment it produced are one atomic durability
@@ -578,7 +849,31 @@ impl PersistentStore {
                 meta_bytes.remove(tables::META_NOTE_TREE_ROOT_CACHE)?;
             }
 
-            // 3c. Weld the immutable receipt-log entry into this same atomic
+            // `store_attested_root_in` also updates the latest-root coordinate
+            // in METADATA. redb deliberately refuses a second open of the same
+            // table while this handle is live, so release it before entering
+            // the attestation/history portion of the same transaction. The
+            // commit cursor is reopened and advanced last below.
+            drop(meta);
+
+            // 3c. The exact faithful root edge and its signed live attestation
+            // share the note leaves' atomic boundary.  Verify both roots from
+            // the durable pre-image before mutating the history table.
+            if let Some(faithful) = faithful.as_ref() {
+                crate::faithful_note_root_history::append_faithful_note_root_verified_in(
+                    &write_txn,
+                    faithful.envelope,
+                    faithful.initial_anchor,
+                    false,
+                )?;
+                crate::federation::store_attested_root_in(
+                    &write_txn,
+                    faithful.attested_root,
+                    crate::federation::AttestedRootWrite::Fresh,
+                )?;
+            }
+
+            // 3d. Weld the immutable receipt-log entry into this same atomic
             // transaction. This is deliberately before the cursor advance;
             // redb commits all writes together or none of them.
             if let Some((receipt_index, encoded_receipt)) = receipt_entry {
@@ -591,6 +886,7 @@ impl PersistentStore {
             }
 
             // 4. Advance the durable cursor LAST within the txn (still atomic).
+            let mut meta = write_txn.open_table(tables::METADATA)?;
             meta.insert(tables::META_COMMIT_CURSOR, assigned + 1)?;
         }
         write_txn.commit()?;
@@ -1658,6 +1954,114 @@ mod tests {
     use super::*;
     use crate::PersistentStore;
     use dregg_cell::Cell;
+
+    struct FaithfulSigner {
+        ed: dregg_types::SigningKey,
+        ed_pk: PublicKey,
+        pq_pk: MlDsaPublicKey,
+        pq: dregg_federation::frost::MlDsaSigningKey,
+    }
+
+    impl FaithfulSigner {
+        fn new(seed: u8) -> Self {
+            let bytes = [seed; 32];
+            let ed = dregg_types::SigningKey::from_bytes(&bytes);
+            let ed_pk = ed.public_key();
+            let (pq_pk, pq) = dregg_federation::frost::MlDsaSigningKey::from_seed(&bytes);
+            Self {
+                ed,
+                ed_pk,
+                pq_pk,
+                pq,
+            }
+        }
+
+        fn sign_edge(&self, edge: crate::FaithfulNoteRootRecordV1) -> FaithfulNoteRootEnvelopeV1 {
+            let message = edge.signing_message();
+            FaithfulNoteRootEnvelopeV1 {
+                record: edge,
+                hybrid_quorum: vec![dregg_types::HybridQuorumSig {
+                    pubkey: self.ed_pk,
+                    signature: dregg_types::sign(&self.ed, &message),
+                    ml_dsa_pubkey: self.pq_pk.0.to_vec(),
+                    pq_signature: self.pq.sign(&message).expect("ML-DSA signs"),
+                }],
+            }
+        }
+
+        fn sign_attested(&self, mut root: StoredAttestedRoot) -> StoredAttestedRoot {
+            let signature = dregg_types::sign(&self.ed, &root.signing_message());
+            root.quorum_signatures = vec![(self.ed_pk, signature)];
+            root
+        }
+    }
+
+    fn faithful_context() -> ([u8; 32], [u8; 32]) {
+        ([0x51; 32], [0x52; 32])
+    }
+
+    fn plan_test_edge(
+        store: &PersistentStore,
+        height: u64,
+        block_id: [u8; 32],
+        new_commitments: &[[u8; 32]],
+    ) -> (FaithfulNoteRootAnchorV1, crate::FaithfulNoteRootRecordV1) {
+        let commitments: Vec<[u8; 32]> = store
+            .load_all_note_commitments()
+            .unwrap()
+            .into_iter()
+            .map(|commitment| commitment.0)
+            .collect();
+        let tree = Poseidon2NoteTree::from_blake3_commitments(&commitments, LIVE_NOTE_TREE_DEPTH);
+        let (session, federation) = faithful_context();
+        let anchor = store.faithful_note_root_head().unwrap().unwrap_or_else(|| {
+            FaithfulNoteRootAnchorV1::new(
+                session,
+                federation,
+                9,
+                height - 1,
+                u64::try_from(tree.size()).unwrap(),
+                crate::CanonicalFaithfulRoot::from_faithful(tree.faithful_root_immutable()),
+            )
+            .unwrap()
+        });
+        let edge =
+            crate::plan_faithful_note_root_transition_v1(&tree, &anchor, block_id, new_commitments)
+                .unwrap();
+        (anchor, edge)
+    }
+
+    fn test_attested(
+        signer: &FaithfulSigner,
+        record: &CommitRecord,
+        edge: &crate::FaithfulNoteRootRecordV1,
+    ) -> StoredAttestedRoot {
+        signer.sign_attested(StoredAttestedRoot {
+            merkle_root: record.ledger_root,
+            note_tree_root: Some(edge.successor.to_bytes()),
+            nullifier_set_root: None,
+            height: record.height,
+            timestamp: 1_700_000_000,
+            blocklace_block_id: Some(record.block_id),
+            finality_round: Some(record.height),
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 1,
+            federation_id: dregg_types::FederationId(edge.federation_id),
+            receipt_stream_root: Some([0x61; 32]),
+            finalization_quorum: Vec::new(),
+        })
+    }
+
+    fn faithful_commit_record(ordinal: u64, block_id: [u8; 32]) -> CommitRecord {
+        let mut out = record(ordinal, ordinal, Vec::new());
+        out.height = ordinal + 1;
+        out.block_id = block_id;
+        out.turn_hash = [0x70 + ordinal as u8; 32];
+        out.receipt_hash = [0x80 + ordinal as u8; 32];
+        out.ledger_root = [0x90 + ordinal as u8; 32];
+        out
+    }
 
     /// Build a deterministic commit record for ordinal `n`, touching `cells`.
     /// Callers overwrite `turn_hash` / `receipt_hash` to make them unique.
@@ -3103,5 +3507,244 @@ mod tests {
         let reopened = PersistentStore::open(&path).unwrap();
         assert_eq!(reopened.commit_cursor().unwrap(), 1);
         assert!(reopened.commit_record_at(0).unwrap().is_some());
+    }
+
+    #[test]
+    fn faithful_root_weld_survives_restart_with_exact_attestation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("faithful-live.redb");
+        let signer = FaithfulSigner::new(0x21);
+        let block_id = [0x31; 32];
+        let notes = [[0x41; 32], [0x42; 32]];
+        let expected_root;
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let commit = faithful_commit_record(0, block_id);
+            let (anchor, edge) = plan_test_edge(&store, 1, block_id, &notes);
+            expected_root = edge.successor;
+            let envelope = signer.sign_edge(edge.clone());
+            let attested = test_attested(&signer, &commit, &edge);
+            let outcome = store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &notes,
+                    0,
+                    b"receipt-0",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: &[signer.ed_pk],
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                    },
+                )
+                .unwrap();
+            assert!(outcome.freshly_committed);
+            assert_eq!(store.note_count().unwrap(), 2);
+            let replay = store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &notes,
+                    0,
+                    b"receipt-0",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: &[signer.ed_pk],
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                    },
+                )
+                .unwrap();
+            assert!(!replay.freshly_committed);
+            assert_eq!(store.note_count().unwrap(), 2);
+        }
+
+        let reopened = PersistentStore::open(&path).unwrap();
+        let root = reopened.latest_attested_root().unwrap().unwrap();
+        assert_eq!(root.note_tree_root, Some(expected_root.to_bytes()));
+        let history = reopened
+            .load_faithful_note_root_history_hybrid(
+                &[signer.ed_pk],
+                std::slice::from_ref(&signer.pq_pk),
+                1,
+                crate::FaithfulNoteRootExpectationV1 {
+                    records: 1,
+                    height: 1,
+                    note_count: 2,
+                    root: expected_root,
+                },
+            )
+            .unwrap();
+        assert_eq!(history.head().root, expected_root);
+        assert_eq!(reopened.commit_cursor().unwrap(), 1);
+        assert_eq!(reopened.receipt_chain_len().unwrap(), 1);
+    }
+
+    #[test]
+    fn faithful_root_weld_refuses_fork_without_partial_commit() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = FaithfulSigner::new(0x22);
+        let first_block = [0x32; 32];
+        let first_commit = faithful_commit_record(0, first_block);
+        let (anchor, first_edge) = plan_test_edge(&store, 1, first_block, &[[0x43; 32]]);
+        let first_envelope = signer.sign_edge(first_edge.clone());
+        let first_attested = test_attested(&signer, &first_commit, &first_edge);
+        store
+            .commit_finalized_turn_with_faithful_root(
+                0,
+                &first_commit,
+                &[[0x43; 32]],
+                0,
+                b"receipt-0",
+                FinalizedFaithfulRootWeld {
+                    initial_anchor: Some(&anchor),
+                    envelope: &first_envelope,
+                    author_committee: &[signer.ed_pk],
+                    author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                    attested_root: &first_attested,
+                },
+            )
+            .unwrap();
+
+        let second_block = [0x33; 32];
+        let second_commit = faithful_commit_record(1, second_block);
+        let (_, mut sibling) = plan_test_edge(&store, 2, second_block, &[[0x44; 32]]);
+        sibling.predecessor = anchor.root; // authenticated sibling of the consumed head
+        let sibling_envelope = signer.sign_edge(sibling.clone());
+        let sibling_attested = test_attested(&signer, &second_commit, &sibling);
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    1,
+                    &second_commit,
+                    &[[0x44; 32]],
+                    1,
+                    b"receipt-1",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: None,
+                        envelope: &sibling_envelope,
+                        author_committee: &[signer.ed_pk],
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &sibling_attested,
+                    },
+                )
+                .is_err()
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.note_count().unwrap(), 1);
+        assert!(store.attested_root_at_height(2).unwrap().is_none());
+        assert_eq!(store.faithful_note_root_head().unwrap().unwrap().height, 1);
+    }
+
+    #[test]
+    fn faithful_root_history_truncation_refuses_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("faithful-truncated.redb");
+        let signer = FaithfulSigner::new(0x23);
+        let block_id = [0x34; 32];
+        let expected;
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            let commit = faithful_commit_record(0, block_id);
+            let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[[0x45; 32]]);
+            expected = crate::FaithfulNoteRootExpectationV1 {
+                records: 1,
+                height: 1,
+                note_count: 1,
+                root: edge.successor,
+            };
+            let envelope = signer.sign_edge(edge.clone());
+            let attested = test_attested(&signer, &commit, &edge);
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[[0x45; 32]],
+                    0,
+                    b"receipt-0",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &envelope,
+                        author_committee: &[signer.ed_pk],
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &attested,
+                    },
+                )
+                .unwrap();
+            let write = store.db.begin_write().unwrap();
+            {
+                let mut history = write
+                    .open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)
+                    .unwrap();
+                history.remove(1).unwrap();
+            }
+            write.commit().unwrap();
+        }
+
+        let reopened = PersistentStore::open(&path).unwrap();
+        assert!(
+            reopened
+                .load_faithful_note_root_history_hybrid(
+                    &[signer.ed_pk],
+                    std::slice::from_ref(&signer.pq_pk),
+                    1,
+                    expected,
+                )
+                .is_err(),
+            "a deleted tail with a surviving seal must not restart as a valid prefix"
+        );
+        assert!(reopened.faithful_note_root_head().is_err());
+    }
+
+    #[test]
+    fn faithful_root_weld_rejects_legacy_scalar_x_plus_p_alias() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = FaithfulSigner::new(0x24);
+        let block_id = [0x35; 32];
+        let x = 1_000_000u32;
+        let x_plus_p = x + dregg_circuit::field::BABYBEAR_P;
+        let mut honest = [0u8; 32];
+        let mut alias = [0u8; 32];
+        honest[..4].copy_from_slice(&x.to_le_bytes());
+        alias[..4].copy_from_slice(&x_plus_p.to_le_bytes());
+        assert_eq!(
+            dregg_commit::poseidon2_tree::commitment_to_field(&honest),
+            dregg_commit::poseidon2_tree::commitment_to_field(&alias),
+            "the hostile fixture must alias under the retired one-felt bridge"
+        );
+
+        let commit = faithful_commit_record(0, block_id);
+        let (anchor, _) = plan_test_edge(&store, 1, block_id, &[honest]);
+        let alias_tree = Poseidon2NoteTree::with_depth(LIVE_NOTE_TREE_DEPTH);
+        let alias_edge =
+            crate::plan_faithful_note_root_transition_v1(&alias_tree, &anchor, block_id, &[alias])
+                .unwrap();
+        let alias_envelope = signer.sign_edge(alias_edge.clone());
+        let alias_attested = test_attested(&signer, &commit, &alias_edge);
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root(
+                    0,
+                    &commit,
+                    &[honest],
+                    0,
+                    b"receipt-0",
+                    FinalizedFaithfulRootWeld {
+                        initial_anchor: Some(&anchor),
+                        envelope: &alias_envelope,
+                        author_committee: &[signer.ed_pk],
+                        author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                        attested_root: &alias_attested,
+                    },
+                )
+                .is_err(),
+            "a legacy scalar alias must not substitute for the exact faithful root"
+        );
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert_eq!(store.note_count().unwrap(), 0);
+        assert!(store.latest_attested_root().unwrap().is_none());
     }
 }

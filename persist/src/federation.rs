@@ -506,23 +506,8 @@ impl PersistentStore {
     ///
     /// Also updates the metadata to track the latest height.
     pub fn store_attested_root(&self, root: &StoredAttestedRoot) -> Result<()> {
-        let serialized = postcard::to_stdvec(root)?;
-
         let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(tables::ATTESTED_ROOTS)?;
-            table.insert(root.height, serialized.as_slice())?;
-
-            // Update latest height metadata.
-            let mut meta = write_txn.open_table(tables::METADATA)?;
-            let current_latest = meta
-                .get(tables::META_LATEST_ROOT_HEIGHT)?
-                .map(|g| g.value())
-                .unwrap_or(0);
-            if root.height >= current_latest {
-                meta.insert(tables::META_LATEST_ROOT_HEIGHT, root.height)?;
-            }
-        }
+        store_attested_root_in(&write_txn, root, AttestedRootWrite::Replace)?;
         write_txn.commit()?;
         Ok(())
     }
@@ -583,6 +568,65 @@ impl PersistentStore {
         }
         Ok(roots)
     }
+}
+
+/// Mutation policy for an attested-root write inside a larger transaction.
+pub(crate) enum AttestedRootWrite {
+    /// The ordinary backfill path may replace a root at the same height with
+    /// the same state plus its newly assembled finalization quorum.
+    Replace,
+    /// A fresh finalized commit must not overwrite a competing attestation.
+    Fresh,
+    /// Crash replay requires the exact bytes already written by the original
+    /// atomic commit and never repairs a missing row.
+    ExactReplay,
+}
+
+/// Store one attested root inside a caller-owned redb transaction.
+pub(crate) fn store_attested_root_in(
+    write: &redb::WriteTransaction,
+    root: &StoredAttestedRoot,
+    policy: AttestedRootWrite,
+) -> Result<()> {
+    let serialized = postcard::to_stdvec(root)?;
+    let mut table = write.open_table(tables::ATTESTED_ROOTS)?;
+    if let Some(existing) = table.get(root.height)? {
+        let existing_bytes = existing.value();
+        match policy {
+            AttestedRootWrite::Replace => {}
+            AttestedRootWrite::Fresh => {
+                return Err(StoreError::Integrity(format!(
+                    "attested root height {} already exists; refusing finalized-root overwrite",
+                    root.height
+                )));
+            }
+            AttestedRootWrite::ExactReplay if existing_bytes == serialized.as_slice() => {
+                return Ok(());
+            }
+            AttestedRootWrite::ExactReplay => {
+                return Err(StoreError::Integrity(format!(
+                    "attested root replay at height {} differs from durable root",
+                    root.height
+                )));
+            }
+        }
+    } else if matches!(policy, AttestedRootWrite::ExactReplay) {
+        return Err(StoreError::Integrity(format!(
+            "attested root replay at height {} is missing from durable store",
+            root.height
+        )));
+    }
+    table.insert(root.height, serialized.as_slice())?;
+
+    let mut meta = write.open_table(tables::METADATA)?;
+    let current_latest = meta
+        .get(tables::META_LATEST_ROOT_HEIGHT)?
+        .map(|g| g.value())
+        .unwrap_or(0);
+    if root.height >= current_latest {
+        meta.insert(tables::META_LATEST_ROOT_HEIGHT, root.height)?;
+    }
+    Ok(())
 }
 
 /// Get the current unix timestamp in seconds.

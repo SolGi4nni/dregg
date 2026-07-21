@@ -4356,7 +4356,7 @@ async fn persist_solo_finalized_attested_root(
 
     let mut attested = dregg_types::AttestedRoot {
         merkle_root,
-        note_tree_root: None,
+        note_tree_root: Some(s.note_tree.faithful_root_immutable().to_bytes32()),
         nullifier_set_root: None,
         height: new_height,
         timestamp: now,
@@ -4425,6 +4425,47 @@ async fn persist_solo_finalized_attested_root(
         merkle_root: dregg_types::hex_encode(&stored.merkle_root),
         timestamp: stored.timestamp,
     });
+}
+
+/// A fresh store or legacy image has no faithful-history segment yet.  Derive a
+/// deterministic nonzero federation context even for solo bootstrap (whose
+/// historical `federation_id` placeholder is zero), so every node with the same
+/// local identity starts the same exact segment rather than accepting a
+/// caller-selected session.
+fn faithful_history_federation_id(
+    configured: [u8; 32],
+    local_author: &dregg_types::PublicKey,
+) -> [u8; 32] {
+    if configured.iter().any(|byte| *byte != 0) {
+        configured
+    } else {
+        *blake3::Hasher::new_derive_key("dregg-faithful-note-root-solo-federation-v1")
+            .update(local_author.as_bytes())
+            .finalize()
+            .as_bytes()
+    }
+}
+
+fn faithful_history_session_id(federation_id: [u8; 32], committee_epoch: u64) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("dregg-faithful-note-root-session-v1")
+        .update(&federation_id)
+        .update(&committee_epoch.to_le_bytes())
+        .finalize()
+        .as_bytes()
+}
+
+/// Positional NoteCreate leaves for the finalized call forest.  The call-tree
+/// depth is semantically significant: nested actions execute too, so collecting
+/// only root actions would produce a live tree that omits committed notes.
+fn finalized_note_commitments(forest: &dregg_turn::CallForest) -> Vec<[u8; 32]> {
+    forest
+        .total_effects()
+        .into_iter()
+        .filter_map(|effect| match effect {
+            dregg_turn::Effect::NoteCreate { commitment, .. } => Some(commitment.0),
+            _ => None,
+        })
+        .collect()
 }
 
 fn persist_finalized_payload_rejection(
@@ -4975,17 +5016,7 @@ async fn execute_finalized_turn(
             // (a permanent double leaf, since the boot path rebuilds the tree
             // from the durable table). The in-RAM Poseidon2 tree is advanced only
             // AFTER durable success, in the commit block below.
-            let note_commitments: Vec<[u8; 32]> = signed_turn
-                .turn
-                .call_forest
-                .roots
-                .iter()
-                .flat_map(|tree| &tree.action.effects)
-                .filter_map(|effect| match effect {
-                    dregg_turn::Effect::NoteCreate { commitment, .. } => Some(commitment.0),
-                    _ => None,
-                })
-                .collect();
+            let note_commitments = finalized_note_commitments(&signed_turn.turn.call_forest);
 
             // Reserve and validate the immutable global-log slot while the
             // node-state lock excludes every other append.  The exact encoded
@@ -5516,11 +5547,126 @@ async fn execute_finalized_turn(
             // `full_turn_proof_attached` above); the note-tree Poseidon2 root
             // binding remains threaded separately.
             let merkle_root = canonical_ledger_root(&s.ledger);
-            let note_tree_root: Option<[u8; 32]> = None;
             let timestamp_for_root = now;
             let federation_keys = s.known_federation_keys.clone();
             let federation_threshold = s.decryption_threshold.max(1);
             let signing_key_bytes = s.cclerk.gossip_signing_key().to_bytes();
+
+            // FAITHFUL NOTE ROOT: plan the exact successor from the in-memory
+            // tree restored from the durable positional leaf table, then hybrid-
+            // sign the complete history edge under this enrolled node identity.
+            // The store independently reconstructs both roots and commits this
+            // edge with the leaves/receipt/attestation/cursor in one redb txn.
+            let local_pk = s.cclerk.public_key();
+            let faithful_federation_id = faithful_history_federation_id(s.federation_id, &local_pk);
+            let existing_faithful_head = match s.store.faithful_note_root_head() {
+                Ok(head) => head,
+                Err(e) => {
+                    error!(
+                        block_id = %block_id,
+                        error = %e,
+                        "faithful note-root history is malformed; refusing durable finalized commit"
+                    );
+                    return;
+                }
+            };
+            if existing_faithful_head.as_ref().is_some_and(|head| {
+                head.federation_id != faithful_federation_id
+                    || head.committee_epoch != s.committee_epoch
+            }) {
+                error!(
+                    block_id = %block_id,
+                    active_federation = %dregg_types::hex_encode(&faithful_federation_id),
+                    active_epoch = s.committee_epoch,
+                    "faithful note-root segment belongs to an earlier committee context; refusing \
+                     to extend it until an authenticated segment-rollover certificate is installed"
+                );
+                return;
+            }
+            let initial_faithful_anchor = if existing_faithful_head.is_none() {
+                let Some(previous_height) = new_height.checked_sub(1) else {
+                    error!(
+                        block_id = %block_id,
+                        "finalized height zero has no faithful predecessor; refusing durable commit"
+                    );
+                    return;
+                };
+                let note_count = match u64::try_from(s.note_tree.size()) {
+                    Ok(count) => count,
+                    Err(_) => {
+                        error!(
+                            block_id = %block_id,
+                            "faithful note count does not fit u64; refusing durable finalized commit"
+                        );
+                        return;
+                    }
+                };
+                match dregg_persist::FaithfulNoteRootAnchorV1::new(
+                    faithful_history_session_id(faithful_federation_id, s.committee_epoch),
+                    faithful_federation_id,
+                    s.committee_epoch,
+                    previous_height,
+                    note_count,
+                    dregg_persist::CanonicalFaithfulRoot::from_faithful(
+                        s.note_tree.faithful_root_immutable(),
+                    ),
+                ) {
+                    Ok(anchor) => Some(anchor),
+                    Err(e) => {
+                        error!(
+                            block_id = %block_id,
+                            error = %e,
+                            "could not create faithful note-root segment anchor"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+            let faithful_predecessor = existing_faithful_head
+                .as_ref()
+                .or(initial_faithful_anchor.as_ref())
+                .expect("existing or initial faithful head");
+            let faithful_record = match dregg_persist::plan_faithful_note_root_transition_v1(
+                &s.note_tree,
+                faithful_predecessor,
+                block_id.0,
+                &note_commitments,
+            ) {
+                Ok(record) => record,
+                Err(e) => {
+                    error!(
+                        block_id = %block_id,
+                        error = %e,
+                        "live note tree does not extend the authenticated faithful head; refusing durable commit"
+                    );
+                    return;
+                }
+            };
+            let faithful_message = faithful_record.signing_message();
+            let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
+            let faithful_classical_signature = dregg_types::sign(&signing_key, &faithful_message);
+            let (local_ml_dsa_pk, local_ml_dsa_signing_key) =
+                dregg_federation::frost::MlDsaSigningKey::from_seed(&signing_key_bytes);
+            let Some(faithful_pq_signature) = local_ml_dsa_signing_key.sign(&faithful_message)
+            else {
+                error!(
+                    block_id = %block_id,
+                    "ML-DSA faithful-root signing failed; refusing half-authenticated durable commit"
+                );
+                return;
+            };
+            let faithful_envelope = dregg_persist::FaithfulNoteRootEnvelopeV1 {
+                record: faithful_record.clone(),
+                hybrid_quorum: vec![dregg_types::HybridQuorumSig {
+                    pubkey: local_pk,
+                    signature: faithful_classical_signature,
+                    ml_dsa_pubkey: local_ml_dsa_pk.0.to_vec(),
+                    pq_signature: faithful_pq_signature,
+                }],
+            };
+            let note_tree_root = Some(faithful_record.successor.to_bytes());
 
             // v4 (#80): bind the receipt stream this attestation covers.
             // Each finalized blocklace block carries exactly one turn (the
@@ -5546,15 +5692,13 @@ async fn execute_finalized_turn(
                 quorum_signatures: Vec::new(),
                 threshold_qc: None,
                 threshold: federation_threshold,
-                federation_id: dregg_types::FederationId(s.federation_id),
+                federation_id: dregg_types::FederationId(faithful_federation_id),
                 receipt_stream_root,
                 // Classical local attestation; the wire hybrid quorum is
                 // populated by the cross-fed export path, not this signer.
                 hybrid_quorum: Vec::new(),
             };
             let signing_msg = attested.signing_message();
-            let local_pk = s.cclerk.public_key();
-            let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
             let sig = dregg_types::sign(&signing_key, &signing_msg);
             // In solo / single-validator mode our signature alone meets the
             // threshold (threshold defaults to 1 if the genesis-declared value
@@ -5637,16 +5781,6 @@ async fn execute_finalized_turn(
                 receipt_stream_root: attested.receipt_stream_root,
                 finalization_quorum,
             };
-            if let Err(e) = s.store.store_attested_root(&stored) {
-                warn!(error = %e, height = new_height, "failed to persist attested root");
-            }
-
-            // Emit root event to WebSocket subscribers.
-            state.emit(NodeEvent::Root {
-                height: new_height,
-                merkle_root: dregg_types::hex_encode(&stored.merkle_root),
-                timestamp: stored.timestamp,
-            });
 
             // Emit revocation events for any RevokeCapability effects.
             for effect in signed_turn.turn.call_forest.total_effects() {
@@ -5711,12 +5845,19 @@ async fn execute_finalized_turn(
                 // transaction (bug #58): the note leaves and the turn record land
                 // together-or-not-at-all in one fsync boundary, so a crash-retry
                 // can never double-append a note leaf.
-                match s.store.commit_finalized_turn_with_notes_and_receipt(
+                match s.store.commit_finalized_turn_with_faithful_root(
                     expected_ordinal,
                     &commit_record,
                     &note_commitments,
                     receipt_log_index,
                     &encoded_receipt,
+                    dregg_persist::commit_log::FinalizedFaithfulRootWeld {
+                        initial_anchor: initial_faithful_anchor.as_ref(),
+                        envelope: &faithful_envelope,
+                        author_committee: std::slice::from_ref(&local_pk),
+                        author_ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
+                        attested_root: &stored,
+                    },
                 ) {
                     Ok(outcome) => {
                         let assigned = outcome.ordinal;
@@ -5745,6 +5886,14 @@ async fn execute_finalized_turn(
                                 s.note_tree_append_commitment(cm);
                             }
                         }
+                        // Only a root that landed in the same atomic transaction
+                        // as its exact note frontier may become externally
+                        // observable.  A failed commit emits no phantom head.
+                        state.emit(NodeEvent::Root {
+                            height: new_height,
+                            merkle_root: dregg_types::hex_encode(&stored.merkle_root),
+                            timestamp: stored.timestamp,
+                        });
                         debug!(
                             turn_hash = %turn_hash_hex,
                             ordinal = assigned,
@@ -5980,6 +6129,53 @@ mod tests {
             was_burn: false,
             consumed_capabilities: vec![],
         }
+    }
+
+    #[test]
+    fn finalized_note_commitments_include_nested_actions_in_dfs_order() {
+        fn action(tag: u8, effects: Vec<dregg_turn::Effect>) -> dregg_turn::Action {
+            dregg_turn::Action {
+                target: dregg_cell::CellId([tag; 32]),
+                method: [tag.wrapping_add(1); 32],
+                args: Vec::new(),
+                authorization: dregg_turn::Authorization::Unchecked,
+                preconditions: Default::default(),
+                effects,
+                may_delegate: dregg_turn::DelegationMode::None,
+                commitment_mode: dregg_turn::CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: Vec::new(),
+            }
+        }
+        fn note(tag: u8) -> dregg_turn::Effect {
+            dregg_turn::Effect::NoteCreate {
+                commitment: dregg_cell::NoteCommitment([tag; 32]),
+                value: u64::from(tag),
+                asset_type: 7,
+                encrypted_note: vec![tag],
+                value_commitment: None,
+                range_proof: None,
+            }
+        }
+
+        let mut forest = dregg_turn::CallForest::new();
+        let root = forest.add_root(action(0x10, vec![note(0x11)]));
+        let child = root.add_child(action(
+            0x20,
+            vec![
+                dregg_turn::Effect::IncrementNonce {
+                    cell: dregg_cell::CellId([0x22; 32]),
+                },
+                note(0x21),
+            ],
+        ));
+        child.add_child(action(0x30, vec![note(0x31)]));
+
+        assert_eq!(
+            finalized_note_commitments(&forest),
+            vec![[0x11; 32], [0x21; 32], [0x31; 32]],
+            "every executed NoteCreate becomes one positional faithful leaf"
+        );
     }
 
     fn scope2_witnessed(receipt: dregg_turn::TurnReceipt) -> dregg_turn::WitnessedReceipt {
@@ -7212,6 +7408,13 @@ mod tests {
                 .expect("fixed-size ML-DSA public key");
         {
             let mut s = state.write().await;
+            let local_pk = s.cclerk.public_key();
+            let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&local_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size local ML-DSA public key");
             let token = *blake3::hash(b"default").as_bytes();
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(
@@ -7228,8 +7431,12 @@ mod tests {
                 ))
                 .expect("insert foreign B");
             s.set_federation_keys_hybrid(
-                vec![clerk_a.public_key(), clerk_b.public_key()],
+                // The foreign agents are enrolled application authors; the
+                // node itself is the enrolled validator that authenticates the
+                // faithful-root edge and live attestation.
+                vec![local_pk, clerk_a.public_key(), clerk_b.public_key()],
                 vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
                     dregg_federation::frost::MlDsaPublicKey(pq_a),
                     dregg_federation::frost::MlDsaPublicKey(pq_b),
                 ],
@@ -7356,6 +7563,10 @@ mod tests {
     /// the FFI runs + HOW its result is installed) is identical either way.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn a1_finalized_turn_advances_height_zero_to_one_off_lock() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("dregg_node=debug")
+            .with_test_writer()
+            .try_init();
         let _ = rustls::crypto::ring::default_provider().install_default();
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
@@ -7376,6 +7587,13 @@ mod tests {
         let dest = dregg_cell::CellId([0x3Cu8; 32]);
         {
             let mut s = state.write().await;
+            let local_pk = s.cclerk.public_key();
+            let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&local_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("fixed-size local ML-DSA public key");
             s.ledger
                 .insert_cell(dregg_cell::Cell::with_balance(
                     sender_pk,
@@ -7389,8 +7607,13 @@ mod tests {
                     .try_into()
                     .expect("fixed-size ML-DSA public key");
             s.set_federation_keys_hybrid(
-                vec![sender_cclerk.public_key()],
-                vec![dregg_federation::frost::MlDsaPublicKey(pq)],
+                // Sender is an enrolled application author; this node is the
+                // enrolled validator that signs the faithful-root attestation.
+                vec![local_pk, sender_cclerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
+                    dregg_federation::frost::MlDsaPublicKey(pq),
+                ],
             );
         }
 
@@ -7441,6 +7664,20 @@ mod tests {
 
         // The ledger reflects the committed transfer.
         let s = state.read().await;
+        let stored_root = s
+            .store
+            .latest_attested_root()
+            .expect("read attested root")
+            .expect("faithful attested root persisted");
+        let faithful = s
+            .store
+            .faithful_note_root_expectation()
+            .expect("read faithful history seal")
+            .expect("faithful history installed");
+        assert_eq!(faithful.records, 1);
+        assert_eq!(faithful.height, 1);
+        assert_eq!(faithful.note_count, 0);
+        assert_eq!(stored_root.note_tree_root, Some(faithful.root.to_bytes()));
         assert_eq!(
             s.ledger
                 .get(&dest)

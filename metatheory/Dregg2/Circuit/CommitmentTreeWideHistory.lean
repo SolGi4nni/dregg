@@ -9,10 +9,12 @@ and successor note counts, consecutive finalized heights, and the block identity
 that carried the transition.
 
 Authentication is deliberately parameterized as `auth : Record -> Prop`.  The
-runtime instantiates it with the existing enrolled-roster hybrid quorum verifier
-(Ed25519 AND ML-DSA-65).  Keeping cryptographic verification abstract here makes
-the structural theorem independent of any signature implementation without
-pretending that structure alone authenticates a record.
+live atomic commit instantiates it with the enrolled local node's hybrid author
+(Ed25519 AND ML-DSA-65); the persistence API also supports a threshold roster
+when a record-signing quorum is supplied.  Block finality remains the carrying
+block's separate consensus obligation.  Keeping cryptographic verification
+abstract here makes the structural theorem independent of any signature
+implementation without pretending that structure alone authenticates a record.
 
 The protocol is append-only.  Once a record has advanced the head, replaying it,
 or presenting a sibling at the already-consumed height, cannot extend the new
@@ -229,6 +231,71 @@ theorem exact_snapshot_rejects_truncated_tail
   intro h
   exact strict_prefix_has_wrong_count initial last h.2.1
 
+/-! ## The live atomic publication cut
+
+The redb interpreter commits a note-frontier mutation, one history record, and
+the attested note root as one transaction.  This small executable state machine
+is the semantic authority for that all-or-nothing boundary.  The cryptographic
+root calculation remains in `CommitmentTreeWide`; here acceptance may expose
+only the exact successor already authenticated by `Record`.
+-/
+
+structure LiveImage where
+  session : Bytes32
+  federation : Bytes32
+  committeeEpoch : Nat
+  height : Nat
+  noteCount : Nat
+  noteRoot : Root8
+  attestedNoteRoot : Root8
+  historyRecords : Nat
+  deriving DecidableEq
+
+def LiveImage.anchor (image : LiveImage) : Anchor :=
+  { session := image.session
+    federation := image.federation
+    committeeEpoch := image.committeeEpoch
+    height := image.height
+    noteCount := image.noteCount
+    root := image.noteRoot }
+
+/-- One atomic attempt.  Authentication or structural failure is exact state
+identity; success advances count/root/history and publishes that same successor
+in the attestation field. -/
+def atomicWeld (auth : Record -> Bool) (image : LiveImage) (record : Record) : LiveImage :=
+  if auth record && extendsBool image.anchor record then
+    { image with
+      height := record.height
+      noteCount := record.noteCount
+      noteRoot := record.successor
+      attestedNoteRoot := record.successor
+      historyRecords := image.historyRecords + 1 }
+  else image
+
+theorem atomicWeld_refusal_holds (auth : Record -> Bool) (image : LiveImage) (record : Record)
+    (h : (auth record && extendsBool image.anchor record) = false) :
+    atomicWeld auth image record = image := by
+  simp [atomicWeld, h]
+
+theorem atomicWeld_accepts_exact_successor
+    (auth : Record -> Bool) (image : LiveImage) (record : Record)
+    (h : (auth record && extendsBool image.anchor record) = true) :
+    let after := atomicWeld auth image record
+    after.height = record.height /\
+    after.noteCount = record.noteCount /\
+    after.noteRoot = record.successor /\
+    after.attestedNoteRoot = record.successor /\
+    after.historyRecords = image.historyRecords + 1 := by
+  simp [atomicWeld, h]
+
+theorem atomicWeld_never_publishes_legacy_alias
+    (auth : Record -> Bool) (image : LiveImage) (record : Record) (legacyAlias : Root8)
+    (h : (auth record && extendsBool image.anchor record) = true)
+    (hne : legacyAlias ≠ record.successor) :
+    (atomicWeld auth image record).attestedNoteRoot ≠ legacyAlias := by
+  simp only [atomicWeld, h, if_true]
+  exact Ne.symm hne
+
 /-! Concrete executable teeth. -/
 
 def byteTag (tag : Nat) : Bytes32 := tag % 256 :: List.replicate 31 0
@@ -284,5 +351,8 @@ def demoRecord : Record :=
 #assert_axioms session_substitution_rejected
 #assert_axioms strict_prefix_has_wrong_count
 #assert_axioms exact_snapshot_rejects_truncated_tail
+#assert_axioms atomicWeld_refusal_holds
+#assert_axioms atomicWeld_accepts_exact_successor
+#assert_axioms atomicWeld_never_publishes_legacy_alias
 
 end Dregg2.Circuit.CommitmentTreeWideHistory

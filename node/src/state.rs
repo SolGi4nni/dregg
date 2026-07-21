@@ -27,6 +27,61 @@ use dregg_turn::WitnessedReceipt;
 use crate::gossip::GossipHandle;
 use crate::routing_table::RoutingTable;
 
+fn restore_and_verify_faithful_note_tree(
+    store: &PersistentStore,
+    cclerk: &AgentCipherclerk,
+) -> Result<Poseidon2NoteTree, String> {
+    let durable_note_commitments: Vec<[u8; 32]> = store
+        .load_all_note_commitments()
+        .map_err(|e| format!("failed to restore faithful note tree: {e}"))?
+        .into_iter()
+        .map(|commitment| commitment.0)
+        .collect();
+    let tree = Poseidon2NoteTree::from_blake3_commitments(&durable_note_commitments, 16);
+
+    let Some(expected) = store
+        .faithful_note_root_expectation()
+        .map_err(|e| format!("faithful note-root restart seal refused: {e}"))?
+    else {
+        return Ok(tree);
+    };
+    let durable_count = u64::try_from(tree.size())
+        .map_err(|_| "faithful note-tree size does not fit u64".to_string())?;
+    let durable_root =
+        dregg_persist::CanonicalFaithfulRoot::from_faithful(tree.faithful_root_immutable());
+    if expected.note_count != durable_count || expected.root != durable_root {
+        return Err(format!(
+            "faithful note-root restart mismatch: sealed count/root ({}, {:?}) != durable tree ({durable_count}, {:?})",
+            expected.note_count, expected.root, durable_root
+        ));
+    }
+    let latest = store
+        .latest_attested_root()
+        .map_err(|e| format!("failed to load faithful live attestation: {e}"))?
+        .ok_or_else(|| "faithful history exists without a live attested root".to_string())?;
+    if latest.height != expected.height || latest.note_tree_root != Some(expected.root.to_bytes()) {
+        return Err(
+            "faithful history head and latest live attestation disagree on height/root".to_string(),
+        );
+    }
+
+    // The live history is node-author authenticated: reconstruct that exact
+    // local hybrid identity and replay every row, so a checksum-preserving row
+    // edit or deleted suffix refuses before the node serves.
+    let seed = cclerk.gossip_signing_key().to_bytes();
+    let local_ed = cclerk.public_key();
+    let (local_pq, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+    store
+        .load_faithful_note_root_history_hybrid(
+            std::slice::from_ref(&local_ed),
+            std::slice::from_ref(&local_pq),
+            1,
+            expected,
+        )
+        .map_err(|e| format!("faithful note-root authenticated replay refused: {e}"))?;
+    Ok(tree)
+}
+
 /// THE SWAP (FLIPPED DEFAULT) — the verified Lean executor is now the authoritative state producer
 /// on the commit path BY DEFAULT, with the legacy Rust executor demoted to a differential
 /// cross-check. The producer installs the verified post-state only for the swap-safe COVERED set
@@ -1001,6 +1056,13 @@ impl NodeState {
         let mut channels = crate::channels_service::ChannelRegistry::default();
         channels.restore_rosters(&store, &ledger);
 
+        // The positional note tree is live consensus state, not a disposable
+        // cache.  Rebuild both its legacy scalar view and faithful sixteen-lane
+        // authority from the exact durable leaf order before serving.  Starting
+        // empty after a restart would make the next finalized history edge name
+        // the wrong predecessor even though redb held every note.
+        let note_tree = restore_and_verify_faithful_note_tree(&store, &cclerk)?;
+
         // Issue 10: the freshly-constructed state has no federation keys yet.
         // This is expected: `run_node` loads them from `genesis.json` (via
         // `set_federation_keys`) immediately after construction, which emits the
@@ -1066,7 +1128,7 @@ impl NodeState {
                 atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
-                note_tree: Poseidon2NoteTree::with_depth(16),
+                note_tree,
                 encrypted_intent_pool: HashMap::new(),
                 trustless_intent_engine: dregg_intent::trustless::TrustlessIntentEngine::new(
                     // Defaults: 1-of-1 (solo); upgraded when threshold_key_share
@@ -1211,6 +1273,8 @@ impl NodeState {
         let mut channels = crate::channels_service::ChannelRegistry::default();
         channels.restore_rosters(&store, &ledger);
 
+        let note_tree = restore_and_verify_faithful_note_tree(&store, &cclerk)?;
+
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
                 cclerk,
@@ -1264,7 +1328,7 @@ impl NodeState {
                 atomic_proposals: HashMap::new(),
                 cross_federation_revocations: HashMap::new(),
                 revocation_accumulator: None,
-                note_tree: Poseidon2NoteTree::with_depth(16),
+                note_tree,
                 encrypted_intent_pool: HashMap::new(),
                 trustless_intent_engine: dregg_intent::trustless::TrustlessIntentEngine::new(
                     // Defaults: 1-of-1 (solo); upgraded when threshold_key_share
