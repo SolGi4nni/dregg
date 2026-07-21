@@ -9,6 +9,7 @@
 //! Blocking on purpose: the runtime shell is ONE synchronous long-poll loop (`getUpdates` with a
 //! server-held timeout) — no tokio, no async plumbing, nothing for the verified core to absorb.
 
+use std::io::Read;
 use std::time::Duration;
 
 use crate::transport::HttpPost;
@@ -55,5 +56,39 @@ impl HttpPost for ReqwestHttpPost {
             .map_err(|e| format!("telegram POST failed: {}", e.without_url()))?;
         resp.text()
             .map_err(|e| format!("read telegram response body: {}", e.without_url()))
+    }
+
+    fn get_bytes_bounded(&self, url: &str, maximum: usize) -> Result<Vec<u8>, String> {
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .map_err(|e| format!("telegram file GET failed: {}", e.without_url()))?
+            .error_for_status()
+            .map_err(|e| format!("telegram file GET was refused: {}", e.without_url()))?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > maximum as u64)
+        {
+            return Err(format!(
+                "telegram file response exceeds the {maximum}-byte operation limit"
+            ));
+        }
+
+        let read_limit = maximum
+            .checked_add(1)
+            .ok_or_else(|| "telegram file limit cannot be represented".to_string())?;
+        let mut bytes =
+            Vec::with_capacity(response.content_length().unwrap_or(0).min(maximum as u64) as usize);
+        response
+            .take(read_limit as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("read telegram file response: {e}"))?;
+        if bytes.len() > maximum {
+            return Err(format!(
+                "downloaded telegram file exceeds the {maximum}-byte operation limit"
+            ));
+        }
+        Ok(bytes)
     }
 }

@@ -28,8 +28,14 @@ description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trai
 [dependencies]
 # THE CORE — the frontend-agnostic Offering/Session/Frontend model + `DungeonOffering`
 # (offering #0) over the real substrate. This crate is a `Frontend` impl; it does NOT
-# re-implement any offering logic.
-dreggnet-offerings = { path = "../dreggnet-offerings" }
+# re-implement any offering logic. The explicit operation features ensure the
+# production catalog actually advertises the private preference, fair-shuffle,
+# and semantic-quest receipt decoders to the ordinary DM attachment path.
+dreggnet-offerings = { path = "../dreggnet-offerings", features = [
+    "private-preference-operation",
+    "private-fair-shuffle-operation",
+    "private-quest-operation",
+] }
 # THE FULL PORTFOLIO — the ONE shared registrar (`dreggnet_catalog::build_full_catalog`), so
 # Telegram registers the SAME 22 offerings the web catalog (`dreggnet_web::demo_host`) does — the
 # eight games (incl. the shared seat-claiming `SeatedTug` tug adapter, re-exported at

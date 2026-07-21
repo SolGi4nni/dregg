@@ -164,6 +164,16 @@ impl Transport for MockTransport {
 pub trait HttpPost {
     /// POST `body` (a JSON string) to `url`; return the response body (JSON) or an error string.
     fn post_json(&self, url: &str, body: &str) -> Result<String, String>;
+
+    /// GET an opaque body while enforcing `maximum` during the read.
+    ///
+    /// The ordinary chat operation path uses this only for Telegram's fixed
+    /// `file/bot…` origin after `getFile` has returned a path.  A default
+    /// refusal keeps existing injected POST-only test doubles source-compatible
+    /// and, more importantly, never falls back to an unbounded convenience GET.
+    fn get_bytes_bounded(&self, _url: &str, _maximum: usize) -> Result<Vec<u8>, String> {
+        Err("bounded Telegram file download is not available on this transport".to_string())
+    }
 }
 
 /// **A live-shaped Bot API client** — composes the real `https://api.telegram.org/bot<token>/

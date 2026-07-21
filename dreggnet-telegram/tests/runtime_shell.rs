@@ -57,6 +57,13 @@ fn a_simulated_callback_update_drives_a_real_advance_and_represents() {
         .open("dungeon", chat, None, ALICE)
         .expect("the dungeon opens");
     let sent_before = h.frontend().transport().sent.len();
+    let surface = TelegramFrontend::<MockTransport>::surface_id(chat, None, "dungeon");
+    let message_id = h
+        .frontend()
+        .session(&surface)
+        .and_then(|session| session.message_id)
+        .expect("the callback names the live keyboard-bearing message")
+        .0;
 
     // The wire shape: a callback_query update, its `data` exactly a presented button's payload.
     let data = encode_callback("choose", KP_PRESS_ON as i64);
@@ -66,7 +73,7 @@ fn a_simulated_callback_update_drives_a_real_advance_and_represents() {
             "id": "cbq-1",
             "from": { "id": ALICE, "is_bot": false, "first_name": "Alice" },
             "message": {
-                "message_id": 1,
+                "message_id": message_id,
                 "chat": { "id": chat, "type": "private" },
                 "text": "…"
             },

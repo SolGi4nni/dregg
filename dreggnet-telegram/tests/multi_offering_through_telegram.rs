@@ -83,6 +83,22 @@ fn the_host_lists_at_least_three_offerings_and_the_menu_opens_one() {
         );
     }
 
+    for hostile_index in [-1, i64::MAX] {
+        assert!(matches!(
+            h.press(CallbackQuery::press(
+                chat,
+                ALICE,
+                encode_callback(TURN_OPEN, hostile_index),
+            )),
+            HostPress::NotOffered
+        ));
+        assert_eq!(
+            h.active_offering(&sid),
+            None,
+            "a hostile stable callback index must not open any catalog slot"
+        );
+    }
+
     // Press the market's open-button → the market opens in the chat.
     let market_idx = offs.iter().position(|o| o.key == "market").unwrap();
     match h.press(CallbackQuery::press(
@@ -275,9 +291,9 @@ fn an_unoffered_turn_is_refused_before_the_substrate() {
 }
 
 /// The RESERVED verify verb routes through `press()` to the offering's REAL re-verifier — the
-/// input a runtime shell binds a `/verify` command (or a pinned button) to. It is never on the
-/// presented keyboard (surfaces stay byte-stable), so it must work from any chat state with an
-/// offering active; while the chat is browsing the offerings menu it is honestly refused.
+/// input both the runtime `/verify` command and each offering's standing button carry. It works
+/// from any chat state with an offering active; while the chat is browsing the offerings menu it
+/// is honestly refused.
 #[test]
 fn the_verify_verb_routes_through_press_to_the_real_reverifier() {
     let mut h = host();

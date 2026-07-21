@@ -46,6 +46,8 @@
 
 pub mod api;
 pub mod audit;
+/// Viewer-blind Telegram consent and public receipt provenance for explicit Chutes turns.
+pub mod chutes_consent;
 pub mod cipherclerk;
 pub mod host;
 pub mod render;
@@ -53,6 +55,7 @@ pub mod reqwest_transport;
 pub mod runtime;
 pub mod seated;
 pub mod transport;
+pub mod verify_control;
 pub mod webapp;
 
 use std::collections::HashMap;
@@ -60,8 +63,8 @@ use std::collections::HashMap;
 use dreggnet_offerings::{Action, DreggIdentity, Frontend, SessionId, Surface};
 
 use crate::api::{
-    InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest, build_present_request,
-    decode_callback,
+    InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest, TELEGRAM_TEXT_LIMIT,
+    build_present_request, decode_callback,
 };
 use crate::cipherclerk::TelegramCipherclerk;
 use crate::transport::{MessageId, Transport, TransportError};
@@ -221,6 +224,10 @@ pub struct TelegramFrontend<T: Transport> {
     /// that names no message (a `/act` command, a Mini App round-trip), and what keeps the
     /// single-offering UX ("the chat's surface") meaningful now that a chat may host several.
     latest: HashMap<SessionId, SessionId>,
+    /// Stable, non-interactive companion messages keyed by `(surface, slot)`. They are deliberately
+    /// absent from `by_message` and `latest`: a proof guide can never become an action-routing
+    /// surface, even while it is edited in place beside one.
+    companions: HashMap<(SessionId, String), Vec<MessageId>>,
     /// The last transport error a (infallible-signature) [`present`](Frontend::present) hit — so a
     /// caller using the trait method can still observe a send failure. Cleared on a successful send.
     last_send_error: Option<TransportError>,
@@ -235,6 +242,7 @@ impl<T: Transport> TelegramFrontend<T> {
             sessions: HashMap::new(),
             by_message: HashMap::new(),
             latest: HashMap::new(),
+            companions: HashMap::new(),
             last_send_error: None,
         }
     }
@@ -359,12 +367,13 @@ impl<T: Transport> TelegramFrontend<T> {
         self.present_result_with(session, surface, actions, &[])
     }
 
-    /// [`present_result`](Self::present_result) plus **trailing launch rows**: each
+    /// [`present_result`](Self::present_result) plus **trailing frontend-control rows**: each
     /// `extra_buttons` entry is appended as its own keyboard row AFTER the affordance rows.
-    /// These are frontend-level launch controls (the Mini App [`crate::webapp::play_button`]) —
-    /// NOT offering [`Action`]s: they are not recorded among the session's `presented`
-    /// affordances, so [`collect`](Frontend::collect) never matches one and the executor is
-    /// never reached through them (a `web_app` button produces no callback at all).
+    /// These are frontend-level controls (the standing [`crate::verify_control`] button or the
+    /// Mini App [`crate::webapp::play_button`]), NOT offering [`Action`]s: they are not recorded
+    /// among the session's `presented` affordances, so [`collect`](Frontend::collect) never
+    /// mistakes one for a game move. A callback control is routed explicitly by its host; a
+    /// `web_app` button produces no callback at all.
     pub fn present_result_with(
         &mut self,
         session: &SessionId,
@@ -375,6 +384,12 @@ impl<T: Transport> TelegramFrontend<T> {
         let (chat_id, topic) = Self::chat_of(session)
             .ok_or_else(|| TransportError(format!("not a telegram session id: {}", session.0)))?;
         let mut req = build_present_request(chat_id, topic, surface, actions);
+        if req.text.chars().count() > TELEGRAM_TEXT_LIMIT {
+            return Err(TransportError(format!(
+                "interactive Telegram surface is {} characters; maximum is {TELEGRAM_TEXT_LIMIT}",
+                req.text.chars().count()
+            )));
+        }
         if !extra_buttons.is_empty() {
             let markup = req
                 .reply_markup
@@ -414,6 +429,84 @@ impl<T: Transport> TelegramFrontend<T> {
             .insert(Self::session_id(chat_id, topic), session.clone());
         self.last_send_error = None;
         Ok(message_id)
+    }
+
+    /// The live message ids for a non-interactive companion slot, in page order.
+    pub fn companion_messages(&self, session: &SessionId, slot: &str) -> Vec<MessageId> {
+        self.companions
+            .get(&(session.clone(), slot.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Present or edit a stable set of non-interactive companion pages beside `session`.
+    ///
+    /// Companion messages never carry a keyboard and are never inserted into `by_message` or
+    /// `latest`. Shrinking/closing a guide edits surplus pages to an inert tombstone instead of
+    /// leaving stale proof instructions visible. A later expansion reuses those same message ids.
+    pub fn present_companion_pages_result(
+        &mut self,
+        session: &SessionId,
+        slot: &str,
+        pages: &[String],
+    ) -> Result<Vec<MessageId>, TransportError> {
+        let (chat_id, topic) = Self::chat_of(session)
+            .ok_or_else(|| TransportError(format!("not a telegram session id: {}", session.0)))?;
+        if slot.is_empty() {
+            return Err(TransportError(
+                "Telegram companion slot must be non-empty".to_string(),
+            ));
+        }
+        for page in pages {
+            let characters = page.chars().count();
+            if characters == 0 || characters > TELEGRAM_TEXT_LIMIT {
+                return Err(TransportError(format!(
+                    "Telegram companion page has {characters} characters; expected 1..={TELEGRAM_TEXT_LIMIT}"
+                )));
+            }
+        }
+
+        let key = (session.clone(), slot.to_string());
+        let mut ids = self.companions.get(&key).cloned().unwrap_or_default();
+        for (index, page) in pages.iter().enumerate() {
+            let request = SendMessageRequest {
+                chat_id,
+                text: page.clone(),
+                reply_markup: None,
+                message_thread_id: topic,
+            };
+            if let Some(message_id) = ids.get(index).copied() {
+                self.transport.edit_message(message_id, &request)?;
+            } else {
+                let message_id = self.transport.send_message(&request)?;
+                ids.push(message_id);
+                // Bank a newly-created id immediately: if a later page fails, the next repaint
+                // can still edit this already-visible message instead of orphaning it.
+                self.companions.insert(key.clone(), ids.clone());
+            }
+        }
+
+        let inert = SendMessageRequest {
+            chat_id,
+            text: "Proof-operation guide inactive. /status shows the current session record."
+                .to_string(),
+            reply_markup: None,
+            message_thread_id: topic,
+        };
+        for message_id in ids.iter().copied().skip(pages.len()) {
+            self.transport.edit_message(message_id, &inert)?;
+        }
+        self.companions.insert(key, ids.clone());
+        self.last_send_error = None;
+        Ok(ids)
+    }
+
+    /// Infallible companion presentation mirroring [`present_with`](Self::present_with): transport
+    /// failures are retained in [`last_send_error`](Self::last_send_error).
+    pub fn present_companion_pages(&mut self, session: &SessionId, slot: &str, pages: &[String]) {
+        if let Err(error) = self.present_companion_pages_result(session, slot, pages) {
+            self.last_send_error = Some(error);
+        }
     }
 
     /// The infallible form of [`present_result_with`](Self::present_result_with) — mirrors the

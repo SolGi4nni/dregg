@@ -60,10 +60,15 @@ use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
 use deos_view::ViewNode;
-use dreggnet_catalog::{CatalogConfig, PlayerWorlds, is_rpg_key};
+use dreggnet_catalog::game_spine::GameAudience;
+use dreggnet_catalog::{
+    CatalogConfig, GameAffordance, GameSessionRef, PlayerWorlds, game_kind, inspect_game_session,
+    is_rpg_key,
+};
 use dreggnet_offerings::{
-    Action, DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId,
-    Surface, VerifyReport,
+    Action, Audience, BinaryOperationDescriptor, BinaryOperationReceipt, ChatBinaryOperationPolicy,
+    DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId, Surface,
+    VerifyReport, preflight_chat_binary_operation,
 };
 
 use crate::cipherclerk::TelegramCipherclerk;
@@ -74,14 +79,123 @@ use crate::{ChatId, ChatKind, TelegramFrontend, TelegramUserId};
 /// at `arg` in this chat), distinct from any offering's own turn verbs.
 pub const TURN_OPEN: &str = "open";
 
-/// The RESERVED host-level verify verb — "⛓ re-verify chain" as a routable input. It is never
-/// presented as an offering affordance (surfaces stay byte-stable), so [`TelegramHost::press`]
-/// routes it WITHOUT the offered check: a runtime shell binds any input it likes (a `/verify`
-/// command, a pinned button minting `encode_callback(TURN_VERIFY, 0)`) and the press reaches the
-/// chat's active offering's REAL re-verifier ([`TelegramHost::verify`]), coming back as
-/// [`HostPress::Verified`]. Mirrors the Discord bot's standing `verifychain:<key>` button
-/// (`discord-bot/src/commands/verify_chain.rs`) — same verb string, same ethos.
-pub const TURN_VERIFY: &str = "verifychain";
+/// Stable companion-message slot carrying the full binary-operation descriptors. The guide is
+/// deliberately not an action surface: its message ids are never eligible callback routes.
+pub const OPERATION_GUIDE_SLOT: &str = "proof-operations";
+
+/// The one binary operation whose payload is intentionally public and whose verifier binds the
+/// authenticated uploader to the exact live group roster/session. This is not a general group
+/// document exception and never confers bearer authority.
+const PRIVATE_RAID_KEY: &str = "private-raid";
+const PRIVATE_RAID_ASSIGN_OPERATION: &str = "party.private-raid-assignment.v1";
+
+fn shared_operation_allowed(key: &str, operation: &str) -> bool {
+    key == PRIVATE_RAID_KEY && operation == PRIVATE_RAID_ASSIGN_OPERATION
+}
+
+/// Select the only projection a Telegram message with this readership may
+/// carry. The offering key is deliberately irrelevant: a personal RPG world
+/// may be selected by identity at the storage/router layer, but its message is
+/// still viewer-blind when the chat has multiple readers.
+fn audience_for_message(shared: bool, viewer: &DreggIdentity) -> Audience {
+    if shared {
+        Audience::Shared
+    } else {
+        Audience::private(viewer.clone())
+    }
+}
+
+/// The RESERVED host-level verify verb — re-exported here for the runtime and existing callers.
+/// [`crate::verify_control`] owns its exact callback wire and standing button.
+pub use crate::verify_control::TURN_VERIFY;
+
+/// A metadata-preflighted ordinary Telegram document upload.
+///
+/// The route contains no bytes: the runtime obtains this value before calling Telegram `getFile`,
+/// so an unknown operation, an ineligible shared-chat upload, or a declared oversize object is
+/// refused without a download. [`TelegramHost::apply_operation`] re-checks the live descriptor,
+/// shared eligibility, and actual length atomically on the host thread.
+#[derive(Clone, Debug)]
+pub struct TelegramOperationRoute {
+    /// The offering owning the active surface.
+    pub key: String,
+    /// The chat-scoped offering session.
+    pub session: SessionId,
+    /// The authenticated Telegram actor's derived dregg identity.
+    pub actor: DreggIdentity,
+    /// Exact descriptor plus the effective ordinary-chat byte cap.
+    pub policy: ChatBinaryOperationPolicy,
+    /// Whether the authenticated update came from a multi-reader chat. Kept private so external
+    /// callers cannot manufacture a DM-classified route around the shared-document gate.
+    shared: bool,
+}
+
+/// A frontend-neutral account of the game session currently addressed by a Telegram chat.
+///
+/// The concrete game keeps its own rules and state type. This is deliberately only the common
+/// operation spine: exact `(offering, session)` address, audience boundary, currently presented
+/// action/operation counts, and the live replay verdict. It is what `/status` renders across
+/// Descent, the dungeon, the Dark Bazaar crawl, and the proof-assigned raid.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TelegramGameStatus {
+    /// Catalog route of the concrete game.
+    pub key: String,
+    /// Shared rule-family vocabulary from `dreggnet-catalog::game_spine`.
+    pub kind: String,
+    /// Exact host session handle. The offering key remains a separate part of the address.
+    pub session: SessionId,
+    /// Whether Telegram selected the single-reader projection.
+    pub private_projection: bool,
+    /// Whether the game declares that its private projection may reveal player-only state.
+    pub hidden_information: bool,
+    /// Ordinary executor-refereed moves on the current projection.
+    pub turn_affordances: usize,
+    /// Exact names of the currently advertised opaque proof/attestation operations.
+    pub proof_operations: Vec<String>,
+    /// Exact names of the currently advertised read-only binary artifacts.
+    pub artifacts: Vec<String>,
+    /// The live offering verifier's result.
+    pub verified: bool,
+    /// Number of turns the verifier replayed.
+    pub verified_turns: usize,
+    /// The verifier's own account.
+    pub verification_detail: String,
+    /// Landed ordinary moves plus journaled binary operations after genesis.
+    pub landed_steps: usize,
+    /// Whether the host has a complete replay recipe for the live state. This does not by itself
+    /// claim that the process has a durable store mounted.
+    pub replay_recipe: bool,
+}
+
+/// A refusal at the ordinary Telegram operation attachment boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TelegramOperationError {
+    /// Documents are chat messages, so a group upload would publish the receipt
+    /// (and, for selective openings, its opening material) to every reader.
+    PrivateChatRequired,
+    /// No playable offering is active in this chat.
+    NoSession,
+    /// The host could not discover or invoke the addressed operation.
+    Refused(String),
+}
+
+impl std::fmt::Display for TelegramOperationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PrivateChatRequired => write!(
+                f,
+                "proof receipts are accepted only in a private bot chat; a Telegram group document is visible to every member (the sole exception is the exact live private-raid assignment proof, whose verifier binds session, roster, and claimant)"
+            ),
+            Self::NoSession => write!(
+                f,
+                "no offering is active in this chat; open one before attaching a receipt"
+            ),
+            Self::Refused(reason) => write!(f, "{reason}"),
+        }
+    }
+}
+
+impl std::error::Error for TelegramOperationError {}
 
 /// The sentinel "active key" a chat carries while it is showing the offerings menu (not yet
 /// playing an offering). Not a registered offering key, so it never collides.
@@ -323,7 +437,7 @@ pub struct TelegramHost<T: Transport> {
 }
 
 impl<T: Transport> TelegramHost<T> {
-    /// Build a host over the FULL shared catalog (the same 22 offerings every frontend exposes —
+    /// Build a host over the FULL shared catalog (the same 23 offerings every frontend exposes —
     /// see [`telegram_default_host`]), sending through `transport`, with the council electorate
     /// derived from `council_member_uids` (Telegram user ids whose derived identities are
     /// registered as council members — so those users can really vote).
@@ -450,6 +564,80 @@ impl<T: Transport> TelegramHost<T> {
             .filter(|k| *k != MENU_KEY)
     }
 
+    /// Inspect the active game through the shared, frontend-neutral game-session spine.
+    ///
+    /// This is an explicit operation (`/status`), so replay verification happens on demand rather
+    /// than on every render. The audience passed into the spine is derived from who can read the
+    /// Telegram message: DMs may select one private reader; groups never carry a viewer identity.
+    /// No concrete game transition or legality rule is duplicated here.
+    pub fn game_status(
+        &self,
+        chat_id: ChatId,
+        topic: Option<i64>,
+        uid: TelegramUserId,
+    ) -> Result<TelegramGameStatus, String> {
+        let session = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let key = self
+            .active_offering(&session)
+            .ok_or_else(|| "No game session is active in this chat.".to_string())?
+            .to_string();
+        if game_kind(&key).is_none() {
+            return Err(format!(
+                "`{key}` uses the offering protocol but is not a game surface; /verify still checks its committed record."
+            ));
+        }
+        let actor = self.frontend.identity(uid);
+        let audience = if ChatKind::classify(chat_id, topic).is_collective() {
+            GameAudience::Shared
+        } else {
+            // The Telegram update authenticates the platform user; the common spine records only
+            // that this adapter asserted the derived viewer label, not a cryptographic claim that
+            // the label is bound into every underlying binary receipt.
+            GameAudience::AssertedPrivate(actor.clone())
+        };
+        let reference =
+            GameSessionRef::new(key.clone(), session.clone()).map_err(|error| error.to_string())?;
+        let status = {
+            let routed_key = key.clone();
+            self.run_offering(&key, &actor, move |host| {
+                inspect_game_session(host, reference, &audience).map(|view| {
+                    let mut turn_affordances = 0usize;
+                    let mut proof_operations = Vec::new();
+                    for affordance in &view.affordances {
+                        match affordance {
+                            GameAffordance::Turn { .. } => turn_affordances += 1,
+                            GameAffordance::Operation { reference, .. } => {
+                                proof_operations.push(reference.operation.clone());
+                            }
+                        }
+                    }
+                    TelegramGameStatus {
+                        key: routed_key,
+                        kind: view.kind.as_str().to_string(),
+                        session: view.session.session_id().clone(),
+                        private_projection: view.projection.private,
+                        hidden_information: view.projection.hidden_information,
+                        turn_affordances,
+                        proof_operations,
+                        artifacts: view
+                            .artifacts
+                            .iter()
+                            .map(|artifact| artifact.reference.artifact.clone())
+                            .collect(),
+                        verified: view.verification.verified,
+                        verified_turns: view.verification.turns,
+                        verification_detail: view.verification.detail,
+                        landed_steps: view.landed_steps,
+                        replay_recipe: view.replay_journal_present,
+                    }
+                })
+            })
+        };
+        // The derived identity participates only in audience/routing selection. It is deliberately
+        // absent from the returned status, so `/status` is safe to paste.
+        status.map_err(|error| error.to_string())
+    }
+
     /// **Present the `/offerings` control message** in `chat_id` — a message whose inline keyboard
     /// is one button per registered offering (a press opens that offering in the chat). Records the
     /// chat as "browsing the menu". Returns the chat-scoped [`SessionId`].
@@ -459,33 +647,34 @@ impl<T: Transport> TelegramHost<T> {
         let actions: Vec<Action> = offerings
             .iter()
             .enumerate()
-            .map(|(i, o)| Action::new(format!("▶ Play {}", o.title), TURN_OPEN, i as i64, true))
+            .map(|(i, o)| {
+                Action::new(
+                    format!("▶ Play {}", o.title),
+                    TURN_OPEN,
+                    i64::try_from(i).expect("the bounded offering catalog fits the callback wire"),
+                    true,
+                )
+            })
             .collect();
-        // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) —
-        // the flagship pointer leads (The Descent is NOT in this catalog; it lives on the web
-        // surface), then the keyboard below is honestly labelled as the lab shelf.
-        // H1: `/descent` on the web is the no-cheat BOARD, not a play surface — label it honestly
-        // (the served in-browser play page is a separate lane; play today is live in Discord).
-        let descent = match self.webapp_base.as_deref() {
-            Some(base) => format!(
-                "{} See today's no-cheat board at {base}/descent.",
-                dreggnet_catalog::flagship_pointer()
-            ),
-            None => format!(
-                "{} Its no-cheat board lives on the web surface, at /descent.",
-                dreggnet_catalog::flagship_pointer()
-            ),
+        // Descent really is in this catalog now, alongside the dungeon, the honestly-labelled
+        // Dark Bazaar crawl and the proof-assigned raid. They share the game-session protocol,
+        // not a second Telegram rule engine.
+        let continuation = if self.webapp_base.is_some() {
+            "Open a session here with the buttons below. In a DM, /play opens that same addressed game in the richer Mini App surface."
+        } else {
+            "Open a session here with the buttons below; the inline surface is fully playable without a web view."
         };
         let surface = Surface(ViewNode::Section {
-            title: "🧪 The Lab — DreggNet Cloud".to_string(),
+            title: "🧪 Dregg games & operations".to_string(),
             tag: "accent".to_string(),
             children: vec![
-                ViewNode::Text(descent),
-                ViewNode::Text(dreggnet_catalog::lab_intro().to_string()),
+                ViewNode::Text(dreggnet_catalog::flagship_pointer().to_string()),
                 ViewNode::Text(
-                    "Pick an offering to poke — each move is a real, verifiable executor turn."
+                    "One addressed session and receipt protocol; different games keep their own rulebooks, proof systems, and mood."
                         .to_string(),
                 ),
+                ViewNode::Text(dreggnet_catalog::lab_intro().to_string()),
+                ViewNode::Text(continuation.to_string()),
             ],
         });
         // The menu gets its OWN surface too ([`MENU_KEY`] is not a registered offering key, so it
@@ -680,45 +869,162 @@ impl<T: Transport> TelegramHost<T> {
             return;
         };
         let shared = ChatKind::classify(chat_id, topic).is_collective();
-        // An RPG world is inherently the viewer's own (their inventory), so it is ALWAYS projected
-        // per-viewer — a press acts in the presser's own world and re-renders as theirs (the
-        // Discord model). A shared table keeps the who-can-read-this rule: viewer-blind in a
-        // collective chat, per-viewer in a DM.
-        let per_viewer = !shared || is_rpg_key(key);
+        // `run_offering` already selects an RPG player's own host. That does NOT make a group
+        // message single-reader: even a personal character sheet is painted with the offering's
+        // viewer-blind projection in a collective chat. Only a DM is allowed to carry an identity
+        // into the projection selector.
+        let audience = audience_for_message(shared, viewer);
         let surface_sid = TelegramFrontend::<T>::surface_id(chat_id, topic, key);
         // The surface is (re)painted fresh — any previously-armed text slot is now stale
         // (the affordance moved on), so drop it. Arming a text slot ([`Self::press`]) returns
         // BEFORE this, so the arm survives until the next advance / open / re-present.
         self.armed.remove(&surface_sid);
-        let (surface, actions) = {
+        let projection = {
             let k = key.to_string();
             let s = sid.clone();
-            let v = viewer.clone();
             self.run_offering(key, viewer, move |h| {
-                if per_viewer {
-                    (h.render_for(&k, &s, &v), h.actions_for(&k, &s, &v))
-                } else {
-                    (h.render(&k, &s), h.actions(&k, &s))
-                }
+                h.project(&k, &s, &audience).map(|projection| {
+                    let operations = h.binary_operations(&k, &s).unwrap_or_default();
+                    (projection, operations)
+                })
             })
         };
-        if let (Some(surface), Some(actions)) = (surface, actions) {
-            // The Mini App launch tier: in a DM (the only place Telegram honors `web_app`
-            // inline buttons), a trailing "Play in the app" row deep-links the rich web
-            // surface for THIS offering + session. Never an offering Action — it is not
-            // recorded among the presented affordances, so no press can route through it.
+        if let Some((mut projection, operations)) = projection {
+            let private_projection = projection.private;
+            let hidden_information = projection.hidden_information;
+            append_game_session_record(
+                &mut projection.surface,
+                key,
+                private_projection,
+                hidden_information,
+                operations.len(),
+            );
+            let guide_pages = operation_guide_pages(key, &operations, shared);
+            // Host controls follow the offering's own actions. Re-verification is always
+            // visible, including at terminal states; it is read-only and never recorded among
+            // the presented offering Actions. In a DM, the Mini App launch follows it.
+            let mut controls = vec![crate::verify_control::button()];
             let play = self.webapp_base.as_deref().and_then(|base| {
                 let (chat_id, topic) = TelegramFrontend::<T>::chat_of(sid)?;
                 crate::webapp::web_app_allowed(chat_id, topic)
                     .then(|| crate::webapp::play_button(base, key, sid))
             });
-            let extra: &[crate::api::InlineKeyboardButton] =
-                play.as_ref().map(std::slice::from_ref).unwrap_or(&[]);
+            if let Some(play) = play {
+                controls.push(play);
+            }
             // Onto THIS offering's own message — a second offering opened in the chat gets its
             // own, instead of stealing this one's.
+            // Paint the non-interactive guide first so the interactive game surface remains the
+            // chat's latest routable surface. When operations disappear, this neutralizes any
+            // surplus guide messages instead of leaving stale upload instructions behind.
             self.frontend
-                .present_with(&surface_sid, &surface, &actions, extra);
+                .present_companion_pages(&surface_sid, OPERATION_GUIDE_SLOT, &guide_pages);
+            self.frontend.present_with(
+                &surface_sid,
+                &projection.surface,
+                &projection.actions,
+                &controls,
+            );
             self.active.insert(sid.clone(), key.to_string());
+        }
+    }
+
+    /// Resolve and cheaply preflight an ordinary Telegram document operation.
+    ///
+    /// This must run before `getFile`: it resolves the active offering/session and actor, selects
+    /// the exact live descriptor, and rejects declared oversize attachments. Ordinarily the
+    /// document must be in a single-reader DM. The sole shared-chat exception is the public
+    /// private-raid assignment proof: its offering verifier binds the authenticated uploader to
+    /// proof seat zero, the exact ordered roster, and the session-derived proof id. No body bytes
+    /// are accepted or allocated here.
+    pub fn preflight_operation(
+        &self,
+        chat_id: ChatId,
+        topic: Option<i64>,
+        uid: TelegramUserId,
+        name: &str,
+        declared_bytes: usize,
+    ) -> Result<TelegramOperationRoute, TelegramOperationError> {
+        let shared = ChatKind::classify(chat_id, topic).is_collective();
+        let session = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let key = self
+            .active_offering(&session)
+            .ok_or(TelegramOperationError::NoSession)?
+            .to_string();
+        let actor = self.frontend.identity(uid);
+        let operations = {
+            let routed_key = key.clone();
+            let routed_session = session.clone();
+            self.run_offering(&key, &actor, move |host| {
+                host.binary_operations(&routed_key, &routed_session)
+            })
+        }
+        .map_err(|error| TelegramOperationError::Refused(error.to_string()))?;
+        let policy = preflight_chat_binary_operation(&operations, name, declared_bytes)
+            .map_err(|error| TelegramOperationError::Refused(error.to_string()))?;
+        if shared && !shared_operation_allowed(&key, &policy.descriptor.name) {
+            return Err(TelegramOperationError::PrivateChatRequired);
+        }
+        Ok(TelegramOperationRoute {
+            key,
+            session,
+            actor,
+            policy,
+            shared,
+        })
+    }
+
+    /// Apply a preflighted document to the same live operation, then repaint its exact chat from
+    /// committed state. Descriptor selection, shared-chat eligibility, and actual-length
+    /// validation are repeated, closing state/metadata races between preflight and the Telegram
+    /// CDN download.
+    pub fn apply_operation(
+        &mut self,
+        route: TelegramOperationRoute,
+        payload: Vec<u8>,
+    ) -> Result<BinaryOperationReceipt, TelegramOperationError> {
+        let TelegramOperationRoute {
+            key,
+            session,
+            actor,
+            policy,
+            shared,
+        } = route;
+        let name = policy.descriptor.name.clone();
+        if shared && !shared_operation_allowed(&key, &name) {
+            return Err(TelegramOperationError::PrivateChatRequired);
+        }
+        let declared_bytes = policy.declared_bytes;
+        let actual_bytes = payload.len();
+        let result = {
+            let routed_key = key.clone();
+            let routed_session = session.clone();
+            let routed_actor = actor.clone();
+            self.run_offering(&key, &actor, move |host| {
+                let operations = host
+                    .binary_operations(&routed_key, &routed_session)
+                    .map_err(|error| error.to_string())?;
+                let current = preflight_chat_binary_operation(&operations, &name, declared_bytes)
+                    .map_err(|error| error.to_string())?;
+                current
+                    .validate_body_len(actual_bytes)
+                    .map_err(|error| error.to_string())?;
+                host.invoke_binary_operation(
+                    &routed_key,
+                    &routed_session,
+                    &name,
+                    &payload,
+                    routed_actor,
+                )
+                .map_err(|error| error.to_string())
+            })
+        };
+        match result {
+            Ok(receipt) => {
+                self.present_offering(&key, &session, &actor);
+                Ok(receipt)
+            }
+            Err(reason) => Err(TelegramOperationError::Refused(reason)),
         }
     }
 
@@ -750,13 +1056,15 @@ impl<T: Transport> TelegramHost<T> {
         let sid = TelegramFrontend::<T>::session_id(ev.chat_id, ev.message_thread_id);
         // Which surface is being pressed: the press's own message names it; a press that names no
         // message means the chat's most recent surface.
-        let surface_sid = match ev
-            .message_id
-            .and_then(|m| self.frontend.surface_of_message(MessageId(m)))
-        {
-            Some(s) => s.clone(),
+        let surface_sid = match ev.message_id {
+            Some(message_id) => match self.frontend.surface_of_message(MessageId(message_id)) {
+                Some(surface) => surface.clone(),
+                // A real callback names the message it came from. Unknown messages (including a
+                // companion proof guide) must never fall through to the latest game keyboard.
+                None => return HostPress::NotOffered,
+            },
             None => match self.frontend.latest_surface(&sid) {
-                Some(s) => s.clone(),
+                Some(surface) => surface.clone(),
                 None => sid.clone(),
             },
         };
@@ -777,10 +1085,9 @@ impl<T: Transport> TelegramHost<T> {
         let Some((turn, arg)) = crate::api::decode_callback(&ev.data) else {
             return HostPress::NotOffered;
         };
-        // The reserved host-level verify verb: never presented as an offering affordance, so it
-        // bypasses the offered check — any shell input can demand the re-check of the chat's
-        // active offering. Read-only: the presented surface is left exactly as it was.
-        if turn == TURN_VERIFY {
+        // The exact reserved host-level verify control bypasses the offered-action check.
+        // Read-only: the presented surface and player attribution stay exactly as they were.
+        if crate::verify_control::is_verify_callback(&turn, arg) {
             if active == MENU_KEY {
                 return HostPress::NotOffered;
             }
@@ -795,6 +1102,11 @@ impl<T: Transport> TelegramHost<T> {
                 key: active,
                 report,
             };
+        }
+        if turn == TURN_VERIFY {
+            // Reserve the whole verb namespace: a forged argument must never fall through to a
+            // future offering that accidentally reuses the host-control verb.
+            return HostPress::NotOffered;
         }
         let offered = self
             .frontend
@@ -811,7 +1123,10 @@ impl<T: Transport> TelegramHost<T> {
                 return HostPress::NotOffered;
             }
             let offerings = self.list_offerings();
-            let Some(info) = offerings.get(arg as usize) else {
+            let Ok(index) = usize::try_from(arg) else {
+                return HostPress::NotOffered;
+            };
+            let Some(info) = offerings.get(index) else {
                 return HostPress::NotOffered;
             };
             let key = info.key.clone();
@@ -995,13 +1310,160 @@ impl<T: Transport> TelegramHost<T> {
     }
 }
 
+/// Add the small piece of common chrome every catalog game receives.
+///
+/// This is intentionally protocol language, not game language: it says which family is mounted,
+/// which audience projection Telegram selected, and where receipt/proof status lives. Concrete
+/// rules, action labels, and scene prose remain entirely owned by the offering.
+fn append_game_session_record(
+    surface: &mut Surface,
+    key: &str,
+    private_projection: bool,
+    hidden_information: bool,
+    proof_operations: usize,
+) {
+    let Some(kind) = game_kind(key) else {
+        return;
+    };
+    let audience = if private_projection {
+        "private single-reader projection"
+    } else {
+        "shared viewer-blind projection"
+    };
+    let mut children = vec![ViewNode::Text(format!(
+        "{} · {audience} · accepted moves append receipts; /status inspects the record.",
+        kind.as_str()
+    ))];
+    if proof_operations > 0 {
+        children.push(ViewNode::Text(format!(
+            "{proof_operations} proof operation(s) are described in the non-interactive companion guide."
+        )));
+    }
+    if private_projection && hidden_information {
+        children.push(ViewNode::Text(
+            "This message may contain player-only state. Do not forward it.".to_string(),
+        ));
+    }
+    let record = ViewNode::Section {
+        title: "Session record".to_string(),
+        tag: "genuine".to_string(),
+        children,
+    };
+    match &mut surface.0 {
+        ViewNode::Section { children, .. } => children.push(record),
+        root => {
+            let original = root.clone();
+            *root = ViewNode::Section {
+                title: "Game".to_string(),
+                tag: "genuine".to_string(),
+                children: vec![original, record],
+            };
+        }
+    }
+}
+
+/// Render the complete operation contract into stable, non-interactive Telegram companion pages.
+/// Keeping descriptor prose out of the keyboard-bearing message means a rich game surface does not
+/// compete with five long cryptographic disclosures for Telegram's 4096-character ceiling.
+fn operation_guide_pages(
+    key: &str,
+    operations: &[BinaryOperationDescriptor],
+    shared: bool,
+) -> Vec<String> {
+    if operations.is_empty() {
+        return Vec::new();
+    }
+    let intro = if shared {
+        "Group documents are public. Upload is disabled unless an operation below explicitly says it binds this exact group session and authenticated claimant. /status inspects the resulting record."
+            .to_string()
+    } else {
+        "This is a single-reader chat. Attach a canonical receipt document with the exact caption shown below; /status inspects the resulting record."
+            .to_string()
+    };
+    let mut blocks = vec![intro];
+    for operation in operations {
+        let maximum = operation
+            .max_input_bytes
+            .min(dreggnet_offerings::MAX_CHAT_BINARY_OPERATION_BYTES);
+        let allowed_here = !shared || shared_operation_allowed(key, &operation.name);
+        let mut block = operation.title.clone();
+        block.push('\n');
+        if allowed_here {
+            block.push_str("Caption: /operation ");
+            block.push_str(&operation.name);
+            block.push('\n');
+            if shared {
+                block.push_str(
+                    "Shared-session exception: the document is public; the live verifier binds the Telegram uploader, exact ordered raid roster, and session-derived proof id. It is not a bearer proof.\n",
+                );
+            }
+        } else {
+            block.push_str("Upload here: disabled (use a DM)\n");
+        }
+        block.push_str("Media type: ");
+        block.push_str(&operation.input_media_type);
+        block.push_str("\nMaximum: ");
+        block.push_str(&maximum.to_string());
+        block.push_str(" bytes\nDisclosure: ");
+        block.push_str(&operation.disclosure);
+        blocks.push(block);
+    }
+
+    // Preserve whole descriptor blocks whenever possible; only an individually enormous field is
+    // split. Leave ample room for the page number even at absurdly high page counts. Counting and
+    // slicing by chars, rather than bytes, matches Telegram's documented Unicode ceiling.
+    const BODY_CHARS: usize = 3_900;
+    let mut raw_pages = Vec::new();
+    let mut current = String::new();
+    for block in blocks {
+        let block_characters = block.chars().collect::<Vec<_>>();
+        if block_characters.len() <= BODY_CHARS {
+            let separator = usize::from(!current.is_empty()) * 5;
+            if current.chars().count() + separator + block_characters.len() <= BODY_CHARS {
+                if !current.is_empty() {
+                    current.push_str("\n\n—\n");
+                }
+                current.push_str(&block);
+                continue;
+            }
+        }
+        if !current.is_empty() {
+            raw_pages.push(std::mem::take(&mut current));
+        }
+        for chunk in block_characters.chunks(BODY_CHARS) {
+            let part = chunk.iter().collect::<String>();
+            if chunk.len() == BODY_CHARS {
+                raw_pages.push(part);
+            } else {
+                current = part;
+            }
+        }
+    }
+    if !current.is_empty() {
+        raw_pages.push(current);
+    }
+    let total = raw_pages.len();
+    raw_pages
+        .into_iter()
+        .enumerate()
+        .map(|(index, page)| {
+            format!(
+                "Proof operations · page {}/{}\n\n{}",
+                index + 1,
+                total,
+                page
+            )
+        })
+        .collect()
+}
+
 /// **The default Telegram catalog host** — the FULL shared portfolio, from the ONE registrar
-/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the eight games
-/// (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl,
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the nine games
+/// (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl · private raid,
 /// `tug` wrapped in the shared
 /// seat-claiming [`crate::seated::SeatedTug`] adapter), the nine do-once RPG feature surfaces
 /// (trade · inventory · cheevos · guild · craft · companion · quest · tavern · party), and the five
-/// service offerings (doc · names · compute · grain · hermes) — the same 22 the web catalog
+/// service offerings (doc · names · compute · grain · hermes) — the same 23 the web catalog
 /// (`dreggnet_web::demo_host`) serves, by construction rather than by a duplicated list
 /// (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread (inside
 /// [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay confined.
@@ -1012,4 +1474,24 @@ impl<T: Transport> TelegramHost<T> {
 /// budget 1000) is [`CatalogConfig`]'s deployed default.
 pub fn telegram_default_host(council_members: Vec<[u8; 32]>) -> OfferingHost {
     dreggnet_catalog::full_catalog_host(&CatalogConfig::with_council_members(council_members))
+}
+
+#[cfg(test)]
+mod audience_tests {
+    use super::*;
+
+    #[test]
+    fn collective_rpg_messages_are_viewer_blind_too() {
+        let viewer = DreggIdentity("telegram:alice".to_string());
+
+        // RPG sessions are routed to a per-player host, but a group message still has multiple
+        // readers. This canary prevents the old `shared || is_rpg_key` exception from returning:
+        // the key may choose storage, never the audience of the rendered message.
+        assert!(is_rpg_key("inventory"), "canary must exercise an RPG key");
+        assert_eq!(audience_for_message(true, &viewer), Audience::Shared);
+        assert_eq!(
+            audience_for_message(false, &viewer),
+            Audience::private(viewer)
+        );
+    }
 }

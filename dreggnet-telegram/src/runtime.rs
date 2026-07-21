@@ -10,7 +10,8 @@
 //!   check). Same shape as [`crate::transport::RawBotApi`]: pure URL/body composition over an
 //!   injected [`HttpPost`].
 //! - **[`parse_updates`]** — the pure `Update[]` → [`BotEvent`] decoder (a button callback, a
-//!   text command, or a Mini App `web_app_data` round-trip), plus the next long-poll offset.
+//!   text command, a bounded-operation document, or a Mini App `web_app_data` round-trip), plus
+//!   the next long-poll offset.
 //!   Driven directly in the tests with the real Bot API JSON shapes — no network needed to
 //!   prove the routing.
 //! - **[`route_callback`] / [`route_text`]** — one press / one command → the ONE router
@@ -39,7 +40,9 @@ use dreggnet_offerings::{FileResumeStore, OfferingHost, Outcome, VerifyReport};
 
 use crate::api::{decode_callback, encode_callback};
 use crate::audit::{self, Actor, AuditEvent, AuditOutcome, Input, Surface};
-use crate::host::{HostPress, TURN_VERIFY, TelegramHost, telegram_default_host};
+use crate::host::{
+    HostPress, TURN_VERIFY, TelegramGameStatus, TelegramHost, telegram_default_host,
+};
 use crate::transport::{HttpPost, Transport, TransportError};
 use crate::{CallbackQuery, ChatId, TelegramFrontend, TelegramUserId};
 
@@ -51,18 +54,22 @@ pub const POLL_TIMEOUT_SECS: u64 = 50;
 const CALLBACK_ANSWER_MAX: usize = 200;
 
 /// The `/help` (and `/start`) text — the shell's whole command surface, honestly enumerated.
-/// The Descent leads (the featured game — it lives on the web surface, not in this catalog);
-/// the offering catalog is framed as the Lab, matching `dreggnet_catalog::lab_intro`.
-pub const HELP_TEXT: &str = "DreggNet Cloud — every move is a real, verifiable executor turn.\n\
-    ⚔️ The featured game is The Descent — one dungeon a day, one life, a no-cheat board. \
-    It lives on the web surface, at /descent.\n\
-    🧪 The Lab — experimental engine surfaces, for the curious:\n\
+/// Native Descent, the dungeon, the playable Bazaar crawl and the proof-assigned raid lead;
+/// richer catalog surfaces remain the Lab, matching `dreggnet_catalog::lab_intro`.
+pub const HELP_TEXT: &str = "Dregg games use one addressed session-and-receipt protocol while keeping different rulebooks.\n\
+    ⚔️ /open descent — the Lean-authored custody dungeon\n\
+    🗝 /open dungeon — The Warden's Keep\n\
+    🕯 /open bazaar — the playable Dark Bazaar crawl (not the encrypted apex)\n\
+    🛡 /open private-raid — proof-assigned tactical party play\n\
+    🧪 The Lab also exposes markets, councils, RPG systems, and services:\n\
     /offerings — the lab shelf (press a button to open one)\n\
     /open <key> — open an offering in this chat (e.g. /open dungeon)\n\
     /play — Mini App launch buttons: the rich web surface, per offering (DMs only)\n\
     /link — bind this Telegram to your dregg root key (one you, across platforms; DMs only)\n\
+    /status — inspect this game's audience boundary, receipts, and proof operations\n\
     /verify — re-verify this chat's committed chain by replay\n\
     /act <turn> <arg> — fire a value-taking turn (e.g. /act bid 500)\n\
+    /operation <name> — caption a canonical receipt attachment with this (normally DM-only; the guide names exact shared exceptions)\n\
     /help — this text\n\
     A group chat plays as a collective; a DM plays solo. Sessions survive bot restarts.";
 
@@ -162,13 +169,55 @@ impl<H: HttpPost> BotApi<H> {
         }
         self.call("sendMessage", &body).map(|_| ())
     }
+
+    /// Resolve a Telegram document with `getFile`, then read its body through
+    /// the injected transport's hard byte ceiling. Neither the token-bearing
+    /// URL nor the opaque body is included in an error string.
+    pub fn download_document(
+        &self,
+        file_id: &str,
+        declared_bytes: usize,
+        maximum: usize,
+    ) -> Result<Vec<u8>, TransportError> {
+        let file = self.call("getFile", &json!({ "file_id": file_id }))?;
+        if let Some(size) = file.get("file_size").and_then(Value::as_u64) {
+            if size > maximum as u64 {
+                return Err(TransportError(format!(
+                    "getFile reports an object larger than the {maximum}-byte operation limit"
+                )));
+            }
+            if size != declared_bytes as u64 {
+                return Err(TransportError(format!(
+                    "Telegram document metadata changed size ({declared_bytes} declared, {size} at getFile)"
+                )));
+            }
+        }
+        let path = file
+            .get("file_path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| TransportError("getFile response missing file_path".to_string()))?;
+        if path.is_empty()
+            || path.starts_with('/')
+            || path.split('/').any(|part| part == "..")
+            || path.contains("://")
+        {
+            return Err(TransportError(
+                "getFile returned an invalid file_path".to_string(),
+            ));
+        }
+        let url = format!("{}/file/bot{}/{}", self.base_url, self.token, path);
+        self.http
+            .get_bytes_bounded(&url, maximum)
+            .map_err(TransportError)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Update decoding (pure — driven directly by the tests with real Bot API JSON)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// One decoded incoming update the shell routes — a button press or a text message.
+/// One decoded incoming update the shell routes — a button, text/service
+/// message, or metadata-only document handle.
 #[derive(Debug, Clone)]
 pub enum BotEvent {
     /// An inline-button press (`callback_query`): the Bot API callback id (for the ack) plus the
@@ -206,6 +255,23 @@ pub enum BotEvent {
         data: String,
         /// The `web_app_data.button_text` — the keyboard button's label, display only.
         button_text: Option<String>,
+    },
+    /// A player-attached opaque producer receipt. Metadata is parsed before
+    /// any `getFile` call so the live descriptor can reject it cheaply.
+    Document {
+        /// The chat the document message landed in.
+        chat_id: ChatId,
+        /// The forum topic, if any.
+        topic: Option<i64>,
+        /// The sending Telegram user.
+        uid: TelegramUserId,
+        /// Telegram's opaque handle for the subsequent `getFile` call.
+        file_id: String,
+        /// Telegram's declared body length. An unrepresentable or absent
+        /// length becomes `usize::MAX` and therefore fails preflight.
+        declared_bytes: usize,
+        /// Must be exactly `/operation <live-name>`.
+        caption: String,
     },
 }
 
@@ -282,6 +348,27 @@ pub fn parse_updates(result: &Value) -> (Vec<BotEvent>, Option<i64>) {
                         .and_then(Value::as_str)
                         .map(str::to_string),
                 });
+            } else if let Some(document) = m.get("document") {
+                let Some(file_id) = document.get("file_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let declared_bytes = document
+                    .get("file_size")
+                    .and_then(Value::as_u64)
+                    .and_then(|size| usize::try_from(size).ok())
+                    .unwrap_or(usize::MAX);
+                events.push(BotEvent::Document {
+                    chat_id,
+                    topic,
+                    uid,
+                    file_id: file_id.to_string(),
+                    declared_bytes,
+                    caption: m
+                        .get("caption")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                });
             } else if let Some(text) = m.get("text").and_then(Value::as_str) {
                 events.push(BotEvent::Text {
                     chat_id,
@@ -293,6 +380,19 @@ pub fn parse_updates(result: &Value) -> (Vec<BotEvent>, Option<i64>) {
         }
     }
     (events, next)
+}
+
+/// Parse the exact caption that opts a document into operation ingress.
+/// Arbitrary attachments and captions are never swallowed by an offering.
+pub fn parse_operation_caption(caption: &str) -> Option<&str> {
+    let mut fields = caption.split_whitespace();
+    let command = fields.next()?.split('@').next()?;
+    let operation = fields.next()?;
+    if command == "/operation" && fields.next().is_none() {
+        Some(operation)
+    } else {
+        None
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -544,6 +644,13 @@ pub enum TextDecision {
         /// The open error, if the host refused.
         err: Option<String>,
     },
+    /// `/status` inspected the active game through the shared game-session spine.
+    GameStatus {
+        /// Active game key, when one was resolved.
+        key: Option<String>,
+        /// Whether the live session was inspected and replay-verified.
+        inspected: bool,
+    },
     /// `/verify` / `/act` minted a synthetic press — the press's own decision.
     Press {
         /// Which command minted the press.
@@ -654,6 +761,33 @@ pub fn route_text_decided<T: Transport>(
                     TextDecision::Open {
                         key: rest.to_string(),
                         err: Some(e.to_string()),
+                    },
+                ),
+            }
+        }
+        "/status" | "/record" => {
+            // Like `/verify`, status remains useful immediately after a process restart: bind the
+            // durable session to this chat and repaint before inspecting the shared game spine.
+            let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+            if host.active_offering(&sid).is_none() {
+                if let Some(key) = host.resume_chat(&sid) {
+                    let _ = host.open(&key, chat_id, topic, uid);
+                }
+            }
+            let key = host.active_offering(&sid).map(str::to_string);
+            match host.game_status(chat_id, topic, uid) {
+                Ok(status) => (
+                    Some(describe_game_status(&status)),
+                    TextDecision::GameStatus {
+                        key: Some(status.key),
+                        inspected: true,
+                    },
+                ),
+                Err(error) => (
+                    Some(format!("Game record unavailable: {error}")),
+                    TextDecision::GameStatus {
+                        key,
+                        inspected: false,
                     },
                 ),
             }
@@ -801,6 +935,17 @@ impl TextDecision {
                 Some(key.clone()),
                 "/open".to_string(),
             )),
+            TextDecision::GameStatus { key, inspected } => Some((
+                if *inspected { "routed" } else { "refused" },
+                if *inspected {
+                    String::new()
+                } else {
+                    "game_status_unavailable".to_string()
+                },
+                AuditOutcome::None,
+                key.clone(),
+                "/status".to_string(),
+            )),
             TextDecision::Press { cmd, press } => {
                 let (kind, reason, outcome, offering) = press.audit_parts();
                 Some((kind, reason, outcome, offering, cmd.clone()))
@@ -900,13 +1045,16 @@ pub fn describe_press(press: HostPress) -> String {
     match press {
         HostPress::Opened(key) => format!("Opened {key}."),
         HostPress::Advanced {
-            outcome: Outcome::Landed { ended, .. },
+            outcome: Outcome::Landed { receipt, ended },
             ..
         } => {
+            let receipt = audit::hex32(&receipt.turn_hash);
             if ended {
-                "Turn landed — session complete. /verify replays the whole chain.".to_string()
+                format!(
+                    "Turn landed · receipt {receipt}. Session complete; /verify replays the exact record."
+                )
             } else {
-                "Turn landed — one real verified receipt.".to_string()
+                format!("Turn landed · receipt {receipt}. /status inspects the game record.")
             }
         }
         HostPress::Advanced {
@@ -925,6 +1073,61 @@ pub fn describe_press(press: HostPress) -> String {
         }
         HostPress::NoSession => "No session in this chat yet — send /offerings.".to_string(),
     }
+}
+
+/// Human rendering of the shared game-session view. It contains no actor identity, private state,
+/// artifact bytes, or proof bytes, so a player can paste it without turning status into a viewer
+/// side channel.
+pub fn describe_game_status(status: &TelegramGameStatus) -> String {
+    let audience = if status.private_projection {
+        if status.hidden_information {
+            "private single-reader projection (player-only state may appear in the game message)"
+        } else {
+            "private single-reader projection"
+        }
+    } else {
+        "shared viewer-blind projection"
+    };
+    let operations = if status.proof_operations.is_empty() {
+        "none currently advertised".to_string()
+    } else {
+        status.proof_operations.join(", ")
+    };
+    let artifacts = if status.artifacts.is_empty() {
+        "none currently advertised".to_string()
+    } else {
+        status.artifacts.join(", ")
+    };
+    format!(
+        "Game record · {} / {}\n\
+         Session · {}\n\
+         Audience · {}\n\
+         Record · {} · {} verified turn(s) · {} landed step(s) · {}\n\
+         Affordances · {} ordinary turn(s)\n\
+         Proof operations · {}\n\
+         Read-only artifacts · {}\n\
+         Replay recipe · {} (process durability depends on the mounted session store)",
+        status.key,
+        status.kind,
+        status.session.0,
+        audience,
+        if status.verified {
+            "VERIFIED"
+        } else {
+            "FAILED"
+        },
+        status.verified_turns,
+        status.landed_steps,
+        status.verification_detail,
+        status.turn_affordances,
+        operations,
+        artifacts,
+        if status.replay_recipe {
+            "complete"
+        } else {
+            "unavailable"
+        },
+    )
 }
 
 /// The human account of a re-verification.
@@ -1167,6 +1370,102 @@ pub fn run_update_loop<T: Transport, H: HttpPost>(
                     );
                     if let Err(e) = api.send_text(chat_id, topic, &reply) {
                         eprintln!("sendMessage (web_app_data reply) failed: {e}");
+                    }
+                }
+                BotEvent::Document {
+                    chat_id,
+                    topic,
+                    uid,
+                    file_id,
+                    declared_bytes,
+                    caption,
+                } => {
+                    let sid = TelegramFrontend::<T>::session_id(chat_id, topic);
+                    let actor = Actor::custodial(uid.to_string(), host.identity(uid).0);
+                    let (reply, decision, offering) = match parse_operation_caption(&caption) {
+                        None => (
+                            "To apply a canonical producer receipt, attach it with the exact caption `/operation <name>` shown in the proof-operation guide. Most operations require a private chat; the guide names any exact shared-session exception. No file was downloaded."
+                                .to_string(),
+                            ("refused", "operation_caption_missing"),
+                            None,
+                        ),
+                        Some(name) => match host.preflight_operation(
+                            chat_id,
+                            topic,
+                            uid,
+                            name,
+                            declared_bytes,
+                        ) {
+                            Err(error) => (
+                                format!("Receipt not accepted: {error}. No file was downloaded."),
+                                ("refused", "operation_preflight_refused"),
+                                None,
+                            ),
+                            Ok(route) => {
+                                let key = route.key.clone();
+                                match api.download_document(
+                                    &file_id,
+                                    route.policy.declared_bytes,
+                                    route.policy.transport_max_bytes,
+                                ) {
+                                    Err(error) => (
+                                        format!("Receipt transport failed: {error}"),
+                                        ("error", "operation_download_failed"),
+                                        Some(key),
+                                    ),
+                                    Ok(payload) => match host.apply_operation(route, payload) {
+                                        Err(error) => (
+                                            format!(
+                                                "The operation verifier refused the receipt: {error}"
+                                            ),
+                                            ("refused", "operation_refused"),
+                                            Some(key),
+                                        ),
+                                        Ok(receipt) => {
+                                            let fields = receipt
+                                                .public_fields
+                                                .iter()
+                                                .map(|(name, value)| format!("{name}={value}"))
+                                                .collect::<Vec<_>>()
+                                                .join(" · ");
+                                            (
+                                                format!(
+                                                    "Applied `{}` · receipt {}{}",
+                                                    receipt.operation,
+                                                    audit::hex32(&receipt.receipt_id),
+                                                    if fields.is_empty() {
+                                                        String::new()
+                                                    } else {
+                                                        format!(" · {fields}")
+                                                    }
+                                                ),
+                                                ("routed", ""),
+                                                Some(key),
+                                            )
+                                        }
+                                    },
+                                }
+                            }
+                        },
+                    };
+                    audit::log().emit(
+                        AuditEvent::new(
+                            "telegram",
+                            actor,
+                            Surface::Command,
+                            Input::new(
+                                "operation_attachment",
+                                json!({
+                                    "declared_bytes": declared_bytes,
+                                    "caption_valid": parse_operation_caption(&caption).is_some(),
+                                }),
+                            ),
+                        )
+                        .in_session(offering, Some(sid.0.clone()))
+                        .decided(decision.0, decision.1),
+                    );
+                    if let Err(e) = api.send_text(chat_id, topic, &reply) {
+                        eprintln!("sendMessage (operation reply) failed: {e}");
                     }
                 }
             }

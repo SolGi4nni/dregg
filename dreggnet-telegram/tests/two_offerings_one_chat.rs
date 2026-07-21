@@ -23,7 +23,7 @@
 
 use dreggnet_offerings::SessionId;
 use dreggnet_telegram::api::encode_callback;
-use dreggnet_telegram::host::{HostPress, TelegramHost};
+use dreggnet_telegram::host::{HostPress, OPERATION_GUIDE_SLOT, TelegramHost};
 use dreggnet_telegram::transport::{MessageId, MockTransport};
 use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
 
@@ -67,10 +67,19 @@ fn two_offerings_open_in_one_chat_both_stay_live_and_addressable() {
         dungeon_msg, council_msg,
         "each offering owns its own message; the second must not steal the first's surface"
     );
+    let dungeon_surface = TelegramFrontend::<MockTransport>::surface_id(chat, None, "dungeon");
+    let council_surface = TelegramFrontend::<MockTransport>::surface_id(chat, None, "council");
+    let companion_count = h
+        .frontend()
+        .companion_messages(&dungeon_surface, OPERATION_GUIDE_SLOT)
+        .len()
+        + h.frontend()
+            .companion_messages(&council_surface, OPERATION_GUIDE_SLOT)
+            .len();
     assert_eq!(
         h.frontend().transport().messages_in(chat).len(),
-        2,
-        "the chat holds exactly two live surfaces"
+        2 + companion_count,
+        "the chat holds two routable surfaces plus their non-interactive operation guides"
     );
     assert_eq!(
         h.frontend().surfaces_in_chat(&sid).len(),

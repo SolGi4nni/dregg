@@ -21,6 +21,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::render::render_surface_text;
 
+/// Telegram's documented text ceiling for `sendMessage` / `editMessageText`, in Unicode
+/// characters after entity parsing. The adapter paginates non-interactive companion guides and
+/// refuses an oversized interactive surface before the live Bot API can reject it ambiguously.
+pub const TELEGRAM_TEXT_LIMIT: usize = 4096;
+
 /// Encode an affordance `{turn, arg}` into Telegram `callback_data` (`"<turn>:<arg>"`). The
 /// inverse of [`decode_callback`]. Deterministic and byte-bounded (≤ 64 bytes for any real
 /// affordance). The Telegram binding of the ONE `deos_view::affordance` codec.
