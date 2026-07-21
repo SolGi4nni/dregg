@@ -1077,16 +1077,26 @@ pub struct TurnExecutor {
     /// other construction defaults to [`crate::shadow::NoOpShadowObserver`] — no shadow,
     /// no veto — which is the visible wasm / no-FFI platform fact.
     pub shadow_observer: std::sync::Arc<dyn crate::shadow::ShadowObserver>,
-    /// THE POST-QUANTUM REQUIREMENT GATE (the staged end-to-end-PQ perimeter,
-    /// `crate::pq`). When `false` (the default — matching the consensus
-    /// HybridPq default-off rollout), a classical [`Authorization::Signature`]
+    /// THE POST-QUANTUM REQUIREMENT GATE (`crate::pq`). When `false` (the bare
+    /// library constructor default, reserved for tests/non-node compatibility),
+    /// a classical [`Authorization::Signature`]
     /// is accepted AND an [`Authorization::HybridSignature`]'s ed25519 half
     /// alone suffices — but if its ML-DSA half is PRESENT it must verify
     /// (fail-CLOSED on a present-but-bad PQ half; never fail-open). When `true`,
-    /// the executor REQUIRES the hybrid variant with a valid PQ half and rejects
-    /// classical-only signatures. An `AtomicBool` so a `&self` verify path reads
-    /// it cheaply and a caller can flip it without `&mut`.
+    /// the executor REQUIRES the hybrid variant with a valid PQ half whose key
+    /// matches an independently enrolled target-cell identity/epoch, and rejects
+    /// classical-only or self-anchored signatures. An `AtomicBool` so a `&self`
+    /// verify path reads it cheaply and a caller can flip it without `&mut`.
     pub require_pq: std::sync::atomic::AtomicBool,
+    /// Host-anchored target-cell -> ML-DSA identity registry.
+    ///
+    /// The carried key in `Authorization::HybridSignature` is wire data, not an
+    /// identity anchor.  Required/native-PQ authorization must find a matching
+    /// entry here (including target Ed25519 identity and cell epoch) before it
+    /// verifies the ML-DSA half.  A mutex provides the same cheap interior
+    /// mutability pattern as the executor's other host-fed registries; reads are
+    /// one map lookup per hybrid authorization.
+    pq_identity_registry: Mutex<HashMap<CellId, crate::pq::EnrolledPqIdentity>>,
 }
 
 impl TurnExecutor {
@@ -1134,6 +1144,7 @@ impl TurnExecutor {
             witness_mode: std::sync::atomic::AtomicU8::new(0),
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
+            pq_identity_registry: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1199,6 +1210,7 @@ impl TurnExecutor {
             witness_mode: std::sync::atomic::AtomicU8::new(0),
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
+            pq_identity_registry: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1246,6 +1258,7 @@ impl TurnExecutor {
             witness_mode: std::sync::atomic::AtomicU8::new(0),
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
+            pq_identity_registry: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1283,18 +1296,89 @@ impl TurnExecutor {
     }
 
     /// Whether this executor REQUIRES the post-quantum (hybrid) authorization
-    /// half. See [`Self::require_pq`]. Default `false` (staged rollout).
+    /// half. See [`Self::require_pq`]. The bare library constructor defaults to
+    /// `false` for tests/non-node consumers; native node admission always sets
+    /// it to `true` unless explicitly running unaudited test mode.
     pub fn require_pq(&self) -> bool {
         self.require_pq.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Flip the post-quantum requirement gate (`crate::pq`). When `true`, a
     /// classical-only `Authorization::Signature` is rejected and a
-    /// `HybridSignature` must carry a valid ML-DSA half; a present-but-invalid
-    /// PQ half is rejected in EITHER mode (fail-closed).
+    /// `HybridSignature` must carry a valid ML-DSA half matching an independently
+    /// enrolled target-cell identity/epoch; a present-but-invalid PQ half is
+    /// rejected in EITHER mode (fail-closed).
     pub fn set_require_pq(&self, require: bool) {
         self.require_pq
             .store(require, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Independently enroll the ML-DSA identity authorized to sign for
+    /// `target` at `epoch`.
+    ///
+    /// This is a host/trusted-state operation, never a wire-envelope operation.
+    /// In particular, callers MUST NOT feed it the `ml_dsa_pk` carried by the
+    /// authorization currently being checked: that would recreate the
+    /// self-authenticating-key vulnerability this registry removes.  Repeating
+    /// the identical enrollment is idempotent; epoch rollback and a conflicting
+    /// key within one epoch fail closed.
+    pub fn enroll_pq_identity(
+        &self,
+        target: CellId,
+        target_ed25519: [u8; 32],
+        epoch: u64,
+        public_key: Vec<u8>,
+    ) -> Result<(), crate::pq::PqIdentityEnrollmentError> {
+        use crate::pq::{EnrolledPqIdentity, ML_DSA_PK_LEN, PqIdentityEnrollmentError};
+
+        if public_key.len() != ML_DSA_PK_LEN {
+            return Err(PqIdentityEnrollmentError::InvalidPublicKeyLength {
+                got: public_key.len(),
+                expected: ML_DSA_PK_LEN,
+            });
+        }
+
+        let mut registry = self
+            .pq_identity_registry
+            .lock()
+            .expect("PQ identity registry mutex poisoned");
+        if let Some(current) = registry.get(&target) {
+            if epoch < current.epoch {
+                return Err(PqIdentityEnrollmentError::EpochRollback {
+                    enrolled: current.epoch,
+                    proposed: epoch,
+                });
+            }
+            if epoch == current.epoch {
+                if current.target_ed25519 == target_ed25519 && current.public_key == public_key {
+                    return Ok(());
+                }
+                return Err(PqIdentityEnrollmentError::ConflictingKeyAtEpoch { epoch });
+            }
+        }
+
+        registry.insert(
+            target,
+            EnrolledPqIdentity {
+                target_ed25519,
+                epoch,
+                public_key,
+            },
+        );
+        Ok(())
+    }
+
+    /// Read the independently enrolled PQ identity for `target`.
+    ///
+    /// The clone keeps the registry lock out of the comparatively expensive
+    /// signature verifier and gives node ingress/validation lanes a narrow API
+    /// for applying the same identity rule to outer envelopes.
+    pub fn enrolled_pq_identity(&self, target: &CellId) -> Option<crate::pq::EnrolledPqIdentity> {
+        self.pq_identity_registry
+            .lock()
+            .expect("PQ identity registry mutex poisoned")
+            .get(target)
+            .cloned()
     }
 
     /// Equip the executor with an X25519 keypair so it can decrypt

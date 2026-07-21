@@ -146,6 +146,90 @@ fn wall_clock_secs() -> i64 {
         .unwrap_or(0)
 }
 
+fn cached_local_ml_dsa_public(seed: &[u8; 32], ed25519: [u8; 32]) -> Vec<u8> {
+    // Executors are intentionally short-lived, while identity keys are not.
+    // Cache only the PUBLIC ML-DSA bytes by the already-public Ed25519 identity;
+    // never retain the seed in this process-global map. Two racing first calls
+    // may both derive, but the installed value is identical.
+    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Some(public_key) = cache
+        .lock()
+        .expect("local PQ identity cache mutex poisoned")
+        .get(&ed25519)
+        .cloned()
+    {
+        return public_key;
+    }
+
+    let public_key = dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(seed).public_bytes();
+    cache
+        .lock()
+        .expect("local PQ identity cache mutex poisoned")
+        .entry(ed25519)
+        .or_insert_with(|| public_key.clone())
+        .clone()
+}
+
+/// Install every target-cell ML-DSA identity the node knows independently of
+/// the turn currently being checked.
+///
+/// Two host-anchored sources exist today:
+///
+/// - cells owned by this node's cipherclerk use the ML-DSA key derived from the
+///   clerk's locally held seed;
+/// - cells owned by a configured federation member use the ML-DSA key published
+///   beside that member's Ed25519 key in the genesis/committee roster.
+///
+/// Nothing is learned from `Authorization::HybridSignature::ml_dsa_pk`. An
+/// external user cell absent from these enrolled sources therefore fails closed
+/// under native/required PQ. The classical-only posture is an explicitly
+/// unaudited test/development mode, not a deployment or migration profile.
+pub fn enroll_known_pq_identities(executor: &TurnExecutor, s: &NodeStateInner) {
+    let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+    let local_ed25519 = s.cclerk.public_key().0;
+    // The explicitly unaudited classical test mode must remain usable in a
+    // marshal-only process: merely constructing an executor must not invoke
+    // dregg-pq's fail-closed unaudited fallback. Native deployments install the
+    // verified keygen core before serving; test/development fallback is possible
+    // only under the same explicit opt-in enforced by dregg-pq itself.
+    let local_keygen_available = dregg_pq::lean_keygen_core_real_installed()
+        || std::env::var(dregg_pq::ALLOW_UNAUDITED_PQ_ENV).as_deref() == Ok("1");
+    // Lazy: read-only verifier executors over an empty/non-local ledger need no
+    // local identity and therefore must not invoke keygen merely by existing.
+    // A real locally owned target pays this once while the executor is built.
+    let mut local_ml_dsa: Option<Vec<u8>> = None;
+
+    for (cell_id, cell) in s.ledger.iter() {
+        let target_ed25519 = *cell.public_key();
+        let enrolled_key = if target_ed25519 == local_ed25519 && local_keygen_available {
+            Some(
+                local_ml_dsa
+                    .get_or_insert_with(|| cached_local_ml_dsa_public(&local_seed, local_ed25519))
+                    .clone(),
+            )
+        } else {
+            s.ml_dsa_key_for(&target_ed25519).map(|key| key.0.to_vec())
+        };
+
+        if let Some(enrolled_key) = enrolled_key {
+            // Every source above has a fixed-size ML-DSA key and each target is
+            // visited once, so an error means host configuration is internally
+            // contradictory. Do not silently run a "required" executor with a
+            // missing identity: fail at configuration time.
+            executor
+                .enroll_pq_identity(
+                    *cell_id,
+                    target_ed25519,
+                    cell.state.delegation_epoch(),
+                    enrolled_key,
+                )
+                .expect("host-anchored PQ identity enrollment must be coherent");
+        }
+    }
+}
+
 /// Configure `executor` with federation id, timestamp, and blocklace height.
 pub fn configure_turn_executor(
     executor: &mut TurnExecutor,
@@ -154,6 +238,7 @@ pub fn configure_turn_executor(
 ) {
     executor.set_local_federation_id(federation_id_for_executor(s));
     executor.set_timestamp(wall_clock_secs());
+    enroll_known_pq_identities(executor, s);
     // Sign committed receipts with the node's key (same key the MCP entry
     // points use). Without this, every HTTP/blocklace-path receipt carried
     // `executor_signature: None` (`executor_signed:false` in /api/receipts) and
@@ -379,6 +464,14 @@ pub fn new_submit_executor(s: &NodeStateInner) -> TurnExecutor {
     executor
 }
 
+fn pq_admission_required(require_pq: Option<&str>, allow_unaudited_pq: Option<&str>) -> bool {
+    let classical_requested = require_pq
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    let unaudited_test_mode = allow_unaudited_pq == Some("1");
+    !(classical_requested && unaudited_test_mode)
+}
+
 /// HYBRID PERIMETER — DEPLOYED POSTURE (require_pq = ON) at the ADMISSION
 /// boundary. Called on the executors the node uses to ADMIT a turn for commit:
 /// the thin-HTTP + signed-envelope submit path (`new_submit_executor`, reached by
@@ -387,21 +480,26 @@ pub fn new_submit_executor(s: &NodeStateInner) -> TurnExecutor {
 /// post-quantum half rejects a classical-only `Authorization::Signature` and an
 /// outer envelope lacking a PQ signature (`api.rs::post_submit_signed_turn` reads
 /// `require_pq()`); a present hybrid `HybridSignature` (ed25519 + ML-DSA-65) is
-/// accepted. The Rust default signer and both SDKs (sdk-ts ML-DSA-65, sdk-py
-/// hybrid) already emit the hybrid shape, so this closes the staged rollout for
-/// the node's admission surface. NOT applied to `new_verify_executor`: read/proof
+/// accepted only when its ML-DSA key matches the independently enrolled target
+/// cell identity/epoch installed by [`enroll_known_pq_identities`]. The Rust
+/// default signer and both SDKs emit the hybrid shape, while external identities
+/// still require a durable enrollment before they can use native-PQ admission.
+/// NOT applied to `new_verify_executor`: read/proof
 /// re-execution replays turns already admitted (possibly pre-flip classical
 /// history), so gating it on PQ presence would wrongly reject a legitimate read.
 /// A present-but-invalid PQ half is fail-closed in EITHER mode regardless.
 ///
-/// DEPLOYED DEFAULT is ON. The staged-rollout ops override `DREGG_REQUIRE_PQ=0`
-/// forces it OFF for a migration window (mirrors the consensus HybridPq knob) —
-/// the default with the var unset, or set to anything but `0`/`false`, is ON.
+/// DEPLOYED DEFAULT is unconditionally ON. Classical authorization exists only
+/// as an explicitly UNAUDITED test/development posture: it requires BOTH
+/// `DREGG_REQUIRE_PQ=0` (or `false`) and `DREGG_ALLOW_UNAUDITED_PQ=1`. The first
+/// variable alone never downgrades a native node.
 pub fn require_pq_admission(executor: &TurnExecutor) {
-    let disabled = std::env::var("DREGG_REQUIRE_PQ")
-        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
-        .unwrap_or(false);
-    executor.set_require_pq(!disabled);
+    let require_pq = std::env::var("DREGG_REQUIRE_PQ").ok();
+    let allow_unaudited_pq = std::env::var(dregg_pq::ALLOW_UNAUDITED_PQ_ENV).ok();
+    executor.set_require_pq(pq_admission_required(
+        require_pq.as_deref(),
+        allow_unaudited_pq.as_deref(),
+    ));
 }
 
 /// Build a fresh executor at the current attested height (verify / read paths). Injects the
@@ -425,5 +523,15 @@ mod tests {
             BlockHeightMode::Current => base,
         };
         assert_eq!(next, 42);
+    }
+
+    #[test]
+    fn native_pq_never_downgrades_without_double_explicit_unaudited_test_mode() {
+        assert!(pq_admission_required(None, None));
+        assert!(pq_admission_required(Some("0"), None));
+        assert!(pq_admission_required(Some("false"), Some("true")));
+        assert!(pq_admission_required(Some("1"), Some("1")));
+        assert!(!pq_admission_required(Some("0"), Some("1")));
+        assert!(!pq_admission_required(Some("FALSE"), Some("1")));
     }
 }

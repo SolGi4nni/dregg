@@ -445,15 +445,17 @@ pub enum Authorization {
     /// ([`crate::executor::TurnExecutor::compute_signing_message`] /
     /// `compute_partial_signing_message`). A hybrid authorization verifies only
     /// when `classical ∧ pq`: the ed25519 half is checked against the target
-    /// cell's identity, and the ML-DSA half (FIPS 204, ctx
-    /// [`crate::pq::HYBRID_TURN_PQ_CTX`]) is checked against `ml_dsa_pk`.
+    /// cell's identity. In required/native-PQ mode the ML-DSA half (FIPS 204,
+    /// ctx [`crate::pq::HYBRID_TURN_PQ_CTX`]) is checked against a key the host
+    /// independently enrolled for that target cell and authorization epoch;
+    /// `ml_dsa_pk` must match that enrollment but is never its own trust anchor.
     ///
-    /// STAGED, fail-closed: a present-but-invalid `ml_dsa` half REJECTS the
+    /// Fail-closed: a present-but-invalid `ml_dsa` half REJECTS the
     /// action regardless of `TurnExecutor::require_pq`; whether the PQ half is
-    /// *required* (vs. the ed25519 half alone sufficing during rollout) is gated
-    /// by that flag (default off). `ml_dsa` empty ⇒ the PQ half is absent (only
-    /// valid when `require_pq` is off). The classical [`Authorization::Signature`]
-    /// variant stays valid throughout the rollout.
+    /// *required* is gated by that flag. Native node admission keeps it on;
+    /// `require_pq=false` exists only for explicit unaudited test/non-node
+    /// compatibility. `ml_dsa` empty means the PQ half is absent and is valid
+    /// only in that explicit mode.
     HybridSignature {
         /// The ed25519 signature over the canonical signing message (64 bytes).
         #[serde(with = "serde_sig64")]
@@ -461,9 +463,11 @@ pub enum Authorization {
         /// The ML-DSA-65 signature over the SAME message under
         /// [`crate::pq::HYBRID_TURN_PQ_CTX`]. Empty ⇒ PQ half absent.
         ml_dsa: Vec<u8>,
-        /// The signer's serialized ML-DSA-65 public key (FIPS 204), carried so
-        /// the verifier is self-contained during the staged rollout. Derived
-        /// deterministically from the same seed as the ed25519 identity
+        /// The signer's serialized ML-DSA-65 public key (FIPS 204). This remains
+        /// in the wire shape for anti-strip hashing; required/native verification
+        /// compares it to the independently enrolled target-cell key and verifies
+        /// with the enrolled value. Derived deterministically
+        /// from the same seed as the ed25519 identity
         /// ([`crate::pq::MlDsaTurnKey::from_ed25519_seed`]).
         ml_dsa_pk: Vec<u8>,
     },

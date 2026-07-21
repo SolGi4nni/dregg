@@ -7,8 +7,10 @@
 //! for an inner action ([`crate::action::Authorization::HybridSignature`]), and
 //! `Turn::hash()` for the outer envelope (`dregg_sdk::SignedTurn`). A hybrid
 //! authorization verifies only when BOTH halves check (`classical ∧ pq`), so
-//! forging a turn requires breaking ed25519 discrete-log AND module-lattice
-//! SIS/LWE simultaneously.
+//! native/required authorization verifies the ML-DSA half against a key the
+//! host independently enrolled for the target cell and its authorization epoch.
+//! This prevents a Shor-capable attacker from forging the Ed25519 half and then
+//! supplying an attacker-owned valid ML-DSA key/signature pair.
 //!
 //! ## Deterministic derivation
 //!
@@ -17,17 +19,19 @@
 //! 204 `ML-DSA.KeyGen(ξ = seed)`), so a cipherclerk, a node, and a genesis
 //! fixture built from one mnemonic all agree on the PQ public key with no
 //! separate ceremony. The verifier cannot derive another party's PQ *public*
-//! key from their ed25519 *public* key, so the ML-DSA public key is carried in
-//! the hybrid envelope — self-contained during the staged rollout, exactly as
-//! the consensus HybridPq quorum carries its per-signer keys.
+//! key from their ed25519 *public* key. The wire therefore still carries the
+//! key for compatibility and anti-strip hashing, but native/required admission
+//! compares it to the independently enrolled target-cell key and verifies with
+//! that enrolled value. A carried key is never its own trust anchor.
 //!
 //! ## Staged, fail-closed
 //!
 //! The client always signs both halves. The verifier checks the PQ half when
 //! present and REJECTS a present-but-invalid PQ half (fail-CLOSED) even before
 //! the PQ half is mandatory. Whether the PQ half is *required* is gated by
-//! `TurnExecutor::require_pq` (default off), matching the consensus HybridPq
-//! default-off rollout.
+//! `TurnExecutor::require_pq` (default off at the library level; node admission
+//! enables it by default). Required mode also requires a matching target-cell
+//! enrollment; unenrolled identities fail closed.
 
 /// Domain-separation context for the ML-DSA half of a HYBRID *turn*
 /// authorization (FIPS 204 `ctx`, bound into every signature). Distinct from
@@ -41,6 +45,61 @@ pub const ML_DSA_PK_LEN: usize = dregg_pq::ML_DSA_PK_LEN;
 
 /// Serialized length of an ML-DSA-65 signature (FIPS 204).
 pub const ML_DSA_SIG_LEN: usize = dregg_pq::ML_DSA_SIG_LEN;
+
+/// An ML-DSA identity enrolled by the host *before* an authorization is
+/// checked.
+///
+/// This is deliberately not reconstructed from
+/// `Authorization::HybridSignature.ml_dsa_pk`. That field is
+/// untrusted wire material: accepting it as its own trust anchor lets an
+/// attacker pair a forged classical signature with an attacker-owned, valid
+/// ML-DSA signature.  Native/required-PQ admission instead looks up this record
+/// by target cell and verifies against `public_key`.
+///
+/// `epoch` is the target cell's authorization epoch at enrollment time.  The
+/// executor compares it to the live target cell epoch, so a rotation/revocation
+/// makes the old enrollment unusable until the host installs the new one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnrolledPqIdentity {
+    /// Ed25519 identity stored by the target cell when this enrollment was made.
+    pub target_ed25519: [u8; 32],
+    /// Target-cell authorization epoch (currently `delegation_epoch`).
+    pub epoch: u64,
+    /// Independently enrolled serialized ML-DSA-65 public key.
+    pub public_key: Vec<u8>,
+}
+
+/// A rejected update to the executor's independently anchored PQ-identity
+/// registry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PqIdentityEnrollmentError {
+    /// Only a full FIPS-204 ML-DSA-65 public key can become an authority.
+    InvalidPublicKeyLength { got: usize, expected: usize },
+    /// Enrollment epochs are monotone per target cell.
+    EpochRollback { enrolled: u64, proposed: u64 },
+    /// Replacing a key within one epoch is ambiguous and therefore refused.
+    ConflictingKeyAtEpoch { epoch: u64 },
+}
+
+impl core::fmt::Display for PqIdentityEnrollmentError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidPublicKeyLength { got, expected } => write!(
+                f,
+                "ML-DSA-65 public key has {got} bytes; expected {expected}"
+            ),
+            Self::EpochRollback { enrolled, proposed } => write!(
+                f,
+                "PQ identity epoch rollback: enrolled {enrolled}, proposed {proposed}"
+            ),
+            Self::ConflictingKeyAtEpoch { epoch } => {
+                write!(f, "conflicting PQ identity key at epoch {epoch}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PqIdentityEnrollmentError {}
 
 /// The PQ half of a hybrid identity: an ML-DSA-65 signing key plus its
 /// serialized public key. Held alongside the classical `ed25519_dalek::SigningKey`
@@ -66,8 +125,9 @@ impl MlDsaTurnKey {
         Self(dregg_pq::MlDsaKey::from_ed25519_seed(seed))
     }
 
-    /// The serialized ML-DSA-65 public key (carried in the hybrid envelope so
-    /// the verifier is self-contained during the staged rollout).
+    /// The serialized ML-DSA-65 public key carried in the hybrid envelope as
+    /// anti-strip wire data. Native verification still requires it to equal an
+    /// independently enrolled target-cell key.
     pub fn public_bytes(&self) -> Vec<u8> {
         self.0.public_bytes()
     }
