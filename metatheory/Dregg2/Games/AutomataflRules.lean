@@ -1890,6 +1890,43 @@ theorem resolveMoves_cell_pair (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.
   rw [writeBoard_resolveMoves_cell b ma mb q hq,
     if_pos (resolvableB_pair b ma mb hne hlegA hlegB hdd hInA hInB)]
 
+/-- **THE PAIR ARRIVAL.** On a legal, distinct-dest pair the arrival at `q` is decided by which of the
+two sources is a mover landing exactly on `q`: `ma.frm` if it moves and lands on `q`, else `mb.frm` if
+it moves and lands on `q`, else nobody (the two movers cannot converge, by `landMap_movers_distinct`,
+so the filter is a singleton or empty). This is the reduction the board-cell correspondence rides:
+paired with `resolveMoves_cell_pair` it turns the arrival `match` into the same nested `if` the emitted
+`cWBoardV4` cellAlgebra collapse produces (mover-A landing → place A; mover-B landing → place B). -/
+theorem arrivalAt_pair (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hdd : ma.to ≠ mb.to) (q : Coord) :
+    arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q =
+      (if ma.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] ma.frm = q then some ma.frm
+       else if mb.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] mb.frm = q then some mb.frm
+       else none) := by
+  unfold arrivalAt
+  by_cases hA : ma.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] ma.frm = q
+  · obtain ⟨hmemA, hLAq⟩ := hA
+    obtain ⟨_, hcarA, hmovA⟩ := (mem_movers_pair b ma mb hne ma.frm).mp hmemA
+    have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [ma.frm] := by
+      rw [← hLAq]; exact filter_land_singleton_a b ma mb hne hlegA hlegB hdd hcarA hmovA
+    rw [hfil, if_pos ⟨hmemA, hLAq⟩]; rfl
+  · rw [if_neg hA]
+    by_cases hB : mb.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] mb.frm = q
+    · obtain ⟨hmemB, hLBq⟩ := hB
+      obtain ⟨_, hcarB, hmovB⟩ := (mem_movers_pair b ma mb hne mb.frm).mp hmemB
+      have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [mb.frm] := by
+        rw [← hLBq]; exact filter_land_singleton_b b ma mb hne hlegA hlegB hdd hcarB hmovB
+      rw [hfil, if_pos ⟨hmemB, hLBq⟩]; rfl
+    · rw [if_neg hB]
+      have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [] := by
+        rw [List.filter_eq_nil_iff]
+        intro c hc heq
+        rw [beq_iff_eq] at heq
+        obtain ⟨hcor, _, _⟩ := (mem_movers_pair b ma mb hne c).mp hc
+        rcases hcor with rfl | rfl
+        · exact hA ⟨hc, heq⟩
+        · exact hB ⟨hc, heq⟩
+      rw [hfil]; rfl
+
 /-! ### The clash ⟺ selection bridge
 
 `clashCoords` (fork/collide adjudication) on a two-move round fires exactly when the pair forks
@@ -1937,10 +1974,402 @@ theorem clashCoords_pair_iff :
     · exact ⟨ma.frm, by simp [candidates], Or.inl ⟨rfl, heq.symm, hne⟩⟩
     · exact ⟨ma.to, by simp [candidates], Or.inr ⟨rfl, heq.symm, hne, ca, cb⟩⟩
 
+/-! ### The single-effective-mover collapse (`hdd` replaced by a SEPARATION hypothesis)
+
+Edge `da = db` with one source VACUUM: the two moves share a destination but at most ONE carries a
+piece, so at most one is a mover and the two movers cannot converge. The `_sep` lemmas below re-run
+the `arrivalAt_pair` / `resolvableB_pair` collapse under the weaker hypothesis
+`hsep : ¬(ma.frm ∈ movers ∧ mb.frm ∈ movers)` (NOT both movers) in place of the distinct-destination
+`hdd`. This covers BOTH the distinct-dest clean class (where `hdd` gives non-convergence via
+`landMap_movers_distinct`) and the shared-dest single-vacuum edge (where a vacuum source is never a
+mover). The caterpillar arm of `clause2_false` — the ONLY place the distinct-dest form used `hdd` —
+is killed here because a caterpillar makes BOTH pieces movers, contradicting `hsep`. -/
+
+theorem filter_land_singleton_a_sep (hne : ma.frm ≠ mb.frm) (hcarA : carAt b ma.frm = true)
+    (hmovA : landMap b [ma, mb] ma.frm ≠ ma.frm)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb])) :
+    (movers b [ma, mb]).filter (fun c' => landMap b [ma, mb] c' == landMap b [ma, mb] ma.frm)
+      = [ma.frm] := by
+  rw [movers_pair b ma mb hne, List.filter_filter]
+  have hPa : ((landMap b [ma, mb] ma.frm == landMap b [ma, mb] ma.frm)
+      && (carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm))) = true := by
+    simp [hcarA, hmovA]
+  have hPb : ((landMap b [ma, mb] mb.frm == landMap b [ma, mb] ma.frm)
+      && (carAt b mb.frm && (landMap b [ma, mb] mb.frm != mb.frm))) = false := by
+    by_cases hcb : carAt b mb.frm = true
+    · by_cases hmb : landMap b [ma, mb] mb.frm = mb.frm
+      · simp [hmb]
+      · exfalso; apply hsep
+        exact ⟨(mem_movers_pair b ma mb hne ma.frm).mpr ⟨Or.inl rfl, hcarA, hmovA⟩,
+               (mem_movers_pair b ma mb hne mb.frm).mpr ⟨Or.inr rfl, hcb, hmb⟩⟩
+    · simp only [Bool.not_eq_true] at hcb; simp [hcb]
+  rw [List.filter_cons, if_pos hPa, List.filter_cons,
+    if_neg (by rw [hPb]; exact Bool.false_ne_true), List.filter_nil]
+
+theorem filter_land_singleton_b_sep (hne : ma.frm ≠ mb.frm) (hcarB : carAt b mb.frm = true)
+    (hmovB : landMap b [ma, mb] mb.frm ≠ mb.frm)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb])) :
+    (movers b [ma, mb]).filter (fun c' => landMap b [ma, mb] c' == landMap b [ma, mb] mb.frm)
+      = [mb.frm] := by
+  rw [movers_pair b ma mb hne, List.filter_filter]
+  have hPb : ((landMap b [ma, mb] mb.frm == landMap b [ma, mb] mb.frm)
+      && (carAt b mb.frm && (landMap b [ma, mb] mb.frm != mb.frm))) = true := by simp [hcarB, hmovB]
+  have hPa : ((landMap b [ma, mb] ma.frm == landMap b [ma, mb] mb.frm)
+      && (carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm))) = false := by
+    by_cases hca : carAt b ma.frm = true
+    · by_cases hma : landMap b [ma, mb] ma.frm = ma.frm
+      · simp [hma]
+      · exfalso; apply hsep
+        exact ⟨(mem_movers_pair b ma mb hne ma.frm).mpr ⟨Or.inl rfl, hca, hma⟩,
+               (mem_movers_pair b ma mb hne mb.frm).mpr ⟨Or.inr rfl, hcarB, hmovB⟩⟩
+    · simp only [Bool.not_eq_true] at hca; simp [hca]
+  rw [List.filter_cons, if_neg (by rw [hPa]; exact Bool.false_ne_true), List.filter_cons,
+    if_pos hPb, List.filter_nil]
+
+theorem clause2_false_a_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hcarA : carAt b ma.frm = true)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb]))
+    (hmovA : landMap b [ma, mb] ma.frm ≠ ma.frm) :
+    carAt b (landMap b [ma, mb] ma.frm) = false
+      ∨ landMap b [ma, mb] (landMap b [ma, mb] ma.frm) ≠ landMap b [ma, mb] ma.frm := by
+  by_cases hBA : blockedB b [ma, mb] ma = true
+  · exact absurd (landMap_pair_blocked_a b ma mb hne hBA) hmovA
+  · simp only [Bool.not_eq_true] at hBA
+    by_cases hab : ma.to = mb.frm
+    · by_cases hBB : blockedB b [ma, mb] mb = true
+      · by_cases hcs : carAt b mb.frm = true
+        · exact absurd (landMap_pair_stuck_a b ma mb hne hab hcs hBA hBB) hmovA
+        · simp only [Bool.not_eq_true] at hcs
+          left; rw [landMap_pair_intoEmpty_a b ma mb hne hab hcs hBA hBB, hab]; exact hcs
+      · simp only [Bool.not_eq_true] at hBB
+        by_cases hba : mb.to = ma.frm
+        · exact absurd (landMap_pair_twoCycle_a b ma mb hne hab hba hBA hBB) hmovA
+        · by_cases hcs : carAt b mb.frm = true
+          · exfalso; apply hsep
+            have hmb : landMap b [ma, mb] mb.frm = mb.to :=
+              landMap_pair_indep_b b ma mb hne hlegB hba hBB
+            exact ⟨(mem_movers_pair b ma mb hne ma.frm).mpr ⟨Or.inl rfl, hcarA, hmovA⟩,
+                   (mem_movers_pair b ma mb hne mb.frm).mpr
+                     ⟨Or.inr rfl, hcs, by rw [hmb]; exact fun h => hlegB h.symm⟩⟩
+          · simp only [Bool.not_eq_true] at hcs
+            left; rw [landMap_pair_flowthrough_a b ma mb hne hlegB hab hba hcs hBA hBB]
+            have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+              simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+                beq_eq_false_iff_ne]
+              exact ⟨fun h => hba h.symm, hlegB⟩
+            exact carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+    · left; rw [landMap_pair_indep_a b ma mb hne hlegA hab hBA]
+      have hns : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+        simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+          beq_eq_false_iff_ne]
+        exact ⟨hlegA, fun h => hab h.symm⟩
+      exact carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns
+
+theorem clause2_false_b_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hcarB : carAt b mb.frm = true)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb]))
+    (hmovB : landMap b [ma, mb] mb.frm ≠ mb.frm) :
+    carAt b (landMap b [ma, mb] mb.frm) = false
+      ∨ landMap b [ma, mb] (landMap b [ma, mb] mb.frm) ≠ landMap b [ma, mb] mb.frm := by
+  by_cases hBB : blockedB b [ma, mb] mb = true
+  · exact absurd (landMap_pair_blocked_b b ma mb hne hBB) hmovB
+  · simp only [Bool.not_eq_true] at hBB
+    by_cases hba : mb.to = ma.frm
+    · by_cases hBA : blockedB b [ma, mb] ma = true
+      · by_cases hcs : carAt b ma.frm = true
+        · exact absurd (landMap_pair_stuck_b b ma mb hne hba hcs hBB hBA) hmovB
+        · simp only [Bool.not_eq_true] at hcs
+          left; rw [landMap_pair_intoEmpty_b b ma mb hne hba hcs hBB hBA, hba]; exact hcs
+      · simp only [Bool.not_eq_true] at hBA
+        by_cases hab : ma.to = mb.frm
+        · exact absurd (landMap_pair_twoCycle_b b ma mb hne hab hba hBA hBB) hmovB
+        · by_cases hcs : carAt b ma.frm = true
+          · exfalso; apply hsep
+            have hma : landMap b [ma, mb] ma.frm = ma.to :=
+              landMap_pair_indep_a b ma mb hne hlegA hab hBA
+            exact ⟨(mem_movers_pair b ma mb hne ma.frm).mpr
+                     ⟨Or.inl rfl, hcs, by rw [hma]; exact fun h => hlegA h.symm⟩,
+                   (mem_movers_pair b ma mb hne mb.frm).mpr ⟨Or.inr rfl, hcarB, hmovB⟩⟩
+          · simp only [Bool.not_eq_true] at hcs
+            left; rw [landMap_pair_flowthrough_b b ma mb hne hlegA hba hab hcs hBA hBB]
+            have hns_da : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+              simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+                beq_eq_false_iff_ne]
+              exact ⟨hlegA, fun h => hab h.symm⟩
+            exact carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns_da
+    · left; rw [landMap_pair_indep_b b ma mb hne hlegB hba hBB]
+      have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+        simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+          beq_eq_false_iff_ne]
+        exact ⟨fun h => hba h.symm, hlegB⟩
+      exact carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+
+theorem landBad_false_a_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb]))
+    (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hmemA : ma.frm ∈ movers b [ma, mb]) : landBad b [ma, mb] ma.frm = false := by
+  obtain ⟨_, hcarA, hmovA⟩ := (mem_movers_pair b ma mb hne ma.frm).mp hmemA
+  have hin : b.inBounds (landMap b [ma, mb] ma.frm) := by
+    rcases landMap_mover_a b ma mb hne hlegA hlegB hmovA with h | ⟨h, _⟩ <;> rw [h]
+    · exact hInA
+    · exact hInB
+  have hd : decide (b.inBounds (landMap b [ma, mb] ma.frm)) = true := decide_eq_true hin
+  unfold landBad
+  rw [filter_land_singleton_a_sep b ma mb hne hcarA hmovA hsep]
+  rcases clause2_false_a_sep b ma mb hne hlegA hlegB hcarA hsep hmovA with h2 | h2
+  · simp [h2, hd]
+  · simp [hd, beq_eq_false_iff_ne.mpr h2]
+
+theorem landBad_false_b_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb]))
+    (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hmemB : mb.frm ∈ movers b [ma, mb]) : landBad b [ma, mb] mb.frm = false := by
+  obtain ⟨_, hcarB, hmovB⟩ := (mem_movers_pair b ma mb hne mb.frm).mp hmemB
+  have hin : b.inBounds (landMap b [ma, mb] mb.frm) := by
+    rcases landMap_mover_b b ma mb hne hlegA hlegB hmovB with h | ⟨h, _⟩ <;> rw [h]
+    · exact hInB
+    · exact hInA
+  have hd : decide (b.inBounds (landMap b [ma, mb] mb.frm)) = true := decide_eq_true hin
+  unfold landBad
+  rw [filter_land_singleton_b_sep b ma mb hne hcarB hmovB hsep]
+  rcases clause2_false_b_sep b ma mb hne hlegA hlegB hcarB hsep hmovB with h2 | h2
+  · simp [h2, hd]
+  · simp [hd, beq_eq_false_iff_ne.mpr h2]
+
+theorem resolvableB_pair_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb])) :
+    resolvableB b [ma, mb] = true := by
+  have hfilt : (movers b [ma, mb]).filter (landBad b [ma, mb]) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro c hc
+    obtain ⟨hcor, hcar, _⟩ := (mem_movers_pair b ma mb hne c).mp hc
+    rcases hcor with rfl | rfl
+    · rw [landBad_false_a_sep b ma mb hne hlegA hlegB hsep hInA hInB hc]; exact Bool.false_ne_true
+    · rw [landBad_false_b_sep b ma mb hne hlegA hlegB hsep hInA hInB hc]; exact Bool.false_ne_true
+  unfold resolvableB unresolved
+  rw [hfilt]; rfl
+
+theorem resolveMoves_cell_pair_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb]))
+    (q : Coord) (hq : b.inBounds q) :
+    (resolveMoves b [ma, mb]).cellAt q =
+      (match arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q with
+       | some c => b.cellAt c
+       | none   => if memB (movers b [ma, mb]) q then Particle.vacuum else b.cellAt q) := by
+  rw [writeBoard_resolveMoves_cell b ma mb q hq,
+    if_pos (resolvableB_pair_sep b ma mb hne hlegA hlegB hInA hInB hsep)]
+
+theorem arrivalAt_pair_sep (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hsep : ¬(ma.frm ∈ movers b [ma, mb] ∧ mb.frm ∈ movers b [ma, mb])) (q : Coord) :
+    arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q =
+      (if ma.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] ma.frm = q then some ma.frm
+       else if mb.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] mb.frm = q then some mb.frm
+       else none) := by
+  unfold arrivalAt
+  by_cases hA : ma.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] ma.frm = q
+  · obtain ⟨hmemA, hLAq⟩ := hA
+    obtain ⟨_, hcarA, hmovA⟩ := (mem_movers_pair b ma mb hne ma.frm).mp hmemA
+    have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [ma.frm] := by
+      rw [← hLAq]; exact filter_land_singleton_a_sep b ma mb hne hcarA hmovA hsep
+    rw [hfil, if_pos ⟨hmemA, hLAq⟩]; rfl
+  · rw [if_neg hA]
+    by_cases hB : mb.frm ∈ movers b [ma, mb] ∧ landMap b [ma, mb] mb.frm = q
+    · obtain ⟨hmemB, hLBq⟩ := hB
+      obtain ⟨_, hcarB, hmovB⟩ := (mem_movers_pair b ma mb hne mb.frm).mp hmemB
+      have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [mb.frm] := by
+        rw [← hLBq]; exact filter_land_singleton_b_sep b ma mb hne hcarB hmovB hsep
+      rw [hfil, if_pos ⟨hmemB, hLBq⟩]; rfl
+    · rw [if_neg hB]
+      have hfil : (movers b [ma, mb]).filter (fun c => landMap b [ma, mb] c == q) = [] := by
+        rw [List.filter_eq_nil_iff]
+        intro c hc heq
+        rw [beq_iff_eq] at heq
+        obtain ⟨hcor, _, _⟩ := (mem_movers_pair b ma mb hne c).mp hc
+        rcases hcor with rfl | rfl
+        · exact hA ⟨hc, heq⟩
+        · exact hB ⟨hc, heq⟩
+      rw [hfil]; rfl
+
+/-! ### The IDENTICAL-move collapse (`ma.frm = mb.frm`, `ma.to = mb.to`)
+
+Two players naming the SAME `(src, dst)` is not a conflict (`clashCoords_pair_iff`: shared source but
+`ma.to = mb.to` is neither a fork nor a collide). The reference `dedup`s the two into ONE mover, so the
+round behaves as a single piece `s → d`. This is the `hne`-FREE surface the circuit's identical-move
+exception (`cIdentV2 = 1 ⇒ cMergeV2` suppressed; both carries fire but agree) matches against. -/
+
+theorem blockedB_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) :
+    blockedB b [ma, mb] ma = blockedB b [ma, mb] mb := by
+  simp only [blockedB, hfrm, hto]
+
+theorem edgeMap_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) (c : Coord) :
+    edgeMap b [ma, mb] c =
+      (if c = ma.frm then (if blockedB b [ma, mb] ma then none else some ma.to) else none) := by
+  have hblk := blockedB_identical b ma mb hfrm hto
+  unfold edgeMap edgeOf
+  by_cases hc : c = ma.frm
+  · rw [if_pos hc]
+    have h1 : (ma.frm == c) = true := by rw [beq_iff_eq]; exact hc.symm
+    have h2 : (mb.frm == c) = true := by rw [beq_iff_eq, ← hfrm]; exact hc.symm
+    by_cases hb : blockedB b [ma, mb] ma = true
+    · have hbb : blockedB b [ma, mb] mb = true := hblk ▸ hb
+      rw [if_pos hb]
+      simp [List.filter_cons, h1, h2, hb, hbb, allEqOpt]
+    · simp only [Bool.not_eq_true] at hb
+      have hbb : blockedB b [ma, mb] mb = false := hblk ▸ hb
+      rw [if_neg (by rw [hb]; exact Bool.false_ne_true)]
+      simp [List.filter_cons, h1, h2, hb, hbb, hto, allEqOpt]
+  · rw [if_neg hc]
+    have h1 : (ma.frm == c) = false := by rw [beq_eq_false_iff_ne]; exact fun h => hc h.symm
+    have h2 : (mb.frm == c) = false := by rw [beq_eq_false_iff_ne, ← hfrm]; exact fun h => hc h.symm
+    simp [List.filter_cons, h1, h2, allEqOpt]
+
+theorem landMap_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) (hleg : ma.frm ≠ ma.to) :
+    landMap b [ma, mb] ma.frm = (if blockedB b [ma, mb] ma then ma.frm else ma.to) := by
+  by_cases hb : blockedB b [ma, mb] ma = true
+  · rw [if_pos hb]
+    have hE : edgeMap b [ma, mb] ma.frm = none := by
+      rw [edgeMap_identical b ma mb hfrm hto, if_pos rfl, if_pos hb]
+    rw [landMap_pair_eq b ma mb]
+    exact landOf_edge_none (edgeMap b [ma, mb]) (carAt b) 2 3 ma.frm hE
+  · simp only [Bool.not_eq_true] at hb
+    rw [if_neg (by rw [hb]; exact Bool.false_ne_true)]
+    have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by
+      rw [edgeMap_identical b ma mb hfrm hto, if_pos rfl,
+        if_neg (by rw [hb]; exact Bool.false_ne_true)]
+    have hns : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+      simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+      exact ⟨hleg, by rw [← hfrm]; exact hleg⟩
+    have hcarDa : carAt b ma.to = false := carAt_to_false_of_not_blocked b [ma, mb] ma hb hns
+    have hda_ne_sa : ma.to ≠ ma.frm := fun h => hleg h.symm
+    have hEda : edgeMap b [ma, mb] ma.to = none := by
+      rw [edgeMap_identical b ma mb hfrm hto, if_neg hda_ne_sa]
+    have hstop : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to := by
+      rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa]
+      exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 ma.to hEda
+    have htc : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by simp [twoCyc, hEa, hEda]
+    rw [landMap_pair_eq b ma mb]
+    exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm ma.to htc hstop hda_ne_sa hcarDa
+
+theorem movers_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) (hleg : ma.frm ≠ ma.to) :
+    movers b [ma, mb] =
+      (if carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false then [ma.frm] else []) := by
+  unfold movers moverList
+  have hmap : (List.map (·.frm) [ma, mb]).dedup = [ma.frm] := by
+    simp only [List.map_cons, List.map_nil]
+    rw [List.dedup_cons_of_mem (show ma.frm ∈ [mb.frm] by simp [hfrm]),
+      (List.nodup_singleton mb.frm).dedup, hfrm]
+  rw [hmap, List.filter_cons, List.filter_nil]
+  by_cases hcar : carAt b ma.frm = true
+  · by_cases hb : blockedB b [ma, mb] ma = true
+    · have hlm : landMap b [ma, mb] ma.frm = ma.frm := by
+        rw [landMap_identical b ma mb hfrm hto hleg, if_pos hb]
+      rw [if_neg (show ¬(carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm)) = true by
+            rw [hlm]; simp),
+        if_neg (by rintro ⟨_, h⟩; rw [hb] at h; exact absurd h (by decide))]
+    · simp only [Bool.not_eq_true] at hb
+      have hlm : landMap b [ma, mb] ma.frm = ma.to := by
+        rw [landMap_identical b ma mb hfrm hto hleg, if_neg (by rw [hb]; exact Bool.false_ne_true)]
+      rw [if_pos (show (carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm)) = true by
+            rw [hlm, hcar]; simp only [Bool.true_and, bne_iff_ne]; exact fun h => hleg h.symm),
+        if_pos ⟨hcar, hb⟩]
+  · simp only [Bool.not_eq_true] at hcar
+    rw [if_neg (show ¬(carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm)) = true by
+          rw [hcar]; simp),
+      if_neg (by rintro ⟨h, _⟩; rw [hcar] at h; exact absurd h (by decide))]
+
+theorem resolvableB_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) (hleg : ma.frm ≠ ma.to)
+    (hIn : b.inBounds ma.to) : resolvableB b [ma, mb] = true := by
+  unfold resolvableB unresolved
+  have hfilt : (movers b [ma, mb]).filter (landBad b [ma, mb]) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro c hc
+    rw [movers_identical b ma mb hfrm hto hleg] at hc
+    by_cases hcond : carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false
+    · rw [if_pos hcond, List.mem_singleton] at hc
+      subst hc
+      have hb : blockedB b [ma, mb] ma = false := hcond.2
+      have hlm : landMap b [ma, mb] ma.frm = ma.to := by
+        rw [landMap_identical b ma mb hfrm hto hleg, if_neg (by rw [hb]; exact Bool.false_ne_true)]
+      have hns : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+        simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+          beq_eq_false_iff_ne]
+        exact ⟨hleg, by rw [← hfrm]; exact hleg⟩
+      have hcarDa : carAt b ma.to = false := carAt_to_false_of_not_blocked b [ma, mb] ma hb hns
+      have hsingle :
+          (movers b [ma, mb]).filter (fun c' => landMap b [ma, mb] c' == landMap b [ma, mb] ma.frm)
+            = [ma.frm] := by
+        rw [movers_identical b ma mb hfrm hto hleg, if_pos hcond]
+        simp
+      unfold landBad
+      rw [hsingle, hlm]
+      have hd : decide (b.inBounds ma.to) = true := decide_eq_true hIn
+      simp [hcarDa, hd]
+    · rw [if_neg hcond] at hc; exact absurd hc List.not_mem_nil
+  rw [hfilt]; rfl
+
+theorem arrivalAt_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to) (hleg : ma.frm ≠ ma.to)
+    (q : Coord) :
+    arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q =
+      (if (carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false) ∧ ma.to = q
+       then some ma.frm else none) := by
+  unfold arrivalAt
+  rw [movers_identical b ma mb hfrm hto hleg]
+  by_cases hcond : carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false
+  · rw [if_pos hcond, List.filter_cons, List.filter_nil]
+    have hlm : landMap b [ma, mb] ma.frm = ma.to := by
+      rw [landMap_identical b ma mb hfrm hto hleg, if_neg (by rw [hcond.2]; exact Bool.false_ne_true)]
+    by_cases hq : ma.to = q
+    · rw [if_pos (show (landMap b [ma, mb] ma.frm == q) = true by rw [hlm, beq_iff_eq]; exact hq),
+        if_pos ⟨hcond, hq⟩]; rfl
+    · rw [if_neg (show ¬(landMap b [ma, mb] ma.frm == q) = true by
+            rw [hlm]; simp only [beq_iff_eq]; exact hq),
+        if_neg (by rintro ⟨_, h⟩; exact hq h)]; rfl
+  · rw [if_neg hcond, if_neg (by rintro ⟨h, _⟩; exact hcond h)]; rfl
+
+theorem resolveMoves_cell_identical (hfrm : ma.frm = mb.frm) (hto : ma.to = mb.to)
+    (hleg : ma.frm ≠ ma.to) (hIn : b.inBounds ma.to) (q : Coord) (hq : b.inBounds q) :
+    (resolveMoves b [ma, mb]).cellAt q =
+      (if carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false then
+        (if q = ma.to then b.cellAt ma.frm else if q = ma.frm then Particle.vacuum else b.cellAt q)
+       else b.cellAt q) := by
+  rw [writeBoard_resolveMoves_cell b ma mb q hq,
+    if_pos (resolvableB_identical b ma mb hfrm hto hleg hIn),
+    arrivalAt_identical b ma mb hfrm hto hleg q,
+    movers_identical b ma mb hfrm hto hleg]
+  by_cases hcond : carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false
+  · rw [if_pos hcond, if_pos hcond]
+    by_cases hqd : q = ma.to
+    · rw [if_pos (show (carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false) ∧ ma.to = q
+            from ⟨hcond, hqd.symm⟩)]
+      simp [hqd]
+    · rw [if_neg (show ¬((carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false) ∧ ma.to = q)
+            from fun h => hqd h.2.symm)]
+      by_cases hqs : q = ma.frm
+      · simp [memB, hqs, hleg]
+      · have hqs' : ¬ ma.frm = q := fun h => hqs h.symm
+        simp [memB, hqd, hqs, hqs']
+  · rw [if_neg hcond,
+      if_neg (show ¬((carAt b ma.frm = true ∧ blockedB b [ma, mb] ma = false) ∧ ma.to = q)
+        from fun h => hcond h.1)]
+    simp [memB, hcond]
+
+-- The pair arrival reduction (the mover-landing decision the board-cell correspondence rides).
+#assert_axioms arrivalAt_pair
 -- The clash bridge and its two `any`-expansion helpers, kernel-clean.
 #assert_axioms forkAt_pair
 #assert_axioms collideAt_pair
 #assert_axioms clashCoords_pair_iff
+-- The single-effective-mover collapse (shared-dest single-vacuum edge), kernel-clean.
+#assert_axioms resolveMoves_cell_pair_sep
+#assert_axioms arrivalAt_pair_sep
+#assert_axioms resolvableB_pair_sep
+-- The identical-move collapse (shared source AND destination), kernel-clean.
+#assert_axioms resolveMoves_cell_identical
+#assert_axioms arrivalAt_identical
+#assert_axioms movers_identical
+#assert_axioms landMap_identical
 
 end PairCollapse
 

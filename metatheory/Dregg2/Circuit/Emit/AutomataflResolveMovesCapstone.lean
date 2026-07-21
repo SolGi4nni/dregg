@@ -3262,6 +3262,973 @@ theorem cleanDistinctBoardCell
 
 end CleanCell
 
+/-! ## §26 — THE SHARED-DEST SINGLE-VACUUM BOARD CELL (edge `da = db`, one source vacuum).
+
+On a surviving round (`surv = 1`) with distinct decoded sources (`sa ≠ sb`) but a SHARED decoded
+destination (`da = db`) where NOT both sources carry (`¬(carSa ∧ carSb)`, forced by `¬collide` on a
+surviving round), at most ONE piece is a mover. The decoded FINAL board cell `cMidV4` IS the reference
+`resolveMoves` cell. Threads §22 (still applies — it needs distinct SOURCE, which holds) and the
+`_sep` single-effective-mover collapse (`¬both-movers` in place of the distinct-dest `hdd`); the
+confluence bit vanishes because a merge needs BOTH pieces to carry. -/
+section EdgeBCell
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+open Dregg2.Games.AutomataflRules (carAt landMap movers resolveMoves arrivalAt memB memB_iff
+  mem_movers_pair carAt_of_mover resolveMoves_cell_pair_sep arrivalAt_pair_sep)
+
+/-- **`mergeV2_zero_of_notBothNz`.** On a surviving round where the two decoded sources are NOT both
+carrying (`¬(cAnz = 1 ∧ cBnz = 1)`), the confluence bit vanishes: a merge needs BOTH pieces to carry
+(`cCv2 = 1`, which forces `nz = 1`), so it never fires. -/
+theorem mergeV2_zero_of_notBothNz
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hsurv : (envAt t i).loc (NGen.cSurv n) = 1)
+    (hnbnz : ¬((envAt t i).loc (NGen.cAnz n) = 1 ∧ (envAt t i).loc (NGen.cBnz n) = 1)) :
+    (envAt t i).loc (NGen.cMergeV2 n) = 0 := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  obtain ⟨hfxa, hfya, htxa, htya⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 0 (by norm_num)
+  obtain ⟨hfxb, hfyb, htxb, htyb⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 1 (by norm_num)
+  have hM : ∀ z : ℤ, 0 ≤ z ∧ z < (n : ℤ) → 0 ≤ z ∧ z ≤ (n : ℤ) - 1 := fun z h => ⟨h.1, by omega⟩
+  set e := envAt t i with he
+  have hocc0B : e.loc (NGen.cOccIncl n 0) = 0 ∨ e.loc (NGen.cOccIncl n 0) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 0 (NGen.occBase n 0)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 0 (NGen.occBase n 0))))
+      (canon_loc hc i _)
+  have hocc1B : e.loc (NGen.cOccIncl n 1) = 0 ∨ e.loc (NGen.cOccIncl n 1) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 1 (NGen.occBase n 1)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 1 (NGen.occBase n 1))))
+      (canon_loc hc i _)
+  obtain ⟨heqffB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cFx n (NGen.mvBase n 0))
+    (NGen.cFy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 0) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ hfxa) (hM _ hfya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ h))))
+  obtain ⟨heqttB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cTx n (NGen.mvBase n 1)) (NGen.cTy n (NGen.mvBase n 1))
+    (NGen.eqBase n 1) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ htxb) (hM _ htyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))
+  obtain ⟨heq2B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 2) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_left _ (List.mem_append_right _ h)))
+  obtain ⟨heq3B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 1))
+    (NGen.cTy n (NGen.mvBase n 1)) (NGen.cFx n (NGen.mvBase n 0)) (NGen.cFy n (NGen.mvBase n 0))
+    (NGen.eqBase n 3) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxb) (hM _ htyb) (hM _ hfxa) (hM _ hfya)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_right _ h))
+  obtain ⟨hftaB, -⟩ := ftV2AN_of_sat hsat hc i hi heq2B F.bnzB hocc1B heq3B (Or.inr hsurv)
+  obtain ⟨hftbB, -⟩ := ftV2BN_of_sat hsat hc i hi heq3B F.anzB hocc0B heq2B (Or.inr hsurv)
+  obtain ⟨hcv2_0B, hcv2_0I⟩ := cv2ValN_of_sat hsat hc i hi 0 (by norm_num) (Or.inr hsurv) F.anzB hocc0B
+  obtain ⟨hcv2_1B, hcv2_1I⟩ := cv2ValN_of_sat hsat hc i hi 1 (by norm_num) (Or.inr hsurv) F.bnzB hocc1B
+  obtain ⟨hreseqB, -⟩ := resEqV2CoordN_of_sat hsat hc i hi W hftaB hftbB
+  obtain ⟨hmergeB, hmergeI⟩ := mergeV2N_of_sat hsat hc i hi heqffB heqttB hcv2_0B hcv2_1B hreseqB
+  rcases hmergeB with h0 | h1
+  · exact h0
+  · exfalso
+    obtain ⟨hcc0, hcc1, -, -⟩ := hmergeI.mp h1
+    exact hnbnz ⟨(hcv2_0I.mp hcc0).2.1, (hcv2_1I.mp hcc1).2.1⟩
+
+/-- **THE SHARED-DEST SINGLE-VACUUM BOARD CELL.** On a surviving round with distinct decoded sources,
+a SHARED decoded destination, and NOT both sources carrying, the decoded FINAL board cell IS the
+reference `resolveMoves` cell, at every in-bounds coordinate, at arbitrary board size `n`. -/
+theorem sharedDestVacuumBoardCell
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hsurv : (envAt t i).loc (NGen.cSurv n) = 1)
+    (hne : (moveDecodeN n (envAt t i) 0).frm ≠ (moveDecodeN n (envAt t i) 1).frm)
+    (hto : (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).to)
+    (hnbc : ¬(carAt (boardDecodeOldN n (envAt t i)) (moveDecodeN n (envAt t i) 0).frm = true
+             ∧ carAt (boardDecodeOldN n (envAt t i)) (moveDecodeN n (envAt t i) 1).frm = true))
+    (x y : Nat) (hx : x < n) (hy : y < n) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 n (y * n + x)))
+      = (resolveMoves (boardDecodeOldN n (envAt t i))
+          [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1]).cellAt ⟨x, y⟩ := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  have hlegA : (moveDecodeN n (envAt t i) 0).frm ≠ (moveDecodeN n (envAt t i) 0).to := F.validA.1
+  have hlegB : (moveDecodeN n (envAt t i) 1).frm ≠ (moveDecodeN n (envAt t i) 1).to := F.validB.1
+  obtain ⟨hfxa, hfya, htxa, htya⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 0 (by norm_num)
+  obtain ⟨hfxb, hfyb, htxb, htyb⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 1 (by norm_num)
+  have hM : ∀ z : ℤ, 0 ≤ z ∧ z < (n : ℤ) → 0 ≤ z ∧ z ≤ (n : ℤ) - 1 := fun z h => ⟨h.1, by omega⟩
+  obtain ⟨heqffB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cFx n (NGen.mvBase n 0))
+    (NGen.cFy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 0) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ hfxa) (hM _ hfya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ h))))
+  obtain ⟨heqttB, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cTx n (NGen.mvBase n 1)) (NGen.cTy n (NGen.mvBase n 1))
+    (NGen.eqBase n 1) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ htxb) (hM _ htyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))
+  obtain ⟨heq2B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 2) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_left _ (List.mem_append_right _ h)))
+  obtain ⟨heq3B, -⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 1))
+    (NGen.cTy n (NGen.mvBase n 1)) (NGen.cFx n (NGen.mvBase n 0)) (NGen.cFy n (NGen.mvBase n 0))
+    (NGen.eqBase n 3) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxb) (hM _ htyb) (hM _ hfxa) (hM _ hfya)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_right _ h))
+  have hocc0B : (envAt t i).loc (NGen.cOccIncl n 0) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 0) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 0 (NGen.occBase n 0)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 0 (NGen.occBase n 0))))
+      (canon_loc hc i _)
+  have hocc1B : (envAt t i).loc (NGen.cOccIncl n 1) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 1) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 1 (NGen.occBase n 1)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 1 (NGen.occBase n 1))))
+      (canon_loc hc i _)
+  obtain ⟨hftaB, -⟩ := ftV2AN_of_sat hsat hc i hi heq2B F.bnzB hocc1B heq3B (Or.inr hsurv)
+  obtain ⟨hftbB, -⟩ := ftV2BN_of_sat hsat hc i hi heq3B F.anzB hocc0B heq2B (Or.inr hsurv)
+  obtain ⟨hlnzaB, -⟩ := landNzV2N_of_sat hsat hc i hi 0 (by norm_num) W.base.lt_p hftaB
+    htxa htya htxb htyb
+  obtain ⟨hlnzbB, -⟩ := landNzV2N_of_sat hsat hc i hi 1 (by norm_num) W.base.lt_p hftbB
+    htxb htyb htxa htya
+  obtain ⟨hcv2_0B, hcv2_0I⟩ := cv2ValN_of_sat hsat hc i hi 0 (by norm_num) (Or.inr hsurv) F.anzB hocc0B
+  obtain ⟨hcv2_1B, hcv2_1I⟩ := cv2ValN_of_sat hsat hc i hi 1 (by norm_num) (Or.inr hsurv) F.bnzB hocc1B
+  obtain ⟨hnlaB, hnlaI⟩ := nonLeaveV2GateN_of_sat hsat hc i hi 0 (by norm_num) hlnzaB hcv2_1B
+  obtain ⟨hnlbB, hnlbI⟩ := nonLeaveV2GateN_of_sat hsat hc i hi 1 (by norm_num) hlnzbB hcv2_0B
+  obtain ⟨hcv3aB, hcv3aI⟩ := carryV3ArithN_of_sat hsat hc i hi 0 (by norm_num) hcv2_0B hnlaB
+  obtain ⟨hcv3bB, hcv3bI⟩ := carryV3ArithN_of_sat hsat hc i hi 1 (by norm_num) hcv2_1B hnlbB
+  obtain ⟨htcB, -⟩ := twoCycN_of_sat hsat hc i hi heq2B heq3B hocc1B hocc0B
+  obtain ⟨hcv4aB, hcv4aI⟩ := carryV4ArithN_of_sat hsat hc i hi 0 (by norm_num) hcv3aB htcB
+  obtain ⟨hcv4bB, hcv4bI⟩ := carryV4ArithN_of_sat hsat hc i hi 1 (by norm_num) hcv3bB htcB
+  -- confluence bit vanishes (¬both-carry), via `¬(cAnz = 1 ∧ cBnz = 1)` from `hnbc`
+  have hnbnz : ¬((envAt t i).loc (NGen.cAnz n) = 1 ∧ (envAt t i).loc (NGen.cBnz n) = 1) := by
+    rintro ⟨ha, hb⟩
+    exact hnbc ⟨by simp only [carAt, F.anzIff.mp ha, Bool.not_false],
+                by simp only [carAt, F.bnzIff.mp hb, Bool.not_false]⟩
+  have hmergeZero := mergeV2_zero_of_notBothNz hsat hc i hi W hsurv hnbnz
+  obtain ⟨hresB, hresI⟩ :=
+    resolvableV2ArithN_of_sat hsat hc i hi hcv2_0B hcv2_1B hnlaB hnlbB (Or.inl hmergeZero)
+  have hcorrA := landV4CorrespondenceA_of_sat hsat hc i hi W hsurv hne
+  have hcorrB := landV4CorrespondenceB_of_sat hsat hc i hi W hsurv hne
+  have hcK : y * n + x < NGen.KK n := by
+    simp only [NGen.KK]
+    have hle : (y + 1) * n ≤ n * n := Nat.mul_le_mul (by omega) (le_refl n)
+    have hexp : (y + 1) * n = y * n + n := by ring
+    omega
+  have hda : (envAt t i).loc (NGen.wDstV2Row n 0 y) * (envAt t i).loc (NGen.wDstV2Col n 0 x)
+      = if (⟨x, y⟩ : Coord)
+           = (if (envAt t i).loc (NGen.cFtV2A n) = 1
+              then (moveDecodeN n (envAt t i) 1).to else (moveDecodeN n (envAt t i) 0).to)
+        then (1 : ℤ) else 0 := by
+    have h := dstIndV2N_of_sat hsat hc i hi 0 (by norm_num) W.base.lt_p hftaB htxa htya htxb htyb x y hx hy
+    simpa using h
+  have hdb : (envAt t i).loc (NGen.wDstV2Row n 1 y) * (envAt t i).loc (NGen.wDstV2Col n 1 x)
+      = if (⟨x, y⟩ : Coord)
+           = (if (envAt t i).loc (NGen.cFtV2B n) = 1
+              then (moveDecodeN n (envAt t i) 0).to else (moveDecodeN n (envAt t i) 1).to)
+        then (1 : ℤ) else 0 := by
+    have h := dstIndV2N_of_sat hsat hc i hi 1 (by norm_num) W.base.lt_p hftbB htxb htyb htxa htya x y hx hy
+    simpa using h
+  have hn0 : 0 < n := by omega
+  have hyy : y = (y * n + x) / n := by
+    rw [Nat.add_comm, Nat.mul_comm y n, Nat.add_mul_div_left x y hn0, Nat.div_eq_of_lt hx,
+      Nat.zero_add]
+  have hxx : x = (y * n + x) % n := by
+    rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hx]
+  have hwb := writeCellV4N_of_sat hsat i hi (y * n + x) y x hyy hxx hcK
+  have hmv := midV4CellN_of_sat hsat i hi (y * n + x) hcK
+  have hbdcell := oldCell_decode x y (envAt t i) hx hy
+  set e := envAt t i with he
+  set bd := boardDecodeOldN n e with hbd
+  set ma := moveDecodeN n e 0 with hma
+  set mb := moveDecodeN n e 1 with hmb
+  set destV2A : Coord := if e.loc (NGen.cFtV2A n) = 1 then mb.to else ma.to with hdestV2A
+  set destV2B : Coord := if e.loc (NGen.cFtV2B n) = 1 then ma.to else mb.to with hdestV2B
+  have hcc0 : NGen.carryV4Col n 0 = NGen.cCarryV4 n 0 := rfl
+  have hcc1 : NGen.carryV4Col n 1 = NGen.cCarryV4 n 1 := rfl
+  have hmemA_iff : ma.frm ∈ movers bd [ma, mb] ↔ e.loc (NGen.cCarryV4 n 0) = 1 := by
+    rw [mem_movers_pair bd ma mb hne]
+    exact ⟨fun ⟨_, hcar, hmov⟩ => hcorrA.1.mpr ⟨hcar, hmov⟩,
+      fun h => ⟨Or.inl rfl, (hcorrA.1.mp h).1, (hcorrA.1.mp h).2⟩⟩
+  have hmemB_iff : mb.frm ∈ movers bd [ma, mb] ↔ e.loc (NGen.cCarryV4 n 1) = 1 := by
+    rw [mem_movers_pair bd ma mb hne]
+    exact ⟨fun ⟨_, hcar, hmov⟩ => hcorrB.1.mpr ⟨hcar, hmov⟩,
+      fun h => ⟨Or.inr rfl, (hcorrB.1.mp h).1, (hcorrB.1.mp h).2⟩⟩
+  have hLA : e.loc (NGen.cCarryV4 n 0) = 1 → landMap bd [ma, mb] ma.frm = destV2A :=
+    fun h => (hcorrA.2 h).symm
+  have hLB : e.loc (NGen.cCarryV4 n 1) = 1 → landMap bd [ma, mb] mb.frm = destV2B :=
+    fun h => (hcorrB.2 h).symm
+  -- the SEPARATION hypothesis: not both are movers (each mover carries; not both carry)
+  have hsep : ¬(ma.frm ∈ movers bd [ma, mb] ∧ mb.frm ∈ movers bd [ma, mb]) := by
+    rintro ⟨hA, hB⟩
+    exact hnbc ⟨carAt_of_mover bd [ma, mb] ma.frm hA, carAt_of_mover bd [ma, mb] mb.frm hB⟩
+  have hcarryV4_collapse : e.loc (NGen.cResolvableV2 n) = 0 →
+      e.loc (NGen.cCarryV4 n 0) = 0 ∧ e.loc (NGen.cCarryV4 n 1) = 0 := by
+    intro hrv0
+    have hnot : ¬ (e.loc (NGen.cMergeV2 n) = 0
+        ∧ (e.loc (NGen.cCv2 n 0) = 0 ∨ e.loc (NGen.cNonLeaveV2 n 0) = 0)
+        ∧ (e.loc (NGen.cCv2 n 1) = 0 ∨ e.loc (NGen.cNonLeaveV2 n 1) = 0)) := by
+      intro h; rw [hresI.mpr h] at hrv0; exact absurd hrv0 (by norm_num)
+    have cv4a0_of_cv3a0 : e.loc (NGen.cCarryV3 n 0) = 0 → e.loc (NGen.cCarryV4 n 0) = 0 := by
+      intro h; rcases hcv4aB with hz | ho
+      · exact hz
+      · exact absurd (hcv4aI.mp ho).1 (by rw [h]; norm_num)
+    have cv4b0_of_cv3b0 : e.loc (NGen.cCarryV3 n 1) = 0 → e.loc (NGen.cCarryV4 n 1) = 0 := by
+      intro h; rcases hcv4bB with hz | ho
+      · exact hz
+      · exact absurd (hcv4bI.mp ho).1 (by rw [h]; norm_num)
+    have cv3a0_of_cv2a0 : e.loc (NGen.cCv2 n 0) = 0 → e.loc (NGen.cCarryV3 n 0) = 0 := by
+      intro h; rcases hcv3aB with hz | ho
+      · exact hz
+      · exact absurd (hcv3aI.mp ho).1 (by rw [h]; norm_num)
+    have cv3b0_of_cv2b0 : e.loc (NGen.cCv2 n 1) = 0 → e.loc (NGen.cCarryV3 n 1) = 0 := by
+      intro h; rcases hcv3bB with hz | ho
+      · exact hz
+      · exact absurd (hcv3bI.mp ho).1 (by rw [h]; norm_num)
+    have cv3a0_of_nla : e.loc (NGen.cNonLeaveV2 n 0) = 1 → e.loc (NGen.cCarryV3 n 0) = 0 := by
+      intro h; rcases hcv3aB with hz | ho
+      · exact hz
+      · exact absurd (hcv3aI.mp ho).2 (by rw [h]; norm_num)
+    have cv3b0_of_nlb : e.loc (NGen.cNonLeaveV2 n 1) = 1 → e.loc (NGen.cCarryV3 n 1) = 0 := by
+      intro h; rcases hcv3bB with hz | ho
+      · exact hz
+      · exact absurd (hcv3bI.mp ho).2 (by rw [h]; norm_num)
+    by_cases hbadA : e.loc (NGen.cCv2 n 0) = 1 ∧ e.loc (NGen.cNonLeaveV2 n 0) = 1
+    · obtain ⟨_, hn0⟩ := hbadA
+      have hc1z : e.loc (NGen.cCv2 n 1) = 0 := by simpa using (hnlaI.mp hn0).2
+      exact ⟨cv4a0_of_cv3a0 (cv3a0_of_nla hn0), cv4b0_of_cv3b0 (cv3b0_of_cv2b0 hc1z)⟩
+    · have hbadB : e.loc (NGen.cCv2 n 1) = 1 ∧ e.loc (NGen.cNonLeaveV2 n 1) = 1 := by
+        by_contra hbn
+        apply hnot
+        refine ⟨hmergeZero, ?_, ?_⟩
+        · rcases hcv2_0B with h | h
+          · exact Or.inl h
+          · rcases hnlaB with h2 | h2
+            · exact Or.inr h2
+            · exact absurd ⟨h, h2⟩ hbadA
+        · rcases hcv2_1B with h | h
+          · exact Or.inl h
+          · rcases hnlbB with h2 | h2
+            · exact Or.inr h2
+            · exact absurd ⟨h, h2⟩ hbn
+      obtain ⟨_, hn1⟩ := hbadB
+      have hc0z : e.loc (NGen.cCv2 n 0) = 0 := by simpa using (hnlbI.mp hn1).2
+      exact ⟨cv4a0_of_cv3a0 (cv3a0_of_cv2a0 hc0z), cv4b0_of_cv3b0 (cv3b0_of_nlb hn1)⟩
+  have hsa := F.srcIndA x y hx hy
+  have hsb := F.srcIndB x y hx hy
+  have hda' : e.loc (NGen.wDstV2Row n 0 y) * e.loc (NGen.wDstV2Col n 0 x)
+      = if (⟨x, y⟩ : Coord) = destV2A then (1 : ℤ) else 0 := hda
+  have hdb' : e.loc (NGen.wDstV2Row n 1 y) * e.loc (NGen.wDstV2Col n 1 x)
+      = if (⟨x, y⟩ : Coord) = destV2B then (1 : ℤ) else 0 := hdb
+  have hmidwb : e.loc (NGen.cMidV4 n (y * n + x)) ≡ e.loc (NGen.cWBoardV4 n (y * n + x))
+      [ZMOD 2013265921] := by
+    rcases hresB with hr0 | hr1
+    · obtain ⟨hca0, hcb0⟩ := hcarryV4_collapse hr0
+      have hwb0 := hwb
+      rw [hcc0, hcc1, hca0, hcb0] at hwb0
+      have hwbold : e.loc (NGen.cWBoardV4 n (y * n + x)) ≡ e.loc (NGen.old n (y * n + x))
+          [ZMOD 2013265921] := by
+        calc e.loc (NGen.cWBoardV4 n (y * n + x)) ≡ _ [ZMOD 2013265921] := hwb0
+          _ = e.loc (NGen.old n (y * n + x)) := by ring
+      calc e.loc (NGen.cMidV4 n (y * n + x))
+          ≡ e.loc (NGen.cResolvableV2 n) * e.loc (NGen.cWBoardV4 n (y * n + x))
+            + e.loc (NGen.old n (y * n + x))
+            - e.loc (NGen.cResolvableV2 n) * e.loc (NGen.old n (y * n + x)) [ZMOD 2013265921] := hmv
+        _ = e.loc (NGen.old n (y * n + x)) := by rw [hr0]; ring
+        _ ≡ e.loc (NGen.cWBoardV4 n (y * n + x)) [ZMOD 2013265921] := hwbold.symm
+    · calc e.loc (NGen.cMidV4 n (y * n + x))
+          ≡ e.loc (NGen.cResolvableV2 n) * e.loc (NGen.cWBoardV4 n (y * n + x))
+            + e.loc (NGen.old n (y * n + x))
+            - e.loc (NGen.cResolvableV2 n) * e.loc (NGen.old n (y * n + x)) [ZMOD 2013265921] := hmv
+        _ = e.loc (NGen.cWBoardV4 n (y * n + x)) := by rw [hr1]; ring
+  have hmod : e.loc (NGen.cMidV4 n (y * n + x))
+      ≡ (1 - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)))
+          * e.loc (NGen.old n (y * n + x))
+        + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+            * e.loc (NGen.particleCol n 0)
+        + e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)
+            * e.loc (NGen.particleCol n 1)
+        - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+            * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0))
+            * e.loc (NGen.particleCol n 1)
+      [ZMOD 2013265921] := by
+    have hwb1 := hwb
+    rw [hcc0, hcc1, hsa, hsb, hda', hdb'] at hwb1
+    exact hmidwb.trans hwb1
+  have bA : e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1 := by
+    rcases hcv4aB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = ma.frm <;> simp [h, q]
+  have bB : e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1 := by
+    rcases hcv4aB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destV2A <;> simp [h, q]
+  have bC : e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1 := by
+    rcases hcv4bB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = mb.frm <;> simp [h, q]
+  have bD : e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 1 := by
+    rcases hcv4bB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destV2B <;> simp [h, q]
+  have eAB : (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0))
+      * (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)) = 0 := by
+    rcases hcv4aB with h | h
+    · rw [h]; ring
+    · have hdne : destV2A ≠ ma.frm := by rw [← hLA h]; exact (hcorrA.1.mp h).2
+      by_cases q1 : (⟨x, y⟩ : Coord) = ma.frm
+      · by_cases q2 : (⟨x, y⟩ : Coord) = destV2A
+        · exact absurd (q2.symm.trans q1) hdne
+        · simp [q2]
+      · simp [q1]
+  have eCD : (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0))
+      * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)) = 0 := by
+    rcases hcv4bB with h | h
+    · rw [h]; ring
+    · have hdne : destV2B ≠ mb.frm := by rw [← hLB h]; exact (hcorrB.1.mp h).2
+      by_cases q1 : (⟨x, y⟩ : Coord) = mb.frm
+      · by_cases q2 : (⟨x, y⟩ : Coord) = destV2B
+        · exact absurd (q2.symm.trans q1) hdne
+        · simp [q2]
+      · simp [q1]
+  have holdc : 0 ≤ e.loc (NGen.old n (y * n + x)) ∧ e.loc (NGen.old n (y * n + x)) ≤ 3 := by
+    rcases F.alphaOld (y * n + x) hcK with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have hmidc : Canon (e.loc (NGen.cMidV4 n (y * n + x))) := canon_loc hc i _
+  have hpaA : 0 ≤ e.loc (NGen.particleCol n 0) ∧ e.loc (NGen.particleCol n 0) ≤ 3 := by
+    rcases F.paAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have hpbA : 0 ≤ e.loc (NGen.particleCol n 1) ∧ e.loc (NGen.particleCol n 1) ≤ 3 := by
+    rcases F.pbAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have halg := AutomataflResolveRefine.cellAlgebra bA bB bC bD eAB eCD holdc hmidc hpaA hpbA hmod
+  have prodOne : ∀ (c : ℤ) (P : Prop) [Decidable P], (c = 0 ∨ c = 1) →
+      (c * (if P then (1:ℤ) else 0) = 1 ↔ c = 1 ∧ P) := by
+    intro c P _ hc
+    by_cases hP : P <;> rcases hc with h | h <;> simp [hP, h]
+  have hBiff : e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1
+      ↔ (ma.frm ∈ movers bd [ma, mb] ∧ landMap bd [ma, mb] ma.frm = (⟨x, y⟩ : Coord)) := by
+    rw [prodOne _ _ hcv4aB, hmemA_iff]
+    exact ⟨fun ⟨hm, hq2⟩ => ⟨hm, by rw [hLA hm]; exact hq2.symm⟩,
+      fun ⟨hm, hlm⟩ => ⟨hm, by rw [← hLA hm]; exact hlm.symm⟩⟩
+  have hDiff : e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 1
+      ↔ (mb.frm ∈ movers bd [ma, mb] ∧ landMap bd [ma, mb] mb.frm = (⟨x, y⟩ : Coord)) := by
+    rw [prodOne _ _ hcv4bB, hmemB_iff]
+    exact ⟨fun ⟨hm, hq2⟩ => ⟨hm, by rw [hLB hm]; exact hq2.symm⟩,
+      fun ⟨hm, hlm⟩ => ⟨hm, by rw [← hLB hm]; exact hlm.symm⟩⟩
+  have hMemiff : (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1
+        ∨ e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1)
+      ↔ memB (movers bd [ma, mb]) (⟨x, y⟩ : Coord) = true := by
+    rw [prodOne _ _ hcv4aB, prodOne _ _ hcv4bB, memB_iff]
+    constructor
+    · rintro (⟨hm, hxy⟩ | ⟨hm, hxy⟩)
+      · rw [hxy]; exact hmemA_iff.mpr hm
+      · rw [hxy]; exact hmemB_iff.mpr hm
+    · intro hmem
+      obtain ⟨hcor, _, _⟩ := (mem_movers_pair bd ma mb hne _).mp hmem
+      rcases hcor with h | h
+      · exact Or.inl ⟨hmemA_iff.mp (h ▸ hmem), h⟩
+      · exact Or.inr ⟨hmemB_iff.mp (h ▸ hmem), h⟩
+  have hInA : bd.inBounds ma.to := F.validA.2.2.2.1
+  have hInB : bd.inBounds mb.to := F.validB.2.2.2.1
+  have hq : bd.inBounds (⟨x, y⟩ : Coord) := ⟨hx, hy⟩
+  rw [resolveMoves_cell_pair_sep bd ma mb hne hlegA hlegB hInA hInB hsep ⟨x, y⟩ hq,
+    arrivalAt_pair_sep bd ma mb hne hlegA hlegB hsep ⟨x, y⟩]
+  rw [halg, apply_ite codeToParticle, apply_ite codeToParticle, apply_ite codeToParticle,
+    show codeToParticle 0 = Particle.vacuum from by decide, ← F.paVal, ← F.pbVal, hbdcell]
+  by_cases h1 : ma.frm ∈ movers bd [ma, mb] ∧ landMap bd [ma, mb] ma.frm = (⟨x, y⟩ : Coord)
+  · rw [if_pos (hBiff.mpr h1), if_pos h1]
+  · rw [if_neg (fun h => h1 (hBiff.mp h)), if_neg h1]
+    by_cases h2 : mb.frm ∈ movers bd [ma, mb] ∧ landMap bd [ma, mb] mb.frm = (⟨x, y⟩ : Coord)
+    · rw [if_pos (hDiff.mpr h2), if_pos h2]
+    · rw [if_neg (fun h => h2 (hDiff.mp h)), if_neg h2]
+      by_cases h3 : memB (movers bd [ma, mb]) (⟨x, y⟩ : Coord) = true
+      · rw [if_pos (hMemiff.mpr h3), if_pos h3]
+      · rw [if_neg (fun h => h3 (hMemiff.mp h)), if_neg h3]
+
+end EdgeBCell
+
+/-! ## §27 — THE IDENTICAL-MOVE BOARD CELL (edge `sa = sb`, `da = db`).
+
+On a surviving round (`surv = 1`) where the two decoded moves are IDENTICAL up to the player id
+(`sa = sb` and `da = db` — which `¬fork` forces once `sa = sb`), the reference `dedup`s them to ONE
+mover, and the decoded FINAL board cell `cMidV4` IS the reference `resolveMoves` cell. This is the
+`hne`-FREE landing correspondence: with `sa = sb` the two moves are the SAME edge (`cFtV2A = cFtV2B =
+0`, `cTwoCyc = 0`, both carries agree ⟺ the single mover condition `carAt sa ∧ ¬blockedB`), and the
+confluence bit vanishes by the IDENTICAL-move exception (`cIdentV2 = eq_ff · eq_tt = 1`). Matched to
+`resolveMoves_cell_identical`. -/
+section EdgeCCell
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+open Dregg2.Games.AutomataflRules (carAt blockedB resolveMoves resolveMoves_cell_identical
+  carAt_to_false_of_not_blocked)
+
+/-- **THE IDENTICAL-MOVE BOARD CELL.** On a surviving round with `sa = sb` and `da = db`, the decoded
+FINAL board cell IS the reference `resolveMoves` cell, at every in-bounds coordinate, at arbitrary `n`.
+The `hne`-free landing correspondence: one edge, both carries agree with the single-mover condition. -/
+theorem identicalMoveBoardCell
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (hsurv : (envAt t i).loc (NGen.cSurv n) = 1)
+    (hsrc : (moveDecodeN n (envAt t i) 0).frm = (moveDecodeN n (envAt t i) 1).frm)
+    (hto : (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).to)
+    (x y : Nat) (hx : x < n) (hy : y < n) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 n (y * n + x)))
+      = (resolveMoves (boardDecodeOldN n (envAt t i))
+          [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1]).cellAt ⟨x, y⟩ := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  have hlegA : (moveDecodeN n (envAt t i) 0).frm ≠ (moveDecodeN n (envAt t i) 0).to := F.validA.1
+  have hlegB : (moveDecodeN n (envAt t i) 1).frm ≠ (moveDecodeN n (envAt t i) 1).to := F.validB.1
+  obtain ⟨hfxa, hfya, htxa, htya⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 0 (by norm_num)
+  obtain ⟨hfxb, hfyb, htxb, htyb⟩ :=
+    AutomataflResolveCapstone.moveCoordBounds hsat hc i hi W.base 1 (by norm_num)
+  have hM : ∀ z : ℤ, 0 ≤ z ∧ z < (n : ℤ) → 0 ≤ z ∧ z ≤ (n : ℤ) - 1 := fun z h => ⟨h.1, by omega⟩
+  -- eq bits (with their iffs)
+  obtain ⟨heqffB, heqffI⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cFx n (NGen.mvBase n 0))
+    (NGen.cFy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 0) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ hfxa) (hM _ hfya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_left _ h))))
+  obtain ⟨heqttB, heqttI⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cTx n (NGen.mvBase n 1)) (NGen.cTy n (NGen.mvBase n 1))
+    (NGen.eqBase n 1) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ htxb) (hM _ htyb)
+    (fun h => mem_resolve_of_mem_patternBit
+      (List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ h))))
+  obtain ⟨heq2B, heq2I⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 0))
+    (NGen.cTy n (NGen.mvBase n 0)) (NGen.cFx n (NGen.mvBase n 1)) (NGen.cFy n (NGen.mvBase n 1))
+    (NGen.eqBase n 2) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxa) (hM _ htya) (hM _ hfxb) (hM _ hfyb)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_left _ (List.mem_append_right _ h)))
+  obtain ⟨heq3B, heq3I⟩ := eqCoordsN_of_sat hsat hc i hi (NGen.cTx n (NGen.mvBase n 1))
+    (NGen.cTy n (NGen.mvBase n 1)) (NGen.cFx n (NGen.mvBase n 0)) (NGen.cFy n (NGen.mvBase n 0))
+    (NGen.eqBase n 3) ((n : ℤ) - 1) (by have := W.base.sq999; linarith)
+    (hM _ htxb) (hM _ htyb) (hM _ hfxa) (hM _ hfya)
+    (fun h => mem_resolve_of_mem_patternBit (List.mem_append_right _ h))
+  have heqffC : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 0)) = 1 ↔
+      (moveDecodeN n (envAt t i) 0).frm = (moveDecodeN n (envAt t i) 1).frm := by
+    rw [heqffI]; simp only [moveDecodeN, Coord.mk.injEq]
+    rw [AutomataflResolveCapstone.toNat_injN hfxa.1 hfxb.1,
+      AutomataflResolveCapstone.toNat_injN hfya.1 hfyb.1]
+  have heqttC : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 1)) = 1 ↔
+      (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).to := by
+    rw [heqttI]; simp only [moveDecodeN, Coord.mk.injEq]
+    rw [AutomataflResolveCapstone.toNat_injN htxa.1 htxb.1,
+      AutomataflResolveCapstone.toNat_injN htya.1 htyb.1]
+  have heq2C : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 2)) = 1 ↔
+      (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).frm := by
+    rw [heq2I]; simp only [moveDecodeN, Coord.mk.injEq]
+    rw [AutomataflResolveCapstone.toNat_injN htxa.1 hfxb.1,
+      AutomataflResolveCapstone.toNat_injN htya.1 hfyb.1]
+  have heq3C : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 3)) = 1 ↔
+      (moveDecodeN n (envAt t i) 1).to = (moveDecodeN n (envAt t i) 0).frm := by
+    rw [heq3I]; simp only [moveDecodeN, Coord.mk.injEq]
+    rw [AutomataflResolveCapstone.toNat_injN htxb.1 hfxa.1,
+      AutomataflResolveCapstone.toNat_injN htyb.1 hfya.1]
+  -- d ≠ s (move legality), and the crossing bits vanish (identical move is not a chain/2-cycle)
+  have hds : (moveDecodeN n (envAt t i) 0).to ≠ (moveDecodeN n (envAt t i) 0).frm :=
+    fun h => hlegA h.symm
+  have heq2z : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 2)) = 0 := by
+    rcases heq2B with h | h
+    · exact h
+    · exfalso; have hh := heq2C.mp h; rw [← hsrc] at hh; exact hds hh
+  have heq3z : (envAt t i).loc (NGen.cEqBit n (NGen.eqBase n 3)) = 0 := by
+    rcases heq3B with h | h
+    · exact h
+    · exfalso; have hh := heq3C.mp h; rw [← hto] at hh; exact hds hh
+  -- occlusion bits + `blockedB` iff
+  have hocc0B : (envAt t i).loc (NGen.cOccIncl n 0) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 0) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 0 (NGen.occBase n 0)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 0 (NGen.occBase n 0))))
+      (canon_loc hc i _)
+  have hocc1B : (envAt t i).loc (NGen.cOccIncl n 1) = 0 ∨ (envAt t i).loc (NGen.cOccIncl n 1) = 1 :=
+    bin_of_gate (rgateN hsat i hi (AutomataflOcclusionBridgeN.inclLiftN n 1 (NGen.occBase n 1)
+      (by norm_num) rfl (AutomataflOcclusionBridgeN.voI_occIncl_ib n 1 (NGen.occBase n 1))))
+      (canon_loc hc i _)
+  have hocc0I : (envAt t i).loc (NGen.cOccIncl n 0) = 1 ↔
+      blockedB (boardDecodeOldN n (envAt t i))
+        [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1]
+        (moveDecodeN n (envAt t i) 0) = true := by
+    have h := blockedV2N_of_sat hsat hc i hi W 0 (by norm_num)
+    simpa using h
+  -- flow-through bits (with iffs) → both vanish (`ma.to ≠ mb.frm`, `mb.to ≠ ma.frm`)
+  obtain ⟨hftaB, hftaI⟩ := ftV2AN_of_sat hsat hc i hi heq2B F.bnzB hocc1B heq3B (Or.inr hsurv)
+  obtain ⟨hftbB, hftbI⟩ := ftV2BN_of_sat hsat hc i hi heq3B F.anzB hocc0B heq2B (Or.inr hsurv)
+  have hfta0 : (envAt t i).loc (NGen.cFtV2A n) = 0 := by
+    rcases hftaB with h | h
+    · exact h
+    · exfalso; have := (hftaI.mp h).1; rw [heq2z] at this; exact absurd this (by norm_num)
+  have hftb0 : (envAt t i).loc (NGen.cFtV2B n) = 0 := by
+    rcases hftbB with h | h
+    · exact h
+    · exfalso; have := (hftbI.mp h).1; rw [heq3z] at this; exact absurd this (by norm_num)
+  -- landing-occupancy (with iffs, cleaned)
+  obtain ⟨hlnzaB, -⟩ := landNzV2N_of_sat hsat hc i hi 0 (by norm_num) W.base.lt_p hftaB
+    htxa htya htxb htyb
+  obtain ⟨hlnzbB, -⟩ := landNzV2N_of_sat hsat hc i hi 1 (by norm_num) W.base.lt_p hftbB
+    htxb htyb htxa htya
+  obtain ⟨hcv2_0B, hcv2_0I⟩ := cv2ValN_of_sat hsat hc i hi 0 (by norm_num) (Or.inr hsurv) F.anzB hocc0B
+  obtain ⟨hcv2_1B, hcv2_1I⟩ := cv2ValN_of_sat hsat hc i hi 1 (by norm_num) (Or.inr hsurv) F.bnzB hocc1B
+  obtain ⟨hnlaB, hnlaI⟩ := nonLeaveV2GateN_of_sat hsat hc i hi 0 (by norm_num) hlnzaB hcv2_1B
+  obtain ⟨hnlbB, hnlbI⟩ := nonLeaveV2GateN_of_sat hsat hc i hi 1 (by norm_num) hlnzbB hcv2_0B
+  obtain ⟨hcv3aB, hcv3aI⟩ := carryV3ArithN_of_sat hsat hc i hi 0 (by norm_num) hcv2_0B hnlaB
+  obtain ⟨hcv3bB, hcv3bI⟩ := carryV3ArithN_of_sat hsat hc i hi 1 (by norm_num) hcv2_1B hnlbB
+  obtain ⟨htcB, htcI⟩ := twoCycN_of_sat hsat hc i hi heq2B heq3B hocc1B hocc0B
+  have htc0 : (envAt t i).loc (NGen.cTwoCyc n) = 0 := by
+    rcases htcB with h | h
+    · exact h
+    · exfalso; have := (htcI.mp h).1; rw [heq2z] at this; exact absurd this (by norm_num)
+  obtain ⟨hcv4aB, hcv4aI⟩ := carryV4ArithN_of_sat hsat hc i hi 0 (by norm_num) hcv3aB htcB
+  obtain ⟨hcv4bB, hcv4bI⟩ := carryV4ArithN_of_sat hsat hc i hi 1 (by norm_num) hcv3bB htcB
+  obtain ⟨hreseqB, -⟩ := resEqV2CoordN_of_sat hsat hc i hi W hftaB hftbB
+  obtain ⟨hmergeB, hmergeI⟩ := mergeV2N_of_sat hsat hc i hi heqffB heqttB hcv2_0B hcv2_1B hreseqB
+  -- confluence bit vanishes by the IDENTICAL-move exception (`eq_ff = eq_tt = 1`)
+  have hmergeZero : (envAt t i).loc (NGen.cMergeV2 n) = 0 := by
+    rcases hmergeB with h0 | h1
+    · exact h0
+    · exfalso; obtain ⟨-, -, -, hlast⟩ := hmergeI.mp h1
+      rcases hlast with h | h
+      · rw [heqffC.mpr hsrc] at h; exact absurd h (by norm_num)
+      · rw [heqttC.mpr hto] at h; exact absurd h (by norm_num)
+  obtain ⟨hresB, hresI⟩ :=
+    resolvableV2ArithN_of_sat hsat hc i hi hcv2_0B hcv2_1B hnlaB hnlbB (Or.inl hmergeZero)
+  -- indicator products at (x, y), the write-cell polynomial pieces
+  have hcK : y * n + x < NGen.KK n := by
+    simp only [NGen.KK]
+    have hle : (y + 1) * n ≤ n * n := Nat.mul_le_mul (by omega) (le_refl n)
+    have hexp : (y + 1) * n = y * n + n := by ring
+    omega
+  have hda : (envAt t i).loc (NGen.wDstV2Row n 0 y) * (envAt t i).loc (NGen.wDstV2Col n 0 x)
+      = if (⟨x, y⟩ : Coord)
+           = (if (envAt t i).loc (NGen.cFtV2A n) = 1
+              then (moveDecodeN n (envAt t i) 1).to else (moveDecodeN n (envAt t i) 0).to)
+        then (1 : ℤ) else 0 := by
+    have h := dstIndV2N_of_sat hsat hc i hi 0 (by norm_num) W.base.lt_p hftaB htxa htya htxb htyb x y hx hy
+    simpa using h
+  have hdb : (envAt t i).loc (NGen.wDstV2Row n 1 y) * (envAt t i).loc (NGen.wDstV2Col n 1 x)
+      = if (⟨x, y⟩ : Coord)
+           = (if (envAt t i).loc (NGen.cFtV2B n) = 1
+              then (moveDecodeN n (envAt t i) 0).to else (moveDecodeN n (envAt t i) 1).to)
+        then (1 : ℤ) else 0 := by
+    have h := dstIndV2N_of_sat hsat hc i hi 1 (by norm_num) W.base.lt_p hftbB htxb htyb htxa htya x y hx hy
+    simpa using h
+  have hn0 : 0 < n := by omega
+  have hyy : y = (y * n + x) / n := by
+    rw [Nat.add_comm, Nat.mul_comm y n, Nat.add_mul_div_left x y hn0, Nat.div_eq_of_lt hx,
+      Nat.zero_add]
+  have hxx : x = (y * n + x) % n := by
+    rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hx]
+  have hwb := writeCellV4N_of_sat hsat i hi (y * n + x) y x hyy hxx hcK
+  have hmv := midV4CellN_of_sat hsat i hi (y * n + x) hcK
+  have hbdcell := oldCell_decode x y (envAt t i) hx hy
+  -- ============ fold ============
+  set e := envAt t i with he
+  set bd := boardDecodeOldN n e with hbd
+  set ma := moveDecodeN n e 0 with hma
+  set mb := moveDecodeN n e 1 with hmb
+  set destV2A : Coord := if e.loc (NGen.cFtV2A n) = 1 then mb.to else ma.to with hdestV2A
+  set destV2B : Coord := if e.loc (NGen.cFtV2B n) = 1 then ma.to else mb.to with hdestV2B
+  have hcc0 : NGen.carryV4Col n 0 = NGen.cCarryV4 n 0 := rfl
+  have hcc1 : NGen.carryV4Col n 1 = NGen.cCarryV4 n 1 := rfl
+  have hdA : destV2A = ma.to := by rw [hdestV2A, if_neg (by rw [hfta0]; norm_num)]
+  have hdB : destV2B = mb.to := by rw [hdestV2B, if_neg (by rw [hftb0]; norm_num)]
+  -- occlusion(1) ↔ `blockedB … mb`, and `blockedB … mb = blockedB … ma` (identical move)
+  have hocc1I : e.loc (NGen.cOccIncl n 1) = 1 ↔ blockedB bd [ma, mb] mb = true := by
+    have hh := blockedV2N_of_sat hsat hc i hi W 1 (by norm_num)
+    rw [Dregg2.Games.AutomataflRules.blockedB_swap] at hh
+    simpa using hh
+  have hblkeq : blockedB bd [ma, mb] mb = blockedB bd [ma, mb] ma :=
+    (Dregg2.Games.AutomataflRules.blockedB_identical bd ma mb hsrc hto).symm
+  -- the single-mover characterization of BOTH final carries (hne-free). The nonleaver is killed by
+  -- the OTHER carry: on an identical move BOTH pieces carry, so `cCv2 (1−which) = 1`.
+  have hC0 : e.loc (NGen.cCarryV4 n 0) = 1 ↔
+      (carAt bd ma.frm = true ∧ blockedB bd [ma, mb] ma = false) := by
+    constructor
+    · intro h
+      have h2 := (hcv3aI.mp (hcv4aI.mp h).1).1
+      obtain ⟨-, hnz, hoccz⟩ := hcv2_0I.mp h2
+      refine ⟨by have hv : (bd.cellAt ma.frm).isVacuum = false := F.anzIff.mp hnz
+                 simp [carAt, hv], ?_⟩
+      by_cases hbb : blockedB bd [ma, mb] ma = true
+      · exfalso; rw [hocc0I.mpr hbb] at hoccz; exact absurd hoccz (by norm_num)
+      · simpa using hbb
+    · rintro ⟨hcar, hb⟩
+      have hoccz0 : e.loc (NGen.cOccIncl n 0) = 0 := by
+        rcases hocc0B with h | h
+        · exact h
+        · exact absurd (hocc0I.mp h) (by rw [hb]; decide)
+      have hbmb : blockedB bd [ma, mb] mb = false := by rw [hblkeq]; exact hb
+      have hoccz1 : e.loc (NGen.cOccIncl n 1) = 0 := by
+        rcases hocc1B with h | h
+        · exact h
+        · exact absurd (hocc1I.mp h) (by rw [hbmb]; decide)
+      have hnza : e.loc (NGen.cAnz n) = 1 := F.anzIff.mpr (by simpa [carAt] using hcar)
+      have hnzb : e.loc (NGen.cBnz n) = 1 := F.bnzIff.mpr (by rw [← hsrc]; simpa [carAt] using hcar)
+      have hcv2_0_one : e.loc (NGen.cCv2 n 0) = 1 := hcv2_0I.mpr ⟨hsurv, hnza, hoccz0⟩
+      have hcv2_1_one : e.loc (NGen.cCv2 n 1) = 1 := hcv2_1I.mpr ⟨hsurv, hnzb, hoccz1⟩
+      have hnl0 : e.loc (NGen.cNonLeaveV2 n 0) = 0 := by
+        rcases hnlaB with h | h
+        · exact h
+        · exact absurd (hnlaI.mp h).2 (by rw [hcv2_1_one]; norm_num)
+      exact hcv4aI.mpr ⟨hcv3aI.mpr ⟨hcv2_0_one, hnl0⟩, htc0⟩
+  have hC1 : e.loc (NGen.cCarryV4 n 1) = 1 ↔
+      (carAt bd ma.frm = true ∧ blockedB bd [ma, mb] ma = false) := by
+    constructor
+    · intro h
+      have h2 := (hcv3bI.mp (hcv4bI.mp h).1).1
+      obtain ⟨-, hnz, hoccz⟩ := hcv2_1I.mp h2
+      refine ⟨by have hv : (bd.cellAt ma.frm).isVacuum = false := by
+                   rw [hsrc]; exact F.bnzIff.mp hnz
+                 simp [carAt, hv], ?_⟩
+      by_cases hbb : blockedB bd [ma, mb] ma = true
+      · exfalso
+        have hbmb : blockedB bd [ma, mb] mb = true := by rw [hblkeq]; exact hbb
+        rw [hocc1I.mpr hbmb] at hoccz; exact absurd hoccz (by norm_num)
+      · simpa using hbb
+    · rintro ⟨hcar, hb⟩
+      have hoccz0 : e.loc (NGen.cOccIncl n 0) = 0 := by
+        rcases hocc0B with h | h
+        · exact h
+        · exact absurd (hocc0I.mp h) (by rw [hb]; decide)
+      have hbmb : blockedB bd [ma, mb] mb = false := by rw [hblkeq]; exact hb
+      have hoccz1 : e.loc (NGen.cOccIncl n 1) = 0 := by
+        rcases hocc1B with h | h
+        · exact h
+        · exact absurd (hocc1I.mp h) (by rw [hbmb]; decide)
+      have hnza : e.loc (NGen.cAnz n) = 1 := F.anzIff.mpr (by simpa [carAt] using hcar)
+      have hnzb : e.loc (NGen.cBnz n) = 1 := F.bnzIff.mpr (by rw [← hsrc]; simpa [carAt] using hcar)
+      have hcv2_0_one : e.loc (NGen.cCv2 n 0) = 1 := hcv2_0I.mpr ⟨hsurv, hnza, hoccz0⟩
+      have hcv2_1_one : e.loc (NGen.cCv2 n 1) = 1 := hcv2_1I.mpr ⟨hsurv, hnzb, hoccz1⟩
+      have hnl1 : e.loc (NGen.cNonLeaveV2 n 1) = 0 := by
+        rcases hnlbB with h | h
+        · exact h
+        · exact absurd (hnlbI.mp h).2 (by rw [hcv2_0_one]; norm_num)
+      exact hcv4bI.mpr ⟨hcv3bI.mpr ⟨hcv2_1_one, hnl1⟩, htc0⟩
+  -- indicator readings + write-cell polynomial (identical to §25's derivation)
+  have hsa := F.srcIndA x y hx hy
+  have hsb := F.srcIndB x y hx hy
+  have hda' : e.loc (NGen.wDstV2Row n 0 y) * e.loc (NGen.wDstV2Col n 0 x)
+      = if (⟨x, y⟩ : Coord) = destV2A then (1 : ℤ) else 0 := hda
+  have hdb' : e.loc (NGen.wDstV2Row n 1 y) * e.loc (NGen.wDstV2Col n 1 x)
+      = if (⟨x, y⟩ : Coord) = destV2B then (1 : ℤ) else 0 := hdb
+  have hcarryV4_collapse : e.loc (NGen.cResolvableV2 n) = 0 →
+      e.loc (NGen.cCarryV4 n 0) = 0 ∧ e.loc (NGen.cCarryV4 n 1) = 0 := by
+    intro hrv0
+    have hnot : ¬ (e.loc (NGen.cMergeV2 n) = 0
+        ∧ (e.loc (NGen.cCv2 n 0) = 0 ∨ e.loc (NGen.cNonLeaveV2 n 0) = 0)
+        ∧ (e.loc (NGen.cCv2 n 1) = 0 ∨ e.loc (NGen.cNonLeaveV2 n 1) = 0)) := by
+      intro h; rw [hresI.mpr h] at hrv0; exact absurd hrv0 (by norm_num)
+    have cv4a0_of_cv3a0 : e.loc (NGen.cCarryV3 n 0) = 0 → e.loc (NGen.cCarryV4 n 0) = 0 := by
+      intro h; rcases hcv4aB with hz | ho
+      · exact hz
+      · exact absurd (hcv4aI.mp ho).1 (by rw [h]; norm_num)
+    have cv4b0_of_cv3b0 : e.loc (NGen.cCarryV3 n 1) = 0 → e.loc (NGen.cCarryV4 n 1) = 0 := by
+      intro h; rcases hcv4bB with hz | ho
+      · exact hz
+      · exact absurd (hcv4bI.mp ho).1 (by rw [h]; norm_num)
+    have cv3a0_of_cv2a0 : e.loc (NGen.cCv2 n 0) = 0 → e.loc (NGen.cCarryV3 n 0) = 0 := by
+      intro h; rcases hcv3aB with hz | ho
+      · exact hz
+      · exact absurd (hcv3aI.mp ho).1 (by rw [h]; norm_num)
+    have cv3b0_of_cv2b0 : e.loc (NGen.cCv2 n 1) = 0 → e.loc (NGen.cCarryV3 n 1) = 0 := by
+      intro h; rcases hcv3bB with hz | ho
+      · exact hz
+      · exact absurd (hcv3bI.mp ho).1 (by rw [h]; norm_num)
+    have cv3a0_of_nla : e.loc (NGen.cNonLeaveV2 n 0) = 1 → e.loc (NGen.cCarryV3 n 0) = 0 := by
+      intro h; rcases hcv3aB with hz | ho
+      · exact hz
+      · exact absurd (hcv3aI.mp ho).2 (by rw [h]; norm_num)
+    have cv3b0_of_nlb : e.loc (NGen.cNonLeaveV2 n 1) = 1 → e.loc (NGen.cCarryV3 n 1) = 0 := by
+      intro h; rcases hcv3bB with hz | ho
+      · exact hz
+      · exact absurd (hcv3bI.mp ho).2 (by rw [h]; norm_num)
+    by_cases hbadA : e.loc (NGen.cCv2 n 0) = 1 ∧ e.loc (NGen.cNonLeaveV2 n 0) = 1
+    · obtain ⟨_, hn0⟩ := hbadA
+      have hc1z : e.loc (NGen.cCv2 n 1) = 0 := by simpa using (hnlaI.mp hn0).2
+      exact ⟨cv4a0_of_cv3a0 (cv3a0_of_nla hn0), cv4b0_of_cv3b0 (cv3b0_of_cv2b0 hc1z)⟩
+    · have hbadB : e.loc (NGen.cCv2 n 1) = 1 ∧ e.loc (NGen.cNonLeaveV2 n 1) = 1 := by
+        by_contra hbn
+        apply hnot
+        refine ⟨hmergeZero, ?_, ?_⟩
+        · rcases hcv2_0B with h | h
+          · exact Or.inl h
+          · rcases hnlaB with h2 | h2
+            · exact Or.inr h2
+            · exact absurd ⟨h, h2⟩ hbadA
+        · rcases hcv2_1B with h | h
+          · exact Or.inl h
+          · rcases hnlbB with h2 | h2
+            · exact Or.inr h2
+            · exact absurd ⟨h, h2⟩ hbn
+      obtain ⟨_, hn1⟩ := hbadB
+      have hc0z : e.loc (NGen.cCv2 n 0) = 0 := by simpa using (hnlbI.mp hn1).2
+      exact ⟨cv4a0_of_cv3a0 (cv3a0_of_cv2a0 hc0z), cv4b0_of_cv3b0 (cv3b0_of_nlb hn1)⟩
+  have hmidwb : e.loc (NGen.cMidV4 n (y * n + x)) ≡ e.loc (NGen.cWBoardV4 n (y * n + x))
+      [ZMOD 2013265921] := by
+    rcases hresB with hr0 | hr1
+    · obtain ⟨hca0, hcb0⟩ := hcarryV4_collapse hr0
+      have hwb0 := hwb
+      rw [hcc0, hcc1, hca0, hcb0] at hwb0
+      have hwbold : e.loc (NGen.cWBoardV4 n (y * n + x)) ≡ e.loc (NGen.old n (y * n + x))
+          [ZMOD 2013265921] := by
+        calc e.loc (NGen.cWBoardV4 n (y * n + x)) ≡ _ [ZMOD 2013265921] := hwb0
+          _ = e.loc (NGen.old n (y * n + x)) := by ring
+      calc e.loc (NGen.cMidV4 n (y * n + x))
+          ≡ e.loc (NGen.cResolvableV2 n) * e.loc (NGen.cWBoardV4 n (y * n + x))
+            + e.loc (NGen.old n (y * n + x))
+            - e.loc (NGen.cResolvableV2 n) * e.loc (NGen.old n (y * n + x)) [ZMOD 2013265921] := hmv
+        _ = e.loc (NGen.old n (y * n + x)) := by rw [hr0]; ring
+        _ ≡ e.loc (NGen.cWBoardV4 n (y * n + x)) [ZMOD 2013265921] := hwbold.symm
+    · calc e.loc (NGen.cMidV4 n (y * n + x))
+          ≡ e.loc (NGen.cResolvableV2 n) * e.loc (NGen.cWBoardV4 n (y * n + x))
+            + e.loc (NGen.old n (y * n + x))
+            - e.loc (NGen.cResolvableV2 n) * e.loc (NGen.old n (y * n + x)) [ZMOD 2013265921] := hmv
+        _ = e.loc (NGen.cWBoardV4 n (y * n + x)) := by rw [hr1]; ring
+  have hmod : e.loc (NGen.cMidV4 n (y * n + x))
+      ≡ (1 - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0)
+           - e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0))
+           + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+               * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)))
+          * e.loc (NGen.old n (y * n + x))
+        + e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+            * e.loc (NGen.particleCol n 0)
+        + e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)
+            * e.loc (NGen.particleCol n 1)
+        - e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)
+            * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0))
+            * e.loc (NGen.particleCol n 1)
+      [ZMOD 2013265921] := by
+    have hwb1 := hwb
+    rw [hcc0, hcc1, hsa, hsb, hda', hdb'] at hwb1
+    exact hmidwb.trans hwb1
+  have bA : e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1 := by
+    rcases hcv4aB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = ma.frm <;> simp [h, q]
+  have bB : e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1 := by
+    rcases hcv4aB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destV2A <;> simp [h, q]
+  have bC : e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1 := by
+    rcases hcv4bB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = mb.frm <;> simp [h, q]
+  have bD : e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 0
+      ∨ e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 1 := by
+    rcases hcv4bB with h | h <;> by_cases q : (⟨x, y⟩ : Coord) = destV2B <;> simp [h, q]
+  have eAB : (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0))
+      * (e.loc (NGen.cCarryV4 n 0) * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0)) = 0 := by
+    have hdne : destV2A ≠ ma.frm := by rw [hdA]; exact hds
+    by_cases q1 : (⟨x, y⟩ : Coord) = ma.frm
+    · by_cases q2 : (⟨x, y⟩ : Coord) = destV2A
+      · exact absurd (q2.symm.trans q1) hdne
+      · simp [q2]
+    · simp [q1]
+  have eCD : (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0))
+      * (e.loc (NGen.cCarryV4 n 1) * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0)) = 0 := by
+    have hdne : destV2B ≠ mb.frm := by rw [hdB]; exact fun h => hlegB h.symm
+    by_cases q1 : (⟨x, y⟩ : Coord) = mb.frm
+    · by_cases q2 : (⟨x, y⟩ : Coord) = destV2B
+      · exact absurd (q2.symm.trans q1) hdne
+      · simp [q2]
+    · simp [q1]
+  have holdc : 0 ≤ e.loc (NGen.old n (y * n + x)) ∧ e.loc (NGen.old n (y * n + x)) ≤ 3 := by
+    rcases F.alphaOld (y * n + x) hcK with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have hmidc : Canon (e.loc (NGen.cMidV4 n (y * n + x))) := canon_loc hc i _
+  have hpaA : 0 ≤ e.loc (NGen.particleCol n 0) ∧ e.loc (NGen.particleCol n 0) ≤ 3 := by
+    rcases F.paAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have hpbA : 0 ≤ e.loc (NGen.particleCol n 1) ∧ e.loc (NGen.particleCol n 1) ≤ 3 := by
+    rcases F.pbAlpha with h | h | h | h <;> rw [h] <;> constructor <;> norm_num
+  have halg := AutomataflResolveRefine.cellAlgebra bA bB bC bD eAB eCD holdc hmidc hpaA hpbA hmod
+  -- the reference identical-move cell
+  have hInA : bd.inBounds ma.to := F.validA.2.2.2.1
+  have hq : bd.inBounds (⟨x, y⟩ : Coord) := ⟨hx, hy⟩
+  rw [resolveMoves_cell_identical bd ma mb hsrc hto hlegA hInA ⟨x, y⟩ hq]
+  rw [halg, apply_ite codeToParticle, apply_ite codeToParticle, apply_ite codeToParticle,
+    show codeToParticle 0 = Particle.vacuum from by decide, ← F.paVal, ← F.pbVal, hbdcell]
+  -- match branch-for-branch: both carries agree with the single-mover condition; `destV2A = destV2B = ma.to`
+  by_cases hcarry : carAt bd ma.frm = true ∧ blockedB bd [ma, mb] ma = false
+  · rw [if_pos hcarry]
+    have hc40 : e.loc (NGen.cCarryV4 n 0) = 1 := hC0.mpr hcarry
+    have hc41 : e.loc (NGen.cCarryV4 n 1) = 1 := hC1.mpr hcarry
+    by_cases hxyd : (⟨x, y⟩ : Coord) = ma.to
+    · rw [if_pos (show e.loc (NGen.cCarryV4 n 0)
+              * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1 by
+            rw [hdA, if_pos hxyd, hc40]; ring), if_pos hxyd]
+    · rw [if_neg (show ¬ e.loc (NGen.cCarryV4 n 0)
+              * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1 by
+            rw [hdA, if_neg hxyd]; simp),
+        if_neg (show ¬ e.loc (NGen.cCarryV4 n 1)
+              * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 1 by
+            rw [hdB, if_neg (hto ▸ hxyd)]; simp),
+        if_neg hxyd]
+      by_cases hxys : (⟨x, y⟩ : Coord) = ma.frm
+      · rw [if_pos (Or.inl (show e.loc (NGen.cCarryV4 n 0)
+              * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1 by
+            rw [if_pos hxys, hc40]; ring)), if_pos hxys]
+      · rw [if_neg (show ¬ (e.loc (NGen.cCarryV4 n 0)
+                * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1
+              ∨ e.loc (NGen.cCarryV4 n 1)
+                * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1) by
+            rintro (h | h)
+            · rw [if_neg hxys] at h; simp at h
+            · rw [← hsrc, if_neg hxys] at h; simp at h),
+        if_neg hxys]
+  · rw [if_neg hcarry]
+    have hc40 : e.loc (NGen.cCarryV4 n 0) = 0 := by
+      rcases hcv4aB with h | h
+      · exact h
+      · exact absurd (hC0.mp h) hcarry
+    have hc41 : e.loc (NGen.cCarryV4 n 1) = 0 := by
+      rcases hcv4bB with h | h
+      · exact h
+      · exact absurd (hC1.mp h) hcarry
+    rw [if_neg (show ¬ e.loc (NGen.cCarryV4 n 0)
+            * (if (⟨x, y⟩ : Coord) = destV2A then (1:ℤ) else 0) = 1 by rw [hc40]; simp),
+      if_neg (show ¬ e.loc (NGen.cCarryV4 n 1)
+            * (if (⟨x, y⟩ : Coord) = destV2B then (1:ℤ) else 0) = 1 by rw [hc41]; simp),
+      if_neg (show ¬ (e.loc (NGen.cCarryV4 n 0)
+              * (if (⟨x, y⟩ : Coord) = ma.frm then (1:ℤ) else 0) = 1
+            ∨ e.loc (NGen.cCarryV4 n 1)
+              * (if (⟨x, y⟩ : Coord) = mb.frm then (1:ℤ) else 0) = 1) by
+          rintro (h | h)
+          · rw [hc40] at h; simp at h
+          · rw [hc41] at h; simp at h)]
+
+end EdgeCCell
+
+/-! ## §28 — THE RESOLVE CAPSTONE: `resolve_sat_imp_roundBoardN`, UNCONDITIONAL, arbitrary `n`.
+
+The decoded FINAL board cell `cMidV4` IS the board `AutomataflRules.roundStep` produces this round:
+`old` on a clash (`clashCoords ≠ []`, the round re-enters unchanged) and the VALIDATED `resolveMoves`
+cell otherwise — at EVERY in-bounds coordinate, off nothing but `Satisfied2 (automataflResolveDescN n)`
+and `StepCanon`, at ARBITRARY board size `n`. Dispatches the surviving round into the three
+EXHAUSTIVE sub-cases (§25 clean-distinct / §26 shared-dest-vacuum / §27 identical) via the `surv ↔
+clashCoords = []` bridge (§24) and the reference `survIff` fork/collide structure; the clash branch is
+§24's `midV4_cell_old_of_surv_zero`. -/
+section RoundBoard
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+  {n : Nat}
+
+open Dregg2.Games.AutomataflRules (carAt clashCoords resolveMoves)
+
+/-- **THE RESOLVE CAPSTONE.** `codeToParticle (cMidV4 …)` IS the `roundStep` board cell — `old` on a
+clash, the VALIDATED `resolveMoves` cell otherwise — unconditionally, at arbitrary `n`. -/
+theorem resolve_sat_imp_roundBoardN
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (W : MovesWindow n)
+    (x y : Nat) (hx : x < n) (hy : y < n) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 n (y * n + x)))
+      = (if clashCoords (boardDecodeOldN n (envAt t i))
+            [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1] ≠ []
+          then boardDecodeOldN n (envAt t i)
+          else resolveMoves (boardDecodeOldN n (envAt t i))
+            [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1]).cellAt ⟨x, y⟩ := by
+  have F := AutomataflResolveCapstone.resolveFactsN_of_sat hsat hc i hi W.base
+  by_cases hcl : clashCoords (boardDecodeOldN n (envAt t i))
+      [moveDecodeN n (envAt t i) 0, moveDecodeN n (envAt t i) 1] = []
+  · rw [if_neg (fun h => h hcl)]
+    have hsurv : (envAt t i).loc (NGen.cSurv n) = 1 :=
+      (surv_iff_clash_empty_of_sat hsat hc i hi W).mpr hcl
+    have hns := F.survIff.mp hsurv
+    by_cases hsrc : (moveDecodeN n (envAt t i) 0).frm = (moveDecodeN n (envAt t i) 1).frm
+    · have hto : (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).to := by
+        by_contra hdd; exact hns (Or.inl ⟨hsrc, hdd⟩)
+      exact identicalMoveBoardCell hsat hc i hi W hsurv hsrc hto x y hx hy
+    · by_cases hdst : (moveDecodeN n (envAt t i) 0).to = (moveDecodeN n (envAt t i) 1).to
+      · have hnbc : ¬(carAt (boardDecodeOldN n (envAt t i)) (moveDecodeN n (envAt t i) 0).frm = true
+              ∧ carAt (boardDecodeOldN n (envAt t i)) (moveDecodeN n (envAt t i) 1).frm = true) := by
+          rintro ⟨ha, hb⟩
+          exact hns (Or.inr ⟨hdst, hsrc, by simpa [carAt] using ha, by simpa [carAt] using hb⟩)
+        exact sharedDestVacuumBoardCell hsat hc i hi W hsurv hsrc hdst hnbc x y hx hy
+      · exact cleanDistinctBoardCell hsat hc i hi W hsurv hsrc hdst x y hx hy
+  · rw [if_pos hcl]
+    have hsurv0 : (envAt t i).loc (NGen.cSurv n) = 0 := by
+      rcases F.survB with h | h
+      · exact h
+      · exact absurd ((surv_iff_clash_empty_of_sat hsat hc i hi W).mp h) hcl
+    exact midV4_cell_old_of_surv_zero hsat hc i hi W hsurv0 x y hx hy
+
+/-- The capstone at `n = 11` (the deployed 11×11 automatafl board). -/
+theorem resolve_sat_imp_roundBoard11
+    (hsat : Satisfied2 hash (automataflResolveDescN 11) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (x y : Nat) (hx : x < 11) (hy : y < 11) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 11 (y * 11 + x)))
+      = (if clashCoords (boardDecodeOldN 11 (envAt t i))
+            [moveDecodeN 11 (envAt t i) 0, moveDecodeN 11 (envAt t i) 1] ≠ []
+          then boardDecodeOldN 11 (envAt t i)
+          else resolveMoves (boardDecodeOldN 11 (envAt t i))
+            [moveDecodeN 11 (envAt t i) 0, moveDecodeN 11 (envAt t i) 1]).cellAt ⟨x, y⟩ :=
+  resolve_sat_imp_roundBoardN hsat hc i hi movesWindow_eleven x y hx hy
+
+/-- The capstone at `n = 3` (the small board the decide-verified branch witnesses live on). -/
+theorem resolve_sat_imp_roundBoard3
+    (hsat : Satisfied2 hash (automataflResolveDescN 3) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length)
+    (x y : Nat) (hx : x < 3) (hy : y < 3) :
+    codeToParticle ((envAt t i).loc (NGen.cMidV4 3 (y * 3 + x)))
+      = (if clashCoords (boardDecodeOldN 3 (envAt t i))
+            [moveDecodeN 3 (envAt t i) 0, moveDecodeN 3 (envAt t i) 1] ≠ []
+          then boardDecodeOldN 3 (envAt t i)
+          else resolveMoves (boardDecodeOldN 3 (envAt t i))
+            [moveDecodeN 3 (envAt t i) 0, moveDecodeN 3 (envAt t i) 1]).cellAt ⟨x, y⟩ :=
+  resolve_sat_imp_roundBoardN hsat hc i hi movesWindow_three x y hx hy
+
+/-! The reference side of the connection: what `roundStep` does with a two-move round. Note the
+resolved board is `automatonStepCfg cfg (resolveMoves …)` — roundStep applies the automaton step AFTER
+resolution, so `cMidV4` (which `resolve_sat_imp_roundBoardN` pins to `resolveMoves`/`old`) is the
+PRE-automaton board roundStep resolves from / re-enters with, NOT the post-automaton output. The
+automaton step is a SEPARATE (step) leg. -/
+
+/-- The board an outcome carries: the re-entry board on `.again`, the resolved board on `.resolved`. -/
+def outcomeBoard : Dregg2.Games.AutomataflRules.RoundOutcome → Board
+  | .again rs => rs.board
+  | .resolved b _ => b
+
+open Dregg2.Games.AutomataflRules (roundStep openRound moveLegalB automatonStepCfg resolvableB
+  unresolved GameConfig GoalAssignment)
+
+/-- **THE `roundStep` REDUCTION (reference side).** On a two-move round whose fresh-move filter keeps
+both moves and which is resolvable, `roundStep` re-enters with the OLD board on a clash and resolves
+via `automatonStepCfg cfg (resolveMoves …)` otherwise. Composed with `resolve_sat_imp_roundBoardN`
+(`cMidV4 = old`/`resolveMoves`) this identifies `cMidV4` as the board `roundStep` resolves from /
+re-enters with — before the automaton step. -/
+theorem roundStep_pair_outcomeBoard (cfg : GameConfig) (g : GoalAssignment) (b : Board)
+    (seats : List Dregg2.Games.Automatafl.Pid) (ma mb : Move)
+    (hfresh : ([ma, mb].filter (fun m => seats.contains m.who && moveLegalB b [] m)) = [ma, mb])
+    (hres : resolvableB b [ma, mb] = true) :
+    outcomeBoard (roundStep cfg g (openRound b seats) [ma, mb]) =
+      (if clashCoords b [ma, mb] = []
+       then automatonStepCfg cfg (resolveMoves b [ma, mb]) else b) := by
+  have hunres : unresolved b [ma, mb] = [] := List.isEmpty_iff.mp hres
+  unfold roundStep openRound outcomeBoard
+  simp only [List.nil_append, hfresh]
+  by_cases hcl : clashCoords b [ma, mb] = []
+  · rw [if_pos hcl]
+    simp only [hcl, List.isEmpty_nil, if_true, hunres]
+  · rw [if_neg hcl]
+    have hne : (clashCoords b [ma, mb]).isEmpty = false := by
+      rw [Bool.eq_false_iff, ne_eq, List.isEmpty_iff]; exact hcl
+    simp only [hne, Bool.false_eq_true, if_false]
+
+end RoundBoard
+
 /-! ## §8 — Axiom hygiene. Every exported theorem, kernel-clean. -/
 
 #assert_axioms movesWindow_three
@@ -3315,5 +4282,20 @@ end CleanCell
 -- §25 THE CLEAN DISTINCT BOARD CELL — the decoded FINAL board cell IS the VALIDATED `resolveMoves`
 -- cell on the clean distinct (distinct raw src AND dst) class, ∀ in-bounds (x, y), at arbitrary `n`.
 #assert_axioms cleanDistinctBoardCell
+-- §26 THE SHARED-DEST SINGLE-VACUUM BOARD CELL — edge `da = db`, one source vacuum (¬both-carry):
+-- one effective mover; `cMidV4` IS the `resolveMoves` cell via the `_sep` collapse, ∀ (x, y), any `n`.
+#assert_axioms mergeV2_zero_of_notBothNz
+#assert_axioms sharedDestVacuumBoardCell
+-- §27 THE IDENTICAL-MOVE BOARD CELL — edge `sa = sb`, `da = db` (dedups to one mover); `cMidV4` IS
+-- the `resolveMoves` cell via the hne-free single-mover correspondence, ∀ (x, y), any `n`.
+#assert_axioms identicalMoveBoardCell
+-- §28 THE RESOLVE CAPSTONE — `codeToParticle (cMidV4)` IS the roundStep board cell (old on clash, the
+-- VALIDATED `resolveMoves` otherwise), UNCONDITIONAL, at arbitrary `n`, and at `n = 11` and `n = 3`.
+#assert_axioms resolve_sat_imp_roundBoardN
+#assert_axioms resolve_sat_imp_roundBoard11
+#assert_axioms resolve_sat_imp_roundBoard3
+-- The reference-side `roundStep` reduction: re-enter with old on clash, resolve via the automaton
+-- step on `resolveMoves` otherwise — the honest connection (the automaton wrapping made explicit).
+#assert_axioms roundStep_pair_outcomeBoard
 
 end Dregg2.Circuit.Emit.AutomataflResolveMovesCapstone
