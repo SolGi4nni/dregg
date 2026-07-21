@@ -11,7 +11,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use dregg_circuit_prove::dark_amm_private::{
     PublicStatement as PrivateAmmPublicStatement, prove_zk, sample_commitment_blind,
@@ -19,7 +19,7 @@ use dregg_circuit_prove::dark_amm_private::{
 use dreggnet_market::dark_amm_collective::CollectiveDecisionBundle;
 use dreggnet_market::dark_amm_collective_worker::{
     CollectiveDecisionTask, CollectiveDecisionTaskContext, MAX_COLLECTIVE_DECISION_TASK_BYTES,
-    MaskedCollectiveDecisionWorker,
+    MaskedCollectiveDecision, MaskedCollectiveDecisionWorker,
 };
 use dreggnet_market::dark_amm_game::{
     DarkAmmGameOffering, DarkAmmHostKeyMaterial, DarkAmmPrivateState, DarkAmmPrivateSwapAuthority,
@@ -28,6 +28,7 @@ use dreggnet_market::dark_amm_game::{
     produce_proved_encrypted_swap_seeded,
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use fhe_traits::Serialize as FheSerialize;
 use fhegg_fhe::amm_same_opening::{
     MAX_AUTHORITY_PARTIES, SAME_OPENING_ENDORSEMENT_WIRE_LEN, Tier1SameOpeningAuthority,
     Tier1SameOpeningEndorsement,
@@ -58,6 +59,7 @@ const COLLECTIVE_WORKER_CONTEXT_MAGIC: &[u8; 8] = b"DBCTX001";
 const COLLECTIVE_WORKER_CUSTODY_MAGIC: &[u8; 8] = b"DBCKv001";
 const COLLECTIVE_PARTY_CUSTODY_MAGIC: &[u8; 8] = b"DBPCv001";
 const COLLECTIVE_PARTY_ARTIFACT_MAGIC: &[u8; 8] = b"DBPAv001";
+const COLLECTIVE_PREPROCESSING_SHARE_MAGIC: &[u8; 8] = b"DBPSv001";
 const COLLECTIVE_WORKER_CHECKSUM_DOMAIN: &str =
     "dregg-dark-amm-collective-worker-input-checksum-v1";
 const COLLECTIVE_PARTY_ARTIFACT_SIGNATURE_DOMAIN: &str =
@@ -68,6 +70,7 @@ const MAX_COLLECTIVE_WORKER_CONTEXT_BYTES: u64 = 144;
 const MAX_COLLECTIVE_WORKER_CUSTODY_BYTES: u64 = 2048;
 const MAX_COLLECTIVE_PARTY_CUSTODY_BYTES: u64 = 256;
 const MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_COLLECTIVE_PREPROCESSING_SHARE_BYTES: u64 = 112;
 
 fn main() {
     if let Err(error) = run() {
@@ -86,9 +89,21 @@ fn run() -> Result<(), String> {
     }
     if args
         .first()
+        .is_some_and(|command| command == "collective-process-preprocessing-share-internal")
+    {
+        return collective_process_preprocessing_share_internal(&args[1..]);
+    }
+    if args
+        .first()
         .is_some_and(|command| command == "collective-process-party-internal")
     {
         return collective_process_party_internal(&args[1..]);
+    }
+    if args
+        .first()
+        .is_some_and(|command| command == "collective-process-coordinator-internal")
+    {
+        return collective_process_coordinator_internal(&args[1..]);
     }
     if args
         .first()
@@ -672,17 +687,26 @@ fn collective_party_contribute(
     result
 }
 
-fn collective_decide_split(args: &[String]) -> Result<(), String> {
-    if args.len() < 9 || (args.len() - 5) % 2 != 0 {
-        return Err("usage: dark-amm-tool collective-decide-split <task-file> <committed-public-material-file> <expected-context-file> <public-worker-config-file> <new-decision-bundle-file> <party-custody-0> <party-artifact-0> [<party-custody-N> <party-artifact-N> ...]".to_string());
-    }
-    let task_path = Path::new(&args[0]);
-    let material_path = Path::new(&args[1]);
-    let expected_context_path = Path::new(&args[2]);
-    let config_path = Path::new(&args[3]);
-    let output_path = Path::new(&args[4]);
-    let party_files = &args[5..];
+const MAX_COLLECTIVE_PROCESS_RECORD_BYTES: usize = 96 * 1024 * 1024;
+const COLLECTIVE_PROCESS_PUMP: u8 = 0;
+const COLLECTIVE_PROCESS_SIGN: u8 = 1;
 
+struct CollectiveProcessPublic {
+    config: CollectiveWorkerConfig,
+    params: BfvParams,
+    collective: CollectivePublicKey,
+    task: CollectiveDecisionTask,
+    session: PartyMpcSession,
+    mask_session: MaskedDecryptSession,
+}
+
+fn load_collective_process_public(
+    task_path: &Path,
+    material_path: &Path,
+    context_path: &Path,
+    config_path: &Path,
+    artifact_paths: &[PathBuf],
+) -> Result<CollectiveProcessPublic, String> {
     let task_wire = read_bounded_regular(
         task_path,
         "collective decision task",
@@ -696,7 +720,7 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
         false,
     )?;
     let context_wire = read_bounded_regular(
-        expected_context_path,
+        context_path,
         "expected collective task context",
         MAX_COLLECTIVE_WORKER_CONTEXT_BYTES,
         false,
@@ -709,24 +733,16 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
     )?;
     let expected_context = parse_collective_worker_context(&context_wire)?;
     let config = parse_collective_worker_config(&config_wire)?;
-    if party_files.len() / 2 != config.keygen.n_parties() {
-        return Err(
-            "split worker must receive exactly one custody/artifact pair per DKG party".to_string(),
-        );
+    if artifact_paths.len() != config.keygen.n_parties() {
+        return Err("process worker requires one public artifact per DKG party".to_string());
     }
-
     let params = BfvParams::fold_set();
     let material = DarkPoolPublicHostMaterial::from_wire_bytes(&material_wire, params.arc())
         .map_err(|error| format!("committed public host material refused: {error}"))?;
-    let mut coordinator = KeygenCoordinator::new(config.keygen.clone(), params.clone());
-    let mut parties = Vec::with_capacity(config.keygen.n_parties());
-    let mut preprocessing_seed = [0u8; 32];
-
-    for (expected_party, pair) in party_files.chunks_exact(2).enumerate() {
-        let custody_path = Path::new(&pair[0]);
-        let artifact_path = Path::new(&pair[1]);
+    let mut keygen_coordinator = KeygenCoordinator::new(config.keygen.clone(), params.clone());
+    for (expected_party, path) in artifact_paths.iter().enumerate() {
         let artifact_wire = read_bounded_regular(
-            artifact_path,
+            path,
             "public collective party contribution",
             MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES,
             false,
@@ -734,51 +750,13 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
         let artifact =
             CollectivePartyArtifact::from_wire_bytes(&artifact_wire, &config_wire, &config)?;
         if artifact.party != expected_party {
-            return Err("split party artifacts must be supplied in exact DKG order".to_string());
+            return Err("process party artifacts must be supplied in exact DKG order".to_string());
         }
-        let mut custody_wire = read_bounded_regular(
-            custody_path,
-            "protected single-party collective custody",
-            MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
-            true,
-        )?;
-        let party_result = (|| {
-            let custody = parse_collective_party_custody(&custody_wire, &config_wire, &config)?;
-            if custody.party != expected_party {
-                return Err("split party custody must be supplied in exact DKG order".to_string());
-            }
-            let (party, contribution) = ThresholdParty::join_seeded(
-                &config.keygen,
-                expected_party,
-                &params,
-                &custody.threshold_root,
-            )
-            .map_err(|error| format!("threshold custody refused: {error:?}"))?;
-            if contribution != artifact.contribution {
-                return Err(
-                    "single-party custody does not reproduce its authenticated contribution"
-                        .to_string(),
-                );
-            }
-            coordinator
-                .accept(contribution)
-                .map_err(|error| format!("threshold contribution refused: {error:?}"))?;
-            for (combined, share) in preprocessing_seed
-                .iter_mut()
-                .zip(custody.preprocessing_seed_share.iter())
-            {
-                *combined ^= *share;
-            }
-            parties.push(party);
-            Ok(())
-        })();
-        custody_wire.fill(0);
-        party_result?;
+        keygen_coordinator
+            .accept(artifact.contribution)
+            .map_err(|error| format!("threshold contribution refused: {error:?}"))?;
     }
-    if preprocessing_seed == [0; 32] {
-        return Err("combined split preprocessing seed must be nonzero".to_string());
-    }
-    let collective = coordinator
+    let collective = keygen_coordinator
         .finish()
         .map_err(|error| format!("collective key reconstruction refused: {error:?}"))?;
     let task = CollectiveDecisionTask::from_wire_bytes(
@@ -792,75 +770,1088 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     task.validate_context(expected_context)
         .map_err(|error| error.to_string())?;
-    let worker = MaskedCollectiveDecisionWorker::new(
-        &params,
-        &config.keygen,
-        &collective,
-        &parties,
+    // `MaskedCollectiveDecisionWorker` deliberately requires party objects, so
+    // reconstruct the public equality session directly from the exact task.
+    // Its nonce is the complete canonical task digest.
+    let session = PartyMpcSession::equality(
+        task.attestation_nonce()
+            .map_err(|error| error.to_string())?,
+        config.keygen.n_parties(),
         config.value_bits,
+        params.plaintext_modulus(),
         config.timeout,
     )
     .map_err(|error| error.to_string())?;
-    let session = worker
-        .decision_session_for_task(&task, &material, expected_context)
-        .map_err(|error| error.to_string())?;
-    let mut preprocessing_rng = StdRng::from_seed(preprocessing_seed);
-    preprocessing_seed.fill(0);
-    let triples = trusted_dealer_triples(&session, &mut preprocessing_rng)
-        .map_err(|error| error.to_string())?;
-    let decision = worker
-        .decide_task_with_triples(&task, &material, expected_context, triples)
-        .map_err(|error| error.to_string())?;
-    let draft = decision
-        .draft_receipt(&config.decision_verifier)
-        .map_err(|error| error.to_string())?;
-
-    // Reopen one protected party file at a time. The coordinator never retains
-    // a vector of roots or signing keys, though the current in-process MPC API
-    // still requires all derived `ThresholdParty` share objects above.
-    let mut signatures = Vec::with_capacity(config.keygen.n_parties());
-    for (expected_party, pair) in party_files.chunks_exact(2).enumerate() {
-        let mut custody_wire = read_bounded_regular(
-            Path::new(&pair[0]),
-            "protected single-party collective custody",
-            MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
-            true,
-        )?;
-        let signature_result = (|| {
-            let custody = parse_collective_party_custody(&custody_wire, &config_wire, &config)?;
-            if custody.party != expected_party {
-                return Err("split signer custody changed order".to_string());
-            }
-            config
-                .decision_verifier
-                .sign_claim(
-                    &draft.claim_digest(),
-                    expected_party,
-                    &custody.decision_signer,
-                )
-                .map_err(|error| error.to_string())
-        })();
-        custody_wire.fill(0);
-        signatures.push(signature_result?);
+    let range_end = 1u64
+        .checked_shl(config.value_bits as u32)
+        .ok_or_else(|| "collective equality value width is not shift-safe".to_string())?;
+    if task.public_k() >= range_end || task.public_k() >= params.plaintext_modulus() {
+        return Err("collective task public invariant is outside the equality range".to_string());
     }
-    let receipt = decision
-        .assemble_attested_receipt(&config.decision_verifier, &signatures)
-        .map_err(|error| error.to_string())?;
-    let bundle = CollectiveDecisionBundle::new(decision.transcript().clone(), receipt);
-    let bundle_wire = bundle.to_wire_bytes().map_err(|error| error.to_string())?;
-    let bundle_digest = *blake3::hash(&bundle_wire).as_bytes();
-    write_new_atomic(output_path, &bundle_wire, false)?;
-    println!(
-        "created public split-custody Dark Bazaar decision bundle: {} (task {}, bundle {})",
-        output_path.display(),
-        hex32(
-            &task
-                .attestation_nonce()
-                .map_err(|error| error.to_string())?
-        ),
-        hex32(&bundle_digest)
+    let invariant = task.invariant(&params).map_err(|error| error.to_string())?;
+    let target = LeanCiphertext::from_fhe_bytes(
+        &invariant.ct.to_bytes(),
+        params.moduli(),
+        params.degree(),
+        invariant.plain_bound,
+    )
+    .map_err(|_| "collective task invariant ciphertext is malformed".to_string())?;
+    let mask_session = MaskedDecryptSession::from_public(
+        session.nonce(),
+        config.keygen.n_parties(),
+        1,
+        target,
+        &params,
+    )
+    .map_err(|error| format!("masked decrypt session refused: {error:?}"))?;
+    Ok(CollectiveProcessPublic {
+        config,
+        params,
+        collective,
+        task,
+        session,
+        mask_session,
+    })
+}
+
+fn collective_process_preprocessing_share_internal(args: &[String]) -> Result<(), String> {
+    if args.len() != 4 {
+        return Err("invalid internal preprocessing-share invocation".to_string());
+    }
+    let config_path = Path::new(&args[0]);
+    let party = parse_usize(&args[1], "preprocessing party index")?;
+    let config_wire = read_bounded_regular(
+        config_path,
+        "public collective worker configuration",
+        MAX_COLLECTIVE_WORKER_CONFIG_BYTES,
+        false,
+    )?;
+    let config = parse_collective_worker_config(&config_wire)?;
+    let mut custody_wire = read_bounded_regular(
+        Path::new(&args[2]),
+        "protected single-party collective custody",
+        MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
+        true,
+    )?;
+    let parsed = parse_collective_party_custody(&custody_wire, &config_wire, &config);
+    custody_wire.fill(0);
+    let mut custody = parsed?;
+    if custody.party != party {
+        return Err("preprocessing-share custody names another party".to_string());
+    }
+    let mut output = Vec::with_capacity(MAX_COLLECTIVE_PREPROCESSING_SHARE_BYTES as usize);
+    output.extend_from_slice(COLLECTIVE_PREPROCESSING_SHARE_MAGIC);
+    output.extend_from_slice(&collective_worker_config_digest(&config_wire));
+    output.extend_from_slice(&(party as u64).to_le_bytes());
+    output.extend_from_slice(&custody.preprocessing_seed_share);
+    output.extend_from_slice(&collective_worker_checksum(&output));
+    custody.preprocessing_seed_share.fill(0);
+    debug_assert_eq!(
+        output.len(),
+        MAX_COLLECTIVE_PREPROCESSING_SHARE_BYTES as usize
     );
+    let result = write_new(Path::new(&args[3]), &output, true);
+    output.fill(0);
+    result
+}
+
+fn read_collective_preprocessing_share(
+    path: &Path,
+    config_wire: &[u8],
+    expected_party: usize,
+) -> Result<[u8; 32], String> {
+    let mut wire = read_bounded_regular(
+        path,
+        "protected single-party preprocessing share",
+        MAX_COLLECTIVE_PREPROCESSING_SHARE_BYTES,
+        true,
+    )?;
+    let result = (|| {
+        let content = checked_collective_worker_wire(
+            &wire,
+            COLLECTIVE_PREPROCESSING_SHARE_MAGIC,
+            "protected single-party preprocessing share",
+        )?;
+        let mut input = CollectiveWorkerReader::new(content);
+        input.expect_magic(COLLECTIVE_PREPROCESSING_SHARE_MAGIC)?;
+        if input.array::<32>()? != collective_worker_config_digest(config_wire) {
+            return Err("preprocessing share names another worker configuration".to_string());
+        }
+        if input.usize()? != expected_party {
+            return Err("preprocessing shares are not in exact party order".to_string());
+        }
+        let share = input.array::<32>()?;
+        input.finish()?;
+        if share == [0; 32] {
+            return Err("preprocessing seed share must be nonzero".to_string());
+        }
+        Ok(share)
+    })();
+    wire.fill(0);
+    result
+}
+
+fn collective_process_preprocess_internal(args: &[String]) -> Result<(), String> {
+    if args.len() < 9 || (args.len() - 5) % 2 != 0 {
+        return Err("invalid internal collective preprocessing invocation".to_string());
+    }
+    let pairs = &args[5..];
+    let artifact_paths = pairs
+        .chunks_exact(2)
+        .map(|pair| PathBuf::from(&pair[1]))
+        .collect::<Vec<_>>();
+    let public = load_collective_process_public(
+        Path::new(&args[0]),
+        Path::new(&args[1]),
+        Path::new(&args[2]),
+        Path::new(&args[3]),
+        &artifact_paths,
+    )?;
+    if pairs.len() / 2 != public.config.keygen.n_parties() {
+        return Err("internal preprocessing custody roster has the wrong size".to_string());
+    }
+    let config_wire = read_bounded_regular(
+        Path::new(&args[3]),
+        "public collective worker configuration",
+        MAX_COLLECTIVE_WORKER_CONFIG_BYTES,
+        false,
+    )?;
+    let mut preprocessing_seed = [0u8; 32];
+    for (expected_party, pair) in pairs.chunks_exact(2).enumerate() {
+        let mut party_share =
+            read_collective_preprocessing_share(Path::new(&pair[0]), &config_wire, expected_party)?;
+        for (combined, share) in preprocessing_seed.iter_mut().zip(party_share.iter()) {
+            *combined ^= *share;
+        }
+        party_share.fill(0);
+    }
+    if preprocessing_seed == [0; 32] {
+        return Err("combined split preprocessing seed must be nonzero".to_string());
+    }
+    let mut rng = StdRng::from_seed(preprocessing_seed);
+    preprocessing_seed.fill(0);
+    let triples =
+        trusted_dealer_triples(&public.session, &mut rng).map_err(|error| error.to_string())?;
+    let output_dir = Path::new(&args[4]);
+    let metadata = fs::symlink_metadata(output_dir)
+        .map_err(|error| format!("cannot inspect preprocessing directory: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("preprocessing target must be a real directory".to_string());
+    }
+    for (party, triple) in triples.into_iter().enumerate() {
+        let mut wire = triple.to_wire_bytes().map_err(|error| error.to_string())?;
+        let result = write_new(
+            &output_dir.join(format!("party-{party}.triples")),
+            &wire,
+            true,
+        );
+        wire.fill(0);
+        result?;
+    }
     Ok(())
+}
+
+struct CollectiveProcessPeer {
+    child: Child,
+    input: ChildStdin,
+    output: ChildStdout,
+    label: String,
+}
+
+impl CollectiveProcessPeer {
+    fn spawn(args: &[String], label: String) -> Result<Self, String> {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("cannot locate dark-amm-tool executable: {error}"))?;
+        let mut child = Command::new(executable)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("cannot spawn {label}: {error}"))?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("{label} has no stdin pipe"))?;
+        let output = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("{label} has no stdout pipe"))?;
+        Ok(Self {
+            child,
+            input,
+            output,
+            label,
+        })
+    }
+
+    fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
+        write_collective_process_record(&mut self.input, bytes, &self.label)
+    }
+
+    fn receive(&mut self) -> Result<Vec<u8>, String> {
+        read_collective_process_record(&mut self.output, &self.label)
+    }
+
+    fn wait(&mut self) -> Result<(), String> {
+        let status = self
+            .child
+            .wait()
+            .map_err(|error| format!("cannot wait for {}: {error}", self.label))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("{} exited with {status}", self.label))
+        }
+    }
+}
+
+impl Drop for CollectiveProcessPeer {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+fn write_collective_process_record<W: Write>(
+    output: &mut W,
+    bytes: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    if bytes.len() > MAX_COLLECTIVE_PROCESS_RECORD_BYTES {
+        return Err(format!("{label} record exceeds its allocation limit"));
+    }
+    output
+        .write_all(&(bytes.len() as u64).to_be_bytes())
+        .and_then(|_| output.write_all(bytes))
+        .and_then(|_| output.flush())
+        .map_err(|error| format!("cannot write {label} record: {error}"))
+}
+
+fn read_collective_process_record<R: Read>(input: &mut R, label: &str) -> Result<Vec<u8>, String> {
+    let mut length = [0u8; 8];
+    input
+        .read_exact(&mut length)
+        .map_err(|error| format!("cannot read {label} record length: {error}"))?;
+    let length = usize::try_from(u64::from_be_bytes(length))
+        .map_err(|_| format!("{label} record length does not fit this platform"))?;
+    if length > MAX_COLLECTIVE_PROCESS_RECORD_BYTES {
+        return Err(format!("{label} record exceeds its allocation limit"));
+    }
+    let mut bytes = vec![0u8; length];
+    input
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("cannot read {label} record body: {error}"))?;
+    Ok(bytes)
+}
+
+fn encode_process_vectors(vectors: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(vectors.len() as u32).to_be_bytes());
+    for vector in vectors {
+        let len = u32::try_from(vector.len())
+            .map_err(|_| "process vector length does not fit u32".to_string())?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(vector);
+    }
+    if out.len() > MAX_COLLECTIVE_PROCESS_RECORD_BYTES {
+        return Err("process vector collection exceeds its allocation limit".to_string());
+    }
+    Ok(out)
+}
+
+fn decode_process_vectors(bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut input = CollectiveWorkerReader::new(bytes);
+    let count = usize::try_from(u32::from_be_bytes(input.array()?))
+        .map_err(|_| "process vector count does not fit this platform".to_string())?;
+    if count > 4096 {
+        return Err("process vector collection contains too many entries".to_string());
+    }
+    let mut vectors = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = usize::try_from(u32::from_be_bytes(input.array()?))
+            .map_err(|_| "process vector length does not fit this platform".to_string())?;
+        if len > MAX_COLLECTIVE_PROCESS_RECORD_BYTES {
+            return Err("process vector exceeds its allocation limit".to_string());
+        }
+        let end = input
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= input.bytes.len())
+            .ok_or_else(|| "process vector is truncated".to_string())?;
+        vectors.push(input.bytes[input.offset..end].to_vec());
+        input.offset = end;
+    }
+    input.finish()?;
+    Ok(vectors)
+}
+
+struct ProcessRoutedFrame {
+    sender: usize,
+    recipient: usize,
+    sequence: u64,
+    wire: Vec<u8>,
+}
+
+struct ProcessPumpResponse {
+    complete: bool,
+    transcript: Option<DecisionTranscript>,
+    frames: Vec<ProcessRoutedFrame>,
+}
+
+fn encode_pump_request(frames: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    let mut out = vec![COLLECTIVE_PROCESS_PUMP];
+    out.extend_from_slice(&encode_process_vectors(frames)?);
+    Ok(out)
+}
+
+fn decode_pump_request(bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    if bytes.first() != Some(&COLLECTIVE_PROCESS_PUMP) {
+        return Err("process expected a pump request".to_string());
+    }
+    decode_process_vectors(&bytes[1..])
+}
+
+fn encode_pump_response(
+    complete: bool,
+    transcript: Option<&DecisionTranscript>,
+    frames: Vec<AuthenticatedEqualityFrame>,
+) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.push(u8::from(complete));
+    match transcript {
+        Some(transcript) => {
+            out.push(1);
+            let wire = transcript
+                .to_wire_bytes()
+                .map_err(|error| error.to_string())?;
+            out.extend_from_slice(&(wire.len() as u32).to_be_bytes());
+            out.extend_from_slice(&wire);
+        }
+        None => out.push(0),
+    }
+    out.extend_from_slice(&(frames.len() as u32).to_be_bytes());
+    for frame in frames {
+        out.extend_from_slice(&(frame.sender() as u32).to_be_bytes());
+        out.extend_from_slice(&(frame.recipient() as u32).to_be_bytes());
+        out.extend_from_slice(&frame.sequence().to_be_bytes());
+        let wire = frame.into_bytes();
+        out.extend_from_slice(&(wire.len() as u32).to_be_bytes());
+        out.extend_from_slice(&wire);
+    }
+    Ok(out)
+}
+
+fn decode_pump_response(bytes: &[u8]) -> Result<ProcessPumpResponse, String> {
+    let mut input = CollectiveWorkerReader::new(bytes);
+    let complete = match input.array::<1>()?[0] {
+        0 => false,
+        1 => true,
+        _ => return Err("process response has invalid completion tag".to_string()),
+    };
+    let transcript = match input.array::<1>()?[0] {
+        0 => None,
+        1 => {
+            let len = usize::try_from(u32::from_be_bytes(input.array()?))
+                .map_err(|_| "process transcript length does not fit".to_string())?;
+            let end = input
+                .offset
+                .checked_add(len)
+                .filter(|end| *end <= input.bytes.len())
+                .ok_or_else(|| "process transcript is truncated".to_string())?;
+            let transcript = DecisionTranscript::from_wire_bytes(&input.bytes[input.offset..end])
+                .map_err(|error| error.to_string())?;
+            input.offset = end;
+            Some(transcript)
+        }
+        _ => return Err("process response has invalid transcript tag".to_string()),
+    };
+    let count = usize::try_from(u32::from_be_bytes(input.array()?))
+        .map_err(|_| "process response frame count does not fit".to_string())?;
+    if count > 4096 {
+        return Err("process response contains too many frames".to_string());
+    }
+    let mut frames = Vec::with_capacity(count);
+    for _ in 0..count {
+        let sender = usize::try_from(u32::from_be_bytes(input.array()?))
+            .map_err(|_| "process sender does not fit".to_string())?;
+        let recipient = usize::try_from(u32::from_be_bytes(input.array()?))
+            .map_err(|_| "process recipient does not fit".to_string())?;
+        let sequence = u64::from_be_bytes(input.array()?);
+        let len = usize::try_from(u32::from_be_bytes(input.array()?))
+            .map_err(|_| "process frame length does not fit".to_string())?;
+        if len > 64 * 1024 {
+            return Err("process equality frame exceeds its bound".to_string());
+        }
+        let end = input
+            .offset
+            .checked_add(len)
+            .filter(|end| *end <= input.bytes.len())
+            .ok_or_else(|| "process equality frame is truncated".to_string())?;
+        let wire = input.bytes[input.offset..end].to_vec();
+        input.offset = end;
+        frames.push(ProcessRoutedFrame {
+            sender,
+            recipient,
+            sequence,
+            wire,
+        });
+    }
+    input.finish()?;
+    Ok(ProcessPumpResponse {
+        complete,
+        transcript,
+        frames,
+    })
+}
+
+fn decode_fixed_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N], String> {
+    if value.len() != N * 2 || !value.is_ascii() {
+        return Err(format!("{label} must contain exactly {} hex digits", N * 2));
+    }
+    let mut output = [0u8; N];
+    for (index, byte) in output.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
+            .map_err(|_| format!("{label} contains non-hexadecimal text"))?;
+    }
+    Ok(output)
+}
+
+fn transport_roster(
+    config: &CollectiveWorkerConfig,
+    coordinator_key: [u8; 32],
+) -> Result<EqualityTransportRoster, String> {
+    EqualityTransportRoster::new(
+        config.decision_verifier.ordered_public_keys().to_vec(),
+        coordinator_key,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn drain_party_machine(
+    machine: &mut EqualityPartyMachine,
+) -> Result<(Vec<AuthenticatedEqualityFrame>, bool), String> {
+    let deadline = Instant::now() + Duration::from_millis(20);
+    let mut quiet = 0usize;
+    let mut frames = Vec::new();
+    let mut complete = false;
+    loop {
+        let mut moved = false;
+        while let Some(frame) = machine
+            .try_next_frame()
+            .map_err(|error| error.to_string())?
+        {
+            frames.push(frame);
+            moved = true;
+        }
+        if !complete {
+            let became_complete = machine
+                .try_result()
+                .map_err(|error| error.to_string())?
+                .is_some();
+            if became_complete {
+                complete = true;
+                // The runtime sends its final decision share immediately
+                // before returning. Give the forwarding thread a full quiet
+                // window so process exit cannot strand that last frame.
+                quiet = 0;
+            }
+        }
+        if moved {
+            quiet = 0;
+        } else {
+            quiet += 1;
+            let required_quiet = if complete { 50 } else { 3 };
+            if quiet >= required_quiet || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        }
+    }
+    Ok((frames, complete))
+}
+
+fn drain_coordinator_machine(
+    machine: &mut EqualityCoordinatorMachine,
+) -> Result<(Vec<AuthenticatedEqualityFrame>, Option<DecisionTranscript>), String> {
+    let deadline = Instant::now() + Duration::from_millis(20);
+    let mut quiet = 0usize;
+    let mut frames = Vec::new();
+    let mut transcript = None;
+    loop {
+        let mut moved = false;
+        while let Some(frame) = machine
+            .try_next_frame()
+            .map_err(|error| error.to_string())?
+        {
+            frames.push(frame);
+            moved = true;
+        }
+        if transcript.is_none() {
+            transcript = machine
+                .try_result()
+                .map_err(|error| error.to_string())?
+                .map(|result| result.transcript);
+        }
+        if moved {
+            quiet = 0;
+        } else {
+            quiet += 1;
+            if quiet >= 3 || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_micros(100));
+        }
+    }
+    Ok((frames, transcript))
+}
+
+fn collective_process_party_internal(args: &[String]) -> Result<(), String> {
+    if args.len() < 11 {
+        return Err("invalid internal collective party invocation".to_string());
+    }
+    let party = parse_usize(&args[4], "party index")?;
+    let artifact_paths = args[9..].iter().map(PathBuf::from).collect::<Vec<_>>();
+    let public = load_collective_process_public(
+        Path::new(&args[0]),
+        Path::new(&args[1]),
+        Path::new(&args[2]),
+        Path::new(&args[3]),
+        &artifact_paths,
+    )?;
+    if party >= public.config.keygen.n_parties()
+        || artifact_paths.len() != public.config.keygen.n_parties()
+    {
+        return Err("internal party is outside the exact process roster".to_string());
+    }
+    let coordinator_key = decode_fixed_hex::<32>(&args[8], "coordinator transport key")?;
+    let roster = transport_roster(&public.config, coordinator_key)?;
+    let config_wire = read_bounded_regular(
+        Path::new(&args[3]),
+        "public collective worker configuration",
+        MAX_COLLECTIVE_WORKER_CONFIG_BYTES,
+        false,
+    )?;
+    let mut custody_wire = read_bounded_regular(
+        Path::new(&args[5]),
+        "protected single-party collective custody",
+        MAX_COLLECTIVE_PARTY_CUSTODY_BYTES,
+        true,
+    )?;
+    let custody_result =
+        parse_collective_party_custody(&custody_wire, &config_wire, &public.config);
+    custody_wire.fill(0);
+    let custody = custody_result?;
+    if custody.party != party {
+        return Err("internal party custody names a different roster slot".to_string());
+    }
+    let artifact_wire = read_bounded_regular(
+        Path::new(&args[6]),
+        "public collective party contribution",
+        MAX_COLLECTIVE_PARTY_ARTIFACT_BYTES,
+        false,
+    )?;
+    let artifact =
+        CollectivePartyArtifact::from_wire_bytes(&artifact_wire, &config_wire, &public.config)?;
+    if artifact.party != party {
+        return Err("internal party artifact names a different roster slot".to_string());
+    }
+    let (threshold_party, contribution) = ThresholdParty::join_seeded(
+        &public.config.keygen,
+        party,
+        &public.params,
+        &custody.threshold_root,
+    )
+    .map_err(|error| format!("threshold custody refused: {error:?}"))?;
+    if contribution != artifact.contribution {
+        return Err("internal party custody does not reproduce its public artifact".to_string());
+    }
+    let mut triple_wire = read_bounded_regular(
+        Path::new(&args[7]),
+        "protected equality preprocessing row",
+        fhegg_fhe::mpc_party::MAX_TRIPLE_MATERIAL_BYTES as u64,
+        true,
+    )?;
+    let triple_result = TripleMaterial::from_wire_bytes(&public.session, party, &triple_wire)
+        .map_err(|error| error.to_string());
+    triple_wire.fill(0);
+    let triples = triple_result?;
+
+    let (mask_state, contribution) = MaskedBoundaryParty::prepare(
+        &public.mask_session,
+        party,
+        &public.params,
+        &public.collective,
+    )
+    .map_err(|error| format!("party mask preparation refused: {error:?}"))?;
+    let stdout = std::io::stdout();
+    let stdin = std::io::stdin();
+    let mut output = stdout.lock();
+    let mut input = stdin.lock();
+    write_collective_process_record(
+        &mut output,
+        &contribution.to_wire_bytes(),
+        "party mask contribution",
+    )?;
+
+    let masked_wire = read_collective_process_record(&mut input, "masked ciphertext")?;
+    let masked_ciphertext = LeanCiphertext::from_fhe_bytes(
+        &masked_wire,
+        public.params.moduli(),
+        public.params.degree(),
+        public.params.plaintext_modulus() - 1,
+    )
+    .map_err(|_| "party received a malformed masked ciphertext".to_string())?;
+    let decrypt_share = threshold_party
+        .partial_decrypt(&masked_ciphertext, MIN_SMUDGE_BITS)
+        .map_err(|error| format!("threshold decryption refused: {error:?}"))?;
+    write_collective_process_record(
+        &mut output,
+        &decrypt_share.to_wire_bytes(),
+        "party decrypt share",
+    )?;
+
+    let opening_packet = read_collective_process_record(&mut input, "masked opening material")?;
+    let opening_vectors = decode_process_vectors(&opening_packet)?;
+    let n = public.config.keygen.n_parties();
+    if opening_vectors.len() != n * 2 {
+        return Err("masked opening material has the wrong quorum shape".to_string());
+    }
+    let mut mask_coordinator =
+        MaskedDecryptCoordinator::new(public.mask_session.clone(), public.params.clone());
+    for (expected_party, wire) in opening_vectors[..n].iter().enumerate() {
+        let contribution = EncryptedMaskContribution::from_wire_bytes(wire, &public.params)
+            .map_err(|error| format!("mask contribution refused: {error:?}"))?;
+        if contribution.party() != expected_party {
+            return Err("masked opening contributions are not in exact party order".to_string());
+        }
+        mask_coordinator
+            .accept(contribution)
+            .map_err(|error| format!("mask contribution refused: {error:?}"))?;
+    }
+    let masked = mask_coordinator
+        .finish()
+        .map_err(|error| format!("masked ciphertext construction refused: {error:?}"))?;
+    if masked.ciphertext() != &masked_ciphertext {
+        return Err("masked opening material reconstructs a different ciphertext".to_string());
+    }
+    let opening = masked
+        .open_framed(&opening_vectors[n..], &public.params)
+        .map_err(|error| format!("masked opening refused: {error:?}"))?;
+    let left_share = mask_state
+        .derive_mod_t_share(&opening)
+        .map_err(|error| format!("masked share derivation refused: {error:?}"))?[0];
+    let mut ingress_rng = OsRng;
+    let equality_input = PartyEqualityInput::new(
+        &public.session,
+        party,
+        left_share,
+        if party == 0 {
+            public.task.public_k()
+        } else {
+            0
+        },
+        &mut ingress_rng,
+    )
+    .map_err(|error| error.to_string())?;
+    let signing_key = custody.decision_signer.clone();
+    let mut machine = EqualityPartyMachine::new(
+        public.session.clone(),
+        roster,
+        party,
+        signing_key.clone(),
+        equality_input,
+        triples,
+    )
+    .map_err(|error| error.to_string())?;
+    loop {
+        let request = read_collective_process_record(&mut input, "party equality request")?;
+        let frames = decode_pump_request(&request)?;
+        for frame in frames {
+            machine
+                .accept_frame(&frame)
+                .map_err(|error| error.to_string())?;
+        }
+        let (frames, complete) = drain_party_machine(&mut machine)?;
+        let response = encode_pump_response(complete, None, frames)?;
+        write_collective_process_record(&mut output, &response, "party equality response")?;
+        if complete {
+            break;
+        }
+    }
+    let sign_request = read_collective_process_record(&mut input, "party claim-sign request")?;
+    if sign_request.len() != 33 || sign_request[0] != COLLECTIVE_PROCESS_SIGN {
+        return Err("party received a malformed claim-sign request".to_string());
+    }
+    let claim_digest: [u8; 32] = sign_request[1..].try_into().unwrap();
+    let signature = public
+        .config
+        .decision_verifier
+        .sign_claim(&claim_digest, party, &signing_key)
+        .map_err(|error| error.to_string())?;
+    let mut signature_wire = Vec::with_capacity(68);
+    signature_wire.extend_from_slice(&signature.signer_index.to_be_bytes());
+    signature_wire.extend_from_slice(&signature.signature);
+    write_collective_process_record(&mut output, &signature_wire, "party claim signature")
+}
+
+fn collective_process_coordinator_internal(args: &[String]) -> Result<(), String> {
+    if args.len() < 8 {
+        return Err("invalid internal collective coordinator invocation".to_string());
+    }
+    let artifact_paths = args[6..].iter().map(PathBuf::from).collect::<Vec<_>>();
+    let public = load_collective_process_public(
+        Path::new(&args[0]),
+        Path::new(&args[1]),
+        Path::new(&args[2]),
+        Path::new(&args[3]),
+        &artifact_paths,
+    )?;
+    let coordinator_key = decode_fixed_hex::<32>(&args[5], "coordinator transport key")?;
+    let roster = transport_roster(&public.config, coordinator_key)?;
+    let mut seed_wire = read_bounded_regular(
+        Path::new(&args[4]),
+        "protected coordinator transport seed",
+        32,
+        true,
+    )?;
+    let seed_result: Result<[u8; 32], String> = seed_wire
+        .as_slice()
+        .try_into()
+        .map_err(|_| "coordinator transport seed must contain exactly 32 bytes".to_string());
+    let mut seed = seed_result?;
+    seed_wire.fill(0);
+    let signing_key = SigningKey::from_bytes(&seed);
+    seed.fill(0);
+    if signing_key.verifying_key().to_bytes() != coordinator_key {
+        return Err("coordinator transport seed does not match its public key".to_string());
+    }
+    let mut machine = EqualityCoordinatorMachine::new(public.session, roster, signing_key)
+        .map_err(|error| error.to_string())?;
+    let stdout = std::io::stdout();
+    let stdin = std::io::stdin();
+    let mut output = stdout.lock();
+    let mut input = stdin.lock();
+    loop {
+        let request = read_collective_process_record(&mut input, "coordinator equality request")?;
+        let frames = decode_pump_request(&request)?;
+        for frame in frames {
+            machine
+                .accept_frame(&frame)
+                .map_err(|error| error.to_string())?;
+        }
+        let (frames, transcript) = drain_coordinator_machine(&mut machine)?;
+        let complete = transcript.is_some();
+        let response = encode_pump_response(complete, transcript.as_ref(), frames)?;
+        write_collective_process_record(&mut output, &response, "coordinator equality response")?;
+        if complete {
+            return Ok(());
+        }
+    }
+}
+
+fn collective_decide_split(args: &[String]) -> Result<(), String> {
+    if args.len() < 9 || (args.len() - 5) % 2 != 0 {
+        return Err("usage: dark-amm-tool collective-decide-split <task-file> <committed-public-material-file> <expected-context-file> <public-worker-config-file> <new-decision-bundle-file> <party-custody-0> <party-artifact-0> [<party-custody-N> <party-artifact-N> ...]".to_string());
+    }
+    let task_path = Path::new(&args[0]);
+    let material_path = Path::new(&args[1]);
+    let expected_context_path = Path::new(&args[2]);
+    let config_path = Path::new(&args[3]);
+    let output_path = Path::new(&args[4]);
+    let party_files = &args[5..];
+    ensure_absent(output_path, "decision bundle")?;
+    let artifact_paths = party_files
+        .chunks_exact(2)
+        .map(|pair| PathBuf::from(&pair[1]))
+        .collect::<Vec<_>>();
+    let public = load_collective_process_public(
+        task_path,
+        material_path,
+        expected_context_path,
+        config_path,
+        &artifact_paths,
+    )?;
+    let n = public.config.keygen.n_parties();
+    if party_files.len() / 2 != n {
+        return Err(
+            "split worker must receive exactly one custody/artifact pair per DKG party".to_string(),
+        );
+    }
+
+    let process_dir = unique_staging_path(output_path)?;
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&process_dir)
+        .map_err(|error| format!("cannot create collective process directory: {error}"))?;
+    let process_result = (|| {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("cannot locate dark-amm-tool executable: {error}"))?;
+        let mut preprocessing_share_paths = Vec::with_capacity(n);
+        for (party, pair) in party_files.chunks_exact(2).enumerate() {
+            let share_path = process_dir.join(format!("party-{party}.preprocessing-share"));
+            let extraction = Command::new(&executable)
+                .arg("collective-process-preprocessing-share-internal")
+                .arg(config_path)
+                .arg(party.to_string())
+                .arg(&pair[0])
+                .arg(&share_path)
+                .output()
+                .map_err(|error| {
+                    format!("cannot spawn preprocessing-share party {party}: {error}")
+                })?;
+            if !extraction.status.success() {
+                return Err(format!(
+                    "preprocessing-share party {party} refused: {}",
+                    String::from_utf8_lossy(&extraction.stderr)
+                ));
+            }
+            preprocessing_share_paths.push(share_path);
+        }
+        let mut preprocessing_args = vec![
+            "collective-process-preprocess-internal".to_string(),
+            task_path.display().to_string(),
+            material_path.display().to_string(),
+            expected_context_path.display().to_string(),
+            config_path.display().to_string(),
+            process_dir.display().to_string(),
+        ];
+        for (party, share_path) in preprocessing_share_paths.iter().enumerate() {
+            preprocessing_args.push(share_path.display().to_string());
+            preprocessing_args.push(party_files[party * 2 + 1].clone());
+        }
+        let preprocessing = Command::new(&executable)
+            .args(&preprocessing_args)
+            .output()
+            .map_err(|error| format!("cannot spawn trusted preprocessing process: {error}"))?;
+        if !preprocessing.status.success() {
+            return Err(format!(
+                "trusted preprocessing process refused: {}",
+                String::from_utf8_lossy(&preprocessing.stderr)
+            ));
+        }
+
+        let mut coordinator_seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut OsRng, &mut coordinator_seed);
+        let coordinator_signer = SigningKey::from_bytes(&coordinator_seed);
+        let coordinator_public = coordinator_signer.verifying_key().to_bytes();
+        drop(coordinator_signer);
+        let coordinator_seed_path = process_dir.join("coordinator.transport-key");
+        let seed_write = write_new(&coordinator_seed_path, &coordinator_seed, true);
+        coordinator_seed.fill(0);
+        seed_write?;
+        let coordinator_public_hex = hex32(&coordinator_public);
+
+        let mut coordinator_args = vec![
+            "collective-process-coordinator-internal".to_string(),
+            task_path.display().to_string(),
+            material_path.display().to_string(),
+            expected_context_path.display().to_string(),
+            config_path.display().to_string(),
+            coordinator_seed_path.display().to_string(),
+            coordinator_public_hex.clone(),
+        ];
+        coordinator_args.extend(artifact_paths.iter().map(|path| path.display().to_string()));
+        let mut coordinator = CollectiveProcessPeer::spawn(
+            &coordinator_args,
+            "collective equality coordinator".to_string(),
+        )?;
+        let mut parties = Vec::with_capacity(n);
+        for (party, pair) in party_files.chunks_exact(2).enumerate() {
+            let mut party_args = vec![
+                "collective-process-party-internal".to_string(),
+                task_path.display().to_string(),
+                material_path.display().to_string(),
+                expected_context_path.display().to_string(),
+                config_path.display().to_string(),
+                party.to_string(),
+                pair[0].clone(),
+                pair[1].clone(),
+                process_dir
+                    .join(format!("party-{party}.triples"))
+                    .display()
+                    .to_string(),
+                coordinator_public_hex.clone(),
+            ];
+            party_args.extend(artifact_paths.iter().map(|path| path.display().to_string()));
+            parties.push(CollectiveProcessPeer::spawn(
+                &party_args,
+                format!("collective equality party {party}"),
+            )?);
+        }
+
+        let mut contribution_wires = Vec::with_capacity(n);
+        let mut mask_coordinator =
+            MaskedDecryptCoordinator::new(public.mask_session.clone(), public.params.clone());
+        for (expected_party, party) in parties.iter_mut().enumerate() {
+            let wire = party.receive()?;
+            let contribution = EncryptedMaskContribution::from_wire_bytes(&wire, &public.params)
+                .map_err(|error| format!("mask contribution refused: {error:?}"))?;
+            if contribution.party() != expected_party {
+                return Err(
+                    "party process emitted a mask contribution for another slot".to_string()
+                );
+            }
+            mask_coordinator
+                .accept(contribution)
+                .map_err(|error| format!("mask contribution refused: {error:?}"))?;
+            contribution_wires.push(wire);
+        }
+        let masked = mask_coordinator
+            .finish()
+            .map_err(|error| format!("masked ciphertext construction refused: {error:?}"))?;
+        let masked_wire = masked.ciphertext().to_fhe_bytes();
+        for party in &mut parties {
+            party.send(&masked_wire)?;
+        }
+        let mut decrypt_shares = Vec::with_capacity(n);
+        for party in &mut parties {
+            decrypt_shares.push(party.receive()?);
+        }
+        // Verify the complete threshold opening in the supervisor as well as
+        // independently inside every party process. This value is one-time
+        // padded; it is not an equality operand or a reserve opening.
+        masked
+            .open_framed(&decrypt_shares, &public.params)
+            .map_err(|error| format!("masked opening refused: {error:?}"))?;
+        let opening_packet = encode_process_vectors(
+            &contribution_wires
+                .iter()
+                .chain(decrypt_shares.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+        )?;
+        for party in &mut parties {
+            party.send(&opening_packet)?;
+        }
+
+        let mut party_queues = vec![Vec::<Vec<u8>>::new(); n];
+        let mut coordinator_queue = Vec::<Vec<u8>>::new();
+        let mut party_complete = vec![false; n];
+        let mut coordinator_complete = false;
+        let mut transcript = None;
+        let deadline = Instant::now() + public.config.timeout;
+        while !(coordinator_complete && party_complete.iter().all(|complete| *complete)) {
+            if Instant::now() >= deadline {
+                return Err("cross-process equality exceeded its configured timeout".to_string());
+            }
+            for party_index in 0..n {
+                if party_complete[party_index] {
+                    continue;
+                }
+                let request = encode_pump_request(&std::mem::take(&mut party_queues[party_index]))?;
+                parties[party_index].send(&request)?;
+                let response = decode_pump_response(&parties[party_index].receive()?)?;
+                if response.transcript.is_some() {
+                    return Err("party process attempted to emit a decision transcript".to_string());
+                }
+                party_complete[party_index] = response.complete;
+                for frame in response.frames {
+                    if frame.sender != party_index || frame.recipient > n {
+                        return Err("party process emitted an invalid public route".to_string());
+                    }
+                    let _sequence = frame.sequence;
+                    if frame.recipient == n {
+                        coordinator_queue.push(frame.wire);
+                    } else {
+                        party_queues[frame.recipient].push(frame.wire);
+                    }
+                }
+            }
+            if !coordinator_complete {
+                let request = encode_pump_request(&std::mem::take(&mut coordinator_queue))?;
+                coordinator.send(&request)?;
+                let response = decode_pump_response(&coordinator.receive()?)?;
+                coordinator_complete = response.complete;
+                if response.transcript.is_some() {
+                    if transcript.is_some() || !coordinator_complete {
+                        return Err(
+                            "coordinator emitted a duplicate or premature transcript".to_string()
+                        );
+                    }
+                    transcript = response.transcript;
+                }
+                for frame in response.frames {
+                    if frame.sender != n || frame.recipient >= n {
+                        return Err(
+                            "coordinator process emitted an invalid public route".to_string()
+                        );
+                    }
+                    let _sequence = frame.sequence;
+                    party_queues[frame.recipient].push(frame.wire);
+                }
+            }
+        }
+        if party_queues.iter().any(|queue| !queue.is_empty()) || !coordinator_queue.is_empty() {
+            return Err(
+                "equality processes completed with undelivered authenticated frames".to_string(),
+            );
+        }
+        let transcript = transcript
+            .ok_or_else(|| "coordinator completed without a reveal-only transcript".to_string())?;
+        let decision =
+            MaskedCollectiveDecision::from_external_transcript(public.session.clone(), transcript)
+                .map_err(|error| error.to_string())?;
+        let draft = decision
+            .draft_receipt(&public.config.decision_verifier)
+            .map_err(|error| error.to_string())?;
+        let mut sign_request = Vec::with_capacity(33);
+        sign_request.push(COLLECTIVE_PROCESS_SIGN);
+        sign_request.extend_from_slice(&draft.claim_digest());
+        let mut signatures = Vec::with_capacity(n);
+        for (party_index, party) in parties.iter_mut().enumerate() {
+            party.send(&sign_request)?;
+            let wire = party.receive()?;
+            if wire.len() != 68 {
+                return Err("party process emitted a malformed FHDAR signature".to_string());
+            }
+            let signer_index = u32::from_be_bytes(wire[..4].try_into().unwrap());
+            if signer_index as usize != party_index {
+                return Err("party process emitted an FHDAR signature for another slot".to_string());
+            }
+            signatures.push(PartyClaimSignature {
+                signer_index,
+                signature: wire[4..].try_into().unwrap(),
+            });
+        }
+        for party in &mut parties {
+            party.wait()?;
+        }
+        coordinator.wait()?;
+
+        // Only after all operand-holding processes have exited do we assemble
+        // the public FHDAR001 receipt and publish the commit bundle.
+        let receipt = decision
+            .assemble_attested_receipt(&public.config.decision_verifier, &signatures)
+            .map_err(|error| error.to_string())?;
+        let bundle = CollectiveDecisionBundle::new(decision.transcript().clone(), receipt);
+        let bundle_wire = bundle.to_wire_bytes().map_err(|error| error.to_string())?;
+        let bundle_digest = *blake3::hash(&bundle_wire).as_bytes();
+        write_new_atomic(output_path, &bundle_wire, false)?;
+        println!(
+            "created public process-separated Dark Bazaar decision bundle: {} (task {}, bundle {}, {} parties + coordinator exited)",
+            output_path.display(),
+            hex32(
+                &public
+                    .task
+                    .attestation_nonce()
+                    .map_err(|error| error.to_string())?
+            ),
+            hex32(&bundle_digest),
+            n,
+        );
+        Ok(())
+    })();
+    let cleanup = fs::remove_dir_all(&process_dir)
+        .map_err(|error| format!("cannot remove collective process directory: {error}"));
+    process_result?;
+    cleanup
 }
 
 fn collective_decide(

@@ -1180,6 +1180,41 @@ fn collective_service_is_a_replay_verified_two_phase_game_offering() {
     trailing.push(0);
     assert!(CollectiveDecisionBundle::from_wire_bytes(&trailing).is_err());
 
+    // `collective-decide-split` does not return until every operand-holding
+    // party process and the reveal-only coordinator have exited. Rebuild the
+    // same staged public host, checkpoint it, cross a real restart boundary,
+    // and only then consume the process-produced FHDAR bundle. This proves the
+    // artifact is sufficient for a fresh relying process, not merely for the
+    // in-memory game instance that exported its task.
+    let restart_config = config(
+        &fixture,
+        hosted_session,
+        same_opening_authority.verifier().clone(),
+        decision_verifier.clone(),
+    );
+    let mut restart_probe = CollectiveDarkAmmSession::new(
+        restart_config.clone(),
+        material.clone(),
+        statement.old_root,
+        0,
+    )
+    .unwrap();
+    restart_probe
+        .stage_same_opening_request(&request_wire)
+        .unwrap();
+    let staged_after_process_exit = restart_probe.checkpoint_wire_bytes();
+    let mut restarted_after_process_exit = CollectiveDarkAmmSession::restore_from_checkpoint(
+        restart_config,
+        &staged_after_process_exit,
+    )
+    .unwrap();
+    let restarted_commit = restarted_after_process_exit
+        .commit_attested_decision(bundle.transcript(), bundle.receipt())
+        .unwrap();
+    assert_eq!(restarted_commit.committed_sequence, 0);
+    assert_eq!(restarted_after_process_exit.next_sequence(), 1);
+    assert!(!restarted_after_process_exit.has_pending_candidate());
+
     let committed_receipt = offering
         .invoke_binary_operation(
             &mut game,
