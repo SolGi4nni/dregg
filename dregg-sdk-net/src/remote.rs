@@ -4,7 +4,9 @@
 //! [`RemoteRuntime`] is the remote twin of [`dregg_sdk::runtime::AgentRuntime`]'s
 //! two-nouns surface: `remote.turn().transfer(..).sign().await?.submit().await?`
 //! yields a committed receipt from a NODE — the agent's keypair never leaves
-//! this process, and the node may never have seen it before.
+//! this process. Native-PQ admission also requires the node to have independently
+//! enrolled this agent's `(CellId, Ed25519 key, delegation epoch, ML-DSA key)`;
+//! neither PQ key carried on the wire is accepted as its own trust anchor.
 //!
 //! The wire shape is the node's `POST /turns/submit` signed-envelope ingress
 //! (postcard-encoded [`SignedTurn`], `Content-Type: application/octet-stream`):
@@ -18,10 +20,10 @@
 //!    signature over the federation-BOUND signing message; an unconfigured
 //!    solo node binds `blake3(operator pubkey)` rather than the placeholder
 //!    its `/api/federations` serves.
-//!  * **nonce / receipt-chain head** — the turn rides the agent cell's live
+//!  * **nonce / per-agent receipt-chain head** — the turn rides the agent cell's live
 //!    replay counter (fetched at SIGN time: `dregg-action-sig-v3` binds the
-//!    turn nonce into the per-action signature) and the node's committed
-//!    receipt head (causal binding); a chain-head race with another commit is
+//!    turn nonce into the per-action signature) and that same agent's committed
+//!    receipt head (causal binding); a chain-head race with another agent turn is
 //!    retried once with a fresh head (only the envelope is re-signed), while
 //!    a nonce race invalidates the action signature and requires re-signing.
 //!
@@ -33,7 +35,7 @@
 //! closed here for the remote path).
 
 use dregg_cell::CellId;
-use dregg_turn::{Action, Authorization, CallForest, Effect, Turn, TurnExecutor, action::symbol};
+use dregg_turn::{Action, CallForest, Effect, Turn, action::symbol};
 use dregg_types::hex_encode;
 use serde::Deserialize;
 
@@ -89,6 +91,11 @@ struct CellDetailLite {
     found: bool,
     #[serde(default)]
     nonce: u64,
+    /// The durable receipt head for THIS cell acting as an agent. This is not
+    /// the node-wide receipt-log tip: every agent advances an independent
+    /// causal chain.
+    #[serde(default)]
+    last_receipt_hash: Option<String>,
 }
 
 /// One entry of `GET /api/receipts` (the fields the remote client consumes).
@@ -152,6 +159,13 @@ impl RemoteRuntime {
     /// No I/O happens until the first signing/submission (federation binding
     /// is discovered lazily and cached).
     pub fn connect(base_url: impl Into<String>, cipherclerk: AgentCipherclerk) -> Self {
+        // RemoteRuntime is itself an SDK signing host. Install the same
+        // process-global verified ML-DSA producers/verifier as AgentRuntime;
+        // if this binary was built without the Lean exports, the PQ audit gate
+        // still refuses at first use rather than silently substituting a crate.
+        let _ = dregg_sdk::install_verified_mldsa_keygen_core_real();
+        let _ = dregg_sdk::install_verified_mldsa_sign_core_real();
+        let _ = dregg_sdk::install_verified_mldsa_verify_core();
         let cell = cipherclerk.cell_id("default");
         Self {
             cipherclerk,
@@ -225,18 +239,23 @@ impl RemoteRuntime {
         Ok(if detail.found { detail.nonce } else { 0 })
     }
 
-    /// The node's committed receipt-chain head (causal binding for
-    /// `previous_receipt_hash`). `None` when the node has no receipts yet.
-    pub async fn receipt_chain_head(&self) -> Result<Option<[u8; 32]>, SdkError> {
-        let infos: Vec<RemoteReceiptInfo> = self.get_json("/api/receipts").await?;
-        let head = infos
-            .iter()
-            .find(|r| r.chain_head)
-            .or_else(|| infos.iter().max_by_key(|r| r.chain_index));
-        match head {
-            Some(h) => Ok(Some(hex_decode_32(&h.receipt_hash)?)),
-            None => Ok(None),
-        }
+    /// This acting agent's durable committed receipt-chain head (causal
+    /// binding for `previous_receipt_hash`). `None` only when this agent has no
+    /// committed receipts yet.
+    ///
+    /// The node exposes this on the agent's own cell view. Reading the
+    /// node-wide `/api/receipts` tip here is incorrect: receipts from unrelated
+    /// agents may interleave in that immutable total log without becoming a
+    /// predecessor in this agent's chain.
+    pub async fn agent_receipt_chain_head(&self) -> Result<Option<[u8; 32]>, SdkError> {
+        let detail: CellDetailLite = self
+            .get_json(&format!("/api/cell/{}", hex_encode(&self.cell.0)))
+            .await?;
+        detail
+            .last_receipt_hash
+            .as_deref()
+            .map(hex_decode_32)
+            .transpose()
     }
 
     /// Fetch the committed receipt for `turn_hash` (hex) from `/api/receipts`.
@@ -245,9 +264,12 @@ impl RemoteRuntime {
         Ok(infos.into_iter().find(|r| r.turn_hash == turn_hash))
     }
 
-    /// Devnet onboarding: `POST /api/faucet` to materialize this agent's
-    /// hosted cell with its REAL owner key (required before the cell can pass
-    /// Ed25519 turn authorization) and claim `amount` computrons.
+    /// Devnet funding: `POST /api/faucet` to materialize this agent's hosted
+    /// cell with its REAL Ed25519 owner key and claim `amount` computrons.
+    ///
+    /// This does not enroll the agent's ML-DSA identity. Native-PQ admission
+    /// remains fail-closed until trusted node/genesis state independently binds
+    /// that key and the cell's live delegation epoch.
     pub async fn faucet(&self, amount: u64) -> Result<(), SdkError> {
         let body = serde_json::json!({
             "recipient": hex_encode(&self.cell.0),
@@ -301,16 +323,8 @@ impl RemoteRuntime {
     /// into the signing message, so the envelope's `turn.nonce` and the
     /// action signature must agree or the node's executor rejects.
     fn sign_action(&self, unsigned: Action, federation_id: &[u8; 32], turn_nonce: u64) -> Action {
-        let unsigned = Action {
-            authorization: Authorization::Unchecked,
-            ..unsigned
-        };
-        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id, turn_nonce);
-        let sig = self.cipherclerk.sign_bytes(&message);
-        Action {
-            authorization: Authorization::from_sig_bytes(sig.0),
-            ..unsigned
-        }
+        self.cipherclerk
+            .sign_action_hybrid(unsigned, federation_id, turn_nonce)
     }
 
     /// Envelope-sign `turn` and POST the postcard `SignedTurn` to the node's
@@ -526,7 +540,7 @@ impl RemoteAuthorizedTurn<'_> {
 
         let mut last_error = String::new();
         for attempt in 0..2 {
-            let previous_receipt_hash = self.runtime.receipt_chain_head().await?;
+            let previous_receipt_hash = self.runtime.agent_receipt_chain_head().await?;
             let turn = self.build_turn(self.turn_nonce, previous_receipt_hash);
             let resp = self.runtime.submit_envelope(&turn).await?;
             if resp.accepted {
@@ -556,6 +570,8 @@ pub fn method_symbol(name: &str) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_cell::{Cell, Ledger};
+    use dregg_turn::{Authorization, ComputronCosts, TurnExecutor};
     use dregg_types::Signature;
 
     /// Poll a future that must complete without any pending I/O (every async
@@ -599,6 +615,56 @@ mod tests {
         let default_token_id = *blake3::hash(b"default").as_bytes();
         let expected = CellId::derive_raw(&runtime.cipherclerk.public_key().0, &default_token_id);
         assert_eq!(runtime.cell_id(), expected);
+    }
+
+    #[tokio::test]
+    async fn receipt_head_is_read_from_the_acting_agent_cell() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let clerk = AgentCipherclerk::from_seed([0x31; 64]);
+        let cell = clerk.cell_id("default");
+        let expected_head = [0xA5; 32];
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fixture server");
+        let addr = listener.local_addr().expect("fixture address");
+        let response_body = serde_json::json!({
+            "found": true,
+            "nonce": 4,
+            "last_receipt_hash": hex_encode(&expected_head),
+        })
+        .to_string();
+        let expected_path = format!("/api/cell/{}", hex_encode(&cell.0));
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept client");
+            let mut request = vec![0u8; 4096];
+            let n = stream.read(&mut request).await.expect("read request");
+            let request = String::from_utf8_lossy(&request[..n]);
+            assert!(
+                request.starts_with(&format!("GET {expected_path} HTTP/1.1")),
+                "remote runtime must ask for its own cell head, never the node-global receipt tip: {request}"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body,
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        });
+
+        let runtime = RemoteRuntime::connect(format!("http://{addr}"), clerk);
+        assert_eq!(
+            runtime
+                .agent_receipt_chain_head()
+                .await
+                .expect("read per-agent head"),
+            Some(expected_head),
+        );
+        server.await.expect("fixture server task");
     }
 
     // ─── builder staging ───
@@ -682,21 +748,23 @@ mod tests {
     // ─── action signing (the executor-side contract) ───
 
     #[test]
-    fn signed_action_verifies_over_the_federation_bound_message() {
+    fn signed_action_is_native_hybrid_and_both_halves_bind_the_message() {
         let runtime = offline_runtime();
         let authorized =
             poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign_at(0)).expect("sign");
         let action = authorized.action();
 
-        let Authorization::Signature(r, s) = &action.authorization else {
+        let Authorization::HybridSignature {
+            ed25519,
+            ml_dsa,
+            ml_dsa_pk,
+        } = &action.authorization
+        else {
             panic!(
-                "expected Authorization::Signature, got {:?}",
+                "expected native Authorization::HybridSignature, got {:?}",
                 action.authorization
             );
         };
-        let mut sig = [0u8; 64];
-        sig[..32].copy_from_slice(r);
-        sig[32..].copy_from_slice(s);
 
         // EXACTLY the executor's verification: the canonical signing message
         // (computed over the Unchecked shape) under the bound federation id.
@@ -707,16 +775,81 @@ mod tests {
         let message = TurnExecutor::compute_signing_message(&unsigned, &TEST_FED, 0);
         let pk = runtime.cipherclerk.public_key();
         assert!(
-            pk.verify(&message, &Signature(sig)),
-            "action signature must verify over the federation-bound message"
+            pk.verify(&message, &Signature(*ed25519)),
+            "action Ed25519 half must verify over the federation-bound message"
+        );
+        assert!(
+            dregg_turn::pq::ml_dsa_verify(ml_dsa_pk, &message, ml_dsa),
+            "action ML-DSA half must verify over exactly the same message"
         );
 
-        // Cross-federation replay refuses: the same signature under a
-        // DIFFERENT federation id must not verify.
+        // Cross-federation replay refuses under BOTH halves.
         let foreign = TurnExecutor::compute_signing_message(&unsigned, &[8u8; 32], 0);
         assert!(
-            !pk.verify(&foreign, &Signature(sig)),
-            "signature must be federation-bound"
+            !pk.verify(&foreign, &Signature(*ed25519)),
+            "Ed25519 half must be federation-bound"
+        );
+        assert!(
+            !dregg_turn::pq::ml_dsa_verify(ml_dsa_pk, &foreign, ml_dsa),
+            "ML-DSA half must be federation-bound"
+        );
+    }
+
+    #[test]
+    fn native_executor_accepts_only_after_independent_identity_enrollment() {
+        let runtime = offline_runtime();
+        let authorized =
+            poll_ready(runtime.turn().write_u64(3, 77).sign_at(0)).expect("hybrid sign");
+        let turn = authorized.build_turn(0, None);
+        let Authorization::HybridSignature { ml_dsa_pk, .. } = &authorized.action.authorization
+        else {
+            panic!("remote action must be hybrid");
+        };
+
+        let default_token_id = *blake3::hash(b"default").as_bytes();
+        let cell = Cell::with_balance(
+            runtime.cipherclerk.public_key().0,
+            default_token_id,
+            1_000_000,
+        );
+        assert_eq!(cell.id(), runtime.cell_id());
+
+        let mut unenrolled_ledger = Ledger::new();
+        unenrolled_ledger
+            .insert_cell(cell.clone())
+            .expect("fixture cell");
+        let mut unenrolled = TurnExecutor::new(ComputronCosts::default());
+        unenrolled.set_local_federation_id(TEST_FED);
+        unenrolled.set_require_pq(true);
+        assert!(
+            !unenrolled
+                .execute(&turn, &mut unenrolled_ledger)
+                .is_committed(),
+            "a self-carried valid ML-DSA key is not an identity enrollment"
+        );
+
+        // Simulate independently trusted genesis/host state installing the
+        // expected key BEFORE admission. Production must never derive this
+        // enrollment from the action currently being verified.
+        let mut enrolled_ledger = Ledger::new();
+        enrolled_ledger
+            .insert_cell(cell.clone())
+            .expect("fixture cell");
+        let mut enrolled = TurnExecutor::new(ComputronCosts::default());
+        enrolled.set_local_federation_id(TEST_FED);
+        enrolled.set_require_pq(true);
+        enrolled
+            .enroll_pq_identity(
+                cell.id(),
+                *cell.public_key(),
+                cell.state.delegation_epoch(),
+                ml_dsa_pk.clone(),
+            )
+            .expect("trusted fixture enrollment");
+        let enrolled_result = enrolled.execute(&turn, &mut enrolled_ledger);
+        assert!(
+            enrolled_result.is_committed(),
+            "the exact pre-enrolled hybrid identity must authorize the turn: {enrolled_result:?}"
         );
     }
 
@@ -767,12 +900,31 @@ mod tests {
         let turn = authorized.build_turn(0, None);
 
         let signed = runtime.cipherclerk.sign_turn(&turn);
+        let Authorization::HybridSignature {
+            ml_dsa_pk: inner_pq_signer,
+            ..
+        } = &authorized.action.authorization
+        else {
+            panic!("remote inner action must be hybrid");
+        };
         // The node's exact acceptance predicate.
         assert!(
             signed.signer.verify(&signed.turn.hash(), &signed.signature),
-            "honest envelope must verify"
+            "honest envelope Ed25519 half must verify"
+        );
+        assert!(
+            dregg_turn::pq::ml_dsa_verify(
+                &signed.pq_signer,
+                &signed.turn.hash(),
+                &signed.pq_signature,
+            ),
+            "honest envelope ML-DSA half must verify over the same turn hash"
         );
         assert_eq!(signed.signer, runtime.cipherclerk.public_key());
+        assert_eq!(
+            &signed.pq_signer, inner_pq_signer,
+            "inner action and outer envelope must present the same native hybrid identity"
+        );
 
         // Tampering ANY turn field after signing breaks the envelope.
         let mut tampered = signed.clone();
@@ -781,7 +933,15 @@ mod tests {
             !tampered
                 .signer
                 .verify(&tampered.turn.hash(), &tampered.signature),
-            "tampered envelope must refuse"
+            "tampered envelope must fail Ed25519"
+        );
+        assert!(
+            !dregg_turn::pq::ml_dsa_verify(
+                &tampered.pq_signer,
+                &tampered.turn.hash(),
+                &tampered.pq_signature,
+            ),
+            "tampered envelope must fail ML-DSA"
         );
     }
 
@@ -817,6 +977,26 @@ mod tests {
         assert!(feds[0].is_local);
         assert_eq!(feds[0].member_count, 3);
         assert_eq!(feds[0].committee_epoch, 2);
+
+        let head = [0xA5; 32];
+        let cell: CellDetailLite = serde_json::from_value(serde_json::json!({
+            "found": true,
+            "nonce": 9,
+            "last_receipt_hash": hex_encode(&head),
+            "extra": 1,
+        }))
+        .expect("cell detail shape");
+        assert!(cell.found);
+        assert_eq!(cell.nonce, 9);
+        assert_eq!(
+            cell.last_receipt_hash
+                .as_deref()
+                .map(hex_decode_32)
+                .transpose()
+                .expect("head hex"),
+            Some(head),
+            "the per-agent head is carried by the acting cell view"
+        );
 
         let receipts: Vec<RemoteReceiptInfo> = serde_json::from_str(
             r#"[{"turn_hash":"00","receipt_hash":"11","chain_index":4,"chain_head":true,"has_proof":false}]"#,
