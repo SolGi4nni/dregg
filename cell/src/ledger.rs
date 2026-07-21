@@ -7,7 +7,7 @@ use crate::capability::CapabilityRef;
 use crate::cell::Cell;
 use crate::id::CellId;
 use crate::permissions::Permissions;
-use crate::state::{FieldElement, STATE_SLOTS};
+use crate::state::FieldElement;
 
 // =============================================================================
 // Witness Freshness Types
@@ -33,8 +33,10 @@ pub struct WitnessDiff {
 /// A delta to apply to a single cell's state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellStateDelta {
-    /// Field updates: (slot_index, new_value).
-    pub field_updates: Vec<(usize, FieldElement)>,
+    /// Field updates: (canonical u64 field key, new value). Keys `0..16`
+    /// address the fixed register file; larger keys address the committed map.
+    /// Fixed width keeps persisted deltas identical on wasm32 and native hosts.
+    pub field_updates: Vec<(u64, FieldElement)>,
     /// Whether to increment the nonce.
     pub nonce_increment: bool,
     /// Balance change (can be negative).
@@ -892,16 +894,6 @@ impl Ledger {
         for (cell_id, state_delta) in &delta.updated {
             let cell = lookup(cell_id).ok_or(LedgerError::CellNotFound(*cell_id))?;
 
-            // Validate field indices.
-            for &(index, _) in &state_delta.field_updates {
-                if index >= STATE_SLOTS {
-                    return Err(LedgerError::InvalidFieldIndex {
-                        cell_id: *cell_id,
-                        index,
-                    });
-                }
-            }
-
             // Get or initialize running balance for this cell.
             let balance =
                 get_running_balance(&mut running_balances, cell_id).unwrap_or(cell.state.balance);
@@ -962,13 +954,7 @@ impl Ledger {
         cell.invalidate_leaf_cache();
         // Field updates.
         for &(index, ref value) in &delta.field_updates {
-            if index >= STATE_SLOTS {
-                return Err(LedgerError::InvalidFieldIndex {
-                    cell_id: *cell_id,
-                    index,
-                });
-            }
-            cell.state.fields[index] = *value;
+            cell.state.set_field_ext(index, *value);
         }
 
         // Nonce.

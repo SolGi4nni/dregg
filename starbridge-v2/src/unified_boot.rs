@@ -510,7 +510,7 @@ pub fn client_signed_save(
     // (2) Build + sign the SetField turn AS THE USER, over the node's federation id.
     let effect = dregg_turn::Effect::SetField {
         cell: user_cell,
-        index,
+        index: index as u64,
         value: field_element_from(value),
     };
     let action = clerk.make_action(user_cell, "save", vec![effect], &federation_id);

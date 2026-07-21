@@ -856,7 +856,7 @@ fn test_budget_exceeded() {
     let mut builder = TurnBuilder::new(agent_id, 0);
     for i in 0..20 {
         let action = ActionBuilder::new_unchecked_for_tests(target_id, "expensive_op", agent_id)
-            .effect_set_field(target_id, i % STATE_SLOTS, [i as u8; 32])
+            .effect_set_field(target_id, (i % STATE_SLOTS) as u64, [i as u8; 32])
             .build();
         builder.add_action(action);
     }
@@ -2177,7 +2177,7 @@ fn test_program_delegation_epoch_equals_enforced() {
     let mut builder = TurnBuilder::new(agent_id, 0);
     builder.add_action(
         ActionBuilder::new_unchecked_for_tests(target_id, "forge_epoch", agent_id)
-            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(5))
+            .effect_set_field(target_id, EPOCH_SLOT as u64, field_from_u64(5))
             .build(),
     );
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
@@ -2200,7 +2200,7 @@ fn test_program_delegation_epoch_equals_enforced() {
     let mut builder = TurnBuilder::new(agent_id, 1);
     builder.add_action(
         ActionBuilder::new_unchecked_for_tests(target_id, "tie_zero", agent_id)
-            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(0))
+            .effect_set_field(target_id, EPOCH_SLOT as u64, field_from_u64(0))
             .build(),
     );
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
@@ -2240,7 +2240,7 @@ fn test_program_delegation_epoch_equals_enforced() {
     let mut builder = TurnBuilder::new(agent_id, 3);
     builder.add_action(
         ActionBuilder::new_unchecked_for_tests(target_id, "epoch_step", agent_id)
-            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(1))
+            .effect_set_field(target_id, EPOCH_SLOT as u64, field_from_u64(1))
             .effect(Effect::RevokeDelegation { child: child_id })
             .build(),
     );
@@ -2258,7 +2258,7 @@ fn test_program_delegation_epoch_equals_enforced() {
     let mut builder = TurnBuilder::new(agent_id, 4);
     builder.add_action(
         ActionBuilder::new_unchecked_for_tests(target_id, "bare_step", agent_id)
-            .effect_set_field(target_id, EPOCH_SLOT, field_from_u64(2))
+            .effect_set_field(target_id, EPOCH_SLOT as u64, field_from_u64(2))
             .build(),
     );
     let result = execute_chained(&executor, &builder.fee(500).build(), &mut ledger);
@@ -2322,7 +2322,7 @@ fn test_program_count_ge_enforced() {
     let quorum_action = |value: dregg_cell::FieldElement, blob: Option<Vec<u8>>| {
         let mut action =
             ActionBuilder::new_unchecked_for_tests(target_id, "council_write", agent_id)
-                .effect_set_field(target_id, QC_SLOT, value)
+                .effect_set_field(target_id, QC_SLOT as u64, value)
                 .build();
         if let Some(bytes) = blob {
             action.witness_blobs = vec![crate::action::WitnessBlob {
@@ -2485,7 +2485,7 @@ fn test_sequential_turns() {
             let mut val = [0u8; 32];
             val[0] = i as u8;
             let action = ActionBuilder::new_unchecked_for_tests(target_id, "seq_op", agent_id)
-                .effect_set_field(target_id, (i as usize) % STATE_SLOTS, val)
+                .effect_set_field(target_id, i % STATE_SLOTS as u64, val)
                 .build();
             builder.add_action(action);
         }
@@ -4463,7 +4463,7 @@ fn test_proved_state_set_by_proof() {
             "",
         );
         for i in 0..STATE_SLOTS {
-            ab = ab.effect_set_field(target_id, i, [(i + 1) as u8; 32]);
+            ab = ab.effect_set_field(target_id, i as u64, [(i + 1) as u8; 32]);
         }
         builder.add_action(ab.build());
     }
@@ -4510,7 +4510,7 @@ fn test_proved_state_cleared_by_signature() {
             "",
         );
         for i in 0..STATE_SLOTS {
-            ab = ab.effect_set_field(target_id, i, [(i + 1) as u8; 32]);
+            ab = ab.effect_set_field(target_id, i as u64, [(i + 1) as u8; 32]);
         }
         builder.add_action(ab.build());
     }
@@ -4572,7 +4572,7 @@ fn test_proved_state_unchanged_when_no_fields_modified() {
             "",
         );
         for i in 0..STATE_SLOTS {
-            ab = ab.effect_set_field(target_id, i, [(i + 1) as u8; 32]);
+            ab = ab.effect_set_field(target_id, i as u64, [(i + 1) as u8; 32]);
         }
         builder.add_action(ab.build());
     }
@@ -4633,7 +4633,7 @@ fn test_precondition_proved_state_true() {
             "",
         );
         for i in 0..STATE_SLOTS {
-            ab = ab.effect_set_field(target_id, i, [(i + 1) as u8; 32]);
+            ab = ab.effect_set_field(target_id, i as u64, [(i + 1) as u8; 32]);
         }
         builder.add_action(ab.build());
     }
@@ -4736,6 +4736,55 @@ fn test_partial_proof_fields_doesnt_set_proved() {
 
     // proved_state should still be false (only 3/STATE_SLOTS fields set).
     assert!(!ledger.get(&target_id).unwrap().state.proved_state());
+}
+
+#[test]
+fn proof_writes_to_sixteen_wide_keys_do_not_claim_fixed_state_is_proved() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let agent_id = agent.id();
+
+    let (mut target, _) = make_open_cell(2, 0);
+    target.permissions = Permissions::zkapp();
+    target.verification_key = Some(VerificationKey::new(vec![1, 2, 3, 4]));
+    let target_id = target.id();
+
+    let mut agent_with_cap = agent;
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
+    ledger.insert_cell(agent_with_cap).unwrap();
+    ledger.insert_cell(target).unwrap();
+
+    let mut executor = zero_cost_executor();
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    let wide_base = (u32::MAX as u64) + 1;
+    let mut action = ActionBuilder::new(target_id, "wide_only_proof", agent_id).with_proof(
+        vec![1, 2, 3, 4],
+        "",
+        "",
+    );
+    for offset in 0..STATE_SLOTS as u64 {
+        action = action.effect_set_field(target_id, wide_base + offset, [0x77; 32]);
+    }
+    let mut turn = TurnBuilder::new(agent_id, 0);
+    turn.add_action(action.build());
+
+    let result = executor.execute(&turn.fee(500).build(), &mut ledger);
+    assert!(result.is_committed());
+    assert!(
+        !ledger.get(&target_id).unwrap().state.proved_state(),
+        "committed-map writes are not proofs of the sixteen fixed registers"
+    );
+    assert_eq!(
+        ledger
+            .get(&target_id)
+            .unwrap()
+            .state
+            .get_field_ext(wide_base),
+        Some([0x77; 32])
+    );
 }
 
 // =============================================================================

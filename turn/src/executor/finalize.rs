@@ -519,7 +519,7 @@ impl TurnExecutor {
         // Track the FIRST old balance/nonce per cell (the pre-turn value).
         let mut first_balance: HashMap<CellId, i64> = HashMap::new();
         let mut first_nonce: HashMap<CellId, u64> = HashMap::new();
-        let mut first_fields: HashMap<(CellId, usize), Option<FieldElement>> = HashMap::new();
+        let mut first_fields: HashMap<(CellId, u64), Option<FieldElement>> = HashMap::new();
 
         for entry in journal.entries() {
             match entry {
@@ -634,10 +634,10 @@ impl TurnExecutor {
         // Compute field/balance/nonce deltas from first-old vs current.
         for ((cell_id, index), old_value) in &first_fields {
             if let Some(c) = ledger.get(cell_id) {
-                let new_value = if *index < STATE_SLOTS {
-                    Some(c.state.fields[*index])
+                let new_value = if *index < STATE_SLOTS as u64 {
+                    Some(c.state.fields[*index as usize])
                 } else {
-                    c.state.get_field_ext(*index as u64)
+                    c.state.get_field_ext(*index)
                 };
                 if new_value != *old_value {
                     let e = updated_cells

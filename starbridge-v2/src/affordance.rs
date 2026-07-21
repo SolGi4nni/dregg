@@ -127,7 +127,7 @@ impl CellAffordance {
 pub enum EffectSummary {
     SetField {
         cell: CellId,
-        index: usize,
+        index: u64,
     },
     Transfer {
         from: CellId,

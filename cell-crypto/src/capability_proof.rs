@@ -118,7 +118,7 @@ pub enum CapabilityProofData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PeerEffect {
     /// Set a state field on the target cell.
-    SetField { index: usize, value: FieldElement },
+    SetField { index: u64, value: FieldElement },
     /// Transfer computrons from the target cell to the holder.
     Transfer { amount: u64 },
     /// Increment the target cell's nonce.

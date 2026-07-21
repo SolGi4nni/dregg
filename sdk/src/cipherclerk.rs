@@ -5267,9 +5267,7 @@ impl AgentCipherclerk {
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
-                    if *index < new_cell_state.state.fields.len() {
-                        new_cell_state.state.fields[*index] = *value;
-                    }
+                    new_cell_state.state.set_field_ext(*index as u64, *value);
                 }
                 Effect::IncrementNonce { cell } if cell == cell_id => {
                     let _ = new_cell_state.state.increment_nonce();
@@ -5609,7 +5607,7 @@ impl AgentCipherclerk {
         //     (`verify_and_commit_proof_rotated`). A single-cohort turn (the live fleet) skips this and
         //     takes the byte-identical single-leg path below.
         {
-            let vm_effects_probe = Self::convert_effects_to_vm(cell_id, &effects);
+            let vm_effects_probe = Self::try_convert_effects_to_vm(cell_id, &effects)?;
             if crate::full_turn_proof::split_into_cohort_runs(&vm_effects_probe).len() > 1 {
                 return self.prove_sovereign_cohort_chain(
                     cell_id,
@@ -5640,9 +5638,7 @@ impl AgentCipherclerk {
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
-                    if *index < after_cell.state.fields.len() {
-                        after_cell.state.fields[*index] = *value;
-                    }
+                    after_cell.state.set_field_ext(*index as u64, *value);
                 }
                 Effect::IncrementNonce { cell } if cell == cell_id => {
                     let _ = after_cell.state.increment_nonce();
@@ -5745,7 +5741,7 @@ impl AgentCipherclerk {
 
         // 3. The Effect-VM marshalling + circuit pre-state (cap-root-seeded), identical
         //    to the v1 path so the rotated generator's v1 sub-trace is byte-identical.
-        let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
+        let vm_effects = Self::try_convert_effects_to_vm(cell_id, &effects)?;
 
         // FEE-IN-PROOF (the `transferFeeVmDescriptor2R24` route): a plain sovereign `Transfer` lead
         // debits the turn `fee` INSIDE the proven transition, so NEW_COMMIT binds the POST-fee
@@ -6432,7 +6428,7 @@ impl AgentCipherclerk {
         // The vm-effect projection + the cohort-run split (the SAME the executor recomputes). For a
         // sovereign turn over `cell_id` the projection is 1:1 with the kernel effects (each kernel
         // effect targeting the cell maps to one VmEffect), so the run ranges index BOTH lists.
-        let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
+        let vm_effects = Self::try_convert_effects_to_vm(cell_id, &effects)?;
         if vm_effects.len() != effects.len() {
             return Err(SdkError::InvalidWitness(format!(
                 "multi-cohort sovereign turn: the vm-effect projection ({} effects) is not 1:1 with \
@@ -6681,7 +6677,7 @@ impl AgentCipherclerk {
     /// via `commitment_to_4bb`); per-effect parameter widening is deferred
     /// to Stages 3–6 of the master plan, where each variant's AIR is
     /// rewritten to consume wider operand slots.
-    pub fn convert_effects_to_vm(
+    fn convert_effects_to_vm_unchecked(
         cell_id: &CellId,
         effects: &[Effect],
     ) -> Vec<dregg_circuit::effect_vm::Effect> {
@@ -6748,8 +6744,14 @@ impl AgentCipherclerk {
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
+                    // Keep the producer boundary byte-identical to the
+                    // executor bridge: the current AIR has a u32 key column,
+                    // so a canonical u64 key must fail rather than truncate.
+                    let field_idx = u32::try_from(*index).expect(
+                        "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
+                    );
                     vm_effects.push(VmEffect::SetField {
-                        field_idx: *index as u32,
+                        field_idx,
                         value: field_element_to_bb(value),
                     });
                 }
@@ -7197,6 +7199,37 @@ impl AgentCipherclerk {
         vm_effects
     }
 
+    /// Checked producer-side EffectVM projection. Runtime keys are canonical
+    /// `u64`; the current AIR can bind only `u32` field indices.
+    pub fn try_convert_effects_to_vm(
+        cell_id: &CellId,
+        effects: &[Effect],
+    ) -> Result<Vec<dregg_circuit::effect_vm::Effect>, SdkError> {
+        if let Some(index) = effects.iter().find_map(|effect| match effect {
+            Effect::SetField { cell, index, .. } if cell == cell_id && *index > u32::MAX as u64 => {
+                Some(*index)
+            }
+            _ => None,
+        }) {
+            return Err(SdkError::InvalidWitness(format!(
+                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+            )));
+        }
+        Ok(Self::convert_effects_to_vm_unchecked(cell_id, effects))
+    }
+
+    /// Compatibility projection for callers that already establish the
+    /// EffectVM key domain. Proof producers should use
+    /// [`Self::try_convert_effects_to_vm`] and propagate the refusal.
+    pub fn convert_effects_to_vm(
+        cell_id: &CellId,
+        effects: &[Effect],
+    ) -> Vec<dregg_circuit::effect_vm::Effect> {
+        Self::try_convert_effects_to_vm(cell_id, effects).expect(
+            "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
+        )
+    }
+
     /// Store sovereign cell state in the cipherclerk (agent maintains it).
     ///
     /// Call this after transitioning a cell to sovereign mode. The cipherclerk keeps
@@ -7231,9 +7264,7 @@ impl AgentCipherclerk {
                     index,
                     value,
                 } if target == cell_id => {
-                    if *index < cell.state.fields.len() {
-                        cell.state.fields[*index] = *value;
-                    }
+                    cell.state.set_field_ext(*index as u64, *value);
                 }
                 Effect::Transfer { to, amount, .. } if to == cell_id => {
                     cell.state
@@ -7548,6 +7579,24 @@ impl std::fmt::Debug for AgentCipherclerk {
 mod tests {
     use super::*;
     use dregg_turn::TurnReceipt;
+
+    #[test]
+    fn checked_effect_vm_projection_refuses_a_wide_field_key() {
+        let cell = CellId([0x61; 32]);
+        let wide = u32::MAX as u64 + 1;
+        let effects = [Effect::SetField {
+            cell,
+            index: wide,
+            value: [9; 32],
+        }];
+
+        let error = AgentCipherclerk::try_convert_effects_to_vm(&cell, &effects)
+            .expect_err("the current EffectVM AIR cannot bind a u64-wide field key");
+        assert!(
+            matches!(error, SdkError::InvalidWitness(message) if message.contains(&wide.to_string())),
+            "the refusal must name the unsupported key"
+        );
+    }
 
     /// THE UNIFIED REDUCTION — `extract_fact_value` IS `trace_fact_terms_bb[0]`.
     ///

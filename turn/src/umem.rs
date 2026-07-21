@@ -1545,7 +1545,7 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
         } => vec![Touch::At(
             UKey::Field {
                 cell: *cell,
-                slot: *index as u64,
+                slot: *index,
             },
             Some(old_value.map(|v| UVal::Bytes32(v))),
         )],

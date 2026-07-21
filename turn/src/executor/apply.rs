@@ -463,7 +463,7 @@ impl TurnExecutor {
         actor: &CellId,
         journal: &mut LedgerJournal,
         cell: &CellId,
-        index: usize,
+        index: u64,
         value: &FieldElement,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if cell != action_target {
@@ -492,20 +492,20 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
-        if index < STATE_SLOTS {
+        if index < STATE_SLOTS as u64 {
             // Fixed register-file slot: the legacy 16-slot path.
-            journal.record_set_field(*cell, index, Some(c.state.fields[index]));
-            c.state.fields[index] = *value;
+            let slot = index as usize;
+            journal.record_set_field(*cell, index, Some(c.state.fields[slot]));
+            c.state.fields[slot] = *value;
             // Invalidate stale field commitment (the old hash no longer matches).
-            if c.state.commitments[index].is_some() {
-                c.state.commitments[index] = None;
+            if c.state.commitments[slot].is_some() {
+                c.state.commitments[slot] = None;
             }
         } else {
             // Heap field (key >= STATE_SLOTS): the openable sorted-map spine.
-            // The journal stores the slot as usize; umem.rs reads it back as u64.
-            let old_value = c.state.get_field_ext(index as u64);
+            let old_value = c.state.get_field_ext(index);
             journal.record_set_field(*cell, index, old_value);
-            c.state.set_field_ext(index as u64, *value);
+            c.state.set_field_ext(index, *value);
         }
         Ok(())
     }
@@ -2933,7 +2933,7 @@ impl TurnExecutor {
         // ext-value (`None` if the key was absent) so rollback restores it exactly.
         let audit_key = dregg_cell::state::REFUSAL_AUDIT_EXT_KEY;
         let old_audit = c.state.get_field_ext(audit_key);
-        journal.record_set_field(*cell, audit_key as usize, old_audit);
+        journal.record_set_field(*cell, audit_key, old_audit);
         c.state.set_field_ext(audit_key, audit);
         Ok(())
     }

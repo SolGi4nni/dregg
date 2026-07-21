@@ -1044,7 +1044,11 @@ pub enum Effect {
     /// Set a state field on a cell.
     SetField {
         cell: CellId,
-        index: usize,
+        /// Canonical cross-target field key. This is deliberately fixed-width:
+        /// `usize` made the signed/serialized turn mean different things on
+        /// wasm32 and native hosts (keys above `u32::MAX` truncated before the
+        /// executor saw them).
+        index: u64,
         value: FieldElement,
     },
     /// Transfer computrons between cells.
@@ -1973,7 +1977,7 @@ impl Effect {
             Effect::SetField { cell, index, value } => {
                 hasher.update(&[0u8]);
                 hasher.update(cell.as_bytes());
-                hasher.update(&(*index as u64).to_le_bytes());
+                hasher.update(&index.to_le_bytes());
                 hasher.update(value);
             }
             Effect::Transfer { from, to, amount } => {
@@ -2871,6 +2875,31 @@ mod linearity_tests {
         assert_eq!(e.linearity(), LinearityClass::Neutral);
         assert!(!e.linearity().requires_paired_sibling());
         assert!(!e.linearity().is_disclosed_non_conservation());
+    }
+
+    #[test]
+    fn wide_set_field_key_roundtrips_without_architecture_narrowing() {
+        let wide = (u32::MAX as u64) + 17;
+        let effect = Effect::SetField {
+            cell: cid(6),
+            index: wide,
+            value: [0x5a; 32],
+        };
+        let expected_hash = effect.hash();
+        let bytes = postcard::to_allocvec(&effect).expect("encode wide SetField");
+        let decoded: Effect = postcard::from_bytes(&bytes).expect("decode wide SetField");
+
+        match decoded {
+            Effect::SetField { index, .. } => assert_eq!(index, wide),
+            other => panic!("decoded wrong effect variant: {other:?}"),
+        }
+        assert_eq!(
+            postcard::from_bytes::<Effect>(&bytes)
+                .expect("decode for hash")
+                .hash(),
+            expected_hash,
+            "the signed effect meaning must survive its durable wire encoding"
+        );
     }
 
     #[test]

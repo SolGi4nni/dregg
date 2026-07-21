@@ -621,7 +621,7 @@ impl<S> ActionBuilder<S> {
 impl<S> ActionBuilder<S> {
     // §3.1 — Field & balance ---------------------------------------------------
 
-    pub fn effect_set_field(mut self, cell: CellId, index: usize, value: FieldElement) -> Self {
+    pub fn effect_set_field(mut self, cell: CellId, index: u64, value: FieldElement) -> Self {
         self.effects.push(Effect::SetField { cell, index, value });
         self
     }

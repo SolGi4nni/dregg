@@ -170,7 +170,7 @@ fn leaf_digest_cache_matches_fresh() {
                     if lcg.pick(2) == 0 {
                         let mut v = [0u8; 32];
                         v[1] = (lcg.next() & 0xff) as u8;
-                        sd.field_updates.push(((lcg.pick(16)) as usize, v));
+                        sd.field_updates.push(((lcg.pick(16)) as u64, v));
                     }
                     delta.updated.push((id, sd));
                     // sometimes also a transfer between two cells

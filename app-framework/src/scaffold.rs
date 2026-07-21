@@ -78,7 +78,7 @@ pub enum AffordanceEffect {
     /// given topic label (hashed to the 32-byte topic).
     Emit { topic: String },
     /// Write the cell's field at `index` (an edit) — `Effect::SetField`.
-    SetField { index: usize },
+    SetField { index: u64 },
 }
 
 impl AffordanceSpec {
@@ -110,7 +110,7 @@ impl AffordanceSpec {
     }
 
     /// An **edit** affordance that writes field `index` (`SetField`).
-    pub fn edit(name: impl Into<String>, rights: impl Into<String>, index: usize) -> Self {
+    pub fn edit(name: impl Into<String>, rights: impl Into<String>, index: u64) -> Self {
         AffordanceSpec {
             name: name.into(),
             required_rights: rights.into(),

@@ -275,7 +275,7 @@ impl Effect {
             Effect::SetField { cell, index, .. } => {
                 let old = pre
                     .get(cell)
-                    .and_then(|c| c.state.get_field(*index).copied())
+                    .and_then(|c| c.state.get_field_ext(*index))
                     .unwrap_or([0u8; 32]);
                 Inversion::Contextual(Effect::SetField {
                     cell: *cell,

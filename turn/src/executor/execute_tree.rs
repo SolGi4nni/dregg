@@ -787,7 +787,15 @@ impl TurnExecutor {
             // Track SetField effects for proved_state logic.
             if let Effect::SetField { cell, index, .. } = effect {
                 if is_proof_auth {
-                    proof_field_sets.entry(*cell).or_default().insert(*index);
+                    // `proved_state` means all sixteen fixed registers were set
+                    // by one proof. Wide committed-map keys must not count toward
+                    // that register-file completeness flag.
+                    if *index < STATE_SLOTS as u64 {
+                        proof_field_sets
+                            .entry(*cell)
+                            .or_default()
+                            .insert(*index as usize);
+                    }
                 } else {
                     non_proof_field_cells.insert(*cell);
                 }

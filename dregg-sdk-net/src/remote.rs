@@ -393,7 +393,7 @@ impl<'rt> RemoteTurnBuilder<'rt> {
 
     /// Stage a field write on the acting cell (encoded like
     /// [`dregg_cell::field_from_u64`]).
-    pub fn write_u64(self, index: usize, value: u64) -> Self {
+    pub fn write_u64(self, index: u64, value: u64) -> Self {
         let cell = self.acting_cell();
         let value = dregg_cell::field_from_u64(value);
         self.effect(Effect::SetField { cell, index, value })

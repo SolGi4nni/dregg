@@ -915,7 +915,10 @@ impl CellState {
     /// The Rust shadow of the Lean `FieldsMap.tailLookup` / `Value.scalar`
     /// uniform name-keyed read.
     pub fn get_field_ext(&self, key: u64) -> Option<FieldElement> {
-        if (key as usize) < STATE_SLOTS {
+        // Compare in the wire type before narrowing. On wasm32, casting a key
+        // such as `1 << 32` to `usize` first would wrap it into the fixed-slot
+        // range and read the wrong committed location.
+        if key < STATE_SLOTS as u64 {
             Some(self.fields[key as usize])
         } else {
             self.fields_map.get(&key).copied()
@@ -928,7 +931,7 @@ impl CellState {
     /// the committed map and recompute [`fields_root`](Self::fields_root).
     /// Returns `true` on success.
     pub fn set_field_ext(&mut self, key: u64, value: FieldElement) -> bool {
-        if (key as usize) < STATE_SLOTS {
+        if key < STATE_SLOTS as u64 {
             self.set_field(key as usize, value)
         } else {
             self.fields_map.insert(key, value);
@@ -1331,6 +1334,21 @@ mod fields_map_tests {
         // The map and its root are untouched by a low-key write.
         assert!(s.fields_map.is_empty());
         assert_eq!(s.fields_root, empty_fields_root());
+    }
+
+    /// A wide canonical key must never wrap into the fixed register file on
+    /// wasm32. This is the architecture-divergence regression for the old
+    /// `key as usize`-before-range-check implementation.
+    #[test]
+    fn wide_key_does_not_alias_a_fixed_slot() {
+        let mut s = CellState::new(0);
+        let wide = (u32::MAX as u64) + 1;
+        let original_slot_zero = s.fields[0];
+
+        assert!(s.set_field_ext(wide, fe(77)));
+        assert_eq!(s.fields[0], original_slot_zero);
+        assert_eq!(s.get_field_ext(wide), Some(fe(77)));
+        assert_eq!(s.fields_map.get(&wide), Some(&fe(77)));
     }
 
     /// ANTI-VACUITY: a map with data has a root DIFFERENT from the empty

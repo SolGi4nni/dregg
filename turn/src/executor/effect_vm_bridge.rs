@@ -14,7 +14,7 @@ use crate::turn::Turn;
 /// sovereign leg over the EXACT VM-effect projection the executor reconstructs at verify time — the
 /// per-effect dispatch here (e.g. `Effect::AttenuateCapability → VmEffect::AttenuateCapability`) is the
 /// authoritative one the executor's `verify_one_cohort_run` resolves descriptors against.
-pub fn convert_turn_effects_to_vm(
+fn convert_turn_effects_to_vm_unchecked(
     cell_id: &CellId,
     turn: &Turn,
 ) -> Vec<dregg_circuit::effect_vm::Effect> {
@@ -95,8 +95,14 @@ pub fn convert_turn_effects_to_vm(
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
+                    // The current AIR has one u32 field-index column. Refuse
+                    // the unsupported wide-key proof lane explicitly instead
+                    // of silently truncating a canonical u64 key.
+                    let field_idx = u32::try_from(*index).expect(
+                        "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
+                    );
                     vm_effects.push(VmEffect::SetField {
-                        field_idx: *index as u32,
+                        field_idx,
                         value: field_element_to_bb(value),
                     });
                 }
@@ -671,4 +677,120 @@ pub fn convert_turn_effects_to_vm(
         vm_effects.push(dregg_circuit::effect_vm::Effect::NoOp);
     }
     vm_effects
+}
+
+/// Checked EffectVM projection.
+///
+/// Runtime turns use canonical `u64` field keys, while the current EffectVM AIR
+/// carries a single `u32` index column. A wider key is a valid classical
+/// committed-map write but is not yet provable by that circuit. Report it
+/// explicitly so verifier paths can refuse instead of truncating or panicking.
+pub fn try_convert_turn_effects_to_vm(
+    cell_id: &CellId,
+    turn: &Turn,
+) -> Result<Vec<dregg_circuit::effect_vm::Effect>, u64> {
+    fn check(tree: &CallTree, cell_id: &CellId) -> Result<(), u64> {
+        for effect in &tree.action.effects {
+            if let Effect::SetField { cell, index, .. } = effect
+                && cell == cell_id
+                && *index > u32::MAX as u64
+            {
+                return Err(*index);
+            }
+        }
+        for child in &tree.children {
+            check(child, cell_id)?;
+        }
+        Ok(())
+    }
+
+    for root in &turn.call_forest.roots {
+        check(root, cell_id)?;
+    }
+    Ok(convert_turn_effects_to_vm_unchecked(cell_id, turn))
+}
+
+/// Compatibility projection for callers that already establish the EffectVM
+/// domain. New verifier/producer paths should use
+/// [`try_convert_turn_effects_to_vm`] and surface the refusal.
+pub fn convert_turn_effects_to_vm(
+    cell_id: &CellId,
+    turn: &Turn,
+) -> Vec<dregg_circuit::effect_vm::Effect> {
+    try_convert_turn_effects_to_vm(cell_id, turn).expect(
+        "EffectVM cannot prove SetField keys above u32::MAX; use the classical committed-map lane",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::action::{Action, Authorization, CommitmentMode, DelegationMode};
+    use crate::forest::CallForest;
+    use crate::{Preconditions, Turn};
+
+    fn turn_with_set_field(cell: CellId, index: u64) -> Turn {
+        let action = Action {
+            target: cell,
+            method: [0; 32],
+            args: Vec::new(),
+            authorization: Authorization::Unchecked,
+            preconditions: Preconditions::default(),
+            effects: vec![Effect::SetField {
+                cell,
+                index,
+                value: [7; 32],
+            }],
+            may_delegate: DelegationMode::ParentsOwn,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: Vec::new(),
+        };
+        let mut call_forest = CallForest::new();
+        call_forest.add_root(action);
+        Turn {
+            agent: cell,
+            nonce: 0,
+            call_forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn checked_projection_refuses_a_wide_key_instead_of_truncating_it() {
+        let cell = CellId([0x51; 32]);
+        let wide = u32::MAX as u64 + 1;
+        let turn = turn_with_set_field(cell, wide);
+
+        assert_eq!(try_convert_turn_effects_to_vm(&cell, &turn), Err(wide));
+    }
+
+    #[test]
+    fn checked_projection_keeps_the_largest_air_representable_key() {
+        use dregg_circuit::effect_vm::Effect as VmEffect;
+
+        let cell = CellId([0x52; 32]);
+        let turn = turn_with_set_field(cell, u32::MAX as u64);
+        let effects = try_convert_turn_effects_to_vm(&cell, &turn).expect("u32 key is provable");
+
+        assert!(matches!(
+            effects.as_slice(),
+            [VmEffect::SetField { field_idx, .. }] if *field_idx == u32::MAX
+        ));
+    }
 }

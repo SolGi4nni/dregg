@@ -450,7 +450,7 @@ impl TurnExecutor {
                         format!("SetField lane {j} targets {cell}, expected Custom cell {cell_id}"),
                     ));
                 }
-                if *index != expected_index {
+                if *index != expected_index as u64 {
                     return Err(mismatch(
                         i,
                         format!(
@@ -673,7 +673,11 @@ impl TurnExecutor {
         turn: &Turn,
     ) -> Result<(), TurnError> {
         let wire = turn.custom_program_proofs.as_ref().map_or(0, |p| p.len());
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
+        let vm_effects = try_convert_turn_effects_to_vm(cell_id, turn).map_err(|index| {
+            TurnError::InvalidExecutionProof(format!(
+                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+            ))
+        })?;
         let committed = vm_effects
             .iter()
             .filter(|e| matches!(e, dregg_circuit::effect_vm::Effect::Custom { .. }))
@@ -769,7 +773,11 @@ impl TurnExecutor {
             cap_root,
             record_digest,
         );
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn);
+        let vm_effects = try_convert_turn_effects_to_vm(cell_id, turn).map_err(|index| {
+            TurnError::InvalidExecutionProof(format!(
+                "EffectVM cannot prove SetField key {index}: the current AIR index lane is u32"
+            ))
+        })?;
 
         // 3b. WHOLE-TURN FOREST (foolable gap #2, the LIVE-WIRE of the
         //     `RotatedKernelForestCohortChain.lean` build-half). A turn is N maximal homogeneous

@@ -26,7 +26,7 @@ pub(crate) enum JournalEntry {
     /// key that was absent before this turn — the universal-map absent leg).
     SetField {
         cell: CellId,
-        index: usize,
+        index: u64,
         old_value: Option<FieldElement>,
     },
     /// A cell's balance was changed (by transfer or fee deduction).
@@ -237,12 +237,7 @@ impl LedgerJournal {
 
     /// Record a field change. `old_value = None` means the heap key was absent
     /// before this turn; fixed slots are always `Some`.
-    pub fn record_set_field(
-        &mut self,
-        cell: CellId,
-        index: usize,
-        old_value: Option<FieldElement>,
-    ) {
+    pub fn record_set_field(&mut self, cell: CellId, index: u64, old_value: Option<FieldElement>) {
         self.entries.push(JournalEntry::SetField {
             cell,
             index,
@@ -451,14 +446,14 @@ impl LedgerJournal {
                     old_value,
                 } => {
                     if let Some(c) = ledger.get_mut(&cell) {
-                        if index < STATE_SLOTS {
-                            c.state.fields[index] = old_value.expect(
+                        if index < STATE_SLOTS as u64 {
+                            c.state.fields[index as usize] = old_value.expect(
                                 "fixed-slot SetField rollback always carries the prior value",
                             );
                         } else if let Some(v) = old_value {
-                            c.state.set_field_ext(index as u64, v);
+                            c.state.set_field_ext(index, v);
                         } else {
-                            c.state.fields_map.remove(&(index as u64));
+                            c.state.fields_map.remove(&index);
                             c.state.reseal_fields_root();
                         }
                     }

@@ -93,7 +93,7 @@ pub enum QuickEffect {
     SetField {
         /// State slot index.
         #[arg(long)]
-        index: usize,
+        index: u64,
         /// Value (decimal, 0x-hex scalar, or 64-char hex field element).
         #[arg(long)]
         value: String,

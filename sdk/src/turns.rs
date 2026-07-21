@@ -137,7 +137,7 @@ impl<'rt> TurnBuilder<'rt> {
 
     /// Write state slot `index` of the acting cell (the `write` verb;
     /// admitted only where the cell's installed program allows).
-    pub fn write(mut self, index: usize, value: FieldElement) -> Self {
+    pub fn write(mut self, index: u64, value: FieldElement) -> Self {
         let cell = self.acting_cell();
         self.effects.push(Effect::SetField { cell, index, value });
         self
@@ -145,7 +145,7 @@ impl<'rt> TurnBuilder<'rt> {
 
     /// [`write`](Self::write) with a numeric value (encoded like
     /// [`field_from_u64`]).
-    pub fn write_u64(self, index: usize, value: u64) -> Self {
+    pub fn write_u64(self, index: u64, value: u64) -> Self {
         self.write(index, field_from_u64(value))
     }
 

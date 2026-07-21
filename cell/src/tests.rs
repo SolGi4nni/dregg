@@ -692,7 +692,7 @@ fn ledger_delta_update_nonexistent_cell_fails() {
 }
 
 #[test]
-fn ledger_delta_invalid_field_index_fails() {
+fn ledger_delta_wide_field_key_updates_the_committed_map() {
     let mut ledger = Ledger::new();
     let id = ledger.create_cell(test_key(1), test_token(1));
 
@@ -701,7 +701,7 @@ fn ledger_delta_invalid_field_index_fails() {
         updated: vec![(
             id,
             CellStateDelta {
-                field_updates: vec![(STATE_SLOTS, field_from_u64(1))], // index STATE_SLOTS is invalid
+                field_updates: vec![(STATE_SLOTS as u64, field_from_u64(1))],
                 nonce_increment: false,
                 balance_change: 0,
                 permission_changes: None,
@@ -713,13 +713,14 @@ fn ledger_delta_invalid_field_index_fails() {
         removed: Vec::new(),
     };
 
-    let err = ledger.apply_delta(&delta).unwrap_err();
+    ledger.apply_delta(&delta).unwrap();
     assert_eq!(
-        err,
-        LedgerError::InvalidFieldIndex {
-            cell_id: id,
-            index: STATE_SLOTS
-        }
+        ledger
+            .get(&id)
+            .unwrap()
+            .state
+            .get_field_ext(STATE_SLOTS as u64),
+        Some(field_from_u64(1))
     );
 }
 

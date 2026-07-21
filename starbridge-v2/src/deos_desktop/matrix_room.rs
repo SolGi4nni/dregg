@@ -514,7 +514,13 @@ mod stack {
                     for eff in &root.action.effects {
                         if let dregg_turn::action::Effect::SetField { cell, index, value } = eff {
                             if *cell == spec.cell {
-                                writes.push((*index, *value));
+                                // Matrix messages occupy only the fixed 16-slot
+                                // register file. A canonical wide map key has no
+                                // message-slot meaning and must never wrap on a
+                                // 32-bit viewer host.
+                                if let Ok(index) = usize::try_from(*index) {
+                                    writes.push((index, *value));
+                                }
                             }
                         }
                     }

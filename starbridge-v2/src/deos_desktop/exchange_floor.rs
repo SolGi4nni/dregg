@@ -140,22 +140,22 @@ pub fn post_effects(cell: CellId, requester: &str, budget: u64) -> Vec<Effect> {
     vec![
         Effect::SetField {
             cell,
-            index: job::REQUESTER_HASH_SLOT,
+            index: job::REQUESTER_HASH_SLOT as u64,
             value: requester_h,
         },
         Effect::SetField {
             cell,
-            index: job::BUDGET_SLOT,
+            index: job::BUDGET_SLOT as u64,
             value: budget_f,
         },
         Effect::SetField {
             cell,
-            index: job::SPEC_HASH_SLOT,
+            index: job::SPEC_HASH_SLOT as u64,
             value: job::spec_digest(b"exchange-floor compute offer"),
         },
         Effect::SetField {
             cell,
-            index: job::STATE_SLOT,
+            index: job::STATE_SLOT as u64,
             value: job::state_field(job::STATE_POSTED),
         },
         Effect::EmitEvent {
