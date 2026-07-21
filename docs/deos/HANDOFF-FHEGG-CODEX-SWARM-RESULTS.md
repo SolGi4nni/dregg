@@ -1552,3 +1552,36 @@ Files to begin the next audit at HEAD:
 The one honest sentence: **private computation and authenticated authorization now compose in one
 claim-bound receipt; BFV-to-private-root same-opening and no-single-viewer witness generation are still the
 cryptographic apex, not an implied property of the composition.**
+
+## 54. Restart checkpoint: exact receipt shape is banked; three apex/game slices await review
+
+Commit `1a2abaedc` tightens the composite private receipt from “some ciphertext plus this root” to the exact
+fixed-family claim: four ordered ciphertext rows, then one terminal commitment to the proved root. The
+relying-party policy now pins the complete `BfvPublicIdentity`, and its verifier identity commits every BFV
+public parameter and key digest. Hostile tests substitute the BFV key and input kinds as well as the earlier
+session/result/rule/root mutations. The focused release heavy-profile test passes 1/1; the matching Lean law
+has 15 clean keystones and deliberately retains the RED theorem that exact shape and key identity still do
+not prove those ciphertexts encrypt the root opening.
+
+Three uncommitted, quiescent slices are present for the next review rather than being promoted without their
+focused gates:
+
+- `fhegg-fhe/src/private_book_relation.rs` plus its test specify an executable, injective N4K4 prover-side
+  NP relation: four byte-exact BFV reencryption openings and the same orders recompute the existing private
+  Poseidon/HidingFRI root and statement. This is the precise lattice-ZK target, **not transferable proof
+  evidence**; wire it under `amm-input-binding` and run its release-heavy test before keeping it.
+- the PartyMPC transport WIP bumps its wire domains to v2, encrypts party-to-party ingress for the named
+  recipient under authenticated roster identities with fresh per-frame nonces, and separates preprocessing
+  across task context and retry entropy. It needs the focused transport/process/collective-session gates and
+  cryptographic review. It remains semi-honest, classical, centrally preprocessed, metadata-visible, and
+  does not prove correct shares, triples, masks, or gate execution.
+- `dreggnet-surfaces/src/private_raid.rs` plus its test turns a verified private role permutation into four
+  receipt-bound one-shot sigil capabilities. The assigned player must claim and executor-burn the sigil
+  before acting in the real Arena; hostile tests cover wrong role, double burn, unprimed action, receipt
+  substitution, roster-order replay, and restart. The proof, sigil, party, and Arena worlds are still
+  separately verified rather than one atomic forest turn.
+
+The same integration gate exposed stale `usize` producers after `Effect::SetField.index` became `u64`.
+Focused repairs are live in the scaffold, sealed-auction, escrow-market, SDK projection boundary, and Descent
+multicell WIP. They made the private receipt gate compile and pass, but belong to the wider in-progress u64
+cutover and were intentionally not swept into the receipt commit.
