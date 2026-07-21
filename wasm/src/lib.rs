@@ -75,6 +75,13 @@ pub mod bindings_story;
 // the persistent cross-day character + no-cheat leaderboard + node settle are the separate
 // publish-a-verified-run leg (`DailyDescentOffering` / `ugc_dregg`), not built here.
 pub mod bindings_descent;
+// The Lean-authored Descent in the tab. Unlike `bindings_descent`'s older daily/procgen
+// game, `NativeDescentWorld` wraps `NativeDescentOffering` itself: exact native verbs and
+// actor binding, one Offering advance per browser action, hash-chained journal/checkpoint/
+// completion, and a portable record accepted only after complete replay. wasm installs the
+// checked-in Lean-emitted program but, per this crate's platform boundary, cannot link the
+// native Lean differential at browser runtime.
+pub mod bindings_native_descent;
 // The in-house sprite in the tab: `dreggnet-sprite`'s deterministic generative
 // `content-addressed asset → SVG` renderer, exposed as a pair of pure getters
 // (`spriteSvg(kind, assetIdHex)` / `traitsJson(kind, assetIdHex)`). Same asset ⇒
