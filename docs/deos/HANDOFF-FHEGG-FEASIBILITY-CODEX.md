@@ -40,6 +40,10 @@ The decisive current hbox run passed 1/1 under the full nextest profile with
 both DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1 and no authority-core
 fallback: 85.923s proof, 7.956s sealed PartyMPC crossing, and 167.008s internal
 total.
+The exact relation prover has since been accelerated without changing its proof
+format or verifier: the fixed production relation now proves in **23.445s** in
+its hostile standalone gate, about **3.66×** faster than that strict-apex
+capture. A new full-apex timing has not yet replaced the 167.008s authority run.
 The newer composed-game evidence has also advanced: the complete offerings
 target is 117/117, the private-raid surface is 8/8 in one current invocation,
 the narrated private-raid relic capstone is 1/1, the incarnation-bound common
@@ -83,7 +87,7 @@ classical seams into a post-quantum composition.
 | Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | authority-certified exact Beaver rows 3/3 hostile; legacy falsifier/audit compatibility 2/2 |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
-| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | current strict v5 hbox run 1/1 in 167.054s nextest / 167.008s internal; proof 85.923s, sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
+| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
 | Distributed private-order proof | **GATED THROUGH RANGES** | four share-opening PoKs + three root-zero proofs per worker; each owner additionally proves 0≤kind≤7 and 0≤quantity≤15 linked to exact vector coords; combined 12/12 in 1.930s; selector/Poseidon/BFV/clearing remain monolithic |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
@@ -343,6 +347,17 @@ per-frame-signature crossing's 1202.240-second timeout. The n=2 transport used
 exactly six ML-DSA signs and six verifies independent of 1,302 gates; the two
 quorum signatures were each checked in four composite verifier contexts.
 
+The same proof format and verifier now have an exact host-parallel prover path.
+Rayon schedules independent constant-time dalek commitment-MSM chunks, sibling
+R1CS commitments, and inner-product rounds without changing transcript order or
+group arithmetic. The production fixed-N hostile relation gate passed **1/1 in
+64.631s**: proof construction was **23.445s** (23.074s inside R1CS), honest
+verification was **8.213s**, and all four cryptographic substitutions plus two
+structural substitutions still rejected. An independent 131,073-term exact MSM
+differential measured **1.226s serial / 0.396s parallel** on 16 threads. This is
+about **3.66×** faster than the 85.923s proof in the strict apex recapture; the
+full strict apex has not yet been recaptured with this optimization.
+
 That is a verification statement about the required authority cores, not an
 end-to-end post-quantum claim. The apex still depends on the classical
 Bulletproof/Ristretto/Pedersen
@@ -385,6 +400,11 @@ MSM path, followed by any relation-specific acceleration that preserves exact
 semantics. The already-GpuResident additive fold is not the apex bottleneck in
 this fixture, and accelerating it cannot turn the classical Bulletproof seam
 into post-quantum security.
+
+The exact host-parallel path has now taken the first large cut out of that
+bottleneck. The portable WGPU public Pippenger remains disabled because its
+measured group MSM is dramatically slower than dalek; the retained WGPU
+scalar-preparation context is not presented as the source of the 3.66× result.
 
 The Lean companion, DarkBazaarLiveApexHost.lean, models the weld from exact
 ingress through same-opening evidence, live MPC output, claim, hosted verifier,
@@ -988,6 +1008,10 @@ from first principles.
   and 7.956s sealed crossing; DREGG_REQUIRE_LEAN=1 and
   DREGG_REQUIRE_PQ_CORES=1, unaudited fallback unset. This requires the real
   ML-KEM/ML-DSA cores, not end-to-end PQ.
+- accelerated fixed-N private-book relation — **1/1 hostile green in 64.631s**;
+  proof **23.445s**, honest verify **8.213s**, exact 131,073-term commitment MSM
+  **1.226s serial / 0.396s parallel**. Same proof/verifier; full strict-apex
+  timing not yet recaptured.
 - fhir_verified_raid_allocation — **6/6 release green**.
 - hostile external fhIR optimizer protocol — **69/69 fhir + 118/118
   fhegg-solver green**; streamed problem binding is zero-allocation at the

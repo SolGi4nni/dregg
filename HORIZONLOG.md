@@ -10933,4 +10933,15 @@ PartyMPC, 167.008s internal total**. The crossing is about 151× faster than the
 v4 timeout. It performed exactly six transport signs + six transport verifies;
 the two unique claim signatures were each checked in four composite contexts.
 This run did not enable the GPU environment, so the classical same-opening
-Bulletproof remains the 85.9s bottleneck.
+Bulletproof was the 85.9s bottleneck in that capture. The same proof format and
+verifier now have an exact host-parallel prover: independent constant-time dalek
+commitment-MSM chunks, sibling R1CS commitments, and inner-product rounds are
+scheduled across Rayon without changing transcript order. The fixed production
+relation's hostile gate is **1/1 green in 64.631s**, with **23.445s** proof
+construction versus the strict-apex capture's 85.923s (about **3.66×**),
+**8.213s** honest verification, four cryptographic substitution rejections, and
+two immediate structural rejections. The independent 131,073-term differential
+was exact at **1.226s serial / 0.396s parallel** on 16 threads. This is a
+classical performance improvement, not a PQ upgrade, and a new strict full-apex
+timing has not yet replaced the authoritative 167.008s run. The measured WGPU
+public Pippenger remains disabled because it is much slower than dalek.
