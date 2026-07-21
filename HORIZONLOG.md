@@ -10736,3 +10736,77 @@ current rather than a single current 8/8 run.
 - The PQ lane supplied the apex-required verified cores. Artifact custody alone
   carries no green; the later credential-polarity ABI tooth and static archive
   audit are the evidence that closed the initializer/handler-export residual.
+
+## 2026-07-21 — coherent private-game rail and hard-tech fhEgg substrate
+
+This checkpoint banked a common game-operation shape across the catalog,
+offerings, private raid, Telegram, the web rail, and the Dark Pool. The common
+spine binds the exact session, actor, operation, payload, prior head, result,
+and successor head; offerings now materialize typed consequences for Dungeon,
+Descent, Chutes, private raid, and Bazaar-shaped operations; private raid is a
+catalog-mounted capability/Arena game; Telegram carries the canonical proof as
+a document and resumes the same receipt chain; and the web rail is deliberately
+viewer-safe. Named current gates were: offerings **117/117**, private-raid
+surface **8/8**, Telegram combined evidence **77 tests**, game spine **8/8**,
+and the web rail/no-viewer targets **2/2 + 2/2**. These results do not promote
+asserted chat identities into cryptographic actors: actor authority, host
+incarnation/ABA resistance, durable consequence/nullifier storage, and a common
+Discord host journal remain explicit integration work.
+
+The portable HidingFRI path now keeps its salted Merkle layers on the GPU and
+performs one readback/poll per commitment rather than one per tree level. On the
+hbox RX 6750 XT, the strict depth-2048 parity gate was **2/2** with byte-identical
+proofs; the final self-identifying capture was **0.717s GPU vs 3.081s CPU**, five
+batched readbacks for 77 materialized layers, 30 DFT dispatches, and six retained
+LDE blits. CPU verification remains authoritative; query/fold work is still
+host-side.
+
+PartyMPC now accepts authority-certified Beaver batches rather than trusting an
+unbound stream of triples. The certificate commits to the exact salted rows,
+batch, circuit context, roster, gate count, party slot, and authority; malformed
+share relations, forged certificates, relabeling, wrong context, and cross-batch
+frames refuse before gate evaluation. The new hostile target passed **3/3** and
+legacy falsifier/audit compatibility **2/2**. This is an honest intermediate:
+the authority is trusted, the batch certificate is presently Ed25519/classical,
+malicious input provenance is not proved, and durable exact-session rollback
+tombstones are still required.
+
+The portable Ristretto verifier MSM is also qualified for correctness, not
+performance. hbox passed the strict group-add and full MSM/R1CS gates with dalek
+independently recomputing the returned result, but a 17-term proof measured about
+**66µs on CPU vs 0.78–0.81s GPU submission** (roughly 12,000× slower). The
+backend therefore remains disabled by default and fail-closed behind explicit
+GPU policy. A device-resident windowed/Pippenger successor is active; no speed
+claim is carried forward from the correctness gate.
+
+The faithful note-tree substrate is now Lean-authored and banked. Exact 32-byte
+commitments map injectively to sixteen canonical `u16`/BabyBear lanes, while
+domain-separated leaf, empty, and internal hashing keeps an eight-felt
+Poseidon2 carrier through the whole 4-ary tree. Lean proves the codec inverse and
+injectivity and defines fail-closed membership replay; Rust matches Lean-computed
+codec/hash/root/proof vectors **8/8** and the runtime/persistence hostile gates
+reject the old `x` / `x+p` alias. `dregg-commit` was **141/141** and the focused
+persistence gate **6/6**. This is substrate, not the final shielded cut: node
+attestation, authenticated root history, live note create/spend/conservation,
+and the executor authority still have to adopt the faithful root.
+
+Active next cuts at this checkpoint are deliberately named rather than implied:
+the full private-clearing apex is being recaptured with native ML-DSA quorum,
+ML-KEM+X25519 PartyMPC transport, and certified-preprocessing receipt binding.
+Durable cell-owned ML-DSA enrollment/rotation is now banked: create/rotate/
+hostile rollback **1/1**, node restart **1/1**, enrollment/substitution **3/3**,
+SignedTurn hostile validation **4/4**, cell wire/commitment **3/3**, EffectVM
+refusal **3/3**, and the Rust/Lean verb-registry gates are green. The live cell
+commitment—not carried key bytes—is authority; rotation requires the old key
+and proof of possession by the next key. Proof producers/verifiers explicitly
+refuse both effects until their Lean/AIR authority row lands. Pre-v10 postcard
+snapshots still require store migration and first enrollment remains sponsor-
+mediated. Discord is acquiring the same durable operation journal. The FhIR
+exact problem-binding hot path is now banked with a single-pass comparison:
+**115/115 fhegg-solver + 69/69 fhir**, zero temporary allocations instead of 51
+and 4,218,560 bytes per n=256 verification, and 671.367µs vs 694.395µs in the
+500-iteration release harness while retaining hostile error precedence. TFHE
+has a dedicated portable-WGPU optimization lane; and the Bulletproof MSM lane
+is pursuing a real crossover rather than merely a green kernel. Even after
+those land, the same-opening Bulletproof/Ristretto proof and distributed-custody commitments
+remain classical until a Lean-authored hash/lattice proof cut replaces them.
