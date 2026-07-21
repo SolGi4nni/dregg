@@ -1,4 +1,4 @@
-//! One-submit, one-readback exact blind-rotation chain.
+//! Device-resident, one-readback exact blind-rotation chain.
 
 use std::sync::{mpsc, OnceLock};
 
@@ -7,6 +7,10 @@ use wgpu::util::DeviceExt;
 use crate::tfhe_wgpu::{TorusCpuFallbackReason, TorusExternalProductParams};
 
 const WORKGROUP_SIZE: u32 = 64;
+// Vulkan descriptor/command allocation on the deployed hbox adapter cannot
+// retain all 1,836 dense blind-rotation dispatches in one command buffer. The
+// accumulator and keys remain device-resident across these ordered submissions.
+const MAX_CMUX_STEPS_PER_SUBMISSION: usize = 256;
 
 pub(crate) struct BlindRotationGpuResult {
     pub coefficients: Vec<u64>,
@@ -635,7 +639,7 @@ impl GpuContext {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("TFHE one-submit blind-rotate/extract/keyswitch"),
+                label: Some("TFHE initial blind-rotate/extract/keyswitch chunk"),
             });
         let degree = u32::try_from(params.degree)
             .map_err(|_| BlindRotationGpuError::Execution("degree metadata overflow".into()))?;
@@ -645,85 +649,80 @@ impl GpuContext {
             .map_err(|_| BlindRotationGpuError::Execution("base-log metadata overflow".into()))?;
         let level_count = u32::try_from(params.decomposition_level_count)
             .map_err(|_| BlindRotationGpuError::Execution("level metadata overflow".into()))?;
-        let mut dispatch = |pipeline: &wgpu::ComputePipeline,
-                            rotation: usize,
-                            key_offset: usize,
-                            input_buffer: u32|
-         -> Result<(), BlindRotationGpuError> {
-            let metadata = [
+
+        let mut current = 0u32;
+        let mut cmux_steps_in_submission = 0usize;
+        if body_rotation != 0 {
+            self.encode_blind_step(
+                &mut encoder,
+                &self.rotate,
+                body_rotation,
+                0,
+                current,
                 degree,
                 glwe_size,
                 base_log,
                 level_count,
-                u32::try_from(rotation).map_err(|_| {
-                    BlindRotationGpuError::Execution("rotation metadata overflow".into())
-                })?,
-                u32::try_from(key_offset).map_err(|_| {
-                    BlindRotationGpuError::Execution("key-offset metadata overflow".into())
-                })?,
-                input_buffer,
-                0,
-            ];
-            let metadata_buffer =
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("TFHE PBS blind-rotation step metadata"),
-                        contents: bytemuck::cast_slice(&metadata),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    });
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("TFHE PBS blind-rotation step bindings"),
-                layout: &self.bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: metadata_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: accumulator_a.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: accumulator_b.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: prepared.bsk.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: decomposed.as_entire_binding(),
-                    },
-                ],
-            });
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("TFHE PBS blind-rotation step"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(blind_workgroups, 1, 1);
-            Ok(())
-        };
-
-        let mut current = 0u32;
-        if body_rotation != 0 {
-            dispatch(&self.rotate, body_rotation, 0, current)?;
+                blind_workgroups,
+                &accumulator_a,
+                &accumulator_b,
+                prepared,
+                &decomposed,
+            )?;
             current = 1;
         }
         for (step, &rotation) in mask_rotations.iter().enumerate() {
             if rotation == 0 {
                 continue;
             }
+            if cmux_steps_in_submission == MAX_CMUX_STEPS_PER_SUBMISSION {
+                self.queue.submit([encoder.finish()]);
+                self.device.poll(wgpu::Maintain::Wait);
+                encoder = self
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("TFHE continued resident blind-rotation chunk"),
+                    });
+                cmux_steps_in_submission = 0;
+            }
             let key_offset = step.checked_mul(ggsw_coefficients).ok_or_else(|| {
                 BlindRotationGpuError::Execution("bootstrapping-key offset overflow".into())
             })?;
-            dispatch(&self.decompose, rotation, key_offset, current)?;
-            dispatch(&self.external_product, rotation, key_offset, current)?;
+            self.encode_blind_step(
+                &mut encoder,
+                &self.decompose,
+                rotation,
+                key_offset,
+                current,
+                degree,
+                glwe_size,
+                base_log,
+                level_count,
+                blind_workgroups,
+                &accumulator_a,
+                &accumulator_b,
+                prepared,
+                &decomposed,
+            )?;
+            self.encode_blind_step(
+                &mut encoder,
+                &self.external_product,
+                rotation,
+                key_offset,
+                current,
+                degree,
+                glwe_size,
+                base_log,
+                level_count,
+                blind_workgroups,
+                &accumulator_a,
+                &accumulator_b,
+                prepared,
+                &decomposed,
+            )?;
             current = 1 - current;
+            cmux_steps_in_submission += 1;
         }
-        drop(dispatch);
 
         let keyswitch_metadata = [
             degree,
@@ -822,6 +821,81 @@ impl GpuContext {
             adapter: self.adapter.clone(),
             backend: self.backend.clone(),
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_blind_step(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        rotation: usize,
+        key_offset: usize,
+        input_buffer: u32,
+        degree: u32,
+        glwe_size: u32,
+        base_log: u32,
+        level_count: u32,
+        workgroups: u32,
+        accumulator_a: &wgpu::Buffer,
+        accumulator_b: &wgpu::Buffer,
+        prepared: &PreparedPbsGpuKeys,
+        decomposed: &wgpu::Buffer,
+    ) -> Result<(), BlindRotationGpuError> {
+        let metadata = [
+            degree,
+            glwe_size,
+            base_log,
+            level_count,
+            u32::try_from(rotation).map_err(|_| {
+                BlindRotationGpuError::Execution("rotation metadata overflow".into())
+            })?,
+            u32::try_from(key_offset).map_err(|_| {
+                BlindRotationGpuError::Execution("key-offset metadata overflow".into())
+            })?,
+            input_buffer,
+            0,
+        ];
+        let metadata_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE PBS blind-rotation step metadata"),
+                contents: bytemuck::cast_slice(&metadata),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TFHE PBS blind-rotation step bindings"),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: metadata_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: accumulator_a.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: accumulator_b.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: prepared.bsk.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: decomposed.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("TFHE PBS blind-rotation step"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(workgroups, 1, 1);
+        Ok(())
     }
 }
 

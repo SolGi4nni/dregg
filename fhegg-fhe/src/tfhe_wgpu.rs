@@ -21,12 +21,12 @@
 //! resident across the dependency chain.
 //!
 //! The PBS-shaped rung fuses degree-zero GLWE sample extraction and an exact standard
-//! native-torus LWE key switch after the blind rotation in that same submission, so
-//! only the post-key-switch LWE ciphertext is read back. A production-shaped sparse
-//! gate qualifies the full deployed 918-mask/918-output buffer and key dimensions
-//! with reusable device-owned BSK/KSK buffers. Dense 918-CMUX execution, default
-//! shortint key-order integration, and the [`crate::fhe_clear`] / `FheUint32` seam
-//! remain explicit.
+//! native-torus LWE key switch after device-resident blind rotation, so only the
+//! post-key-switch LWE ciphertext is read back. A dense gate now executes all 918
+//! deployed CMUX steps with genuine noisy GGSWs and a real encrypted LWE input.
+//! Reusable plans retain the full BSK/KSK; bounded command chunks retain both keys
+//! and accumulator on-device. Transform-resident blind rotation, default shortint
+//! key-order integration, and the [`crate::fhe_clear`] / `FheUint32` seam remain.
 //!
 //! The shader represents every torus coefficient as `(lo, hi)` `u32` limbs.  Its
 //! 16-bit-split multiply retains exactly the low 64 bits, so the result is bit-for-bit
@@ -90,7 +90,7 @@ pub enum TorusWgpuAlgorithm {
     /// bootstrapping key stay device-resident until one final readback.
     ExactDeviceResidentBlindRotation,
     /// Blind rotation, degree-zero sample extraction, and native-torus LWE key
-    /// switch in one submission with one post-key-switch readback.
+    /// switch with device-resident intermediates and one final readback.
     ExactDeviceResidentPbsExtractKeyswitch,
 }
 
@@ -1614,8 +1614,9 @@ pub fn torus_pbs_extract_keyswitch_cpu(
 }
 
 /// PBS-shaped exact portable artifact: blind rotation, degree-zero sample
-/// extraction, and native-torus LWE key switch in one GPU submission and one
-/// final post-key-switch readback.
+/// extraction, and native-torus LWE key switch with one final post-key-switch
+/// readback. Dense schedules use bounded ordered command submissions while the
+/// accumulator and evaluation keys stay resident.
 #[allow(clippy::too_many_arguments)]
 pub fn torus_pbs_extract_keyswitch_with_policy(
     accumulator: &[u64],
@@ -1738,9 +1739,10 @@ pub fn prepare_torus_pbs_wgpu_plan(
 
 /// Execute one exact PBS-shaped operation against pre-uploaded evaluation keys.
 ///
-/// The accumulator follows the same one-submit blind-rotate/extract/key-switch
+/// The accumulator follows the same resident blind-rotate/extract/key-switch
 /// path as the ordinary API. Only per-ciphertext buffers and the final LWE
-/// readback are transient; BSK/KSK uploads are outside this call.
+/// readback are transient; BSK/KSK uploads are outside this call. Dense schedules
+/// are command-chunked without an intermediate host readback.
 pub fn torus_pbs_extract_keyswitch_prepared(
     plan: &TorusPbsWgpuPlan,
     accumulator: &[u64],

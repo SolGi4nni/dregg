@@ -169,14 +169,14 @@ GPU median.  These are different startup conditions, not interchangeable "cold"
 measurements.  The standard KSK is load-bearing under mutation and the final
 ciphertext decrypts to the same rounded message as tfhe-rs.
 
-The production-shaped follow-on gate now qualifies the deployed buffer and key
-dimensions without pretending that four CMUX steps measure a dense bootstrap. It
-uses a 918-coefficient blind mask, a full 57.38 MiB standard BSK allocation, the
-complete 2048-to-918 standard key switch and its 57.44 MiB KSK, and checks all 919
-post-key-switch LWE coefficients bit-for-bit against tfhe-rs. Four mask
-coefficients are active, distributed across BSK slots 0, 306, 612, and 917; all
-other rotations are zero. Clearing slot 917 changes the CPU authority, so the
-far-end BSK address is load-bearing.
+The production-shaped follow-on gate now executes the complete deployed envelope.
+It generates a real 918-bit input LWE secret, a genuinely noisy standard GGSW
+encryption for every one of its BSK bits, and a real encrypted LWE input whose 918
+mask coefficients all modulus-switch to nonzero rotations. It uses the full 57.38
+MiB standard BSK, the complete 2048-to-918 standard key switch and its 57.44 MiB
+KSK, and checks all 919 post-key-switch LWE coefficients bit-for-bit against
+tfhe-rs. Clearing the final noisy BSK ciphertext changes the CPU authority, so slot
+917 is load-bearing. This is a dense 918-CMUX gate, not sparse/no-op extrapolation.
 
 `TorusPbsWgpuPlan` is the first explicit execution context for this path. Its
 constructor validates the exact BSK/KSK shapes and uploads each immutable key
@@ -186,18 +186,33 @@ The plan rejects a 917-coefficient mask against its 918-coefficient binding and
 continues to produce the uploaded result after the host BSK slice is changed,
 demonstrating actual device custody rather than pointer-keyed host caching.
 
-On hbox's RX 6750 XT, the final combined strict release gate passed both PBS tests
-in 0.411 seconds. Its production-shaped CPU result took 10.008 ms, plan creation
-plus both key uploads took 111.710 ms, the first prepared call took 15.003 ms, and
-the parity-checked five-sample prepared median took 5.897 ms. These are four
-active blind-rotation steps with a full
-918-output key switch, not a projected dense-918 latency.
+Encoding all 1,836 dependent decompose/external-product dispatches into one Vulkan
+command buffer exhausted hbox's command/descriptor allocation even though the key
+buffers fit comfortably. The exact dense route therefore submits at most 256 CMUX
+steps per ordered command chunk. Both accumulator buffers, decomposition scratch,
+BSK, and KSK remain device-resident across all four submissions, and there is still
+only one final post-key-switch readback. Short schedules retain the single-command
+path.
 
-This is still not a complete high-level `FheUint32` backend. Dense 918-CMUX blind
-rotation is deliberately not run through the quadratic coefficient kernel; the
+On hbox's RX 6750 XT, the final strict dense release gate passed in 9.667 seconds,
+including real BSK/KSK generation, three full warm parity calls, hostile far-key
+mutation, and an exact scaling sweep. The exact full CPU result took 1,493.795 ms,
+plan creation plus both key uploads took 125.152 ms, the first prepared dense call
+took 449.309 ms, and the parity-checked three-sample prepared median took 421.617
+ms. That is about 3.5x faster than the exact CPU authority for the complete
+coefficient-domain 918-step schedule.
+
+With the same full 2048-to-918 key switch at every point, exact active-CMUX scaling
+was: 64 steps, 106.232 ms CPU / 43.180 ms GPU; 256 steps, 417.605 / 128.940 ms;
+512 steps, 830.367 / 243.958 ms; and 918 steps, 1,493.795 / 421.617 ms. The GPU
+curve is still essentially linear in the blind-rotation step count. The result is
+a strong exact baseline and a useful deployed fallback, not a substitute for
+transform-form residency.
+
+This is still not a complete high-level `FheUint32` backend. The dense coefficient
+route is now an exact measured baseline, not the intended throughput carrier; the
 default shortint key order plus integer comparison integration remains. Those are
-named implementation boundaries, not properties inferred from the sparse
-production-shaped qualification.
+named implementation boundaries.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
@@ -205,4 +220,4 @@ oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC a
 described above. The next hard performance cut is to keep the accumulator and
 bootstrapping key in transform form across all 918 deployed blind-rotation steps,
 then wire the resulting PBS-shaped primitive below an integer comparison—not
-extrapolate dense latency from the sparse gate.
+mistake the 421.617 ms coefficient baseline for the transform-form target.
