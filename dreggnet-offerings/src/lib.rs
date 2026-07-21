@@ -61,6 +61,12 @@ pub mod host;
 /// the unbounded pre-lifecycle behavior. See [`lifecycle`].
 pub mod lifecycle;
 pub mod mock;
+/// THE LEAN-NATIVE DESCENT offering — an incremental player-facing adapter over
+/// [`dungeon_on_dregg::descent`], whose deployed executor teeth are emitted by
+/// `Dregg2.Games.DungeonProgram`. This is distinct from the older spween daily
+/// HP/gold loop: every affordance drives custody, light, carrying attenuation,
+/// keys, relic provenance, and terminal banking on the native game.
+pub mod native_descent;
 /// Transport-bearing deos affordances: one opaque binary operation descriptor
 /// and execution shape shared by every frontend adapter.
 pub mod operation;
