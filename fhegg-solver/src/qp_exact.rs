@@ -92,7 +92,7 @@ pub struct CertQpExact {
 
 /// The exact check report. Residuals are at scale `S²` and EXACT; `None` means
 /// the computation overflowed (fail-closed) or the certificate was malformed.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CertQpExactReport {
     pub well_formed: bool,
     /// A checked i128 operation overflowed — the check fails CLOSED.
@@ -368,19 +368,29 @@ impl CertQpExact {
         let s = 10i128.pow(self.scale);
         let (n, mc) = (self.n, self.mc);
 
-        // Ax at scale S², per constraint row.
-        let ax: Vec<i128> = (0..mc)
-            .map(|i| row_dot(&self.a[i * n..(i + 1) * n], &self.x))
-            .collect::<Option<_>>()?;
-
-        // rustPrimalResidual: max_i (Ax−uS)₊ + (lS−Ax)₊.
+        // Stream each A row exactly once into both constraint residuals.  The
+        // previous checker first materialized `Ax: Vec<i128>` and then scanned
+        // it twice.  `collect::<Option<Vec<_>>>()` cannot retain the range's
+        // exact-size hint, so a 256-row certificate grew that temporary seven
+        // times (8,128 allocated bytes) on every verification.  Primal and
+        // normal-cone residuals need only the current row scalar; retaining it
+        // beyond this iteration changes neither exact arithmetic nor the
+        // fail-closed verdict.
         let mut prim: i128 = 0;
+        let mut normal: i128 = 0;
         for i in 0..mc {
+            let ax_i = row_dot(&self.a[i * n..(i + 1) * n], &self.x)?;
             let us = self.u[i].checked_mul(s)?;
             let ls = self.l[i].checked_mul(s)?;
-            let over = ax[i].checked_sub(us)?.max(0);
-            let under = ls.checked_sub(ax[i])?.max(0);
+            let over = ax_i.checked_sub(us)?.max(0);
+            let under = ls.checked_sub(ax_i)?.max(0);
             prim = prim.max(over.checked_add(under)?);
+
+            // rustNormalResidual:
+            // max_i |Ax − clamp(Ax + yS, lS, uS)|.
+            let shifted = ax_i.checked_add(self.y[i].checked_mul(s)?)?;
+            let projected = shifted.clamp(ls, us);
+            normal = normal.max(ax_i.checked_sub(projected)?.checked_abs()?);
         }
 
         // rustDualResidual: max_j |(Px)_j + q_j·S + (Aᵀy)_j|.
@@ -394,16 +404,6 @@ impl CertQpExact {
             let qs = self.q[j].checked_mul(s)?;
             let stat = px_j.checked_add(qs)?.checked_add(aty_j)?;
             dual = dual.max(stat.checked_abs()?);
-        }
-
-        // rustNormalResidual: max_i |Ax − clamp(Ax + yS, lS, uS)|.
-        let mut normal: i128 = 0;
-        for i in 0..mc {
-            let us = self.u[i].checked_mul(s)?;
-            let ls = self.l[i].checked_mul(s)?;
-            let shifted = ax[i].checked_add(self.y[i].checked_mul(s)?)?;
-            let projected = shifted.clamp(ls, us);
-            normal = normal.max(ax[i].checked_sub(projected)?.checked_abs()?);
         }
 
         let tol = self.epsilon.checked_mul(s)?;
@@ -423,6 +423,123 @@ mod tests {
     const SC: u32 = 6;
     const S: i128 = 1_000_000; // 10^SC
     const S2: i128 = S * S;
+
+    /// The former allocating implementation, retained only as a test oracle
+    /// for the streaming cutover. This is deliberately not production code.
+    fn allocating_residual_oracle(cert: &CertQpExact) -> Option<(i128, i128, i128, i128)> {
+        let s = 10i128.pow(cert.scale);
+        let (n, mc) = (cert.n, cert.mc);
+        let ax: Vec<i128> = (0..mc)
+            .map(|i| row_dot(&cert.a[i * n..(i + 1) * n], &cert.x))
+            .collect::<Option<_>>()?;
+
+        let mut prim: i128 = 0;
+        for i in 0..mc {
+            let us = cert.u[i].checked_mul(s)?;
+            let ls = cert.l[i].checked_mul(s)?;
+            let over = ax[i].checked_sub(us)?.max(0);
+            let under = ls.checked_sub(ax[i])?.max(0);
+            prim = prim.max(over.checked_add(under)?);
+        }
+
+        let mut dual: i128 = 0;
+        for j in 0..n {
+            let px_j = row_dot(&cert.p[j * n..(j + 1) * n], &cert.x)?;
+            let mut aty_j: i128 = 0;
+            for i in 0..mc {
+                aty_j = aty_j.checked_add(cert.a[i * n + j].checked_mul(cert.y[i])?)?;
+            }
+            let qs = cert.q[j].checked_mul(s)?;
+            let stat = px_j.checked_add(qs)?.checked_add(aty_j)?;
+            dual = dual.max(stat.checked_abs()?);
+        }
+
+        let mut normal: i128 = 0;
+        for i in 0..mc {
+            let us = cert.u[i].checked_mul(s)?;
+            let ls = cert.l[i].checked_mul(s)?;
+            let shifted = ax[i].checked_add(cert.y[i].checked_mul(s)?)?;
+            let projected = shifted.clamp(ls, us);
+            normal = normal.max(ax[i].checked_sub(projected)?.checked_abs()?);
+        }
+
+        Some((prim, dual, normal, cert.epsilon.checked_mul(s)?))
+    }
+
+    fn small_signed(state: &mut u64) -> i128 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((*state >> 32) % 11) as i128 - 5
+    }
+
+    fn small_values(state: &mut u64, count: usize) -> Vec<i128> {
+        (0..count).map(|_| small_signed(state)).collect()
+    }
+
+    #[test]
+    fn streaming_residuals_match_allocating_oracle_and_hostile_overflow() {
+        // Exercise every dimension/scale shape with signed coefficients rather
+        // than comparing only a cooperative identity matrix.
+        let mut state = 0x6b6b_742d_7374_7265;
+        for n in 1..=8 {
+            for mc in 0..=8 {
+                for scale in 0..=3 {
+                    let mut l = Vec::with_capacity(mc);
+                    let mut u = Vec::with_capacity(mc);
+                    for _ in 0..mc {
+                        let left = small_signed(&mut state);
+                        let right = small_signed(&mut state);
+                        l.push(left.min(right));
+                        u.push(left.max(right));
+                    }
+                    let cert = CertQpExact {
+                        n,
+                        mc,
+                        scale,
+                        p: small_values(&mut state, n * n),
+                        q: small_values(&mut state, n),
+                        a: small_values(&mut state, mc * n),
+                        l,
+                        u,
+                        x: small_values(&mut state, n),
+                        y: small_values(&mut state, mc),
+                        epsilon: small_signed(&mut state).unsigned_abs() as i128,
+                    };
+                    assert!(cert.well_formed());
+                    assert_eq!(
+                        cert.residuals(),
+                        allocating_residual_oracle(&cert),
+                        "streaming drift at n={n}, mc={mc}, scale={scale}"
+                    );
+                }
+            }
+        }
+
+        // The old pass computed every Ax row before checking bounds. The new
+        // pass may encounter this first-row bound overflow before the hostile
+        // second-row dot overflow, but both are the same observable fail-closed
+        // arithmetic result; no later error can turn either into acceptance.
+        let hostile = CertQpExact {
+            n: 2,
+            mc: 2,
+            scale: MAX_SCALE,
+            p: vec![0; 4],
+            q: vec![0; 2],
+            a: vec![0, 0, i128::MAX, i128::MAX],
+            l: vec![i128::MIN, 0],
+            u: vec![i128::MAX, 0],
+            x: vec![2, 2],
+            y: vec![0, 0],
+            epsilon: 0,
+        };
+        assert_eq!(hostile.residuals(), allocating_residual_oracle(&hostile));
+        assert_eq!(
+            hostile.check(),
+            CertQpExactReport::failed_closed(true),
+            "hostile arithmetic must remain a closed failure"
+        );
+    }
 
     /// `rustQpOne` from CertQpRustDenotation.lean: min ½x²−x on 0≤x≤2, lifted.
     fn qp_one(x: i128, y: i128, epsilon: i128) -> CertQpExact {
