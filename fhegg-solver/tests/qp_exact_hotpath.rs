@@ -2,7 +2,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
+use fhegg_solver::qp::QpProblem;
 use fhegg_solver::qp_exact::CertQpExact;
+use fhegg_solver::qp_strict::{verify_zero_kkt_qp, verify_zero_kkt_qp_ref};
 
 struct CountingAllocator;
 
@@ -67,6 +69,24 @@ fn exact_identity_qp(n: usize) -> CertQpExact {
         x: vec![1; n],
         y: vec![0; n],
         epsilon: 0,
+    }
+}
+
+fn exact_identity_public_qp(n: usize) -> QpProblem {
+    let mut p = vec![0.0; n * n];
+    let mut a = vec![0.0; n * n];
+    for i in 0..n {
+        p[i * n + i] = 1.0;
+        a[i * n + i] = 1.0;
+    }
+    QpProblem {
+        n,
+        mc: n,
+        p,
+        q: vec![-1.0; n],
+        a,
+        l: vec![1.0; n],
+        u: vec![1.0; n],
     }
 }
 
@@ -219,4 +239,69 @@ fn exact_kkt_revalidation_allocation_and_timing_probe() {
         "exact KKT revalidation must be allocation-free"
     );
     assert_eq!(streaming_bytes, 0);
+}
+
+#[test]
+fn borrowed_zero_kkt_authority_elides_dense_certificate_clone() {
+    const N: usize = 256;
+    const ITERATIONS: usize = 64;
+
+    let certificate = exact_identity_qp(N);
+    let public_problem = exact_identity_public_qp(N);
+    let borrowed =
+        verify_zero_kkt_qp_ref(&certificate, &public_problem, 0).expect("borrowed exact authority");
+    assert!(std::ptr::eq(borrowed.certificate(), &certificate));
+    assert!(borrowed.report().valid);
+
+    let (owned_allocations, owned_bytes) = allocation_delta(|| {
+        for _ in 0..ITERATIONS {
+            let verified = verify_zero_kkt_qp(certificate.clone(), &public_problem, 0)
+                .expect("former fhir owned path");
+            assert!(std::hint::black_box(verified.report()).valid);
+        }
+    });
+    let (borrowed_allocations, borrowed_bytes) = allocation_delta(|| {
+        for _ in 0..ITERATIONS {
+            let verified = verify_zero_kkt_qp_ref(&certificate, &public_problem, 0)
+                .expect("zero-copy fhir path");
+            assert!(std::hint::black_box(verified.report()).valid);
+        }
+    });
+
+    let owned_first = timed_ns(ITERATIONS, || {
+        let verified = verify_zero_kkt_qp(certificate.clone(), &public_problem, 0)
+            .expect("owned benchmark path");
+        assert!(std::hint::black_box(verified.report()).valid);
+    });
+    let borrowed_first = timed_ns(ITERATIONS, || {
+        let verified = verify_zero_kkt_qp_ref(&certificate, &public_problem, 0)
+            .expect("borrowed benchmark path");
+        assert!(std::hint::black_box(verified.report()).valid);
+    });
+    let borrowed_second = timed_ns(ITERATIONS, || {
+        let verified = verify_zero_kkt_qp_ref(&certificate, &public_problem, 0)
+            .expect("borrowed benchmark path");
+        assert!(std::hint::black_box(verified.report()).valid);
+    });
+    let owned_second = timed_ns(ITERATIONS, || {
+        let verified = verify_zero_kkt_qp(certificate.clone(), &public_problem, 0)
+            .expect("owned benchmark path");
+        assert!(std::hint::black_box(verified.report()).valid);
+    });
+    let measured_checks = ITERATIONS * 2;
+    let expected_clone_bytes = (2 * N * N + 5 * N) * std::mem::size_of::<i128>();
+    eprintln!(
+        "zero-kkt-authority n={N} checks={measured_checks} owned_ns_per_check={} borrowed_ns_per_check={} owned_allocations_per_check={} owned_bytes_per_check={} borrowed_allocations={} borrowed_bytes={}",
+        (owned_first + owned_second) / measured_checks as u128,
+        (borrowed_first + borrowed_second) / measured_checks as u128,
+        owned_allocations / ITERATIONS,
+        owned_bytes / ITERATIONS,
+        borrowed_allocations,
+        borrowed_bytes,
+    );
+
+    assert_eq!(owned_allocations / ITERATIONS, 7);
+    assert_eq!(owned_bytes / ITERATIONS, expected_clone_bytes);
+    assert_eq!(borrowed_allocations, 0);
+    assert_eq!(borrowed_bytes, 0);
 }

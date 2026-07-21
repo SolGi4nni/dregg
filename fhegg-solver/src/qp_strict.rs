@@ -6,13 +6,15 @@
 //! global-optimality composition.  This module makes that distinction a Rust
 //! type boundary.
 //!
-//! [`verify_zero_kkt_qp`] is the only constructor of [`VerifiedZeroKktQp`]. It
-//! takes ownership of the untrusted certificate, pins the fixed-point scale,
-//! bounds verifier work, recomputes all residuals with checked arithmetic,
-//! requires `epsilon = primal = dual = normal = 0`, and binds the complete
-//! embedded `(P,q,A,l,u)` to an independently supplied [`QpProblem`].  Callers
-//! cannot mint the capability from a merely approximate certificate or mutate
-//! the owned certificate after verification.
+//! [`verify_zero_kkt_qp`] is the only constructor of [`VerifiedZeroKktQp`].
+//! [`verify_zero_kkt_qp_ref`] provides the same checks as a lifetime-bound
+//! [`VerifiedZeroKktQpRef`] when a higher-level private owner already keeps the
+//! certificate immutable. Both pin the fixed-point scale, bound verifier work,
+//! recompute all residuals with checked arithmetic, require
+//! `epsilon = primal = dual = normal = 0`, and bind the complete embedded
+//! `(P,q,A,l,u)` to an independently supplied [`QpProblem`]. Callers cannot
+//! mint either capability from a merely approximate certificate; the borrowed
+//! capability also prevents mutation for its entire lifetime.
 //!
 //! This boundary does **not** prove `P` is PSD, authenticate a producer, decode
 //! hostile bytes before allocation, or prove the Rust checker refines Lean.
@@ -118,6 +120,45 @@ impl VerifiedZeroKktQp {
     }
 }
 
+/// A zero-copy exact-zero KKT capability over an immutably borrowed
+/// certificate.
+///
+/// This is useful for strict container formats that already own the canonical
+/// certificate and make it private after decoding. The lifetime prevents the
+/// certificate from being mutated while the capability exists, avoiding a
+/// second owned copy of dense `P` and `A` matrices solely to express the typed
+/// check result.
+#[derive(Debug)]
+pub struct VerifiedZeroKktQpRef<'a> {
+    certificate: &'a CertQpExact,
+    report: CertQpExactReport,
+}
+
+impl<'a> VerifiedZeroKktQpRef<'a> {
+    pub fn certificate(&self) -> &'a CertQpExact {
+        self.certificate
+    }
+
+    pub fn report(&self) -> &CertQpExactReport {
+        &self.report
+    }
+
+    pub fn solution(&self) -> (&'a [i128], &'a [i128], u32) {
+        (
+            &self.certificate.x,
+            &self.certificate.y,
+            self.certificate.scale,
+        )
+    }
+
+    /// Retain the recomputed report when a higher-level private capability
+    /// consumes this lifetime-bound view and continues to own the exact same
+    /// immutable certificate.
+    pub fn into_report(self) -> CertQpExactReport {
+        self.report
+    }
+}
+
 /// Mint the exact-zero KKT capability for one independently authorized QP.
 ///
 /// The independent `expected_scale` is load-bearing: otherwise an untrusted
@@ -127,6 +168,33 @@ pub fn verify_zero_kkt_qp(
     public_problem: &QpProblem,
     expected_scale: u32,
 ) -> Result<VerifiedZeroKktQp, ZeroKktQpError> {
+    let report = verify_zero_kkt_qp_report(&certificate, public_problem, expected_scale)?;
+    Ok(VerifiedZeroKktQp {
+        certificate,
+        report,
+    })
+}
+
+/// Verify exact-zero KKT authority without cloning an already privately-owned
+/// certificate. The returned capability cannot outlive or permit mutation of
+/// `certificate`.
+pub fn verify_zero_kkt_qp_ref<'a>(
+    certificate: &'a CertQpExact,
+    public_problem: &QpProblem,
+    expected_scale: u32,
+) -> Result<VerifiedZeroKktQpRef<'a>, ZeroKktQpError> {
+    let report = verify_zero_kkt_qp_report(certificate, public_problem, expected_scale)?;
+    Ok(VerifiedZeroKktQpRef {
+        certificate,
+        report,
+    })
+}
+
+fn verify_zero_kkt_qp_report(
+    certificate: &CertQpExact,
+    public_problem: &QpProblem,
+    expected_scale: u32,
+) -> Result<CertQpExactReport, ZeroKktQpError> {
     if expected_scale > MAX_SCALE {
         return Err(ZeroKktQpError::ExpectedScaleTooLarge {
             expected: expected_scale,
@@ -168,10 +236,7 @@ pub fn verify_zero_kkt_qp(
         return Err(ZeroKktQpError::NonZeroResidual);
     }
 
-    Ok(VerifiedZeroKktQp {
-        certificate,
-        report,
-    })
+    Ok(report)
 }
 
 fn bound_verifier_work(n: usize, mc: usize) -> Result<(), ZeroKktQpError> {
