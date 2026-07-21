@@ -34,8 +34,8 @@ verifier reconstruction; and a green full-profile integration wiring the exact
 encrypted rows through a live authenticated PartyMPC crossing into atomic
 Bazaar/game consequences. The same-opening proof, composite verifier, hosted
 registry, live crossing, custody envelope, fhIR raid allocation, and the
-full-profile apex gate are green. The crown consequence remains implemented but
-ungated.
+full-profile apex gate are green. The Warden's Keep crown consequence is also
+green at its exact heavy-release gate.
 The decisive hbox run passed 1/1 under the full nextest profile with both
 DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1 and no authority-core
 fallback.
@@ -51,14 +51,15 @@ verification sees plaintext orders and encryption randomness; PartyMPC arithmeti
 is semi-honest with trusted Beaver preprocessing; and the distributed-custody
 surface does not yet produce the real Bulletproof/R1CS proof.
 
-This is also **not an end-to-end post-quantum apex**. The gate required the
-verified ML-KEM and ML-DSA authority cores, and BFV is lattice-based, but the
-exact ciphertext/root relation is a Bulletproof over Ristretto/Pedersen with a
-discrete-log + Fiat–Shamir security floor. Committee/crossing authentication is
-Ed25519, distributed custody uses Ristretto/Pedersen, and PartyMPC peer key
-agreement uses Curve25519. HidingFRI, Poseidon, and BFV have their own stated
-soundness/security floors; their presence does not convert these classical
-seams into a post-quantum composition.
+This is also **not an end-to-end post-quantum apex**. Native clearing quorum and
+PartyMPC transport now have separately green ML-DSA and ML-KEM-backed profiles,
+and BFV is lattice-based, but the full apex has not been rerun since those
+transport cutovers. More importantly, its exact ciphertext/root relation is a
+Bulletproof over Ristretto/Pedersen with a discrete-log + Fiat–Shamir security
+floor, and distributed custody still uses Ristretto/Pedersen. HidingFRI,
+Poseidon, BFV, and the wide Lean/Rust bindings have their own stated
+soundness/security floors; their presence does not convert the remaining
+classical seams into a post-quantum composition.
 
 ## 2. Current status at a glance
 
@@ -68,19 +69,25 @@ seams into a post-quantum composition.
 | Composite private clearing verifier | **GATED** | private_bfv_attested_clearing: 1/1 release green; 62.958s |
 | Exact source rows and ingress weld | **GATED in Lean and the full-profile apex** | DarkBazaarPrivateIngressCutover: 11 clean; apex 1/1 green |
 | Public-only hosted verifier registry | **GATED** | two hostile registry tests: 2/2 green |
-| Authenticated live PartyMPC crossing | **GATED** | party_mpc_crossing_transport: 2/2 release green; 1.099s |
-| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | exact timed hbox full-profile run 1/1 green in 124.159s; verified ML-KEM/ML-DSA authority cores required; classical Bulletproof/Ed25519/Curve25519 seams remain |
+| Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
+| Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
+| Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | exact timed hbox full-profile run 1/1 green in 124.159s; verified authority cores required; capture predates native quorum/transport cutovers and still uses the classical Bulletproof relation |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
 | Distributed prover envelope | **GATED, FIXTURE BACKEND ONLY** | private_book_distributed_prover: 2/2 green; no distributed Bulletproof/R1CS backend |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
-| Bazaar crown consequence | **BUILT, UNGATED** | one both-polarity test exists; no captured successful run |
+| Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
 | Narrated Dungeon and relic-oath composition | **GATED BY TARGET** | narrated Dungeon 3/3; repaired relic oath 2/2 |
 | Private-raid capability/Arena and narrated-relic composition | **PARTIALLY GATED** | relic capstone 1/1; surface evidence 7 prior + 1 focused current; lower forest pending |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **PENDING GATE** | HEAD targets contain 3 + 3 tests; no result supplied |
-| hbox build substrate | **OPERATIONAL** | 55GiB free; full-profile apex and real Vulkan GPU-fold gates captured |
+| hbox build substrate | **CONSTRAINED** | current filesystem probe: 19GiB free; prior full-profile apex and real Vulkan GPU gates remain valid captures |
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
+| Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; 6 resident blits; GPU 1.306s vs CPU 3.072s at depth 2048 |
+| Portable encrypted TFHE CMUX | **GATED PROTOTYPE** | CPU/hostile 4/4 and strict GPU 2/2 on hbox; degree-N external product is O(N²), not programmable bootstrapping |
+| Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
+| Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
+| Hostile external fhIR optimizer protocol | **GATED** | 69/69 focused: problem/session/nonce/manifest/certificate/checksum/replay are bound before the exact checker |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
 
@@ -228,13 +235,17 @@ depends on the explicit LiveMpcBackend.sound premise.
 
 ### Transport and crossing code
 
-**fhegg-fhe/src/mpc_party/transport.rs** implements authenticated process
-transport v3:
+**fhegg-fhe/src/mpc_party/transport.rs** now implements two explicit transport
+profiles:
 
-- Ed25519 authenticates the exact session, sender, recipient, sequence, and
-  ciphertext;
-- peer ingress is XChaCha20-Poly1305 encrypted under Curve25519-DH-derived keys,
-  so a routing process sees routes rather than plaintext peer payloads;
+- `NativePostQuantum` roster-pins ML-DSA-65 identities and authenticates every
+  frame under the native profile;
+- each native frame combines a fresh ML-KEM-768 encapsulation with the existing
+  X25519 contribution through dregg's canonical hybrid combiner before
+  XChaCha20-Poly1305 protects the peer payload;
+- `ClassicalCompatibility` is explicit rather than an implicit downgrade;
+- signatures bind the profile, identity, session, circuit role, route,
+  sequence, payload, and roster key;
 - CrossingPartyMachine and CrossingCoordinatorMachine drive the crossing;
 - prepare_private_book_crossing_input validates the exact packed private-book
   shape;
@@ -242,12 +253,13 @@ transport v3:
   transcript; and
 - fresh_crossing_preprocessing_seed separates invocations.
 
-Its Ed25519 authentication and Curve25519 key agreement are classical-security
-seams. This transport has no forward secrecy or post-quantum confidentiality.
-More importantly, authenticated transport does not imply honest arithmetic. The
-crossing protocol is semi-honest and uses trusted Beaver preprocessing; it has
-no proof of honest share formation, correct gate evaluation, or maliciously
-secure preprocessing.
+The native profile removes Curve25519-only confidentiality and Ed25519-only
+frame authentication from this boundary, but it makes no forward-secrecy claim:
+recipient ML-KEM and identity-DH keys are long-lived. More importantly,
+authenticated transport does not imply honest arithmetic. The crossing
+protocol is semi-honest and uses trusted Beaver preprocessing; it has no proof
+of honest share formation, correct gate evaluation, or maliciously secure
+preprocessing.
 
 **fhegg-fhe/tests/party_mpc_crossing_transport.rs** starts with the exact four BFV
 proof rows, folds them, masks and threshold-opens only a one-time-padded
@@ -257,8 +269,13 @@ authenticated machines reveal only (p*, V*). It contains:
 - exact_packed_rows_drive_authenticated_crossing_and_bind_every_public_bit
 - packed_private_input_refuses_wrong_shape_or_noncanonical_share
 
-Captured result after repairing the E0282 inference failure: **2/2 green in
-release**, **1.099s**.
+The original exact-crossing target passed **2/2 in release**, **1.099s**. After
+the native profile cutover, the focused end-to-end native integration passed
+**5/5**, including exact packed private crossing and hostile replay, downgrade,
+and roster-key substitution cases; transport units passed **5/5**. Those native
+PQ tests used the explicit unaudited test backend because the remote lane lacked
+the verified Lean cores, so they are control-flow/transcript evidence rather
+than verified-core evidence.
 
 ### Apex cutover
 
@@ -283,11 +300,13 @@ crossing, hosted verifier reconstruction/restart, verified ML-DSA
 turn-authority core, atomic consequence, and replay refusal all ran.
 
 That is a verification statement about the required authority cores, not an
-end-to-end post-quantum claim. The same run still depends on the classical
-Bulletproof/Ristretto/Pedersen exact-relation seam, Ed25519 committee and
-transport authentication, Curve25519 PartyMPC peer DH, and the separately
-stated HidingFRI/Poseidon soundness floors. BFV's lattice security does not
-remove those classical assumptions.
+end-to-end post-quantum claim. The captured full-apex run predates the later
+native quorum and PartyMPC transport cutovers and therefore exercised the then
+current Ed25519/Curve25519 boundary. Their replacement profiles are separately
+green but have not yet been recaptured inside this heavy apex. In every case the
+apex still depends on the classical Bulletproof/Ristretto/Pedersen
+exact-relation seam and the separately stated HidingFRI/Poseidon soundness
+floors. BFV's lattice security does not remove those assumptions.
 
 The first hbox invocation used the default nextest profile. It built the current
 Lean material but ran **0 tests** because the apex binary is deliberately
@@ -437,7 +456,9 @@ The test targets the real Warden's Keep WriteOnce crown and includes hostile
 target, root, turn, receipt, replay, and recovery cases. It uses the older Tier-1
 private-clearing producer, which sees the order witness; the consequence gate is
 process-local and is not the transferable BFV composite verifier. It is
-**BUILT, UNGATED**.
+**GATED: 1/1 green in the heavy release profile**. Only the pinned receipt may
+authorize the crown; target/root/turn/receipt substitution, replay, and crash
+splice cases refuse.
 
 ### fhIR raid allocation
 
@@ -585,11 +606,14 @@ Current hbox ground truth:
 - 123 GiB RAM;
 - AMD RX 6750 XT visible through Vulkan;
 - no ROCm/HIP installation; and
-- **55 GiB free** on the filesystem used for the work.
+- **19 GiB free** on the filesystem used for the work at the latest direct
+  probe.
 
 The hbox required-authority-core apex gate above and the collective GPU fold
 below are now successful
-execution evidence; the earlier 100%-full/1.9-MB-free condition is resolved.
+execution evidence. The current free-space floor is again too narrow for casual
+parallel heavy builds, so keep Rust CPU gates on persvati and reserve hbox for
+GPU-specific work until its build artifacts are pruned.
 
 **fhegg-fhe/tests/collective_gpu_additive.rs**:
 
@@ -619,6 +643,14 @@ The portable GPU frontier is now broader and exactly scoped:
   coordinates are refused. This is **not yet a complete MSM** and, even when it
   is, only accelerates the transitional classical Bulletproof proof.
 
+The HidingFRI GPU path now retains LDE buffers device-to-device through salted
+leaf construction. At depth 2048 it produced the exact CPU proof with six
+resident blits and measured **1.306s GPU vs 3.072s CPU**; Merkle-layer readback
+remains, so this is not full proof residency. The TFHE path also has a portable
+encrypted CMUX/external-product prototype with 4/4 CPU/hostile and 2/2 strict-GPU
+gates. Its current kernel is quadratic in the polynomial degree and is not a
+programmable-bootstrap implementation.
+
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
 execution. Frozen details live in `FHEGG-WGPU-VALIDATION-MATRIX.md`,
@@ -630,10 +662,40 @@ The PQ lane supplied the apex-required verified ML-KEM/ML-DSA authority cores;
 the separate credential-polarity ABI tooth and static archive audit are the
 evidence that closed the handler/initializer residual.
 
+### Wide post-quantum binding and the live shielded boundary
+
+Two narrower-but-load-bearing replacements now exist:
+
+- `metatheory/Market/PrivateBookBfvBindingAir.lean` checks the fixed private-book
+  relation as **98,304 exact BFV equations** at the Lean model boundary.
+- `metatheory/Dregg2/Shielded/WideNativePqCommitment.lean` commits the native
+  shielded statement through **16 canonical BabyBear lanes**, rather than one
+  field that aliases `x` with `x + p`.
+
+The Rust `ShieldedInputPayload` now carries a mandatory 16-lane wide value
+binding plus its hiding proof. The effect hash binds every lane, and executor
+admission verifies both the existing spend/conservation evidence and the wide
+proof before absorbing those lanes into the conservation transcript. Focused
+gates are **7/7 Turn shielded** and **4/4 circuit wire/alias**.
+
+This is a transitional weld, not the final PQ no-mint theorem. Note creation and
+the live tree still commit the older modulo-field leaf, and the authoritative
+conservation proof remains Ristretto/Pedersen/Bulletproof-based. The next exact
+cut is a wide note/root format and one combined Lean AIR for membership and
+conservation, followed by replacement of the classical acceptance leg.
+
 ## 10. What the fhIR optimizer proof does and does not say
 
 The optimizer is an untrusted finder. Acceptance authority is the exact
 certificate/checker path:
+
+- `fhir/src/optimizer_protocol.rs` now makes the out-of-process worker boundary
+  hostile by construction: the complete problem digest, solver manifest,
+  session, nonce, certificate bytes, length, exact EOF, checksum, and replay id
+  are bound before the existing checker and Cert-F authority are invoked. The
+  focused protocol/checker target is **69/69 green**. A worker returning a valid
+  certificate for a different problem, session, or solver context has supplied
+  no authority.
 
 - Market.SddPsd proves that an arbitrary finite rational SDD matrix with
   nonnegative diagonal is PSD. The exact checker constructs and verifies that
@@ -684,6 +746,10 @@ are:
 
 Additional imported authority includes:
 
+- Dregg2/Shielded/WideNativePqCommitment.lean — canonical 16-lane native PQ
+  commitment and anti-aliasing laws;
+- Market/PrivateBookBfvBindingAir.lean — exact fixed-shape BFV binding equations
+  and extraction boundary;
 - Market/PrivateBookEncryptionBinding.lean — exact opening law and detached
   encoding counterexample;
 - Market/PartyMpcTransportBoundary.lean — authenticated transport does not
@@ -697,7 +763,8 @@ Additional imported authority includes:
 
 These modules make the missing premises visible. They do not prove the
 Bulletproof implementation, BFV/DKG security, PartyMPC malicious security,
-canonical wire decoding, or Rust-to-Lean refinement from first principles.
+canonical wire decoding, GPU execution, or the complete Rust-to-Lean refinement
+from first principles.
 
 ## 12. Exact captured verification ledger
 
@@ -712,11 +779,17 @@ canonical wire decoding, or Rust-to-Lean refinement from first principles.
   process/custody envelope.
 - fhegg_private_verifier_registry — **2/2 green**.
 - party_mpc_crossing_transport — **2/2 release green**, **1.099s**.
+- native PartyMPC PQ transport — **5/5 integration + 5/5 units green**;
+  explicit unaudited test backend, so transcript/control-flow evidence only.
+- native clearing quorum — **1/1 hostile native + 6/6 classical compatibility
+  green**; the native authority transcript covers the complete canonical claim.
 - private_clearing_apex_e2e — **1/1 full-stack integration green**, exact timed
   run **124.159s nextest / 124.116s internal**, under --profile full with
   DREGG_REQUIRE_LEAN=1 and DREGG_REQUIRE_PQ_CORES=1; no authority-core
   fallback. This verifies the required ML-KEM/ML-DSA cores, not end-to-end PQ.
 - fhir_verified_raid_allocation — **6/6 release green**.
+- hostile external fhIR optimizer protocol — **69/69 focused green**.
+- private_clearing_crown_consequence — **1/1 heavy-release green**.
 - dungeon_narrated_operation — **3/3 green**.
 - relic_oath_branch — repaired target **2/2 green**.
 - relic_raid_narrated_forest — **1/1 green**.
@@ -724,6 +797,12 @@ canonical wire decoding, or Rust-to-Lean refinement from first principles.
   1 repaired focused-path green**; no single current 8/8 invocation captured.
 - collective_gpu_additive — **1/1 green** on the real RX 6750 XT with
   GpuResident via wgpu/Vulkan.
+- portable HidingFRI GPU — **2/2 exact parity green**, with the depth-2048 path
+  measuring **1.306s GPU vs 3.072s CPU** and retaining six device blits.
+- portable TFHE encrypted CMUX — **4/4 CPU/hostile + 2/2 strict GPU green**;
+  quadratic external-product prototype, not PBS.
+- wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
+  note/root and classical conservation leg remain.
 - lake build Market — **8745 jobs green** before the final live-host/optimizer
   additions, then **8747 jobs green** afterward.
 - direct Lean: private ingress **11 clean**, live apex host **16 clean**, fhIR
@@ -731,7 +810,6 @@ canonical wire decoding, or Rust-to-Lean refinement from first principles.
 
 ### Not green
 
-- private_clearing_crown_consequence — implemented, no captured successful run.
 - any earlier full-apex result that omitted the target because its manifest
   feature was absent — **not evidence**.
 - No remaining handler-cutover archive residual: the exact strict ABI tooth and
@@ -760,7 +838,9 @@ canonical wire decoding, or Rust-to-Lean refinement from first principles.
 
 These are the next truth-producing gates:
 
-1. Run the crown consequence target.
+1. Recapture the full private-clearing apex with the native PQ quorum and native
+   PartyMPC transport profiles installed together; their independent greens do
+   not retroactively alter the older apex capture.
 2. Capture the four still-pending composed-game targets in section 9; do not
    merge their counts or inherit greens from their organs.
 3. If a single-invocation suite claim is needed for dreggnet-surfaces private
