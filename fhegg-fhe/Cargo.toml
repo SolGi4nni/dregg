@@ -70,9 +70,10 @@ dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 bulletproofs = { version = "5" }
 # Owned fork of zkcrypto/bulletproofs@04bce4e.  Besides the upstream CtOption
 # parser repair, it replaces the six hard-coded prover MSM calls with one
-# fail-closed dispatch seam and a portable wgpu scalar-window stage.  Dalek is
-# still the exact group-operation oracle/output today; the fork names that
-# boundary instead of claiming the bucket accumulation is already accelerated.
+# fail-closed dispatch seam, portable prover scalar-window preparation, and a
+# bounded complete public-scalar verifier MSM. Dalek remains the exact group
+# oracle/output; witness-derived prover group MSM stays on CPU because the
+# verifier bit-bucket kernel is deliberately variable-time.
 bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["yoloproofs", "wgpu-msm"], optional = true }
 curve25519-dalek = { version = "4", features = ["alloc", "rand_core", "dregg-wgpu-coordinates"] }
 merlin = "3"
@@ -156,6 +157,11 @@ required-features = ["amm-input-binding"]
 [[test]]
 name = "ristretto_group_add_wgpu_required"
 path = "tests/ristretto_group_add_wgpu_required.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
+name = "ristretto_full_msm_wgpu_required"
+path = "tests/ristretto_full_msm_wgpu_required.rs"
 required-features = ["amm-input-binding"]
 
 [lints]

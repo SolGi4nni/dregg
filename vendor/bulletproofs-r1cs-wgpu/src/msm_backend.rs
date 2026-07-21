@@ -5,30 +5,34 @@
 //! proving phases.  This module is the single replacement point for those
 //! calls.
 //!
-//! The first backend stage is intentionally modest and precisely named.  It
-//! sends every secret scalar to a portable wgpu compute shader, derives the
-//! unsigned radix-256 Pippenger windows there, reads them back, and compares
-//! every byte with the CPU definition before dalek performs the group MSM.
-//! It does **not** claim that the Edwards bucket accumulation is on the GPU
-//! yet.  That next step can replace the last line of [`multiscalar_mul`]
-//! without touching the transcript or the six proof call sites again.
+//! The prover seam sends every witness-derived scalar through exact portable
+//! GPU window preparation, but deliberately keeps group MSM in dalek: the
+//! branch-bearing public-scalar kernel is not an acceptable secret-scalar
+//! replacement. The verifier seam owns a complete bounded GPU MSM: 256 public
+//! bit buckets plus exact extended-Edwards Horner reduction. Dalek still
+//! computes the result independently and is the canonical acceptance oracle.
 //!
-//! These prover scalars are witness-derived.  An eventual bucket kernel must
-//! therefore use a constant-work/constant-address construction (or explicitly
-//! place the GPU and its side channels inside the prover's trust boundary).
-//! Ordinary public-scalar verifier MSMs may use variable-time Pippenger.
+//! No GPU path is default authority. Disabled mode is pure dalek; auto mode has
+//! explicit CPU fallback; required mode fails closed on feature, adapter,
+//! dimension, canonical-input, identity-input, or parity failure.
 
 use core::borrow::Borrow;
 use std::convert::{TryFrom, TryInto};
 
 use curve25519_dalek::ristretto::{CompressedRistretto, DreggExtendedCoordinates, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::MultiscalarMul;
+use curve25519_dalek::traits::{Identity, MultiscalarMul, VartimeMultiscalarMul};
 
 use crate::errors::R1CSError;
 
 /// The number of aligned radix-256 windows in a canonical 32-byte scalar.
 pub const RADIX_256_WINDOWS: usize = 32;
+
+/// Hard allocation/dispatch ceiling for the qualification MSM.
+///
+/// This comfortably covers small and medium Bulletproof verifier checks while
+/// making hostile serialized dimensions fail before allocating device buffers.
+pub const MAX_WGPU_MSM_TERMS: usize = 4096;
 
 /// Result of the exact GPU-preparation stage.
 #[derive(Debug, Eq, PartialEq)]
@@ -60,15 +64,38 @@ pub struct WgpuPointAddition {
     pub compressed_sums: Vec<[u8; 32]>,
 }
 
+/// Exact result of the bounded public-scalar GPU MSM.
+#[derive(Debug, Eq, PartialEq)]
+pub struct WgpuMsmResult {
+    /// Adapter selected by wgpu.
+    pub adapter_name: String,
+    /// `false` denotes a software/CPU adapter such as lavapipe.
+    pub is_hardware: bool,
+    /// Number of scalar/point terms reduced by the GPU.
+    pub term_count: usize,
+    /// Canonical Ristretto encoding, accepted only after exact dalek parity.
+    pub compressed_result: [u8; 32],
+    /// Submit-to-completion time for scaling, reduction, and final readback.
+    pub gpu_elapsed_micros: u128,
+}
+
 /// Fail-closed input or GPU error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MsmBackendError {
+    /// An empty serialized MSM is not a verifier statement and cannot create
+    /// non-empty wgpu storage bindings portably.
+    EmptyMsm,
     /// Scalar and point sequences had different lengths.
     LengthMismatch { scalars: usize, points: usize },
+    /// The bounded backend refuses allocations above its documented ceiling.
+    TooManyTerms { terms: usize, maximum: usize },
     /// A serialized scalar was not canonical modulo the Ristretto group order.
     NonCanonicalScalar { index: usize },
     /// A serialized Ristretto point did not canonically decompress.
     NonCanonicalPoint { index: usize },
+    /// Verifier proof inputs must not smuggle the Ristretto identity as a
+    /// syntactically valid substitute for a required commitment.
+    IdentityPoint { index: usize },
     /// No usable hardware/software wgpu adapter was available.
     WgpuUnavailable(String),
     /// The shader output disagreed with exact CPU radix-256 decomposition.
@@ -76,6 +103,8 @@ pub enum MsmBackendError {
     /// A GPU extended-coordinate result was malformed, off-curve, or did not
     /// compress to the exact dalek sum.
     WgpuPointMismatch { index: usize },
+    /// The complete GPU MSM disagreed with dalek's canonical group result.
+    WgpuMsmMismatch,
     /// Input dimensions overflowed a checked host or device limit.
     DimensionOverflow,
 }
@@ -83,14 +112,27 @@ pub enum MsmBackendError {
 impl core::fmt::Display for MsmBackendError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::EmptyMsm => write!(f, "empty MSM is outside the bounded wgpu contract"),
             Self::LengthMismatch { scalars, points } => {
                 write!(f, "MSM length mismatch: {scalars} scalars, {points} points")
+            }
+            Self::TooManyTerms { terms, maximum } => {
+                write!(
+                    f,
+                    "MSM has {terms} terms; bounded wgpu maximum is {maximum}"
+                )
             }
             Self::NonCanonicalScalar { index } => {
                 write!(f, "non-canonical Ristretto scalar at index {index}")
             }
             Self::NonCanonicalPoint { index } => {
                 write!(f, "non-canonical Ristretto point at index {index}")
+            }
+            Self::IdentityPoint { index } => {
+                write!(
+                    f,
+                    "Ristretto identity point refused at verifier index {index}"
+                )
             }
             Self::WgpuUnavailable(reason) => write!(f, "wgpu MSM backend unavailable: {reason}"),
             Self::WgpuParityMismatch { scalar, window } => write!(
@@ -100,6 +142,7 @@ impl core::fmt::Display for MsmBackendError {
             Self::WgpuPointMismatch { index } => {
                 write!(f, "wgpu extended-Edwards sum mismatch at pair {index}")
             }
+            Self::WgpuMsmMismatch => write!(f, "wgpu MSM result disagrees with dalek"),
             Self::DimensionOverflow => write!(f, "MSM dimensions exceed checked device limits"),
         }
     }
@@ -422,6 +465,348 @@ pub fn prepare_scalar_windows_wgpu(
     })
 }
 
+/// Execute a complete, bounded MSM on wgpu for public verifier inputs.
+///
+/// The device builds 256 public-scalar bit buckets in parallel, then one exact
+/// high-to-low Horner pass produces the weighted group sum.
+/// The returned encoding remains CPU-authoritative: dalek independently
+/// computes the same MSM, then validates the GPU coordinates and requires the
+/// canonical compressed bytes to agree exactly. This variable-time kernel is
+/// for public verifier scalars, never witness-derived prover scalars.
+#[cfg(feature = "wgpu-msm")]
+pub fn vartime_multiscalar_mul_wgpu(
+    scalar_bytes: &[[u8; 32]],
+    point_bytes: &[[u8; 32]],
+) -> Result<WgpuMsmResult, MsmBackendError> {
+    if scalar_bytes.len() != point_bytes.len() {
+        return Err(MsmBackendError::LengthMismatch {
+            scalars: scalar_bytes.len(),
+            points: point_bytes.len(),
+        });
+    }
+    if scalar_bytes.is_empty() {
+        return Err(MsmBackendError::EmptyMsm);
+    }
+    if scalar_bytes.len() > MAX_WGPU_MSM_TERMS {
+        return Err(MsmBackendError::TooManyTerms {
+            terms: scalar_bytes.len(),
+            maximum: MAX_WGPU_MSM_TERMS,
+        });
+    }
+
+    let (scalars, points) = validate_canonical_inputs(scalar_bytes, point_bytes)?;
+    let identity = RistrettoPoint::identity();
+    if let Some(index) = points.iter().position(|point| *point == identity) {
+        return Err(MsmBackendError::IdentityPoint { index });
+    }
+    let expected = RistrettoPoint::vartime_multiscalar_mul(&scalars, &points);
+    let expected_compressed = expected.compress();
+
+    let term_count =
+        u32::try_from(scalar_bytes.len()).map_err(|_| MsmBackendError::DimensionOverflow)?;
+    let coordinate_word_count = scalar_bytes
+        .len()
+        .checked_mul(4 * 32)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let coordinate_buffer_bytes = u64::try_from(
+        coordinate_word_count
+            .checked_mul(core::mem::size_of::<u32>())
+            .ok_or(MsmBackendError::DimensionOverflow)?,
+    )
+    .map_err(|_| MsmBackendError::DimensionOverflow)?;
+    let scalar_word_count = scalar_bytes
+        .len()
+        .checked_mul(32)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let scalar_buffer_bytes = u64::try_from(
+        scalar_word_count
+            .checked_mul(core::mem::size_of::<u32>())
+            .ok_or(MsmBackendError::DimensionOverflow)?,
+    )
+    .map_err(|_| MsmBackendError::DimensionOverflow)?;
+    const ONE_POINT_BYTES: u64 = (4 * 32 * core::mem::size_of::<u32>()) as u64;
+    const BIT_BUCKET_BYTES: u64 = 256 * ONE_POINT_BYTES;
+
+    let mut coordinate_words = Vec::with_capacity(coordinate_word_count);
+    for point in &points {
+        for coordinate in point.dregg_extended_coordinates() {
+            coordinate_words.extend(coordinate.iter().copied().map(u32::from));
+        }
+    }
+    let mut scalar_words = Vec::with_capacity(scalar_word_count);
+    for bytes in scalar_bytes {
+        scalar_words.extend(bytes.iter().copied().map(u32::from));
+    }
+    let mut constant_words = Vec::with_capacity(32 + 4 * 32);
+    constant_words.extend(
+        RistrettoPoint::dregg_edwards_d2_bytes()
+            .iter()
+            .copied()
+            .map(u32::from),
+    );
+    for coordinate in identity.dregg_extended_coordinates() {
+        constant_words.extend(coordinate.iter().copied().map(u32::from));
+    }
+
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    }))
+    .ok_or_else(|| MsmBackendError::WgpuUnavailable("no adapter".to_owned()))?;
+    let adapter_info = adapter.get_info();
+    let adapter_name = adapter_info.name;
+    let is_hardware = !matches!(adapter_info.device_type, wgpu::DeviceType::Cpu);
+    let limits = adapter.limits();
+    let storage_limit =
+        u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size);
+    if 4 > limits.max_compute_workgroups_per_dimension
+        || coordinate_buffer_bytes > storage_limit
+        || scalar_buffer_bytes > storage_limit
+        || BIT_BUCKET_BYTES > storage_limit
+    {
+        coordinate_words.fill(0);
+        scalar_words.fill(0);
+        return Err(MsmBackendError::DimensionOverflow);
+    }
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("bulletproofs-ristretto-complete-msm-device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: limits.clone(),
+            memory_hints: Default::default(),
+        },
+        None,
+    ))
+    .map_err(|error| MsmBackendError::WgpuUnavailable(error.to_string()))?;
+
+    use wgpu::util::DeviceExt;
+    let input_coordinates = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-points"),
+        contents: bytemuck::cast_slice(&coordinate_words),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+    let input_scalars = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-scalars"),
+        contents: bytemuck::cast_slice(&scalar_words),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    });
+    let constants = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-constants"),
+        contents: bytemuck::cast_slice(&constant_words),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let bit_buckets = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-bit-buckets"),
+        size: BIT_BUCKET_BYTES,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let result_coordinates = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-result"),
+        size: ONE_POINT_BYTES,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-readback"),
+        size: ONE_POINT_BYTES,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let metadata = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-metadata"),
+        contents: bytemuck::cast_slice(&[term_count, 0_u32, 0, 0]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/edwards_add_radix5.wgsl").into()),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-bind-layout"),
+        entries: &[
+            buffer_entry(0, wgpu::BufferBindingType::Uniform),
+            buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+            buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
+            buffer_entry(3, wgpu::BufferBindingType::Storage { read_only: false }),
+            buffer_entry(4, wgpu::BufferBindingType::Storage { read_only: true }),
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-pipeline-layout"),
+        bind_group_layouts: &[&layout],
+        push_constant_ranges: &[],
+    });
+    let bucket_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-bucket-pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("bucket_bits"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let combine_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-combine-pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("combine_bits"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bucket_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-bucket-group"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: metadata.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: input_coordinates.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: constants.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: bit_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: input_scalars.as_entire_binding(),
+            },
+        ],
+    });
+    let combine_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-combine-group"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: metadata.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: bit_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: constants.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: result_coordinates.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: input_scalars.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-encoder"),
+    });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("bulletproofs-ristretto-complete-msm-pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&bucket_pipeline);
+        pass.set_bind_group(0, &bucket_group, &[]);
+        pass.dispatch_workgroups(4, 1, 1);
+        pass.set_pipeline(&combine_pipeline);
+        pass.set_bind_group(0, &combine_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&result_coordinates, 0, &readback, 0, ONE_POINT_BYTES);
+    let started = std::time::Instant::now();
+    queue.submit(Some(encoder.finish()));
+
+    let slice = readback.slice(..);
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = send.send(result);
+    });
+    device.poll(wgpu::Maintain::Wait);
+    let gpu_elapsed_micros = started.elapsed().as_micros();
+    match receive.recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            clear_buffers(
+                &device,
+                &queue,
+                &[
+                    &input_coordinates,
+                    &input_scalars,
+                    &bit_buckets,
+                    &result_coordinates,
+                    &readback,
+                ],
+            );
+            coordinate_words.fill(0);
+            scalar_words.fill(0);
+            return Err(MsmBackendError::WgpuUnavailable(error.to_string()));
+        }
+        Err(_) => {
+            clear_buffers(
+                &device,
+                &queue,
+                &[
+                    &input_coordinates,
+                    &input_scalars,
+                    &bit_buckets,
+                    &result_coordinates,
+                    &readback,
+                ],
+            );
+            coordinate_words.fill(0);
+            scalar_words.fill(0);
+            return Err(MsmBackendError::WgpuUnavailable(
+                "readback callback was dropped".to_owned(),
+            ));
+        }
+    }
+
+    let mapped = slice.get_mapped_range();
+    let gpu_words: &[u32] = bytemuck::cast_slice(&mapped);
+    let gpu_coordinates = coordinates_from_words(gpu_words).ok_or(MsmBackendError::WgpuMsmMismatch);
+    drop(mapped);
+    readback.unmap();
+    let parity = gpu_coordinates.and_then(|coordinates| {
+        RistrettoPoint::dregg_from_extended_coordinates_checked(&coordinates, &expected_compressed)
+            .ok_or(MsmBackendError::WgpuMsmMismatch)
+    });
+    clear_buffers(
+        &device,
+        &queue,
+        &[
+            &input_coordinates,
+            &input_scalars,
+            &bit_buckets,
+            &result_coordinates,
+            &readback,
+        ],
+    );
+    coordinate_words.fill(0);
+    scalar_words.fill(0);
+    parity?;
+
+    Ok(WgpuMsmResult {
+        adapter_name,
+        is_hardware,
+        term_count: scalar_bytes.len(),
+        compressed_result: expected_compressed.to_bytes(),
+        gpu_elapsed_micros,
+    })
+}
+
 /// Add canonical compressed Ristretto pairs with exact extended-Edwards field
 /// arithmetic on wgpu, then accept each result only if dalek validates its
 /// coordinates and its compressed bytes equal the CPU sum.
@@ -693,6 +1078,32 @@ pub fn add_compressed_point_pairs_wgpu(
 }
 
 #[cfg(feature = "wgpu-msm")]
+fn coordinates_from_words(words: &[u32]) -> Option<DreggExtendedCoordinates> {
+    if words.len() != 4 * 32 {
+        return None;
+    }
+    let mut coordinates = [[0_u8; 32]; 4];
+    for (coordinate_index, coordinate_words) in words.chunks_exact(32).enumerate() {
+        for (byte_index, &word) in coordinate_words.iter().enumerate() {
+            coordinates[coordinate_index][byte_index] = u8::try_from(word).ok()?;
+        }
+    }
+    Some(coordinates)
+}
+
+#[cfg(feature = "wgpu-msm")]
+fn clear_buffers(device: &wgpu::Device, queue: &wgpu::Queue, buffers: &[&wgpu::Buffer]) {
+    let mut clear = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-clear"),
+    });
+    for buffer in buffers {
+        clear.clear_buffer(buffer, 0, None);
+    }
+    queue.submit(Some(clear.finish()));
+    device.poll(wgpu::Maintain::Wait);
+}
+
+#[cfg(feature = "wgpu-msm")]
 fn clear_secret_buffers(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -722,6 +1133,87 @@ fn buffer_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLay
         },
         count: None,
     }
+}
+
+/// Optional verifier MSM dispatch. Dalek always remains the acceptance oracle
+/// and output producer; required mode makes any GPU refusal or parity failure
+/// a verification error, while auto mode falls back explicitly to dalek.
+pub(crate) fn optional_vartime_multiscalar_mul<I, J>(
+    scalars: I,
+    points: J,
+) -> Result<Option<RistrettoPoint>, R1CSError>
+where
+    I: IntoIterator,
+    I::Item: Borrow<Scalar>,
+    J: IntoIterator<Item = Option<RistrettoPoint>>,
+{
+    let scalar_values: Vec<Scalar> = scalars.into_iter().map(|scalar| *scalar.borrow()).collect();
+    let point_values: Vec<Option<RistrettoPoint>> = points.into_iter().collect();
+    if scalar_values.len() != point_values.len() {
+        return Err(r1cs_error(MsmBackendError::LengthMismatch {
+            scalars: scalar_values.len(),
+            points: point_values.len(),
+        }));
+    }
+
+    let cpu_result =
+        RistrettoPoint::optional_multiscalar_mul(&scalar_values, point_values.iter().copied());
+    let policy = wgpu_policy();
+    if policy == WgpuPolicy::Disabled || cpu_result.is_none() {
+        return Ok(cpu_result);
+    }
+
+    #[cfg(feature = "wgpu-msm")]
+    {
+        // Identity is a valid typed group element and contributes zero to an
+        // MSM. Small valid Bulletproofs can contain identity commitments for
+        // an unused phase, so remove those terms before crossing the stricter
+        // serialized verifier boundary rather than treating them as aliases.
+        let non_identity_terms: Vec<(Scalar, RistrettoPoint)> = scalar_values
+            .iter()
+            .copied()
+            .zip(point_values.iter().copied())
+            .filter_map(|(scalar, point)| {
+                let point = point.expect("CPU optional MSM established every point");
+                (point != RistrettoPoint::identity()).then_some((scalar, point))
+            })
+            .collect();
+        let scalar_bytes: Vec<[u8; 32]> = non_identity_terms
+            .iter()
+            .map(|(scalar, _)| scalar.to_bytes())
+            .collect();
+        let point_bytes: Vec<[u8; 32]> = non_identity_terms
+            .iter()
+            .map(|(_, point)| point.compress().to_bytes())
+            .collect();
+        match vartime_multiscalar_mul_wgpu(&scalar_bytes, &point_bytes) {
+            Ok(result) if policy == WgpuPolicy::Required && !result.is_hardware => {
+                return Err(r1cs_error(MsmBackendError::WgpuUnavailable(format!(
+                    "hard verifier gate selected CPU adapter {}",
+                    result.adapter_name
+                ))));
+            }
+            Ok(result) => {
+                if Some(result.compressed_result)
+                    != cpu_result.as_ref().map(|point| point.compress().to_bytes())
+                {
+                    return Err(r1cs_error(MsmBackendError::WgpuMsmMismatch));
+                }
+            }
+            Err(error) if policy == WgpuPolicy::Required => return Err(r1cs_error(error)),
+            Err(_) => return Ok(cpu_result),
+        }
+    }
+    #[cfg(not(feature = "wgpu-msm"))]
+    {
+        if policy == WgpuPolicy::Required {
+            return Err(r1cs_error(MsmBackendError::WgpuUnavailable(
+                "bulletproofs was built without feature `wgpu-msm`".to_owned(),
+            )));
+        }
+    }
+
+    Ok(cpu_result)
 }
 
 /// The fork-owned replacement for the six R1CS prover MSM calls.

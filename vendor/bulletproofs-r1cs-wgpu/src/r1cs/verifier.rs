@@ -2,9 +2,8 @@
 
 use core::borrow::BorrowMut;
 use core::mem;
-use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::VartimeMultiscalarMul;
 use merlin::Transcript;
 
 use super::{
@@ -474,7 +473,7 @@ impl<T: BorrowMut<Transcript>> Verifier<T> {
         let T_scalars = [r * x, rxx * x, rxx * xx, rxx * xxx, rxx * xx * xx];
         let T_points = [proof.T_1, proof.T_3, proof.T_4, proof.T_5, proof.T_6];
 
-        let mega_check = RistrettoPoint::optional_multiscalar_mul(
+        let mega_check = crate::msm_backend::optional_vartime_multiscalar_mul(
             iter::once(x) // A_I1
                 .chain(iter::once(xx)) // A_O1
                 .chain(iter::once(xxx)) // S1
@@ -505,7 +504,7 @@ impl<T: BorrowMut<Transcript>> Verifier<T> {
                 .chain(gens.H(padded_n).map(|&H_i| Some(H_i)))
                 .chain(proof.ipp_proof.L_vec.iter().map(|L_i| L_i.decompress()))
                 .chain(proof.ipp_proof.R_vec.iter().map(|R_i| R_i.decompress())),
-        )
+        )?
         .ok_or_else(|| R1CSError::VerificationError)?;
 
         use curve25519_dalek::traits::IsIdentity;
