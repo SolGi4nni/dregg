@@ -293,6 +293,7 @@ preflight() {
   log "preflight"
   [[ -d "$GAMES_REPO_DIR" ]] || die "repo not found: $GAMES_REPO_DIR (set GAMES_REPO_DIR)"
   [[ -d "$SRC_DIR" ]] || die "deploy/games not found under $GAMES_REPO_DIR — is this the right checkout / branch?"
+  command -v wasm-pack >/dev/null 2>&1 || die "wasm-pack is required: /descent/play refuses stale or absent NativeDescentWorld artifacts"
   if [[ ! -f "$GAMES_ENV" ]]; then
     warn "env file $GAMES_ENV MISSING — ember must place it (bind + DREGG_NODE_URL + DATABASE_URL)."
     gated "place $GAMES_ENV from deploy/games/$ENV_EXAMPLE, then chmod 600"
@@ -304,7 +305,12 @@ preflight() {
 
 # ── build ────────────────────────────────────────────────────────────────────
 build() {
-  log "build (cargo --release): ${BINARIES[*]}"
+  log "build native browser runtime + cargo --release: ${BINARIES[*]}"
+  # `/descent/play` is an actual game, not an optional decoration. Rebuild its
+  # wasm in the same release transaction so the server can never expose a new
+  # native shell over yesterday's procgen-only glue. `descent_play.rs` serves
+  # this exact workspace pkg as its normal deployment fallback.
+  run bash -c "cd '$GAMES_REPO_DIR' && RUSTFLAGS='-C link-arg=-zstack-size=33554432' wasm-pack build wasm --target web --out-dir pkg --release"
   # DREGG_REQUIRE_LEAN=0: the games web + bot are the RE-EXECUTION-verified surface
   # (a run ranks + verifies by replay, not by the Lean-linked verified producer —
   # that is the node's job, built Lean-linked via deploy/node/). Without this, the
@@ -449,14 +455,30 @@ start_units() {
 health_gate() {
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "    [dry-run] curl -fsS -m 5 $HEALTH_URL  (poll up to ${HEALTH_TIMEOUT}s; expect 200 {\"status\":\"ok\"})"
+    echo "    [dry-run] require NativeDescentWorld in wasm glue plus 200 from its wasm blob and every generated snippet import"
     return 0
   fi
-  local deadline=$((SECONDS + HEALTH_TIMEOUT))
+  local deadline=$((SECONDS + HEALTH_TIMEOUT)) base glue snippet snippets_ok
+  base="${HEALTH_URL%/health}"
   log "health gate: $HEALTH_URL (up to ${HEALTH_TIMEOUT}s)"
   while ((SECONDS < deadline)); do
     if curl -fsS -m 5 "$HEALTH_URL" >/dev/null 2>&1; then
-      log "health gate PASSED"
-      return 0
+      glue="$(curl -fsS -m 10 "$base/descent/play/static/dregg_wasm.js" 2>/dev/null || true)"
+      snippets_ok=1
+      while IFS= read -r snippet; do
+        [[ -z "$snippet" ]] && continue
+        if ! curl -fsS -m 10 "$base/descent/play/static/$snippet" >/dev/null 2>&1; then
+          snippets_ok=0
+          break
+        fi
+      done < <(sed -n 's@.*from "\./\(snippets/[^\"]*\)".*@\1@p' <<<"$glue")
+      if [[ "$glue" == *NativeDescentWorld* ]] &&
+         curl -fsSI -m 10 "$base/descent/play/static/dregg_wasm_bg.wasm" >/dev/null 2>&1 &&
+         [[ "$snippets_ok" == "1" ]]; then
+        log "health gate PASSED (server + Lean-native Descent wasm)"
+        return 0
+      fi
+      log "  server is live but the Lean-native Descent wasm is absent or stale"
     fi
     log "  waiting for $HEALTH_URL ..."
     sleep 5

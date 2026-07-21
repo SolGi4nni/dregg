@@ -50,6 +50,9 @@ Environment=RUST_LOG=info
 # Fallback bind if the env file omits DREGGNET_WEB_BIND (the Tailscale iface so the
 # gateway can reach it over the tailnet; NEVER 0.0.0.0). hbox-dregg = 100.95.240.73.
 Environment=DREGGNET_WEB_BIND=100.95.240.73:8790
+# Generated in the same deploy transaction. Relative to WorkingDirectory below,
+# so a binary built elsewhere never bakes that builder's absolute source path.
+Environment=DESCENT_PLAY_ASSET_DIR=wasm/pkg
 WorkingDirectory=%h/dev/breadstuffs
 ExecStart=%h/dev/breadstuffs/target/release/dreggnet-web-server
 Restart=always

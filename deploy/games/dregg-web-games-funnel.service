@@ -69,6 +69,10 @@ Environment=DREGG_NODE_URL=http://127.0.0.1:8420
 # boot by replay (a tampered log refuses to reopen). Without this, a restart drops
 # every in-progress game.
 Environment=DREGGNET_WEB_SESSION_DIR=%h/dregg-games/sessions
+# Generated in the same deploy transaction. Relative to WorkingDirectory below,
+# so `/descent/play` serves the exact NativeDescentWorld artifact health-checked
+# by deploy-hbox.sh rather than a compile-host absolute path.
+Environment=DESCENT_PLAY_ASSET_DIR=wasm/pkg
 # SHARED interaction-envelope audit dir (dreggnet-audit). Set the SAME dir on ALL
 # THREE services (this funnel web + dregg-telegram-bot + the discord unit) so one
 # `auditq correlate` joins a chain across them — without it each service writes to
