@@ -7721,12 +7721,14 @@ dependencies = [
 name = "dreggnet-game-board"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "dregg-automatafl",
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-lightclient",
  "dregg-multiway-tug",
+ "dreggnet-offerings",
  "game-turn-slice",
  "ugc-dregg",
 ]
