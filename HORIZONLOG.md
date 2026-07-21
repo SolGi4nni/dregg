@@ -10490,3 +10490,38 @@ executor-refused repeated WriteOnce contributions, signed fork ballots, and dura
 across web/Telegram/Discord. (`e7d473b74`) Active next cuts are process-transported PartyMPC equality, a
 party/capability-authorized tactical encounter, a proof-assigned raid mechanic, and web action-route tests that
 spend the newly accepted counsel/deal results rather than stopping at their operation panels.
+
+## 2026-07-20 — fail-closed private receipt, Cert-F semantics, and authenticated collective bootstrap
+
+The fixed N4K4 hidden-book proof now has a canonical opaque postcard carrier and a relying-party-selected
+composite verifier. One canonical fhEgg receipt must pass both the HidingFRI private-book relation and the
+exact authenticated quorum; neither a quorum-only envelope nor a proof-only envelope can substitute. The
+statement is reconstructed from the full claim and pins the exact rule policy, output, faithful eight-felt
+root, and a canonical injective BabyBear-session nonce. This deliberately accepts only the fixed family's
+~31-bit session image rather than aliasing arbitrary 256-bit replay nonces into one felt. Freshly re-signed
+session, result, root, and rule substitutions refuse. `Market.DarkBazaarAttestation` proves the conjunction
+and statement binding, and also carries the executable RED theorem that the separately listed BFV ciphertext
+digests are not yet bound to the same private opening. The aggregate `lake build Market` gate is green.
+
+Cert-F's implementation boundary is now fail-closed. `CertFTranslationChecker` remains a translation/checker
+organ and intentionally cannot satisfy `ComputationIntegrityVerifier`. `CertFClearingVerifier<B>` requires an
+explicit semantic binder for every public flow-program field, ordered input, and output meaning; relying-party
+policy fixes epsilon, tolerances, dimensions, coefficient bounds, and the exact-f64 envelope. The composite
+`AllOfIntegrityVerifier` gives one receipt ordered AND semantics for a full Cert-F/source verifier plus a
+full authenticated-quorum verifier. Hostile tests cover program/input/output rebinding, evidence-selected
+epsilon or tolerances, >2^53 aliases, and removal of either verifier leg. Formatting and metadata gates pass;
+the final focused Rust compile was quiesced while waiting behind an unrelated shared Cargo target lock and
+must be the first narrow Rust gate after restart.
+
+Collective Dark AMM production bootstrap no longer trusts public table material to nominate its own alleged
+collective key. The sole public constructor consumes the exact canonical worker configuration plus one
+party-index-ordered, roster-signed `DBPAv001` contribution per DKG party, replays the aggregate, and requires
+the resulting canonical key bytes to equal the table material. Production web configuration requires the
+bounded non-symlink config/artifact files and refuses the former material-only boot. The isolated release
+DKG gate passed 2/2. This establishes authenticated contribution-to-table binding, not proof of possession or
+shortness of the hidden BFV shares, relin-share correctness, malicious-secure MPC, or initial encrypted
+reserve/product validity.
+
+The apex sentence remains: a private witness proof and authenticated authorization now coexist in one
+claim-bound receipt, while the cryptographic BFV-ciphertext-to-private-root same-opening/range/validity
+relation and distributed no-single-viewer proof-witness production remain the Tier-0 construction frontier.

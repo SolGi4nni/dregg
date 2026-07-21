@@ -1507,3 +1507,48 @@ then replays the exact initiative/crown/depth result after restart. The focused 
 bodies hit the same fail-closed verified-ML-DSA environment gate before entry, with no bypass.
 
 Commit: `b7ae31afe`.
+
+## 53. The newest private/attested boundary is conjunctive, and its remaining seam is executable
+
+The fixed N4K4 hidden-book proof now has a canonical opaque postcard transport and can inhabit one fhEgg
+receipt together with the exact authenticated roster quorum. `PrivateAttestedClearingVerifier` reconstructs
+the public statement from the complete claim, verifies both independent components, and binds exact policy,
+session, rule, faithful eight-felt root, and `(p*, V*)`. Digest-only verification fails closed. Quorum-only,
+proof-only, wire-corrupt, and freshly re-signed session/output/root/rule substitutions are refusal teeth.
+
+The session binding does not compress an arbitrary 256-bit nonce into one BabyBear felt. It accepts only a
+canonical checksummed injective image of the fixed family's field-valued session, preventing the practical
+cross-replay alias discovered by the adversarial review. The exact rule `value_bits` and plaintext modulus,
+descriptor, size caps, domains, and verifier components are committed into the relying-party verifier id.
+
+`Market.DarkBazaarAttestation` gives the composite acceptance law and an intentional RED theorem: changing
+the separately listed BFV ciphertext digests does not change the currently proved private statement. Thus the
+new receipt honestly establishes private-book computation plus authenticated authorization, but not that the
+BFV ciphertexts encrypt that same hidden opening. The missing Tier-0 relation is a lattice/circuit
+same-opening + input-range/validity proof, followed by distributed witness production that gives no single
+prover the complete book. Focused and aggregate Lean gates are green (15 clean keystones; `lake build Market`).
+
+Cert-F was hardened in the same pass. Its translation checker cannot impersonate complete computation
+integrity; the full verifier requires an explicit semantic binder for every public program field, ordered
+input, and output meaning. Relying-party policy fixes epsilon, tolerances, shape/coefficient limits, and the
+exact-f64 envelope. An ordered AND evidence carrier composes that full verifier with authenticated quorum in
+the receipt's single evidence slot. Hostile regressions cover program/input/result rebinding, selected
+epsilon/tolerances, >2^53 aliasing, and either missing component. The final focused Rust compile was stopped
+while queued behind the shared target lock at the requested restart boundary; rerun it first after restart.
+
+Collective deployment also gained a non-circular DKG gate. Production construction requires the exact public
+worker configuration and one ordered roster-signed contribution artifact per party, recomputes the aggregate,
+and byte-matches it to the public table key. The isolated release gate passed 2/2. It still does not prove
+secret-share possession/shortness, relin-share correctness, malicious MPC behavior, or correct encrypted
+initial reserves.
+
+Files to begin the next audit at HEAD:
+
+- `dreggnet-market/src/private_attested_clearing.rs`
+- `fhegg-fhe/src/certf_integrity.rs`
+- `fhegg-fhe/src/dark_amm_dkg.rs`
+- `metatheory/Market/DarkBazaarAttestation.lean`
+
+The one honest sentence: **private computation and authenticated authorization now compose in one
+claim-bound receipt; BFV-to-private-root same-opening and no-single-viewer witness generation are still the
+cryptographic apex, not an implied property of the composition.**
