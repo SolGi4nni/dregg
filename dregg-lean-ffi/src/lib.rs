@@ -88,160 +88,6 @@ pub fn lean_available() -> bool {
     lean_init_once().is_ok()
 }
 
-/// ── THE TEST-SIDE HARD MODE (`DREGG_TEST_REQUIRE_LEAN`) ─────────────────────────────────────
-///
-/// The RUNTIME twin of the `DREGG_REQUIRE_LEAN` BUILD gate in `build.rs`. Same env grammar
-/// (`1`/`true`/`on`, any case), same purpose, different moment: the build gate refuses to *produce*
-/// a silently-marshal-only binary; this gate refuses to let a *test* silently self-skip the
-/// verified-gate assertion it is named for.
-///
-/// The hole it closes: a test that opens `if !finality_gate_available() { eprintln!("SKIP"); return; }`
-/// reports **`ok`** on an archive-less build having asserted NOTHING. Every load-bearing
-/// verified-gate test in `dregg-node` was shaped that way, so the crate's verified-consensus claim
-/// rested on assertions that no archive-less runner ever executed — and every runner was
-/// archive-less. A green that means nothing is worse than a red.
-///
-/// Usage — the ONE line at the top of a self-skipping test:
-///
-/// ```ignore
-/// if !dregg_lean_ffi::demand_lean(dregg_lean_ffi::finality_gate_available(), "finality-gate export") {
-///     return;
-/// }
-/// ```
-///
-/// Unset (a dev box, a marshal-only CI runner): returns `false`, the test prints its honest SKIP
-/// line and returns — today's behaviour, unchanged.
-/// Set to `1` (the scheduled hard-mode lane, where the archive IS seeded): **panics**, so an
-/// archive that lost an export cannot masquerade as a passing suite.
-pub fn test_require_lean() -> bool {
-    armed_from_env_value(std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref())
-}
-
-/// The env GRAMMAR, split out from the env READ so it is testable as a pure function.
-/// Byte-for-byte the build gate's truthy set (`build.rs`'s `require_lean`).
-fn armed_from_env_value(v: Option<&str>) -> bool {
-    matches!(
-        v,
-        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
-    )
-}
-
-/// The skip-or-panic decision for a Lean-export-conditional test. Returns `true` when `available`
-/// (run the body); returns `false` to skip when the export is absent and the hard mode is OFF; and
-/// PANICS when the export is absent and `DREGG_TEST_REQUIRE_LEAN=1` — see [`test_require_lean`].
-///
-/// `what` names the missing export so the panic tells an operator which archive leg is stale
-/// (mirroring the build gate's fix-the-cause message rather than a bare assertion failure).
-pub fn demand_lean(available: bool, what: &str) -> bool {
-    demand_lean_armed(available, what, test_require_lean())
-}
-
-/// [`demand_lean`] with the armed decision passed IN rather than read from the process
-/// environment — which is what makes the gate's own poles testable.
-///
-/// The env is process-global and `cargo test` runs a binary's tests on parallel threads, so a test
-/// that armed the gate by `set_var` would race any sibling reading it (and `set_var` is `unsafe` in
-/// edition 2024, safe in this crate's 2021 — a portability wart on top). Threading the decision
-/// through a parameter removes the shared mutable state instead of synchronizing it.
-fn demand_lean_armed(available: bool, what: &str, armed: bool) -> bool {
-    if available {
-        return true;
-    }
-    assert!(
-        !armed,
-        "DREGG_TEST_REQUIRE_LEAN=1 but the linked archive lacks the {what} — this test would have \
-         SILENTLY SKIPPED its verified-gate assertion and reported `ok`, which is exactly what the \
-         hard mode exists to forbid. Fix the cause (seed a HEAD-matching dregg-lean-ffi/\
-         libdregg_lean.a via ./scripts/bootstrap.sh — the seed must match the current Lean HEAD or \
-         the export goes missing; see docs/BUILD-LEAN-LINKED-NODE.md), or unset \
-         DREGG_TEST_REQUIRE_LEAN to allow the honest skip."
-    );
-    eprintln!("SKIP: {what} not linked (DREGG_TEST_REQUIRE_LEAN unset — honest skip)");
-    false
-}
-
-#[cfg(test)]
-mod test_require_lean_gate {
-    use super::*;
-
-    /// HONEST POLE FIRST — a PRESENT export runs the body under BOTH modes.
-    ///
-    /// Without this the panic pole below would be vacuous: a `demand_lean` that panicked
-    /// unconditionally, or always returned `false`, would satisfy "absent ⇒ panic" just fine. This
-    /// is also the property that matters operationally — arming the hard mode must never red a test
-    /// whose export is actually there.
-    #[test]
-    fn present_export_runs_the_body_under_both_modes() {
-        assert!(
-            demand_lean_armed(true, "a present export", false),
-            "a present export must run the body with the hard mode OFF"
-        );
-        assert!(
-            demand_lean_armed(true, "a present export", true),
-            "a present export must run the body with the hard mode ON — arming reds nothing honest"
-        );
-    }
-
-    /// THE TOOTH — an ABSENT export under the hard mode PANICS, rather than returning the
-    /// skip-and-report-`ok` `false`. The forged witness is the exact live shape: the export is
-    /// missing and the lane claimed to require it.
-    #[test]
-    fn absent_export_panics_when_armed() {
-        let r = std::panic::catch_unwind(|| demand_lean_armed(false, "a missing export", true));
-        let err = r.expect_err("an absent export under the hard mode must PANIC, not return");
-        // Assert WHY it refused — a match on the message, not "something went wrong" (the P1b
-        // anti-pattern: any panic counting as a correct refusal).
-        let msg = err
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .expect("the gate must panic with a String message naming the cause");
-        assert!(
-            msg.contains("DREGG_TEST_REQUIRE_LEAN=1"),
-            "the panic must name the gate that fired; got: {msg}"
-        );
-        assert!(
-            msg.contains("a missing export"),
-            "the panic must name WHICH export is missing, or an operator cannot act on it; got: {msg}"
-        );
-    }
-
-    /// THE OPPOSITE POLE — hard mode OFF: an absent export skips (`false`) and does NOT panic.
-    /// This is what keeps a dev box / marshal-only runner green, and it is why arming is opt-in.
-    #[test]
-    fn absent_export_skips_when_not_armed() {
-        assert!(
-            !demand_lean_armed(false, "a missing export", false),
-            "an absent export must skip (return false) when the hard mode is off"
-        );
-    }
-
-    /// The env grammar is the BUILD gate's grammar, spelling for spelling. Divergence here would
-    /// mean `DREGG_TEST_REQUIRE_LEAN=on` arming the build but not the tests (or vice versa) —
-    /// exactly the kind of silent asymmetry that makes a gate untrustworthy. Pure function, so no
-    /// process env is touched and nothing races a sibling test.
-    #[test]
-    fn env_grammar_mirrors_the_build_gate() {
-        for truthy in ["1", "true", "TRUE", "on", "ON"] {
-            assert!(
-                armed_from_env_value(Some(truthy)),
-                "build.rs's require_lean accepts {truthy:?} as ON; this gate must agree"
-            );
-        }
-        // Explicitly-falsy, unset, and unrecognized spellings all mean NOT armed — the gate is
-        // opt-IN, so anything that is not a known truthy value must leave the honest skip in place.
-        for falsy in ["0", "false", "FALSE", "off", "OFF", "", "yes", "2"] {
-            assert!(
-                !armed_from_env_value(Some(falsy)),
-                "{falsy:?} is not a truthy spelling in the build gate's grammar"
-            );
-        }
-        assert!(
-            !armed_from_env_value(None),
-            "UNSET must not arm the hard mode — the skip stays honest by default"
-        );
-    }
-}
-
 /// Marshal a wire string through `dregg_exec_full_forest_auth_str` and return the raw
 /// output wire. Requires `lean_available()`.
 pub fn shadow_exec_full_forest_auth(wire: &str) -> Result<String, String> {
@@ -321,32 +167,6 @@ pub fn decide_refines_gate_available() -> bool {
 pub fn shadow_decide_refines(wire: &str) -> Result<String, String> {
     ensure_lean_init()?;
     lean_decide_refines(wire)
-}
-
-/// Whether the linked archive exports the verified DEPLOYED-CONSTRAINT evaluator
-/// (`dregg_constraint_admits`, the C-ABI entry over the PROVEN
-/// `Dregg2.Exec.DeployedConstraint.admitsFFI`). When false, the `ConstraintOracle` install
-/// (`dregg-exec-lean`) is unavailable and the pure-constraint admission stays on the Rust guest-path
-/// evaluator. Distinct from [`lean_available`] (the executor exports): a stale archive can have the
-/// executor but lack this evaluator.
-pub fn constraint_admits_available() -> bool {
-    ffi::constraint_admits_present() && lean_init_once().is_ok()
-}
-
-/// Run the verified DEPLOYED-CONSTRAINT evaluator `@[export] dregg_constraint_admits` (the PROVEN
-/// `Dregg2.Exec.DeployedConstraint.admits`, over the deployed `[FieldElement;16]`+heap substrate with
-/// UNSIGNED-256 field compares) over a wire-encoded `(constraint, old, new)` slice.
-///
-/// The wire grammar the export reads (single line, space-separated):
-///   `oldPresent nonce heapOldPresent heapOldHex heapNewPresent heapNewHex R0..R15 N0..N15 <constraint>`
-///   * out: `"0"` admit · `"1"` violated · `"2 <idx>"` needsOld · `"3 <idx>"` badIndex.
-///
-/// The deployed node's `ConstraintOracle` (installed by `dregg-exec-lean`) routes each pure-subset
-/// admission through this entry, so `cell/src/program/eval.rs` runs the verified Lean decision rather
-/// than a hand-authored Rust mirror. Requires the archive to export the evaluator; `Err` otherwise.
-pub fn shadow_constraint_admits(wire: &str) -> Result<String, String> {
-    ensure_lean_init()?;
-    ffi::lean_constraint_admits(wire)
 }
 
 /// Whether the linked archive exports the extracted, Lean-verified ML-DSA verify core
@@ -570,6 +390,34 @@ pub fn shadow_mlkem_encaps_real(wire: &str) -> Result<String, String> {
     ffi::lean_mlkem_encaps_real(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified REAL, FULL-BYTE ML-KEM-768 KEYGEN core
+/// (`dregg_mlkem_keygen_real`, BRICK K7 — the C-ABI entry over `Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI`
+/// = the deterministic FIPS 203 ML-KEM.KeyGen_internal over a 64-byte (d,z) seed). When false, a caller must
+/// fall back to the `ml-kem` crate keygen. Distinct from [`lean_available`]: a stale archive can lack this
+/// export.
+pub fn mlkem_keygen_real_core_available() -> bool {
+    ffi::mlkem_keygen_real_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted REAL, FULL-BYTE ML-KEM-768 keygen core `@[export] dregg_mlkem_keygen_real`
+/// (the executable `Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI` over `mlkemKeygen` — the deterministic FIPS
+/// 203 ML-KEM.KeyGen_internal: G(d||k) SHA3-512 split, ExpandMatrix, CBD sampling, NTT, t = A*s + e, ByteEncode,
+/// dk = dkPKE || ek || H(ek) || z). KAT-anchored vs the NIST ACVP `ML-KEM-keyGen-FIPS203` vectors (single-vector
+/// `native_decide`); the byte<->ring `kpkeKeyGen_refines_ring` forall is OPEN.
+///
+/// Wire grammar the export reads:
+///   * in:  `"hex(d z)"` (one lowercase-hex field over the real 64-byte (d,z) seed).
+///   * out: `"hex(ek) hex(dk)"` — the 1184-byte encapsulation key + 2400-byte decapsulation key as lowercase
+///     hex; `"ERR"` for a malformed wire (the fail-closed answer the Rust caller treats as a keygen fault).
+///
+/// `dregg-pq::hybrid_kem::ml_kem768_keygen` routes its ML-KEM keygen through this entry (installed via
+/// `dregg_pq::install_verified_mlkem_keygen_core`), so the deployed keygen runs the verified Lean core over the
+/// real bytes rather than the trusted `ml-kem` primitive. Returns `Err` if the archive lacks the export.
+pub fn shadow_mlkem_keygen_real(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_mlkem_keygen_real(wire)
+}
+
 /// Whether the linked archive exports the extracted, Lean-verified GRAIN R3 whole-history verify core
 /// (`dregg_grain_r3_verify`, the C-ABI entry over `Dregg2.Grain.R3Verify.r3VerifyFFI` = the PROVED
 /// `r3VerifyCore`). When false, a caller (`grain-verify::r3_verify`) cannot render the Lean-proven R3
@@ -663,178 +511,6 @@ pub fn shadow_interchain_reached_consensus(wire: &str) -> Result<String, String>
     ffi::lean_interchain_reached_consensus(wire)
 }
 
-/// One shipped FRI knob set, as the [`fri_ledger`] wire carries it. The five deployed knobs plus the
-/// extension degree that fixes the challenge-field size `|F| = babyBearP ^ ext_deg` — and the two
-/// ε_C inputs that are NOT knobs at all (see [`FriKnobs::log_d0`] / [`FriKnobs::bciks_m`]).
-///
-/// This struct is a MARSHALLER, not a model: it computes nothing. Every soundness number for a knob
-/// set comes back from Lean's `friLedger` (see [`fri_ledger`]).
-///
-/// ⚑ **No `Default`, and no defaulting inside `to_wire`.** `log_d0` and `bciks_m` change the reported
-/// `commit_bits` (a `log_d0` move is worth ~2 bits per trace doubling), so a silent default here
-/// would be this crate quietly choosing a soundness number on a caller's behalf. Callers name both
-/// explicitly, at the call site, with a comment saying where the value came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FriKnobs {
-    pub log_blowup: usize,
-    pub num_queries: usize,
-    pub query_pow_bits: usize,
-    pub max_log_arity: usize,
-    pub log_final_poly_len: usize,
-    /// The degree of the challenge extension field. It lives in Rust as a TYPE
-    /// (`BinomialExtensionField<P3BabyBear, 4>`) or a private `const D`, never as an exported `usize`
-    /// — so a caller supplies it explicitly and the pin against the Lean model names it.
-    pub ext_deg: usize,
-    /// **NOT AN FRI KNOB.** `|D⁽⁰⁾| = 2 ^ log_d0` — the FRI domain size, i.e. trace height × blowup.
-    /// It is a property of the STATEMENT being proved, not of the prover config: two turns run the
-    /// same knobs at different trace heights and get different `commit_bits`. It rides this struct
-    /// only because it rides the same wire; the model pin in the FRI gate does not pin it, because
-    /// there is no Lean literal for "the height dregg's turns have".
-    pub log_d0: usize,
-    /// **NOT AN FRI KNOB.** BCIKS20's proximity parameter `m ≥ 3` (Thm 8.3) — a parameter of the
-    /// ANALYSIS, not of the deployed prover. Nothing in the prover reads it; it selects which of a
-    /// family of bounds the paper's theorem is instantiated at. Lean REFUSES `m < 3` (the paper's own
-    /// hypothesis), so a caller cannot ask for a number no theorem backs.
-    pub bciks_m: usize,
-}
-
-impl FriKnobs {
-    /// The eight-field wire the Lean export reads: the six knob fields, then the two ε_C inputs
-    /// (`logD0 bciksM`) that are not knobs. Lean's `friLedgerFFI` refuses any other arity.
-    pub fn to_wire(self) -> String {
-        format!(
-            "{} {} {} {} {} {} {} {}",
-            self.log_blowup,
-            self.num_queries,
-            self.query_pow_bits,
-            self.max_log_arity,
-            self.log_final_poly_len,
-            self.ext_deg,
-            self.log_d0,
-            self.bciks_m
-        )
-    }
-}
-
-/// The FRI soundness ledger of ONE config, as Lean's `friLedger` computed it. Every field is a
-/// distinct quantity with a distinct justification; they are deliberately NOT collapsed into a single
-/// headline. Rust never derives any of these — they are read off the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FriLedger {
-    /// Fold arity `m = 2 ^ max_log_arity`.
-    pub arity: usize,
-    /// Folded domain size `|κ| = 2 ^ log_blowup`.
-    pub folded_domain: usize,
-    /// `(m − 1) · C(|κ|, 2)` — the good-challenge count
-    /// `FriArityTransfer.good_card_le_of_phase_injective` proves.
-    pub good_count: usize,
-    /// The PROVEN per-fold proximity-gap error exponent: `|Good| / |F| < 2 ^ (−perFoldBits)`
-    /// (`FriLedgerSound.ledger_perFold_soundness`). Carries the `M = 1` fiber bound as a per-config
-    /// HYPOTHESIS — discharged only at arity 2, `log_blowup = 6` in this tree.
-    pub per_fold_bits: usize,
-    /// `num_queries · log_blowup / 2 + query_pow_bits` — the Johnson query ledger, proven for any code.
-    ///
-    /// ⚑ **This is the `m → ∞` IDEALISATION of BCIKS20 Thm 8.3, and it DROPS ε_C.** `log_blowup/2` is
-    /// `−log₂ α` in the limit of `α = √ρ·(1 + 1/2m)`; the paper's bound is `ε_FRI = ε_C + α^s`. The
-    /// dropped term is [`FriLedger::commit_bits`], and at the deployed wrap it BINDS: this column
-    /// reads `73`, but ethSTARK (eprint 2021/582) eq. (20) composes the two as
-    /// `λ ≥ min{−log₂ ε_C, ζ − s·log₂ α} − 1` ⇒ **~70**. Read this as the query ledger it is, never as
-    /// "the proven FRI soundness".
-    pub johnson_bits: usize,
-    /// `num_queries · log_blowup + query_pow_bits` — the capacity query ledger. The conjecture beneath
-    /// it is REFUTED; a drift baseline, NOT a security number.
-    ///
-    /// ⚑ **THE CITATION, CORRECTED (2026-07-15).** This tree carried *"REFUTED (Kambiré, eprint
-    /// 2025/2046)"*. That conflated two papers by different authors:
-    ///
-    ///   * **eprint 2025/2046 is Crites–Stewart** — Elizabeth Crites & Alistair Stewart (Web3
-    ///     Foundation), *On Reed–Solomon Proximity Gaps Conjectures*. They disprove the BCIKS
-    ///     up-to-capacity correlated-agreement conjecture (and WHIR's mutual-CA conjecture).
-    ///   * **Kambiré is arXiv 2604.09724** — *Proximity Gaps Conjecture Fails Near Capacity over Prime
-    ///     Fields*. His counterexample chooses the prime AS A FUNCTION OF the block length (`p < n^A`
-    ///     with `p ≡ 1 mod n`, via a quantitative Linnik theorem), so `p` must GROW with `n` — it does
-    ///     **not** instantiate at BabyBear's FIXED 31-bit prime.
-    ///
-    /// Both refute; attribute them correctly. ⚑ **The posture does NOT rest on that escape.** A
-    /// conjecture refuted in general cannot be a security basis for anyone, whatever the
-    /// field-cardinality technicality — "no counterexample reaches BabyBear" is true and is NOT a
-    /// defence. This column stays a drift canary either way, and every claim stands on
-    /// [`FriLedger::johnson_bits`] / [`FriLedger::commit_bits`].
-    pub capacity_bits: usize,
-    /// **The BCIKS20 COMMIT-PHASE error `ε_C`, as `⌊−log₂ ε_C⌋`** — the term [`FriLedger::johnson_bits`]
-    /// drops. From **BCIKS20 (eprint 2020/654), Lemma 8.2 / Theorem 8.3, printed pp. 40–41**:
-    ///
-    /// ```text
-    /// ε_FRI = ε_C + α^s ,   α = √ρ·(1 + 1/2m) ,   m ≥ 3
-    /// ε_C   = (m+½)⁷·|D⁽⁰⁾|² / (2ρ^{3/2}|F|)  +  (2m+1)(|D⁽⁰⁾|+1)/√ρ · (Σᵢ l⁽ⁱ⁾)/|F|
-    /// ```
-    ///
-    /// A LOWER bound on `−log₂ ε_C`: Lean's `friCommitLedger` over-estimates `ε_C` at every rounding,
-    /// so this column rounds DOWN, never up.
-    ///
-    /// ⚑ **It is NOT trace-invariant.** `ε_C ∝ |D⁽⁰⁾|²/|F|`, and `|D⁽⁰⁾|` is the trace height × blowup
-    /// — not an FRI knob. At the deployed wrap it reads `71` at `log_d0 = 12`, `69` at `13`, `55` at
-    /// `20`: ~2 bits per trace DOUBLING. So there is no single "dregg's commit-phase bits"; there is
-    /// one per trace height, and nobody has measured dregg's deployed trace-height distribution.
-    ///
-    /// ⚑ **It is a CEILING no knob can buy past.** `ε_C` contains no `num_queries` and no
-    /// `query_pow_bits`, so raising queries or PoW moves this column by exactly ZERO. The only lever
-    /// is `ext_deg`, worth `log₂ p ≈ 30.91` bits per degree (`ε_C ∝ 1/|F| = 1/p^ext_deg`).
-    ///
-    /// ⚑ **Kept SEPARATE.** This is never multiplied or `min`-ed into `johnson_bits` here. The `min`
-    /// of ethSTARK eq. (20) is a reading a CALLER may take; the ledger reports the terms.
-    pub commit_bits: usize,
-}
-
-/// Whether the linked archive exports the FRI soundness ledger (`dregg_fri_ledger`, the C-ABI entry
-/// over `Dregg2.Circuit.FriLedger.friLedgerFFI`). When false, a caller
-/// (`circuit-prove/tests/fri_params_soundness_budget.rs`) cannot render the Lean-proved per-config
-/// numbers and must surface the archive gap rather than fall back to computing them itself. Distinct
-/// from [`lean_available`]: a stale archive can lack this export.
-pub fn fri_ledger_available() -> bool {
-    ffi::fri_ledger_present() && lean_init_once().is_ok()
-}
-
-/// **Run the FRI SOUNDNESS LEDGER `@[export] dregg_fri_ledger`** — the executable
-/// `Dregg2.Circuit.FriLedger.friLedger`, the function `Dregg2.Circuit.FriLedgerSound` proves about
-/// (`ledger_perFold_soundness`: at any config, a phase-injective word's good folding challenges have
-/// density `< 2 ^ (−per_fold_bits)` in the degree-`ext_deg` extension, instantiating
-/// `FriArityTransfer.good_card_le_of_phase_injective` at that config's arity and folded domain).
-///
-/// This is why the FRI params gate has no soundness arithmetic in it: the metatheory modeled these
-/// numbers in detail, so Rust CALLS the model rather than re-typing its formulas and calling the
-/// agreement a check. A re-derivation agrees with itself by construction; a call cannot.
-///
-/// Returns `Err` if the archive lacks the export, or if the wire came back malformed / fail-closed
-/// (an out-of-window knob set — see `FriLedger.knobsInWindow`, or ε_C inputs outside
-/// `FriLedger.epsCInWindow`, notably `bciks_m < 3`, which is BCIKS20 Thm 8.3's OWN hypothesis: below
-/// it the formula is not the paper's, so Lean refuses rather than return a number no theorem backs).
-pub fn fri_ledger(knobs: FriKnobs) -> Result<FriLedger, String> {
-    ensure_lean_init()?;
-    let out = ffi::lean_fri_ledger(&knobs.to_wire())?;
-    let cols: Vec<&str> = out.split_whitespace().collect();
-    if cols.len() != 7 {
-        return Err(format!(
-            "dregg_fri_ledger refused {:?} (fail-closed) or returned a malformed ledger: {out:?}",
-            knobs.to_wire()
-        ));
-    }
-    let n = |i: usize| -> Result<usize, String> {
-        cols[i]
-            .parse::<usize>()
-            .map_err(|e| format!("ledger column {i} ({:?}) is not a nat: {e}", cols[i]))
-    };
-    Ok(FriLedger {
-        arity: n(0)?,
-        folded_domain: n(1)?,
-        good_count: n(2)?,
-        per_fold_bits: n(3)?,
-        johnson_bits: n(4)?,
-        capacity_bits: n(5)?,
-        commit_bits: n(6)?,
-    })
-}
-
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -912,7 +588,7 @@ mod ffi {
     extern "C" {
         fn dregg_ffi_init() -> i32;
         /// The SINGLE-THREADED / libuv-thread-free init (the pg-Tier-D-embeddable
-        /// path — see `.docs-history-noclaude/EMBEDDABLE-LEAN-RUNTIME.md` + `src/lean_init_st.cpp`).
+        /// path — see `docs/EMBEDDABLE-LEAN-RUNTIME.md` + `src/lean_init_st.cpp`).
         /// Runs the libuv-free initializer chain so NO libuv event-loop thread is
         /// spawned. Same once-per-process contract as `dregg_ffi_init`.
         fn dregg_ffi_init_st() -> i32;
@@ -946,12 +622,6 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_storage_content_root_present)]
         fn dregg_storage_content_root_str(
-            in_utf8: *const c_char,
-            out: *mut c_char,
-            out_cap: usize,
-        ) -> usize;
-        #[cfg(dregg_constraint_admits_present)]
-        fn dregg_constraint_admits_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -1004,6 +674,12 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_mlkem_keygen_real_present)]
+        fn dregg_mlkem_keygen_real_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
         #[cfg(dregg_grain_r3_verify_present)]
         fn dregg_grain_r3_verify_str(
             in_utf8: *const c_char,
@@ -1016,8 +692,6 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
-        #[cfg(dregg_fri_ledger_present)]
-        fn dregg_fri_ledger_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize) -> usize;
         #[cfg(dregg_interchain_reached_consensus_present)]
         fn dregg_interchain_reached_consensus_str(
             in_utf8: *const c_char,
@@ -1158,32 +832,6 @@ mod ffi {
     #[cfg(not(dregg_decide_refines_present))]
     pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
         Err("dregg_decide_refines not exported by the linked archive (rebuild to enable)".into())
-    }
-
-    #[cfg(dregg_constraint_admits_present)]
-    pub fn constraint_admits_present() -> bool {
-        true
-    }
-
-    #[cfg(not(dregg_constraint_admits_present))]
-    pub fn constraint_admits_present() -> bool {
-        false
-    }
-
-    /// DEPLOYED CONSTRAINT EVALUATOR — run the PROVEN Lean `admits` over the deployed substrate.
-    /// Input: the pure-constraint admission wire; output `"0"`/`"1"`/`"2 <idx>"`/`"3 <idx>"`.
-    #[cfg(dregg_constraint_admits_present)]
-    pub fn lean_constraint_admits(wire: &str) -> Result<String, String> {
-        lean_string_bridge(
-            wire,
-            dregg_constraint_admits_str,
-            "dregg_constraint_admits_str",
-        )
-    }
-
-    #[cfg(not(dregg_constraint_admits_present))]
-    pub fn lean_constraint_admits(_wire: &str) -> Result<String, String> {
-        Err("dregg_constraint_admits not exported by the linked archive (rebuild to enable)".into())
     }
 
     /// STORAGE-IN-LEAN EXTRACTION — run the VERIFIED Lean content-root over the deployed Poseidon2.
@@ -1427,6 +1075,37 @@ mod ffi {
         false
     }
 
+    /// ML-KEM-768-KEYGEN-REAL extraction (BRICK K7) — run the VERIFIED Lean ML-KEM keygen core over the REAL,
+    /// FULL-BYTE (d,z) seed (leanc-native). Input: `"hex(d z)"` (one lowercase-hex field over the real 64-byte
+    /// seed); output: `"hex(ek) hex(dk)"` (the 1184-byte ek + 2400-byte dk) or `"ERR"` (the fail-closed answer
+    /// for a malformed wire). This is the deterministic FIPS 203 ML-KEM.KeyGen_internal (KAT-anchored vs the
+    /// NIST ACVP keyGen vectors) — the object `dregg-pq::ml_kem768_keygen` routes through to take the `ml-kem`
+    /// crate OUT of the keygen TCB.
+    #[cfg(dregg_mlkem_keygen_real_present)]
+    pub fn lean_mlkem_keygen_real(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_mlkem_keygen_real_str,
+            "dregg_mlkem_keygen_real_str",
+        )
+    }
+
+    #[cfg(not(dregg_mlkem_keygen_real_present))]
+    pub fn lean_mlkem_keygen_real(_wire: &str) -> Result<String, String> {
+        Err("dregg_mlkem_keygen_real not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-KEM-768 keygen core.
+    #[cfg(dregg_mlkem_keygen_real_present)]
+    pub fn mlkem_keygen_real_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_mlkem_keygen_real_present))]
+    pub fn mlkem_keygen_real_present() -> bool {
+        false
+    }
+
     /// GRAIN-R3 extraction — run the VERIFIED Lean whole-history R3-accept core (leanc-native).
     /// Input: `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints); output: `"1"`
     /// (accept) / `"0"` (reject, and the fail-closed answer for a malformed wire). This is the PROVED
@@ -1523,31 +1202,6 @@ mod ffi {
 
     #[cfg(not(dregg_interchain_reached_consensus_present))]
     pub fn interchain_reached_consensus_present() -> bool {
-        false
-    }
-
-    /// Run the FRI soundness ledger: `"logBlowup numQueries powBits maxLogArity logFinalPolyLen
-    /// extDeg"` → `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (`""`
-    /// fail-closed). This is the computable `Dregg2.Circuit.FriLedger.friLedger`, the object
-    /// `FriLedgerSound`'s parametric per-fold theorem is stated over.
-    #[cfg(dregg_fri_ledger_present)]
-    pub fn lean_fri_ledger(wire: &str) -> Result<String, String> {
-        lean_string_bridge(wire, dregg_fri_ledger_str, "dregg_fri_ledger_str")
-    }
-
-    #[cfg(not(dregg_fri_ledger_present))]
-    pub fn lean_fri_ledger(_wire: &str) -> Result<String, String> {
-        Err("dregg_fri_ledger not exported by the linked archive (rebuild to enable)".into())
-    }
-
-    /// `true` iff the linked archive carries the extracted FRI soundness ledger.
-    #[cfg(dregg_fri_ledger_present)]
-    pub fn fri_ledger_present() -> bool {
-        true
-    }
-
-    #[cfg(not(dregg_fri_ledger_present))]
-    pub fn fri_ledger_present() -> bool {
         false
     }
 
@@ -1804,14 +1458,6 @@ mod ffi {
         Err("Lean static lib not linked".into())
     }
 
-    pub fn constraint_admits_present() -> bool {
-        false
-    }
-
-    pub fn lean_constraint_admits(_wire: &str) -> Result<String, String> {
-        Err("Lean static lib not linked".into())
-    }
-
     pub fn fips204_verify_present() -> bool {
         false
     }
@@ -1847,6 +1493,16 @@ mod ffi {
     }
 
     pub fn lean_mlkem_encaps_real(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-KEM keygen
+    /// core. Unlinked stub: the archive is absent, so the real core is never present.
+    pub fn mlkem_keygen_real_present() -> bool {
+        false
+    }
+
+    pub fn lean_mlkem_keygen_real(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 
@@ -1907,14 +1563,6 @@ mod ffi {
     pub fn lean_interchain_reached_consensus(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
-
-    pub fn fri_ledger_present() -> bool {
-        false
-    }
-
-    pub fn lean_fri_ledger(_wire: &str) -> Result<String, String> {
-        Err("Lean static lib not linked".into())
-    }
 }
 
 fn lean_init_once() -> Result<(), String> {
@@ -1930,7 +1578,7 @@ fn ensure_lean_init() -> Result<(), String> {
 }
 
 /// Initialize the Lean runtime in the **single-threaded / libuv-thread-free** mode
-/// (the pg-Tier-D-embeddable path — see `.docs-history-noclaude/EMBEDDABLE-LEAN-RUNTIME.md`). Unlike
+/// (the pg-Tier-D-embeddable path — see `docs/EMBEDDABLE-LEAN-RUNTIME.md`). Unlike
 /// [`lean_available`], this init does NOT start the libuv event-loop thread, so the
 /// runtime executes entirely on the caller's thread — the property a single-threaded
 /// host (a postgres backend) requires. Returns `true` on a successful init.

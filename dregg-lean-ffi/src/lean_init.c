@@ -153,20 +153,6 @@ extern lean_object *initialize_Dregg2_Dregg2_Storage_Deployed(uint8_t builtin);
 extern lean_object *dregg_storage_content_root(lean_object *input);
 #endif
 
-/* The @[export]ed Lean `String -> String` DEPLOYED CONSTRAINT evaluator
- * (`Dregg2.Exec.DeployedConstraint.admitsFFI`): decodes the pure-constraint admission wire
- * (oldPresent, nonce, the one heap key's old/new option, 16+16 register hex, then the constraint),
- * runs the PROVEN `admits` over the DEPLOYED substrate (unsigned-256 field compares + the low-64
- * counter lane), and returns `"0"` (admit) / `"1"` (violated) / `"2 <idx>"` (needsOld) /
- * `"3 <idx>"` (badIndex). This is the ONE source of the pure `StateConstraint`/`HeapAtom` teeth —
- * the collapse of the game-proof LARP-audit's parallel-disconnected Lean copy of `eval.rs`. GATED on
- * DREGG_CONSTRAINT_ADMITS (the module is OUTSIDE the FFI closure; build.rs probes + defines it, and
- * dregg_ffi_init runs its initializer). */
-#ifdef DREGG_CONSTRAINT_ADMITS
-extern lean_object *initialize_Dregg2_Dregg2_Exec_DeployedConstraint(uint8_t builtin);
-extern lean_object *dregg_constraint_admits(lean_object *input);
-#endif
-
 /* The @[export]ed Lean `String -> String` VERIFIED ML-DSA VERIFY CORE
  * (`Dregg2.Crypto.Fips204Verify.verifyFFI`): decodes the wire `"thi μ c̃ z h"`, runs the extracted,
  * spec-agreeing `verifyCore` (= `Fips204Spec.MlDsaParams.verifyB` at the deployed ML-DSA-65 parameters —
@@ -257,6 +243,17 @@ extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlKemEncaps(uint8_t builtin)
 extern lean_object *dregg_mlkem_encaps_real(lean_object *input);
 #endif
 
+/* BRICK K7 - the REAL, FULL-BYTE ML-KEM-768 KEYGEN export
+ * (`Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI`): decodes the wire `"hex(d z)"` (64-byte seed), runs the
+ * deterministic FIPS 203 ML-KEM.KeyGen_internal and returns `"hex(ek) hex(dk)"` (1184-byte ek + 2400-byte dk)
+ * or `"ERR"` on a malformed wire. Takes the `ml-kem` crate OUT of the deployed KEM-KEYGEN TCB. Its OWN module
+ * `Dregg2.Crypto.MlKemKeygen`, so it needs its OWN initializer `initialize_Dregg2_Dregg2_Crypto_MlKemKeygen`
+ * (run below). GATED on DREGG_MLKEM_KEYGEN_REAL (build.rs probes + defines it when the symbol is present). */
+#ifdef DREGG_MLKEM_KEYGEN_REAL
+extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlKemKeygen(uint8_t builtin);
+extern lean_object *dregg_mlkem_keygen_real(lean_object *input);
+#endif
+
 /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 SIGN export
  * (`Dregg2.Crypto.MlDsaSignReal.signRealFFI`): decodes the wire `"hex(sk) hex(msg) hex(ctx)"`, runs the
  * FULL-DIMENSION Lean-verified `signCore` (skDecode / ExpandMask / NTT / SampleInBall / ExpandA / MakeHint /
@@ -332,29 +329,6 @@ extern lean_object *dregg_holding_grant_weight(lean_object *input);
  * links and runs on the always-initialized Init runtime. */
 #ifdef DREGG_INTERCHAIN_REACHED_CONSENSUS
 extern lean_object *dregg_interchain_reached_consensus(lean_object *input);
-#endif
-
-/* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
- * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
- * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg"` (six decimal nats — one shipped
- * FRI knob set) and returns `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (the
- * six `Ledger` columns; `""` fail-closed for a malformed wire or an out-of-window knob set). This is
- * the per-config soundness ARITHMETIC as leanc-native code: `friLedger` is the very function
- * `Dregg2.Circuit.FriLedgerSound` proves about (`ledger_perFold_soundness` — the parametric per-fold
- * bound instantiating `FriArityTransfer.good_card_le_of_phase_injective` at each config's arity and
- * folded-domain size), so the numbers Rust reports are the numbers Lean proved rather than a
- * hand-written Rust twin of the same formulas. `circuit-prove/tests/fri_params_soundness_budget.rs`
- * hands it each deployed knob set and gates/reports what comes back. GATED on DREGG_FRI_LEDGER
- * (the module is OUTSIDE the FFI closure; build.rs probes + defines it). NOTE: like R3's / holding's /
- * interchain's export it needs NO module initializer — its generated C hoists the string literals into
- * STATIC CONST `lean_string_object`s and its closures into LAZY `lean_once_cell`s, so
- * `dregg_fri_ledger` is self-contained. We therefore deliberately do NOT reference
- * `initialize_Dregg2_Dregg2_Circuit_FriLedger`: that initializer chains into the `Dregg2.Tactics`
- * (Mathlib-tactic) import closure's init symbols the leanc-native archive does not carry; leaving it
- * unreferenced lets `-dead_strip` drop the proof closure — the pure ledger core links and runs on the
- * always-initialized Init runtime. */
-#ifdef DREGG_FRI_LEDGER
-extern lean_object *dregg_fri_ledger(lean_object *input);
 #endif
 
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
@@ -455,18 +429,6 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(sres);
 #endif
-#ifdef DREGG_CONSTRAINT_ADMITS
-    /* The deployed-constraint evaluator module is OUTSIDE the FFI closure; initialize it explicitly so
-     * `dregg_constraint_admits` is callable. It imports NOTHING beyond core Lean (no Mathlib), so its
-     * initializer is self-contained and re-entrant-safe under Lean's init guards. */
-    lean_object *cares = initialize_Dregg2_Dregg2_Exec_DeployedConstraint(1);
-    if (!lean_io_result_is_ok(cares)) {
-        lean_io_result_show_error(cares);
-        lean_dec_ref(cares);
-        return 1;
-    }
-    lean_dec_ref(cares);
-#endif
 #if defined(DREGG_FIPS204_VERIFY) || defined(DREGG_FIPS204_VERIFY_REAL)
     /* The verified ML-DSA verify-core module is OUTSIDE the FFI closure; initialize it explicitly so
      * `dregg_fips204_verify` AND the full-byte `dregg_fips204_verify_real` (BRICK 8, same module) are
@@ -519,6 +481,20 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(keres);
+#endif
+#ifdef DREGG_MLKEM_KEYGEN_REAL
+    /* BRICK K7 — the REAL, FULL-BYTE ML-KEM-768 keygen-core module (`Dregg2.Crypto.MlKemKeygen`) is OUTSIDE
+     * the FFI closure and is its OWN module (imports `MlKemDecaps` for SHA3), so initialize it explicitly so
+     * `dregg_mlkem_keygen_real` is callable. Its dependency closure (Crypto.Keccak / MlKemRing / MlKemSample /
+     * MlKemCodec / MlKemDecaps) is re-entrant-safe under Lean's init guards (shared with the encaps/decaps
+     * modules). */
+    lean_object *kgres = initialize_Dregg2_Dregg2_Crypto_MlKemKeygen(1);
+    if (!lean_io_result_is_ok(kgres)) {
+        lean_io_result_show_error(kgres);
+        lean_dec_ref(kgres);
+        return 1;
+    }
+    lean_dec_ref(kgres);
 #endif
 #ifdef DREGG_FIPS204_SIGN_REAL
     /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 sign-core module
@@ -630,28 +606,6 @@ size_t dregg_storage_content_root_str(const char *in_utf8, char *out, size_t out
 }
 #endif
 
-#ifdef DREGG_CONSTRAINT_ADMITS
-/* dregg_constraint_admits_str — the C string bridge over the VERIFIED Lean `String -> String`
- * deployed-constraint evaluator export (`Dregg2.Exec.DeployedConstraint.admitsFFI`). Input: the
- * pure-constraint admission wire; output: `"0"` admit / `"1"` violated / `"2 <idx>"` needsOld /
- * `"3 <idx>"` badIndex. Runs the PROVEN `admits` over the deployed substrate — the ONE source the
- * deployed node's ConstraintOracle routes through. Same return contract as the bridges above. */
-size_t dregg_constraint_admits_str(const char *in_utf8, char *out, size_t out_cap) {
-    if (out == 0 || out_cap == 0) {
-        return (size_t)-1;
-    }
-    lean_object *in_obj = lean_mk_string(in_utf8);
-    lean_object *res = dregg_constraint_admits(in_obj);
-    const char *cstr = lean_string_cstr(res);
-    size_t full = strlen(cstr);
-    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
-    memcpy(out, cstr, copy);
-    out[copy] = '\0';
-    lean_dec_ref(res);
-    return full;
-}
-#endif
-
 #ifdef DREGG_FIPS204_VERIFY
 /* dregg_fips204_verify_str — the C string bridge over the VERIFIED Lean `String -> String` ML-DSA
  * verify-core export (`Dregg2.Crypto.Fips204Verify.verifyFFI`). Input: `"thi μ c̃ z h"` (five decimal
@@ -745,40 +699,6 @@ size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, si
 }
 #endif
 
-#ifdef DREGG_FRI_LEDGER
-/* dregg_fri_ledger_str — the C string bridge over the Lean `String -> String` FRI SOUNDNESS LEDGER
- * export (`Dregg2.Circuit.FriLedger.friLedgerFFI`). Input:
- * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (EIGHT decimal
- * nats). Output:
- * `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits"` (SEVEN decimal
- * nats; `""` fail-closed). Runs `friLedger` — the function `FriLedgerSound.ledger_perFold_soundness`
- * proves the per-fold bound of — and `friCommitLedger`, whose `commitBits` is BCIKS20's commit-phase
- * error eps_C (`FriLedgerSound.ledger_epsC_soundness`), so no Rust caller re-types the soundness
- * arithmetic. Same return contract as the bridges above.
- *
- * `logD0` and `bciksM` are NOT FRI knobs and are deliberately not in `FriParams`: |D^(0)| = 2^logD0
- * is the FRI domain (trace height x blowup, a property of the STATEMENT being proved) and bciksM is
- * BCIKS20 Thm 8.3's proximity parameter m >= 3 (a parameter of the ANALYSIS). The export refuses
- * (`""`) for m < 3, which is the paper's own hypothesis, rather than return a number no theorem
- * backs. This function is length-agnostic (it copies whatever Lean returns and reports the full
- * length), so a column added on the Lean side cannot silently truncate here — but the caller's
- * column count must match, and `FriLedgerSound`'s #guards go red on a wire drift first. */
-size_t dregg_fri_ledger_str(const char *in_utf8, char *out, size_t out_cap) {
-    if (out == 0 || out_cap == 0) {
-        return (size_t)-1;
-    }
-    lean_object *in_obj = lean_mk_string(in_utf8);
-    lean_object *res = dregg_fri_ledger(in_obj);
-    const char *cstr = lean_string_cstr(res);
-    size_t full = strlen(cstr);
-    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
-    memcpy(out, cstr, copy);
-    out[copy] = '\0';
-    lean_dec_ref(res);
-    return full;
-}
-#endif
-
 #ifdef DREGG_FIPS204_VERIFY_REAL
 /* dregg_fips204_verify_real_str — the C string bridge over the VERIFIED Lean `String -> String` REAL,
  * FULL-BYTE ML-DSA-65 verify export (`Dregg2.Crypto.Fips204Verify.verifyRealFFI`, BRICK 8). Input:
@@ -843,6 +763,30 @@ size_t dregg_mlkem_encaps_real_str(const char *in_utf8, char *out, size_t out_ca
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mlkem_encaps_real(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MLKEM_KEYGEN_REAL
+/* dregg_mlkem_keygen_real_str — the C string bridge over the VERIFIED Lean `String -> String` REAL,
+ * FULL-BYTE ML-KEM-768 keygen export (`Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI`, BRICK K7). Input:
+ * `"hex(d z)"` (one lowercase-hex field over the real 64-byte (d,z) seed). Output: `"hex(ek) hex(dk)"`
+ * (the 1184-byte encapsulation key + 2400-byte decapsulation key as lowercase hex) or `"ERR"` (the
+ * fail-closed answer for any malformed wire). Runs the deterministic FIPS 203 ML-KEM.KeyGen_internal
+ * (KAT-anchored vs the NIST ACVP keyGen vectors) — the object that takes the `ml-kem` crate OUT of the
+ * deployed KEM-KEYGEN TCB. Same return contract as the bridges above. */
+size_t dregg_mlkem_keygen_real_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mlkem_keygen_real(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -229,6 +229,76 @@ pub enum MlKemEncapsCoreInstall {
     ExportAbsent,
 }
 
+/// A pluggable, Lean-VERIFIED **REAL, FULL-BYTE** ML-KEM-768 KEYGEN backend (BRICK K7 — the KEYGEN mirror of
+/// the K5 encaps / K6 decaps cores), installed by an integration layer. It carries the full-dimension
+/// deterministic FIPS 203 ML-KEM.KeyGen_internal over a caller-supplied 64-byte `(d ‖ z)` seed.
+///
+/// The extracted core is `Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI` over `mlkemKeygen` (G(d||k) SHA3-512
+/// split, ExpandMatrix, CBD sampling, NTT, `t = A*s + e`, ByteEncode, `dk = dkPKE || ek || H(ek) || z`),
+/// `@[export]`ed as `dregg_mlkem_keygen_real` and compiled to leanc-native code. It is KAT-anchored
+/// (`native_decide`) BYTE-EXACT vs the NIST ACVP `ML-KEM-keyGen-FIPS203` vectors. `dregg-lean-ffi::
+/// shadow_mlkem_keygen_real` runs it natively.
+/// ★ THIS IS A KAT, NOT A REFINEMENT THEOREM: the byte<->ring `kpkeKeyGen_refines_ring` forall is OPEN.
+///
+/// dregg-pq stays a LIGHT leaf (it never depends on the ~195 MB Lean archive): it takes a function pointer.
+/// An integration layer that CAN link the archive installs the native core via
+/// [`install_lean_kem_keygen_core_real`]; once installed, [`ml_kem768_keygen`] mints `(ek, dk)` from the
+/// Lean-verified object over the real bytes — the `ml-kem` crate is NO LONGER the keygen authority (its
+/// `.generate` is not called). The caller supplies its own 64-byte `(d ‖ z)` seed (as the crate's randomized
+/// keygen draws internally). The wire is `"hex(d z)"`; the reply is `"hex(ek) hex(dk)"` / `"ERR"` (malformed).
+type LeanKemKeygenCoreReal = fn(wire: &str) -> Option<String>;
+static LEAN_KEM_KEYGEN_CORE_REAL: OnceLock<LeanKemKeygenCoreReal> = OnceLock::new();
+
+/// Install the extracted, Lean-verified REAL, full-byte ML-KEM-768 keygen core (e.g.
+/// `|w| dregg_lean_ffi::shadow_mlkem_keygen_real(w).ok()`). Once installed, [`ml_kem768_keygen`] mints the
+/// keypair through it — taking the `ml-kem` crate OUT of the keygen TCB. Returns `false` if one is already
+/// installed (once-per-process; the verified core is not hot-swappable).
+pub fn install_lean_kem_keygen_core_real(core: LeanKemKeygenCoreReal) -> bool {
+    LEAN_KEM_KEYGEN_CORE_REAL.set(core).is_ok()
+}
+
+/// Whether a Lean-verified REAL ML-KEM keygen core has been installed (so [`ml_kem768_keygen`] mints the
+/// keypair from the Lean-verified object rather than the `ml-kem` crate's `.generate`). A deployed, verified
+/// node installs one at startup.
+pub fn mlkem_keygen_real_core_installed() -> bool {
+    LEAN_KEM_KEYGEN_CORE_REAL.get().is_some()
+}
+
+/// Outcome of installing the Lean-verified REAL ML-KEM keygen core as [`ml_kem768_keygen`]'s authority (via
+/// [`install_verified_mlkem_keygen_core`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlKemKeygenCoreInstall {
+    /// The real core was installed by THIS call — the `ml-kem` crate is now out of the keygen TCB.
+    Installed,
+    /// A core was already installed this process (install is once-per-process) — crate still out of TCB.
+    AlreadyInstalled,
+    /// The linked Lean archive does not export the real keygen core; the `ml-kem`-crate fallback stays in
+    /// place (a valid FIPS-203 keygen behind the loud audit warning, but NOT the Lean-verified authority).
+    ExportAbsent,
+}
+
+/// THE ONE install every deployed, archive-linked process calls to make the Lean-verified REAL, full-byte
+/// ML-KEM-768 keygen core ([`install_lean_kem_keygen_core_real`]) the keypair AUTHORITY behind
+/// [`ml_kem768_keygen`] — taking the `ml-kem` crate OUT of that process's KEM-keygen TCB.
+///
+/// dregg-pq stays a LIGHT leaf: the archive-dependent symbols are INJECTED as `fn` pointers rather than
+/// depended on. Gated on `export_available()`: install ONLY when the linked archive actually EXPORTS the real
+/// core. When the export is absent we return [`MlKemKeygenCoreInstall::ExportAbsent`] and keep the keygen
+/// fallback (the crate behind the loud audit warning). Idempotent and once-per-process.
+pub fn install_verified_mlkem_keygen_core(
+    export_available: fn() -> bool,
+    shadow: fn(wire: &str) -> Option<String>,
+) -> MlKemKeygenCoreInstall {
+    if !export_available() {
+        return MlKemKeygenCoreInstall::ExportAbsent;
+    }
+    if install_lean_kem_keygen_core_real(shadow) {
+        MlKemKeygenCoreInstall::Installed
+    } else {
+        MlKemKeygenCoreInstall::AlreadyInstalled
+    }
+}
+
 /// THE ONE install every deployed, archive-linked process calls to make the Lean-verified REAL, full-byte
 /// ML-KEM-768 encaps core ([`install_lean_kem_encaps_core_real`]) the ciphertext+secret AUTHORITY behind
 /// [`initiate`] — taking the `ml-kem` crate OUT of that process's KEM-encaps TCB.
@@ -377,6 +447,53 @@ fn decode_ct_ss_hex(reply: &str) -> Option<(Vec<u8>, [u8; 32])> {
     let k = hex_bytes(k_hex)?;
     let ss: [u8; 32] = k.try_into().ok()?;
     Some((ct, ss))
+}
+
+/// Marshal a 64-byte `(d ‖ z)` seed into the byte wire the Lean real keygen core reads: `"hex(d z)"` (one
+/// lowercase-hex field).
+fn real_keygen_wire(seed: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(seed.len() * 2);
+    for &b in seed {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
+/// Decode the Lean real keygen core's reply — `"hex(ek) hex(dk)"` (two space-separated lowercase-hex fields:
+/// the 1184-byte encapsulation key + 2400-byte decapsulation key) — into `(ek_bytes, dk_bytes)`. `None` on any
+/// malformed reply (wrong field count, odd length, non-hex, or `"ERR"`), which the caller treats as a
+/// fail-closed keygen fault.
+fn decode_ek_dk_hex(reply: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    fn nibble(c: u8) -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    }
+    fn hex_bytes(field: &str) -> Option<Vec<u8>> {
+        let b = field.as_bytes();
+        if b.is_empty() || b.len() % 2 != 0 {
+            return None;
+        }
+        let mut out = Vec::with_capacity(b.len() / 2);
+        for chunk in b.chunks_exact(2) {
+            out.push((nibble(chunk[0])? << 4) | nibble(chunk[1])?);
+        }
+        Some(out)
+    }
+    let mut fields = reply.split(' ');
+    let ek_hex = fields.next()?;
+    let dk_hex = fields.next()?;
+    if fields.next().is_some() {
+        return None; // exactly two fields
+    }
+    let ek = hex_bytes(ek_hex)?;
+    let dk = hex_bytes(dk_hex)?;
+    Some((ek, dk))
 }
 
 type Ek = <MlKem768 as KemCore>::EncapsulationKey;
@@ -675,19 +792,36 @@ impl HybridResponder {
 /// FIPS-203 ML-KEM-768 sizes. The SAME `ml-kem` v0.2.3 primitive [`responder_offer`] mints its post-quantum
 /// half from; dregg `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
 pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
-    // NO VERIFIED PATH EXISTS FOR THIS OPERATION. Encaps and decaps route to the
-    // Lean-verified `MlKemEncaps` / `MlKemDecaps` cores when installed; KEYGEN has
-    // no verified core in the metatheory and none exported from `libdregg_lean.a`,
-    // so the `ml-kem` crate's CSPRNG draw and key expansion are UNCONDITIONALLY the
-    // authority producing this decapsulation key -- there is no install that could
-    // displace it. Refuses (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1 -- see
-    // `crate::audit`.
+    let mut rng = OsCsprng;
+    if let Some(core) = LEAN_KEM_KEYGEN_CORE_REAL.get() {
+        // AUTHORITY: the Lean-verified REAL keygen core over the real bytes -- the deterministic FIPS 203
+        // ML-KEM.KeyGen_internal from a 64-byte (d || z) seed (KAT-anchored vs the NIST ACVP keyGen vectors;
+        // the byte<->ring `kpkeKeyGen_refines_ring` forall is OPEN). We supply our own fresh 64-byte seed
+        // (fresh OS entropy, exactly as the crate's randomized keygen draws internally); the core
+        // deterministically produces (ek, dk). The `ml-kem` crate's `.generate` is NOT consulted here -- it
+        // has left the KEM-keygen TCB. A None (archive fault) or malformed (`"ERR"` / wrong-length / non-hex)
+        // reply does NOT fall back to the crate -- that would silently reintroduce the UNAUDITED authority for
+        // SECRET KEY MATERIAL -- so it fails CLOSED (panic) rather than mint a crate key.
+        let mut seed = [0u8; 64];
+        rng.fill_bytes(&mut seed);
+        let wire = real_keygen_wire(&seed);
+        let reply = core(&wire);
+        seed.zeroize();
+        let (ek, dk) = reply.and_then(|r| decode_ek_dk_hex(&r)).expect(
+            "verified ML-KEM keygen core returned a malformed reply (archive fault) -- refusing to fall \
+             back to the unaudited `ml-kem` crate for SECRET KEY MATERIAL",
+        );
+        return (ek, dk);
+    }
+    // FALLBACK (no verified core installed): keep the loud keygen warning + the `ml-kem` crate primitive.
+    // Unlike encaps/decaps (which ABORT via `guard_unaudited_fallback`), keygen WARNS and proceeds -- the
+    // deployed, archive-linked processes install the verified core above (assert-fatal), so this branch is
+    // only reached by a process that cannot link the archive.
     crate::audit::guard_no_verified_core(
         "ML-KEM-768 KeyGen (bare, from OS entropy)",
         "ml-kem 0.2.3",
         "an ML-KEM-768 decapsulation key (2400 B) guarding every session secret it opens",
     );
-    let mut rng = OsCsprng;
     let (dk, ek) = MlKem768::generate(&mut rng);
     (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())
 }

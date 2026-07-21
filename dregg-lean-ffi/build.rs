@@ -274,6 +274,14 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // `dregg-pq::hybrid_kem::initiate` routes through to take the `ml-kem` crate OUT of the deployed
         // KEM-encaps TCB. Its OWN module `Dregg2.Crypto.MlKemEncaps` (imports `MlKemDecaps` for `kpkeEncrypt`).
         "Dregg2.Crypto.MlKemEncaps",
+        // ML-KEM-768-KEYGEN-REAL extraction (BRICK K7 — the KEYGEN mirror of K5/K6): the verified REAL,
+        // FULL-BYTE ML-KEM-768 keygen core (`@[export] dregg_mlkem_keygen_real` over `mlkemKeygen` — the
+        // deterministic FIPS 203 ML-KEM.KeyGen_internal from a 64-byte (d ‖ z) seed, KAT-anchored vs the NIST
+        // ACVP keyGen vectors), OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice
+        // picks up the export. This is the object `dregg-pq::ml_kem768_keygen` routes through to take the
+        // `ml-kem` crate OUT of the deployed KEM-keygen TCB. Its OWN module `Dregg2.Crypto.MlKemKeygen`
+        // (imports `MlKemDecaps` for the SHA3 primitives + `MlKemSample`/`MlKemRing`/`MlKemCodec`).
+        "Dregg2.Crypto.MlKemKeygen",
         // FIPS-204-SIGN-REAL extraction (the brick-8 SIGN analog): the verified REAL, FULL-BYTE ML-DSA-65
         // sign core (`@[export] dregg_fips204_sign_real` over `signCore` — the deterministic (`rnd = 0`)
         // Fiat–Shamir-with-aborts signer: skDecode / ExpandMask / NTT / SampleInBall / MakeHint / rejection
@@ -1387,6 +1395,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_fips203_decaps_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_decaps_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_encaps_real_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_keygen_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
@@ -1820,6 +1829,18 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_mlkem_encaps_real_present");
     }
 
+    // ML-KEM-768-KEYGEN-REAL extraction (BRICK K7 — the KEYGEN mirror of K5/K6): probe the spliced archive
+    // for the `@[export] dregg_mlkem_keygen_real` symbol — the FULL-BYTE, full-dimension ML-KEM-768 keygen
+    // (`Dregg2.Crypto.MlKemKeygen.mlkemKeygenRealFFI` over `mlkemKeygen`, the deterministic FIPS 203
+    // ML-KEM.KeyGen_internal from a 64-byte (d ‖ z) seed, KAT-anchored vs NIST ACVP keyGen). Its module is
+    // `Dregg2.Crypto.MlKemKeygen` (its OWN module, a separate initializer from MlKemDecaps/MlKemEncaps).
+    // Present ⇒ gate the Rust `extern "C"` block, the C shim string bridge, and the module define/init. This
+    // is the export `dregg-pq::ml_kem768_keygen` routes through to take the `ml-kem` crate OUT of the keygen TCB.
+    let mlkem_keygen_real_present = archive_exports(&build_archive, "dregg_mlkem_keygen_real");
+    if mlkem_keygen_real_present {
+        println!("cargo:rustc-cfg=dregg_mlkem_keygen_real_present");
+    }
+
     // ── PQ-CORE EXPORT GATE (DREGG_REQUIRE_PQ_CORES) ────────────────────────────────────────
     // The DREGG_REQUIRE_LEAN gate above asks only "is a Lean archive linked at all"
     // (`lean_available()`). That question passes for an archive that links perfectly and
@@ -1859,7 +1880,7 @@ fn main() {
     let require_pq_cores = require_pq_on || (require_lean_native && !require_pq_off);
     if require_pq_cores {
         // (export symbol, present?, what dregg-pq silently falls back to without it)
-        let required: [(&str, bool, &str); 3] = [
+        let required: [(&str, bool, &str); 4] = [
             (
                 "dregg_fips204_verify_real",
                 fips204_verify_real_present,
@@ -1874,6 +1895,11 @@ fn main() {
                 "dregg_mlkem_decaps_real",
                 mlkem_decaps_real_present,
                 "ML-KEM-768 decaps would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
+            ),
+            (
+                "dregg_mlkem_keygen_real",
+                mlkem_keygen_real_present,
+                "ML-KEM-768 keygen would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
             ),
         ];
         let missing: Vec<&(&str, bool, &str)> =
@@ -2045,6 +2071,11 @@ fn main() {
     // gates BOTH the per-export extern+bridge AND the module initializer (like the K6 decaps core).
     if mlkem_encaps_real_present {
         shim.define("DREGG_MLKEM_ENCAPS_REAL", None);
+    }
+    // ML-KEM-768-KEYGEN-REAL (BRICK K7): its own module `Dregg2.Crypto.MlKemKeygen`, so DREGG_MLKEM_KEYGEN_REAL
+    // gates BOTH the per-export extern+bridge AND the module initializer (like the K5/K6 cores).
+    if mlkem_keygen_real_present {
+        shim.define("DREGG_MLKEM_KEYGEN_REAL", None);
     }
     if grain_r3_verify_present {
         shim.define("DREGG_GRAIN_R3_VERIFY", None);
