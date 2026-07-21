@@ -32,9 +32,9 @@ teeth bite.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
-the NAMED hypothesis `Poseidon2SpongeCR hash`. Imports are
-read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment keystone is
+UNCONDITIONAL (an extraction-as-data disjunction naming a deployed-sponge collision), never conditioned
+on the (refuted) injective sponge floor. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -50,8 +50,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins
    gate_modEq_iff eqToModEq not_modEq_zero_of_canon)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -210,14 +209,14 @@ theorem exerciseVm_rejects_nonce_freeze (env : VmRowEnv)
 
 theorem exerciseHashSites_eq : exerciseHashSites = transferHashSites := rfl
 
-theorem exerciseVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem exerciseVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ exerciseHashSites)
     (hs₂ : siteHoldsAll hash e₂ exerciseHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   rw [exerciseHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -311,8 +310,7 @@ theorem exerciseDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem exerciseDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem exerciseDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash exerciseVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash exerciseVmDescriptor e₂ true true)
@@ -325,7 +323,7 @@ theorem exerciseDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
       ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ exerciseHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ exerciseHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash exerciseVmDescriptor e true true →
@@ -357,7 +355,7 @@ theorem exerciseDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     obtain ⟨l₁, u₁⟩ := hcanon₁
     obtain ⟨l₂, u₂⟩ := hcanon₂
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — `balProj`/`capRootProj` to universe-A's `ExerciseHoldSpec` (kernel freeze). -/
 
@@ -509,7 +507,8 @@ theorem staleNonceExRow_rejected :
 #assert_axioms exerciseVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms exerciseDescriptor_full_sound
-#assert_axioms exerciseDescriptor_commit_binds_state
+#assert_axioms exerciseVm_commit_binds_block_or_collides
+#assert_axioms exerciseDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_exercise
 #assert_axioms unify_exercise_via_exec
 #assert_axioms descriptor_agrees_with_executor_exercise

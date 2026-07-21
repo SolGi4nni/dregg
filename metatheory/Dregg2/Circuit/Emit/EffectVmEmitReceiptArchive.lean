@@ -59,8 +59,9 @@ transition; not a fourth spec.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
-the NAMED hypothesis `Poseidon2SpongeCR hash`. Imports are read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment tooth is
+UNCONDITIONAL (an extraction-as-data disjunction), never conditioned on the (refuted) injective sponge
+floor. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
@@ -75,7 +76,6 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub transitionAll boundaryFirstPins transferHashSites
    gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
@@ -331,23 +331,25 @@ theorem archiveDescriptor_full_sound (env : VmRowEnv) (pre post : CellState)
 /-! ## §7 — THE ANTI-GHOST COMMITMENT TOOTH (whole-state binding, field[1] included). -/
 
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (absorbedCols absorbed_determined_by_commit_of_injective)
+  (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 
 /-- `archiveHashSites` is DEFINITIONALLY the transfer keystone's `transferHashSites`. -/
 theorem archiveHashSites_eq : archiveHashSites = transferHashSites := rfl
 
-/-- **`archiveDescriptor_commit_binds_state` — the whole-state tooth.** Two `receiptArchiveA` rows that
-satisfy the hash-sites and publish equal `state_commit`s have identical absorbed columns — the set
-post-`field[1]` (an absorbed column, site 1) included. So a prover CANNOT tamper the post-`field[1]` (or
-any absorbed cell) while keeping the published commitment. -/
-theorem archiveDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`archiveDescriptor_commit_binds_state_or_collides` — the whole-state tooth, UNCONDITIONAL.** Two
+`receiptArchiveA` rows that satisfy the hash-sites and publish equal `state_commit`s EITHER have
+identical absorbed columns — the set post-`field[1]` (an absorbed column, site 1) included — OR exhibit
+a genuine deployed-sponge collision. So a prover CANNOT tamper the post-`field[1]` (or any absorbed
+cell) while keeping the published commitment unless it finds a collision. Reuses the cured keystone
+core; no refuted injective sponge floor. -/
+theorem archiveDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ archiveHashSites)
     (hs₂ : siteHoldsAll hash e₂ archiveHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   rw [archiveHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §8 — THE CONNECTOR — `lifeProj` to universe-A's `ReceiptArchiveSpec`.
 
@@ -491,7 +493,7 @@ theorem archiveBadRow_rejected : ¬ (VmConstraint.gate gLifeSet).holdsVm archive
 #assert_axioms archiveVm_rejects_wrong_output
 #assert_axioms intent_to_archiveCellSpec
 #assert_axioms archiveDescriptor_full_sound
-#assert_axioms archiveDescriptor_commit_binds_state
+#assert_axioms archiveDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_archive
 #assert_axioms unify_archive_via_exec
 #assert_axioms archiveGoodRow_realizes_intent

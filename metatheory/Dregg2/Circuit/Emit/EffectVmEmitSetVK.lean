@@ -30,7 +30,8 @@ This v2 reconciles the descriptor to the runtime passthrough+tick.
     state block (the hand-AIR carries no VK `field` column). The VK-write soundness lives in universe-A's
     `SetVKSpec` (cited via the §connector); the runnable row pins the conserved frame + nonce tick.
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR = NAMED hypothesis. Imports read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The commitment keystone is UNCONDITIONAL
+(a deployed-sponge collision disjunction), never conditioned on the (refuted) injective sponge floor. Imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -47,8 +48,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transferHashSites boundaryLast_pins
    eqToModEq gate_modEq_iff not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState RowEncodes absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState RowEncodes absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
@@ -186,13 +186,13 @@ theorem setVKVm_rejects_nonce_freeze (env : VmRowEnv)
 
 theorem setVK_sites_eq : setVKVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem setVKDescriptor_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem setVKDescriptor_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ setVKHashSites)
     (hs₂ : siteHoldsAll hash e₂ setVKHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -284,8 +284,7 @@ theorem setVKDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem setVKDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem setVKDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash setVKVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash setVKVmDescriptor e₂ true true)
@@ -298,7 +297,7 @@ theorem setVKDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
       ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ setVKHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ setVKHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash setVKVmDescriptor e true true →
@@ -328,7 +327,7 @@ theorem setVKDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     obtain ⟨l₁, u₁⟩ := hcanon₁
     obtain ⟨l₂, u₂⟩ := hcanon₂
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — `cellProjV` to universe-A's `SetVKSpec` (conserved-balance freeze). -/
 
@@ -482,7 +481,8 @@ theorem staleNonceSetVKRow_rejected :
 #assert_axioms setVKVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms setVKDescriptor_full_sound
-#assert_axioms setVKDescriptor_commit_binds_state
+#assert_axioms setVKDescriptor_commit_binds_block_or_collides
+#assert_axioms setVKDescriptor_commit_binds_state_or_collides
 #assert_axioms setVK_balance_frozen
 #assert_axioms vk_write_is_out_of_row
 #assert_axioms descriptor_agrees_with_executor_setVK

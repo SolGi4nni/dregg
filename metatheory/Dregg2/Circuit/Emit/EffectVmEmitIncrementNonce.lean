@@ -57,8 +57,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
@@ -226,14 +225,6 @@ theorem incNonceVm_rejects_nonce_freeze (env : VmRowEnv)
 
 theorem incNonce_sites_eq : incrementNonceVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem incNonceVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (e₁ e₂ : VmRowEnv)
-    (hs₁ : siteHoldsAll hash e₁ incNonceHashSites)
-    (hs₂ : siteHoldsAll hash e₂ incNonceHashSites)
-    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
-
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
 /-- `RowEncodesIncNonce env pre post` ties the row's state-block columns to a `(pre, post)` transition. -/
@@ -332,15 +323,14 @@ theorem incNonceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   rw [← hsaC]
   omega
 
-theorem incNonceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem incNonceDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hsat₁ : satisfiedVm hash incrementNonceVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash incrementNonceVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ incNonceHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ incNonceHashSites := hsat₂.2.1
   -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
@@ -360,7 +350,7 @@ theorem incNonceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
   rw [hpub] at h₁
   have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — `cellProjN` to universe-A's `IncrementNonceSpec` (conserved-balance freeze). -/
 
@@ -604,7 +594,7 @@ theorem staleNonceIncNonceRow_rejected :
 #assert_axioms incNonceVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms incNonceDescriptor_full_sound
-#assert_axioms incNonceDescriptor_commit_binds_state
+#assert_axioms incNonceDescriptor_commit_binds_state_or_collides
 #assert_axioms incNonce_balance_frozen
 #assert_axioms nonce_write_is_out_of_row
 #assert_axioms descriptor_agrees_with_executor_incNonce

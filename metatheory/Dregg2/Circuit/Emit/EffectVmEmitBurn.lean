@@ -28,9 +28,10 @@ by passthrough gates, and the 4 GROUP-4 hash-sites bind the whole post-state int
   * `burnDescriptor_full_sound` — satisfying the WHOLE descriptor under the `RowEncodes` decoding
     forces the structured per-cell `CellBurnSpec pre amt post` (debit + full frame freeze) AND
     publishes `post.commit = PI[NEW_COMMIT]`.
-  * `burnDescriptor_commit_binds_state` — the KEYSTONE anti-ghost: two satisfying rows agreeing on the
-    published `NEW_COMMIT` have IDENTICAL absorbed after-state columns (reusing the transfer keystone's
-    `transferDescriptor_commit_binds_state_of_injective`, since the hash sites are the SAME GROUP-4 chain).
+  * `burnDescriptor_commit_binds_state_or_collides` — the KEYSTONE anti-ghost, UNCONDITIONAL: two
+    satisfying rows agreeing on the published `NEW_COMMIT` EITHER have IDENTICAL absorbed after-state
+    columns OR exhibit a genuine deployed-sponge collision (reusing the cured transfer core
+    `absorbed_determined_by_commit_or_collides`, since the hash sites are the SAME GROUP-4 chain).
   * `unify_burn` / `unify_burn_exec` — the CONNECTOR: a committed universe-A `BurnSpec` (= `recCBurnAsset`),
     projected per-`(cell, asset)` through `cellProjA`, satisfies `CellBurnSpec` EXACTLY (the conserved
     `bal cell a` drops by `amt`; the frame is `0 = 0`). So the runnable `bal_lo` column transition IS
@@ -53,8 +54,10 @@ by passthrough gates, and the 4 GROUP-4 hash-sites bind the whole post-state int
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
-the NAMED hypothesis `Poseidon2SpongeCR hash`. Imports are read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment keystone is
+UNCONDITIONAL (an extraction-as-data disjunction naming a deployed-sponge collision pair), never
+conditioned on the refuted injective sponge floor; the injective special case lives at the transfer
+spine home. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
@@ -69,8 +72,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transferHashSites site0 site1 site2 site3 boundaryLast_pins
    gate_modEq_iff not_modEq_zero_of_canon pPrimeInt)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState absorbedCols transferDescriptor_commit_binds_state_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -375,20 +377,26 @@ their WHOLE absorbed after-state. -/
 /-- The descriptor's hash-site component is the transfer GROUP-4 chain. -/
 theorem burn_sites_eq : burnVmDescriptor.hashSites = transferHashSites := rfl
 
-/-- **`burnDescriptor_commit_binds_state` — THE KEYSTONE anti-ghost tooth for burn.** Under
-`Poseidon2SpongeCR hash`, two rows satisfying the burn descriptor's hash-sites and publishing the SAME
-`NEW_COMMIT` have IDENTICAL absorbed after-state columns. So a prover CANNOT keep `NEW_COMMIT` while
-tampering any absorbed cell. (Proof reuses the transfer keystone — the hash chain is identical.) -/
-theorem burnDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`burnDescriptor_commit_binds_state_or_collides` — THE KEYSTONE anti-ghost tooth for burn,
+UNCONDITIONAL.** Two rows satisfying the burn descriptor's hash-sites and publishing the SAME
+`NEW_COMMIT` EITHER have IDENTICAL absorbed after-state columns, OR exhibit a genuine collision of the
+deployed sponge at the pair `transferCollFind` returns. So a prover CANNOT keep `NEW_COMMIT` while
+tampering any absorbed cell unless it finds a Poseidon2 collision. (Proof reuses the cured transfer
+core — the hash chain is identical.) ⚑ The old form concluded a bare equality from the injective sponge
+floor, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` REFUTES at the deployed BabyBear
+parameters; this disjunction is formally weaker but HOLDS of the deployed sponge. The injective special
+case is `EffectVmEmitTransferSound.absorbed_determined_by_commit_of_injective` (the strength bridge, at
+the spine home). -/
+theorem burnDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ transferHashSites)
     (hs₂ : siteHoldsAll hash e₂ transferHashSites)
     (hpubLo₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
     (hpubLo₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbed_determined_by_commit_of_injective
-    hash hCR e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides
+    hash e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
 
 /-! ## §7 — THE CONNECTOR — `cellProjA` to universe-A's `BurnSpec` / `recCBurnAsset`.
 
@@ -866,7 +874,7 @@ theorem goodBurnAvailRow_ranges_hold (r : VmRange) (hr : r ∈ burnAvailRanges) 
 #assert_axioms intent_to_cellSpec
 #assert_axioms burnRowGates_flag_indep
 #assert_axioms burnDescriptor_full_sound
-#assert_axioms burnDescriptor_commit_binds_state
+#assert_axioms burnDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_burn
 #assert_axioms unify_burn_well
 #assert_axioms unify_burn_exec

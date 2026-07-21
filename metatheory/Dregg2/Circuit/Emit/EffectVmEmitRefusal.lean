@@ -33,7 +33,8 @@ The refusal SOUNDNESS lives ONLY in `refusalA_full_sound`.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only. Read-only imports.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; the commitment keystone is UNCONDITIONAL
+(a deployed-sponge collision disjunction), never conditioned on the (refuted) injective sponge floor. Read-only imports.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -50,9 +51,8 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transferHashSites boundaryLast_pins
    eqToModEq gate_modEq_iff not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState RowEncodes absorbedCols absorbed_determined_by_commit_of_injective)
+  (CellState RowEncodes absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull (refusalField)
 open Dregg2.Exec (balanceField)
@@ -196,13 +196,13 @@ theorem refusalVm_rejects_nonce_freeze (env : VmRowEnv)
 
 /-! ## §7 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
-theorem refusalVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem refusalVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ refusalHashSites)
     (hs₂ : siteHoldsAll hash e₂ refusalHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §8 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -296,8 +296,7 @@ theorem refusalDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem refusalDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem refusalDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash refusalVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash refusalVmDescriptor e₂ true true)
@@ -310,7 +309,7 @@ theorem refusalDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
       ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ refusalHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ refusalHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash refusalVmDescriptor e true true →
@@ -341,7 +340,7 @@ theorem refusalDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     obtain ⟨l₁, u₁⟩ := hcanon₁
     obtain ⟨l₂, u₂⟩ := hcanon₂
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §10 — CONNECTOR to universe-A `RefusalSpec` via `cellProj`.
 
@@ -544,7 +543,8 @@ theorem staleNonceRefusalRow_rejected :
 #assert_axioms refusalVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms refusalDescriptor_full_sound
-#assert_axioms refusalDescriptor_commit_binds_state
+#assert_axioms refusalVm_commit_binds_block_or_collides
+#assert_axioms refusalDescriptor_commit_binds_state_or_collides
 #assert_axioms refusal_balance_frozen
 #assert_axioms descriptor_agrees_with_executor_refusal
 #assert_axioms refusal_offrow_unenforced

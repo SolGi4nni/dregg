@@ -39,9 +39,9 @@ row does NOT. We connect the ONE overlap (the new cell's ECONOMIC block is born-
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; Poseidon2 CR enters ONLY
-as the named `Poseidon2SpongeCR` hypothesis. Imports are
-read-only (the keystone Sound module + universe-A `accountgrowth` spec).
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; the commitment tooth is
+UNCONDITIONAL (an extraction-as-data disjunction), never conditioned on the (refuted) injective sponge
+floor. Imports are read-only (the keystone Sound module + universe-A `accountgrowth` spec).
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation
@@ -55,7 +55,6 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eSB eSA eSub eqToModEq not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState RowEncodes)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec
 open Dregg2.Circuit.Spec.AccountGrowth
 
@@ -191,17 +190,18 @@ lemmas apply verbatim: the published `state_commit` is the genuine H4-of-H4 dige
 injective in its 13 absorbed columns under Poseidon2 CR. So a prover cannot keep the published
 `NEW_COMMIT` while tampering ANY absorbed column of the born-empty block. -/
 
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_of_injective)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 
-/-- The whole-block anti-ghost: two `createCell` rows publishing the SAME `state_commit` under CR have
-identical absorbed after-blocks. Inherited from the keystone (same hash sites). -/
-theorem createCellVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- The whole-block anti-ghost, UNCONDITIONAL: two `createCell` rows publishing the SAME `state_commit`
+EITHER have identical absorbed after-blocks OR exhibit a genuine deployed-sponge collision. Inherited
+from the cured keystone core (same hash sites); no refuted injective sponge floor. -/
+theorem createCellVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ createCellHashSites)
     (hs₂ : siteHoldsAll hash e₂ createCellHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §8 — CONNECTOR to universe-A `CreateCellSpec` via `cellProj`.
 
@@ -371,7 +371,7 @@ theorem forgedRow_rejected : ¬ (gZero state.BALANCE_LO).holdsVm forgedRow false
 #assert_axioms createCellVm_faithful
 #assert_axioms createCellVm_rejects_nonzero
 #assert_axioms createCellVm_rejects_nonzero_balance
-#assert_axioms createCellVm_commit_binds_block
+#assert_axioms createCellVm_commit_binds_block_or_collides
 #assert_axioms createCell_newcell_is_zero
 #assert_axioms createCell_row_matches_executor
 #assert_axioms createCell_offrow_unenforced

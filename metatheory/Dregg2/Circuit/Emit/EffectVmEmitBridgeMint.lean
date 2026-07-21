@@ -20,7 +20,8 @@ the block frozen, the post-state bound into `state_commit` via the GROUP-4 hash 
   * `bridgeMintVm_faithful` — emitted per-row gates ⟺ `BridgeMintRowIntent` (credit + frame freeze).
   * `bridgeMintDescriptor_full_sound` — satisfying the descriptor under `RowEncodes` forces
     `CellBridgeMintSpec` AND publishes `post.commit = PI[NEW_COMMIT]`.
-  * `bridgeMintDescriptor_commit_binds_state` — anti-ghost (reuses the transfer keystone; same chain).
+  * `bridgeMintDescriptor_commit_binds_state_or_collides` — anti-ghost, UNCONDITIONAL (reuses the cured
+    transfer keystone core; same chain).
   * `unify_bridgeMint` / `unify_bridgeMint_exec` — a committed `MintASpec` (via the bridge-mint arm
     `execFullA_bridgeMintA` = `recCMintAsset`), projected per `(cell, asset)`, satisfies
     `CellBridgeMintSpec` EXACTLY. The runnable column transition IS universe-A's bridge-mint ledger
@@ -36,7 +37,8 @@ the block frozen, the post-state bound into `state_commit` via the GROUP-4 hash 
   * NONCE: descriptor FREEZES the nonce; the bridge-mint arm ticks NO nonce — MATCHES (no divergence).
   * `state.RESERVED` not absorbed by any hash-site (inherited transfer-keystone finding).
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR = NAMED hypothesis.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The commitment tooth is UNCONDITIONAL
+(an extraction-as-data disjunction), never conditioned on the (refuted) injective sponge floor.
 Imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -56,8 +58,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA ePrm eSub eSelNoop gNonce transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState absorbedCols)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -323,16 +324,16 @@ theorem bridgeMintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
 
 theorem bridgeMint_sites_eq : bridgeMintVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem bridgeMintDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem bridgeMintDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ transferHashSites)
     (hs₂ : siteHoldsAll hash e₂ transferHashSites)
     (hpubLo₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
     (hpubLo₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbed_determined_by_commit_of_injective
-    hash hCR e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides
+    hash e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
 
 /-! ## §7 — THE CONNECTOR — `cellProjA` to the bridge-mint arm (`execFullA_bridgeMintA` = `recCMintAsset`). -/
 
@@ -550,7 +551,7 @@ theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (
 #assert_axioms intent_to_cellSpec
 #assert_axioms bridgeMintRowGates_flag_indep
 #assert_axioms bridgeMintDescriptor_full_sound
-#assert_axioms bridgeMintDescriptor_commit_binds_state
+#assert_axioms bridgeMintDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_bridgeMint
 #assert_axioms unify_bridgeMint_exec
 #assert_axioms exec_nonce_is_frozen_not_ticked
@@ -665,7 +666,7 @@ descriptor, as EXTRACTION.** Two wide bridge-mint rows publishing the same `NEW_
 state-block columns DIFFER exhibit a concrete collision of `hash`: a `WideColl` on the wide absorbed
 lists, or a `RootsColl` on the two root lists.
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`. The deployed BabyBear sponge REFUTES
+The previous form concluded `False` from the (refuted) injective sponge floor. The deployed BabyBear sponge REFUTES
 that hypothesis (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the previous form was vacuous at
 deployed parameters. This disjunction is formally weaker and holds of the deployed sponge. -/
 theorem bridgeMint_wide_rejects_state_tamper_or_collides (hash : List ℤ → ℤ)
@@ -689,7 +690,7 @@ carriers) whose side-table sub-blocks DIFFER at some index exhibit a concrete co
 bound BY the running commitment up to a produced collision: a bridge-mint row that smuggled a side-table
 mutation (it must touch none) IS one.
 
-The previous form concluded `False` from `Poseidon2SpongeCR hash`, which the deployed BabyBear sponge
+The previous form concluded `False` from the (refuted) injective sponge floor, which the deployed BabyBear sponge
 refutes; it was therefore vacuous at deployed parameters. This form is weaker and holds of that sponge. -/
 theorem bridgeMint_wide_rejects_root_tamper_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)

@@ -21,7 +21,8 @@ param1 = 0`, the nonce-tick gate, the frame frozen).
   * `mintVm_faithful` — emitted per-row gates ⟺ `MintRowIntent` (credit + frame freeze).
   * `mintDescriptor_full_sound` — satisfying the descriptor under `RowEncodes` forces `CellMintSpec`
     AND publishes `post.commit = PI[NEW_COMMIT]`.
-  * `mintDescriptor_commit_binds_state` — anti-ghost (reuses the transfer keystone; same hash chain).
+  * `mintDescriptor_commit_binds_state_or_collides` — anti-ghost, UNCONDITIONAL (reuses the cured
+    transfer core `absorbed_determined_by_commit_or_collides`; same hash chain).
   * `unify_mint` / `unify_mint_exec` — a committed `MintASpec` (= `recCMintAsset`), projected per
     `(cell, asset)`, satisfies `CellMintSpec` EXACTLY (the conserved `bal cell a` rises by `amt`; frame
     `0 = 0`). The runnable column transition IS universe-A's `bal`-ledger transition.
@@ -57,8 +58,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA ePrm eSub gNonce eSelNoop transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState absorbedCols)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -362,18 +362,22 @@ theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hr
 
 theorem mint_sites_eq : mintVmDescriptor.hashSites = transferHashSites := rfl
 
-/-- **`mintDescriptor_commit_binds_state` — the anti-ghost tooth for mint.** Two rows satisfying the
-mint descriptor's hash-sites and publishing the SAME `NEW_COMMIT` have IDENTICAL absorbed after-state. -/
-theorem mintDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`mintDescriptor_commit_binds_state_or_collides` — the anti-ghost tooth for mint, UNCONDITIONAL.**
+Two rows satisfying the mint descriptor's hash-sites and publishing the SAME `NEW_COMMIT` EITHER have
+IDENTICAL absorbed after-state OR exhibit a genuine deployed-sponge collision. The old form concluded a
+bare equality from the injective sponge floor (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+REFUTES it at deployed BabyBear params); this disjunction HOLDS of the deployed sponge. Injective
+special case at the transfer spine home (`absorbed_determined_by_commit_of_injective`). -/
+theorem mintDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ transferHashSites)
     (hs₂ : siteHoldsAll hash e₂ transferHashSites)
     (hpubLo₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
     (hpubLo₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbed_determined_by_commit_of_injective
-    hash hCR e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides
+    hash e₁ e₂ hs₁ hs₂ (by rw [hpubLo₁, hpubLo₂, hpub])
 
 /-! ## §7 — THE CONNECTOR — `cellProjA` to universe-A's `MintASpec` / `recCMintAsset`. -/
 
@@ -586,7 +590,7 @@ turn property (cited, not papered), not a per-cell gap. -/
 per-cell `CellMintSpec` (bal_lo credited by `amt`, nonce TICKED, the frame frozen); (b) the post-state
 published as `PI[NEW_COMMIT]`; and (c) AGREEMENT with the executor's per-cell post-state on every
 conserved/frame clause (the ONE nonce-tick divergence is `exec_nonce_is_frozen_not_ticked`, named).
-The anti-ghost (`mintDescriptor_commit_binds_state`) covers all 13 absorbed columns. This is the
+The anti-ghost (`mintDescriptor_commit_binds_state_or_collides`) covers all 13 absorbed columns. This is the
 transfer/burn class-A bar, per cell. -/
 theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsMintRow env)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
@@ -626,7 +630,7 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow :
 #assert_axioms intent_to_cellSpec
 #assert_axioms mintRowGates_flag_indep
 #assert_axioms mintDescriptor_full_sound
-#assert_axioms mintDescriptor_commit_binds_state
+#assert_axioms mintDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_mint
 #assert_axioms unify_mint_well
 #assert_axioms unify_mint_exec

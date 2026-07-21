@@ -31,8 +31,9 @@ AGREES with the hand-AIR on the honest witness AND both anti-ghost teeth bite.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR
-hash`. Imports read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The commitment keystone is UNCONDITIONAL
+(a deployed-sponge collision disjunction), never conditioned on the (refuted) injective sponge floor.
+Imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -47,8 +48,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins not_modEq_zero_of_canon)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective cellLeafInjective RestHashIffFrame AccountsWF)
 open Dregg2.Circuit.EffectCommit (CommitSurface satisfiedE encodeE)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -227,14 +227,14 @@ theorem pipelinedSendVm_rejects_nonce_freeze (env : VmRowEnv)
 
 theorem pipelinedSendHashSites_eq : pipelinedSendHashSites = transferHashSites := rfl
 
-theorem pipelinedSendVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem pipelinedSendVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites)
     (hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   rw [pipelinedSendHashSites_eq] at hs₁ hs₂
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
@@ -331,15 +331,14 @@ theorem pipelinedSendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRo
   rw [← hsaC]
   omega
 
-theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem pipelinedSendDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites := hsat₂.2.1
   -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
@@ -366,7 +365,7 @@ theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ)
   rw [hpub] at h₁
   have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — to universe-A's `pipelinedSendA_full_sound` (whole-kernel freeze). -/
 
@@ -522,7 +521,8 @@ theorem staleNonceSendRow_rejected :
 #assert_axioms pipelinedSendVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms pipelinedSendDescriptor_full_sound
-#assert_axioms pipelinedSendDescriptor_commit_binds_state
+#assert_axioms pipelinedSendVm_commit_binds_block_or_collides
+#assert_axioms pipelinedSendDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_pipelinedSend
 #assert_axioms unify_pipelinedSend_via_full_sound
 #assert_axioms goodSendRow_realizes_intent

@@ -48,8 +48,9 @@ before — the sponge carrier is off the gate denotation.
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
-the NAMED hypothesis `Poseidon2SpongeCR hash`. Imports are read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The commitment keystone is
+UNCONDITIONAL (an extraction-as-data disjunction naming a deployed-sponge collision), never conditioned on
+the (refuted) injective sponge floor. Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -66,8 +67,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transferHashSites boundaryLast_pins
    gate_modEq_iff eqToModEq not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
@@ -385,8 +385,7 @@ theorem emitEventDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
 
 theorem emit_sites_eq : emitEventVmDescriptor.hashSites = transferHashSites := rfl
 
-theorem emitEventDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+theorem emitEventDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash emitEventVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash emitEventVmDescriptor e₂ true true)
@@ -399,7 +398,7 @@ theorem emitEventDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
       ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash emitEventVmDescriptor e true true →
@@ -430,7 +429,7 @@ theorem emitEventDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     obtain ⟨l₁, u₁⟩ := hcanon₁
     obtain ⟨l₂, u₂⟩ := hcanon₂
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §8 — THE CONNECTOR — `cellProjE` to universe-A's `EmitEventSpec` (the whole-kernel FREEZE).
 
@@ -611,7 +610,7 @@ theorem staleNonceEmitRow_rejected :
 #assert_axioms emitEventVm_rejects_nonce_freeze
 #assert_axioms intent_to_tickCellSpec
 #assert_axioms emitEventDescriptor_full_sound
-#assert_axioms emitEventDescriptor_commit_binds_state
+#assert_axioms emitEventDescriptor_commit_binds_state_or_collides
 #assert_axioms descriptor_agrees_with_executor
 #assert_axioms goodEmitRow_realizes_intent
 #assert_axioms badEmitRow_rejected

@@ -29,7 +29,9 @@ the earlier descriptor read the value from `param0`, froze the nonce, and named 
 
   * BOUND + anti-ghosted (the 13 absorbed columns): `fields[slot]_after = VALUE` (the move) AND
     every other state-block column frozen. Tampering ANY of them moves `state_commit` ⇒ UNSAT
-    (`setFieldVm_commit_binds_block`, inherited from the keystone's `absorbed_determined_by_commit_of_injective`).
+    (`setFieldVm_commit_binds_block_or_collides`, inherited from the cured keystone core
+    `absorbed_determined_by_commit_or_collides` — UNCONDITIONAL: tamper ⇒ moved commit OR a named
+    deployed-sponge collision, no refuted injectivity floor).
   * UNIFIED to the executor: `unify_setField_exec` welds the descriptor's bound block to
     `execFullA`'s `SetFieldSpec` post-state (the conserved `balLo` frozen; the written slot's value
     is the executor's `fieldOf (slotName slot) (cell)`).
@@ -44,9 +46,9 @@ the earlier descriptor read the value from `param0`, froze the nonce, and named 
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; Poseidon2 CR enters
-ONLY as the named `Poseidon2SpongeCR` hypothesis.
-Imports are read-only (the keystone Sound module + the universe-A `cellstatefield` spec).
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; the commitment keystone is
+UNCONDITIONAL (an extraction-as-data disjunction), never conditioned on the refuted injective sponge
+floor. Imports are read-only (the keystone Sound module + the universe-A `cellstatefield` spec).
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -61,8 +63,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub ePrm eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass
    transferHashSites)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (CellState absorbedCols absorbed_determined_by_commit_of_injective)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec (balOf balanceField)
@@ -310,13 +311,13 @@ the published `state_commit` is the genuine H4-of-H4 digest of the after-block's
 — and `fields[slot]` is one of them. So a prover cannot keep the published `NEW_COMMIT` while
 tampering the written slot OR any frozen column. This is the class-A anti-ghost-on-ALL-of-it tooth. -/
 
-theorem setFieldVm_commit_binds_block (slot : Fin 8) (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv)
+theorem setFieldVm_commit_binds_block_or_collides (slot : Fin 8) (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ transferHashSites)
     (hs₂ : siteHoldsAll hash e₂ transferHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — the structured per-cell spec + RowEncodes decoding. -/
 
@@ -392,13 +393,13 @@ theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (
       simpa only [VmConstraint.holdsVm] using hh
   exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env hrow hcanon).mp hgates)
 
-theorem setFieldDescriptor_commit_binds_state (slot : Fin 8) (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv)
+theorem setFieldDescriptor_commit_binds_state_or_collides (slot : Fin 8) (hash : List ℤ → ℤ)
+    (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash (setFieldVmDescriptor slot) e₁ true true)
     (hsat₂ : satisfiedVm hash (setFieldVmDescriptor slot) e₂ true true)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  setFieldVm_commit_binds_block slot hash hCR e₁ e₂ hsat₁.2.1 hsat₂.2.1 hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  setFieldVm_commit_binds_block_or_collides slot hash e₁ e₂ hsat₁.2.1 hsat₂.2.1 hcommit
 
 /-! ## §9 — THE EXECUTOR UNIFICATION + the named honest boundary.
 
@@ -662,10 +663,10 @@ theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSF
 #assert_axioms setFieldVm_rejects_wrong_value
 #assert_axioms setFieldVm_rejects_wrong_nonce_delta
 #assert_axioms setFieldVm_rejects_moved_balance
-#assert_axioms setFieldVm_commit_binds_block
+#assert_axioms setFieldVm_commit_binds_block_or_collides
 #assert_axioms intent_to_cellSpec
 #assert_axioms setFieldDescriptor_full_sound
-#assert_axioms setFieldDescriptor_commit_binds_state
+#assert_axioms setFieldDescriptor_commit_binds_state_or_collides
 #assert_axioms slotName_ne_balance
 #assert_axioms unify_setField_exec
 #assert_axioms setField_guard_is_offrow

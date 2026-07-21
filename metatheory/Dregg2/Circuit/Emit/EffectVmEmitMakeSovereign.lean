@@ -38,7 +38,8 @@ was sovereign-committed. The rebind SOUNDNESS lives ONLY in `makeSovereignA_full
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; the commitment tooth is UNCONDITIONAL
+(an extraction-as-data disjunction), never conditioned on the (refuted) injective sponge floor.
 Read-only imports.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
@@ -56,7 +57,6 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eSA site0 site1 site2 eqToModEq g
   not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState RowEncodes)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull (sovereignRebind commitmentField stateCommitment)
 open Dregg2.Circuit.Spec.SovereignCommitment
@@ -164,15 +164,15 @@ theorem makeSovereignVm_rejects_surviving_balance (env : VmRowEnv)
 
 /-! ## §7 — the commitment binding (inherited from the keystone). -/
 
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_of_injective)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 
-theorem makeSovereignVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem makeSovereignVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ makeSovereignHashSites)
     (hs₂ : siteHoldsAll hash e₂ makeSovereignHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §8 — the dropped record carries NO readable balance (the overlap with the executor).
 
@@ -334,7 +334,7 @@ theorem forgedRow_rejected : ¬ (gZero state.BALANCE_LO).holdsVm forgedRow false
 #assert_axioms makeSovereignVm_faithful
 #assert_axioms makeSovereignVm_rejects_nonzero
 #assert_axioms makeSovereignVm_rejects_surviving_balance
-#assert_axioms makeSovereignVm_commit_binds_block
+#assert_axioms makeSovereignVm_commit_binds_block_or_collides
 #assert_axioms sovereignRebind_balOf_zero
 #assert_axioms makeSovereign_target_dropped
 #assert_axioms makeSovereign_row_matches_executor
