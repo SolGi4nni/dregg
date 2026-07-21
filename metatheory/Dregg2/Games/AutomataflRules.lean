@@ -1120,6 +1120,754 @@ theorem clashCoords_perm {ms₁ ms₂ : List Move} (h : ms₁.Perm ms₂) (b : B
   rw [hf]
   exact ((candidates_perm h).filter _).mem_iff
 
+/-! ## §9.6  ⚑ THE m = 2 RESOLVEMOVES COLLAPSE — closed forms for a two-move round
+
+The landing machinery of §4 (`edgeMap`/`landMap` via the bounded-fuel `stopWalk`/`leaves` mutual
+recursion) has no obvious closed form: it is written to be permutation-invariant and to handle
+`m`-move rounds uniformly. This section proves the CLOSED FORMS at `m = 2` — the analog, for the new
+machinery, of the retired `followChain`/`chainDest_a`/`chainDest_b` at arity two.
+
+Fix a move list `[ma, mb]` that survived conflict adjudication: **distinct sources** (`ma.frm ≠ mb.frm`,
+else a fork), **distinct raw destinations** (`ma.to ≠ mb.to`, else a collide/merge), both `MoveLegal`.
+Write `sa/da` for `ma.frm/ma.to`, `sb/db` for `mb.frm/mb.to`, and `BA/BB` for `blockedB` of each.
+
+* `edgeMap_pair` — the move graph is supported on `{sa, sb}`: `E sa = if BA then none else some da`,
+  `E sb = if BB then none else some db`, `E c = none` elsewhere. Hence `landMap c = c` off `{sa, sb}`.
+* `landMap_pair_a` / `landMap_pair_b` — **the two landing closed forms**, casing on the finite
+  configuration set. Each mover ends at (in precedence): its origin if its own move is blocked;
+  otherwise, if it chains into the other's source (`da = sb`), the sub-cases —
+  leader blocked ⇒ stay (occupied source) or slide into the empty square; **2-cycle** (`db = sa`) ⇒
+  **stay** (ruling C); **caterpillar** (occupied vacated source) ⇒ ride onto it (`= da`);
+  **flow-through** (vacuum waypoint) ⇒ continue to `db`; otherwise its own destination `da`.
+* `movers_pair` — the movers are `[sa, sb]` filtered by "carries a piece and actually moves".
+* `resolvableB_pair` — **NO CONFLUENCE at m = 2**: a legal, distinct-source, distinct-dest pair is
+  ALWAYS `resolvableB` (`= true`). This is the `landBad`/merge-clause obligation the emitted
+  `cResolvable = ¬merge · ¬badA · ¬badB` must match; the two movers cannot converge because a piece
+  that reaches the OTHER move's destination did so through that move's VACUUM source, whence the other
+  square is empty and its move contributes no rival landing (`landMap_movers_distinct`).
+* `writeBoard_resolveMoves_cell` / `resolveMoves_cell_pair` — `(resolveMoves b [ma,mb]).cellAt q` in
+  closed, cell-by-cell form (`resolvableB` ? the arrival/vacated board : `b`), the reference surface
+  the circuit's `cMidV2` cell gate matches against.
+
+Nothing here changes an existing definition; §10's audit witnesses re-appear at the foot of the
+conformance block, computed against these closed forms (`landMap`/`movers`/`resolvableB` and the
+firing theorems). -/
+
+section PairCollapse
+
+set_option autoImplicit false
+
+variable (b : Board) (ma mb : Move)
+
+-- ===== edgeMap closed form for a distinct-source pair =====
+theorem edgeMap_pair (hne : ma.frm ≠ mb.frm) (c : Coord) :
+    edgeMap b [ma, mb] c =
+      (if c = ma.frm then (if blockedB b [ma, mb] ma then none else some ma.to)
+       else if c = mb.frm then (if blockedB b [ma, mb] mb then none else some mb.to)
+       else none) := by
+  unfold edgeMap edgeOf
+  simp only [List.filter_cons, List.filter_nil]
+  by_cases ha : c = ma.frm
+  · subst ha
+    have hfmb : (mb.frm == ma.frm) = false := by
+      simp only [beq_eq_false_iff_ne]; exact fun h => hne h.symm
+    rw [if_pos rfl]
+    by_cases hba : blockedB b [ma, mb] ma
+    · simp [hfmb, hba, allEqOpt]
+    · simp only [Bool.not_eq_true] at hba
+      simp [hfmb, hba, allEqOpt]
+  · rw [if_neg ha]
+    have hfma : (ma.frm == c) = false := by simp only [beq_eq_false_iff_ne]; exact fun h => ha h.symm
+    by_cases hb : c = mb.frm
+    · subst hb
+      rw [if_pos rfl]
+      by_cases hbb : blockedB b [ma, mb] mb
+      · simp [hfma, hbb, allEqOpt]
+      · simp only [Bool.not_eq_true] at hbb
+        simp [hfma, hbb, allEqOpt]
+    · rw [if_neg hb]
+      have hfmb : (mb.frm == c) = false := by
+        simp only [beq_eq_false_iff_ne]; exact fun h => hb h.symm
+      simp [hfma, hfmb, allEqOpt]
+
+-- ===== general walk helpers =====
+
+theorem stopWalk_dead (E : Coord → Option Coord) (car : Coord → Bool) (f : Nat) (c : Coord)
+    (h : E c = none) : stopWalk E car (f + 1) c = some c := by
+  rw [stopWalk, h]
+
+theorem stopWalk_stop (E : Coord → Option Coord) (car : Coord → Bool) (f : Nat) (c d : Coord)
+    (h : E c = some d) (hcar : car d = true) : stopWalk E car (f + 1) c = some d := by
+  rw [stopWalk, h]; simp [hcar]
+
+theorem stopWalk_go (E : Coord → Option Coord) (car : Coord → Bool) (f : Nat) (c d : Coord)
+    (h : E c = some d) (hcar : car d = false) :
+    stopWalk E car (f + 1) c = stopWalk E car f d := by
+  rw [stopWalk, h]; simp [hcar]
+
+/-- A dead-end (or non-source) square lands on itself, any fuel. -/
+theorem landOf_edge_none (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat) (c : Coord)
+    (h : E c = none) : landOf E car (sf + 1) vf c = c := by
+  have hs : stopWalk E car (sf + 1) c = some c := stopWalk_dead E car sf c h
+  unfold landOf
+  rw [hs]
+  simp only [Option.getD_some, ite_self]
+
+-- ===== destination clear when a move is not blocked =====
+theorem dst_clear_of_not_blocked (bb : Board) (ms : List Move) (m : Move)
+    (h : blockedB bb ms m = false) :
+    carAt bb m.to = false ∨ (ms.any (fun m' => m'.frm == m.to)) = true := by
+  unfold blockedB at h
+  have hmem : m.to ∈ pathCells m.frm m.to := by
+    unfold pathCells; exact List.mem_append_right _ (List.mem_singleton.mpr rfl)
+  have hp := (List.any_eq_false.mp h) m.to hmem
+  simp only [Bool.not_eq_true, Bool.and_eq_false_iff, Bool.not_eq_false'] at hp
+  unfold carAt
+  rcases hp with hp | hp
+  · exact Or.inl (by simp [hp])
+  · exact Or.inr hp
+
+/-- The destination of an unblocked move that is nobody's source is EMPTY at turn start. -/
+theorem carAt_to_false_of_not_blocked (bb : Board) (ms : List Move) (m : Move)
+    (h : blockedB bb ms m = false)
+    (hns : (ms.any (fun m' => m'.frm == m.to)) = false) : carAt bb m.to = false := by
+  rcases dst_clear_of_not_blocked bb ms m h with hc | hc
+  · exact hc
+  · rw [hns] at hc; exact absurd hc (by simp)
+
+-- ===== landOf outcome helpers (bounded-fuel walk resolved) =====
+
+/-- Walk stops at a DISTINCT EMPTY square `d` (a dead end) ⇒ the piece lands there. -/
+theorem landOf_stop_empty (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat)
+    (c d : Coord) (htc : twoCyc E c = false) (hs : stopWalk E car sf c = some d)
+    (hdc : d ≠ c) (hcar : car d = false) : landOf E car sf (vf + 1) c = d := by
+  unfold landOf
+  have hl : leaves E car sf (vf + 1) c = true := by
+    rw [leaves, hs, htc]; simp [hdc, hcar]
+  rw [if_pos hl, hs, Option.getD_some]
+
+/-- `c` is in a 2-cycle ⇒ it stays. -/
+theorem landOf_twoCyc (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat) (c : Coord)
+    (h : twoCyc E c = true) : landOf E car sf (vf + 1) c = c := by
+  unfold landOf
+  have hl : leaves E car sf (vf + 1) c = false := by rw [leaves, if_pos h]
+  rw [if_neg (by simp [hl])]
+
+/-- Walk stops at an OCCUPIED square `d` that itself does NOT leave ⇒ the piece stays. -/
+theorem landOf_stop_stayer (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat)
+    (c d : Coord) (htc : twoCyc E c = false) (hs : stopWalk E car sf c = some d)
+    (hdc : d ≠ c) (hcar : car d = true) (hleave : leaves E car sf vf d = false) :
+    landOf E car sf (vf + 1) c = c := by
+  unfold landOf
+  have hl : leaves E car sf (vf + 1) c = false := by
+    rw [leaves, hs, htc]; simp [hdc, hcar, hleave]
+  rw [if_neg (by simp [hl])]
+
+/-- Walk stops at an OCCUPIED square `d` that itself DOES leave ⇒ the piece rides onto `d`. -/
+theorem landOf_stop_mover (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat)
+    (c d : Coord) (htc : twoCyc E c = false) (hs : stopWalk E car sf c = some d)
+    (hdc : d ≠ c) (hcar : car d = true) (hleave : leaves E car sf vf d = true) :
+    landOf E car sf (vf + 1) c = d := by
+  unfold landOf
+  have hl : leaves E car sf (vf + 1) c = true := by
+    rw [leaves, hs, htc]; simp [hdc, hcar, hleave]
+  rw [if_pos hl, hs, Option.getD_some]
+
+-- ===== edge values at the pair's coordinates =====
+theorem edge_a (hne : ma.frm ≠ mb.frm) :
+    edgeMap b [ma, mb] ma.frm = if blockedB b [ma, mb] ma then none else some ma.to := by
+  rw [edgeMap_pair b ma mb hne, if_pos rfl]
+
+theorem edge_b (hne : ma.frm ≠ mb.frm) :
+    edgeMap b [ma, mb] mb.frm = if blockedB b [ma, mb] mb then none else some mb.to := by
+  rw [edgeMap_pair b ma mb hne, if_neg (Ne.symm hne), if_pos rfl]
+
+theorem edge_off (hne : ma.frm ≠ mb.frm) (c : Coord) (ha : c ≠ ma.frm) (hb : c ≠ mb.frm) :
+    edgeMap b [ma, mb] c = none := by
+  rw [edgeMap_pair b ma mb hne, if_neg ha, if_neg hb]
+
+theorem landMap_pair_eq (c : Coord) :
+    landMap b [ma, mb] c = landOf (edgeMap b [ma, mb]) (carAt b) 3 3 c := rfl
+
+-- ===== (i) INDEPENDENT: each piece lands at its own destination (unblocked) or stays (blocked) =====
+theorem landMap_pair_indep_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hab : ma.to ≠ mb.frm) (hBA : blockedB b [ma, mb] ma = false) :
+    landMap b [ma, mb] ma.frm = ma.to := by
+  have hda_ne_sa : ma.to ≠ ma.frm := fun h => hlegA h.symm
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hns : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨hlegA, fun h => hab h.symm⟩
+  have hcarDa : carAt b ma.to = false := carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns
+  have hEda : edgeMap b [ma, mb] ma.to = none := edge_off b ma mb hne ma.to hda_ne_sa hab
+  have hstop : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 ma.to hEda
+  have htc : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by simp [twoCyc, hEa, hEda]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm ma.to htc hstop hda_ne_sa hcarDa
+
+theorem landMap_pair_indep_b (hne : ma.frm ≠ mb.frm) (hlegB : mb.frm ≠ mb.to)
+    (hba : mb.to ≠ ma.frm) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] mb.frm = mb.to := by
+  have hdb_ne_sb : mb.to ≠ mb.frm := fun h => hlegB h.symm
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hns : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨fun h => hba h.symm, hlegB⟩
+  have hcarDb : carAt b mb.to = false := carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns
+  have hEdb : edgeMap b [ma, mb] mb.to = none := edge_off b ma mb hne mb.to hba hdb_ne_sb
+  have hstop : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some mb.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 mb.to hEdb
+  have htc : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by simp [twoCyc, hEb, hEdb]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm mb.to htc hstop hdb_ne_sb hcarDb
+
+-- ===== (iv-partial) BLOCKED: an occluded move does not execute, its piece stays =====
+theorem landMap_pair_blocked_a (hne : ma.frm ≠ mb.frm) (hBA : blockedB b [ma, mb] ma = true) :
+    landMap b [ma, mb] ma.frm = ma.frm := by
+  have hEa : edgeMap b [ma, mb] ma.frm = none := by rw [edge_a b ma mb hne, if_pos hBA]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_edge_none (edgeMap b [ma, mb]) (carAt b) 2 3 ma.frm hEa
+
+theorem landMap_pair_blocked_b (hne : ma.frm ≠ mb.frm) (hBB : blockedB b [ma, mb] mb = true) :
+    landMap b [ma, mb] mb.frm = mb.frm := by
+  have hEb : edgeMap b [ma, mb] mb.frm = none := by rw [edge_b b ma mb hne, if_pos hBB]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_edge_none (edgeMap b [ma, mb]) (carAt b) 2 3 mb.frm hEb
+
+-- ===== (iii) 2-CYCLE: both pieces stay (ruling C) =====
+theorem landMap_pair_twoCycle_a (hne : ma.frm ≠ mb.frm)
+    (hab : ma.to = mb.frm) (hba : mb.to = ma.frm)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] ma.frm = ma.frm := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have htc : twoCyc (edgeMap b [ma, mb]) ma.frm = true := by
+    simp only [twoCyc, hEa]; rw [hab, hEb, hba]; simp [Ne.symm hne]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_twoCyc (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm htc
+
+theorem landMap_pair_twoCycle_b (hne : ma.frm ≠ mb.frm)
+    (hab : ma.to = mb.frm) (hba : mb.to = ma.frm)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] mb.frm = mb.frm := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have htc : twoCyc (edgeMap b [ma, mb]) mb.frm = true := by
+    simp only [twoCyc, hEb]; rw [hba, hEa, hab]; simp [hne]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_twoCyc (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm htc
+
+-- ===== leaves helpers for the chain recursion =====
+theorem leaves_stop_empty (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat)
+    (c d : Coord) (htc : twoCyc E c = false) (hs : stopWalk E car sf c = some d)
+    (hdc : d ≠ c) (hcar : car d = false) : leaves E car sf (vf + 1) c = true := by
+  rw [leaves, hs, htc]; simp [hdc, hcar]
+
+theorem leaves_dead (E : Coord → Option Coord) (car : Coord → Bool) (sf vf : Nat) (c : Coord)
+    (h : E c = none) : leaves E car (sf + 1) (vf + 1) c = false := by
+  have htc : twoCyc E c = false := by unfold twoCyc; rw [h]
+  rw [leaves, stopWalk_dead E car sf c h, htc]; simp
+
+-- ===== (ii) CHAIN / caterpillar: the follower rides onto the vacated leader source =====
+theorem landMap_pair_caterpillar_a (hne : ma.frm ≠ mb.frm) (hlegB : mb.frm ≠ mb.to)
+    (hab : ma.to = mb.frm) (hba : mb.to ≠ ma.frm) (hcarSb : carAt b mb.frm = true)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] ma.frm = ma.to := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hdb_ne_sb : mb.to ≠ mb.frm := fun h => hlegB h.symm
+  have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨fun h => hba h.symm, hlegB⟩
+  have hcarDb : carAt b mb.to = false := carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+  have hEdb : edgeMap b [ma, mb] mb.to = none := edge_off b ma mb hne mb.to hba hdb_ne_sb
+  have hstopB : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some mb.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 mb.to hEdb
+  have htcB : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by simp [twoCyc, hEb, hEdb]
+  have hleaveB : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm = true :=
+    leaves_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 1 mb.frm mb.to htcB hstopB hdb_ne_sb hcarDb
+  have hcarDa : carAt b ma.to = true := by rw [hab]; exact hcarSb
+  have hda_ne_sa : ma.to ≠ ma.frm := by rw [hab]; exact Ne.symm hne
+  have hstopA : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to :=
+    stopWalk_stop (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa
+  have htcA : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by
+    simp only [twoCyc, hEa]; rw [hab, hEb]; simp [hba]
+  have hleaveDa : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 ma.to = true := by rw [hab]; exact hleaveB
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_mover (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm ma.to htcA hstopA hda_ne_sa hcarDa hleaveDa
+
+-- ===== (ii') CHAIN through a VACUUM waypoint: the piece flows all the way to db =====
+theorem landMap_pair_flowthrough_a (hne : ma.frm ≠ mb.frm) (hlegB : mb.frm ≠ mb.to)
+    (hab : ma.to = mb.frm) (hba : mb.to ≠ ma.frm) (hvacSb : carAt b mb.frm = false)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] ma.frm = mb.to := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hdb_ne_sb : mb.to ≠ mb.frm := fun h => hlegB h.symm
+  have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨fun h => hba h.symm, hlegB⟩
+  have hcarDb : carAt b mb.to = false := carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+  have hEdb : edgeMap b [ma, mb] mb.to = none := edge_off b ma mb hne mb.to hba hdb_ne_sb
+  have hcarDa : carAt b ma.to = false := by rw [hab]; exact hvacSb
+  have hstopA : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some mb.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa, hab,
+        stopWalk_go (edgeMap b [ma, mb]) (carAt b) 1 mb.frm mb.to hEb hcarDb]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 0 mb.to hEdb
+  have htcA : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by
+    simp only [twoCyc, hEa]; rw [hab, hEb]; simp [hba]
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm mb.to htcA hstopA hba hcarDb
+
+-- ===== (iv) OCCLUDED-STAYER: leader blocked ⇒ follower on the occupied leader-source stays =====
+theorem landMap_pair_stuck_a (hne : ma.frm ≠ mb.frm)
+    (hab : ma.to = mb.frm) (hcarSb : carAt b mb.frm = true)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = true) :
+    landMap b [ma, mb] ma.frm = ma.frm := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb0 : edgeMap b [ma, mb] mb.frm = none := by rw [edge_b b ma mb hne, if_pos hBB]
+  have hcarDa : carAt b ma.to = true := by rw [hab]; exact hcarSb
+  have hda_ne_sa : ma.to ≠ ma.frm := by rw [hab]; exact Ne.symm hne
+  have hstopA : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to :=
+    stopWalk_stop (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa
+  have htcA : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by
+    simp only [twoCyc, hEa]; rw [hab, hEb0]; simp
+  have hleaveDa : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 ma.to = false := by
+    rw [hab]; exact leaves_dead (edgeMap b [ma, mb]) (carAt b) 2 1 mb.frm hEb0
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_stayer (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm ma.to htcA hstopA hda_ne_sa hcarDa hleaveDa
+
+-- ===== leader blocked but its source VACUUM: ma just moves into the empty square =====
+theorem landMap_pair_intoEmpty_a (hne : ma.frm ≠ mb.frm)
+    (hab : ma.to = mb.frm) (hvacSb : carAt b mb.frm = false)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = true) :
+    landMap b [ma, mb] ma.frm = ma.to := by
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hEb0 : edgeMap b [ma, mb] mb.frm = none := by rw [edge_b b ma mb hne, if_pos hBB]
+  have hcarDa : carAt b ma.to = false := by rw [hab]; exact hvacSb
+  have hda_ne_sa : ma.to ≠ ma.frm := by rw [hab]; exact Ne.symm hne
+  have hstopA : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa, hab]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 mb.frm hEb0
+  have htcA : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by
+    simp only [twoCyc, hEa]; rw [hab, hEb0]; simp
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm ma.to htcA hstopA hda_ne_sa hcarDa
+
+-- ===== THE A-SIDE LANDING, ALL CASES (analog of the old `chainDest_a`) =====
+theorem landMap_pair_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to) :
+    landMap b [ma, mb] ma.frm =
+      (if blockedB b [ma, mb] ma then ma.frm
+       else if ma.to = mb.frm then
+         (if blockedB b [ma, mb] mb then (if carAt b mb.frm then ma.frm else ma.to)
+          else if mb.to = ma.frm then ma.frm
+          else (if carAt b mb.frm then ma.to else mb.to))
+       else ma.to) := by
+  by_cases hBA : blockedB b [ma, mb] ma = true
+  · rw [if_pos hBA]; exact landMap_pair_blocked_a b ma mb hne hBA
+  · rw [if_neg hBA]; simp only [Bool.not_eq_true] at hBA
+    by_cases hab : ma.to = mb.frm
+    · rw [if_pos hab]
+      by_cases hBB : blockedB b [ma, mb] mb = true
+      · rw [if_pos hBB]
+        by_cases hcs : carAt b mb.frm = true
+        · rw [if_pos hcs]; exact landMap_pair_stuck_a b ma mb hne hab hcs hBA hBB
+        · rw [if_neg hcs]; simp only [Bool.not_eq_true] at hcs
+          exact landMap_pair_intoEmpty_a b ma mb hne hab hcs hBA hBB
+      · rw [if_neg hBB]; simp only [Bool.not_eq_true] at hBB
+        by_cases hba : mb.to = ma.frm
+        · rw [if_pos hba]; exact landMap_pair_twoCycle_a b ma mb hne hab hba hBA hBB
+        · rw [if_neg hba]
+          by_cases hcs : carAt b mb.frm = true
+          · rw [if_pos hcs]; exact landMap_pair_caterpillar_a b ma mb hne hlegB hab hba hcs hBA hBB
+          · rw [if_neg hcs]; simp only [Bool.not_eq_true] at hcs
+            exact landMap_pair_flowthrough_a b ma mb hne hlegB hab hba hcs hBA hBB
+    · rw [if_neg hab]; exact landMap_pair_indep_a b ma mb hne hlegA hab hBA
+
+-- ===== B-SIDE chain cases (mirror; the follower is mb, the leader is ma) =====
+theorem landMap_pair_caterpillar_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hba : mb.to = ma.frm) (hab : ma.to ≠ mb.frm) (hcarSa : carAt b ma.frm = true)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] mb.frm = mb.to := by
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hda_ne_sa : ma.to ≠ ma.frm := fun h => hlegA h.symm
+  have hns_da : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨hlegA, fun h => hab h.symm⟩
+  have hcarDa : carAt b ma.to = false := carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns_da
+  have hEda : edgeMap b [ma, mb] ma.to = none := edge_off b ma mb hne ma.to hda_ne_sa hab
+  have hstopA : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 ma.frm = some ma.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 ma.frm ma.to hEa hcarDa]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 ma.to hEda
+  have htcA : twoCyc (edgeMap b [ma, mb]) ma.frm = false := by simp [twoCyc, hEa, hEda]
+  have hleaveA : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 ma.frm = true :=
+    leaves_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 1 ma.frm ma.to htcA hstopA hda_ne_sa hcarDa
+  have hcarDb : carAt b mb.to = true := by rw [hba]; exact hcarSa
+  have hdb_ne_sb : mb.to ≠ mb.frm := by rw [hba]; exact hne
+  have hstopB : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some mb.to :=
+    stopWalk_stop (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb
+  have htcB : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by
+    simp only [twoCyc, hEb]; rw [hba, hEa]; simp [hab]
+  have hleaveDb : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 mb.to = true := by rw [hba]; exact hleaveA
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_mover (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm mb.to htcB hstopB hdb_ne_sb hcarDb hleaveDb
+
+theorem landMap_pair_flowthrough_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hba : mb.to = ma.frm) (hab : ma.to ≠ mb.frm) (hvacSa : carAt b ma.frm = false)
+    (hBA : blockedB b [ma, mb] ma = false) (hBB : blockedB b [ma, mb] mb = false) :
+    landMap b [ma, mb] mb.frm = ma.to := by
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hEa : edgeMap b [ma, mb] ma.frm = some ma.to := by rw [edge_a b ma mb hne, if_neg (by simp [hBA])]
+  have hda_ne_sa : ma.to ≠ ma.frm := fun h => hlegA h.symm
+  have hns_da : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+    simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+    exact ⟨hlegA, fun h => hab h.symm⟩
+  have hcarDa : carAt b ma.to = false := carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns_da
+  have hEda : edgeMap b [ma, mb] ma.to = none := edge_off b ma mb hne ma.to hda_ne_sa hab
+  have hcarDb : carAt b mb.to = false := by rw [hba]; exact hvacSa
+  have hstopB : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some ma.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb, hba,
+        stopWalk_go (edgeMap b [ma, mb]) (carAt b) 1 ma.frm ma.to hEa hcarDa]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 0 ma.to hEda
+  have htcB : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by
+    simp only [twoCyc, hEb]; rw [hba, hEa]; simp [hab]
+  have hda_ne_sb : ma.to ≠ mb.frm := hab
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm ma.to htcB hstopB hda_ne_sb hcarDa
+
+theorem landMap_pair_stuck_b (hne : ma.frm ≠ mb.frm)
+    (hba : mb.to = ma.frm) (hcarSa : carAt b ma.frm = true)
+    (hBB : blockedB b [ma, mb] mb = false) (hBA : blockedB b [ma, mb] ma = true) :
+    landMap b [ma, mb] mb.frm = mb.frm := by
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hEa0 : edgeMap b [ma, mb] ma.frm = none := by rw [edge_a b ma mb hne, if_pos hBA]
+  have hcarDb : carAt b mb.to = true := by rw [hba]; exact hcarSa
+  have hdb_ne_sb : mb.to ≠ mb.frm := by rw [hba]; exact hne
+  have hstopB : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some mb.to :=
+    stopWalk_stop (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb
+  have htcB : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by
+    simp only [twoCyc, hEb]; rw [hba, hEa0]; simp
+  have hleaveDb : leaves (edgeMap b [ma, mb]) (carAt b) 3 2 mb.to = false := by
+    rw [hba]; exact leaves_dead (edgeMap b [ma, mb]) (carAt b) 2 1 ma.frm hEa0
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_stayer (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm mb.to htcB hstopB hdb_ne_sb hcarDb hleaveDb
+
+theorem landMap_pair_intoEmpty_b (hne : ma.frm ≠ mb.frm)
+    (hba : mb.to = ma.frm) (hvacSa : carAt b ma.frm = false)
+    (hBB : blockedB b [ma, mb] mb = false) (hBA : blockedB b [ma, mb] ma = true) :
+    landMap b [ma, mb] mb.frm = mb.to := by
+  have hEb : edgeMap b [ma, mb] mb.frm = some mb.to := by rw [edge_b b ma mb hne, if_neg (by simp [hBB])]
+  have hEa0 : edgeMap b [ma, mb] ma.frm = none := by rw [edge_a b ma mb hne, if_pos hBA]
+  have hcarDb : carAt b mb.to = false := by rw [hba]; exact hvacSa
+  have hdb_ne_sb : mb.to ≠ mb.frm := by rw [hba]; exact hne
+  have hstopB : stopWalk (edgeMap b [ma, mb]) (carAt b) 3 mb.frm = some mb.to := by
+    rw [stopWalk_go (edgeMap b [ma, mb]) (carAt b) 2 mb.frm mb.to hEb hcarDb, hba]
+    exact stopWalk_dead (edgeMap b [ma, mb]) (carAt b) 1 ma.frm hEa0
+  have htcB : twoCyc (edgeMap b [ma, mb]) mb.frm = false := by
+    simp only [twoCyc, hEb]; rw [hba, hEa0]; simp
+  rw [landMap_pair_eq b ma mb]
+  exact landOf_stop_empty (edgeMap b [ma, mb]) (carAt b) 3 2 mb.frm mb.to htcB hstopB hdb_ne_sb hcarDb
+
+-- ===== THE B-SIDE LANDING, ALL CASES =====
+theorem landMap_pair_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to) :
+    landMap b [ma, mb] mb.frm =
+      (if blockedB b [ma, mb] mb then mb.frm
+       else if mb.to = ma.frm then
+         (if blockedB b [ma, mb] ma then (if carAt b ma.frm then mb.frm else mb.to)
+          else if ma.to = mb.frm then mb.frm
+          else (if carAt b ma.frm then mb.to else ma.to))
+       else mb.to) := by
+  by_cases hBB : blockedB b [ma, mb] mb = true
+  · rw [if_pos hBB]; exact landMap_pair_blocked_b b ma mb hne hBB
+  · rw [if_neg hBB]; simp only [Bool.not_eq_true] at hBB
+    by_cases hba : mb.to = ma.frm
+    · rw [if_pos hba]
+      by_cases hBA : blockedB b [ma, mb] ma = true
+      · rw [if_pos hBA]
+        by_cases hcs : carAt b ma.frm = true
+        · rw [if_pos hcs]; exact landMap_pair_stuck_b b ma mb hne hba hcs hBB hBA
+        · rw [if_neg hcs]; simp only [Bool.not_eq_true] at hcs
+          exact landMap_pair_intoEmpty_b b ma mb hne hba hcs hBB hBA
+      · rw [if_neg hBA]; simp only [Bool.not_eq_true] at hBA
+        by_cases hab : ma.to = mb.frm
+        · rw [if_pos hab]; exact landMap_pair_twoCycle_b b ma mb hne hab hba hBA hBB
+        · rw [if_neg hab]
+          by_cases hcs : carAt b ma.frm = true
+          · rw [if_pos hcs]; exact landMap_pair_caterpillar_b b ma mb hne hlegA hba hab hcs hBA hBB
+          · rw [if_neg hcs]; simp only [Bool.not_eq_true] at hcs
+            exact landMap_pair_flowthrough_b b ma mb hne hlegA hba hab hcs hBA hBB
+    · rw [if_neg hba]; exact landMap_pair_indep_b b ma mb hne hlegB hba hBB
+
+-- ===== movers of a pair =====
+theorem movers_pair (hne : ma.frm ≠ mb.frm) :
+    movers b [ma, mb] =
+      [ma.frm, mb.frm].filter (fun c => carAt b c && landMap b [ma, mb] c != c) := by
+  unfold movers moverList
+  have hnd : ([ma.frm, mb.frm] : List Coord).Nodup := by
+    simp only [List.nodup_cons, List.not_mem_nil, not_false_eq_true,
+      List.nodup_nil, and_true, List.mem_cons, or_false]
+    exact hne
+  have : (List.map (·.frm) [ma, mb]).dedup = [ma.frm, mb.frm] := by
+    simp only [List.map_cons, List.map_nil]
+    exact List.Nodup.dedup hnd
+  rw [this]
+
+theorem mem_movers_pair (hne : ma.frm ≠ mb.frm) (c : Coord) :
+    c ∈ movers b [ma, mb] ↔
+      (c = ma.frm ∨ c = mb.frm) ∧ carAt b c = true ∧ landMap b [ma, mb] c ≠ c := by
+  rw [movers_pair b ma mb hne, List.mem_filter]
+  simp only [List.mem_cons, List.not_mem_nil, or_false, Bool.and_eq_true, bne_iff_ne]
+
+-- ===== a mover's landing is its own raw dest, unless it flows through the other's vacuum source =====
+theorem landMap_mover_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hmov : landMap b [ma, mb] ma.frm ≠ ma.frm) :
+    landMap b [ma, mb] ma.frm = ma.to
+      ∨ (landMap b [ma, mb] ma.frm = mb.to ∧ carAt b mb.frm = false) := by
+  by_cases hBA : blockedB b [ma, mb] ma = true
+  · exact absurd (landMap_pair_blocked_a b ma mb hne hBA) hmov
+  · simp only [Bool.not_eq_true] at hBA
+    by_cases hab : ma.to = mb.frm
+    · by_cases hBB : blockedB b [ma, mb] mb = true
+      · by_cases hcs : carAt b mb.frm = true
+        · exact absurd (landMap_pair_stuck_a b ma mb hne hab hcs hBA hBB) hmov
+        · simp only [Bool.not_eq_true] at hcs
+          exact Or.inl (landMap_pair_intoEmpty_a b ma mb hne hab hcs hBA hBB)
+      · simp only [Bool.not_eq_true] at hBB
+        by_cases hba : mb.to = ma.frm
+        · exact absurd (landMap_pair_twoCycle_a b ma mb hne hab hba hBA hBB) hmov
+        · by_cases hcs : carAt b mb.frm = true
+          · exact Or.inl (landMap_pair_caterpillar_a b ma mb hne hlegB hab hba hcs hBA hBB)
+          · simp only [Bool.not_eq_true] at hcs
+            exact Or.inr ⟨landMap_pair_flowthrough_a b ma mb hne hlegB hab hba hcs hBA hBB, hcs⟩
+    · exact Or.inl (landMap_pair_indep_a b ma mb hne hlegA hab hBA)
+
+theorem landMap_mover_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hmov : landMap b [ma, mb] mb.frm ≠ mb.frm) :
+    landMap b [ma, mb] mb.frm = mb.to
+      ∨ (landMap b [ma, mb] mb.frm = ma.to ∧ carAt b ma.frm = false) := by
+  by_cases hBB : blockedB b [ma, mb] mb = true
+  · exact absurd (landMap_pair_blocked_b b ma mb hne hBB) hmov
+  · simp only [Bool.not_eq_true] at hBB
+    by_cases hba : mb.to = ma.frm
+    · by_cases hBA : blockedB b [ma, mb] ma = true
+      · by_cases hcs : carAt b ma.frm = true
+        · exact absurd (landMap_pair_stuck_b b ma mb hne hba hcs hBB hBA) hmov
+        · simp only [Bool.not_eq_true] at hcs
+          exact Or.inl (landMap_pair_intoEmpty_b b ma mb hne hba hcs hBB hBA)
+      · simp only [Bool.not_eq_true] at hBA
+        by_cases hab : ma.to = mb.frm
+        · exact absurd (landMap_pair_twoCycle_b b ma mb hne hab hba hBA hBB) hmov
+        · by_cases hcs : carAt b ma.frm = true
+          · exact Or.inl (landMap_pair_caterpillar_b b ma mb hne hlegA hba hab hcs hBA hBB)
+          · simp only [Bool.not_eq_true] at hcs
+            exact Or.inr ⟨landMap_pair_flowthrough_b b ma mb hne hlegA hba hab hcs hBA hBB, hcs⟩
+    · exact Or.inl (landMap_pair_indep_b b ma mb hne hlegB hba hBB)
+
+/-- With two moves, distinct RAW destinations, the two movers cannot converge — no confluence. -/
+theorem landMap_movers_distinct (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hdd : ma.to ≠ mb.to)
+    (hcarA : carAt b ma.frm = true) (hcarB : carAt b mb.frm = true)
+    (hmovA : landMap b [ma, mb] ma.frm ≠ ma.frm) (hmovB : landMap b [ma, mb] mb.frm ≠ mb.frm) :
+    landMap b [ma, mb] ma.frm ≠ landMap b [ma, mb] mb.frm := by
+  have hA : landMap b [ma, mb] ma.frm = ma.to := by
+    rcases landMap_mover_a b ma mb hne hlegA hlegB hmovA with h | ⟨_, hc⟩
+    · exact h
+    · rw [hcarB] at hc; exact absurd hc (by simp)
+  have hB : landMap b [ma, mb] mb.frm = mb.to := by
+    rcases landMap_mover_b b ma mb hne hlegA hlegB hmovB with h | ⟨_, hc⟩
+    · exact h
+    · rw [hcarA] at hc; exact absurd hc (by simp)
+  rw [hA, hB]; exact hdd
+
+-- ===== clause 2 (non-leaver) is false for a mover: its landing is empty or itself moves =====
+theorem clause2_false_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hdd : ma.to ≠ mb.to) (hmovA : landMap b [ma, mb] ma.frm ≠ ma.frm) :
+    carAt b (landMap b [ma, mb] ma.frm) = false
+      ∨ landMap b [ma, mb] (landMap b [ma, mb] ma.frm) ≠ landMap b [ma, mb] ma.frm := by
+  by_cases hBA : blockedB b [ma, mb] ma = true
+  · exact absurd (landMap_pair_blocked_a b ma mb hne hBA) hmovA
+  · simp only [Bool.not_eq_true] at hBA
+    by_cases hab : ma.to = mb.frm
+    · by_cases hBB : blockedB b [ma, mb] mb = true
+      · by_cases hcs : carAt b mb.frm = true
+        · exact absurd (landMap_pair_stuck_a b ma mb hne hab hcs hBA hBB) hmovA
+        · simp only [Bool.not_eq_true] at hcs
+          left; rw [landMap_pair_intoEmpty_a b ma mb hne hab hcs hBA hBB, hab]; exact hcs
+      · simp only [Bool.not_eq_true] at hBB
+        by_cases hba : mb.to = ma.frm
+        · exact absurd (landMap_pair_twoCycle_a b ma mb hne hab hba hBA hBB) hmovA
+        · by_cases hcs : carAt b mb.frm = true
+          · have hLd : landMap b [ma, mb] ma.to = mb.to := by
+              rw [hab]; exact landMap_pair_indep_b b ma mb hne hlegB hba hBB
+            right; rw [landMap_pair_caterpillar_a b ma mb hne hlegB hab hba hcs hBA hBB, hLd]
+            exact fun h => hdd h.symm
+          · simp only [Bool.not_eq_true] at hcs
+            left; rw [landMap_pair_flowthrough_a b ma mb hne hlegB hab hba hcs hBA hBB]
+            have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+              simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+                beq_eq_false_iff_ne]
+              exact ⟨fun h => hba h.symm, hlegB⟩
+            exact carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+    · left; rw [landMap_pair_indep_a b ma mb hne hlegA hab hBA]
+      have hns : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+        simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+          beq_eq_false_iff_ne]
+        exact ⟨hlegA, fun h => hab h.symm⟩
+      exact carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns
+
+theorem clause2_false_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hdd : ma.to ≠ mb.to) (hmovB : landMap b [ma, mb] mb.frm ≠ mb.frm) :
+    carAt b (landMap b [ma, mb] mb.frm) = false
+      ∨ landMap b [ma, mb] (landMap b [ma, mb] mb.frm) ≠ landMap b [ma, mb] mb.frm := by
+  by_cases hBB : blockedB b [ma, mb] mb = true
+  · exact absurd (landMap_pair_blocked_b b ma mb hne hBB) hmovB
+  · simp only [Bool.not_eq_true] at hBB
+    by_cases hba : mb.to = ma.frm
+    · by_cases hBA : blockedB b [ma, mb] ma = true
+      · by_cases hcs : carAt b ma.frm = true
+        · exact absurd (landMap_pair_stuck_b b ma mb hne hba hcs hBB hBA) hmovB
+        · simp only [Bool.not_eq_true] at hcs
+          left; rw [landMap_pair_intoEmpty_b b ma mb hne hba hcs hBB hBA, hba]; exact hcs
+      · simp only [Bool.not_eq_true] at hBA
+        by_cases hab : ma.to = mb.frm
+        · exact absurd (landMap_pair_twoCycle_b b ma mb hne hab hba hBA hBB) hmovB
+        · by_cases hcs : carAt b ma.frm = true
+          · have hLd : landMap b [ma, mb] mb.to = ma.to := by
+              rw [hba]; exact landMap_pair_indep_a b ma mb hne hlegA hab hBA
+            right; rw [landMap_pair_caterpillar_b b ma mb hne hlegA hba hab hcs hBA hBB, hLd]
+            exact hdd
+          · simp only [Bool.not_eq_true] at hcs
+            left; rw [landMap_pair_flowthrough_b b ma mb hne hlegA hba hab hcs hBA hBB]
+            have hns_da : ([ma, mb].any (fun m' => m'.frm == ma.to)) = false := by
+              simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+                beq_eq_false_iff_ne]
+              exact ⟨hlegA, fun h => hab h.symm⟩
+            exact carAt_to_false_of_not_blocked b [ma, mb] ma hBA hns_da
+    · left; rw [landMap_pair_indep_b b ma mb hne hlegB hba hBB]
+      have hns_db : ([ma, mb].any (fun m' => m'.frm == mb.to)) = false := by
+        simp only [List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_false_iff,
+          beq_eq_false_iff_ne]
+        exact ⟨fun h => hba h.symm, hlegB⟩
+      exact carAt_to_false_of_not_blocked b [ma, mb] mb hBB hns_db
+
+-- ===== clause 1 (confluence): each mover is the UNIQUE mover landing where it lands =====
+theorem filter_land_singleton_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hdd : ma.to ≠ mb.to) (hcarA : carAt b ma.frm = true)
+    (hmovA : landMap b [ma, mb] ma.frm ≠ ma.frm) :
+    (movers b [ma, mb]).filter (fun c' => landMap b [ma, mb] c' == landMap b [ma, mb] ma.frm)
+      = [ma.frm] := by
+  rw [movers_pair b ma mb hne, List.filter_filter]
+  have hPa : ((landMap b [ma, mb] ma.frm == landMap b [ma, mb] ma.frm)
+      && (carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm))) = true := by
+    simp [hcarA, hmovA]
+  have hPb : ((landMap b [ma, mb] mb.frm == landMap b [ma, mb] ma.frm)
+      && (carAt b mb.frm && (landMap b [ma, mb] mb.frm != mb.frm))) = false := by
+    by_cases hcb : carAt b mb.frm = true
+    · by_cases hmb : landMap b [ma, mb] mb.frm = mb.frm
+      · simp [hmb]
+      · have hd := landMap_movers_distinct b ma mb hne hlegA hlegB hdd hcarA hcb hmovA hmb
+        simp [beq_eq_false_iff_ne.mpr (fun h => hd h.symm)]
+    · simp only [Bool.not_eq_true] at hcb; simp [hcb]
+  rw [List.filter_cons, if_pos hPa, List.filter_cons, if_neg (by rw [hPb]; exact Bool.false_ne_true),
+    List.filter_nil]
+
+theorem filter_land_singleton_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hdd : ma.to ≠ mb.to) (hcarB : carAt b mb.frm = true)
+    (hmovB : landMap b [ma, mb] mb.frm ≠ mb.frm) :
+    (movers b [ma, mb]).filter (fun c' => landMap b [ma, mb] c' == landMap b [ma, mb] mb.frm)
+      = [mb.frm] := by
+  rw [movers_pair b ma mb hne, List.filter_filter]
+  have hPb : ((landMap b [ma, mb] mb.frm == landMap b [ma, mb] mb.frm)
+      && (carAt b mb.frm && (landMap b [ma, mb] mb.frm != mb.frm))) = true := by
+    simp [hcarB, hmovB]
+  have hPa : ((landMap b [ma, mb] ma.frm == landMap b [ma, mb] mb.frm)
+      && (carAt b ma.frm && (landMap b [ma, mb] ma.frm != ma.frm))) = false := by
+    by_cases hca : carAt b ma.frm = true
+    · by_cases hma : landMap b [ma, mb] ma.frm = ma.frm
+      · simp [hma]
+      · have hd := landMap_movers_distinct b ma mb hne hlegA hlegB hdd hca hcarB hma hmovB
+        simp [beq_eq_false_iff_ne.mpr hd]
+    · simp only [Bool.not_eq_true] at hca; simp [hca]
+  rw [List.filter_cons, if_neg (by rw [hPa]; exact Bool.false_ne_true), List.filter_cons,
+    if_pos hPb, List.filter_nil]
+
+-- ===== landBad is false on every mover of a legal, distinct-dest pair =====
+theorem landBad_false_a (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hdd : ma.to ≠ mb.to) (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hmemA : ma.frm ∈ movers b [ma, mb]) : landBad b [ma, mb] ma.frm = false := by
+  obtain ⟨_, hcarA, hmovA⟩ := (mem_movers_pair b ma mb hne ma.frm).mp hmemA
+  have hin : b.inBounds (landMap b [ma, mb] ma.frm) := by
+    rcases landMap_mover_a b ma mb hne hlegA hlegB hmovA with h | ⟨h, _⟩ <;> rw [h]
+    · exact hInA
+    · exact hInB
+  have hd : decide (b.inBounds (landMap b [ma, mb] ma.frm)) = true := decide_eq_true hin
+  unfold landBad
+  rw [filter_land_singleton_a b ma mb hne hlegA hlegB hdd hcarA hmovA]
+  rcases clause2_false_a b ma mb hne hlegA hlegB hdd hmovA with h2 | h2
+  · simp [h2, hd]
+  · simp [hd, beq_eq_false_iff_ne.mpr h2]
+
+theorem landBad_false_b (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hdd : ma.to ≠ mb.to) (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to)
+    (hmemB : mb.frm ∈ movers b [ma, mb]) : landBad b [ma, mb] mb.frm = false := by
+  obtain ⟨_, hcarB, hmovB⟩ := (mem_movers_pair b ma mb hne mb.frm).mp hmemB
+  have hin : b.inBounds (landMap b [ma, mb] mb.frm) := by
+    rcases landMap_mover_b b ma mb hne hlegA hlegB hmovB with h | ⟨h, _⟩ <;> rw [h]
+    · exact hInB
+    · exact hInA
+  have hd : decide (b.inBounds (landMap b [ma, mb] mb.frm)) = true := decide_eq_true hin
+  unfold landBad
+  rw [filter_land_singleton_b b ma mb hne hlegA hlegB hdd hcarB hmovB]
+  rcases clause2_false_b b ma mb hne hlegA hlegB hdd hmovB with h2 | h2
+  · simp [h2, hd]
+  · simp [hd, beq_eq_false_iff_ne.mpr h2]
+
+-- ===== (v) NO CONFLUENCE: a legal distinct-dest pair is ALWAYS resolvable =====
+theorem resolvableB_pair (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to) (hlegB : mb.frm ≠ mb.to)
+    (hdd : ma.to ≠ mb.to) (hInA : b.inBounds ma.to) (hInB : b.inBounds mb.to) :
+    resolvableB b [ma, mb] = true := by
+  have hfilt : (movers b [ma, mb]).filter (landBad b [ma, mb]) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro c hc
+    obtain ⟨hcor, _, _⟩ := (mem_movers_pair b ma mb hne c).mp hc
+    rcases hcor with rfl | rfl
+    · rw [landBad_false_a b ma mb hne hlegA hlegB hdd hInA hInB hc]; exact Bool.false_ne_true
+    · rw [landBad_false_b b ma mb hne hlegA hlegB hdd hInA hInB hc]; exact Bool.false_ne_true
+  unfold resolvableB unresolved
+  rw [hfilt]; rfl
+
+-- ===== cell-wise closed form of resolveMoves for a pair =====
+theorem writeBoard_resolveMoves_cell (q : Coord) (hq : b.inBounds q) :
+    (resolveMoves b [ma, mb]).cellAt q =
+      (if resolvableB b [ma, mb] then
+         (match arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q with
+          | some c => b.cellAt c
+          | none   => if memB (movers b [ma, mb]) q then Particle.vacuum else b.cellAt q)
+       else b.cellAt q) := by
+  unfold resolveMoves
+  by_cases hr : resolvableB b [ma, mb] = true
+  · rw [if_pos hr, if_pos hr]; exact writeBoard_cellAt b _ _ q hq
+  · simp only [Bool.not_eq_true] at hr; rw [hr]; simp
+
+/-- The `resolvableB`-gate collapses: a legal, distinct-dest pair always resolves, so the cell is
+the placed/vacated board unconditionally. -/
+theorem resolveMoves_cell_pair (hne : ma.frm ≠ mb.frm) (hlegA : ma.frm ≠ ma.to)
+    (hlegB : mb.frm ≠ mb.to) (hdd : ma.to ≠ mb.to) (hInA : b.inBounds ma.to)
+    (hInB : b.inBounds mb.to) (q : Coord) (hq : b.inBounds q) :
+    (resolveMoves b [ma, mb]).cellAt q =
+      (match arrivalAt (movers b [ma, mb]) (landMap b [ma, mb]) q with
+       | some c => b.cellAt c
+       | none   => if memB (movers b [ma, mb]) q then Particle.vacuum else b.cellAt q) := by
+  rw [writeBoard_resolveMoves_cell b ma mb q hq,
+    if_pos (resolvableB_pair b ma mb hne hlegA hlegB hdd hInA hInB)]
+
+end PairCollapse
+
 /-! ## §10  ⚑ CONFORMANCE TEST BLOCK
 
 One live `#guard` per rules clause, keyed to the audit's divergence table
@@ -1428,6 +2176,45 @@ on a board where the automaton had not moved at all. It FLIPS. -/
 -- the opening is symmetric: all four rays are equidistant repulsors, so nothing moves
 #guard (automatonStepCfg cfgCol stockTwoPlayer).automaton = (⟨5, 5⟩ : Coord)
 
+/-! ### §10.10 — the m = 2 collapse closed forms at the audit witnesses (non-vacuity) -/
+
+-- ===== NON-VACUITY: the closed forms at the audit witnesses (direct computation) =====
+-- caterpillar (§3.4): follower rides onto the vacated leader source; leader to its own dest
+#guard landMap catBoard [cat1, cat2] ⟨0, 0⟩ = (⟨0, 1⟩ : Coord)
+#guard landMap catBoard [cat1, cat2] ⟨0, 1⟩ = (⟨0, 2⟩ : Coord)
+#guard movers catBoard [cat1, cat2] = [(⟨0, 0⟩ : Coord), ⟨0, 1⟩]
+#guard resolvableB catBoard [cat1, cat2] = true
+-- flowthrough (§3.3): the piece flows through the vacuum waypoint all the way to db
+#guard landMap chainBoard [ch1, ch2] ⟨0, 0⟩ = (⟨0, 2⟩ : Coord)
+#guard resolvableB chainBoard [ch1, ch2] = true
+-- occluded-stayer (§3.6, D-style): leader blocked ⇒ both stay, still resolvable (no lost piece)
+#guard landMap stuckBoard [st1, st2] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)
+#guard landMap stuckBoard [st1, st2] ⟨0, 1⟩ = (⟨0, 1⟩ : Coord)
+#guard movers stuckBoard [st1, st2] = ([] : List Coord)
+#guard resolvableB stuckBoard [st1, st2] = true
+-- 2-cycle (§3.5a): both stay
+#guard landMap d2Board [d2A, d2B] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)
+#guard landMap d2Board [d2A, d2B] ⟨0, 2⟩ = (⟨0, 2⟩ : Coord)
+#guard resolvableB d2Board [d2A, d2B] = true
+-- independent (§1.4): unblocked mover lands at its own destination
+#guard landMap d1Board [d1Move] ⟨0, 0⟩ = (⟨0, 0⟩ : Coord)   -- blocked (dest occupied) ⇒ stays
+
+-- the closed-form THEOREMS fire at the witnesses (hypotheses satisfiable ⇒ non-vacuous)
+example : landMap catBoard [cat1, cat2] cat1.frm = cat1.to :=
+  landMap_pair_caterpillar_a catBoard cat1 cat2 (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide)
+example : landMap chainBoard [ch1, ch2] ch1.frm = ch2.to :=
+  landMap_pair_flowthrough_a chainBoard ch1 ch2 (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide)
+example : landMap stuckBoard [st1, st2] st1.frm = st1.frm :=
+  landMap_pair_stuck_a stuckBoard st1 st2 (by decide) (by decide) (by decide) (by decide) (by decide)
+example : landMap d2Board [d2A, d2B] d2A.frm = d2A.frm :=
+  landMap_pair_twoCycle_a d2Board d2A d2B (by decide) (by decide) (by decide) (by decide) (by decide)
+example : resolvableB catBoard [cat1, cat2] = true :=
+  resolvableB_pair catBoard cat1 cat2 (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide)
+
+
 end Conformance
 
 /-! ## §11  Axiom hygiene -/
@@ -1453,7 +2240,15 @@ end Conformance
   movers_perm,
   resolvableB_perm,
   resolve_perm,
-  clashCoords_perm
+  clashCoords_perm,
+  edgeMap_pair,
+  landMap_pair_a,
+  landMap_pair_b,
+  movers_pair,
+  landMap_movers_distinct,
+  resolvableB_pair,
+  writeBoard_resolveMoves_cell,
+  resolveMoves_cell_pair
 ]
 
 end Dregg2.Games.AutomataflRules
