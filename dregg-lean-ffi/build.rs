@@ -282,6 +282,15 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // `ml-kem` crate OUT of the deployed KEM-keygen TCB. Its OWN module `Dregg2.Crypto.MlKemKeygen`
         // (imports `MlKemDecaps` for the SHA3 primitives + `MlKemSample`/`MlKemRing`/`MlKemCodec`).
         "Dregg2.Crypto.MlKemKeygen",
+        // ML-DSA-65-KEYGEN-REAL extraction (the identity-key KEYGEN mirror of the ML-KEM keygen): the
+        // verified REAL, FULL-BYTE ML-DSA-65 keygen core (`@[export] dregg_mldsa_keygen_real` over
+        // `mldsaKeygenInternal` — the deterministic FIPS 204 ML-DSA.KeyGen_internal from a 32-byte ξ seed,
+        // KAT-anchored vs the NIST ACVP ML-DSA-65 keyGen vectors), OUTSIDE the FFI closure — build it so its
+        // `.c` IR is emitted and the splice picks up the export. This is the object
+        // `dregg-pq::MlDsaKey::from_ed25519_seed` routes through to take the `fips204` crate OUT of the
+        // deployed IDENTITY-KEY keygen TCB. Its OWN module `Dregg2.Crypto.MlDsaKeygen` (imports MlDsaExpandA /
+        // MlDsaRing / MlDsaCodec + MlKemDecaps for the SHA3 hex primitives).
+        "Dregg2.Crypto.MlDsaKeygen",
         // FIPS-204-SIGN-REAL extraction (the brick-8 SIGN analog): the verified REAL, FULL-BYTE ML-DSA-65
         // sign core (`@[export] dregg_fips204_sign_real` over `signCore` — the deterministic (`rnd = 0`)
         // Fiat–Shamir-with-aborts signer: skDecode / ExpandMask / NTT / SampleInBall / MakeHint / rejection
@@ -1396,6 +1405,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_decaps_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_encaps_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_keygen_real_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mldsa_keygen_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
@@ -1841,6 +1851,18 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_mlkem_keygen_real_present");
     }
 
+    // ML-DSA-65-KEYGEN-REAL extraction (the identity-key KEYGEN mirror): probe the spliced archive for the
+    // `@[export] dregg_mldsa_keygen_real` symbol — the FULL-BYTE, full-dimension ML-DSA-65 keygen
+    // (`Dregg2.Crypto.MlDsaKeygen.mldsaKeygenRealFFI` over `mldsaKeygenInternal`, the deterministic FIPS 204
+    // ML-DSA.KeyGen_internal from a 32-byte ξ seed, KAT-anchored vs NIST ACVP ML-DSA-65 keyGen). Present ⇒
+    // gate the Rust `extern "C"` block, the C shim string bridge, and the module define/init. This is the
+    // export `dregg-pq::MlDsaKey::from_ed25519_seed` routes through to take the `fips204` crate OUT of the
+    // IDENTITY-KEY keygen TCB.
+    let mldsa_keygen_real_present = archive_exports(&build_archive, "dregg_mldsa_keygen_real");
+    if mldsa_keygen_real_present {
+        println!("cargo:rustc-cfg=dregg_mldsa_keygen_real_present");
+    }
+
     // ── PQ-CORE EXPORT GATE (DREGG_REQUIRE_PQ_CORES) ────────────────────────────────────────
     // The DREGG_REQUIRE_LEAN gate above asks only "is a Lean archive linked at all"
     // (`lean_available()`). That question passes for an archive that links perfectly and
@@ -1880,7 +1902,7 @@ fn main() {
     let require_pq_cores = require_pq_on || (require_lean_native && !require_pq_off);
     if require_pq_cores {
         // (export symbol, present?, what dregg-pq silently falls back to without it)
-        let required: [(&str, bool, &str); 4] = [
+        let required: [(&str, bool, &str); 5] = [
             (
                 "dregg_fips204_verify_real",
                 fips204_verify_real_present,
@@ -1900,6 +1922,11 @@ fn main() {
                 "dregg_mlkem_keygen_real",
                 mlkem_keygen_real_present,
                 "ML-KEM-768 keygen would be answered by the UNAUDITED `ml-kem` 0.2.3 crate",
+            ),
+            (
+                "dregg_mldsa_keygen_real",
+                mldsa_keygen_real_present,
+                "ML-DSA-65 IDENTITY keygen would be answered by the UNAUDITED `fips204` 0.4 crate",
             ),
         ];
         let missing: Vec<&(&str, bool, &str)> =
@@ -2076,6 +2103,11 @@ fn main() {
     // gates BOTH the per-export extern+bridge AND the module initializer (like the K5/K6 cores).
     if mlkem_keygen_real_present {
         shim.define("DREGG_MLKEM_KEYGEN_REAL", None);
+    }
+    // ML-DSA-65-KEYGEN-REAL: its own module `Dregg2.Crypto.MlDsaKeygen`, so DREGG_MLDSA_KEYGEN_REAL gates
+    // BOTH the per-export extern+bridge AND the module initializer (like the ML-KEM keygen core).
+    if mldsa_keygen_real_present {
+        shim.define("DREGG_MLDSA_KEYGEN_REAL", None);
     }
     if grain_r3_verify_present {
         shim.define("DREGG_GRAIN_R3_VERIFY", None);

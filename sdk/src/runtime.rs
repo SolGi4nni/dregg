@@ -229,6 +229,21 @@ pub fn install_verified_mlkem_keygen_core() -> dregg_pq::MlKemKeygenCoreInstall 
     )
 }
 
+/// Install the extracted, Lean-verified REAL ML-DSA-65 KEYGEN core as the expander behind
+/// `dregg_pq::MlDsaKey::from_ed25519_seed` — so this SDK-hosted process mints its NODE IDENTITY key via
+/// the proven `MlDsaKeygen.mldsaKeygenInternal` (deterministic FIPS 204 ML-DSA.KeyGen_internal), NIST-ACVP
+/// -anchored (KAT, the byte<->ring refinement is OPEN) — NOT the `fips204` crate.
+///
+/// Gated on `mldsa_keygen_real_core_available()`, and deliberately NOT fatal on `ExportAbsent` — like the
+/// ML-KEM keygen twin, for the `no-lean-link` wasm/zkvm targets. Installing the verified core here routes
+/// SDK-hosted identity-key derivation through the proven object instead of the crate.
+pub fn install_verified_mldsa_keygen_core_real() -> dregg_pq::MlDsaKeygenCoreRealInstall {
+    dregg_pq::install_verified_mldsa_keygen_core_real(
+        dregg_lean_ffi::mldsa_keygen_real_core_available,
+        |w| dregg_lean_ffi::shadow_mldsa_keygen_real(w).ok(),
+    )
+}
+
 /// Perform the once-per-process ML-KEM ENCAPS-core install at SDK agent-runtime startup, logging once.
 fn ensure_verified_mlkem_encaps_core_installed() {
     use dregg_pq::MlKemEncapsCoreInstall as E;
@@ -279,6 +294,33 @@ fn ensure_verified_mlkem_keygen_core_installed() {
              process's ML-KEM keypairs are minted by the UNAUDITED `ml-kem` crate behind dregg-pq's loud \
              keygen warning (keygen WARNS, it does not abort). Rebuild against a HEAD-matching archive to \
              route keygen through Lean."
+        ),
+    });
+}
+
+/// Perform the once-per-process ML-DSA-65 KEYGEN-core install at SDK agent-runtime startup, logging once.
+fn ensure_verified_mldsa_keygen_core_installed() {
+    use dregg_pq::MlDsaKeygenCoreRealInstall as K;
+    use std::sync::Once;
+    static LOGGED: Once = Once::new();
+    let outcome = install_verified_mldsa_keygen_core_real();
+    LOGGED.call_once(|| match outcome {
+        K::Installed => tracing::info!(
+            "ML-DSA keygen: verified Lean REAL keygen core installed at SDK agent-runtime startup - the \
+             extracted deterministic FIPS 204 `MlDsaKeygen.mldsaKeygenInternal` (KAT-anchored) is now the \
+             IDENTITY-keypair AUTHORITY behind `dregg_pq::MlDsaKey::from_ed25519_seed` for this process; the \
+             `fips204` crate is out of the SDK-hosted IDENTITY-KEY keygen TCB"
+        ),
+        K::AlreadyInstalled => tracing::debug!(
+            "ML-DSA keygen: a verified Lean REAL keygen core was already installed this process (install is \
+             once-per-process) - the `fips204` crate remains out of the SDK-hosted IDENTITY-KEY keygen TCB"
+        ),
+        K::ExportAbsent => tracing::warn!(
+            "ML-DSA keygen: the linked Lean archive does NOT export the real keygen core \
+             (`mldsa_keygen_real_core_available()` is false) - NO verified keygen core is installed, so this \
+             process's ML-DSA IDENTITY keypair is minted by the UNAUDITED `fips204` crate behind dregg-pq's \
+             loud keygen warning (keygen WARNS, it does not abort). Rebuild against a HEAD-matching archive \
+             to route identity keygen through Lean."
         ),
     });
 }
@@ -543,6 +585,9 @@ impl AgentRuntime {
         // Route this SDK-hosted process's ML-KEM keygen through the Lean-verified core (warn-and-continue on
         // ExportAbsent -- keygen does not abort at the audit gate). Once-per-process, export-gated.
         ensure_verified_mlkem_keygen_core_installed();
+        // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
+        // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
+        ensure_verified_mldsa_keygen_core_installed();
         let cell_id;
         let public_key;
         {
@@ -602,6 +647,9 @@ impl AgentRuntime {
         ensure_verified_mlkem_encaps_core_installed();
         ensure_verified_mlkem_decaps_core_installed();
         ensure_verified_mlkem_keygen_core_installed();
+        // Route this SDK-hosted process's ML-DSA IDENTITY keygen through the Lean-verified core
+        // (warn-and-continue on ExportAbsent -- identity keygen WARNS, it does not abort). Once-per-process.
+        ensure_verified_mldsa_keygen_core_installed();
         let cell_id = cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())

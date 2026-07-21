@@ -254,6 +254,19 @@ extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlKemKeygen(uint8_t builtin)
 extern lean_object *dregg_mlkem_keygen_real(lean_object *input);
 #endif
 
+/* THE identity-key KEYGEN mirror — the REAL, FULL-BYTE ML-DSA-65 KEYGEN export
+ * (`Dregg2.Crypto.MlDsaKeygen.mldsaKeygenRealFFI`): decodes the wire `"hex(xi)"` (one 32-byte seed field),
+ * runs the FULL-DIMENSION Lean-verified `mldsaKeygenInternal` (the deterministic FIPS 204
+ * ML-DSA.KeyGen_internal: H split, ExpandA, ExpandS, t = NTT^-1(A.NTT(s1))+s2, Power2Round, pkEncode/skEncode)
+ * and returns `"hex(pk) hex(sk)"` (1952-byte pk + 4032-byte sk) or `"ERR"` on a malformed wire. Takes the
+ * `fips204` crate OUT of the deployed IDENTITY-KEY keygen TCB. Its OWN module `Dregg2.Crypto.MlDsaKeygen`,
+ * so it needs its OWN initializer `initialize_Dregg2_Dregg2_Crypto_MlDsaKeygen` (run below). GATED on
+ * DREGG_MLDSA_KEYGEN_REAL (build.rs probes + defines it when the symbol is present). */
+#ifdef DREGG_MLDSA_KEYGEN_REAL
+extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlDsaKeygen(uint8_t builtin);
+extern lean_object *dregg_mldsa_keygen_real(lean_object *input);
+#endif
+
 /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 SIGN export
  * (`Dregg2.Crypto.MlDsaSignReal.signRealFFI`): decodes the wire `"hex(sk) hex(msg) hex(ctx)"`, runs the
  * FULL-DIMENSION Lean-verified `signCore` (skDecode / ExpandMask / NTT / SampleInBall / ExpandA / MakeHint /
@@ -495,6 +508,20 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(kgres);
+#endif
+
+#ifdef DREGG_MLDSA_KEYGEN_REAL
+    /* The identity-key KEYGEN mirror — the REAL, FULL-BYTE ML-DSA-65 keygen-core module
+     * (`Dregg2.Crypto.MlDsaKeygen`) is OUTSIDE the FFI closure and is its OWN module, so initialize it
+     * explicitly so `dregg_mldsa_keygen_real` is callable. Its dependency closure (Crypto.Keccak / MlDsaRing /
+     * MlDsaExpandA / MlDsaCodec / MlKemDecaps) is re-entrant-safe under Lean's init guards. */
+    lean_object *dkgres = initialize_Dregg2_Dregg2_Crypto_MlDsaKeygen(1);
+    if (!lean_io_result_is_ok(dkgres)) {
+        lean_io_result_show_error(dkgres);
+        lean_dec_ref(dkgres);
+        return 1;
+    }
+    lean_dec_ref(dkgres);
 #endif
 #ifdef DREGG_FIPS204_SIGN_REAL
     /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 sign-core module
@@ -787,6 +814,30 @@ size_t dregg_mlkem_keygen_real_str(const char *in_utf8, char *out, size_t out_ca
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mlkem_keygen_real(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MLDSA_KEYGEN_REAL
+/* dregg_mldsa_keygen_real_str — the C string bridge over the VERIFIED Lean `String -> String` REAL,
+ * FULL-BYTE ML-DSA-65 keygen export (`Dregg2.Crypto.MlDsaKeygen.mldsaKeygenRealFFI`). Input: `"hex(xi)"`
+ * (one lowercase-hex field over the real 32-byte ξ seed). Output: `"hex(pk) hex(sk)"` (the 1952-byte public
+ * key + 4032-byte secret key as lowercase hex) or `"ERR"` (the fail-closed answer for any malformed wire).
+ * Runs the deterministic FIPS 204 ML-DSA.KeyGen_internal (KAT-anchored vs the NIST ACVP ML-DSA-65 keyGen
+ * vectors) — the object that takes the `fips204` crate OUT of the deployed IDENTITY-KEY keygen TCB. Same
+ * return contract as the bridges above. */
+size_t dregg_mldsa_keygen_real_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mldsa_keygen_real(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

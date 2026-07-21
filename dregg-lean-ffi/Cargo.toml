@@ -27,7 +27,7 @@ default = []
 # wasm32/zkvm targets as defense-in-depth.
 no-lean-link = []
 # Enable the differential/marshal binaries (they require the linked archive at run time).
-lean-lib = ["dep:proptest"]
+lean-lib = ["dep:proptest", "dep:dregg-pq"]
 
 [[bin]]
 name = "dregg-lean-ffi"
@@ -79,6 +79,13 @@ name = "marshal_roundtrip"
 path = "src/marshal_roundtrip.rs"
 required-features = ["lean-lib"]
 
+# DISPATCH OBSERVATION: verifies MlDsaKey::from_ed25519_seed routes through the verified
+# dregg_mldsa_keygen_real core (real/poison/nocore modes). Links the archive.
+[[bin]]
+name = "mldsa_keygen_dispatch"
+path = "src/mldsa_keygen_dispatch.rs"
+required-features = ["lean-lib"]
+
 # THE TRANSLATION-VALIDATION GATE (Klein CRITICAL-2, Rust half): asserts the hand-written
 # `marshal.rs` T8/T9 marshaller reproduces, BYTE-FOR-BYTE, the Lean-emitted golden corpus produced
 # by the PROVED encoders (`Dregg2.Exec.FFI.encodeWWire`/`encodeWStatusOut`, via
@@ -107,6 +114,10 @@ dregg-circuit = { path = "../circuit" }
 # Optional (tied to `lean-lib`): the fuzzer only runs in the differential bins; keeping it
 # out of the default graph is what lets the now-unconditional lib dep compile on wasm32.
 proptest = { version = "1", optional = true }
+# DISPATCH OBSERVATION only: the mldsa_keygen_dispatch bin installs the verified keygen core
+# into dregg-pq and observes MlDsaKey::from_ed25519_seed route through it. Optional (tied to
+# lean-lib) so the default graph is unchanged; no cycle (dregg-pq never depends on this crate).
+dregg-pq = { path = "../dregg-pq", optional = true }
 
 [build-dependencies]
 cc = "1"
@@ -118,6 +129,3 @@ cc = "1"
 name = "direct_vs_json_overhead"
 path = "benches/direct_vs_json_overhead.rs"
 harness = false
-
-[lints]
-workspace = true

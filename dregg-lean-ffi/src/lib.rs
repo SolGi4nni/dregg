@@ -418,6 +418,34 @@ pub fn shadow_mlkem_keygen_real(wire: &str) -> Result<String, String> {
     ffi::lean_mlkem_keygen_real(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified REAL, FULL-BYTE ML-DSA-65 KEYGEN core
+/// (`dregg_mldsa_keygen_real` — the C-ABI entry over `Dregg2.Crypto.MlDsaKeygen.mldsaKeygenRealFFI` = the
+/// deterministic FIPS 204 ML-DSA.KeyGen_internal over a 32-byte ξ seed). When false, a caller must fall back
+/// to the `fips204` crate keygen. Distinct from [`lean_available`]: a stale archive can lack this export.
+pub fn mldsa_keygen_real_core_available() -> bool {
+    ffi::mldsa_keygen_real_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted REAL, FULL-BYTE ML-DSA-65 keygen core `@[export] dregg_mldsa_keygen_real`
+/// (the executable `Dregg2.Crypto.MlDsaKeygen.mldsaKeygenRealFFI` over `mldsaKeygenInternal` — the
+/// deterministic FIPS 204 ML-DSA.KeyGen_internal: H(ξ‖k‖ℓ) split, ExpandA, ExpandS, t = NTT⁻¹(Â∘NTT(s1))+s2,
+/// Power2Round, pkEncode / skEncode). KAT-anchored vs the NIST ACVP `ML-DSA-keyGen-FIPS204` ML-DSA-65 vectors
+/// (single-vector `native_decide`); the byte↔ring KeyGen refinement forall is OPEN.
+///
+/// Wire grammar the export reads:
+///   * in:  `"hex(xi)"` (one lowercase-hex field over the real 32-byte ξ seed).
+///   * out: `"hex(pk) hex(sk)"` — the 1952-byte public key + 4032-byte secret key as lowercase hex; `"ERR"`
+///     for a malformed wire (the fail-closed answer the Rust caller treats as a keygen fault).
+///
+/// `dregg-pq::MlDsaKey::from_ed25519_seed` routes its ML-DSA keygen through this entry (installed via
+/// `dregg_pq::install_verified_mldsa_keygen_core_real`), so the deployed IDENTITY-key derivation runs the
+/// verified Lean core over the real bytes rather than the trusted `fips204` primitive. Returns `Err` if the
+/// archive lacks the export.
+pub fn shadow_mldsa_keygen_real(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_mldsa_keygen_real(wire)
+}
+
 /// Whether the linked archive exports the extracted, Lean-verified GRAIN R3 whole-history verify core
 /// (`dregg_grain_r3_verify`, the C-ABI entry over `Dregg2.Grain.R3Verify.r3VerifyFFI` = the PROVED
 /// `r3VerifyCore`). When false, a caller (`grain-verify::r3_verify`) cannot render the Lean-proven R3
@@ -676,6 +704,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_mlkem_keygen_real_present)]
         fn dregg_mlkem_keygen_real_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_mldsa_keygen_real_present)]
+        fn dregg_mldsa_keygen_real_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -1106,6 +1140,37 @@ mod ffi {
         false
     }
 
+    /// Identity-key KEYGEN mirror — run the VERIFIED Lean real ML-DSA-65 keygen core (leanc-native). Input:
+    /// `"hex(xi)"` (one lowercase-hex field over the 32-byte ξ seed); output: `"hex(pk) hex(sk)"` (the
+    /// 1952-byte pk + 4032-byte sk) or `"ERR"` (the fail-closed answer for a malformed wire). This is the
+    /// deterministic FIPS 204 ML-DSA.KeyGen_internal (KAT-anchored vs the NIST ACVP ML-DSA-65 keyGen vectors)
+    /// — the object `dregg-pq::MlDsaKey::from_ed25519_seed` routes through to take the `fips204` crate OUT of
+    /// the IDENTITY-KEY keygen TCB.
+    #[cfg(dregg_mldsa_keygen_real_present)]
+    pub fn lean_mldsa_keygen_real(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_mldsa_keygen_real_str,
+            "dregg_mldsa_keygen_real_str",
+        )
+    }
+
+    #[cfg(not(dregg_mldsa_keygen_real_present))]
+    pub fn lean_mldsa_keygen_real(_wire: &str) -> Result<String, String> {
+        Err("dregg_mldsa_keygen_real not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-DSA-65 keygen core.
+    #[cfg(dregg_mldsa_keygen_real_present)]
+    pub fn mldsa_keygen_real_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_mldsa_keygen_real_present))]
+    pub fn mldsa_keygen_real_present() -> bool {
+        false
+    }
+
     /// GRAIN-R3 extraction — run the VERIFIED Lean whole-history R3-accept core (leanc-native).
     /// Input: `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints); output: `"1"`
     /// (accept) / `"0"` (reject, and the fail-closed answer for a malformed wire). This is the PROVED
@@ -1503,6 +1568,16 @@ mod ffi {
     }
 
     pub fn lean_mlkem_keygen_real(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-DSA keygen
+    /// core. Unlinked stub: the archive is absent, so the real core is never present.
+    pub fn mldsa_keygen_real_present() -> bool {
+        false
+    }
+
+    pub fn lean_mldsa_keygen_real(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 

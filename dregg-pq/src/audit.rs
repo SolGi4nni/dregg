@@ -115,6 +115,33 @@ fn refuse_unaudited(op: &str, unaudited_crate: &str, install_fn: &str) -> ! {
     std::process::abort()
 }
 
+/// Abort for an installed-but-FAULTED verified core.
+///
+/// Reached only when a Lean-verified core WAS installed for a security-critical operation but returned
+/// garbage at runtime (a `None`/`"ERR"` reply, a wrong-length or non-hex field). Unlike
+/// [`guard_unaudited_fallback`], there is no opt-out: a faulting verified core is an integrity failure, not
+/// a policy choice, so falling back to the unaudited crate for (e.g.) the node IDENTITY key would silently
+/// re-admit exactly what the verified path removed. Uncatchable abort — see the module docs on `abort()`.
+#[cold]
+#[inline(never)]
+pub(crate) fn abort_verified_core_fault(op: &str, export_sym: &str) -> ! {
+    eprintln!(
+        "\n\
+         ================================================================================\n\
+         FATAL: dregg-pq verified core FAULTED (installed but returned garbage).\n\
+         ================================================================================\n\
+         operation      : {op}\n\
+         verified export: {export_sym}\n\
+         \n\
+         A Lean-verified core was installed for this operation but produced no usable answer\n\
+         (an FFI/archive fault, an \"ERR\" reply, or a wrong-length/non-hex field). Falling back\n\
+         to the unaudited crate here would silently re-admit what the verified path removed, so\n\
+         the process is aborting instead. There is NO opt-out for a faulting core.\n\
+         ================================================================================\n"
+    );
+    std::process::abort()
+}
+
 /// Gate the unaudited fallback for one operation.
 ///
 /// Call this at the top of every branch that is about to answer a

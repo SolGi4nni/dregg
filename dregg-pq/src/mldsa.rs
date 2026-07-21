@@ -353,6 +353,87 @@ fn decode_hex(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A pluggable, Lean-VERIFIED ML-DSA-65 KEYGEN backend, installed by an integration layer that can link
+/// `dregg-lean-ffi`. The extracted core lives in `metatheory/Dregg2/Crypto/MlDsaKeygen.lean`
+/// (`mldsaKeygenInternal` = the deterministic FIPS 204 ML-DSA.KeyGen_internal at ML-DSA-65 parameters),
+/// `@[export]`ed as `dregg_mldsa_keygen_real` and compiled to leanc-native code. It is KAT-anchored
+/// byte-exact vs the NIST ACVP `ML-DSA-keyGen-FIPS204` ML-DSA-65 vectors (single-vector `native_decide`);
+/// the byte↔ring KeyGen refinement forall is OPEN. `dregg-lean-ffi::shadow_mldsa_keygen_real` runs it
+/// natively. The wire is `"hex(xi)"` (the 32-byte ξ seed); the reply is `"hex(pk) hex(sk)"` or `"ERR"`.
+type LeanKeygenCoreReal = fn(wire: &str) -> Option<String>;
+static LEAN_KEYGEN_CORE_REAL: OnceLock<LeanKeygenCoreReal> = OnceLock::new();
+
+/// Install the extracted, Lean-verified REAL, full-byte ML-DSA-65 keygen core (e.g.
+/// `|w| dregg_lean_ffi::shadow_mldsa_keygen_real(w).ok()`). Once installed, [`MlDsaKey::from_ed25519_seed`]
+/// EXPANDS the seed through it — taking the `fips204` crate OUT of the IDENTITY-KEY keygen TCB. Returns
+/// `false` if one is already installed (once-per-process; the verified core is not hot-swappable).
+pub fn install_lean_keygen_core_real(core: LeanKeygenCoreReal) -> bool {
+    LEAN_KEYGEN_CORE_REAL.set(core).is_ok()
+}
+
+/// Whether a Lean-verified REAL keygen core has been installed (so [`MlDsaKey::from_ed25519_seed`] is
+/// Lean-backed rather than crate-expanded). A deployed, verified node installs one at startup.
+pub fn lean_keygen_core_real_installed() -> bool {
+    LEAN_KEYGEN_CORE_REAL.get().is_some()
+}
+
+/// Outcome of installing the Lean-verified REAL ML-DSA keygen core as [`MlDsaKey::from_ed25519_seed`]'s
+/// expander (via [`install_verified_mldsa_keygen_core_real`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlDsaKeygenCoreRealInstall {
+    /// The real core was installed by THIS call — the `fips204` crate is now out of the keygen TCB.
+    Installed,
+    /// A core was already installed this process (install is once-per-process) — crate still out of TCB.
+    AlreadyInstalled,
+    /// The linked Lean archive does not export the real keygen core; the `fips204`-crate fallback stays
+    /// in place (a valid FIPS-204 keygen, but NOT the Lean-verified expander).
+    ExportAbsent,
+}
+
+/// THE ONE install every deployed, archive-linked process calls to make the Lean-verified REAL, full-byte
+/// ML-DSA-65 keygen core ([`install_lean_keygen_core_real`]) the EXPANDER behind
+/// [`MlDsaKey::from_ed25519_seed`] — taking the `fips204` crate OUT of that process's IDENTITY-KEY keygen
+/// TCB.
+///
+/// ```ignore
+/// dregg_pq::install_verified_mldsa_keygen_core_real(
+///     dregg_lean_ffi::mldsa_keygen_real_core_available,
+///     |w| dregg_lean_ffi::shadow_mldsa_keygen_real(w).ok(),
+/// )
+/// ```
+///
+/// Gated on `export_available()`: install ONLY when the linked archive actually EXPORTS the real core. A
+/// stale archive lacking it would make the installed core return `None` on every call and — because
+/// [`MlDsaKey::from_ed25519_seed`] fails CLOSED on the identity key (it will NOT silently fall back to the
+/// unaudited crate once a core is installed) — brick identity-key derivation; so when the export is absent
+/// we return [`MlDsaKeygenCoreRealInstall::ExportAbsent`] and keep the `fips204`-crate fallback (a valid
+/// FIPS-204 keygen). Idempotent and once-per-process.
+pub fn install_verified_mldsa_keygen_core_real(
+    export_available: fn() -> bool,
+    shadow: fn(wire: &str) -> Option<String>,
+) -> MlDsaKeygenCoreRealInstall {
+    if !export_available() {
+        return MlDsaKeygenCoreRealInstall::ExportAbsent;
+    }
+    if install_lean_keygen_core_real(shadow) {
+        MlDsaKeygenCoreRealInstall::Installed
+    } else {
+        MlDsaKeygenCoreRealInstall::AlreadyInstalled
+    }
+}
+
+/// Marshal the 32-byte ξ seed into the byte wire the Lean real keygen core reads: `"hex(xi)"` (one
+/// lowercase-hex field, 64 chars).
+fn real_keygen_wire(seed: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(64);
+    for &b in seed {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
 /// Serialized length of an ML-DSA-65 secret key (FIPS 204 = 4032 bytes).
 pub const ML_DSA_SK_LEN: usize = ml_dsa_65::SK_LEN;
 
@@ -383,23 +464,62 @@ impl MlDsaKey {
     /// PQ public key matches across cipherclerk / node / genesis with no
     /// separate ceremony.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
-        // NO VERIFIED PATH EXISTS FOR THIS OPERATION. Unlike sign/verify -- which
-        // route to `MlDsaSignReal.signCore` / `Fips204Verify.verifyRealCore` when a
-        // host installs them -- there is no Lean-verified ML-DSA keygen core in the
-        // metatheory and none exported from `libdregg_lean.a`. The `fips204` crate
-        // is therefore UNCONDITIONALLY the authority that expands this seed into a
-        // secret key, with no install that could displace it. Refuses (aborts)
-        // unless DREGG_ALLOW_UNAUDITED_PQ=1 -- see `crate::audit`.
-        crate::audit::guard_no_verified_core(
+        // AUTHORITY: the Lean-verified real ML-DSA-65 keygen core over the ξ seed, when installed
+        // (`install_verified_mldsa_keygen_core_real`, done by any process that can link `dregg-lean-ffi`).
+        // On this path the `fips204` crate does NOT expand the identity seed — it has left the identity-key
+        // keygen TCB. The pk/sk bytes are PRODUCED by the extracted `mldsaKeygenInternal` (KAT-anchored vs
+        // the NIST ACVP ML-DSA-65 keyGen vectors); the crate `PrivateKey` is only a container reconstructed
+        // from the verified sk bytes so the (separately verified) signer can use it.
+        if let Some(core) = LEAN_KEYGEN_CORE_REAL.get() {
+            if let Some(key) = Self::from_verified_core(seed, *core) {
+                return key;
+            }
+            // A core is installed but FAULTED (FFI/archive fault, `"ERR"`, wrong-length decode). For the
+            // IDENTITY key we fail CLOSED and refuse to silently fall back to the unaudited crate — an
+            // uncatchable abort, the same posture `crate::audit` uses for the unaudited fallback.
+            crate::audit::abort_verified_core_fault(
+                "ML-DSA-65 KeyGen (deterministic, from the ed25519 seed)",
+                "dregg_mldsa_keygen_real",
+            );
+        }
+        // FALLBACK (no verified core installed): the `fips204` crate seed expansion. A verified core now
+        // EXISTS and has an install fn, so this is the same shape as the sign/verify fallbacks — refuses
+        // (aborts) unless DREGG_ALLOW_UNAUDITED_PQ=1, and names the install call. See `crate::audit`.
+        crate::audit::guard_unaudited_fallback(
             "ML-DSA-65 KeyGen (deterministic, from the ed25519 seed)",
             "fips204 0.4",
-            "an ML-DSA-65 secret key (4032 B) and the public key enrolled/pinned to this identity",
+            "install_verified_mldsa_keygen_core_real",
         );
         let (pk, sk) = ml_dsa_65::KG::keygen_from_seed(seed);
         Self {
             secret: sk,
             public_bytes: pk.into_bytes(),
         }
+    }
+
+    /// Expand `seed` through the installed Lean-verified real keygen `core` and rebuild the `MlDsaKey` from
+    /// its `"hex(pk) hex(sk)"` reply. `None` on any core fault (a `None`/`"ERR"` reply, a non-hex or
+    /// wrong-length field, or a `PrivateKey` that fails to parse) so the caller fails CLOSED.
+    fn from_verified_core(seed: &[u8; 32], core: LeanKeygenCoreReal) -> Option<Self> {
+        let reply = core(&real_keygen_wire(seed))?;
+        let mut fields = reply.split(' ');
+        let pk = decode_hex(fields.next()?)?;
+        let sk = decode_hex(fields.next()?)?;
+        if fields.next().is_some() {
+            return None;
+        }
+        if pk.len() != ml_dsa_65::PK_LEN || sk.len() != ml_dsa_65::SK_LEN {
+            return None;
+        }
+        let mut pk_arr = [0u8; ml_dsa_65::PK_LEN];
+        pk_arr.copy_from_slice(&pk);
+        let mut sk_arr = [0u8; ml_dsa_65::SK_LEN];
+        sk_arr.copy_from_slice(&sk);
+        let secret = ml_dsa_65::PrivateKey::try_from_bytes(sk_arr).ok()?;
+        Some(Self {
+            secret,
+            public_bytes: pk_arr,
+        })
     }
 
     /// The serialized ML-DSA-65 public key — the value a verifier ENROLLS and
@@ -453,34 +573,6 @@ impl MlDsaKey {
             "install_verified_mldsa_sign_core_real",
         );
         self.secret.try_sign(message, ctx).ok().map(|s| s.to_vec())
-    }
-
-    /// Sign with the FIPS 204 deterministic variant (`rnd = {0}^32`). This is
-    /// required when the signature bytes are themselves part of a stable object
-    /// identity (for example a turn hash), rather than merely an authorization
-    /// checked alongside that object.
-    ///
-    /// The installed Lean real-sign core is already deterministic and remains
-    /// authoritative when present. The unaudited fallback is guarded by the
-    /// same deployment policy as [`Self::try_sign`], but calls fips204's explicit
-    /// deterministic primitive instead of its OS-random hedged signer.
-    pub fn try_sign_deterministic(&self, ctx: &[u8], message: &[u8]) -> Option<Vec<u8>> {
-        if let Some(core) = LEAN_SIGN_CORE_REAL.get() {
-            let sk_bytes = self.secret.clone().into_bytes();
-            let wire = real_sign_wire(&sk_bytes, message, ctx);
-            let sig = decode_hex(core(&wire).as_deref()?)?;
-            return (sig.len() == ml_dsa_65::SIG_LEN).then_some(sig);
-        }
-
-        crate::audit::guard_unaudited_fallback(
-            "ML-DSA-65 deterministic sign",
-            "fips204 0.4",
-            "install_verified_mldsa_sign_core_real",
-        );
-        self.secret
-            .try_sign_with_seed(&[0u8; 32], message, ctx)
-            .ok()
-            .map(|signature| signature.to_vec())
     }
 }
 
