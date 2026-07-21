@@ -90,6 +90,7 @@ pub mod attest;
 pub mod pool;
 pub mod spend_circuit;
 mod transfer;
+pub mod wide_value_binding;
 
 pub use attest::{
     AttestWitness, Predicate, attest_circuit, attest_descriptor, generate_attest_trace,
@@ -104,4 +105,11 @@ pub use spend_circuit::{
 pub use transfer::{
     ShieldedError, ShieldedInputProof, ShieldedTransfer, ShieldedTransferWitness, ShieldedValueLeg,
     prove_shielded_input, prove_shielded_transfer as transfer_from_witnesses,
+};
+pub use wide_value_binding::{
+    BINDING_BLIND_LANES, LIMB_BITS, U64_LIMBS, WIDE_VALUE_BINDING_LANES, WideValueBindingClaim,
+    WideValueBindingError, WideValueBindingProof, WideValueBindingWitness,
+    generate_wide_value_binding_trace, prove_wide_value_binding, verify_stark_with_wide_bindings,
+    verify_wide_value_binding, wide_transfer_message, wide_value_binding_circuit,
+    wide_value_binding_descriptor,
 };

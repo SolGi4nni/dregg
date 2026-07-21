@@ -1287,15 +1287,16 @@ impl TurnExecutor {
     /// the cleartext note path. The cleartext value is never seen; the executor
     /// admits the transfer on three independent gates, all fail-closed:
     ///
-    /// 1. **Hidden STARK side** — every input's membership in the commitment tree
-    ///    + correct nullifier derivation, proved through `HidingFriPcs` (owner /
-    ///    key / Merkle path blind). Reconstructed from the wire payload and
-    ///    verified by `ShieldedTransfer::verify_stark_side`, which also rejects an
-    ///    in-transfer duplicate nullifier.
+    /// 1. **Hidden STARK + native-wide side** — every input's membership in the
+    ///    commitment tree + correct nullifier derivation, and a mandatory
+    ///    canonical full-`u64` value/asset binding. Both are proved through
+    ///    `HidingFriPcs`; the executor verifies their exact legacy join and
+    ///    rejects an in-transfer duplicate nullifier.
     /// 2. **Hidden Pedersen side** — `Σ C_in = Σ C_out` (value conserved, blind)
     ///    AND one in-`[0,2^64)` range proof per output (the negative-value /
     ///    mod-order-wrap inflation gate), over the SAME Fiat-Shamir transcript that
-    ///    binds the STARK nullifiers + value-bindings (no cross-transfer splice).
+    ///    binds the STARK nullifiers and every native-wide carrier lane (no
+    ///    one-felt or cross-transfer splice).
     /// 3. **Cross-transfer double-spend gate** — each revealed nullifier is
     ///    consumed once in the production `note_nullifiers` set (journaled, so a
     ///    later-failing turn unwinds the spend), exactly as `NoteSpend`.
@@ -1303,11 +1304,12 @@ impl TurnExecutor {
     /// NAMED RESIDUAL (honest): (a) the LIGHT-CLIENT witness — this VERIFIES live
     /// in a re-executing validator, but binding the shielded-proof verification
     /// into the `effect_vm` descriptor (so a pure light client witnesses it) is the
-    /// VK-affecting follow-up. (b) the leaf↔leg VALUE LINK — the STARK proves a
-    /// hidden leaf value and the Pedersen side conserves the legs, both bound to one
-    /// transcript, but their cryptographic equality is only checkable with the
-    /// secret opening; M2-a relies on the honest prover for it (the `verify_value_link`
-    /// residual named in `circuit-prove/src/shielded/mod.rs`).
+    /// VK-affecting follow-up. (b) the wide carrier is now live Turn/no-mint
+    /// transcript input, but the old note leaf precommits only its reduced felt.
+    /// Until note creation commits the wide carrier (or the combined transfer AIR
+    /// replaces the split), two full-width openings with the same reduction can
+    /// still be re-proved under distinct transcripts. This is the exact remaining
+    /// leaf migration, not a claim that the compatibility join is collision-free.
     ///
     /// Requires a `prover`-enabled build (the hiding uni-STARK verifier lives in
     /// `dregg-circuit-prove`). A verify-only build fails the effect closed.
@@ -1318,9 +1320,28 @@ impl TurnExecutor {
         journal: &mut LedgerJournal,
         payload: &crate::action::ShieldedTransferPayload,
     ) -> Result<(), (TurnError, Vec<usize>)> {
-        use dregg_circuit_prove::shielded::{ShieldedTransfer, ShieldedValueLeg};
+        use dregg_circuit_prove::shielded::{
+            ShieldedTransfer, ShieldedValueLeg, WideValueBindingProof,
+            verify_stark_with_wide_bindings, wide_transfer_message,
+        };
 
         let invalid = |reason: String| (TurnError::InvalidEffect { reason }, path.to_vec());
+
+        // Reconstruct every mandatory full-width proof first. There is no
+        // compatibility fallback: a pre-cutover one-felt-only payload cannot
+        // reach the no-mint verifier.
+        let wide_bindings: Vec<WideValueBindingProof> = payload
+            .inputs
+            .iter()
+            .map(|input| {
+                WideValueBindingProof::from_serialized_parts(
+                    input.legacy_value_binding,
+                    input.wide_value_binding,
+                    &input.wide_value_proof,
+                )
+            })
+            .collect::<Result<_, _>>()
+            .map_err(|e| invalid(format!("shielded wide value binding malformed: {e}")))?;
 
         // Reconstruct the published shielded transfer from its wire payload,
         // deserializing each hidden note-spend proof.
@@ -1333,7 +1354,7 @@ impl TurnExecutor {
             payload
                 .inputs
                 .iter()
-                .map(|i| (i.nullifier, i.value_binding, i.proof.clone()))
+                .map(|i| (i.nullifier, i.legacy_value_binding, i.spend_proof.clone()))
                 .collect(),
             payload.input_legs.iter().map(leg).collect(),
             payload.output_legs.iter().map(leg).collect(),
@@ -1341,11 +1362,10 @@ impl TurnExecutor {
         )
         .map_err(|e| invalid(format!("shielded transfer payload malformed: {e}")))?;
 
-        // GATE 1: the hidden STARK side — per-input membership + nullifier
-        // derivation (owner/key/path blind), and no in-transfer duplicate.
-        transfer
-            .verify_stark_side()
-            .map_err(|e| invalid(format!("shielded STARK verification failed: {e}")))?;
+        // GATE 1: membership/nullifier plus exactly one canonical full-u64
+        // binding per input. The legacy felt is now only an equality join.
+        verify_stark_with_wide_bindings(&transfer, &wide_bindings)
+            .map_err(|e| invalid(format!("shielded wide STARK verification failed: {e}")))?;
         // The structural inflation gate: exactly one range proof per output.
         transfer
             .check_range_proof_shape()
@@ -1353,7 +1373,8 @@ impl TurnExecutor {
 
         // GATE 2: the hidden Pedersen side — conservation (Σ in = Σ out) AND each
         // output's range proof, over the transfer's binding transcript.
-        let message = transfer.transfer_message();
+        let message = wide_transfer_message(&transfer, &wide_bindings)
+            .map_err(|e| invalid(format!("shielded wide transcript rejected: {e}")))?;
         dregg_cell_crypto::value_commitment::verify_full_conservation_bytes(
             &transfer.input_commitment_bytes(),
             &transfer.output_commitment_bytes(),
@@ -4201,15 +4222,29 @@ mod shielded_executor_tests {
     use dregg_cell_crypto::value_commitment::{
         BulletproofRangeProof, ValueCommitment, prove_conservation, scalar_from_blinding_bytes,
     };
-    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::field::{BABYBEAR_P, BabyBear};
     use dregg_circuit_prove::shielded::{
-        ShieldedSpendWitness, ShieldedTransfer, ShieldedTransferWitness, ShieldedValueLeg,
+        BINDING_BLIND_LANES, ShieldedSpendWitness, ShieldedTransfer, ShieldedTransferWitness,
+        ShieldedValueLeg, WideValueBindingProof, WideValueBindingWitness, prove_wide_value_binding,
+        wide_transfer_message,
     };
 
     const ASSET: u64 = 1;
 
     fn range_proof_bytes(value: u64, blinding: &[u8; 32]) -> Vec<u8> {
         BulletproofRangeProof::prove_range(value, &scalar_from_blinding_bytes(blinding)).proof_bytes
+    }
+
+    fn wide_binding(input: &ShieldedTransferWitness, full_value: u64) -> WideValueBindingProof {
+        let binding_blind: [BabyBear; BINDING_BLIND_LANES] =
+            core::array::from_fn(|i| input.spend.randomness + BabyBear::new(0x100 + i as u32));
+        prove_wide_value_binding(&WideValueBindingWitness {
+            value: full_value,
+            asset_type: input.leg.asset_type,
+            legacy_randomness: input.spend.randomness,
+            binding_blind,
+        })
+        .expect("prove mandatory native-wide input binding")
     }
 
     /// A shielded-spend witness with a genuine Poseidon2 Merkle path + its leg.
@@ -4260,8 +4295,10 @@ mod shielded_executor_tests {
     /// the executor wire payload — exactly what a client would post.
     fn to_payload(
         transfer: &ShieldedTransfer,
+        wide_bindings: &[WideValueBindingProof],
         conservation: dregg_cell_crypto::ConservationProof,
     ) -> ShieldedTransferPayload {
+        assert_eq!(transfer.inputs.len(), wide_bindings.len());
         let leg = |l: &ShieldedValueLeg| ShieldedLeg {
             asset_type: l.asset_type,
             commitment_bytes: l.commitment_bytes,
@@ -4271,10 +4308,13 @@ mod shielded_executor_tests {
             inputs: transfer
                 .inputs
                 .iter()
-                .map(|ip| ShieldedInputPayload {
+                .zip(wide_bindings)
+                .map(|(ip, wide)| ShieldedInputPayload {
                     nullifier: ip.nullifier.as_u32(),
-                    value_binding: ip.value_binding.as_u32(),
-                    proof: ip.proof_bytes(),
+                    legacy_value_binding: ip.value_binding.as_u32(),
+                    wide_value_binding: wide.claim.wide_binding.map(BabyBear::as_u32),
+                    spend_proof: ip.proof_bytes(),
+                    wide_value_proof: wide.proof_bytes(),
                 })
                 .collect(),
             input_legs: transfer.input_legs.iter().map(leg).collect(),
@@ -4294,6 +4334,7 @@ mod shielded_executor_tests {
         in_blinding[..4].copy_from_slice(&leaf_seed.to_le_bytes());
         out_blinding[..4].copy_from_slice(&key_seed.to_le_bytes());
         let w = make_input(leaf_seed, amount, in_blinding, key_seed, 4);
+        let wide = wide_binding(&w, amount as u64);
         let merkle_root = w.spend.merkle_root();
         let in_c =
             ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&in_blinding));
@@ -4313,9 +4354,10 @@ mod shielded_executor_tests {
         .expect("prove balanced shielded transfer");
         let excess =
             scalar_from_blinding_bytes(&in_blinding) - scalar_from_blinding_bytes(&out_blinding);
-        let msg = transfer.transfer_message();
+        let msg = wide_transfer_message(&transfer, core::slice::from_ref(&wide))
+            .expect("build native-wide conservation transcript");
         let conservation = prove_conservation(&[in_c], &[out_c], &excess, &msg);
-        to_payload(&transfer, conservation)
+        to_payload(&transfer, &[wide], conservation)
     }
 
     fn run(
@@ -4351,6 +4393,74 @@ mod shielded_executor_tests {
             executor.note_nullifiers.lock().unwrap().contains(&nf),
             "the shielded input's nullifier is now spent in the production set"
         );
+    }
+
+    // ── WIDE CUTOVER TOOTH: x and x+p have the same legacy spend binding,
+    //    but distinct native carriers. The genuine x payload is admitted; an
+    //    x+p carrier spliced over its no-mint transcript is refused at the real
+    //    executor entry. This establishes that all sixteen lanes are live in
+    //    Turn acceptance. It does not claim the legacy note leaf precommits
+    //    which of two aliased openings was originally created.
+    #[test]
+    fn modulus_alias_splice_rejects_at_real_executor_no_mint_entry() {
+        let leaf_seed = 31;
+        let key_seed = 0x3131;
+        let amount = 1_000_000u32;
+        let honest_payload = balanced_payload(leaf_seed, key_seed);
+
+        let honest_executor =
+            crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        run(&honest_executor, honest_payload.clone(), 0)
+            .expect("the full-width x carrier must be admitted");
+
+        // Recreate the same spend witness and prove the distinct full-u64
+        // opening x+p. Its compatibility felt is identical by construction.
+        let mut in_blinding = [3u8; 32];
+        in_blinding[..4].copy_from_slice(&leaf_seed.to_le_bytes());
+        let input = make_input(leaf_seed, amount, in_blinding, key_seed, 4);
+        let alias = wide_binding(&input, amount as u64 + BABYBEAR_P as u64);
+        assert_eq!(
+            alias.claim.legacy_binding.as_u32(),
+            honest_payload.inputs[0].legacy_value_binding,
+            "x and x+p must exercise the real old one-felt alias"
+        );
+        assert_ne!(
+            alias.claim.wide_binding.map(BabyBear::as_u32),
+            honest_payload.inputs[0].wide_value_binding,
+            "the native carrier must distinguish x from x+p"
+        );
+
+        let mut alias_payload = honest_payload;
+        alias_payload.inputs[0].wide_value_binding = alias.claim.wide_binding.map(BabyBear::as_u32);
+        alias_payload.inputs[0].wide_value_proof = alias.proof_bytes();
+        let alias_executor =
+            crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let (error, _) = run(&alias_executor, alias_payload, 0)
+            .expect_err("an x+p carrier spliced over x's no-mint transcript must reject");
+        match error {
+            TurnError::InvalidEffect { reason } => assert!(
+                reason.contains("conservation") || reason.contains("range"),
+                "wide splice must reach and fail the live no-mint verifier: {reason}"
+            ),
+            other => panic!("expected InvalidEffect no-mint refusal, got {other:?}"),
+        }
+        assert!(alias_executor.note_nullifiers.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn noncanonical_wide_public_lane_rejects_at_executor_entry() {
+        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let mut payload = balanced_payload(32, 0x3232);
+        payload.inputs[0].wide_value_binding[0] = BABYBEAR_P;
+        let (error, _) =
+            run(&executor, payload, 0).expect_err("a noncanonical wide field encoding must reject");
+        match error {
+            TurnError::InvalidEffect { reason } => assert!(
+                reason.contains("not canonical BabyBear"),
+                "wide decoder refusal must be explicit: {reason}"
+            ),
+            other => panic!("expected InvalidEffect canonicality refusal, got {other:?}"),
+        }
     }
 
     // ── REJECT (forged membership): a tampered merkle_root breaks the hidden
@@ -4397,6 +4507,7 @@ mod shielded_executor_tests {
         let in_blinding = [3u8; 32];
         let out_blinding = [7u8; 32];
         let w = make_input(14, amount, in_blinding, 0x1234, 4);
+        let wide = wide_binding(&w, amount as u64);
         let merkle_root = w.spend.merkle_root();
         let in_c =
             ValueCommitment::commit(amount as u64, &scalar_from_blinding_bytes(&in_blinding));
@@ -4419,9 +4530,10 @@ mod shielded_executor_tests {
         // excess carry a V-component, so the Schnorr-on-R proof cannot answer.
         let excess =
             scalar_from_blinding_bytes(&in_blinding) - scalar_from_blinding_bytes(&out_blinding);
-        let msg = transfer.transfer_message();
+        let msg = wide_transfer_message(&transfer, core::slice::from_ref(&wide))
+            .expect("build native-wide conservation transcript");
         let conservation = prove_conservation(&[in_c], &[out_c], &excess, &msg);
-        let payload = to_payload(&transfer, conservation);
+        let payload = to_payload(&transfer, &[wide], conservation);
         let (err, _) =
             run(&executor, payload, 0).expect_err("an inflating shielded transfer must reject");
         match err {
@@ -4452,8 +4564,12 @@ mod shielded_executor_tests {
             "equal amounts must still commit to distinct (blinded) value commitments"
         );
         assert_ne!(
-            a.inputs[0].proof, b.inputs[0].proof,
+            a.inputs[0].spend_proof, b.inputs[0].spend_proof,
             "the hidden proofs reveal nothing linking the two transfers"
+        );
+        assert_ne!(
+            a.inputs[0].wide_value_binding, b.inputs[0].wide_value_binding,
+            "the native wide carriers retain fresh hidden blinding"
         );
     }
 }

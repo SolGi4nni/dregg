@@ -974,19 +974,29 @@ pub struct ShieldedLeg {
     pub commitment_bytes: [u8; 32],
 }
 
-/// One spent input of a shielded transfer on the wire: the revealed nullifier and
-/// value-binding (canonical `u32` field elements) plus the postcard-serialized
-/// **hidden** note-spend proof (the hiding uni-STARK that proves membership +
-/// nullifier derivation with owner/key/path blind). Reconstructed by the executor
-/// via `dregg_circuit_prove::shielded::ShieldedTransfer::from_serialized_parts`.
+/// One spent input of a shielded transfer on the wire: the revealed nullifier,
+/// the legacy compatibility binding, and the mandatory sixteen-lane native
+/// wide binding, each backed by its own hiding proof.
+///
+/// The legacy felt is retained only to join the existing membership proof.  It
+/// is not sufficient acceptance: the executor verifies the wide proof and
+/// absorbs every wide lane into the live conservation transcript.  This is an
+/// intentional wire cut; old one-felt-only shielded inputs fail closed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShieldedInputPayload {
     /// The revealed nullifier (the double-spend tag), as a canonical BabyBear u32.
     pub nullifier: u32,
-    /// The published value-binding `hash_fact(value,[randomness,0,0])`, BabyBear u32.
-    pub value_binding: u32,
-    /// Canonical postcard bytes of the hiding note-spend proof (`DslZkProof`).
-    pub proof: Vec<u8>,
+    /// Compatibility `hash_fact(value mod p,[asset mod p,randomness,0])`.
+    /// This one-felt claim is used only to join the existing spend proof to the
+    /// native wide proof; it is no longer accepted on its own.
+    pub legacy_value_binding: u32,
+    /// Sixteen canonical BabyBear lanes binding the complete `u64` value and
+    /// asset encodings before hashing.
+    pub wide_value_binding: [u32; 16],
+    /// Canonical postcard bytes of the hiding membership/nullifier proof.
+    pub spend_proof: Vec<u8>,
+    /// Canonical postcard bytes of the hiding full-width value/asset proof.
+    pub wide_value_proof: Vec<u8>,
 }
 
 /// The wire payload of a shielded transfer effect (privacy M2-a).
@@ -997,8 +1007,10 @@ pub struct ShieldedInputPayload {
 /// proof that the flow is genuine, conserved (`Σ in = Σ out`), and in-range. This
 /// is the always-serializable, circuit-type-free mirror of
 /// `dregg_circuit_prove::shielded::ShieldedTransfer` plus the Pedersen
-/// conservation proof, so the `Effect` enum is wire-stable in every build (the
-/// heavy STARK *verify* is reconstructed only in a `prover`-enabled executor).
+/// conservation proof. The mandatory wide input proof is part of that wire
+/// identity, so an old one-felt-only payload cannot deserialize as current
+/// shielded authority. The heavy STARK verification is reconstructed only in a
+/// `prover`-enabled executor.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShieldedTransferPayload {
     /// Commitment-tree root every input note is proven a member of (BabyBear u32).
@@ -2430,9 +2442,14 @@ impl Effect {
                 hasher.update(&(payload.inputs.len() as u64).to_le_bytes());
                 for input in &payload.inputs {
                     hasher.update(&input.nullifier.to_le_bytes());
-                    hasher.update(&input.value_binding.to_le_bytes());
-                    hasher.update(&(input.proof.len() as u64).to_le_bytes());
-                    hasher.update(&input.proof);
+                    hasher.update(&input.legacy_value_binding.to_le_bytes());
+                    for lane in input.wide_value_binding {
+                        hasher.update(&lane.to_le_bytes());
+                    }
+                    hasher.update(&(input.spend_proof.len() as u64).to_le_bytes());
+                    hasher.update(&input.spend_proof);
+                    hasher.update(&(input.wide_value_proof.len() as u64).to_le_bytes());
+                    hasher.update(&input.wide_value_proof);
                 }
                 for (tag, legs) in [(0u8, &payload.input_legs), (1u8, &payload.output_legs)] {
                     hasher.update(&[tag]);
@@ -2580,13 +2597,16 @@ impl Effect {
                     + postcard::to_allocvec(condition).map_or(0, |b| b.len())
                     + postcard::to_allocvec(resolution_proof).map_or(0, |b| b.len())
             }
-            // Shielded transfer: dominated by the hidden per-input STARK proofs +
-            // the value-commitment legs + range proofs + conservation proof.
+            // Shielded transfer: dominated by both hidden per-input STARK proofs
+            // + the sixteen-lane native carrier + value-commitment legs + range
+            // proofs + conservation proof.
             Effect::ShieldedTransfer { payload } => {
                 4 + payload
                     .inputs
                     .iter()
-                    .map(|i| 4 + 4 + 8 + i.proof.len())
+                    .map(|i| {
+                        4 + 4 + 16 * 4 + 8 + i.spend_proof.len() + 8 + i.wide_value_proof.len()
+                    })
                     .sum::<usize>()
                     + (payload.input_legs.len() + payload.output_legs.len()) * (8 + 32)
                     + payload
