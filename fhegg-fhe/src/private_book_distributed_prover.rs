@@ -3,9 +3,12 @@
 //!
 //! [`WorkerProofProcess`] is the only type in this module that accepts a
 //! [`PreparedWitnessShare`].  It authenticates the worker identity, verifies
-//! the complete public input certificate, checks that the private capability
-//! names the certificate's exact four owner dealings, and then moves that
-//! capability into a worker-local backend.  The public
+//! one canonical [`ShareBoundProverRequest`], verifies the complete public
+//! input certificate, checks that the private capability names the
+//! certificate's exact four owner dealings, and then moves that capability
+//! into a worker-local backend.  The request has a fixed-size public wire: its
+//! only admitted custody mode is distributed shares, and appended plaintext
+//! witness/opening bytes are not representable.  The public
 //! [`DistributedProverCoordinator`] has no method or field that accepts a
 //! private share; it collects only roster-signed 32-byte backend transcript
 //! digests.  Canonical proof bytes stay in the backend's public-verification
@@ -47,10 +50,15 @@ use crate::private_book_distributed_inputs::{
 };
 
 const CONTEXT_DOMAIN: &str = "fhegg/private-book-distributed-prover/context/v1";
+const REQUEST_CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-prover/request-checksum/v1";
 const CONTRIBUTION_DOMAIN: &str = "fhegg/private-book-distributed-prover/contribution/v1";
 const BUNDLE_DOMAIN: &str = "fhegg/private-book-distributed-prover/bundle/v1";
 const WIRE_CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-prover/wire-checksum/v1";
 const SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-prover/signature/v1";
+const REQUEST_MAGIC: &[u8; 8] = b"FHPRQ001";
+const REQUEST_VERSION: u16 = 1;
+const DISTRIBUTED_SHARES_MODE: u8 = 1;
+const REQUEST_WIRE_LEN: usize = 8 + 2 + 1 + 1 + 5 * 32 + 2 + 32 + 32;
 const CONTRIBUTION_MAGIC: &[u8; 8] = b"FHPWC001";
 const CONTRIBUTION_VERSION: u16 = 1;
 const CONTRIBUTION_WIRE_LEN: usize = 8 + 2 + 2 + 6 * 32 + 64 + 32;
@@ -62,6 +70,9 @@ pub enum DistributedProverError {
     WorkerOutOfRange,
     SigningKeyMismatch,
     InvalidProtocol,
+    MalformedRequest,
+    SourceViewerForbidden,
+    RequestMismatch,
     WitnessMisbound,
     InputCertificateMismatch,
     ProtocolMismatch,
@@ -84,6 +95,14 @@ impl fmt::Display for DistributedProverError {
                 write!(f, "worker signing key does not match the ceremony roster")
             }
             Self::InvalidProtocol => write!(f, "distributed prover protocol id is invalid"),
+            Self::MalformedRequest => write!(f, "share-bound prover request wire is malformed"),
+            Self::SourceViewerForbidden => write!(
+                f,
+                "monolithic plaintext/source-viewer custody is forbidden on this prover boundary"
+            ),
+            Self::RequestMismatch => {
+                write!(f, "share-bound prover request names another public context")
+            }
             Self::WitnessMisbound => {
                 write!(
                     f,
@@ -216,6 +235,134 @@ impl WorkerProofContext {
     }
 }
 
+/// Canonical fixed-size request for the distributed-share prover boundary.
+///
+/// The request is public.  It binds the exact input certificate, joint hiding
+/// commitment, relation, session, worker count, and backend protocol before a
+/// private share enters a worker process.  Its wire admits exactly one custody
+/// mode: `distributed-shares`.  A complete plaintext witness, BFV seed/opening,
+/// or reconstructed scalar vector cannot be encoded because the parser
+/// requires the exact fixed length and rejects every other custody-mode byte.
+///
+/// This is an API/process-boundary guarantee, not a proof that a malicious
+/// distributed backend will not collude or reconstruct shares over its own
+/// private channels.  That guarantee belongs to the concrete backend protocol.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShareBoundProverRequest {
+    context: WorkerProofContext,
+}
+
+impl ShareBoundProverRequest {
+    /// Construct a request from the exact verified distributed-input
+    /// certificate.  There is deliberately no constructor taking plaintext
+    /// orders, BFV seeds/openings, or a monolithic witness.
+    pub fn new(
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+        protocol_id: [u8; 32],
+    ) -> Result<Self> {
+        input_certificate.verify(session)?;
+        Ok(Self {
+            context: WorkerProofContext::new(session, input_certificate, protocol_id)?,
+        })
+    }
+
+    /// Complete request/context digest signed indirectly by every worker.
+    pub const fn digest(&self) -> [u8; 32] {
+        self.context.digest()
+    }
+
+    /// Exact backend protocol/version selected by this request.
+    pub const fn protocol_id(&self) -> [u8; 32] {
+        self.context.protocol_id()
+    }
+
+    /// Emit the sole canonical public request wire.  The one-byte custody mode
+    /// is pinned to distributed shares; the following reserved byte is zero.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(REQUEST_WIRE_LEN);
+        out.extend_from_slice(REQUEST_MAGIC);
+        out.extend_from_slice(&REQUEST_VERSION.to_be_bytes());
+        out.push(DISTRIBUTED_SHARES_MODE);
+        out.push(0);
+        out.extend_from_slice(&self.context.session_digest);
+        out.extend_from_slice(&self.context.relation_digest);
+        out.extend_from_slice(&self.context.input_certificate_digest);
+        out.extend_from_slice(&self.context.joint_input_commitment);
+        out.extend_from_slice(&self.context.protocol_id);
+        out.extend_from_slice(&(self.context.n_workers as u16).to_be_bytes());
+        out.extend_from_slice(&self.context.digest);
+        let checksum = hash_parts(REQUEST_CHECKSUM_DOMAIN, &[&out]);
+        out.extend_from_slice(&checksum);
+        debug_assert_eq!(out.len(), REQUEST_WIRE_LEN);
+        out
+    }
+
+    /// Parse an untrusted request only against independently supplied session,
+    /// certificate, and backend policy.  Exact re-encoding prevents appended
+    /// plaintext/source-opening data and non-canonical integer encodings.
+    pub fn from_bytes(
+        bytes: &[u8],
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+        expected_protocol_id: [u8; 32],
+    ) -> Result<Self> {
+        if bytes.len() != REQUEST_WIRE_LEN {
+            return Err(DistributedProverError::MalformedRequest);
+        }
+        let mut offset = 0;
+        if take_request::<8>(bytes, &mut offset)? != *REQUEST_MAGIC
+            || u16::from_be_bytes(take_request::<2>(bytes, &mut offset)?) != REQUEST_VERSION
+        {
+            return Err(DistributedProverError::MalformedRequest);
+        }
+        let custody_mode = take_request::<1>(bytes, &mut offset)?[0];
+        if custody_mode != DISTRIBUTED_SHARES_MODE {
+            return Err(DistributedProverError::SourceViewerForbidden);
+        }
+        if take_request::<1>(bytes, &mut offset)? != [0] {
+            return Err(DistributedProverError::MalformedRequest);
+        }
+        let context = WorkerProofContext {
+            session_digest: take_request::<32>(bytes, &mut offset)?,
+            relation_digest: take_request::<32>(bytes, &mut offset)?,
+            input_certificate_digest: take_request::<32>(bytes, &mut offset)?,
+            joint_input_commitment: take_request::<32>(bytes, &mut offset)?,
+            protocol_id: take_request::<32>(bytes, &mut offset)?,
+            n_workers: u16::from_be_bytes(take_request::<2>(bytes, &mut offset)?) as usize,
+            digest: take_request::<32>(bytes, &mut offset)?,
+        };
+        let checksum_start = bytes.len() - 32;
+        if offset != checksum_start
+            || take_request::<32>(bytes, &mut offset)?
+                != hash_parts(REQUEST_CHECKSUM_DOMAIN, &[&bytes[..checksum_start]])
+            || offset != bytes.len()
+        {
+            return Err(DistributedProverError::MalformedRequest);
+        }
+
+        let expected = Self::new(session, input_certificate, expected_protocol_id)?;
+        let request = Self { context };
+        if request != expected || request.to_bytes() != bytes {
+            return Err(DistributedProverError::RequestMismatch);
+        }
+        Ok(request)
+    }
+
+    fn verify(
+        &self,
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+        expected_protocol_id: [u8; 32],
+    ) -> Result<()> {
+        let expected = Self::new(session, input_certificate, expected_protocol_id)?;
+        if *self != expected {
+            return Err(DistributedProverError::RequestMismatch);
+        }
+        Ok(())
+    }
+}
+
 /// Secret worker-side proving implementation.
 ///
 /// The backend may run an interactive MPC protocol over worker-only channels,
@@ -297,15 +444,16 @@ impl<B: WorkerLocalProofBackend> WorkerProofProcess<B> {
     /// release only its signed public transcript digest.
     pub fn run(
         mut self,
+        request: &ShareBoundProverRequest,
         input_certificate: &DistributedInputCertificate,
         witness: PreparedWitnessShare,
     ) -> Result<WorkerProofContribution> {
-        input_certificate.verify(&self.session)?;
+        request.verify(&self.session, input_certificate, self.protocol_id)?;
         if witness.session_digest() != self.session.digest() || witness.worker() != self.worker {
             return Err(DistributedProverError::WitnessMisbound);
         }
         witness.verify_certificate_binding(input_certificate)?;
-        let context = WorkerProofContext::new(&self.session, input_certificate, self.protocol_id)?;
+        let context = request.context;
         let backend_transcript_digest = self
             .backend
             .prove_local(&context, input_certificate, witness)
@@ -387,7 +535,7 @@ impl WorkerProofContribution {
         bytes: &[u8],
         session: &DistributedWitnessSession,
         input_certificate: &DistributedInputCertificate,
-        protocol_id: [u8; 32],
+        request: &ShareBoundProverRequest,
     ) -> Result<Self> {
         if bytes.len() != CONTRIBUTION_WIRE_LEN {
             return Err(DistributedProverError::MalformedContribution);
@@ -417,8 +565,8 @@ impl WorkerProofContribution {
         if offset != checksum_start {
             return Err(DistributedProverError::MalformedContribution);
         }
-        input_certificate.verify(session)?;
-        let context = WorkerProofContext::new(session, input_certificate, protocol_id)?;
+        request.verify(session, input_certificate, request.protocol_id())?;
+        let context = request.context;
         contribution.verify(session, &context)?;
         if contribution.to_bytes() != bytes {
             return Err(DistributedProverError::MalformedContribution);
@@ -484,11 +632,11 @@ impl DistributedProverCoordinator {
     /// Bind the public collector to one exact input certificate and backend.
     pub fn new(
         session: DistributedWitnessSession,
+        request: &ShareBoundProverRequest,
         input_certificate: &DistributedInputCertificate,
-        protocol_id: [u8; 32],
     ) -> Result<Self> {
-        input_certificate.verify(&session)?;
-        let context = WorkerProofContext::new(&session, input_certificate, protocol_id)?;
+        request.verify(&session, input_certificate, request.protocol_id())?;
+        let context = request.context;
         let contributions = iter::repeat_with(|| None)
             .take(session.n_workers())
             .collect();
@@ -551,6 +699,11 @@ impl DistributedProverEnvelope {
         self.transcript_digest
     }
 
+    /// Exact share-bound request digest authenticated by every contribution.
+    pub const fn request_digest(&self) -> [u8; 32] {
+        self.context.digest()
+    }
+
     /// Ordered public transcript digests, one per worker roster slot.
     pub fn worker_transcript_digests(
         &self,
@@ -565,12 +718,11 @@ impl DistributedProverEnvelope {
     pub fn verify_envelope(
         &self,
         session: &DistributedWitnessSession,
+        request: &ShareBoundProverRequest,
         input_certificate: &DistributedInputCertificate,
     ) -> Result<()> {
-        input_certificate.verify(session)?;
-        let expected_context =
-            WorkerProofContext::new(session, input_certificate, self.context.protocol_id)?;
-        if self.context != expected_context {
+        request.verify(session, input_certificate, self.context.protocol_id)?;
+        if self.context != request.context {
             return Err(DistributedProverError::InputCertificateMismatch);
         }
         if self.contributions.len() != session.n_workers() {
@@ -593,10 +745,11 @@ impl DistributedProverEnvelope {
     pub fn verify_backend<V: PublicDistributedProofVerifier>(
         &self,
         session: &DistributedWitnessSession,
+        request: &ShareBoundProverRequest,
         input_certificate: &DistributedInputCertificate,
         verifier: &V,
     ) -> Result<()> {
-        self.verify_envelope(session, input_certificate)?;
+        self.verify_envelope(session, request, input_certificate)?;
         if verifier.protocol_id() != self.context.protocol_id {
             return Err(DistributedProverError::ProtocolMismatch);
         }
@@ -665,6 +818,19 @@ fn take<const N: usize>(bytes: &[u8], offset: &mut usize) -> Result<[u8; N]> {
         .ok_or(DistributedProverError::MalformedContribution)?
         .try_into()
         .map_err(|_| DistributedProverError::MalformedContribution)?;
+    *offset = end;
+    Ok(value)
+}
+
+fn take_request<const N: usize>(bytes: &[u8], offset: &mut usize) -> Result<[u8; N]> {
+    let end = offset
+        .checked_add(N)
+        .ok_or(DistributedProverError::MalformedRequest)?;
+    let value = bytes
+        .get(*offset..end)
+        .ok_or(DistributedProverError::MalformedRequest)?
+        .try_into()
+        .map_err(|_| DistributedProverError::MalformedRequest)?;
     *offset = end;
     Ok(value)
 }

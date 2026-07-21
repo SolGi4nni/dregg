@@ -12,7 +12,8 @@ use private_book_distributed_inputs::{
 };
 use private_book_distributed_prover::{
     DistributedProverCoordinator, DistributedProverError, PublicDistributedProofVerifier,
-    WorkerLocalProofBackend, WorkerProofContext, WorkerProofContribution, WorkerProofProcess,
+    ShareBoundProverRequest, WorkerLocalProofBackend, WorkerProofContext, WorkerProofContribution,
+    WorkerProofProcess,
 };
 
 use ed25519_dalek::SigningKey;
@@ -161,6 +162,7 @@ fn run_workers(
     worker_keys: &[SigningKey; 3],
     shares: Vec<PreparedWitnessShare>,
 ) -> Vec<WorkerProofContribution> {
+    let request = ShareBoundProverRequest::new(session, certificate, PROTOCOL_ID).unwrap();
     shares
         .into_iter()
         .enumerate()
@@ -172,7 +174,7 @@ fn run_workers(
                 LocalOnlyBackend { worker },
             )
             .unwrap()
-            .run(certificate, share)
+            .run(&request, certificate, share)
             .unwrap()
         })
         .collect()
@@ -184,29 +186,32 @@ fn each_process_consumes_one_share_and_coordinator_sees_only_public_digests() {
     let worker_keys = keys::<3>(0x30);
     let session = session(&owner_keys, &worker_keys);
     let (certificate, shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x60);
+    let request = ShareBoundProverRequest::new(&session, &certificate, PROTOCOL_ID).unwrap();
     let contributions = run_workers(&session, &certificate, &worker_keys, shares);
 
     let wire = contributions[0].to_bytes();
     assert_eq!(
-        WorkerProofContribution::from_bytes(&wire, &session, &certificate, PROTOCOL_ID).unwrap(),
+        WorkerProofContribution::from_bytes(&wire, &session, &certificate, &request).unwrap(),
         contributions[0]
     );
     let mut corrupt_wire = wire;
     *corrupt_wire.last_mut().unwrap() ^= 1;
     assert_eq!(
-        WorkerProofContribution::from_bytes(&corrupt_wire, &session, &certificate, PROTOCOL_ID),
+        WorkerProofContribution::from_bytes(&corrupt_wire, &session, &certificate, &request),
         Err(DistributedProverError::MalformedContribution)
     );
 
     let mut coordinator =
-        DistributedProverCoordinator::new(session.clone(), &certificate, PROTOCOL_ID).unwrap();
+        DistributedProverCoordinator::new(session.clone(), &request, &certificate).unwrap();
     for contribution in contributions.into_iter().rev() {
         coordinator.accept(contribution).unwrap();
     }
     let bundle = coordinator.finish().unwrap();
-    bundle.verify_envelope(&session, &certificate).unwrap();
     bundle
-        .verify_backend(&session, &certificate, &FixtureVerifier)
+        .verify_envelope(&session, &request, &certificate)
+        .unwrap();
+    bundle
+        .verify_backend(&session, &request, &certificate, &FixtureVerifier)
         .unwrap();
     assert_eq!(
         bundle
@@ -216,6 +221,52 @@ fn each_process_consumes_one_share_and_coordinator_sees_only_public_digests() {
         vec![(0, true), (1, true), (2, true)]
     );
     assert_ne!(bundle.transcript_digest(), [0; 32]);
+    assert_eq!(bundle.request_digest(), request.digest());
+}
+
+#[test]
+fn request_wire_refuses_source_viewer_mode_appended_plaintext_and_context_substitution() {
+    let owner_keys = keys::<ORDER_COUNT>(0x12);
+    let worker_keys = keys::<3>(0x32);
+    let session = session(&owner_keys, &worker_keys);
+    let (certificate, _) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x68);
+    let request = ShareBoundProverRequest::new(&session, &certificate, PROTOCOL_ID).unwrap();
+    let wire = request.to_bytes();
+    assert_eq!(
+        ShareBoundProverRequest::from_bytes(&wire, &session, &certificate, PROTOCOL_ID).unwrap(),
+        request
+    );
+
+    // The custody byte follows the 8-byte magic and u16 version.  Mode 2 is
+    // reserved as an explicit negative test for monolithic/source-viewer use.
+    let mut source_viewer = wire.clone();
+    source_viewer[10] = 2;
+    assert_eq!(
+        ShareBoundProverRequest::from_bytes(&source_viewer, &session, &certificate, PROTOCOL_ID),
+        Err(DistributedProverError::SourceViewerForbidden)
+    );
+
+    let mut appended_plaintext = wire.clone();
+    appended_plaintext.extend_from_slice(b"plaintext-order-and-bfv-opening");
+    assert_eq!(
+        ShareBoundProverRequest::from_bytes(
+            &appended_plaintext,
+            &session,
+            &certificate,
+            PROTOCOL_ID
+        ),
+        Err(DistributedProverError::MalformedRequest)
+    );
+
+    assert_eq!(
+        ShareBoundProverRequest::from_bytes(&wire, &session, &certificate, [0xa6; 32]),
+        Err(DistributedProverError::RequestMismatch)
+    );
+    let (other_certificate, _) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x69);
+    assert_eq!(
+        ShareBoundProverRequest::from_bytes(&wire, &session, &other_certificate, PROTOCOL_ID),
+        Err(DistributedProverError::RequestMismatch)
+    );
 }
 
 #[test]
@@ -227,6 +278,8 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
         prepare_inputs(&session, &owner_keys, &worker_keys, 0x70);
     let (second_certificate, second_shares) =
         prepare_inputs(&session, &owner_keys, &worker_keys, 0x80);
+    let second_request =
+        ShareBoundProverRequest::new(&session, &second_certificate, PROTOCOL_ID).unwrap();
 
     assert!(matches!(
         WorkerProofProcess::new(
@@ -249,7 +302,7 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
         LocalOnlyBackend { worker: 0 },
     )
     .unwrap()
-    .run(&second_certificate, first_worker_share);
+    .run(&second_request, &second_certificate, first_worker_share);
     assert_eq!(
         misbound,
         Err(DistributedProverError::Input(
@@ -259,7 +312,7 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
 
     let contributions = run_workers(&session, &second_certificate, &worker_keys, second_shares);
     let mut coordinator =
-        DistributedProverCoordinator::new(session.clone(), &second_certificate, PROTOCOL_ID)
+        DistributedProverCoordinator::new(session.clone(), &second_request, &second_certificate)
             .unwrap();
     coordinator.accept(contributions[0].clone()).unwrap();
     assert_eq!(
@@ -267,9 +320,14 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
         Err(DistributedProverError::DuplicateContribution)
     );
 
-    let mut wrong_protocol =
-        DistributedProverCoordinator::new(session.clone(), &second_certificate, [0xa6; 32])
-            .unwrap();
+    let wrong_protocol_request =
+        ShareBoundProverRequest::new(&session, &second_certificate, [0xa6; 32]).unwrap();
+    let mut wrong_protocol = DistributedProverCoordinator::new(
+        session.clone(),
+        &wrong_protocol_request,
+        &second_certificate,
+    )
+    .unwrap();
     assert_eq!(
         wrong_protocol.accept(contributions[0].clone()),
         Err(DistributedProverError::ProtocolMismatch)
@@ -283,7 +341,7 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
     );
 
     let mut incomplete =
-        DistributedProverCoordinator::new(session.clone(), &second_certificate, PROTOCOL_ID)
+        DistributedProverCoordinator::new(session.clone(), &second_request, &second_certificate)
             .unwrap();
     incomplete.accept(contributions[0].clone()).unwrap();
     assert_eq!(
@@ -299,7 +357,7 @@ fn duplicate_missing_misbound_and_forged_worker_material_fail_closed() {
         fresh_first_shares,
     );
     let mut wrong_certificate =
-        DistributedProverCoordinator::new(session.clone(), &second_certificate, PROTOCOL_ID)
+        DistributedProverCoordinator::new(session.clone(), &second_request, &second_certificate)
             .unwrap();
     assert_eq!(
         wrong_certificate.accept(first_contributions[0].clone()),

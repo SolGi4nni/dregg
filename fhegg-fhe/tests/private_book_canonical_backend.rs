@@ -16,8 +16,8 @@ use private_book_distributed_inputs::{
     LocalOrderWitness, PreparedWitnessShare, PrivateSide, WitnessPartyMachine, ORDER_COUNT,
 };
 use private_book_distributed_prover::{
-    DistributedProverCoordinator, DistributedProverError, WorkerLocalProofBackend,
-    WorkerProofContext, WorkerProofContribution, WorkerProofProcess,
+    DistributedProverCoordinator, DistributedProverError, ShareBoundProverRequest,
+    WorkerLocalProofBackend, WorkerProofContext, WorkerProofContribution, WorkerProofProcess,
 };
 
 use ed25519_dalek::SigningKey;
@@ -98,6 +98,9 @@ fn canonical_contributions(
     worker_keys: &[SigningKey; 3],
     shares: Vec<PreparedWitnessShare>,
 ) -> Vec<WorkerProofContribution> {
+    let request =
+        ShareBoundProverRequest::new(session, certificate, canonical_share_opening_protocol_id())
+            .unwrap();
     shares
         .into_iter()
         .enumerate()
@@ -109,7 +112,7 @@ fn canonical_contributions(
                 CanonicalShareOpeningBackend::new(worker),
             )
             .unwrap()
-            .run(certificate, share)
+            .run(&request, certificate, share)
             .unwrap()
         })
         .collect()
@@ -142,15 +145,16 @@ fn exact_local_openings_produce_the_only_publicly_accepted_contributions() {
     let (certificate, shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x60);
     let contributions = canonical_contributions(&session, &certificate, &worker_keys, shares);
     let protocol_id = canonical_share_opening_protocol_id();
+    let request = ShareBoundProverRequest::new(&session, &certificate, protocol_id).unwrap();
     let mut coordinator =
-        DistributedProverCoordinator::new(session.clone(), &certificate, protocol_id).unwrap();
+        DistributedProverCoordinator::new(session.clone(), &request, &certificate).unwrap();
     for contribution in contributions {
         coordinator.accept(contribution).unwrap();
     }
     let envelope = coordinator.finish().unwrap();
     let verifier = CanonicalShareOpeningVerifier::new(&certificate).unwrap();
     envelope
-        .verify_backend(&session, &certificate, &verifier)
+        .verify_backend(&session, &request, &certificate, &verifier)
         .unwrap();
     let digests = envelope
         .worker_transcript_digests()
@@ -167,6 +171,7 @@ fn arbitrary_digest_and_cross_certificate_verifier_fail_closed() {
     let session = session(&owner_keys, &worker_keys);
     let (certificate, shares) = prepare_inputs(&session, &owner_keys, &worker_keys, 0x70);
     let protocol_id = canonical_share_opening_protocol_id();
+    let request = ShareBoundProverRequest::new(&session, &certificate, protocol_id).unwrap();
     let arbitrary = shares
         .into_iter()
         .enumerate()
@@ -178,19 +183,19 @@ fn arbitrary_digest_and_cross_certificate_verifier_fail_closed() {
                 ArbitraryDigestBackend,
             )
             .unwrap()
-            .run(&certificate, share)
+            .run(&request, &certificate, share)
             .unwrap()
         })
         .collect::<Vec<_>>();
     let mut coordinator =
-        DistributedProverCoordinator::new(session.clone(), &certificate, protocol_id).unwrap();
+        DistributedProverCoordinator::new(session.clone(), &request, &certificate).unwrap();
     for contribution in arbitrary {
         coordinator.accept(contribution).unwrap();
     }
     let envelope = coordinator.finish().unwrap();
     let verifier = CanonicalShareOpeningVerifier::new(&certificate).unwrap();
     assert_eq!(
-        envelope.verify_backend(&session, &certificate, &verifier),
+        envelope.verify_backend(&session, &request, &certificate, &verifier),
         Err(DistributedProverError::BackendRejected)
     );
 
@@ -198,15 +203,17 @@ fn arbitrary_digest_and_cross_certificate_verifier_fail_closed() {
         prepare_inputs(&session, &owner_keys, &worker_keys, 0x80);
     let other_contributions =
         canonical_contributions(&session, &other_certificate, &worker_keys, other_shares);
+    let other_request =
+        ShareBoundProverRequest::new(&session, &other_certificate, protocol_id).unwrap();
     let mut other_coordinator =
-        DistributedProverCoordinator::new(session.clone(), &other_certificate, protocol_id)
+        DistributedProverCoordinator::new(session.clone(), &other_request, &other_certificate)
             .unwrap();
     for contribution in other_contributions {
         other_coordinator.accept(contribution).unwrap();
     }
     let other_envelope = other_coordinator.finish().unwrap();
     assert_eq!(
-        other_envelope.verify_backend(&session, &other_certificate, &verifier),
+        other_envelope.verify_backend(&session, &other_request, &other_certificate, &verifier),
         Err(DistributedProverError::BackendRejected)
     );
 }
