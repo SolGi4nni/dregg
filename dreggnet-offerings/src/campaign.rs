@@ -20,10 +20,21 @@ use dregg_app_framework::TurnReceipt;
 use dungeon_on_dregg::descent::{DELVE, FLEE, LOOT, SMITE, UNLOCK};
 use dungeon_on_dregg::overworld::{RegionCell, RegionMap, deepening_ways};
 
-use crate::native_descent::{NativeDescentMove, NativeDescentOffering, NativeDescentSession};
+use crate::native_descent::{
+    NativeDescentMove, NativeDescentOffering, NativeDescentRecord, NativeDescentSession,
+};
 use crate::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RecordVerify, RunCost, SessionConfig,
     Surface, VerifyReport,
+};
+#[cfg(any(
+    feature = "private-preference-operation",
+    feature = "private-raid-operation",
+    feature = "private-fair-shuffle-operation"
+))]
+use crate::{
+    BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
+    BinaryOperationReplayMaterial,
 };
 
 /// The campaign-level travel verb. Its argument is the stable index in the region map.
@@ -86,6 +97,8 @@ pub struct DescentCampaignRecord {
     pub events: Vec<DescentCampaignEvent>,
     pub root: [u8; 32],
     pub checkpoint: Option<DescentCampaignCheckpoint>,
+    /// Exact current-location native record, including accepted shielded operations.
+    pub active: NativeDescentRecord,
 }
 
 /// A live traversal: one real region cell and the current location's native game.
@@ -105,7 +118,7 @@ impl DescentCampaignSession {
     }
 
     pub fn revision(&self) -> u64 {
-        self.events.len() as u64
+        u64::try_from(self.events.len()).expect("the fixed campaign journal bound fits u64")
     }
 
     pub fn root(&self) -> [u8; 32] {
@@ -143,6 +156,7 @@ impl DescentCampaignSession {
             events: self.events.clone(),
             root: self.root,
             checkpoint: self.checkpoint.clone(),
+            active: self.active.export_record(),
         }
     }
 }
@@ -236,7 +250,8 @@ impl DescentCampaignOffering {
                 Some(Action::new(
                     format!("Travel to {}", location.name),
                     CAMPAIGN_TRAVEL,
-                    index as i64,
+                    i64::try_from(index)
+                        .expect("the bounded campaign location list fits the action wire"),
                     enabled,
                 ))
             })
@@ -332,7 +347,8 @@ impl DescentCampaignOffering {
         }
         let mut replayed = self.deploy(record.seed)?;
         for (index, expected) in record.events.iter().enumerate() {
-            let revision = (index + 1) as u64;
+            let revision = u64::try_from(index + 1)
+                .expect("the fixed campaign journal bound fits the revision wire");
             if expected.revision != revision {
                 return Err(format!(
                     "campaign event {revision} has a non-canonical revision"
@@ -376,6 +392,25 @@ impl DescentCampaignOffering {
                 ));
             }
         }
+        // Ordinary campaign events reconstruct the exact native public head. Enrich that head
+        // with the record's independently replay-verified shielded operations, then require the
+        // ordinary actor/revision/root/state image to remain identical. A private proof can add a
+        // consequence; it cannot replace the Descent trajectory it names.
+        let enriched_active = self
+            .native
+            .resume_record(&record.active)
+            .map_err(|error| format!("campaign active Descent record refused: {error}"))?;
+        if enriched_active.actor() != replayed.active.actor()
+            || enriched_active.revision() != replayed.active.revision()
+            || enriched_active.root() != replayed.active.root()
+            || enriched_active.game().sim() != replayed.active.game().sim()
+        {
+            return Err(
+                "campaign active Descent record does not match its replayed location head"
+                    .to_string(),
+            );
+        }
+        replayed.active = enriched_active;
         if replayed.actor != record.actor
             || replayed.root != record.root
             || replayed.checkpoint != record.checkpoint
@@ -408,7 +443,10 @@ impl DescentCampaignOffering {
                         "this location is cleared; choose a real region road".to_string(),
                     );
                 }
-                let native_action = action_for_native_move(native_move);
+                let native_action = match action_for_native_move(native_move) {
+                    Ok(action) => action,
+                    Err(reason) => return Outcome::Refused(reason),
+                };
                 let (native_receipt, ended) =
                     match self
                         .native
@@ -527,7 +565,17 @@ impl DescentCampaignOffering {
             );
         }
         match self.replay_record(record) {
-            Ok(_) => VerifyReport::ok(turns),
+            Ok(_) => {
+                let native = self.native.verify_record(&session.active, &record.active);
+                if native.verified {
+                    VerifyReport::ok(turns)
+                } else {
+                    VerifyReport::broken(
+                        turns,
+                        format!("active native Descent record failed: {}", native.detail),
+                    )
+                }
+            }
             Err(reason) => VerifyReport::broken(turns, reason),
         }
     }
@@ -617,6 +665,29 @@ impl Offering for DescentCampaignOffering {
                     .to_string(),
             ));
         }
+        #[cfg(feature = "private-preference-operation")]
+        if let Some(preference) = session.active.private_preference() {
+            children.push(ViewNode::Text(format!(
+                "Shielded party choice: {} · receipt {}",
+                crate::dungeon::PRIVATE_PREFERENCE_OPTIONS[preference.decision().winner()],
+                short_digest(preference.receipt_id()),
+            )));
+        }
+        #[cfg(feature = "private-raid-operation")]
+        if let Some(raid) = session.active.private_raid() {
+            children.push(ViewNode::Text(format!(
+                "Shielded raid assignment accepted · receipt {}",
+                short_digest(raid.receipt_id()),
+            )));
+        }
+        #[cfg(feature = "private-fair-shuffle-operation")]
+        if let Some(deal) = session.active.private_deal() {
+            children.push(ViewNode::Text(format!(
+                "Shielded initiative: card {} · receipt {}",
+                deal.initiative_card(),
+                short_digest(deal.receipt_id()),
+            )));
+        }
         children.push(ViewNode::Menu {
             items: self
                 .actions_for_session(session)
@@ -639,6 +710,70 @@ impl Offering for DescentCampaignOffering {
     fn price(&self, _input: &Action) -> RunCost {
         RunCost::free()
     }
+
+    #[cfg(any(
+        feature = "private-preference-operation",
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
+    ))]
+    fn binary_operations(&self, session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
+        if session.region.is_cleared(&session.current_location()) {
+            Vec::new()
+        } else {
+            self.native.binary_operations(&session.active)
+        }
+    }
+
+    #[cfg(any(
+        feature = "private-preference-operation",
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
+    ))]
+    fn binary_operation_replay_material(
+        &self,
+        session: &Self::Session,
+        name: &str,
+        payload: &[u8],
+    ) -> Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError> {
+        if session.region.is_cleared(&session.current_location()) {
+            return Err(BinaryOperationError::Refused(
+                "a cleared campaign location accepts no further private operation".to_string(),
+            ));
+        }
+        self.native
+            .binary_operation_replay_material(&session.active, name, payload)
+    }
+
+    #[cfg(any(
+        feature = "private-preference-operation",
+        feature = "private-raid-operation",
+        feature = "private-fair-shuffle-operation"
+    ))]
+    fn invoke_binary_operation(
+        &self,
+        session: &mut Self::Session,
+        name: &str,
+        payload: &[u8],
+        actor: DreggIdentity,
+    ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+        if !valid_actor(&actor) {
+            return Err(BinaryOperationError::Refused(
+                "the campaign operation actor is empty or overlong".to_string(),
+            ));
+        }
+        if session.actor.as_ref().is_some_and(|bound| bound != &actor) {
+            return Err(BinaryOperationError::Refused(
+                "this campaign belongs to a different actor".to_string(),
+            ));
+        }
+        if session.region.is_cleared(&session.current_location()) {
+            return Err(BinaryOperationError::Refused(
+                "a cleared campaign location accepts no further private operation".to_string(),
+            ));
+        }
+        self.native
+            .invoke_binary_operation(&mut session.active, name, payload, actor)
+    }
 }
 
 impl RecordVerify for DescentCampaignOffering {
@@ -657,24 +792,38 @@ impl RecordVerify for DescentCampaignOffering {
 fn parse_native_move(action: &Action) -> Result<NativeDescentMove, String> {
     match (action.turn.as_str(), action.arg) {
         (DELVE, 0) => Ok(NativeDescentMove::Delve),
-        (UNLOCK, way @ 2..=4) => Ok(NativeDescentMove::Unlock { way: way as u64 }),
+        (UNLOCK, way @ 2..=4) => Ok(NativeDescentMove::Unlock {
+            way: u64::try_from(way).expect("the matched campaign unlock argument is non-negative"),
+        }),
         (SMITE, 0) => Ok(NativeDescentMove::Smite),
         (LOOT, relic @ 0..=7) => Ok(NativeDescentMove::Loot {
-            relic: relic as usize,
+            relic: u64::try_from(relic)
+                .expect("the matched campaign relic argument is non-negative"),
         }),
         (FLEE, 0) => Ok(NativeDescentMove::Flee),
         (turn, arg) => Err(format!("`{turn}({arg})` is not a native campaign move")),
     }
 }
 
-fn action_for_native_move(command: NativeDescentMove) -> Action {
-    match command {
+fn action_for_native_move(command: NativeDescentMove) -> Result<Action, String> {
+    let action = match command {
         NativeDescentMove::Delve => Action::new("replay delve", DELVE, 0, true),
-        NativeDescentMove::Unlock { way } => Action::new("replay unlock", UNLOCK, way as i64, true),
+        NativeDescentMove::Unlock { way } => Action::new(
+            "replay unlock",
+            UNLOCK,
+            i64::try_from(way).map_err(|_| "unlock index exceeds the action wire")?,
+            true,
+        ),
         NativeDescentMove::Smite => Action::new("replay smite", SMITE, 0, true),
-        NativeDescentMove::Loot { relic } => Action::new("replay loot", LOOT, relic as i64, true),
+        NativeDescentMove::Loot { relic } => Action::new(
+            "replay loot",
+            LOOT,
+            i64::try_from(relic).map_err(|_| "relic index exceeds the action wire")?,
+            true,
+        ),
         NativeDescentMove::Flee => Action::new("replay flee", FLEE, 0, true),
-    }
+    };
+    Ok(action)
 }
 
 fn valid_actor(actor: &DreggIdentity) -> bool {
@@ -695,12 +844,20 @@ fn genesis_root(map: &RegionMap, seed: u8, native_root: [u8; 32]) -> [u8; 32] {
     hasher.update(&[seed]);
     hash_string(&mut hasher, &map.id);
     hash_string(&mut hasher, &map.start);
-    hasher.update(&(map.locations.len() as u64).to_be_bytes());
+    hasher.update(
+        &u64::try_from(map.locations.len())
+            .expect("the bounded campaign location list fits u64")
+            .to_be_bytes(),
+    );
     for location in &map.locations {
         hash_string(&mut hasher, &location.id);
         hash_string(&mut hasher, &location.name);
     }
-    hasher.update(&(map.edges.len() as u64).to_be_bytes());
+    hasher.update(
+        &u64::try_from(map.edges.len())
+            .expect("the bounded campaign edge list fits u64")
+            .to_be_bytes(),
+    );
     for edge in &map.edges {
         hash_string(&mut hasher, &edge.from);
         hash_string(&mut hasher, &edge.to);
@@ -768,7 +925,7 @@ fn hash_command(hasher: &mut blake3::Hasher, command: &DescentCampaignMove) {
                 }
                 NativeDescentMove::Loot { relic } => {
                     hasher.update(&[3]);
-                    hasher.update(&(*relic as u64).to_be_bytes());
+                    hasher.update(&relic.to_be_bytes());
                 }
                 NativeDescentMove::Flee => {
                     hasher.update(&[4]);
@@ -899,7 +1056,11 @@ fn same_receipt(left: Option<&TurnReceipt>, right: Option<&TurnReceipt>) -> bool
 }
 
 fn hash_string(hasher: &mut blake3::Hasher, value: &str) {
-    hasher.update(&(value.len() as u64).to_be_bytes());
+    hasher.update(
+        &u64::try_from(value.len())
+            .expect("the bounded campaign string fits u64")
+            .to_be_bytes(),
+    );
     hasher.update(value.as_bytes());
 }
 

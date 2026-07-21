@@ -24,7 +24,7 @@ fn ballots() -> [PrivateBallot; 4] {
 }
 
 #[test]
-fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
+fn claimant_free_private_preference_cannot_be_stolen_by_first_uploader() {
     let offering = DungeonOffering::new();
     let mut session = offering.open(SessionConfig::with_seed(SEED)).unwrap();
     assert!(
@@ -38,6 +38,7 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
     let receipt = prove_private_preference(proof_session, &ballots()).unwrap();
     let honest = receipt.to_postcard().unwrap();
     let counsel = DreggIdentity("guild-counsel".to_string());
+    let first_uploader = DreggIdentity("mallory-first-uploader".to_string());
 
     assert!(
         offering
@@ -117,12 +118,16 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
             &mut session,
             PRIVATE_PREFERENCE_OPERATION,
             &honest,
-            counsel.clone(),
+            first_uploader.clone(),
         )
         .unwrap();
     assert_eq!(landed.operation, PRIVATE_PREFERENCE_OPERATION);
     assert_eq!(session.private_preference_decision().unwrap().winner(), 1);
-    assert_eq!(session.private_preference_actor(), Some(&counsel));
+    assert_eq!(
+        session.private_preference_actor(),
+        Some(&first_uploader),
+        "uploader attribution is retained only as provenance"
+    );
     assert!(
         offering
             .actions(&session)
@@ -132,25 +137,11 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
             .enabled,
         "the verified drowned-stair result unlocks the route"
     );
-    let before_actor_substitution = session.receipts_len();
-    assert!(
-        !offering
-            .advance(
-                &mut session,
-                benefit.clone(),
-                DreggIdentity("route-thief".to_string()),
-            )
-            .landed(),
-        "another identity cannot spend the submitter-bound result"
-    );
-    assert_eq!(session.receipts_len(), before_actor_substitution);
-    assert_eq!(session.read_var("depth"), 0);
-
     assert!(
         offering
             .advance(&mut session, benefit, counsel.clone())
             .landed(),
-        "the proof submitter enacts the certified route"
+        "Mallory uploading claimant-free proof bytes first must not steal the party consequence"
     );
     assert_eq!(
         session.read_var("depth"),
@@ -170,7 +161,8 @@ fn hosted_dungeon_accepts_one_hiding_party_choice_atomically() {
 
     // This is a fully valid scene receipt chain carrying a DIFFERENT certified
     // commitment. The generic spween verifier accepts it; the dungeon verifier
-    // must reject it because it is not the accepted HidingFri result + actor.
+    // must reject it because it is not the accepted HidingFri result + actual
+    // enacting actor.
     let world_seed = ((SEED % 251) + 1) as u8;
     let scene = keep_scene();
     let mut unbound = Driver::start(deploy_keep(world_seed), &scene).unwrap();

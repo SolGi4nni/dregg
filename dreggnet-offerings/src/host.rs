@@ -39,11 +39,12 @@ use crate::lifecycle::{Clock, PolicyRefusal, SessionPolicy, SweepReport, quota_k
 use crate::resume::{LoggedBinaryOperation, SessionMoveLog, SessionResumeStore};
 use crate::signed::{Attribution, SignedAction, SignedError, verify_signed};
 use crate::{
-    Action, BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError,
-    BinaryArtifactVisibility, BinaryOperationDescriptor, BinaryOperationError,
-    BinaryOperationReceipt, BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity,
-    MAX_HOSTED_ARTIFACT_BYTES, Offering, OfferingError, Outcome, RunCost, SessionConfig, SessionId,
-    Surface, VerifyReport,
+    Action, AppliedBinaryOperation, Audience, AudienceProjection, BinaryArtifact,
+    BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
+    BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
+    BinaryOperationReplayMaterial, CollectiveDecision, DreggIdentity, MAX_HOSTED_ARTIFACT_BYTES,
+    MAX_HOSTED_BINARY_OPERATION_BYTES, Offering, OfferingError, Outcome, RunCost, SessionConfig,
+    SessionId, Surface, VerifyReport,
 };
 
 /// A **catalog entry** — one registered offering's public identity + its live-session count, for a
@@ -571,6 +572,48 @@ fn validate_artifact_descriptor(
     Ok(())
 }
 
+fn validate_operation_descriptor(
+    descriptor: &BinaryOperationDescriptor,
+) -> Result<(), BinaryOperationError> {
+    let valid_name = !descriptor.name.is_empty()
+        && descriptor.name.len() <= 128
+        && descriptor.name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        });
+    if !valid_name {
+        return Err(BinaryOperationError::Refused(
+            "invalid operation descriptor: name must be 1..=128 lowercase ASCII route characters [a-z0-9._-]"
+                .to_string(),
+        ));
+    }
+    if descriptor.title.trim().is_empty() || descriptor.disclosure.trim().is_empty() {
+        return Err(BinaryOperationError::Refused(
+            "invalid operation descriptor: title and disclosure must be non-empty".to_string(),
+        ));
+    }
+    let valid_media_type = !descriptor.input_media_type.is_empty()
+        && descriptor.input_media_type.len() <= 127
+        && descriptor
+            .input_media_type
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b';' | b',' | b'"' | b'\\'))
+        && descriptor.input_media_type.matches('/').count() == 1;
+    if !valid_media_type {
+        return Err(BinaryOperationError::Refused(
+            "invalid operation descriptor: media type must be one exact ASCII type/subtype without parameters"
+                .to_string(),
+        ));
+    }
+    if descriptor.max_input_bytes == 0
+        || descriptor.max_input_bytes > MAX_HOSTED_BINARY_OPERATION_BYTES
+    {
+        return Err(BinaryOperationError::Refused(format!(
+            "invalid operation descriptor: max_input_bytes must be within 1..={MAX_HOSTED_BINARY_OPERATION_BYTES}"
+        )));
+    }
+    Ok(())
+}
+
 impl OfferingHost {
     /// A fresh host with no offerings registered.
     pub fn new() -> Self {
@@ -1046,7 +1089,9 @@ impl OfferingHost {
 
     /// Discover the transport-bearing deos affordances of live session
     /// `(key, id)`.  The descriptor is frontend-neutral; adapters render the
-    /// same name, media type, byte cap, and disclosure.
+    /// same name, media type, byte cap, and disclosure. The host validates the
+    /// complete set before returning it, so web/chat/native surfaces cannot
+    /// select different policy from duplicate or malformed routes.
     pub fn binary_operations(
         &self,
         key: &str,
@@ -1056,11 +1101,59 @@ impl OfferingHost {
             .slots
             .get(key)
             .ok_or_else(|| HostOperationError::UnknownOffering(key.to_string()))?;
-        slot.binary_operations(id)
+        let descriptors =
+            slot.binary_operations(id)
+                .ok_or_else(|| HostOperationError::UnknownSession {
+                    key: key.to_string(),
+                    id: id.clone(),
+                })?;
+        let mut names = std::collections::BTreeSet::new();
+        for descriptor in &descriptors {
+            validate_operation_descriptor(descriptor).map_err(HostOperationError::Operation)?;
+            if !names.insert(descriptor.name.as_str()) {
+                return Err(HostOperationError::Operation(
+                    BinaryOperationError::Refused(format!(
+                        "invalid operation descriptors: duplicate operation name {:?}",
+                        descriptor.name
+                    )),
+                ));
+            }
+        }
+        Ok(descriptors)
+    }
+
+    /// Whether this exact live operation request has offering-selected safe replay material.
+    ///
+    /// Storeless callers that promise a replayable game view use this as a read-only preflight
+    /// before mutation. A durable host already enforces the same condition inside
+    /// [`Self::invoke_binary_operation`]. `false` is not a statement that the operation is
+    /// invalid; it means a successful mutation would intentionally be process-local and must not
+    /// be represented as restartable. Discovery is validated first, so malformed or ambiguous
+    /// descriptor policy fails rather than selecting one surface's interpretation.
+    pub fn binary_operation_replayable(
+        &self,
+        key: &str,
+        id: &SessionId,
+        name: &str,
+        payload: &[u8],
+    ) -> Result<bool, HostOperationError> {
+        let descriptors = self.binary_operations(key, id)?;
+        if !descriptors.iter().any(|descriptor| descriptor.name == name) {
+            return Err(HostOperationError::Operation(
+                BinaryOperationError::UnknownOperation(name.to_string()),
+            ));
+        }
+        let slot = self
+            .slots
+            .get(key)
+            .ok_or_else(|| HostOperationError::UnknownOffering(key.to_string()))?;
+        slot.binary_operation_replay_material(id, name, payload)
             .ok_or_else(|| HostOperationError::UnknownSession {
                 key: key.to_string(),
                 id: id.clone(),
-            })
+            })?
+            .map(|material| material.is_some())
+            .map_err(HostOperationError::Operation)
     }
 
     /// Discover the bounded, read-only binary artifacts of live session
@@ -1213,6 +1306,21 @@ impl OfferingHost {
                 id: id.clone(),
             })?;
         let receipt = result.map_err(HostOperationError::Operation)?;
+        if receipt.operation != name {
+            // The concrete offering has already had an opportunity to mutate.  A receipt for a
+            // different operation therefore cannot merely be returned as an error while leaving
+            // that unjournaled state live: downstream capability/consequence code could confuse
+            // the addressed operation with the one named by the receipt, and a later ordinary
+            // move could make the ghost mutation durable. Quarantine the live session. Its exact
+            // pre-operation journal remains intact and a durable host may resume from that record.
+            slot.close(id);
+            return Err(HostOperationError::Operation(
+                BinaryOperationError::Refused(format!(
+                    "operation receipt named {:?}, but the host addressed {name:?}; session quarantined",
+                    receipt.operation
+                )),
+            ));
+        }
 
         if let Some(material) = replay_material {
             let after_moves = self
@@ -1220,6 +1328,11 @@ impl OfferingHost {
                 .get(&(key.to_string(), id.clone()))
                 .map(|log| log.moves.len())
                 .unwrap_or(0);
+            let after_moves = u64::try_from(after_moves).map_err(|_| {
+                HostOperationError::Operation(BinaryOperationError::Refused(
+                    "ordinary-move cursor exceeds the durable operation wire".to_string(),
+                ))
+            })?;
             let operation = LoggedBinaryOperation {
                 after_moves,
                 name: name.to_string(),
@@ -1244,6 +1357,49 @@ impl OfferingHost {
         }
         self.touch(key, id);
         Ok(receipt)
+    }
+
+    /// Apply one operation and return its exact source-session binding for downstream game organs.
+    ///
+    /// This is the consequence/capability-friendly form of [`Self::invoke_binary_operation`]. It
+    /// observes the same host commitment immediately before and after the real invocation and
+    /// carries the concrete receipt plus source tuple in [`AppliedBinaryOperation`]. The `actor`
+    /// remains the attribution supplied by the caller; adapters requiring authenticated identity
+    /// must verify it before this call.
+    pub fn invoke_binary_operation_bound(
+        &mut self,
+        key: &str,
+        id: &SessionId,
+        name: &str,
+        payload: &[u8],
+        actor: DreggIdentity,
+    ) -> Result<AppliedBinaryOperation, HostOperationError> {
+        let before = self.operation_source_commitment(key, id)?;
+        let receipt = self.invoke_binary_operation(key, id, name, payload, actor.clone())?;
+        let after = self.operation_source_commitment(key, id)?;
+        Ok(AppliedBinaryOperation {
+            offering: key.to_string(),
+            session: id.clone(),
+            actor,
+            before,
+            after,
+            receipt,
+        })
+    }
+
+    fn operation_source_commitment(
+        &self,
+        key: &str,
+        id: &SessionId,
+    ) -> Result<Vec<u8>, HostOperationError> {
+        if !self.slots.contains_key(key) {
+            return Err(HostOperationError::UnknownOffering(key.to_string()));
+        }
+        self.commitment(key, id)
+            .ok_or_else(|| HostOperationError::UnknownSession {
+                key: key.to_string(),
+                id: id.clone(),
+            })
     }
 
     /// **Advance session `(key, id)` by one real turn** — resolve `input` on the substrate as ONE
@@ -1468,6 +1624,36 @@ impl OfferingHost {
         Some(self.slots.get(key)?.hidden_information())
     }
 
+    /// Render one live session for an explicit transport audience.
+    ///
+    /// [`Audience::Shared`] is structurally viewer-blind: this method calls
+    /// only [`OfferingHost::render`] and [`OfferingHost::actions`]. A private
+    /// audience carries the one reader's identity and may select the offering's
+    /// per-viewer projection. Frontend adapters should prefer this method over
+    /// independently pairing `render[_for]` and `actions[_for]`.
+    pub fn project(
+        &self,
+        key: &str,
+        id: &SessionId,
+        audience: &Audience,
+    ) -> Option<AudienceProjection> {
+        let hidden_information = self.hidden_information(key)?;
+        let (surface, actions, private) = match audience {
+            Audience::Shared => (self.render(key, id)?, self.actions(key, id)?, false),
+            Audience::Private(viewer) => (
+                self.render_for(key, id, viewer)?,
+                self.actions_for(key, id, viewer)?,
+                true,
+            ),
+        };
+        Some(AudienceProjection {
+            surface,
+            actions,
+            hidden_information,
+            private,
+        })
+    }
+
     /// Re-verify session `(key, id)`'s committed chain (`None` if absent).
     pub fn verify(&self, key: &str, id: &SessionId) -> Option<VerifyReport> {
         self.slots.get(key)?.verify(id)
@@ -1499,7 +1685,11 @@ impl OfferingHost {
         let report = self.verify(key, id)?;
         let mut h = blake3::Hasher::new();
         h.update(format!("{:?}", surface.0).as_bytes());
-        h.update(&(report.turns as u64).to_le_bytes());
+        h.update(
+            &u64::try_from(report.turns)
+                .expect("the bounded verification turn count fits u64")
+                .to_le_bytes(),
+        );
         h.update(&[report.verified as u8]);
         Some(h.finalize().as_bytes().to_vec())
     }
@@ -1540,8 +1730,21 @@ impl OfferingHost {
         // retain vector order.
         let mut operation_index = 0usize;
         for move_index in 0..=log.moves.len() {
+            let move_cursor = match u64::try_from(move_index) {
+                Ok(cursor) => cursor,
+                Err(_) => {
+                    if let Some(slot) = self.slots.get_mut(&log.key) {
+                        slot.close(&log.id);
+                    }
+                    return Err(ResumeError::OperationRefused {
+                        index: operation_index,
+                        reason: "ordinary-move cursor exceeds the durable operation wire"
+                            .to_string(),
+                    });
+                }
+            };
             while let Some(operation) = log.operations.get(operation_index) {
-                if operation.after_moves < move_index {
+                if operation.after_moves < move_cursor {
                     if let Some(slot) = self.slots.get_mut(&log.key) {
                         slot.close(&log.id);
                     }
@@ -1550,7 +1753,7 @@ impl OfferingHost {
                         reason: "operation timeline is not monotone".to_string(),
                     });
                 }
-                if operation.after_moves > move_index {
+                if operation.after_moves > move_cursor {
                     break;
                 }
                 if *blake3::hash(&operation.replay_material).as_bytes() != operation.replay_digest {
@@ -1896,13 +2099,22 @@ mod tests {
         }
 
         fn binary_operations(&self, _session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
-            vec![BinaryOperationDescriptor {
-                name: "multiply.v1".to_string(),
-                title: "multiply".to_string(),
-                input_media_type: "application/x-u8".to_string(),
-                max_input_bytes: 1,
-                disclosure: "one public multiplier byte".to_string(),
-            }]
+            vec![
+                BinaryOperationDescriptor {
+                    name: "multiply.v1".to_string(),
+                    title: "multiply".to_string(),
+                    input_media_type: "application/x-u8".to_string(),
+                    max_input_bytes: 1,
+                    disclosure: "one public multiplier byte".to_string(),
+                },
+                BinaryOperationDescriptor {
+                    name: "ephemeral.v1".to_string(),
+                    title: "ephemeral add".to_string(),
+                    input_media_type: "application/octet-stream".to_string(),
+                    max_input_bytes: 1,
+                    disclosure: "one deliberately unjournaled byte".to_string(),
+                },
+            ]
         }
 
         fn binary_operation_replay_material(
@@ -1911,6 +2123,14 @@ mod tests {
             name: &str,
             payload: &[u8],
         ) -> Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError> {
+            if name == "ephemeral.v1" {
+                if payload.len() != 1 {
+                    return Err(BinaryOperationError::Malformed(
+                        "expected one ephemeral byte".to_string(),
+                    ));
+                }
+                return Ok(None);
+            }
             if name != "multiply.v1" {
                 return Err(BinaryOperationError::UnknownOperation(name.to_string()));
             }
@@ -1932,6 +2152,22 @@ mod tests {
             payload: &[u8],
             _actor: DreggIdentity,
         ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+            if name == "ephemeral.v1" {
+                let addend = *payload.first().ok_or_else(|| {
+                    BinaryOperationError::Malformed("missing ephemeral addend".to_string())
+                })?;
+                if payload.len() != 1 {
+                    return Err(BinaryOperationError::Malformed(
+                        "expected one ephemeral byte".to_string(),
+                    ));
+                }
+                *session += u64::from(addend);
+                return Ok(BinaryOperationReceipt {
+                    operation: name.to_string(),
+                    receipt_id: *blake3::hash(&session.to_le_bytes()).as_bytes(),
+                    public_fields: vec![("value".to_string(), session.to_string())],
+                });
+            }
             if name != "multiply.v1" {
                 return Err(BinaryOperationError::UnknownOperation(name.to_string()));
             }
@@ -1957,6 +2193,197 @@ mod tests {
         }
     }
 
+    /// Hostile operation fixture: mutates the addressed session but lies about which operation
+    /// produced its receipt. The host must quarantine this state before it can become observable.
+    struct ReceiptConfusionOffering;
+
+    impl Offering for ReceiptConfusionOffering {
+        type Session = u64;
+
+        fn open(&self, _cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
+            Ok(0)
+        }
+
+        fn actions(&self, _session: &Self::Session) -> Vec<Action> {
+            Vec::new()
+        }
+
+        fn advance(
+            &self,
+            _session: &mut Self::Session,
+            _input: Action,
+            _actor: DreggIdentity,
+        ) -> Outcome {
+            Outcome::Refused("no ordinary moves".to_string())
+        }
+
+        fn verify(&self, session: &Self::Session) -> VerifyReport {
+            VerifyReport::ok(*session as usize)
+        }
+
+        fn render(&self, session: &Self::Session) -> Surface {
+            Surface(deos_view::ViewNode::Text(format!("confused = {session}")))
+        }
+
+        fn binary_operations(&self, _session: &Self::Session) -> Vec<BinaryOperationDescriptor> {
+            vec![
+                BinaryOperationDescriptor {
+                    name: "addressed.v1".to_string(),
+                    title: "addressed".to_string(),
+                    input_media_type: "application/octet-stream".to_string(),
+                    max_input_bytes: 1,
+                    disclosure: "empty public request".to_string(),
+                },
+                BinaryOperationDescriptor {
+                    name: "addressed.v1".to_string(),
+                    title: "conflicting addressed policy".to_string(),
+                    input_media_type: "application/vnd.dregg.conflict+binary".to_string(),
+                    max_input_bytes: 4096,
+                    disclosure: "a contradictory disclosure".to_string(),
+                },
+            ]
+        }
+
+        fn binary_operation_replay_material(
+            &self,
+            _session: &Self::Session,
+            name: &str,
+            payload: &[u8],
+        ) -> Result<Option<BinaryOperationReplayMaterial>, BinaryOperationError> {
+            if name != "addressed.v1" {
+                return Err(BinaryOperationError::UnknownOperation(name.to_string()));
+            }
+            if !payload.is_empty() {
+                return Err(BinaryOperationError::Malformed(
+                    "expected an empty request".to_string(),
+                ));
+            }
+            Ok(Some(BinaryOperationReplayMaterial::new(
+                Vec::new(),
+                "empty public request",
+            )))
+        }
+
+        fn invoke_binary_operation(
+            &self,
+            session: &mut Self::Session,
+            name: &str,
+            payload: &[u8],
+            _actor: DreggIdentity,
+        ) -> Result<BinaryOperationReceipt, BinaryOperationError> {
+            if name != "addressed.v1" || !payload.is_empty() {
+                return Err(BinaryOperationError::Malformed(
+                    "expected addressed.v1 with an empty request".to_string(),
+                ));
+            }
+            *session = 99;
+            Ok(BinaryOperationReceipt {
+                operation: "other.v1".to_string(),
+                receipt_id: *blake3::hash(b"lying receipt").as_bytes(),
+                public_fields: vec![("value".to_string(), "99".to_string())],
+            })
+        }
+
+        fn price(&self, _input: &Action) -> RunCost {
+            RunCost::free()
+        }
+    }
+
+    #[test]
+    fn binary_operation_discovery_rejects_malformed_or_ambiguous_policy() {
+        let id = SessionId::new("ambiguous-operations");
+        let mut host = OfferingHost::new();
+        host.register("confused", "Confused", ReceiptConfusionOffering);
+        host.open_session("confused", id.clone(), SessionConfig::with_seed(1))
+            .unwrap();
+        assert!(matches!(
+            host.binary_operations("confused", &id),
+            Err(HostOperationError::Operation(BinaryOperationError::Refused(reason)))
+                if reason.contains("duplicate operation name")
+        ));
+
+        let valid = BinaryOperationDescriptor {
+            name: "valid.route-v1".to_string(),
+            title: "Valid route".to_string(),
+            input_media_type: "application/vnd.dregg.valid+binary".to_string(),
+            max_input_bytes: 1,
+            disclosure: "the request is public".to_string(),
+        };
+        assert!(validate_operation_descriptor(&valid).is_ok());
+
+        let mut malformed = valid.clone();
+        malformed.name.clear();
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid.clone();
+        malformed.name = "Uppercase".to_string();
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid.clone();
+        malformed.title = "  ".to_string();
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid.clone();
+        malformed.disclosure.clear();
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid.clone();
+        malformed.input_media_type = "application/octet-stream; secret=true".to_string();
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid.clone();
+        malformed.max_input_bytes = 0;
+        assert!(validate_operation_descriptor(&malformed).is_err());
+        malformed = valid;
+        malformed.max_input_bytes = MAX_HOSTED_BINARY_OPERATION_BYTES + 1;
+        assert!(validate_operation_descriptor(&malformed).is_err());
+    }
+
+    #[test]
+    fn operation_receipt_name_mismatch_quarantines_mutation_and_never_journals() {
+        let store = crate::resume::InMemoryResumeStore::new();
+        let id = SessionId::new("receipt-confusion");
+        let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+        host.register("confused", "Confused", ReceiptConfusionOffering);
+        host.open_session("confused", id.clone(), SessionConfig::with_seed(1))
+            .unwrap();
+
+        let error = host
+            .invoke_binary_operation_bound(
+                "confused",
+                &id,
+                "addressed.v1",
+                &[],
+                DreggIdentity("alice".to_string()),
+            )
+            .expect_err("a mismatched operation name must fail closed");
+        assert!(matches!(
+            error,
+            HostOperationError::Operation(BinaryOperationError::Refused(ref reason))
+                if reason.contains("other.v1")
+                    && reason.contains("addressed.v1")
+                    && reason.contains("quarantined")
+        ));
+        assert!(
+            !host.is_open("confused", &id),
+            "the already-mutated live session must not remain observable"
+        );
+
+        let authentic = store
+            .load("confused", &id)
+            .expect("the exact pre-operation genesis remains durable");
+        assert!(
+            authentic.operations.is_empty(),
+            "the lying receipt and its ghost mutation must never be journaled"
+        );
+
+        drop(host);
+        let mut restarted = OfferingHost::new().with_resume_store(Box::new(store));
+        restarted.register("confused", "Confused", ReceiptConfusionOffering);
+        restarted
+            .resume(&authentic)
+            .expect("the exact pre-operation session remains resumable");
+        assert!(
+            format!("{:?}", restarted.render("confused", &id).unwrap().0).contains("confused = 0"),
+            "restart must recover the pre-operation state, not the ghost mutation"
+        );
+    }
+
     #[test]
     fn binary_operation_journal_restores_in_timeline_order_and_refuses_tamper() {
         let store = crate::resume::InMemoryResumeStore::new();
@@ -1965,6 +2392,15 @@ mod tests {
         host.register("journal", "Journal", JournalOffering);
         host.open_session("journal", id.clone(), SessionConfig::with_seed(17))
             .unwrap();
+        assert!(
+            host.binary_operation_replayable("journal", &id, "multiply.v1", &[3])
+                .expect("canonical request has safe replay material")
+        );
+        assert!(
+            !host
+                .binary_operation_replayable("journal", &id, "ephemeral.v1", &[1])
+                .expect("an advertised process-local operation is a valid preflight")
+        );
         let actor = DreggIdentity("signed-worker".to_string());
         assert!(
             host.advance(
@@ -2019,6 +2455,19 @@ mod tests {
             Err(ResumeError::OperationRefused { index: 0, .. })
         ));
         assert!(!rejecting.is_open("journal", &id));
+
+        let mut target_wide_cursor = authentic.clone();
+        target_wide_cursor.operations[0].after_moves = u64::MAX;
+        let mut rejecting = OfferingHost::new();
+        rejecting.register("journal", "Journal", JournalOffering);
+        assert!(matches!(
+            rejecting.resume(&target_wide_cursor),
+            Err(ResumeError::OperationRefused { index: 0, .. })
+        ));
+        assert!(
+            !rejecting.is_open("journal", &id),
+            "a stable cursor beyond the move log must be anti-ghost"
+        );
 
         let mut tampered_disclosure = authentic.clone();
         tampered_disclosure.operations[0]

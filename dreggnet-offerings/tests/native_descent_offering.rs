@@ -156,6 +156,15 @@ fn public_record_resumes_by_reexecution_and_rejects_tampering() {
     wrong_command.events[0].command = NativeDescentMove::Smite;
     assert!(!offering.verify_record(&session, &wrong_command).verified);
 
+    let mut target_wide_relic = authentic.clone();
+    target_wide_relic.events[0].command = NativeDescentMove::Loot { relic: u64::MAX };
+    assert!(
+        !offering
+            .verify_record(&session, &target_wide_relic)
+            .verified,
+        "the public u64 relic wire fails closed at the internal executor-index boundary"
+    );
+
     let mut wrong_actor = authentic.clone();
     wrong_actor.events[0].actor = actor("mallory-cipherclerk");
     assert!(!offering.verify_record(&session, &wrong_actor).verified);

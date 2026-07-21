@@ -34,12 +34,19 @@
 //! core resolves that action on the substrate; the executor stays the sole referee on every
 //! surface. [`mock::MockFrontend`] is the reference renderer the tests drive.
 
+/// THE AUDIENCE BOUNDARY — an explicit shared-vs-private projection selector.
+/// A shared surface carries no viewer identity and therefore cannot call a
+/// hidden offering's per-viewer renderer by accident.
+pub mod audience;
+
 /// THE DESCENT CAMPAIGN — a player-driven Lean-native Descent at every location of the real
 /// overworld region cell. A location's WriteOnce clear turn is emitted only after the exact
 /// native run reaches and replay-verifies a Crown settlement; the resulting region gate then
 /// controls travel. See [`campaign::DescentCampaignOffering`].
 pub mod campaign;
 pub mod character;
+/// Viewer-blind, cross-surface consent + receipt disclosures for explicit paid Chutes turns.
+pub mod chutes_consent;
 /// THE DESCENT — the flagship's core: a daily, provably-fair, permadeath procgen roguelite as
 /// an Offering. Today's dungeon is one drand-beacon-seeded world everyone plays; you can die
 /// (real committed defeat + hardcore character death); a persistent character carries in + earns;
@@ -107,15 +114,20 @@ pub mod session;
 /// consumer exists; rung 2 (browser/device-held keys) feeds this same verifier. See [`signed`].
 pub mod signed;
 
+pub use audience::{Audience, AudienceProjection, project as project_for_audience};
 pub use host::{
     HostArtifactError, HostError, HostOperationError, OfferingHost, OfferingInfo, ResumeError,
     seed_from_id,
 };
 pub use lifecycle::{Clock, ManualClock, PolicyRefusal, SessionPolicy, SweepReport, SystemClock};
 pub use operation::{
-    BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError, BinaryArtifactVisibility,
-    BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
-    BinaryOperationReplayMaterial, MAX_HOSTED_ARTIFACT_BYTES,
+    AppliedBinaryOperation, BinaryArtifact, BinaryArtifactDescriptor, BinaryArtifactError,
+    BinaryArtifactVisibility, BinaryOperationDescriptor, BinaryOperationError,
+    BinaryOperationReceipt, BinaryOperationReplayMaterial, ChatBinaryOperationError,
+    ChatBinaryOperationPolicy, MAX_CHAT_BINARY_OPERATION_BYTES, MAX_HOSTED_ARTIFACT_BYTES,
+    MAX_HOSTED_BINARY_OPERATION_BYTES, OperationConsequenceBook, OperationConsequenceEndpoint,
+    OperationConsequenceError, OperationConsequenceGrant, OperationConsequenceRule,
+    preflight_chat_binary_operation,
 };
 pub use resume::{
     FileResumeStore, InMemoryResumeStore, LoggedBinaryOperation, LoggedMove, SessionMoveLog,

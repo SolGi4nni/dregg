@@ -24,7 +24,11 @@ fn action_for(
     offering
         .actions(session)
         .into_iter()
-        .find(|action| action.turn == turn && action.arg == index as i64)
+        .find(|action| {
+            action.turn == turn
+                && action.arg
+                    == i64::try_from(index).expect("the bounded region map fits the action wire")
+        })
         .unwrap_or_else(|| panic!("missing exact {turn} action for {location}"))
 }
 
@@ -64,6 +68,17 @@ fn generic_clear_consumes_a_staged_win_and_first_landed_turn_binds_player() {
     );
     assert_eq!(session.revision(), 0);
     assert_eq!(session.root(), before_root);
+
+    for hostile_index in [-1, i64::MAX] {
+        assert_refused(offering.advance(
+            &mut session,
+            Action::new("hostile location", OVERWORLD_TRAVEL, hostile_index, true),
+            alice.clone(),
+        ));
+        assert_eq!(session.revision(), 0);
+        assert_eq!(session.root(), before_root);
+        assert_eq!(session.actor(), None);
+    }
 
     let seed = offering.completion_seed(&alice, "keep").unwrap();
     let partial = play_partial_run("keep", seed, 2).expect("partial run");

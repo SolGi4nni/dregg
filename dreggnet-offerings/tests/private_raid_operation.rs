@@ -31,7 +31,7 @@ fn choose(label: &str, index: usize) -> Action {
 }
 
 #[test]
-fn hosted_dungeon_accepts_one_real_private_raid_proof_atomically() {
+fn claimant_free_private_raid_cannot_be_stolen_by_first_uploader() {
     let offering = DungeonOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(31_337))
@@ -128,7 +128,7 @@ fn hosted_dungeon_accepts_one_real_private_raid_proof_atomically() {
             &mut session,
             PRIVATE_RAID_OPERATION,
             &honest,
-            DreggIdentity("party-captain".to_string()),
+            DreggIdentity("mallory-first-uploader".to_string()),
         )
         .expect("verified assignment lands");
     assert_eq!(applied.operation, PRIVATE_RAID_OPERATION);
@@ -146,7 +146,7 @@ fn hosted_dungeon_accepts_one_real_private_raid_proof_atomically() {
     );
     assert_eq!(
         session.private_raid_actor(),
-        Some(&DreggIdentity("party-captain".to_string()))
+        Some(&DreggIdentity("mallory-first-uploader".to_string()))
     );
 
     let landed = assignment;
@@ -163,7 +163,7 @@ fn hosted_dungeon_accepts_one_real_private_raid_proof_atomically() {
     assert_eq!(session.private_raid_assignment(), Some(landed));
     assert_eq!(
         session.private_raid_actor(),
-        Some(&DreggIdentity("party-captain".to_string()))
+        Some(&DreggIdentity("mallory-first-uploader".to_string()))
     );
 
     let exact_choice = mender_choice(assignment);
@@ -183,25 +183,14 @@ fn hosted_dungeon_accepts_one_real_private_raid_proof_atomically() {
         "the assignment's public role permutation selects one exact Mender seat"
     );
     assert!(
-        !offering
-            .advance(
-                &mut session,
-                choose("steal the Mender recovery", exact_choice),
-                DreggIdentity("mallory".to_string()),
-            )
-            .landed(),
-        "a different actor cannot carry the assignment submitter's benefit"
-    );
-    assert_eq!(session.read_var("hp"), 30);
-
-    assert!(
         offering
             .advance(
                 &mut session,
                 choose("apply the assigned Mender recovery", exact_choice),
                 DreggIdentity("party-captain".to_string()),
             )
-            .landed()
+            .landed(),
+        "Mallory uploading claimant-free proof bytes first must not steal the party recovery"
     );
     assert_eq!(session.read_var("hp"), 50);
     assert_eq!(session.read_var("raid_mending_used"), 1);

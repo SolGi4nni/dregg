@@ -199,6 +199,15 @@ fn restart_and_hostile_substitutions_reexecute_exactly() {
         DescentCampaignMove::Native(dreggnet_offerings::native_descent::NativeDescentMove::Flee);
     assert!(offering.resume_record(&wrong_move).is_err());
 
+    let mut target_wide_relic = authentic.clone();
+    target_wide_relic.events[1].command = DescentCampaignMove::Native(
+        dreggnet_offerings::native_descent::NativeDescentMove::Loot { relic: u64::MAX },
+    );
+    assert!(
+        offering.resume_record(&target_wide_relic).is_err(),
+        "the campaign refuses a stable u64 relic that cannot cross its signed action wire"
+    );
+
     let mut forged_crown = authentic.clone();
     forged_crown
         .events

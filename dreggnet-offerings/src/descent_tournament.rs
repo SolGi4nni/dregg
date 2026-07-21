@@ -365,7 +365,8 @@ impl DescentStandings {
                     // is a stable inert verb and the arg is the competitor's seed (for a frontend
                     // that wants to deep-link a competitor's bracket record). Shown, never fired.
                     turn: "standing".to_string(),
-                    arg: row.seed as i64,
+                    arg: i64::try_from(row.seed)
+                        .expect("the bounded tournament field fits the stable action wire"),
                     enabled: false,
                 }
             })

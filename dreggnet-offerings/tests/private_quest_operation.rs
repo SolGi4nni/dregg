@@ -109,7 +109,7 @@ fn opaque_quest_reductions_land_atomically_and_survive_restart() {
     let rendered = format!("{:?}", host.render("dungeon", &id).unwrap().0);
     assert!(rendered.contains("Private semantic quest"));
     assert!(rendered.contains("2/2 opaque reductions verified"));
-    assert!(rendered.contains("2 authenticated submitter(s)"));
+    assert!(rendered.contains("2 attributed uploader(s)"));
 
     let log = store.load("dungeon", &id).expect("durable quest journal");
     assert_eq!(log.operations.len(), 2);
@@ -130,5 +130,5 @@ fn opaque_quest_reductions_land_atomically_and_survive_restart() {
     assert!(resumed[0].1.is_ok(), "{resumed:?}");
     let rendered = format!("{:?}", reopened.render("dungeon", &id).unwrap().0);
     assert!(rendered.contains("2/2 opaque reductions verified"));
-    assert!(rendered.contains("2 authenticated submitter(s)"));
+    assert!(rendered.contains("2 attributed uploader(s)"));
 }

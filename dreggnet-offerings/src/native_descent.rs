@@ -104,9 +104,16 @@ pub const NATIVE_DESCENT_PRIVATE_DEAL_DISCLOSURE: &str = "A Lean-authored Hiding
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeDescentMove {
     Delve,
-    Unlock { way: u64 },
+    Unlock {
+        way: u64,
+    },
     Smite,
-    Loot { relic: usize },
+    /// Stable relic identifier carried by records and surface adapters.
+    /// Conversion to the executor's target-sized collection index happens
+    /// only inside [`NativeDescentMove::execute`] and is checked.
+    Loot {
+        relic: u64,
+    },
     Flee,
 }
 
@@ -118,11 +125,13 @@ impl NativeDescentMove {
         match (action.turn.as_str(), action.arg) {
             (DELVE, 0) => Ok(Self::Delve),
             (UNLOCK, 2..=4) => Ok(Self::Unlock {
-                way: action.arg as u64,
+                way: u64::try_from(action.arg)
+                    .expect("the matched native unlock argument is non-negative"),
             }),
             (SMITE, 0) => Ok(Self::Smite),
             (LOOT, 0..=7) => Ok(Self::Loot {
-                relic: action.arg as usize,
+                relic: u64::try_from(action.arg)
+                    .expect("the matched native relic argument is non-negative"),
             }),
             (FLEE, 0) => Ok(Self::Flee),
             (verb, _) if matches!(verb, DELVE | UNLOCK | SMITE | LOOT | FLEE) => {
@@ -137,7 +146,14 @@ impl NativeDescentMove {
             Self::Delve => game.delve(),
             Self::Unlock { way } => game.unlock(way),
             Self::Smite => game.smite(),
-            Self::Loot { relic } => game.loot(relic),
+            Self::Loot { relic } => {
+                let relic = usize::try_from(relic).map_err(|_| {
+                    WorldError::Refused(
+                        "relic index exceeds the native executor address space".to_string(),
+                    )
+                })?;
+                game.loot(relic)
+            }
             Self::Flee => game.flee(),
         }
     }
@@ -156,7 +172,7 @@ impl NativeDescentMove {
             }
             Self::Loot { relic } => {
                 hasher.update(&[3]);
-                hasher.update(&(relic as u64).to_be_bytes());
+                hasher.update(&relic.to_be_bytes());
             }
             Self::Flee => {
                 hasher.update(&[4]);
@@ -194,7 +210,8 @@ pub struct NativeDescentCompletion {
     pub revision: u64,
     pub root: [u8; 32],
     pub settlement_receipt_hash: [u8; 32],
-    pub banked_relics: Vec<usize>,
+    /// Stable relic identifiers; never target-sized collection offsets.
+    pub banked_relics: Vec<u64>,
     pub crowned: bool,
 }
 
@@ -347,7 +364,7 @@ impl NativeDescentSession {
     }
 
     pub fn revision(&self) -> u64 {
-        self.events.len() as u64
+        u64::try_from(self.events.len()).expect("the fixed native journal bound fits u64")
     }
 
     pub fn root(&self) -> [u8; 32] {
@@ -528,6 +545,7 @@ impl NativeDescentOffering {
         if sim.fate != 0 {
             return Vec::new();
         }
+        let pack = sim.pack();
         let mut actions = vec![
             Action::new(
                 format!("Descend to floor {}", sim.depth + 1),
@@ -537,7 +555,15 @@ impl NativeDescentOffering {
             ),
             Action::new("Strike the guardian", SMITE, 0, sim.smite().is_ok()),
             Action::new(
-                "Bank the carried relics and leave",
+                if pack == 0 {
+                    "End the run with no relics banked".to_string()
+                } else {
+                    format!(
+                        "End the run and bank {} carried relic{}",
+                        pack,
+                        if pack == 1 { "" } else { "s" }
+                    )
+                },
                 FLEE,
                 0,
                 sim.flee().is_ok(),
@@ -547,7 +573,7 @@ impl NativeDescentOffering {
             Action::new(
                 format!("Exercise the key to way {way}"),
                 UNLOCK,
-                way as i64,
+                i64::try_from(way).expect("the fixed native way set fits the action wire"),
                 sim.unlock(way).is_ok(),
             )
         }));
@@ -555,10 +581,24 @@ impl NativeDescentOffering {
             Action::new(
                 relic_label(relic),
                 LOOT,
-                relic as i64,
+                i64::try_from(relic).expect("the fixed native relic set fits the action wire"),
                 sim.loot(relic).is_ok(),
             )
         }));
+        // Every frontend consumes this one list directly. Keep the complete action vocabulary —
+        // including disabled actions, whose real executor refusals are useful and intentional —
+        // but put the moves a player can take NOW before the locked catalogue. FLEE is a legal
+        // terminal move almost everywhere; ordering it after other enabled moves keeps newly won
+        // loot and newly exercisable keys above the irreversible exit on web, Discord, and the
+        // especially tall one-button-per-row Telegram keyboard.
+        //
+        // `sort_by_key` is stable, so actions within each band retain the authored verb/relic
+        // order. This is presentation only: action identities and executor admission are unchanged.
+        actions.sort_by_key(|action| match (action.enabled, action.turn.as_str()) {
+            (true, FLEE) => 1,
+            (true, _) => 0,
+            (false, _) => 2,
+        });
         actions
     }
 
@@ -792,9 +832,15 @@ impl Offering for NativeDescentOffering {
                         completion.banked_relics.len()
                     )),
                     ViewNode::Text(format!(
-                        "receipt {}",
-                        short_digest(completion.settlement_receipt_hash)
+                        "proof/share record: actor {} · root {} · receipt {}",
+                        completion.actor.as_str(),
+                        hex_digest(completion.root),
+                        hex_digest(completion.settlement_receipt_hash)
                     )),
+                    ViewNode::Text(
+                        "re-verify this exact record with this surface's verify control before forwarding it"
+                            .to_string(),
+                    ),
                 ],
             });
         }
@@ -1014,7 +1060,8 @@ fn replay_record(record: &NativeDescentRecord) -> Result<NativeDescentSession, S
     let mut derived_completion = None;
 
     for (index, expected) in record.events.iter().enumerate() {
-        let revision = (index + 1) as u64;
+        let revision = u64::try_from(index + 1)
+            .expect("the fixed native journal bound fits the revision wire");
         if expected.revision != revision {
             return Err(format!("event {revision} has a non-canonical revision"));
         }
@@ -1432,6 +1479,10 @@ fn apply_private_preference(
                 format!("{:?}", decision.ballot_root()),
             ),
             ("winner".to_string(), decision.winner().to_string()),
+            (
+                "plan".to_string(),
+                crate::dungeon::PRIVATE_PREFERENCE_OPTIONS[decision.winner()].to_string(),
+            ),
         ],
     })
 }
@@ -2053,11 +2104,15 @@ fn completion(
     sim: &Sim,
     receipt: &TurnReceipt,
 ) -> NativeDescentCompletion {
-    let banked_relics: Vec<usize> = sim
+    let banked_relics: Vec<u64> = sim
         .custody
         .iter()
         .enumerate()
-        .filter_map(|(relic, custody)| (*custody == BANKED).then_some(relic))
+        .filter_map(|(relic, custody)| {
+            (*custody == BANKED).then(|| {
+                u64::try_from(relic).expect("the fixed native relic set fits the stable wire")
+            })
+        })
         .collect();
     NativeDescentCompletion {
         actor: actor.clone(),
@@ -2098,11 +2153,6 @@ fn short_digest(digest: [u8; 32]) -> String {
         .collect()
 }
 
-#[cfg(any(
-    feature = "private-preference-operation",
-    feature = "private-raid-operation",
-    feature = "private-fair-shuffle-operation"
-))]
 fn hex_digest(digest: [u8; 32]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }

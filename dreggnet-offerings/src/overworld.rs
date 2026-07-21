@@ -716,7 +716,8 @@ impl OverworldOffering {
                     return Some(Action::new(
                         format!("Clear {} with staged completion", location.name),
                         OVERWORLD_CLEAR,
-                        index as i64,
+                        i64::try_from(index)
+                            .expect("the bounded region map fits the stable action wire"),
                         !session.is_cleared(&here) && staged,
                     ));
                 }
@@ -732,7 +733,8 @@ impl OverworldOffering {
                 Some(Action::new(
                     format!("Travel to {}", location.name),
                     OVERWORLD_TRAVEL,
-                    index as i64,
+                    i64::try_from(index)
+                        .expect("the bounded region map fits the stable action wire"),
                     enabled,
                 ))
             })

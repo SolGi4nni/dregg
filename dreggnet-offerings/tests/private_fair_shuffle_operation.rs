@@ -30,7 +30,7 @@ fn initiative_for(card: u8) -> usize {
 }
 
 #[test]
-fn hosted_dungeon_enforces_actor_bound_commit_prove_and_selective_reveal() {
+fn hosted_dungeon_keeps_claimant_free_shuffle_consequences_party_shared() {
     let offering = DungeonOffering::new();
     let mut session = offering
         .open(SessionConfig::with_seed(0xFA17))
@@ -78,20 +78,17 @@ fn hosted_dungeon_enforces_actor_bound_commit_prove_and_selective_reveal() {
         .expect("first commitment lands");
     let stolen_seat =
         encode_private_shuffle_commitment(1, prepared.participant_commitment(1).unwrap());
-    assert!(
-        offering
-            .invoke_binary_operation(
-                &mut session,
-                PRIVATE_SHUFFLE_COMMIT_OPERATION,
-                &stolen_seat,
-                actor(0),
-            )
-            .is_err(),
-        "one authenticated actor cannot occupy two participant slots"
-    );
-    assert!(session.private_fair_shuffle_table().commitments()[1].is_none());
+    offering
+        .invoke_binary_operation(
+            &mut session,
+            PRIVATE_SHUFFLE_COMMIT_OPERATION,
+            &stolen_seat,
+            actor(0),
+        )
+        .expect("uploader attribution cannot masquerade as a proved seat owner");
+    assert!(session.private_fair_shuffle_table().commitments()[1].is_some());
 
-    for participant in 1..PARTICIPANTS {
+    for participant in 2..PARTICIPANTS {
         let payload = encode_private_shuffle_commitment(
             participant as u8,
             prepared.participant_commitment(participant).unwrap(),
@@ -147,30 +144,14 @@ fn hosted_dungeon_enforces_actor_bound_commit_prove_and_selective_reveal() {
     );
 
     let opening = prepared.card_opening(6).unwrap().to_postcard().unwrap();
-    assert!(
-        offering
-            .invoke_binary_operation(
-                &mut session,
-                PRIVATE_SHUFFLE_REVEAL_OPERATION,
-                &opening,
-                actor(5),
-            )
-            .is_err(),
-        "a different authenticated seat cannot obtain the opening"
-    );
-    assert_eq!(
-        session.private_fair_shuffle_table().revealed_cards()[6],
-        None
-    );
-
     let revealed = offering
         .invoke_binary_operation(
             &mut session,
             PRIVATE_SHUFFLE_REVEAL_OPERATION,
             &opening,
-            actor(6),
+            actor(5),
         )
-        .expect("seat-owned opening lands");
+        .expect("a valid claimant-free opening lands regardless of who transports it");
     assert!(revealed.public_fields.iter().any(|(key, _)| key == "card"));
     let card = session.private_fair_shuffle_table().revealed_cards()[6].unwrap();
     let initiative = initiative_for(card);
@@ -179,6 +160,7 @@ fn hosted_dungeon_enforces_actor_bound_commit_prove_and_selective_reveal() {
     } else {
         KP_PRIVATE_SHUFFLE_EVEN_INITIATIVE
     };
+    let party_enactor = DreggIdentity("party-enactor-with-no-seat-claim".to_string());
     assert!(
         !offering
             .advance(
@@ -189,31 +171,20 @@ fn hosted_dungeon_enforces_actor_bound_commit_prove_and_selective_reveal() {
                     wrong_initiative as i64,
                     true,
                 ),
-                actor(6),
+                party_enactor.clone(),
             )
             .landed(),
         "the selectively opened card fixes which banner initiative may claim"
     );
     assert!(
-        !offering
-            .advance(
-                &mut session,
-                Action::new("steal initiative", TURN_CHOOSE, initiative as i64, true),
-                actor(5),
-            )
-            .landed(),
-        "another seat cannot spend the revealed card"
-    );
-    assert_eq!(session.read_var("relic_owner"), 0);
-
-    assert!(
         offering
             .advance(
                 &mut session,
                 Action::new("play fair initiative", TURN_CHOOSE, initiative as i64, true),
-                actor(6),
+                party_enactor,
             )
-            .landed()
+            .landed(),
+        "commit uploader, opening uploader, and enactor may differ without first-uploader theft"
     );
     assert_eq!(session.read_var("relic_owner"), 1 + (card % 2) as u64);
     assert_eq!(session.read_var("depth"), 1);

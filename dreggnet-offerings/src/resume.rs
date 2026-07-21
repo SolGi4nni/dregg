@@ -107,7 +107,8 @@ impl LoggedMove {
 /// landed turns without changing their legacy wire format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoggedBinaryOperation {
-    pub after_moves: usize,
+    /// Stable wire cursor into the ordinary-move timeline.
+    pub after_moves: u64,
     pub name: String,
     pub actor: DreggIdentity,
     pub payload_digest: [u8; 32],
@@ -783,7 +784,7 @@ fn decode_operation(fields: &[&str]) -> Option<LoggedBinaryOperation> {
         public_fields.push((unesc(pair[0]), unesc(pair[1])));
     }
     Some(LoggedBinaryOperation {
-        after_moves: fields[1].parse::<usize>().ok()?,
+        after_moves: fields[1].parse::<u64>().ok()?,
         name: unesc(fields[2]),
         actor: DreggIdentity(unesc(fields[3])),
         payload_digest: decode_hex32(fields[4])?,
@@ -953,7 +954,7 @@ mod file_store_tests {
         let replay_material = b"public proof material; no private witness".to_vec();
         let replay_digest = *blake3::hash(&replay_material).as_bytes();
         let operation = LoggedBinaryOperation {
-            after_moves: 3,
+            after_moves: u64::MAX,
             name: "settle.private.v1".to_string(),
             actor: DreggIdentity("worker-key".to_string()),
             payload_digest: replay_digest,

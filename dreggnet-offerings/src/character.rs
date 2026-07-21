@@ -423,11 +423,7 @@ impl<S: CharacterStore> AdventurerOffering<S> {
     pub fn advance(&self, session: &mut AdventureSession, input: Action) -> Outcome {
         // Capture the room + choice BEFORE the move (the dungeon advances past it on a land).
         let room = session.dungeon.current_passage_name();
-        let choice_index = if input.arg >= 0 {
-            Some(input.arg as usize)
-        } else {
-            None
-        };
+        let choice_index = usize::try_from(input.arg).ok();
 
         let out = self
             .dungeon
