@@ -7,7 +7,7 @@
 //! is a *renderer of that one tree*. So writing `render -> ViewNode` ONCE per feature lights up
 //! EVERY surface — the do-once path the frontend plan (`docs/FRONTEND-PLAN.md`) confirmed is ~80%
 //! of the work. [`dreggnet_market`](../dreggnet_market/index.html) was the only prior new-domain
-//! Offering; this crate adds four more, following that reference:
+//! Offering; this crate now adds nine, following that reference:
 //!
 //! * [`trade::TradeOffering`] — a **playable market #2** over [`dreggnet_trade`]: list a good, then
 //!   settle a real atomic **asset swap** (the seller's owned note crosses to the buyer for a
@@ -42,15 +42,19 @@
 //! * [`party::PartyOffering`] — a **playable roster + fork ballot** over [`dreggnet_party`]: a seat
 //!   acts in its role (a cross-role misplay is a real cap refusal) and the party resolves a fork via
 //!   `advance_collective` (a real quorum-certified signed ballot into the shared world).
+//! * [`quest::AshenmoorErrandOffering`] — a **playable faction-to-quest composition** over
+//!   [`dreggnet_faction`] + [`dreggnet_quest`]: one identity earns committed Ember standing,
+//!   passes its executor-gated trial, then completes the ordered errand. Both ledgers replay from
+//!   genesis, and every landed move commits the owning actor into that same world turn.
 //!
 //! ## Honest scope
 //!
 //! *Playable* Offerings (their `advance`/`advance_collective` fire real committed turns): trade,
-//! craft, companion, party — and, at one move each, inventory (**gift**) + guild (**admit**). Pure
+//! craft, companion, party, quest — and, at one move each, inventory (**gift**) + guild (**admit**). Pure
 //! *read-surfaces* (`advance` is a read-only refusal, `render` is the payload): cheevo (soulbound —
 //! nothing to write) and tavern (a read mirror + a `join` link-out to the live async node). The
 //! do-once reach is real: each `render` is a plain [`ViewNode`] tree, so the web one-line register
-//! ([`register_surfaces`]) AND the discord/telegram/wechat renderers inherit all eight with no
+//! ([`register_surfaces`]) AND the discord/telegram/wechat renderers inherit all nine with no
 //! per-surface code — proven by the cross-backend golden tests (`tests/golden_render.rs`) that walk
 //! each surface through the real `text`/`telegram`/`wechat`/`web` backends. NAMED NEXT (not built here): the
 //! discord command shells (the generic `/offering` adapter gives discord these for free once
@@ -66,6 +70,7 @@ pub mod craft;
 pub mod guild;
 pub mod inventory;
 pub mod party;
+pub mod quest;
 pub mod tavern;
 pub mod trade;
 pub mod world;
@@ -79,6 +84,7 @@ pub use craft::CraftOffering;
 pub use guild::GuildPage;
 pub use inventory::{InventoryItem, InventoryOffering};
 pub use party::PartyOffering;
+pub use quest::AshenmoorErrandOffering;
 pub use tavern::TavernOffering;
 pub use trade::TradeOffering;
 pub use world::{GameWorld, ItemRecord, Origin, SharedWorld};
@@ -144,10 +150,10 @@ pub(crate) fn short_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// **Register all eight surfaces on an [`OfferingHost`]** — the do-once web/discord/telegram reach.
+/// **Register all nine surfaces on an [`OfferingHost`]** — the do-once web/discord/telegram reach.
 ///
 /// This is the ONE call a frontend makes to mount trade + inventory + cheevo + guild + craft +
-/// companion + tavern + party alongside the market (it avoids editing `dreggnet-web`: the web's
+/// companion + quest + tavern + party alongside the market (it avoids editing `dreggnet-web`: the web's
 /// `catalog_default_host` calls this after registering the dungeon/council/market, and the generic
 /// `/offering` discord adapter + the telegram/wechat frontends reach them the same way — each
 /// renders the SAME `render->ViewNode`).
@@ -156,9 +162,10 @@ pub(crate) fn short_hex(bytes: &[u8]) -> String {
 /// [`dreggnet_asset::AssetWorld`], one item registry, one canonical player. So the demo IS the
 /// composition: forge a Greatblade on the craft surface and it is in your inventory and listable on
 /// your market stall, as the SAME note-cell (`dreggnet-saga`'s craft→trade handoff, in the shape
-/// live coexisting surfaces need — see [`world`]). The remaining five mount their own state:
-/// cheevo/guild/tavern are read-surfaces over other substrates, party has no asset ledger, and
-/// companion mints into its own `CompanionRoost` (the named next graduation).
+/// live coexisting surfaces need — see [`world`]). The remaining six mount their own state:
+/// cheevo/guild/tavern are read-surfaces over other substrates, party has no asset ledger,
+/// companion mints into its own `CompanionRoost`, and quest composes its own faction + errand
+/// cells (the named next graduation is a single cross-ledger witness).
 ///
 /// **Anonymous/demo only.** This mounts ONE world named for [`DEMO_PLAYER`], shared by every
 /// session on the host — right for a single-player demo host, and WRONG for any host serving more
@@ -173,7 +180,7 @@ pub fn register_surfaces(host: &mut OfferingHost) {
 /// identified viewer (a single-player demo host).
 pub const DEMO_PLAYER: &str = "Adventurer";
 
-/// **Register all eight surfaces on a world owned by `player`** — the per-identity mount.
+/// **Register all nine surfaces on a world owned by `player`** — the per-identity mount.
 ///
 /// Identical to [`register_surfaces`] except that the ONE [`SharedWorld`] carrying trade / craft /
 /// inventory is seeded for `player` (their bench, their shelf, their stock), so the shelf label
@@ -183,24 +190,24 @@ pub const DEMO_PLAYER: &str = "Adventurer";
 /// are mounted on two hosts, each with its own world, forge, ledger and registry. Give each viewer
 /// their own [`OfferingHost`] (as `dreggnet_catalog::PlayerWorlds` does, and as the Discord bot's
 /// `build_player_host` does) — mounting two `register_surfaces_for` calls on ONE host would simply
-/// have the second registration replace the first under the same eight keys.
+/// have the second registration replace the first under the same nine keys.
 pub fn register_surfaces_for(host: &mut OfferingHost, player: &str) {
     register_surfaces_in_world(host, SharedWorld::demo(player));
 }
 
-/// **Register the seven identity-owned surfaces for one player.** This is the production
-/// per-identity mount: trade, inventory, cheevos, guild, craft, companion, and tavern. `party` is
+/// **Register the eight identity-owned surfaces for one player.** This is the production
+/// per-identity mount: trade, inventory, cheevos, guild, craft, companion, quest, and tavern. `party` is
 /// deliberately absent because it is a shared multi-identity table; mounting it in one host per
 /// viewer would give every player a private lobby nobody else could join.
 ///
-/// [`register_surfaces_for`] remains the complete eight-surface demo registrar. Frontends that
+/// [`register_surfaces_for`] remains the complete nine-surface demo registrar. Frontends that
 /// split identity-owned worlds from shared games should use this narrower registrar for their
 /// player hosts and keep the globally registered [`PartyOffering`] on the shared catalog host.
 pub fn register_player_surfaces_for(host: &mut OfferingHost, player: &str) {
     register_player_surfaces_in_world(host, SharedWorld::demo(player));
 }
 
-/// **Register all eight surfaces onto a caller-supplied [`SharedWorld`]** — the primitive behind
+/// **Register all nine surfaces onto a caller-supplied [`SharedWorld`]** — the primitive behind
 /// [`register_surfaces`] and [`register_surfaces_for`], for a frontend that wants to seed the
 /// world itself (a different starting stock, a world it also reads directly).
 pub fn register_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
@@ -212,7 +219,7 @@ pub fn register_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
     );
 }
 
-/// Register only the seven surfaces whose state belongs to one identity. This is the primitive
+/// Register only the eight surfaces whose state belongs to one identity. This is the primitive
 /// behind [`register_player_surfaces_for`]; callers supplying their own world retain the same
 /// craft → inventory → trade composition without accidentally privatizing the party lobby.
 pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedWorld) {
@@ -247,6 +254,11 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
         CompanionOffering::demo(),
     );
     host.register(
+        quest::KEY,
+        quest::DESCRIPTION,
+        AshenmoorErrandOffering::new(),
+    );
+    host.register(
         "tavern",
         "Tavern — the shared hub: presence · the LFG board · the party roster",
         TavernOffering::demo("The Salted Tankard"),
@@ -255,7 +267,7 @@ pub fn register_player_surfaces_in_world(host: &mut OfferingHost, world: SharedW
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for the shared ViewNode vocab builders — the ONE place all eight surfaces compose
+    //! Unit tests for the shared ViewNode vocab builders — the ONE place all nine surfaces compose
     //! the tree, so a regression here is felt uniformly. Driven, not named.
     use super::*;
     use deos_view::ViewNode;
