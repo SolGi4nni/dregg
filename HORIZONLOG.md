@@ -10807,9 +10807,26 @@ standard native-torus LWE key switch, then reads back only the final LWE
 ciphertext. Its strict independent-tfhe-rs combined gate is **5/5**; at N=2048,
 GLWE size 2, full 2048-coordinate extracted input, and an 8-coordinate output,
 the retained-context GPU path measured **4.673ms warm** against **5.763ms CPU**
-(standalone warm median **6.474ms** against **13.377ms CPU**). Remaining are the
-full deployed 918-mask/918-output envelope, transform-form device chaining, and
-`FheUint32`/`fhe_clear` integration.
+(standalone warm median **6.474ms** against **13.377ms CPU**). The
+production-shaped prepared-plan gate now qualifies that full envelope's memory
+and addressing geometry without
+pretending sparse work is dense: all 918 mask slots, a 57.38 MiB BSK, the exact
+2048→918 key switch with a 57.44 MiB KSK, all 919 output coefficients, far-slot
+addressing, host-after-upload mutation isolation, and 917-vs-918 refusal. The
+strict hbox target is **2/2**; one-time plan/upload was **111.710ms**, first
+prepared execution **15.003ms**, and the warm median **5.897ms** against
+**10.008ms CPU**. Four distant CMUX slots are active; dense 918-step execution
+still requires transform-resident accumulator/BSK work, and the shortint/
+`FheUint32`/`fhe_clear` integration has not yet consumed this backend.
+
+`Dregg2.Circuit.TfhePbsRefinement` is now the Lean-first semantic authority for
+this boundary over the exact native `ZMod (2^64)` torus. It proves the
+degree-zero extraction's positive constant and negated reversed tail, standard
+subtractive key switching, fail-closed shape, and exact narrow and production
+BSK/KSK/output coefficient counts. The composed WGPU theorem deliberately
+requires an explicit external implementation-equality premise: the WGSL limb,
+buffer, and dispatch correspondence remains the next translation-validation
+proof rather than being smuggled into the arithmetic theorem.
 
 The faithful note-tree substrate is now Lean-authored and banked. Exact 32-byte
 commitments map injectively to sixteen canonical `u16`/BabyBear lanes, while

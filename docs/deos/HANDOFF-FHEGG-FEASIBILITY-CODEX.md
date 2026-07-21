@@ -98,7 +98,7 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
-| Portable encrypted TFHE PBS prefix | **GATED THROUGH EXTRACT + KEY SWITCH** | blind rotation, exact degree-zero sample extraction, and native-torus LWE key switch in one submission/readback; strict combined 5/5; retained-context warm 4.673ms GPU vs 5.763ms CPU; not full 918-mask/918-output or high-level integer integration |
+| Portable encrypted TFHE PBS | **FULL 918×918 SHAPE GATED; DENSE ROTATION OPEN** | reusable plan owns full 57.38 MiB BSK + 57.44 MiB KSK and all 919 outputs; strict 2/2, 5.897ms warm with four far-separated active CMUX slots; dense 918-step transform-resident execution and high-level integers remain |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE FINALIZED/ATTESTED CREATE AUTHORITY** | finalized record, receipt, nested NoteCreate leaves, authenticated root edge, exact eight-felt attestation, and cursors commit atomically; restart reconstructs/replays; NoteSpend membership + nullifier/root atomicity remain active |
@@ -758,12 +758,26 @@ post-key-switch LWE readback. The strict independent-tfhe-rs combined target
 passed **5/5**. At N=2048, GLWE size 2, full 2048-coordinate extracted input,
 and an 8-coordinate output, retained-context first execution was 57.652ms and
 the warm GPU path was **4.673ms vs 5.763ms CPU**; the standalone warm median was
-**6.474ms vs 13.377ms CPU**. The full deployed 918-mask/918-output envelope,
-transform-form device chaining, and high-level integer integration remain.
+**6.474ms vs 13.377ms CPU**. A production-shaped prepared plan now qualifies
+the full envelope's actual memory
+and addressing geometry: all 918 input-mask slots, a 57.38 MiB standard BSK,
+the exact 2048→918 standard key switch with a 57.44 MiB KSK, all 919 output
+coefficients, first/middle/last BSK addressing, far-slot mutation sensitivity,
+host-after-upload ownership, and 917-vs-918 refusal. The strict hbox target
+passed **2/2**; one-time plan/upload was **111.710ms**, first prepared execution
+**15.003ms**, and warm median **5.897ms** versus **10.008ms CPU**. Only four
+far-separated CMUX slots are active in this shape gate. It is not evidence for
+dense 918-step performance; transform-form accumulator/BSK residency remains
+the exact next cut, followed by high-level integer integration.
 
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
-execution. Frozen details live in `FHEGG-WGPU-VALIDATION-MATRIX.md`,
+execution. `Dregg2.Circuit.TfhePbsRefinement` now additionally fixes the exact
+native-torus GLWE/LWE semantics, degree-zero extraction signs, subtractive key
+switch, fail-closed shape, and narrow plus 918×918 production coefficient
+geometry. Its composed WGPU theorem requires an explicit external
+implementation-equality premise; WGSL buffers, limbs, and dispatch are not
+silently declared verified. Frozen details live in `FHEGG-WGPU-VALIDATION-MATRIX.md`,
 `HBOX-WGPU-QUALIFICATION-2026-07-21.md`, and
 `BULLETPROOFS-MSM-DISPATCH-INVENTORY.md`.
 
@@ -976,11 +990,12 @@ from first principles.
 - portable Ristretto verifier MSM — exact radix-16 Pippenger required-mode
   matrix **1/1 green** with dalek authority through 4096 terms; 4096-term GPU
   is 7.508s versus 9.918ms CPU and therefore disabled by default.
-- portable TFHE encrypted PBS prefix — exact coefficient/RNS-NTT and
+- portable TFHE encrypted PBS — exact coefficient/RNS-NTT and
   four-selector device-resident blind rotation combined strict GPU **4/4**,
-  then exact extraction/key-switch combined strict GPU **5/5**; warm retained
-  PBS-shaped path 4.673ms GPU vs 5.763ms CPU, not yet the full deployed
-  918-mask/918-output or high-level integer envelope.
+  exact extraction/key-switch combined strict GPU **5/5**, and full 918×918
+  prepared-key/buffer geometry **2/2**; production-shaped warm median 5.897ms
+  with four active CMUX slots. Dense 918-step transform residency and high-level
+  integers remain.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
