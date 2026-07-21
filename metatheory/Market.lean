@@ -36,6 +36,7 @@ import Market.InterchainCustody
 import Market.FhEggClearing
 import Market.DarkBazaarPrivateDescriptor
 import Market.DarkBazaarAttestation
+import Market.PrivateBookEncryptionBinding
 import Market.DarkAmmPrivateSwap
 import Market.DarkAmmPrivateReceipt
 import Market.DarkAmmPrivateDescriptor
