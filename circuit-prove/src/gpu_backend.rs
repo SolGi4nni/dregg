@@ -75,6 +75,14 @@
 //!   adapter is present; native-without-GPU and wasm keep the CPU recursion
 //!   path, while the browser async WGSL engine remains available via
 //!   [`init_gpu`].
+//! - The shielded `HidingFriPcs` now has a wire-identical GPU config too:
+//!   [`GpuHidingBabyBearMmcs`] appends the same four random salt felts per row
+//!   as upstream `MerkleTreeHidingMmcs`, then builds the Poseidon2-BabyBear
+//!   tree in the resident GPU engine. [`create_gpu_zk_config`] is the
+//!   OS-seeded production constructor; the hbox gate in
+//!   `tests/gpu_hidingfri_ir2_e2e.rs` proves a Lean-emitted IR2 statement,
+//!   requires actual completed GPU commits, byte-compares the CPU proof, and
+//!   re-verifies the GPU bytes under the untouched CPU HidingFRI verifier.
 
 // On wasm32 the sync-config GPU machinery is intentionally CPU-shelled (wgpu
 // handles are `!Send + !Sync` there), so the native-only imports and the
@@ -110,13 +118,14 @@ use p3_commit::{BatchOpening, BatchOpeningRef, ExtensionMmcs, Mmcs};
 use p3_dft::{Radix2DitParallel, TwoAdicSubgroupDft};
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField32, TwoAdicField};
-use p3_fri::{FriParameters, TwoAdicFriPcs};
+use p3_fri::{FriParameters, HidingFriPcs, TwoAdicFriPcs};
 use p3_lookup::Lookups;
 use p3_lookup::logup::LogUpGadget;
 use p3_matrix::Matrix;
 use p3_matrix::bitrev::{BitReversedMatrixView, BitReversibleMatrix};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_merkle_tree::{MerkleTreeError, MerkleTreeMmcs};
+use p3_matrix::stack::HorizontalPair;
+use p3_merkle_tree::{MerkleTreeError, MerkleTreeHidingMmcs, MerkleTreeMmcs};
 use p3_recursion::traits::RecursiveAir;
 use p3_recursion::{
     AggExposeHook, BatchOnly, NextLayerExposeHook, PcsRecursionBackend, ProveNextLayerParams,
@@ -125,6 +134,8 @@ use p3_recursion::{
 };
 use p3_symmetric::{MerkleCap, PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{StarkConfig, StarkGenericConfig};
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
 use rayon::prelude::*;
 
 use crate::apex_shrink::default_shrink_packing;
@@ -169,6 +180,13 @@ fn bb_powmod(mut b: u64, mut e: u64) -> u64 {
 /// (monty-31/src/monty_31.rs) — reinterpret slices directly.
 fn bb_as_u32s(v: &[BabyBear]) -> &[u32] {
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u32, v.len()) }
+}
+
+#[inline]
+fn bb_raw(v: BabyBear) -> u32 {
+    // Same representation contract as `bb_as_u32s`, for non-contiguous matrix
+    // views (notably the HidingFRI `[row | salt]` HorizontalPair).
+    unsafe { std::mem::transmute::<BabyBear, u32>(v) }
 }
 
 /// All GPU outputs are reduced (< P): the kernels keep the Montgomery
@@ -302,6 +320,11 @@ fn shared_gpu() -> Option<&'static SharedGpu> {
 // wasm, so the registry itself is native-only).
 static LDE_RESIDENT_HITS: AtomicU64 = AtomicU64::new(0);
 static LDE_RESIDENT_MISSES: AtomicU64 = AtomicU64::new(0);
+/// Successful native `GpuDft` dispatches (DFT and coset-LDE combined).
+static GPU_DFT_DISPATCHES: AtomicU64 = AtomicU64::new(0);
+/// Successful native Poseidon2-BabyBear Merkle commits.  This is the tree
+/// engine shared by the recursion PCS and the salted HidingFRI PCS below.
+static GPU_BABYBEAR_MMCS_COMMITS: AtomicU64 = AtomicU64::new(0);
 
 /// (hits, misses) of the device-resident LDE hand-off across the process —
 /// a hit is one leaf-arena upload replaced by a device→device blit.
@@ -310,6 +333,25 @@ pub fn lde_residency_counters() -> (u64, u64) {
         LDE_RESIDENT_HITS.load(Ordering::Relaxed),
         LDE_RESIDENT_MISSES.load(Ordering::Relaxed),
     )
+}
+
+/// Auditable GPU work counters for a HidingFRI proving interval.
+///
+/// The counters are deliberately about completed dispatch paths, not adapter
+/// discovery.  A strict proving gate snapshots these before a proof and checks
+/// that the BabyBear Merkle count increased; merely having a Vulkan adapter is
+/// not evidence that a HidingFRI proof used it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HidingGpuDispatchCounters {
+    pub dft_dispatches: u64,
+    pub babybear_merkle_commits: u64,
+}
+
+pub fn hiding_gpu_dispatch_counters() -> HidingGpuDispatchCounters {
+    HidingGpuDispatchCounters {
+        dft_dispatches: GPU_DFT_DISPATCHES.load(Ordering::Relaxed),
+        babybear_merkle_commits: GPU_BABYBEAR_MMCS_COMMITS.load(Ordering::Relaxed),
+    }
 }
 
 /// On wasm the resident-LDE registry does not exist (wgpu buffers are `!Send`);
@@ -378,6 +420,24 @@ fn gpu_runtime_stage_enabled(var: &str) -> bool {
             .to_ascii_lowercase()
             .as_str(),
         "off" | "false" | "0" | "cpu"
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn gpu_runtime_stage_enabled(_var: &str) -> bool {
+    // The synchronous config is intentionally a CPU shell in the browser;
+    // browser WebGPU is reached through the async `init_gpu` surface below.
+    false
+}
+
+fn wgpu_required() -> bool {
+    matches!(
+        std::env::var("DREGG_REQUIRE_WGPU")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "required" | "on"
     )
 }
 
@@ -1279,6 +1339,7 @@ impl TwoAdicSubgroupDft<BabyBear> for GpuDft {
             };
             let mut ctx = gm.lock().unwrap();
             let (out, _) = self.gpu_flow(&mut ctx, &mat, 0, BabyBear::ONE, false, false);
+            GPU_DFT_DISPATCHES.fetch_add(1, Ordering::Relaxed);
             RowMajorMatrix::new(u32s_into_bb(out), mat.width()).bit_reverse_rows()
         }
     }
@@ -1308,6 +1369,7 @@ impl TwoAdicSubgroupDft<BabyBear> for GpuDft {
             let mut ctx = gm.lock().unwrap();
             let (out, retained) =
                 self.gpu_flow(&mut ctx, &mat, added_bits as u32, shift, true, true);
+            GPU_DFT_DISPATCHES.fetch_add(1, Ordering::Relaxed);
             drop(ctx);
             let values = u32s_into_bb(out);
             // Park the device copy for the commit that follows in the PCS flow
@@ -3395,8 +3457,10 @@ impl GpuBabyBearMmcs {
                         } else {
                             let mut staging = vec![0u32; rows * w];
                             staging.par_chunks_mut(w).enumerate().for_each(|(r, dst)| {
-                                let row = m.row_slice(base_row + r).expect("row in range");
-                                dst.copy_from_slice(bb_as_u32s(&row));
+                                let row = m.row(base_row + r).expect("row in range");
+                                for (slot, value) in dst.iter_mut().zip(row) {
+                                    *slot = bb_raw(value);
+                                }
                             });
                             ctx.write_u32s_chunked(&arena, off, &staging);
                         }
@@ -3486,6 +3550,8 @@ impl Mmcs<BabyBear> for GpuBabyBearMmcs {
                 .iter()
                 .all(|&(h, w)| h.is_power_of_two() && h > 0 && w > 0)
             && Self::estimate_perms(&shapes) >= MIN_GPU_MMCS_PERMS;
+        #[cfg(not(target_arch = "wasm32"))]
+        let gpu_able = gpu_able && gpu_runtime_stage_enabled("DREGG_GPU_BABYBEAR_MMCS");
         // Native-only GPU fast-path (wgpu handles); wasm is the CPU shell.
         #[cfg(not(target_arch = "wasm32"))]
         if gpu_able && let Some(gm) = self.gpu() {
@@ -3500,6 +3566,7 @@ impl Mmcs<BabyBear> for GpuBabyBearMmcs {
                 let tree = self.build_gpu_tree(&ctx, inputs);
                 let root = tree.digest_layers.last().expect("non-empty tree")[0];
                 let commitment = MerkleCap::new(vec![bb8_from_monty(&root)]);
+                GPU_BABYBEAR_MMCS_COMMITS.fetch_add(1, Ordering::Relaxed);
                 clear_thread_resident_ldes();
                 return (commitment, GpuBbMmcsProverData::Gpu(tree));
             }
@@ -3579,6 +3646,297 @@ impl Mmcs<BabyBear> for GpuBabyBearMmcs {
             BatchOpeningRef::new(opened_values, opening_proof),
         )
     }
+}
+
+// ============================================================================
+// SEAM 4 — the shielded PCS: salted HidingFRI Merkle commitments on GPU
+//
+// `HidingFriPcs` does not change the DFT seam, but it requires a hiding MMCS:
+// every committed row is hashed as `[row | salt4]`, and every opening carries
+// those four salts.  Upstream `MerkleTreeHidingMmcs` is a thin salting wrapper
+// over `MerkleTreeMmcs`; this is the exact same wrapper over
+// `GpuBabyBearMmcs`.  Consequently the commitment and opening-proof types are
+// identical to the CPU HidingFRI config, while eligible Poseidon2 leaf/internal
+// tree work stays in the portable wgpu engine through the root.
+// ============================================================================
+
+const HIDING_SALT_ELEMS: usize = 4;
+
+type CpuHidingValMmcs = MerkleTreeHidingMmcs<
+    <BabyBear as Field>::Packing,
+    <BabyBear as Field>::Packing,
+    BbHash,
+    BbCompress,
+    SmallRng,
+    2,
+    8,
+    HIDING_SALT_ELEMS,
+>;
+
+type GpuHidingProverData<M> =
+    <GpuBabyBearMmcs as Mmcs<BabyBear>>::ProverData<HorizontalPair<M, RowMajorMatrix<BabyBear>>>;
+
+/// Salted-leaf MMCS for the production HidingFRI wire shape, backed by the
+/// portable Poseidon2-BabyBear GPU tree builder.
+pub struct GpuHidingBabyBearMmcs {
+    inner: GpuBabyBearMmcs,
+    rng: Mutex<SmallRng>,
+}
+
+impl Clone for GpuHidingBabyBearMmcs {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            rng: Mutex::new(self.rng.lock().unwrap().clone()),
+        }
+    }
+}
+
+impl GpuHidingBabyBearMmcs {
+    pub fn new(cap_height: usize, rng: SmallRng) -> Self {
+        Self {
+            inner: GpuBabyBearMmcs::new(cap_height),
+            rng: Mutex::new(rng),
+        }
+    }
+
+    pub fn adapter_available(&self) -> bool {
+        self.inner.adapter_available()
+    }
+}
+
+impl Mmcs<BabyBear> for GpuHidingBabyBearMmcs {
+    type ProverData<M> = GpuHidingProverData<M>;
+    type Commitment = <CpuHidingValMmcs as Mmcs<BabyBear>>::Commitment;
+    type Proof = <CpuHidingValMmcs as Mmcs<BabyBear>>::Proof;
+    type Error = MerkleTreeError;
+
+    fn commit<M: Matrix<BabyBear>>(
+        &self,
+        inputs: Vec<M>,
+    ) -> (Self::Commitment, Self::ProverData<M>) {
+        let mut rng = self.rng.lock().unwrap();
+        let salted = inputs
+            .into_iter()
+            .map(|matrix| {
+                let salts = RowMajorMatrix::rand(&mut *rng, matrix.height(), HIDING_SALT_ELEMS);
+                HorizontalPair::new(matrix, salts)
+            })
+            .collect();
+        self.inner.commit(salted)
+    }
+
+    fn open_batch<M: Matrix<BabyBear>>(
+        &self,
+        index: usize,
+        prover_data: &Self::ProverData<M>,
+    ) -> BatchOpening<BabyBear, Self> {
+        let (salted_openings, siblings) = self.inner.open_batch(index, prover_data).unpack();
+        let (openings, salts) = salted_openings
+            .into_iter()
+            .map(|row| {
+                let split = row.len() - HIDING_SALT_ELEMS;
+                (row[..split].to_vec(), row[split..].to_vec())
+            })
+            .unzip();
+        BatchOpening::new(openings, (salts, siblings))
+    }
+
+    fn get_matrices<'a, M: Matrix<BabyBear>>(
+        &self,
+        prover_data: &'a Self::ProverData<M>,
+    ) -> Vec<&'a M> {
+        self.inner
+            .get_matrices(prover_data)
+            .into_iter()
+            .map(|pair| &pair.left)
+            .collect()
+    }
+
+    fn verify_batch(
+        &self,
+        commit: &Self::Commitment,
+        dimensions: &[p3_matrix::Dimensions],
+        index: usize,
+        batch_proof: BatchOpeningRef<'_, BabyBear, Self>,
+    ) -> Result<(), Self::Error> {
+        let (opened_values, (salts, siblings)) = batch_proof.unpack();
+        if opened_values.len() != salts.len() {
+            return Err(MerkleTreeError::WrongBatchSize);
+        }
+        let opened_salted_values = opened_values
+            .iter()
+            .zip(salts)
+            .map(|(opened, salt)| opened.iter().chain(salt).copied().collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        self.inner.verify_batch(
+            commit,
+            dimensions,
+            index,
+            BatchOpeningRef::new(&opened_salted_values, siblings),
+        )
+    }
+}
+
+/// HidingFRI challenge MMCS: extension rows are flattened and then salted by
+/// the same GPU hiding MMCS.
+pub type GpuHidingChallengeMmcs = ExtensionMmcs<BabyBear, EF, GpuHidingBabyBearMmcs>;
+pub type GpuHidingPcs =
+    HidingFriPcs<BabyBear, GpuDft, GpuHidingBabyBearMmcs, GpuHidingChallengeMmcs, SmallRng>;
+pub type GpuHidingChallenger = DuplexChallenger<BabyBear, BbPerm, 16, 8>;
+pub type GpuDreggZkConfig = StarkConfig<GpuHidingPcs, EF, GpuHidingChallenger>;
+
+fn seed_rng(seed: [u8; 32]) -> SmallRng {
+    SmallRng::from_seed(seed)
+}
+
+fn os_seed() -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).expect("getrandom failed seeding GPU HidingFRI RNG");
+    seed
+}
+
+fn enforce_required_gpu_hiding_boundary() {
+    if !wgpu_required() {
+        return;
+    }
+    assert!(
+        gpu_runtime_stage_enabled("DREGG_GPU_BABYBEAR_MMCS"),
+        "DREGG_REQUIRE_WGPU=1 but DREGG_GPU_BABYBEAR_MMCS disables the HidingFRI Merkle stage"
+    );
+    assert!(
+        GpuHidingBabyBearMmcs::new(0, seed_rng([0x47; 32])).adapter_available(),
+        "DREGG_REQUIRE_WGPU=1 but no portable wgpu adapter is available for HidingFRI"
+    );
+}
+
+fn hiding_fri_params<M: Clone>(mmcs: M) -> FriParameters<M> {
+    use dregg_circuit::stark_zk::{
+        ZK_FRI_LOG_BLOWUP, ZK_FRI_LOG_FINAL_POLY_LEN, ZK_FRI_MAX_LOG_ARITY, ZK_FRI_NUM_QUERIES,
+        ZK_FRI_QUERY_POW_BITS,
+    };
+    FriParameters {
+        log_blowup: ZK_FRI_LOG_BLOWUP,
+        log_final_poly_len: ZK_FRI_LOG_FINAL_POLY_LEN,
+        max_log_arity: ZK_FRI_MAX_LOG_ARITY,
+        num_queries: ZK_FRI_NUM_QUERIES,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: ZK_FRI_QUERY_POW_BITS,
+        mmcs,
+    }
+}
+
+/// Deterministic builder used only for GPU/CPU byte-parity gates.  Production
+/// callers must use [`create_gpu_zk_config`], which draws fresh OS entropy.
+#[doc(hidden)]
+pub fn create_gpu_zk_config_seeded(mmcs_seed: [u8; 32], pcs_seed: [u8; 32]) -> GpuDreggZkConfig {
+    enforce_required_gpu_hiding_boundary();
+    let perm = default_babybear_poseidon2_16();
+    let val_mmcs = GpuHidingBabyBearMmcs::new(0, seed_rng(mmcs_seed));
+    let challenge_mmcs = GpuHidingChallengeMmcs::new(val_mmcs.clone());
+    let pcs = GpuHidingPcs::new(
+        GpuDft::default(),
+        val_mmcs,
+        hiding_fri_params(challenge_mmcs),
+        4,
+        seed_rng(pcs_seed),
+    );
+    StarkConfig::new(pcs, GpuHidingChallenger::new(perm))
+}
+
+/// Production HidingFRI config with fresh salts, trace/random-codeword
+/// blinding, portable GPU DFT, and salted Poseidon2 GPU Merkle commitments.
+pub fn create_gpu_zk_config() -> GpuDreggZkConfig {
+    create_gpu_zk_config_seeded(os_seed(), os_seed())
+}
+
+/// Mint a shielded Lean-emitted IR2 proof through the portable GPU config and
+/// return it in the existing CPU HidingFRI wire type.
+///
+/// This is the drop-in producer seam for Dark Bazaar/game proofs: callers do
+/// not need to change their receipt or verifier type.  The proof is re-tagged
+/// only after serialization (the associated commitment/opening types are
+/// byte-identical) and is then checked by the untouched CPU HidingFRI verifier
+/// before return.  With `DREGG_REQUIRE_WGPU=1`, an all-CPU fallback is an error.
+pub fn prove_vm_descriptor2_gpu_zk(
+    descriptor: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+    base_trace: &[Vec<dregg_circuit::field::BabyBear>],
+    public_inputs: &[dregg_circuit::field::BabyBear],
+    mem_boundary: &dregg_circuit::descriptor_ir2::MemBoundaryWitness,
+    map_heaps: &[Vec<dregg_circuit::heap_root::HeapLeaf>],
+    umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::stark_zk::DreggZkStarkConfig>,
+    String,
+> {
+    let config = create_gpu_zk_config();
+    let before = hiding_gpu_dispatch_counters();
+    let proof = dregg_circuit::descriptor_ir2::prove_vm_descriptor2_for_config(
+        descriptor,
+        base_trace,
+        public_inputs,
+        mem_boundary,
+        map_heaps,
+        umem_boundary,
+        &config,
+    )?;
+    if wgpu_required() {
+        require_hiding_gpu_dispatch_since(before)?;
+    }
+
+    let encoded = postcard::to_allocvec(&proof)
+        .map_err(|error| format!("GPU HidingFRI proof encode failed: {error}"))?;
+    let cpu_proof = postcard::from_bytes(&encoded)
+        .map_err(|error| format!("GPU HidingFRI proof CPU re-tag failed: {error}"))?;
+    let cpu_config = dregg_circuit::stark_zk::create_zk_config();
+    dregg_circuit::descriptor_ir2::verify_vm_descriptor2_with_config(
+        descriptor,
+        &cpu_proof,
+        public_inputs,
+        &cpu_config,
+    )?;
+    Ok(cpu_proof)
+}
+
+/// CPU twin with caller-pinned seeds, solely for byte-identity tests and CPU
+/// verifier re-tagging.  It is the concrete type returned by
+/// `dregg_circuit::stark_zk::create_zk_config`.
+#[doc(hidden)]
+pub fn create_cpu_zk_config_seeded(
+    mmcs_seed: [u8; 32],
+    pcs_seed: [u8; 32],
+) -> dregg_circuit::stark_zk::DreggZkStarkConfig {
+    let perm = default_babybear_poseidon2_16();
+    let hash = BbHash::new(perm.clone());
+    let compress = BbCompress::new(perm.clone());
+    let val_mmcs = CpuHidingValMmcs::new(hash, compress, 0, seed_rng(mmcs_seed));
+    let challenge_mmcs = ExtensionMmcs::<BabyBear, EF, CpuHidingValMmcs>::new(val_mmcs.clone());
+    let pcs = HidingFriPcs::new(
+        Radix2DitParallel::default(),
+        val_mmcs,
+        hiding_fri_params(challenge_mmcs),
+        4,
+        seed_rng(pcs_seed),
+    );
+    StarkConfig::new(pcs, DuplexChallenger::new(perm))
+}
+
+/// Close a strict proof interval: at least one salted Poseidon2 Merkle commit
+/// must have completed on GPU.  This turns silent shape/adapter fallback into
+/// a hard error when `DREGG_REQUIRE_WGPU=1`.
+pub fn require_hiding_gpu_dispatch_since(
+    before: HidingGpuDispatchCounters,
+) -> Result<HidingGpuDispatchCounters, String> {
+    if !wgpu_required() {
+        return Err("strict HidingFRI GPU audit requires DREGG_REQUIRE_WGPU=1".to_string());
+    }
+    let after = hiding_gpu_dispatch_counters();
+    if after.babybear_merkle_commits <= before.babybear_merkle_commits {
+        return Err(
+            "HidingFRI proof completed without a portable GPU Poseidon2 Merkle commit".to_string(),
+        );
+    }
+    Ok(after)
 }
 
 // ============================================================================
