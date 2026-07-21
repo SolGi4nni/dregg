@@ -62,7 +62,7 @@ fn two_agents_interleave_without_cross_linking_their_causal_chains() {
     // immutable total log.
     let log = clerk.receipt_log().to_vec();
     let mut restored = common::cclerk_from_label("restored-interleaved-node-log");
-    assert_eq!(restored.restore_receipt_chain(log), 4);
+    assert_eq!(restored.restore_receipt_chain(log).unwrap(), 4);
     assert_eq!(
         restored.agent_receipt_head_hash(&alice),
         Some(alice_2.receipt_hash())
@@ -130,6 +130,7 @@ fn append_preserves_signed_bytes_hash_and_executor_signature() {
             .lock()
             .unwrap()
             .push((index, postcard::to_allocvec(receipt).unwrap()));
+        Ok(())
     }));
 
     let alice_1 = signed(
@@ -176,5 +177,97 @@ fn append_preserves_signed_bytes_hash_and_executor_signature() {
         durable.lock().unwrap()[2],
         (2, alice_2_wire),
         "the persisted global-log entry is byte-identical to the signed receipt"
+    );
+}
+
+#[test]
+fn persistence_failure_leaves_every_in_memory_head_unchanged() {
+    let mut clerk = common::cclerk_from_label("fail-closed-durable-append");
+    let alice = clerk.cell_id("alice");
+    clerk.set_receipt_persist(std::sync::Arc::new(|_, _| {
+        Err("injected durable write failure".to_owned())
+    }));
+
+    let error = clerk
+        .append_receipt(common::mock_receipt(alice, [0x10; 32], [0x11; 32]))
+        .expect_err("a failed durable write must refuse the visible append");
+    assert_eq!(
+        error,
+        ChainAppendError::ReceiptPersistenceFailed {
+            message: "injected durable write failure".to_owned(),
+        }
+    );
+    assert_eq!(clerk.receipt_log_length(), 0);
+    assert_eq!(clerk.agent_receipt_count(&alice), 0);
+    assert_eq!(clerk.agent_receipt_head_hash(&alice), None);
+}
+
+#[test]
+fn already_durable_append_bypasses_sink_but_rechecks_index_and_link() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut clerk = common::cclerk_from_label("already-durable-append");
+    let alice = clerk.cell_id("alice");
+    let sink_calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let observed = sink_calls.clone();
+    clerk.set_receipt_persist(std::sync::Arc::new(move |_, _| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }));
+
+    let alice_1 = common::mock_receipt(alice, [0x10; 32], [0x11; 32]);
+    clerk
+        .append_receipt_already_durable(0, alice_1.clone())
+        .expect("the transaction already persisted index zero");
+    assert_eq!(sink_calls.load(Ordering::SeqCst), 0);
+
+    let wrong_index =
+        common::mock_receipt_with_prev(alice, [0x11; 32], [0x12; 32], Some(alice_1.receipt_hash()));
+    assert_eq!(
+        clerk
+            .append_receipt_already_durable(7, wrong_index)
+            .expect_err("a durable gap cannot become visible"),
+        ChainAppendError::ReceiptLogIndexMismatch {
+            expected: 1,
+            got: 7,
+        }
+    );
+
+    let wrong_link =
+        common::mock_receipt_with_prev(alice, [0x11; 32], [0x12; 32], Some([0xEE; 32]));
+    assert!(matches!(
+        clerk.append_receipt_already_durable(1, wrong_link),
+        Err(ChainAppendError::ReceiptChainMismatch { .. })
+    ));
+    assert_eq!(clerk.receipt_log_length(), 1);
+    assert_eq!(sink_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn corrupt_restored_tail_is_an_error_not_an_accepted_prefix() {
+    let mut source = common::cclerk_from_label("restore-source");
+    let alice = source.cell_id("alice");
+    let alice_1 = common::mock_receipt(alice, [0x10; 32], [0x11; 32]);
+    source.append_receipt(alice_1.clone()).unwrap();
+    let alice_2 =
+        common::mock_receipt_with_prev(alice, [0x11; 32], [0x12; 32], Some(alice_1.receipt_hash()));
+
+    let mut restored = common::cclerk_from_label("restore-destination");
+    let existing_agent = restored.cell_id("existing");
+    let existing = common::mock_receipt(existing_agent, [0x30; 32], [0x31; 32]);
+    restored.append_receipt(existing.clone()).unwrap();
+
+    let mut corrupt_tail = alice_2;
+    corrupt_tail.previous_receipt_hash = Some([0xFF; 32]);
+    assert!(matches!(
+        restored.restore_receipt_chain(vec![alice_1, corrupt_tail]),
+        Err(ChainAppendError::ReceiptChainMismatch { .. })
+    ));
+
+    assert_eq!(restored.receipt_log_length(), 1);
+    assert_eq!(
+        postcard::to_allocvec(&restored.receipt_log()[0]).unwrap(),
+        postcard::to_allocvec(&existing).unwrap(),
+        "restore is all-or-error; it must not install the valid prefix or erase the prior log"
     );
 }

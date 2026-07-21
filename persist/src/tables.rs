@@ -121,6 +121,22 @@ pub const BLOCKLACE_EXECUTED_IDS_KEY: &str = "executed_block_ids";
 pub const WITNESSED_RECEIPTS: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("witnessed_receipts");
 
+/// Durable receipt chain — the node cipherclerk's per-turn `TurnReceipt` log, the
+/// exact sequence `/api/receipts*` and the receipt-index MMR are served from.
+///
+/// Key: dense chain index (0-based ordinal, the receipt's position in the
+/// cipherclerk chain). Value: caller-serialized `TurnReceipt` bytes. Byte-oriented
+/// (like [`WITNESSED_RECEIPTS`]) so this crate stays independent of `dregg-turn`.
+///
+/// The in-memory `receipt_chain` used to be rebuilt EMPTY every boot, so
+/// `/api/receipts/index/head` served `len = 0` after a restart even though the
+/// ledger recovered. Persisting each appended receipt here — reloaded into the
+/// cipherclerk on boot — makes the receipt chain + MMR head durable across a
+/// restart, riding the same redb discipline as the ledger. Load requires the
+/// complete dense sequence from index 0; any gap is an integrity error, never an
+/// excuse to silently roll the accepted head back to a prefix.
+pub const RECEIPT_CHAIN: TableDefinition<u64, &[u8]> = TableDefinition::new("receipt_chain");
+
 // ─── Durable Commit Log + Index (crash-consistency) ─────────────────────────
 //
 // The commit log is the authoritative, append-only record of finalized turns

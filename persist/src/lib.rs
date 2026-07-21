@@ -45,7 +45,7 @@ mod tests;
 
 use std::path::Path;
 
-use redb::{Database, ReadableTable};
+use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub use blocklace_store::BlocklaceMeta;
 pub use commit_log::{CellOverlayOp, CommitRecord, IndexAuditReport};
@@ -233,6 +233,8 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::BLOCKLACE_META)?;
             // Node witness artifact tables.
             let _ = write_txn.open_table(tables::WITNESSED_RECEIPTS)?;
+            // Durable receipt chain (the served /api/receipts* log + MMR source).
+            let _ = write_txn.open_table(tables::RECEIPT_CHAIN)?;
             // Durable commit log + index tables (crash-consistency).
             let _ = write_txn.open_table(tables::COMMIT_LOG)?;
             let _ = write_txn.open_table(tables::IDX_RECEIPT_BY_HASH)?;
@@ -303,6 +305,132 @@ impl PersistentStore {
             out.push((*key.value(), value.value().to_vec()));
         }
         Ok(out)
+    }
+
+    // =========================================================================
+    // Durable receipt chain (the served /api/receipts* log + MMR source)
+    // =========================================================================
+
+    /// Durably append the caller-serialized `TurnReceipt` at its dense chain
+    /// index. An existing byte-identical entry is an idempotent success; an
+    /// overwrite, gap, or pre-existing gap is an integrity error.
+    pub fn append_receipt_chain_entry(&self, index: u64, encoded: &[u8]) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        Self::write_receipt_chain_entry_in(&write_txn, index, encoded, true)?;
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Validate and optionally append one receipt-log entry inside a caller-owned
+    /// write transaction. `allow_insert = false` is the idempotent-replay check:
+    /// the exact bytes must already exist at `index`.
+    pub(crate) fn write_receipt_chain_entry_in(
+        write_txn: &redb::WriteTransaction,
+        index: u64,
+        encoded: &[u8],
+        allow_insert: bool,
+    ) -> Result<()> {
+        let mut table = write_txn.open_table(tables::RECEIPT_CHAIN)?;
+        // For a u64-keyed table, `len = n` and `max_key = n - 1` implies the
+        // key set is exactly 0..n: there are n distinct non-negative integers
+        // and only n available positions below that maximum. This is the same
+        // density proof as a full scan, without turning every append into O(n).
+        let expected = {
+            let count = table.len()?;
+            match (count, table.last()?) {
+                (0, None) => 0,
+                (0, Some((key, _))) => {
+                    return Err(StoreError::Integrity(format!(
+                        "receipt log has key {} but reports zero entries",
+                        key.value()
+                    )));
+                }
+                (count, Some((key, _))) if key.value() == count - 1 => count,
+                (count, Some((key, _))) => {
+                    return Err(StoreError::Integrity(format!(
+                        "receipt log is not dense: {count} entries but highest index is {}",
+                        key.value()
+                    )));
+                }
+                (count, None) => {
+                    return Err(StoreError::Integrity(format!(
+                        "receipt log reports {count} entries but has no last key"
+                    )));
+                }
+            }
+        };
+
+        if index < expected {
+            let existing = table.get(index)?.ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "receipt log index {index} is below length {expected} but missing"
+                ))
+            })?;
+            if existing.value() != encoded {
+                return Err(StoreError::Integrity(format!(
+                    "receipt log index {index} already contains different bytes"
+                )));
+            }
+            return Ok(());
+        }
+        if index != expected {
+            return Err(StoreError::Integrity(format!(
+                "receipt log append would create a gap: next index {expected}, supplied {index}"
+            )));
+        }
+        if !allow_insert {
+            return Err(StoreError::Integrity(format!(
+                "finalized-turn replay is missing durable receipt log index {index}"
+            )));
+        }
+        table.insert(index, encoded)?;
+        Ok(())
+    }
+
+    /// Load the complete durable receipt chain. Any non-dense key is an integrity
+    /// error: boot must not turn a corrupt tail into an accepted rollback to an
+    /// earlier receipt head.
+    pub fn load_receipt_chain(&self) -> Result<Vec<Vec<u8>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::RECEIPT_CHAIN)?;
+        let mut out = Vec::new();
+        let mut expected: u64 = 0;
+        for entry in table.iter()? {
+            let (key, value) =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            if key.value() != expected {
+                return Err(StoreError::Integrity(format!(
+                    "receipt log gap: expected index {expected}, found {}",
+                    key.value()
+                )));
+            }
+            out.push(value.value().to_vec());
+            expected += 1;
+        }
+        Ok(out)
+    }
+
+    /// Length of the durable receipt chain. A gap is an integrity error, not a
+    /// shorter accepted history.
+    pub fn receipt_chain_len(&self) -> Result<u64> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::RECEIPT_CHAIN)?;
+        let count = table.len()?;
+        match (count, table.last()?) {
+            (0, None) => Ok(0),
+            (0, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "receipt log has key {} but reports zero entries",
+                key.value()
+            ))),
+            (count, Some((key, _))) if key.value() == count - 1 => Ok(count),
+            (count, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "receipt log is not dense: {count} entries but highest index is {}",
+                key.value()
+            ))),
+            (count, None) => Err(StoreError::Integrity(format!(
+                "receipt log reports {count} entries but has no last key"
+            ))),
+        }
     }
 
     // =========================================================================

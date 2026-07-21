@@ -377,7 +377,33 @@ impl PersistentStore {
         record: &CommitRecord,
         note_commitments: &[[u8; 32]],
     ) -> Result<CommitOutcome> {
-        self.commit_finalized_turn_welded(expected_ordinal, record, &[], note_commitments)
+        self.commit_finalized_turn_welded(expected_ordinal, record, &[], note_commitments, None)
+    }
+
+    /// [`Self::commit_finalized_turn_with_notes`] PLUS the exact serialized
+    /// `TurnReceipt` at its immutable node-wide log index in the SAME redb
+    /// transaction.
+    ///
+    /// This is the finalized-turn receipt weld: a successful return means the
+    /// commit record, note leaves, receipt bytes, and both cursors are durable
+    /// together. On idempotent replay, the receipt entry must already exist at
+    /// `receipt_index` with byte-identical contents; a missing or conflicting
+    /// entry is an integrity error rather than a repaired/shorter history.
+    pub fn commit_finalized_turn_with_notes_and_receipt(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            note_commitments,
+            Some((receipt_index, encoded_receipt)),
+        )
     }
 
     /// [`Self::commit_finalized_turn`] PLUS forever-digest burns in the SAME
@@ -397,7 +423,7 @@ impl PersistentStore {
         record: &CommitRecord,
         burns: &[(u8, [u8; 32], [u8; 32])],
     ) -> Result<u64> {
-        self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[])
+        self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[], None)
             .map(|o| o.ordinal)
     }
 
@@ -413,6 +439,7 @@ impl PersistentStore {
         record: &CommitRecord,
         burns: &[(u8, [u8; 32], [u8; 32])],
         note_commitments: &[[u8; 32]],
+        receipt_entry: Option<(u64, &[u8])>,
     ) -> Result<CommitOutcome> {
         let write_txn = self.db.begin_write()?;
         let assigned;
@@ -432,6 +459,17 @@ impl PersistentStore {
                         Some(guard) => {
                             let existing = decode_commit_record(guard.value())?;
                             if existing.turn_hash == record.turn_hash {
+                                if let Some((receipt_index, encoded_receipt)) = receipt_entry {
+                                    // The original atomic commit must already
+                                    // contain the exact receipt bytes. A replay
+                                    // never patches a missing/conflicting entry.
+                                    Self::write_receipt_chain_entry_in(
+                                        &write_txn,
+                                        receipt_index,
+                                        encoded_receipt,
+                                        false,
+                                    )?;
+                                }
                                 // Already durably committed; nothing to do. The
                                 // welded notes/burns were written by the original
                                 // commit; signal a replay so the caller does NOT
@@ -538,6 +576,18 @@ impl PersistentStore {
                 // the next `note_tree_root()` recomputes over the new leaves.
                 let mut meta_bytes = write_txn.open_table(tables::METADATA_BYTES)?;
                 meta_bytes.remove(tables::META_NOTE_TREE_ROOT_CACHE)?;
+            }
+
+            // 3c. Weld the immutable receipt-log entry into this same atomic
+            // transaction. This is deliberately before the cursor advance;
+            // redb commits all writes together or none of them.
+            if let Some((receipt_index, encoded_receipt)) = receipt_entry {
+                Self::write_receipt_chain_entry_in(
+                    &write_txn,
+                    receipt_index,
+                    encoded_receipt,
+                    true,
+                )?;
             }
 
             // 4. Advance the durable cursor LAST within the txn (still atomic).
@@ -1645,6 +1695,79 @@ mod tests {
         cm[0] = 0xc0;
         cm[1] = k;
         cm
+    }
+
+    #[test]
+    fn finalized_receipt_is_atomic_dense_and_byte_exact_on_replay() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let rec = record(0, 0, vec![]);
+        let cm = note_cm(1);
+        let receipt = b"executor-signed-turn-receipt";
+
+        let fresh = store
+            .commit_finalized_turn_with_notes_and_receipt(0, &rec, &[cm], 0, receipt)
+            .unwrap();
+        assert!(fresh.freshly_committed);
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.note_count().unwrap(), 1);
+        assert_eq!(store.load_receipt_chain().unwrap(), vec![receipt.to_vec()]);
+
+        let replay = store
+            .commit_finalized_turn_with_notes_and_receipt(0, &rec, &[cm], 0, receipt)
+            .unwrap();
+        assert!(!replay.freshly_committed);
+        assert_eq!(store.note_count().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+
+        assert!(matches!(
+            store.commit_finalized_turn_with_notes_and_receipt(
+                0,
+                &rec,
+                &[cm],
+                0,
+                b"conflicting-receipt-bytes",
+            ),
+            Err(StoreError::Integrity(_))
+        ));
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.note_count().unwrap(), 1);
+        assert_eq!(store.load_receipt_chain().unwrap(), vec![receipt.to_vec()]);
+
+        // Corrupt the table by deleting the welded entry. Replay must expose
+        // the corruption, never backfill it and call the image consistent.
+        let txn = store.db.begin_write().unwrap();
+        {
+            let mut table = txn.open_table(tables::RECEIPT_CHAIN).unwrap();
+            table.remove(0).unwrap();
+        }
+        txn.commit().unwrap();
+        assert!(matches!(
+            store.commit_finalized_turn_with_notes_and_receipt(0, &rec, &[cm], 0, receipt),
+            Err(StoreError::Integrity(_))
+        ));
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.note_count().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+    }
+
+    #[test]
+    fn receipt_gap_aborts_entire_finalized_turn_transaction() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let rec = record(0, 0, vec![]);
+        let cm = note_cm(2);
+
+        let result = store.commit_finalized_turn_with_notes_and_receipt(
+            0,
+            &rec,
+            &[cm],
+            3,
+            b"receipt-at-gap",
+        );
+        assert!(matches!(result, Err(StoreError::Integrity(_))));
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert_eq!(store.note_count().unwrap(), 0);
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+        assert!(store.commit_record_at(0).unwrap().is_none());
     }
 
     // ── bug #58: crash-consistent note-tree weld ─────────────────────────────

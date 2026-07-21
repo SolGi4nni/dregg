@@ -67,6 +67,24 @@ pub enum ChainAppendError {
         /// What the receipt claims its predecessor is.
         got: Option<[u8; 32]>,
     },
+    /// The caller claimed a durable node-wide log index other than the only
+    /// index that can be appended next. This is an integrity error: accepting
+    /// it would either overwrite an immutable receipt or create a gap that boot
+    /// recovery could mistake for a shorter history.
+    #[error("receipt log index mismatch: next index = {expected}, supplied = {got}")]
+    ReceiptLogIndexMismatch {
+        /// The current immutable log length.
+        expected: u64,
+        /// The index supplied by the durable store/caller.
+        got: u64,
+    },
+    /// The node-installed durability sink refused the receipt. The in-memory
+    /// receipt log is unchanged when this error is returned.
+    #[error("receipt persistence failed: {message}")]
+    ReceiptPersistenceFailed {
+        /// Store/serialization failure reported by the durability sink.
+        message: String,
+    },
 }
 
 // =============================================================================
@@ -1054,7 +1072,9 @@ pub struct AgentCipherclerk {
     /// cipherclerk (no store), so the append path is a pure in-memory push there.
     /// Never fired by [`Self::restore_receipt_chain`] (boot reload is not a new
     /// append). Not part of the identity/serialized state; skipped by `Debug`.
-    receipt_persist: Option<std::sync::Arc<dyn Fn(u64, &dregg_turn::TurnReceipt) + Send + Sync>>,
+    receipt_persist: Option<
+        std::sync::Arc<dyn Fn(u64, &dregg_turn::TurnReceipt) -> Result<(), String> + Send + Sync>,
+    >,
     /// The HD seed from which this cipherclerk's key was derived (if created from mnemonic).
     /// Stored encrypted at rest; zeroized on drop.
     seed: Option<[u8; 64]>,
@@ -2208,22 +2228,68 @@ impl AgentCipherclerk {
         &mut self,
         receipt: dregg_turn::TurnReceipt,
     ) -> Result<(), ChainAppendError> {
-        let expected_prev = self.agent_receipt_head_hash(&receipt.agent);
+        self.validate_receipt_append(&receipt)?;
+        let index = self.receipt_log_next_index();
 
-        // Strict mode: the claimed predecessor (including its absence) must
-        // match this agent's current head. The previous behavior (silently
-        // overwriting the caller's value with the global head) would mask a fork:
-        // an executor that disagreed with the cipherclerk about the chain head
-        // would still have its receipt appended, after which cipherclerk's
-        // chain and the federation's chain would silently diverge.
+        // A node-backed cipherclerk is durable-first: if serialization or redb
+        // refuses the append, no served/in-memory head is advanced. This keeps
+        // the API's successful return equivalent to "durable and visible" for
+        // every non-finalization caller.
+        if let Some(sink) = &self.receipt_persist {
+            sink(index, &receipt)
+                .map_err(|message| ChainAppendError::ReceiptPersistenceFailed { message })?;
+        }
+
+        self.append_receipt_already_durable(index, receipt)
+    }
+
+    /// Validate the receipt's agent-scoped predecessor without mutating the log.
+    ///
+    /// Finalization calls this while holding the node-state write lock, then
+    /// welds the encoded receipt into the same redb transaction as the finalized
+    /// turn. After that transaction succeeds it calls
+    /// [`Self::append_receipt_already_durable`].
+    pub fn validate_receipt_append(
+        &self,
+        receipt: &dregg_turn::TurnReceipt,
+    ) -> Result<(), ChainAppendError> {
+        let expected_prev = self.agent_receipt_head_hash(&receipt.agent);
         if receipt.previous_receipt_hash != expected_prev {
             return Err(ChainAppendError::ReceiptChainMismatch {
                 expected: expected_prev,
                 got: receipt.previous_receipt_hash,
             });
         }
+        Ok(())
+    }
 
-        let index = self.receipt_chain.len();
+    /// Return the only dense node-wide receipt-log index that may be appended.
+    pub fn receipt_log_next_index(&self) -> u64 {
+        self.receipt_chain.len() as u64
+    }
+
+    /// Install a receipt whose exact bytes are already durable at `index`.
+    ///
+    /// This deliberately bypasses the ordinary durability sink: finalized turns
+    /// persist the receipt in the same transaction as their commit record and
+    /// note leaves, then advance the in-memory projection exactly once. The
+    /// supplied index and the agent-scoped predecessor are both rechecked before
+    /// mutation, so this method cannot overwrite, gap, or fork the log.
+    pub fn append_receipt_already_durable(
+        &mut self,
+        index: u64,
+        receipt: dregg_turn::TurnReceipt,
+    ) -> Result<(), ChainAppendError> {
+        let expected_index = self.receipt_log_next_index();
+        if index != expected_index {
+            return Err(ChainAppendError::ReceiptLogIndexMismatch {
+                expected: expected_index,
+                got: index,
+            });
+        }
+        self.validate_receipt_append(&receipt)?;
+
+        let index = index as usize;
         let agent = receipt.agent;
         self.receipt_chain.push(receipt);
         self.receipt_indices_by_agent
@@ -2231,15 +2297,6 @@ impl AgentCipherclerk {
             .or_default()
             .push(index);
         self.receipt_heads_by_agent.insert(agent, index);
-        // Durably record the just-appended receipt at its dense chain index, if a
-        // node installed the persistence sink. Fired here (not at the ~26 node
-        // call sites) so EVERY append path — HTTP ingress, blocklace finalization,
-        // MCP handlers, trustline/storage — persists uniformly. Synchronous and
-        // best-effort: a store error is the sink's to log; the in-memory append
-        // (the executor's authority) stands regardless.
-        if let Some(sink) = &self.receipt_persist {
-            sink(index as u64, &self.receipt_chain[index]);
-        }
         Ok(())
     }
 
@@ -2249,38 +2306,54 @@ impl AgentCipherclerk {
     /// durable store tracks the served log. See the `receipt_persist` field.
     pub fn set_receipt_persist(
         &mut self,
-        sink: std::sync::Arc<dyn Fn(u64, &dregg_turn::TurnReceipt) + Send + Sync>,
+        sink: std::sync::Arc<
+            dyn Fn(u64, &dregg_turn::TurnReceipt) -> Result<(), String> + Send + Sync,
+        >,
     ) {
         self.receipt_persist = Some(sink);
     }
 
     /// Reload a persisted receipt log into this cipherclerk on boot, replacing
     /// the in-memory log and rebuilding every agent index. Receipts are checked
-    /// strictly: loading stops at the first entry whose `previous_receipt_hash`
-    /// does not match that agent's running head (a corrupt/torn durable tail
-    /// truncates rather than forks any chain),
-    /// and the returned count is how many were accepted. Does NOT fire the
+    /// strictly: every entry must match that agent's running head or the entire
+    /// restore fails without changing the existing in-memory log. A corrupt
+    /// durable tail must not become an accepted rollback to an earlier head.
+    /// Does NOT fire the
     /// persistence sink — this is recovery of already-durable receipts, not a new
     /// append — and is meant to be called BEFORE [`Self::set_receipt_persist`].
-    pub fn restore_receipt_chain(&mut self, receipts: Vec<dregg_turn::TurnReceipt>) -> usize {
-        self.receipt_chain.clear();
-        self.receipt_indices_by_agent.clear();
-        self.receipt_heads_by_agent.clear();
+    pub fn restore_receipt_chain(
+        &mut self,
+        receipts: Vec<dregg_turn::TurnReceipt>,
+    ) -> Result<usize, ChainAppendError> {
+        let mut receipt_chain: Vec<dregg_turn::TurnReceipt> = Vec::with_capacity(receipts.len());
+        let mut receipt_indices_by_agent: HashMap<CellId, Vec<usize>> = HashMap::new();
+        let mut receipt_heads_by_agent: HashMap<CellId, usize> = HashMap::new();
+
         for receipt in receipts {
-            let expected_prev = self.agent_receipt_head_hash(&receipt.agent);
+            let expected_prev = receipt_heads_by_agent
+                .get(&receipt.agent)
+                .map(|&index| receipt_chain[index].receipt_hash());
             if receipt.previous_receipt_hash != expected_prev {
-                break;
+                return Err(ChainAppendError::ReceiptChainMismatch {
+                    expected: expected_prev,
+                    got: receipt.previous_receipt_hash,
+                });
             }
-            let index = self.receipt_chain.len();
+            let index = receipt_chain.len();
             let agent = receipt.agent;
-            self.receipt_chain.push(receipt);
-            self.receipt_indices_by_agent
+            receipt_chain.push(receipt);
+            receipt_indices_by_agent
                 .entry(agent)
                 .or_default()
                 .push(index);
-            self.receipt_heads_by_agent.insert(agent, index);
+            receipt_heads_by_agent.insert(agent, index);
         }
-        self.receipt_chain.len()
+
+        let loaded = receipt_chain.len();
+        self.receipt_chain = receipt_chain;
+        self.receipt_indices_by_agent = receipt_indices_by_agent;
+        self.receipt_heads_by_agent = receipt_heads_by_agent;
+        Ok(loaded)
     }
 
     /// Return the immutable causal head receipt for `agent`.
@@ -7715,6 +7788,7 @@ mod tests {
                 assert_eq!(expected, Some(head));
                 assert_eq!(got, Some([0xDE; 32]));
             }
+            other => panic!("unexpected append error: {other}"),
         }
 
         // Chain must be unchanged on rejection.
@@ -7741,6 +7815,7 @@ mod tests {
                 assert_eq!(expected, None);
                 assert_eq!(got, Some([0xAB; 32]));
             }
+            other => panic!("unexpected append error: {other}"),
         }
         assert_eq!(cclerk.receipt_chain_length(), 0);
     }

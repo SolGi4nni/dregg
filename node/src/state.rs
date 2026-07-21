@@ -155,7 +155,12 @@ pub struct NodeStateInner {
     /// The cell ledger (local cell state).
     pub ledger: Ledger,
     /// Persistent storage backend.
-    pub store: PersistentStore,
+    ///
+    /// `Arc` so the cipherclerk's receipt-chain durability sink
+    /// ([`AgentCipherclerk::set_receipt_persist`]) can hold its own handle and
+    /// persist each appended receipt under the state lock. Transparent to the
+    /// `&self` store calls elsewhere (deref coercion).
+    pub store: Arc<PersistentStore>,
     /// Federation peer addresses.
     pub peers: Vec<String>,
     /// Whether the cipherclerk is unlocked for signing operations.
@@ -607,6 +612,70 @@ fn load_witnessed_receipts(
     (witnessed_receipts, witnessed_receipt_order)
 }
 
+/// Make the cipherclerk's receipt chain durable across a restart.
+///
+/// THE WELD the deep-reads converged on: the served `/api/receipts*` chain and
+/// its receipt-index MMR head are projected from `cclerk.receipt_chain()` (via
+/// [`NodeStateInner::sync_receipt_index`]), which used to rebuild EMPTY every
+/// boot — so `/api/receipts/index/head` served `len = 0` after a restart even
+/// though the durable ledger recovered. This does two things, in order:
+///
+/// 1. RESTORE: reload the complete dense durable receipt chain back into the
+///    cipherclerk. A gap, undecodable entry, or bad agent-scoped predecessor
+///    fails node construction; none may be laundered into a shorter accepted
+///    history. After this the MMR head rebuilds to its true pre-restart value on
+///    the first `sync_receipt_index`.
+/// 2. ARM: install the persistence sink so every subsequent `append_receipt`
+///    (HTTP ingress, blocklace finalization, MCP, trustline/storage — all paths)
+///    writes the receipt to the durable store at its dense index, under the state
+///    lock. The sink holds its own `Arc` of the store.
+///
+/// Called from every constructor right after the cipherclerk is built and before
+/// it moves into the state. Recovery and future append failures are fail-closed:
+/// a node must not serve an in-memory receipt head it cannot recover durably.
+fn install_receipt_chain_durability(
+    store: &Arc<PersistentStore>,
+    cclerk: &mut AgentCipherclerk,
+) -> Result<(), String> {
+    // 1. RESTORE the durable chain into the cipherclerk.
+    let encoded = store
+        .load_receipt_chain()
+        .map_err(|e| format!("failed to load durable receipt chain: {e}"))?;
+    if !encoded.is_empty() {
+        let receipts: Vec<dregg_turn::TurnReceipt> = encoded
+            .iter()
+            .enumerate()
+            .map(|(index, bytes)| {
+                postcard::from_bytes(bytes)
+                    .map_err(|e| format!("invalid durable receipt at log index {index}: {e}"))
+            })
+            .collect::<Result<_, _>>()?;
+        let persisted = encoded.len();
+        let loaded = cclerk
+            .restore_receipt_chain(receipts)
+            .map_err(|e| format!("invalid durable receipt chain: {e}"))?;
+        tracing::info!(
+            loaded,
+            persisted,
+            "restored durable receipt chain on boot (served /api/receipts* + MMR \
+             head survive the restart)"
+        );
+    } else {
+        tracing::debug!("no durable receipt chain to restore (fresh node)");
+    }
+
+    // 2. ARM the durability sink for all future appends.
+    let sink_store = Arc::clone(store);
+    cclerk.set_receipt_persist(Arc::new(move |index, receipt| {
+        let bytes = postcard::to_stdvec(receipt)
+            .map_err(|e| format!("failed to serialize receipt at log index {index}: {e}"))?;
+        sink_store
+            .append_receipt_chain_entry(index, &bytes)
+            .map_err(|e| format!("failed to persist receipt at log index {index}: {e}"))
+    }));
+    Ok(())
+}
+
 fn encode_witnessed_receipt_artifacts(witnesses: &[WitnessedReceipt]) -> Result<Vec<u8>, String> {
     let artifacts = witnesses
         .iter()
@@ -730,8 +799,9 @@ impl NodeState {
         key_file: &str,
     ) -> Result<Self, String> {
         let db_path = data_dir.join("dregg.redb");
-        let store =
-            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
+        let store = Arc::new(
+            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?,
+        );
         // Boot crash-recovery: a torn/poisoned commit-log tail (e.g. a process
         // killed between the input-turn config write and the commit-record txn, or
         // an unclean power-cycle) leaves the log's head inconsistent with its
@@ -765,7 +835,7 @@ impl NodeState {
             data_dir.join(key_file)
         };
 
-        let cclerk = if key_path.exists() {
+        let mut cclerk = if key_path.exists() {
             let key_bytes_vec = std::fs::read(&key_path)
                 .map_err(|e| format!("failed to read {}: {e}", key_path.display()))?;
             if key_bytes_vec.len() != 32 {
@@ -911,6 +981,12 @@ impl NodeState {
                 tracing::warn!(error = %e, "failed to apply durable commit-log overlay on recovery");
             }
         }
+
+        // Restore the durable receipt chain into the cipherclerk and arm its
+        // durability sink, so the served `/api/receipts*` chain + the receipt-index
+        // MMR head survive this restart instead of rebuilding empty.
+        install_receipt_chain_durability(&store, &mut cclerk)?;
+
         let (events_tx, _) = broadcast::channel(4096);
 
         // Derive the silo ID from the cipherclerk's public key.
@@ -1038,8 +1114,9 @@ impl NodeState {
         key_bytes: [u8; 32],
     ) -> Result<Self, String> {
         let db_path = data_dir.join("dregg.redb");
-        let store =
-            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
+        let store = Arc::new(
+            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?,
+        );
         // Boot crash-recovery: a torn/poisoned commit-log tail (e.g. a process
         // killed between the input-turn config write and the commit-record txn, or
         // an unclean power-cycle) leaves the log's head inconsistent with its
@@ -1065,7 +1142,11 @@ impl NodeState {
             }
         }
 
-        let cclerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(key_bytes));
+        let mut cclerk = AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(key_bytes));
+        // Restore the durable receipt chain into the cipherclerk and arm its
+        // durability sink (see `install_receipt_chain_durability`): the served
+        // `/api/receipts*` chain + MMR head survive this restart.
+        install_receipt_chain_durability(&store, &mut cclerk)?;
         let (witnessed_receipts, witnessed_receipt_order) = load_witnessed_receipts(&store);
 
         // Restore the forever-digest registries (.docs-history-noclaude/PERSISTENCE.md): the
@@ -2691,6 +2772,144 @@ mod witnessed_receipt_persistence_tests {
         let guard = restored.read().await;
         assert!(!guard.witnessed_receipts.contains_key(&first_hash));
         assert_eq!(guard.witnessed_receipts.len(), MAX_WITNESSED_RECEIPTS);
+    }
+
+    /// THE RESTART-DURABILITY CANARY (the weld the deep-reads converged on).
+    ///
+    /// Pre-fix, the cipherclerk `receipt_chain` was rebuilt EMPTY every boot, so
+    /// after a restart `/api/receipts/index/head` (which projects the MMR from the
+    /// chain via `sync_receipt_index`) served `len = 0` even though the ledger
+    /// recovered. This drives a real restart at the `NodeState` level: append a
+    /// chain, record the head, DROP the node, reopen the SAME data dir, and assert
+    /// the head is the SAME real head — not `len = 0`. Without the durability weld
+    /// (`install_receipt_chain_durability` + the cipherclerk persist sink) the two
+    /// `post_len` assertions below fail with `len = 0`.
+    #[tokio::test]
+    async fn receipt_chain_and_mmr_head_survive_node_restart() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let key_bytes = [11u8; 32];
+
+        let pre_root;
+        let pre_len;
+        let sample_hash;
+        {
+            let state =
+                NodeState::with_cclerk(tmp.path(), vec![], key_bytes).expect("create node state");
+            let mut s = state.write().await;
+            // Append five independent agents' genesis receipts. The node-wide
+            // log is total while causal receipt links are agent-scoped; every
+            // append fires the durable persist sink installed at construction.
+            for i in 0u8..5 {
+                let receipt = dregg_turn::TurnReceipt {
+                    turn_hash: [i.wrapping_add(1); 32],
+                    post_state_hash: [i.wrapping_add(100); 32],
+                    agent: CellId::from_bytes([i.wrapping_add(50); 32]),
+                    previous_receipt_hash: None,
+                    ..Default::default()
+                };
+                s.cclerk.append_receipt(receipt).expect("append receipt");
+            }
+            s.sync_receipt_index();
+            pre_root = s.receipt_index.root();
+            pre_len = s.receipt_index.len();
+            sample_hash = s.cclerk.receipt_chain()[2].receipt_hash();
+            assert_eq!(pre_len, 5, "5 receipts on the chain pre-restart");
+            // The durability weld persisted each appended receipt synchronously.
+            assert_eq!(
+                s.store.receipt_chain_len().expect("durable len"),
+                5,
+                "every appended receipt is durable the moment it lands on the chain"
+            );
+        }
+
+        // ── RESTART ── reopen the SAME data dir (crash recovery).
+        let restored =
+            NodeState::with_cclerk(tmp.path(), vec![], key_bytes).expect("restore node state");
+        let mut s = restored.write().await;
+        s.sync_receipt_index();
+        let post_root = s.receipt_index.root();
+        let post_len = s.receipt_index.len();
+
+        // THE CANARY: same head after restart (len=0 before the fix).
+        assert_eq!(
+            post_len, 5,
+            "restart preserves the receipt-index length (was 0 pre-fix)"
+        );
+        assert_eq!(
+            post_root, pre_root,
+            "restart preserves the receipt-index MMR root"
+        );
+        assert_eq!(
+            s.cclerk.receipt_chain().len(),
+            5,
+            "the durable receipt chain reloaded into the cipherclerk"
+        );
+        assert_eq!(
+            s.cclerk.receipt_chain()[2].receipt_hash(),
+            sample_hash,
+            "the previously-fetched receipt is still present and replayable"
+        );
+        s.cclerk
+            .verify_own_chain()
+            .expect("every reloaded agent-scoped receipt chain verifies");
+    }
+
+    #[test]
+    fn corrupt_durable_receipt_bytes_refuse_node_boot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        {
+            let store = PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open store");
+            store
+                .append_receipt_chain_entry(0, b"not-a-postcard-turn-receipt")
+                .expect("inject structurally corrupt durable entry");
+        }
+
+        let error = match NodeState::with_cclerk(tmp.path(), vec![], [12u8; 32]) {
+            Ok(_) => panic!("corrupt durable receipt bytes must refuse node construction"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("invalid durable receipt at log index 0"),
+            "boot error identifies the corrupt durable index: {error}"
+        );
+    }
+
+    #[test]
+    fn corrupt_durable_receipt_link_refuses_node_boot_without_prefix_rollback() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent = CellId::from_bytes([0xA1; 32]);
+        let first = dregg_turn::TurnReceipt {
+            turn_hash: [1; 32],
+            post_state_hash: [2; 32],
+            agent,
+            ..Default::default()
+        };
+        let second = dregg_turn::TurnReceipt {
+            turn_hash: [3; 32],
+            pre_state_hash: [2; 32],
+            post_state_hash: [4; 32],
+            previous_receipt_hash: Some([0xFF; 32]),
+            agent,
+            ..Default::default()
+        };
+        {
+            let store = PersistentStore::open(&tmp.path().join("dregg.redb")).expect("open store");
+            store
+                .append_receipt_chain_entry(0, &postcard::to_stdvec(&first).unwrap())
+                .unwrap();
+            store
+                .append_receipt_chain_entry(1, &postcard::to_stdvec(&second).unwrap())
+                .unwrap();
+        }
+
+        let error = match NodeState::with_cclerk(tmp.path(), vec![], [13u8; 32]) {
+            Ok(_) => panic!("a corrupt durable tail must not boot at the valid prefix"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("invalid durable receipt chain: receipt chain mismatch"),
+            "boot refuses the whole corrupt chain: {error}"
+        );
     }
 }
 

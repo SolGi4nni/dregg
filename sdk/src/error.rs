@@ -120,6 +120,21 @@ pub enum SdkError {
         /// What the receipt's `previous_receipt_hash` claimed.
         got: Option<[u8; 32]>,
     },
+
+    /// The durable node-wide receipt log was not appendable at the supplied
+    /// dense index.
+    #[error("receipt log index mismatch: expected = {expected}, got = {got}")]
+    ReceiptLogIndexMismatch {
+        /// Current immutable log length.
+        expected: u64,
+        /// Index supplied by the caller/store.
+        got: u64,
+    },
+
+    /// The node's durable receipt store refused an append. No in-memory receipt
+    /// head was advanced.
+    #[error("receipt persistence failed: {0}")]
+    ReceiptPersistenceFailed(String),
 }
 
 impl SdkError {
@@ -140,6 +155,12 @@ impl From<crate::cipherclerk::ChainAppendError> for SdkError {
         match value {
             crate::cipherclerk::ChainAppendError::ReceiptChainMismatch { expected, got } => {
                 SdkError::ReceiptChainMismatch { expected, got }
+            }
+            crate::cipherclerk::ChainAppendError::ReceiptLogIndexMismatch { expected, got } => {
+                SdkError::ReceiptLogIndexMismatch { expected, got }
+            }
+            crate::cipherclerk::ChainAppendError::ReceiptPersistenceFailed { message } => {
+                SdkError::ReceiptPersistenceFailed(message)
             }
         }
     }

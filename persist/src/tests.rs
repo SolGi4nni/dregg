@@ -14,6 +14,61 @@ fn new_store() -> PersistentStore {
     PersistentStore::open_in_memory().expect("failed to open in-memory store")
 }
 
+// =============================================================================
+// Durable receipt log
+// =============================================================================
+
+#[test]
+fn receipt_log_append_is_dense_immutable_and_idempotent() {
+    let store = new_store();
+    let first = b"signed-receipt-zero";
+
+    store.append_receipt_chain_entry(0, first).unwrap();
+    store
+        .append_receipt_chain_entry(0, first)
+        .expect("byte-identical retry is idempotent");
+    assert!(matches!(
+        store.append_receipt_chain_entry(0, b"different-receipt"),
+        Err(StoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        store.append_receipt_chain_entry(2, b"gap"),
+        Err(StoreError::Integrity(_))
+    ));
+    assert_eq!(store.load_receipt_chain().unwrap(), vec![first.to_vec()]);
+    assert_eq!(store.receipt_chain_len().unwrap(), 1);
+}
+
+#[test]
+fn receipt_log_gap_is_boot_integrity_error_not_a_shorter_prefix() {
+    let store = new_store();
+    store
+        .append_receipt_chain_entry(0, b"signed-receipt-zero")
+        .unwrap();
+
+    // Inject the exact durable corruption boot must refuse: index one is absent
+    // while a later accepted receipt remains in the table.
+    let txn = store.db.begin_write().unwrap();
+    {
+        let mut table = txn.open_table(crate::tables::RECEIPT_CHAIN).unwrap();
+        table.insert(2, b"signed-receipt-two".as_slice()).unwrap();
+    }
+    txn.commit().unwrap();
+
+    assert!(matches!(
+        store.load_receipt_chain(),
+        Err(StoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        store.receipt_chain_len(),
+        Err(StoreError::Integrity(_))
+    ));
+    assert!(matches!(
+        store.append_receipt_chain_entry(1, b"would-paper-over-gap"),
+        Err(StoreError::Integrity(_))
+    ));
+}
+
 fn sample_attested_root(height: u64) -> StoredAttestedRoot {
     StoredAttestedRoot {
         merkle_root: [height as u8; 32],
