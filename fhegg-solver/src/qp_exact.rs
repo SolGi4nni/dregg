@@ -176,22 +176,34 @@ impl From<LiftError> for QpProblemBindingError {
 /// `2^53` — the exact-integer boundary of f64.
 const F64_EXACT: f64 = 9_007_199_254_740_992.0;
 
+fn lift_value(
+    value: f64,
+    scale: i128,
+    field: &'static str,
+    index: usize,
+) -> Result<i128, LiftError> {
+    if !value.is_finite() {
+        return Err(LiftError::NonFinite { field, index });
+    }
+    let scaled = value * scale as f64;
+    if scaled.abs() > F64_EXACT {
+        return Err(LiftError::OutOfRange { field, index });
+    }
+    // Round half-away-from-zero (f64::round). The rounded value IS the
+    // certified problem — documented residual (1) in the module doc.
+    Ok(scaled.round() as i128)
+}
+
 fn lift_slice(vs: &[f64], s: i128, field: &'static str) -> Result<Vec<i128>, LiftError> {
-    vs.iter()
-        .enumerate()
-        .map(|(index, &v)| {
-            if !v.is_finite() {
-                return Err(LiftError::NonFinite { field, index });
-            }
-            let scaled = v * s as f64;
-            if scaled.abs() > F64_EXACT {
-                return Err(LiftError::OutOfRange { field, index });
-            }
-            // Round half-away-from-zero (f64::round). The rounded value IS the
-            // certified problem — documented residual (1) in the module doc.
-            Ok(scaled.round() as i128)
-        })
-        .collect()
+    // `Result<Vec<_>, _>`'s generic `FromIterator` does not retain the source
+    // slice's exact-size reservation through the short-circuiting adapter.
+    // Reserve once so canonical problem/certificate lifts cannot repeatedly
+    // grow their dense P/A buffers on the hot path.
+    let mut lifted = Vec::with_capacity(vs.len());
+    for (index, &value) in vs.iter().enumerate() {
+        lifted.push(lift_value(value, s, field, index)?);
+    }
+    Ok(lifted)
 }
 
 /// Lift an f64 [`CertQp`] to the exact-integer carrier at `10^scale` fixed
@@ -216,7 +228,7 @@ pub fn lift_cert(cert: &CertQp, scale: u32) -> Result<CertQpExact, LiftError> {
         return Err(LiftError::NegativeEpsilon);
     }
     let s = 10i128.pow(scale);
-    let epsilon = lift_slice(&[cert.epsilon], s, "epsilon")?[0];
+    let epsilon = lift_value(cert.epsilon, s, "epsilon", 0)?;
     Ok(CertQpExact {
         n,
         mc,
@@ -326,14 +338,22 @@ impl CertQpExact {
                        embedded: &[i128],
                        public: &[f64]|
          -> Result<(), QpProblemBindingError> {
-            let lifted = lift_slice(public, scale, field)?;
-            embedded
-                .iter()
-                .zip(&lifted)
-                .position(|(left, right)| left != right)
-                .map_or(Ok(()), |index| {
-                    Err(QpProblemBindingError::FieldMismatch { field, index })
-                })
+            // Keep the old error ordering without allocating a lifted Vec:
+            // malformed public values outrank a mismatch anywhere earlier in
+            // the same field, while the first mismatch wins when every value
+            // is liftable. This is the exact predicate/error semantics of
+            // `lift_slice(public, ..)?` followed by `position`, streamed in one
+            // pass over hostile input.
+            let mut first_mismatch = None;
+            for (index, (&expected, &actual)) in embedded.iter().zip(public).enumerate() {
+                let lifted = lift_value(actual, scale, field, index)?;
+                if first_mismatch.is_none() && expected != lifted {
+                    first_mismatch = Some(index);
+                }
+            }
+            first_mismatch.map_or(Ok(()), |index| {
+                Err(QpProblemBindingError::FieldMismatch { field, index })
+            })
         };
         compare("p", &self.p, &problem.p)?;
         compare("q", &self.q, &problem.q)?;
@@ -556,6 +576,63 @@ mod tests {
             cert.verify_problem_binding(&different_constraints),
             Err(QpProblemBindingError::FieldMismatch {
                 field: "u",
+                index: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn streaming_problem_binding_preserves_hostile_lift_error_precedence() {
+        let cert = CertQpExact {
+            n: 2,
+            mc: 1,
+            scale: 0,
+            p: vec![1, 0, 0, 1],
+            q: vec![1, 2],
+            a: vec![1, 1],
+            l: vec![0],
+            u: vec![2],
+            x: vec![0, 0],
+            y: vec![0],
+            epsilon: 0,
+        };
+        let mut hostile = QpProblem {
+            n: 2,
+            mc: 1,
+            p: vec![1.0, 0.0, 0.0, 1.0],
+            // Coordinate zero already differs. The old allocating path lifted
+            // the complete field before comparing, so a later malformed value
+            // must still fail as malformed rather than being hidden by the
+            // earlier mismatch.
+            q: vec![9.0, f64::NAN],
+            a: vec![1.0, 1.0],
+            l: vec![0.0],
+            u: vec![2.0],
+        };
+        assert_eq!(
+            cert.verify_problem_binding(&hostile),
+            Err(QpProblemBindingError::Lift(LiftError::NonFinite {
+                field: "q",
+                index: 1,
+            }))
+        );
+
+        hostile.q[1] = F64_EXACT * 2.0;
+        assert_eq!(
+            cert.verify_problem_binding(&hostile),
+            Err(QpProblemBindingError::Lift(LiftError::OutOfRange {
+                field: "q",
+                index: 1,
+            }))
+        );
+
+        // Once the later hostile value is repaired, the first exact mutation
+        // remains the reported refusal tooth.
+        hostile.q[1] = 2.0;
+        assert_eq!(
+            cert.verify_problem_binding(&hostile),
+            Err(QpProblemBindingError::FieldMismatch {
+                field: "q",
                 index: 0,
             })
         );
