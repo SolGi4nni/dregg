@@ -117,8 +117,9 @@ pub mod private_book_distributed_prover;
 /// This is a prover-side relation checker, not transferable ZK evidence.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_relation;
-pub mod tfhe_wgpu;
+mod tfhe_blind_rotation_wgpu;
 mod tfhe_ntt_wgpu;
+pub mod tfhe_wgpu;
 pub mod threshold;
 
 /// The OUTPUT-BOUNDARY MPC crossing (BFV / fhe.rs → additive shares → secret-shared

@@ -1,30 +1,34 @@
 //! Portable WebGPU arithmetic frontier for the TFHE programmable-bootstrap path.
 //!
-//! This module implements two exact coefficient-domain rungs, not a programmable bootstrap:
+//! This module implements exact portable rungs toward a programmable bootstrap:
 //!
 //! ```text
 //! out = accumulator + sum_t lhs_t * rhs_t
 //!       in (Z / 2^64 Z)[X] / (X^N + 1).
 //! ```
 //!
-//! The second rung performs tfhe-rs-compatible signed gadget decomposition and the
+//! The external-product rung performs tfhe-rs-compatible signed gadget decomposition and the
 //! complete standard-GGSW x GLWE external product, and exposes the corresponding
-//! `ct0 + GGSW * (ct1 - ct0)` CMUX.  Both decomposition and convolution execute in
-//! one GPU command submission.  It is a real private conditional primitive at the
-//! deployed `N=2048, glwe_size=2, base_log=23, levels=1` shape.
+//! `ct0 + GGSW * (ct1 - ct0)` CMUX.  An exact four-prime RNS-NTT route supplies the
+//! subquadratic single-CMUX path.
 //!
-//! It is still deliberately coefficient-domain and O(N^2).  A production PBS needs
-//! a transform-domain external product, blind-rotation scheduling, monomial rotation,
-//! sample extraction, and keyswitching.  None of those are claimed here.  In
-//! particular, this module is not yet connected to [`crate::fhe_clear`] and does not
-//! accelerate `FheUint32` comparison by itself.
+//! The chained rung implements tfhe-rs's native modulus switch, initial `LUT / X^b`,
+//! and every dependent `CMUX(BSK_i, acc, acc * X^a_i)` with two device-resident
+//! accumulator buffers and one resident standard bootstrapping-key buffer.  The
+//! complete chain uses one command submission and one final readback.  Its current
+//! external-product stage is deliberately coefficient-domain; moving CRT and gadget
+//! decomposition fully onto-device is required before the RNS-NTT carrier can remain
+//! resident across the dependency chain.
+//!
+//! This is a real blind-rotation slice, but not a complete high-level PBS.  Sample
+//! extraction, key switching, the full deployed 918-mask performance envelope, and
+//! the [`crate::fhe_clear`] / `FheUint32` integration seam remain explicit.
 //!
 //! The shader represents every torus coefficient as `(lo, hi)` `u32` limbs.  Its
 //! 16-bit-split multiply retains exactly the low 64 bits, so the result is bit-for-bit
 //! equal to Rust's wrapping `u64` arithmetic and tfhe-rs's
 //! `polynomial_wrapping_add_mul_assign`.  The implementation is a deliberately simple
-//! O(N^2) parity rung.  Replacing it with a subquadratic transform while preserving
-//! this gate is the next performance step.
+//! O(N^2) authority rung retained beside the exact transform and chained gates.
 
 use ethnum::I256;
 use std::fmt;
@@ -33,6 +37,7 @@ use tfhe::core_crypto::algorithms::polynomial_algorithms::polynomial_wrapping_ad
 use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
 
+use crate::tfhe_blind_rotation_wgpu::{run as blind_rotation_gpu, BlindRotationGpuError};
 use crate::tfhe_ntt_wgpu::{multiply_signed_batch, NttBatchError, TORUS_NTT_MODULI};
 
 const WORKGROUP_SIZE: u32 = 64;
@@ -72,6 +77,9 @@ pub enum TorusWgpuAlgorithm {
     /// Exact negacyclic RNS NTT under four primes, followed by a bounded CRT
     /// reconstruction of the native 64-bit torus coefficient.
     ExactRnsNtt,
+    /// A complete exact blind-rotation chain whose accumulator and standard
+    /// bootstrapping key stay device-resident until one final readback.
+    ExactDeviceResidentBlindRotation,
 }
 
 /// Algorithm selection for the complete standard-GGSW external product.
@@ -160,6 +168,11 @@ pub enum TorusMacError {
         expected: usize,
         actual: usize,
     },
+    EmptyBlindRotationMask,
+    BlindRotationKeyLength {
+        expected: usize,
+        actual: usize,
+    },
     AddressSpaceOverflow,
     WgpuRequired(TorusCpuFallbackReason),
     /// GPU execution failed after a device and supported shape were selected.
@@ -219,6 +232,13 @@ impl fmt::Display for TorusMacError {
             Self::GgswLength { expected, actual } => write!(
                 f,
                 "flattened standard GGSW ciphertext has {actual} coefficients; expected exactly {expected}"
+            ),
+            Self::EmptyBlindRotationMask => {
+                write!(f, "TFHE blind rotation requires a nonempty LWE mask")
+            }
+            Self::BlindRotationKeyLength { expected, actual } => write!(
+                f,
+                "flattened standard bootstrapping key has {actual} coefficients; expected exactly {expected}"
             ),
             Self::AddressSpaceOverflow => write!(
                 f,
@@ -1175,6 +1195,229 @@ pub fn torus_cmux_with_mode(
     torus_external_product_with_mode(ct0, &difference, standard_ggsw, params, policy, mode)
 }
 
+/// Exact native-torus modulus switch used by tfhe-rs before blind rotation.
+///
+/// The returned monomial degree is in `[0, 2N)`.  The wrapping add is
+/// load-bearing: values in the final half-bin round through zero exactly as in
+/// tfhe-rs's `fft_impl::common::modulus_switch`.
+pub fn torus_pbs_modulus_switch(
+    input: u64,
+    polynomial_degree: usize,
+) -> Result<usize, TorusMacError> {
+    if polynomial_degree == 0 {
+        return Err(TorusMacError::ZeroDegree);
+    }
+    if !polynomial_degree.is_power_of_two() {
+        return Err(TorusMacError::DegreeNotPowerOfTwo {
+            degree: polynomial_degree,
+        });
+    }
+    let modulus = polynomial_degree
+        .checked_mul(2)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    let log_modulus = modulus.ilog2();
+    if log_modulus >= u64::BITS {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    let shift = u64::BITS - log_modulus;
+    let rounding = 1u64 << (shift - 1);
+    usize::try_from(input.wrapping_add(rounding) >> shift)
+        .map_err(|_| TorusMacError::AddressSpaceOverflow)
+}
+
+fn rotate_glwe_monomial(
+    input: &[u64],
+    rotation: usize,
+    params: TorusExternalProductParams,
+) -> Result<Vec<u64>, TorusMacError> {
+    let modulus = params
+        .degree
+        .checked_mul(2)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if rotation >= modulus {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    let global_negative = rotation >= params.degree;
+    let shift = rotation % params.degree;
+    let mut output = vec![0u64; input.len()];
+    for polynomial in 0..params.glwe_size {
+        let base = polynomial * params.degree;
+        for out_index in 0..params.degree {
+            let (source_index, wrap_negative) = if out_index >= shift {
+                (out_index - shift, false)
+            } else {
+                (params.degree + out_index - shift, true)
+            };
+            let value = input[base + source_index];
+            output[base + out_index] = if global_negative != wrap_negative {
+                value.wrapping_neg()
+            } else {
+                value
+            };
+        }
+    }
+    Ok(output)
+}
+
+fn validate_blind_rotation(
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    standard_bsk: &[u64],
+    params: TorusExternalProductParams,
+) -> Result<(ExternalShape, usize), TorusMacError> {
+    if lwe_mask.is_empty() {
+        return Err(TorusMacError::EmptyBlindRotationMask);
+    }
+    let ggsw_coefficients = params
+        .decomposition_level_count
+        .checked_mul(params.glwe_size)
+        .and_then(|count| count.checked_mul(params.glwe_size))
+        .and_then(|count| count.checked_mul(params.degree))
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    let expected_bsk = lwe_mask
+        .len()
+        .checked_mul(ggsw_coefficients)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if standard_bsk.len() != expected_bsk {
+        return Err(TorusMacError::BlindRotationKeyLength {
+            expected: expected_bsk,
+            actual: standard_bsk.len(),
+        });
+    }
+    let shape = validate_external_product(
+        accumulator,
+        accumulator,
+        &standard_bsk[..ggsw_coefficients],
+        params,
+    )?;
+    let twice_degree = params
+        .degree
+        .checked_mul(2)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if twice_degree > u32::MAX as usize || expected_bsk > u32::MAX as usize {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    Ok((shape, ggsw_coefficients))
+}
+
+fn blind_rotation_schedule(
+    lwe_mask: &[u64],
+    lwe_body: u64,
+    degree: usize,
+) -> Result<(usize, Vec<usize>), TorusMacError> {
+    let modulus = degree
+        .checked_mul(2)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    let switched_body = torus_pbs_modulus_switch(lwe_body, degree)?;
+    let body_rotation = (modulus - switched_body) % modulus;
+    let mask_rotations = lwe_mask
+        .iter()
+        .map(|&coefficient| torus_pbs_modulus_switch(coefficient, degree))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((body_rotation, mask_rotations))
+}
+
+/// Exact coefficient-domain authority for tfhe-rs's classic blind rotation.
+///
+/// The input is a native-modulus LWE mask/body and a coefficient-domain
+/// standard bootstrapping key, one GGSW ciphertext per mask coefficient.
+pub fn torus_blind_rotate_cpu(
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+    standard_bsk: &[u64],
+    params: TorusExternalProductParams,
+) -> Result<Vec<u64>, TorusMacError> {
+    let (shape, ggsw_coefficients) =
+        validate_blind_rotation(accumulator, lwe_mask, standard_bsk, params)?;
+    let (body_rotation, mask_rotations) =
+        blind_rotation_schedule(lwe_mask, lwe_body, params.degree)?;
+    let mut current = rotate_glwe_monomial(accumulator, body_rotation, params)?;
+    for (step, rotation) in mask_rotations.into_iter().enumerate() {
+        if rotation == 0 {
+            continue;
+        }
+        let rotated = rotate_glwe_monomial(&current, rotation, params)?;
+        let difference = rotated
+            .iter()
+            .zip(&current)
+            .map(|(&then_coefficient, &else_coefficient)| {
+                then_coefficient.wrapping_sub(else_coefficient)
+            })
+            .collect::<Vec<_>>();
+        let key_start = step * ggsw_coefficients;
+        current = external_product_cpu_validated(
+            &current,
+            &difference,
+            &standard_bsk[key_start..key_start + ggsw_coefficients],
+            shape,
+        );
+    }
+    Ok(current)
+}
+
+/// One-submit exact blind rotation.  Both accumulator buffers and the complete
+/// standard bootstrapping key stay resident across the dependent CMUX chain;
+/// only the final GLWE ciphertext is read back.
+pub fn torus_blind_rotate_with_policy(
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+    standard_bsk: &[u64],
+    params: TorusExternalProductParams,
+    policy: TorusMacPolicy,
+) -> Result<TorusMacResult, TorusMacError> {
+    let (_, ggsw_coefficients) =
+        validate_blind_rotation(accumulator, lwe_mask, standard_bsk, params)?;
+    if policy == TorusMacPolicy::CpuOnly {
+        return Ok(TorusMacResult {
+            coefficients: torus_blind_rotate_cpu(
+                accumulator,
+                lwe_mask,
+                lwe_body,
+                standard_bsk,
+                params,
+            )?,
+            backend: TorusMacBackend::CpuOnly,
+        });
+    }
+    let (body_rotation, mask_rotations) =
+        blind_rotation_schedule(lwe_mask, lwe_body, params.degree)?;
+    match blind_rotation_gpu(
+        accumulator,
+        body_rotation,
+        &mask_rotations,
+        standard_bsk,
+        ggsw_coefficients,
+        params,
+    ) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactDeviceResidentBlindRotation,
+            },
+        }),
+        Err(BlindRotationGpuError::Unavailable(reason))
+            if policy == TorusMacPolicy::RequireWgpu =>
+        {
+            Err(TorusMacError::WgpuRequired(reason))
+        }
+        Err(BlindRotationGpuError::Unavailable(reason)) => Ok(TorusMacResult {
+            coefficients: torus_blind_rotate_cpu(
+                accumulator,
+                lwe_mask,
+                lwe_body,
+                standard_bsk,
+                params,
+            )?,
+            backend: TorusMacBackend::CpuFallback(reason),
+        }),
+        Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
 struct ExternalGpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -1698,5 +1941,71 @@ mod tests {
             assert_eq!(reconstructed, value);
             assert_eq!(reconstructed.as_u64(), value.as_u64());
         }
+    }
+
+    #[test]
+    fn pbs_modulus_switch_wraps_the_final_rounding_bin_to_zero() {
+        let degree = 2048usize;
+        let shift = 52u32;
+        let rounding = 1u64 << 51;
+        assert_eq!(torus_pbs_modulus_switch(0, degree), Ok(0));
+        assert_eq!(torus_pbs_modulus_switch(rounding - 1, degree), Ok(0));
+        assert_eq!(torus_pbs_modulus_switch(rounding, degree), Ok(1));
+        assert_eq!(
+            torus_pbs_modulus_switch(u64::MAX - rounding, degree),
+            Ok((u64::MAX - rounding).wrapping_add(rounding) as usize >> shift)
+        );
+        assert_eq!(torus_pbs_modulus_switch(u64::MAX, degree), Ok(0));
+    }
+
+    #[test]
+    fn monomial_rotation_matches_tfhe_polynomial_definition_across_2n() {
+        use tfhe::core_crypto::algorithms::polynomial_algorithms::polynomial_wrapping_monic_monomial_mul;
+        use tfhe::core_crypto::prelude::MonomialDegree;
+
+        let params = TorusExternalProductParams {
+            degree: 8,
+            glwe_size: 1,
+            decomposition_base_log: 4,
+            decomposition_level_count: 2,
+        };
+        let input = [1u64, 2, u64::MAX, 4, 1u64 << 63, 6, 7, 8];
+        for rotation in 0..16 {
+            let mut tfhe_output = vec![0u64; params.degree];
+            let mut output_polynomial = Polynomial::from_container(tfhe_output.as_mut_slice());
+            let input_polynomial = Polynomial::from_container(input.as_slice());
+            polynomial_wrapping_monic_monomial_mul(
+                &mut output_polynomial,
+                &input_polynomial,
+                MonomialDegree(rotation),
+            );
+            assert_eq!(
+                rotate_glwe_monomial(&input, rotation, params).unwrap(),
+                tfhe_output,
+                "rotation X^{rotation} diverged"
+            );
+        }
+    }
+
+    #[test]
+    fn blind_rotation_refuses_unpaired_mask_and_key_before_gpu_selection() {
+        let params = TorusExternalProductParams {
+            degree: 8,
+            glwe_size: 2,
+            decomposition_base_log: 4,
+            decomposition_level_count: 2,
+        };
+        let accumulator = [0u64; 16];
+        assert_eq!(
+            torus_blind_rotate_cpu(&accumulator, &[], 0, &[], params),
+            Err(TorusMacError::EmptyBlindRotationMask)
+        );
+        assert_eq!(
+            torus_blind_rotate_cpu(&accumulator, &[0], 0, &[0; 63], params),
+            Err(TorusMacError::BlindRotationKeyLength {
+                expected: 64,
+                actual: 63,
+            })
+        );
     }
 }

@@ -109,19 +109,52 @@ bit-for-bit with the CPU authority across `N=256..4096`; a second hostile case
 uses two decomposition levels and base log 31.  It also reports process-cold cost
 and parity-checked five-sample warm medians on the selected adapter.
 
+## The device-resident blind-rotation slice
+
+`fhegg-fhe/src/tfhe_blind_rotation_wgpu.rs` and
+`fhegg-fhe/src/shaders/torus_blind_rotation.wgsl` now implement the exact classic
+blind-rotation schedule over a native-modulus LWE mask/body and a standard
+coefficient-domain bootstrapping key:
+
+```text
+acc <- LUT / X^modswitch(body)
+for (a_i, GGSW(s_i)):
+    difference <- acc * X^modswitch(a_i) - acc
+    acc <- acc + GGSW(s_i) * Decomp(difference)
+```
+
+The two accumulator buffers ping-pong on-device, the complete standard BSK prefix
+is uploaded once, rotation and signed gadget decomposition execute on the GPU, and
+the dependent CMUX chain is encoded into one command submission with one final
+readback.  The modulus-switch rounding, including the final bin wrapping through
+zero, and every monomial exponent in `[0, 2N)` are differentially pinned to tfhe-rs
+semantics.
+
+The strict encrypted gate uses the deployed `N=2048`, GLWE-size-two, base-log-23,
+level-one shape and four genuinely noisy GGSW selector ciphertexts.  Two strict
+runs on hbox's AMD RX 6750 XT through Vulkan measured 5.826--5.914 ms for the exact
+CPU authority, 71.087--121.063 ms process-cold GPU startup, and 2.865--2.882 ms
+parity-checked warm GPU medians.  The gate also decrypts the result to the expected
+aggregate LUT rotation and proves a one-bin mask edit changes the exact ciphertext.
+
 ## The remaining PBS boundary
 
-This is a real exact external product and CMUX, but it is not yet a complete
-programmable bootstrap or a high-level `FheUint32` backend.  Gadget decomposition
-and CRT reconstruction currently happen on the host, and one readback remains per
-external product.  Blind rotation would chain hundreds of dependent CMUX steps;
-making that useful requires a device-resident accumulator, a transform-form
-bootstrapping key, rotation/modulus-switch kernels, sample extraction, key switch,
-and an integration seam below tfhe-rs integer comparison.
+The new rung is a real blind rotation, but it deliberately uses the exact
+coefficient-domain external product inside the device-resident chain.  The current
+RNS-NTT single-CMUX adapter performs gadget decomposition and CRT reconstruction on
+the host, so it cannot yet be substituted between dependent rotations without
+reintroducing a readback.  Closing that performance seam requires GPU-side CRT (or
+a transform-form accumulator/BSK representation) across the whole chain.
+
+It is also not yet a complete high-level `FheUint32` backend.  Sample extraction,
+key switching, the full deployed 918-mask BSK/runtime envelope, and an integration
+seam below tfhe-rs integer comparison remain.  Those are named implementation
+boundaries, not properties inferred from the four-step benchmark.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
 described above.  The next hard performance cut is to keep the accumulator and
-bootstrapping key resident across an entire blind rotation, then measure an actual
-PBS and integer comparison—not extrapolate one from a single CMUX.
+bootstrapping key in transform form across the full deployed blind rotation, then
+add sample extraction and key switching and measure an actual PBS and integer
+comparison—not extrapolate one from a short prefix.
