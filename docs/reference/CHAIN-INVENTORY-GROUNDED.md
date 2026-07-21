@@ -25,7 +25,7 @@ production is *specific*, not "the crypto is fake."
   engine (matcher/prover/settle bins); ~30 dregg-native apps (300+ tests).
 
 ## The TRUST CEILING (three named seams, all worked)
-1. **FRI extraction floor — undischarged (no adversary model; the "~57 calculator bits" was an INFORMAL density estimate, NOT a soundness bound).** The theorem-backed ledger readings are the deployed commit ε_C **51 bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`) and query soundness **~31.5 bits** (`DeployedProximitySoundness`, `(9/16)³⁸ < 2⁻³¹`). Everything
+1. **FRI extraction floor — undischarged (no adversary model; the bit-count is a density reading, NOT a soundness bound).** The theorem-backed ledger columns are the deployed commit `FriDeployedHeightPairing.deployed_wrap_commitBits` and query `DeployedProximitySoundness` (`(9/16)³⁸ < 2⁻³¹`; digits in `docs/reference/PROVEN-120-CONFIG.md`). Everything
    wrapping a STARK inherits it. Worked by the FRI stages (FriVerifier* 5-stage re-basing) + codex.
 2. **Hand-authored circuits (the gnark Go STARK verifier — 12M R1CS, no Lean refinement; faithfulness
    is differential-test-validated, not proven).** The AIR-in-Lean debt at scale. Closure = stark-kill

@@ -236,7 +236,7 @@ Proofs are NOT interchangeable across the flip — this defines the FS epoch. Re
 3. Collapse the `DreggStarkConfig`/`DreggRecursionConfig` split ("SIDESTEP option a" fossil,
    `ivc_turn_chain.rs:927-935`, ~15 leaf adapters) so the production mint IS the fold input type.
 4. Re-pin posture: the rotated chain leaves `ir2LeafWrapRotatedConfig` (the ONE config the
-   ~112.6-bit per-fold posture describes) for the 109-bit arity-8 ledger row; move
+   arity-2 per-fold posture describes) for the arity-8 ledger row; move
    `fri_params_soundness_budget.rs` expectations via the exported `dregg_fri_ledger`.
 5. gnark long pole: add an arity-8 `fold_row` beside `friFoldRowArity2`
    (`chain/gnark/fri_verify_native.go:228`); bundle with apex lever B so the ETH wrap re-lands once.

@@ -243,7 +243,7 @@ CORRECTION" / "EVM SETTLEMENT REAL END-TO-END" / "APEX-VK PIN" entries):
    rate-1/64 code, their `L > 1` correlated-agreement generalization proved by
    ordered-pair counting (`L ≤ 186` interior / `L ≤ 292` boundary) in
    `FriCorrelatedAgreementSharp.lean`, and the deployed **arity-8** per-fold soundness is
-   **~109.84 bits** (`FriArityTransfer.arity8_perFold_soundness`); the proven ~112.6-bit
+   proven by `FriArityTransfer.arity8_perFold_soundness`; the
    `wrap_perFold_soundness_capacity` is the **arity-2** figure and provably fails at arity 8
    (`arity8_error_not_lt_2e112`). Open: the
    Guruswami–Sudan-ideal `L ≤ 128` list bound for the multiset word

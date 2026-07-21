@@ -10,11 +10,11 @@ The deployed state commitment once carried components folded **32 bytes → ONE
 BabyBear** (`fold_bytes32_to_bb`, a Horner fold). A single BabyBear is ~31 bits,
 so two distinct 32-byte values collide with probability ~`1/p ≈ 2^-31`. That is
 **far below** every column of the FRI knob ledger (`FriLedger.friLedger` /
-`friCommitLedger`), whose weakest deployed reading is the **51-bit** commit column
+`friCommitLedger`), whose weakest deployed reading is the commit column
 (`FriDeployedHeightPairing.deployed_wrap_commitBits`, at `ir2_leaf_wrap_config()` /
-`|D⁽⁰⁾| = 2^22`). ⚑ Those are LEDGER READINGS, not a proven soundness floor: there is no
+`|D⁽⁰⁾| = 2^22`; the digit is in `docs/reference/PROVEN-120-CONFIG.md`). ⚑ Those are LEDGER READINGS, not a proven soundness floor: there is no
 adversary object in the tree, and `FriLdtExtractV3` — the extraction guarantee the apex
-actually consumes — is assumed. The former **~112.6-bit proven floor** claim here was
+actually consumes — is assumed. The former **arity-2 per-fold "proven floor"** claim here was
 wrong twice: it quoted the arity-2 per-fold column
 (`wrap_perFold_soundness_capacity`, `FriCorrelatedAgreementSharp.lean` §8) as if it were
 the system's number, and the arity-8 leaf mint refutes it outright

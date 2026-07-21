@@ -364,7 +364,7 @@ The recipient must:
 - **Double-consume prevention**: Each commitment produces exactly one valid nullifier; the nullifier set prevents replay
 - **Freshness**: Queue root history window prevents stale proofs while allowing slight delays
 - **Anti-spam**: Deposits remain public and enforced at enqueue time
-- **Soundness**: Consumption proof is a STARK. ⚠ The bare "~100-bit security" once written here is NOT a bound and is deleted: the proven deployed posture is the commit-phase ε_C reading of **~51 bits** at the deployed `|D⁰| = 2^22` (`FriDeployedHeightPairing.deployed_wrap_commitBits`), δ=7/16 unique-decoding query soundness ~31.5 bits (`DeployedProximitySoundness`), field-bound ~124. FRI extraction remains an explicit named carrier (not an adversary-quantified soundness theorem).
+- **Soundness**: Consumption proof is a STARK. ⚠ The bare "~100-bit security" once written here is NOT a bound and is deleted: the proven deployed posture is the machine-checked commit-phase and δ=7/16 unique-decoding query columns (`FriDeployedHeightPairing.deployed_wrap_commitBits`, `DeployedProximitySoundness`; digits in `docs/reference/PROVEN-120-CONFIG.md`), a density reading rather than an adversary bound. FRI extraction remains an explicit named carrier (not an adversary-quantified soundness theorem).
 
 ## 11. Relationship to Existing Infrastructure
 

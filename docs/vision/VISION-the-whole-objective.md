@@ -165,12 +165,12 @@ touch it.** Four honest gaps, at current resolution.
   state-commit anchor cutover (delete BLAKE3 `ledger.root()`, make `wire_commit_8` the
   chained root) have not landed. Encouraging truth: **this is replication of a proven
   pattern, not research.**
-- **FRI soundness reality.** The deployed apex proves at `d=4`. The "~57 calculator bits" once
-  quoted was an INFORMAL Finset density ratio, NOT a soundness bound, **with no adversary / protocol
-  object in existence** (`verifyAlgo` is a `Bool` on a *supplied* proof). The theorem-backed deployed
-  readings are commit ε_C **51 bits** at `2²²` (`FriDeployedHeightPairing.deployed_wrap_commitBits`)
-  and query soundness **~31.5 bits** at δ=7/16 (`(9/16)³⁸ < 2⁻³¹`, `DeployedProximitySoundness`)
-  (`project-fri-soundness-reality`, `docs/THE-LINKING-TOWER.md:180-189`). There is
+- **FRI soundness reality.** The deployed apex proves at `d=4`, **with no adversary / protocol
+  object in existence** (`verifyAlgo` is a `Bool` on a *supplied* proof) — so the bit-count is a
+  Finset density reading, not a soundness bound. The theorem-backed deployed posture is the
+  machine-checked commit and query columns (`FriDeployedHeightPairing.deployed_wrap_commitBits`,
+  `DeployedProximitySoundness`; the digits live in the reference, `docs/reference/PROVEN-120-CONFIG.md`,
+  `project-fri-soundness-reality`). There is
   deliberately no `2⁻¹²⁸` headline; the client is not entitled to believe one. This is
   the deepest, last-sequenced gap.
 
@@ -275,9 +275,9 @@ the anchor cutover open. Replication, not research. Orthogonal to the FRI floor 
 laundered by this work (`docs/ROADMAP-assurance-perimeter.md`).
 
 ### Cycle 2 — FLOOR: sharpen the proof to an adversary, and prepare the freeze
-**Objective.** Cut the deployed config from `d=4` (the "57-calc-bits" was an informal estimate, not a
-soundness bound — the proven deployed readings are query ~31.5 bits `DeployedProximitySoundness` /
-commit ε_C 51 bits `FriDeployedHeightPairing.deployed_wrap_commitBits`) to **λ ≥ 122 with margin**
+**Objective.** Cut the deployed config from `d=4` (its proven deployed posture is the machine-checked
+commit and query columns — `FriDeployedHeightPairing.deployed_wrap_commitBits`,
+`DeployedProximitySoundness`; a Finset density reading, not a soundness bound, no adversary object) to **λ ≥ 122 with margin**
 (`d=8, lb=6, q=36, pow=16`), and re-base the one assumed FRI extraction leg
 (`FriLdtExtractV3`) over a query-counting **adversary object** (`RomOracle`) so the bits
 mean "εFri(2^b) ≤ ½," not a density ratio (`docs/FORWARD-CAMPAIGN-2026-07.md` Track B).
@@ -300,7 +300,7 @@ the A mainnet feed (prove one real mainnet holding against real ≥2/3 Solana co
 and wire the on-chain settle from a *live* turn.
 **Unlocks.** Every downstream "deployed" claim becomes true; a stranger can reproduce the
 VK they verify against. **Sequencing law:** D-freeze MUST ride FLOOR's cutover Phase-4
-re-key — freeze the proven-122 VK, never a standalone ceremony that pins the current un-upgraded posture (the "57 bit" figure was an informal estimate; the proven deployed commit reading is 51 bits, `FriDeployedHeightPairing.deployed_wrap_commitBits`).
+re-key — freeze the proven-122 VK, never a standalone ceremony that pins the current un-upgraded posture (the proven deployed commit reading is `FriDeployedHeightPairing.deployed_wrap_commitBits`, a density reading rather than a soundness bound).
 D-reproducibility (bare-clone gate) and the durable federation have *no* Track-B
 dependency and proceed first.
 
@@ -431,8 +431,8 @@ you pointed them at — never automatically about the deployed reality.
    the Rust twin verbatim, which reproduces the mirror.
 6. **Prove the floor FALSE.** A load-bearing assumption must be a GENUINE assumption —
    satisfiable AND refutable but NOT provable. Try to prove each floor false at *deployed*
-   parameters (the MLWE `(s,e)` ARE the key; a compressing hash HAS collisions; FRI at 57
-   calc bits has no adversary object yet). `#assert_axioms` is blind to hypotheses; a
+   parameters (the MLWE `(s,e)` ARE the key; a compressing hash HAS collisions; the FRI
+   calc-bit posture has no adversary object yet). `#assert_axioms` is blind to hypotheses; a
    hardness claim quantifies over efficient adversaries, never over solutions
    (`feedback-prove-the-floor-false`).
 7. **Confirm by READING, not grep.** Assess whether code is real/mature/does-what-it-claims

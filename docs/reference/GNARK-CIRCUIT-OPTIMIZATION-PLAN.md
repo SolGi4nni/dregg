@@ -10,9 +10,9 @@ document maps where the constraint mass is and ranks the optimizations that guar
 safe to attempt aggressively.
 
 **This is constraint-count only.** The FRI soundness floor
-(`project-fri-soundness-reality`; the "57 calculator bits" was an INFORMAL estimate, not a bound —
-the proven deployed readings are commit ε_C **51 bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`)
-and query soundness **~31.5 bits** (`DeployedProximitySoundness`)) and the single-party Groth16
+(`project-fri-soundness-reality`; a density reading, not a bound — the proven deployed
+columns are `FriDeployedHeightPairing.deployed_wrap_commitBits`
+and `DeployedProximitySoundness`, digits in `docs/reference/PROVEN-120-CONFIG.md`) and the single-party Groth16
 ceremony (`chain/gnark/README.md:50`) are UNAFFECTED — none of these optimizations touch
 the number of proven bits or the trusted setup.
 
@@ -256,9 +256,9 @@ ranked as a wrap optimization.
 
 ### What is unaffected (stated plainly)
 Every optimization here is **constraint-count only**. The FRI soundness floor
-(`project-fri-soundness-reality`; the "57 calculator bits" was an INFORMAL estimate — the proven
-deployed readings are commit ε_C **51 bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`)
-and query soundness **~31.5 bits** (`DeployedProximitySoundness`)) and the single-party Groth16 ceremony
+(`project-fri-soundness-reality`; a density reading, not a bound — the proven
+deployed columns are `FriDeployedHeightPairing.deployed_wrap_commitBits`
+and `DeployedProximitySoundness`, digits in `docs/reference/PROVEN-120-CONFIG.md`) and the single-party Groth16 ceremony
 (`README.md:50`) are untouched — no optimization changes the number of proven bits or the
 trusted setup. The refinement `emitVerifier_refines` guards *that gnark computes the same
 Bool as the spec*, which is exactly the leg optimization could break and now cannot (in

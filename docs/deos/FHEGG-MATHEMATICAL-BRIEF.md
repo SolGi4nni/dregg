@@ -208,11 +208,9 @@ and lives over lattice-additive commitments. This is the crux the analyst is ask
 
 - **STARK soundness floor:** Poseidon2 sponge **collision-resistance** (`HashCR`) +
   `Poseidon2ChipArithSound`, with the BCIKS20 list-decoding core proved for the deployed code. The
-  deployed FRI query-soundness floor is **~31.5 bits** — a δ=7/16-far word survives the 38-query
-  check with probability `(9/16)³⁸ < 2⁻³¹` (`FriArityForking.deployed_far_survival_lt`,
-  `DeployedProximitySoundness`). The per-fold proximity-gap column reads **~109.84 bits** at the
-  deployed arity-8 fold (`FriArityTransfer.arity8_perFold_soundness`, `< 2⁻¹⁰⁹`); the once-quoted
-  ~112.6 is the arity-2 figure and provably fails at arity 8 (`arity8_error_not_lt_2e112`).
+  deployed FRI query-soundness floor is `DeployedProximitySoundness` — a δ=7/16-far word survives the 38-query
+  check with probability `(9/16)³⁸ < 2⁻³¹` (`FriArityForking.deployed_far_survival_lt`). The per-fold proximity-gap column is proven at the
+  deployed arity-8 fold (`FriArityTransfer.arity8_perFold_soundness`); the arity-2 capacity figure provably fails at arity 8 (`arity8_error_not_lt_2e112`).
   Everything inherits this floor. All PQ (hash-based).
 - **Privacy floor (already PQ):** Pedersen *hiding* is perfect/information-theoretic (quantum-safe
   unconditionally); the STARK privacy path is statistical zero-knowledge (`HidingFriPcs`, `ZK=true`).

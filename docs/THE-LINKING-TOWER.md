@@ -141,12 +141,13 @@ FRI soundness is **two columns, never a product**
   field-cardinality technicality. The deployed ledger says so in the code that
   ships it (`circuit/src/lib.rs:98-128`); the research record is
   [`reference/FRI-SOUNDNESS-FRONTIER-RESEARCH.md`](reference/FRI-SOUNDNESS-FRONTIER-RESEARCH.md).
-- **The proven per-fold number for the dimension-2 (arity-2) fold is ~112.6
-  bits — at the near-capacity radius; the DEPLOYED arity-8 fold carries ~109.84
-  bits (`FriArityTransfer.arity8_perFold_soundness`), and ~112.6 provably fails
-  there (`arity8_error_not_lt_2e112`).** `wrap_perFold_soundness_capacity`
+- **The deployed arity-8 per-fold posture is proven by
+  `FriArityTransfer.arity8_perFold_soundness` at the near-capacity radius; the
+  dimension-2 (arity-2) capacity figure provably fails there
+  (`arity8_error_not_lt_2e112`) — the digits are in `reference/PROVEN-120-CONFIG.md`
+  and `reference/FRI-PARAM-FRONTIER.md`.** `wrap_perFold_soundness_capacity`
   (`metatheory/Dregg2/Circuit/FriCorrelatedAgreementSharp.lean:1085`) proves
-  the per-fold error `< 2⁻¹¹²` (exact ≈ 2⁻¹¹²·⁶) by the capacity-radius
+  the per-fold error `< 2⁻¹¹²` by the capacity-radius
   counting chain: the field-independent bound `|Good| ≤ C(64,2) = 2016`
   (`wrap_good_challenge_card_le_capacity`, `:939`) on the arity-2 constant
   fold — per the shipped ledger, "a 2-to-1 fold the deployed prover does NOT
@@ -295,13 +296,13 @@ A deployed light client's entitlement reduces to:
 1. `Poseidon2SpongeCR` — one hash's collision resistance.
 2. `Poseidon2ChipArithSound` — the chip's arithmetic correctness (distinct
    from 1).
-3. The FRI floor at deployed parameters — per-fold proven ~109.84 bits at the
+3. The FRI floor at deployed parameters — per-fold proven at the
    deployed arity-8 fold (`FriArityTransfer.arity8_perFold_soundness`; the
-   ~112.6 dimension-2 figure provably fails at arity 8,
+   dimension-2 capacity figure provably fails at arity 8,
    `arity8_error_not_lt_2e112`), both about near-capacity words rather than the
-   operating radius; the deployed **query-soundness floor is ~31.5 bits** at the
-   unique-decoding radius δ=7/16 (`(9/16)³⁸ < 2⁻³¹`,
-   `DeployedProximitySoundness`) — the 71–73 Johnson figure is the m→∞
+   operating radius; the deployed **query-soundness floor** at the
+   unique-decoding radius δ=7/16 is `DeployedProximitySoundness` (`(9/16)³⁸ < 2⁻³¹`)
+   — the Johnson query figure is the m→∞
    idealisation that drops the ε_C commit term; capacity refuted and demoted to
    a canary.
 4. The FS-SZ game bound.

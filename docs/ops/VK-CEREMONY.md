@@ -9,13 +9,13 @@
 >
 > **GATE 1 — Track B FRI cutover must have landed.** The ceremony MUST operate on the
 > **proven-120 `d=8` circuit** (`d=8, lb=6, q=36, pow=16, WRAP_LOG_CEIL=15` → λ=122.60,
-> `docs/reference/FRI-CUTOVER-PLAN.md:3-4`), **never** the deployed `d=4` config (proven
-> commit posture 51 bits, `FriDeployedHeightPairing.deployed_wrap_commitBits`;
+> `docs/reference/FRI-CUTOVER-PLAN.md:3-4`), **never** the deployed `d=4` config (its proven
+> commit posture is `FriDeployedHeightPairing.deployed_wrap_commitBits`;
 > `docs/reference/REPRODUCIBLE-BUILD-AND-FREEZE.md:20-22,130-138`).
 > Concretely: `FRI-CUTOVER-PLAN.md` **Phases 0–3 complete and gate G3 green** — a *real*
 > `d=8` apex-shrink proof from `circuit-prove` verifies inside the gnark circuit
 > (`FRI-CUTOVER-PLAN.md:220-223`). Run the ceremony at `d=4` and the frozen KAT pins the
-> deployed `d=4` config (proven commit posture 51 bits); the `d=8` cutover then throws that ceremony away and demands a second
+> deployed `d=4` config; the `d=8` cutover then throws that ceremony away and demands a second
 > multi-GB setup, a second re-key, and a re-publish of the "frozen" genesis
 > (`REPRODUCIBLE-BUILD-AND-FREEZE.md:136-138,257-258`). **This ceremony runs ONCE, at `d=8`.**
 >

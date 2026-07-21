@@ -19,8 +19,8 @@ at `GET /api/node/producer` (`node/src/api.rs`). For turns the host arm
 produces, the host implementation is in the trust base, and the running-entry
 guarantee is stated over the verified entry, not over the host arms.
 
-*The proof-system carrier is explicit; its parameter ledger evaluates to
-57.98 bits but does not prove adversarial soundness.* The circuit layer's one recursion assumption is
+*The proof-system carrier is explicit; its parameter ledger is a density
+evaluation, not a proof of adversarial soundness.* The circuit layer's one recursion assumption is
 #lean("RecursiveAggregation.EngineSound.recursive_sound"). Beneath it, the
 mechanized reduction takes #lean("FriLdtExtractV3") --- everything FRI delivers
 on an accepting run --- as a hypothesis, and the Lean development contains no

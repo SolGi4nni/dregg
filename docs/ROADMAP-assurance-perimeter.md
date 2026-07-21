@@ -3,7 +3,7 @@
 The multi-swarm-cycle execution tracker for closing the witness-generation perimeter. **DESIGN** (the
 architecture + the verdicts) = `docs/DESIGN-assurance-perimeter-closure.md`. **INVENTORY** (what was
 trusted-Rust) = memory `project-witness-gen-assurance-perimeter`. This file = *where we are*, updated each
-cycle. Orthogonal axis: the FRI floor (`project-fri-soundness-reality`, 57 calc bits) — never laundered by
+cycle. Orthogonal axis: the FRI floor (`project-fri-soundness-reality`; see `FriDeployedHeightPairing` for the deployed posture) — never laundered by
 this work.
 
 ## Mission (the invariant we are driving to)

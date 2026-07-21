@@ -21,7 +21,7 @@ green on ember's laptop, not in a frozen, reproducible, deployed artifact** (`HO
 The math is strong; the gap is engineering discipline and scope focus. The four forward tracks are
 the four cures, and they are not independent. **D** puts the system somewhere other than one
 laptop and freezes what it is (the meta-enabler — every other track's "deployed" claim is
-green-on-one-laptop until D lands). **B** sharpens the proof from a 57.98-bit calculator artifact
+green-on-one-laptop until D lands). **B** sharpens the proof from the deployed calculator artifact
 to a proven-122.60 configuration and re-bases the one still-assumed soundness leg over a real
 adversary model, so that when D freezes a VK it freezes the *strong* one. **A** turns the
 interchain story from fixture-clusters and a local test validator into a real mainnet consensus
@@ -59,9 +59,9 @@ the disease's root cause into a falsifier (`REPRODUCIBLE-BUILD-AND-FREEZE.md` §
 ### Track B — proof-sharp (cutover + extraction floor)
 
 **Maturity: BUILT design, RUNS numerics, cutover not executed.** The deployed apex proves at
-`d=4`, apex height `2^22` → **51 proven commit bits** (`FriDeployedHeightPairing.deployed_wrap_commitBits`;
-the `57.98`/`57` once quoted from `PROVEN-120-CONFIG.md` §3.1 is the `m`-optimized ceiling at a mispaired
-height, refuted as the deployed number by `deployed_wrap_is_not_the_proven120_number`). That number
+`d=4`, apex height `2^22`; its proven commit posture is `FriDeployedHeightPairing.deployed_wrap_commitBits`
+(the `m`-optimized ceiling once quoted from `PROVEN-120-CONFIG.md` §3.1 is refuted as the deployed
+number by `deployed_wrap_is_not_the_proven120_number`; digits live in that reference). That column
 is a Finset density ratio from a parametric Lean ledger, not an adversary bound, and the one leg
 below the grounded apex — the per-node FRI extraction bundle `FriLdtExtractV3`
 (`AlgoStarkSoundTransferV3.lean:131`) and its recursion twin `AggAirSound.FriExtract`
@@ -76,7 +76,7 @@ query-counting oracle model (`RomOracle`, in-tree and `#assert_axioms`-clean) so
 becomes either a theorem or a citation-shaped probabilistic carrier with a real adversary type and
 a concrete `εFri(Q, params)` — explicitly **not** a cost model, which the record twice warns is the
 trap (`FRI-EXTRACTION-FLOOR-DESIGN.md` §3, §4.3). **Next rung: Cutover Phase 0** — free, correct
-today, degree-independent: `WRAP_LOG_CEIL 16→15` (+2 bits at d=4: 57→59, ~2× less apex work) plus
+today, degree-independent: `WRAP_LOG_CEIL 16→15` (+2 ceiling bits at d=4, ~2× less apex work) plus
 the three wrong-artifact corrections (`FRI-CUTOVER-PLAN.md` Phase 0). The floor design's Stage 1
 (the faithfulness bridge `verifyAlgoO_run_eq`) can proceed in parallel — it is pure structure, no
 crypto, and everything downstream needs it.
@@ -131,7 +131,7 @@ Rung 1 (one real dollar through the custodial rail) is an ember-gated external t
 
 A stranger clones the public repo into an empty environment, the build goes green from a bare clone
 enforced by CI, and the VK it produces byte-matches a frozen, ceremony-pinned `v-final` VK whose
-proven soundness is **λ ≥ 122** (not 57.98) and whose one soundness leg is grounded in a
+proven soundness is **λ ≥ 122** (not the deployed calculator posture) and whose one soundness leg is grounded in a
 query-counting adversary model rather than assumed. That same stranger proves a *real* mainnet
 `$DREGG` holding against real ≥ 2/3 Solana consensus and receives governance weight
 non-custodially; and a service — a launchpad deploy, an AI-narration run, a bond — accepts real
@@ -145,7 +145,7 @@ tracks compose in a fixed order.
         D (off-laptop + FREEZE)  ← the meta-enabler; nothing is "deployed" until this
         ▲
         │ B-cutover MUST precede D-freeze
-        │ (freeze the PROVEN 122.60 VK, not the 57.98 calculator one)
+        │ (freeze the PROVEN 122.60 VK, not the deployed calculator one)
         │ — and the two SHARE one event: cutover Phase 4 IS D's freeze ceremony
         │
    B (proof-sharp) ──────────────┐
@@ -163,7 +163,7 @@ tracks compose in a fixed order.
   (below).
 - **B-cutover must precede D-freeze, and they share one event.** The freeze pins a production VK as
   a hex KAT constant, killing the self-recompute tautology at `recursive_witness_bundle.rs:180`. If
-  D freezes before the FRI cutover, it freezes the `d=4`/57.98-bit config; the cutover then forces a
+  D freezes before the FRI cutover, it freezes the `d=4` config; the cutover then forces a
   full VK re-key (the anchor pair `DREGG_APEX_RECURSION_VK`/`DreggApexRecursionVk`, Solidity
   verifier, all fixtures), wasting the multi-GB Groth16 ceremony. **The cutover's Phase-4 re-key IS
   the freeze event** — `REPRODUCIBLE-BUILD-AND-FREEZE.md` Rung D4 is literally
@@ -205,8 +205,8 @@ value.
    In the same window, A Rung 0 (retire `HostBallotBox`) and C Rung 2a (protocol-native run budget on
    an internal asset) are both cheap, lane-autonomous, and unblocked — schedule them here.
 3. **B Phase 1 measurements → G1 go/no-go.** Measure the d=8 wrap R1CS and outer-shrink cost before
-   any rewrite. If G1 fails, the fallback is Phase-0's 59 bits plus the BCSS25 route — *and
-   D-freeze then pins that 59-bit config deliberately*, not by accident.
+   any rewrite. If G1 fails, the fallback is Phase-0's ceiling gain plus the BCSS25 route — *and
+   D-freeze then pins that Phase-0 config deliberately*, not by accident.
    *Gate: measured Groth16 setup peak fits hbox under `swarm-build` (`MemoryMax=96G`); outer-shrink
    prove time acceptable.*
 4. **B Phases 2–5 (Rust flip → gnark wrap → VK re-key → apex re-verify), and D-freeze rides Phase 4.**
@@ -236,7 +236,7 @@ claim each track upgrades to proven-excellent, and whether they can check it the
 | Track | Claim today (labeled-honest) | Claim after the next rungs (proven-excellent) | What an outsider can independently check |
 |---|---|---|---|
 | **D** | "It builds green" — but on one laptop, with a mutable-branch dep, a rolling nightly, and no bare-clone gate (`REPRODUCIBLE-BUILD-AND-FREEZE.md` §2.2) | "*You* build it green from a bare clone into an empty home, every dep an immutable ref, and the VK you get byte-matches the ceremony-frozen KAT constant" | Clone the public repo into an empty env; CI's bare-clone gate (Rung D2) is the reproducibility proof; the VK KAT constant is checkable against your own build |
-| **B** | "57.98 proven bits, computed by a ledger that never touches the apex; one soundness leg an undischarged deterministic universal claim" (`PROVEN-120-CONFIG.md` §3.1, `FriLdtExtractV3`) | "λ ≥ 122 with 2.6 bits margin on every config; the extraction leg re-based over a query-counting adversary with a concrete `εFri(Q,params)` — b bits means `εFri(2^b) ≤ 1/2`" | Read `FRI-CUTOVER-PLAN.md` §3's re-pinned test table and the parametric Lean ledger validated against all 14 numbers it proves; read the floor design's per-stage falsifiers |
+| **B** | "the deployed calculator posture, computed by a ledger that never touches the apex; one soundness leg an undischarged deterministic universal claim" (`PROVEN-120-CONFIG.md` §3.1, `FriLdtExtractV3`) | "λ ≥ 122 with 2.6 bits margin on every config; the extraction leg re-based over a query-counting adversary with a concrete `εFri(Q,params)` — b bits means `εFri(2^b) ≤ 1/2`" | Read `FRI-CUTOVER-PLAN.md` §3's re-pinned test table and the parametric Lean ledger validated against all 14 numbers it proves; read the floor design's per-stage falsifiers |
 | **A** | "Sound over its inputs, but every holding/lock is a fixture; no mainnet consensus ever verified" (`INTERCHAIN-LIVE-CAMPAIGN.md` §2) | "One real mainnet holding proven against real ≥ 2/3 Solana consensus, non-custodially, anchor-pinned, with the reconstruction seam deleted" | Reproduce the mainnet holding proof against a public snapshot; custody preservation is a Lean theorem you can read (`ProofOfHoldings.lean`); the load-bearing falsifier (snapshot `bank_hash` = the hash a real supermajority signed) is a CI gate |
 | **C** | "Payment rail RUNS on mock chains, custodial by construction; no real `$DREGG` accepted; no computron↔token peg" (`TOKENOMICS.md:29-41,115`) | "Real `$DREGG` posts a bond / buys a service through a supply-conserving rail with no operator custody; the honest non-existence of a peg is stated by the project" | Post/spend through the deployed rail; the supply invariant `live_supply ≤ currently_locked` (`bridge_ledger.rs`) and per-asset Σδ = 0 (`action.rs:1069`) are enforced and testable; grep the run path for `Seed`/`Sweeper` and find nothing |
 
@@ -265,7 +265,7 @@ state first*, and by each named gap arriving with its closure rung already sched
   A design that trusts the manifest over the gate is the "green on ember's laptop" disease one level
   up (`REPRODUCIBLE-BUILD-AND-FREEZE.md` §6).
 - **Sequencing risk: freezing before B decides.** If schedule pressure lands D-freeze before B's G1,
-  the ceremony pins 57.98 and the cutover forces a second ceremony. Mitigation is structural: the
+  the ceremony pins the deployed `d=4` config and the cutover forces a second ceremony. Mitigation is structural: the
   cutover's Phase-4 re-key *is* the freeze; do not run a standalone freeze ceremony ahead of it.
 - **A's mainnet feed is a live-network dependency, not a proof gap — with one real soundness
   falsifier.** The consensus circuit is built and green on fixtures; most of the risk is operational

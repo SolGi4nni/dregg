@@ -5,8 +5,8 @@
 > receipt carries a real proof, not a trusted key. Nothing trusted, nothing duplicated.**
 
 Companion to memory `project-witness-gen-assurance-perimeter` (the inventory) and orthogonal to
-`project-fri-soundness-reality` (the 57-calc-bit FRI floor — every proof here rests on that undischarged
-floor regardless).
+`project-fri-soundness-reality` (the FRI floor — every proof here rests on that undischarged
+floor regardless; see `FriDeployedHeightPairing` for the deployed posture).
 
 ## 0. The finding that opened this
 
@@ -92,6 +92,6 @@ The only real constraint is correctness (the `⟺` proofs) and internal consiste
 ## 7. The honest caveat, kept in front
 
 Everything here is `air_accepts ⟺ spec` — **soundness of the constraint relation**, still on the deployed
-FRI floor (57 calc bits, `FriLdtExtractV3` assumed, no adversary object). Closing this perimeter makes the
+FRI floor (`FriLdtExtractV3` assumed, no adversary object; see `FriDeployedHeightPairing` for the posture). Closing this perimeter makes the
 witness-generation axis honest; it does NOT discharge the FRI floor. Both axes are named; do not let one
 launder the other.

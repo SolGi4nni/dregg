@@ -2,7 +2,7 @@
 
 Read-only sufficient-test audit of every `metatheory/Market/*.lean` (37 files), the verified
 core the confidential-clearing product rests on. The discipline is the one that found vacuity in
-ArkLib's `KZG.binding`, in our own FRI "57 calculator bits", and in our `*HardQuant` costumes,
+ArkLib's `KZG.binding`, in our own FRI "calculator bits", and in our `*HardQuant` costumes,
 turned inward on our own assurance core. A found vacuity / mirror / laundering is a WIN.
 
 Verdict vocabulary: **PROVEN** · **HONEST-CARRIER** (assumed but honestly named + graded) ·
