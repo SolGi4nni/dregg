@@ -53,15 +53,16 @@ use crate::mnemonic;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChainAppendError {
     /// The receipt's `previous_receipt_hash` does not match the cipherclerk's
-    /// current chain head. This indicates that the executor that produced
-    /// the receipt and this cipherclerk disagree about the receipt chain —
+    /// current head for that receipt's agent. This indicates that the executor
+    /// that produced the receipt and this cipherclerk disagree about the agent's receipt chain —
     /// a fork condition. The caller must explicitly reconcile (request the
     /// federation's view, reset the cipherclerk, branch, etc.); the
     /// cipherclerk will not silently rewrite the link.
     #[error("receipt chain mismatch: cipherclerk head = {expected:?}, receipt's prev = {got:?}")]
     ReceiptChainMismatch {
         /// What the cipherclerk thinks the prior receipt hash is (i.e., the
-        /// hash of its current chain head, or `None` for an empty chain).
+        /// hash of that agent's current chain head, or `None` before that
+        /// agent's genesis receipt).
         expected: Option<[u8; 32]>,
         /// What the receipt claims its predecessor is.
         got: Option<[u8; 32]>,
@@ -1031,11 +1032,29 @@ pub struct AgentCipherclerk {
     tokens: Vec<HeldToken>,
     /// Counter for generating unique token IDs.
     next_token_id: u64,
-    /// The agent's receipt chain: a linked sequence of TurnReceipts proving
-    /// the complete history of state transitions from genesis. This is the
-    /// proof-carrying state representation — anyone can verify the chain
-    /// without contacting a federation.
+    /// Immutable node-wide receipt log, in append order.
+    ///
+    /// This vector is deliberately **not** the causal-chain index: receipts
+    /// from different agents may be interleaved here. Their independent chains
+    /// are tracked by `receipt_indices_by_agent` / `receipt_heads_by_agent`.
+    /// Keeping the log and causal indices separate prevents a node from
+    /// relinking an already executor-signed foreign receipt into the operator's
+    /// chain merely because it was the next receipt observed by that node.
     receipt_chain: Vec<dregg_turn::TurnReceipt>,
+    /// Dense log indices for each agent's causal receipt chain.
+    receipt_indices_by_agent: HashMap<CellId, Vec<usize>>,
+    /// The immutable log index of each agent's current causal head.
+    receipt_heads_by_agent: HashMap<CellId, usize>,
+    /// Optional durability sink for the immutable receipt log. When set (by the node,
+    /// via [`Self::set_receipt_persist`]), every [`Self::append_receipt`] fires
+    /// it with `(log_index, &receipt)` so the just-appended receipt is written
+    /// to the durable store SYNCHRONOUSLY under the same lock — the hook that
+    /// makes the served `/api/receipts*` chain (and its MMR head) survive a node
+    /// restart instead of rebuilding empty every boot. `None` for a plain SDK
+    /// cipherclerk (no store), so the append path is a pure in-memory push there.
+    /// Never fired by [`Self::restore_receipt_chain`] (boot reload is not a new
+    /// append). Not part of the identity/serialized state; skipped by `Debug`.
+    receipt_persist: Option<std::sync::Arc<dyn Fn(u64, &dregg_turn::TurnReceipt) + Send + Sync>>,
     /// The HD seed from which this cipherclerk's key was derived (if created from mnemonic).
     /// Stored encrypted at rest; zeroized on drop.
     seed: Option<[u8; 64]>,
@@ -1187,6 +1206,9 @@ impl AgentCipherclerk {
             tokens: Vec::new(),
             next_token_id: 0,
             receipt_chain: Vec::new(),
+            receipt_indices_by_agent: HashMap::new(),
+            receipt_heads_by_agent: HashMap::new(),
+            receipt_persist: None,
             seed: None,
             mnemonic_phrase: None,
             derivation_path: None,
@@ -1261,6 +1283,9 @@ impl AgentCipherclerk {
             tokens: Vec::new(),
             next_token_id: 0,
             receipt_chain: Vec::new(),
+            receipt_indices_by_agent: HashMap::new(),
+            receipt_heads_by_agent: HashMap::new(),
+            receipt_persist: None,
             seed: Some(seed),
             mnemonic_phrase: None,
             derivation_path: Some(path.to_string()),
@@ -2159,30 +2184,19 @@ impl AgentCipherclerk {
     // see [`ChainAppendError::ReceiptChainMismatch`] for the strict-mode
     // semantics enforced by [`Self::append_receipt`].
 
-    /// Append a receipt to this cipherclerk's chain after a successful turn execution.
+    /// Append an immutable receipt to this cipherclerk's node-wide log and the
+    /// receipt's agent-scoped causal chain.
     ///
     /// # Strict chain semantics (P0 #77 fix)
     ///
-    /// The receipt's `previous_receipt_hash` is treated as follows:
+    /// The receipt's `previous_receipt_hash` must exactly equal the current
+    /// head hash for **that receipt's agent**. Consequently `None` is accepted
+    /// only for that agent's genesis receipt; it is rejected after genesis.
+    /// Receipts from other agents do not affect the expected predecessor.
     ///
-    /// - **`Some(h)`** — `h` must equal the hash of the cipherclerk's current
-    ///   chain head. If the chain is empty, `Some(h)` is a mismatch (the
-    ///   executor that produced the receipt thinks the chain is non-empty but
-    ///   the cipherclerk thinks otherwise — a divergence). Otherwise, equality
-    ///   is required. A mismatch returns
-    ///   [`ChainAppendError::ReceiptChainMismatch`] **without** mutating the
-    ///   chain.
-    /// - **`None`** — the cipherclerk fills in its current head. This preserves
-    ///   compatibility with callers that build receipts in test contexts (or
-    ///   from paths that don't track the head) while still being strict against
-    ///   adversarial supplied-prev-hash values.
-    ///
-    /// The fork-detection contract: any caller that *does* supply a
-    /// `previous_receipt_hash` (e.g. a receipt produced by an honest executor
-    /// that auto-fills from its own ledger) will surface a divergence rather
-    /// than have it silently rewritten. Pre-fix, the cipherclerk overwrote
-    /// the supplied value unconditionally, which made the cipherclerk's chain
-    /// disagree with the federation's chain without any observable signal.
+    /// The receipt is never edited. In particular, `previous_receipt_hash` is
+    /// part of `receipt_hash()` and therefore of the executor's canonical
+    /// signed message; rewriting it after execution invalidates the signature.
     ///
     /// The caller must explicitly reconcile (request the federation's view, reset
     /// the cipherclerk, branch, etc.) — there is no audit-trail mode that papers
@@ -2192,72 +2206,186 @@ impl AgentCipherclerk {
     /// Call this after `TurnExecutor::execute()` returns a committed result.
     pub fn append_receipt(
         &mut self,
-        mut receipt: dregg_turn::TurnReceipt,
+        receipt: dregg_turn::TurnReceipt,
     ) -> Result<(), ChainAppendError> {
-        let expected_prev = self.receipt_chain.last().map(|r| r.receipt_hash());
+        let expected_prev = self.agent_receipt_head_hash(&receipt.agent);
 
-        // Strict mode: if the caller provided a prev_hash, it must match the
-        // cipherclerk's current head. The previous behavior (silently overwriting
-        // the caller's value with the cipherclerk's head) would mask a fork:
+        // Strict mode: the claimed predecessor (including its absence) must
+        // match this agent's current head. The previous behavior (silently
+        // overwriting the caller's value with the global head) would mask a fork:
         // an executor that disagreed with the cipherclerk about the chain head
         // would still have its receipt appended, after which cipherclerk's
         // chain and the federation's chain would silently diverge.
-        if let Some(claimed) = receipt.previous_receipt_hash
-            && Some(claimed) != expected_prev
-        {
+        if receipt.previous_receipt_hash != expected_prev {
             return Err(ChainAppendError::ReceiptChainMismatch {
                 expected: expected_prev,
-                got: Some(claimed),
+                got: receipt.previous_receipt_hash,
             });
         }
 
-        // Link to the previous receipt (no-op if already set to the matching
-        // value; fills in when the caller left it unset).
-        receipt.previous_receipt_hash = expected_prev;
-
+        let index = self.receipt_chain.len();
+        let agent = receipt.agent;
         self.receipt_chain.push(receipt);
+        self.receipt_indices_by_agent
+            .entry(agent)
+            .or_default()
+            .push(index);
+        self.receipt_heads_by_agent.insert(agent, index);
+        // Durably record the just-appended receipt at its dense chain index, if a
+        // node installed the persistence sink. Fired here (not at the ~26 node
+        // call sites) so EVERY append path — HTTP ingress, blocklace finalization,
+        // MCP handlers, trustline/storage — persists uniformly. Synchronous and
+        // best-effort: a store error is the sink's to log; the in-memory append
+        // (the executor's authority) stands regardless.
+        if let Some(sink) = &self.receipt_persist {
+            sink(index as u64, &self.receipt_chain[index]);
+        }
         Ok(())
     }
 
-    /// Get the head (most recent) receipt in this cipherclerk's chain.
+    /// Install the durability sink for the immutable receipt log (the node calls this
+    /// once at construction, after [`Self::restore_receipt_chain`]). From then on
+    /// every [`Self::append_receipt`] fires `sink(log_index, &receipt)` so the
+    /// durable store tracks the served log. See the `receipt_persist` field.
+    pub fn set_receipt_persist(
+        &mut self,
+        sink: std::sync::Arc<dyn Fn(u64, &dregg_turn::TurnReceipt) + Send + Sync>,
+    ) {
+        self.receipt_persist = Some(sink);
+    }
+
+    /// Reload a persisted receipt log into this cipherclerk on boot, replacing
+    /// the in-memory log and rebuilding every agent index. Receipts are checked
+    /// strictly: loading stops at the first entry whose `previous_receipt_hash`
+    /// does not match that agent's running head (a corrupt/torn durable tail
+    /// truncates rather than forks any chain),
+    /// and the returned count is how many were accepted. Does NOT fire the
+    /// persistence sink — this is recovery of already-durable receipts, not a new
+    /// append — and is meant to be called BEFORE [`Self::set_receipt_persist`].
+    pub fn restore_receipt_chain(&mut self, receipts: Vec<dregg_turn::TurnReceipt>) -> usize {
+        self.receipt_chain.clear();
+        self.receipt_indices_by_agent.clear();
+        self.receipt_heads_by_agent.clear();
+        for receipt in receipts {
+            let expected_prev = self.agent_receipt_head_hash(&receipt.agent);
+            if receipt.previous_receipt_hash != expected_prev {
+                break;
+            }
+            let index = self.receipt_chain.len();
+            let agent = receipt.agent;
+            self.receipt_chain.push(receipt);
+            self.receipt_indices_by_agent
+                .entry(agent)
+                .or_default()
+                .push(index);
+            self.receipt_heads_by_agent.insert(agent, index);
+        }
+        self.receipt_chain.len()
+    }
+
+    /// Return the immutable causal head receipt for `agent`.
     ///
-    /// Returns `None` if no turns have been executed yet (empty chain).
+    /// This is the node-facing lookup to seed authoritative execution. It must
+    /// be preferred over [`Self::receipt_head`], which returns the last receipt
+    /// in the node-wide observation log and may belong to another agent.
+    pub fn agent_receipt_head(&self, agent: &CellId) -> Option<&dregg_turn::TurnReceipt> {
+        self.receipt_heads_by_agent
+            .get(agent)
+            .map(|&index| &self.receipt_chain[index])
+    }
+
+    /// Return the current causal predecessor hash for `agent`.
+    pub fn agent_receipt_head_hash(&self, agent: &CellId) -> Option<[u8; 32]> {
+        self.agent_receipt_head(agent).map(|r| r.receipt_hash())
+    }
+
+    /// Return the number of immutable receipts in `agent`'s causal chain.
+    pub fn agent_receipt_count(&self, agent: &CellId) -> usize {
+        self.receipt_indices_by_agent.get(agent).map_or(0, Vec::len)
+    }
+
+    /// Iterate `agent`'s causal receipts in chain order, excluding interleaved
+    /// receipts belonging to other agents.
+    pub fn agent_receipts(&self, agent: &CellId) -> impl Iterator<Item = &dregg_turn::TurnReceipt> {
+        self.receipt_indices_by_agent
+            .get(agent)
+            .into_iter()
+            .flatten()
+            .map(|&index| &self.receipt_chain[index])
+    }
+
+    /// Get the last receipt in the node-wide append log.
+    ///
+    /// For causal validation use [`Self::agent_receipt_head`]; this compatibility
+    /// accessor may return a receipt belonging to any agent.
     pub fn receipt_head(&self) -> Option<&dregg_turn::TurnReceipt> {
         self.receipt_chain.last()
     }
 
-    /// Get the number of receipts in this cipherclerk's chain.
+    /// Get the number of receipts in the node-wide immutable log.
     ///
-    /// This is the number of successfully committed turns in this agent's history.
+    /// Use [`Self::agent_receipt_count`] for one agent's causal height.
     pub fn receipt_chain_length(&self) -> usize {
         self.receipt_chain.len()
     }
 
-    /// Get the full receipt chain for verification or export.
+    /// Number of immutable receipts in the node-wide observation log.
     ///
-    /// The chain can be presented to any verifier who can check its integrity
-    /// using [`dregg_turn::verify_receipt_chain`] without contacting a federation.
-    pub fn receipt_chain(&self) -> &[dregg_turn::TurnReceipt] {
+    /// This explicit name is preferred by node code; the legacy
+    /// [`Self::receipt_chain_length`] name predates interleaved agents.
+    pub fn receipt_log_length(&self) -> usize {
+        self.receipt_chain.len()
+    }
+
+    /// Return the immutable node-wide receipt log in append order.
+    ///
+    /// This explicit name is preferred by node code. It is not a causal chain
+    /// when multiple agents are interleaved; project one with
+    /// [`Self::agent_receipts`].
+    pub fn receipt_log(&self) -> &[dregg_turn::TurnReceipt] {
         &self.receipt_chain
     }
 
-    /// Get the current state commitment (post_state_hash of the chain head).
+    /// Get the immutable node-wide receipt log in append order.
     ///
-    /// This is the state that the receipt chain proves. Returns `None` if the
-    /// chain is empty.
+    /// When more than one agent is present this is not itself a single causal
+    /// chain. Use [`Self::agent_receipts`] to project a verifiable agent chain.
+    pub fn receipt_chain(&self) -> &[dregg_turn::TurnReceipt] {
+        self.receipt_log()
+    }
+
+    /// Get the state commitment on the final entry of the node-wide log.
+    ///
+    /// This compatibility accessor is ambiguous for interleaved logs; use
+    /// [`Self::current_state_commitment_for`] for causal state. Returns `None`
+    /// if the log is empty.
     pub fn current_state_commitment(&self) -> Option<[u8; 32]> {
         self.receipt_chain.last().map(|r| r.post_state_hash)
     }
 
-    /// Verify this cipherclerk's own receipt chain integrity.
+    /// Get the current state commitment proved by `agent`'s causal head.
+    pub fn current_state_commitment_for(&self, agent: &CellId) -> Option<[u8; 32]> {
+        self.agent_receipt_head(agent).map(|r| r.post_state_hash)
+    }
+
+    /// Verify every agent chain indexed by this cipherclerk's immutable log.
     ///
-    /// Returns `Ok(())` if the chain is valid, or an error describing the break.
-    /// An empty chain is considered valid (no receipts to verify).
+    /// Returns `Ok(())` if every chain is valid, or the first structural error.
+    /// An empty log is considered valid (no receipts to verify).
     pub fn verify_own_chain(&self) -> Result<(), dregg_turn::VerifyError> {
-        if self.receipt_chain.is_empty() {
+        for agent in self.receipt_indices_by_agent.keys() {
+            self.verify_agent_chain(agent)?;
+        }
+        Ok(())
+    }
+
+    /// Verify one agent's causal receipt chain projected from the node-wide log.
+    pub fn verify_agent_chain(&self, agent: &CellId) -> Result<(), dregg_turn::VerifyError> {
+        let chain: Vec<_> = self.agent_receipts(agent).cloned().collect();
+        if chain.is_empty() {
             return Ok(());
         }
-        dregg_turn::verify_receipt_chain(&self.receipt_chain)
+        dregg_turn::verify_receipt_chain(&chain)
     }
 
     // DELETED 2026-07-16 (mock-proof purge, final cut): the mock-IVC path —
@@ -3054,9 +3182,9 @@ impl AgentCipherclerk {
     /// Since `dregg-action-sig-v3` the canonical signing message also binds the
     /// SUBMITTING turn's nonce (Full-commitment replay closure — see
     /// `TurnExecutor::compute_signing_message`). This convenience wrapper signs
-    /// over [`Self::next_turn_nonce`] (`receipt_chain.len()`), which is the
-    /// SAME value every cipherclerk submission path stamps on the turn it
-    /// builds (`make_sovereign`, the node MCP handlers'
+    /// over [`Self::next_turn_nonce`] (the default agent's receipt count),
+    /// which is the SAME value every cipherclerk submission path stamps on the
+    /// turn it builds (`make_sovereign`, the node MCP handlers'
     /// `receipt_chain_length()`, the shared app-framework runtime whose
     /// counter advances in lockstep with `append_receipt`). If the action will
     /// ride a turn with a DIFFERENT nonce (e.g. a cell-agent turn riding the
@@ -3072,13 +3200,14 @@ impl AgentCipherclerk {
     }
 
     /// The nonce the NEXT turn this cipherclerk submits will carry: the
-    /// receipt-chain length. Every committed turn appends one receipt
-    /// ([`Self::append_receipt`]), so the chain length tracks the agent's
+    /// default agent's receipt-chain length. Every committed turn for that
+    /// agent appends one receipt ([`Self::append_receipt`]), so its chain length
+    /// tracks the agent's
     /// on-ledger replay counter (`agent.state.nonce()`), which the executor
     /// requires `turn.nonce` to equal — and, since `dregg-action-sig-v3`,
     /// binds into every Full-commitment action signature.
     pub fn next_turn_nonce(&self) -> u64 {
-        self.receipt_chain.len() as u64
+        self.agent_receipt_count(&self.cell_id("default")) as u64
     }
 
     /// Sign an action with the legacy CLASSICAL (ed25519-only)
@@ -3355,8 +3484,9 @@ impl AgentCipherclerk {
                 hash: [0u8; 32],
             })
             .collect();
+        let agent = self.cell_id(domain);
         Turn {
-            agent: self.cell_id(domain),
+            agent,
             nonce: 0,
             fee: 0,
             call_forest: CallForest {
@@ -3365,7 +3495,7 @@ impl AgentCipherclerk {
             },
             memo: None,
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: Default::default(),
@@ -3474,8 +3604,9 @@ impl AgentCipherclerk {
             hash: [0u8; 32],
         };
 
+        let agent = self.cell_id("default");
         let turn = Turn {
-            agent: self.cell_id("default"),
+            agent,
             // AUDIT[P3-6]: nonce hardcoded to 0; documented as caller's
             // responsibility. `previous_receipt_hash` is now plumbed through
             // from the cipherclerk's receipt chain to bind this turn to the
@@ -3488,7 +3619,7 @@ impl AgentCipherclerk {
             },
             memo: None,
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: Default::default(),
@@ -4903,7 +5034,7 @@ impl AgentCipherclerk {
 
         // 2. Build a committed turn with the stealth address as recipient.
         let agent_cell = self.cell_id("default");
-        let nonce = self.receipt_chain.len() as u64;
+        let nonce = self.agent_receipt_count(&agent_cell) as u64;
 
         let output = CommittedNoteOutput {
             value: amount,
@@ -4939,7 +5070,7 @@ impl AgentCipherclerk {
     /// A [`Turn`] containing an `Effect::MakeSovereign` action ready for signing.
     pub fn make_sovereign(&mut self, cell_id: &CellId) -> Result<Turn, SdkError> {
         let agent_cell = *cell_id;
-        let nonce = self.receipt_chain.len() as u64;
+        let nonce = self.agent_receipt_count(&agent_cell) as u64;
 
         let mut forest = dregg_turn::forest::CallForest::new();
         // Built UNAUTHORIZED via the sealed raw scaffold: the returned turn
@@ -4960,7 +5091,7 @@ impl AgentCipherclerk {
             fee: 0,
             memo: Some("make_sovereign".to_string()),
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent_cell),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),
@@ -5092,7 +5223,7 @@ impl AgentCipherclerk {
         //    part of turn identity (the proof path proves this by computing
         //    identity over an empty-witness turn), so we can attach it after.
         let agent_cell = *cell_id;
-        let nonce = self.receipt_chain.len() as u64;
+        let nonce = self.agent_receipt_count(&agent_cell) as u64;
 
         let mut forest = dregg_turn::forest::CallForest::new();
         // Sealed-raw scaffold: a sovereign turn's authority is the attached
@@ -5108,7 +5239,7 @@ impl AgentCipherclerk {
             fee,
             memo: None,
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent_cell),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),
@@ -6017,7 +6148,7 @@ impl AgentCipherclerk {
         // 7. Build the proof-carrying turn scaffold (same identity as the v1 path: the
         //    authority IS the attached proof; no signature leg).
         let agent_cell = *cell_id;
-        let nonce = self.receipt_chain.len() as u64;
+        let nonce = self.agent_receipt_count(&agent_cell) as u64;
         let mut forest = dregg_turn::forest::CallForest::new();
         let action = crate::raw::unsigned_action_named(
             agent_cell,
@@ -6032,7 +6163,7 @@ impl AgentCipherclerk {
             fee,
             memo: Some("sovereign_proof_carrying_rotated".to_string()),
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent_cell),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),
@@ -6382,7 +6513,7 @@ impl AgentCipherclerk {
 
         // Build the proof-carrying turn (same identity as the single-leg path).
         let agent_cell = *cell_id;
-        let nonce = self.receipt_chain.len() as u64;
+        let nonce = self.agent_receipt_count(&agent_cell) as u64;
         // v12 CARRIER RETENTION (the heterogeneous-forest twin of the single-leg site below the
         // wide mint): capture BEFORE `effects` moves into the action forest.
         let retained = crate::carrier_witness_attach::RetainedCarrierMaterial {
@@ -6409,7 +6540,7 @@ impl AgentCipherclerk {
             fee,
             memo: Some("sovereign_proof_carrying_rotated_chain".to_string()),
             valid_until: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
+            previous_receipt_hash: self.agent_receipt_head_hash(&agent_cell),
             depends_on: Vec::new(),
             conservation_proof: None,
             sovereign_witnesses: HashMap::new(),
@@ -7490,7 +7621,8 @@ mod tests {
         cclerk.append_receipt(r1).unwrap();
 
         // Append second receipt (pre_state matches first post_state).
-        let r2 = mock_receipt(cell_id, [2u8; 32], [3u8; 32]);
+        let mut r2 = mock_receipt(cell_id, [2u8; 32], [3u8; 32]);
+        r2.previous_receipt_hash = cclerk.agent_receipt_head_hash(&cell_id);
         cclerk.append_receipt(r2).unwrap();
 
         assert_eq!(cclerk.receipt_chain_length(), 2);
@@ -7517,7 +7649,8 @@ mod tests {
             let pre = state;
             state[0] = i + 1;
             let post = state;
-            let receipt = mock_receipt(cell_id, pre, post);
+            let mut receipt = mock_receipt(cell_id, pre, post);
+            receipt.previous_receipt_hash = cclerk.agent_receipt_head_hash(&cell_id);
             cclerk.append_receipt(receipt).unwrap();
         }
 
@@ -7537,10 +7670,12 @@ mod tests {
         let r1 = mock_receipt(cell_id, [1u8; 32], [2u8; 32]);
         cclerk.append_receipt(r1).unwrap();
 
-        let r2 = mock_receipt(cell_id, [2u8; 32], [3u8; 32]);
+        let mut r2 = mock_receipt(cell_id, [2u8; 32], [3u8; 32]);
+        r2.previous_receipt_hash = cclerk.agent_receipt_head_hash(&cell_id);
         cclerk.append_receipt(r2).unwrap();
 
-        let r3 = mock_receipt(cell_id, [3u8; 32], [4u8; 32]);
+        let mut r3 = mock_receipt(cell_id, [3u8; 32], [4u8; 32]);
+        r3.previous_receipt_hash = cclerk.agent_receipt_head_hash(&cell_id);
         cclerk.append_receipt(r3).unwrap();
 
         // External verification.
