@@ -88,6 +88,82 @@ pub fn lean_available() -> bool {
     lean_init_once().is_ok()
 }
 
+/// Whether verified-gate tests must refuse an absent Lean archive/export instead
+/// of reporting a hollow `ok` after self-skipping.
+pub fn test_require_lean() -> bool {
+    armed_from_env_value(std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref())
+}
+
+/// Keep the test gate's grammar byte-for-byte aligned with build.rs's explicit
+/// `DREGG_REQUIRE_LEAN` grammar.
+fn armed_from_env_value(value: Option<&str>) -> bool {
+    matches!(
+        value,
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    )
+}
+
+/// Return `true` when a linked Lean capability is present.  When it is absent,
+/// return `false` for an honest developer-mode skip, but panic under
+/// `DREGG_TEST_REQUIRE_LEAN=1` so a verification lane cannot pass without
+/// exercising the verified runtime.
+pub fn demand_lean(available: bool, what: &str) -> bool {
+    demand_lean_armed(available, what, test_require_lean())
+}
+
+fn demand_lean_armed(available: bool, what: &str, armed: bool) -> bool {
+    if available {
+        return true;
+    }
+    assert!(
+        !armed,
+        "DREGG_TEST_REQUIRE_LEAN=1 but the linked archive lacks the {what} — this test would have \
+         SILENTLY SKIPPED its verified-gate assertion and reported `ok`. Seed a HEAD-matching \
+         dregg-lean-ffi/libdregg_lean.a and rebuild; do not weaken the hard mode."
+    );
+    eprintln!("SKIP: {what} not linked (DREGG_TEST_REQUIRE_LEAN unset — honest skip)");
+    false
+}
+
+#[cfg(test)]
+mod test_require_lean_gate {
+    use super::*;
+
+    #[test]
+    fn present_export_runs_under_both_modes() {
+        assert!(demand_lean_armed(true, "present", false));
+        assert!(demand_lean_armed(true, "present", true));
+    }
+
+    #[test]
+    fn absent_export_panics_when_armed() {
+        let error = std::panic::catch_unwind(|| demand_lean_armed(false, "missing export", true))
+            .expect_err("an absent export under hard mode must panic");
+        let message = error
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .expect("the gate panic must carry an actionable String");
+        assert!(message.contains("DREGG_TEST_REQUIRE_LEAN=1"));
+        assert!(message.contains("missing export"));
+    }
+
+    #[test]
+    fn absent_export_skips_when_unarmed() {
+        assert!(!demand_lean_armed(false, "missing export", false));
+    }
+
+    #[test]
+    fn env_grammar_matches_the_build_gate() {
+        for truthy in ["1", "true", "TRUE", "on", "ON"] {
+            assert!(armed_from_env_value(Some(truthy)));
+        }
+        for falsy in ["0", "false", "FALSE", "off", "OFF", "", "yes", "2"] {
+            assert!(!armed_from_env_value(Some(falsy)));
+        }
+        assert!(!armed_from_env_value(None));
+    }
+}
+
 /// Marshal a wire string through `dregg_exec_full_forest_auth_str` and return the raw
 /// output wire. Requires `lean_available()`.
 pub fn shadow_exec_full_forest_auth(wire: &str) -> Result<String, String> {
@@ -95,7 +171,8 @@ pub fn shadow_exec_full_forest_auth(wire: &str) -> Result<String, String> {
     lean_forest_auth(wire)
 }
 
-/// Handler-cutover shadow path — admission ∘ `execHandlerTurn` on the same wire.
+/// Credential-preserving handler-cutover shadow: host-fed admission, then the
+/// four-leg per-node auth gate before each registered-handler dispatch.
 ///
 /// Available only when the linked archive exports `dregg_exec_handler_turn`
 /// (cfg `dregg_handler_present`, set by build.rs). The forest-auth gate
@@ -167,6 +244,17 @@ pub fn decide_refines_gate_available() -> bool {
 pub fn shadow_decide_refines(wire: &str) -> Result<String, String> {
     ensure_lean_init()?;
     lean_decide_refines(wire)
+}
+
+/// Whether the linked archive exports the verified deployed-constraint evaluator.
+pub fn constraint_admits_available() -> bool {
+    ffi::constraint_admits_present() && lean_init_once().is_ok()
+}
+
+/// Run the Lean-authored pure-constraint admission evaluator over its canonical wire.
+pub fn shadow_constraint_admits(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_constraint_admits(wire)
 }
 
 /// Whether the linked archive exports the extracted, Lean-verified ML-DSA verify core
@@ -648,6 +736,12 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_constraint_admits_present)]
+        fn dregg_constraint_admits_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
         #[cfg(dregg_storage_content_root_present)]
         fn dregg_storage_content_root_str(
             in_utf8: *const c_char,
@@ -866,6 +960,30 @@ mod ffi {
     #[cfg(not(dregg_decide_refines_present))]
     pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
         Err("dregg_decide_refines not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    #[cfg(dregg_constraint_admits_present)]
+    pub fn constraint_admits_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_constraint_admits_present))]
+    pub fn constraint_admits_present() -> bool {
+        false
+    }
+
+    #[cfg(dregg_constraint_admits_present)]
+    pub fn lean_constraint_admits(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_constraint_admits_str,
+            "dregg_constraint_admits_str",
+        )
+    }
+
+    #[cfg(not(dregg_constraint_admits_present))]
+    pub fn lean_constraint_admits(_wire: &str) -> Result<String, String> {
+        Err("dregg_constraint_admits not exported by the linked archive (rebuild to enable)".into())
     }
 
     /// STORAGE-IN-LEAN EXTRACTION — run the VERIFIED Lean content-root over the deployed Poseidon2.
@@ -1520,6 +1638,14 @@ mod ffi {
     }
 
     pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn constraint_admits_present() -> bool {
+        false
+    }
+
+    pub fn lean_constraint_admits(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 

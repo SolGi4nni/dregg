@@ -36,9 +36,10 @@ extern lean_object *dregg_exec_full_turn(lean_object *input);
 extern lean_object *dregg_exec_full_forest_auth(lean_object *input);
 
 /* The @[export]ed Lean `String -> String` HANDLER-CUTOVER COMPLETE-TURN executor: decodes the §WIDE wire
- * (Turn envelope + action-tree + full state), runs admission ∘ `execHandlerTurn` over the lowered flat
- * action list (`lowerForestA (eraseAuth root)`), and re-encodes the §WIDE output (post-state + receipt-log
- * length + commit; on inadmissible rollback ok:0 echoes the unchanged pre-state).
+ * (Turn envelope + auth-decorated action-tree + full state), runs host-fed admission followed by the
+ * credential-preserving handler fold (`lowerForestG`; four-leg `gateOK` on the exact pre-state before
+ * each `execHandlerOne` dispatch), and re-encodes the §WIDE output (post-state + receipt-log length +
+ * three-way status; a refused body is never reported committed).
  *
  * GATED on DREGG_HANDLER_TURN: this secondary export is absent from older archives. build.rs probes the
  * archive and only `#define`s DREGG_HANDLER_TURN when the symbol is present, so a stale archive does not
@@ -151,6 +152,12 @@ extern lean_object *initialize_Dregg2_Dregg2_Exec_FFIDirect(uint8_t builtin);
 #ifdef DREGG_STORAGE_CONTENT_ROOT
 extern lean_object *initialize_Dregg2_Dregg2_Storage_Deployed(uint8_t builtin);
 extern lean_object *dregg_storage_content_root(lean_object *input);
+#endif
+
+/* The exported Lean `String -> String` deployed-constraint evaluator. */
+#ifdef DREGG_CONSTRAINT_ADMITS
+extern lean_object *initialize_Dregg2_Dregg2_Exec_DeployedConstraint(uint8_t builtin);
+extern lean_object *dregg_constraint_admits(lean_object *input);
 #endif
 
 /* The @[export]ed Lean `String -> String` VERIFIED ML-DSA VERIFY CORE
@@ -442,6 +449,15 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(sres);
 #endif
+#ifdef DREGG_CONSTRAINT_ADMITS
+    lean_object *cares = initialize_Dregg2_Dregg2_Exec_DeployedConstraint(1);
+    if (!lean_io_result_is_ok(cares)) {
+        lean_io_result_show_error(cares);
+        lean_dec_ref(cares);
+        return 1;
+    }
+    lean_dec_ref(cares);
+#endif
 #if defined(DREGG_FIPS204_VERIFY) || defined(DREGG_FIPS204_VERIFY_REAL)
     /* The verified ML-DSA verify-core module is OUTSIDE the FFI closure; initialize it explicitly so
      * `dregg_fips204_verify` AND the full-byte `dregg_fips204_verify_real` (BRICK 8, same module) are
@@ -623,6 +639,23 @@ size_t dregg_storage_content_root_str(const char *in_utf8, char *out, size_t out
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_storage_content_root(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_CONSTRAINT_ADMITS
+size_t dregg_constraint_admits_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_constraint_admits(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
@@ -965,9 +998,10 @@ size_t dregg_exec_full_forest_auth_str(const char *in_utf8, char *out, size_t ou
 /* dregg_exec_handler_turn_str — the C string bridge over the Lean `String -> String` HANDLER-CUTOVER
  * COMPLETE-TURN executor export. Identical marshalling discipline as the bridges above; it drives
  * `dregg_exec_handler_turn`, whose input wire is the §WIDE `{"state":STATEW,"turn":TURNW}` and whose
- * output is `{"state":STATEW,"loglen":N,"ok":B}`. The executed object is admission ∘ `execHandlerTurn`
- * over the lowered action list (the handler-registry cutover path). Same return contract (full byte
- * length; (size_t)-1 only on an unusable buffer). */
+ * output is `{"state":STATEW,"loglen":N,"status":S,"ok":B}`. The executed object is host-fed
+ * admission followed by the auth-preserving handler-registry fold: every lowered `(NodeAuth, action)`
+ * passes the four-leg gate before handler dispatch. Same return contract (full byte length;
+ * (size_t)-1 only on an unusable buffer). */
 #ifdef DREGG_HANDLER_TURN
 size_t dregg_exec_handler_turn_str(const char *in_utf8, char *out, size_t out_cap) {
     if (out == 0 || out_cap == 0) {

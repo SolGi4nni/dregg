@@ -35,14 +35,23 @@ NCPU="$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)"
 
 command -v lake >/dev/null 2>&1 || { echo "FATAL: lake not on PATH (install elan; ./scripts/bootstrap.sh teaches the fix)"; exit 1; }
 
-# Build ALL THREE archive splice roots (the same triple build.rs and
-# scripts/lean-ffi-closure.py name). FFI alone is NOT enough: DistributedExports
+# Build the executor roots plus every real PQ archive splice root (the same set
+# scripts/lean-ffi-closure.py names). FFI alone is NOT enough: DistributedExports
 # is a ROOT (nothing imports it), and it imports Dregg2.Coord.* — on a fresh box
 # `lake build Dregg2.Exec.FFI` emits no IR for those, and the closure-only
 # archive step below dies asking for Dregg2_Coord_*.o (bit for real on a fresh
 # Linux bootstrap, 2026-07-10).
-echo "==> lake build the three FFI splice roots (full transitive closure → :c facets)"
-( cd "$META" && lake build Dregg2.Exec.FFI Dregg2.Exec.DistributedExports Dregg2.Exec.FFIDirect )
+echo "==> lake build the executor + real-PQ splice roots (full transitive closure → :c facets)"
+( cd "$META" && lake build \
+    Dregg2.Exec.FFI \
+    Dregg2.Exec.DistributedExports \
+    Dregg2.Exec.FFIDirect \
+    Dregg2.Crypto.Fips204Verify \
+    Dregg2.Crypto.MlDsaSignReal \
+    Dregg2.Crypto.MlDsaKeygen \
+    Dregg2.Crypto.MlKemEncaps \
+    Dregg2.Crypto.MlKemDecaps \
+    Dregg2.Crypto.MlKemKeygen )
 
 INC="$(cd "$META" && lake env printenv LEAN_SYSROOT)/include"
 
@@ -104,7 +113,7 @@ echo "==> Compiled $total objects ($dregg Dregg2 + $((total - dregg)) dependency
 
 echo "==> Archiving → $ARCH"
 # CLOSURE-ONLY by default: archive the import closure of the three splice roots
-# (scripts/lean-ffi-closure.py — FFI / DistributedExports / FFIDirect), not
+# (scripts/lean-ffi-closure.py — executor + real-PQ roots), not
 # every warm IR object. A cache-warmed mathlib tree carries ~5000 modules the
 # FFI never imports; archiving them all ships a 295 MB seed where the closure
 # is ~96 MB (measured 2026-07-10, docs/LEAN-SEED-SIZE.md). DREGG_SEED_ALL=1

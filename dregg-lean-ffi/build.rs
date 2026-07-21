@@ -30,6 +30,37 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod build_parallel;
+
+/// One bounded worker budget for every independent `leanc` phase.  The env
+/// override is intentionally shared: operators should not have to discover
+/// that the initial Dregg2 facets parallelise while closure completion remains
+/// a serial, single-core tail.
+fn configured_leanc_workers() -> usize {
+    let available = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4);
+    let override_value = std::env::var("DREGG_LEANC_JOBS").ok();
+    build_parallel::worker_count(override_value.as_deref(), available)
+}
+
+/// Replay captured compiler diagnostics only after the parallel phase joins,
+/// in input order.  This keeps build logs deterministic instead of letting
+/// multiple `leanc` children interleave bytes on stderr.
+fn emit_command_diagnostics(output: &std::io::Result<std::process::Output>) {
+    match output {
+        Ok(output) => {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                println!("cargo:warning=dregg-lean-ffi: leanc stdout: {line}");
+            }
+            for line in String::from_utf8_lossy(&output.stderr).lines() {
+                println!("cargo:warning=dregg-lean-ffi: leanc stderr: {line}");
+            }
+        }
+        Err(error) => println!("cargo:warning=dregg-lean-ffi: could not launch leanc: {error}"),
+    }
+}
+
 // ── ARCHIVE-TOOL NAMES (the binutils trio) ──────────────────────────────────────
 // The archive splice / closure-completion / reachability-GC below shell out to the
 // `ar` / `nm` / `ranlib` trio. On macOS / Linux these resolve to the host binutils
@@ -53,6 +84,43 @@ fn nm_tool() -> &'static str {
     } else {
         "nm"
     }
+}
+
+/// Split one `nm -A <archive>` row into `(member, symbol columns)` without
+/// assuming one platform's archive spelling.  The three forms we encounter are:
+///
+/// * GNU nm:       `<archive>:<member.o>:<addr> T symbol`
+/// * BSD/llvm-nm:  `<archive>:<member.o>: <addr> T symbol`
+/// * bracket form: `<archive>[<member.o>]: <addr> T symbol`
+///
+/// The old `split_once(": ")` parser accepted only the latter two.  On GNU nm it
+/// silently skipped every DEFINED row (there is no space after the member's
+/// colon), so archive GC/runtime trimming became a no-op on Linux build hosts.
+fn nm_archive_member_row(line: &str) -> Option<(String, &str)> {
+    let obj_end = line.find(".o")? + 2;
+    let prefix = &line[..obj_end];
+    let member_start = prefix
+        .rfind(['/', ':', '['])
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let member = &prefix[member_start..];
+    if !member.ends_with(".o") {
+        return None;
+    }
+    let rest = line[obj_end..]
+        .strip_prefix(']')
+        .unwrap_or(&line[obj_end..])
+        .strip_prefix(':')?
+        .trim_start();
+    Some((member.to_string(), rest))
+}
+
+const LEAN_INIT_PREFIXES: [&str; 3] = ["initialize_", "runtime_initialize_", "meta_initialize_"];
+
+fn lean_init_suffix(symbol: &str) -> Option<&str> {
+    LEAN_INIT_PREFIXES
+        .iter()
+        .find_map(|prefix| symbol.strip_prefix(prefix))
 }
 /// `ranlib` regenerates an archive's symbol index. `llvm-ar` writes the index on
 /// every `rcs`/`r` op (and `llvm-ranlib` may not be on PATH), so on Windows we run
@@ -214,7 +282,14 @@ fn seed_build_archive(seed: &Path, build: &Path) {
 /// one Dregg2 object actually changed or the archive lacks Dregg2 members. `rerun-if-changed` is
 /// emitted by the caller for the source tree + toolchain marker, so a genuine no-op cargo build does
 /// not even re-enter this function.
-fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &Path, seed: &Path) {
+fn build_dregg2_archive(
+    meta: &Path,
+    sysroot: &Path,
+    archive: &Path,
+    out_dir: &Path,
+    seed: &Path,
+    require_current_source: bool,
+) {
     // (1) Refresh the Lean `:c` facets. `lake build` is incremental; building the FFI module pulls
     // in (and emits `:c` for) its whole Dregg2 transitive closure.
     let inc = sysroot.join("include");
@@ -320,6 +395,11 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // It lives under `Dregg2/` so its IR emits under `.lake/build/ir/Dregg2/` and the
         // `build_dregg2_archive` splice (which walks `Dregg2/**/*.c`) picks up the export.
         "Dregg2.Bridge.InterchainAdapterDecision",
+        // DEPLOYED CONSTRAINT evaluator extraction: the one Lean source for the pure
+        // `StateConstraint`/`HeapAtom` admission teeth over the deployed substrate.
+        // It is outside the ordinary FFI closure, so build it explicitly for the
+        // archive splice and gate its bridge on the exported symbol below.
+        "Dregg2.Exec.DeployedConstraint",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -338,16 +418,25 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
             // `_lp_…_TurnExecutorFull_*` specialized symbols that the un-rebuilt `TurnExecutorFull.o`
             // never emitted → `Undefined symbols` at the final link of every downstream binary
             // (dregg-node included). The git-tracked SEED archive is, by construction, a coherent
-            // linkable set. So on a `lake build` failure we DISCARD any prior (possibly incoherent)
-            // working archive and restore the consistent seed, then skip the recompile/splice
-            // entirely. The node links the known-good verified kernel; an in-progress metatheory
-            // proof regression no longer blocks the node from running.
+            // linkable set. A non-strict developer build may therefore discard any prior
+            // (possibly incoherent) working archive and restore that consistent seed. A strict
+            // verification/release build must instead fail: an older coherent kernel is not
+            // evidence that the current checkout's Turn semantics were compiled.
+            let reason = format!(
+                "`lake build` of the FFI + gate modules exited {s}; the current-source IR tree is \
+                 not coherent enough to produce a verified runtime archive"
+            );
+            if require_current_source {
+                panic!(
+                    "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate refuses a stale \
+                     verified runtime: {reason}. Fix the Lean build; do not satisfy a current-source \
+                     verification claim by restoring an older seed."
+                );
+            }
             println!(
-                "cargo:warning=dregg-lean-ffi: `lake build` of the FFI + gate modules exited {s} — \
-                 the metatheory IR tree may be incoherent (a module failed to elaborate). Restoring \
-                 the git-tracked consistent seed archive and NOT splicing a partial fresh set (a torn \
-                 splice would fail to link). To pick up fresh Lean changes, make `lake build \
-                 Dregg2.Exec.FFI` green in metatheory/ and rebuild."
+                "cargo:warning=dregg-lean-ffi: {reason}. This non-strict debug build restores the \
+                 git-tracked consistent seed and does NOT splice a partial fresh set. Set \
+                 DREGG_REQUIRE_LEAN=1 to make this stale-source fallback a hard failure."
             );
             // Force the working archive back to the seed (overwrite any prior incoherent splice).
             let _ = std::fs::remove_file(archive);
@@ -355,6 +444,13 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
             return;
         }
         Err(e) => {
+            if require_current_source {
+                panic!(
+                    "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate could not run the \
+                     current-source Lean build ({e}); refusing to link an older seed as if it \
+                     represented this checkout"
+                );
+            }
             println!(
                 "cargo:warning=dregg-lean-ffi: could not run `lake build` ({e}) — is elan/lake on \
                  PATH? Falling back to the existing archive (if any)."
@@ -365,6 +461,13 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
 
     // The `:c` facet must have landed for us to compile anything.
     if !dregg2_ir.exists() {
+        if require_current_source {
+            panic!(
+                "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate found no current-source \
+                 Dregg2 C IR at {} after a successful lake build",
+                dregg2_ir.display()
+            );
+        }
         println!(
             "cargo:warning=dregg-lean-ffi: no `:c` IR at {} after `lake build` — cannot compile the \
              Dregg2 native objects. Run `lake build Dregg2.Exec.FFI` in metatheory and re-check.",
@@ -376,6 +479,12 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // Persistent object cache (so the `.c`-newer-than-`.o` guard survives across cargo builds).
     let obj_dir = out_dir.join("dregg2_closure_objs");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
+        if require_current_source {
+            panic!(
+                "dregg-lean-ffi: cannot create the current-source Lean object cache {} ({e})",
+                obj_dir.display()
+            );
+        }
         println!(
             "cargo:warning=dregg-lean-ffi: cannot create {} ({e})",
             obj_dir.display()
@@ -418,53 +527,49 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
 
     let recompiled = !jobs.is_empty() || pruned;
     if !jobs.is_empty() {
+        let workers = configured_leanc_workers();
         println!(
-            "cargo:warning=dregg-lean-ffi: compiling {} changed Dregg2 C facet(s) via leanc …",
-            jobs.len()
+            "cargo:warning=dregg-lean-ffi: compiling {} changed Dregg2 C facet(s) via {workers} \
+             bounded leanc worker(s) …",
+            jobs.len(),
         );
-        let ncpu = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .max(1);
-        let failed = std::sync::atomic::AtomicBool::new(false);
-        let jobs_ref = &jobs;
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        std::thread::scope(|scope| {
-            for _ in 0..ncpu {
-                scope.spawn(|| {
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        let Some((c, obj)) = jobs_ref.get(i) else {
-                            break;
-                        };
-                        // `-fPIC` so the spliced objects are position-independent: the SAME archive
-                        // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
-                        // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
-                        // default); on Linux it guards against a leanc default change (leanc
-                        // currently compiles PIC there too — Lean plugins are dlopen'd).
-                        let status = Command::new("lake")
-                            .args(["env", "leanc", "-c", "-fPIC", "-I"])
-                            .arg(&inc)
-                            .arg(c)
-                            .arg("-o")
-                            .arg(obj)
-                            .current_dir(meta)
-                            .status();
-                        let ok = matches!(status, Ok(s) if s.success());
-                        if !ok {
-                            // Drop a stale/partial object so the next build retries this `.c`.
-                            let _ = std::fs::remove_file(obj);
-                            failed.store(true, std::sync::atomic::Ordering::SeqCst);
-                            println!(
-                                "cargo:warning=dregg-lean-ffi: leanc failed on {}",
-                                c.display()
-                            );
-                        }
-                    }
-                });
-            }
+        let outcomes = build_parallel::run_indexed(&jobs, workers, |(c, obj)| {
+            // `-fPIC` so the spliced objects are position-independent: the SAME archive
+            // then serves both link modes (static bins AND the `DREGG_LEAN_LINK=shared`
+            // cdylib link, e.g. the sdk-py pyo3 module). No-op on macOS (PIC is the
+            // default); on Linux it guards against a leanc default change (leanc
+            // currently compiles PIC there too — Lean plugins are dlopen'd).
+            Command::new("lake")
+                .args(["env", "leanc", "-c", "-fPIC", "-I"])
+                .arg(&inc)
+                .arg(c)
+                .arg("-o")
+                .arg(obj)
+                .current_dir(meta)
+                .output()
         });
-        if failed.load(std::sync::atomic::Ordering::SeqCst) {
+        let mut failed = false;
+        for ((c, obj), outcome) in jobs.iter().zip(&outcomes) {
+            if !matches!(outcome, Ok(output) if output.status.success()) {
+                // Drop a stale/partial object so the next build retries this `.c`.
+                let _ = std::fs::remove_file(obj);
+                failed = true;
+                println!(
+                    "cargo:warning=dregg-lean-ffi: leanc failed on {}",
+                    c.display()
+                );
+            }
+            // Preserve warnings from successful compiles too; replaying after join keeps them
+            // deterministic while avoiding concurrent child-process stderr interleaving.
+            emit_command_diagnostics(outcome);
+        }
+        if failed {
+            if require_current_source {
+                panic!(
+                    "dregg-lean-ffi: at least one current-source Dregg2 C facet failed to compile; \
+                     DREGG_REQUIRE_LEAN/current release gate refuses the older archive"
+                );
+            }
             println!(
                 "cargo:warning=dregg-lean-ffi: at least one Dregg2 C facet failed to compile — \
                  NOT re-splicing the archive (it keeps its previous, consistent contents)."
@@ -476,9 +581,6 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // (3) Splice. Only pay the extract/repack cost when something actually changed, or when the
     // archive is missing Dregg2 members entirely (e.g. a freshly-seeded dependency-only base).
     let needs_splice = recompiled || !archive_has_dregg2(archive);
-    if !needs_splice {
-        return;
-    }
 
     if !archive.exists() {
         println!(
@@ -493,12 +595,20 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         return;
     }
 
-    if let Err(e) = splice_objects(archive, &obj_dir, out_dir) {
-        println!(
-            "cargo:warning=dregg-lean-ffi: archive splice failed ({e}) — the archive was left \
-             unchanged; a previous-but-consistent build will be linked."
-        );
-        return;
+    if needs_splice {
+        if let Err(e) = splice_objects(archive, &obj_dir, out_dir) {
+            if require_current_source {
+                panic!(
+                    "dregg-lean-ffi: current-source archive splice failed ({e}); \
+                     DREGG_REQUIRE_LEAN/current release gate refuses the previous archive"
+                );
+            }
+            println!(
+                "cargo:warning=dregg-lean-ffi: archive splice failed ({e}) — the archive was left \
+                 unchanged; a previous-but-consistent build will be linked."
+            );
+            return;
+        }
     }
 
     // (4) Closure-completion. The freshly-built Dregg2 objects may import NEW dependency modules
@@ -507,8 +617,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // objects would then leave a dangling `_initialize_<dep>` undefined symbol and the FINAL Rust
     // link fails. So we close the archive: detect undefined `_initialize_*` symbols, compile the
     // matching `.c` from the Lean source/dependency IR trees, splice them in, and repeat until the
-    // archive is self-contained (or no resolvable `.c` remains — which we surface loudly).
-    complete_initializer_closure(meta, sysroot, archive, out_dir);
+    // archive is self-contained (or no resolvable `.c` remains — which we surface loudly). This MUST
+    // run even when no Dregg2 facet changed: a prior fail-closed build may have banked several closure
+    // passes in the OUT_DIR working archive and needs to resume from that coherent checkpoint.
+    complete_initializer_closure(meta, sysroot, archive, out_dir, require_current_source);
 
     // (5) Reachability GC. Closure-completion makes the archive self-LINKING, but the base still
     // carries every dependency object it was ever seeded with — including the mathlib CategoryTheory/
@@ -629,6 +741,11 @@ fn undefined_initializers(archive: &Path) -> Vec<String> {
             _ => continue,
         };
         let name = sym.trim_start_matches('_');
+        // Closure completion follows the ordinary module initializer graph only. The generated
+        // `runtime_initialize_` / `meta_initialize_` graph contains elaborator/proof imports that
+        // are intentionally severed by the runtime archive boundary; chasing those edges attempts
+        // to compile essentially all of Mathlib. Runtime trimming still classifies all three
+        // families, but only `initialize_` is a link-required project closure edge here.
         if let Some(rest) = name.strip_prefix("initialize_") {
             // The toolchain stdlib initializers (Init/Std/Lean/Lake) are supplied by the sysroot
             // static libs the FINAL Rust link pulls in (rustc-link-lib=static={Init,Std,Lean,Lake});
@@ -652,16 +769,17 @@ fn undefined_initializers(archive: &Path) -> Vec<String> {
     missing
 }
 
-/// Map a bare initializer symbol (`initialize_<lib>_<flat>`) to its source `.c` via the index. The
-/// `<lib>` token is a single library name (no internal-underscore doubling); we strip `initialize_`,
-/// then strip a KNOWN library token + `_`, leaving exactly the Lean-mangled `<flat>` index key. This
-/// is unambiguous (vs suffix-guessing, which breaks on `__`-mangled names like `CommMon__`). We try
-/// the known tokens longest-first so e.g. `LeanSearchClient` is preferred over a shorter prefix.
+/// Map a bare initializer symbol (`{initialize,runtime_initialize,meta_initialize}_<lib>_<flat>`)
+/// to its source `.c` via the index. The `<lib>` token is a single library name (no
+/// internal-underscore doubling); we strip the initializer family, then strip a KNOWN library token
+/// + `_`, leaving exactly the Lean-mangled `<flat>` index key. This is unambiguous (vs
+/// suffix-guessing, which breaks on `__`-mangled names like `CommMon__`). We try the known tokens
+/// longest-first so e.g. `LeanSearchClient` is preferred over a shorter prefix.
 fn resolve_initializer_cfile<'a>(
     sym: &str,
     index: &'a std::collections::HashMap<String, PathBuf>,
 ) -> Option<(String, &'a PathBuf)> {
-    let rest = sym.strip_prefix("initialize_")?;
+    let rest = lean_init_suffix(sym)?;
     // Library tokens that prefix a module initializer (the project libs + every dependency package).
     // `Init`/`Std`/`Lean`/`Lake` are filtered out earlier (sysroot-provided), so they need not appear.
     let mut libs = [
@@ -691,48 +809,48 @@ fn resolve_initializer_cfile<'a>(
 /// Iteratively add the dependency-closure objects the freshly-spliced Dregg2 objects need, until the
 /// archive has no resolvable undefined `_initialize_*` edge left. Each pass compiles the missing
 /// `.c` (cached by flattened name under OUT_DIR) and splices them in; new objects can introduce
-/// further deps, hence the loop. Bounded to avoid runaway; unresolved symbols are surfaced loudly.
-fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &Path) {
+/// further deps, hence the loop. Bounded to avoid runaway; strict/release builds fail closed if
+/// compilation, source resolution, archive mutation, or closure exhaustion is incomplete.
+fn complete_initializer_closure(
+    meta: &Path,
+    sysroot: &Path,
+    archive: &Path,
+    out_dir: &Path,
+    require_current_source: bool,
+) {
+    const MAX_CLOSURE_PASSES: usize = 64;
     let inc = sysroot.join("include");
     let dep_dir = out_dir.join("dregg2_closure_deps");
-    if std::fs::create_dir_all(&dep_dir).is_err() {
+    if let Err(error) = std::fs::create_dir_all(&dep_dir) {
+        let reason = format!(
+            "cannot create dependency-closure object cache {} ({error})",
+            dep_dir.display()
+        );
+        if require_current_source {
+            panic!("dregg-lean-ffi: {reason}");
+        }
+        println!("cargo:warning=dregg-lean-ffi: {reason}");
         return;
     }
     let roots = discover_ir_roots(meta);
     let index = build_cfile_index(&roots);
 
-    for pass in 0..16 {
+    for pass in 0..MAX_CLOSURE_PASSES {
         let undefined = undefined_initializers(archive);
         if undefined.is_empty() {
             return;
         }
-        // Resolve as many as we can to source `.c`; compile those not already cached.
+        // Resolve as many as we can to source `.c`. Compilation jobs and the archive-add list both
+        // retain the sorted undefined-symbol order, regardless of worker completion order.
         let mut to_add: Vec<(String, PathBuf)> = Vec::new(); // (objname, objpath)
+        let mut compile_jobs: Vec<(String, PathBuf, PathBuf)> = Vec::new(); // (sym, cfile, obj)
         let mut unresolved = Vec::new();
         for sym in &undefined {
             match resolve_initializer_cfile(sym, &index) {
                 Some((flat, cfile)) => {
                     let obj = dep_dir.join(format!("{flat}.o"));
                     if newer_than(cfile, &obj) {
-                        // `-fPIC` for the same shared-link-compatibility reason as the splice
-                        // compile above (one archive, both link modes).
-                        let status = Command::new("lake")
-                            .args(["env", "leanc", "-c", "-fPIC", "-I"])
-                            .arg(&inc)
-                            .arg(cfile)
-                            .arg("-o")
-                            .arg(&obj)
-                            .current_dir(meta)
-                            .status();
-                        if !matches!(status, Ok(s) if s.success()) {
-                            let _ = std::fs::remove_file(&obj);
-                            println!(
-                                "cargo:warning=dregg-lean-ffi: closure leanc failed on {} (dep of \
-                                 {sym})",
-                                cfile.display()
-                            );
-                            continue;
-                        }
+                        compile_jobs.push((sym.clone(), cfile.clone(), obj.clone()));
                     }
                     to_add.push((format!("{flat}.o"), obj));
                 }
@@ -740,22 +858,77 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
             }
         }
 
+        if !compile_jobs.is_empty() {
+            let workers = configured_leanc_workers();
+            println!(
+                "cargo:warning=dregg-lean-ffi: closure pass {pass}: compiling {} dependency \
+                 object(s) via {workers} bounded leanc worker(s) …",
+                compile_jobs.len(),
+            );
+            let outcomes =
+                build_parallel::run_indexed(&compile_jobs, workers, |(_sym, cfile, obj)| {
+                    // `-fPIC` for the same shared-link-compatibility reason as the splice
+                    // compile above (one archive, both link modes).
+                    Command::new("lake")
+                        .args(["env", "leanc", "-c", "-fPIC", "-I"])
+                        .arg(&inc)
+                        .arg(cfile)
+                        .arg("-o")
+                        .arg(obj)
+                        .current_dir(meta)
+                        .output()
+                });
+            let mut failed = 0_usize;
+            for ((sym, cfile, obj), outcome) in compile_jobs.iter().zip(&outcomes) {
+                if !matches!(outcome, Ok(output) if output.status.success()) {
+                    let _ = std::fs::remove_file(obj);
+                    failed += 1;
+                    println!(
+                        "cargo:warning=dregg-lean-ffi: closure leanc failed on {} (dep of {sym})",
+                        cfile.display()
+                    );
+                }
+                // Preserve warnings from successful compiles too; replaying after join keeps them
+                // deterministic while avoiding concurrent child-process stderr interleaving.
+                emit_command_diagnostics(outcome);
+            }
+            if failed != 0 {
+                let reason = format!(
+                    "closure pass {pass} failed to compile {failed} of {} dependency object(s); \
+                     refusing to splice a partial pass",
+                    compile_jobs.len()
+                );
+                if require_current_source {
+                    panic!("dregg-lean-ffi: {reason}");
+                }
+                println!("cargo:warning=dregg-lean-ffi: {reason}");
+                return;
+            }
+        }
+
         if to_add.is_empty() {
             if !unresolved.is_empty() {
-                println!(
-                    "cargo:warning=dregg-lean-ffi: {} undefined initializer(s) could not be \
-                     resolved to a `.c` in the IR trees (e.g. {}); the archive may not self-link. \
-                     Re-seed the closure (scripts/seed-dregg2-closure.sh) if the dependency set \
-                     changed substantially.",
+                let reason = format!(
+                    "{} undefined initializer(s) could not be resolved to a `.c` in the IR trees \
+                     (e.g. {}); the archive does not self-link. Re-seed the closure \
+                     (scripts/seed-dregg2-closure.sh) if the dependency set changed substantially",
                     unresolved.len(),
                     unresolved.first().map(|s| s.as_str()).unwrap_or("?")
                 );
+                if require_current_source {
+                    panic!("dregg-lean-ffi: {reason}");
+                }
+                println!("cargo:warning=dregg-lean-ffi: {reason}");
             }
             return;
         }
 
         if let Err(e) = add_objects_to_archive(archive, &to_add, out_dir) {
-            println!("cargo:warning=dregg-lean-ffi: closure splice failed on pass {pass} ({e}).");
+            let reason = format!("closure splice failed on pass {pass} ({e})");
+            if require_current_source {
+                panic!("dregg-lean-ffi: {reason}");
+            }
+            println!("cargo:warning=dregg-lean-ffi: {reason}");
             return;
         }
         println!(
@@ -763,10 +936,20 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
             to_add.len()
         );
     }
-    println!(
-        "cargo:warning=dregg-lean-ffi: closure completion hit the 16-pass bound — archive may \
-         still have undefined initializers. Consider re-seeding the closure."
+    let remaining = undefined_initializers(archive);
+    if remaining.is_empty() {
+        return;
+    }
+    let reason = format!(
+        "closure completion hit the {MAX_CLOSURE_PASSES}-pass bound with {} undefined \
+         initializer(s) remaining (e.g. {}); archive is incomplete",
+        remaining.len(),
+        remaining.first().map(|s| s.as_str()).unwrap_or("?")
     );
+    if require_current_source {
+        panic!("dregg-lean-ffi: {reason}");
+    }
+    println!("cargo:warning=dregg-lean-ffi: {reason}");
 }
 
 /// **Archive reachability GC — the import-graph-trim payoff made durable.**
@@ -797,42 +980,39 @@ fn gc_unreachable_members(archive: &Path, out_dir: &Path) {
     let mut members: HashSet<String> = HashSet::new();
     let mut roots: HashSet<String> = HashSet::new();
     for line in text.lines() {
-        // `nm -A` location-prefixed forms (see `members_defining_project_initializers`):
-        //   macOS/llvm: `<archive>:<member.o>: <addr> T _sym`  /  `<archive>:<member.o>:    U _sym`
-        //   GNU:        `<archive>[<member.o>]: <addr> T _sym`
-        let Some((prefix, rest)) = line.split_once(": ") else {
+        let Some((member, rest)) = nm_archive_member_row(line) else {
             continue;
         };
-        let prefix = prefix.trim_end_matches(']');
-        let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
-        if !member.ends_with(".o") {
-            continue;
-        }
         let toks: Vec<&str> = rest.split_whitespace().collect();
         let (ty, sym) = match toks.as_slice() {
             [ty, sym] if ty.len() == 1 => (*ty, *sym),
             [_addr, ty, sym] if ty.len() == 1 => (*ty, *sym),
             _ => continue,
         };
-        members.insert(member.to_string());
+        members.insert(member.clone());
         if ty == "U" || ty == "u" {
             undef
-                .entry(member.to_string())
+                .entry(member.clone())
                 .or_default()
                 .insert(sym.to_string());
         } else {
             sym_def_in
                 .entry(sym.to_string())
                 .or_default()
-                .insert(member.to_string());
+                .insert(member.clone());
             // Root: any member defining a `_dregg_*` FFI export (the C-ABI entry points).
             if sym.trim_start_matches('_').starts_with("dregg_") {
-                roots.insert(member.to_string());
+                roots.insert(member);
             }
         }
     }
     if members.is_empty() || roots.is_empty() {
-        // Parse failure or no exports found — do not risk a destructive GC.
+        println!(
+            "cargo:warning=dregg-lean-ffi: archive GC could not parse members/roots from `nm -A` \
+             (members={}, roots={}); refusing to prune rather than silently pretending GC ran.",
+            members.len(),
+            roots.len()
+        );
         return;
     }
     // BFS: keep a member, then chase each of its undefined symbols to the member(s) defining them.
@@ -973,32 +1153,27 @@ fn runtime_dead_init_trim(
     let mut members: HashSet<String> = HashSet::new();
     let mut roots: HashSet<String> = HashSet::new();
     for line in text.lines() {
-        let Some((prefix, rest)) = line.split_once(": ") else {
+        let Some((member, rest)) = nm_archive_member_row(line) else {
             continue;
         };
-        let prefix = prefix.trim_end_matches(']');
-        let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
-        if !member.ends_with(".o") {
-            continue;
-        }
         let toks: Vec<&str> = rest.split_whitespace().collect();
         let (ty, sym) = match toks.as_slice() {
             [ty, sym] if ty.len() == 1 => (*ty, *sym),
             [_addr, ty, sym] if ty.len() == 1 => (*ty, *sym),
             _ => continue,
         };
-        members.insert(member.to_string());
+        members.insert(member.clone());
         let bare = sym.trim_start_matches('_');
-        let is_init = bare.starts_with("initialize_");
+        let is_init = lean_init_suffix(bare).is_some();
         if ty == "U" || ty == "u" {
             if is_init {
                 undef_init
-                    .entry(member.to_string())
+                    .entry(member.clone())
                     .or_default()
                     .insert(sym.to_string());
             } else {
                 undef_func
-                    .entry(member.to_string())
+                    .entry(member.clone())
                     .or_default()
                     .insert(sym.to_string());
             }
@@ -1006,13 +1181,19 @@ fn runtime_dead_init_trim(
             sym_def_in
                 .entry(sym.to_string())
                 .or_default()
-                .insert(member.to_string());
+                .insert(member.clone());
             if bare.starts_with("dregg_") {
-                roots.insert(member.to_string());
+                roots.insert(member);
             }
         }
     }
     if members.is_empty() || roots.is_empty() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: runtime trim could not parse members/roots from `nm -A` \
+             (members={}, roots={}); refusing to fall back silently.",
+            members.len(),
+            roots.len()
+        );
         return None;
     }
 
@@ -1048,7 +1229,7 @@ fn runtime_dead_init_trim(
     // so never no-op those — if a live member genuinely references `initialize_Lean`, let the real
     // (sysroot) init run rather than silently skip it.
     let is_toolchain = |bare: &str| -> bool {
-        match bare.strip_prefix("initialize_") {
+        match lean_init_suffix(bare) {
             Some(rest) => ["Init", "Std", "Lean", "Lake"]
                 .iter()
                 .any(|lib| rest == *lib || rest.starts_with(&format!("{lib}_"))),
@@ -1224,16 +1405,10 @@ fn members_defining_project_initializers(archive: &Path) -> std::collections::Ha
         if !(is_project_init("initialize_Dregg2_") || is_project_init("initialize_Metatheory_")) {
             continue;
         }
-        // The location prefix is everything up to the first `: ` (space-separated from the address).
-        let Some(prefix) = line.split(": ").next() else {
+        let Some((member, _rest)) = nm_archive_member_row(line) else {
             continue;
         };
-        // Strip a trailing `]` (GNU bracket form), then take the basename and keep it iff it's a `.o`.
-        let prefix = prefix.trim_end_matches(']');
-        let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
-        if member.ends_with(".o") {
-            members.insert(member.to_string());
-        }
+        members.insert(member);
     }
     members
 }
@@ -1388,6 +1563,7 @@ fn shared_link_mode() -> bool {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=DREGG_LEANC_JOBS");
     println!("cargo::rustc-check-cfg=cfg(lean_lib_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
@@ -1409,6 +1585,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_constraint_admits_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1565,9 +1742,20 @@ fn main() {
         );
 
         match &sysroot_opt {
-            Some(sysroot) => {
-                build_dregg2_archive(meta, sysroot, &build_archive, &out_dir, &seed_archive)
-            }
+            Some(sysroot) => build_dregg2_archive(
+                meta,
+                sysroot,
+                &build_archive,
+                &out_dir,
+                &seed_archive,
+                require_lean_native,
+            ),
+            None if require_lean_native => panic!(
+                "dregg-lean-ffi: DREGG_REQUIRE_LEAN/current release gate cannot resolve the Lean \
+                 sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/); refusing to \
+                 reuse an older archive as current-source evidence. Install the pinned Lean \
+                 toolchain/mathlib dependencies or provide DREGG_LEAN_SYSROOT."
+            ),
             None => println!(
                 "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
                  DREGG_LEAN_SYSROOT and `lake env` failed in metatheory/) — skipping the archive \
@@ -1639,19 +1827,27 @@ fn main() {
         None
     };
 
-    // The handler-cutover export is a SECONDARY path; older archives predate it. Only wire its
-    // string bridge when the archive actually exports it (otherwise the dangling ref breaks the
-    // whole shim under -dead_strip). The forest-auth gate is the load-bearing path and is always
-    // present.
+    // The handler-cutover export is the credential-preserving handler-registry shadow. Older
+    // archives predate its safe (non-`eraseAuth`) ABI, so a non-strict developer build may compile
+    // the bridge out. A Lean-required/current release build must contain it: silently linking an
+    // older archive would claim handler-cutover coverage that the binary cannot exercise.
     let handler_present = archive_exports(&build_archive, "dregg_exec_handler_turn");
     if handler_present {
         println!("cargo:rustc-cfg=dregg_handler_present");
     } else {
         println!(
             "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_exec_handler_turn` — \
-             the handler-cutover bridge is compiled out (forest-auth gate unaffected). \
-             Rebuild the archive to enable shadow_exec_handler_turn."
+             the credential-preserving handler-cutover bridge is compiled out (forest-auth gate \
+             unaffected). Rebuild the current Lean archive to enable shadow_exec_handler_turn."
         );
+        if require_lean_native {
+            panic!(
+                "dregg-lean-ffi: the Lean-required/current release gate requires the safe \
+                 `dregg_exec_handler_turn` export, but the linked archive lacks it. Refusing to \
+                 advertise a verified handler cutover backed only by an older seed; rebuild \
+                 Dregg2.Exec.FFI from this checkout and splice the current object."
+            );
+        }
     }
 
     // The verified FINALITY GATE export (`dregg_blocklace_finalize`) lives in
@@ -1723,6 +1919,21 @@ fn main() {
              the verified flow-refinement decision bridge is compiled out (dregg-deploy's refine \
              gate falls back to its in-process mirror). Rebuild the archive (it splices \
              Dregg2.Deos.FlowRefine) to run the PROVEN decideRefines at the deploy gate."
+        );
+    }
+
+    // `Dregg2.Exec.DeployedConstraint` is outside the main FFI import closure.
+    // Probe before emitting either the Rust extern or C bridge so a stale archive
+    // degrades to the existing Rust evaluator without leaving a dangling symbol.
+    let constraint_admits_present = archive_exports(&build_archive, "dregg_constraint_admits");
+    if constraint_admits_present {
+        println!("cargo:rustc-cfg=dregg_constraint_admits_present");
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_constraint_admits` — \
+             the verified deployed-constraint evaluator bridge is compiled out (the ConstraintOracle \
+             install is unavailable; the pure-subset admission stays on the Rust guest-path evaluator). \
+             Rebuild the archive to run the proven Lean evaluator."
         );
     }
 
@@ -1881,7 +2092,7 @@ fn main() {
     // for dependency crates unless you pass `-vv`. The degrade is invisible in a normal log.
     //
     // This gate checks the ARTIFACT rather than the control flow: it re-probes the archive we
-    // are actually about to link for the three cores `dregg-pq` routes through. That catches
+    // are actually about to link for every real core `dregg-pq` routes through. That catches
     // every degrade path at once, including ones added later, and cannot be bypassed by a new
     // early `return` upstream.
     //
@@ -1902,11 +2113,16 @@ fn main() {
     let require_pq_cores = require_pq_on || (require_lean_native && !require_pq_off);
     if require_pq_cores {
         // (export symbol, present?, what dregg-pq silently falls back to without it)
-        let required: [(&str, bool, &str); 5] = [
+        let required: [(&str, bool, &str); 6] = [
             (
                 "dregg_fips204_verify_real",
                 fips204_verify_real_present,
                 "ML-DSA-65 verify would be answered by the UNAUDITED `fips204` 0.4 crate",
+            ),
+            (
+                "dregg_fips204_sign_real",
+                fips204_sign_real_present,
+                "ML-DSA-65 sign would be answered by the UNAUDITED `fips204` 0.4 crate",
             ),
             (
                 "dregg_mlkem_encaps_real",
@@ -1948,11 +2164,11 @@ fn main() {
                  distribution build on a native archive-linkable target), but the archive this\n\
                  build would link:\n\
                  \n    {archive_path}\n\n\
-                 does NOT export {n_missing} of the 3 Lean-verified post-quantum cores:\n\
+                 does NOT export {n_missing} of the 6 Lean-verified post-quantum cores:\n\
                  {detail}\n\
                  \n\
                  A binary linked against this archive would look identical, build green, and\n\
-                 answer every post-quantum operation with UNAUDITED crate primitives — the exact\n\
+                 answer one or more post-quantum operations with UNAUDITED crate primitives — the exact\n\
                  silent substitution this gate exists to prevent.\n\
                  \n\
                  CAUSE: the git-tracked seed archive exports NONE of these; they are produced by\n\
@@ -2120,6 +2336,9 @@ fn main() {
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);
+    }
+    if constraint_admits_present {
+        shim.define("DREGG_CONSTRAINT_ADMITS", None);
     }
     // We drive the link with `rustc-link-lib` / `rustc-link-search` directives, NOT
     // `rustc-link-arg`. WHY: with the package's `links = "dregg_lean"` key, build-script

@@ -15,7 +15,7 @@ open Dregg2.Exec
 open Dregg2.Authority
 open Dregg2.Exec.Admission (AdmCtx TurnHdr)
 open Dregg2.Exec.TurnAdmission (runGatedForestTurn runHandlerTurn runGatedForestTurnStatus
-  runTurnStatus TurnStatus)
+  runGatedHandlerTurnStatus runTurnStatus TurnStatus)
 open Dregg2.Exec.HandlerExecutor (execHandlerTurn)
 open Dregg2.Exec.AdmissionWire (turnHdrOf prevReceiptOf)
 open Dregg2.Exec.TurnExecutorFull (FullAction execFull execFullTurn)
@@ -2939,15 +2939,56 @@ instances pull `Classical.choice`/`Quot.sound`). -/
 #assert_axioms discharge_teeth_same_wire
 #assert_axioms signature_teeth_same_wire
 
-/-! # §WH — the HANDLER-CUTOVER complete-turn step (DIAGNOSTIC, NOT a node-callable ABI).
+/-! # §WH — the credential-preserving HANDLER-CUTOVER complete-turn step.
+
+The exported handler path consumes the SAME wide wire and host-fed admission context as
+`dregg_exec_full_forest_auth`.  Crucially, it does NOT flatten through `eraseAuth`: it lifts the wire
+to `DForest`, then `runGatedHandlerTurnStatus` checks every node's WHO / WHAT / caveat / revocation
+gate on the exact pre-state before dispatching that action through the proved handler registry.
+Malformed input and every false gate fail closed; fee distribution occurs only after the complete
+handler fold commits. -/
+
+/-- **Production-safe handler cutover export — host admission ∘ credential-preserving handler fold.** -/
+@[export dregg_exec_handler_turn]
+def execHandlerTurnAuthStep (input : String) : String :=
+  match parseWWire input with
+  | none => encodeWStatusReasonOut emptyWState 0 TurnStatus.rejected 0
+  | some w =>
+    let k0 := stateOfWState w.state
+    let s0 : RecChainedState := { kernel := k0, log := [] }
+    let cellIds := w.state.cells.map Prod.fst
+    let capLabels := w.state.caps.map Prod.fst
+    let balKeys := balKeysOf w.state
+    let ctx := admCtxOfHost w.host
+    let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                  w.turn.validUntil w.turn.prevHash
+    let gforest : DForest := liftForestG w.turn.root
+    let reason := AdmissionReason.reasonCode (AdmissionReason.admissionReason ctx hdr s0)
+    let (st, res) := runGatedHandlerTurnStatus ctx hdr s0 gforest
+    match res with
+    | some s' =>
+        encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st reason
+    | none =>
+        encodeWStatusReasonOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st reason
+
+-- Non-vacuity and the BUG-3 regression tooth: the genuine forest commits, while changing only the
+-- credential to a forged value makes the handler body fail after admission.  It is never reported
+-- `bodyCommitted`, so the old `eraseAuth` bypass cannot reappear behind the exported symbol.
+#guard (wireOk1 (execHandlerTurnAuthStep gatedDemoInput))
+#guard (wireStatusIs 2 (execHandlerTurnAuthStep gatedDemoInput))
+#guard (wireOk0 (execHandlerTurnAuthStep forgedGatedInput))
+#guard (wireStatusIs 1 (execHandlerTurnAuthStep forgedGatedInput))
+
+#assert_axioms execHandlerTurnAuthStep
+
+/-! ## §WH-diagnostic — the old auth-erasing differential reference (NOT exported).
 
 ★ BUG-3 FENCE ★ This path runs `execHandlerTurn` over `lowerForestA (eraseAuth root)` — it ERASES the
 per-node `Authorization` credential (`eraseAuth`), so it is an UNGATED auth-bypass. It is NOT a
-production entry: the `@[export dregg_exec_handler_turn]` has been REMOVED, so the symbol is absent
-from `libdregg_lean.a`. `build.rs`'s `archive_exports` probe therefore leaves `dregg_handler_present`
-UNSET ⇒ the C shim's `dregg_exec_handler_turn_str` is `#ifdef`'d out ⇒ Rust's `lean_handler_turn`
-fail-closes with "not exported". The SOLE node-callable production turn ABI is
-`dregg_exec_full_forest_auth` (host-fed admission + per-node credential gate + three-way status).
+production entry: `execHandlerTurnStep` has no `@[export]`; the `dregg_exec_handler_turn` symbol above
+names `execHandlerTurnAuthStep`, whose body retains the auth-decorated forest and gates every handler
+dispatch. The primary node commit authority remains `dregg_exec_full_forest_auth`; this second ABI is
+the safe, fail-closed handler-cutover shadow.
 
 `execHandlerTurnStep` is retained Lean-side ONLY as a diagnostic / differential reference for the
 handler-algebra cutover study — it carries NO `@[export]` and must NEVER be wired to the node. -/

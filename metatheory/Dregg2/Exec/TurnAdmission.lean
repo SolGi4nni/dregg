@@ -22,8 +22,8 @@ open Dregg2.Exec (balOf)
 open Dregg2.Exec.Admission
 open Dregg2.Exec.EffectTransfer (nonceOf)
 open Dregg2.Exec.FullForestAuth
-open Dregg2.Exec.HandlerExecutor (execHandlerTurn)
-open Dregg2.Exec.StarbridgeGated (DForest St Wt)
+open Dregg2.Exec.HandlerExecutor (execHandlerOne execHandlerTurn)
+open Dregg2.Exec.StarbridgeGated (DForest DNodeAuth St Wt)
 open Dregg2.Exec.TurnExecutorFull (FullActionA)
 
 /-- **Devnet-shaped turn execution:** admission prologue ∘ gated call-forest body ∘ fee distribution.
@@ -43,6 +43,39 @@ dispatched through the proved handler registry — no per-node credential gate o
 def runHandlerTurn (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
     (acts : List FullActionA) : Option RecChainedState :=
   runTurn ctx h s (fun s₁ => execHandlerTurn acts s₁)
+
+/-! ## §HANDLER-GATED — credential-preserving handler cutover.
+
+`runHandlerTurn` above is deliberately only a flat diagnostic: its `List FullActionA` has no
+per-node credential carrier.  The node-callable handler path must instead consume the production
+`DForest`, retain `FullForestAuth.lowerForestG`'s `(NodeAuth, FullActionA)` pairing, test the existing
+four-leg `gateOK` on the exact pre-state, and only then dispatch that action through the proved
+handler registry.  This is the handler analog of `execFullTurnG`; it changes the effect producer
+(`execFullA` → `execHandlerOne`) without weakening WHO / WHAT / caveat / revocation admission. -/
+
+/-- One credential-preserving handler step.  A false gate returns `none` before the handler sees the
+state; on success the handler reads the same pre-state that `gateOK` just checked (no TOCTOU seam). -/
+def execHandlerNodeG (s : RecChainedState) (na : DNodeAuth)
+    (a : FullActionA) : Option RecChainedState :=
+  if gateOK na s = true then execHandlerOne a s else none
+
+/-- The all-or-nothing handler fold over the production forest's auth-preserving linearization. -/
+def execHandlerForestG (s : RecChainedState) (forest : DForest) : Option RecChainedState :=
+  (lowerForestG forest).foldlM (fun st p => execHandlerNodeG st p.1 p.2) s
+
+/-- Load-bearing unfolding: a handler node commits iff all four credential legs passed on the exact
+pre-state and the registered handler itself committed. -/
+theorem execHandlerNodeG_some_iff (s s' : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
+    execHandlerNodeG s na a = some s' ↔
+      (gateOK na s = true ∧ execHandlerOne a s = some s') := by
+  unfold execHandlerNodeG
+  by_cases hg : gateOK na s = true
+  · rw [if_pos hg]
+    exact ⟨fun h => ⟨hg, h⟩, fun h => h.2⟩
+  · rw [if_neg hg]
+    exact ⟨fun h => absurd h (by simp), fun h => absurd h.1 hg⟩
+
+#assert_axioms execHandlerNodeG_some_iff
 
 /-! ## §STATUS — the THREE-WAY turn outcome (boundary-P1 bug 2).
 
@@ -144,6 +177,14 @@ the gated forest THEN fee distribution; the status records whether that body com
 def runGatedForestTurnStatus (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
     (forest : DForest) : TurnStatus × Option RecChainedState :=
   runTurnStatus ctx h s (fun s₁ => (execFullForestG s₁ forest).map (fun s₂ => distributeFee ctx s₂ h.fee))
+
+/-- **Status-bearing credential-preserving handler cutover.** Admission is host-fed, every lowered
+forest action retains and checks its node credential through `execHandlerForestG`, and fee
+distribution occurs only after the complete handler fold commits. -/
+def runGatedHandlerTurnStatus (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (forest : DForest) : TurnStatus × Option RecChainedState :=
+  runTurnStatus ctx h s
+    (fun s₁ => (execHandlerForestG s₁ forest).map (fun s₂ => distributeFee ctx s₂ h.fee))
 
 /-- The status-bearing variant projects to `runGatedForestTurn` on the state. -/
 theorem runGatedForestTurnStatus_state (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
