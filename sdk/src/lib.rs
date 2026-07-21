@@ -212,12 +212,16 @@ pub use dregg_pq::MlDsaSignCoreRealInstall;
 /// The verify-core install outcome (from `dregg-pq`), re-exported so SDK-hosted processes can match on
 /// [`install_verified_mldsa_verify_core`]'s result without a direct `dregg-pq` dependency.
 pub use dregg_pq::MlDsaVerifyCoreInstall;
+/// Outcomes of the ML-KEM-768 encaps/decaps core installs (`install_verified_mlkem_{encaps,decaps}_core`) —
+/// re-exported so an SDK-hosted process can match on them without a direct `dregg-pq` dependency.
+pub use dregg_pq::{MlKemDecapsCoreInstall, MlKemEncapsCoreInstall};
 pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
 pub use runtime::{
     AgentRuntime, SubAgent, executor_pubkey_from_seed, install_verified_mldsa_sign_core_real,
-    install_verified_mldsa_verify_core,
+    install_verified_mldsa_verify_core, install_verified_mlkem_decaps_core,
+    install_verified_mlkem_encaps_core,
 };
 
 // ORGAN 4 — THE GATEWAY surface: the delegated tool-access seam for a live

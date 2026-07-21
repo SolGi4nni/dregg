@@ -17,7 +17,6 @@ use dregg_turn::{
     Effect, TokenKeyRef, Turn, TurnExecutor, TurnReceipt, TurnResult, action::symbol,
 };
 use dregg_types::PublicKey;
-use zeroize::Zeroizing;
 
 use crate::cipherclerk::{AgentCipherclerk, HeldToken};
 use crate::error::SdkError;
@@ -160,6 +159,112 @@ fn ensure_verified_mldsa_verify_core_installed() {
     });
 }
 
+/// Install the Lean-verified REAL, FULL-BYTE ML-KEM-768 ENCAPS core as the ciphertext+shared-secret
+/// AUTHORITY behind `dregg_pq::ml_kem768_encaps` / `hybrid_kem::initiate` for THIS process — taking the
+/// `ml-kem` crate out of the SDK-hosted process's KEM-encaps TCB.
+///
+/// The KEM-encaps twin of [`install_verified_mldsa_verify_core`] / [`install_verified_mldsa_sign_core_real`],
+/// closing the LAST unrouted PQ surface for an SDK-hosted process. `sdk/src` does not KEM directly, but any
+/// KEM op it hosts (the X-Wing / `X25519MLKEM768` session establishment its wire/transport layers reach, the
+/// hybrid session combiners) routes through `dregg_pq::ml_kem768_encaps` — which, with `dregg-pq`'s audit
+/// gate live, ABORTS the process on the first encaps unless a verified core is installed. Before this the SDK
+/// installed verify + sign but NOT the KEM cores, so every SDK-hosted KEM op hit that gate and aborted
+/// (fail-closed, but a real gap).
+///
+/// Same shared install the node / drorb dataplane performs
+/// (`dregg_pq::install_verified_mlkem_encaps_core`), injecting the two `dregg-lean-ffi` archive symbols;
+/// idempotent and once-per-process. The extracted core is `Dregg2.Crypto.MlKemEncaps.mlkemEncaps` (FIPS 203
+/// Alg 16, full n=256 ring / NTT / real codec), NIST-ACVP-anchored (byte-exact on the 25 ML-KEM-768
+/// encapDecap cases) — NOT the `ml-kem` crate.
+///
+/// Gated on `mlkem_encaps_real_core_available()`, and deliberately NOT fatal on `ExportAbsent` — exactly like
+/// the sign twin above and for the same reason: unlike the `drorb` dataplane (a single serving binary that
+/// always links the archive, so it asserts), the SDK is also built for `no-lean-link` wasm/zkvm targets that
+/// have no archive to export from. Bricking those at construction is not the tradeoff; the audit gate still
+/// refuses to run an unaudited KEM at the point of use (process abort unless `DREGG_ALLOW_UNAUDITED_PQ=1`).
+pub fn install_verified_mlkem_encaps_core() -> dregg_pq::MlKemEncapsCoreInstall {
+    dregg_pq::install_verified_mlkem_encaps_core(
+        dregg_lean_ffi::mlkem_encaps_real_core_available,
+        |w| dregg_lean_ffi::shadow_mlkem_encaps_real(w).ok(),
+    )
+}
+
+/// Install the Lean-verified REAL, FULL-BYTE ML-KEM-768 DECAPS core as the shared-secret AUTHORITY behind
+/// `dregg_pq::ml_kem768_decaps` / `HybridResponder::finish` for THIS process — taking the `ml-kem` crate out
+/// of the SDK-hosted process's KEM-decaps TCB.
+///
+/// The decaps mirror of [`install_verified_mlkem_encaps_core`]; the other half the same SDK-hosted KEM
+/// surface reaches. Same shared install the node / drorb dataplane performs
+/// (`dregg_pq::install_verified_mlkem_decaps_core`), injecting the two `dregg-lean-ffi` archive symbols;
+/// idempotent and once-per-process. The extracted core is `Dregg2.Crypto.MlKemDecaps.mlkemDecaps` (the full
+/// FIPS 203 FO decaps pipeline with implicit reject), NIST-ACVP-anchored — NOT the `ml-kem` crate.
+///
+/// Gated on `mlkem_decaps_real_core_available()`, and deliberately NOT fatal on `ExportAbsent`, for the same
+/// `no-lean-link` reason as its encaps twin. A stale archive lacking the export would make an installed core
+/// return `None` on every call, and `HybridResponder::finish` / `ml_kem768_decaps` fail CLOSED on a core
+/// fault — so keeping the export-gated install (fallback preserved off-archive) is what avoids bricking
+/// decaps on wasm/zkvm; the audit gate still refuses the unaudited decaps at the point of use.
+pub fn install_verified_mlkem_decaps_core() -> dregg_pq::MlKemDecapsCoreInstall {
+    dregg_pq::install_verified_mlkem_decaps_core(
+        dregg_lean_ffi::mlkem_decaps_real_core_available,
+        |w| dregg_lean_ffi::shadow_mlkem_decaps_real(w).ok(),
+    )
+}
+
+/// Perform the once-per-process ML-KEM ENCAPS-core install at SDK agent-runtime startup, logging once.
+fn ensure_verified_mlkem_encaps_core_installed() {
+    use dregg_pq::MlKemEncapsCoreInstall as E;
+    use std::sync::Once;
+    static LOGGED: Once = Once::new();
+    let outcome = install_verified_mlkem_encaps_core();
+    LOGGED.call_once(|| match outcome {
+        E::Installed => tracing::info!(
+            "ML-KEM encaps: verified Lean REAL encaps core installed at SDK agent-runtime startup — the \
+             extracted full-byte `MlKemEncaps.mlkemEncaps` is now the ciphertext+shared-secret AUTHORITY \
+             behind `dregg_pq::ml_kem768_encaps` / hybrid `initiate` for this process; the `ml-kem` crate \
+             is out of the SDK-hosted KEM-encaps TCB"
+        ),
+        E::AlreadyInstalled => tracing::debug!(
+            "ML-KEM encaps: a verified Lean REAL encaps core was already installed this process (install is \
+             once-per-process) — the `ml-kem` crate remains out of the SDK-hosted KEM-encaps TCB"
+        ),
+        E::ExportAbsent => tracing::warn!(
+            "ML-KEM encaps: the linked Lean archive does NOT export the real encaps core \
+             (`mlkem_encaps_real_core_available()` is false) — NO verified encaps core is installed, so any \
+             ML-KEM encaps this process reaches will be REFUSED by dregg-pq's audit gate (process abort) \
+             unless DREGG_ALLOW_UNAUDITED_PQ=1. Rebuild against a HEAD-matching archive to route encaps \
+             through Lean."
+        ),
+    });
+}
+
+/// Perform the once-per-process ML-KEM DECAPS-core install at SDK agent-runtime startup, logging once.
+fn ensure_verified_mlkem_decaps_core_installed() {
+    use dregg_pq::MlKemDecapsCoreInstall as D;
+    use std::sync::Once;
+    static LOGGED: Once = Once::new();
+    let outcome = install_verified_mlkem_decaps_core();
+    LOGGED.call_once(|| match outcome {
+        D::Installed => tracing::info!(
+            "ML-KEM decaps: verified Lean REAL decaps core installed at SDK agent-runtime startup — the \
+             extracted full-byte `MlKemDecaps.mlkemDecaps` is now the shared-secret AUTHORITY behind \
+             `dregg_pq::ml_kem768_decaps` / `HybridResponder::finish` for this process; the `ml-kem` crate \
+             is out of the SDK-hosted KEM-decaps TCB"
+        ),
+        D::AlreadyInstalled => tracing::debug!(
+            "ML-KEM decaps: a verified Lean REAL decaps core was already installed this process (install is \
+             once-per-process) — the `ml-kem` crate remains out of the SDK-hosted KEM-decaps TCB"
+        ),
+        D::ExportAbsent => tracing::warn!(
+            "ML-KEM decaps: the linked Lean archive does NOT export the real decaps core \
+             (`mlkem_decaps_real_core_available()` is false) — NO verified decaps core is installed, so any \
+             ML-KEM decaps this process reaches will be REFUSED by dregg-pq's audit gate (process abort) \
+             unless DREGG_ALLOW_UNAUDITED_PQ=1. Rebuild against a HEAD-matching archive to route decaps \
+             through Lean."
+        ),
+    });
+}
+
 /// Build the `TurnExecutor` every [`AgentRuntime`] runs on, with the **real**
 /// witnessed-predicate verifiers installed (not the fail-closed defaults).
 ///
@@ -265,33 +370,7 @@ fn mint_subagent_cap_token(
     sub_cell: CellId,
     methods: &[&str],
 ) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
-    mint_subagent_cap_token_with_keypair(sub_cell, methods, biscuit_auth::KeyPair::new())
-}
-
-/// Deterministic twin of [`mint_subagent_cap_token`]. The issuer seed is a
-/// private Ed25519 key and must be derived and stored with the same care as the
-/// worker identity seed.
-fn mint_subagent_cap_token_seeded(
-    sub_cell: CellId,
-    methods: &[&str],
-    issuer_seed: &[u8; 32],
-) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
-    let private =
-        biscuit_auth::PrivateKey::from_bytes(issuer_seed, biscuit_auth::Algorithm::Ed25519)
-            .map_err(|e| {
-                SdkError::MissingKey(format!(
-                    "issuer seed is not a valid biscuit ed25519 private key: {e}"
-                ))
-            })?;
-    mint_subagent_cap_token_with_keypair(sub_cell, methods, biscuit_auth::KeyPair::from(&private))
-}
-
-/// Shared capability-biscuit constructor for random and deterministic workers.
-fn mint_subagent_cap_token_with_keypair(
-    sub_cell: CellId,
-    methods: &[&str],
-    kp: biscuit_auth::KeyPair,
-) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
+    let kp = biscuit_auth::KeyPair::new();
     let issuer: [u8; 32] = kp
         .public()
         .to_bytes()
@@ -411,6 +490,11 @@ impl AgentRuntime {
         // [`ensure_verified_mldsa_verify_core_installed`].
         ensure_verified_mldsa_verify_core_installed();
         ensure_verified_mldsa_sign_core_installed();
+        // Route this SDK-hosted process's ML-KEM encaps/decaps (X-Wing / X25519MLKEM768 session KEM, the
+        // hybrid combiners) through the Lean-verified cores — closing the last unrouted PQ surface, which
+        // otherwise ABORTS at dregg-pq's audit gate on the first KEM op. Once-per-process, export-gated.
+        ensure_verified_mlkem_encaps_core_installed();
+        ensure_verified_mlkem_decaps_core_installed();
         let cell_id;
         let public_key;
         {
@@ -466,6 +550,9 @@ impl AgentRuntime {
         // Same once-per-process verify-core install as `new` (this is an independent construction path).
         ensure_verified_mldsa_verify_core_installed();
         ensure_verified_mldsa_sign_core_installed();
+        // Same once-per-process ML-KEM encaps/decaps core installs as `new` (independent construction path).
+        ensure_verified_mlkem_encaps_core_installed();
+        ensure_verified_mlkem_decaps_core_installed();
         let cell_id = cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -575,12 +662,6 @@ impl AgentRuntime {
         self.executor.set_local_federation_id(id);
     }
 
-    /// The federation id the embedded executor verifies action signatures
-    /// against (see [`Self::set_local_federation_id`]).
-    pub fn local_federation_id(&self) -> [u8; 32] {
-        self.executor.local_federation_id
-    }
-
     /// Set the block height the embedded executor evaluates time-gated
     /// program constraints against (`TemporalGate` and friends, via
     /// `EvalContext.block_height`).
@@ -688,23 +769,27 @@ impl AgentRuntime {
         TurnBuilder::new(self)
     }
 
-    /// Sign `unsigned` with this runtime's cipherclerk key over the canonical,
-    /// federation- and nonce-bound signing message.
-    ///
-    /// `turn_nonce` must be the nonce the submitted turn will carry. Full
-    /// commitments bind it under `dregg-action-sig-v3`; passing a different
-    /// value deliberately makes the action fail verification instead of
-    /// allowing it to be replayed on a later turn.
-    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action, turn_nonce: u64) -> Action {
-        self.cipherclerk
+    /// Sign `unsigned` with this runtime's cipherclerk key over the
+    /// canonical federation-bound signing message. The authorization field
+    /// of the input is ignored (zeroed for the message) and replaced with a
+    /// real `Authorization::Signature` — this is the ONLY way an action
+    /// leaves the runtime.
+    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action) -> Action {
+        let unsigned = Action {
+            authorization: Authorization::Unchecked,
+            ..unsigned
+        };
+        let message =
+            TurnExecutor::compute_signing_message(&unsigned, &self.executor.local_federation_id);
+        let sig = self
+            .cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .sign_action_hybrid(unsigned, &self.executor.local_federation_id, turn_nonce)
-    }
-
-    /// The nonce the next agent-paid turn will carry.
-    pub(crate) fn next_agent_turn_nonce(&self) -> u64 {
-        *self.nonce.lock().unwrap()
+            .sign_bytes(&message);
+        Action {
+            authorization: Authorization::from_sig_bytes(sig.0),
+            ..unsigned
+        }
     }
 
     /// Submit a SIGNED root action as an ordinary agent turn: this agent
@@ -849,10 +934,11 @@ impl AgentRuntime {
     #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         // Sign before acquiring the ledger lock since signing is pure.
-        let action = self.sign_action_for_runtime(
-            raw::unsigned_action_named(self.cell_id, "execute", effects),
-            self.next_agent_turn_nonce(),
-        );
+        let action = self.sign_action_for_runtime(raw::unsigned_action_named(
+            self.cell_id,
+            "execute",
+            effects,
+        ));
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -881,23 +967,8 @@ impl AgentRuntime {
         effects: Vec<Effect>,
         fee: u64,
     ) -> Result<TurnReceipt, SdkError> {
-        // A cell-agent turn rides the cell's on-ledger replay counter, not the
-        // runtime agent counter. Read exactly the value the submit path will
-        // stamp into `Turn::nonce`.
-        let turn_nonce = {
-            let ledger = self.ledger.lock().unwrap();
-            ledger
-                .get(&cell)
-                .ok_or(SdkError::Turn(dregg_turn::TurnError::CellNotFound {
-                    id: cell,
-                }))?
-                .state
-                .nonce()
-        };
-        let action = self.sign_action_for_runtime(
-            raw::unsigned_action_named(cell, "execute", effects),
-            turn_nonce,
-        );
+        let action =
+            self.sign_action_for_runtime(raw::unsigned_action_named(cell, "execute", effects));
         self.submit_signed_action_as_cell(cell, action, fee)
     }
 
@@ -918,10 +989,8 @@ impl AgentRuntime {
         target: CellId,
         effects: Vec<Effect>,
     ) -> Result<TurnReceipt, SdkError> {
-        let action = self.sign_action_for_runtime(
-            raw::unsigned_action_named(target, "execute", effects),
-            self.next_agent_turn_nonce(),
-        );
+        let action =
+            self.sign_action_for_runtime(raw::unsigned_action_named(target, "execute", effects));
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -1027,50 +1096,8 @@ impl AgentRuntime {
         token: &HeldToken,
         allowed_methods: &[&str],
     ) -> Result<SubAgent, SdkError> {
-        self.spawn_sub_agent_scoped_with(
-            restrictions,
-            token,
-            allowed_methods,
-            AgentCipherclerk::new(),
-            None,
-        )
-    }
-
-    /// Deterministic twin of [`Self::spawn_sub_agent_scoped`]. The two seeds
-    /// reproduce both trust anchors that identify a worker across process
-    /// restarts: its cipherclerk/CellId and its capability-biscuit issuer.
-    ///
-    /// The seeds are private keys. Callers must derive them with distinct
-    /// domain separators from custodied secret material and must not persist
-    /// the derived values. Reusing a worker seed with a different issuer seed
-    /// in one ledger is invalid: the first cell insertion pins the issuer.
-    pub fn spawn_sub_agent_scoped_seeded(
-        &self,
-        restrictions: &Attenuation,
-        token: &HeldToken,
-        allowed_methods: &[&str],
-        worker_seed: [u8; 32],
-        issuer_seed: [u8; 32],
-    ) -> Result<SubAgent, SdkError> {
-        let sub_cclerk = AgentCipherclerk::from_key_bytes(Zeroizing::new(worker_seed));
-        let issuer_seed = Zeroizing::new(issuer_seed);
-        self.spawn_sub_agent_scoped_with(
-            restrictions,
-            token,
-            allowed_methods,
-            sub_cclerk,
-            Some(&issuer_seed),
-        )
-    }
-
-    fn spawn_sub_agent_scoped_with(
-        &self,
-        restrictions: &Attenuation,
-        token: &HeldToken,
-        allowed_methods: &[&str],
-        mut sub_cclerk: AgentCipherclerk,
-        issuer_seed: Option<&[u8; 32]>,
-    ) -> Result<SubAgent, SdkError> {
+        // Create a new cipherclerk for the sub-agent.
+        let mut sub_cclerk = AgentCipherclerk::new();
         let sub_pk = sub_cclerk.public_key();
 
         // The delegated (narration) HeldToken must carry at least one caveat —
@@ -1160,10 +1187,7 @@ impl AgentRuntime {
         // `Authorization::Token`, so the EXECUTOR's `verify_token_authorization`
         // — not an out-of-band `cap.verify()` — is the real admission gate.
         let federation_id = self.executor.local_federation_id;
-        let (cap_token, cap_issuer) = match issuer_seed {
-            None => mint_subagent_cap_token(sub_cell_id, allowed_methods)?,
-            Some(seed) => mint_subagent_cap_token_seeded(sub_cell_id, allowed_methods, seed)?,
-        };
+        let (cap_token, cap_issuer) = mint_subagent_cap_token(sub_cell_id, allowed_methods)?;
         let cap_methods: Vec<String> = allowed_methods.iter().map(|m| m.to_string()).collect();
 
         // Create the sub-agent's cell in the ledger, recording the biscuit
@@ -1473,12 +1497,6 @@ impl SubAgent {
     /// encoded biscuit presented as [`Authorization::Token`]).
     pub fn cap_token(&self) -> &[u8] {
         &self.cap_token
-    }
-
-    /// The capability-biscuit issuer anchored in this worker cell's
-    /// `verification_key`.
-    pub fn cap_issuer(&self) -> [u8; 32] {
-        self.cap_issuer
     }
 
     /// The method verbs the worker's capability credential grants (diagnostic;

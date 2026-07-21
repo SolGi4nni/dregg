@@ -1,3 +1,35 @@
+//! ─────────────────────────────────────────────────────────────────────────────
+//! FROZEN PUBLICATION SNAPSHOT — DO NOT HAND-EDIT — NOT AUTHORITATIVE.
+//!
+//! This file is a snapshot cut from the drorb dataplane crate for the public
+//! dregg repo ("orb + orb-compiler: fresh cut", 2026-07-11, breadstuffs commit
+//! 62a3abb6b). The LIVE, AUTHORITATIVE source is:
+//!
+//!     drorb/crates/dataplane/src/pq.rs
+//!
+//! Changes belong UPSTREAM in drorb, then flow here via a re-cut. Editing this
+//! copy by hand re-introduces exactly the drift this header documents.
+//!
+//! STATUS (as of 2026-07-20): STALE and CRATE-AUTHORITATIVE.
+//!   • This cut LACKS `install_verified_cores()` (the verify / encaps / decaps /
+//!     sign verified-core installs + fail-loud assert posture) that drorb's cut
+//!     carries. Its `main.rs` never installs the Lean-verified cores.
+//!   • Consequence: absent the installs, `dregg_pq` keeps its UNVERIFIED
+//!     `fips204` / `ml-kem` crate fallbacks as the deployed PQ authority. Under
+//!     dregg-pq's Gate-2 audit refusal, a binary built from this cut would ABORT
+//!     on the first PQ op — so it is crate-authoritative, not verified-core.
+//!   • It ALSO CANNOT BUILD IN PLACE: the `dregg-pq` path dep resolves to a
+//!     nonexistent `breadstuffs/breadstuffs/dregg-pq` (the path is written for
+//!     drorb's tree depth, not this cut's), and there is no `dregg-lean-ffi`
+//!     dep, so the verified-core installs cannot be linked here even if added.
+//!     Demonstrated: `cargo metadata` fails to load the manifest.
+//!
+//! THE REAL FIX is a SCRIPTED re-cut (drorb -> orb) that rewrites the dep paths
+//! for this tree's depth, adds the `dregg-lean-ffi` dep, and carries the current
+//! `install_verified_cores()` + `main.rs` install call. Until that re-cut lands,
+//! treat drorb as authoritative and do not build/deploy from this cut.
+//! ─────────────────────────────────────────────────────────────────────────────
+//!
 //! The post-quantum (ML-DSA-65 / FIPS 204) half of the orb's hybrid JWT verify.
 //!
 //! `Jwt.lean`'s `Crypto.mlDsaVerify` (`@[extern "drorb_ml_dsa_verify"]`) is the
