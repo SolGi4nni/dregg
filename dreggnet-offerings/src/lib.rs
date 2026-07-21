@@ -34,6 +34,11 @@
 //! core resolves that action on the substrate; the executor stays the sole referee on every
 //! surface. [`mock::MockFrontend`] is the reference renderer the tests drive.
 
+/// THE DESCENT CAMPAIGN — a player-driven Lean-native Descent at every location of the real
+/// overworld region cell. A location's WriteOnce clear turn is emitted only after the exact
+/// native run reaches and replay-verifies a Crown settlement; the resulting region gate then
+/// controls travel. See [`campaign::DescentCampaignOffering`].
+pub mod campaign;
 pub mod character;
 /// THE DESCENT — the flagship's core: a daily, provably-fair, permadeath procgen roguelite as
 /// an Offering. Today's dungeon is one drand-beacon-seeded world everyone plays; you can die
