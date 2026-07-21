@@ -14,6 +14,25 @@ pub(crate) struct BlindRotationGpuResult {
     pub backend: String,
 }
 
+/// Device-owned bootstrapping and key-switch material for repeated PBS calls.
+///
+/// The public wrapper records the exact parameter shape. Keeping this type in
+/// the backend module prevents callers from constructing a plan with buffers
+/// belonging to another device or pipeline context.
+pub(crate) struct PreparedPbsGpuKeys {
+    bsk: wgpu::Buffer,
+    ksk: wgpu::Buffer,
+    bsk_bytes: u64,
+    ksk_bytes: u64,
+    pub(crate) ggsw_coefficients: usize,
+    pub(crate) params: TorusExternalProductParams,
+    pub(crate) output_lwe_size: usize,
+    pub(crate) ks_base_log: usize,
+    pub(crate) ks_level_count: usize,
+    pub(crate) adapter: String,
+    pub(crate) backend: String,
+}
+
 pub(crate) enum BlindRotationGpuError {
     Unavailable(TorusCpuFallbackReason),
     Execution(String),
@@ -63,10 +82,38 @@ pub(crate) fn run_extract_keyswitch(
     ks_level_count: usize,
 ) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
     match gpu_state() {
-        GpuState::Ready(gpu) => gpu.run_extract_keyswitch(
-            accumulator,
-            body_rotation,
-            mask_rotations,
+        GpuState::Ready(gpu) => {
+            let prepared = gpu.prepare_extract_keyswitch(
+                standard_bsk,
+                ggsw_coefficients,
+                params,
+                standard_ksk,
+                output_lwe_size,
+                ks_base_log,
+                ks_level_count,
+            )?;
+            gpu.run_extract_keyswitch_prepared(
+                accumulator,
+                body_rotation,
+                mask_rotations,
+                &prepared,
+            )
+        }
+        GpuState::Unavailable(reason) => Err(BlindRotationGpuError::Unavailable(reason.clone())),
+    }
+}
+
+pub(crate) fn prepare_extract_keyswitch(
+    standard_bsk: &[u64],
+    ggsw_coefficients: usize,
+    params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    output_lwe_size: usize,
+    ks_base_log: usize,
+    ks_level_count: usize,
+) -> Result<PreparedPbsGpuKeys, BlindRotationGpuError> {
+    match gpu_state() {
+        GpuState::Ready(gpu) => gpu.prepare_extract_keyswitch(
             standard_bsk,
             ggsw_coefficients,
             params,
@@ -75,6 +122,20 @@ pub(crate) fn run_extract_keyswitch(
             ks_base_log,
             ks_level_count,
         ),
+        GpuState::Unavailable(reason) => Err(BlindRotationGpuError::Unavailable(reason.clone())),
+    }
+}
+
+pub(crate) fn run_extract_keyswitch_prepared(
+    accumulator: &[u64],
+    body_rotation: usize,
+    mask_rotations: &[usize],
+    prepared: &PreparedPbsGpuKeys,
+) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
+    match gpu_state() {
+        GpuState::Ready(gpu) => {
+            gpu.run_extract_keyswitch_prepared(accumulator, body_rotation, mask_rotations, prepared)
+        }
         GpuState::Unavailable(reason) => Err(BlindRotationGpuError::Unavailable(reason.clone())),
     }
 }
@@ -424,11 +485,8 @@ impl GpuContext {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn run_extract_keyswitch(
+    fn prepare_extract_keyswitch(
         &self,
-        accumulator: &[u64],
-        body_rotation: usize,
-        mask_rotations: &[usize],
         standard_bsk: &[u64],
         ggsw_coefficients: usize,
         params: TorusExternalProductParams,
@@ -436,11 +494,71 @@ impl GpuContext {
         output_lwe_size: usize,
         ks_base_log: usize,
         ks_level_count: usize,
-    ) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
-        let glwe_coefficients = accumulator.len();
-        let accumulator_bytes = byte_len(glwe_coefficients)?;
+    ) -> Result<PreparedPbsGpuKeys, BlindRotationGpuError> {
         let bsk_bytes = byte_len(standard_bsk.len())?;
         let ksk_bytes = byte_len(standard_ksk.len())?;
+        let binding_limit = self
+            .limits
+            .max_buffer_size
+            .min(u64::from(self.limits.max_storage_buffer_binding_size));
+        if bsk_bytes > binding_limit || ksk_bytes > binding_limit {
+            return Err(BlindRotationGpuError::Unavailable(
+                TorusCpuFallbackReason::ShapeExceedsAdapterLimits,
+            ));
+        }
+
+        let bsk_limbs = to_limbs(standard_bsk);
+        let ksk_limbs = to_limbs(standard_ksk);
+        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bsk = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE prepared standard bootstrapping key"),
+                contents: bytemuck::cast_slice(&bsk_limbs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let ksk = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("TFHE prepared standard keyswitch key"),
+                contents: bytemuck::cast_slice(&ksk_limbs),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        self.device.poll(wgpu::Maintain::Wait);
+        if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+            return Err(BlindRotationGpuError::Execution(format!(
+                "TFHE prepared-key upload failed: {error}"
+            )));
+        }
+        Ok(PreparedPbsGpuKeys {
+            bsk,
+            ksk,
+            bsk_bytes,
+            ksk_bytes,
+            ggsw_coefficients,
+            params,
+            output_lwe_size,
+            ks_base_log,
+            ks_level_count,
+            adapter: self.adapter.clone(),
+            backend: self.backend.clone(),
+        })
+    }
+
+    fn run_extract_keyswitch_prepared(
+        &self,
+        accumulator: &[u64],
+        body_rotation: usize,
+        mask_rotations: &[usize],
+        prepared: &PreparedPbsGpuKeys,
+    ) -> Result<BlindRotationGpuResult, BlindRotationGpuError> {
+        let params = prepared.params;
+        let ggsw_coefficients = prepared.ggsw_coefficients;
+        let output_lwe_size = prepared.output_lwe_size;
+        let ks_base_log = prepared.ks_base_log;
+        let ks_level_count = prepared.ks_level_count;
+        let glwe_coefficients = accumulator.len();
+        let accumulator_bytes = byte_len(glwe_coefficients)?;
         let output_bytes = byte_len(output_lwe_size)?;
         let decomposed_coefficients = params
             .decomposition_level_count
@@ -465,8 +583,8 @@ impl GpuContext {
             })?;
         if [
             accumulator_bytes,
-            bsk_bytes,
-            ksk_bytes,
+            prepared.bsk_bytes,
+            prepared.ksk_bytes,
             decomposed_bytes,
             output_bytes,
         ]
@@ -482,8 +600,6 @@ impl GpuContext {
         }
 
         let accumulator_limbs = to_limbs(accumulator);
-        let bsk_limbs = to_limbs(standard_bsk);
-        let ksk_limbs = to_limbs(standard_ksk);
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let accumulator_a = self
             .device
@@ -498,26 +614,12 @@ impl GpuContext {
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let bsk = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("TFHE PBS resident standard bootstrapping key"),
-                contents: bytemuck::cast_slice(&bsk_limbs),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
         let decomposed = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE PBS blind-rotation gadget digits"),
             size: decomposed_bytes,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let ksk = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("TFHE PBS resident standard keyswitch key"),
-                contents: bytemuck::cast_slice(&ksk_limbs),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
         let output = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE PBS post-keyswitch LWE"),
             size: output_bytes,
@@ -587,7 +689,7 @@ impl GpuContext {
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
-                        resource: bsk.as_entire_binding(),
+                        resource: prepared.bsk.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 4,
@@ -664,7 +766,7 @@ impl GpuContext {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: ksk.as_entire_binding(),
+                    resource: prepared.ksk.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,

@@ -22,9 +22,11 @@
 //!
 //! The PBS-shaped rung fuses degree-zero GLWE sample extraction and an exact standard
 //! native-torus LWE key switch after the blind rotation in that same submission, so
-//! only the post-key-switch LWE ciphertext is read back.  The full deployed 918-mask
-//! and 918-output envelope, default shortint key-order integration, and the
-//! [`crate::fhe_clear`] / `FheUint32` seam remain explicit.
+//! only the post-key-switch LWE ciphertext is read back. A production-shaped sparse
+//! gate qualifies the full deployed 918-mask/918-output buffer and key dimensions
+//! with reusable device-owned BSK/KSK buffers. Dense 918-CMUX execution, default
+//! shortint key-order integration, and the [`crate::fhe_clear`] / `FheUint32` seam
+//! remain explicit.
 //!
 //! The shader represents every torus coefficient as `(lo, hi)` `u32` limbs.  Its
 //! 16-bit-split multiply retains exactly the low 64 bits, so the result is bit-for-bit
@@ -40,8 +42,10 @@ use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
 
 use crate::tfhe_blind_rotation_wgpu::{
-    run as blind_rotation_gpu, run_extract_keyswitch as pbs_extract_keyswitch_gpu,
-    BlindRotationGpuError,
+    prepare_extract_keyswitch as prepare_pbs_extract_keyswitch_gpu, run as blind_rotation_gpu,
+    run_extract_keyswitch as pbs_extract_keyswitch_gpu,
+    run_extract_keyswitch_prepared as pbs_extract_keyswitch_prepared_gpu, BlindRotationGpuError,
+    PreparedPbsGpuKeys,
 };
 use crate::tfhe_ntt_wgpu::{multiply_signed_batch, NttBatchError, TORUS_NTT_MODULI};
 
@@ -144,6 +148,31 @@ pub struct TorusKeyswitchParams {
     pub decomposition_level_count: usize,
 }
 
+/// Exact GPU-resident BSK/KSK plan for repeated PBS-shaped calls.
+///
+/// Construction validates both host keys, uploads each exactly once, and binds
+/// the resulting buffers to their blind-mask, GLWE, and key-switch dimensions.
+/// Execution still creates per-ciphertext accumulator/output buffers; the large
+/// immutable evaluation keys and the shared device/pipelines are retained.
+pub struct TorusPbsWgpuPlan {
+    prepared: PreparedPbsGpuKeys,
+    blind_mask_dimension: usize,
+    external_params: TorusExternalProductParams,
+    keyswitch_params: TorusKeyswitchParams,
+}
+
+impl fmt::Debug for TorusPbsWgpuPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TorusPbsWgpuPlan")
+            .field("blind_mask_dimension", &self.blind_mask_dimension)
+            .field("external_params", &self.external_params)
+            .field("keyswitch_params", &self.keyswitch_params)
+            .field("adapter", &self.prepared.adapter)
+            .field("backend", &self.prepared.backend)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Refusals at the portable primitive boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TorusMacError {
@@ -186,6 +215,10 @@ pub enum TorusMacError {
     },
     EmptyBlindRotationMask,
     BlindRotationKeyLength {
+        expected: usize,
+        actual: usize,
+    },
+    BlindRotationMaskLength {
         expected: usize,
         actual: usize,
     },
@@ -261,6 +294,10 @@ impl fmt::Display for TorusMacError {
             Self::BlindRotationKeyLength { expected, actual } => write!(
                 f,
                 "flattened standard bootstrapping key has {actual} coefficients; expected exactly {expected}"
+            ),
+            Self::BlindRotationMaskLength { expected, actual } => write!(
+                f,
+                "blind-rotation mask has {actual} coefficients; prepared plan expects exactly {expected}"
             ),
             Self::ZeroKeyswitchInputDimension => write!(
                 f,
@@ -735,10 +772,7 @@ struct ExternalShape {
     decomposed_coefficients: usize,
 }
 
-fn validate_external_product(
-    accumulator: &[u64],
-    glwe: &[u64],
-    standard_ggsw: &[u64],
+fn validate_external_product_shape(
     params: TorusExternalProductParams,
 ) -> Result<ExternalShape, TorusMacError> {
     if params.degree == 0 {
@@ -789,24 +823,6 @@ fn validate_external_product(
         .decomposition_level_count
         .checked_mul(glwe_coefficients)
         .ok_or(TorusMacError::AddressSpaceOverflow)?;
-    if accumulator.len() != glwe_coefficients {
-        return Err(TorusMacError::AccumulatorLength {
-            expected: glwe_coefficients,
-            actual: accumulator.len(),
-        });
-    }
-    if glwe.len() != glwe_coefficients {
-        return Err(TorusMacError::GlweLength {
-            expected: glwe_coefficients,
-            actual: glwe.len(),
-        });
-    }
-    if standard_ggsw.len() != ggsw_coefficients {
-        return Err(TorusMacError::GgswLength {
-            expected: ggsw_coefficients,
-            actual: standard_ggsw.len(),
-        });
-    }
     if params.degree > u32::MAX as usize
         || params.glwe_size > u32::MAX as usize
         || params.decomposition_base_log > u32::MAX as usize
@@ -823,6 +839,34 @@ fn validate_external_product(
         ggsw_coefficients,
         decomposed_coefficients,
     })
+}
+
+fn validate_external_product(
+    accumulator: &[u64],
+    glwe: &[u64],
+    standard_ggsw: &[u64],
+    params: TorusExternalProductParams,
+) -> Result<ExternalShape, TorusMacError> {
+    let shape = validate_external_product_shape(params)?;
+    if accumulator.len() != shape.glwe_coefficients {
+        return Err(TorusMacError::AccumulatorLength {
+            expected: shape.glwe_coefficients,
+            actual: accumulator.len(),
+        });
+    }
+    if glwe.len() != shape.glwe_coefficients {
+        return Err(TorusMacError::GlweLength {
+            expected: shape.glwe_coefficients,
+            actual: glwe.len(),
+        });
+    }
+    if standard_ggsw.len() != shape.ggsw_coefficients {
+        return Err(TorusMacError::GgswLength {
+            expected: shape.ggsw_coefficients,
+            actual: standard_ggsw.len(),
+        });
+    }
+    Ok(shape)
 }
 
 fn decompose_glwe_tfhe_oracle(glwe: &[u64], shape: ExternalShape) -> Vec<u64> {
@@ -1639,6 +1683,104 @@ pub fn torus_pbs_extract_keyswitch_with_policy(
             )?,
             backend: TorusMacBackend::CpuFallback(reason),
         }),
+        Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Validate and upload immutable standard-domain PBS evaluation keys once.
+///
+/// Unlike [`torus_pbs_extract_keyswitch_with_policy`], this is intentionally a
+/// fail-closed GPU constructor: a returned plan is evidence that the exact key
+/// shape fits the selected adapter. The host key slices are not retained.
+pub fn prepare_torus_pbs_wgpu_plan(
+    blind_mask_dimension: usize,
+    standard_bsk: &[u64],
+    external_params: TorusExternalProductParams,
+    standard_ksk: &[u64],
+    keyswitch_params: TorusKeyswitchParams,
+) -> Result<TorusPbsWgpuPlan, TorusMacError> {
+    if blind_mask_dimension == 0 {
+        return Err(TorusMacError::EmptyBlindRotationMask);
+    }
+    let external_shape = validate_external_product_shape(external_params)?;
+    let expected_bsk = blind_mask_dimension
+        .checked_mul(external_shape.ggsw_coefficients)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if standard_bsk.len() != expected_bsk {
+        return Err(TorusMacError::BlindRotationKeyLength {
+            expected: expected_bsk,
+            actual: standard_bsk.len(),
+        });
+    }
+    if expected_bsk > u32::MAX as usize {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    let (_, output_lwe_size) = validate_keyswitch(standard_ksk, external_params, keyswitch_params)?;
+    match prepare_pbs_extract_keyswitch_gpu(
+        standard_bsk,
+        external_shape.ggsw_coefficients,
+        external_params,
+        standard_ksk,
+        output_lwe_size,
+        keyswitch_params.decomposition_base_log,
+        keyswitch_params.decomposition_level_count,
+    ) {
+        Ok(prepared) => Ok(TorusPbsWgpuPlan {
+            prepared,
+            blind_mask_dimension,
+            external_params,
+            keyswitch_params,
+        }),
+        Err(BlindRotationGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute one exact PBS-shaped operation against pre-uploaded evaluation keys.
+///
+/// The accumulator follows the same one-submit blind-rotate/extract/key-switch
+/// path as the ordinary API. Only per-ciphertext buffers and the final LWE
+/// readback are transient; BSK/KSK uploads are outside this call.
+pub fn torus_pbs_extract_keyswitch_prepared(
+    plan: &TorusPbsWgpuPlan,
+    accumulator: &[u64],
+    lwe_mask: &[u64],
+    lwe_body: u64,
+) -> Result<TorusMacResult, TorusMacError> {
+    if lwe_mask.len() != plan.blind_mask_dimension {
+        return Err(TorusMacError::BlindRotationMaskLength {
+            expected: plan.blind_mask_dimension,
+            actual: lwe_mask.len(),
+        });
+    }
+    let expected_accumulator = plan
+        .external_params
+        .glwe_size
+        .checked_mul(plan.external_params.degree)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if accumulator.len() != expected_accumulator {
+        return Err(TorusMacError::GlweLength {
+            expected: expected_accumulator,
+            actual: accumulator.len(),
+        });
+    }
+    let (body_rotation, mask_rotations) =
+        blind_rotation_schedule(lwe_mask, lwe_body, plan.external_params.degree)?;
+    match pbs_extract_keyswitch_prepared_gpu(
+        accumulator,
+        body_rotation,
+        &mask_rotations,
+        &plan.prepared,
+    ) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactDeviceResidentPbsExtractKeyswitch,
+            },
+        }),
+        Err(BlindRotationGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
         Err(BlindRotationGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
     }
 }

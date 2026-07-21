@@ -169,17 +169,40 @@ GPU median.  These are different startup conditions, not interchangeable "cold"
 measurements.  The standard KSK is load-bearing under mutation and the final
 ciphertext decrypts to the same rounded message as tfhe-rs.
 
-This is still not a complete high-level `FheUint32` backend.  The deployed
-918-mask blind-rotation/918-output-key envelope has not yet been qualified, and
-the default shortint key order plus integer comparison integration remains.  Those
-are named implementation boundaries, not properties inferred from the four-step,
-eight-output benchmark.
+The production-shaped follow-on gate now qualifies the deployed buffer and key
+dimensions without pretending that four CMUX steps measure a dense bootstrap. It
+uses a 918-coefficient blind mask, a full 57.38 MiB standard BSK allocation, the
+complete 2048-to-918 standard key switch and its 57.44 MiB KSK, and checks all 919
+post-key-switch LWE coefficients bit-for-bit against tfhe-rs. Four mask
+coefficients are active, distributed across BSK slots 0, 306, 612, and 917; all
+other rotations are zero. Clearing slot 917 changes the CPU authority, so the
+far-end BSK address is load-bearing.
+
+`TorusPbsWgpuPlan` is the first explicit execution context for this path. Its
+constructor validates the exact BSK/KSK shapes and uploads each immutable key
+once. Repeated calls reuse those device buffers plus the process-retained adapter
+and pipelines; only per-ciphertext accumulator/output buffers remain transient.
+The plan rejects a 917-coefficient mask against its 918-coefficient binding and
+continues to produce the uploaded result after the host BSK slice is changed,
+demonstrating actual device custody rather than pointer-keyed host caching.
+
+On hbox's RX 6750 XT, the final combined strict release gate passed both PBS tests
+in 0.411 seconds. Its production-shaped CPU result took 10.008 ms, plan creation
+plus both key uploads took 111.710 ms, the first prepared call took 15.003 ms, and
+the parity-checked five-sample prepared median took 5.897 ms. These are four
+active blind-rotation steps with a full
+918-output key switch, not a projected dense-918 latency.
+
+This is still not a complete high-level `FheUint32` backend. Dense 918-CMUX blind
+rotation is deliberately not run through the quadratic coefficient kernel; the
+default shortint key order plus integer comparison integration remains. Those are
+named implementation boundaries, not properties inferred from the sparse
+production-shaped qualification.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
-described above.  The next hard performance cut is to keep the accumulator and
-bootstrapping key in transform form across the full deployed blind rotation, then
-qualify the full deployed key dimensions and wire the resulting PBS-shaped
-primitive below an integer comparison—not extrapolate that result from a short
-prefix.
+described above. The next hard performance cut is to keep the accumulator and
+bootstrapping key in transform form across all 918 deployed blind-rotation steps,
+then wire the resulting PBS-shaped primitive below an integer comparison—not
+extrapolate dense latency from the sparse gate.
