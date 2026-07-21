@@ -515,6 +515,24 @@ VK-CEREMONY, FRI-CUTOVER-PLAN, FRI-BOTH-WIN-LEVERS, paper/dregg.typ all now cite
 δ=7/16 unique decoding, ~31.5 query term. NOT 100. NOT 112.6. NOT 57/61. The only path above the ceiling is
 a bigger field / higher extension degree.
 
+
+## ✅ FRI WAVE 2 (07-20) — BUILT the honest structure; the VACUOUS KEYSTONE is FIXED + canary-guarded (VERIFIED-BY-ME)
+- retire-wrap (f832e2346, FriWrapHonest.lean, VERIFIED my own build 3171 jobs/14 keystones): the deployed wrap
+  now concludes ONLY honest content (segment binding) — vacuous [FriLowDegreeSound] + ⟨True⟩ STRIPPED
+  (emitVerifier_wrap_sound_honest); emitVerifier_wrap_cannot_certify_fri_content = the honest LIMITATION in Lean;
+  ⚑ PERMANENT VACUITY CANARY (old_carrier_fails_canary / honest_deployed_carrier_passes_canary) — a ≡True carrier
+  now TRIPS A MACHINE-CHECKED ALARM. Cycle-4's worst over-claim FIXED + the failure mode guarded forever.
+- extractor (87342acfd, FriColumnLogExtract): the HONEST extraction statement — what the query-log extractor
+  ACTUALLY yields, adversary-quantified w/ explicit ε (NOT the refuted "every accepting proof ⟹ codeword").
+- compose-εFri (1085e3d8d, FriEpsFriComposedAdversary, 404 lines): honest composed adversary-quantified εFri at
+  design §4.3 shape; honest that its DEPLOYED instantiation is the wave-1 vacuity.
+Plus de-cite DONE (866ddb083): ~44 bare bit-digits removed from 22 running docs; number lives in ONE home
+(PROVEN-120-CONFIG) cited to theorem; everywhere else points at the theorem.
+⚑ FRI ARC HONEST STATE: the deployed FRI is field-ceilinged (~real bits per FriDeployedHeightPairing, not
+recited); the wrap states its honest content + its LIMITATION + a canary; the proof STRUCTURE (extractor,
+composition, refutations) is real + adversary-quantified; the ONLY lever above the field ceiling = extension
+degree (deep, ember-gated). The floor is now HONESTLY CHARACTERIZED + STRUCTURALLY BUILT, not performed.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
