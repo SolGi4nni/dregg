@@ -410,6 +410,19 @@ theorem automatonStepCfg_size (cfg : GameConfig) (b : Board) :
     (automatonStepCfg cfg b).size = b.size := by
   simp only [automatonStepCfg]; split <;> rfl
 
+/-- **The Leg-A STEP bridge at the default tie-break.** The third bridge lemma (alongside
+`chooseOffsetCfg_column` / `automatonOffsetCfg_column`): at `.column`, on a board whose
+`useColumnRule = true`, the NEW automaton step IS the OLD one, arm for arm — the only difference
+between `automatonStepCfg .column` and `automatonStep` is the offset function, and that is equated
+by `automatonOffsetCfg_column`. So the ~13.8k-line Leg-A capstone re-points onto `automatonStepCfg`
+by a single rewrite, with NO descriptor re-emit for the deployed default game. -/
+theorem automatonStepCfg_column_eq (cfg : GameConfig) (b : Board)
+    (hcfg : cfg.tieBreak = .column) (hb : b.useColumnRule = true) :
+    automatonStepCfg cfg b = automatonStep b := by
+  have hoff : automatonOffsetCfg b cfg.tieBreak = automatonOffset b := by
+    rw [hcfg]; exact automatonOffsetCfg_column b hb
+  simp only [automatonStepCfg, automatonStep, hoff]
+
 /-- The automaton stays in bounds across its step. -/
 theorem automatonStepCfg_preserves_inBounds (cfg : GameConfig) (b : Board)
     (hb : b.inBounds b.automaton) :
@@ -1424,6 +1437,7 @@ end Conformance
   chooseOffsetCfg_mem,
   chooseOffsetCfg_column,
   automatonOffsetCfg_column,
+  automatonStepCfg_column_eq,
   automatonOffsetCfg_bounded,
   automatonStepCfg_preserves_inBounds,
   winOnEntry_sound,

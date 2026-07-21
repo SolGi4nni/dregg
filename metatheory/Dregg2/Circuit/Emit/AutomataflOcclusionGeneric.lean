@@ -65,6 +65,7 @@ Axiom hygiene: definitions + theorems, no `sorry`, no `native_decide`. Imports t
 module only.
 -/
 import Dregg2.Games.Automatafl
+import Dregg2.Games.AutomataflRules
 import Dregg2.Tactics
 import Mathlib.Data.List.Basic
 import Mathlib.Data.List.Range
@@ -77,6 +78,7 @@ set_option autoImplicit false
 namespace Dregg2.Circuit.Emit.AutomataflOcclusionGeneric
 
 open Dregg2.Games.Automatafl
+open Dregg2.Games.AutomataflRules (blockedB pathCells)
 
 /-! ## §1 — Generic list helpers (the one-hot collapse). -/
 
@@ -513,6 +515,297 @@ theorem occ_eq_occluded_horiz {efrom eto osrc line : Nat → ℤ} {n : Nat}
     · intro hz
       exact hv ((hlineRead x hxn).mp hz)
 
+/-! ## §5b — THE INCLUSIVE (`blockedB`) BRIDGE: emitted threshold = reference `blockedB`.
+
+The migration re-targets occlusion from the OLD `Automatafl.occluded` (which scans `interior`,
+STRICTLY between the endpoints) to `AutomataflRules.blockedB`, which scans
+`pathCells = interior ++ [dst]` — INCLUSIVE OF THE DESTINATION. Per the migration design this is
+exactly ONE EXTRA TERM in the emitted `msum` fold: the destination endpoint contribution
+`(1 − osrc[dst])·line[dst]`, picked out by the `eto` one-hot. Everything else — `segVal_eq`,
+`msum_ge_one_iff`, `mem_interior_*` — is REUSED verbatim.
+
+These are NEW lemmas ALONGSIDE the exclusive `occ_eq_occluded_*` (which the old-spec Leg R still uses
+until cutover). The content they add is precisely the audit's 3.2 CRIT case: a non-moving piece
+standing ON the destination now BLOCKS the move (and the mover is replaced at its origin), where the
+old exclusive check let the mover overwrite — deleting the occupant. §5b.4 exhibits that at `n = 3`. -/
+
+/-- Summing `v j · g j` over an in-range duplicate-free index list, with `v` a one-hot at `i`, picks
+out `g i`. The `g`-weighted twin of `sum_oneHot`; this is how the emitted endpoint term (the `eto`
+one-hot times `(1 − osrc)·line`) collapses to the single destination contribution. -/
+theorem sum_oneHot_mul {v g : Nat → ℤ} {n i : Nat} (hv : OneHotAt v n i)
+    (l : List Nat) (hnd : l.Nodup) (hlt : ∀ j ∈ l, j < n) :
+    (l.map (fun j => v j * g j)).sum = if i ∈ l then g i else 0 := by
+  have hmap : l.map (fun j => v j * g j) = l.map (fun j => if j = i then g i else 0) := by
+    apply List.map_congr_left
+    intro j hj
+    rw [hv.2 j (hlt j hj)]
+    by_cases h : j = i
+    · subst h; simp
+    · simp [h]
+  rw [hmap, sum_map_ite l hnd i (g i)]
+
+/-- **The value the INCLUSIVE `msum` gate forces.** The strictly-interior fold `msumVal (segVal …)`
+plus the destination endpoint term `Σ_k eto[k]·(1 − osrc[k])·line[k]` — a single extra fold weighted
+by the destination one-hot. This is the emitted change: the same `msum` head, one endpoint term
+longer. -/
+def msumInclVal (efrom eto osrc line : Nat → ℤ) (n : Nat) : ℤ :=
+  msumVal (segVal efrom eto n) osrc line n
+    + ((List.range n).map (fun k => eto k * ((1 - osrc k) * line k))).sum
+
+/-- The endpoint fold collapses through the `eto` one-hot to the single destination contribution. -/
+theorem endpoint_collapse {eto osrc line : Nat → ℤ} {n at_ : Nat} (ht : OneHotAt eto n at_) :
+    ((List.range n).map (fun k => eto k * ((1 - osrc k) * line k))).sum
+      = (1 - osrc at_) * line at_ := by
+  rw [sum_oneHot_mul ht (List.range n) List.nodup_range (fun j hj => List.mem_range.mp hj),
+    if_pos (List.mem_range.mpr ht.1)]
+
+/-- The strictly-interior masked sum is NON-NEGATIVE: every term `seg·line·(1 − osrc)` is a product
+of non-negatives. This is what lets `1 ≤ interior + endpoint` split into the two blocking cases. -/
+theorem msumVal_segVal_nonneg {efrom eto osrc line : Nat → ℤ} {n af at_ : Nat}
+    (hf : OneHotAt efrom n af) (ht : OneHotAt eto n at_)
+    (hosrc : ∀ k, k < n → osrc k = 0 ∨ osrc k = 1)
+    (hline : ∀ k, k < n → 0 ≤ line k ∧ line k ≤ 3) :
+    0 ≤ msumVal (segVal efrom eto n) osrc line n := by
+  unfold msumVal
+  apply List.sum_nonneg
+  intro x hx
+  obtain ⟨k, hk, rfl⟩ := List.mem_map.mp hx
+  have hk' := List.mem_range.mp hk
+  show 0 ≤ segVal efrom eto n k * line k - segVal efrom eto n k * osrc k * line k
+  rw [segVal_eq hf ht k]
+  by_cases hb : (af < k ∧ k < at_) ∨ (at_ < k ∧ k < af)
+  · rw [if_pos hb]
+    rcases hosrc k hk' with h0 | h1
+    · rw [h0]; nlinarith [(hline k hk').1]
+    · rw [h1]; nlinarith [(hline k hk').1]
+  · rw [if_neg hb]; nlinarith [(hline k hk').1]
+
+/-- The gated other-source mask, INCLUSIVE of the destination endpoint: for `k` strictly between the
+endpoints OR at the destination, `osrc k = 1` iff the coordinate at along-index `k` is the source of
+some move. (`blockedB`'s passability exempts every moving source — `mark_passable` — including a
+source sitting on the destination, which is why the destination is in the inclusive range.) -/
+def OsrcIsOtherSourceVertIncl (osrc : Nat → ℤ) (ms : List Move) (x n af at_ : Nat) : Prop :=
+  ∀ k, k < n → (Between af at_ k ∨ k = at_) →
+    (osrc k = 1 ↔ (ms.any (fun m' => m'.frm == (⟨x, k⟩ : Coord))) = true)
+
+def OsrcIsOtherSourceHorizIncl (osrc : Nat → ℤ) (ms : List Move) (y n af at_ : Nat) : Prop :=
+  ∀ k, k < n → (Between af at_ k ∨ k = at_) →
+    (osrc k = 1 ↔ (ms.any (fun m' => m'.frm == (⟨k, y⟩ : Coord))) = true)
+
+/-- The `blockedB` per-cell predicate, as a `Prop` pair (Bool `&&`/`!` unfolded once). -/
+theorem blockedPred_iff (b : Board) (ms : List Move) (c : Coord) :
+    (!(b.cellAt c).isVacuum && !(ms.any (fun m' => m'.frm == c))) = true
+      ↔ (¬ (b.cellAt c).isVacuum = true ∧ ¬ (ms.any (fun m' => m'.frm == c)) = true) := by
+  cases (b.cellAt c).isVacuum <;>
+    cases (ms.any (fun m' => m'.frm == c)) <;> simp
+
+/-- **The reference `blockedB`, VERTICAL, split into interior-blocks OR destination-blocks.** The
+first disjunct is exactly the old `occluded_vert_iff` shape (strict interior); the second is the new
+endpoint case — a non-passable piece on the destination. -/
+theorem blocked_vert_iff (b : Board) (ms : List Move) (m : Move) (h : m.frm.x = m.to.x) :
+    blockedB b ms m = true ↔
+      (∃ y, min m.frm.y m.to.y < y ∧ y < max m.frm.y m.to.y
+          ∧ ¬ (b.cellAt (⟨m.frm.x, y⟩ : Coord)).isVacuum = true
+          ∧ ¬ (ms.any (fun m' => m'.frm == (⟨m.frm.x, y⟩ : Coord))) = true)
+      ∨ (¬ (b.cellAt m.to).isVacuum = true ∧ ¬ (ms.any (fun m' => m'.frm == m.to)) = true) := by
+  unfold blockedB pathCells
+  rw [List.any_append, List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true,
+    List.any_eq_true]
+  constructor
+  · rintro (⟨c, hc, hp⟩ | hdst)
+    · left
+      obtain ⟨cx, cy⟩ := c
+      obtain ⟨hx, hlo, hhi⟩ := (mem_interior_vert m.frm m.to ⟨cx, cy⟩ h).mp hc
+      simp only at hx; subst hx
+      have hp' := (blockedPred_iff b ms ⟨m.frm.x, cy⟩).mp hp
+      exact ⟨cy, hlo, hhi, hp'.1, hp'.2⟩
+    · right; exact (blockedPred_iff b ms m.to).mp hdst
+  · rintro (⟨y, hlo, hhi, hv, hs⟩ | ⟨hv, hs⟩)
+    · left
+      exact ⟨⟨m.frm.x, y⟩, (mem_interior_vert m.frm m.to _ h).mpr ⟨rfl, hlo, hhi⟩,
+        (blockedPred_iff b ms _).mpr ⟨hv, hs⟩⟩
+    · right; exact (blockedPred_iff b ms m.to).mpr ⟨hv, hs⟩
+
+/-- **The reference `blockedB`, HORIZONTAL, split into interior-blocks OR destination-blocks.** -/
+theorem blocked_horiz_iff (b : Board) (ms : List Move) (m : Move) (h : m.frm.x ≠ m.to.x) :
+    blockedB b ms m = true ↔
+      (∃ x, min m.frm.x m.to.x < x ∧ x < max m.frm.x m.to.x
+          ∧ ¬ (b.cellAt (⟨x, m.frm.y⟩ : Coord)).isVacuum = true
+          ∧ ¬ (ms.any (fun m' => m'.frm == (⟨x, m.frm.y⟩ : Coord))) = true)
+      ∨ (¬ (b.cellAt m.to).isVacuum = true ∧ ¬ (ms.any (fun m' => m'.frm == m.to)) = true) := by
+  unfold blockedB pathCells
+  rw [List.any_append, List.any_cons, List.any_nil, Bool.or_false, Bool.or_eq_true,
+    List.any_eq_true]
+  constructor
+  · rintro (⟨c, hc, hp⟩ | hdst)
+    · left
+      obtain ⟨cx, cy⟩ := c
+      obtain ⟨hy, hlo, hhi⟩ := (mem_interior_horiz m.frm m.to ⟨cx, cy⟩ h).mp hc
+      simp only at hy; subst hy
+      have hp' := (blockedPred_iff b ms ⟨cx, m.frm.y⟩).mp hp
+      exact ⟨cx, hlo, hhi, hp'.1, hp'.2⟩
+    · right; exact (blockedPred_iff b ms m.to).mp hdst
+  · rintro (⟨x, hlo, hhi, hv, hs⟩ | ⟨hv, hs⟩)
+    · left
+      exact ⟨⟨x, m.frm.y⟩, (mem_interior_horiz m.frm m.to _ h).mpr ⟨rfl, hlo, hhi⟩,
+        (blockedPred_iff b ms _).mpr ⟨hv, hs⟩⟩
+    · right; exact (blockedPred_iff b ms m.to).mpr ⟨hv, hs⟩
+
+/-- **THE INCLUSIVE OCCLUSION REFINEMENT, VERTICAL, AT ARBITRARY BOARD SIZE.** The emitted inclusive
+threshold bit (`msumInclVal ≥ 1`) equals the reference `AutomataflRules.blockedB` — for any `n`, any
+vertical rook move, any move list. The interior half reuses `msum_ge_one_iff` unchanged; the
+destination half is the single endpoint term. NON-VACUOUS at `n = 3` (§5b.4). -/
+theorem occ_eq_blockedB_vert {efrom eto osrc line : Nat → ℤ} {n : Nat}
+    {b : Board} {ms : List Move} {m : Move}
+    (hvert : m.frm.x = m.to.x)
+    (hfy : m.frm.y < n) (hty : m.to.y < n)
+    (hf : OneHotAt efrom n m.frm.y) (ht : OneHotAt eto n m.to.y)
+    (hosrc : ∀ k, k < n → osrc k = 0 ∨ osrc k = 1)
+    (hlineRange : ∀ k, k < n → 0 ≤ line k ∧ line k ≤ 3)
+    (hlineRead : LineReadsVert line b m.frm.x n)
+    (hosrcMeans : OsrcIsOtherSourceVertIncl osrc ms m.frm.x n m.frm.y m.to.y) :
+    (1 ≤ msumInclVal efrom eto osrc line n) ↔ blockedB b ms m = true := by
+  have hdst : (⟨m.frm.x, m.to.y⟩ : Coord) = m.to := by rw [hvert]
+  have hcollapse : msumInclVal efrom eto osrc line n
+      = msumVal (segVal efrom eto n) osrc line n + (1 - osrc m.to.y) * line m.to.y := by
+    unfold msumInclVal; rw [endpoint_collapse ht]
+  have hAnn : 0 ≤ msumVal (segVal efrom eto n) osrc line n :=
+    msumVal_segVal_nonneg hf ht hosrc hlineRange
+  have hBnn : 0 ≤ (1 - osrc m.to.y) * line m.to.y := by
+    rcases hosrc m.to.y hty with h0 | h1
+    · rw [h0]; nlinarith [(hlineRange m.to.y hty).1]
+    · rw [h1]; nlinarith [(hlineRange m.to.y hty).1]
+  -- interior half: reuse `msum_ge_one_iff`
+  have hAiff : (1 ≤ msumVal (segVal efrom eto n) osrc line n) ↔
+      (∃ y, min m.frm.y m.to.y < y ∧ y < max m.frm.y m.to.y
+          ∧ ¬ (b.cellAt (⟨m.frm.x, y⟩ : Coord)).isVacuum = true
+          ∧ ¬ (ms.any (fun m' => m'.frm == (⟨m.frm.x, y⟩ : Coord))) = true) := by
+    rw [msum_ge_one_iff hf ht hosrc hlineRange]
+    constructor
+    · rintro ⟨k, hk, hbet, ho, hne⟩
+      refine ⟨k, ?_, ?_, ?_, ?_⟩
+      · rcases hbet with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> omega
+      · rcases hbet with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> omega
+      · exact fun hc => hne ((hlineRead k hk).mpr hc)
+      · exact fun hc => by
+          have := (hosrcMeans k hk (Or.inl hbet)).mpr hc; rw [ho] at this
+          exact absurd this (by norm_num)
+    · rintro ⟨y, hlo, hhi, hv, hs⟩
+      have hyn : y < n := by omega
+      have hbet : Between m.frm.y m.to.y y := by
+        unfold Between; rcases Nat.lt_or_ge m.frm.y m.to.y with hd | hd
+        · left; constructor <;> omega
+        · right; constructor <;> omega
+      refine ⟨y, hyn, hbet, ?_, ?_⟩
+      · rcases hosrc y hyn with h0 | h1
+        · exact h0
+        · exact absurd ((hosrcMeans y hyn (Or.inl hbet)).mp h1) hs
+      · exact fun hz => hv ((hlineRead y hyn).mp hz)
+  -- destination half: the single endpoint term
+  have hBiff : (1 ≤ (1 - osrc m.to.y) * line m.to.y) ↔
+      (¬ (b.cellAt m.to).isVacuum = true ∧ ¬ (ms.any (fun m' => m'.frm == m.to)) = true) := by
+    rcases hosrc m.to.y hty with h0 | h1
+    · rw [h0]; simp only [sub_zero, one_mul]
+      constructor
+      · intro hge
+        refine ⟨?_, ?_⟩
+        · intro hc
+          have hv : (b.cellAt (⟨m.frm.x, m.to.y⟩ : Coord)).isVacuum = true := by rw [hdst]; exact hc
+          have := (hlineRead m.to.y hty).mpr hv; omega
+        · intro hc
+          have hs : (ms.any (fun m' => m'.frm == (⟨m.frm.x, m.to.y⟩ : Coord))) = true := by
+            rw [hdst]; exact hc
+          have := (hosrcMeans m.to.y hty (Or.inr rfl)).mpr hs; omega
+      · rintro ⟨hv, hs⟩
+        have hne : line m.to.y ≠ 0 := by
+          intro hz
+          have := (hlineRead m.to.y hty).mp hz; rw [hdst] at this; exact hv this
+        have := (hlineRange m.to.y hty).1; omega
+    · rw [h1]; simp only [sub_self, zero_mul]
+      constructor
+      · intro hge; exact absurd hge (by norm_num)
+      · rintro ⟨hv, hs⟩
+        have := (hosrcMeans m.to.y hty (Or.inr rfl)).mp h1; rw [hdst] at this
+        exact absurd this hs
+  rw [hcollapse, blocked_vert_iff b ms m hvert, ← hAiff, ← hBiff]
+  omega
+
+/-- **THE INCLUSIVE OCCLUSION REFINEMENT, HORIZONTAL, AT ARBITRARY BOARD SIZE.** The mirror of
+`occ_eq_blockedB_vert` for the row-scan branch. `hrow` (`m.frm.y = m.to.y`) is the rook alignment of
+a horizontal move — it identifies the destination cell `m.to` with the along-line coordinate. -/
+theorem occ_eq_blockedB_horiz {efrom eto osrc line : Nat → ℤ} {n : Nat}
+    {b : Board} {ms : List Move} {m : Move}
+    (hhoriz : m.frm.x ≠ m.to.x) (hrow : m.frm.y = m.to.y)
+    (hfx : m.frm.x < n) (htx : m.to.x < n)
+    (hf : OneHotAt efrom n m.frm.x) (ht : OneHotAt eto n m.to.x)
+    (hosrc : ∀ k, k < n → osrc k = 0 ∨ osrc k = 1)
+    (hlineRange : ∀ k, k < n → 0 ≤ line k ∧ line k ≤ 3)
+    (hlineRead : LineReadsHoriz line b m.frm.y n)
+    (hosrcMeans : OsrcIsOtherSourceHorizIncl osrc ms m.frm.y n m.frm.x m.to.x) :
+    (1 ≤ msumInclVal efrom eto osrc line n) ↔ blockedB b ms m = true := by
+  have hdst : (⟨m.to.x, m.frm.y⟩ : Coord) = m.to := by rw [hrow]
+  have hcollapse : msumInclVal efrom eto osrc line n
+      = msumVal (segVal efrom eto n) osrc line n + (1 - osrc m.to.x) * line m.to.x := by
+    unfold msumInclVal; rw [endpoint_collapse ht]
+  have hAnn : 0 ≤ msumVal (segVal efrom eto n) osrc line n :=
+    msumVal_segVal_nonneg hf ht hosrc hlineRange
+  have hBnn : 0 ≤ (1 - osrc m.to.x) * line m.to.x := by
+    rcases hosrc m.to.x htx with h0 | h1
+    · rw [h0]; nlinarith [(hlineRange m.to.x htx).1]
+    · rw [h1]; nlinarith [(hlineRange m.to.x htx).1]
+  have hAiff : (1 ≤ msumVal (segVal efrom eto n) osrc line n) ↔
+      (∃ x, min m.frm.x m.to.x < x ∧ x < max m.frm.x m.to.x
+          ∧ ¬ (b.cellAt (⟨x, m.frm.y⟩ : Coord)).isVacuum = true
+          ∧ ¬ (ms.any (fun m' => m'.frm == (⟨x, m.frm.y⟩ : Coord))) = true) := by
+    rw [msum_ge_one_iff hf ht hosrc hlineRange]
+    constructor
+    · rintro ⟨k, hk, hbet, ho, hne⟩
+      refine ⟨k, ?_, ?_, ?_, ?_⟩
+      · rcases hbet with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> omega
+      · rcases hbet with ⟨h1, h2⟩ | ⟨h1, h2⟩ <;> omega
+      · exact fun hc => hne ((hlineRead k hk).mpr hc)
+      · exact fun hc => by
+          have := (hosrcMeans k hk (Or.inl hbet)).mpr hc; rw [ho] at this
+          exact absurd this (by norm_num)
+    · rintro ⟨x, hlo, hhi, hv, hs⟩
+      have hxn : x < n := by omega
+      have hbet : Between m.frm.x m.to.x x := by
+        unfold Between; rcases Nat.lt_or_ge m.frm.x m.to.x with hd | hd
+        · left; constructor <;> omega
+        · right; constructor <;> omega
+      refine ⟨x, hxn, hbet, ?_, ?_⟩
+      · rcases hosrc x hxn with h0 | h1
+        · exact h0
+        · exact absurd ((hosrcMeans x hxn (Or.inl hbet)).mp h1) hs
+      · exact fun hz => hv ((hlineRead x hxn).mp hz)
+  have hBiff : (1 ≤ (1 - osrc m.to.x) * line m.to.x) ↔
+      (¬ (b.cellAt m.to).isVacuum = true ∧ ¬ (ms.any (fun m' => m'.frm == m.to)) = true) := by
+    rcases hosrc m.to.x htx with h0 | h1
+    · rw [h0]; simp only [sub_zero, one_mul]
+      constructor
+      · intro hge
+        refine ⟨?_, ?_⟩
+        · intro hc
+          have hv : (b.cellAt (⟨m.to.x, m.frm.y⟩ : Coord)).isVacuum = true := by rw [hdst]; exact hc
+          have := (hlineRead m.to.x htx).mpr hv; omega
+        · intro hc
+          have hs : (ms.any (fun m' => m'.frm == (⟨m.to.x, m.frm.y⟩ : Coord))) = true := by
+            rw [hdst]; exact hc
+          have := (hosrcMeans m.to.x htx (Or.inr rfl)).mpr hs; omega
+      · rintro ⟨hv, hs⟩
+        have hne : line m.to.x ≠ 0 := by
+          intro hz
+          have := (hlineRead m.to.x htx).mp hz; rw [hdst] at this; exact hv this
+        have := (hlineRange m.to.x htx).1; omega
+    · rw [h1]; simp only [sub_self, zero_mul]
+      constructor
+      · intro hge; exact absurd hge (by norm_num)
+      · rintro ⟨hv, hs⟩
+        have := (hosrcMeans m.to.x htx (Or.inr rfl)).mp h1; rw [hdst] at this
+        exact absurd this hs
+  rw [hcollapse, blocked_horiz_iff b ms m hhoriz, ← hAiff, ← hBiff]
+  omega
+
 /-! ## §6 — NON-VACUITY: the generalisation is not empty at `n ≥ 3`.
 
 `interior_nil_n2` / `occluded_false_n2` are true only because their conclusions are trivial. The
@@ -696,8 +989,52 @@ theorem occ_bridge_horiz_fires_n3 :
   · intro k hk hbet; rcases (by omega : k = 0 ∨ k = 1 ∨ k = 2) with rfl | rfl | rfl <;>
       first | decide | exact absurd hbet (by decide)
 
+/-! ### §5b.4 — the INCLUSIVE endpoint BITES at `n = 3`: a piece ON THE DESTINATION blocks.
+
+The audit's 3.2 CRIT case, made concrete. A vertical move `⟨0,0⟩ → ⟨0,2⟩` with a repulsor standing
+on the DESTINATION `⟨0,2⟩` (interior `⟨0,1⟩` empty). Under the INCLUSIVE `blockedB` the move is
+BLOCKED (and the mover is replaced at its origin); under the OLD EXCLUSIVE `occluded` it is NOT — the
+old check would have let the mover overwrite the occupant, deleting it. The bridge equates the
+inclusive threshold with `blockedB`, both `true`; the exclusive `msumVal` and `occluded` are `false`.
+This is the exact content the extra endpoint term adds. -/
+
+/-- A 3×3 board with a repulsor on the DESTINATION `⟨0,2⟩` (interior `⟨0,1⟩` empty, source vacated). -/
+def bV3dstblocked : Board where
+  size := 3
+  cells := fun c => if c = ⟨0, 2⟩ then Particle.repulsor else Particle.vacuum
+  automaton := ⟨2, 2⟩
+/-- The line down `x = 0`: a piece (felt `1`) only at the DESTINATION index `k = 2`. -/
+def lineV3dst : Nat → ℤ := fun k => if k = 2 then 1 else 0
+
+theorem occ_bridge_vert_dst_fires_n3 :
+    ((1 ≤ msumInclVal efromV3 etoV3 osrcV3zero lineV3dst 3)
+        ↔ blockedB bV3dstblocked [mV3] mV3 = true)
+      ∧ (1 ≤ msumInclVal efromV3 etoV3 osrcV3zero lineV3dst 3)   -- inclusive threshold FIRES
+      ∧ blockedB bV3dstblocked [mV3] mV3 = true                  -- reference blockedB FIRES
+      ∧ msumVal (segVal efromV3 etoV3 3) osrcV3zero lineV3dst 3 = 0  -- exclusive interior MISSES it
+      ∧ occluded bV3dstblocked srcsV3 mV3 = false := by           -- old exclusive occluded MISSES it
+  refine ⟨?_, by decide, by decide, by decide, by decide⟩
+  refine occ_eq_blockedB_vert (m := mV3) (b := bV3dstblocked) (ms := [mV3]) (n := 3)
+    rfl (by decide) (by decide) efromV3_oneHot etoV3_oneHot
+    (fun k _ => Or.inl rfl) ?_ ?_ ?_
+  · intro k hk; rcases (by omega : k = 0 ∨ k = 1 ∨ k = 2) with rfl | rfl | rfl <;> decide
+  · intro k hk; rcases (by omega : k = 0 ∨ k = 1 ∨ k = 2) with rfl | rfl | rfl <;> decide
+  · intro k hk hincl
+    rcases (by omega : k = 0 ∨ k = 1 ∨ k = 2) with rfl | rfl | rfl
+    · exact absurd hincl (by decide)
+    · decide
+    · decide
+
 /-! ## §7 — Axiom pins. -/
 
+#assert_axioms sum_oneHot_mul
+#assert_axioms msumVal_segVal_nonneg
+#assert_axioms endpoint_collapse
+#assert_axioms blocked_vert_iff
+#assert_axioms blocked_horiz_iff
+#assert_axioms occ_eq_blockedB_vert
+#assert_axioms occ_eq_blockedB_horiz
+#assert_axioms occ_bridge_vert_dst_fires_n3
 #assert_axioms segVal_eq
 #assert_axioms msum_ge_one_iff
 #assert_axioms mem_interior_vert

@@ -28,6 +28,7 @@ satisfiability ceiling documented in `AutomataflStepBackend`. Everything in §1�
 touch the offset SEMANTICS is free of both.
 -/
 import Dregg2.Circuit.Emit.AutomataflStepChoose
+import Dregg2.Games.AutomataflRules
 
 namespace Dregg2.Circuit.Emit.AutomataflStepStep
 
@@ -1078,6 +1079,33 @@ theorem astep_sat_imp_automatonStepN (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) <
       rw [hcell, if_neg (by rw [hA0]; norm_num), if_neg (by rw [hB0]; norm_num), hstep,
         if_neg hm, hcellOld]
 
+/-! ### §6b — LEG A re-pointed onto the VALIDATED spec (`AutomataflRules.automatonStepCfg .column`).
+
+The migration re-targets the tower from the OLD `Automatafl.automatonStep` to the rules-faithful
+`AutomataflRules.automatonStepCfg`. For the DEPLOYED default (`.column`) tie-break this is a pure
+rewrite: `boardDecodeN` fixes `useColumnRule = true` (`rfl`), so
+`AutomataflRules.automatonStepCfg_column_eq` makes the new step defeq-equal to the old one and the
+capstone transports verbatim. NO descriptor is re-emitted; `automatafl-step.json` is untouched.
+(A `.row`/`.freeze` game would need `StepChoose`'s `.eq`-tie branch re-emitted — a Phase-4 item.) -/
+theorem astep_sat_imp_automatonStepCfgN (n : Nat) (hn1 : 1 ≤ n) (hn : (n : ℤ) < 2013265921)
+    (hn99 : (n : ℤ) ≤ 99) (hwin : (2 : ℤ) ^ (NGen.COORD_RBITS n + 1) ≤ 2013265921)
+    (hsat : Satisfied2 hash (automataflStepDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) :
+    (Dregg2.Games.AutomataflRules.automatonStepCfg ⟨.column⟩
+        (boardDecodeN n (envAt t i))).size = n
+    ∧ (∀ x y : Nat, x < n → y < n →
+        codeToParticle ((envAt t i).loc (NGen.new n (y * n + x)))
+          = (Dregg2.Games.AutomataflRules.automatonStepCfg ⟨.column⟩
+              (boardDecodeN n (envAt t i))).cellAt ⟨x, y⟩) := by
+  have hbridge : Dregg2.Games.AutomataflRules.automatonStepCfg ⟨.column⟩
+        (boardDecodeN n (envAt t i))
+      = automatonStep (boardDecodeN n (envAt t i)) :=
+    Dregg2.Games.AutomataflRules.automatonStepCfg_column_eq ⟨.column⟩
+      (boardDecodeN n (envAt t i)) rfl rfl
+  rw [hbridge]
+  have h := astep_sat_imp_automatonStepN n hn1 hn hn99 hwin hsat hc i hi
+  exact ⟨h.1, h.2.2⟩
+
 end StepN
 
 /-! ## §7 — non-vacuous instantiation: `n = 3` and the DEPLOYED `n = 11`. -/
@@ -1202,6 +1230,7 @@ def treadIdxForgeN3 : Assignment := fun c =>
 #assert_axioms autoSelN_of_sat
 #assert_axioms boardupdN_of_sat
 #assert_axioms astep_sat_imp_automatonStepN
+#assert_axioms astep_sat_imp_automatonStepCfgN
 #assert_axioms astep_sat_imp_automatonStep_n3
 #assert_axioms astep_sat_imp_automatonStep_n11
 

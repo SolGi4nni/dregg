@@ -120,6 +120,7 @@ import Dregg2.Circuit.Emit.AutomataflCommitRefine
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Games.Automatafl
+import Dregg2.Games.AutomataflRules
 
 namespace Dregg2.Circuit.Emit.AutomataflResolveRefine
 
@@ -4052,6 +4053,61 @@ theorem validMoveN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
   · simp [Board.isConflict, boardDecodeOldN]
   · simp [Board.isConflict, boardDecodeOldN]
 
+/-! ### §D.8.5b — LEGALITY re-pointed to the VALIDATED spec (`AutomataflRules.MoveLegal`).
+
+The migration re-targets move-legality from the OLD `Automatafl.MoveValid` to
+`AutomataflRules.MoveLegal`. Two clauses change (design Δ2):
+
+* **the automaton square is banned as a SOURCE ONLY.** `MoveLegal` drops the `¬ isAutomaton to`
+  gate — naming the automaton as a DESTINATION is legal to propose and simply fails to execute (the
+  occupied square blocks the inclusive path, §5b). The emitted `validate_move` still PROVES
+  `¬ isAutomaton to` today, so `MoveLegal` follows as a WEAKENING of `MoveValid` on that clause; the
+  gate-drop itself is a later descriptor re-emit.
+* **marks-membership.** `MoveValid`'s `¬ isConflict frm ∧ ¬ isConflict to` (which read
+  `Board.conflictAt`, never set in the OLD tree) becomes `frm ∉ marks ∧ to ∉ marks` against the
+  round's committed marker set. The current descriptor has NO marks columns, so this is supplied as
+  a HYPOTHESIS (`hfrm`/`hto`) — the labelled round-composition seam Phase 3 discharges from the marks
+  PI commitment. On the opening round `marks = []`, so it is vacuous and `moveLegalN_of_sat`
+  discharges it outright.
+
+Fork/collide (`AutomataflRules.forkAt`/`collideAt`) are the SAME predicates as the old
+`frmConflict`/`toConflict` — already proven equal to the `d3` selection truth table in
+`AutomataflAir.conflictResolve_pair` — so the conflict-detection leg re-points by rename, not
+re-proof. -/
+
+/-- **`validate_move` ⇒ `AutomataflRules.MoveLegal`, general marker set.** Everything but
+marks-membership comes from the emitted `validate_move` (via `validMoveN_of_sat`); the
+`frm ∉ marks`/`to ∉ marks` clauses are the Phase-3 round-composition seam, supplied here as
+hypotheses. -/
+theorem moveLegalN_of_sat_marks (marks : List Coord)
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (M : ℤ)
+    (hn1 : 1 ≤ n) (hnlt : (n : ℤ) < 2013265921) (hM : M = (n : ℤ) - 1) (hwin : M * M ≤ 1000000)
+    (hcw : (2 : ℤ) ^ (NGen.COORD_RBITS n + 1) ≤ 2013265921)
+    (hmv : ∀ {g : VmConstraint2}, g ∈ NGen.validateMove n (NGen.mvBase n which)
+            → g ∈ (automataflResolveDescN n).constraints)
+    (hfrm : (moveDecodeN n (envAt t i) which).frm ∉ marks)
+    (hto : (moveDecodeN n (envAt t i) which).to ∉ marks) :
+    Dregg2.Games.AutomataflRules.MoveLegal (boardDecodeOldN n (envAt t i)) marks
+      (moveDecodeN n (envAt t i) which) := by
+  obtain ⟨hne, hrook, hinF, hinT, hautoF, _hautoT, _hcfF, _hcfT⟩ :=
+    validMoveN_of_sat hsat hc i hi which M hn1 hnlt hM hwin hcw hmv
+  exact ⟨hne, hrook, hinF, hinT, hautoF, hfrm, hto⟩
+
+/-- **`validate_move` ⇒ `AutomataflRules.MoveLegal` on the OPENING round** (`marks = []`), where the
+marks clause is vacuous. This is the round-1 legality the migrated Leg S/C consumes directly. -/
+theorem moveLegalN_of_sat
+    (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+    (hc : StepCanon t) (i : Nat) (hi : i + 1 < t.rows.length) (which : Nat) (M : ℤ)
+    (hn1 : 1 ≤ n) (hnlt : (n : ℤ) < 2013265921) (hM : M = (n : ℤ) - 1) (hwin : M * M ≤ 1000000)
+    (hcw : (2 : ℤ) ^ (NGen.COORD_RBITS n + 1) ≤ 2013265921)
+    (hmv : ∀ {g : VmConstraint2}, g ∈ NGen.validateMove n (NGen.mvBase n which)
+            → g ∈ (automataflResolveDescN n).constraints) :
+    Dregg2.Games.AutomataflRules.MoveLegal (boardDecodeOldN n (envAt t i)) []
+      (moveDecodeN n (envAt t i) which) :=
+  moveLegalN_of_sat_marks [] hsat hc i hi which M hn1 hnlt hM hwin hcw hmv
+    (by simp) (by simp)
+
 /-! ### §D.8.6 — `srcNonVacN_of_sat`: the source-non-vacuum bit IS the reference predicate.
 
 The `n`-generic twin of `srcNonVac_of_sat` (§5), off `sourceReadN_of_sat` (the witnessed source read)
@@ -4121,6 +4177,8 @@ theorem srcNonVacN_of_sat (hsat : Satisfied2 hash (automataflResolveDescN n) min
 #print axioms ivN_of_sat
 #print axioms eqCoordsN_of_sat
 #print axioms validMoveN_of_sat
+#print axioms moveLegalN_of_sat_marks
+#print axioms moveLegalN_of_sat
 #print axioms srcNonVacN_of_sat
 
 end CoordExtractN
