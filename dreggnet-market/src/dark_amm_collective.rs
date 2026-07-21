@@ -25,8 +25,7 @@ use dreggnet_offerings::{
     BinaryOperationReplayMaterial, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, Surface, VerifyReport,
 };
-use fhe::bfv::PublicKey;
-use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
+use fhe_traits::Serialize as FheSerialize;
 use fhegg_fhe::amm_same_opening::{
     AmmPrivacyTier, AmmSameOpeningContext, canonical_bfv_parameters_digest,
 };
@@ -40,6 +39,7 @@ use fhegg_fhe::dark_amm::{
 use fhegg_fhe::dark_amm_attested::{
     AttestedPrivateDecisionPolicy, commit_attested_private_decision_in_context,
 };
+use fhegg_fhe::dark_amm_dkg::verify_collective_dkg_binding;
 use fhegg_fhe::decision_attestation::AttestedDecisionReceipt;
 use fhegg_fhe::mpc_party::{DecisionTranscript, MAX_DECISION_TRANSCRIPT_BYTES};
 use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey, KeygenSession};
@@ -882,8 +882,15 @@ impl CollectiveDarkAmmOffering {
         Ok(offering)
     }
 
+    /// Construct a collective table only after independently authenticated
+    /// party contributions reproduce the exact public key in `initial_material`.
+    ///
+    /// `artifact_wires` are the canonical `DBPAv001` values emitted by
+    /// `dark-amm-tool collective-party-contribute`, in party-index order. This
+    /// is the sole public deployment constructor: it does not let the material
+    /// nominate its own alleged collective key.
     #[allow(clippy::too_many_arguments)]
-    pub fn from_public_material(
+    pub fn from_authenticated_dkg_artifacts(
         base_hosted_session: [u8; 32],
         session_seed: u64,
         params: BfvParams,
@@ -892,24 +899,28 @@ impl CollectiveDarkAmmOffering {
         initial_root: [u32; 8],
         same_opening_verifier: AuthenticatedQuorumVerifier,
         decision_policy: AttestedPrivateDecisionPolicy,
+        worker_config_wire: &[u8],
+        artifact_wires: &[&[u8]],
     ) -> Result<Self, CollectiveDarkAmmError> {
-        let public_key = PublicKey::from_bytes(initial_material.public_key_bytes(), params.arc())
-            .map_err(|error| {
+        let verified = verify_collective_dkg_binding(
+            worker_config_wire,
+            &keygen,
+            &params,
+            decision_policy.verifier(),
+            &initial_material,
+            artifact_wires,
+        )
+        .map_err(|error| {
             CollectiveDarkAmmError::Configuration(format!(
-                "collective public key decode failed: {error}"
+                "authenticated DKG/table binding failed: {error}"
             ))
         })?;
-        if public_key.to_bytes() != initial_material.public_key_bytes() {
-            return Err(CollectiveDarkAmmError::Configuration(
-                "collective public key is not canonically encoded".to_string(),
-            ));
-        }
         Self::new(
             base_hosted_session,
             session_seed,
             params,
             keygen,
-            CollectivePublicKey { pk: public_key },
+            verified.collective().clone(),
             initial_material,
             initial_root,
             same_opening_verifier,

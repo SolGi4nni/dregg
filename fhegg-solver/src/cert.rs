@@ -26,10 +26,16 @@
 //! Lean Cert-F ingestor and the in-STARK checker both consume.
 
 use crate::pdhg::FlowLp;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The Cert-F certificate: public program + primal-dual witness.
-#[derive(Clone, Debug, Serialize)]
+///
+/// `Deserialize` is derived so a relying party (e.g. the fhegg-fhe
+/// `CertFClearingVerifier`) can decode the JSON wire form back into a checkable
+/// certificate. Deserialization only restores the carrier; every acceptance
+/// decision still recomputes the objectives/residual in [`CertF::check_with`],
+/// so the diagnostic fields it restores can never decide validity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CertF {
     /// Number of nodes (rows of `A`).
     pub n_nodes: usize,

@@ -8829,6 +8829,7 @@ dependencies = [
 name = "fhegg-fhe"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bulletproofs",
  "bytemuck",
  "curve25519-dalek",
@@ -8838,6 +8839,7 @@ dependencies = [
  "fhe",
  "fhe-math",
  "fhe-traits",
+ "fhegg-solver",
  "merlin",
  "pollster 0.4.0",
  "rand 0.8.6",

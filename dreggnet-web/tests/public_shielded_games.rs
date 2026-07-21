@@ -14,8 +14,9 @@ use dreggnet_offerings::{SessionConfig, SessionId};
 use dreggnet_web::{
     DARK_AMM_AUTHORITY_KEYS_ENV, DARK_AMM_AUTHORITY_THRESHOLD_ENV,
     DARK_AMM_COLLECTIVE_BASE_SESSION_ENV, DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
-    DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV, DARK_AMM_COLLECTIVE_PARTIES_ENV,
-    DARK_AMM_COLLECTIVE_SESSION_ID_ENV, DARK_AMM_DECISION_KEYS_ENV,
+    DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV, DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV,
+    DARK_AMM_COLLECTIVE_PARTIES_ENV, DARK_AMM_COLLECTIVE_SESSION_ID_ENV,
+    DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV, DARK_AMM_DECISION_KEYS_ENV,
     DARK_AMM_DECISION_THRESHOLD_ENV, DARK_AMM_INITIAL_ROOT_ENV, DARK_AMM_SECRET_KEY_FILE_ENV,
     FHEGG_QUORUM_KEYS_ENV, FHEGG_QUORUM_THRESHOLD_ENV, dark_amm_authority_from,
     dark_amm_decision_authority_from, validate_public_shielded_deployment_from,
@@ -146,6 +147,8 @@ fn production_startup_refuses_half_configured_private_authorities() {
         DARK_AMM_COLLECTIVE_BASE_SESSION_ENV,
         DARK_AMM_COLLECTIVE_PARTIES_ENV,
         DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
+        DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV,
+        DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV,
         DARK_AMM_DECISION_KEYS_ENV,
         DARK_AMM_DECISION_THRESHOLD_ENV,
     ] {
@@ -163,4 +166,43 @@ fn production_startup_refuses_half_configured_private_authorities() {
     })
     .expect_err("single-key and collective custody cannot be enabled together");
     assert!(error.contains("mutually exclusive"), "{error}");
+}
+
+#[test]
+fn production_collective_boot_requires_authenticated_dkg_artifacts() {
+    let key0 = "11".repeat(32);
+    let key1 = "22".repeat(32);
+    let key2 = "33".repeat(32);
+    let roster = format!("{key0},{key1},{key2}");
+    let complete_legacy_value = |name: &str| match name {
+        DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV => Some("pool.dbap".to_string()),
+        DARK_AMM_COLLECTIVE_SESSION_ID_ENV => Some("dark-bazaar-production".to_string()),
+        DARK_AMM_COLLECTIVE_BASE_SESSION_ENV => Some("44".repeat(32)),
+        DARK_AMM_COLLECTIVE_PARTIES_ENV => Some("3".to_string()),
+        DARK_AMM_COLLECTIVE_CRP_SEED_ENV => Some("55".repeat(32)),
+        DARK_AMM_INITIAL_ROOT_ENV => Some("1,2,3,4,5,6,7,8".to_string()),
+        DARK_AMM_AUTHORITY_KEYS_ENV | DARK_AMM_DECISION_KEYS_ENV => Some(roster.clone()),
+        DARK_AMM_AUTHORITY_THRESHOLD_ENV | DARK_AMM_DECISION_THRESHOLD_ENV => Some("2".to_string()),
+        _ => None,
+    };
+
+    let without_config = validate_public_shielded_deployment_from(&complete_legacy_value)
+        .expect_err("the old material-only collective boot must now fail closed");
+    assert!(
+        without_config.contains(DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV),
+        "{without_config}"
+    );
+
+    let without_artifacts = validate_public_shielded_deployment_from(|name| {
+        if name == DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV {
+            Some("worker.dbwc".to_string())
+        } else {
+            complete_legacy_value(name)
+        }
+    })
+    .expect_err("a config without its authenticated contribution roster must fail closed");
+    assert!(
+        without_artifacts.contains(DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV),
+        "{without_artifacts}"
+    );
 }

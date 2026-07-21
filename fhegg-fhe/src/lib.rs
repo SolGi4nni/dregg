@@ -60,6 +60,12 @@ pub mod bfv_lean;
 /// over fhe.rs's `Multiplicator`, oracle-anchored in `tests/bfv_mul_oracle.rs`.
 pub mod bfv_mul;
 pub mod boundary;
+/// Fail-closed Cert-F translation checking plus the explicit semantic-binder
+/// seam required before a certificate may satisfy a dark-clearing receipt's
+/// computation-integrity policy. A claim digest alone never binds the public
+/// flow program to encrypted inputs; see the module docs for the remaining
+/// reveal-boundary and true no-viewer obligations.
+pub mod certf_integrity;
 pub mod convex_engine;
 /// PRIVATE CONVEX ENGINE stone 1: one iteration of `x ← prox(x − τ·A·x)` over
 /// encrypted state — the public-matrix linear step stays ADDITIVE (no ct×ct),
@@ -69,6 +75,9 @@ pub mod dark_amm;
 /// Cross-process, quorum-attested commit of an already-encrypted Dark AMM
 /// candidate by a host that possesses no BFV secret key.
 pub mod dark_amm_attested;
+/// Authenticated, non-circular binding from an independently signed DKG
+/// contribution roster to the public key carried by a Dark AMM table.
+pub mod dark_amm_dkg;
 /// Durable quorum-signed companion to the in-process one-bit private decision
 /// capability. The receipt binds the exact candidate/session and reveal-only
 /// transcript while keeping malicious BFV-share validity an explicit residual.

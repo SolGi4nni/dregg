@@ -2718,6 +2718,18 @@ pub const DARK_AMM_COLLECTIVE_BASE_SESSION_ENV: &str = "DREGG_DARK_AMM_COLLECTIV
 pub const DARK_AMM_COLLECTIVE_PARTIES_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_PARTIES";
 #[cfg(feature = "dark-amm-game")]
 pub const DARK_AMM_COLLECTIVE_CRP_SEED_ENV: &str = "DREGG_DARK_AMM_COLLECTIVE_CRP_SEED";
+/// Canonical public `DBWCv001` worker configuration signed over by every DKG
+/// party artifact. Production bootstrap pins the exact bytes used by the
+/// independent decision worker; the table material cannot nominate them.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV: &str =
+    "DREGG_DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE";
+/// Comma-separated, party-index-ordered `DBPAv001` public contribution files.
+/// The production registrar requires exactly one authenticated artifact per
+/// configured DKG party and reproduces the table key from them before boot.
+#[cfg(feature = "dark-amm-game")]
+pub const DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV: &str =
+    "DREGG_DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES";
 /// Independent FHDAR decision-authority roster. It must contain exactly the DKG
 /// party count; its threshold need not equal the Tier-1 issuer threshold.
 #[cfg(feature = "dark-amm-game")]
@@ -2890,6 +2902,8 @@ pub fn register_collective_dark_amm_from(
         decode_quorum_key(&required(DARK_AMM_COLLECTIVE_CRP_SEED_ENV)?).ok_or_else(|| {
             format!("{DARK_AMM_COLLECTIVE_CRP_SEED_ENV} must be exactly 32 bytes of hex")
         })?;
+    let worker_config_path = required(DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV)?;
+    let artifact_path_list = required(DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV)?;
     let root = parse_dark_amm_root(&required(DARK_AMM_INITIAL_ROOT_ENV)?)?;
     let (same_opening_keys, same_opening_threshold) =
         dark_amm_authority_from(|name| get(name))?.ok_or_else(|| {
@@ -2904,32 +2918,47 @@ pub fn register_collective_dark_amm_from(
             )
         })?;
 
-    let path = std::path::Path::new(&path);
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
-        format!(
-            "cannot inspect {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {}: {error}",
-            path.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+    let bytes = read_bounded_collective_public_file(
+        DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV,
+        &path,
+        MAX_PUBLIC_MATERIAL_BYTES,
+    )?;
+    let max_config_bytes = u64::try_from(fhegg_fhe::dark_amm_dkg::MAX_COLLECTIVE_DKG_CONFIG_BYTES)
+        .map_err(|_| "canonical DKG config bound does not fit u64".to_string())?;
+    let worker_config_wire = read_bounded_collective_public_file(
+        DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV,
+        &worker_config_path,
+        max_config_bytes,
+    )?;
+    let artifact_paths = artifact_path_list
+        .split(',')
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    if artifact_paths.iter().any(|path| path.is_empty()) {
         return Err(format!(
-            "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {} must be a regular, non-symlinked file",
-            path.display()
+            "{DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV} must be a comma-separated list without empty paths"
         ));
     }
-    if metadata.len() > MAX_PUBLIC_MATERIAL_BYTES {
+    if artifact_paths.len() != n_parties {
         return Err(format!(
-            "{DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {} is {} bytes; maximum is {MAX_PUBLIC_MATERIAL_BYTES}",
-            path.display(),
-            metadata.len()
+            "{DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV} requires exactly {n_parties} party-ordered files, got {}",
+            artifact_paths.len()
         ));
     }
-    let bytes = std::fs::read(path).map_err(|error| {
-        format!(
-            "cannot read {DARK_AMM_COLLECTIVE_MATERIAL_FILE_ENV} {}: {error}",
-            path.display()
-        )
-    })?;
+    let max_artifact_bytes =
+        u64::try_from(fhegg_fhe::dark_amm_dkg::MAX_COLLECTIVE_DKG_ARTIFACT_BYTES)
+            .map_err(|_| "canonical DKG artifact bound does not fit u64".to_string())?;
+    let artifact_wires = artifact_paths
+        .iter()
+        .map(|artifact_path| {
+            read_bounded_collective_public_file(
+                DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV,
+                artifact_path,
+                max_artifact_bytes,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let artifact_wire_refs = artifact_wires.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let params = fhegg_fhe::threshold::BfvParams::fold_set();
     let material =
         fhegg_fhe::dark_amm::DarkPoolPublicHostMaterial::from_wire_bytes(&bytes, params.arc())
@@ -2953,7 +2982,7 @@ pub fn register_collective_dark_amm_from(
     .map_err(|error| format!("invalid FHDAR circuit policy: {error}"))?;
     let session_seed = dreggnet_offerings::seed_from_id(&session_id);
     let offering =
-        dreggnet_market::dark_amm_collective::CollectiveDarkAmmOffering::from_public_material(
+        dreggnet_market::dark_amm_collective::CollectiveDarkAmmOffering::from_authenticated_dkg_artifacts(
             base_hosted_session,
             session_seed,
             params,
@@ -2962,6 +2991,8 @@ pub fn register_collective_dark_amm_from(
             root,
             same_opening_verifier,
             decision_policy,
+            &worker_config_wire,
+            &artifact_wire_refs,
         )
         .map_err(|error| format!("invalid collective Dark Pool deployment: {error}"))?;
     host.register(
@@ -2970,6 +3001,55 @@ pub fn register_collective_dark_amm_from(
         offering,
     );
     Ok(true)
+}
+
+#[cfg(feature = "dark-amm-game")]
+fn read_bounded_collective_public_file(
+    env_name: &str,
+    path: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+
+    let path = std::path::Path::new(path);
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect {env_name} {}: {error}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(format!(
+            "{env_name} {} must be a regular, non-symlinked file",
+            path.display()
+        ));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot open {env_name} {}: {error}", path.display()))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect open {env_name} {}: {error}", path.display()))?;
+    if !opened_metadata.file_type().is_file() || opened_metadata.len() > max_bytes {
+        return Err(format!(
+            "{env_name} {} is {} bytes; maximum is {max_bytes}",
+            path.display(),
+            opened_metadata.len()
+        ));
+    }
+    let allocation = usize::try_from(opened_metadata.len())
+        .map_err(|_| format!("{env_name} length does not fit this platform"))?;
+    let read_limit = max_bytes
+        .checked_add(1)
+        .ok_or_else(|| format!("{env_name} byte limit overflowed"))?;
+    let mut bytes = Vec::with_capacity(allocation);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {env_name} {}: {error}", path.display()))?;
+    let bytes_len = u64::try_from(bytes.len())
+        .map_err(|_| format!("{env_name} read length does not fit the canonical u64 bound"))?;
+    if bytes_len > max_bytes {
+        return Err(format!(
+            "{env_name} {} grew beyond the {max_bytes}-byte maximum while being read",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Select exactly one custody mode. Collective public-only material wins only
@@ -3219,6 +3299,8 @@ pub fn validate_public_shielded_deployment_from(
             DARK_AMM_COLLECTIVE_BASE_SESSION_ENV,
             DARK_AMM_COLLECTIVE_PARTIES_ENV,
             DARK_AMM_COLLECTIVE_CRP_SEED_ENV,
+            DARK_AMM_COLLECTIVE_WORKER_CONFIG_FILE_ENV,
+            DARK_AMM_COLLECTIVE_DKG_ARTIFACT_FILES_ENV,
             DARK_AMM_DECISION_KEYS_ENV,
             DARK_AMM_DECISION_THRESHOLD_ENV,
         ]

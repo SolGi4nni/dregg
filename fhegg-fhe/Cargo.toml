@@ -48,6 +48,7 @@ wgpu = "24"
 pollster = "0.4"
 bytemuck = "1"
 sha2 = { workspace = true }
+blake3 = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 # Authenticated computation-integrity quorum: strict Ed25519 signatures from the
@@ -62,6 +63,16 @@ bulletproofs = "5"
 curve25519-dalek = { version = "4", features = ["alloc", "rand_core"] }
 merlin = "3"
 ethnum = "1.5"
+# The Stage-1 untrusted solver's Cert-F IR: the checkable primal-dual optimality
+# certificate this crate binds into a dark-clearing receipt's computation-integrity
+# evidence (`certf_integrity.rs`). Library-only dependency; the solver's GPU bench
+# bins are not pulled in.
+fhegg-solver = { path = "../fhegg-solver" }
+
+[dev-dependencies]
+# The integration test drives a real PDHG solve to produce a genuine Cert-F
+# certificate; it needs the solver's pdhg/cert API directly.
+fhegg-solver = { path = "../fhegg-solver" }
 
 [[bin]]
 name = "smoke"
