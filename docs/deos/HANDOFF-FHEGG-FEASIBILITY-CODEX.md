@@ -53,10 +53,11 @@ receives the complete private witness and BFV openings in one process; source
 verification sees plaintext orders and encryption randomness; PartyMPC arithmetic
 now refuses uncertified or malformed Beaver rows but still trusts the certifying
 preprocessing authority; and the distributed-custody
-surface now proves committed-share custody and the first three share-native
-linear zero constraints without reconstructing the witness. The nonlinear BFV,
-Poseidon/root, range, and clearing constraints still run inside the monolithic
-Bulletproof/R1CS backend.
+surface now proves committed-share custody, the first three share-native linear
+zero constraints, and owner-local kind/quantity ranges linked to the exact
+distributed commitments without reconstructing the witness. Selector/message-
+table linkage, BFV, Poseidon/root, and clearing constraints still run inside the
+monolithic Bulletproof/R1CS backend.
 
 This is also **not an end-to-end post-quantum apex**. Native clearing quorum and
 PartyMPC transport now have separately green ML-DSA and ML-KEM-backed profiles,
@@ -84,7 +85,7 @@ classical seams into a post-quantum composition.
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | current strict v5 hbox run 1/1 in 167.054s nextest / 167.008s internal; proof 85.923s, sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
-| Distributed proof custody | **GATED FOR COMMITTED SHARES + FIRST LINEAR LAYER** | four logarithmic share-opening PoKs and three share-native root-blinding-zero proofs per worker; canonical 5/5 in 0.359s, generic 3/3 in 0.236s; nonlinear relation remains monolithic |
+| Distributed private-order proof | **GATED THROUGH RANGES** | four share-opening PoKs + three root-zero proofs per worker; each owner additionally proves 0≤kind≤7 and 0≤quantity≤15 linked to exact vector coords; combined 12/12 in 1.930s; selector/Poseidon/BFV/clearing remain monolithic |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
@@ -424,6 +425,16 @@ after the complete request, certificate, ordered commitment vector, roster,
 worker/owner order, widths, and generator namespace are bound; prover nonces are
 fresh CSPRNG output committed before that challenge.
 
+Each owner certificate now also carries one four-value Bulletproof range proof
+over `[kind, 7-kind, quantity, 15-quantity]` and two logarithmic
+representation proofs. Those link the hidden scalar commitments for kind and
+quantity to coordinates 0 and 1 of the same owner vector commitment whose
+worker commitments sum to it. Thus the public bounds are exactly 0≤kind≤7 and
+0≤quantity≤15 without disclosing either value or asking a worker/coordinator to
+reconstruct the order. The proof digest is covered by the owner signature and
+the v2 session/deal/certificate domains; the strict artifact is 2,754 bytes at
+production width.
+
 ### Exact test inventory
 
 **fhegg-fhe/tests/private_book_relation.rs** currently contains:
@@ -460,12 +471,17 @@ openings, rejection of arbitrary digests and cross-certificate reuse,
 roster-signed corrupt-share proofs, and cross-worker/request/owner-order replay.
 The canonical target passed **5/5 release in 0.359s**; the generic distributed
 target passed **3/3 release in 0.236s** after the request-wire tooth was added.
+With the nonlinear owner proofs, the three distributed targets passed **12/12
+release in 1.930s**. A hostile target changes a canonical range response,
+recomputes the artifact checksum, and re-signs it with the legitimate owner;
+verification still rejects `OrderRangeProofRejected`.
 
 ### Exact residual before any no-single-viewer claim
 
 A production distributed nonlinear backend must extend these same committed
-shares from custody and the first linear constraints through the exact BFV,
-Poseidon/root, range, and clearing relations. It must then be used by the actual
+shares from custody, linear constraints, and owner ranges through exact
+selector/message-table linkage, BFV, Poseidon/root, and clearing relations. It
+must then be used by the actual
 apex instead of prove_private_book_bfv_zk, whose API receives the complete
 witness and openings.
 The system also still needs malicious share-formation and MPC-gate proofs,
@@ -949,8 +965,10 @@ from first principles.
 - custody-hardened private_book_distributed_inputs — **4/4 green**.
 - private_book_distributed_prover — generic request/envelope **3/3 release
   green**; canonical committed-share backend **5/5 release green** with four
-  opening PoKs and three share-native linear constraints per worker. The
-  nonlinear relation and live apex proof generation remain monolithic.
+  opening PoKs and three share-native linear constraints per worker; owner
+  range/link layer brings the combined distributed targets to **12/12 release
+  green**. Selector/Poseidon/BFV/clearing and live apex proof generation remain
+  monolithic.
 - fhegg_private_verifier_registry — **2/2 green**.
 - party_mpc_crossing_transport — **2/2 release green**, **1.099s**.
 - native PartyMPC PQ transport — **5/5 integration + 5/5 units green**;
@@ -1042,8 +1060,9 @@ These are the next truth-producing gates:
 
 1. Capture the still-pending Discord Chutes→Dungeon target in section 9; do
    not inherit a green from its Dungeon/narrator organs.
-2. Extend the committed-share backend beyond its opening PoKs and first linear
-   constraints through BFV, Poseidon/root, ranges, and clearing, then make the
+2. Extend the committed-share backend beyond its opening PoKs, first linear
+   constraints, and owner ranges through selector/message linkage, BFV,
+   Poseidon/root, and clearing, then make the
    apex consume it before revisiting any no-single-viewer language.
 3. Replace trusted-authority Beaver certification with malicious preprocessing
    and add private-input share-formation evidence; signed, encrypted routing

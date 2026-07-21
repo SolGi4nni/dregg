@@ -10899,9 +10899,17 @@ CSPRNG nonces enter before challenge derivation. Canonical and generic release
 targets are **5/5 in 0.359s** and **3/3 in 0.236s**, including cross-request,
 cross-certificate, cross-worker, owner-order, scalar-corruption, source-viewer,
 and appended-plaintext refusals. This proves distributed custody and the first
-linear relation without reconstructing shares. It does not yet prove nonlinear
-BFV equations, Poseidon/root opening, ranges, or clearing; the live apex still
-uses the monolithic classical Bulletproof backend for those constraints.
+linear relation without reconstructing shares. The owner boundary now also
+proves its first genuinely nonlinear layer: one four-value Bulletproof over
+`[kind, 7-kind, quantity, 15-quantity]` plus two logarithmic representation
+proofs links the hidden range-checked values to coordinates 0/1 of that same
+distributed vector commitment. The versioned certificate is owner-signed over
+the proof digest; a checksum-repaired and re-signed response mutation still
+fails cryptographically. The combined release targets are **12/12 in 1.930s**;
+the production artifact is 2,754 bytes per owner. Selector/message-table
+linkage, Poseidon/root opening, BFV equations, and clearing are not yet proved
+over shares, so the live apex still uses the monolithic classical Bulletproof
+backend for those constraints.
 
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame
