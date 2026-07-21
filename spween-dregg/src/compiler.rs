@@ -262,7 +262,14 @@ pub const GENESIS_METHOD: &str = "genesis";
 /// `REFUSAL_AUDIT_EXT_KEY` (`2^32`) and far below [`SPILL_EXT_BASE`] (`2^34`), so it can
 /// never collide with a spilled story var, a reserved key, or a small `STATE_SLOTS + n`
 /// application-collection key.
-pub const GENESIS_DONE_EXT_KEY: u64 = 0x0000_0002_0000_0001;
+/// The key deliberately fits in `u32`: `Effect::SetField::index` is still a
+/// platform-sized `usize`, so a larger key is not portable to `wasm32`.  The old
+/// `0x0000_0002_0000_0001` value truncated to register `1` in browsers and made
+/// every genesis turn overwrite an ordinary game field.  Keep protocol-reserved
+/// game keys in the high, schema-unallocated portion of the portable index space.
+pub const GENESIS_DONE_EXT_KEY: u64 = 0x0000_0000_7000_0011;
+
+const _: () = assert!(GENESIS_DONE_EXT_KEY <= u32::MAX as u64);
 
 /// The reserved dispatch method a raw HEAP-hatch turn ([`WorldCell::apply_raw`] with
 /// heap-keyed effects) presents.

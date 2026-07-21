@@ -143,6 +143,27 @@ impl AppCipherclerk {
             .make_action(target, method, effects, &self.federation_id)
     }
 
+    /// Build an Ed25519-only action for a browser's in-tab executor.
+    ///
+    /// A `wasm32-unknown-unknown` module cannot link the verified Lean ML-DSA core, and the PQ
+    /// audit gate correctly aborts rather than silently substituting the Rust fallback. Browser
+    /// worlds are therefore an explicitly local replay surface: they authorize their embedded
+    /// turns classically, retain the exact receipt tape, and require a native verified host to
+    /// re-execute/re-authorize any later publication. This method does not exist on native targets,
+    /// so server, node, and federation code cannot accidentally select the weaker profile.
+    #[cfg(target_arch = "wasm32")]
+    pub fn make_browser_local_action(
+        &self,
+        target: CellId,
+        method: &str,
+        effects: Vec<Effect>,
+    ) -> Action {
+        let clerk = self.read();
+        let nonce = clerk.next_turn_nonce();
+        let unsigned = dregg_sdk::raw::unsigned_action_named(target, method, effects);
+        clerk.sign_action_classical(unsigned, &self.federation_id, nonce)
+    }
+
     /// Build a self-signed [`Action`] targeting this cipherclerk's own cell.
     ///
     /// Equivalent to `cclerk.make_action(cclerk.cell_id(), method, effects)`.

@@ -54,7 +54,14 @@ const DECISION_DOMAIN: &[u8] = b"spween-dregg/collective/decision-binding-v1";
 /// usage and distinct from `REFUSAL_AUDIT_EXT_KEY = 2^32`) so no application heap key
 /// clashes. Absent on a single-player turn; [`WorldCell::read_decision`] reads it back
 /// and [`crate::verify_collective_certified`] checks it against the certified winner.
-pub const DECISION_EXT_KEY: u64 = 0x0000_0002_0000_0000;
+/// Reserved collective-decision key in the high, schema-unallocated part of the
+/// cross-target field-index space.  This MUST fit in `u32`: turns currently carry
+/// field indices as `usize`, and a wider value would truncate on `wasm32` before
+/// reaching the executor.
+pub const DECISION_EXT_KEY: u64 = 0x0000_0000_7000_0010;
+
+const _: () = assert!(DECISION_EXT_KEY <= u32::MAX as u64);
+const _: () = assert!(DECISION_EXT_KEY != GENESIS_DONE_EXT_KEY);
 
 /// **The canonical commitment of a quorum-certified decision** — the value a collective
 /// world turn pins into [`DECISION_EXT_KEY`] so the committed turn binds
@@ -572,6 +579,22 @@ impl WorldCell {
                 field_from_u64(1),
             ));
         }
+        // A browser cannot link the verified Lean ML-DSA core, so its in-tab executor uses the
+        // framework's explicit local-only Ed25519 profile and publishes only replay material. It
+        // must never route that action directly to a federation; publication is a fresh native
+        // re-execution/re-authorization boundary. Native worlds keep the normal hybrid signer.
+        #[cfg(target_arch = "wasm32")]
+        if self.node_target.is_federation() {
+            return Err(WorldError::Federation(
+                "browser-local turns cannot be submitted directly to a federation; replay and re-authorize them on a verified native host"
+                    .to_string(),
+            ));
+        }
+        #[cfg(target_arch = "wasm32")]
+        let action = self
+            .cclerk
+            .make_browser_local_action(self.cell, method, effects);
+        #[cfg(not(target_arch = "wasm32"))]
         let action = self.cclerk.make_action(self.cell, method, effects);
         let receipt = self.exec.submit_action(&self.cclerk, action)?;
         // FEDERATION SEAM: in `Local` mode this is a no-op; in `Federation` mode the
