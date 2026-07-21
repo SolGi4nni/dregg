@@ -1,81 +1,28 @@
-//! ZK leaf↔leg value linker — the light-client privacy tie (WIRED).
+//! Experimental Ristretto value-link sigma proofs — NOT wired into production.
 //!
-//! # The residual this closes
+//! # Integrity status (2026-07-21)
 //!
-//! The shielded-spend STARK publishes a Poseidon2 value-binding
-//! `value_binding = hash_fact(felt(value), [asset_type, randomness, 0])`
-//! (PI[VALUE_BINDING]) — the authoritative PQ (HashCR) value-commitment binding
-//! (value, asset_type). This module's Ristretto Pedersen leg `leg = value·V +
-//! blinding·R` and its DLog sigma are the RETIRED aggregate (see
-//! `value_commitment.rs` header); the ZK tie below survives only for legacy
-//! full-disclosure callers still carrying a Pedersen leg.
-//! [`crate::value_commitment::verify_value_link`] ties them — but in FULL
-//! DISCLOSURE: the prover hands the verifier `value` (and `randomness`). That is
-//! fine for a full node, but a LIGHT CLIENT then learns the amount. The privacy
-//! pillar wants a ZERO-KNOWLEDGE tie: prove the Poseidon felt and the Pedersen
-//! point open to the SAME `value` WITHOUT revealing it.
+//! No non-test caller of this module exists at HEAD. Its sigma protocols are over
+//! Ristretto/Pedersen and therefore rely on DLog; they are not post-quantum.
+//! More importantly, the current `value_binding` felt is merely folded into the
+//! Fiat–Shamir challenge. That prevents replaying one proof under a different PI,
+//! but it does **not** constrain the hidden 64-bit value proved by the sigma to be
+//! a preimage of that PI. A prover can produce the per-bit proof for any chosen
+//! value while treating any supplied `value_binding` as transcript context.
 //!
-//! # Why it is genuinely new (the cross-field wall)
+//! The implemented proofs establish, under DLog/Fiat–Shamir:
 //!
-//! A Poseidon hash over BabyBear is NOT a homomorphic commitment: there is no
-//! Schnorr/Chaum-Pedersen extractor that "ranges over" a hash preimage the way
-//! one ranges over a Pedersen exponent. And the two systems live in DIFFERENT
-//! fields: the STARK speaks BabyBear (p ≈ 2^31), the Pedersen leg speaks the
-//! Ristretto scalar field (l ≈ 2^252). A direct equal-discrete-log proof is
-//! impossible because one side has no discrete log at all.
+//! 1. `link_leg` opens to one hidden 64-bit value whose committed bits are Boolean;
+//! 2. `link_leg` and a transfer `value_leg` open to the same hidden value; and
+//! 3. both proofs are bound to a supplied transcript and `value_binding` PI.
 //!
-//! # The construction (a STARK-anchored Pedersen bridge — NOT a new field link)
-//!
-//! The trick is to NOT try to relate the hash to the Pedersen point cryptographically.
-//! Instead, make the STARK ITSELF emit a Pedersen-shaped commitment to `value` and
-//! prove THAT commitment equals the transfer leg — a plain same-value equality of
-//! two Pedersen commitments, which a Schnorr/CP extractor CAN range over.
-//!
-//! Concretely, add ONE Pedersen leg as a SECOND public output of the spend, the
-//! "link leg":
-//!   link_leg = value·V + r_link·R          (same V, R as the value commitment)
-//! and require, in zero-knowledge:
-//!
-//!   (A) [in-STARK, no new Rust AIR] the value that drives `value_binding`
-//!       decomposes into the SAME bits that the prover commits to bit-by-bit; the
-//!       STARK already binds `value` (col::VALUE) into `value_binding` (C7). We
-//!       reuse the EXISTING per-bit range gadget that the bulletproof shadows: the
-//!       value's 64-bit decomposition is the shared bridge variable. (No new
-//!       constraint family — this is the bit-decomposition the range proof and the
-//!       leaf commitment already pin; we only EXPOSE the bit-commitment as a PI.)
-//!
-//!   (B) [out-of-STARK sigma, this file] a same-value equality-of-Pedersen-
-//!       commitments proof: `link_leg` and the transfer `value_leg` open to the
-//!       same hidden `value` (different blindings). This is a textbook
-//!       Chaum-Pedersen equal-message proof on `(V, R)`:
-//!         prove ∃ value, r1, r2 :
-//!           value_leg = value·V + r1·R  ∧  link_leg = value·V + r2·R
-//!       i.e. `value_leg − link_leg = (r1 − r2)·R` — a Schnorr proof of knowledge
-//!       of the R-exponent of the DIFFERENCE (exactly the conservation-excess
-//!       shape, reused). Zero-knowledge over `value`.
-//!
-//! The light client checks: STARK verifies (so `value_binding` is the genuine
-//! leaf value AND `link_leg` is a Pedersen commitment to that SAME felt-value,
-//! by (A)); the CP proof verifies (so the transfer `value_leg` commits to the
-//! SAME value as `link_leg`, by (B)). Transitively, `value_leg` ↔ leaf, in ZK.
-//! Nobody learns `value`.
-//!
-//! # Where each step lives (both BUILT, zero Rust AIR)
-//!
-//! Step (B) — [`prove_zk_value_link`] / [`verify_zk_value_link`]: the
-//! [`crate::value_commitment`] excess Schnorr reused as an equal-message proof.
-//!
-//! Step (A) — [`prove_link_leg_binding`] / [`verify_link_leg_binding`]: a per-bit
-//! Pedersen OR-sigma binding `link_leg` to the leaf's 64-bit value. The STARK's
-//! C7 already pins `value_binding == hash_fact(value, …)` to the leaf integer (so
-//! the felt is the genuine leaf value to anyone who verifies the STARK proof);
-//! this sigma proves `link_leg` opens to that SAME integer bit-by-bit, with the
-//! `value_binding` felt folded into every Fiat-Shamir transcript. ALL
-//! field-crossing arithmetic stays in the Ristretto sigma; the STARK emits only
-//! BabyBear felts it already emits. THE AIR DOES NOT CHANGE — no Rust-authored
-//! constraint. [`prove_zk_leaf_leg_link`] / [`verify_zk_leaf_leg_link`] compose
-//! the two into the end-to-end light-client tie (the ZK analog of the
-//! full-disclosure [`crate::value_commitment::verify_value_link`]).
+//! They do not establish that the hidden value hashes to the PI or comes from the
+//! STARK leaf. Closing that relation requires proving the hash preimage in the
+//! same proof system, or exposing STARK-constrained bit commitments and checking
+//! those commitments here. Neither exists in this module. The production PQ
+//! direction instead removes this curve bridge: faithfully encode value/asset in
+//! a wide in-AIR hash commitment and enforce no-mint in AIR. Function/type names
+//! below are retained for compatibility with this module's local tests.
 
 use crate::value_commitment::{ValueCommitment, randomness_generator, value_generator};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
@@ -132,8 +79,8 @@ pub enum ZkValueLinkError {
     InvalidPoint,
     /// The response scalar is non-canonical.
     InvalidResponse,
-    /// The equal-message equation failed: the two legs commit to DIFFERENT values
-    /// (the leaf↔leg value mismatch this proof exists to reject — now in ZK).
+    /// A sigma equation failed. For step B this means the two Pedersen legs do
+    /// not share a value; it says nothing by itself about a STARK leaf.
     LinkFailed,
 }
 
@@ -142,9 +89,8 @@ pub enum ZkValueLinkError {
 /// `delta_r = r1 − r2` (the only witness needed — `value` itself never enters the
 /// proof, hence zero-knowledge over the amount).
 ///
-/// `value_binding_pi` is the STARK's published `value_binding` felt bytes, folded
-/// into Fiat-Shamir so this proof is bound to the specific leaf. `link_leg` is the
-/// STARK-anchored commitment from step (A).
+/// `value_binding_pi` is folded into Fiat–Shamir as transcript context. This
+/// does not prove either Pedersen opening is a preimage of that PI.
 pub fn prove_zk_value_link(
     value_leg: &ValueCommitment,
     link_leg: &ValueCommitment,
@@ -174,10 +120,9 @@ pub fn prove_zk_value_link(
 /// link_leg)`: this holds iff the difference is a pure `R`-multiple, i.e. the
 /// `V`-components (the values) cancel.
 ///
-/// NOTE: this verifies step (B) only. The FULL light-client tie additionally
-/// requires that `link_leg` is the STARK-anchored commitment to the leaf value
-/// (step A) — see [`LinkLegBinding`] for that obligation. Verifying (B) in
-/// isolation ties two legs to each other, not yet to the leaf.
+/// This verifies step (B) only and ties two Pedersen legs to each other. The
+/// current [`LinkLegBindingProof`] does not add a checked hash-preimage relation
+/// to a STARK leaf; see the module integrity notice.
 pub fn verify_zk_value_link(
     value_leg_bytes: &[u8; 32],
     link_leg_bytes: &[u8; 32],
@@ -226,20 +171,12 @@ pub fn value_binding_pi_bytes(value_binding: BabyBear) -> [u8; 32] {
 
 // ─── Step (A): link-leg ↔ leaf value binding (per-bit Pedersen sigma) ─────────
 //
-// `link_leg = value·V + r_link·R` must be provably a Pedersen commitment to the
-// SAME 64-bit `value` the STARK bound into `value_binding` — WITHOUT revealing
-// the value. The bridge variable is the value's 64-bit decomposition:
-//
-//   - the STARK's C7 constrains `value_binding == hash_fact(value, …)`, so the
-//     felt is pinned to the leaf's integer value (the light client trusts this
-//     because it verifies the STARK proof);
-//   - this sigma proves `link_leg` opens to that SAME integer, bit by bit.
-//
-// Both sides reduce to one 64-bit integer; binding the bits binds the leaf value
-// to `link_leg` with NO cross-field hash inversion. All field-crossing arithmetic
-// stays in the Ristretto sigma; the STARK emits only BabyBear felts (no AIR
-// change). The proof is honest-verifier ZK over the value (the per-bit responses
-// are `nonce + e·witness` with uniform nonces).
+// This proves `link_leg = value·V + r_link·R` for some hidden 64-bit value,
+// using Boolean bit commitments. `value_binding` influences the Fiat–Shamir
+// challenges but no equation checks `value_binding == hash_fact(value, …)`.
+// Consequently this is a transcript-associated opening proof, not a cross-field
+// leaf↔leg relation. The sigma is honest-verifier ZK over the value (the per-bit
+// responses are `nonce + e·witness` with uniform nonces).
 //
 // # Construction
 //
@@ -358,11 +295,9 @@ fn scalar_canonical(b: &[u8; 32]) -> Result<Scalar, ZkValueLinkError> {
     }
 }
 
-/// Prove (step A) that `link_leg` commits to the SAME `value` whose felt the STARK
-/// published as `value_binding`. The prover supplies the opening `(value, r_link)`
-/// of `link_leg` and the STARK's `value_binding` felt (which it independently
-/// confirms equals `value_link_binding(value, randomness)` — the felt anchors the
-/// bits to the leaf). The value never enters the transcript in the clear.
+/// Prove that `link_leg` commits to one hidden 64-bit value, binding the supplied
+/// `value_binding` felt into the transcript as context. This does not prove that
+/// the hidden value hashes to that felt or comes from a STARK leaf.
 ///
 /// # Panics
 /// Panics if `link_leg != value·V + r_link·R` (the caller must pass a real opening),
@@ -463,10 +398,10 @@ pub fn prove_link_leg_binding(
     )
 }
 
-/// Verify (step A): returns `Ok(())` iff `link_leg` provably commits to the 64-bit
-/// value whose felt is `value_binding`. Checks every bit is `∈ {0,1}` and the
-/// aggregate equals `link_leg`. Reveals nothing about the value. Fails closed on
-/// any malformed input.
+/// Verify (step A): returns `Ok(())` iff `link_leg` provably commits to some
+/// Boolean-composed 64-bit value and the proof transcript includes
+/// `value_binding`. It does not prove that value hashes to the felt. Reveals
+/// nothing about the value and fails closed on malformed input.
 pub fn verify_link_leg_binding(
     link_leg_bytes: &[u8; 32],
     value_binding: BabyBear,
@@ -517,23 +452,21 @@ pub fn verify_link_leg_binding(
 
 // ─── End-to-end ZK leaf↔leg linker (step A ∘ step B) ──────────────────────────
 
-/// The complete zero-knowledge leaf↔leg link a light client checks: step (A)
-/// binds `link_leg` to the STARK's leaf value, step (B) ties the transfer
-/// `value_leg` to `link_leg`. Transitively `value_leg ↔ leaf`, in ZK. This is the
-/// ZK analog of [`crate::value_commitment::verify_value_link`] — no value disclosed.
+/// Experimental composition of the per-bit `link_leg` proof and the equal-message
+/// Pedersen proof. It binds both to the supplied transcript/PI but does not prove
+/// that the hidden value is a preimage of the STARK `value_binding`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZkLeafLegLink {
-    /// The STARK-anchored link leg `value·V + r_link·R` (compressed).
+    /// Transcript-associated link leg `value·V + r_link·R` (compressed).
     pub link_leg: [u8; 32],
-    /// Step (A): `link_leg` commits to the leaf value behind `value_binding`.
+    /// Step (A): `link_leg` commits to a hidden 64-bit value; the PI is context.
     pub leg_binding: LinkLegBindingProof,
     /// Step (B): the transfer `value_leg` and `link_leg` commit to the same value.
     pub equal_message: ZkValueLinkProof,
 }
 
-/// Prove the FULL ZK leaf↔leg link. `value`/`r_value` open the transfer
-/// `value_leg`; `value_binding` is the STARK's published felt for the SAME value.
-/// A fresh `r_link` is sampled for the link leg. Nothing about `value` is revealed.
+/// Prove the experimental composed Pedersen relation. `value_binding` is
+/// transcript context; callers must not treat this as a proved hash-preimage link.
 pub fn prove_zk_leaf_leg_link(
     value: u64,
     r_value: &Scalar,
@@ -556,10 +489,9 @@ pub fn prove_zk_leaf_leg_link(
     )
 }
 
-/// Verify the FULL ZK leaf↔leg link: `value_leg` provably commits to the SAME value
-/// the STARK bound into `value_binding`, in zero knowledge. Returns `Ok(())` iff
-/// BOTH step (A) and step (B) verify. This is what a light client runs to get a ZK
-/// leaf↔leg tie WITHOUT learning the amount.
+/// Verify both experimental sigma components. Success proves the two Pedersen
+/// legs share a hidden value and that the proof transcript includes the supplied
+/// PI; it does not prove the hidden value hashes to that PI.
 pub fn verify_zk_leaf_leg_link(
     value_leg_bytes: &[u8; 32],
     value_binding: BabyBear,
@@ -567,7 +499,7 @@ pub fn verify_zk_leaf_leg_link(
     message: &[u8],
 ) -> Result<(), ZkValueLinkError> {
     let vb_pi = value_binding_pi_bytes(value_binding);
-    // Step (A): link_leg ↔ leaf value.
+    // Step (A): link_leg opens to a Boolean-composed value; PI is transcript context.
     verify_link_leg_binding(&link.link_leg, value_binding, &link.leg_binding, message)?;
     // Step (B): value_leg ↔ link_leg.
     verify_zk_value_link(
@@ -618,9 +550,9 @@ mod tests {
         );
     }
 
-    /// NEGATIVE polarity: a leg committing to a DIFFERENT value is REJECTED. This
-    /// is exactly the leaf↔leg value-mismatch attack (prove membership of V, balance
-    /// V'), now caught in zero-knowledge. The prover knows `delta_r = r1 − r2` but
+    /// NEGATIVE polarity: two Pedersen legs committing to different values are
+    /// rejected. This tests equal-message soundness only, not relation to a leaf.
+    /// The prover knows `delta_r = r1 − r2` but
     /// the values differ, so `value_leg − link_leg` has a nonzero V-component and the
     /// Schnorr-on-R equation cannot hold.
     #[test]
@@ -677,10 +609,10 @@ mod tests {
 
     // ─── REAL-PATH tests: the genuine STARK `value_binding` felt ──────────────
     //
-    // These exercise the ACTUAL felt the shielded-spend circuit publishes
+    // These exercise the felt an honest shielded-spend witness publishes
     // (`ShieldedSpendWitness::value_binding()` == `value_link_binding(value,
-    // randomness)`), not a fixture string. The whole point of the weld: a light
-    // client gets a ZK leaf↔leg tie anchored to the real leaf binding.
+    // asset_type, randomness)`), not a fixture string. They check honest-value
+    // compatibility only; they do not establish the missing hash-preimage relation.
 
     use crate::value_commitment::value_link_binding;
     use dregg_circuit::field::BabyBear;
@@ -715,7 +647,7 @@ mod tests {
         (value, vb_circuit)
     }
 
-    /// POSITIVE (step A, REAL felt): `link_leg` binds to the genuine leaf value.
+    /// POSITIVE honest-input case: the proof accepts with the matching PI as context.
     #[test]
     fn link_leg_binding_accepts_real_value() {
         let (value, vb) = real_leaf(123_456_789, 9999);
@@ -745,9 +677,8 @@ mod tests {
         );
     }
 
-    /// NEGATIVE (step A): the bits are bound to the REAL felt. A proof made for
-    /// leaf A's `value_binding` does NOT verify against leaf B's felt (the bit
-    /// challenges differ — replay across leaves is rejected).
+    /// NEGATIVE (step A): changing the PI changes Fiat–Shamir challenges and
+    /// rejects transcript replay. This does not prove a hash-preimage relation.
     #[test]
     fn link_leg_binding_bound_to_real_felt() {
         let (value, vb_a) = real_leaf(555, 100);
@@ -764,9 +695,7 @@ mod tests {
         );
     }
 
-    /// POSITIVE (end-to-end, REAL felt): the full ZK leaf↔leg link verifies — a
-    /// light client ties the transfer `value_leg` to the genuine STARK leaf value
-    /// in zero knowledge, learning NOTHING about the amount.
+    /// POSITIVE honest-input composition: both Pedersen sigma components verify.
     #[test]
     fn zk_leaf_leg_link_accepts_genuine() {
         let (value, vb) = real_leaf(2_000_000, 31337);
@@ -778,11 +707,8 @@ mod tests {
         );
     }
 
-    /// NEGATIVE (end-to-end): the leaf↔leg value-MISMATCH attack — prove membership
-    /// of a note worth `value` in the STARK, but carry a transfer `value_leg`
-    /// balancing a DIFFERENT value — is REJECTED in ZK. We forge a link by taking a
-    /// genuine binding for `value` but swapping in a `value_leg` for `value'`; the
-    /// step-(B) equal-message check catches the V-component mismatch.
+    /// NEGATIVE composition: swapping in a Pedersen leg for a different value is
+    /// rejected by step B. This remains independent of the missing PI-preimage link.
     #[test]
     fn zk_leaf_leg_link_rejects_value_mismatch() {
         let (value, vb) = real_leaf(7_777, 55);
@@ -797,10 +723,10 @@ mod tests {
         );
     }
 
-    /// NEGATIVE (end-to-end): tampering with the link_leg (step A) is caught even
+    /// NEGATIVE composition: tampering with the link_leg (step A) is caught even
     /// if step (B) would pass — the binding proof no longer matches the substituted
     /// leg. Guards against an attacker who keeps a valid equal-message proof but
-    /// swaps the STARK-anchored leg.
+    /// swaps the transcript-associated leg.
     #[test]
     fn zk_leaf_leg_link_rejects_tampered_link_leg() {
         let (value, vb) = real_leaf(42, 8);

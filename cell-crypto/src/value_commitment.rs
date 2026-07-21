@@ -1,12 +1,12 @@
 //! Homomorphic value commitments (Pedersen commitments over Ristretto).
 //!
-//! # ⚠ PQ CUTOVER — this DLog aggregate is RETIRED from the shielded value-binding TCB
+//! # ⚠ PQ CUTOVER TARGET — this DLog aggregate is still live in the deployed transfer
 //!
-//! The AUTHORITATIVE shielded value-commitment is now the in-AIR Poseidon2
+//! The intended shielded value-commitment is the in-AIR Poseidon2
 //! `value_binding = hash_fact(value, [asset_type, randomness, 0])` (the spend circuit's
 //! C7 PI, `dregg_circuit::shielded::spend_circuit`), binding `(value, asset_type)`
-//! jointly under `HashCR` (Poseidon2 collision-resistance — quantum-safe), and the
-//! authoritative NO-MINT (conservation + no-wraparound range) check is the fully-in-AIR
+//! jointly under `HashCR` once encoded injectively, and the intended NO-MINT
+//! (conservation + no-wraparound range) check is the fully-in-AIR
 //! STARK conservation gate in `circuit-prove/src/shielded_ring_clearing_air.rs`
 //! (`Poseidon2ChipArithSound`, `HidingFriPcs` statistical-ZK). See
 //! `docs/deos/PQ-SHIELDED-COMMITMENT.md` (Option A).
@@ -14,12 +14,12 @@
 //! Everything in THIS module — the Pedersen `commit_hidden_asset` over Ristretto, the
 //! Schnorr `prove/verify_asset_conservation` excess, the `AssetEqualityProof`
 //! Chaum-Pedersen argument, and the `BulletproofRangeProof` — is the classical
-//! discrete-log aggregate that binding rested on BEFORE the cutover. Its binding is
-//! **Shor-broken** (DLog), so it is **retired from the shielded value-binding TCB**: it
-//! is redundant with the in-AIR hash/STARK path, kept here only for the legacy M2-a/M2-b
-//! composed-proof callers and the wasm/FFI byte helpers. `value_link_binding` /
-//! `verify_value_link` below are the mirror of the PQ commitment (check (1)); the
-//! Pedersen-leg tie (check (2)) is part of this retired aggregate. NAMED RESIDUAL:
+//! discrete-log aggregate the intended cutover must replace. Its binding is
+//! **Shor-broken** (DLog). It is **not yet retired from the deployed shielded
+//! value-binding TCB**: `turn/src/executor/apply.rs::apply_shielded_transfer` still
+//! calls `verify_full_conservation_bytes`, including its Schnorr/Bulletproof checks.
+//! `value_link_binding` / `verify_value_link` below are test/compatibility bridge code,
+//! not the deployed replacement. NAMED RESIDUAL:
 //! `curve25519-dalek` + `bulletproofs` are pulled by ~15 crates across the tree (FFI,
 //! wasm, sdk, turn, federation, …), so the full crate removal is a separate dep-graph
 //! sweep, not this cutover.
@@ -1554,23 +1554,23 @@ impl std::error::Error for FullConservationError {}
 // blinding·R` over that value. Without a tie, a spender could prove membership of a
 // note worth V in the STARK while the Pedersen leg balances a DIFFERENT value V'.
 //
-// This bridge closes that link. It lives in `cell` (not `circuit`) because it needs
+// This bridge is an experimental/test-only compatibility check. It lives in `cell`
+// (not `circuit`) because it needs
 // BOTH `dregg_circuit::poseidon2::hash_fact` (to recompute the STARK binding) AND
 // the Ristretto Pedersen commitment (to recompute the leg) — and `cell` is the
 // downstream crate that depends on `circuit` and the curve stack.
 //
-// # Soundness
+// # Encoding limitation
 //
-// Given the STARK's published `value_binding` felt and the published leg bytes, the
-// verifier accepts only if the prover exhibits ONE opening `(value, randomness)`
-// that satisfies BOTH:
-//   (1) `hash_fact(felt(value), [felt(randomness), 0, 0]) == value_binding`, and
+// `value` and `asset_type` are `u64`, but this compatibility tag maps each to one
+// BabyBear felt by reduction modulo `BABYBEAR_P` and emits only one felt. Therefore
+// it is NOT an injective or security-strength commitment to the full pair: for fixed
+// randomness, `(value, asset)` and `(value + BABYBEAR_P, asset)` alias whenever the
+// addition fits in `u64` (and likewise for `asset`). The bridge only checks BOTH:
+//   (1) `hash_fact(value mod p, [asset mod p, randomness, 0]) == value_binding`, and
 //   (2) `commit(value, blinding) == leg`.
-// Because the SAME `value` drives both equations, a leg committing to V' ≠ the
-// STARK leaf's V cannot satisfy (2) under any opening that also satisfies (1) (the
-// Poseidon2 commitment is binding on `value`, so (1) pins `value` to the leaf's V;
-// the Pedersen commitment is binding on `value`, so (2) then forces the leg to V).
-// The leaf↔leg value mismatch is rejected.
+// It must not be promoted into the TCB until value/asset use a faithful multi-limb
+// encoding and a wide commitment output with an explicit quantum security margin.
 //
 // # Residual (named precisely)
 //
@@ -1595,12 +1595,10 @@ impl std::error::Error for FullConservationError {}
 /// the u64 value / u64 asset_type / randomness into BabyBear felts matches the spend
 /// circuit's witness (each as a single felt).
 ///
-/// PQ CUTOVER (Option A): this is the Rust mirror of the AUTHORITATIVE shielded
-/// value-commitment. Its binding on `(value, asset_type)` rests on `HashCR` (Poseidon2
-/// collision-resistance — quantum-safe), retiring the Ristretto three-generator
-/// `commit_hidden_asset` (DLog binding). The asset_type is now absorbed into the
-/// preimage, so the commitment binds `(value, asset_type)` JOINTLY, exactly as the
-/// three-generator Pedersen `value·V + asset·H_asset + r·R` did — now without DLog.
+/// This is a one-felt compatibility tag, not an authoritative commitment. Both u64
+/// inputs are reduced modulo `BABYBEAR_P`; it therefore aliases distinct u64 values
+/// and asset types, and its one-felt output is not a PQ-strength collision target.
+/// Current call sites are tests/compatibility code, not the deployed executor.
 pub fn value_link_binding(
     value: u64,
     asset_type: u64,
@@ -1645,17 +1643,15 @@ impl core::fmt::Display for ValueLinkError {
 
 impl std::error::Error for ValueLinkError {}
 
-/// Verify the leaf↔leg value link against the AUTHORITATIVE PQ value-binding, and
-/// (RETIRED path) the legacy Pedersen leg.
+/// Verify the experimental leaf↔leg compatibility tag and the Pedersen leg.
 ///
 /// The prover supplies the opening `(value, asset_type, randomness, blinding)`. Check
-/// (1) is the PQ-authoritative one: the opening reproduces the STARK's published
+/// Check (1) reproduces the STARK's published one-felt
 /// Poseidon2 `value_binding = hash_fact(felt(value), [felt(asset_type), randomness,
-/// 0])`, which binds `(value, asset_type)` under `HashCR` (quantum-safe). Check (2) —
-/// the Ristretto `commit(value, blinding) == leg` tie — is the REDUNDANT DLog aggregate
-/// this PQ cutover retires; it survives only for backward compatibility with callers
-/// still carrying a Pedersen leg and is NOT part of the value-binding TCB. New callers
-/// should bind value+asset via the Poseidon2 `value_binding` alone (check (1)).
+/// 0])`. Because the u64 inputs are reduced modulo BabyBear and the output is one
+/// felt, this is not a full-u64 or security-strength commitment. Check (2) is the
+/// Ristretto `commit(value, blinding) == leg` tie and remains classical DLog. This
+/// helper does not establish a post-quantum value-binding boundary.
 pub fn verify_value_link(
     value_binding: dregg_circuit::field::BabyBear,
     leg_bytes: &[u8; 32],
@@ -1664,12 +1660,12 @@ pub fn verify_value_link(
     randomness: dregg_circuit::field::BabyBear,
     blinding: &Scalar,
 ) -> Result<(), ValueLinkError> {
-    // (1) PQ-AUTHORITATIVE (HashCR): the opening must reproduce the STARK's published
-    //     Poseidon2 binding, pinning (value, asset_type) to the leaf under Poseidon2 CR.
+    // (1) Compatibility tag only: u64 inputs are reduced modulo BabyBear and the
+    //     output is one felt, so this is not a faithful/PQ-strength commitment.
     if value_link_binding(value, asset_type, randomness) != value_binding {
         return Err(ValueLinkError::BindingMismatch);
     }
-    // (2) RETIRED (DLog Pedersen aggregate — NOT the value-binding TCB): the same
+    // (2) Classical DLog Pedersen aggregate: the same
     //     `value` must commit to the published Pedersen leg.
     let leg = ValueCommitment::from_bytes(&ValueCommitmentBytes(*leg_bytes))
         .ok_or(ValueLinkError::MalformedLeg)?;

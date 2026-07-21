@@ -39,18 +39,18 @@
 //! `value_binding = hash_fact(value, [asset_type, randomness, 0])` (C7), computed
 //! from the SAME value/asset/randomness cells the membership leaf is built from, so
 //! the STARK leaf value+asset cannot float free of what the transfer actually
-//! balances. ⚠ POSTURE (honest, 2026-07-20 — corrected from an overstated claim):
-//! this Poseidon2 value-binding is the INTENDED authoritative PQ commitment (binding on
-//! `(value, asset_type)` under `HashCR` / Poseidon2 collision-resistance, hiding via the
-//! `randomness` blinder) — but it is NOT yet the deployed no-mint gate. On the CURRENTLY
+//! balances. ⚠ POSTURE (honest, 2026-07-21 — corrected from an overstated claim):
+//! this one-felt tag is only the SHAPE of the intended PQ commitment. The current u64
+//! mirror reduces value and asset modulo BabyBear p and the output is one felt, so it
+//! neither binds the full u64 pair nor has a PQ-strength collision margin. On the CURRENTLY
 //! DEPLOYED single-transfer path, conservation still runs through the Ristretto
 //! three-generator Pedersen `commit_hidden_asset` (DLog, Shor-broken), and the
 //! value_binding↔leaf link (`verify_value_link`) is checked ONLY in tests, not in
 //! `apply_shielded_transfer`. The PQ cutover COMPLETES only when the deployed transfer is
 //! routed through the ring-clearing apex (`shielded_ring_clearing_nleg_air`) as a 1-leg
 //! ring — the approved Option-A redesign (docs/DECISION-shielded-redesign-2026-07-20.md +
-//! docs/PLAN-shielded-apex-redesign-2026-07-20.md) — which makes THIS the authoritative
-//! Poseidon2 no-mint check and retires Ristretto. Until then the real posture is
+//! docs/PLAN-shielded-apex-redesign-2026-07-20.md) — with faithful multi-limb inputs and
+//! a wide Poseidon output. Only then can it retire Ristretto. Until then the real posture is
 //! Ristretto-DLog conservation, not the PQ gate this comment previously claimed. The Rust mirror
 //! `dregg_cell_crypto::value_commitment::value_link_binding` re-derives this felt.
 
@@ -128,16 +128,19 @@ pub mod col {
     // commitment to the very value AND asset this spend's membership leaf encodes — it
     // cannot float free of them.
     //
-    // PQ CUTOVER (Option A): this IS the authoritative shielded value-commitment. Its
-    // binding on `(value, asset_type)` rests on `HashCR` (Poseidon2 collision-resistance
-    // — quantum-safe), the SAME floor Merkle membership and nullifiers stand on. It
-    // retires the Ristretto three-generator `commit_hidden_asset` (whose binding was
-    // DLog, Shor-broken). The Rust mirror
+    // PQ CUTOVER TARGET (Option A): after a faithful multi-limb input encoding and a
+    // wide commitment output replace this one-felt tag, the same in-AIR structure can
+    // become the authoritative shielded value commitment. Today both u64 inputs are
+    // represented by one BabyBear felt and the output is one felt; the off-circuit Rust
+    // mirror reduces them modulo p. It therefore neither binds full u64 values nor has a
+    // PQ-strength collision margin, and it has not retired the live Ristretto path.
+    // The Rust mirror
     // `dregg_cell_crypto::value_commitment::value_link_binding(value, asset_type,
     // randomness)` re-derives this felt.
     /// Value-binding commitment `hash_fact(value, [asset_type, randomness, 0])`,
     /// recomputed every row (C7a) from the leaf's own value/asset/randomness cells and
-    /// pinned to PI[VALUE_BINDING] (C7b). The authoritative PQ (HashCR) value-commitment.
+    /// pinned to PI[VALUE_BINDING] (C7b). This is a one-felt cutover prototype,
+    /// not yet an authoritative full-u64/PQ-strength commitment.
     pub const VALUE_BINDING: usize = 17;
     /// Trailing constant-zero pad so the `value_binding` hash absorbs exactly
     /// `[asset_type, randomness, 0]`.
@@ -156,8 +159,8 @@ pub mod pi {
     pub const MERKLE_ROOT: usize = 1;
     /// Hiding Poseidon2 commitment binding the input note's value AND asset type
     /// (with the note randomness as blinding): `hash_fact(value, [asset_type,
-    /// randomness, 0])`. The authoritative PQ (HashCR) shielded value-commitment —
-    /// re-derived off-circuit by
+    /// randomness, 0])`. One-felt cutover prototype; not a full-u64/PQ-strength
+    /// commitment. Re-derived off-circuit by
     /// `dregg_cell_crypto::value_commitment::value_link_binding`.
     pub const VALUE_BINDING: usize = 2;
 }
@@ -186,10 +189,10 @@ pub const PUBLIC_INPUT_COUNT: usize = 3;
 ///   value/asset/randomness cells: `value_binding ==
 ///   hash_fact(value,[asset_type,randomness,0])` (the trailing pad pinned to 0).
 ///   Publishes a hiding Poseidon2 commitment binding exactly the value AND asset the
-///   membership leaf encodes — the authoritative PQ (HashCR) value-commitment.
-/// - C7b: pin `value_binding` to `pi[2]` (the leaf↔Pedersen-leg VALUE LINK). The
-///   downstream `verify_value_link` re-derives this from the Pedersen leg's
-///   opening, rejecting any leg whose value differs from the STARK leaf value.
+///   membership leaf encodes modulo the circuit field. This is a one-felt cutover
+///   prototype, not yet a faithful full-u64/PQ-strength commitment.
+/// - C7b: pin `value_binding` to `pi[2]`. `verify_value_link` exercises the intended
+///   leaf↔Pedersen bridge in tests only; the deployed executor does not call it.
 ///
 /// Boundaries:
 /// - Row 0: `nullifier == pi[0]`.
@@ -277,11 +280,11 @@ pub fn shielded_spend_descriptor() -> CircuitDescriptor {
     // randomness cells the leaf commitment (C6) binds:
     //   value_binding == hash_fact(value, [asset_type, randomness, vb_pad0]).
     // The trailing pad cell vb_pad0 is pinned to 0 (below) so the absorbed terms are
-    // [asset_type, randomness, 0] — a Poseidon2 commitment binding (value, asset_type)
-    // jointly under HashCR (the PQ cutover: the authoritative value-commitment, no
-    // DLog). Because `value`/`asset_type`/`randomness` are constant on every row, this
-    // holds throughout. (vb_pad1 is retained as a zeroed layout column, no longer an
-    // absorbed term.)
+    // [asset_type, randomness, 0]. This constrains the one-field representations
+    // jointly inside the AIR; it is not yet the faithful multi-limb, wide-output
+    // commitment required by the PQ cutover. Because `value`/`asset_type`/`randomness`
+    // are constant on every row, this holds throughout. (vb_pad1 is retained as a
+    // zeroed layout column, no longer an absorbed term.)
     constraints.push(ConstraintExpr::Hash {
         output_col: col::VALUE_BINDING,
         input_cols: vec![col::VALUE, col::ASSET_TYPE, col::RANDOMNESS, col::VB_PAD0],
@@ -313,7 +316,7 @@ pub fn shielded_spend_descriptor() -> CircuitDescriptor {
         // C7b: pin the value-binding commitment to its public input (row 0; it is
         // carried constant on every row, so any row pins the same value). This is
         // what surfaces `value_binding` to the verifier and the Fiat-Shamir
-        // transcript, tying the STARK leaf value to the Pedersen leg.
+        // transcript. It does not by itself prove equality with the Pedersen leg.
         BoundaryDef::PiBinding {
             row: BoundaryRow::First,
             col: col::VALUE_BINDING,
@@ -481,15 +484,15 @@ impl ShieldedSpendWitness {
     /// from the SAME value/asset/randomness cells the membership leaf (C6) is built
     /// from, so the published binding cannot float free of the leaf's value or asset.
     ///
-    /// ⚠ POSTURE (honest, 2026-07-20 — corrected from an overstated claim): this
-    /// Poseidon2 commitment is the INTENDED authoritative PQ value-commitment (binding on
-    /// `(value, asset_type)` under `HashCR`, a quantum-safe floor; hiding via `randomness`;
-    /// asset absorbed in the hash so the PI reveals neither value nor asset) — but it is
-    /// NOT yet the deployed no-mint gate. The value_binding↔leaf link (`verify_value_link`)
+    /// ⚠ POSTURE (honest, 2026-07-21 — corrected from an overstated claim): this
+    /// one-felt tag is the shape of the intended Poseidon commitment, but is not yet a
+    /// faithful full-u64/PQ-strength commitment: the Rust mirror reduces both u64 inputs
+    /// modulo BabyBear and the output is one felt. It is also NOT the deployed no-mint gate.
+    /// The value_binding↔leaf link (`verify_value_link`)
     /// runs ONLY in tests, and deployed conservation gates on the Shor-broken Ristretto
     /// `commit_hidden_asset(value, asset_type, blinding)` DLog. This becomes authoritative
-    /// (and Ristretto retired) only after the Option-A redesign routes the transfer through
-    /// the ring-clearing apex. The Rust mirror
+    /// only after the Option-A redesign adds multi-limb inputs, a wide output, and routes
+    /// the transfer through the ring-clearing apex. The Rust mirror
     /// `dregg_cell_crypto::value_commitment::value_link_binding(value, asset_type,
     /// randomness)` re-derives exactly this felt.
     pub fn value_binding(&self) -> BabyBear {
@@ -855,15 +858,12 @@ mod tests {
         );
     }
 
-    /// THE ASSET-BINDING TOOTH (PQ cutover). The authoritative Poseidon2 value-binding
-    /// now binds `(value, asset_type)` JOINTLY —
+    /// Prototype asset-absorption check. The one-felt tag includes `(value, asset_type)`
+    /// JOINTLY —
     /// `hash_fact(value, [asset_type, randomness, 0])` — the multi-asset binding the
-    /// retired Ristretto three-generator `commit_hidden_asset` had under DLog, now under
-    /// HashCR. So a note of the SAME value but a DIFFERENT asset type publishes a
-    /// DIFFERENT value_binding: an attacker cannot re-label a spent note's asset while
-    /// keeping the same committed value-binding. (Collision-resistance of Poseidon2 is
-    /// what makes this binding; here we witness the distinctness the preimage change
-    /// buys.)
+    /// and this test witnesses that the two selected small field values produce
+    /// different outputs. It is not a collision-resistance test, does not cover the
+    /// modulo-p u64 aliases, and does not establish a PQ-strength commitment.
     #[test]
     fn value_binding_binds_asset_type() {
         let mut w = test_witness(4);
@@ -876,8 +876,7 @@ mod tests {
         assert_ne!(
             vb_asset42,
             w2.value_binding(),
-            "the value-binding must bind the asset type: same value, different asset ⇒ different \
-             commitment (the PQ HashCR analog of the Ristretto H_asset generator)"
+            "the one-felt tag must absorb asset_type for these two field values"
         );
 
         // And it is exactly hash_fact(value, [asset_type, randomness, 0]).

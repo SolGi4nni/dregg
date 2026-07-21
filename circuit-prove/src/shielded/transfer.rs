@@ -58,19 +58,21 @@ pub struct ShieldedInputProof {
     /// The revealed nullifier (the chain's double-spend tag for this input).
     pub nullifier: BabyBear,
     /// The published **value-binding** of this input's note: a hiding Poseidon2
-    /// commitment `hash_fact(value, [randomness, 0, 0])` over exactly the value
+    /// one-felt tag `hash_fact(value, [asset_type, randomness, 0])` over the field
+    /// representation of the value
     /// the spend's membership leaf is built from (the spend circuit's C7 PI). It
     /// reveals nothing about the value (value+randomness hidden behind the hash)
-    /// but ties the STARK-witnessed leaf value to the published Pedersen value-
-    /// commitment leg: the downstream
-    /// [`dregg_cell_crypto::value_commitment::verify_value_link`] re-derives this from the
-    /// leg's `(value, randomness)` opening and rejects a leg whose value differs.
+    /// but does not yet tie the deployed Pedersen leg to the STARK-witnessed leaf:
+    /// [`dregg_cell_crypto::value_commitment::verify_value_link`] exercises that
+    /// compatibility bridge in tests only. Its u64 inputs reduce modulo BabyBear and
+    /// its one-felt output is not an authoritative full-u64/PQ commitment.
     /// Bound into [`ShieldedTransfer::transfer_message`] so the two halves cannot
     /// be spliced.
     pub value_binding: BabyBear,
     /// The hiding (zero-knowledge) shielded-spend proof (membership + nullifier +
     /// value-binding; owner/leaf/key/path/value all blind). The note's value is
-    /// hidden but bound (via `value_binding`) to the Pedersen leg that carries it.
+    /// hidden and bound into this proof/transcript; the deployed Pedersen-leg tie
+    /// remains an open cutover.
     pub proof: DslZkProof,
 }
 
@@ -189,9 +191,9 @@ impl ShieldedTransfer {
         m.extend_from_slice(&(self.inputs.len() as u64).to_le_bytes());
         for input in &self.inputs {
             m.extend_from_slice(&input.nullifier.as_u32().to_le_bytes());
-            // Bind each input's value-binding into the transcript so the Pedersen
-            // conservation/range proofs are Fiat-Shamir-tied to the STARK leaf
-            // values (the leaf↔leg VALUE LINK cannot be spliced across transfers).
+            // Bind each input's one-felt tag into the transcript so the Pedersen
+            // conservation/range proofs cannot be spliced across transfer messages.
+            // This transcript binding does not prove leaf↔leg value equality.
             m.extend_from_slice(&input.value_binding.as_u32().to_le_bytes());
         }
         m.extend_from_slice(&(self.input_legs.len() as u64).to_le_bytes());

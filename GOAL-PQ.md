@@ -3,6 +3,12 @@
 
 # GOAL — NO PRE-QUANTUM: leave no classical-only load-bearing crypto standing
 
+**Scope correction (2026-07-21):** despite the broad historical title, this is
+the signature/key-exchange lane. Its completion claims do not certify proof
+systems, commitments, MPC, randomness beacons, WebPKI/passkeys/TEE roots,
+foreign chains, or end-to-end PQ. The HEAD-wide boundary is
+[`docs/deos/PQ-EVERYTHING-DREGG.md`](docs/deos/PQ-EVERYTHING-DREGG.md).
+
 Every security-critical **signature** → hybrid (ed25519 ∧ ML-DSA-65, verify BOTH, PQ key ENROLLED+PINNED,
 never self-carried). Every security-critical **key-exchange** → hybrid KEM (X25519 + ML-KEM). Per the
 07-09 pre-quantum audit.

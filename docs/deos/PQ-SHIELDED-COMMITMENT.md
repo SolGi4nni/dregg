@@ -88,27 +88,29 @@ value-conservation soundness (no-mint), not confidentiality.
 
 ### Option A (RECOMMENDED) — Poseidon2 hash-commitment + fully-in-AIR STARK conservation
 
-Retire Pedersen/Ristretto/Schnorr/Bulletproofs entirely. The whole shielded value side rests on
+Retire Pedersen/Ristretto/Schnorr/Bulletproofs entirely. The Option-A target rests on
 **hashes + STARK** — dregg's existing PQ floors (`HashCR` / Poseidon2 CR, `Poseidon2ChipArithSound`,
 `HidingFriPcs` statistical-ZK), the *same* primitives already carrying Merkle membership and nullifiers.
 
-**Binding** = collision-resistance of the note value-commitment hash (the same `HashCR` the Merkle tree
-and nullifier stand on). CR is a quantum-safe assumption (Grover only halves the security parameter — a
-256-bit Poseidon2 output gives ~128-bit quantum CR).
+**Binding target** = collision-resistance of a faithfully encoded, wide note
+value-commitment hash. Generic quantum collision search is approximately
+`2^(n/3)`, not the preimage/Grover `2^(n/2)` rule: a 256-bit output has only
+about 85 generic quantum collision bits. A conservative 128-bit collision target
+needs at least 384 output bits plus Poseidon2/QROM analysis.
 
 **Conservation** `Σ value_in − Σ value_out = 0` proven **fully in-AIR**: the value is a STARK witness, the
-conservation a field constraint, no-wrap enforced by the in-AIR range gadget. STARK soundness (HashCR /
-Poseidon2ChipArithSound = hash-based) is quantum-safe.
+conservation a field constraint, no-wrap enforced by the in-AIR range gadget. STARK soundness is
+PQ-shaped, but remains conditional on the named FRI extractor/query/transcript floors.
 
 **Hiding** = the STARK statistical-ZK (`HidingFriPcs`) — already quantum-safe.
 
-**This is largely already BUILT.** The infrastructure exists in the current codebase:
+**The AIR organs are partly built; the commitment and deployed cutover are not.**
 
-- **The hash value-commitment already exists.** The shielded-spend circuit publishes
-  `value_binding = hash_fact(value, [randomness, 0, 0])` — a **hiding Poseidon2 commitment to exactly the
-  value, blinded by the note randomness** (C7, `shielded/spend_circuit.rs:39–40, 111–125, 143`; PI
-  `[nullifier, merkle_root, value_binding]`). This is *already* the Option-A note-value commitment:
-  binding = Poseidon2 CR, hiding = the randomness blinder. It is recomputed in-AIR and pinned to a PI.
+- **A one-felt prototype tag exists.** The shielded-spend circuit publishes
+  `value_binding = hash_fact(value, [asset_type, randomness, 0])` and pins it to a PI.
+  The Rust mirror reduces both u64 inputs modulo BabyBear p, so `x` and `x+p` alias,
+  and its single-felt output has no security-strength collision margin. Option A still
+  needs faithful multi-limb u64 encoding and a wide commitment output.
 - **In-AIR conservation already exists** as a BabyBear field gate `Σ value_in − Σ value_out = 0`
   (`shielded_ring_clearing_air.rs`, clause (c)).
 - **The in-AIR range gadget already exists.** Every conservation value is bit-decomposed into `VALUE_BITS`
@@ -119,10 +121,11 @@ Poseidon2ChipArithSound = hash-based) is quantum-safe.
   off-AIR to a CIRCUIT constraint."* That is the Option-A range gadget, already landed for the
   BabyBear-scale range.
 
-So the AIR *already* proves value conservation over hash-committed, in-AIR-ranged STARK witnesses. What is
-still DLog is the **redundant off-AIR Pedersen aggregate** (`pedTwoGen` coordinate excess + the off-AIR
-Schnorr + the off-AIR Bulletproof + the Ristretto `commit_hidden_asset` bytes). Option A is the
-decision to **make the in-AIR hash+STARK path the sole value-binding and delete the DLog aggregate** — not
+So the ring AIR constrains field-level value conservation and ranges, but its current tag is not yet a
+faithful wide commitment and the deployed single-transfer executor does not use this AIR as its no-mint
+gate. What is still DLog is the **live off-AIR Pedersen aggregate** (`pedTwoGen` coordinate excess + the
+off-AIR Schnorr + the off-AIR Bulletproof + the Ristretto `commit_hidden_asset` bytes). Option A must
+make a faithful wide in-AIR hash+STARK path the sole value-binding and delete the DLog aggregate — not
 a from-scratch build.
 
 **Does in-AIR conservation fully replace the homomorphic Pedersen?** Yes, for the no-mint property. The
@@ -136,23 +139,22 @@ already are: the ring-clearing apex folds all legs into one proof).
 
 **Remaining migration work (Option A):**
 
-1. **Note commitment: Poseidon2, not Ristretto.** Make the note's on-chain value-commitment the Poseidon2
-   `value_binding` (already the PI) rather than the 32-byte compressed Ristretto `commitment_bytes`
-   (`pool.rs::HiddenAssetLeg`, `value_commitment.rs::commit_hidden_asset`). Extend the hash preimage to
-   also commit the `asset_type` (a second hashed field) to keep the multi-asset hiding — e.g.
-   `hash_fact(value, [asset_type, randomness, 0])` — so one hash binds `(value, asset_type)` jointly, as
-   the Ristretto three-generator commitment did. *Scale: S–M.*
+1. **Note commitment: wide Poseidon2, not Ristretto.** Replace both the 32-byte compressed Ristretto
+   `commitment_bytes` (`pool.rs::HiddenAssetLeg`, `value_commitment.rs::commit_hidden_asset`) and the
+   compatibility `value_link_binding` with a canonical multi-limb encoding of the full `u64` value and
+   `asset_type`, bound with the note randomness into a commitment of at least 384 output bits. The current
+   one-felt tag reduces both integers modulo BabyBear, so it is neither faithful nor security-strength.
 2. **Conservation: fully in-AIR, not off-AIR Schnorr excess.** Delete `prove_asset_conservation` /
    `verify_asset_conservation` (the Schnorr DLog excess). The conservation `Σ value_in = Σ value_out` (and
    the per-asset routing) is already the in-AIR field gate (c); the asset-tag conservation folds in as a
    second in-AIR field sum over the witnessed `asset_type` cells (replacing the `H_asset`-component check).
    The split/merge asset-equality (the Chaum-Pedersen equal-DLog `AssetEqualityProof`) becomes an in-AIR
-   equality constraint over the witnessed asset cells. *Scale: M — the gadgets exist; this is wiring the
-   asset coordinate into the same in-AIR conservation the value coordinate already uses.*
+   equality constraint over the witnessed asset cells. The asset coordinate must be wired into the same
+   in-AIR conservation that the value coordinate uses.
 3. **Range: in-AIR, not Bulletproof.** Delete `output_range_proofs` (`bulletproofs`). The in-AIR
    `VALUE_BITS` gadget already covers the BabyBear-scale range; extend it to the full 64-bit amount via a
    multi-limb (Bignum) in-AIR range (`Dregg2.Bignum.legs_noWrap_conservation` is already the N-leg /
-   multi-limb keystone). *Scale: M–L (the 64-bit widening is the only real depth).*
+   multi-limb keystone).
 4. **Drop the DLog crates from the shielded path.** Once 1–3 land, `curve25519-dalek`, `bulletproofs`, and
    the Schnorr excess leave the shielded value-commitment TCB. (`ed25519-dalek` stays only where it is the
    *classical leg of the hybrid signature* — that IS covered by the PQ metatheory's hybrid combiner; the
@@ -160,8 +162,8 @@ already are: the ring-clearing apex folds all legs into one proof).
 
 **Net:** Option A retires *all* DLog from shielded value-binding and lands it on the exact floors
 (`HashCR`, `Poseidon2ChipArithSound`, `HidingFriPcs` statistical-ZK) the rest of dregg's PQ posture
-already stands on. Most of it is already built; the migration is a cutover + a 64-bit range widening, not
-new cryptography.
+already stands on. The AIR arithmetic organs exist, but the faithful wide commitment, deployed carrier
+cutover, full 64-bit range, and proof/receipt integration remain real implementation work.
 
 ### Option B (FALLBACK) — lattice homomorphic commitment (Module-SIS binding)
 
@@ -219,24 +221,26 @@ Ristretto-EC-in-AIR that entrenches DLog.
 
 ---
 
-## 5. Cutover status (LANDED)
+## 5. Cutover status (PARTIAL; deployed single-transfer path remains classical)
 
 | Migration step | Status |
 |---|---|
-| **1. Note commitment: Poseidon2, asset_type-bound** | **DONE.** The authoritative value-commitment is the C7 PI `value_binding = hash_fact(value, [asset_type, randomness, 0])`, binding `(value, asset_type)` jointly under `HashCR` (`spend_circuit.rs::value_binding`, both ring AIRs' in-AIR recompute, `value_commitment.rs::value_link_binding`). Both-polarity: `spend_circuit.rs::value_binding_binds_asset_type`. The Ristretto three-generator `commit_hidden_asset` is retired from the value-binding TCB. |
-| **2. Conservation: fully in-AIR** | **DONE (authoritative).** `Σ value_in = Σ value_out` is the in-AIR field gate (`shielded_ring_clearing_air.rs` clause (c)); a mint / non-conserving ring is UNSAT in-AIR (`nonconserving_ring_is_unsat`). The off-AIR Schnorr excess (`prove_asset_conservation`) is retired from the TCB (redundant DLog aggregate). |
+| **1. Note commitment: Poseidon2, asset_type-bound** | **PROTOTYPE, NOT A PQ BINDING YET.** C7 computes `hash_fact(value, [asset_type, randomness, 0])`, but `value_link_binding` reduces both u64 inputs modulo BabyBear p and emits one felt. Thus `(value, asset)` aliases `(value+p, asset)` / `(value, asset+p)`, and one felt is not a security-strength collision target. The real cutover needs a faithful multi-limb encoding and wide commitment output. |
+| **2. Conservation: fully in-AIR** | **BUILT FOR THE RING AIR, NOT DEPLOYED FOR SINGLE TRANSFER.** `Σ value_in = Σ value_out` is constrained by `shielded_ring_clearing_air.rs`, with negative tests. But `turn/src/executor/apply.rs::apply_shielded_transfer` still calls `verify_full_conservation_bytes`; deployed acceptance still rests on Ristretto/Pedersen, Schnorr, and Bulletproofs. |
 | **3. Range: in-AIR** | **DONE over the BabyBear no-wrap range** (`VALUE_BITS` bit-decompose + recompose; `wraparound_mint_ring_is_unsat`, `out_of_range_output_is_unsat`). RESIDUAL: the full 64-bit multi-limb widening — the bignum bedrock exists (`caveat_admission_leaf_adapter.rs` limbwise range + `Dregg2.Bignum.legs_noWrap_conservation`), but wiring multi-limb conservation into the ring AIR is the M–L depth item, deliberately NOT rushed (a subtly-wrong range gadget re-opens the mint hole). |
-| **4. Drop DLog crates** | **RETIRED-FROM-TCB, not deleted.** The value-binding TCB no longer rests on `curve25519-dalek`/`bulletproofs`/Schnorr. Full crate REMOVAL is a separate dep-graph sweep: `curve25519-dalek`+`bulletproofs` are pulled by ~15 crates (FFI, wasm, sdk, turn, federation, …). Named, not done here. |
+| **4. Drop DLog crates** | **NOT RETIRED FROM THE DEPLOYED TCB.** The live executor path still depends on `curve25519-dalek`/`bulletproofs`/Schnorr. Physical crate removal follows only after the executor routes through the faithful wide Poseidon/AIR path. |
 
-**Lean tie:** `metatheory/Dregg2/Shielded/RealCrypto.lean` §1.3 names the PQ value-binding floor as
+**Lean target:** `metatheory/Dregg2/Shielded/RealCrypto.lean` §1.3 names the intended PQ value-binding floor as
 `ValueBindingCommit` — `binds_value_and_asset` (HashCR ⇒ binds `(value, asset)`) and
 `mint_forces_collision` (a hidden mint forces a Poseidon2 collision) — the PQ replacement for
-`pedCommit_binding` (DLog). The floor MOVED from discrete-log to `HashCR`.
+`pedCommit_binding` (DLog). This is a target theorem boundary, not evidence that the
+deployed executor or the current one-felt encoding has already moved floors.
 
-**Honest PQ grade (precise):** the shielded value-BINDING is now PQ (Poseidon2 `HashCR`), and the
-no-mint conservation+range is PQ (in-AIR STARK, `Poseidon2ChipArithSound`). NAMED RESIDUALS (NOT PQ /
-NOT this cutover): (i) the fhEgg homomorphic-fold's aggregation-layer commitment (the Option-B
+**Honest PQ grade (precise):** shielded witness privacy is PQ-shaped, but deployed
+value-binding/no-mint remains classical DLog. The ring AIR contains the intended conservation/range
+organ, while its current C7 one-felt tag is neither faithful for u64 inputs nor a PQ-strength
+commitment. NAMED RESIDUALS (NOT PQ / NOT this cutover): (i) the fhEgg homomorphic-fold's aggregation-layer commitment (the Option-B
 PQ-lattice-additive commitment for aggregating *independently-produced* commitments — a SEPARATE
 frontier item); (ii) the full 64-bit multi-limb in-AIR range; (iii) the physical `curve25519`/
-`bulletproofs` crate removal. The shielded no-mint value-binding survives Shor; the aggregation-fold
-frontier does not yet — so this is NOT "the whole shielded pool is PQ", precisely.
+`bulletproofs` crate removal. Until these land and the executor is cut over, the shielded no-mint
+boundary does not survive Shor.

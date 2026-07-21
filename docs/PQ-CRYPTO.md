@@ -1,14 +1,18 @@
 # The verified post-quantum / hybrid crypto stack
 
-This is the honest map of dregg's post-quantum posture at HEAD. It has two tracks that share one
-design law — **hybrid, not PQ-only**:
+This is the scheme/reduction record for dregg's hybrid-crypto work. It is not a
+whole-system claim; the live-surface audit and native-PQ profile are in
+[`docs/deos/PQ-EVERYTHING-DREGG.md`](deos/PQ-EVERYTHING-DREGG.md). It has two
+tracks that share one design law — **hybrid, not PQ-only**:
 
-1. **The deployed hybrid perimeter** — every authority-bearing signature and every session KEM is a
-   HYBRID: a classical component (ed25519 / X25519, hard iff discrete log is) welded to a post-quantum
+1. **The hybrid surfaces covered by the 2026-07-09 sweep** — central consensus,
+   node turn admission, and the specific hybrid APIs below use a HYBRID: a
+   classical component (ed25519 / X25519, hard iff discrete log is) welded to a post-quantum
    component (ML-DSA / ML-KEM, hard iff a module-lattice problem is), combined so that breaking ONE
    still leaves the other holding. This track is BUILT and machine-checked in Lean. At the
    **consensus** perimeter the hybrid is MANDATORY and fail-closed (§4); at the **turn** perimeter the
-   PQ half is verified when present but not yet required (`require_pq` default off). §§1–6.
+   PQ half is verified when present but not yet required (`require_pq` default
+   off) or independently pinned to the target cell. §§1–6.
 2. **The compact-future Hermine threshold quorum certificate** — a lattice threshold signature that
    drops into the hybrid's PQ slot once it earns deployment-grade maturity + audit. Verified to its
    irreducible line; §8.
@@ -184,25 +188,31 @@ BOTH signature halves (`Block::verify_hybrid`), and REJECTS an unenrolled creato
 (`BlockError::UnenrolledCreator`). There is no classical-only acceptance path on the live wire — a
 quantum adversary who forges the ed25519 half cannot inject a block under an enrolled identity.
 
-**The turn perimeter: hybrid wired, PQ half staged.** `turn/src/pq.rs` is the PQ half of the HYBRID
-*turn*-authorization perimeter (end-to-end quantum-safety for user/agent TURNS, not just consensus
-finality):
+**The turn perimeter: hybrid wire shape built, identity binding staged and
+incomplete.** `turn/src/pq.rs` supplies the PQ half of turn authorization, but
+this is not yet end-to-end quantum-safe:
 
 - **`Authorization::HybridSignature`** (`turn/src/action.rs:457`) carries `{ ed25519, ml_dsa,
-  ml_dsa_pk }`. Both halves cover the SAME canonical signing message; a hybrid authorization verifies
-  only when **`classical ∧ pq`** — forging a turn requires breaking ed25519 discrete-log AND
-  module-lattice SIS/LWE simultaneously (exactly the §1 keystone, at the wire).
+  ml_dsa_pk }`. Both halves cover the same canonical signing message and a
+  present PQ half must verify. However, Ed25519 is checked against the target
+  cell while ML-DSA is checked against the public key carried in the
+  authorization. The verifier does not independently pin that key to the cell,
+  so a Shor adversary that forges Ed25519 can carry its own valid ML-DSA key and
+  signature. The `classical ∧ pq` combiner theorem applies only after both keys
+  are enrolled as the same identity.
 - **Deterministic derivation** (`MlDsaTurnKey::from_ed25519_seed`, `turn/src/pq.rs:65`, FIPS 204
-  `ML-DSA.KeyGen(ξ = seed)`): the ML-DSA key derives from the same 32-byte ed25519 seed, so
-  cipherclerk / node / genesis agree on the PQ public key with no separate ceremony. Domain-separated
-  by `HYBRID_TURN_PQ_CTX = b"dregg-hybrid-turn-v1"` (`:37`), distinct from the consensus quorum ctx.
-- **Staged, fail-CLOSED** (`turn/src/executor/authorize.rs:1054,1064`): the client always signs both
+  `ML-DSA.KeyGen(ξ = seed)`): honest clients can derive both keys from one seed.
+  This is operational convenience, not verifier-side identity binding: the
+  verifier cannot infer that a self-carried `ml_dsa_pk` came from the enrolled
+  Ed25519 seed. Domain-separated by `HYBRID_TURN_PQ_CTX =
+  b"dregg-hybrid-turn-v1"` (`:37`), distinct from the consensus quorum ctx.
+- **Staged, fail-CLOSED** (`turn/src/executor/authorize.rs:1054,1064`): a hybrid client signs both
   halves; the verifier checks the PQ half when present and REJECTS a present-but-invalid PQ half even
   before the PQ half is mandatory (`ml_dsa_verify`, `turn/src/pq.rs:99`, never panics). Whether the PQ
   half is *required* is gated by `TurnExecutor::require_pq` (`turn/src/executor/mod.rs:1089`,
-  **default off** — the one remaining staged flip on this track; consensus, above, is already
-  mandatory). The flip is a human decision, and the classical `Authorization::Signature` variant stays
-  valid until it lands.
+  **default off**). Two steps remain: require the PQ half and independently bind
+  its key to the target cell/epoch. The classical `Authorization::Signature`
+  variant stays valid until the profile flip lands.
 
 **Implementation floor (not ours to prove — real, standardized crates):** ML-DSA-65 is `fips204 =
 "0.4"` (`dregg-pq/src/mldsa.rs`); the X-Wing session KEM is `ml-kem = "0.2.3"` (ML-KEM-768, FIPS 203)
