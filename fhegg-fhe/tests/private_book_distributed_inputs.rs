@@ -2,8 +2,10 @@
 //!
 //! The source module is path-included so this hostile gate can use its
 //! deliberately test-only reduced-degree fixtures.  Production exposes input
-//! preparation behind `amm-input-binding`, but no distributed R1CS backend yet
-//! consumes `PreparedWitnessShare` without reconstruction.
+//! preparation behind `amm-input-binding`. Each owner now proves the first
+//! nonlinear subrelation locally: its hidden kind and quantity are in range and
+//! linked to the exact vector commitment held additively by the workers. The
+//! remaining Poseidon/BFV/clearing circuit is not yet a distributed R1CS proof.
 
 #[path = "../src/private_book_distributed_inputs.rs"]
 mod distributed;
@@ -157,6 +159,7 @@ fn all_local_openings_bind_one_public_certificate_without_reconstruction() {
         assert_eq!(contribution.owner(), owner);
         assert_ne!(contribution.digest(), [0; 32]);
         assert_ne!(contribution.owner_commitment(), [0; 32]);
+        assert_eq!(contribution.order_range_proof_len_for_test(), 1_730);
         coordinator
             .accept_dealer(output.contribution)
             .expect("public dealing");
@@ -260,6 +263,30 @@ fn private_packet_equivocation_and_public_signature_forgery_fail_closed() {
             | Err(DistributedInputError::CertificateDigestMismatch)
     ));
 
+    // Re-sign a checksum-valid artifact after changing a canonical response
+    // scalar inside its range proof. Neither the owner signature nor framing
+    // checksum can substitute for the nonlinear proof equation.
+    let witness = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Bid,
+        2,
+        7,
+        [0x64; 32],
+        Some([901; 8]),
+    )
+    .unwrap();
+    let mut rng = StdRng::from_seed([0x65; 32]);
+    let mut output = witness.deal(&session, &owner_keys[0], &mut rng).unwrap();
+    output
+        .contribution
+        .corrupt_range_proof_and_resign_for_test(&owner_keys[0]);
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(output.contribution),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    );
+
     // Build a complete certificate, then mutate a worker signature while
     // recomputing the public transcript digest. Signature verification, not the
     // checksum alone, remains load-bearing.
@@ -337,6 +364,16 @@ fn exact_production_layout_and_session_separation_are_pinned() {
     .unwrap();
     assert_eq!(production_witness.width(), LOCAL_WITNESS_WIDTH);
     assert!(production_witness.has_short_coefficient_outside_for_test(10));
+    let mut production_rng = StdRng::from_seed([0x95; 32]);
+    let production_deal = production_witness
+        .deal(&production, &owner_keys[0], &mut production_rng)
+        .expect("production-width owner range/link proof");
+    assert_eq!(
+        production_deal
+            .contribution
+            .order_range_proof_len_for_test(),
+        2_754
+    );
 
     assert_eq!(
         DistributedWitnessSession::new(

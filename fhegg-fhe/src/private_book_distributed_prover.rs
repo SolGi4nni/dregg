@@ -32,8 +32,10 @@
 //! knowledge. A concrete backend must implement [`WorkerLocalProofBackend`]
 //! and its direct public verifier must implement
 //! [`PublicDistributedProofVerifier`]. The canonical share-opening backend
-//! proves committed-share custody plus its named linear constraints, but not
-//! yet the full nonlinear BFV/Poseidon/range/clearing relation. The monolithic
+//! proves committed-share custody plus its named linear constraints. The input
+//! certificate separately proves owner-local kind/quantity ranges linked to
+//! those same distributed commitments, but not yet the full nonlinear
+//! BFV/Poseidon/selector-table/clearing relation. The monolithic
 //! `private_book_bfv_zk::prove_private_book_bfv_zk` therefore remains the
 //! explicit Tier-1 full-relation path: its one prover process sees all four
 //! orders and BFV seeds. Public artifact bytes are size-bounded, but a

@@ -75,9 +75,10 @@ const ROOT_CONSTRAINT_CHALLENGE_DOMAIN: &str =
     "fhegg/private-book-share-opening-pok/root-constraint-challenge/v1";
 const ROOT_CONSTRAINT_TRANSCRIPT_LABEL: &[u8] =
     b"fhegg/private-book-share-opening-pok/root-constraint/v1";
-const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI001";
+const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI002";
 const MIN_WORKERS: usize = 2;
 const MAX_WORKERS: usize = 8;
+const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 4 * 1024;
 const ACK_WIRE_LEN: usize = 2 + 2 + 32 + 64;
 const ZERO_CLAIM_COUNT: usize = ORDER_COUNT - 1;
 const ARTIFACT_FIXED_BYTES: usize = 8 + 2 + 2 + 4 + 4 + 32 + 32 + 2 + 2 + 32;
@@ -723,7 +724,14 @@ impl CertificateCommitmentView {
                 commitments.push(commitment);
             }
             share_commitments.push(commitments);
-            reader.skip(32 + 64)?;
+            reader.skip(32)?;
+            let owner_range_proof_len = reader.u32()?;
+            if owner_range_proof_len == 0 || owner_range_proof_len > MAX_OWNER_RANGE_ARTIFACT_BYTES
+            {
+                return Err(CanonicalBackendError::InvalidCertificate);
+            }
+            reader.skip(owner_range_proof_len)?;
+            reader.skip(64)?;
         }
         let acknowledgement_count = reader.u16()?;
         let expected_acknowledgements = ORDER_COUNT
