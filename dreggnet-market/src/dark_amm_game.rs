@@ -2147,6 +2147,7 @@ impl DarkAmmGameOffering {
         let mut receipt_hash =
             blake3::Hasher::new_derive_key("dregg-dark-amm-operation-receipt-v1");
         receipt_hash.update(&session.public.session_id);
+        receipt_hash.update(&dark_amm_player_binding(session.public.session_id, &actor));
         receipt_hash.update(&request.sequence.to_le_bytes());
         receipt_hash.update(&request_digest);
         let receipt_id = *receipt_hash.finalize().as_bytes();
@@ -2264,6 +2265,7 @@ impl DarkAmmGameOffering {
         let mut receipt_hash =
             blake3::Hasher::new_derive_key("dregg-dark-amm-proved-operation-receipt-v2");
         receipt_hash.update(&session.public.session_id);
+        receipt_hash.update(&dark_amm_player_binding(session.public.session_id, &actor));
         receipt_hash.update(&request.encrypted.sequence.to_le_bytes());
         receipt_hash.update(&statement_digest);
         receipt_hash.update(&proof_digest);
@@ -2396,6 +2398,7 @@ impl DarkAmmGameOffering {
         let mut receipt_hash =
             blake3::Hasher::new_derive_key("dregg-dark-amm-same-opening-operation-receipt-v3");
         receipt_hash.update(&session.public.session_id);
+        receipt_hash.update(&dark_amm_player_binding(session.public.session_id, &actor));
         receipt_hash.update(&request.proved.encrypted.sequence.to_le_bytes());
         receipt_hash.update(&statement_digest);
         receipt_hash.update(&proof_digest);
@@ -2709,6 +2712,25 @@ fn open_invariant(
     slots.first().copied().ok_or_else(|| {
         DarkAmmGameError::Malformed("decrypted invariant has no SIMD slot".to_string())
     })
+}
+
+/// Bind a routed player to one pool's public cryptographic identity without
+/// publishing that player in the operation's small public consequence fields.
+///
+/// The length prefix is load-bearing: [`DreggIdentity`] is an opaque string,
+/// so concatenating it with future receipt material without a boundary would
+/// make distinct tuples share one transcript. Every Dark AMM receipt family
+/// absorbs this same digest before its request/proof-specific material. This
+/// makes a durable operation-journal actor substitution reproduce a different
+/// receipt and therefore fail exact replay verification.
+fn dark_amm_player_binding(session_id: [u8; 32], actor: &DreggIdentity) -> [u8; 32] {
+    let actor = actor.as_str().as_bytes();
+    let mut binding = blake3::Hasher::new_derive_key("dregg-dark-amm-player-operation-binding-v1");
+    binding.update(DARK_AMM_OFFERING_KEY.as_bytes());
+    binding.update(&session_id);
+    binding.update(&(actor.len() as u64).to_le_bytes());
+    binding.update(actor);
+    *binding.finalize().as_bytes()
 }
 
 fn parameter_digest_for(params: &BfvParameters) -> [u8; 32] {

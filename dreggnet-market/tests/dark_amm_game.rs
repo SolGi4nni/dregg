@@ -7,8 +7,11 @@ use dreggnet_market::dark_amm_game::{
     DARK_AMM_DISCLOSURE, DARK_AMM_OFFERING_KEY, DARK_AMM_OPERATION, DarkAmmGameOffering,
     DarkAmmHostKeyMaterial, DarkAmmPublicSession, produce_encrypted_swap,
 };
+use dreggnet_market::{DARK_BAZAAR_OFFERING_KEY, DarkBazaarOffering, TURN_LIST};
 use dreggnet_offerings::resume::{InMemoryResumeStore, SessionResumeStore};
-use dreggnet_offerings::{DreggIdentity, Offering, OfferingHost, SessionConfig, SessionId};
+use dreggnet_offerings::{
+    Action, DreggIdentity, Offering, OfferingHost, Outcome, ResumeError, SessionConfig, SessionId,
+};
 use rand_09::SeedableRng;
 use rand_09::rngs::StdRng;
 use std::process::Command;
@@ -109,12 +112,31 @@ fn encrypted_swaps_are_atomic_replayable_and_absent_from_the_public_surface() {
             DreggIdentity("veiled-trader-a".to_string()),
         )
         .expect("first exact encrypted quote lands");
-    assert!(
+    assert_eq!(
         first_receipt
             .public_fields
             .iter()
-            .any(|(key, value)| key == "sequence" && value == "0")
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>(),
+        vec!["sequence", "invariant", "requestDigest", "acceptedSwaps"],
+        "the public game consequence is an exact allowlist, not a projection of private input"
     );
+    assert_eq!(first_receipt.public_fields[0].1, "0");
+    assert!(first_receipt.public_fields.iter().all(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            "actor"
+                | "dx"
+                | "dy"
+                | "reserveX"
+                | "reserveY"
+                | "ciphertext"
+                | "witness"
+                | "opening"
+                | "secretKey"
+                | "rejectedProduct"
+        )
+    }));
 
     assert!(
         host.invoke_binary_operation(
@@ -158,6 +180,51 @@ fn encrypted_swaps_are_atomic_replayable_and_absent_from_the_public_surface() {
         operation.replay_disclosure == DARK_AMM_DISCLOSURE
             && operation.replay_material != public_wire
     }));
+
+    // The public receipt id now binds the routed player under the pool's
+    // internal cryptographic session. Substituting only the durable actor must
+    // no longer reproduce the accepted receipt during restart.
+    let mut bad_actor = log.clone();
+    bad_actor.operations[0].actor = DreggIdentity("receipt-thief".to_string());
+    let mut rejecting = OfferingHost::new();
+    rejecting.register(
+        DARK_AMM_OFFERING_KEY,
+        "The Dark Bazaar — encrypted pool",
+        DarkAmmGameOffering::demo(key_material.clone()),
+    );
+    assert!(matches!(
+        rejecting.resume(&bad_actor),
+        Err(ResumeError::OperationRefused { index: 0, .. })
+    ));
+    assert!(!rejecting.is_open(DARK_AMM_OFFERING_KEY, &id));
+
+    let mut bad_receipt = log.clone();
+    bad_receipt.operations[0].receipt.receipt_id[0] ^= 1;
+    let mut rejecting = OfferingHost::new();
+    rejecting.register(
+        DARK_AMM_OFFERING_KEY,
+        "The Dark Bazaar — encrypted pool",
+        DarkAmmGameOffering::demo(key_material.clone()),
+    );
+    assert!(matches!(
+        rejecting.resume(&bad_receipt),
+        Err(ResumeError::OperationRefused { index: 0, .. })
+    ));
+    assert!(!rejecting.is_open(DARK_AMM_OFFERING_KEY, &id));
+
+    let mut bad_public_consequence = log.clone();
+    bad_public_consequence.operations[0].receipt.public_fields[0].1 = "999".to_string();
+    let mut rejecting = OfferingHost::new();
+    rejecting.register(
+        DARK_AMM_OFFERING_KEY,
+        "The Dark Bazaar — encrypted pool",
+        DarkAmmGameOffering::demo(key_material.clone()),
+    );
+    assert!(matches!(
+        rejecting.resume(&bad_public_consequence),
+        Err(ResumeError::OperationRefused { index: 0, .. })
+    ));
+    assert!(!rejecting.is_open(DARK_AMM_OFFERING_KEY, &id));
     drop(host);
 
     // A new process with the same secret host configuration reconstructs the
@@ -179,6 +246,115 @@ fn encrypted_swaps_are_atomic_replayable_and_absent_from_the_public_surface() {
         reopened.render(DARK_AMM_OFFERING_KEY, &id).unwrap().view()
     );
     assert!(surface.contains("2 encrypted swap(s) accepted"));
+}
+
+#[test]
+fn crawl_and_encrypted_game_share_a_session_token_without_sharing_rules_or_state() {
+    assert_eq!(DARK_BAZAAR_OFFERING_KEY, "bazaar");
+    assert_eq!(DARK_AMM_OFFERING_KEY, "dark-pool");
+    assert_ne!(DARK_BAZAAR_OFFERING_KEY, DARK_AMM_OFFERING_KEY);
+
+    let key_material = keys(0xD6);
+    let pool_public = DarkAmmGameOffering::demo(key_material.clone())
+        .public_session_for_seed(SEED)
+        .expect("public producer context");
+    let private_request = request(&pool_public, 50, 300, 0xD601);
+    let same_token = SessionId::new("one-player-slot");
+    let store = InMemoryResumeStore::new();
+    let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));
+    host.register(
+        DARK_BAZAAR_OFFERING_KEY,
+        "Dark Bazaar crawl",
+        DarkBazaarOffering::new(),
+    );
+    host.register(
+        DARK_AMM_OFFERING_KEY,
+        "Dark Bazaar encrypted pool",
+        DarkAmmGameOffering::demo(key_material),
+    );
+    for offering in [DARK_BAZAAR_OFFERING_KEY, DARK_AMM_OFFERING_KEY] {
+        host.open_session(offering, same_token.clone(), SessionConfig::with_seed(SEED))
+            .unwrap();
+    }
+
+    let crawl_operations = host
+        .binary_operations(DARK_BAZAAR_OFFERING_KEY, &same_token)
+        .unwrap();
+    assert!(crawl_operations.is_empty());
+    let private_operations = host
+        .binary_operations(DARK_AMM_OFFERING_KEY, &same_token)
+        .unwrap();
+    assert_eq!(private_operations.len(), 1);
+    assert_eq!(private_operations[0].name, DARK_AMM_OPERATION);
+
+    // A private-game upload addressed to the public crawl is not reinterpreted
+    // as a bid or settlement and records no operation.
+    assert!(
+        host.invoke_binary_operation(
+            DARK_BAZAAR_OFFERING_KEY,
+            &same_token,
+            DARK_AMM_OPERATION,
+            &private_request,
+            DreggIdentity("cross-route-attacker".to_string()),
+        )
+        .is_err()
+    );
+    assert_eq!(
+        store
+            .load(DARK_BAZAAR_OFFERING_KEY, &same_token)
+            .unwrap()
+            .operations
+            .len(),
+        0
+    );
+
+    // Conversely, the crawl's ordinary LIST action reaches the encrypted game
+    // only as a real refusal. It cannot mutate the pool's sequence or journal.
+    let crossed = host
+        .advance(
+            DARK_AMM_OFFERING_KEY,
+            &same_token,
+            Action::new(TURN_LIST, TURN_LIST, 1, true),
+            DreggIdentity("seller".to_string()),
+        )
+        .expect("the encrypted session exists");
+    assert!(matches!(crossed, Outcome::Refused(_)));
+    assert_eq!(
+        store
+            .load(DARK_AMM_OFFERING_KEY, &same_token)
+            .unwrap()
+            .operations
+            .len(),
+        0
+    );
+
+    let receipt = host
+        .invoke_binary_operation(
+            DARK_AMM_OFFERING_KEY,
+            &same_token,
+            DARK_AMM_OPERATION,
+            &private_request,
+            DreggIdentity("veiled-player".to_string()),
+        )
+        .expect("the exact encrypted-game route accepts its request");
+    assert_eq!(receipt.operation, DARK_AMM_OPERATION);
+    assert_eq!(
+        store
+            .load(DARK_AMM_OFFERING_KEY, &same_token)
+            .unwrap()
+            .operations
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .load(DARK_BAZAAR_OFFERING_KEY, &same_token)
+            .unwrap()
+            .operations
+            .len(),
+        0,
+        "the public crawl remains a distinct session despite the shared frontend token"
+    );
 }
 
 #[test]
