@@ -1,9 +1,9 @@
 //! # `dreggnet-catalog` — the ONE statement of what the DreggNet offering catalog is.
 //!
-//! [`build_full_catalog`] registers the full 20-offering portfolio — the seven games
-//! (native Descent · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl), the eight do-once RPG
+//! [`build_full_catalog`] registers the full 22-offering portfolio — the eight games
+//! (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl), the nine do-once RPG
 //! feature surfaces ([`dreggnet_surfaces::register_surfaces`]: trade · inventory · cheevos ·
-//! guild · craft · companion · tavern · party), and the five service offerings (doc · names ·
+//! guild · craft · companion · quest · tavern · party), and the five service offerings (doc · names ·
 //! compute · grain · hermes) — into a caller-supplied [`OfferingHost`]. Every frontend builds its
 //! host through this one function, so "which offerings exist" stops being four hand-maintained
 //! lists (`dreggnet_web::catalog_default_host` + `register_non_game_offerings`,
@@ -22,8 +22,8 @@
 //! ## Shared tables vs. per-player worlds
 //!
 //! [`build_full_catalog`] builds ONE host: right for the shared tables (a council, a market, a
-//! tug board, or party — several identities acting on one object), and WRONG for the seven
-//! identity-owned RPG feature surfaces. Mounted globally those seven give every viewer the SAME
+//! tug board, or party — several identities acting on one object), and WRONG for the eight
+//! identity-owned RPG feature surfaces. Mounted globally those eight give every viewer the SAME
 //! inventory (one `SharedWorld::demo("Adventurer")`, one ledger, one shelf label). [`PlayerWorlds`]
 //! is the per-identity half: one [`OfferingHost`] per derived identity, each with its own world,
 //! built and boot-resumed on first touch. A frontend routes [`is_rpg_key`] keys there and
@@ -37,6 +37,7 @@
 //! `OfferingHost` are the design doc's remaining Phases B and C.
 
 use dreggnet_offerings::OfferingHost;
+use dreggnet_offerings::campaign::DescentCampaignOffering;
 use dreggnet_offerings::dungeon::DungeonOffering;
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 
@@ -101,8 +102,8 @@ impl CatalogConfig {
     }
 }
 
-/// **THE seam: register the full DreggNet portfolio into `host`.** Seven games + eight RPG
-/// feature surfaces + five service offerings = the 20 every frontend exposes. Call it inside
+/// **THE seam: register the full DreggNet portfolio into `host`.** Eight games + nine RPG
+/// feature surfaces + five service offerings = the 22 every frontend exposes. Call it inside
 /// the frontend's host-build closure (on the host's owning thread) so `!Send` offering
 /// internals are born confined, exactly as the four per-frontend registrars do today.
 pub fn build_full_catalog(host: &mut OfferingHost, cfg: &CatalogConfig) {
@@ -119,8 +120,8 @@ pub fn full_catalog_host(cfg: &CatalogConfig) -> OfferingHost {
     host
 }
 
-/// **The seven portfolio games** — native Descent · dungeon · council · market · Dark Bazaar ·
-/// tug · automatafl.
+/// **The eight portfolio games** — native Descent · Descent campaign · dungeon · council ·
+/// market · Dark Bazaar · tug · automatafl.
 /// Port source (titles + shapes, byte-identical across the three existing copies):
 /// `dreggnet-web/src/lib.rs:1232-1282` / `dreggnet-telegram/src/host.rs:419-451`.
 pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
@@ -128,6 +129,11 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
         "descent",
         "The Descent — the Lean-authored custody dungeon (delve · unlock · smite · loot · bank)",
         NativeDescentOffering::new(),
+    );
+    host.register(
+        DescentCampaignOffering::KEY,
+        "The Deepening Ways — player-driven native Descent expeditions; only a replay-verified Crown opens each real region road",
+        DescentCampaignOffering::new(),
     );
     host.register(
         "dungeon",
@@ -169,14 +175,14 @@ pub fn register_games(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
 }
 
-/// **The eight do-once RPG feature surfaces** — trade · inventory · cheevos · guild · craft ·
-/// companion · tavern · party, on ONE `SharedWorld` (so craft → inventory → trade compose over one
-/// ledger).
+/// **The nine do-once RPG feature surfaces** — trade · inventory · cheevos · guild · craft ·
+/// companion · quest · tavern · party. The asset-bearing surfaces share one `SharedWorld` (so
+/// craft → inventory → trade compose over one ledger).
 ///
 /// ⚠ **ANONYMOUS / SINGLE-PLAYER ONLY.** The world this mounts belongs to
 /// [`dreggnet_surfaces::DEMO_PLAYER`] and is shared by every session on the host, so on a host
 /// serving more than one viewer *every player shares one inventory*. A frontend with identified
-/// viewers routes the seven [`is_rpg_key`] keys to a per-identity host from [`PlayerWorlds`]
+/// viewers routes the eight [`is_rpg_key`] keys to a per-identity host from [`PlayerWorlds`]
 /// instead, and keeps `party` plus the other shared tables on this global host.
 pub fn register_feature_surfaces(host: &mut OfferingHost) {
     dreggnet_surfaces::register_surfaces(host);
@@ -214,13 +220,14 @@ pub fn register_services(host: &mut OfferingHost, cfg: &CatalogConfig) {
     );
 }
 
-/// The 20 catalog keys, in registration order — the parity contract. Every frontend's
+/// The 22 catalog keys, in registration order — the parity contract. Every frontend's
 /// "which offerings exist" question resolves to this ONE list; the test below pins
 /// `full_catalog_host` to it, and a frontend cutover test can pin its old registrar against
 /// the same constant before deleting it.
-pub const CATALOG_KEYS: [&str; 20] = [
+pub const CATALOG_KEYS: [&str; 22] = [
     // games
     "descent",
+    DescentCampaignOffering::KEY,
     "dungeon",
     "council",
     "market",
@@ -234,6 +241,7 @@ pub const CATALOG_KEYS: [&str; 20] = [
     "guild",
     "craft",
     "companion",
+    "quest",
     "tavern",
     "party",
     // services
@@ -250,7 +258,7 @@ pub const CATALOG_KEYS: [&str; 20] = [
 
 /// **The Lab intro** — the honest framing every catalog LISTING leads with, on every front
 /// door (web `GET /offerings`, the Mini App `/tg` fragment, Telegram `/offerings`, Discord
-/// `/play`). The 20 offerings are the engine's proving ground — real verifiable turns,
+/// `/play`). The 22 offerings are the engine's proving ground — real verifiable turns,
 /// deliberately rough — not the polished game. ONE string, so the three front doors cannot
 /// drift into three different stories about what the catalog is.
 pub fn lab_intro() -> &'static str {
@@ -271,7 +279,7 @@ pub fn flagship_pointer() -> &'static str {
 mod tests {
     use super::*;
 
-    /// The parity contract: the full catalog registers exactly [`CATALOG_KEYS`] — the same 20
+    /// The parity contract: the full catalog registers exactly [`CATALOG_KEYS`] — the same 22
     /// `dreggnet_web::demo_host()` serves today. (Once the frontends delegate here, this is the
     /// single test that "add an offering" must update, and drift is a compile-time/test failure
     /// instead of a fourfold folklore.)
@@ -284,5 +292,68 @@ mod tests {
         let mut want: Vec<&str> = CATALOG_KEYS.to_vec();
         want.sort();
         assert_eq!(keys, want);
+    }
+
+    /// The campaign is not merely named in the catalog: a generic host can drive it and recover
+    /// the exact actor-bound state from its landed-move journal after a fresh-host restart.
+    #[test]
+    fn the_campaign_catalog_mount_drives_and_resumes_by_replay() {
+        use dreggnet_offerings::{
+            DreggIdentity, InMemoryResumeStore, Outcome, SessionConfig, SessionId,
+        };
+
+        let cfg = CatalogConfig::default();
+        let store = InMemoryResumeStore::new();
+        let id = SessionId::new("catalog-campaign-restart");
+        let actor = DreggIdentity("catalog-campaign-player".to_string());
+
+        let before = {
+            let mut host = full_catalog_host(&cfg).with_resume_store(Box::new(store.clone()));
+            assert_eq!(
+                host.title(DescentCampaignOffering::KEY),
+                Some(
+                    "The Deepening Ways — player-driven native Descent expeditions; only a replay-verified Crown opens each real region road"
+                )
+            );
+            host.open_session(
+                DescentCampaignOffering::KEY,
+                id.clone(),
+                SessionConfig::with_seed(73),
+            )
+            .expect("the catalog campaign opens");
+            let delve = host
+                .actions_for(DescentCampaignOffering::KEY, &id, &actor)
+                .expect("campaign actions")
+                .into_iter()
+                .find(|action| action.turn == "delve" && action.enabled)
+                .expect("the player is offered a manual delve");
+            assert!(matches!(
+                host.advance(DescentCampaignOffering::KEY, &id, delve, actor.clone()),
+                Some(Outcome::Landed { .. })
+            ));
+            let report = host
+                .verify(DescentCampaignOffering::KEY, &id)
+                .expect("campaign verifier is mounted");
+            assert!(report.verified, "{}", report.detail);
+            assert_eq!(report.turns, 2, "genesis plus the submitted delve");
+            host.commitment(DescentCampaignOffering::KEY, &id)
+                .expect("live campaign commitment")
+        };
+
+        let mut restarted = full_catalog_host(&cfg).with_resume_store(Box::new(store.clone()));
+        let results = restarted.resume_all();
+        assert_eq!(results.len(), 1, "one campaign log was persisted");
+        assert!(results[0].1.is_ok(), "campaign log replays: {results:?}");
+        assert_eq!(
+            restarted.commitment(DescentCampaignOffering::KEY, &id),
+            Some(before),
+            "a fresh catalog host reconstructs the exact campaign head"
+        );
+        assert!(
+            restarted
+                .verify(DescentCampaignOffering::KEY, &id)
+                .expect("resumed verifier")
+                .verified
+        );
     }
 }

@@ -59,8 +59,8 @@ use dreggnet_cheevo::{Achievement, Cheevo, CheevoLedger};
 use dreggnet_offerings::resume::{SessionMoveLog, SessionResumeStore};
 use dreggnet_offerings::{Action, DreggIdentity, OfferingHost, SessionId, VerifyReport};
 use dreggnet_surfaces::{
-    CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
-    TavernOffering, TradeOffering, register_player_surfaces_for,
+    AshenmoorErrandOffering, CheevoShowcase, CompanionOffering, CraftOffering, GuildPage,
+    InventoryOffering, PartyOffering, TavernOffering, TradeOffering, register_player_surfaces_for,
 };
 use ugc_dregg::{Completion, Universe, record_playthrough};
 
@@ -75,21 +75,14 @@ use crate::commands::offering::{
 use crate::db::Database;
 use crate::rpg_store::SqliteRpgResumeStore;
 
-/// The seven `/play` keys this module serves out of the per-identity persistent host. `party` is a
-/// shared multi-identity game and therefore stays on the per-channel generic-adapter store.
-pub const RPG_KEYS: [&str; 7] = [
-    "trade",
-    "inventory",
-    "cheevos",
-    "guild",
-    "craft",
-    "companion",
-    "tavern",
-];
+/// The eight `/play` keys this module serves out of the per-identity persistent host. `party` is a
+/// shared multi-identity game and therefore stays on the per-channel generic-adapter store. The
+/// list is re-exported from the shared catalog so Discord cannot drift from web and Telegram.
+pub use dreggnet_catalog::RPG_KEYS;
 
-/// Whether `key` is one of the seven identity-owned RPG-world keys this module owns.
+/// Whether `key` is one of the eight identity-owned RPG-world keys this module owns.
 pub fn is_rpg_key(key: &str) -> bool {
-    RPG_KEYS.contains(&key)
+    dreggnet_catalog::is_rpg_key(key)
 }
 
 /// The one session slot each RPG surface occupies in a player's host. A player's inventory is a
@@ -120,6 +113,7 @@ fn meta(key: &str) -> Option<(&'static str, u32, &'static str)> {
         "guild" => m!(GuildPage),
         "craft" => m!(CraftOffering),
         "companion" => m!(CompanionOffering),
+        "quest" => m!(AshenmoorErrandOffering),
         "tavern" => m!(TavernOffering),
         "party" => m!(PartyOffering),
         _ => None,
@@ -172,7 +166,7 @@ pub fn order_logs_for_replay(mut logs: Vec<SessionMoveLog>) -> Vec<SessionMoveLo
     logs
 }
 
-/// **Build one player's persistent RPG host**: mount the seven identity-owned surfaces
+/// **Build one player's persistent RPG host**: mount the eight identity-owned surfaces
 /// (ONE shared world across craft/inventory/trade), replace the demo
 /// cheevo showcase with the player's REAL earned cheevos, attach the durable store, and reopen
 /// every persisted session by replay (craft-first ordering). A log that refuses to re-drive is
@@ -518,7 +512,7 @@ fn verify_core(
 }
 
 /// Route `/play <rpg-key> action:verify` — re-verify the chain of the INVOKER's persistent
-/// world session (the seven identity-owned RPG keys no longer live in the per-channel generic store, so
+/// world session (the eight identity-owned RPG keys no longer live in the per-channel generic store, so
 /// `offering::handle_verify` would honestly-but-uselessly report "no live session" for them).
 /// Defers first: a first-touch verify rebuilds the host by full replay, which can exceed
 /// Discord's 3s window.
@@ -582,7 +576,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     let Some(press) = offering::parse_press(&component.data.custom_id) else {
         return;
     };
-    // The seven identity-owned RPG surfaces declare no value/text prompts, so every press is a direct fire
+    // The eight identity-owned RPG surfaces declare no value/text prompts, so every press is a direct fire
     // (an `ask`-shaped id would only arise from a stale foreign message — fire it honestly
     // with its arg rather than dead-ending, the same fallback `offering::drive` takes).
     let (key, turn, arg) = match press {

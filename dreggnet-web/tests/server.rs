@@ -2,7 +2,7 @@
 //! network (axum `ServiceExt::oneshot`). This is the smoke test for the deploy scout's Phase-0
 //! unblocker: the ONE app the `dreggnet-web-server` bin binds + serves must
 //! - answer `GET /health` 200 (the liveness probe the fronting proxy hits);
-//! - list the five games AND the eight do-once feature surfaces at `GET /offerings`;
+//! - list the eight games AND the nine do-once feature surfaces at `GET /offerings`;
 //! - play a real turn on a game through the merged router (a POST lands a committed receipt);
 //! - render the seeded no-cheat Descent leaderboard (the honest winner ranks, the forgery is
 //!   excluded) and the run-cards (an honest run PASSes, the forgery FAILs) — all by replay.
@@ -106,7 +106,7 @@ async fn the_landing_page_renders() {
     );
 }
 
-/// `GET /offerings` lists BOTH the five games AND the eight do-once feature surfaces — the merged
+/// `GET /offerings` lists BOTH the eight games AND the nine do-once feature surfaces — the merged
 /// demo host wires `register_surfaces` beside the games.
 #[tokio::test]
 async fn offerings_lists_the_games_and_the_do_once_surfaces() {
@@ -114,14 +114,23 @@ async fn offerings_lists_the_games_and_the_do_once_surfaces() {
     let (status, body) = get(&app, "/offerings").await;
     assert_eq!(status, StatusCode::OK);
 
-    // The five games.
-    for key in ["dungeon", "council", "market", "tug", "automatafl"] {
+    // The eight games.
+    for key in [
+        "descent",
+        "descent-campaign",
+        "dungeon",
+        "council",
+        "market",
+        "bazaar",
+        "tug",
+        "automatafl",
+    ] {
         assert!(
             body.contains(&format!("/offerings/{key}/session/")),
             "the catalog lists the {key} game: {body}"
         );
     }
-    // The eight do-once feature surfaces (register_surfaces).
+    // The nine do-once feature surfaces (register_surfaces).
     for key in [
         "trade",
         "inventory",
@@ -129,6 +138,7 @@ async fn offerings_lists_the_games_and_the_do_once_surfaces() {
         "guild",
         "craft",
         "companion",
+        "quest",
         "tavern",
         "party",
     ] {

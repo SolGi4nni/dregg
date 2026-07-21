@@ -289,7 +289,7 @@ pub struct TelegramHost<T: Transport> {
     /// The offering registry, confined to its owning thread. The SHARED tables — the games and
     /// service offerings — live here (a council with one voter per host is not a council).
     host: HostThread,
-    /// The per-identity RPG worlds, confined to their own owning thread. The seven [`is_rpg_key`]
+    /// The per-identity RPG worlds, confined to their own owning thread. The eight [`is_rpg_key`]
     /// surfaces (trade / inventory / craft / …) are per-player by nature, so every RPG-key session
     /// operation routes to the PRESSER's own [`OfferingHost`] here
     /// ([`run_offering`](Self::run_offering)), keyed by their derived identity — two Telegram users
@@ -323,7 +323,7 @@ pub struct TelegramHost<T: Transport> {
 }
 
 impl<T: Transport> TelegramHost<T> {
-    /// Build a host over the FULL shared catalog (the same 18 offerings every frontend exposes —
+    /// Build a host over the FULL shared catalog (the same 22 offerings every frontend exposes —
     /// see [`telegram_default_host`]), sending through `transport`, with the council electorate
     /// derived from `council_member_uids` (Telegram user ids whose derived identities are
     /// registered as council members — so those users can really vote).
@@ -996,12 +996,12 @@ impl<T: Transport> TelegramHost<T> {
 }
 
 /// **The default Telegram catalog host** — the FULL shared portfolio, from the ONE registrar
-/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the seven games
-/// (native Descent · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl,
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the eight games
+/// (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl,
 /// `tug` wrapped in the shared
-/// seat-claiming [`crate::seated::SeatedTug`] adapter), the eight do-once RPG feature surfaces
-/// (trade · inventory · cheevos · guild · craft · companion · tavern · party), and the five
-/// service offerings (doc · names · compute · grain · hermes) — the same 20 the web catalog
+/// seat-claiming [`crate::seated::SeatedTug`] adapter), the nine do-once RPG feature surfaces
+/// (trade · inventory · cheevos · guild · craft · companion · quest · tavern · party), and the five
+/// service offerings (doc · names · compute · grain · hermes) — the same 22 the web catalog
 /// (`dreggnet_web::demo_host`) serves, by construction rather than by a duplicated list
 /// (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread (inside
 /// [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay confined.

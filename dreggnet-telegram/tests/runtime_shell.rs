@@ -240,3 +240,61 @@ fn a_restart_resumes_a_persisted_session_and_a_stale_press_still_lands() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The composed native campaign rides the same durable Telegram host: its submitted `delve`
+/// survives process death, a stale `smite` press rebinds the chat to that exact campaign, and
+/// the actor-bound dual-executor journal re-verifies. No helper plays either move for the user.
+#[test]
+fn the_descent_campaign_is_playable_and_restart_safe_on_telegram() {
+    let dir = scratch_dir("descent-campaign-restart");
+    let chat: i64 = 73;
+    let sid = TelegramFrontend::<MockTransport>::session_id(chat, None);
+
+    {
+        let d = dir.clone();
+        let mut h1 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
+            durable_telegram_host(Some(d), vec![])
+        });
+        h1.open("descent-campaign", chat, None, ALICE)
+            .expect("the campaign opens from Telegram's shared catalog");
+        match h1.press(CallbackQuery::press(
+            chat,
+            ALICE,
+            encode_callback("delve", 0),
+        )) {
+            HostPress::Advanced { key, outcome } => {
+                assert_eq!(key, "descent-campaign");
+                assert!(outcome.landed(), "the manual delve landed: {outcome:?}");
+            }
+            other => panic!("the presented campaign delve must advance: {other:?}"),
+        }
+        let report = h1
+            .verify("descent-campaign", &sid)
+            .expect("campaign is live");
+        assert!(report.verified, "{}", report.detail);
+        assert_eq!(report.turns, 2);
+    }
+
+    let d = dir.clone();
+    let mut h2 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
+        durable_telegram_host(Some(d), vec![])
+    });
+    let ack = route_callback(
+        &mut h2,
+        CallbackQuery::press(chat, ALICE, encode_callback("smite", 0)),
+    );
+    assert!(
+        ack.contains("landed"),
+        "the stale campaign press resumes and lands: {ack}"
+    );
+    let report = h2
+        .verify("descent-campaign", &sid)
+        .expect("the restarted campaign is live");
+    assert!(report.verified, "{}", report.detail);
+    assert_eq!(
+        report.turns, 3,
+        "genesis plus the pre- and post-restart player moves"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

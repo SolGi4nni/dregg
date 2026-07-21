@@ -31,9 +31,9 @@ description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trai
 # re-implement any offering logic.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 # THE FULL PORTFOLIO — the ONE shared registrar (`dreggnet_catalog::build_full_catalog`), so
-# Telegram registers the SAME 18 offerings the web catalog (`dreggnet_web::demo_host`) does — the
-# five games (incl. the shared seat-claiming `SeatedTug` tug adapter, re-exported at
-# `src/seated.rs`), the eight do-once RPG feature surfaces, the five service offerings — from ONE
+# Telegram registers the SAME 22 offerings the web catalog (`dreggnet_web::demo_host`) does — the
+# eight games (incl. the shared seat-claiming `SeatedTug` tug adapter, re-exported at
+# `src/seated.rs`), the nine do-once RPG feature surfaces, and the five service offerings — from ONE
 # list instead of this crate's own hand-maintained copy (docs/BOT-SHARED-BACKEND-DESIGN.md).
 dreggnet-catalog = { path = "../dreggnet-catalog" }
 # THE INTERACTION-ENVELOPE AUDIT FACILITY (docs/BOT-AUDIT-LOGGING-DESIGN.md) — the shared

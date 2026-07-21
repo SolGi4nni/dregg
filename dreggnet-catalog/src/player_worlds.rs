@@ -29,8 +29,8 @@
 //!
 //! ## Which offerings belong here
 //!
-//! The seven identity-owned RPG feature surfaces ([`RPG_KEYS`]) and ONLY those. They are per-player
-//! by nature (an inventory is yours). The seven games, `party`, and five service offerings in
+//! The eight identity-owned RPG feature surfaces ([`RPG_KEYS`]) and ONLY those. They are per-player
+//! by nature (an inventory is yours). The eight games, `party`, and five service offerings in
 //! [`crate::build_full_catalog`] are shared tables — a council with one voter per host is not a
 //! council, and a party with one role per private host is not a party — so a frontend keeps routing
 //! those to its one global host and routes [`is_rpg_key`] keys here.
@@ -49,20 +49,21 @@ use std::collections::HashMap;
 use dreggnet_offerings::OfferingHost;
 use dreggnet_offerings::resume::SessionResumeStore;
 
-/// **The seven identity-owned RPG surface keys** — the offerings a [`PlayerWorlds`] host mounts.
+/// **The eight identity-owned RPG surface keys** — the offerings a [`PlayerWorlds`] host mounts.
 /// `party` is intentionally NOT here: it is a multi-identity lobby and therefore stays on the
 /// shared catalog host.
-pub const RPG_KEYS: [&str; 7] = [
+pub const RPG_KEYS: [&str; 8] = [
     "trade",
     "inventory",
     "cheevos",
     "guild",
     "craft",
     "companion",
+    "quest",
     "tavern",
 ];
 
-/// Whether `key` is one of the seven per-player RPG surfaces (routed to a [`PlayerWorlds`] host
+/// Whether `key` is one of the eight per-player RPG surfaces (routed to a [`PlayerWorlds`] host
 /// rather than the frontend's shared catalog host).
 pub fn is_rpg_key(key: &str) -> bool {
     RPG_KEYS.contains(&key)
@@ -80,7 +81,7 @@ type Customizer = dyn Fn(&mut OfferingHost, &str);
 
 /// **One persistent RPG world per derived identity.** Hosts are built lazily on first touch
 /// ([`host_mut`](PlayerWorlds::host_mut)) and cached; each is an independent
-/// [`OfferingHost`] carrying the seven [`RPG_KEYS`] surfaces on its own world.
+/// [`OfferingHost`] carrying the eight [`RPG_KEYS`] surfaces on its own world.
 ///
 /// Not `Send` — an [`OfferingHost`] holds `!Send` `Rc`-backed sessions, so a frontend confines a
 /// `PlayerWorlds` to one owning thread exactly as it already confines its catalog host (the web /
@@ -125,7 +126,7 @@ impl PlayerWorlds {
     }
 
     /// **`identity`'s own host**, built on first touch. The build is the lift of Discord's
-    /// `build_player_host`: register the seven identity-owned surfaces on a world seeded for
+    /// `build_player_host`: register the eight identity-owned surfaces on a world seeded for
     /// `identity`, run the customizer, then reopen every persisted session by replay.
     pub fn host_mut(&mut self, identity: &str) -> &mut OfferingHost {
         if !self.hosts.contains_key(identity) {
@@ -165,7 +166,7 @@ impl PlayerWorlds {
 /// **Build ONE identity's persistent RPG host** — the shared-layer form of Discord's
 /// `build_player_host`.
 ///
-/// 1. Mount the seven identity-owned surfaces on a [`dreggnet_surfaces::SharedWorld`] seeded for
+/// 1. Mount the eight identity-owned surfaces on a [`dreggnet_surfaces::SharedWorld`] seeded for
 ///    `identity` (`dreggnet_surfaces::register_player_surfaces_for`), so craft / inventory / trade
 ///    compose over ONE ledger that belongs to this player and nobody else.
 /// 2. Run `customize` (a frontend replacing a demo-fixture surface with the player's real state).
@@ -233,10 +234,10 @@ mod tests {
         assert!(out.landed(), "the greatblade craft lands: {out:?}");
     }
 
-    /// Every per-identity host carries exactly the seven identity-owned RPG keys. The party stays
+    /// Every per-identity host carries exactly the eight identity-owned RPG keys. The party stays
     /// on the global host so several identities can inhabit one lobby.
     #[test]
-    fn a_player_host_mounts_only_the_seven_identity_owned_rpg_surfaces() {
+    fn a_player_host_mounts_only_the_eight_identity_owned_rpg_surfaces() {
         let mut worlds = PlayerWorlds::new();
         let host = worlds.host_mut("alice");
         for key in RPG_KEYS {
@@ -255,10 +256,10 @@ mod tests {
     }
 
     /// The routing decision itself is pure and cheap to pin: party shares the same host as other
-    /// multi-identity tables, while all seven inventory-bearing features remain private.
+    /// multi-identity tables, while all eight identity-owned features remain private.
     #[test]
     fn party_routes_shared_while_identity_owned_surfaces_route_private() {
-        assert_eq!(RPG_KEYS.len(), 7);
+        assert_eq!(RPG_KEYS.len(), 8);
         assert!(RPG_KEYS.into_iter().all(is_rpg_key));
         assert!(!is_rpg_key("party"));
         assert!(!is_rpg_key("council"));

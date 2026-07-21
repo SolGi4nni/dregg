@@ -1,10 +1,10 @@
-//! **The driven FULL-PORTFOLIO parity proof — Telegram registers the SAME 20 offerings the web
+//! **The driven FULL-PORTFOLIO parity proof — Telegram registers the SAME 22 offerings the web
 //! catalog does, and the viewer threads through the surface.**
 //!
 //! `multi_offering_through_telegram.rs` proved THREE heterogeneous offerings play through Telegram.
 //! This closes the gap the audit found: Telegram (and WeChat) registered only three each while the
-//! web catalog ([`dreggnet_web::demo_host`]) registers twenty — the seven games (including the
-//! Lean-authored Descent, automatafl, and multiway-tug) and the eight do-once RPG feature surfaces were ABSENT because their crates were not
+//! web catalog ([`dreggnet_web::demo_host`]) registers twenty-two — the eight games (including the
+//! Lean-authored Descent, automatafl, and multiway-tug) and the nine do-once RPG feature surfaces were ABSENT because their crates were not
 //! deps. Now [`telegram_default_host`] builds through the ONE shared registrar
 //! (`dreggnet_catalog::build_full_catalog` — docs/BOT-SHARED-BACKEND-DESIGN.md). This drives:
 //!

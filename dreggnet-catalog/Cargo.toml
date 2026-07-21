@@ -1,7 +1,7 @@
 # `dreggnet-catalog` — THE one statement of what the DreggNet offering catalog IS.
 #
 # The registrar every frontend builds its `OfferingHost` from, replacing the four
-# hand-maintained copies of the 19-offering registration list (web `catalog_default_host`
+# hand-maintained copies of the offering registration list (web `catalog_default_host`
 # + `register_non_game_offerings`, `telegram_default_host`, `wechat_default_host`, and
 # Discord's bespoke per-type stores). See docs/BOT-SHARED-BACKEND-DESIGN.md.
 #
@@ -19,13 +19,13 @@
 name = "dreggnet-catalog"
 version = "0.1.0"
 edition = "2024"
-description = "The shared DreggNet offering-catalog registrar: build_full_catalog(host, cfg) registers the ONE 19-offering portfolio (6 games, 8 RPG feature surfaces, 5 service offerings) every frontend (web, Telegram, WeChat, Discord) exposes, plus the single SeatedTug seat-claiming adapter — replacing four drifting per-frontend copies."
+description = "The shared DreggNet offering-catalog registrar: build_full_catalog(host, cfg) registers the ONE 22-offering portfolio (8 games, 9 RPG feature surfaces, 5 service offerings) every frontend (web, Telegram, WeChat, Discord) exposes, plus the single SeatedTug seat-claiming adapter — replacing four drifting per-frontend copies."
 
 [dependencies]
 # The Offering trait + OfferingHost — the frontend-agnostic core this crate populates.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 
-# The six portfolio games.
+# The eight portfolio games.
 dreggnet-council = { path = "../dreggnet-council" }
 dreggnet-market = { path = "../dreggnet-market" }
 dregg-automatafl = { path = "../dregg-automatafl" }
@@ -34,8 +34,8 @@ dregg-automatafl = { path = "../dregg-automatafl" }
 # derived identities. The dungeon offering ships inside `dreggnet-offerings` itself.
 dregg-multiway-tug = { path = "../dregg-multiway-tug" }
 
-# The eight do-once RPG feature surfaces (trade · inventory · cheevos · guild · craft ·
-# companion · tavern · party) — registered via the already-shared
+# The nine do-once RPG feature surfaces (trade · inventory · cheevos · guild · craft ·
+# companion · quest · tavern · party) — registered via the already-shared
 # `dreggnet_surfaces::register_surfaces`, which mounts ONE SharedWorld across
 # trade/inventory/craft (the composition Discord's per-type stores currently sever).
 dreggnet-surfaces = { path = "../dreggnet-surfaces" }

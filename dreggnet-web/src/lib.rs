@@ -1296,7 +1296,7 @@ pub struct CatalogState {
     /// live here: a council with one voter per host is not a council, so those are inherently
     /// shared and stay on this ONE host across every viewer.
     host: HostThread,
-    /// The per-identity RPG worlds handle. The seven [`is_rpg_key`] surfaces (trade / inventory /
+    /// The per-identity RPG worlds handle. The eight [`is_rpg_key`] surfaces (trade / inventory /
     /// craft / …) are per-player by nature — an inventory is yours — so every RPG-key session
     /// operation routes to the VIEWER's own [`OfferingHost`] here ([`run_offering`](Self::run_offering)),
     /// keyed by their derived identity. Two viewers on the same web surface therefore have
@@ -2416,6 +2416,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // known sets falls into a catch-all "More" shelf (so a future registration still shows up).
     const GAMES: &[&str] = &[
         "descent",
+        "descent-campaign",
         "dungeon",
         "council",
         "market",
@@ -2426,7 +2427,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // NOTE `cheevos`, not `cheevo`: `dreggnet_surfaces::register_surfaces` registers the
     // achievements surface under the PLURAL key. The singular never matched, so Achievements has
     // been silently falling through to the catch-all "More" shelf instead of sitting with the other
-    // seven feature surfaces. (The per-shelf count added by this design pass is what surfaced it:
+    // eight feature surfaces. (The per-shelf count added by this design pass is what surfaced it:
     // the shelf read "7".)
     const FEATURES: &[&str] = &[
         "trade",
@@ -2435,6 +2436,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         "guild",
         "craft",
         "companion",
+        "quest",
         "tavern",
         "party",
     ];
@@ -2513,7 +2515,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     };
 
     // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the
-    // featured game leads, and the 20-offering shelf below is honestly the lab, not the product.
+    // featured game leads, and the 22-offering shelf below is honestly the lab, not the product.
     // THE FUNNEL: the PLAY CTA leads (the served in-tab run at `/descent/play`) and the no-cheat
     // board is the secondary link. Previously this page offered the BOARD as its only always-present
     // affordance, so the flagship's front door on the catalog was a leaderboard.
@@ -3264,7 +3266,7 @@ pub fn resolve_demo_host() -> OfferingHost {
 }
 
 /// **Resolve the per-identity RPG worlds registry** from the environment — the per-player half of
-/// the catalog (the seven [`is_rpg_key`] surfaces). With `DREGGNET_WEB_SESSION_DIR` set, each
+/// the catalog (the eight [`is_rpg_key`] surfaces). With `DREGGNET_WEB_SESSION_DIR` set, each
 /// identity's world attaches a durable [`FileResumeStore`] under a PER-IDENTITY subdirectory
 /// (`<dir>/players/<blake3(identity)>`), so a player's forge / inventory / trade survive a restart
 /// by move-log replay — the same durability the shared game sessions get, and the same per-player
@@ -3784,7 +3786,7 @@ async fn index() -> Html<String> {
          {card_play}<a class=\"play\" href=\"/descent\">See today's no-cheat board \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
          <div class=\"offering-card shelf-services\"><h3>🧪 The Lab</h3>\
-         <p class=\"tagline\">Experimental engine surfaces — seven games, eight feature surfaces, \
+         <p class=\"tagline\">Experimental engine surfaces — eight games, nine feature surfaces, \
          five services. The parts the game is built from, on the shelf for the curious.</p>\
          <a class=\"play\" href=\"/offerings\">Browse the Lab \
          <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\

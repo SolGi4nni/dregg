@@ -31,7 +31,7 @@ const NON_GAME: &[(&str, &str)] = &[
     ("hermes", "DreggNet Hermes"),
 ];
 
-/// The demo host registers the whole portfolio: six games + eight feature surfaces + five
+/// The demo host registers the whole portfolio: eight games + nine feature surfaces + five
 /// non-game offerings. Assert the shared count and the non-game keys directly on the host.
 #[test]
 fn demo_host_mounts_the_whole_portfolio() {
