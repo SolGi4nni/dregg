@@ -290,17 +290,23 @@ fn shared_gpu() -> Option<&'static SharedGpu> {
 // `TwoAdicFriPcs::commit` computes `coset_lde_batch(evals, ..).bit_reverse_
 // rows().to_row_major_matrix()` and passes the result to `Mmcs::commit`. For
 // our `Evaluations = BitReversedMatrixView<RowMajorMatrix<BabyBear>>` the
-// `bit_reverse_rows()` unwraps to the inner matrix and `to_row_major_matrix`
-// is `Vec::to_vec(self) -> self` — the EXACT allocation minted in `gpu_flow`
-// arrives at `commit`. So `coset_lde_batch` registers its retained device
-// buffer under the key `(thread, values.as_ptr(), values.len())`, and the
-// tree build consumes it (device→device blit into the leaf arena) instead of
-// re-uploading the host bytes.
+// `bit_reverse_rows()` unwraps to the inner matrix. Upstream's generic dense
+// `to_row_major_matrix`, however, clones the owned storage, so the allocation
+// pointer can change before `commit`. We therefore bind first by the cheap
+// `(thread, ptr, len)` identity and, for that upstream copy seam, by a BLAKE3
+// fingerprint of every raw Montgomery word. The tree build consumes the
+// matching retained buffer (device→device blit into the leaf arena) instead
+// of re-uploading the host bytes.
 //
 // Binding contract (why a hit blits the RIGHT data):
-// - Among LIVE allocations, (ptr, len) is unique — a hit on a live entry is
-//   the registered Vec itself, whose contents are byte-identical to the
-//   retained buffer (both are the same kernel output).
+// - Among LIVE allocations, (ptr, len) is unique — a direct hit is the
+//   registered Vec itself, whose contents are byte-identical to the retained
+//   buffer (both are the same kernel output).
+// - If upstream cloned the allocation, the fallback match covers every word
+//   with BLAKE3-256. Equal-content candidates are interchangeable because
+//   their device buffers contain the same words. A collision could only make
+//   the prover emit a proof that its own untouched verifier rejects; it cannot
+//   authorize a false statement.
 // - A STALE entry (registered Vec dropped uncommitted, allocation reused)
 //   is guarded three ways: entries are one-shot (removed on consume), the
 //   registry is cleared for the thread at the end of every `commit`
@@ -375,6 +381,9 @@ struct ResidentLde {
     seq: u64,
     /// (flat index, raw word) samples of the host copy at registration.
     guard: Vec<(usize, u32)>,
+    /// Full-content identity for the allocation-copy seam in Plonky3's
+    /// generic `to_row_major_matrix`.
+    fingerprint: [u8; 32],
 }
 
 /// (registering thread, host values ptr, host values len).
@@ -450,6 +459,7 @@ fn register_resident_lde(values: &[BabyBear], buf: wgpu::Buffer) {
         return;
     }
     let raw = bb_as_u32s(values);
+    let fingerprint = *blake3::hash(bytemuck::cast_slice(raw)).as_bytes();
     let guard: Vec<(usize, u32)> = (0..LDE_GUARD_SAMPLES)
         .map(|i| {
             let idx = i * (len - 1) / (LDE_GUARD_SAMPLES - 1);
@@ -468,6 +478,7 @@ fn register_resident_lde(values: &[BabyBear], buf: wgpu::Buffer) {
             bytes,
             seq,
             guard,
+            fingerprint,
         },
     ) {
         reg.bytes -= old.bytes;
@@ -485,8 +496,9 @@ fn register_resident_lde(values: &[BabyBear], buf: wgpu::Buffer) {
     }
 }
 
-/// Take the resident device buffer for a matrix about to be committed, iff
-/// the (thread, ptr, len) key AND the sampled-content guard both match.
+/// Take the resident device buffer for a matrix about to be committed. Prefer
+/// the allocation-identity key plus sampled guard; if upstream copied the
+/// allocation, require an all-words BLAKE3 fingerprint match instead.
 #[cfg(not(target_arch = "wasm32"))]
 fn take_resident_lde<M: Matrix<BabyBear>>(m: &M) -> Option<wgpu::Buffer> {
     if !lde_residency_enabled() {
@@ -501,18 +513,48 @@ fn take_resident_lde<M: Matrix<BabyBear>>(m: &M) -> Option<wgpu::Buffer> {
         let r0 = m.row_slice(0)?;
         r0.as_ptr() as usize
     };
-    let key: LdeKey = (std::thread::current().id(), addr, h * w);
+    let tid = std::thread::current().id();
+    let len = h * w;
+    let key: LdeKey = (tid, addr, len);
     let mut reg = lde_registry().lock().unwrap();
-    {
-        let entry = reg.map.get(&key)?;
-        for &(idx, word) in &entry.guard {
-            let row = m.row_slice(idx / w)?;
-            if bb_as_u32s(&row)[idx % w] != word {
-                return None;
-            }
-        }
+    let exact_valid = reg.map.get(&key).is_some_and(|entry| {
+        entry.guard.iter().all(|&(idx, word)| {
+            m.row_slice(idx / w)
+                .is_some_and(|row| bb_as_u32s(&row)[idx % w] == word)
+        })
+    });
+    if exact_valid {
+        let entry = reg.map.remove(&key).expect("key just validated");
+        reg.bytes -= entry.bytes;
+        return Some(entry.buf);
     }
-    let entry = reg.map.remove(&key).expect("key just found");
+
+    // Avoid hashing a large matrix when no copied allocation of the same
+    // shape is waiting for this thread.
+    let has_copy_candidate = reg
+        .map
+        .keys()
+        .any(|candidate| candidate.0 == tid && candidate.2 == len);
+    drop(reg);
+    if !has_copy_candidate {
+        return None;
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    for row_idx in 0..h {
+        let row = m.row_slice(row_idx)?;
+        hasher.update(bytemuck::cast_slice(bb_as_u32s(&row)));
+    }
+    let fingerprint = *hasher.finalize().as_bytes();
+
+    let mut reg = lde_registry().lock().unwrap();
+    let copied_key = reg
+        .map
+        .iter()
+        .filter(|(candidate, _)| candidate.0 == tid && candidate.2 == len)
+        .find(|(_, entry)| entry.fingerprint == fingerprint)
+        .map(|(candidate, _)| *candidate)?;
+    let entry = reg.map.remove(&copied_key).expect("key just found");
     reg.bytes -= entry.bytes;
     Some(entry.buf)
 }
@@ -3531,6 +3573,209 @@ impl GpuBabyBearMmcs {
             digest_layers,
         }
     }
+
+    /// Hiding-MMCS twin of [`Self::build_gpu_tree`].  The logical leaf matrix
+    /// is `[lde_row | salt4]`, but preserving that as a `HorizontalPair` would
+    /// normally hide the registered LDE allocation from the residency lookup.
+    /// This builder exposes the pair as two leaf-arena descriptors: the left
+    /// half is copied device→device from `GpuDft` when present, while the four
+    /// fresh salt columns are uploaded alongside it.  The leaf shader absorbs
+    /// the two descriptors consecutively, which is exactly the upstream
+    /// `HorizontalPair` row order.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn build_gpu_hiding_tree<M: Matrix<BabyBear>>(
+        &self,
+        ctx: &BbHashCtx,
+        leaves: Vec<HorizontalPair<M, RowMajorMatrix<BabyBear>>>,
+    ) -> GpuBbMerkleTree<HorizontalPair<M, RowMajorMatrix<BabyBear>>> {
+        let mut order: Vec<usize> = (0..leaves.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(leaves[i].height()));
+        let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+        for i in order {
+            let h = leaves[i].height();
+            match groups.last_mut() {
+                Some((gh, idxs)) if *gh == h => idxs.push(i),
+                _ => groups.push((h, vec![i])),
+            }
+        }
+        let max_h = groups[0].0;
+
+        let hash_group =
+            |group: &[usize], h: usize, out: &wgpu::Buffer, desc_buf: &wgpu::Buffer| {
+                let total_w: usize = group.iter().map(|&i| leaves[i].width()).sum();
+                const TARGET_ARENA_U32S: usize = (256 << 20) / 4;
+                let arena_cap = ctx.max_binding_u32s.min(TARGET_ARENA_U32S);
+                let rows_per_arena = (arena_cap / total_w).max(1).min(h);
+
+                // Consume the retained buffer under the ORIGINAL LDE matrix,
+                // before the salt view obscures its allocation identity.
+                let residents: Vec<Option<wgpu::Buffer>> = group
+                    .iter()
+                    .map(|&i| {
+                        let resident = take_resident_lde(&leaves[i].left);
+                        if resident.is_some() {
+                            LDE_RESIDENT_HITS.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            LDE_RESIDENT_MISSES.fetch_add(1, Ordering::Relaxed);
+                        }
+                        resident
+                    })
+                    .collect();
+
+                let perms_per_row = total_w.div_ceil(8).max(1);
+                let mut base_row = 0usize;
+                while base_row < h {
+                    let rows = rows_per_arena.min(h - base_row);
+                    let arena = ctx.storage_buffer("bb_hiding_leaf_arena", rows * total_w, true);
+                    // Every logical `[left | salt]` matrix becomes TWO shader
+                    // descriptors in exactly that order.
+                    let mut mat_descs: Vec<u32> = Vec::with_capacity(group.len() * 4);
+                    let mut blits: Vec<(&wgpu::Buffer, u64, usize, u64)> = Vec::new();
+                    let mut off = 0usize;
+                    for (slot, &i) in group.iter().enumerate() {
+                        let left = &leaves[i].left;
+                        let left_w = left.width();
+                        if let Some(resident) = residents[slot].as_ref() {
+                            blits.push((
+                                resident,
+                                (base_row * left_w * 4) as u64,
+                                off,
+                                (rows * left_w * 4) as u64,
+                            ));
+                        } else {
+                            let mut staging = vec![0u32; rows * left_w];
+                            staging
+                                .par_chunks_mut(left_w)
+                                .enumerate()
+                                .for_each(|(r, dst)| {
+                                    let row = left.row(base_row + r).expect("row in range");
+                                    for (dst_word, value) in dst.iter_mut().zip(row) {
+                                        *dst_word = bb_raw(value);
+                                    }
+                                });
+                            ctx.write_u32s_chunked(&arena, off, &staging);
+                        }
+                        mat_descs.push(off as u32);
+                        mat_descs.push(left_w as u32);
+                        off += rows * left_w;
+
+                        let salts = &leaves[i].right;
+                        let salt_w = salts.width();
+                        debug_assert_eq!(salt_w, HIDING_SALT_ELEMS);
+                        let start = base_row * salt_w;
+                        let end = start + rows * salt_w;
+                        ctx.write_u32s_chunked(&arena, off, bb_as_u32s(&salts.values[start..end]));
+                        mat_descs.push(off as u32);
+                        mat_descs.push(salt_w as u32);
+                        off += rows * salt_w;
+                    }
+                    if !blits.is_empty() {
+                        let mut enc = ctx.device.create_command_encoder(&Default::default());
+                        for (resident, src_off, dst_off, bytes) in &blits {
+                            enc.copy_buffer_to_buffer(
+                                resident,
+                                *src_off,
+                                &arena,
+                                (*dst_off * 4) as u64,
+                                *bytes,
+                            );
+                        }
+                        ctx.queue.submit([enc.finish()]);
+                    }
+                    ctx.dispatch_leaf(
+                        &arena,
+                        desc_buf,
+                        out,
+                        (group.len() * 2) as u32,
+                        &mat_descs,
+                        0,
+                        base_row,
+                        rows,
+                        perms_per_row,
+                    );
+                    base_row += rows;
+                }
+            };
+
+        let desc_buf = ctx.storage_buffer("bb_hiding_desc", 4 + 4 * leaves.len().max(2), true);
+        let dig_a = ctx.storage_buffer("bb_hiding_dig_a", max_h * 8, true);
+        let dig_b = ctx.storage_buffer("bb_hiding_dig_b", max_h * 8, true);
+        let inj = ctx.storage_buffer("bb_hiding_dig_inj", (max_h / 2).max(1) * 8, true);
+
+        hash_group(&groups[0].1, max_h, &dig_a, &desc_buf);
+        let mut digest_layers: Vec<Vec<[u32; 8]>> = vec![ctx.read_digests(&dig_a, max_h)];
+
+        let mut next_group = 1usize;
+        let mut cur_len = max_h;
+        let mut cur_is_a = true;
+        while cur_len > 1 {
+            let next_len = cur_len / 2;
+            let (src, dst) = if cur_is_a {
+                (&dig_a, &dig_b)
+            } else {
+                (&dig_b, &dig_a)
+            };
+            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, dst, next_len);
+            if next_group < groups.len() && groups[next_group].0 == next_len {
+                hash_group(&groups[next_group].1, next_len, &inj, &desc_buf);
+                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, dst, next_len);
+                next_group += 1;
+            }
+            digest_layers.push(ctx.read_digests(dst, next_len));
+            cur_len = next_len;
+            cur_is_a = !cur_is_a;
+        }
+        assert_eq!(
+            next_group,
+            groups.len(),
+            "all hiding height groups consumed"
+        );
+
+        GpuBbMerkleTree {
+            leaves,
+            digest_layers,
+        }
+    }
+
+    fn commit_hiding<M: Matrix<BabyBear>>(
+        &self,
+        inputs: Vec<HorizontalPair<M, RowMajorMatrix<BabyBear>>>,
+    ) -> (
+        <BbValMmcs as Mmcs<BabyBear>>::Commitment,
+        GpuBbMmcsProverData<HorizontalPair<M, RowMajorMatrix<BabyBear>>>,
+    ) {
+        let shapes: Vec<(usize, usize)> = inputs
+            .iter()
+            .map(|matrix| (matrix.height(), matrix.width()))
+            .collect();
+        let gpu_able = self.cap_height == 0
+            && !inputs.is_empty()
+            && shapes
+                .iter()
+                .all(|&(h, w)| h.is_power_of_two() && h > 0 && w > 0)
+            && Self::estimate_perms(&shapes) >= MIN_GPU_MMCS_PERMS;
+        #[cfg(not(target_arch = "wasm32"))]
+        let gpu_able = gpu_able && gpu_runtime_stage_enabled("DREGG_GPU_BABYBEAR_MMCS");
+        #[cfg(not(target_arch = "wasm32"))]
+        if gpu_able && let Some(gm) = self.gpu() {
+            let ctx = gm.lock().unwrap();
+            let mut group_width: HashMap<usize, usize> = HashMap::new();
+            for &(h, w) in &shapes {
+                *group_width.entry(h).or_default() += w;
+            }
+            if group_width.values().all(|&u| u <= ctx.max_binding_u32s) {
+                let tree = self.build_gpu_hiding_tree(&ctx, inputs);
+                let root = tree.digest_layers.last().expect("non-empty tree")[0];
+                let commitment = MerkleCap::new(vec![bb8_from_monty(&root)]);
+                GPU_BABYBEAR_MMCS_COMMITS.fetch_add(1, Ordering::Relaxed);
+                clear_thread_resident_ldes();
+                return (commitment, GpuBbMmcsProverData::Gpu(tree));
+            }
+        }
+        clear_thread_resident_ldes();
+        let (commitment, data) = self.cpu.commit(inputs);
+        (commitment, GpuBbMmcsProverData::Cpu(data))
+    }
 }
 
 impl Mmcs<BabyBear> for GpuBabyBearMmcs {
@@ -3723,7 +3968,7 @@ impl Mmcs<BabyBear> for GpuHidingBabyBearMmcs {
                 HorizontalPair::new(matrix, salts)
             })
             .collect();
-        self.inner.commit(salted)
+        self.inner.commit_hiding(salted)
     }
 
     fn open_batch<M: Matrix<BabyBear>>(
@@ -5366,19 +5611,15 @@ mod tests {
             "coset_lde_batch must park a device-resident buffer"
         );
 
-        // Same bytes through a FRESH allocation (must MISS the registry) and
-        // the CPU reference lane.
+        // Same bytes through a FRESH allocation. This is the actual Plonky3
+        // PCS seam: generic `to_row_major_matrix` clones the dense storage,
+        // so the full-content binding must recover the retained buffer.
         let lde_copy = RowMajorMatrix::new(lde_gpu.values.clone(), lde_gpu.width());
         let lde_cpu = cpu_dft
             .coset_lde_batch(mat, 1, shift)
             .bit_reverse_rows()
             .to_row_major_matrix();
         assert_eq!(lde_gpu.values, lde_cpu.values, "DFT parity precondition");
-        assert!(
-            take_resident_lde(&lde_copy).is_none(),
-            "a fresh allocation must not bind a resident buffer"
-        );
-
         // A second, shorter matrix (below the GPU-DFT height threshold, so
         // host-borne) exercises the mixed blit + upload arena fill and the
         // injection level.
@@ -5392,7 +5633,7 @@ mod tests {
             .collect();
 
         let (hits0, _) = lde_residency_counters();
-        let (commit_resident, data_resident) = gpu_mmcs.commit(vec![lde_gpu, side.clone()]);
+        let (commit_resident, data_resident) = gpu_mmcs.commit(vec![lde_copy, side.clone()]);
         let (hits1, _) = lde_residency_counters();
         assert!(
             matches!(data_resident, GpuMmcsProverData::Gpu(_)),
@@ -5405,8 +5646,9 @@ mod tests {
             "commit must clear this thread's registry"
         );
 
-        // Fallback lane: identical bytes, fresh allocation -> host upload.
-        let (commit_copy, _) = gpu_mmcs.commit(vec![lde_copy, side.clone()]);
+        // Fallback lane: after the one-shot resident entry was consumed, the
+        // original allocation takes the ordinary host upload.
+        let (commit_copy, _) = gpu_mmcs.commit(vec![lde_gpu, side.clone()]);
         assert_eq!(
             commit_resident.roots(),
             commit_copy.roots(),

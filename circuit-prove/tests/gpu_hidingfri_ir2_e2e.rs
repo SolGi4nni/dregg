@@ -27,10 +27,13 @@ use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 use dregg_circuit::stark_zk::DreggZkStarkConfig;
 use dregg_circuit_prove::gpu_backend::{
     create_cpu_zk_config_seeded, create_gpu_zk_config_seeded, hiding_gpu_dispatch_counters,
-    prove_vm_descriptor2_gpu_zk, require_hiding_gpu_dispatch_since,
+    lde_residency_counters, prove_vm_descriptor2_gpu_zk, require_hiding_gpu_dispatch_since,
 };
 
-const DEPTH: usize = 512;
+// HidingFRI doubles the trace with interleaved random rows. Depth 2048 makes
+// that randomized input exactly 2^12 rows, the first GPU-DFT production band;
+// a smaller fixture would exercise GPU Merkle but honestly retain no LDE.
+const DEPTH: usize = 2048;
 const MMCS_SEED: [u8; 32] = [0x4d; 32];
 const PCS_SEED: [u8; 32] = [0x5a; 32];
 
@@ -57,10 +60,11 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         .collect::<Vec<_>>();
     let descriptor = membership_descriptor_of_depth_4ary(DEPTH);
     let (trace, public) = membership_witness_4ary(leaf, &siblings, &positions)
-        .expect("depth-512 4-ary witness builds");
+        .expect("depth-2048 4-ary witness builds");
 
     let gpu_config = create_gpu_zk_config_seeded(MMCS_SEED, PCS_SEED);
     let before = hiding_gpu_dispatch_counters();
+    let (resident_hits_before, _) = lde_residency_counters();
     let gpu_started = Instant::now();
     let gpu_proof = prove_vm_descriptor2_for_config(
         &descriptor,
@@ -75,6 +79,11 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     let gpu_elapsed = gpu_started.elapsed();
     let after = require_hiding_gpu_dispatch_since(before)
         .expect("strict proof interval must contain a GPU Poseidon2 Merkle commit");
+    let (resident_hits_after, _) = lde_residency_counters();
+    assert!(
+        resident_hits_after > resident_hits_before,
+        "GPU HidingFRI never consumed a retained GpuDft LDE buffer"
+    );
     verify_vm_descriptor2_with_config(&descriptor, &gpu_proof, &public, &gpu_config)
         .expect("GPU-config HidingFRI verifier accepts its proof");
 
@@ -134,12 +143,13 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     );
 
     eprintln!(
-        "GPU HidingFRI IR2 depth={DEPTH}: proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, DFT dispatches +{}",
+        "GPU HidingFRI IR2 depth={DEPTH}: proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, DFT dispatches +{}, resident LDE blits +{}",
         gpu_bytes.len(),
         gpu_elapsed.as_secs_f64(),
         cpu_elapsed.as_secs_f64(),
         after.babybear_merkle_commits - before.babybear_merkle_commits,
         after.dft_dispatches - before.dft_dispatches,
+        resident_hits_after - resident_hits_before,
     );
 }
 
