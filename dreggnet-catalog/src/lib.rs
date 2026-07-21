@@ -45,9 +45,16 @@ use dregg_automatafl::AutomataflOffering;
 use dreggnet_council::{CandidateProposal, CouncilOffering};
 use dreggnet_market::{DarkBazaarOffering, MarketOffering};
 
+pub mod game_spine;
 pub mod player_worlds;
 pub mod seated;
 
+pub use game_spine::{
+    GameActionRef, GameAffordance, GameArtifact, GameArtifactRef, GameAudience, GameCommand,
+    GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionRef, GameSessionView,
+    GameSpineError, execute_asserted_game_command, execute_signed_game_turn, game_kind,
+    inspect_game_session,
+};
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 
 /// **The platform-independent inputs a catalog registration needs** — everything a frontend

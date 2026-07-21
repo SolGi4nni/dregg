@@ -24,6 +24,7 @@ description = "The shared DreggNet offering-catalog registrar: build_full_catalo
 [dependencies]
 # The Offering trait + OfferingHost — the frontend-agnostic core this crate populates.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+blake3 = "1"
 
 # The eight portfolio games.
 dreggnet-council = { path = "../dreggnet-council" }
@@ -46,6 +47,9 @@ dreggnet-names = { path = "../dreggnet-names" }
 dreggnet-compute = { path = "../dreggnet-compute" }
 dreggnet-grain = { path = "../dreggnet-grain" }
 dreggnet-hermes = { path = "../dreggnet-hermes" }
+
+[dev-dependencies]
+deos-view = { path = "../deos-view", default-features = false }
 
 [lints]
 workspace = true
