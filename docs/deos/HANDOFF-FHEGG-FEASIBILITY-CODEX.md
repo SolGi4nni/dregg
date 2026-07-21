@@ -81,7 +81,7 @@ classical seams into a post-quantum composition.
 | Private-raid capability/Arena and narrated-relic composition | **PARTIALLY GATED** | relic capstone 1/1; surface evidence 7 prior + 1 focused current; lower forest pending |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **PENDING GATE** | HEAD targets contain 3 + 3 tests; no result supplied |
-| hbox build substrate | **CONSTRAINED** | current filesystem probe: 19GiB free; prior full-profile apex and real Vulkan GPU gates remain valid captures |
+| hbox build substrate | **QUALIFIED FOR GPU LANES** | current filesystem probe: 86GiB free after pruning four inactive, reconstructible build-lane copies; current GPU lane and deployed services were preserved |
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; 6 resident blits; GPU 1.306s vs CPU 3.072s at depth 2048 |
 | Portable encrypted TFHE CMUX | **GATED PROTOTYPE** | CPU/hostile 4/4 and strict GPU 2/2 on hbox; degree-N external product is O(N²), not programmable bootstrapping |
@@ -606,14 +606,16 @@ Current hbox ground truth:
 - 123 GiB RAM;
 - AMD RX 6750 XT visible through Vulkan;
 - no ROCm/HIP installation; and
-- **19 GiB free** on the filesystem used for the work at the latest direct
-  probe.
+- **86 GiB free** on the filesystem used for the work at the latest direct
+  probe. Four inactive, reconstructible build-lane copies were removed; the
+  current GPU lane, games deployment, private node, and service binaries were
+  preserved.
 
 The hbox required-authority-core apex gate above and the collective GPU fold
 below are now successful
-execution evidence. The current free-space floor is again too narrow for casual
-parallel heavy builds, so keep Rust CPU gates on persvati and reserve hbox for
-GPU-specific work until its build artifacts are pruned.
+execution evidence. Keep ordinary Rust CPU gates on persvati for cache and
+contention economy; hbox now has enough headroom for the GPU-specific gates it
+is meant to run.
 
 **fhegg-fhe/tests/collective_gpu_additive.rs**:
 
