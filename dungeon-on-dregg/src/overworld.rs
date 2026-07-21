@@ -581,6 +581,34 @@ impl RegionCell {
         self.exec.submit_turn(&turn).map_err(|e| e.to_string())
     }
 
+    /// Travel while binding one receipt-only event into the same real region
+    /// turn. The event has no state authority; the installed travel predicate
+    /// still decides whether the destination may land.
+    pub(crate) fn travel_with_event(
+        &self,
+        dest: &str,
+        event: dregg_app_framework::Event,
+    ) -> Result<TurnReceipt, String> {
+        let di = self
+            .map
+            .index_of(dest)
+            .ok_or_else(|| format!("`{dest}` is not a place in this region"))?;
+        self.issue(
+            &travel_method(dest),
+            vec![
+                Effect::SetField {
+                    cell: self.cell,
+                    index: CURRENT_SLOT as u64,
+                    value: field_from_u64(di as u64),
+                },
+                Effect::EmitEvent {
+                    cell: self.cell,
+                    event,
+                },
+            ],
+        )
+    }
+
     /// **Clear location `loc` — the sanctioned completion turn.** Sets its WriteOnce cleared flag on
     /// a real committed turn. The offering fires this ONLY after a genuine, replay-verified WIN of
     /// the location's universe (the session-level binding). A first clear (0→1) commits; a re-clear

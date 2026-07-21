@@ -107,6 +107,11 @@ pub mod dsl;
 /// capabilities, banking is terminal — each a theorem, each an executor tooth.
 pub mod descent;
 
+/// The coherent, persistent game core joining Lean-native Descent expeditions,
+/// character progression, overworld travel, receipt-bound narration, and relic
+/// rewards behind one typed/replayable operation journal.
+pub mod campaign;
+
 /// A feature-gated PRIVATE QUEST / RAID mechanic over the real Lean-authored
 /// bounded graph-rewrite prover and `dregg-turn`'s atomic proof history.  The
 /// hidden state is reduced twice while players/auditors see only chained roots

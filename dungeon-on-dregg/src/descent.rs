@@ -44,8 +44,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use dregg_app_framework::{
-    CellId, CellProgram, Effect, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
-    field_from_u64, symbol,
+    CellId, CellProgram, Effect, Event, StateConstraint, TransitionCase, TransitionGuard,
+    TurnReceipt, field_from_u64, symbol,
 };
 use dregg_cell::program::{HeapAtom, SimpleStateConstraint};
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
@@ -665,6 +665,27 @@ impl Descent {
     ) -> Result<TurnReceipt, WorldError> {
         let next = next.map_err(|e| WorldError::Refused(format!("mover: {e}")))?;
         let receipt = self.world.apply_raw(method, self.effects_for(&next))?;
+        self.sim = next;
+        Ok(receipt)
+    }
+
+    /// Commit one mover projection with a receipt-only event in the very same
+    /// executor turn. This is crate-visible for the campaign engine: narration
+    /// may describe a typed move, but the Lean-loaded referee remains the only
+    /// authority over the projection.
+    pub(crate) fn commit_projected_with_event(
+        &mut self,
+        method: &str,
+        next: Result<Sim, &'static str>,
+        event: Event,
+    ) -> Result<TurnReceipt, WorldError> {
+        let next = next.map_err(|error| WorldError::Refused(format!("mover: {error}")))?;
+        let mut effects = self.effects_for(&next);
+        effects.push(Effect::EmitEvent {
+            cell: self.cell(),
+            event,
+        });
+        let receipt = self.world.apply_raw(method, effects)?;
         self.sim = next;
         Ok(receipt)
     }
