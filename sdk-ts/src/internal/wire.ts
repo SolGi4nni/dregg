@@ -48,6 +48,7 @@ import {
   utf8,
 } from "./bytes";
 import { Blake3Hasher, blake3, blake3DeriveKey } from "./blake3";
+import { ML_DSA_PK_LEN, ML_DSA_SIG_LEN } from "./mldsa";
 import type { StateConstraint as ProgramStateConstraint } from "../program";
 import { encodeConstraints } from "../program";
 
@@ -1103,14 +1104,24 @@ export function encodeTurn(t: Turn): Uint8Array {
 
 /**
  * Postcard-encode the `SignedTurn` envelope the node's
- * `/api/turns/submit-signed` ingress expects:
- * `turn ++ varint(64) ++ signature ++ varint(32) ++ signer`.
+ * `/api/turns/submit-signed` ingress expects. There is one current envelope:
+ * the turn, Ed25519 signature/key, and the ML-DSA-65 signature/key. The PQ
+ * fields are mandatory here; callers cannot accidentally emit the historical
+ * three-field prefix and rely on a decoder default.
  */
-export function encodeSignedTurn(turn: Turn, signature: Uint8Array, signer: Uint8Array): Uint8Array {
+export function encodeSignedTurn(
+  turn: Turn,
+  signature: Uint8Array,
+  signer: Uint8Array,
+  pqSignature: Uint8Array,
+  pqSigner: Uint8Array,
+): Uint8Array {
   const w = new Writer();
   w.bytes(encodeTurn(turn));
   w.byteSeq(exactBytes(signature, 64, "signature"));
   w.byteSeq(exactBytes(signer, 32, "signer"));
+  w.byteSeq(exactBytes(pqSignature, ML_DSA_SIG_LEN, "pqSignature"));
+  w.byteSeq(exactBytes(pqSigner, ML_DSA_PK_LEN, "pqSigner"));
   return w.out();
 }
 

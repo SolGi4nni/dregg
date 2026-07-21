@@ -168,14 +168,16 @@ export class Identity {
   }
 
   /**
-   * Sign a turn's canonical `Turn::hash` (v3) and wrap it in the postcard
-   * `SignedTurn` envelope the node's `/api/turns/submit-signed` ingress
-   * verifies (signature over the hash; `turn.agent` must be this identity's
-   * default cell).
+   * Sign a turn's canonical `Turn::hash` (v3) with BOTH Ed25519 and ML-DSA-65,
+   * then encode the one current postcard `SignedTurn` envelope. The node binds
+   * both carried keys to enrolled identity state; `turn.agent` must be this
+   * identity's default cell.
    */
   signTurnEnvelope(turn: Turn): Uint8Array {
     const hash = turnHash(turn);
     const sig = this.signBytes(hash);
-    return encodeSignedTurn(turn, sig, this.publicKey);
+    const pq = this.mlDsaKey();
+    const pqSignature = mlDsaSign(pq.secretKey, hash);
+    return encodeSignedTurn(turn, sig, this.publicKey, pqSignature, pq.publicKey);
   }
 }

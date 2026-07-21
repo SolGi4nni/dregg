@@ -654,10 +654,12 @@ dependencies = [
 name = "dregg-ts-sdk-verifier-harness"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "dregg-cell",
  "dregg-turn",
  "dregg-types",
  "postcard",
+ "serde",
  "serde_json",
 ]
 

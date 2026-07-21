@@ -412,7 +412,7 @@ test("hybrid authorization boundary: the Rust default IS post-quantum (the stand
   );
 });
 
-test("the SignedTurn envelope verifies and frames as turn ++ sig ++ signer", async () => {
+test("the canonical SignedTurn is the complete hybrid envelope and both halves verify", async () => {
   const rawMod = await raw();
   const { Identity } = await import("../dist/index.mjs");
 
@@ -427,14 +427,31 @@ test("the SignedTurn envelope verifies and frames as turn ++ sig ++ signer", asy
 
   const envelope = identity.signTurnEnvelope(turn);
   const turnBytes = rawMod.encodeTurn(turn);
-  assert.equal(envelope.length, turnBytes.length + 1 + 64 + 1 + 32);
+  assert.equal(envelope.length, turnBytes.length + 1 + 64 + 1 + 32 + 2 + 3309 + 2 + 1952);
   assert.equal(hex(envelope.subarray(0, turnBytes.length)), hex(turnBytes));
   assert.equal(envelope[turnBytes.length], 0x40, "varint(64) before the signature");
   assert.equal(envelope[turnBytes.length + 65], 0x20, "varint(32) before the signer");
   const sig = envelope.subarray(turnBytes.length + 1, turnBytes.length + 65);
-  const signer = envelope.subarray(turnBytes.length + 66);
+  const signer = envelope.subarray(turnBytes.length + 66, turnBytes.length + 98);
   assert.equal(hex(signer), identity.publicKeyHex);
+  const pqSigPrefix = turnBytes.length + 98;
+  assert.deepEqual(
+    Array.from(envelope.subarray(pqSigPrefix, pqSigPrefix + 2)),
+    [0xed, 0x19],
+    "LEB128 varint(3309) before the outer ML-DSA signature",
+  );
+  const pqSignature = envelope.subarray(pqSigPrefix + 2, pqSigPrefix + 2 + 3309);
+  const pqSignerPrefix = pqSigPrefix + 2 + 3309;
+  assert.deepEqual(
+    Array.from(envelope.subarray(pqSignerPrefix, pqSignerPrefix + 2)),
+    [0xa0, 0x0f],
+    "LEB128 varint(1952) before the outer ML-DSA public key",
+  );
+  const pqSigner = envelope.subarray(pqSignerPrefix + 2);
+  assert.equal(hex(pqSigner), hex(identity.mlDsaPublicKey()));
   // The envelope signature is over the canonical Turn::hash (v3) — exactly
   // what post_submit_signed_turn re-derives and verifies.
-  assert.ok(rawMod.ed25519Verify(identity.publicKey, rawMod.turnHash(turn), sig));
+  const hash = rawMod.turnHash(turn);
+  assert.ok(rawMod.ed25519Verify(identity.publicKey, hash, sig));
+  assert.ok(rawMod.mlDsaVerify(pqSigner, hash, pqSignature));
 });

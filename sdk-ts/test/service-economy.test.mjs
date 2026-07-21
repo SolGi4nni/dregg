@@ -205,7 +205,7 @@ async function mockNode({ onEnvelope }) {
   return { server, nodePubkey, url: `http://127.0.0.1:${server.address().port}` };
 }
 
-test("pay rides the full path: sign -> submit -> Receipt (verified envelope)", async () => {
+test("pay rides the full path: sign -> submit -> Receipt (canonical hybrid envelope)", async () => {
   const rawMod = await raw();
   const { AgentRuntime, Identity } = await sdk();
   const identity = Identity.fromKeyBytes(Uint8Array.from({ length: 32 }, (_, i) => 0x50 + i));
@@ -214,12 +214,14 @@ test("pay rides the full path: sign -> submit -> Receipt (verified envelope)", a
   let saw = null;
   const { server, url, nodePubkey } = await mockNode({
     onEnvelope: (body, receipts) => {
-      // Frame: turn ++ 0x40 ++ sig(64) ++ 0x20 ++ signer(32) — same as the node.
-      const turnLen = body.length - (1 + 64 + 1 + 32);
+      // Canonical hybrid frame: turn ++ Ed signature/key ++ ML-DSA signature/key.
+      const turnLen = body.length - (1 + 64 + 1 + 32 + 2 + 3309 + 2 + 1952);
       assert.equal(body[turnLen], 0x40);
       assert.equal(body[turnLen + 65], 0x20);
-      const signer = body.subarray(turnLen + 66);
+      const signer = body.subarray(turnLen + 66, turnLen + 98);
       assert.equal(hex(signer), identity.publicKeyHex, "the payer signed");
+      const pqSigner = body.subarray(turnLen + 98 + 2 + 3309 + 2);
+      assert.equal(hex(pqSigner), hex(identity.mlDsaPublicKey()), "the payer's PQ identity is carried too");
       assert.equal(hex(rawMod.deriveCellId(signer)), agentHex);
       assert.equal(hex(body.subarray(0, 32)), agentHex, "turn begins with the agent cell id");
       saw = true;

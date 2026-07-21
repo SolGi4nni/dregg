@@ -1,8 +1,8 @@
 // The authorized turn builder against a mock node: verb staging, the
 // empty-turn refusal, federation-id discovery, and a full
-// sign() → explain() → submit() → Receipt round trip whose envelope the
-// mock verifies EXACTLY the way post_submit_signed_turn does (signature
-// over Turn::hash v3, agent == derive_raw(signer, blake3("default"))).
+// sign() → explain() → submit() → Receipt round trip whose mock pins the
+// canonical hybrid framing and enrolled identity carriers. The cross-language
+// Rust harness owns the actual signature-verification gate.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -77,13 +77,18 @@ test("full round trip: verbs -> sign -> explain -> submit -> Receipt", async () 
   let verified = null;
   const { server, url, nodePubkey } = await mockNode({
     onEnvelope: (body, receipts) => {
-      // Verify the envelope EXACTLY like post_submit_signed_turn:
-      // postcard frame: turn ++ 0x40 ++ sig(64) ++ 0x20 ++ signer(32).
-      const turnBytes = body.subarray(0, body.length - (1 + 64 + 1 + 32));
+      // Canonical hybrid frame: turn ++ Ed signature/key ++ ML-DSA signature/key.
+      const turnBytes = body.subarray(0, body.length - (1 + 64 + 1 + 32 + 2 + 3309 + 2 + 1952));
       assert.equal(body[turnBytes.length], 0x40);
       assert.equal(body[turnBytes.length + 65], 0x20);
       const sig = body.subarray(turnBytes.length + 1, turnBytes.length + 65);
-      const signer = body.subarray(turnBytes.length + 66);
+      const signer = body.subarray(turnBytes.length + 66, turnBytes.length + 98);
+      const pqSigPrefix = turnBytes.length + 98;
+      assert.deepEqual(Array.from(body.subarray(pqSigPrefix, pqSigPrefix + 2)), [0xed, 0x19]);
+      const pqSignerPrefix = pqSigPrefix + 2 + 3309;
+      assert.deepEqual(Array.from(body.subarray(pqSignerPrefix, pqSignerPrefix + 2)), [0xa0, 0x0f]);
+      const pqSigner = body.subarray(pqSignerPrefix + 2);
+      assert.equal(hex(pqSigner), hex(identity.mlDsaPublicKey()), "the envelope carries the enrolled PQ identity");
       // signature over the canonical Turn::hash — recompute it from the TS
       // wire vocabulary (the differential test ties this to Rust).
       // We can't re-decode postcard here; instead require the client to have
