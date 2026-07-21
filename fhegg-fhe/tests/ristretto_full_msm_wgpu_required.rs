@@ -1,4 +1,9 @@
 //! Hard-hardware tooth for the bounded complete public-scalar Ristretto MSM.
+//!
+//! On hbox's RX 6750 XT the exact warm 17/256/1024/4096 matrix remained much
+//! slower than dalek (about 1.40/1.82/2.90/7.51 seconds versus
+//! 0.21/1.04/2.97/9.92 milliseconds). This is a required-mode qualification
+//! tooth, not evidence for enabling the default-disabled verifier backend.
 
 use std::time::Instant;
 
@@ -12,6 +17,17 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::{Identity, VartimeMultiscalarMul};
 use merlin::Transcript;
+use sha2::{Digest, Sha512};
+
+fn deterministic_scalar(domain: u8, index: u64) -> Scalar {
+    let mut seed = [0_u8; 9];
+    seed[0] = domain;
+    seed[1..].copy_from_slice(&index.to_le_bytes());
+    let digest = Sha512::digest(seed);
+    let mut wide = [0_u8; 64];
+    wide.copy_from_slice(&digest);
+    Scalar::from_bytes_mod_order_wide(&wide)
+}
 
 #[test]
 #[ignore = "hardware wgpu tooth; run explicitly on hbox"]
@@ -21,17 +37,11 @@ fn required_complete_msm_matches_dalek_and_verifier_refuses_bad_boundaries() {
         Ok("required")
     );
 
-    let scalars: Vec<Scalar> = (0_u64..17)
-        .map(|index| {
-            Scalar::from(
-                index
-                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
-                    .wrapping_add(index.rotate_left(17)),
-            )
-        })
+    let scalars: Vec<Scalar> = (0_u64..MAX_WGPU_MSM_TERMS as u64)
+        .map(|index| deterministic_scalar(0x53, index))
         .collect();
-    let points: Vec<RistrettoPoint> = (0_u64..17)
-        .map(|index| Scalar::from(index * index + 3 * index + 1) * RISTRETTO_BASEPOINT_POINT)
+    let points: Vec<RistrettoPoint> = (0_u64..MAX_WGPU_MSM_TERMS as u64)
+        .map(|index| deterministic_scalar(0x50, index) * RISTRETTO_BASEPOINT_POINT)
         .collect();
     let scalar_bytes: Vec<[u8; 32]> = scalars.iter().map(Scalar::to_bytes).collect();
     let point_bytes: Vec<[u8; 32]> = points
@@ -39,45 +49,65 @@ fn required_complete_msm_matches_dalek_and_verifier_refuses_bad_boundaries() {
         .map(|point| point.compress().to_bytes())
         .collect();
 
-    let cpu_started = Instant::now();
-    let expected = RistrettoPoint::vartime_multiscalar_mul(&scalars, &points)
-        .compress()
-        .to_bytes();
-    let cpu_elapsed = cpu_started.elapsed();
-    let gpu_call_started = Instant::now();
-    let result =
-        vartime_multiscalar_mul_wgpu(&scalar_bytes, &point_bytes).expect("complete exact wgpu MSM");
-    let gpu_call_elapsed = gpu_call_started.elapsed();
+    // Pay and report one cold device/pipeline initialization separately. The
+    // production cache is then shared by the exact 17/256/1024/4096 matrix.
+    let cold_started = Instant::now();
+    let cold = vartime_multiscalar_mul_wgpu(&scalar_bytes[..17], &point_bytes[..17])
+        .expect("cold exact wgpu MSM");
+    let cold_elapsed = cold_started.elapsed();
     assert!(
-        result.is_hardware,
+        cold.is_hardware,
         "hard tooth selected software adapter {}",
-        result.adapter_name
+        cold.adapter_name
     );
-    assert_eq!(result.term_count, scalars.len());
-    assert_eq!(result.compressed_result, expected);
     eprintln!(
-        "ristretto-full-msm-wgpu-cold adapter={} hardware={} terms={} cpu={}us gpu-submit={}us gpu-call={}us parity=exact",
-        result.adapter_name,
-        result.is_hardware,
-        result.term_count,
-        cpu_elapsed.as_micros(),
-        result.gpu_elapsed_micros,
-        gpu_call_elapsed.as_micros(),
+        "ristretto-full-msm-wgpu-cold adapter={} hardware={} terms={} gpu-submit={}us gpu-call={}us parity=exact",
+        cold.adapter_name,
+        cold.is_hardware,
+        cold.term_count,
+        cold.gpu_elapsed_micros,
+        cold_elapsed.as_micros(),
     );
 
-    let warm_started = Instant::now();
-    let warm = vartime_multiscalar_mul_wgpu(&scalar_bytes, &point_bytes)
-        .expect("warm complete exact wgpu MSM");
-    let warm_elapsed = warm_started.elapsed();
-    assert!(warm.is_hardware);
-    assert_eq!(warm.compressed_result, expected);
-    eprintln!(
-        "ristretto-full-msm-wgpu-warm adapter={} terms={} gpu-submit={}us gpu-call={}us parity=exact",
-        warm.adapter_name,
-        warm.term_count,
-        warm.gpu_elapsed_micros,
-        warm_elapsed.as_micros(),
-    );
+    for terms in [17_usize, 256, 1024, 4096] {
+        let cpu_started = Instant::now();
+        let expected = RistrettoPoint::vartime_multiscalar_mul(&scalars[..terms], &points[..terms])
+            .compress()
+            .to_bytes();
+        let cpu_elapsed = cpu_started.elapsed();
+        let gpu_call_started = Instant::now();
+        let result = vartime_multiscalar_mul_wgpu(&scalar_bytes[..terms], &point_bytes[..terms])
+            .expect("warm exact wgpu MSM matrix row");
+        let gpu_call_elapsed = gpu_call_started.elapsed();
+        assert!(result.is_hardware);
+        assert_eq!(result.term_count, terms);
+        assert_eq!(result.compressed_result, expected);
+        assert_eq!(result.window_bits, 4);
+        assert_eq!(result.window_count, 64);
+        assert_eq!(result.bucket_count, 15);
+        assert_eq!(result.chunk_count, (terms as u32).div_ceil(64));
+        assert_eq!(
+            result.partial_bucket_count,
+            result.window_count * result.chunk_count * result.bucket_count
+        );
+        assert_eq!(result.dispatch_count, 4);
+        assert_eq!(result.readback_count, 1);
+        eprintln!(
+            "ristretto-full-msm-wgpu-matrix adapter={} terms={} cpu={}us gpu-submit={}us gpu-call={}us chunks={} partial-buckets={} bucket-tests={} nonzero-digits={} post-add-upper={} dispatches={} readbacks={} parity=exact",
+            result.adapter_name,
+            result.term_count,
+            cpu_elapsed.as_micros(),
+            result.gpu_elapsed_micros,
+            gpu_call_elapsed.as_micros(),
+            result.chunk_count,
+            result.partial_bucket_count,
+            result.bucket_term_tests,
+            result.nonzero_digits,
+            result.post_bucket_addition_upper_bound,
+            result.dispatch_count,
+            result.readback_count,
+        );
+    }
 
     // A valid non-empty input may sum to the identity. The output is accepted
     // only after dalek validates the exact identity encoding and coordinates.

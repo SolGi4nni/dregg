@@ -8,9 +8,10 @@
 //! The prover seam sends every witness-derived scalar through exact portable
 //! GPU window preparation, but deliberately keeps group MSM in dalek: the
 //! branch-bearing public-scalar kernel is not an acceptable secret-scalar
-//! replacement. The verifier seam owns a complete bounded GPU MSM: 256 public
-//! bit buckets plus exact extended-Edwards Horner reduction. Dalek still
-//! computes the result independently and is the canonical acceptance oracle.
+//! replacement. The verifier seam owns a complete bounded GPU MSM: a
+//! device-resident radix-16 Pippenger reduction with chunk-local buckets.
+//! Dalek still computes the result independently and is the canonical
+//! acceptance oracle.
 //!
 //! No GPU path is default authority. Disabled mode is pure dalek; auto mode has
 //! explicit CPU fallback; required mode fails closed on feature, adapter,
@@ -77,6 +78,108 @@ pub struct WgpuMsmResult {
     pub compressed_result: [u8; 32],
     /// Submit-to-completion time for scaling, reduction, and final readback.
     pub gpu_elapsed_micros: u128,
+    /// Bits consumed per device-resident Pippenger window.
+    pub window_bits: u32,
+    /// Number of radix windows spanning a canonical scalar.
+    pub window_count: u32,
+    /// Number of nonzero buckets per window.
+    pub bucket_count: u32,
+    /// Number of bounded term chunks independently accumulated per bucket.
+    pub chunk_count: u32,
+    /// Number of independently parallel chunk-local bucket accumulators.
+    pub partial_bucket_count: u32,
+    /// Scalar/bucket comparisons performed by the first GPU stage.
+    pub bucket_term_tests: u64,
+    /// Exact number of nonzero radix digits considered by stage one.
+    pub nonzero_digits: u64,
+    /// Conservative point-addition bound after stage one; identity fast paths
+    /// make the executed count smaller, especially for sparse small MSMs.
+    pub post_bucket_addition_upper_bound: u64,
+    /// Number of ordered device dispatches in the MSM pipeline.
+    pub dispatch_count: u32,
+    /// Number of device-to-host result readbacks.
+    pub readback_count: u32,
+}
+
+#[cfg(feature = "wgpu-msm")]
+struct CompleteMsmContext {
+    adapter_name: String,
+    is_hardware: bool,
+    limits: wgpu::Limits,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+#[cfg(feature = "wgpu-msm")]
+fn complete_msm_context() -> Result<&'static CompleteMsmContext, MsmBackendError> {
+    static CONTEXT: std::sync::OnceLock<Result<CompleteMsmContext, String>> =
+        std::sync::OnceLock::new();
+    CONTEXT
+        .get_or_init(|| {
+            let instance = wgpu::Instance::default();
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..Default::default()
+                }))
+                .ok_or_else(|| "no adapter".to_owned())?;
+            let adapter_info = adapter.get_info();
+            let adapter_name = adapter_info.name;
+            let is_hardware = !matches!(adapter_info.device_type, wgpu::DeviceType::Cpu);
+            let limits = adapter.limits();
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("bulletproofs-ristretto-complete-msm-device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: limits.clone(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            ))
+            .map_err(|error| error.to_string())?;
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("bulletproofs-ristretto-complete-msm-shader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("shaders/edwards_add_radix5.wgsl").into(),
+                ),
+            });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bulletproofs-ristretto-complete-msm-bind-layout"),
+                entries: &[
+                    buffer_entry(0, wgpu::BufferBindingType::Uniform),
+                    buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                    buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
+                    buffer_entry(3, wgpu::BufferBindingType::Storage { read_only: false }),
+                    buffer_entry(4, wgpu::BufferBindingType::Storage { read_only: true }),
+                ],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bulletproofs-ristretto-complete-msm-pipeline-layout"),
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bulletproofs-ristretto-complete-msm-pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some("pippenger"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            Ok(CompleteMsmContext {
+                adapter_name,
+                is_hardware,
+                limits,
+                device,
+                queue,
+                layout,
+                pipeline,
+            })
+        })
+        .as_ref()
+        .map_err(|reason| MsmBackendError::WgpuUnavailable(reason.clone()))
 }
 
 /// Fail-closed input or GPU error.
@@ -467,8 +570,10 @@ pub fn prepare_scalar_windows_wgpu(
 
 /// Execute a complete, bounded MSM on wgpu for public verifier inputs.
 ///
-/// The device builds 256 public-scalar bit buckets in parallel, then one exact
-/// high-to-low Horner pass produces the weighted group sum.
+/// The device builds radix-16 public-scalar buckets in bounded 64-term chunks,
+/// reduces those chunks, collapses the weighted buckets per window, and then
+/// performs a short high-to-low radix-16 combination. All four ordered stages
+/// stay device-resident and only the final extended point is read back.
 /// The returned encoding remains CPU-authoritative: dalek independently
 /// computes the same MSM, then validates the GPU coordinates and requires the
 /// canonical compressed bytes to agree exactly. This variable-time kernel is
@@ -502,8 +607,34 @@ pub fn vartime_multiscalar_mul_wgpu(
     let expected = RistrettoPoint::vartime_multiscalar_mul(&scalars, &points);
     let expected_compressed = expected.compress();
 
+    const WINDOW_BITS: u32 = 4;
+    const WINDOW_COUNT: u32 = 256 / WINDOW_BITS;
+    const BUCKET_COUNT: u32 = (1 << WINDOW_BITS) - 1;
+    const CHUNK_TERMS: u32 = 64;
+    const WORKGROUP_SIZE: u32 = 64;
+    const ONE_POINT_BYTES: u64 = (4 * 32 * core::mem::size_of::<u32>()) as u64;
+
     let term_count =
         u32::try_from(scalar_bytes.len()).map_err(|_| MsmBackendError::DimensionOverflow)?;
+    let chunk_count = term_count.div_ceil(CHUNK_TERMS);
+    let partial_bucket_count = WINDOW_COUNT
+        .checked_mul(chunk_count)
+        .and_then(|count| count.checked_mul(BUCKET_COUNT))
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let reduced_bucket_count = WINDOW_COUNT
+        .checked_mul(BUCKET_COUNT)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let partial_bucket_bytes = u64::from(partial_bucket_count)
+        .checked_mul(ONE_POINT_BYTES)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let reduced_bucket_bytes = u64::from(reduced_bucket_count)
+        .checked_mul(ONE_POINT_BYTES)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let window_sum_bytes = u64::from(WINDOW_COUNT)
+        .checked_mul(ONE_POINT_BYTES)
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let partial_workgroups = partial_bucket_count.div_ceil(WORKGROUP_SIZE);
+    let reduced_workgroups = reduced_bucket_count.div_ceil(WORKGROUP_SIZE);
     let coordinate_word_count = scalar_bytes
         .len()
         .checked_mul(4 * 32)
@@ -524,9 +655,6 @@ pub fn vartime_multiscalar_mul_wgpu(
             .ok_or(MsmBackendError::DimensionOverflow)?,
     )
     .map_err(|_| MsmBackendError::DimensionOverflow)?;
-    const ONE_POINT_BYTES: u64 = (4 * 32 * core::mem::size_of::<u32>()) as u64;
-    const BIT_BUCKET_BYTES: u64 = 256 * ONE_POINT_BYTES;
-
     let mut coordinate_words = Vec::with_capacity(coordinate_word_count);
     for point in &points {
         for coordinate in point.dregg_extended_coordinates() {
@@ -548,37 +676,25 @@ pub fn vartime_multiscalar_mul_wgpu(
         constant_words.extend(coordinate.iter().copied().map(u32::from));
     }
 
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .ok_or_else(|| MsmBackendError::WgpuUnavailable("no adapter".to_owned()))?;
-    let adapter_info = adapter.get_info();
-    let adapter_name = adapter_info.name;
-    let is_hardware = !matches!(adapter_info.device_type, wgpu::DeviceType::Cpu);
-    let limits = adapter.limits();
+    let context = complete_msm_context()?;
+    let device = &context.device;
+    let queue = &context.queue;
+    let limits = &context.limits;
     let storage_limit =
         u64::from(limits.max_storage_buffer_binding_size).min(limits.max_buffer_size);
-    if 4 > limits.max_compute_workgroups_per_dimension
+    if partial_workgroups > limits.max_compute_workgroups_per_dimension
+        || reduced_workgroups > limits.max_compute_workgroups_per_dimension
         || coordinate_buffer_bytes > storage_limit
         || scalar_buffer_bytes > storage_limit
-        || BIT_BUCKET_BYTES > storage_limit
+        || partial_bucket_bytes > storage_limit
+        || reduced_bucket_bytes > storage_limit
+        || window_sum_bytes > storage_limit
+        || ONE_POINT_BYTES > storage_limit
     {
         coordinate_words.fill(0);
         scalar_words.fill(0);
         return Err(MsmBackendError::DimensionOverflow);
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("bulletproofs-ristretto-complete-msm-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: limits.clone(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .map_err(|error| MsmBackendError::WgpuUnavailable(error.to_string()))?;
 
     use wgpu::util::DeviceExt;
     let input_coordinates = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -596,9 +712,21 @@ pub fn vartime_multiscalar_mul_wgpu(
         contents: bytemuck::cast_slice(&constant_words),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let bit_buckets = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-bit-buckets"),
-        size: BIT_BUCKET_BYTES,
+    let partial_buckets = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-partial-buckets"),
+        size: partial_bucket_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let reduced_buckets = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-reduced-buckets"),
+        size: reduced_bucket_bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let window_sums = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-window-sums"),
+        size: window_sum_bytes,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -616,54 +744,44 @@ pub fn vartime_multiscalar_mul_wgpu(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let metadata = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-metadata"),
-        contents: bytemuck::cast_slice(&[term_count, 0_u32, 0, 0]),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let make_metadata = |stage, label| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(&[
+                term_count,
+                WINDOW_COUNT,
+                BUCKET_COUNT,
+                chunk_count,
+                stage,
+                32,
+                0,
+                0,
+            ]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    };
+    let partial_metadata = make_metadata(
+        0_u32,
+        "bulletproofs-ristretto-complete-msm-partial-metadata",
+    );
+    let reduce_metadata =
+        make_metadata(1_u32, "bulletproofs-ristretto-complete-msm-reduce-metadata");
+    let collapse_metadata = make_metadata(
+        2_u32,
+        "bulletproofs-ristretto-complete-msm-collapse-metadata",
+    );
+    let combine_metadata = make_metadata(
+        3_u32,
+        "bulletproofs-ristretto-complete-msm-combine-metadata",
+    );
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/edwards_add_radix5.wgsl").into()),
-    });
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-bind-layout"),
-        entries: &[
-            buffer_entry(0, wgpu::BufferBindingType::Uniform),
-            buffer_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
-            buffer_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
-            buffer_entry(3, wgpu::BufferBindingType::Storage { read_only: false }),
-            buffer_entry(4, wgpu::BufferBindingType::Storage { read_only: true }),
-        ],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-pipeline-layout"),
-        bind_group_layouts: &[&layout],
-        push_constant_ranges: &[],
-    });
-    let bucket_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-bucket-pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("bucket_bits"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let combine_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-combine-pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("combine_bits"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bucket_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bulletproofs-ristretto-complete-msm-bucket-group"),
-        layout: &layout,
+    let partial_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-partial-group"),
+        layout: &context.layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: metadata.as_entire_binding(),
+                resource: partial_metadata.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -675,7 +793,59 @@ pub fn vartime_multiscalar_mul_wgpu(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: bit_buckets.as_entire_binding(),
+                resource: partial_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: input_scalars.as_entire_binding(),
+            },
+        ],
+    });
+    let reduce_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-reduce-group"),
+        layout: &context.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: reduce_metadata.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: partial_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: constants.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: reduced_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: input_scalars.as_entire_binding(),
+            },
+        ],
+    });
+    let collapse_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bulletproofs-ristretto-complete-msm-collapse-group"),
+        layout: &context.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: collapse_metadata.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: reduced_buckets.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: constants.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: window_sums.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
@@ -685,15 +855,15 @@ pub fn vartime_multiscalar_mul_wgpu(
     });
     let combine_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("bulletproofs-ristretto-complete-msm-combine-group"),
-        layout: &layout,
+        layout: &context.layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: metadata.as_entire_binding(),
+                resource: combine_metadata.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: bit_buckets.as_entire_binding(),
+                resource: window_sums.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -718,10 +888,13 @@ pub fn vartime_multiscalar_mul_wgpu(
             label: Some("bulletproofs-ristretto-complete-msm-pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&bucket_pipeline);
-        pass.set_bind_group(0, &bucket_group, &[]);
-        pass.dispatch_workgroups(4, 1, 1);
-        pass.set_pipeline(&combine_pipeline);
+        pass.set_pipeline(&context.pipeline);
+        pass.set_bind_group(0, &partial_group, &[]);
+        pass.dispatch_workgroups(partial_workgroups, 1, 1);
+        pass.set_bind_group(0, &reduce_group, &[]);
+        pass.dispatch_workgroups(reduced_workgroups, 1, 1);
+        pass.set_bind_group(0, &collapse_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
         pass.set_bind_group(0, &combine_group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
@@ -745,7 +918,9 @@ pub fn vartime_multiscalar_mul_wgpu(
                 &[
                     &input_coordinates,
                     &input_scalars,
-                    &bit_buckets,
+                    &partial_buckets,
+                    &reduced_buckets,
+                    &window_sums,
                     &result_coordinates,
                     &readback,
                 ],
@@ -761,7 +936,9 @@ pub fn vartime_multiscalar_mul_wgpu(
                 &[
                     &input_coordinates,
                     &input_scalars,
-                    &bit_buckets,
+                    &partial_buckets,
+                    &reduced_buckets,
+                    &window_sums,
                     &result_coordinates,
                     &readback,
                 ],
@@ -789,7 +966,9 @@ pub fn vartime_multiscalar_mul_wgpu(
         &[
             &input_coordinates,
             &input_scalars,
-            &bit_buckets,
+            &partial_buckets,
+            &reduced_buckets,
+            &window_sums,
             &result_coordinates,
             &readback,
         ],
@@ -798,12 +977,37 @@ pub fn vartime_multiscalar_mul_wgpu(
     scalar_words.fill(0);
     parity?;
 
+    let nonzero_digits = scalar_bytes
+        .iter()
+        .flat_map(|scalar| scalar.iter())
+        .map(|byte| u64::from(byte & 15 != 0) + u64::from(byte >> 4 != 0))
+        .sum();
+    let bucket_term_tests = u64::from(term_count)
+        .checked_mul(u64::from(WINDOW_COUNT))
+        .and_then(|count| count.checked_mul(u64::from(BUCKET_COUNT)))
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+    let post_bucket_addition_upper_bound = u64::from(reduced_bucket_count)
+        .checked_mul(u64::from(chunk_count))
+        .and_then(|count| count.checked_add(u64::from(WINDOW_COUNT) * u64::from(BUCKET_COUNT) * 2))
+        .and_then(|count| count.checked_add(u64::from(WINDOW_COUNT) * u64::from(WINDOW_BITS + 1)))
+        .ok_or(MsmBackendError::DimensionOverflow)?;
+
     Ok(WgpuMsmResult {
-        adapter_name,
-        is_hardware,
+        adapter_name: context.adapter_name.clone(),
+        is_hardware: context.is_hardware,
         term_count: scalar_bytes.len(),
         compressed_result: expected_compressed.to_bytes(),
         gpu_elapsed_micros,
+        window_bits: WINDOW_BITS,
+        window_count: WINDOW_COUNT,
+        bucket_count: BUCKET_COUNT,
+        chunk_count,
+        partial_bucket_count,
+        bucket_term_tests,
+        nonzero_digits,
+        post_bucket_addition_upper_bound,
+        dispatch_count: 4,
+        readback_count: 1,
     })
 }
 
@@ -910,7 +1114,7 @@ pub fn add_compressed_point_pairs_wgpu(
     use wgpu::util::DeviceExt;
     let metadata = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bulletproofs-ristretto-edwards-add-metadata"),
-        contents: bytemuck::cast_slice(&[pair_count, 0_u32, 0, 0]),
+        contents: bytemuck::cast_slice(&[pair_count, 0_u32, 0, 0, 0, 32, 0, 0]),
         usage: wgpu::BufferUsages::UNIFORM,
     });
     let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
