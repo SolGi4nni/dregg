@@ -30,6 +30,11 @@ pub const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata"
 pub const NOTE_COMMITMENTS: TableDefinition<u64, &[u8; 32]> =
     TableDefinition::new("note_commitments");
 
+/// Versioned, hybrid-authenticated faithful-eight note-root transitions.
+/// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
+pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("faithful_note_root_history_v1");
+
 /// Nullifier set: nullifier hash (32 bytes) -> unit (presence = spent).
 ///
 /// Key: 32-byte nullifier hash.
@@ -64,6 +69,12 @@ pub const META_NOTE_TREE_ROOT_CACHE: &str = "note_tree_root_cache";
 /// Stored as 4 bytes (little-endian u32) representing the BabyBear field element.
 /// Updated on every `store_note_commitment` / `spend_note_atomic` call.
 pub const META_POSEIDON2_NOTE_TREE_ROOT_CACHE: &str = "poseidon2_note_tree_root_cache";
+
+/// Fixed v1 history anchor (`FaithfulNoteRootAnchorV1`).
+pub const META_FAITHFUL_NOTE_ROOT_ANCHOR: &str = "faithful_note_root_anchor_v1";
+
+/// Transactionally updated exact count/head seal for truncation detection.
+pub const META_FAITHFUL_NOTE_ROOT_HEAD: &str = "faithful_note_root_head_v1";
 
 /// Key for the latest checkpoint height.
 pub const META_LATEST_CHECKPOINT_HEIGHT: &str = "latest_checkpoint_height";

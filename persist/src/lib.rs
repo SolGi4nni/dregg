@@ -31,6 +31,7 @@ pub mod blocklace_store;
 pub mod channel_rosters;
 pub mod checkpoint;
 pub mod commit_log;
+pub mod faithful_note_root_history;
 pub mod federation;
 pub mod forever_digests;
 pub mod image_builder;
@@ -49,6 +50,11 @@ use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub use blocklace_store::BlocklaceMeta;
 pub use commit_log::{CellOverlayOp, CommitRecord, IndexAuditReport};
+pub use faithful_note_root_history::{
+    CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1,
+    FaithfulNoteRootExpectationV1, FaithfulNoteRootHistoryError, FaithfulNoteRootHistoryV1,
+    FaithfulNoteRootRecordV1, plan_faithful_note_root_transition_v1,
+};
 pub use federation::{QuorumSignature, StoredAttestedRoot};
 pub use image_builder::{
     BuildError, CellSpec, ImageArtifact, ImageAttestation, ImageFacts, ImageManifest, VerifyError,
@@ -223,6 +229,7 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::ATTESTED_ROOTS)?;
             // Note tree tables.
             let _ = write_txn.open_table(tables::NOTE_COMMITMENTS)?;
+            let _ = write_txn.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
