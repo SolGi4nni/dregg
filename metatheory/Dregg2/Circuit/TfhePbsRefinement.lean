@@ -151,6 +151,16 @@ by the fused kernel. -/
 def keySwitchCoefficientCount (inputDim levels outDim : Nat) : Nat :=
   inputDim * levels * (outDim + 1)
 
+/-- Native-torus coefficients in one standard-domain GGSW ciphertext for a
+GLWE with `maskPolys + 1` polynomials. -/
+def ggswCoefficientCount (maskPolys degree levels : Nat) : Nat :=
+  levels * (maskPolys + 1) * (maskPolys + 1) * degree
+
+/-- Native-torus coefficients in the complete standard bootstrapping key. -/
+def bootstrappingKeyCoefficientCount
+    (inputDim maskPolys degree levels : Nat) : Nat :=
+  inputDim * ggswCoefficientCount maskPolys degree levels
+
 /-- The fail-closed arithmetic shape enforced by the Rust primitive before the
 fused kernel is dispatched.  `baseLog * levels < 64` leaves at least one
 non-represented torus bit, exactly as the signed decomposer requires. -/
@@ -258,13 +268,20 @@ theorem signTooth_refuses_positive_tail :
 
 The present independent tfhe-rs qualification uses one GLWE mask polynomial,
 degree 2048, a 2048-dimensional extracted LWE, four KS levels, and an
-8-dimensional qualification output.  These guards make arithmetic drift in the
-authority visible without claiming the still-separate 918-output deployment. -/
+8-dimensional qualification output. The production-shaped prepared-plan gate
+then uses the same extracted input with all 918 post-key-switch mask outputs and
+the complete 918-slot BSK/KSK footprint. Only four BSK slots execute CMUX in
+that gate, so these shape teeth make no dense-rotation performance claim. -/
 
 #guard 1 * 2048 = 2048
 #guard decide (ValidPbsShape 1 2048 4 4 8)
 #guard keySwitchCoefficientCount (1 * 2048) 4 8 = 73728
 #guard outputLweCoefficientCount 8 = 9
+#guard decide (ValidPbsShape 1 2048 4 4 918)
+#guard ggswCoefficientCount 1 2048 1 = 8192
+#guard bootstrappingKeyCoefficientCount 918 1 2048 1 = 7520256
+#guard keySwitchCoefficientCount (1 * 2048) 4 918 = 7528448
+#guard outputLweCoefficientCount 918 = 919
 
 #assert_axioms flatMaskIndex_lt
 #assert_axioms sampleExtractZero_mask_zero
