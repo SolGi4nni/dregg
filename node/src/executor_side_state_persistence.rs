@@ -94,6 +94,42 @@ pub(crate) fn capture_reactive_successors(
     })
 }
 
+/// Publish only the durable outcome of promise resolution to operator logs.
+///
+/// `ReadyToExecute` deliberately remains informational: it contains an
+/// unsigned `Turn` and therefore cannot be inserted into the signed consensus
+/// queue. FOLLOW-UP: add a typed durable PromiseResolution query/NodeEvent
+/// surface so Discord, Telegram, and web clients can notify without treating
+/// transient candidate events as authority.
+pub(crate) fn trace_durable_resolution_events(events: &[dregg_turn::ResolutionEvent]) {
+    for event in events {
+        match event {
+            dregg_turn::ResolutionEvent::Resolved { turn_hash, .. } => {
+                tracing::info!(
+                    pending_id = %dregg_types::hex_encode(turn_hash),
+                    outcome = "resolved",
+                    "durable promise resolution published"
+                );
+            }
+            dregg_turn::ResolutionEvent::ReadyToExecute { turn_hash, .. } => {
+                tracing::info!(
+                    pending_id = %dregg_types::hex_encode(turn_hash),
+                    outcome = "ready_to_execute",
+                    "durable promise resolution published; unsigned dependent is not auto-executed"
+                );
+            }
+            dregg_turn::ResolutionEvent::Broken { turn_hash, reason } => {
+                tracing::warn!(
+                    pending_id = %dregg_types::hex_encode(turn_hash),
+                    outcome = "broken",
+                    reason = %reason,
+                    "durable promise resolution published"
+                );
+            }
+        }
+    }
+}
+
 /// Restore both React authority images only after each has decoded completely.
 pub(crate) fn restore_executor_reactive_state(
     executor: &TurnExecutor,
