@@ -236,6 +236,24 @@ fn full_mode_single_sig_root_is_refused_genuine_quorum_accepted() {
          MUST be accepted — this is the record the commit path must persist"
     );
 
+    // A quorum threshold counts distinct committee identities, not serialized
+    // rows. Repeating one member's otherwise-valid signature must not inflate a
+    // 1-of-3 observation into a 3-of-3 authority.
+    let one_valid_signature = root.quorum_signatures[0].clone();
+    root.quorum_signatures = vec![one_valid_signature; 3];
+    assert!(
+        !root.verify_signatures(&committee),
+        "duplicating one valid committee signature must not manufacture quorum"
+    );
+
+    let mut zero_threshold = root.clone();
+    zero_threshold.threshold = 0;
+    zero_threshold.quorum_signatures.clear();
+    assert!(
+        !zero_threshold.verify_signatures(&committee),
+        "a zero threshold is not a cryptographic authority"
+    );
+
     // ── The anchor stays strict against forgery: >=threshold signatures that
     //    do NOT verify over THIS root's message (they signed a different
     //    merkle_root) are still refused. ──

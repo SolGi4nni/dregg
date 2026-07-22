@@ -153,12 +153,15 @@ impl StoredAttestedRoot {
     /// Verify signatures cryptographically against a set of known committee keys.
     ///
     /// Checks that the threshold count is met AND each signature verifies against
-    /// the corresponding public key in `committee`.
+    /// the corresponding public key in `committee`.  Thresholds count distinct
+    /// committee identities: duplicating one valid `(key, signature)` row never
+    /// manufactures a quorum, and a zero threshold is not an authority.
     pub fn verify_signatures(&self, committee: &[PublicKey]) -> bool {
-        if self.quorum_signatures.len() < self.threshold {
+        if self.threshold == 0 || self.quorum_signatures.len() < self.threshold {
             return false;
         }
         let message = self.signing_message();
+        let mut distinct = std::collections::HashSet::new();
         for (pk, sig) in &self.quorum_signatures {
             if !committee.contains(pk) {
                 return false;
@@ -166,8 +169,9 @@ impl StoredAttestedRoot {
             if !pk.verify(&message, sig) {
                 return false;
             }
+            distinct.insert(pk.0);
         }
-        true
+        distinct.len() >= self.threshold
     }
 
     /// Does this root carry a (non-empty) finalization-vote quorum record?
