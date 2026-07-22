@@ -1840,7 +1840,7 @@ impl TurnExecutor {
     // ─── Reactive effects (Track 2): Promise / Notify / React ────────────────
     //
     // The keystone (REACTIVE-EFFECTS.md §6): a promise-hole is a one-shot
-    // capability. `React` consumes the hole and records its 32-byte id in the
+    // capability. `React` releases the exact stored wake and records its 32-byte id in the
     // dedicated `reactive_nullifiers` domain. This is intentionally disjoint
     // from the faithful `note_nullifiers` append history: React carries no
     // NoteSpend statement, while its own canonical CAS is persisted and
@@ -1990,9 +1990,10 @@ impl TurnExecutor {
     ///     (journaled). A second react — or a replay of the same `pending_id` —
     ///     is rejected, while an equal raw value in the NoteSpend domain grants
     ///     no React authority and vice versa.
-    ///  4. If a matching hole is live in the reactive registry, RESOLVE it with
-    ///     a genuine receipt over the resolved turn (the registry-removal is a
-    ///     redundant second tooth; the nullifier gate is load-bearing).
+    ///  4. Mark the exact stored wake READY without removing it or fabricating a
+    ///     receipt. The carrying finalized boundary publishes one
+    ///     `ReadyToExecute`; only finalization of the exact wake later resolves
+    ///     and removes it with the executor's real receipt.
     fn apply_react(
         &self,
         path: &[usize],
@@ -2099,14 +2100,19 @@ impl TurnExecutor {
         }
         journal.record_reactive_nullifier_inserted(*pending_id);
 
-        // (4) RESOLVE the hole with a GENUINE receipt over the resolved turn.
-        // The receipt is content-addressed to the wake turn we just verified
-        // (its hash == pending_id), so the registry cascade has a real, bound
-        // provenance link. Reauthenticate under the mutation lock so a concurrent
-        // timeout/replacement cannot race the proof check.
+        // (4) RELEASE the exact stored wake, but RETAIN it until its real
+        // finalized execution receipt arrives. Reauthenticate under the mutation
+        // lock so a concurrent timeout/replacement cannot race the proof check.
+        // `mark_react_ready` stages one ReadyToExecute event in the canonical
+        // registry. `resolve_pending_receipt` drains it only after this carrier
+        // turn has committed, welding release publication to the same durable
+        // executor-state/outbox transaction.
         {
             let mut reg = self.reactive_registry.lock().unwrap();
-            reg.authorize_react(&pending_id.0, actor, condition, wake, self.block_height)
+            let previous = journal
+                .needs_reactive_registry_snapshot()
+                .then(|| reg.clone());
+            reg.mark_react_ready(&pending_id.0, actor, condition, wake, self.block_height)
                 .map_err(|error| {
                     (
                         TurnError::InvalidEffect {
@@ -2115,22 +2121,6 @@ impl TurnExecutor {
                         path.to_vec(),
                     )
                 })?;
-            let previous = journal
-                .needs_reactive_registry_snapshot()
-                .then(|| reg.clone());
-            let receipt = genuine_resolution_receipt(wake);
-            let events = reg.resolve(
-                pending_id.0,
-                crate::pending::ResolutionOutcome::Resolved(receipt),
-            );
-            if events.is_empty() {
-                return Err((
-                    TurnError::InvalidEffect {
-                        reason: "React: registered pending entry disappeared before resolve".into(),
-                    },
-                    path.to_vec(),
-                ));
-            }
             if let Some(previous) = previous {
                 journal.record_reactive_registry_snapshot(previous);
             }
@@ -4269,18 +4259,20 @@ impl TurnExecutor {
 // ─── End-to-end React-through-the-executor forge-detector ────────────────────
 //
 // The Track-2 bar: a `React` effect driven through the executor's `apply_effect`
-// dispatch resolves ONCE and SPENDS `pending_id` into the dedicated
-// `reactive_nullifiers` set. A SECOND react is rejected by the missing live
-// promise; even if an attacker re-registers the same hole, the durable React
-// replay gate rejects it without polluting the faithful NoteSpend history.
+// dispatch RELEASES ONCE and SPENDS `pending_id` into the dedicated
+// `reactive_nullifiers` set. The exact wake remains registered until a real
+// finalized receipt resolves it. A SECOND react is rejected by the durable
+// release phase; even after finalization removes and an attacker re-registers
+// the same hole, the React replay gate rejects it without polluting the faithful
+// NoteSpend history.
 #[cfg(test)]
 mod react_executor_tests {
     use super::*;
     use crate::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
     use crate::conditional::{ConditionProof, ProofCondition};
     use crate::forest::CallForest;
-    use crate::pending::ResolutionCondition;
-    use crate::turn::Turn;
+    use crate::pending::{ResolutionCondition, ResolutionEvent};
+    use crate::turn::{Turn, TurnReceipt};
     use dregg_cell::{CellId, Nullifier, Preconditions};
 
     /// A minimal wake turn for `cell` (the turn the recipient runs on react).
@@ -4361,6 +4353,31 @@ mod react_executor_tests {
         CellId::from_bytes([0xB0; 32])
     }
 
+    fn finalized_receipt(turn: &Turn) -> TurnReceipt {
+        TurnReceipt {
+            turn_hash: turn.hash(),
+            forest_hash: turn.call_forest.compute_hash(),
+            pre_state_hash: [0x10; 32],
+            post_state_hash: [0x20; 32],
+            timestamp: 42,
+            effects_hash: [0x30; 32],
+            computrons_used: 7,
+            action_count: turn.call_forest.roots.len(),
+            previous_receipt_hash: None,
+            agent: turn.agent,
+            federation_id: [0x40; 32],
+            routing_directives: vec![],
+            introduction_exports: vec![],
+            derivation_records: vec![],
+            emitted_events: vec![],
+            executor_signature: None,
+            finality: Default::default(),
+            was_encrypted: false,
+            was_burn: false,
+            consumed_capabilities: vec![],
+        }
+    }
+
     // ── THE END-TO-END FORGE-DETECTOR: react once spends the nullifier; a
     //    SECOND react on the SAME consumed hole is REJECTED before proof work. ──
     #[test]
@@ -4401,7 +4418,7 @@ mod react_executor_tests {
             "hole id not yet spent"
         );
 
-        // FIRST REACT: resolves and SPENDS the pending_id nullifier.
+        // FIRST REACT: releases and SPENDS the pending_id nullifier.
         let react = react_effect(&wake, condition.clone(), proof.clone());
         let mut journal1 = LedgerJournal::new();
         executor
@@ -4414,7 +4431,7 @@ mod react_executor_tests {
                 &mut journal1,
                 [0u8; 32],
             )
-            .expect("a genuine react resolves once");
+            .expect("a genuine react releases once");
         assert!(
             executor
                 .reactive_nullifiers
@@ -4425,12 +4442,36 @@ mod react_executor_tests {
         );
         assert_eq!(
             executor.reactive_registry.lock().unwrap().len(),
-            0,
-            "the hole is consumed (registry removal — the redundant second tooth)"
+            1,
+            "React must retain the exact wake until its real finalized receipt"
+        );
+        assert!(
+            executor
+                .reactive_registry
+                .lock()
+                .unwrap()
+                .is_released(&pending_id.0)
         );
 
-        // SECOND REACT on the SAME hole id: the registered authority has already
-        // been consumed, so fail closed before accepting another proof.
+        // The carrying turn's successful finalized boundary drains exactly one
+        // ReadyToExecute event. It must not invent a terminal Resolved receipt.
+        let carrier = wake_turn(CellId::from_bytes([0xC0; 32]), 77);
+        let ready = executor.resolve_pending_receipt(carrier.hash(), finalized_receipt(&carrier));
+        assert!(matches!(
+            ready.as_slice(),
+            [ResolutionEvent::ReadyToExecute { turn_hash, turn }]
+                if *turn_hash == pending_id.0 && turn.hash() == pending_id.0
+        ));
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        assert!(
+            executor
+                .resolve_pending_receipt(carrier.hash(), finalized_receipt(&carrier))
+                .is_empty(),
+            "published Ready event must not duplicate"
+        );
+
+        // SECOND REACT on the SAME retained hole id: its release phase has already
+        // advanced, so fail closed before accepting another proof.
         let mut journal2 = LedgerJournal::new();
         let twice = executor.apply_effect(
             &react,
@@ -4444,8 +4485,8 @@ mod react_executor_tests {
         let (err, _) = twice.expect_err("react-twice MUST be rejected");
         match err {
             TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("not registered"),
-                "rejection must cite the consumed registered authority, got: {reason}"
+                reason.contains("already released"),
+                "rejection must cite the durable release phase, got: {reason}"
             ),
             other => panic!("expected InvalidEffect, got {other:?}"),
         }
@@ -4457,6 +4498,16 @@ mod react_executor_tests {
                 .unwrap()
                 .contains(&pending_id)
         );
+
+        // Only the exact wake's genuine finalized receipt emits Resolved and
+        // removes the retained registry entry.
+        let resolved = executor.resolve_pending_receipt(pending_id.0, finalized_receipt(&wake));
+        assert!(matches!(
+            resolved.as_slice(),
+            [ResolutionEvent::Resolved { turn_hash, receipt }]
+                if *turn_hash == pending_id.0 && receipt.turn_hash == pending_id.0
+        ));
+        assert!(executor.reactive_registry.lock().unwrap().is_empty());
     }
 
     // ── A REPLAYED pending_id (a fresh React carrying the SAME hole id, even
@@ -4498,15 +4549,22 @@ mod react_executor_tests {
                 .contains(&pending_id)
         );
 
-        // RE-NOTIFY the same hole (a fresh live registry entry with the same id),
-        // then REACT again. The registry-removal tooth is bypassed (the hole is
-        // live again), but the nullifier gate still refuses: the hole id was
-        // already spent.
+        // A real final receipt removes the retained wake but leaves the one-shot
+        // React nullifier durable.
+        let resolved = executor.resolve_pending_receipt(pending_id.0, finalized_receipt(&wake));
+        assert!(matches!(
+            resolved.first(),
+            Some(ResolutionEvent::Resolved { turn_hash, .. }) if *turn_hash == pending_id.0
+        ));
+        assert!(executor.reactive_registry.lock().unwrap().is_empty());
+
+        // RE-NOTIFY the same exact hole, then REACT again. The entry is waiting
+        // again, but the nullifier gate still refuses: the id was already spent.
         let notify = notify_effect(cell, &wake, condition.clone(), 100);
         let mut jn = LedgerJournal::new();
         executor
             .apply_effect(&notify, &mut ledger, &[2], &cell, &cell, &mut jn, [0u8; 32])
-            .expect("re-notify deposits a fresh live hole");
+            .expect("post-finality re-notify deposits a fresh live hole");
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
 
         let mut j2 = LedgerJournal::new();
@@ -4791,7 +4849,14 @@ mod react_executor_tests {
                 [0u8; 32],
             )
             .expect("react mutates both registry and nullifier state");
-        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 0);
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        assert!(
+            executor
+                .reactive_registry
+                .lock()
+                .unwrap()
+                .is_released(&pending_id.0)
+        );
         assert!(
             executor
                 .reactive_nullifiers
@@ -4812,6 +4877,13 @@ mod react_executor_tests {
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
         assert!(
             !executor
+                .reactive_registry
+                .lock()
+                .unwrap()
+                .is_released(&pending_id.0)
+        );
+        assert!(
+            !executor
                 .reactive_nullifiers
                 .lock()
                 .unwrap()
@@ -4828,38 +4900,6 @@ mod react_executor_tests {
             &executor.reactive_nullifiers,
         );
         assert!(executor.reactive_registry.lock().unwrap().is_empty());
-    }
-}
-
-/// A GENUINE resolution receipt for a discharged promise-hole: content-addressed
-/// to the resolved `wake` turn (whose hash the React effect verified equals the
-/// spent `pending_id`). Unlike a fabricated receipt, every field is derived from
-/// the real resolved turn — `forest_hash` from its call forest, `post_state_hash`
-/// bound to the turn hash — so the registry's cascade carries a real provenance
-/// link to the turn that was actually proven-resolved.
-fn genuine_resolution_receipt(wake: &Turn) -> TurnReceipt {
-    let turn_hash = wake.hash();
-    TurnReceipt {
-        turn_hash,
-        forest_hash: wake.call_forest.compute_hash(),
-        pre_state_hash: [0u8; 32],
-        post_state_hash: turn_hash,
-        timestamp: 0i64,
-        effects_hash: [0u8; 32],
-        computrons_used: 0,
-        action_count: wake.call_forest.roots.len(),
-        previous_receipt_hash: None,
-        agent: wake.agent,
-        federation_id: [0u8; 32],
-        routing_directives: vec![],
-        introduction_exports: vec![],
-        derivation_records: vec![],
-        emitted_events: vec![],
-        executor_signature: None,
-        finality: Default::default(),
-        was_encrypted: false,
-        was_burn: false,
-        consumed_capabilities: vec![],
     }
 }
 

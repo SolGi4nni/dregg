@@ -45,6 +45,12 @@ use dregg_cell::Nullifier;
 /// version merely because its first fields happen to decode.
 const PENDING_REGISTRY_MAGIC_V1: &[u8; 5] = b"DPRG1";
 
+/// Version 2 adds an explicit durable release phase to every entry.  Postcard
+/// encodes structs positionally, so this must be a real wire-version bump:
+/// serde's skipped/default trailing-field pattern is not backwards-compatible
+/// for a non-self-describing sequence format.
+const PENDING_REGISTRY_MAGIC_V2: &[u8; 5] = b"DPRG2";
+
 /// Hard admission ceiling for unresolved promises.
 ///
 /// Without a bound, valid signed Promise turns can grow the durable registry
@@ -142,6 +148,10 @@ pub enum PendingReactError {
     },
     ConditionIsNotProofDriven,
     ConditionMismatch,
+    /// The proof condition was already discharged.  The exact wake remains in
+    /// the registry until its real finalized receipt arrives, but it cannot be
+    /// released or enqueued a second time.
+    AlreadyReleased,
     Expired {
         timeout_height: u64,
         current_height: u64,
@@ -162,6 +172,9 @@ impl fmt::Display for PendingReactError {
             }
             Self::ConditionMismatch => {
                 f.write_str("React proof condition differs from the registered promise condition")
+            }
+            Self::AlreadyReleased => {
+                f.write_str("React pending wake was already released for execution")
             }
             Self::Expired {
                 timeout_height,
@@ -282,6 +295,27 @@ pub struct PendingEntry {
     pub submitted_at: u64,
     /// Block height at which this pending entry times out.
     pub timeout_height: u64,
+    /// Durable release phase.  This is deliberately private: wire-authored
+    /// Promise/Notify effects may create only `Waiting` entries.  A successful
+    /// condition discharge advances the entry to `ReadyToPublish`; publishing
+    /// the durable `ReadyToExecute` event advances it to `Published`.  Neither
+    /// phase removes the exact wake -- only its real finalized receipt does.
+    release_state: PendingReleaseState,
+}
+
+/// Durable lifecycle of a registered wake between condition discharge and its
+/// real finalized execution.
+///
+/// Version 2 of the private canonical wire carries this phase explicitly; the
+/// decoder migrates version-1 entries to `Waiting`.  The two non-default values
+/// close the crash/replay seam: a release is retained across restart and a
+/// published release is not emitted twice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+enum PendingReleaseState {
+    #[default]
+    Waiting,
+    ReadyToPublish,
+    Published,
 }
 
 /// A condition that must be met before a pending turn can execute.
@@ -420,6 +454,23 @@ struct PendingEntryWireV1 {
     timeout_height: u64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct PendingRegistryWireV2 {
+    entries: Vec<PendingEntryWireV2>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PendingEntryWireV2 {
+    turn_hash: [u8; 32],
+    turn_without_sovereign_witnesses: Turn,
+    sovereign_witnesses: Vec<(dregg_cell::CellId, crate::turn::SovereignCellWitness)>,
+    condition: ResolutionCondition,
+    dependents: Vec<[u8; 32]>,
+    submitted_at: u64,
+    timeout_height: u64,
+    release_state: PendingReleaseState,
+}
+
 impl PendingTurnRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
@@ -431,6 +482,47 @@ impl PendingTurnRegistry {
     /// Canonical, versioned durable representation.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
         self.validate()?;
+        let entries = self
+            .pending
+            .iter()
+            .map(|(turn_hash, entry)| {
+                let mut turn_without_sovereign_witnesses = entry.turn.clone();
+                let mut sovereign_witnesses: Vec<_> = turn_without_sovereign_witnesses
+                    .sovereign_witnesses
+                    .drain()
+                    .collect();
+                sovereign_witnesses.sort_by_key(|(cell, _)| *cell.as_bytes());
+                let mut dependents = entry.dependents.clone();
+                dependents.sort_unstable();
+                dependents.dedup();
+                PendingEntryWireV2 {
+                    turn_hash: *turn_hash,
+                    turn_without_sovereign_witnesses,
+                    sovereign_witnesses,
+                    condition: entry.condition.clone(),
+                    dependents,
+                    submitted_at: entry.submitted_at,
+                    timeout_height: entry.timeout_height,
+                    release_state: entry.release_state,
+                }
+            })
+            .collect();
+        let wire = PendingRegistryWireV2 { entries };
+        Self::encode_canonical_wire(PENDING_REGISTRY_MAGIC_V2, &wire)
+    }
+
+    /// Reconstruct the historical v1 image while validating a v1 snapshot.
+    /// A v1 entry has no release phase, so only its migrated `Waiting` form can
+    /// be represented here.
+    fn to_canonical_bytes_v1(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
+        self.validate()?;
+        if self
+            .pending
+            .values()
+            .any(|entry| entry.release_state != PendingReleaseState::Waiting)
+        {
+            return Err(PendingRegistryCodecError::NonCanonical);
+        }
         let entries = self
             .pending
             .iter()
@@ -456,11 +548,16 @@ impl PendingTurnRegistry {
             })
             .collect();
         let wire = PendingRegistryWireV1 { entries };
+        Self::encode_canonical_wire(PENDING_REGISTRY_MAGIC_V1, &wire)
+    }
+
+    fn encode_canonical_wire<T: Serialize>(
+        magic: &[u8; 5],
+        wire: &T,
+    ) -> Result<Vec<u8>, PendingRegistryCodecError> {
         let payload = postcard::to_allocvec(&wire)
             .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
-        let size = PENDING_REGISTRY_MAGIC_V1
-            .len()
-            .saturating_add(payload.len());
+        let size = magic.len().saturating_add(payload.len());
         if size > MAX_PENDING_REGISTRY_BYTES {
             return Err(PendingRegistryCodecError::TooLarge {
                 size,
@@ -468,7 +565,7 @@ impl PendingTurnRegistry {
             });
         }
         let mut encoded = Vec::with_capacity(size);
-        encoded.extend_from_slice(PENDING_REGISTRY_MAGIC_V1);
+        encoded.extend_from_slice(magic);
         encoded.extend_from_slice(&payload);
         Ok(encoded)
     }
@@ -482,20 +579,41 @@ impl PendingTurnRegistry {
                 max: MAX_PENDING_REGISTRY_BYTES,
             });
         }
-        let payload = bytes
-            .strip_prefix(PENDING_REGISTRY_MAGIC_V1)
-            .ok_or(PendingRegistryCodecError::InvalidMagic)?;
-        let wire: PendingRegistryWireV1 = postcard::from_bytes(payload)
-            .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
-        if wire.entries.len() > MAX_PENDING_TURNS {
+        let (wire_entries, is_v1) =
+            if let Some(payload) = bytes.strip_prefix(PENDING_REGISTRY_MAGIC_V2) {
+                let wire: PendingRegistryWireV2 = postcard::from_bytes(payload)
+                    .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
+                (wire.entries, false)
+            } else if let Some(payload) = bytes.strip_prefix(PENDING_REGISTRY_MAGIC_V1) {
+                let wire: PendingRegistryWireV1 = postcard::from_bytes(payload)
+                    .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
+                let entries = wire
+                    .entries
+                    .into_iter()
+                    .map(|entry| PendingEntryWireV2 {
+                        turn_hash: entry.turn_hash,
+                        turn_without_sovereign_witnesses: entry.turn_without_sovereign_witnesses,
+                        sovereign_witnesses: entry.sovereign_witnesses,
+                        condition: entry.condition,
+                        dependents: entry.dependents,
+                        submitted_at: entry.submitted_at,
+                        timeout_height: entry.timeout_height,
+                        release_state: PendingReleaseState::Waiting,
+                    })
+                    .collect();
+                (entries, true)
+            } else {
+                return Err(PendingRegistryCodecError::InvalidMagic);
+            };
+        if wire_entries.len() > MAX_PENDING_TURNS {
             return Err(PendingRegistryCodecError::TooManyEntries {
-                count: wire.entries.len(),
+                count: wire_entries.len(),
                 max: MAX_PENDING_TURNS,
             });
         }
         let mut pending = BTreeMap::new();
-        for wire_entry in wire.entries {
-            let PendingEntryWireV1 {
+        for wire_entry in wire_entries {
+            let PendingEntryWireV2 {
                 turn_hash,
                 mut turn_without_sovereign_witnesses,
                 sovereign_witnesses,
@@ -503,6 +621,7 @@ impl PendingTurnRegistry {
                 dependents,
                 submitted_at,
                 timeout_height,
+                release_state,
             } = wire_entry;
             if !turn_without_sovereign_witnesses
                 .sovereign_witnesses
@@ -529,6 +648,7 @@ impl PendingTurnRegistry {
                 dependents,
                 submitted_at,
                 timeout_height,
+                release_state,
             };
             if pending.insert(turn_hash, entry).is_some() {
                 return Err(PendingRegistryCodecError::NonCanonical);
@@ -536,7 +656,12 @@ impl PendingTurnRegistry {
         }
         let decoded = Self { pending };
         decoded.validate()?;
-        if decoded.to_canonical_bytes()?.as_slice() != bytes {
+        let canonical = if is_v1 {
+            decoded.to_canonical_bytes_v1()?
+        } else {
+            decoded.to_canonical_bytes()?
+        };
+        if canonical.as_slice() != bytes {
             return Err(PendingRegistryCodecError::NonCanonical);
         }
         Ok(decoded)
@@ -620,6 +745,7 @@ impl PendingTurnRegistry {
             dependents: Vec::new(),
             submitted_at,
             timeout_height,
+            release_state: PendingReleaseState::Waiting,
         };
         self.pending.insert(turn_hash, entry);
         Ok(turn_hash)
@@ -639,6 +765,7 @@ impl PendingTurnRegistry {
             dependents: Vec::new(),
             submitted_at,
             timeout_height,
+            release_state: PendingReleaseState::Waiting,
         });
         turn_hash
     }
@@ -668,26 +795,44 @@ impl PendingTurnRegistry {
         turn_hash: [u8; 32],
         outcome: ResolutionOutcome,
     ) -> Vec<ResolutionEvent> {
-        let Some(entry) = self.pending.remove(&turn_hash) else {
-            return vec![];
-        };
-
-        match outcome {
+        let mut events = match outcome {
             ResolutionOutcome::Resolved(receipt) => {
-                let mut events = vec![ResolutionEvent::Resolved {
-                    turn_hash,
-                    receipt: receipt.clone(),
-                }];
+                // A caller may not consume one registered wake by handing us a
+                // receipt for another turn.  Finalization supplies this exact
+                // equality; keeping it here makes the registry independently
+                // fail closed and rules out synthetic/content-shaped receipts.
+                if receipt.turn_hash != turn_hash {
+                    Vec::new()
+                } else if let Some(entry) = self.pending.remove(&turn_hash) {
+                    let mut events = vec![ResolutionEvent::Resolved {
+                        turn_hash,
+                        receipt: receipt.clone(),
+                    }];
 
-                // Cascade resolution to dependents whose conditions are now met.
-                self.cascade_resolved(turn_hash, &entry.dependents, &receipt, &mut events);
-
-                events
+                    // Cascade resolution to dependents whose conditions are now met.
+                    self.cascade_resolved(turn_hash, &entry.dependents, &receipt, &mut events);
+                    events
+                } else {
+                    Vec::new()
+                }
             }
             ResolutionOutcome::Broken(reason) => {
-                self.propagate_broken(turn_hash, &entry.dependents, reason)
+                if let Some(entry) = self.pending.remove(&turn_hash) {
+                    self.propagate_broken(turn_hash, &entry.dependents, reason)
+                } else {
+                    Vec::new()
+                }
             }
-        }
+        };
+
+        // React discharges its condition while applying the carrier turn, but
+        // the Ready event may become observable only if that carrier commits.
+        // The finalized caller invokes `resolve` after successful execution;
+        // draining here therefore welds Ready publication to the same durable
+        // executor-state/outbox transaction.  `Published` survives restart and
+        // prevents a duplicate release while the exact wake remains retained.
+        events.extend(self.take_ready_events());
+        events
     }
 
     /// Cascade to dependents whose conditions are met: emit ReadyToExecute events.
@@ -712,19 +857,21 @@ impl PendingTurnRegistry {
                 .unwrap_or(false);
 
             if should_resolve {
-                // The entry stays in the registry. The node is responsible for executing
-                // this turn and then calling resolve() with a real receipt (or Broken).
-                // That call will remove it from the registry and cascade to its dependents.
-                let turn = self.pending.get(&dep_hash).unwrap().turn.clone();
-                events.push(ResolutionEvent::ReadyToExecute {
-                    turn_hash: dep_hash,
-                    turn,
-                });
+                // The entry stays in the registry. Mark the release before
+                // surfacing it; `take_ready_events` below advances it to the
+                // durable Published phase and returns the exact stored wake.
+                if let Some(entry) = self.pending.get_mut(&dep_hash) {
+                    if entry.release_state == PendingReleaseState::Waiting {
+                        entry.release_state = PendingReleaseState::ReadyToPublish;
+                    }
+                }
                 // NOTE: We do NOT recursively cascade here. The node will execute the
                 // turn, get a real receipt, and call resolve() again, which will cascade
                 // to any further dependents at that point.
             }
         }
+
+        events.extend(self.take_ready_events());
     }
 
     /// Check all pending turns for timeout at the given block height.
@@ -736,7 +883,10 @@ impl PendingTurnRegistry {
         let timed_out: Vec<[u8; 32]> = self
             .pending
             .iter()
-            .filter(|(_, entry)| current_height > entry.timeout_height)
+            .filter(|(_, entry)| {
+                entry.release_state == PendingReleaseState::Waiting
+                    && current_height > entry.timeout_height
+            })
             .map(|(hash, _)| *hash)
             .collect();
 
@@ -793,6 +943,9 @@ impl PendingTurnRegistry {
         if expected_condition != condition {
             return Err(PendingReactError::ConditionMismatch);
         }
+        if entry.release_state != PendingReleaseState::Waiting {
+            return Err(PendingReactError::AlreadyReleased);
+        }
         if current_height > entry.timeout_height {
             return Err(PendingReactError::Expired {
                 timeout_height: entry.timeout_height,
@@ -800,6 +953,59 @@ impl PendingTurnRegistry {
             });
         }
         Ok(entry.timeout_height)
+    }
+
+    /// Advance an authenticated proof-driven wake to the durable release phase.
+    ///
+    /// This does not remove the pending entry and does not fabricate a receipt.
+    /// The next successful finalized executor boundary drains exactly one
+    /// [`ResolutionEvent::ReadyToExecute`]; only a later exact finalized receipt
+    /// may call [`Self::resolve`] and remove the wake.
+    pub fn mark_react_ready(
+        &mut self,
+        pending_id: &[u8; 32],
+        actor: &dregg_cell::CellId,
+        condition: &ProofCondition,
+        wake: &Turn,
+        current_height: u64,
+    ) -> Result<(), PendingReactError> {
+        self.authorize_react(pending_id, actor, condition, wake, current_height)?;
+        let entry = self
+            .pending
+            .get_mut(pending_id)
+            .ok_or(PendingReactError::NotRegistered)?;
+        entry.release_state = PendingReleaseState::ReadyToPublish;
+        Ok(())
+    }
+
+    /// Return whether a condition has been discharged and the wake is retained
+    /// awaiting real finalized execution.
+    pub fn is_released(&self, pending_id: &[u8; 32]) -> bool {
+        self.pending
+            .get(pending_id)
+            .is_some_and(|entry| entry.release_state != PendingReleaseState::Waiting)
+    }
+
+    /// Publish each newly released wake at most once, in canonical hash order.
+    ///
+    /// The transition to `Published` and the returned events are committed by
+    /// the node in the same finalized executor-state/outbox transaction.  If
+    /// that transaction aborts, the isolated executor is discarded; retry from
+    /// the durable `ReadyToPublish` predecessor emits the event again exactly as
+    /// required.  After a successful commit, restart observes `Published` and
+    /// emits nothing.
+    pub(crate) fn take_ready_events(&mut self) -> Vec<ResolutionEvent> {
+        let mut events = Vec::new();
+        for (turn_hash, entry) in &mut self.pending {
+            if entry.release_state == PendingReleaseState::ReadyToPublish {
+                entry.release_state = PendingReleaseState::Published;
+                events.push(ResolutionEvent::ReadyToExecute {
+                    turn_hash: *turn_hash,
+                    turn: entry.turn.clone(),
+                });
+            }
+        }
+        events
     }
 
     /// Returns the number of currently pending turns.
@@ -863,10 +1069,11 @@ impl PendingTurnRegistry {
         self.pending
             .iter()
             .filter(|(_, entry)| {
-                matches!(
-                    entry.condition,
-                    ResolutionCondition::AwaitHeight(h) if current_height >= h
-                )
+                entry.release_state == PendingReleaseState::Waiting
+                    && matches!(
+                        entry.condition,
+                        ResolutionCondition::AwaitHeight(h) if current_height >= h
+                    )
             })
             .map(|(hash, _)| *hash)
             .collect()
@@ -1516,6 +1723,85 @@ mod tests {
     }
 
     #[test]
+    fn released_wake_survives_restart_and_only_exact_receipt_resolves() {
+        let mut registry = PendingTurnRegistry::new();
+        let wake = make_turn(11, 4);
+        let wake_hash = wake.hash();
+        let condition = ProofCondition::HashPreimage { hash: [0x55; 32] };
+        registry
+            .try_submit_pending_at(
+                wake.clone(),
+                ResolutionCondition::AwaitCondition(condition.clone()),
+                80,
+                10,
+            )
+            .expect("register wake");
+
+        registry
+            .mark_react_ready(&wake_hash, &wake.agent, &condition, &wake, 50)
+            .expect("condition discharge releases exact wake");
+        assert!(registry.is_released(&wake_hash));
+        assert_eq!(registry.len(), 1, "release must retain the wake");
+        assert_eq!(
+            registry.authorize_react(&wake_hash, &wake.agent, &condition, &wake, 50),
+            Err(PendingReactError::AlreadyReleased),
+            "released wake cannot produce another dispatch"
+        );
+        assert!(
+            registry.check_timeouts(1_000).is_empty(),
+            "a condition discharged before deadline cannot timeout while awaiting finalization"
+        );
+
+        // Crash/restart before publication: ReadyToPublish is canonical durable
+        // state and emits exactly one Ready event after restore.
+        let before_publish = registry.to_canonical_bytes().expect("encode released wake");
+        let mut restarted =
+            PendingTurnRegistry::from_canonical_bytes(&before_publish).expect("restart restore");
+        assert!(restarted.is_released(&wake_hash));
+        let ready = restarted.take_ready_events();
+        assert!(matches!(
+            ready.as_slice(),
+            [ResolutionEvent::ReadyToExecute { turn_hash, turn }]
+                if *turn_hash == wake_hash && turn.hash() == wake_hash
+        ));
+        assert!(
+            ready
+                .iter()
+                .all(|event| !matches!(event, ResolutionEvent::Resolved { .. })),
+            "condition discharge must never fabricate terminal resolution"
+        );
+
+        // Crash/restart after durable publication: Published emits no duplicate.
+        let after_publish = restarted
+            .to_canonical_bytes()
+            .expect("encode published wake");
+        let mut restarted_again =
+            PendingTurnRegistry::from_canonical_bytes(&after_publish).expect("restore published");
+        assert!(restarted_again.take_ready_events().is_empty());
+        assert_eq!(restarted_again.len(), 1);
+
+        // A receipt for any other turn cannot consume the retained wake.
+        let other = make_turn(12, 4);
+        assert!(
+            restarted_again
+                .resolve(wake_hash, ResolutionOutcome::Resolved(make_receipt(&other)))
+                .is_empty()
+        );
+        assert!(restarted_again.get_pending(&wake_hash).is_some());
+
+        // Only the exact wake's real receipt produces Resolved and removes it.
+        let real = make_receipt(&wake);
+        let resolved =
+            restarted_again.resolve(wake_hash, ResolutionOutcome::Resolved(real.clone()));
+        assert!(matches!(
+            resolved.as_slice(),
+            [ResolutionEvent::Resolved { turn_hash, receipt }]
+                if *turn_hash == wake_hash && receipt.receipt_hash() == real.receipt_hash()
+        ));
+        assert!(restarted_again.is_empty());
+    }
+
+    #[test]
     fn canonical_snapshot_is_insertion_order_independent_and_restart_safe() {
         let a = make_turn(3, 1);
         let b = make_turn(4, 2);
@@ -1543,6 +1829,22 @@ mod tests {
         assert_eq!(restored.to_canonical_bytes().unwrap(), encoded);
         assert!(restored.get_pending(&a.hash()).is_some());
         assert!(restored.get_pending(&b.hash()).is_some());
+
+        // Historical v1 snapshots remain strictly decodable.  They migrate to
+        // Waiting entries and are emitted as the explicit v2 schema on the
+        // next durable write.
+        let encoded_v1 = left.to_canonical_bytes_v1().expect("encode v1");
+        assert!(encoded_v1.starts_with(PENDING_REGISTRY_MAGIC_V1));
+        let migrated =
+            PendingTurnRegistry::from_canonical_bytes(&encoded_v1).expect("restore historical v1");
+        assert!(migrated.get_pending(&a.hash()).is_some());
+        assert!(migrated.get_pending(&b.hash()).is_some());
+        assert!(
+            migrated
+                .to_canonical_bytes()
+                .expect("migrate to v2")
+                .starts_with(PENDING_REGISTRY_MAGIC_V2)
+        );
 
         let mut trailing = encoded;
         trailing.push(0);

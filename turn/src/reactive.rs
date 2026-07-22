@@ -25,8 +25,8 @@
 //! |-----------------------|------------------------------------------------|
 //! | the inbox             | a cell's view of the [`PendingTurnRegistry`]   |
 //! | a `NotifyEdge`        | a [`PendingEntry`] (a promise/wake)            |
-//! | "drain / react"       | `resolve` → fire the awaiting turn             |
-//! | `drained: bool`       | the entry's REMOVAL + the proof nullifier      |
+//! | "drain / react"       | release → execute → real-receipt resolve   |
+//! | `drained: bool`       | durable release phase + the proof nullifier    |
 //!
 //! # The soundness gift (the keystone)
 //!
@@ -36,11 +36,12 @@
 //! no authority across the two domains. The deployed executor persists the
 //! domain-separated `ReactiveNullifierSet` beside the canonical pending registry.
 //!
-//! The [`ReactiveCoordinator`] enforces the one-shot property at TWO independent
-//! teeth, so neither alone is load-bearing:
+//! The [`ReactiveCoordinator`] enforces the one-shot release at TWO independent
+//! teeth while retaining the wake until its real execution receipt:
 //!
-//!  1. **Registry removal** — `resolve()` REMOVES the entry. A second react finds
-//!     no entry: [`ReactError::AlreadyReacted`]. (The promise-hole is consumed.)
+//!  1. **Durable release phase** — a successful react advances the live entry
+//!     to Published. A second react is refused, but the exact wake stays in the
+//!     registry until finalized execution supplies its real receipt.
 //!  2. **The proof nullifier** — the resolution proof's hash is inserted into the
 //!     shared `used_proof_hashes` on success; a replayed proof is refused by
 //!     `resolve_condition` with "proof already used". (The spend is one-shot even
@@ -120,10 +121,8 @@ pub enum ReactiveEffect {
 /// Why a reactive operation was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReactError {
-    /// The `pending_id` named no hole in the registry. Either it was never
-    /// notified, or — the one-shot tooth — it was ALREADY reacted to (the entry
-    /// was removed on the first react). This is the promise-hole-as-nullifier
-    /// double-spend refusal.
+    /// The `pending_id` named no hole in the registry, or its condition was
+    /// already discharged and the exact wake is retained awaiting finalization.
     AlreadyReacted {
         /// The hole that was named but is absent.
         pending_id: [u8; 32],
@@ -144,7 +143,7 @@ impl std::fmt::Display for ReactError {
         match self {
             ReactError::AlreadyReacted { pending_id } => write!(
                 f,
-                "REFUSED — no live hole {:02x}{:02x}…: never notified or already reacted (one-shot)",
+                "REFUSED — no awaiting hole {:02x}{:02x}…: never notified or already released (one-shot)",
                 pending_id[0], pending_id[1]
             ),
             ReactError::ProofRejected { pending_id, reason } => write!(
@@ -156,13 +155,13 @@ impl std::fmt::Display for ReactError {
     }
 }
 
-/// The outcome of a successful react: the hole was discharged once.
+/// The outcome of a successful react: the condition was discharged once and
+/// the exact wake was released, but not yet resolved or removed.
 #[derive(Clone, Debug)]
 pub struct ReactOutcome {
-    /// The hole that was discharged (now consumed from the registry).
+    /// The hole whose condition was discharged.
     pub pending_id: [u8; 32],
-    /// The resolution events the registry emitted (the resolved turn + any
-    /// cascading `ReadyToExecute` for dependents).
+    /// Exactly one `ReadyToExecute` event for the retained wake.
     pub events: Vec<ResolutionEvent>,
 }
 
@@ -176,9 +175,9 @@ pub struct ReactOutcome {
 ///    [`resolve_condition`] writes to, the SAME structure the conditional-turn
 ///    machinery uses against replay.
 ///
-/// `notify` deposits a hole; `react` spends it — exactly once. The one-shot
-/// property is enforced by TWO teeth (registry removal AND the proof nullifier),
-/// so this is not a single point that can silently regress.
+/// `notify` deposits a hole; `react` releases it exactly once; finalization of
+/// the exact wake resolves/removes it. The one-shot release is enforced by TWO
+/// teeth (durable release phase AND proof nullifier).
 #[derive(Clone, Debug, Default)]
 pub struct ReactiveCoordinator {
     /// The promise-holes this cell holds (its kernel-backed inbox).
@@ -233,16 +232,17 @@ impl ReactiveCoordinator {
     ///
     /// Two independent teeth enforce one-shotness:
     ///
-    ///  1. If `pending_id` names no live hole (never notified, or already
-    ///     reacted — `resolve` removed it on the first react), refuse with
+    ///  1. If `pending_id` names no awaiting hole (never notified, or already
+    ///     released), refuse with
     ///     [`ReactError::AlreadyReacted`]. THE promise-hole-as-nullifier refusal.
     ///  2. Else run [`resolve_condition`] against the SHARED nullifier. On success
     ///     the proof hash is recorded, so even a re-presented proof is refused
     ///     ("proof already used"). On failure the hole STAYS (a failed react does
     ///     not consume it) and we return [`ReactError::ProofRejected`].
     ///
-    /// On success the hole is consumed (removed) and the registry's resolution
-    /// events are returned.
+    /// On success the exact wake remains registered and one `ReadyToExecute`
+    /// event is returned. Only [`Self::finalize_wake`] removes it with a real
+    /// execution receipt.
     pub fn react(
         &mut self,
         pending_id: [u8; 32],
@@ -250,11 +250,29 @@ impl ReactiveCoordinator {
         resolution_proof: &ConditionProof,
         current_height: u64,
     ) -> Result<ReactOutcome, ReactError> {
-        // TOOTH 1 — the hole must be live. A consumed (already-reacted) or
-        // never-notified hole is absent: the one-shot refusal.
+        // TOOTH 1 — the hole must exist and still be awaiting release.
         let Some(entry) = self.registry.get_pending(&pending_id).cloned() else {
             return Err(ReactError::AlreadyReacted { pending_id });
         };
+        if self.registry.is_released(&pending_id) {
+            return Err(ReactError::AlreadyReacted { pending_id });
+        }
+
+        // Bind the proof to the exact stored condition/wake/deadline before the
+        // proof nullifier can grow. This is the coordinator image of the live
+        // executor's `authorize_react` gate.
+        self.registry
+            .authorize_react(
+                &pending_id,
+                &entry.turn.agent,
+                condition,
+                &entry.turn,
+                current_height,
+            )
+            .map_err(|error| ReactError::ProofRejected {
+                pending_id,
+                reason: error.to_string(),
+            })?;
 
         // TOOTH 2 — the proof must discharge the condition, gated on the shared
         // nullifier. `resolve_condition` refuses a replayed proof ("already
@@ -272,13 +290,22 @@ impl ReactiveCoordinator {
 
         match verdict {
             ConditionalResult::Resolved => {
-                // The spend lands: consume the hole (removes the entry) and
-                // surface the resolution events. From here, a second react on the
-                // same id hits TOOTH 1 (the entry is gone).
-                let receipt = synthetic_resolution_receipt(&entry.turn);
-                let events = self
-                    .registry
-                    .resolve(pending_id, ResolutionOutcome::Resolved(receipt));
+                // The spend lands: advance the durable release phase and emit
+                // Ready exactly once. The entry and exact wake remain until a
+                // genuine finalized receipt is supplied.
+                self.registry
+                    .mark_react_ready(
+                        &pending_id,
+                        &entry.turn.agent,
+                        condition,
+                        &entry.turn,
+                        current_height,
+                    )
+                    .map_err(|error| ReactError::ProofRejected {
+                        pending_id,
+                        reason: error.to_string(),
+                    })?;
+                let events = self.registry.take_ready_events();
                 Ok(ReactOutcome { pending_id, events })
             }
             ConditionalResult::Pending => Err(ReactError::ProofRejected {
@@ -316,38 +343,12 @@ impl ReactiveCoordinator {
     pub fn registry(&self) -> &PendingTurnRegistry {
         &self.registry
     }
-}
 
-/// A resolution receipt for the discharged hole's turn. The hole's `wake` turn is
-/// *committed to* by the notify; on react it is *resolved*, and the registry wants
-/// a receipt to cascade to dependents. The real node would run the turn through
-/// the executor and pass the genuine receipt to `registry.resolve`; this slice
-/// records the resolution with a content-addressed receipt over the turn hash so
-/// the cascade has a stable, non-fabricated provenance link. (Replacing this with
-/// the real executor receipt is the effect-vocabulary lift — see the module doc.)
-fn synthetic_resolution_receipt(turn: &Turn) -> TurnReceipt {
-    let turn_hash = turn.hash();
-    TurnReceipt {
-        turn_hash,
-        forest_hash: turn.call_forest.compute_hash(),
-        pre_state_hash: [0u8; 32],
-        post_state_hash: turn_hash, // content-addressed to the resolved hole
-        timestamp: 0i64,
-        effects_hash: [0u8; 32],
-        computrons_used: 0,
-        action_count: turn.call_forest.roots.len(),
-        previous_receipt_hash: None,
-        agent: turn.agent,
-        federation_id: [0u8; 32],
-        routing_directives: vec![],
-        introduction_exports: vec![],
-        derivation_records: vec![],
-        emitted_events: vec![],
-        executor_signature: None,
-        finality: Default::default(),
-        was_encrypted: false,
-        was_burn: false,
-        consumed_capabilities: vec![],
+    /// Complete a released wake with its real finalized receipt. A receipt for
+    /// any other turn is ignored and leaves the wake retained.
+    pub fn finalize_wake(&mut self, receipt: TurnReceipt) -> Vec<ResolutionEvent> {
+        self.registry
+            .resolve(receipt.turn_hash, ResolutionOutcome::Resolved(receipt))
     }
 }
 
@@ -410,17 +411,42 @@ mod tests {
         )
     }
 
-    // ── THE POSITIVE: a genuine notify → react resolves once and is recorded ──
+    fn finalized_receipt(turn: &Turn) -> TurnReceipt {
+        TurnReceipt {
+            turn_hash: turn.hash(),
+            forest_hash: turn.call_forest.compute_hash(),
+            pre_state_hash: [0x10; 32],
+            post_state_hash: [0x20; 32],
+            timestamp: 42,
+            effects_hash: [0x30; 32],
+            computrons_used: 7,
+            action_count: turn.call_forest.roots.len(),
+            previous_receipt_hash: None,
+            agent: turn.agent,
+            federation_id: [0x40; 32],
+            routing_directives: vec![],
+            introduction_exports: vec![],
+            derivation_records: vec![],
+            emitted_events: vec![],
+            executor_signature: None,
+            finality: Default::default(),
+            was_encrypted: false,
+            was_burn: false,
+            consumed_capabilities: vec![],
+        }
+    }
+
+    // ── THE POSITIVE: notify → react releases → real receipt resolves ──
 
     #[test]
-    fn notify_then_react_resolves_once() {
+    fn notify_then_react_retains_until_real_receipt() {
         let mut coord = ReactiveCoordinator::new();
         let (condition, proof) = preimage_wake();
 
         // A notifies B: deposit a promise-hole holding B's wake turn.
         let wake = wake_turn(0xB0, 0);
         let pending_id = coord.notify(
-            wake,
+            wake.clone(),
             // The registry's resolution-condition mirrors the proof gate; the
             // ProofCondition is what the react actually discharges.
             ResolutionCondition::AwaitCondition(condition.clone()),
@@ -435,25 +461,43 @@ mod tests {
         // B reacts: discharge the hole with the genuine preimage proof.
         let outcome = coord
             .react(pending_id, &condition, &proof, /* height */ 50)
-            .expect("a genuine react must resolve");
+            .expect("a genuine react must release the wake");
 
         assert_eq!(outcome.pending_id, pending_id);
         assert!(
             matches!(
                 outcome.events.first(),
-                Some(ResolutionEvent::Resolved { turn_hash, .. }) if *turn_hash == pending_id
+                Some(ResolutionEvent::ReadyToExecute { turn_hash, turn })
+                    if *turn_hash == pending_id && turn.hash() == pending_id
             ),
-            "the resolution is RECORDED as a Resolved event for the hole, got {:?}",
+            "condition discharge must emit ReadyToExecute, never synthetic Resolved: {:?}",
             outcome.events
         );
+        assert!(
+            !outcome
+                .events
+                .iter()
+                .any(|event| matches!(event, ResolutionEvent::Resolved { .. })),
+            "React cannot invent a terminal receipt"
+        );
 
-        // The hole is consumed and the proof is now spent (the nullifier grew).
-        assert_eq!(coord.pending_count(), 0, "the hole is consumed");
-        assert!(!coord.is_live(&pending_id), "the hole is no longer live");
+        // Release is one-shot, but the exact wake remains durably registered.
+        assert_eq!(coord.pending_count(), 1, "released wake remains retained");
+        assert!(coord.is_live(&pending_id), "the exact wake remains live");
+        assert!(coord.registry().is_released(&pending_id));
         assert!(
             coord.proof_spent(&proof),
             "the proof is now in the nullifier"
         );
+
+        // Only the real finalized receipt removes the wake and emits Resolved.
+        let events = coord.finalize_wake(finalized_receipt(&wake));
+        assert!(matches!(
+            events.as_slice(),
+            [ResolutionEvent::Resolved { turn_hash, receipt }]
+                if *turn_hash == pending_id && receipt.turn_hash == pending_id
+        ));
+        assert_eq!(coord.pending_count(), 0);
     }
 
     // ── THE FORGE-DETECTOR: a SECOND react on the same hole is REJECTED ──────
@@ -475,10 +519,8 @@ mod tests {
         let first = coord.react(pending_id, &condition, &proof, 50);
         assert!(first.is_ok(), "the first react resolves: {first:?}");
 
-        // SECOND react on the SAME hole: REFUSED. The hole was consumed (removed
-        // from the registry) on the first react — TOOTH 1, the
-        // promise-hole-as-nullifier one-shot refusal. This is genuine: the entry
-        // is gone, not an unconditional Err.
+        // SECOND react on the SAME hole: REFUSED by the durable release phase.
+        // The exact wake remains retained for its real finalized receipt.
         let second = coord.react(pending_id, &condition, &proof, 50);
         assert_eq!(
             second.unwrap_err(),
@@ -486,9 +528,9 @@ mod tests {
             "react-twice on the same hole MUST be rejected (one-shot linearity)"
         );
 
-        // And the registry confirms: no live hole, exactly the one spend recorded.
-        assert_eq!(coord.pending_count(), 0);
-        assert!(!coord.is_live(&pending_id));
+        assert_eq!(coord.pending_count(), 1);
+        assert!(coord.is_live(&pending_id));
+        assert!(coord.registry().is_released(&pending_id));
     }
 
     // ── The second tooth is ALSO genuine: a replayed PROOF (even on a fresh
@@ -564,7 +606,8 @@ mod tests {
         // did not poison the nullifier — only successful spends are recorded).
         let (_c, good) = preimage_wake();
         assert!(coord.react(id, &condition, &good, 50).is_ok());
-        assert_eq!(coord.pending_count(), 0);
+        assert_eq!(coord.pending_count(), 1);
+        assert!(coord.registry().is_released(&id));
     }
 
     // ── An expired hole refuses (the temporal tooth — past the timeout height). ──
