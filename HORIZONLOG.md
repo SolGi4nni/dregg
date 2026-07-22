@@ -11122,8 +11122,15 @@ reduction. Odd NTT/INTT semantics, key-certificate functionality, spectral
 composition, the coefficient-opening bridge, production-root checks, and an
 executable q0/q1 coefficient family with mutation refusal are green. Butterfly
 AIR, witness/permutation bus, terminal quotient/canonicality, recursive key-cert
-join, production Fourier-refinement proof, and WGPU scheduled-transform parity
-remain production obligations.
+join, and production Fourier-refinement proof remain production obligations.
+The scheduled transform itself is no longer one of them (`c0595baa7`): standalone
+odd forward/inverse WGPU transforms now pin the exact Lean roots for q0/q1/q2,
+stream the six-residue butterfly records used by the family, and exhaustively
+decode/recompose all **1,048,576 rows** of the `2^20 × 48` schedule. The strict
+hbox RX 6750 XT/Vulkan gate is **1/1 in 0.163s**, the focused NTT suite is
+**7/7**, and the existing `fhe-math` multiplication regression remains green.
+This is exact hardware witness generation and schedule parity, not yet a proof
+that those 48 columns satisfy a production butterfly AIR.
 
 The binary sacrifice's concrete lying-response seam has advanced
 (`a06ccacd3`). Two independent GF(2^128) authentication lanes now protect bit-
@@ -11160,3 +11167,18 @@ gate is **1/1 in 19.464s**. Remaining: a live caller and durable
 `authorization_id` recovery, roster-aware finality classification, recipient-
 output semantics beyond one-shot redemption, and distributed atomicity across
 the spend/Bazaar/game commits.
+
+The exact nullifier-successor design has also moved past the sentinel-domain
+hole (`3e313161e`). Lean now specifies tagged `BOT | REAL raw256 | TOP` linked
+leaves, so both `00..00` and `ff..ff` remain ordinary spendable nullifiers while
+the predecessor/successor bracket, sorted insertion, duplicate refusal,
+append-order physical update, two depth-16 arity-4 root rewrites, and full
+33-bit terminal count remain exact. The FNSP-v3 descriptor plan is **2,442
+columns × 16 rows with 76 public inputs**, carrying 128 state16 and 180 range16
+sites per row; its leaf preimage is 39 field inputs and still consumes eleven
+state16 steps. The targeted modules and full **9,918-job** `lake build Dregg2`
+are green. This is the authoritative circuit/runtime cutover plan, not a newly
+emitted proof artifact: the signed committed `FNS3(root8,count4)` prior/post
+state must still be carried through the rotated receipt, followed by independent
+witness/refinement differential, byte-pinned artifact generation, Rust consumer,
+and VK rotation.
