@@ -364,10 +364,6 @@ pub struct NodeStateInner {
     /// Pending conditional turns awaiting proof resolution.
     /// Garbage-collected on access when timeout_height is exceeded.
     pub pending_conditionals: Vec<dregg_turn::ConditionalTurn>,
-    /// Registry of pending turns with distributed promise semantics.
-    /// Tracks turns awaiting async resolution (cross-federation receipts, height
-    /// conditions, etc.) and propagates broken promises to dependents.
-    pub pending_turns: dregg_turn::PendingTurnRegistry,
     /// Set of proof hashes that have already been used (nullifiers).
     /// Prevents the same proof from satisfying multiple conditional turns.
     pub used_proof_hashes: HashSet<[u8; 32]>,
@@ -1211,7 +1207,6 @@ impl NodeState {
                 consensus_queue: Vec::new(),
                 faucet_reserved_nonce: None,
                 pending_conditionals: Vec::new(),
-                pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
                 known_federation_ml_dsa_keys: Vec::new(),
@@ -1413,7 +1408,6 @@ impl NodeState {
                 consensus_queue: Vec::new(),
                 faucet_reserved_nonce: None,
                 pending_conditionals: Vec::new(),
-                pending_turns: dregg_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
                 known_federation_ml_dsa_keys: Vec::new(),

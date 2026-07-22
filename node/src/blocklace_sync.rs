@@ -72,6 +72,13 @@ static FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]
 static REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]>> =
     std::sync::Mutex::new(None);
 
+/// Test-only failure at the deterministic-rejection write. A rejection is a
+/// terminal outcome only after its authenticated row is durable; before that,
+/// the finalized block identity must remain retryable and unacknowledged.
+#[cfg(test)]
+static FAIL_FINALIZED_REJECTION_WRITE_FOR_BLOCK: std::sync::Mutex<Option<[u8; 32]>> =
+    std::sync::Mutex::new(None);
+
 /// A strictly-monotonic per-process counter stamped into each `Frontier` message
 /// so repeated frontiers are byte-unique and never collapse under the gossip
 /// layer's hash-dedup (see `BlocklaceGossipMessage::Frontier`).
@@ -2178,27 +2185,11 @@ pub async fn run_blocklace_sync(
                         .collect();
                 let persisted_ids = s.store.load_executed_block_ids().unwrap_or_default();
                 let persisted_count = persisted_ids.len();
-                let mut executed_ids: Vec<BlockId> = Vec::new();
-                let mut seen: std::collections::HashSet<BlockId> = std::collections::HashSet::new();
-                for id in persisted_ids {
-                    let keep = match restored_lace.get(&id).map(|b| &b.payload) {
-                        Some(Payload::Turn(_)) | Some(Payload::TurnBundle(_)) => {
-                            durable_turn_ids.contains(&id)
-                        }
-                        Some(_) => true,
-                        // Not in the restored lace: tau can never order it, so it
-                        // can never be served; carrying it would only grow the set.
-                        None => false,
-                    };
-                    if keep && seen.insert(id) {
-                        executed_ids.push(id);
-                    }
-                }
-                for id in &durable_turn_ids {
-                    if seen.insert(*id) {
-                        executed_ids.push(*id);
-                    }
-                }
+                let executed_ids = reconcile_restored_execution_ids(
+                    &restored_lace,
+                    persisted_ids,
+                    &durable_turn_ids,
+                );
                 info!(
                     blocks = block_count,
                     executed_restored = executed_ids.len(),
@@ -4238,7 +4229,19 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                         }
                         FinalizedExecutionOutcome::FatalIntegrity { error, .. } => {
                             error!(block_id = %block_id, error, "finalized execution hit a fatal integrity failure; stopping tau prefix without acknowledgement");
-                            break;
+                            // Earlier terminal identities in this batch are
+                            // already durable authority. Persist their cursor
+                            // projection before permanently stopping this task;
+                            // otherwise an inert/membership prefix could be
+                            // needlessly replayed after the operator restarts.
+                            if !acknowledged_blocks.is_empty() {
+                                persist_blocklace_state(&state, &handle).await;
+                            }
+                            error!(
+                                block_id = %block_id,
+                                "finality executor permanently stopped after fatal integrity failure"
+                            );
+                            return;
                         }
                     }
                 } else {
@@ -4661,6 +4664,41 @@ fn finalized_turn_bytes(payload: &Payload) -> Option<&[u8]> {
     }
 }
 
+/// Reconcile the best-effort executed-id projection with terminal turn
+/// authority reconstructed from the commit/rejection logs.
+///
+/// All three turn carriers require a durable terminal row. In particular a
+/// persisted `ConsensusTimedTurnV1` id is not authority by itself: it may have
+/// been flushed just before a crash while its application transaction failed.
+fn reconcile_restored_execution_ids(
+    restored_lace: &Blocklace,
+    persisted_ids: Vec<BlockId>,
+    durable_turn_ids: &std::collections::HashSet<BlockId>,
+) -> Vec<BlockId> {
+    let mut executed_ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for id in persisted_ids {
+        let keep = match restored_lace.get(&id).map(|block| &block.payload) {
+            Some(Payload::Turn(_))
+            | Some(Payload::TurnBundle(_))
+            | Some(Payload::ConsensusTimedTurnV1(_)) => durable_turn_ids.contains(&id),
+            Some(_) => true,
+            // Not in the restored lace: tau can never order it, so it can never
+            // be served; carrying it would only grow the set.
+            None => false,
+        };
+        if keep && seen.insert(id) {
+            executed_ids.push(id);
+        }
+    }
+    for id in durable_turn_ids {
+        if seen.insert(*id) {
+            executed_ids.push(*id);
+        }
+    }
+    executed_ids
+}
+
 fn persist_finalized_payload_rejection(
     s: &crate::state::NodeStateInner,
     block_id: BlockId,
@@ -4719,6 +4757,16 @@ fn persist_finalized_payload_rejection(
                 "failed to read finalized-payload rejection record before idempotent write"
             );
             return retryable(format!("failed to read durable rejection row: {error}"));
+        }
+    }
+    #[cfg(test)]
+    {
+        let mut target = FAIL_FINALIZED_REJECTION_WRITE_FOR_BLOCK
+            .lock()
+            .expect("finalized rejection failure hook mutex");
+        if target.as_ref() == Some(&block_id.0) {
+            target.take();
+            return retryable("injected finalized rejection-store failure".into());
         }
     }
     match s.store.set_config(&key, &encoded) {
@@ -4992,9 +5040,9 @@ async fn execute_live_exact_fnsp_v3(
         .revalidate_actor_locked(&locked)
         .map_err(|error| format!("exact FNSP-v3 snapshot became stale: {error}"))?;
 
-    // Historical-root membership is part of the accepted spend, but it is intentionally outside
-    // the HidingFRI statement verifier.  Authenticate it before lazy activation so a valid proof
-    // naming an absent history row cannot choose the federation flag day and then fail later.
+    // Retain the live signer material for the prepared exact-finalization authority below.  The
+    // prepared authority is also the sole historical-root admission boundary: it performs one
+    // full history audit on first activation, then authenticates active-epoch spends in O(1).
     let local_pk = locked.cclerk.public_key();
     let signing_key_bytes = locked.cclerk.gossip_signing_key().to_bytes();
     if signer.public_key() != local_pk {
@@ -5002,31 +5050,6 @@ async fn execute_live_exact_fnsp_v3(
     }
     let (local_ml_dsa_pk, local_ml_dsa_signing_key) =
         dregg_federation::frost::MlDsaSigningKey::from_seed(&signing_key_bytes);
-    let accepted_binding = executed.accepted_binding();
-    let historical_root =
-        dregg_persist::CanonicalFaithfulRoot::from_bytes(accepted_binding.historical_note_root())
-            .map_err(|error| error.to_string())?;
-    let history_expectation = locked
-        .store
-        .faithful_note_root_expectation()
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "faithful note-root history is uninitialized".to_string())?;
-    let authenticated_history = locked
-        .store
-        .load_faithful_note_root_history_hybrid(
-            std::slice::from_ref(&local_pk),
-            std::slice::from_ref(&local_ml_dsa_pk),
-            1,
-            history_expectation,
-        )
-        .map_err(|error| error.to_string())?;
-    if !faithful_history_contains_pair(
-        &authenticated_history,
-        accepted_binding.historical_root_height(),
-        historical_root,
-    ) {
-        return Err("exact FNSP-v3 historical note root is not authenticated".into());
-    }
 
     // This is the first point allowed to install a lazy epoch: the authenticated actor/checkpoint,
     // exact proof, real producer, and every captured cursor have all succeeded.  The predecessor
@@ -5247,9 +5270,17 @@ async fn execute_live_exact_fnsp_v3(
         );
         return Ok(outcome.ordinal);
     }
+    // Clone before taking disjoint mutable field borrows.  Fresh installation is deliberately
+    // coupled to typed promise-resolution publication against the same durable store.
+    let publication_store = locked.store.clone();
     let locked_inner = &mut *locked;
     durable
-        .install_fresh_post_execution(&mut locked_inner.ledger, &mut locked_inner.cclerk)
+        .install_fresh_post_execution(
+            &mut locked_inner.ledger,
+            &mut locked_inner.cclerk,
+            state,
+            &publication_store,
+        )
         .expect("fresh exact receipt projection was fenced against durable receipt coordinates");
     crate::metrics::inc_turns_executed("committed");
     crate::metrics::set_ledger_cell_count(locked.ledger.len() as f64);
@@ -5958,6 +5989,27 @@ async fn execute_finalized_turn(
     // on the same authoritative state producer.
     let lean_producer_enabled = s.lean_producer_enabled;
 
+    // The short-lived executor owns consensus state beyond the ledger. Capture
+    // every sparse-snapshot/CAS predecessor before the isolated execution so
+    // the store can compare the complete successor against the exact durable
+    // image. A malformed live predecessor is an integrity failure, not a state
+    // that may be silently reset by constructing the next executor.
+    let executor_consensus_predecessors =
+        match crate::executor_side_state_persistence::capture_executor_consensus_predecessors(
+            &executor,
+        ) {
+            Ok(predecessors) => predecessors,
+            Err(error) => {
+                error!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %error,
+                    "could not capture executor consensus-state predecessors"
+                );
+                return FinalizedExecutionOutcome::FatalIntegrity { block_id, error };
+            }
+        };
+
     // ─── A1 FIX — the confirmed n=5 finalization-stall root cause ─────────────
     // The EXECUTION FFI (`dregg_exec_full_forest_auth`, reached through
     // `execute_via_producer`) used to run INLINE on the tokio async worker while
@@ -6005,6 +6057,23 @@ async fn execute_finalized_turn(
             &mut exec_ledger,
             lean_producer_enabled,
         );
+
+        // Resolve this real finalized receipt on the retained executor, which
+        // is the one consensus owner of pending turns. The event cascade stays
+        // candidate-local until the carrying redb transaction returns Fresh.
+        // Rejected/expired/pending candidates resolve nothing.
+        let resolution_events = match &result {
+            dregg_turn::TurnResult::Committed { receipt, .. } => {
+                if receipt.turn_hash != computed_hash {
+                    return Err(
+                        "executor receipt turn hash differs from the finalized SignedTurn"
+                            .to_string(),
+                    );
+                }
+                executor.resolve_pending_receipt(receipt.turn_hash, receipt.clone())
+            }
+            _ => Vec::new(),
+        };
         // NULLIFIER-ROOT (VK-epoch ghost mirror): capture the executor's LIVE nullifier-accumulator
         // frontier AFTER execution — the native `CanonicalHeapTree8` root over its (nf, value)
         // `note_nullifiers` map. Captured HERE (the executor is consumed by this blocking task) and
@@ -6016,27 +6085,41 @@ async fn execute_finalized_turn(
         // (commitment, value) `note_commitments` map — so the rotated producer binds the committed
         // `commitments_root` (limbs [27,74..80]) to the node's REAL created-note frontier.
         let live_commitments_root = executor.note_commitments.lock().unwrap().root8();
-        // Keep the consensus-side rate frontier beside the candidate ledger.
-        // The persist owner welds this snapshot into the same finalized record;
-        // returning it from the consumed executor here avoids reconstructing or
-        // silently resetting the limiter after the blocking task exits.
-        let post_rate_limit_snapshot = executor.rate_limit_state_snapshot();
-        (
+        // Capture the COMPLETE post-execution executor image only after receipt
+        // resolution. This includes accumulators, sparse rate/factory images,
+        // the canonical pending registry, and the dedicated React replay set.
+        let executor_state =
+            crate::executor_side_state_persistence::capture_finalized_executor_consensus_state(
+                &executor,
+                &executor_consensus_predecessors,
+            )?;
+        Ok::<_, String>((
             result,
             exec_ledger,
             live_nullifier_root,
             live_commitments_root,
-            post_rate_limit_snapshot,
-        )
+            executor_state,
+            resolution_events,
+        ))
     });
     let (
         exec_result,
         exec_ledger,
         live_nullifier_root,
         live_commitments_root,
-        _post_rate_limit_snapshot,
+        mut executor_state,
+        resolution_events,
     ) = match exec_join.await {
-        Ok(v) => v,
+        Ok(Ok(v)) => v,
+        Ok(Err(error)) => {
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "finalized-turn executor consensus-state capture failed closed"
+            );
+            return FinalizedExecutionOutcome::FatalIntegrity { block_id, error };
+        }
         Err(e) => {
             error!(
                 block_id = %block_id,
@@ -7028,7 +7111,27 @@ async fn execute_finalized_turn(
                     touched_cells,
                     removed,
                 };
-                let expected_ordinal = s.store.commit_cursor().unwrap_or(0);
+                // This is the fail-closed cursor captured before execution and
+                // revalidated byte-for-byte after reacquiring the state lock.
+                // Reading it again here would add a masking fallback/race seam.
+                let expected_ordinal = durable_commit_cursor;
+                executor_state.promise_resolutions =
+                    match crate::promise_resolutions::resolution_candidates(
+                        expected_ordinal,
+                        receipt.receipt_hash(),
+                        &resolution_events,
+                    ) {
+                        Ok(candidates) => candidates,
+                        Err(error) => {
+                            error!(
+                                block_id = %block_id,
+                                turn_hash = %turn_hash_hex,
+                                error = %error,
+                                "could not canonicalize promise-resolution outbox before commit"
+                            );
+                            return FinalizedExecutionOutcome::FatalIntegrity { block_id, error };
+                        }
+                    };
                 // Weld the NoteCreate commitments into this SAME atomic commit
                 // transaction (bug #58): the note leaves and the turn record land
                 // together-or-not-at-all in one fsync boundary, so a crash-retry
@@ -7045,23 +7148,26 @@ async fn execute_finalized_turn(
                 let commit_durable = || {
                     if receipt_already_in_log {
                         s.store
-                            .commit_finalized_turn_with_faithful_root_existing_receipt(
+                            .commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt(
                                 expected_ordinal,
                                 &commit_record,
                                 &note_commitments,
                                 receipt_log_index,
                                 &encoded_receipt,
                                 faithful_weld,
+                                &executor_state,
                             )
                     } else {
-                        s.store.commit_finalized_turn_with_faithful_root(
-                            expected_ordinal,
-                            &commit_record,
-                            &note_commitments,
-                            receipt_log_index,
-                            &encoded_receipt,
-                            faithful_weld,
-                        )
+                        s.store
+                            .commit_finalized_turn_with_faithful_root_and_executor_state(
+                                expected_ordinal,
+                                &commit_record,
+                                &note_commitments,
+                                receipt_log_index,
+                                &encoded_receipt,
+                                faithful_weld,
+                                &executor_state,
+                            )
                     }
                 };
                 #[cfg(test)]
@@ -7232,14 +7338,28 @@ async fn execute_finalized_turn(
                 crate::state::ActivityProofStatus::ProofPending,
             );
 
-            // Transitional second owner: now safely post-durable, but this
-            // NodeState registry must be removed when the executor-registry
-            // snapshot/CAS weld lands. The consumed executor is the consensus
-            // owner; this mirror exists only for the legacy node surface.
-            s.pending_turns.resolve(
-                computed_hash,
-                dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
+            // Publish only the exact cascade that shared the source commit's
+            // transaction. ReadyToExecute is intentionally notification-only:
+            // it contains an unsigned dependent turn and is never submitted to
+            // the signed consensus queue.
+            crate::executor_side_state_persistence::trace_durable_resolution_events(
+                &resolution_events,
             );
+            if let Err(error) = crate::promise_resolutions::publish_durable_resolution_events(
+                state,
+                &s.store,
+                durable_ordinal,
+                receipt.receipt_hash(),
+                &resolution_events,
+            ) {
+                error!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    durable_ordinal,
+                    error = %error,
+                    "durable promise-resolution outbox could not be published"
+                );
+            }
 
             let invalid_bundle_evidence = if let Some(bundle) = artifacts {
                 materialize_blocklace_artifacts(&mut s, block_id, &receipt, bundle)
@@ -7479,6 +7599,43 @@ mod tests {
             was_burn: false,
             consumed_capabilities: vec![],
         }
+    }
+
+    #[test]
+    fn exact_live_path_never_replays_full_faithful_history() {
+        let blocklace_source = include_str!("blocklace_sync.rs");
+        let exact_live = blocklace_source
+            .split_once("async fn execute_live_exact_fnsp_v3(")
+            .expect("exact live executor remains present")
+            .1
+            .split_once("async fn execute_finalized_turn(")
+            .expect("exact live executor remains a bounded function")
+            .0;
+        assert!(
+            !exact_live.contains("load_faithful_note_root_history_hybrid"),
+            "active exact spends must consume prepared O(1) history authority"
+        );
+
+        let finalization_source = include_str!("exact_fnsp_v3_finalization.rs");
+        let history_validator = finalization_source
+            .split_once("fn validate_authenticated_history(")
+            .expect("history validator remains present")
+            .1
+            .split_once("fn validate_faithful_coordinates(")
+            .expect("history validator remains a bounded function")
+            .0;
+        assert_eq!(
+            history_validator
+                .matches("load_faithful_note_root_history_hybrid")
+                .count(),
+            1,
+            "first activation retains exactly one full-history audit"
+        );
+        assert!(
+            history_validator.contains("exact_fnsp_v3_live_authority")
+                && history_validator.contains(".is_none()"),
+            "the full-history audit must remain guarded by absent live authority"
+        );
     }
 
     #[test]
@@ -8246,6 +8403,89 @@ mod tests {
             .expect("ordering block exists");
 
         assert_eq!(ordering_block.payload, bundle.signed_turn);
+    }
+
+    /// A best-effort executed-id flush is not terminal authority for any turn
+    /// carrier. This is the timed-turn crash image: the id reached the cursor
+    /// projection, but neither a commit row nor authenticated rejection did.
+    /// Restart must re-serve it; conversely a durable terminal row restores it
+    /// even when the cursor flush itself was lost.
+    #[test]
+    fn timed_turn_restart_requires_durable_terminal_authority() {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[0x73; 32]);
+        let mut lace = Blocklace::new_simple(key);
+        let anchor = 1_700_000_000;
+        lace.enable_consensus_time_v1(dregg_blocklace::finality::ConsensusTimePolicyV1::new(
+            anchor,
+        ))
+        .expect("install consensus-time policy");
+        let block = lace
+            .add_consensus_timed_turn_v1(
+                dregg_blocklace::finality::ConsensusTimedTurnPayloadV1::new(
+                    anchor,
+                    b"signed-turn".to_vec(),
+                ),
+            )
+            .expect("add timed turn");
+        let id = block.id();
+
+        let stale =
+            reconcile_restored_execution_ids(&lace, vec![id], &std::collections::HashSet::new());
+        assert!(
+            stale.is_empty(),
+            "persisted timed-turn id without commit/rejection authority must be retried"
+        );
+
+        let durable = std::collections::HashSet::from([id]);
+        let restored = reconcile_restored_execution_ids(&lace, Vec::new(), &durable);
+        assert_eq!(
+            restored,
+            vec![id],
+            "durable terminal authority restores an id across a lost cursor flush"
+        );
+    }
+
+    /// A deterministic rejection is terminal only if its authenticated row was
+    /// actually written. A store failure must remain retryable, leave no row,
+    /// and therefore cannot authorize finality-cursor acknowledgement.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rejection_store_failure_remains_retryable_and_unrecorded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let block_id = BlockId([0x74; 32]);
+        *FAIL_FINALIZED_REJECTION_WRITE_FOR_BLOCK
+            .lock()
+            .expect("rejection failure hook mutex") = Some(block_id.0);
+        let handle = test_handle_with_committee([0x75; 32], vec![[0x75; 32]]).await;
+
+        let malformed_payload = b"not-a-canonical-signed-turn";
+        let outcome =
+            execute_finalized_turn(&state, &handle, block_id, malformed_payload, None, None, 0)
+                .await;
+        assert!(matches!(
+            outcome,
+            FinalizedExecutionOutcome::RetryableOperational { block_id: id, .. } if id == block_id
+        ));
+        assert!(
+            FAIL_FINALIZED_REJECTION_WRITE_FOR_BLOCK
+                .lock()
+                .expect("rejection failure hook mutex")
+                .is_none(),
+            "one-shot fault must fire at the real rejection write"
+        );
+        let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &block_id.0,
+        );
+        assert!(
+            state
+                .read()
+                .await
+                .store
+                .get_config(&key)
+                .expect("read rejection row")
+                .is_none(),
+            "failed rejection write must not leave terminal authority"
+        );
     }
 
     // ── Distributed witness path: gossip → materialize → aggregate + verify ──
@@ -9329,7 +9569,6 @@ mod tests {
         };
         let signed = signed_transfer_turn(&sender_cclerk, sender, dest, 4_200, 0, &federation_id);
         let payload = postcard::to_stdvec(&signed).expect("encode signed turn");
-        let receipt_hash = signed.turn.hash();
         let bundle = TurnArtifactBundle {
             signed_turn: payload.clone(),
             receipt: Some(vec![0xFF]),
@@ -9338,21 +9577,18 @@ mod tests {
 
         let mut events = state.subscribe_events();
         let before = {
-            let mut s = state.write().await;
-            let mut wake = signed.turn.clone();
-            wake.memo = Some("must remain pending across failed commit".into());
-            s.pending_turns.submit_pending(
-                wake,
-                dregg_turn::ResolutionCondition::AwaitReceipt {
-                    turn_hash: receipt_hash,
-                    federation_id: None,
-                },
-                u64::MAX,
-            );
+            let s = state.read().await;
+            let pending_len = dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+                &s.store
+                    .load_latest_reactive_registry_snapshot_bytes()
+                    .expect("read durable pending registry"),
+            )
+            .expect("decode durable pending registry")
+            .len();
             (
                 canonical_ledger_root(&s.ledger),
                 s.cclerk.receipt_chain_length(),
-                s.pending_turns.len(),
+                pending_len,
                 s.event_log.len(),
                 s.witnessed_receipts.len(),
                 s.store.commit_cursor().expect("commit cursor"),
@@ -9387,7 +9623,16 @@ mod tests {
         let s = state.read().await;
         assert_eq!(canonical_ledger_root(&s.ledger), before.0);
         assert_eq!(s.cclerk.receipt_chain_length(), before.1);
-        assert_eq!(s.pending_turns.len(), before.2);
+        assert_eq!(
+            dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+                &s.store
+                    .load_latest_reactive_registry_snapshot_bytes()
+                    .expect("read durable pending registry"),
+            )
+            .expect("decode durable pending registry")
+            .len(),
+            before.2
+        );
         assert_eq!(s.event_log.len(), before.3);
         assert_eq!(s.witnessed_receipts.len(), before.4);
         assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
@@ -9434,7 +9679,16 @@ mod tests {
             let s = state.read().await;
             assert_eq!(canonical_ledger_root(&s.ledger), before.0);
             assert_eq!(s.cclerk.receipt_chain_length(), before.1);
-            assert_eq!(s.pending_turns.len(), before.2);
+            assert_eq!(
+                dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+                    &s.store
+                        .load_latest_reactive_registry_snapshot_bytes()
+                        .expect("read durable pending registry"),
+                )
+                .expect("decode durable pending registry")
+                .len(),
+                before.2
+            );
             assert_eq!(s.event_log.len(), before.3);
             assert_eq!(s.witnessed_receipts.len(), before.4);
             assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
@@ -9472,7 +9726,16 @@ mod tests {
         let s = state.read().await;
         assert_eq!(canonical_ledger_root(&s.ledger), before.0);
         assert_eq!(s.cclerk.receipt_chain_length(), before.1);
-        assert_eq!(s.pending_turns.len(), before.2);
+        assert_eq!(
+            dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+                &s.store
+                    .load_latest_reactive_registry_snapshot_bytes()
+                    .expect("read durable pending registry"),
+            )
+            .expect("decode durable pending registry")
+            .len(),
+            before.2
+        );
         assert_eq!(s.event_log.len(), before.3);
         assert_eq!(s.witnessed_receipts.len(), before.4);
         assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.5);
