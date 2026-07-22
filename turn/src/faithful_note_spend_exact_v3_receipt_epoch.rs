@@ -19,22 +19,25 @@
 //! first exact frame hash -> later exact frame hash -> ...
 //! ```
 //!
-//! An activation binds both sides of the flag day: the terminal legacy receipt
-//! and legacy full-turn outer commitment, plus the independently reconstructed
-//! exact accumulator state.  The values are deliberately adjacent but are never
-//! asserted equal.
+//! An activation binds the global cutover marker (dense receipt-log cursor and
+//! optional terminal entry), federation, executor policy key, and independently
+//! reconstructed exact accumulator state.  It is intentionally not scoped to
+//! the actor that happened to author the terminal receipt: FNS3 is a
+//! federation-wide spent-note accumulator.
 //!
 //! Each exact frame then binds two distinct receipts:
 //!
 //! * the ordinary inner [`TurnReceipt`] continues to carry the complete real
-//!   actor transition (nonce, fees, all effects) and keeps its existing raw
-//!   receipt-hash/state-continuity chain; and
+//!   actor transition (nonce, fees, all effects), authenticated state snapshot,
+//!   and existing **per-actor** receipt-hash causal chain; and
 //! * the exact subreceipt carries proof-local outer BEFORE/AFTER anchors plus
 //!   FNS3 before/after.  Those proof-local outer anchors preserve the descriptor's
 //!   stable frame and therefore are **not** equal to the real full-turn receipt's
 //!   post-state when execution also changes nonce/fees.
 //!
-//! The outer versioned frame has its own activation/frame-hash chain.  A future
+//! The outer versioned frame has one global activation/frame-hash chain.  Its
+//! continuation binds only the prior exact frame and exact state; ordinary
+//! receipts and exact turns by other actors may interleave.  A future
 //! executor/quorum signature over the frame-domain message cryptographically
 //! joins the exact subreceipt to the real receipt without conflating their state
 //! commitments.
@@ -190,16 +193,17 @@ impl FullTurnReceiptStateCommit8 {
 /// Explicit flag-day record between the terminal legacy receipt and exact v3.
 ///
 /// Construction is structural, not authority: the caller must separately
-/// authenticate/finalize `legacy_tip` and reconstruct `exact_initial` from the
-/// complete durable append prefix.  The hash commits both facts so neither can
-/// be replaced after the epoch is authorized.
+/// authenticate the optional cutover tail at `receipt_cutover_next_index - 1`
+/// (including its finality/federation), prove the dense receipt-log cursor, and
+/// reconstruct `exact_initial` from the complete durable append prefix.  The
+/// hash commits those coordinates so none can be replaced after authorization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExactFnspV3ReceiptEpochV1 {
     epoch: ExactFnspV3ReceiptEpoch,
     federation_id: [u8; 32],
-    agent: dregg_cell::CellId,
-    legacy_tip_receipt_hash: [u8; 32],
-    legacy_tip_outer_commit: FullTurnReceiptStateCommit8,
+    executor_public_key: [u8; 32],
+    receipt_cutover_next_index: u64,
+    receipt_cutover_tail_hash: Option<[u8; 32]>,
     exact_initial: ExactFnspV3StatePoint,
     activation_hash: [u8; 32],
 }
@@ -207,28 +211,26 @@ pub struct ExactFnspV3ReceiptEpochV1 {
 impl ExactFnspV3ReceiptEpochV1 {
     /// Prepare an explicit legacy-to-exact flag day.
     ///
-    /// A tentative legacy receipt cannot become an epoch boundary.  Signature,
-    /// quorum, store-prefix equality, and finality-proof verification remain
-    /// caller obligations; this module deliberately does not accept raw keys or
-    /// claim to perform them.
+    /// Signature, quorum, dense-log equality, and finality verification remain
+    /// caller obligations; this structural module deliberately accepts only a
+    /// tail hash and does not claim to authenticate it.
     pub fn prepare(
         epoch: ExactFnspV3ReceiptEpoch,
-        legacy_tip: &TurnReceipt,
+        federation_id: [u8; 32],
+        executor_public_key: [u8; 32],
+        receipt_cutover_next_index: u64,
+        receipt_cutover_tail_hash: Option<[u8; 32]>,
         exact_initial: ExactFnspV3StatePoint,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
-        if legacy_tip.finality != Finality::Final {
-            return Err(ExactFnspV3ReceiptEpochError::LegacyTipNotFinal);
+        if (receipt_cutover_next_index == 0) != receipt_cutover_tail_hash.is_none() {
+            return Err(ExactFnspV3ReceiptEpochError::ReceiptCutoverCoordinateMismatch);
         }
-        let legacy_tip_outer_commit = FullTurnReceiptStateCommit8::from_bytes(
-            "legacy tip outer commitment",
-            legacy_tip.post_state_hash,
-        )?;
         let mut prepared = Self {
             epoch,
-            federation_id: legacy_tip.federation_id,
-            agent: legacy_tip.agent,
-            legacy_tip_receipt_hash: legacy_tip.receipt_hash(),
-            legacy_tip_outer_commit,
+            federation_id,
+            executor_public_key,
+            receipt_cutover_next_index,
+            receipt_cutover_tail_hash,
             exact_initial,
             activation_hash: [0; 32],
         };
@@ -244,16 +246,16 @@ impl ExactFnspV3ReceiptEpochV1 {
         self.federation_id
     }
 
-    pub const fn agent(&self) -> dregg_cell::CellId {
-        self.agent
+    pub const fn executor_public_key(&self) -> [u8; 32] {
+        self.executor_public_key
     }
 
-    pub const fn legacy_tip_receipt_hash(&self) -> [u8; 32] {
-        self.legacy_tip_receipt_hash
+    pub const fn receipt_cutover_next_index(&self) -> u64 {
+        self.receipt_cutover_next_index
     }
 
-    pub const fn legacy_tip_outer_commit(&self) -> FullTurnReceiptStateCommit8 {
-        self.legacy_tip_outer_commit
+    pub const fn receipt_cutover_tail_hash(&self) -> Option<[u8; 32]> {
+        self.receipt_cutover_tail_hash
     }
 
     pub const fn exact_initial(&self) -> ExactFnspV3StatePoint {
@@ -268,9 +270,15 @@ impl ExactFnspV3ReceiptEpochV1 {
         let mut hasher = blake3::Hasher::new_derive_key(ACTIVATION_HASH_DOMAIN);
         hasher.update(&self.epoch.get().to_le_bytes());
         hasher.update(&self.federation_id);
-        hasher.update(self.agent.as_bytes());
-        hasher.update(&self.legacy_tip_receipt_hash);
-        hasher.update(&self.legacy_tip_outer_commit.to_bytes());
+        hasher.update(&self.executor_public_key);
+        hasher.update(&self.receipt_cutover_next_index.to_le_bytes());
+        match self.receipt_cutover_tail_hash {
+            None => hasher.update(&[0]),
+            Some(hash) => {
+                hasher.update(&[1]);
+                hasher.update(&hash)
+            }
+        };
         hash_state_point(&mut hasher, self.exact_initial);
         *hasher.finalize().as_bytes()
     }
@@ -309,35 +317,28 @@ pub struct UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
     epoch: ExactFnspV3ReceiptEpoch,
     activation_hash: [u8; 32],
     frame_hash: [u8; 32],
-    full_receipt_hash: [u8; 32],
-    full_post_state_hash: [u8; 32],
+    receipt_log_index: u64,
     exact_after: ExactFnspV3StatePoint,
     federation_id: [u8; 32],
-    agent: dregg_cell::CellId,
 }
 
 impl UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
     /// Assemble structural coordinates.  This does not mint committed authority.
-    #[allow(clippy::too_many_arguments)]
     pub fn from_untrusted_coordinates(
         epoch: ExactFnspV3ReceiptEpoch,
         activation_hash: [u8; 32],
         frame_hash: [u8; 32],
-        full_receipt_hash: [u8; 32],
-        full_post_state_hash: [u8; 32],
+        receipt_log_index: u64,
         exact_after: ExactFnspV3StatePoint,
         federation_id: [u8; 32],
-        agent: dregg_cell::CellId,
     ) -> Self {
         Self {
             epoch,
             activation_hash,
             frame_hash,
-            full_receipt_hash,
-            full_post_state_hash,
+            receipt_log_index,
             exact_after,
             federation_id,
-            agent,
         }
     }
 
@@ -350,20 +351,14 @@ impl UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
     pub const fn frame_hash(self) -> [u8; 32] {
         self.frame_hash
     }
-    pub const fn full_receipt_hash(self) -> [u8; 32] {
-        self.full_receipt_hash
-    }
-    pub const fn full_post_state_hash(self) -> [u8; 32] {
-        self.full_post_state_hash
+    pub const fn receipt_log_index(self) -> u64 {
+        self.receipt_log_index
     }
     pub const fn exact_after(self) -> ExactFnspV3StatePoint {
         self.exact_after
     }
     pub const fn federation_id(self) -> [u8; 32] {
         self.federation_id
-    }
-    pub const fn agent(self) -> dregg_cell::CellId {
-        self.agent
     }
 }
 
@@ -375,7 +370,9 @@ struct ExactFnspV3ReceiptFrameCoreV1 {
     epoch: ExactFnspV3ReceiptEpoch,
     activation_hash: [u8; 32],
     predecessor: ExactFnspV3ReceiptLinkV1,
-    full_predecessor_receipt_hash: [u8; 32],
+    receipt_log_index: u64,
+    full_predecessor_receipt_index: Option<u64>,
+    full_predecessor_receipt_hash: Option<[u8; 32]>,
     receipt: TurnReceipt,
     before: ExactFnspV3StatePoint,
     after: ExactFnspV3StatePoint,
@@ -389,15 +386,15 @@ struct ExactFnspV3ReceiptFrameCoreV1 {
 impl ExactFnspV3ReceiptFrameCoreV1 {
     fn begin_with_binding(
         activation: &ExactFnspV3ReceiptEpochV1,
+        receipt_log_index: u64,
+        full_predecessor_receipt_index: Option<u64>,
         receipt: TurnReceipt,
         binding: ExactFrameBinding,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
-        validate_receipt_scope(
-            &receipt,
-            activation.federation_id,
-            activation.agent,
-            activation.legacy_tip_receipt_hash,
-        )?;
+        validate_receipt_scope(&receipt, activation.federation_id)?;
+        if receipt_log_index < activation.receipt_cutover_next_index {
+            return Err(ExactFnspV3ReceiptEpochError::ReceiptBeforeCutover);
+        }
         if binding.before != activation.exact_initial {
             return Err(ExactFnspV3ReceiptEpochError::CutoverExactStateMismatch);
         }
@@ -405,6 +402,8 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
             activation.epoch,
             activation.activation_hash,
             ExactFnspV3ReceiptLinkV1::EpochActivation(activation.activation_hash),
+            receipt_log_index,
+            full_predecessor_receipt_index,
             receipt,
             binding,
         )
@@ -412,25 +411,24 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
 
     fn extend_from_head_binding(
         previous: UntrustedExactFnspV3CommittedFrameHeadBindingV1,
+        receipt_log_index: u64,
+        full_predecessor_receipt_index: Option<u64>,
         receipt: TurnReceipt,
         binding: ExactFrameBinding,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
-        validate_receipt_scope(
-            &receipt,
-            previous.federation_id,
-            previous.agent,
-            previous.full_receipt_hash,
-        )?;
+        validate_receipt_scope(&receipt, previous.federation_id)?;
+        if receipt_log_index <= previous.receipt_log_index {
+            return Err(ExactFnspV3ReceiptEpochError::ReceiptOrderBreak);
+        }
         if binding.before != previous.exact_after {
             return Err(ExactFnspV3ReceiptEpochError::ExactStateChainBreak);
-        }
-        if receipt.pre_state_hash != previous.full_post_state_hash {
-            return Err(ExactFnspV3ReceiptEpochError::FullTurnStateChainBreak);
         }
         Self::finish(
             previous.epoch,
             previous.activation_hash,
             ExactFnspV3ReceiptLinkV1::ExactFrame(previous.frame_hash),
+            receipt_log_index,
+            full_predecessor_receipt_index,
             receipt,
             binding,
         )
@@ -440,6 +438,8 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
         epoch: ExactFnspV3ReceiptEpoch,
         activation_hash: [u8; 32],
         predecessor: ExactFnspV3ReceiptLinkV1,
+        receipt_log_index: u64,
+        full_predecessor_receipt_index: Option<u64>,
         receipt: TurnReceipt,
         binding: ExactFrameBinding,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
@@ -455,13 +455,19 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
                 after: binding.after.count,
             });
         }
-        let full_predecessor_receipt_hash = receipt
-            .previous_receipt_hash
-            .ok_or(ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch)?;
+        let full_predecessor_receipt_hash = receipt.previous_receipt_hash;
+        if full_predecessor_receipt_index.is_some() != full_predecessor_receipt_hash.is_some() {
+            return Err(ExactFnspV3ReceiptEpochError::FullTurnPredecessorCoordinateMismatch);
+        }
+        if full_predecessor_receipt_index.is_some_and(|index| index >= receipt_log_index) {
+            return Err(ExactFnspV3ReceiptEpochError::FullTurnPredecessorOrder);
+        }
         let mut frame = Self {
             epoch,
             activation_hash,
             predecessor,
+            receipt_log_index,
+            full_predecessor_receipt_index,
             full_predecessor_receipt_hash,
             receipt,
             before: binding.before,
@@ -488,8 +494,16 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
         self.predecessor
     }
 
-    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+    pub const fn full_predecessor_receipt_hash(&self) -> Option<[u8; 32]> {
         self.full_predecessor_receipt_hash
+    }
+
+    pub const fn full_predecessor_receipt_index(&self) -> Option<u64> {
+        self.full_predecessor_receipt_index
+    }
+
+    pub const fn receipt_log_index(&self) -> u64 {
+        self.receipt_log_index
     }
 
     #[cfg(test)]
@@ -552,7 +566,6 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
         }
         if self.activation_hash != authorized_epoch.activation_hash
             || self.receipt.federation_id != authorized_epoch.federation_id
-            || self.receipt.agent != authorized_epoch.agent
         {
             return Err(ExactFnspV3ReceiptEpochError::ActivationMismatch);
         }
@@ -565,11 +578,9 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
             epoch: self.epoch,
             activation_hash: self.activation_hash,
             frame_hash: self.frame_hash,
-            full_receipt_hash: self.receipt.receipt_hash(),
-            full_post_state_hash: self.receipt.post_state_hash,
+            receipt_log_index: self.receipt_log_index,
             exact_after: self.after,
             federation_id: self.receipt.federation_id,
-            agent: self.receipt.agent,
         }
     }
 
@@ -579,6 +590,27 @@ impl ExactFnspV3ReceiptFrameCoreV1 {
         hasher.update(&self.activation_hash);
         hasher.update(&[self.predecessor.tag()]);
         hasher.update(&self.predecessor.hash());
+        hasher.update(&self.receipt_log_index.to_le_bytes());
+        match self.full_predecessor_receipt_index {
+            None => hasher.update(&[0]),
+            Some(index) => {
+                hasher.update(&[1]);
+                hasher.update(&index.to_le_bytes())
+            }
+        };
+        hasher.update(self.receipt.agent.as_bytes());
+        hasher.update(&self.receipt.federation_id);
+        hasher.update(&self.receipt.turn_hash);
+        hasher.update(&self.receipt.forest_hash);
+        match self.full_predecessor_receipt_hash {
+            None => hasher.update(&[0]),
+            Some(hash) => {
+                hasher.update(&[1]);
+                hasher.update(&hash)
+            }
+        };
+        hasher.update(&self.receipt.pre_state_hash);
+        hasher.update(&self.receipt.post_state_hash);
         hasher.update(&self.receipt.receipt_hash());
         hash_state_point(&mut hasher, self.before);
         hash_state_point(&mut hasher, self.after);
@@ -607,11 +639,19 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
     /// Structurally prepare the first proof-bound frame after a cutover.
     pub fn begin(
         activation: &ExactFnspV3ReceiptEpochV1,
+        receipt_log_index: u64,
+        full_predecessor_receipt_index: Option<u64>,
         receipt: TurnReceipt,
         accepted: AcceptedFaithfulNoteSpendExactV3,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
         let binding = ExactFrameBinding::from_accepted(&accepted)?;
-        let core = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(activation, receipt, binding)?;
+        let core = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            activation,
+            receipt_log_index,
+            full_predecessor_receipt_index,
+            receipt,
+            binding,
+        )?;
         Ok(Self { core, accepted })
     }
 
@@ -623,12 +663,19 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
     /// retaining or reconstructing the prior accepted-proof token.
     pub fn extend_from_head_binding(
         previous: UntrustedExactFnspV3CommittedFrameHeadBindingV1,
+        receipt_log_index: u64,
+        full_predecessor_receipt_index: Option<u64>,
         receipt: TurnReceipt,
         accepted: AcceptedFaithfulNoteSpendExactV3,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
         let binding = ExactFrameBinding::from_accepted(&accepted)?;
-        let core =
-            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(previous, receipt, binding)?;
+        let core = ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+            previous,
+            receipt_log_index,
+            full_predecessor_receipt_index,
+            receipt,
+            binding,
+        )?;
         Ok(Self { core, accepted })
     }
 
@@ -644,8 +691,16 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
         self.core.predecessor()
     }
 
-    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+    pub const fn full_predecessor_receipt_hash(&self) -> Option<[u8; 32]> {
         self.core.full_predecessor_receipt_hash()
+    }
+
+    pub const fn full_predecessor_receipt_index(&self) -> Option<u64> {
+        self.core.full_predecessor_receipt_index()
+    }
+
+    pub const fn receipt_log_index(&self) -> u64 {
+        self.core.receipt_log_index()
     }
 
     pub fn full_receipt_hash(&self) -> [u8; 32] {
@@ -721,8 +776,16 @@ impl UntrustedExactFnspV3ReceiptFrameJoinV1 {
         self.core.predecessor
     }
 
-    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+    pub const fn full_predecessor_receipt_hash(&self) -> Option<[u8; 32]> {
         self.core.full_predecessor_receipt_hash
+    }
+
+    pub const fn full_predecessor_receipt_index(&self) -> Option<u64> {
+        self.core.full_predecessor_receipt_index
+    }
+
+    pub const fn receipt_log_index(&self) -> u64 {
+        self.core.receipt_log_index
     }
 
     pub fn full_receipt_hash(&self) -> [u8; 32] {
@@ -865,8 +928,6 @@ fn accepted_statement_digest(
 fn validate_receipt_scope(
     receipt: &TurnReceipt,
     federation_id: [u8; 32],
-    agent: dregg_cell::CellId,
-    inner_predecessor: [u8; 32],
 ) -> Result<(), ExactFnspV3ReceiptEpochError> {
     FullTurnReceiptStateCommit8::from_bytes(
         "full-turn receipt BEFORE commitment",
@@ -881,12 +942,6 @@ fn validate_receipt_scope(
     }
     if receipt.federation_id != federation_id {
         return Err(ExactFnspV3ReceiptEpochError::FederationMismatch);
-    }
-    if receipt.agent != agent {
-        return Err(ExactFnspV3ReceiptEpochError::AgentMismatch);
-    }
-    if receipt.previous_receipt_hash != Some(inner_predecessor) {
-        return Err(ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch);
     }
     Ok(())
 }
@@ -926,7 +981,11 @@ fn hash_state_point(hasher: &mut blake3::Hasher, point: ExactFnspV3StatePoint) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExactFnspV3ReceiptEpochError {
     LegacyEpochNumber,
-    LegacyTipNotFinal,
+    ReceiptCutoverCoordinateMismatch,
+    ReceiptBeforeCutover,
+    ReceiptOrderBreak,
+    FullTurnPredecessorCoordinateMismatch,
+    FullTurnPredecessorOrder,
     ExactReceiptNotFinal,
     ExactCountOutOfRange {
         count: u64,
@@ -944,13 +1003,10 @@ pub enum ExactFnspV3ReceiptEpochError {
     },
     Fns3Mismatch,
     FederationMismatch,
-    AgentMismatch,
-    FullTurnPredecessorMismatch,
     CrossEpoch,
     ActivationMismatch,
     CutoverExactStateMismatch,
     ExactStateChainBreak,
-    FullTurnStateChainBreak,
 }
 
 impl fmt::Display for ExactFnspV3ReceiptEpochError {
@@ -959,8 +1015,20 @@ impl fmt::Display for ExactFnspV3ReceiptEpochError {
             Self::LegacyEpochNumber => {
                 f.write_str("exact receipt epoch zero is reserved for legacy")
             }
-            Self::LegacyTipNotFinal => {
-                f.write_str("exact epoch cutover requires a final legacy receipt")
+            Self::ReceiptCutoverCoordinateMismatch => f.write_str(
+                "exact epoch receipt cutover index is zero iff its terminal hash is absent",
+            ),
+            Self::ReceiptBeforeCutover => {
+                f.write_str("exact frame receipt index precedes the activated receipt cutover")
+            }
+            Self::ReceiptOrderBreak => {
+                f.write_str("exact frame receipt indices are not strictly increasing")
+            }
+            Self::FullTurnPredecessorCoordinateMismatch => f.write_str(
+                "full-turn predecessor hash and durable receipt index must both be present or absent",
+            ),
+            Self::FullTurnPredecessorOrder => {
+                f.write_str("full-turn predecessor receipt index is not earlier than this receipt")
             }
             Self::ExactReceiptNotFinal => f.write_str("exact receipt frame requires finality"),
             Self::ExactCountOutOfRange { count, maximum } => {
@@ -977,24 +1045,17 @@ impl fmt::Display for ExactFnspV3ReceiptEpochError {
             ),
             Self::Fns3Mismatch => f.write_str("FNS3 does not bind the exact root/count pair"),
             Self::FederationMismatch => f.write_str("exact receipt frame federation changed"),
-            Self::AgentMismatch => f.write_str("exact receipt frame agent changed"),
-            Self::FullTurnPredecessorMismatch => f.write_str(
-                "inner full-turn receipt does not extend the prior full-turn receipt hash",
-            ),
             Self::CrossEpoch => {
                 f.write_str("exact receipt frame belongs to a different authorized epoch")
             }
             Self::ActivationMismatch => f.write_str(
-                "exact receipt frame activation/federation/agent differs from authorized epoch",
+                "exact receipt frame activation/federation differs from authorized epoch",
             ),
             Self::CutoverExactStateMismatch => {
                 f.write_str("first exact receipt does not begin at the activated exact state")
             }
             Self::ExactStateChainBreak => {
                 f.write_str("exact FNSP-v3 root/count/FNS3 chain is discontinuous")
-            }
-            Self::FullTurnStateChainBreak => {
-                f.write_str("inner full-turn receipt state chain is discontinuous")
             }
         }
     }
@@ -1023,14 +1084,14 @@ mod tests {
     fn receipt(
         agent: dregg_cell::CellId,
         federation: [u8; 32],
-        previous: [u8; 32],
+        previous: Option<[u8; 32]>,
         before: ExactFnspV3OuterCommit,
         after: ExactFnspV3OuterCommit,
     ) -> TurnReceipt {
         TurnReceipt {
             agent,
             federation_id: federation,
-            previous_receipt_hash: Some(previous),
+            previous_receipt_hash: previous,
             pre_state_hash: before.to_bytes(),
             post_state_hash: after.to_bytes(),
             finality: Finality::Final,
@@ -1046,6 +1107,23 @@ mod tests {
             finality: Finality::Final,
             ..TurnReceipt::default()
         }
+    }
+
+    fn make_activation(
+        epoch: u64,
+        federation: [u8; 32],
+        tip: &TurnReceipt,
+        exact: ExactFnspV3StatePoint,
+    ) -> ExactFnspV3ReceiptEpochV1 {
+        ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(epoch).unwrap(),
+            federation,
+            [0xe7; 32],
+            1,
+            Some(tip.receipt_hash()),
+            exact,
+        )
+        .unwrap()
     }
 
     fn successor(before: ExactFnspV3StatePoint, tag: u32) -> ExactFnspV3StatePoint {
@@ -1099,57 +1177,181 @@ mod tests {
     }
 
     #[test]
-    fn epoch_zero_and_tentative_cutover_refuse() {
+    fn epoch_zero_and_malformed_cutover_coordinates_refuse() {
         assert_eq!(
             ExactFnspV3ReceiptEpoch::new(0),
             Err(ExactFnspV3ReceiptEpochError::LegacyEpochNumber)
         );
-        let agent = Cell::new([1; 32], [2; 32]).id();
-        let mut tip = legacy_tip(agent, [4; 32]);
-        tip.finality = Finality::Tentative;
+        let federation = [4; 32];
         assert_eq!(
             ExactFnspV3ReceiptEpochV1::prepare(
                 ExactFnspV3ReceiptEpoch::new(1).unwrap(),
-                &tip,
+                federation,
+                [0xe7; 32],
+                0,
+                Some([9; 32]),
                 state(),
             ),
-            Err(ExactFnspV3ReceiptEpochError::LegacyTipNotFinal)
+            Err(ExactFnspV3ReceiptEpochError::ReceiptCutoverCoordinateMismatch)
         );
+        assert_eq!(
+            ExactFnspV3ReceiptEpochV1::prepare(
+                ExactFnspV3ReceiptEpoch::new(1).unwrap(),
+                federation,
+                [0xe7; 32],
+                1,
+                None,
+                state(),
+            ),
+            Err(ExactFnspV3ReceiptEpochError::ReceiptCutoverCoordinateMismatch)
+        );
+        ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(1).unwrap(),
+            federation,
+            [0xe7; 32],
+            0,
+            None,
+            state(),
+        )
+        .expect("empty dense receipt log has no cutover tail");
+
+        let a = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(1).unwrap(),
+            federation,
+            [0xe7; 32],
+            0,
+            None,
+            state(),
+        )
+        .unwrap();
+        let b = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(1).unwrap(),
+            federation,
+            [0xe8; 32],
+            0,
+            None,
+            state(),
+        )
+        .unwrap();
+        assert_ne!(a.activation_hash(), b.activation_hash());
     }
 
     #[test]
-    fn activation_hash_cannot_be_reinterpreted_as_the_full_turn_receipt_link() {
-        let agent = Cell::new([1; 32], [2; 32]).id();
+    fn activation_is_actor_neutral_and_keeps_frame_and_receipt_links_distinct() {
+        let alice = Cell::new([1; 32], [2; 32]).id();
+        let bob = Cell::new([8; 32], [9; 32]).id();
         let federation = [4; 32];
         let exact = state();
-        let tip = legacy_tip(agent, federation);
+        let tip = legacy_tip(alice, federation);
         let activation = ExactFnspV3ReceiptEpochV1::prepare(
             ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
+            federation,
+            [0xe7; 32],
+            2,
+            Some(tip.receipt_hash()),
             exact,
         )
         .unwrap();
         let next = successor(exact, 11);
 
-        // The full-turn chain must still name the terminal real receipt.  The
-        // activation hash belongs only to the outer versioned frame chain.
-        let conflated = receipt(
-            agent,
-            federation,
-            activation.activation_hash(),
-            outer(3),
-            outer(100),
-        );
+        let bob_previous = [0x42; 32];
+        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            2,
+            Some(0),
+            receipt(bob, federation, Some(bob_previous), outer(30), outer(100)),
+            binding(exact, next, outer(5), outer(6)),
+        )
+        .expect("activation is not pinned to the cutover marker's actor");
         assert_eq!(
-            ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
-                &activation,
-                conflated,
-                binding(exact, next, outer(5), outer(6)),
-            )
-            .unwrap_err(),
-            ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch
+            first.predecessor(),
+            ExactFnspV3ReceiptLinkV1::EpochActivation(activation.activation_hash())
         );
+        assert_eq!(first.full_predecessor_receipt_hash(), Some(bob_previous));
         assert_ne!(tip.receipt_hash(), activation.activation_hash());
+
+        let carol = Cell::new([10; 32], [11; 32]).id();
+        let after = successor(next, 12);
+        let second = ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+            first.untrusted_head_binding(),
+            3,
+            None,
+            receipt(carol, federation, None, outer(77), outer(78)),
+            binding(next, after, outer(6), outer(7)),
+        )
+        .expect("a new actor's receipt genesis may continue the global exact chain");
+        assert_eq!(second.full_predecessor_receipt_hash(), None);
+    }
+
+    #[test]
+    fn frame_hash_explicitly_binds_per_frame_receipt_preimage() {
+        let agent = Cell::new([1; 32], [2; 32]).id();
+        let federation = [4; 32];
+        let exact = state();
+        let next = successor(exact, 11);
+        let tip = legacy_tip(agent, federation);
+        let activation = make_activation(7, federation, &tip, exact);
+        let with_previous = receipt(agent, federation, Some([0x44; 32]), outer(3), outer(100));
+        let mut without_previous = with_previous.clone();
+        without_previous.previous_receipt_hash = None;
+        let a = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            1,
+            Some(0),
+            with_previous,
+            binding(exact, next, outer(5), outer(6)),
+        )
+        .unwrap();
+        let b = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            1,
+            None,
+            without_previous,
+            binding(exact, next, outer(5), outer(6)),
+        )
+        .unwrap();
+        let c = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            2,
+            Some(0),
+            a.receipt().clone(),
+            binding(exact, next, outer(5), outer(6)),
+        )
+        .unwrap();
+        assert_ne!(a.frame_hash(), b.frame_hash());
+        assert_ne!(a.frame_hash(), c.frame_hash());
+    }
+
+    #[test]
+    fn self_or_forward_full_receipt_predecessor_index_refuses_before_signing() {
+        let agent = Cell::new([1; 32], [2; 32]).id();
+        let federation = [4; 32];
+        let exact = state();
+        let next = successor(exact, 11);
+        let tip = legacy_tip(agent, federation);
+        let activation = make_activation(7, federation, &tip, exact);
+        let candidate = || {
+            receipt(
+                agent,
+                federation,
+                Some(tip.receipt_hash()),
+                outer(3),
+                outer(100),
+            )
+        };
+        for predecessor_index in [1, 2] {
+            assert_eq!(
+                ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+                    &activation,
+                    1,
+                    Some(predecessor_index),
+                    candidate(),
+                    binding(exact, next, outer(5), outer(6)),
+                )
+                .unwrap_err(),
+                ExactFnspV3ReceiptEpochError::FullTurnPredecessorOrder
+            );
+        }
     }
 
     #[test]
@@ -1160,15 +1362,18 @@ mod tests {
         let exact1 = successor(exact0, 11);
         let exact2 = successor(exact1, 12);
         let tip = legacy_tip(agent, federation);
-        let activation = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
-        let first_receipt = receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100));
+        let activation = make_activation(7, federation, &tip, exact0);
+        let first_receipt = receipt(
+            agent,
+            federation,
+            Some(tip.receipt_hash()),
+            outer(3),
+            outer(100),
+        );
         let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
+            1,
+            Some(0),
             first_receipt,
             binding(exact0, exact1, outer(5), outer(6)),
         )
@@ -1179,38 +1384,12 @@ mod tests {
         assert_eq!(first.proof_outer_before(), outer(5));
         assert_eq!(first.proof_outer_after(), outer(6));
 
-        // The outer exact frame hash cannot replace the ordinary receipt hash
-        // in the inner full-state chain.
-        let conflated_link = receipt(
-            agent,
-            federation,
-            first.frame_hash(),
-            outer(100),
-            outer(101),
-        );
-        assert_eq!(
-            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
-                first.untrusted_head_binding(),
-                conflated_link,
-                binding(exact1, exact2, outer(6), outer(7)),
-            )
-            .unwrap_err(),
-            ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch
-        );
-
-        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
-            &activation,
-            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
-            binding(exact0, exact1, outer(5), outer(6)),
-        )
-        .expect("rebuilt linear predecessor");
-
-        // Correct full-turn link, but a different prior exact root/FNS3 pair is
-        // not rescued by matching real receipt state hashes.
+        // A different prior exact root/FNS3 pair is not rescued by matching
+        // arbitrary real receipt state coordinates.
         let correct_link = receipt(
             agent,
             federation,
-            first.receipt().receipt_hash(),
+            Some(first.receipt().receipt_hash()),
             outer(100),
             outer(101),
         );
@@ -1219,6 +1398,8 @@ mod tests {
         assert_eq!(
             ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
                 first.untrusted_head_binding(),
+                2,
+                Some(1),
                 correct_link,
                 binding(mixed_prior, exact2, outer(6), outer(7)),
             )
@@ -1235,17 +1416,14 @@ mod tests {
         let exact0 = state();
         let exact1 = successor(exact0, 11);
         let tip = legacy_tip(agent, federation);
-        let activation = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
+        let activation = make_activation(7, federation, &tip, exact0);
         let full = nonce_advancing_full_receipt(actor, federation, tip.receipt_hash());
         assert_ne!(full.pre_state_hash, full.post_state_hash);
 
         let frame = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
+            1,
+            Some(0),
             full,
             binding(exact0, exact1, outer(5), outer(6)),
         )
@@ -1263,28 +1441,27 @@ mod tests {
     }
 
     #[test]
-    fn full_state_break_and_cross_epoch_refuse() {
-        let agent = Cell::new([1; 32], [2; 32]).id();
+    fn ordinary_turn_and_other_actor_may_interleave_while_cross_epoch_refuses() {
+        let alice = Cell::new([1; 32], [2; 32]).id();
+        let bob = Cell::new([8; 32], [9; 32]).id();
         let federation = [4; 32];
         let exact0 = state();
         let exact1 = successor(exact0, 11);
         let exact2 = successor(exact1, 12);
-        let tip = legacy_tip(agent, federation);
-        let epoch7 = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
-        let epoch8 = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(8).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
+        let tip = legacy_tip(alice, federation);
+        let epoch7 = make_activation(7, federation, &tip, exact0);
+        let epoch8 = make_activation(8, federation, &tip, exact0);
         let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &epoch7,
-            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            1,
+            Some(0),
+            receipt(
+                alice,
+                federation,
+                Some(tip.receipt_hash()),
+                outer(3),
+                outer(100),
+            ),
             binding(exact0, exact1, outer(5), outer(6)),
         )
         .unwrap();
@@ -1293,22 +1470,39 @@ mod tests {
             Err(ExactFnspV3ReceiptEpochError::CrossEpoch)
         );
 
-        let next = receipt(
-            agent,
-            federation,
-            first.receipt().receipt_hash(),
-            outer(999),
-            outer(101),
-        );
+        let bob_next = receipt(bob, federation, None, outer(999), outer(101));
         assert_eq!(
             ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
                 first.untrusted_head_binding(),
-                next,
+                1,
+                None,
+                bob_next.clone(),
                 binding(exact1, exact2, outer(6), outer(7)),
             )
             .unwrap_err(),
-            ExactFnspV3ReceiptEpochError::FullTurnStateChainBreak
+            ExactFnspV3ReceiptEpochError::ReceiptOrderBreak
         );
+        let second = ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+            first.untrusted_head_binding(),
+            3,
+            None,
+            bob_next,
+            binding(exact1, exact2, outer(6), outer(7)),
+        )
+        .expect("Bob exact follows the global exact head");
+
+        // An ordinary Alice receipt may interleave without appearing in the
+        // exact frame chain.  Alice's later exact receipt points at that actor-
+        // local head, while its exact predecessor remains Bob's frame.
+        let exact3 = successor(exact2, 13);
+        ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+            second.untrusted_head_binding(),
+            5,
+            Some(4),
+            receipt(alice, federation, Some([0xa1; 32]), outer(555), outer(556)),
+            binding(exact2, exact3, outer(7), outer(8)),
+        )
+        .expect("Alice exact follows an interleaved ordinary Alice receipt");
     }
 
     #[test]
@@ -1318,23 +1512,34 @@ mod tests {
         let exact0 = state();
         let exact1 = successor(exact0, 11);
         let tip = legacy_tip(agent, federation);
-        let activation = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
+        let activation = make_activation(7, federation, &tip, exact0);
         let mut other_binding = binding(exact0, exact1, outer(5), outer(6));
         other_binding.signed_spending_proof_digest = [0x99; 32];
         let frame_a = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
-            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            1,
+            Some(0),
+            receipt(
+                agent,
+                federation,
+                Some(tip.receipt_hash()),
+                outer(3),
+                outer(100),
+            ),
             binding(exact0, exact1, outer(5), outer(6)),
         )
         .unwrap();
         let frame_b = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
-            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            1,
+            Some(0),
+            receipt(
+                agent,
+                federation,
+                Some(tip.receipt_hash()),
+                outer(3),
+                outer(100),
+            ),
             other_binding,
         )
         .unwrap();
@@ -1365,15 +1570,18 @@ mod tests {
         let exact0 = state();
         let exact1 = successor(exact0, 11);
         let tip = legacy_tip(agent, federation);
-        let activation = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
-            &tip,
-            exact0,
-        )
-        .unwrap();
+        let activation = make_activation(7, federation, &tip, exact0);
         let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
-            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            1,
+            Some(0),
+            receipt(
+                agent,
+                federation,
+                Some(tip.receipt_hash()),
+                outer(3),
+                outer(100),
+            ),
             binding(exact0, exact1, outer(5), outer(6)),
         )
         .unwrap();
@@ -1385,18 +1593,15 @@ mod tests {
         assert_eq!(&message[FRAME_SIGNATURE_DOMAIN.len()..], first.frame_hash());
 
         let other_tip = legacy_tip(agent, federation);
-        let other_epoch = ExactFnspV3ReceiptEpochV1::prepare(
-            ExactFnspV3ReceiptEpoch::new(8).unwrap(),
-            &other_tip,
-            exact0,
-        )
-        .unwrap();
+        let other_epoch = make_activation(8, federation, &other_tip, exact0);
         let other = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &other_epoch,
+            1,
+            Some(0),
             receipt(
                 agent,
                 federation,
-                other_tip.receipt_hash(),
+                Some(other_tip.receipt_hash()),
                 outer(3),
                 outer(100),
             ),
