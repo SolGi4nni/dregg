@@ -266,6 +266,13 @@ impl RangeProof {
         use self::dealer::*;
         use self::party::*;
 
+        #[cfg(feature = "std")]
+        let profile_enabled = std::env::var_os("DREGG_BULLETPROOFS_PROFILE").is_some();
+        #[cfg(feature = "std")]
+        let total_started = std::time::Instant::now();
+        #[cfg(feature = "std")]
+        let mut phase_started = total_started;
+
         if values.len() != blindings.len() {
             return Err(ProofError::WrongNumBlindingFactors);
         }
@@ -297,6 +304,17 @@ impl RangeProof {
             .zip(blindings.iter())
             .map(|(&v, &v_blinding)| Party::new(bp_gens, pc_gens, v, v_blinding, n))
             .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "std")]
+        {
+            if profile_enabled {
+                eprintln!(
+                    "bulletproofs-range-prover n={n} m={} phase=party-construct elapsed_us={}",
+                    values.len(),
+                    phase_started.elapsed().as_micros()
+                );
+            }
+            phase_started = std::time::Instant::now();
+        }
 
         // Preserve the exact caller-RNG consumption order before scheduling
         // any independent group work. This keeps deterministic proof bytes
@@ -350,6 +368,17 @@ impl RangeProof {
         let value_commitments: Vec<_> = bit_commitments.iter().map(|c| c.V_j).collect();
 
         let (dealer, bit_challenge) = dealer.receive_bit_commitments(bit_commitments)?;
+        #[cfg(feature = "std")]
+        {
+            if profile_enabled {
+                eprintln!(
+                    "bulletproofs-range-prover n={n} m={} phase=bit-commit elapsed_us={}",
+                    values.len(),
+                    phase_started.elapsed().as_micros()
+                );
+            }
+            phase_started = std::time::Instant::now();
+        }
 
         #[cfg(feature = "parallel-prover")]
         let poly_randomness = if run_parallel {
@@ -386,6 +415,17 @@ impl RangeProof {
             .unzip();
 
         let (dealer, poly_challenge) = dealer.receive_poly_commitments(poly_commitments)?;
+        #[cfg(feature = "std")]
+        {
+            if profile_enabled {
+                eprintln!(
+                    "bulletproofs-range-prover n={n} m={} phase=poly-commit elapsed_us={}",
+                    values.len(),
+                    phase_started.elapsed().as_micros()
+                );
+            }
+            phase_started = std::time::Instant::now();
+        }
 
         #[cfg(feature = "parallel-prover")]
         let proof_shares: Vec<_> = if run_parallel {
@@ -405,8 +445,29 @@ impl RangeProof {
             .map(|p| p.apply_challenge(&poly_challenge))
             // Collect the iterator of Results into a Result<Vec>, then unwrap it
             .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "std")]
+        {
+            if profile_enabled {
+                eprintln!(
+                    "bulletproofs-range-prover n={n} m={} phase=proof-share elapsed_us={}",
+                    values.len(),
+                    phase_started.elapsed().as_micros()
+                );
+            }
+            phase_started = std::time::Instant::now();
+        }
 
         let proof = dealer.receive_trusted_shares(&proof_shares)?;
+
+        #[cfg(feature = "std")]
+        if profile_enabled {
+            eprintln!(
+                "bulletproofs-range-prover n={n} m={} phase=inner-product elapsed_us={} total_us={}",
+                values.len(),
+                phase_started.elapsed().as_micros(),
+                total_started.elapsed().as_micros()
+            );
+        }
 
         Ok((proof, value_commitments))
     }
