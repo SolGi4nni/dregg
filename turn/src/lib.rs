@@ -104,6 +104,7 @@ pub mod execution_path;
 pub mod executor;
 pub mod faithful_note_spend;
 pub mod faithful_note_spend_exact_v3;
+pub mod faithful_note_spend_exact_v3_anchor;
 #[cfg(feature = "prover")]
 pub mod faithful_note_spend_exact_v3_verifier;
 #[cfg(feature = "prover")]
@@ -178,6 +179,10 @@ pub use executor::{
     MixedAtomicResult, MixedAtomicTurn, ProofVerifier, ResolutionTable, TurnExecutor,
     escrow_nullifier_for, execute_pipeline, execute_pipeline_result, new_mirror_ledger_cell,
     read_supply, resolve_eventual_ref,
+};
+pub use faithful_note_spend_exact_v3_anchor::{
+    ExactFnspV3AnchorSide, ExactFnspV3DurableAnchor, ExactFnspV3DurableAnchorError,
+    derive_exact_fnsp_v3_durable_anchor, derive_exact_fnsp_v3_durable_anchor_chain,
 };
 #[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
