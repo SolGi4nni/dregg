@@ -7,8 +7,9 @@ The useful result of this audit is a stronger architecture than the claim that
 prompted it.
 
 #callout([DECISIVE RESULT], [
-  We now have a coherent path from matrix FOL to sound compiler semantics, and
-  from general bounded finite FOL to live DREGG descriptors, certified local
+  We now have a coherent path from matrix FOL to sound compiler semantics and a
+  statement-bound public direct-table relation, and from general bounded finite
+  FOL to live DREGG descriptors, certified local
   optimization, and matching encrypted plans. We also have a genuinely
   higher-order intensional route: typed shared nets form a cartesian closed
   category, and the structural compiler preserves the chosen CCC operations.
@@ -34,7 +35,13 @@ private Skolem-witness relation in the live proof grammar.
 `GabbayDescriptorIR2PublicBoundary` proves that this descriptor has zero public
 inputs and no hash or range sites: acceptance does not attest an independently
 named external table, and the fixed instance is not interpolation-performance
-evidence. `FiniteSignatureFOLDescriptorIR2` then
+evidence. The separate `GabbayDescriptorIR2PublicBinding` closes that statement
+boundary directly: six public cells bind the complete two-by-three table; six
+trace columns and seven constraints contain three nonlinear square products;
+under the stated canonical and no-wrap premises, a satisfying trace exists iff
+the named table satisfies source `Holds`, and a one-cell public tamper is
+refused. This integrity variant reveals the whole table, provides zero table
+privacy, and deliberately performs no interpolation. `FiniteSignatureFOLDescriptorIR2` then
 extends the live route to many relation symbols, total public function symbols,
 equality, all connectives, and nested finite quantifiers.
 

@@ -102,6 +102,18 @@ the logical residual and final acceptance read the raw input/output cells.
 This specimen establishes a fixed-shape semantic relation, not an interpolation
 performance result.
 
+`GabbayDescriptorIR2PublicBinding` now closes that statement gap with a separate
+direct-table descriptor.  Its six disclosed table cells are pinned to six trace
+columns by six public inputs; one acceptance gate gives seven constraints in
+total and contains exactly three nonlinear products.  Under canonical field
+decoding and the explicit no-wrap certificate,
+`public_statement_satisfied_iff_holds` proves that an arbitrary nonempty
+satisfying trace exists exactly when the externally claimed table satisfies the
+source formula.  A one-cell public tamper is refused, and the complete IR-v2 JSON
+is pinned.  This construction supplies public integrity with zero table privacy.
+It deliberately removes interpolation coefficients, so it closes public
+binding without manufacturing an interpolation speedup.
+
 == Certificates optimize the relation without changing it
 
 The important performance mechanism is not "FOL instead of circuits."  It is
@@ -500,16 +512,16 @@ a deployed chain.
     table.header(repeat: true, [*Axis*], [*Reviewed public Modulus evidence*], [*DREGG artifact in this study*]),
     [Source semantics],
     [Printed equations; the published swap product admits the proved bypass.],
-    [Kernel-checked corrected FOL, finite-signature source semantics, conformance corpus.],
+    [Kernel-checked corrected FOL, finite-signature semantics, and exact public-table binding.],
     [Compiler],
     [No public compiler implementation found.],
-    [Lean FOL-to-IR compiler, executable Rust front end, canonical Python reference compiler.],
+    [Lean FOL-to-IR and six-PI direct-table compilers, executable Rust front end, Python reference compiler.],
     [Optimization],
     [No public derivation or cost certificate found.],
     [Replayable Lean rewrite certificates and independently checked hybrid search artifact.],
     [Proof path],
     [Architecture prose names zkEVM, STARK, and SNARK components.],
-    [Live IR-v2 descriptor, Rust prove/verify roundtrip, explicit FRI/deployment assumptions.],
+    [Live IR-v2 descriptors, absolute Rust proof capture, explicit FRI/deployment assumptions.],
     [Independent checker],
     [No public checker source found.],
     [Independent SML checker, HOL4 soundness, proof-producing CakeML translation.],

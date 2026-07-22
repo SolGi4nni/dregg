@@ -10,7 +10,9 @@ constructions.
 #callout([RESULT], [
   We reconstructed Gabbay's matrix-language compiler, proved its characteristic-
   zero semantics, added two exact finite-field repairs, and constructed a
-  fixed-shape private-witness matrix relation in DREGG's live DescriptorIR2. We then built a
+  fixed-shape private-witness matrix relation in DREGG's live DescriptorIR2. We
+  then closed its external-statement boundary with a six-input public direct-table
+  relation and built a
   general finite-signature FOL compiler, a checker-gated optimizer, a same-opening
   proof/FHE certificate, an intensional cartesian closed compiler with explicit
   sharing, a presheaf embedding for arbitrary small CCCs, and a bias-aware robust
@@ -34,12 +36,12 @@ constructions.
     [`GabbayMatrixCompiler` and `GabbayMatrixBridge`; positive one-index matrix
      fragment, not arbitrary recursion.],
     [Live matrix relation],
-    [A three-entry Skolem successor table has a constructive accepting trace in
-     actual `EffectVmDescriptor2`. Coefficient columns are checked, while the
-     residual and acceptance gates read the private table cells directly.],
-    [`GabbayDescriptorIR2PublicBoundary` proves `piCount = 0`, with no hash or
-     range sites: this is an existential witness relation, not an attestation of
-     an external table or evidence of interpolation performance.],
+    [The original three-entry instance is a private existential witness with no
+     public binding. A separate direct-table descriptor binds all six claimed
+     cells and accepts exactly when the public table satisfies source `Holds`.],
+    [`GabbayDescriptorIR2PublicBinding`: 6 public inputs, 6 columns, 7
+     constraints, 3 nonlinear products, exact tamper refusal, and zero table
+     privacy. It is not interpolation-performance evidence.],
     [Finite FOL],
     [Closed de Bruijn syntax with equality, many relations of independent
      arities, total public function tables, every connective, and exhaustive

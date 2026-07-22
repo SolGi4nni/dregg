@@ -38,10 +38,14 @@ checked optimization and certified representation search.
   [reduced numerator and positive denominator plus prime/no-wrap certificate],
   [field zero iff rational zero iff source truth; bad modulus is rejected],
   [#raw("GabbayFiniteField")#linebreak()#raw("Projection")],
-  [Live Gabbay instance],
+  [Private Gabbay bridge],
   [two-row, three-column successor table in DescriptorIR2],
   [17-column constructive private trace; 12 constraints; exact for the table carried by that trace, but not externally bound],
   [#raw("GabbayDescriptorIR2")],
+  [Public Gabbay statement],
+  [six direct public table cells pinned to a six-column trace],
+  [seven constraints and three nonlinear products; any accepted canonical trace attests the named external table],
+  [#raw("GabbayDescriptorIR2")#linebreak()#raw("PublicBinding")],
   [General finite FOL],
   [public total functions, witness relation tables, equality, all Boolean connectives and bounded quantifiers],
   [canonical trace accepts iff the finite model satisfies the sentence],
@@ -160,7 +164,7 @@ matrix compiler prove that this alternative supports the full matrix formula
 language without pretending that rational addition retained its semantics
 after reduction.
 
-== Two routes into the live DREGG relation
+== Three routes into the live DREGG relation
 
 === A fixed-shape private witness/semantics bridge
 
@@ -207,6 +211,58 @@ projection cannot enter the compiler.
   dimensions: that requires emitted interpolation, denominator management,
   range certificates, and cost accounting. IR-v2 fixes BabyBear; the witness
   does not choose its own field.
+])
+
+=== Direct-table public binding
+
+`GabbayDescriptorIR2PublicBinding` closes the statement gap with a distinct,
+smaller descriptor. All six cells of the claimed two-by-three table are public
+inputs. Six first-row PI bindings pin them to six trace columns, and one
+always-on gate checks the sum of the three successor residual squares. There
+are no interpolation coefficients, denominator column, hash site, commitment
+assumption, or range carrier.
+
+The exact ledger is proved by `descriptor_public_surface_exact` and
+`direct_public_cost_exact`:
+
+#table(
+  columns: (1fr, 1fr, 1fr, 1fr, 1fr),
+  align: (center, center, center, center, center),
+  table.header([*Public inputs*], [*Trace columns*], [*Constraints*],
+    [*Nonlinear products*], [*Private table cells*]),
+  [6], [6], [7], [3], [0],
+)
+
+The three nonlinear products are exactly the three squares. The syntax also
+contains 15 multiplication nodes when multiplication by constants is counted.
+`publicLayout` pins the exact PI order, while an executable guard pins the full
+emitted descriptor JSON byte-for-byte.
+
+The statement theorem is now external rather than witness-relative.
+`StatementSatisfied` requires a nonempty trace and canonical BabyBear integer
+representatives for its first row. Given the same explicit no-wrap certificate
+for the claimed table, `statement_sound` proves that *any* such satisfying
+trace implies `Holds` of the externally named table. `statement_complete`
+constructs a trace for every canonical true claim, and
+`public_statement_satisfied_iff_holds` packages the exact result:
+
+$
+  exists t. "StatementSatisfied"(h, M, t)
+  quad "iff" quad M models phi_"successor".
+$
+
+`tampered_public_statement_refused` proves that the one-cell public tamper has
+no satisfying canonical witness. This is stronger than refusing one
+preselected trace: the public statement itself is impossible.
+
+#boundary([
+  Public integrity is purchased by revealing the whole table.
+  `public_statement_reveals_whole_table` proves that equality of the six public
+  inputs implies equality of all table cells. This descriptor therefore has
+  zero table privacy. It also makes no interpolation performance claim: the
+  acceptance polynomial is the direct sum of three residual squares. The
+  result is an exact fixed-shape public statement, not an arbitrary-matrix
+  compiler.
 ])
 
 === General finite-signature FOL

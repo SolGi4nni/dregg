@@ -187,12 +187,9 @@
 #include "sections/01-findings.typ"
 #pagebreak()
 #include "sections/02-gabbay-bitlogic.typ"
-#pagebreak()
 #include "sections/03-corrected-constructions.typ"
 #include "sections/04-hol-ccc-limits.typ"
-#pagebreak()
 #include "sections/05-proofobjects-topos.typ"
-#pagebreak()
 #include "sections/06-pipeline-fhe-dregg.typ"
 #pagebreak()
 #include "sections/07-conclusion.typ"
