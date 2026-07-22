@@ -11,14 +11,55 @@
 //! deployed Rust executor — are DRIVEN over the same transitions and agree.
 
 use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, symbol};
+use dregg_cell::program::TransitionMeta;
+use dregg_cell::state::CellState;
 use dungeon_on_dregg::descent::{
-    BANKED, CARRIED, DELVE, Descent, FLEE, GENESIS, LOOT, PROGRAM_JSON, SCENE_ID, SMITE, Sim,
-    UNLOCK,
+    BANKED, CARRIED, DELVE, Deployment, Descent, FLEE, GENESIS, LOOT, PROGRAM_JSON, SCENE_ID,
+    SMITE, Sim, UNLOCK,
 };
 use spween_dregg::WorldError;
 
 fn refused(r: Result<dregg_app_framework::TurnReceipt, WorldError>) -> bool {
     matches!(r, Err(WorldError::Refused(_)))
+}
+
+/// Materialize the same register + custody representation that `Descent` writes,
+/// for a direct evaluator mutation canary.  The real-executor tests below remain
+/// the deployment pole; this helper isolates which exact tooth makes the attack
+/// flip from admit to refuse.
+fn evaluator_state(dep: &Deployment, sim: &Sim) -> CellState {
+    let mut state = CellState::new(0);
+    for (name, value) in [
+        ("depth", sim.depth),
+        ("spent", sim.spent),
+        ("wounds", sim.wounds),
+        ("fate", sim.fate),
+        ("pack", sim.pack()),
+        ("bank", sim.bank()),
+        ("way_2", sim.ways[0]),
+        ("way_3", sim.ways[1]),
+        ("way_4", sim.ways[2]),
+        ("hoard_1", sim.hoard_at(1)),
+        ("hoard_2", sim.hoard_at(2)),
+        ("hoard_3", sim.hoard_at(3)),
+        ("hoard_4", sim.hoard_at(4)),
+    ] {
+        assert!(state.set_field(
+            dep.reg(name) as usize,
+            dregg_app_framework::field_from_u64(value)
+        ));
+    }
+    for (i, &custody) in sim.custody.iter().enumerate() {
+        assert!(state.set_field_ext(
+            dep.relic_key(i),
+            dregg_app_framework::field_from_u64(custody),
+        ));
+    }
+    assert!(state.set_field_ext(
+        spween_dregg::GENESIS_DONE_EXT_KEY,
+        dregg_app_framework::field_from_u64(1),
+    ));
+    state
 }
 
 /// The artifact is the Lean emission: it parses, names OUR scene, and the loaded
@@ -56,6 +97,23 @@ fn loaded_program_is_the_lean_object() {
                 if children.iter().any(|g| matches!(g, TransitionGuard::SlotChanged { .. }))
         )),
         "the SlotChanged riders are installed"
+    );
+    let census_teeth: Vec<_> = cases
+        .iter()
+        .flat_map(|case| &case.constraints)
+        .filter_map(|constraint| match constraint {
+            StateConstraint::FieldsCountEquals { keys, .. } => Some(keys),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        census_teeth.len(),
+        6,
+        "pack, bank, and four hoards each have one exact custody census"
+    );
+    assert!(
+        census_teeth.iter().all(|keys| keys.len() == 8),
+        "every census covers all eight relic custody objects"
     );
 }
 
@@ -157,6 +215,107 @@ fn dupe_relic_is_refused() {
         "a minted relic breaks SumEquals and is refused"
     );
     assert_eq!(d.read_reg("pack"), 0);
+}
+
+/// OBJECT/PROJECTION SPLIT: a conservation-consistent counter transition with no
+/// custody move used to fit the counter-only rules.  The exact census refuses it
+/// and rolls the attempted projection back.
+#[test]
+fn counter_only_loot_is_refused_and_commits_nothing() {
+    let mut d = Descent::deploy(3).expect("deploy");
+    d.delve().expect("delve");
+    d.smite().expect("slay guardian");
+    let sim = d.sim().clone();
+    let effects = vec![
+        d.reg_effect("pack", 1),
+        d.reg_effect("hoard_1", 2),
+        d.reg_effect("spent", sim.spent + 1),
+    ];
+    assert!(
+        refused(d.commit_raw(LOOT, effects)),
+        "register projections cannot claim a custody move that never happened"
+    );
+    assert_eq!(d.read_reg("pack"), 0);
+    assert_eq!(d.read_reg("hoard_1"), 3);
+    assert_eq!(d.read_relic(1), 1);
+}
+
+/// TWO-FOR-ONE: both relic transitions satisfy their individual monotonicity and
+/// provenance alphabets, while the counters honestly describe only ONE move.
+/// Exact object↔projection binding is the only missing semantic tooth, and it
+/// rejects the forged batch on the real executor.
+#[test]
+fn two_relics_behind_one_counter_delta_are_refused() {
+    let mut d = Descent::deploy(4).expect("deploy");
+    d.delve().expect("delve");
+    d.smite().expect("slay guardian");
+    let sim = d.sim().clone();
+    let effects = vec![
+        d.reg_effect("pack", 1),
+        d.reg_effect("hoard_1", 2),
+        d.reg_effect("spent", sim.spent + 1),
+        d.relic_effect(1, CARRIED),
+        d.relic_effect(4, CARRIED),
+    ];
+    assert!(
+        refused(d.commit_raw(LOOT, effects)),
+        "two custody moves cannot hide behind one pack/hoard delta"
+    );
+    assert_eq!(d.read_reg("pack"), 0);
+    assert_eq!(d.read_relic(1), 1);
+    assert_eq!(d.read_relic(4), 1);
+}
+
+/// Mutation canary: evaluate the identical forged post-state against (a) the
+/// loaded Lean program and (b) a copy with only `FieldsCountEquals` removed.
+/// The verdict flips refuse→admit, proving the new aggregate is load-bearing
+/// rather than accidentally shadowed by conservation or per-relic ratchets.
+#[test]
+fn deleting_projection_census_reopens_two_for_one_attack() {
+    let dep = Deployment::new();
+    let old_sim = Sim::genesis()
+        .delve()
+        .expect("legal delve")
+        .smite()
+        .expect("legal smite");
+    let mut forged_sim = old_sim.clone();
+    forged_sim.spent += 1;
+    forged_sim.custody[1] = CARRIED;
+    forged_sim.custody[4] = CARRIED;
+
+    let old_state = evaluator_state(&dep, &old_sim);
+    let mut forged_state = evaluator_state(&dep, &forged_sim);
+    // Lie only in the compact projection: claim one move although two custody
+    // objects advanced.  SumEquals and the loot frame still see a valid +1/-1.
+    assert!(forged_state.set_field(
+        dep.reg("pack") as usize,
+        dregg_app_framework::field_from_u64(1),
+    ));
+    assert!(forged_state.set_field(
+        dep.reg("hoard_1") as usize,
+        dregg_app_framework::field_from_u64(2),
+    ));
+    let meta = TransitionMeta::new(symbol(LOOT), 0);
+
+    let strong = dep.program();
+    assert!(
+        strong
+            .evaluate_with_meta(&forged_state, Some(&old_state), None, &meta)
+            .is_err(),
+        "the Lean-loaded exact census refuses the forgery"
+    );
+
+    let mut weakened = strong.clone();
+    let CellProgram::Cases(cases) = &mut weakened else {
+        panic!("descent program must be Cases");
+    };
+    for case in cases {
+        case.constraints
+            .retain(|constraint| !matches!(constraint, StateConstraint::FieldsCountEquals { .. }));
+    }
+    weakened
+        .evaluate_with_meta(&forged_state, Some(&old_state), None, &meta)
+        .expect("removing only the census teeth reopens the two-for-one attack");
 }
 
 /// KEYLESS WAY: flipping `way_2` without the carried key-relic is refused — the

@@ -460,19 +460,102 @@ private theorem custodyTeeth_honest {s s' : DState} {m : Move}
     · rw [h]
       simp
 
+/-- A fixed eight-relic world can be exposed elementwise without assuming
+anything about the elements.  This is only plumbing for reducing the deployed
+fixed-key aggregate against `List.countP`; no game rule is hidden here. -/
+private theorem list_length_eight {l : List Nat} (hlen : l.length = RELICS) :
+    ∃ a b c d e f g h, l = [a, b, c, d, e, f, g, h] := by
+  rcases l with _ | ⟨a, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨b, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨c, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨d, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨e, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨f, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨g, l⟩
+  · simp at hlen
+  rcases l with _ | ⟨h, tail⟩
+  · simp at hlen
+  cases tail with
+  | nil => exact ⟨a, b, c, d, e, f, g, h, rfl⟩
+  | cons x xs => simp [RELICS] at hlen
+
+/-- The executor aggregate compares signed scalars, while the native game counts
+`Nat` custody codes.  `Int.ofNat` is injective, so these are exactly the same
+census -- no modular or truncating representation step is present. -/
+private def countNatsAsIntsEq (l : List Nat) (needle : Nat) : Nat :=
+  l.foldr (fun (x : Nat) n => if (x : Int) = (needle : Int) then n + 1 else n) 0
+
+private theorem countNatsAsIntsEq_eq_countP (l : List Nat) (needle : Nat) :
+    countNatsAsIntsEq l needle = l.countP (fun x => x == needle) := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [countNatsAsIntsEq, List.foldr, List.countP_cons]
+    change (if (a : Int) = (needle : Int)
+      then countNatsAsIntsEq rest needle + 1
+      else countNatsAsIntsEq rest needle) =
+        rest.countP (fun x => x == needle) + if (a == needle) = true then 1 else 0
+    rw [ih]
+    by_cases h : a = needle
+    · subst needle
+      simp
+    · have hcast : (a : Int) ≠ (needle : Int) := fun heq => h (Int.ofNat_inj.mp heq)
+      simp [h, hcast]
+
+open Dregg2.Exec in
+private theorem countScalarsEq_relicKeys_encode (s : DState) (hInv : Inv s)
+    (needle : Nat) :
+    countScalarsEq (encode s) (relicKeys.map HeapKeyRef.field) (needle : Int) =
+      some (s.custody.countP (fun x => x == needle)) := by
+  obtain ⟨a, b, c, d, e, f, g, h, hcustody⟩ := list_length_eight hInv.1.1
+  have hcount := congrArg some
+    (countNatsAsIntsEq_eq_countP [a, b, c, d, e, f, g, h] needle)
+  simpa [countScalarsEq, countNatsAsIntsEq, relicKeys, range_relics,
+    HeapKeyRef.field, hcustody] using hcount
+
+open Dregg2.Exec in
+private theorem projectionTeeth_honest {s : DState} (hInv : Inv s) (o : Value) :
+    ∀ c ∈ projectionTeeth, evalConstraint c.toExec o (encode s) = true := by
+  intro c hc
+  simp only [projectionTeeth, List.mem_cons, List.not_mem_nil, or_false] at hc
+  rcases hc with rfl | rfl | rfl | rfl | rfl | rfl
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨pack s, countScalarsEq_relicKeys_encode s hInv CARRIED, encode_scalar_pack s⟩
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨bank s, countScalarsEq_relicKeys_encode s hInv BANKED, encode_scalar_bank s⟩
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨hoardAt s 1, countScalarsEq_relicKeys_encode s hInv 1,
+      encode_scalar_hoard s 1 (by decide) (by decide)⟩
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨hoardAt s 2, countScalarsEq_relicKeys_encode s hInv 2,
+      encode_scalar_hoard s 2 (by decide) (by decide)⟩
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨hoardAt s 3, countScalarsEq_relicKeys_encode s hInv 3,
+      encode_scalar_hoard s 3 (by decide) (by decide)⟩
+  · apply (evalConstraint_countFieldsEq_iff _ _ _ _ _).2
+    exact ⟨hoardAt s 4, countScalarsEq_relicKeys_encode s hInv 4,
+      encode_scalar_hoard s 4 (by decide) (by decide)⟩
+
 open Dregg2.Exec in
 private theorem spentRider_honest {s s' : DState} {m : Move}
     (hInv : ModelProgramInv s) (hstep : step s m = some s') :
     ∀ c ∈ spentRider.constraints,
       evalConstraint c.toExec (encode s) (encode s') = true := by
   intro c hc
-  change c ∈ coreTeeth ++ rangeTeeth ++ custodyTeeth ++
+  change c ∈ coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
     [.heapField .sentinel .immutable] at hc
   simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hc
-  rcases hc with ((hc | hc) | hc) | rfl
+  rcases hc with (((hc | hc) | hc) | hc) | rfl
   · exact coreTeeth_honest hInv hstep c hc
   · exact rangeTeeth_honest (modelProgramInv_step hInv hstep).1 (encode s) c hc
   · exact custodyTeeth_honest hInv hstep c hc
+  · exact projectionTeeth_honest (modelProgramInv_step hInv hstep).1 (encode s) c hc
   · simp [Constraint.toExec, HeapAtom.toExec, HeapKeyRef.field, evalConstraint,
       evalSimple]
 

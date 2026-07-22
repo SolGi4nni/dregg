@@ -1991,4 +1991,32 @@ pub enum StateConstraint {
         /// negative). Carries the third cross-key term (e.g. the queue tail).
         delta: i64,
     },
+
+    /// **Exact fixed-key aggregate-to-register binding:** count the post-state
+    /// `fields_map` keys in `keys` whose full field value equals `value`, and
+    /// require the exact count to equal register `count_index`.
+    ///
+    /// This binds object-granular state to a compact register projection.  For
+    /// example, a game's eight individually committed custody fields can prove
+    /// that `pack == count(custody == CARRIED)`; register conservation alone
+    /// cannot prevent a client from advancing `pack` while leaving every
+    /// custody object untouched.  Every key must be present.  Missing keys or
+    /// a bad count register fail closed, and the register comparison is a full
+    /// canonical `field_from_u64(count)` equality (garbage upper limbs cannot
+    /// alias the u64 count).
+    ///
+    /// Lean source: `Dregg2.Exec.StateConstraint.countFieldsEq` and
+    /// `countScalarsEq` (`metatheory/Dregg2/Exec/Program.lean`).  The symbolic
+    /// Descent program resolves its Lean-authored key names to these exact map
+    /// keys.  This is executor-enforced today; a heap-aggregate AIR projection
+    /// remains a separate proof-backend optimization.  APPEND-ONLY.
+    FieldsCountEquals {
+        /// Executor-reachable field keys (`get_field_ext`); for the intended
+        /// object aggregate these are map-tail keys `>= STATE_SLOTS`.
+        keys: Vec<u64>,
+        /// Full field value counted as a match.
+        value: FieldElement,
+        /// Fixed register that must carry the canonical exact count.
+        count_index: u8,
+    },
 }

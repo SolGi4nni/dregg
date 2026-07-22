@@ -426,6 +426,12 @@ pub enum StateConstraintView {
         other_key: u64,
         delta: i64,
     },
+    /// Exact count of `keys` equal to `value`, bound to `count_index`.
+    FieldsCountEquals {
+        keys: Vec<u64>,
+        value: String,
+        count_index: u8,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -1149,6 +1155,15 @@ impl StateConstraint {
                 key: *key,
                 other_key: *other_key,
                 delta: *delta,
+            },
+            StateConstraint::FieldsCountEquals {
+                keys,
+                value,
+                count_index,
+            } => StateConstraintView::FieldsCountEquals {
+                keys: keys.clone(),
+                value: view_hex(value),
+                count_index: *count_index,
             },
         }
     }

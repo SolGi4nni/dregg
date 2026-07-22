@@ -363,6 +363,47 @@ fn heap_field_lte_other_capacity_and_underflow() {
     assert!(ev0(&cross_key_state(Some(5), Some(4))).is_err());
 }
 
+// ── Exact fixed-key aggregate ↔ register projection ────────────────────────
+
+#[test]
+fn fields_count_equals_exact_fail_closed_and_no_upper_limb_alias() {
+    let keys = vec![140, 141, 142];
+    let program = CellProgram::Predicate(vec![StateConstraint::FieldsCountEquals {
+        keys: keys.clone(),
+        value: field_from_u64(8),
+        count_index: 0,
+    }]);
+    let eval = |state: &CellState| {
+        program.evaluate_full(
+            state,
+            None,
+            None,
+            &TransitionMeta::wildcard(),
+            &WitnessBundle::empty(),
+        )
+    };
+    let state = |values: &[Option<u64>], count: FieldElement| {
+        let mut state = CellState::new(0);
+        assert!(state.set_field(0, count));
+        for (&key, value) in keys.iter().zip(values) {
+            if let Some(value) = value {
+                assert!(state.set_field_ext(key, field_from_u64(*value)));
+            }
+        }
+        state
+    };
+
+    assert!(eval(&state(&[Some(8), Some(1), Some(8)], field_from_u64(2))).is_ok());
+    assert!(eval(&state(&[Some(8), Some(1), Some(8)], field_from_u64(1))).is_err());
+    assert!(eval(&state(&[Some(8), None, Some(8)], field_from_u64(2))).is_err());
+
+    // Full-field equality for the register: low-u64 `2` with a non-zero upper
+    // limb cannot alias the canonical exact count.
+    let mut noncanonical_two = field_from_u64(2);
+    noncanonical_two[0] = 1;
+    assert!(eval(&state(&[Some(8), Some(1), Some(8)], noncanonical_two)).is_err());
+}
+
 #[test]
 fn heap_atom_composes_under_heyting_fragment() {
     // Not(HeapField) is the clean complement (heap atoms only ever emit
@@ -3554,6 +3595,14 @@ fn view_projection_is_total_and_kind_tagged() {
             },
             "HeapFieldLteOther",
         ),
+        (
+            StateConstraint::FieldsCountEquals {
+                keys: vec![140, 141, 142],
+                value: field_from_u64(8),
+                count_index: 0,
+            },
+            "FieldsCountEquals",
+        ),
     ];
 
     // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -3628,7 +3677,8 @@ fn view_projection_is_total_and_kind_tagged() {
             | StateConstraint::SettleEscrow { .. }
             | StateConstraint::DischargeObligation { .. }
             | StateConstraint::VaultDeposit { .. }
-            | StateConstraint::HeapFieldLteOther { .. } => {}
+            | StateConstraint::HeapFieldLteOther { .. }
+            | StateConstraint::FieldsCountEquals { .. } => {}
         }
     }
 

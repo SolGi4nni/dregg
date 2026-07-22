@@ -260,6 +260,13 @@ enum SymConstraint {
         key: SymKey,
         atom: SymAtom,
     },
+    /// Exact fixed-key aggregate authored by Lean: the number of resolved
+    /// post-state keys equal to `value` must equal the named register.
+    CountFieldsEq {
+        keys: Vec<SymKey>,
+        value: u64,
+        reg: String,
+    },
 }
 
 /// Mirrors Lean `Simple` (the anyOf-liftable subset).
@@ -413,6 +420,13 @@ impl SymConstraint {
                 key: key.resolve(dep),
                 atom: atom.resolve(),
             },
+            SymConstraint::CountFieldsEq { keys, value, reg } => {
+                StateConstraint::FieldsCountEquals {
+                    keys: keys.iter().map(|key| key.resolve(dep)).collect(),
+                    value: field_from_u64(*value),
+                    count_index: dep.reg(reg),
+                }
+            }
         }
     }
 }

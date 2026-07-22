@@ -37,7 +37,13 @@ construction (edit a rule here, re-emit, and the deployed game changes: the cana
        `0 → 1` transition AND the post-state holds key-relic `w−1` CARRIED;
      * `unknown_method_refused` — a method outside the six verbs is default-denied.
 
-3. **The model and the program share ONE substrate** (name-keyed records): `encode`
+3. **Custody projections are exact, not parallel bookkeeping.** The spent rider
+   carries six `countFieldsEq` aggregate teeth.  Every ordinary verb therefore proves
+   that `pack`, `bank`, and each floor hoard are the exact census of the eight
+   individually committed relic custody fields.  A forged loot can neither advance a
+   counter without moving a relic nor move two relics behind one `pack += 1` receipt.
+
+4. **The model and the program share ONE substrate** (name-keyed records): `encode`
    embeds the model `DState` into `Exec.Value`, and the `#guard` battery DRIVES the
    crowned run of `Dungeon.lean` through `RecordProgram.admits` step by step — the
    model-legal run IS admitted — while eight named attacks (dupe, keyless way, staple,
@@ -65,11 +71,10 @@ construction (edit a rule here, re-emit, and the deployed game changes: the cana
   is the register-substrate refinement the audit named (NOT re-claimed here). The Rust-side agreement
   the descent crate's executor tests exercise (illegal turns are REAL `WorldError::Refused`) is now
   ALSO backed by the differential gate, not prose alone.
-* The per-relic custody ratchet (`monotonic` + `memberOf {home, CARRIED, BANKED}`) and
-  the zone-counter conservation are BOTH enforced; the exact custody↔counter bijection
-  (each loot flips EXACTLY the looted relic's code) is model-level (`Dungeon.lean`,
-  where counters are *definitions* over custody) and engine-driven — the constraint
-  vocabulary cannot count over heap keys. Named seam, inherited from the substrate.
+* The per-relic custody ratchet (`monotonic` + `memberOf {home, CARRIED, BANKED}`),
+  zone-counter conservation, and the exact custody↔counter census are all enforced.
+  The aggregate is over this game's fixed eight custody keys; an unbounded dynamic
+  inventory still belongs on the first-class collection/AIR path.
 
 ## ⚑ DeployedConstraint refinement — why tug lands and the descent is BOUNDED (LARP-audit fix #4/#5)
 
@@ -158,6 +163,7 @@ inductive Constraint where
   | allowedTransitions (reg : String) (allowed : List (Nat × Nat))
   | anyOf (variants : List Simple)
   | heapField (key : HeapKeyRef) (atom : HeapAtom)
+  | countFieldsEq (keys : List HeapKeyRef) (value : Nat) (reg : String)
 deriving Repr, DecidableEq
 
 /-- Guards: the descent authors BOTH method dispatch AND slot-changed riders. A rider
@@ -186,6 +192,10 @@ def hoardName (d : Nat) : String := s!"hoard_{d}"
 /-- The relic-zone registers summed by conservation (`Σ = RELICS` on every turn). -/
 def zones : List String :=
   ["pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4"]
+
+/-- The individually committed relic custody fields, in their canonical mint order. -/
+def relicKeys : List HeapKeyRef :=
+  (List.range RELICS).map fun i => .named (relicName i)
 
 /-- Each relic's minted home floor — THE SAME list the model mints from
 (`Dungeon.homeFloors`); the emit reads the model, so the world and its teeth cannot
@@ -217,6 +227,17 @@ def custodyTeeth : List Constraint :=
 /-- Zone counters live in `[0, RELICS]` — no field-wrap tricks. -/
 def rangeTeeth : List Constraint :=
   zones.map fun z => .inRangeTwoSided z 0 RELICS
+
+/-- Bind every register projection to the exact census of the eight custody fields.
+This is the heap/object ↔ register bridge: conservation among counters can no longer
+be satisfied by counters that describe a different custody state. -/
+def projectionTeeth : List Constraint :=
+  [ .countFieldsEq relicKeys CARRIED "pack",
+    .countFieldsEq relicKeys BANKED "bank",
+    .countFieldsEq relicKeys 1 (hoardName 1),
+    .countFieldsEq relicKeys 2 (hoardName 2),
+    .countFieldsEq relicKeys 3 (hoardName 3),
+    .countFieldsEq relicKeys 4 (hoardName 4) ]
 
 /-- Freeze a register set (a verb's write-frame: what it does NOT own, it cannot touch). -/
 def frozen (regs : List String) : List Constraint := regs.map .immutable
@@ -345,7 +366,8 @@ def bankRider : Case :=
 the per-relic provenance ratchet, and the genesis-sentinel freeze. -/
 def spentRider : Case :=
   ⟨.slotChangedForMethods "spent" verbs,
-    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ [.heapField .sentinel .immutable]⟩
+    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ projectionTeeth ++
+      [.heapField .sentinel .immutable]⟩
 
 /-- The deployed case list: the six verb arms + the six riders. -/
 def programCases : List Case :=
@@ -402,6 +424,8 @@ def Constraint.toExec : Constraint → Dregg2.Exec.StateConstraint
       .allowedTransitions r (al.map (fun p => ((p.1 : Int), (p.2 : Int))))
   | .anyOf vs        => .anyOf (vs.map Simple.toExec)
   | .heapField k a   => a.toExec k.field
+  | .countFieldsEq ks v r =>
+      .countFieldsEq (ks.map HeapKeyRef.field) (v : Int) r
 
 def Guard.toExec : Guard → Dregg2.Exec.TransitionGuard
   | .methodIs m => .methodIs (methodIdx m)
@@ -740,6 +764,21 @@ def setF (v : Value) (f : String) (x : Int) : Value :=
   | .record fs => .record (fs.map (fun p => if p.1 = f then (f, .int x) else p))
   | v => v
 
+/-- Mutation-canary referee: the deployed program with exactly the six
+object↔projection census teeth deleted from the spent rider.  This is not an
+alternative ruleset; it exists to demonstrate that the aggregate tooth, rather
+than another overlapping constraint, is what rejects the two-relic/one-counter
+forgery below. -/
+private def spentRiderWithoutProjection : Case :=
+  ⟨.slotChangedForMethods "spent" verbs,
+    coreTeeth ++ rangeTeeth ++ custodyTeeth ++ [.heapField .sentinel .immutable]⟩
+
+private def dungeonExecWithoutProjection : Dregg2.Exec.RecordProgram :=
+  CellProgram.toExec (.cases
+    [ genesisCase, delveCase, unlockCase, smiteCase, lootCase, fleeCase,
+      depthRider, wayRider 2, wayRider 3, wayRider 4, fateRider, bankRider,
+      spentRiderWithoutProjection ])
+
 /-! ### The weld, DRIVEN (`#guard` — kernel-evaluated, no axioms):
 the model-legal crowned run is admitted END TO END by the deployed program object,
 and the named attacks are refused. ⚑ This is the FORWARD weld for ONE run; the general
@@ -756,6 +795,24 @@ The reverse direction (admitted ⇒ the named laws) IS ∀-proven by the inversi
   (let s := st [.delve, .smite]
    Dregg2.Exec.RecordProgram.admits dungeonExec 4 (encode s)
      (setF (setF (encode s) "pack" 1) "spent" 4)) = false
+
+-- Attack 1b — OBJECT/PROJECTION SPLIT: debit one hoard unit and increment pack
+-- by one while advancing TWO custody objects to CARRIED.  Conservation, the
+-- loot frame, and both per-object ratchets all pass; the exact census is the
+-- indispensable rejecting tooth.  The mutation canary proves that deleting
+-- precisely `projectionTeeth` makes the same forged transition admit.
+#guard
+  (let s := st [.delve, .smite]
+   let forged := setF (setF (setF (setF (setF (encode s)
+      (relicName 1) CARRIED) (relicName 4) CARRIED)
+      "pack" 1) (hoardName 1) 2) "spent" 4
+   Dregg2.Exec.RecordProgram.admits dungeonExec 4 (encode s) forged) = false
+#guard
+  (let s := st [.delve, .smite]
+   let forged := setF (setF (setF (setF (setF (encode s)
+      (relicName 1) CARRIED) (relicName 4) CARRIED)
+      "pack" 1) (hoardName 1) 2) "spent" 4
+   Dregg2.Exec.RecordProgram.admits dungeonExecWithoutProjection 4 (encode s) forged) = true
 
 -- Attack 2 — KEYLESS WAY: flipping way_2 without carrying key-relic 1 is refused
 -- (the rider demands the exhibited key).
@@ -862,6 +919,9 @@ def Constraint.toJson : Constraint → String
       "{\"kind\":\"allowedTransitions\",\"reg\":" ++ jStr r ++ ",\"allowed\":" ++ jList (al.map jPair) ++ "}"
   | .anyOf vs        => "{\"kind\":\"anyOf\",\"variants\":" ++ jList (vs.map Simple.toJson) ++ "}"
   | .heapField k a   => "{\"kind\":\"heapField\",\"key\":" ++ k.toJson ++ ",\"atom\":" ++ a.toJson ++ "}"
+  | .countFieldsEq ks v r =>
+      "{\"kind\":\"countFieldsEq\",\"keys\":" ++ jList (ks.map HeapKeyRef.toJson)
+        ++ ",\"value\":" ++ toString v ++ ",\"reg\":" ++ jStr r ++ "}"
 
 def Guard.toJson : Guard → String
   | .methodIs m => "{\"kind\":\"methodIs\",\"method\":" ++ jStr m ++ "}"

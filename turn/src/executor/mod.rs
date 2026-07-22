@@ -457,6 +457,9 @@ pub fn project_slot_caveat_manifest(
             // in-circuit teeth. It must not be read as executor-enforced until a
             // heap-relational AIR exists.
             | dregg_cell::StateConstraint::HeapFieldLteOther { .. }
+            // Exact aggregate over executor-reachable map keys. Host-evaluated
+            // today; no per-slot caveat manifest can carry the variable key set.
+            | dregg_cell::StateConstraint::FieldsCountEquals { .. }
             | dregg_cell::StateConstraint::BoundedBy { .. }
             | dregg_cell::StateConstraint::FieldDeltaInRange { .. }
             | dregg_cell::StateConstraint::FieldGteHeight { .. }

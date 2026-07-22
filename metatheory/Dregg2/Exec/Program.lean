@@ -48,6 +48,17 @@ def sumScalars (v : Value) (fields : List FieldName) : Option Int :=
                   | _,      _      => none)
     (some 0)
 
+/-- Count the named scalar fields whose value is exactly `needle`.  Unlike a
+plain `List.countP` over optional reads, an absent or non-scalar field makes the
+whole count unavailable: an aggregate over a partially opened custody set must
+fail closed rather than silently treating the missing member as a non-match. -/
+def countScalarsEq (v : Value) (fields : List FieldName) (needle : Int) : Option Nat :=
+  fields.foldr
+    (fun f acc => match v.scalar f, acc with
+                  | some x, some n => some (if x = needle then n + 1 else n)
+                  | _,      _      => none)
+    (some 0)
+
 /-! ## The constraint catalog (name-keyed; the structural subset of dregg1's 21). -/
 
 /-- **Simple (non-witnessed, non-recursive-except-`not`) constraints** — the fragment
@@ -407,6 +418,18 @@ inductive StateConstraint where
   evaluator the executor already owns — no new semantics). APPENDED (so existing serialized programs,
   factory VKs, and content addresses stay byte-identical, §2). Admit-char: `evalConstraint_anyOfBound_iff`. -/
   | anyOfBound (branches : List BoundBranch)
+  /-- **Exact aggregate-to-register binding.** Count the fields in `fields`
+  whose post-state scalar equals `value` and require that exact count to equal
+  the post-state scalar `countField`.  Every source field and the count field
+  must be present and scalar-valued; otherwise the gate fails closed.
+
+  This is the fixed-key aggregate tooth needed when individually committed
+  heap objects have register projections: a custody list may project to
+  `pack`, `bank`, and per-zone counters, but conservation over the counters
+  alone cannot prove that those counters describe the objects.  The Rust twin
+  is `StateConstraint::FieldsCountEquals { keys, value, count_index }`, where
+  the named fields are resolved to executor-reachable `fields_map` keys. -/
+  | countFieldsEq (fields : List FieldName) (value : Int) (countField : FieldName)
   deriving Repr
 
 /-! ## Decidable equality on the constraint catalog.
@@ -592,6 +615,35 @@ def evalConstraint : StateConstraint → Value → Value → Bool
   -- conservative-extension direction — it would reject a turn the ctx-aware evaluator on the empty
   -- context ADMITS via a passing pure-simple branch.
   | .anyOfBound branches, old, new => branches.any (fun b => b.eval old new)
+  | .countFieldsEq fields value countField, _, new =>
+      match countScalarsEq new fields value, new.scalar countField with
+      | some count, some expected => (count : Int) == expected
+      | _,          _             => false
+
+/-- Admit-characterization for the exact aggregate-to-register tooth.  In
+particular, neither a missing source field nor a missing count field can be
+reinterpreted as an empty/zero collection. -/
+theorem evalConstraint_countFieldsEq_iff (fields : List FieldName) (value : Int)
+    (countField : FieldName) (old new : Value) :
+    evalConstraint (.countFieldsEq fields value countField) old new = true ↔
+      ∃ count : Nat, countScalarsEq new fields value = some count ∧
+        new.scalar countField = some (count : Int) := by
+  simp only [evalConstraint]
+  cases hc : countScalarsEq new fields value with
+  | none => simp
+  | some count =>
+    cases he : new.scalar countField with
+    | none => simp
+    | some expected =>
+      simp only [beq_iff_eq]
+      constructor
+      · intro h
+        exact ⟨count, rfl, congrArg some h.symm⟩
+      · rintro ⟨n, hn, hexp⟩
+        injection hn with hn
+        subst n
+        injection hexp with hexp
+        exact hexp.symm
 
 /-! ## RecordProgram + TransitionGuard dispatch + default-deny. -/
 
@@ -2470,6 +2522,16 @@ def mixedHeapProgram : RecordProgram := .predicate
   (.record [("epoch", .int 2), (heapKey 64, .int 5)])
   (.record [("epoch", .int 1), (heapKey 64, .int 9)]) == false   -- slot tooth still bites
 
+-- Exact aggregate-to-register binding: the honest census admits, a counter
+-- substitution and a partially-opened source set both fail closed.
+#guard evalConstraint (.countFieldsEq ["r0", "r1", "r2"] 8 "pack") (.record [])
+  (.record [("r0", .int 8), ("r1", .int 1), ("r2", .int 8), ("pack", .int 2)])
+#guard evalConstraint (.countFieldsEq ["r0", "r1", "r2"] 8 "pack") (.record [])
+  (.record [("r0", .int 8), ("r1", .int 1), ("r2", .int 8), ("pack", .int 1)]) == false
+#guard evalConstraint (.countFieldsEq ["r0", "r1", "r2"] 8 "pack") (.record [])
+  (.record [("r0", .int 8), ("r2", .int 8), ("pack", .int 2)]) == false
+
+#assert_axioms evalConstraint_countFieldsEq_iff
 #assert_axioms evalHeap_eq_evalSimple
 #assert_axioms evalHeap_strictMono_iff
 #assert_axioms evalHeap_memberOf_iff

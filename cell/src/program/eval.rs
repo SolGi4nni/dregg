@@ -1982,6 +1982,47 @@ fn evaluate_constraint_full(
             Ok(())
         }
 
+        // ─── Exact fixed-key aggregate ↔ register projection ───
+        StateConstraint::FieldsCountEquals {
+            keys,
+            value,
+            count_index,
+        } => {
+            let count_idx = check_index(*count_index)?;
+            let mut count = 0u64;
+            for key in keys {
+                let Some(actual) = new_state.get_field_ext(*key) else {
+                    return violated(
+                        constraint,
+                        format!(
+                            "field-map key {key} absent post-state \
+                             (FieldsCountEquals fails closed)"
+                        ),
+                    );
+                };
+                if actual == *value {
+                    count =
+                        count
+                            .checked_add(1)
+                            .ok_or_else(|| ProgramError::ConstraintViolated {
+                                constraint: constraint.clone(),
+                                description: "FieldsCountEquals cardinality overflow".to_string(),
+                            })?;
+                }
+            }
+            let expected = field_from_u64(count);
+            if new_state.fields[count_idx] != expected {
+                return violated(
+                    constraint,
+                    format!(
+                        "slot[{count_idx}] does not equal exact field-map census {count} \
+                         (FieldsCountEquals)"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         // ─── Program-readable delegation_epoch (the channels closure lane) ───
         StateConstraint::DelegationEpochEquals { index } => {
             let idx = check_index(*index)?;
