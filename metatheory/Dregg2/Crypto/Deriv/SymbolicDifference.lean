@@ -970,6 +970,7 @@ theorem constraintDifference?_reads {c : StateConstraint} {S : DifferenceSpec}
   | affineDeltaLeField _ _ => simp [constraintDifference?] at hS
   | observedFieldEquals _ _ _ => simp [constraintDifference?] at hS
   | anyOfBound _ => simp [constraintDifference?] at hS
+  | countFieldsEq _ _ _ => simp [constraintDifference?] at hS
 
 private def predMeasure : Pred → Nat
   | .and l r | .or l r => predMeasure l + predMeasure r + 1
@@ -1910,6 +1911,7 @@ theorem constraintDifference?_closed {c : StateConstraint} {S : DifferenceSpec}
   | affineDeltaLeField _ _ => simp [constraintDifference?] at h
   | observedFieldEquals _ _ _ => simp [constraintDifference?] at h
   | anyOfBound _ => simp [constraintDifference?] at h
+  | countFieldsEq _ _ _ => simp [constraintDifference?] at h
 
 /-- Extraction always creates the scalar cuts required by its full-value equality observations. -/
 theorem predDifference?_closed : ∀ {p : Pred} {S : DifferenceSpec},
