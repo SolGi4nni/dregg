@@ -269,27 +269,34 @@ pub struct PreparedExactAafiTurnTransition {
     pub validated: ValidatedExactAafiTransition,
 }
 
-/// Reconstruct the exact full-domain append-order accumulator from durable records and prepare one
-/// successor transition without mutating persistence or cutting over the deployed FNSP-v2 path.
+/// One DFS/effect-ordered finalized spend prepared against the exact successor of every earlier
+/// spend in the same turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedExactAafiFinalizedSpend {
+    /// Durable zero-based append sequence persistence will assign to this spend.
+    pub append_seq: u64,
+    pub transition: PreparedExactAafiTurnTransition,
+}
+
+/// Ordered exact-nullifier staging artifact for all finalized spends in one turn.
 ///
-/// The input shape is intentionally the direct output of
-/// `Store::load_faithful_nullifier_records`: `(Nullifier, public_value, append_seq)`. Storage
-/// iteration order is irrelevant, but `append_seq` is authoritative and must be exactly dense.
-/// Malformed history, duplicate keys/sequence numbers, a duplicate new spend, and terminal
-/// capacity all refuse before an artifact is returned.
-pub fn prepare_exact_aafi_turn_transition(
-    durable_records: impl IntoIterator<Item = (dregg_cell::note::Nullifier, u64, u64)>,
+/// This is the narrow hand-off a future FNSP-v3 rotated witness producer needs. It retains both
+/// batch boundary anchors and every per-spend two-path witness. It does not change proof routing or
+/// imply that any deployed verifier accepts those anchors yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedExactAafiFinalizedSpendBatch {
+    /// State before the turn's first spend (`FNS3(root8,count64)`).
+    pub prior_fns3: Digest8,
+    /// State after the turn's last spend, or `prior_fns3` for an empty batch.
+    pub successor_fns3: Digest8,
+    pub spends: Vec<PreparedExactAafiFinalizedSpend>,
+}
+
+fn prepare_exact_aafi_transition_from_state(
+    state: &mut ExactNullifierAafi,
     inserted_nullifier: dregg_cell::note::Nullifier,
     inserted_value: u64,
 ) -> Result<PreparedExactAafiTurnTransition, ExactAafiTurnPreparationError> {
-    let records = durable_records
-        .into_iter()
-        .map(|(nullifier, value, seq)| ExactAppendRecord {
-            seq,
-            raw: nullifier.0,
-            value,
-        });
-    let mut state = ExactNullifierAafi::from_append_records(records)?;
     let prior_fns3 = state.state_commit();
     let witness = state.prepare_insert(inserted_nullifier.0, inserted_value)?;
 
@@ -313,6 +320,85 @@ pub fn prepare_exact_aafi_turn_transition(
         successor_fns3,
         witness,
         validated,
+    })
+}
+
+/// Reconstruct the exact full-domain append-order accumulator from durable records and prepare one
+/// successor transition without mutating persistence or cutting over the deployed FNSP-v2 path.
+///
+/// The input shape is intentionally the direct output of
+/// `Store::load_faithful_nullifier_records`: `(Nullifier, public_value, append_seq)`. Storage
+/// iteration order is irrelevant, but `append_seq` is authoritative and must be exactly dense.
+/// Malformed history, duplicate keys/sequence numbers, a duplicate new spend, and terminal
+/// capacity all refuse before an artifact is returned.
+pub fn prepare_exact_aafi_turn_transition(
+    durable_records: impl IntoIterator<Item = (dregg_cell::note::Nullifier, u64, u64)>,
+    inserted_nullifier: dregg_cell::note::Nullifier,
+    inserted_value: u64,
+) -> Result<PreparedExactAafiTurnTransition, ExactAafiTurnPreparationError> {
+    let records = durable_records
+        .into_iter()
+        .map(|(nullifier, value, seq)| ExactAppendRecord {
+            seq,
+            raw: nullifier.0,
+            value,
+        });
+    let mut state = ExactNullifierAafi::from_append_records(records)?;
+    prepare_exact_aafi_transition_from_state(&mut state, inserted_nullifier, inserted_value)
+}
+
+/// Prepare every DFS/effect-ordered finalized spend against one evolving exact AAFI state.
+///
+/// Calling the one-spend helper repeatedly against an unchanged durable prefix would be unsound:
+/// every spend after the first must open the immediately preceding spend's successor. This batch
+/// adapter reconstructs the persisted prefix once, applies each validated transition in order,
+/// and records the same dense sequence persistence assigns (`durable_len + effect_offset`).
+pub fn prepare_exact_aafi_finalized_spend_batch(
+    durable_records: impl IntoIterator<Item = (dregg_cell::note::Nullifier, u64, u64)>,
+    finalized_spends: &[dregg_persist::FinalizedNullifierRecord],
+) -> Result<PreparedExactAafiFinalizedSpendBatch, ExactAafiTurnPreparationError> {
+    let records = durable_records
+        .into_iter()
+        .map(|(nullifier, value, seq)| ExactAppendRecord {
+            seq,
+            raw: nullifier.0,
+            value,
+        });
+    let mut state = ExactNullifierAafi::from_append_records(records)?;
+    let prior_fns3 = state.state_commit();
+    let mut prepared = Vec::with_capacity(finalized_spends.len());
+
+    for spend in finalized_spends {
+        // AAFI count includes the permanent BOT leaf, while persistence's sequence is zero-based
+        // over REAL leaves. Therefore the exact durable sequence for the next append is count-1.
+        let append_seq = state
+            .count()
+            .checked_sub(1)
+            .ok_or(ExactAafiTurnPreparationError::InternalAnchorMismatch)?;
+        let transition = prepare_exact_aafi_transition_from_state(
+            &mut state,
+            dregg_cell::note::Nullifier(spend.nullifier),
+            spend.value,
+        )?;
+        if transition.validated.prior_count() != append_seq + 1
+            || prepared
+                .last()
+                .is_some_and(|previous: &PreparedExactAafiFinalizedSpend| {
+                    previous.transition.successor_fns3 != transition.prior_fns3
+                })
+        {
+            return Err(ExactAafiTurnPreparationError::InternalAnchorMismatch);
+        }
+        prepared.push(PreparedExactAafiFinalizedSpend {
+            append_seq,
+            transition,
+        });
+    }
+
+    Ok(PreparedExactAafiFinalizedSpendBatch {
+        prior_fns3,
+        successor_fns3: state.state_commit(),
+        spends: prepared,
     })
 }
 
@@ -1909,6 +1995,61 @@ mod tests {
             capacity,
             Err(ExactAafiTurnPreparationError::Accumulator(
                 ExactAafiError::ReplaySeqOutOfRange(_)
+            ))
+        ));
+    }
+
+    /// MULTI-SPEND STAGING — each spend opens the exact successor produced by the preceding spend,
+    /// and its staged sequence matches persistence's dense `first_seq + effect_offset` assignment.
+    #[test]
+    fn exact_aafi_finalized_batch_chains_spends_and_refuses_within_turn_duplicate() {
+        let durable = vec![
+            durable_record([0xff; 32], 20, 1),
+            durable_record([0x00; 32], 10, 0),
+        ];
+        let spends = [
+            dregg_persist::FinalizedNullifierRecord {
+                nullifier: [0x55; 32],
+                value: 0x0102_0304_0506_0708,
+            },
+            dregg_persist::FinalizedNullifierRecord {
+                nullifier: [0x66; 32],
+                value: u64::MAX,
+            },
+        ];
+
+        let batch = prepare_exact_aafi_finalized_spend_batch(durable.clone(), &spends)
+            .expect("two fresh DFS-ordered spends prepare as one chained batch");
+        assert_eq!(batch.spends.len(), 2);
+        assert_eq!(batch.spends[0].append_seq, 2);
+        assert_eq!(batch.spends[1].append_seq, 3);
+        assert_eq!(batch.spends[0].transition.validated.prior_count(), 3);
+        assert_eq!(batch.spends[0].transition.validated.successor_count(), 4);
+        assert_eq!(batch.spends[1].transition.validated.prior_count(), 4);
+        assert_eq!(batch.spends[1].transition.validated.successor_count(), 5);
+        assert_eq!(
+            batch.spends[0].transition.successor_fns3, batch.spends[1].transition.prior_fns3,
+            "spend two must open spend one's exact successor, not the unchanged durable prefix"
+        );
+        assert_eq!(batch.prior_fns3, batch.spends[0].transition.prior_fns3);
+        assert_eq!(
+            batch.successor_fns3,
+            batch.spends[1].transition.successor_fns3
+        );
+        assert_eq!(
+            batch.spends[0].transition.validated.inserted_value(),
+            spends[0].value
+        );
+        assert_eq!(
+            batch.spends[1].transition.validated.inserted_value(),
+            spends[1].value
+        );
+
+        let duplicate = [spends[0], spends[0]];
+        assert!(matches!(
+            prepare_exact_aafi_finalized_spend_batch(durable, &duplicate),
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::Duplicate
             ))
         ));
     }
