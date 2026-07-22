@@ -168,6 +168,28 @@ structure Activation where
   receiptCutoverTip : Option ReceiptHash
   exactInitial : ExactStatePoint
 
+/-- Store/finality-owned facts needed to authorize an activation.  The relations deliberately sit
+outside the activation record: durable rows, federation policy, and executor enrollment are
+authorities, not caller-authored bytes. -/
+structure ActivationAuthority where
+  cutover : Nat → Option ReceiptHash → Prop
+  exactHeadAtCutover : Nat → ExactStatePoint → Prop
+  federationAuthorized : List UInt8 → Prop
+  executorAuthorized : List UInt8 → Prop
+
+/-- A global exact activation is tied to the authenticated receipt-log cutover and exact head, and
+to the federation/executor policy which owns the epoch. -/
+structure ActivationAuthorized (authority : ActivationAuthority)
+    (activation : Activation) : Prop where
+  nonzeroEpoch : activation.epoch ≠ 0
+  cursorTipShape :
+    (activation.receiptCutoverCursor = 0) ↔ activation.receiptCutoverTip = none
+  cutover : authority.cutover activation.receiptCutoverCursor activation.receiptCutoverTip
+  exactHead :
+    authority.exactHeadAtCutover activation.receiptCutoverCursor activation.exactInitial
+  federation : authority.federationAuthorized activation.federation
+  executor : authority.executorAuthorized activation.executor
+
 /-- One versioned frame binds a genuine full-turn receipt to its exact proof-local subreceipt. -/
 structure ExactFrame where
   epoch : Nat
@@ -209,6 +231,7 @@ structure FullReceiptAuthorized
     (latestBefore : LatestAgentReceiptBefore)
     (globalBoundary : GlobalCommitBoundary)
     (frame : ExactFrame) : Prop where
+  current : durableAt frame.receiptIndex (receiptHash frame.full) frame.full
   nonce : frame.full.nonceAfter = frame.full.nonceBefore + 1
   globalState : globalBoundary frame.receiptIndex frame.full.preState frame.full.postState
   predecessor :
@@ -241,13 +264,14 @@ def FrameLinked (frameHash : FrameHasher) (previous next : ExactFrame) : Prop :=
 activation point.  Its full receipt is authorized independently; activation does not select an
 agent or synthesize that agent's predecessor. -/
 structure WellFormedFirst
+    (activationAuthority : ActivationAuthority)
     (receiptHash : ReceiptHasher)
     (activationHash : ActivationHasher)
     (durableAt : DurableReceiptAt)
     (latestBefore : LatestAgentReceiptBefore)
     (globalBoundary : GlobalCommitBoundary)
     (activation : Activation) (frame : ExactFrame) : Prop where
-  nonzeroEpoch : activation.epoch ≠ 0
+  activationAuthorized : ActivationAuthorized activationAuthority activation
   epoch : frame.epoch = activation.epoch
   activationMatches : frame.activation = activationHash activation
   framePredecessor : frame.predecessor = .activation (activationHash activation)
@@ -272,23 +296,37 @@ structure WellFormedStep
   exact : ExactStateLinked previous.exact next.exact
   frame : FrameLinked frameHash previous next
 
-/-- The first frame begins at the activated exact accumulator point. -/
-theorem first_exact_begins_at_activation
+/-- A first-frame witness carries the store/finality-owned activation authority; nonzero epoch and
+cutover/head/federation/executor facts are not reconstructed from frame bytes. -/
+theorem first_activation_authorized
+    {activationAuthority : ActivationAuthority}
     {receiptHash : ReceiptHasher} {activationHash : ActivationHasher}
     {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
     {globalBoundary : GlobalCommitBoundary} {activation : Activation} {frame : ExactFrame}
-    (h : WellFormedFirst receiptHash activationHash durableAt latestBefore globalBoundary
-      activation frame) :
+    (h : WellFormedFirst activationAuthority receiptHash activationHash durableAt latestBefore
+      globalBoundary activation frame) :
+    ActivationAuthorized activationAuthority activation :=
+  h.activationAuthorized
+
+/-- The first frame begins at the activated exact accumulator point. -/
+theorem first_exact_begins_at_activation
+    {activationAuthority : ActivationAuthority}
+    {receiptHash : ReceiptHasher} {activationHash : ActivationHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {activation : Activation} {frame : ExactFrame}
+    (h : WellFormedFirst activationAuthority receiptHash activationHash durableAt latestBefore
+      globalBoundary activation frame) :
     frame.exact.before = activation.exactInitial :=
   h.exactPreState
 
 /-- The first exact frame advances the physical count exactly once. -/
 theorem first_exact_count_increments
+    {activationAuthority : ActivationAuthority}
     {receiptHash : ReceiptHasher} {activationHash : ActivationHasher}
     {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
     {globalBoundary : GlobalCommitBoundary} {activation : Activation} {frame : ExactFrame}
-    (h : WellFormedFirst receiptHash activationHash durableAt latestBefore globalBoundary
-      activation frame) :
+    (h : WellFormedFirst activationAuthority receiptHash activationHash durableAt latestBefore
+      globalBoundary activation frame) :
     frame.exact.after.1.count = activation.exactInitial.1.count + 1 := by
   rw [h.exactValid, h.exactPreState]
 
@@ -301,6 +339,15 @@ theorem step_full_receipt_authorized
     (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
     FullReceiptAuthorized receiptHash durableAt latestBefore globalBoundary next :=
   h.full
+
+/-- The current receipt itself is present byte/identity-exactly at the frame's durable index. -/
+theorem step_current_receipt_durable
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
+    durableAt next.receiptIndex (receiptHash next.full) next.full :=
+  h.full.current
 
 /-- The next full receipt's pre/post pair comes from the global commit boundary at its own index,
 not from the previous exact frame's post-state. -/
@@ -433,9 +480,11 @@ theorem exactFrame_finalizes_at_most_once
 #assert_axioms receiptLink_ne_frameLink
 #assert_axioms activationLink_ne_frameLink
 #assert_axioms exactStateCommit_recomputed
+#assert_axioms first_activation_authorized
 #assert_axioms first_exact_begins_at_activation
 #assert_axioms first_exact_count_increments
 #assert_axioms step_full_receipt_authorized
+#assert_axioms step_current_receipt_durable
 #assert_axioms step_global_state_authorized
 #assert_axioms step_exact_state_link
 #assert_axioms step_exact_count_increments
