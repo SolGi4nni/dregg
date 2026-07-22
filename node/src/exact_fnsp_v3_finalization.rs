@@ -83,6 +83,8 @@ struct FreshExactFnspV3PostExecution {
     receipt: TurnReceipt,
     receipt_index: u64,
     install_receipt_head: bool,
+    source_commit_ordinal: u64,
+    source_receipt_hash: [u8; 32],
     resolution_events: Vec<dregg_turn::ResolutionEvent>,
 }
 
@@ -103,6 +105,8 @@ impl DurablyCommittedExactFnspV3Turn {
         self,
         live_ledger: &mut Ledger,
         cclerk: &mut AgentCipherclerk,
+        state: &crate::state::NodeState,
+        store: &PersistentStore,
     ) -> Result<CommitOutcome, ExactFnspV3FinalizationError> {
         if let Some(fresh) = self.fresh_post_execution {
             if fresh.install_receipt_head {
@@ -116,6 +120,14 @@ impl DurablyCommittedExactFnspV3Turn {
             crate::executor_side_state_persistence::trace_durable_resolution_events(
                 &fresh.resolution_events,
             );
+            crate::promise_resolutions::publish_durable_resolution_events(
+                state,
+                store,
+                fresh.source_commit_ordinal,
+                fresh.source_receipt_hash,
+                &fresh.resolution_events,
+            )
+            .map_err(ExactFnspV3FinalizationError::PromiseResolution)?;
         }
         Ok(self.outcome)
     }
@@ -234,12 +246,18 @@ impl PreparedExactFnspV3Finalization {
         // complete successor and weld both React CAS predecessors into this exact-frame writer;
         // otherwise a committed exact receipt could resolve a promise whose replay/nullifier gate
         // disappeared on restart.
-        let executor_state =
+        let mut executor_state =
             crate::executor_side_state_persistence::capture_finalized_executor_consensus_state(
                 &post_executor,
                 &executor_consensus_predecessors,
             )
             .map_err(ExactFnspV3FinalizationError::ExecutorState)?;
+        executor_state.promise_resolutions = crate::promise_resolutions::resolution_candidates(
+            expected_ordinal,
+            record.receipt_hash,
+            &resolution_events,
+        )
+        .map_err(ExactFnspV3FinalizationError::PromiseResolution)?;
 
         // Keep every non-Clone authority alive across the atomic call.  Only the store-returned
         // committed head below becomes recovery authority.
@@ -293,6 +311,8 @@ impl PreparedExactFnspV3Finalization {
                     receipt,
                     receipt_index,
                     install_receipt_head: !require_existing_receipt,
+                    source_commit_ordinal: expected_ordinal,
+                    source_receipt_hash: record.receipt_hash,
                     resolution_events,
                 });
         Ok(DurablyCommittedExactFnspV3Turn {
@@ -682,6 +702,7 @@ pub(crate) enum ExactFnspV3FinalizationError {
     Anchor(String),
     ReceiptEncoding(String),
     ExecutorState(String),
+    PromiseResolution(String),
     ReceiptHeadInstall(String),
     Store(StoreError),
 }
@@ -727,6 +748,9 @@ impl fmt::Display for ExactFnspV3FinalizationError {
             }
             Self::ExecutorState(error) => {
                 write!(f, "exact FNSP-v3 executor-state snapshot failed: {error}")
+            }
+            Self::PromiseResolution(error) => {
+                write!(f, "exact FNSP-v3 promise-resolution weld failed: {error}")
             }
             Self::ReceiptHeadInstall(error) => {
                 write!(
