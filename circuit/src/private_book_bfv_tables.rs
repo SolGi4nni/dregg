@@ -102,6 +102,20 @@ impl BfvButterflyGeometry {
         psi: 5_546_991_020,
     };
 
+    /// Inverse companion of the executable q0/N=8 tooth.  The same primitive
+    /// `2N`-th root identifies the odd domain; direction selects inverse
+    /// twiddles plus the post-butterfly `psi^-i / N` normalization.
+    pub const Q0_N8_INVERSE: Self = Self {
+        direction: 1,
+        ..Self::Q0_N8
+    };
+
+    /// Production-degree inverse q0 geometry.
+    pub const Q0_N4096_INVERSE: Self = Self {
+        direction: 1,
+        ..Self::Q0_N4096
+    };
+
     fn validate(self) -> Result<(), BfvTableError> {
         let degree = self.degree as usize;
         if degree < 2 || degree > MAX_DEGREE || !degree.is_power_of_two() {
@@ -113,6 +127,12 @@ impl BfvButterflyGeometry {
             return Err(BfvTableError::Geometry(format!(
                 "log_degree {} does not match degree {degree}",
                 self.log_degree
+            )));
+        }
+        if self.direction > 1 {
+            return Err(BfvTableError::Geometry(format!(
+                "direction {} is neither forward (0) nor inverse (1)",
+                self.direction
             )));
         }
         if self.modulus < 3 || self.modulus >= RADIX.pow(3) || self.modulus % 2 == 0 {
@@ -178,6 +198,159 @@ pub struct VerifiedBfvFaithfulTables {
     bus_commitment: [u8; 32],
 }
 
+/// Authority returned after the strict table carrier has additionally been
+/// joined to the transform's real ingress and egress.
+///
+/// This is deliberately *not* an arithmetic-proof authority by itself: the
+/// 48-column butterfly equations still have to be accepted by the matching
+/// IR2 proof.  It closes the separate substitution seam in which a valid
+/// internal stage permutation could otherwise start from, or finish at, a
+/// different polynomial.  In inverse mode the final comparison includes the
+/// exact `psi^-i / N` normalization omitted from the butterfly rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedBfvTransformBoundaries {
+    tables: VerifiedBfvFaithfulTables,
+    input_commitment: [u8; 32],
+    output_commitment: [u8; 32],
+}
+
+impl VerifiedBfvTransformBoundaries {
+    pub fn tables(&self) -> &VerifiedBfvFaithfulTables {
+        &self.tables
+    }
+
+    pub fn input_commitment(&self) -> [u8; 32] {
+        self.input_commitment
+    }
+
+    pub fn output_commitment(&self) -> [u8; 32] {
+        self.output_commitment
+    }
+}
+
+/// One AIR-shaped terminal coefficient for a threshold decryption share.
+///
+/// All large integers are represented in radix `2^14`, the same limb system
+/// as the butterfly AIR.  `smudge_shift = smudge + 2^b` and
+/// `smudge_complement = 2^b - smudge`; their exact sum proves the inclusive
+/// signed interval without revealing a sign bit.  `quotient_shift` uses the
+/// existing `2^63` protocol offset.  The row checks the integer identity
+///
+/// `lambda * product + smudge - h = q * quotient`
+///
+/// without embedding a 37-by-37-bit multiplication in BabyBear.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThresholdDecryptTerminalRow {
+    pub lambda: [u32; 3],
+    pub product: [u32; 3],
+    pub h: [u32; 3],
+    pub smudge_shift: [u32; 6],
+    pub smudge_complement: [u32; 6],
+    pub quotient_shift: [u32; 5],
+}
+
+impl ThresholdDecryptTerminalRow {
+    /// Construct one honest terminal row from exact signed integers.  The
+    /// modular quotient is derived rather than caller-supplied.
+    pub fn from_values(
+        modulus: u64,
+        lambda: u64,
+        product: u64,
+        smudge: i128,
+        h: u64,
+        smudge_bits: u32,
+    ) -> Result<Self, BfvTableError> {
+        validate_terminal_public(modulus, lambda, product, h, smudge_bits)?;
+        let bound = 1i128 << smudge_bits;
+        if smudge < -bound || smudge > bound {
+            return Err(BfvTableError::ThresholdTerminal(format!(
+                "smudge {smudge} is outside [-2^{smudge_bits}, 2^{smudge_bits}]"
+            )));
+        }
+        let numerator = i128::from(lambda)
+            .checked_mul(i128::from(product))
+            .and_then(|value| value.checked_add(smudge))
+            .and_then(|value| value.checked_sub(i128::from(h)))
+            .ok_or_else(|| {
+                BfvTableError::ThresholdTerminal("terminal numerator overflowed i128".to_string())
+            })?;
+        if numerator.rem_euclid(i128::from(modulus)) != 0 {
+            return Err(BfvTableError::ThresholdTerminal(
+                "lambda*product+smudge-h is not divisible by q".to_string(),
+            ));
+        }
+        let quotient = numerator / i128::from(modulus);
+        let quotient_shift = quotient.checked_add(1i128 << 63).ok_or_else(|| {
+            BfvTableError::ThresholdTerminal("signed quotient offset overflow".to_string())
+        })?;
+        if !(0..(1i128 << 64)).contains(&quotient_shift) {
+            return Err(BfvTableError::ThresholdTerminal(
+                "signed quotient does not fit the protocol's offset-u64 range".to_string(),
+            ));
+        }
+        let smudge_shift = smudge + bound;
+        let smudge_complement = bound - smudge;
+        let row = Self {
+            lambda: encode_radix_limbs::<3>(u128::from(lambda))?,
+            product: encode_radix_limbs::<3>(u128::from(product))?,
+            h: encode_radix_limbs::<3>(u128::from(h))?,
+            smudge_shift: encode_radix_limbs::<6>(smudge_shift as u128)?,
+            smudge_complement: encode_radix_limbs::<6>(smudge_complement as u128)?,
+            quotient_shift: encode_radix_limbs::<5>(quotient_shift as u128)?,
+        };
+        row.verify(modulus, smudge_bits)?;
+        Ok(row)
+    }
+
+    /// Verify canonical limbs, the inclusive signed-smudge complement, and
+    /// the exact integer modular equation.  This is the row-local relation the
+    /// production IR2 terminal gate must arithmetize.
+    pub fn verify(&self, modulus: u64, smudge_bits: u32) -> Result<(), BfvTableError> {
+        let lambda = decode_radix_limbs(&self.lambda)?;
+        let product = decode_radix_limbs(&self.product)?;
+        let h = decode_radix_limbs(&self.h)?;
+        let smudge_shift = decode_radix_limbs(&self.smudge_shift)?;
+        let smudge_complement = decode_radix_limbs(&self.smudge_complement)?;
+        let quotient_shift = decode_radix_limbs(&self.quotient_shift)?;
+        let lambda = u64::try_from(lambda)
+            .map_err(|_| BfvTableError::ThresholdTerminal("lambda does not fit u64".to_string()))?;
+        let product = u64::try_from(product).map_err(|_| {
+            BfvTableError::ThresholdTerminal("product does not fit u64".to_string())
+        })?;
+        let h = u64::try_from(h)
+            .map_err(|_| BfvTableError::ThresholdTerminal("h does not fit u64".to_string()))?;
+        validate_terminal_public(modulus, lambda, product, h, smudge_bits)?;
+
+        let bound = 1u128 << smudge_bits;
+        if smudge_shift
+            .checked_add(smudge_complement)
+            .filter(|sum| *sum == 2 * bound)
+            .is_none()
+        {
+            return Err(BfvTableError::ThresholdTerminal(
+                "smudge shift/complement do not sum to 2^(b+1)".to_string(),
+            ));
+        }
+        if quotient_shift >= (1u128 << 64) {
+            return Err(BfvTableError::ThresholdTerminal(
+                "offset quotient is not a canonical u64".to_string(),
+            ));
+        }
+        let smudge = i128::try_from(smudge_shift).expect("six 14-bit limbs fit i128")
+            - i128::try_from(bound).expect("smudge bound fits i128");
+        let quotient =
+            i128::try_from(quotient_shift).expect("five 14-bit limbs fit i128") - (1i128 << 63);
+        let left = i128::from(lambda) * i128::from(product) + smudge - i128::from(h);
+        let right = i128::from(modulus) * quotient;
+        if left != right {
+            return Err(BfvTableError::ThresholdTerminal(
+                "exact lambda*product+smudge-h=q*quotient relation failed".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl VerifiedBfvFaithfulTables {
     /// Exact descriptor identity authorized by this carrier.
     pub fn descriptor_commitment(&self) -> [u8; 32] {
@@ -222,6 +395,12 @@ pub enum BfvTableError {
     Schedule(String),
     /// A boundary table is not the exact source and sink multiset.
     Boundary { boundary: usize, reason: String },
+    /// The faithful transform starts from or finishes at a different
+    /// polynomial than the caller supplied.
+    TransformBoundary(String),
+    /// A threshold-share terminal limb row is noncanonical or does not satisfy
+    /// the exact signed modular equation.
+    ThresholdTerminal(String),
 }
 
 impl std::fmt::Display for BfvTableError {
@@ -236,6 +415,8 @@ impl std::fmt::Display for BfvTableError {
             Self::Boundary { boundary, reason } => {
                 write!(f, "BFV boundary {boundary}: {reason}")
             }
+            Self::TransformBoundary(s) => write!(f, "BFV transform boundary: {s}"),
+            Self::ThresholdTerminal(s) => write!(f, "threshold terminal limb: {s}"),
         }
     }
 }
@@ -315,6 +496,26 @@ impl BfvFaithfulTableClaim {
             main_trace_commitment: self.main_trace_commitment,
             schedule_commitment: self.schedule_commitment,
             bus_commitment: self.bus_commitment,
+        })
+    }
+
+    /// Conjoin the exact-table replay with the real transform ingress and
+    /// egress.  Forward ingress is `bit_reverse(input[i] * psi^i)`; inverse
+    /// ingress is `bit_reverse(input)`.  Forward egress is direct, while
+    /// inverse egress is multiplied coefficient-wise by `psi^-i / N`.
+    pub fn verify_boundaries(
+        &self,
+        expected_descriptor_commitment: [u8; 32],
+        main_rows: &[BfvButterflyRow],
+        input: &[u64],
+        output: &[u64],
+    ) -> Result<VerifiedBfvTransformBoundaries, BfvTableError> {
+        let tables = self.verify(expected_descriptor_commitment, main_rows)?;
+        verify_transform_boundaries(self.geometry, main_rows, input, output)?;
+        Ok(VerifiedBfvTransformBoundaries {
+            tables,
+            input_commitment: commit_residues(b"dregg/bfv-ntt/input/v1", input),
+            output_commitment: commit_residues(b"dregg/bfv-ntt/output/v1", output),
         })
     }
 
@@ -503,6 +704,16 @@ fn commit_rows<const W: usize>(domain: &[u8], rows: &[[u32; W]]) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
+fn commit_residues(domain: &[u8], values: &[u64]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(domain);
+    h.update(&(values.len() as u64).to_le_bytes());
+    for value in values {
+        h.update(&value.to_le_bytes());
+    }
+    *h.finalize().as_bytes()
+}
+
 /// Domain-separated commitment to the exact Lean-emitted descriptor bytes consumed by IR2.
 /// Callers should derive the relation identity with this function rather than inventing a
 /// display-name digest.
@@ -590,7 +801,12 @@ fn schedule_row(
     let left = (butterfly / half) * len + butterfly % half;
     let right = left + half;
     let twiddle_index = (butterfly % half) * (n / len);
-    let twiddle = mod_pow(geometry.psi, 2 * twiddle_index as u64, geometry.modulus);
+    let root = if geometry.direction == 0 {
+        geometry.psi
+    } else {
+        mod_inverse_prime(geometry.psi, geometry.modulus)
+    };
+    let twiddle = mod_pow(root, 2 * twiddle_index as u64, geometry.modulus);
     let limbs = limbs3(twiddle)?;
     let values = [
         geometry.direction as u32,
@@ -643,6 +859,155 @@ fn extract_schedule(row: &BfvButterflyRow) -> BfvScheduleRow {
 
 fn bus_item(row: &BfvButterflyRow, tag: usize, residue: usize) -> BfvBusRow {
     [row[tag], row[residue], row[residue + 1], row[residue + 2]]
+}
+
+fn decode_limbs3(limbs: [u32; 3]) -> Result<u64, BfvTableError> {
+    if limbs[0] as u64 >= RADIX || limbs[1] as u64 >= RADIX || limbs[2] as u64 >= RADIX {
+        return Err(BfvTableError::TransformBoundary(
+            "noncanonical radix-2^14 residue limb".to_string(),
+        ));
+    }
+    Ok(u64::from(limbs[0]) + u64::from(limbs[1]) * RADIX + u64::from(limbs[2]) * RADIX * RADIX)
+}
+
+fn boundary_values(
+    geometry: BfvButterflyGeometry,
+    rows: &[BfvButterflyRow],
+    first: bool,
+) -> Result<Vec<u64>, BfvTableError> {
+    let stage = if first {
+        0
+    } else {
+        geometry.log_degree as usize - 1
+    };
+    let image = if first {
+        stage_reads(geometry, rows, stage)
+    } else {
+        stage_writes(geometry, rows, stage)
+    };
+    let n = geometry.degree as usize;
+    let boundary = if first {
+        0
+    } else {
+        geometry.log_degree as usize
+    };
+    let mut values = vec![None; n];
+    for row in image {
+        let tag = row[0] as usize;
+        let expected_lo = boundary * n;
+        if tag < expected_lo || tag >= expected_lo + n {
+            return Err(BfvTableError::TransformBoundary(format!(
+                "tag {tag} is outside boundary {boundary}"
+            )));
+        }
+        let index = tag - expected_lo;
+        let value = decode_limbs3([row[1], row[2], row[3]])?;
+        if value >= geometry.modulus {
+            return Err(BfvTableError::TransformBoundary(format!(
+                "boundary {boundary} residue {index} is noncanonical"
+            )));
+        }
+        if values[index].replace(value).is_some() {
+            return Err(BfvTableError::TransformBoundary(format!(
+                "boundary {boundary} repeats residue {index}"
+            )));
+        }
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value.ok_or_else(|| {
+                BfvTableError::TransformBoundary(format!(
+                    "boundary {boundary} omits residue {index}"
+                ))
+            })
+        })
+        .collect()
+}
+
+fn verify_transform_boundaries(
+    geometry: BfvButterflyGeometry,
+    rows: &[BfvButterflyRow],
+    input: &[u64],
+    output: &[u64],
+) -> Result<(), BfvTableError> {
+    geometry.validate()?;
+    let n = geometry.degree as usize;
+    if input.len() != n || output.len() != n {
+        return Err(BfvTableError::TransformBoundary(format!(
+            "input/output lengths {}/{} do not equal degree {n}",
+            input.len(),
+            output.len()
+        )));
+    }
+    if input
+        .iter()
+        .chain(output)
+        .any(|value| *value >= geometry.modulus)
+    {
+        return Err(BfvTableError::TransformBoundary(
+            "input or output contains a noncanonical residue".to_string(),
+        ));
+    }
+
+    let ingress = boundary_values(geometry, rows, true)?;
+    let egress = boundary_values(geometry, rows, false)?;
+    let bits = geometry.log_degree as u32;
+    let psi_inverse = mod_inverse_prime(geometry.psi, geometry.modulus);
+    let n_inverse = mod_inverse_prime(geometry.degree as u64, geometry.modulus);
+
+    let mut expected_ingress = vec![0u64; n];
+    for (index, slot) in expected_ingress.iter_mut().enumerate() {
+        let source = index.reverse_bits() >> (usize::BITS - bits);
+        *slot = if geometry.direction == 0 {
+            mod_mul(
+                input[source],
+                mod_pow(geometry.psi, source as u64, geometry.modulus),
+                geometry.modulus,
+            )
+        } else {
+            input[source]
+        };
+    }
+    if ingress != expected_ingress {
+        let index = ingress
+            .iter()
+            .zip(&expected_ingress)
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or(0);
+        return Err(BfvTableError::TransformBoundary(format!(
+            "ingress residue {index} is not the canonical twist/bit-reversal"
+        )));
+    }
+
+    let expected_output = if geometry.direction == 0 {
+        egress
+    } else {
+        egress
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let untwist = mod_mul(
+                    mod_pow(psi_inverse, index as u64, geometry.modulus),
+                    n_inverse,
+                    geometry.modulus,
+                );
+                mod_mul(value, untwist, geometry.modulus)
+            })
+            .collect()
+    };
+    if output != expected_output {
+        let index = output
+            .iter()
+            .zip(&expected_output)
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or(0);
+        return Err(BfvTableError::TransformBoundary(format!(
+            "egress residue {index} does not match the normalized output"
+        )));
+    }
+    Ok(())
 }
 
 fn stage_reads(
@@ -806,6 +1171,68 @@ fn limbs3(value: u64) -> Result<[u32; 3], BfvTableError> {
     ])
 }
 
+fn encode_radix_limbs<const N: usize>(mut value: u128) -> Result<[u32; N], BfvTableError> {
+    let mut limbs = [0u32; N];
+    for limb in &mut limbs {
+        *limb = (value % u128::from(RADIX)) as u32;
+        value /= u128::from(RADIX);
+    }
+    if value != 0 {
+        return Err(BfvTableError::ThresholdTerminal(format!(
+            "integer does not fit {N} radix-2^14 limbs"
+        )));
+    }
+    Ok(limbs)
+}
+
+fn decode_radix_limbs<const N: usize>(limbs: &[u32; N]) -> Result<u128, BfvTableError> {
+    let mut value = 0u128;
+    let mut place = 1u128;
+    for (index, limb) in limbs.iter().enumerate() {
+        if u64::from(*limb) >= RADIX {
+            return Err(BfvTableError::ThresholdTerminal(format!(
+                "limb {index}={limb} is not a canonical 14-bit value"
+            )));
+        }
+        value = value
+            .checked_add(u128::from(*limb) * place)
+            .ok_or_else(|| {
+                BfvTableError::ThresholdTerminal("radix recomposition overflow".to_string())
+            })?;
+        place = place
+            .checked_mul(u128::from(RADIX))
+            .ok_or_else(|| BfvTableError::ThresholdTerminal("radix place overflow".to_string()))?;
+    }
+    Ok(value)
+}
+
+fn validate_terminal_public(
+    modulus: u64,
+    lambda: u64,
+    product: u64,
+    h: u64,
+    smudge_bits: u32,
+) -> Result<(), BfvTableError> {
+    if modulus < 3 || modulus >= RADIX.pow(3) || modulus % 2 == 0 {
+        return Err(BfvTableError::ThresholdTerminal(
+            "q must be an odd canonical three-limb modulus".to_string(),
+        ));
+    }
+    if lambda >= modulus || product >= modulus || h >= modulus {
+        return Err(BfvTableError::ThresholdTerminal(
+            "lambda, product, and h must be canonical modulo q".to_string(),
+        ));
+    }
+    // Six radix-2^14 limbs hold 84 bits. `2B` must fit because the complement
+    // equation materializes it exactly.
+    if smudge_bits == 0 || smudge_bits >= 83 {
+        return Err(BfvTableError::ThresholdTerminal(
+            "smudge_bits must lie in 1..=82 for the six-limb v1 row".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn mod_pow(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
     let mut acc = 1u64;
     while exponent != 0 {
@@ -816,6 +1243,14 @@ fn mod_pow(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
         exponent >>= 1;
     }
     acc
+}
+
+fn mod_mul(left: u64, right: u64, modulus: u64) -> u64 {
+    ((u128::from(left) * u128::from(right)) % u128::from(modulus)) as u64
+}
+
+fn mod_inverse_prime(value: u64, modulus: u64) -> u64 {
+    mod_pow(value, modulus - 2, modulus)
 }
 
 fn conv3(left: [u32; 3], right: [u32; 3], degree: usize) -> i128 {
@@ -883,19 +1318,46 @@ fn sub_carries(left: u64, product: u64, output: u64, reduce: u32, modulus: u64) 
     carries
 }
 
-/// Independent Rust construction of the exact Lean q0/N=8 witness. The focused KAT pins
-/// its canonical commitment to the value computed by Lean's `honestRows` evaluator.
-pub fn q0_n8_lean_rows() -> Vec<BfvButterflyRow> {
-    let geometry = BfvButterflyGeometry::Q0_N8;
+/// Construct the canonical 48-column butterfly rows and normalized transform
+/// output for one RNS polynomial.  This is the typed producer for the strict
+/// table/boundary carrier; the independent IR2 arithmetic proof remains the
+/// authority for the row equations.
+pub fn build_bfv_transform_rows(
+    geometry: BfvButterflyGeometry,
+    input: &[u64],
+) -> Result<(Vec<BfvButterflyRow>, Vec<u64>), BfvTableError> {
+    geometry.validate()?;
     let n = geometry.degree as usize;
+    if input.len() != n {
+        return Err(BfvTableError::TransformBoundary(format!(
+            "input length {} does not equal degree {n}",
+            input.len()
+        )));
+    }
+    if input.iter().any(|value| *value >= geometry.modulus) {
+        return Err(BfvTableError::TransformBoundary(
+            "input contains a noncanonical residue".to_string(),
+        ));
+    }
     let mut initial = vec![0u64; n];
     for (index, slot) in initial.iter_mut().enumerate() {
         let source = index.reverse_bits() >> (usize::BITS - geometry.log_degree as u32);
-        let input = (3 * source * source + 5 * source + 7) as u64 % geometry.modulus;
-        *slot = ((input as u128 * mod_pow(geometry.psi, source as u64, geometry.modulus) as u128)
-            % geometry.modulus as u128) as u64;
+        *slot = if geometry.direction == 0 {
+            mod_mul(
+                input[source],
+                mod_pow(geometry.psi, source as u64, geometry.modulus),
+                geometry.modulus,
+            )
+        } else {
+            input[source]
+        };
     }
     let mut states = vec![initial];
+    let butterfly_root = if geometry.direction == 0 {
+        geometry.psi
+    } else {
+        mod_inverse_prime(geometry.psi, geometry.modulus)
+    };
     for stage in 0..geometry.log_degree as usize {
         let mut next = states[stage].clone();
         let half = 1usize << stage;
@@ -904,7 +1366,7 @@ pub fn q0_n8_lean_rows() -> Vec<BfvButterflyRow> {
             let left = (butterfly / half) * len + butterfly % half;
             let right = left + half;
             let twiddle_index = (butterfly % half) * (n / len);
-            let twiddle = mod_pow(geometry.psi, 2 * twiddle_index as u64, geometry.modulus);
+            let twiddle = mod_pow(butterfly_root, 2 * twiddle_index as u64, geometry.modulus);
             let product = ((states[stage][right] as u128 * twiddle as u128)
                 % geometry.modulus as u128) as u64;
             next[left] = (states[stage][left] + product) % geometry.modulus;
@@ -963,7 +1425,35 @@ pub fn q0_n8_lean_rows() -> Vec<BfvButterflyRow> {
             rows.push(row);
         }
     }
-    rows
+    let mut output = states
+        .last()
+        .expect("one initial state plus at least one stage")
+        .clone();
+    if geometry.direction == 1 {
+        let psi_inverse = mod_inverse_prime(geometry.psi, geometry.modulus);
+        let n_inverse = mod_inverse_prime(geometry.degree as u64, geometry.modulus);
+        for (index, value) in output.iter_mut().enumerate() {
+            let scale = mod_mul(
+                mod_pow(psi_inverse, index as u64, geometry.modulus),
+                n_inverse,
+                geometry.modulus,
+            );
+            *value = mod_mul(*value, scale, geometry.modulus);
+        }
+    }
+    Ok((rows, output))
+}
+
+/// Independent Rust construction of the exact Lean q0/N=8 witness. The focused KAT pins
+/// its canonical commitment to the value computed by Lean's `honestRows` evaluator.
+pub fn q0_n8_lean_rows() -> Vec<BfvButterflyRow> {
+    let geometry = BfvButterflyGeometry::Q0_N8;
+    let input = (0..geometry.degree as usize)
+        .map(|index| (3 * index * index + 5 * index + 7) as u64 % geometry.modulus)
+        .collect::<Vec<_>>();
+    build_bfv_transform_rows(geometry, &input)
+        .expect("fixed Lean q0/N8 geometry")
+        .0
 }
 
 #[cfg(test)]
@@ -1170,5 +1660,123 @@ mod tests {
         assert_eq!(schedule.last().unwrap()[STAGE], 11);
         assert_eq!(schedule.last().unwrap()[BUTTERFLY], 2047);
         assert_eq!(schedule.last().unwrap()[14], 13 * 4096 - 1);
+    }
+
+    #[test]
+    fn table_faithful_transform_boundaries_bind_twist_and_inverse_normalization() {
+        let input = (0..8)
+            .map(|index| (97 * index * index + 31 * index + 11) as u64)
+            .collect::<Vec<_>>();
+        let (forward_rows, spectrum) =
+            build_bfv_transform_rows(BfvButterflyGeometry::Q0_N8, &input).expect("forward rows");
+        let forward_descriptor = commit_bfv_butterfly_descriptor(b"q0-n8-forward-bound-v1");
+        let forward_claim = BfvFaithfulTableClaim::prove_public_trace(
+            forward_descriptor,
+            BfvButterflyGeometry::Q0_N8,
+            &forward_rows,
+        )
+        .expect("forward faithful tables");
+        forward_claim
+            .verify_boundaries(forward_descriptor, &forward_rows, &input, &spectrum)
+            .expect("forward ingress and egress bind");
+
+        let (inverse_rows, roundtrip) =
+            build_bfv_transform_rows(BfvButterflyGeometry::Q0_N8_INVERSE, &spectrum)
+                .expect("inverse rows");
+        assert_eq!(roundtrip, input, "odd NTT inverse normalization");
+        let inverse_descriptor = commit_bfv_butterfly_descriptor(b"q0-n8-inverse-bound-v1");
+        let inverse_claim = BfvFaithfulTableClaim::prove_public_trace(
+            inverse_descriptor,
+            BfvButterflyGeometry::Q0_N8_INVERSE,
+            &inverse_rows,
+        )
+        .expect("inverse faithful tables");
+        let verified = inverse_claim
+            .verify_boundaries(inverse_descriptor, &inverse_rows, &spectrum, &roundtrip)
+            .expect("inverse ingress and normalized egress bind");
+        assert_ne!(verified.input_commitment(), verified.output_commitment());
+
+        let mut wrong_input = spectrum.clone();
+        wrong_input[3] += 1;
+        assert!(matches!(
+            inverse_claim.verify_boundaries(
+                inverse_descriptor,
+                &inverse_rows,
+                &wrong_input,
+                &roundtrip,
+            ),
+            Err(BfvTableError::TransformBoundary(_))
+        ));
+        let mut wrong_normalization = roundtrip.clone();
+        wrong_normalization[5] += 1;
+        assert!(matches!(
+            inverse_claim.verify_boundaries(
+                inverse_descriptor,
+                &inverse_rows,
+                &spectrum,
+                &wrong_normalization,
+            ),
+            Err(BfvTableError::TransformBoundary(_))
+        ));
+    }
+
+    #[test]
+    fn production_q0_boundary_carrier_covers_every_real_coefficient() {
+        let geometry = BfvButterflyGeometry::Q0_N4096;
+        let input = (0..geometry.degree as usize)
+            .map(|index| {
+                (index as u64 * 1_000_003 + (index as u64).pow(2) * 17 + 29) % geometry.modulus
+            })
+            .collect::<Vec<_>>();
+        let (rows, output) = build_bfv_transform_rows(geometry, &input).expect("production rows");
+        assert_eq!(rows.len(), 12 * 2048);
+        let descriptor = commit_bfv_butterfly_descriptor(b"q0-n4096-forward-bound-v1");
+        let claim = BfvFaithfulTableClaim::prove_public_trace(descriptor, geometry, &rows)
+            .expect("production exact boundary tables");
+        claim
+            .verify_boundaries(descriptor, &rows, &input, &output)
+            .expect("all 4096 ingress and egress residues bind");
+    }
+
+    #[test]
+    fn threshold_terminal_q0_limb_relation_is_exact_and_mutation_strict() {
+        let q = BfvButterflyGeometry::Q0_N4096.modulus;
+        let lambda = 41_337_119_221u64;
+        let product = 62_911_771_003u64;
+        let smudge = (1i128 << 79) + 17_123;
+        let unreduced = i128::from(lambda) * i128::from(product) + smudge;
+        let h = unreduced.rem_euclid(i128::from(q)) as u64;
+        let row = ThresholdDecryptTerminalRow::from_values(q, lambda, product, smudge, h, 80)
+            .expect("honest production-q0 terminal row");
+        row.verify(q, 80).expect("exact terminal relation");
+
+        let mut changed_product = row.clone();
+        changed_product.product[0] += 1;
+        assert!(matches!(
+            changed_product.verify(q, 80),
+            Err(BfvTableError::ThresholdTerminal(_))
+        ));
+
+        let mut changed_smudge_same_interval = row.clone();
+        changed_smudge_same_interval.smudge_shift[0] += 1;
+        changed_smudge_same_interval.smudge_complement[0] -= 1;
+        assert!(matches!(
+            changed_smudge_same_interval.verify(q, 80),
+            Err(BfvTableError::ThresholdTerminal(_))
+        ));
+
+        let mut changed_quotient = row.clone();
+        changed_quotient.quotient_shift[0] += 1;
+        assert!(matches!(
+            changed_quotient.verify(q, 80),
+            Err(BfvTableError::ThresholdTerminal(_))
+        ));
+
+        let mut noncanonical_limb = row;
+        noncanonical_limb.h[0] = RADIX as u32;
+        assert!(matches!(
+            noncanonical_limb.verify(q, 80),
+            Err(BfvTableError::ThresholdTerminal(_))
+        ));
     }
 }
