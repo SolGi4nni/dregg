@@ -129,6 +129,10 @@ pub mod private_book_distributed_inputs;
 /// remain named.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_distributed_prover;
+/// Nonlinear commitment-bound Poseidon root proof joining the distributed BFV
+/// owner vectors to the exact private root consumed by HidingFRI clearing.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_distributed_root;
 /// Exact N4K4 NP relation joining four BFV ciphertext openings to the same
 /// hidden orders and Poseidon root consumed by the private clearing proof.
 /// This is a prover-side relation checker, not transferable ZK evidence.

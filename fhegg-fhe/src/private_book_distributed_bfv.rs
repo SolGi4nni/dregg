@@ -27,6 +27,7 @@ use crate::private_book_distributed_inputs::{
     DistributedInputCertificate, DistributedWitnessSession, OwnerWitnessContinuation,
     PreparedWitnessShare, BFV_DEGREE, DERIVED_ORDER_WIDTH, ORDER_COUNT, ROOT_BLINDING_WIDTH,
 };
+use crate::private_book_distributed_root::RootLinkCertificate;
 use crate::private_book_relation::PrivateBookCiphertexts;
 use crate::threshold::{BfvParams, CollectivePublicKey};
 use dregg_circuit_prove::dark_bazaar_private::PublicStatement;
@@ -71,14 +72,15 @@ const QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN: &str =
     "fhegg/private-book-distributed-bfv/quotient-certificate-checksum/v1";
 const RELATION_CERTIFICATE_CHECKSUM_DOMAIN: &str =
     "fhegg/private-book-distributed-bfv/relation-certificate-checksum/v1";
-const ENVELOPE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/public-envelope/v1";
+const ENVELOPE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/public-envelope/v2-root-bound";
 const ENVELOPE_CHECKSUM_DOMAIN: &str =
-    "fhegg/private-book-distributed-bfv/public-envelope-checksum/v1";
+    "fhegg/private-book-distributed-bfv/public-envelope-checksum/v2-root-bound";
 const QUOTIENT_CERTIFICATE_MAGIC: &[u8; 8] = b"FHQCT001";
 const WORKER_RELATION_PROOF_MAGIC: &[u8; 8] = b"FHRWP001";
 const RELATION_CERTIFICATE_MAGIC: &[u8; 8] = b"FHRLC001";
-const ENVELOPE_MAGIC: &[u8; 8] = b"FHDBE001";
+const ENVELOPE_MAGIC: &[u8; 8] = b"FHDBE002";
 const PUBLIC_WIRE_VERSION: u16 = 1;
+const ENVELOPE_WIRE_VERSION: u16 = 2;
 const WORKER_RELATION_PROOF_CHECKSUM_DOMAIN: &str =
     "fhegg/private-book-distributed-bfv/worker-relation-wire-checksum/v1";
 
@@ -150,6 +152,7 @@ pub enum DistributedBfvError {
     DuplicateWorkerProof,
     MissingWorkerProofs,
     RelationRejected,
+    RootLinkRejected,
     MalformedWire,
     IntegerOverflow,
 }
@@ -183,6 +186,9 @@ impl fmt::Display for DistributedBfvError {
             Self::DuplicateWorkerProof => "duplicate distributed BFV worker relation proof",
             Self::MissingWorkerProofs => "distributed BFV worker relation proofs are incomplete",
             Self::RelationRejected => "distributed BFV collapsed exact relation was rejected",
+            Self::RootLinkRejected => {
+                "distributed BFV owner vectors do not open the clearing Poseidon root"
+            }
             Self::MalformedWire => "distributed BFV public wire is malformed or non-canonical",
             Self::IntegerOverflow => "exact distributed BFV integer evaluation overflowed",
         };
@@ -226,6 +232,13 @@ impl DistributedBfvPublicRelation {
 
     pub const fn relation_digest(&self) -> [u8; 32] {
         self.exact.relation_digest()
+    }
+
+    /// Exact statement already bound into the independently derived public
+    /// coefficient family. Same-opening continuation verifiers must obtain the
+    /// root statement here rather than accepting a parallel caller value.
+    pub const fn statement(&self) -> PublicStatement {
+        self.exact.statement()
     }
 }
 
@@ -1803,7 +1816,10 @@ impl BfvRelationCertificate {
 /// One transportable public object for the complete distributed exact-BFV
 /// ceremony. Public statement, ciphertexts, BFV parameters, collective key,
 /// and roster remain independently supplied verifier policy; this envelope
-/// contains the three proof certificates and binds their ordered digests.
+/// contains all four mandatory proof certificates and binds their ordered
+/// digests. In particular, the nonlinear root link is never optional: without
+/// it this object would admit the valid-BFV-book-A / valid-clearing-book-B
+/// substitution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistributedBfvProofEnvelope {
     session_digest: [u8; 32],
@@ -1811,6 +1827,7 @@ pub struct DistributedBfvProofEnvelope {
     input_certificate: DistributedInputCertificate,
     quotient_certificate: BfvQuotientCertificate,
     relation_certificate: BfvRelationCertificate,
+    root_certificate: RootLinkCertificate,
     transcript_digest: [u8; 32],
 }
 
@@ -1821,22 +1838,27 @@ impl DistributedBfvProofEnvelope {
         input_certificate: DistributedInputCertificate,
         quotient_certificate: BfvQuotientCertificate,
         relation_certificate: BfvRelationCertificate,
+        root_certificate: RootLinkCertificate,
     ) -> Result<Self> {
         let round = DistributedBfvRound::new(session, &input_certificate, public)?;
         quotient_certificate.verify(&round)?;
-        let relation_round = DistributedBfvRelationRound::new(
+        let relation_round = DistributedBfvRelationRound::new_after_verified_certificates(
             &round,
             &input_certificate,
             &quotient_certificate,
             public,
         )?;
         relation_certificate.verify(&relation_round)?;
+        root_certificate
+            .verify_after_verified_input(session, &input_certificate, public)
+            .map_err(|_| DistributedBfvError::RootLinkRejected)?;
         let mut envelope = Self {
             session_digest: session.digest(),
             relation_digest: public.relation_digest(),
             input_certificate,
             quotient_certificate,
             relation_certificate,
+            root_certificate,
             transcript_digest: [0; 32],
         };
         envelope.transcript_digest = envelope.compute_transcript_digest();
@@ -1859,6 +1881,10 @@ impl DistributedBfvProofEnvelope {
         &self.relation_certificate
     }
 
+    pub const fn root_certificate(&self) -> &RootLinkCertificate {
+        &self.root_certificate
+    }
+
     pub fn verify(
         &self,
         session: &DistributedWitnessSession,
@@ -1872,13 +1898,16 @@ impl DistributedBfvProofEnvelope {
         }
         let round = DistributedBfvRound::new(session, &self.input_certificate, public)?;
         self.quotient_certificate.verify(&round)?;
-        let relation_round = DistributedBfvRelationRound::new(
+        let relation_round = DistributedBfvRelationRound::new_after_verified_certificates(
             &round,
             &self.input_certificate,
             &self.quotient_certificate,
             public,
         )?;
         self.relation_certificate.verify(&relation_round)?;
+        self.root_certificate
+            .verify_after_verified_input(session, &self.input_certificate, public)
+            .map_err(|_| DistributedBfvError::RootLinkRejected)?;
         if self.transcript_digest != self.compute_transcript_digest() {
             return Err(DistributedBfvError::CertificateMismatch);
         }
@@ -1889,14 +1918,22 @@ impl DistributedBfvProofEnvelope {
         let input = self.input_certificate.to_bytes();
         let quotient = self.quotient_certificate.to_bytes();
         let relation = self.relation_certificate.to_bytes();
+        let root = self.root_certificate.to_bytes();
         let mut body = Vec::with_capacity(
-            8 + 2 + 2 * 32 + 3 * 4 + input.len() + quotient.len() + relation.len() + 64,
+            8 + 2
+                + 2 * 32
+                + 4 * 4
+                + input.len()
+                + quotient.len()
+                + relation.len()
+                + root.len()
+                + 64,
         );
         body.extend_from_slice(ENVELOPE_MAGIC);
-        body.extend_from_slice(&PUBLIC_WIRE_VERSION.to_be_bytes());
+        body.extend_from_slice(&ENVELOPE_WIRE_VERSION.to_be_bytes());
         body.extend_from_slice(&self.session_digest);
         body.extend_from_slice(&self.relation_digest);
-        for component in [&input, &quotient, &relation] {
+        for component in [&input, &quotient, &relation, &root] {
             body.extend_from_slice(&(component.len() as u32).to_be_bytes());
             body.extend_from_slice(component);
         }
@@ -1914,7 +1951,7 @@ impl DistributedBfvProofEnvelope {
         session: &DistributedWitnessSession,
         public: &DistributedBfvPublicRelation,
     ) -> Result<Self> {
-        if bytes.len() < 160 {
+        if bytes.len() < 164 {
             return Err(DistributedBfvError::MalformedWire);
         }
         let checksum_start = bytes
@@ -1929,7 +1966,7 @@ impl DistributedBfvProofEnvelope {
         validate_envelope_framing(&bytes[..checksum_start], session)?;
         let mut input = WireReader::new(&bytes[..checksum_start]);
         if input.take::<8>()? != *ENVELOPE_MAGIC
-            || input.u16()? != PUBLIC_WIRE_VERSION
+            || input.u16()? != ENVELOPE_WIRE_VERSION
             || input.take::<32>()? != session.digest()
             || input.take::<32>()? != session.relation_digest()
             || public.relation_digest() != session.relation_digest()
@@ -1974,6 +2011,21 @@ impl DistributedBfvProofEnvelope {
         }
         let relation_certificate =
             BfvRelationCertificate::from_bytes(input.take_slice(relation_len)?, &relation_round)?;
+
+        let root_len = input.usize_u32()?;
+        if root_len
+            != RootLinkCertificate::expected_wire_len(session)
+                .map_err(|_| DistributedBfvError::MalformedWire)?
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let root_certificate = RootLinkCertificate::from_bytes_after_verified_input(
+            input.take_slice(root_len)?,
+            session,
+            &input_certificate,
+            public,
+        )
+        .map_err(|_| DistributedBfvError::RootLinkRejected)?;
         let transcript_digest = input.take::<32>()?;
         input.finish()?;
         let envelope = Self {
@@ -1982,6 +2034,7 @@ impl DistributedBfvProofEnvelope {
             input_certificate,
             quotient_certificate,
             relation_certificate,
+            root_certificate,
             transcript_digest,
         };
         if envelope.compute_transcript_digest() != transcript_digest || envelope.to_bytes() != bytes
@@ -2000,6 +2053,7 @@ impl DistributedBfvProofEnvelope {
                 self.input_certificate.transcript_digest().as_slice(),
                 self.quotient_certificate.transcript_digest.as_slice(),
                 self.relation_certificate.transcript_digest.as_slice(),
+                self.root_certificate.transcript_digest().as_slice(),
             ],
         )
     }
@@ -2013,11 +2067,14 @@ fn validate_envelope_framing(body: &[u8], session: &DistributedWitnessSession) -
         .checked_mul(ORDER_COUNT)
         .ok_or(DistributedBfvError::MalformedWire)?;
     let relation_len = relation_certificate_wire_len(session.n_workers(), relation_width)?;
+    let root_len = RootLinkCertificate::expected_wire_len(session)
+        .map_err(|_| DistributedBfvError::MalformedWire)?;
     let expected_body_len = 8usize
         .checked_add(2 + 32 + 32)
         .and_then(|value| value.checked_add(4 + input_len))
         .and_then(|value| value.checked_add(4 + quotient_len))
         .and_then(|value| value.checked_add(4 + relation_len))
+        .and_then(|value| value.checked_add(4 + root_len))
         .and_then(|value| value.checked_add(32))
         .ok_or(DistributedBfvError::MalformedWire)?;
     if body.len() != expected_body_len {
@@ -2025,7 +2082,7 @@ fn validate_envelope_framing(body: &[u8], session: &DistributedWitnessSession) -
     }
     let mut input = WireReader::new(body);
     if input.take::<8>()? != *ENVELOPE_MAGIC
-        || input.u16()? != PUBLIC_WIRE_VERSION
+        || input.u16()? != ENVELOPE_WIRE_VERSION
         || input.take::<32>()? != session.digest()
         || input.take::<32>()? != session.relation_digest()
         || input.usize_u32()? != input_len
@@ -2041,6 +2098,10 @@ fn validate_envelope_framing(body: &[u8], session: &DistributedWitnessSession) -
         return Err(DistributedBfvError::MalformedWire);
     }
     input.take_slice(relation_len)?;
+    if input.usize_u32()? != root_len {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    input.take_slice(root_len)?;
     input.take::<32>()?;
     input.finish()
 }

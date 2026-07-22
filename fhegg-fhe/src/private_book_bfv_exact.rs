@@ -89,6 +89,7 @@ pub(crate) struct ExactBfvBatchEquation {
 /// Canonical public half of the deployed exact private-book BFV relation.
 #[derive(Clone)]
 pub(crate) struct ExactBfvPublicRelation {
+    statement: PublicStatement,
     pub(crate) pk: LeanCiphertext,
     pub(crate) ciphertexts: [LeanCiphertext; ORDER_COUNT],
     /// `[kind * 16 + quantity][modulus][coefficient]`, obtained from the real
@@ -126,6 +127,7 @@ impl ExactBfvPublicRelation {
         let relation_digest =
             private_book_relation_digest(statement, ciphertexts, params, public_key);
         Ok(Self {
+            statement,
             pk,
             ciphertexts: ciphertexts.rows().clone(),
             message_table,
@@ -138,6 +140,12 @@ impl ExactBfvPublicRelation {
     /// Digest that a production `DistributedWitnessSession` must bind.
     pub(crate) const fn relation_digest(&self) -> [u8; 32] {
         self.relation_digest
+    }
+
+    /// Exact public statement from which this coefficient family and relation
+    /// digest were independently derived.
+    pub(crate) const fn statement(&self) -> PublicStatement {
+        self.statement
     }
 
     /// Materialize all 384 owner-local equations in `[modulus][round]` order.

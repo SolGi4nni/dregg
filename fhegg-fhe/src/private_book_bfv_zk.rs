@@ -1087,14 +1087,9 @@ fn constrain_poseidon_root<CS: ConstraintSystem>(
     packed_value: Option<u64>,
     blinding: Option<[u32; DIGEST_WIDTH]>,
 ) -> std::result::Result<(), R1CSError> {
-    let mut state = Vec::with_capacity(POSEIDON_WIDTH);
-    state.push(FeltLc::constant(u64::from(ROOT_DOMAIN_TAG)));
-    state.push(FeltLc::constant(u64::from(statement.session)));
-    state.push(FeltLc::constant(u64::from(RULE_ID)));
-    state.push(FeltLc {
-        lc: packed_book,
-        value: packed_value,
-    });
+    // Preserve the historical FHPZK001 allocation/constraint schedule exactly:
+    // each lane is allocated and range-constrained before the next lane.
+    let mut state = poseidon_root_prefix(statement, packed_book, packed_value);
     for lane in 0..DIGEST_WIDTH {
         let value = blinding.map(|blinding| u64::from(blinding[lane]));
         let variable = cs.allocate(value.map(Scalar::from))?;
@@ -1104,6 +1099,57 @@ fn constrain_poseidon_root<CS: ConstraintSystem>(
             value,
         });
     }
+    finish_poseidon_root(cs, statement, state)
+}
+
+/// Shared fixed-root gadget for continuation proofs whose scalar commitments
+/// have already allocated the eight private blinding variables.
+///
+/// Keeping this as the single implementation is load-bearing: the monolithic
+/// same-opening proof and the distributed root-link proof must constrain the
+/// exact same arity-16 Poseidon2 permutation and BabyBear canonicality rules.
+pub(crate) fn constrain_poseidon_root_with_blinding_variables<CS: ConstraintSystem>(
+    cs: &mut CS,
+    statement: PublicStatement,
+    packed_book: LinearCombination,
+    packed_value: Option<u64>,
+    blinding_variables: &[Variable; DIGEST_WIDTH],
+    blinding: Option<[u32; DIGEST_WIDTH]>,
+) -> std::result::Result<(), R1CSError> {
+    let mut state = poseidon_root_prefix(statement, packed_book, packed_value);
+    for lane in 0..DIGEST_WIDTH {
+        let value = blinding.map(|blinding| u64::from(blinding[lane]));
+        let variable = blinding_variables[lane];
+        constrain_canonical_felt(cs, variable.into(), value)?;
+        state.push(FeltLc {
+            lc: variable.into(),
+            value,
+        });
+    }
+    finish_poseidon_root(cs, statement, state)
+}
+
+fn poseidon_root_prefix(
+    statement: PublicStatement,
+    packed_book: LinearCombination,
+    packed_value: Option<u64>,
+) -> Vec<FeltLc> {
+    let mut state = Vec::with_capacity(POSEIDON_WIDTH);
+    state.push(FeltLc::constant(u64::from(ROOT_DOMAIN_TAG)));
+    state.push(FeltLc::constant(u64::from(statement.session)));
+    state.push(FeltLc::constant(u64::from(RULE_ID)));
+    state.push(FeltLc {
+        lc: packed_book,
+        value: packed_value,
+    });
+    state
+}
+
+fn finish_poseidon_root<CS: ConstraintSystem>(
+    cs: &mut CS,
+    statement: PublicStatement,
+    mut state: Vec<FeltLc>,
+) -> std::result::Result<(), R1CSError> {
     state.extend((0..4).map(|_| FeltLc::constant(0)));
     let mut state: [FeltLc; POSEIDON_WIDTH] = state.try_into().expect("arity sixteen");
     state = external_linear_layer(cs, &state)?;

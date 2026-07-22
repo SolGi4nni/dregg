@@ -648,6 +648,7 @@ impl LocalOrderWitness {
             session_digest: session.digest,
             owner: self.owner,
             values: self.values,
+            owner_blinding,
         };
         Ok(DealerOutput {
             contribution,
@@ -1250,7 +1251,7 @@ fn small_scalar(value: Scalar) -> Option<u64> {
     Some(u64::from_le_bytes(bytes[..8].try_into().ok()?))
 }
 
-fn owner_linear_generators(
+pub(crate) fn owner_linear_generators(
     session: &DistributedWitnessSession,
     owner: usize,
     padded_width: usize,
@@ -1518,7 +1519,7 @@ fn owner_link_transcript(
     transcript
 }
 
-fn expected_owner_link_proof_len(padded_width: usize) -> Result<usize> {
+pub(crate) fn expected_owner_link_proof_len(padded_width: usize) -> Result<usize> {
     if !padded_width.is_power_of_two() {
         return Err(DistributedInputError::InvalidOrderRangeProof);
     }
@@ -1903,6 +1904,10 @@ pub struct OwnerWitnessContinuation {
     session_digest: [u8; 32],
     owner: usize,
     values: Vec<Scalar>,
+    // Opening of the public owner-vector commitment. This never crosses the
+    // owner boundary; continuation protocols need it to prove that a new
+    // scalar commitment names coordinates in this exact certified vector.
+    owner_blinding: Scalar,
 }
 
 impl OwnerWitnessContinuation {
@@ -1916,6 +1921,10 @@ impl OwnerWitnessContinuation {
 
     pub(crate) fn values(&self) -> &[Scalar] {
         &self.values
+    }
+
+    pub(crate) const fn owner_blinding(&self) -> Scalar {
+        self.owner_blinding
     }
 }
 
@@ -2293,6 +2302,14 @@ impl DistributedInputCertificate {
             .copied()
     }
 
+    /// Commitment to one owner's complete local vector. Continuation proofs
+    /// use this as their public statement; the opening remains owner-local.
+    pub(crate) fn owner_commitment(&self, owner: usize) -> Option<[u8; 32]> {
+        self.dealers
+            .get(owner)
+            .map(|dealer| dealer.owner_commitment)
+    }
+
     /// One hiding commitment binding the concatenation of all four owner
     /// vectors in their separate Bulletproof generator namespaces.
     pub fn joint_input_commitment(&self) -> Result<[u8; 32]> {
@@ -2582,7 +2599,7 @@ fn vector_commitment(degree: usize, owner: usize, values: &[Scalar], blinding: S
     point.compress().to_bytes()
 }
 
-fn decode_point(bytes: &[u8; 32]) -> Result<RistrettoPoint> {
+pub(crate) fn decode_point(bytes: &[u8; 32]) -> Result<RistrettoPoint> {
     let compressed = CompressedRistretto(*bytes);
     let point = compressed
         .decompress()
