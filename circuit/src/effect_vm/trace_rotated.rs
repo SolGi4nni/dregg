@@ -5953,17 +5953,15 @@ mod tests {
 
     /// DIAGNOSTIC: every wide chip lookup tuple in the wide transfer descriptor is self-consistent
     /// after `fill_chip_lanes` — for each `TID_P2` lookup, `out0..out7 == chip_absorb_all_lanes(
-    /// arity, in0..in10)` evaluated off the row. A mismatch pinpoints a carrier-base / seeding bug
+    /// arity, in0..in15)` evaluated off the row. A mismatch pinpoints a carrier-base / seeding bug
     /// WITHOUT the slow prove. Checks BOTH an active row (0) and a padding row (40).
     #[test]
     fn wide_chip_lookups_are_self_consistent_after_lane_fill() {
         use crate::descriptor_ir2::{
-            EffectVmDescriptor2, TID_P2, VmConstraint2, chip_absorb_all_lanes, eval_lean_expr,
-            fill_chip_lanes, parse_vm_descriptor2,
+            CHIP_RATE, EffectVmDescriptor2, TID_P2, VmConstraint2, chip_absorb_all_lanes,
+            eval_lean_expr, fill_chip_lanes, parse_vm_descriptor2,
         };
         use crate::effect_vm_descriptors::WIDE_TRANSFER_STAGED_TSV;
-        use crate::lean_descriptor_air::LeanExpr;
-
         let json = {
             let line = WIDE_TRANSFER_STAGED_TSV.lines().next().unwrap();
             line.splitn(3, '\t').nth(2).unwrap()
@@ -5985,8 +5983,45 @@ mod tests {
             generate_rotated_transfer_wide(&st, &effects, &bw, &aw, &empty_caveat_manifest())
                 .unwrap();
 
+        // `generate_rotated_transfer_wide` builds the old-geometry row first, just like every
+        // family producer.  The production dispatcher then applies the Lean-emitted S2 deletion
+        // before pairing it with the committed descriptor.  Exercise that same boundary here:
+        // the checked-in TSV is the authoritative `compactS2` object, not the 2607-column
+        // intermediate row.
+        assert_eq!(trace[0].len(), WIDE_WIDTH, "pre-compaction wide geometry");
+        // The single-line PLAIN probe has the base-cohort geometry bb=188/lane=737.  Its live
+        // registry transfer namesake is availability-shifted to bb=198/lane=747, so that row is
+        // deliberately NOT its compaction source.  `mintVmDescriptor2R24` is the Lean-emitted
+        // table's same-geometry bb=188/lane=737 representative for this pre-availability probe.
+        compact_s2_columns(&mut trace, "mintVmDescriptor2R24")
+            .expect("Lean-emitted base-cohort S2 geometry compacts the plain wide-transfer row");
+        assert_eq!(
+            desc.trace_width,
+            WIDE_WIDTH - crate::effect_vm::s2_compact_generated::S2_DELETED_COLS,
+            "committed descriptor deletes exactly the dead S2 stratum"
+        );
+        assert_eq!(
+            trace[0].len(),
+            desc.trace_width,
+            "compacted producer row matches committed descriptor geometry"
+        );
+
+        let wide_lookup_count = 2 * WIDE_NUM_CARRIERS;
+        let poseidon_lookup_count = desc
+            .constraints
+            .iter()
+            .filter(|constraint| {
+                matches!(constraint, VmConstraint2::Lookup(lookup) if lookup.table == TID_P2)
+            })
+            .count();
+        let wide_lookup_start = poseidon_lookup_count
+            .checked_sub(wide_lookup_count)
+            .expect("descriptor must contain both complete wide carrier chains");
+
         let check_row = |row: &mut Vec<BabyBear>, label: &str| {
             fill_chip_lanes(&desc, row);
+            let mut checked = 0;
+            let mut poseidon_ordinal = 0;
             for (ci, k) in desc.constraints.iter().enumerate() {
                 let VmConstraint2::Lookup(l) = k else {
                     continue;
@@ -5994,24 +6029,33 @@ mod tests {
                 if l.table != TID_P2 {
                     continue;
                 }
-                let ev = |e: &LeanExpr| -> BabyBear { eval_lean_expr(e, row) };
-                let arity = ev(&l.tuple[0]).as_u32() as usize;
-                // only the WIDE carriers (out col >= GRAD_ROT_WIDTH) — the live lookups are covered elsewhere.
-                let out0_is_wide =
-                    matches!(l.tuple[12], LeanExpr::Var(c) if (c as usize) >= GRAD_ROT_WIDTH);
-                if !out0_is_wide {
+                let this_ordinal = poseidon_ordinal;
+                poseidon_ordinal += 1;
+                if this_ordinal < wide_lookup_start {
                     continue;
                 }
-                let ins: [BabyBear; 11] = core::array::from_fn(|i| ev(&l.tuple[1 + i]));
+                let ev = |e| -> BabyBear { eval_lean_expr(e, row) };
+                let arity = ev(&l.tuple[0]).as_u32() as usize;
+                // The emitted wideAppend wrapper appends the two complete carrier chains as the
+                // final 120 Poseidon lookups. Table-1 tuples are
+                // `[arity, 16 padded inputs, 8 outputs]`.
+                let output_base = 1 + CHIP_RATE;
+                assert_eq!(l.tuple.len(), output_base + 8);
+                checked += 1;
+                let ins: [BabyBear; CHIP_RATE] = core::array::from_fn(|i| ev(&l.tuple[1 + i]));
                 let expect = chip_absorb_all_lanes(arity, &ins);
                 for j in 0..8 {
-                    let got = ev(&l.tuple[12 + j]);
+                    let got = ev(&l.tuple[output_base + j]);
                     assert_eq!(
                         got, expect[j],
                         "{label}: wide lookup {ci} (arity {arity}) out{j} mismatch (carrier not chip-faithful)"
                     );
                 }
             }
+            assert_eq!(
+                checked, wide_lookup_count,
+                "{label}: expected every BEFORE/AFTER wide carrier lookup to be checked"
+            );
         };
         // an ACTIVE row (0) and a PADDING row (40 of the 64-tall trace) — both must be chip-faithful.
         check_row(&mut trace[0], "row0");
