@@ -126,8 +126,9 @@ impl ExactFnspV3DurableReceiptLinkV1 {
 
 /// Structurally valid, executor-signed activation proposed to the store.
 ///
-/// This remains untrusted until [`PersistentStore::install_exact_fnsp_v3_activation`] checks the
-/// exact prefix and writes it once.  The resulting committed activation has no public constructor.
+/// This remains untrusted until the finalized first-frame writer checks the exact prefix and
+/// installs it in the same transaction as the first exact append, receipt, and signed frame.  The
+/// resulting committed activation has no public constructor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UntrustedExactFnspV3ActivationV1 {
     epoch: u64,
@@ -932,9 +933,13 @@ impl PersistentStore {
         Ok(())
     }
 
-    /// Persist the devnet-authorized flag day once, welded to the exact prefix reconstructed by
-    /// the store.  Replacement and activation after any frame row fail closed.
-    pub fn install_exact_fnsp_v3_activation(
+    /// Test-only legacy activation installer.
+    ///
+    /// Production activation is deliberately impossible through a standalone write: the optional
+    /// candidate is consumed only by the first finalized exact-frame transaction.  Tests which
+    /// exercise continuation/recovery in isolation retain this helper as explicit scaffolding.
+    #[cfg(test)]
+    pub(crate) fn install_exact_fnsp_v3_activation(
         &self,
         activation: UntrustedExactFnspV3ActivationV1,
     ) -> StoreResult<StoreAuthenticatedExactFnspV3ActivationV1> {
@@ -1125,17 +1130,33 @@ pub(crate) fn stage_receipt_head_on_append_in(
     Ok(())
 }
 
-pub(crate) fn stage_exact_fnsp_v3_frame_in(
+pub(crate) fn stage_exact_fnsp_v3_frame_with_activation_in(
     write: WriteTransaction,
     exact: ExactFnspV3StateCasV1,
+    candidate_activation: Option<UntrustedExactFnspV3ActivationV1>,
     frame: UntrustedExactFnspV3FrameV1,
 ) -> StoreResult<(WriteTransaction, UntrustedExactFnspV3FrameV1)> {
     frame.validate().map_err(integrity)?;
+    if let Some(candidate) = candidate_activation.as_ref() {
+        candidate.validate().map_err(integrity)?;
+    }
     let exact_head = exact_fnsp_v3_state_head_in(&write)?;
     let live = load_live_authority_from_write(&write, exact_head)?;
-    let activation = live
-        .activation
-        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
+    let activation = match (live.activation, candidate_activation) {
+        (Some(activation), None) => activation,
+        (Some(_), Some(_)) => {
+            return Err(integrity(
+                ExactFnspV3FrameStoreError::ActivationAlreadyInstalled,
+            ));
+        }
+        (None, None) => {
+            return Err(integrity(ExactFnspV3FrameStoreError::ActivationMissing));
+        }
+        (None, Some(candidate)) => {
+            stage_first_frame_activation_in(&write, exact_head, &frame, &candidate)?;
+            candidate
+        }
+    };
     validate_fresh_frame_against_live(&frame, &activation, live.head.as_ref(), exact)?;
     validate_frame_receipt_online(&write, &frame, true, true)?;
     let (write, successor) = compare_and_commit_exact_fnsp_v3_append_in(write, exact)?;
@@ -1155,9 +1176,20 @@ pub(crate) fn stage_exact_fnsp_v3_frame_in(
     Ok((write, frame))
 }
 
-pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
+/// Compatibility seam for already-installed epochs. Production finalized-turn callers should use
+/// [`stage_exact_fnsp_v3_frame_with_activation_in`] and pass their optional first-frame candidate.
+pub(crate) fn stage_exact_fnsp_v3_frame_in(
+    write: WriteTransaction,
+    exact: ExactFnspV3StateCasV1,
+    frame: UntrustedExactFnspV3FrameV1,
+) -> StoreResult<(WriteTransaction, UntrustedExactFnspV3FrameV1)> {
+    stage_exact_fnsp_v3_frame_with_activation_in(write, exact, None, frame)
+}
+
+pub(crate) fn verify_replayed_exact_fnsp_v3_frame_with_activation_in(
     write: &WriteTransaction,
     exact: ExactFnspV3StateCasV1,
+    candidate_activation: Option<&UntrustedExactFnspV3ActivationV1>,
     frame: &UntrustedExactFnspV3FrameV1,
 ) -> StoreResult<()> {
     frame.validate().map_err(integrity)?;
@@ -1166,8 +1198,64 @@ pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
     let activation = live
         .activation
         .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
+    if candidate_activation.is_some_and(|candidate| candidate.encode() != activation.encode()) {
+        return Err(integrity(ExactFnspV3FrameStoreError::ActivationReplacement));
+    }
     validate_replayed_frame_against_live(write, frame, &activation, exact)?;
     validate_frame_receipt_online(write, frame, false, false)
+}
+
+/// Compatibility seam for replay under an already-installed activation.
+pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
+    write: &WriteTransaction,
+    exact: ExactFnspV3StateCasV1,
+    frame: &UntrustedExactFnspV3FrameV1,
+) -> StoreResult<()> {
+    verify_replayed_exact_fnsp_v3_frame_with_activation_in(write, exact, None, frame)
+}
+
+/// Validate and stage the persist-once activation carried by the first accepted exact frame.
+///
+/// The receipt append occurs earlier in the same caller-owned writer transaction. Therefore the
+/// only admissible image is the historical cutover prefix plus exactly the first exact receipt at
+/// `cutover`. Rebuilding the derived per-agent heads here includes that staged row; any subsequent
+/// frame/CAS failure drops the sole writer and exposes neither activation nor cache rows.
+fn stage_first_frame_activation_in(
+    write: &WriteTransaction,
+    exact_head: ExactFnspV3StateHeadV1,
+    frame: &UntrustedExactFnspV3FrameV1,
+    activation: &UntrustedExactFnspV3ActivationV1,
+) -> StoreResult<()> {
+    if frame.sequence != 0
+        || frame.receipt_log_index != activation.receipt_cutover_next_index
+        || activation.exact_initial != exact_head
+    {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+        ));
+    }
+    let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
+    let expected_len = activation
+        .receipt_cutover_next_index
+        .checked_add(1)
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationCutoverMismatch))?;
+    if u64::try_from(receipts.len()).ok() != Some(expected_len) {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+        ));
+    }
+    validate_activation_cutover(activation, &receipts)?;
+    validate_active_epoch_receipts(activation, &receipts)?;
+    replace_receipt_head_index_in(write, Some(&receipts.latest_heads()))?;
+    let mut table = write.open_table(EXACT_FNSP_V3_ACTIVATION)?;
+    if table.len()? != 0 {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationAlreadyInstalled,
+        ));
+    }
+    let encoded = activation.encode();
+    table.insert(SINGLETON_KEY, encoded.as_slice())?;
+    Ok(())
 }
 
 fn validate_fresh_frame_against_live(
