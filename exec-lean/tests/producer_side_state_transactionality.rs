@@ -10,11 +10,13 @@ use dregg_exec_lean::{
     lean_shadow,
 };
 use dregg_turn::{
-    ActionBuilder, BudgetGate, BudgetSlice, ComputronCosts, Effect, TurnBuilder, TurnExecutor,
+    ActionBuilder, BudgetGate, BudgetSlice, ComputronCosts, TurnBuilder, TurnExecutor,
 };
 
-fn open_cell() -> Cell {
-    let mut cell = Cell::with_balance([1; 32], [2; 32], 100);
+fn open_cell(seed: u8, balance: i64) -> Cell {
+    let mut public_key = [0; 32];
+    public_key[0] = seed;
+    let mut cell = Cell::with_balance(public_key, [2; 32], balance);
     cell.permissions = Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,
@@ -37,28 +39,27 @@ fn covered_commit_records_exact_receipt_head_and_budget_slice() {
         return;
     }
 
-    // Burn is in the root-agreeing producer set, so this reaches the verified
-    // authority branch rather than the Rust fallback. The formerly documented
-    // no-cap divergence is now aligned: both producers commit this self-redeem.
-    let agent = open_cell();
+    // Transfer is the control-grade root-agreeing producer path: both
+    // producers commit the same post-state and the returned receipt is the
+    // exact substrate subsequent turns must extend.
+    let agent = open_cell(1, 100);
     let agent_id = agent.id();
+    let recipient = open_cell(2, 0);
+    let recipient_id = recipient.id();
     let mut ledger = Ledger::new();
     ledger.insert_cell(agent).unwrap();
+    ledger.insert_cell(recipient).unwrap();
     let pre_root = ledger.root();
     let executor = TurnExecutor::with_budget_gate(
         ComputronCosts::zero(),
         BudgetGate::new(17, BudgetSlice::new(100)),
     );
-    let action = ActionBuilder::new_unchecked_for_tests(agent_id, "burn", agent_id)
-        .effect(Effect::Burn {
-            target: agent_id,
-            slot: 0,
-            amount: 10,
-        })
+    let action = ActionBuilder::new_unchecked_for_tests(agent_id, "transfer", agent_id)
+        .effect_transfer(agent_id, recipient_id, 10)
         .build();
     let mut builder = TurnBuilder::new(agent_id, 0);
     builder.add_action(action);
-    let turn = builder.fee(5).build();
+    let turn = builder.fee(5).valid_until(1_000).build();
     assert!(lean_shadow::forest_is_root_agreeing(&turn));
 
     let (result, outcome) = produce_via_lean(&executor, &turn, &mut ledger);
