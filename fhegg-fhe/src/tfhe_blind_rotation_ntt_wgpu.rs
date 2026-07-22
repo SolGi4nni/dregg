@@ -731,41 +731,6 @@ impl GpuContext {
             .and_then(|n| n.checked_mul(2))
             .ok_or_else(|| TransformPbsGpuError::Execution("transform scratch overflow".into()))?;
         let scratch_bytes = word_bytes(scratch_words)?;
-        let selection_mask_count = selection_blocks.checked_mul(2).ok_or_else(|| {
-            TransformPbsGpuError::Execution("resident selection mask count overflow".into())
-        })?;
-        let selection_allocation_count = selection_mask_count.max(1) as u64;
-        let batch_accumulator_bytes = one_accumulator_bytes
-            .checked_mul(selection_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch accumulator bytes overflow".into())
-            })?;
-        let batch_small_lwe_bytes = small_lwe_bytes
-            .checked_mul(selection_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch small-LWE bytes overflow".into())
-            })?;
-        let batch_rotation_bytes = rotation_bytes
-            .checked_mul(selection_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch rotation bytes overflow".into())
-            })?;
-        let batch_scratch_bytes = scratch_bytes
-            .checked_mul(selection_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch scratch bytes overflow".into())
-            })?;
-        let batch_masked_lwe_bytes = large_lwe_bytes
-            .checked_mul(selection_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch masked-LWE bytes overflow".into())
-            })?;
-        let selected_allocation_count = selection_blocks.max(1) as u64;
-        let batch_selected_lwe_bytes = large_lwe_bytes
-            .checked_mul(selected_allocation_count)
-            .ok_or_else(|| {
-                TransformPbsGpuError::Execution("batch selected-LWE bytes overflow".into())
-            })?;
         let output_lwe_size = match finalization {
             Finalization::ExtractKeyswitch => prepared.output_lwe_size,
             Finalization::ExtractOnly => (p.glwe_size - 1)
@@ -1195,6 +1160,41 @@ impl GpuContext {
             .and_then(|n| n.checked_mul(2))
             .ok_or_else(|| TransformPbsGpuError::Execution("transform scratch overflow".into()))?;
         let scratch_bytes = word_bytes(scratch_words)?;
+        let selection_mask_count = selection_blocks.checked_mul(2).ok_or_else(|| {
+            TransformPbsGpuError::Execution("resident selection mask count overflow".into())
+        })?;
+        let selection_allocation_count = selection_mask_count.max(1) as u64;
+        let batch_accumulator_bytes = one_accumulator_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch accumulator bytes overflow".into())
+            })?;
+        let batch_small_lwe_bytes = small_lwe_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch small-LWE bytes overflow".into())
+            })?;
+        let batch_rotation_bytes = rotation_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch rotation bytes overflow".into())
+            })?;
+        let batch_scratch_bytes = scratch_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch scratch bytes overflow".into())
+            })?;
+        let batch_masked_lwe_bytes = large_lwe_bytes
+            .checked_mul(selection_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch masked-LWE bytes overflow".into())
+            })?;
+        let selected_allocation_count = selection_blocks.max(1) as u64;
+        let batch_selected_lwe_bytes = large_lwe_bytes
+            .checked_mul(selected_allocation_count)
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution("batch selected-LWE bytes overflow".into())
+            })?;
         let binding_limit = self
             .limits
             .max_buffer_size
