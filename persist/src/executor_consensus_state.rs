@@ -479,6 +479,7 @@ fn stage_fresh_reactive_state_in(
     validate_reactive_nullifier_keys(&state.reactive_nullifiers.successor_keys)?;
 
     let durable_registry = latest_reactive_registry_before(write_txn, ordinal)?;
+    validate_reactive_registry_bytes(&durable_registry)?;
     if reactive_registry_commitment(&durable_registry)
         != state.reactive_registry.expected_pre_commitment
     {
@@ -550,6 +551,7 @@ fn verify_replayed_reactive_state_in(
     validate_reactive_registry_bytes(&state.reactive_registry.successor_bytes)?;
     validate_reactive_nullifier_keys(&state.reactive_nullifiers.successor_keys)?;
     let registry_predecessor = latest_reactive_registry_before(write_txn, ordinal)?;
+    validate_reactive_registry_bytes(&registry_predecessor)?;
     if reactive_registry_commitment(&registry_predecessor)
         != state.reactive_registry.expected_pre_commitment
     {
@@ -1540,6 +1542,33 @@ mod tests {
         assert_eq!(
             store.load_reactive_nullifier_keys().unwrap(),
             vec![[0x71; 32]]
+        );
+
+        // A caller that hashes a corrupt durable predecessor must not be able
+        // to CAS over it and thereby hide the corruption under a valid successor.
+        let corrupt_predecessor = b"DPRG1-not-canonical";
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut registries = write
+                .open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)
+                .unwrap();
+            registries
+                .insert(0, corrupt_predecessor.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        let mut hides_corruption = reactive_state_two(None);
+        hides_corruption.reactive_registry.expected_pre_commitment =
+            reactive_registry_commitment(corrupt_predecessor);
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    1,
+                    &record(1, empty_root),
+                    &[[4; 32]],
+                    &hides_corruption,
+                )
+                .is_err()
         );
     }
 
