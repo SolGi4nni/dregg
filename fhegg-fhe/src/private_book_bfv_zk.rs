@@ -82,7 +82,8 @@ use merlin::Transcript;
 use rand_09::rngs::StdRng;
 use rand_09::{RngCore, SeedableRng};
 
-use crate::bfv_lean::{FOLD_DEGREE, FOLD_MODULI};
+use crate::bfv_lean::{RnsPoly, FOLD_DEGREE, FOLD_MODULI};
+use crate::bfv_ntt_gpu::{RnsNttBackend, RnsNttBatchExecution, RnsNttEngine};
 #[cfg(test)]
 use crate::private_book_bfv_exact::derive_exact_message_table;
 use crate::private_book_bfv_exact::{
@@ -592,32 +593,103 @@ impl SecretRelation {
     /// extracted short coefficients.  This catches RNG/sampling drift before a
     /// proof can turn a host-side extraction mistake into an asserted witness.
     fn validate_seeded_equations(&self, public: &PublicRelation) -> Result<()> {
+        if crate::private_book_bfv_wgpu::requested_by_environment() {
+            // The same opt-in that requests the large signed-dot kernel also
+            // requests the exact eight seeded u×pk products. It is fail-closed:
+            // adapter absence or limits are errors, never CPU work carrying a
+            // GPU label. The no-environment path below remains the independent
+            // fhe-math reference used since the relation was introduced.
+            self.validate_seeded_equations_with_engine(public, &RnsNttEngine::require_wgpu())?;
+            Ok(())
+        } else {
+            self.validate_seeded_equations_reference(public)
+        }
+    }
+
+    fn validate_seeded_equations_reference(&self, public: &PublicRelation) -> Result<()> {
+        self.validate_seeded_products(public, |order, poly| {
+            let mut u = Poly::try_convert_from(
+                self.randomness[order].u.as_slice(),
+                &public.context,
+                false,
+                Representation::PowerBasis,
+            )
+            .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
+            let mut pk = Poly::try_convert_from(
+                public.pk.polys[poly]
+                    .rows
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                &public.context,
+                false,
+                Representation::PowerBasis,
+            )
+            .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
+            u.change_representation(Representation::Ntt);
+            pk.change_representation(Representation::Ntt);
+            u *= &pk;
+            u.change_representation(Representation::PowerBasis);
+            Ok(Vec::<u64>::from(&u))
+        })
+    }
+
+    /// Production portable-wgpu seam for the exact seeded ring preflight.
+    /// Returning the observed backend lets the qualification canary prove that
+    /// the real relation caller—not only an isolated kernel test—selected the
+    /// requested adapter.
+    fn validate_seeded_equations_with_engine(
+        &self,
+        public: &PublicRelation,
+        engine: &RnsNttEngine,
+    ) -> Result<RnsNttBatchExecution> {
+        let mut lhs = Vec::with_capacity(ORDER_COUNT * 2);
+        let mut rhs = Vec::with_capacity(ORDER_COUNT * 2);
+        for order in 0..ORDER_COUNT {
+            let u = RnsPoly {
+                rows: FOLD_MODULI
+                    .iter()
+                    .map(|&q| {
+                        self.randomness[order]
+                            .u
+                            .iter()
+                            .map(|&value| i128::from(value).rem_euclid(i128::from(q)) as u64)
+                            .collect()
+                    })
+                    .collect(),
+            };
+            for poly in 0..2 {
+                lhs.push(u.clone());
+                rhs.push(public.pk.polys[poly].clone());
+            }
+        }
+        let execution = engine
+            .multiply_batch(&lhs, &rhs, &FOLD_MODULI)
+            .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
+        self.validate_seeded_products(public, |order, poly| {
+            Ok(execution.polynomials[order * 2 + poly]
+                .rows
+                .iter()
+                .flatten()
+                .copied()
+                .collect())
+        })?;
+        Ok(execution)
+    }
+
+    fn validate_seeded_products<F>(&self, public: &PublicRelation, mut product: F) -> Result<()>
+    where
+        F: FnMut(usize, usize) -> Result<Vec<u64>>,
+    {
         for order in 0..ORDER_COUNT {
             for poly in 0..2 {
-                let mut u = Poly::try_convert_from(
-                    self.randomness[order].u.as_slice(),
-                    &public.context,
-                    false,
-                    Representation::PowerBasis,
-                )
-                .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
-                let mut pk = Poly::try_convert_from(
-                    public.pk.polys[poly]
-                        .rows
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .collect::<Vec<_>>(),
-                    &public.context,
-                    false,
-                    Representation::PowerBasis,
-                )
-                .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
-                u.change_representation(Representation::Ntt);
-                pk.change_representation(Representation::Ntt);
-                u *= &pk;
-                u.change_representation(Representation::PowerBasis);
-                let product = Vec::<u64>::from(&u);
+                let product = product(order, poly)?;
+                if product.len() != FOLD_MODULI.len() * FOLD_DEGREE {
+                    return Err(PrivateBookBfvZkError::Arithmetic(
+                        "seeded ring product has the wrong exact shape".to_owned(),
+                    ));
+                }
                 for (qi, &q) in FOLD_MODULI.iter().enumerate() {
                     for coefficient in 0..FOLD_DEGREE {
                         let mut rhs = product[qi * FOLD_DEGREE + coefficient] as i128;
@@ -1380,7 +1452,10 @@ const INTERNAL_DIAG: [u32; 16] = [
 #[cfg(test)]
 mod slice_message_table_differential {
     use super::*;
+    use crate::private_book_relation::{encrypt_private_book, PrivateBookEncryptionOpening};
     use crate::threshold::{KeygenCoordinator, KeygenSession, ThresholdParty};
+    use dregg_circuit_prove::dark_bazaar_private::{statement, PrivateBookWitness, PrivateOrder};
+    use std::time::Instant;
 
     #[test]
     fn exact_modulus0_coefficient0_message_table_matches_lean_descriptor() {
@@ -1528,5 +1603,94 @@ mod slice_message_table_differential {
             66977505456,
         ];
         assert_eq!(values.as_slice(), LEAN_MESSAGE_COEFF0.as_slice());
+    }
+
+    #[test]
+    fn production_seeded_ring_validation_is_exact_on_selected_backend() {
+        let params = BfvParams::fold_set();
+        let session = KeygenSession::from_seed(2, [0xA1; 32]).expect("key session");
+        let mut coordinator = KeygenCoordinator::new(session.clone(), params.clone());
+        for party in 0..session.n_parties() {
+            let (_state, contribution) =
+                ThresholdParty::join(&session, party, &params).expect("party keygen");
+            coordinator
+                .accept(contribution)
+                .expect("ordered contribution");
+        }
+        let public_key = coordinator.finish().expect("collective key");
+        let witness = PrivateBookWitness::try_from_orders_with_blinding(
+            &[
+                PrivateOrder::bid(10, 2),
+                PrivateOrder::bid(6, 1),
+                PrivateOrder::ask(5, 0),
+                PrivateOrder::ask(8, 1),
+            ],
+            core::array::from_fn(|lane| 23_000 + lane as u32),
+        )
+        .expect("private book");
+        let opening = PrivateBookEncryptionOpening::from_seeds([
+            [0x71; 32], [0x72; 32], [0x73; 32], [0x74; 32],
+        ]);
+        let book = statement(0xDBA2, &witness).expect("private statement");
+        let ciphertexts =
+            encrypt_private_book(&witness, &opening, &params, &public_key).expect("exact BFV book");
+        let public = PublicRelation::derive(book, &ciphertexts, &params, &public_key)
+            .expect("canonical public relation");
+        let secret = SecretRelation::extract(&witness, &opening).expect("seeded short witness");
+
+        // Independent fhe-math production oracle first; the selected portable
+        // backend must satisfy the same 98,304 public ciphertext coefficients.
+        let reference_started = Instant::now();
+        secret
+            .validate_seeded_equations_reference(&public)
+            .expect("fhe-math seeded equation oracle");
+        let reference_elapsed = reference_started.elapsed();
+        let require_wgpu = std::env::var_os("DREGG_REQUIRE_WGPU").is_some();
+        let engine = if require_wgpu {
+            RnsNttEngine::require_wgpu()
+        } else {
+            RnsNttEngine::cpu_only()
+        };
+        let initialization_started = Instant::now();
+        if require_wgpu {
+            assert!(engine.has_gpu(), "RequireWgpu adapter must initialize");
+        }
+        let initialization_elapsed = initialization_started.elapsed();
+        let started = Instant::now();
+        let execution = secret
+            .validate_seeded_equations_with_engine(&public, &engine)
+            .expect("portable seeded equation validation");
+        assert_eq!(execution.plan.input_pairs, ORDER_COUNT * 2);
+        assert_eq!(execution.plan.rns_rows_per_polynomial, FOLD_MODULI.len());
+        assert_eq!(
+            execution.plan.total_rns_rows,
+            ORDER_COUNT * 2 * FOLD_MODULI.len()
+        );
+        assert_eq!(execution.plan.degree, FOLD_DEGREE);
+        match &execution.backend {
+            RnsNttBackend::Wgpu { adapter } => {
+                assert!(require_wgpu);
+                assert_eq!(
+                    execution.plan.gpu_dispatches,
+                    2 * FOLD_DEGREE.ilog2() as usize + 5
+                );
+                assert_eq!(execution.plan.gpu_coefficient_uploads, 2);
+                assert!(matches!(execution.plan.gpu_static_table_uploads, 0 | 3));
+                assert_eq!(execution.plan.gpu_queue_submissions, 1);
+                assert_eq!(execution.plan.gpu_readbacks, 1);
+                eprintln!(
+                    "production private-book seeded ring validation GREEN on {adapter}: 8 exact u×pk products/98,304 coefficient checks; fhe-math={:.3}ms, adapter+pipelines={:.3}ms, warm-wgpu={:.3}ms",
+                    reference_elapsed.as_secs_f64() * 1e3,
+                    initialization_elapsed.as_secs_f64() * 1e3,
+                    started.elapsed().as_secs_f64() * 1e3,
+                );
+            }
+            RnsNttBackend::CpuPolicy => {
+                assert!(!require_wgpu);
+                assert_eq!(execution.plan.gpu_dispatches, 0);
+                assert_eq!(execution.plan.gpu_queue_submissions, 0);
+            }
+            backend => panic!("unexpected seeded validation backend: {backend:?}"),
+        }
     }
 }
