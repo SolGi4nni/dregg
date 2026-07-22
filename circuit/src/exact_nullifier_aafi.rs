@@ -186,7 +186,11 @@ impl ExactLinkedLeaf {
         }
     }
 
-    fn decode(wire: LinkedLeafWire) -> Result<Self, ExactAafiError> {
+    /// Decode the canonical linked-leaf wire.
+    ///
+    /// Durable incremental accumulators use this to reconstruct authenticated predecessor leaves
+    /// without exposing the leaf's representation or permitting unchecked construction.
+    pub fn decode(wire: LinkedLeafWire) -> Result<Self, ExactAafiError> {
         let addr = wire.addr.decode()?;
         let next_addr = wire.next_addr.decode()?;
         if matches!(addr, ExactTaggedKey::Top) {

@@ -25,11 +25,15 @@
 //! back.  Independent rollback resistance remains the job of authenticated finality/checkpoints.
 
 use dregg_circuit::exact_nullifier_aafi::{
-    Digest8, ExactAafiError, ExactAppendRecord, ExactNullifierAafi, TREE_CAPACITY,
-    ValidatedExactAafiTransition, exact_state_commit,
+    Digest8, ExactAafiError, ExactAafiWitness, ExactAppendRecord, ExactLinkedLeaf,
+    ExactNullifierAafi, ExactPath4, ExactTaggedKey, KEY_LIMBS, LinkedLeafWire, ROOT_LANES,
+    TREE_ARITY, TREE_CAPACITY, TREE_DEPTH, TaggedKeyWire, VALUE_LIMBS,
+    ValidatedExactAafiTransition, exact_empty_leaf_digest, exact_leaf_digest, exact_node_digest,
+    exact_state_commit, raw_to_u16_le, u64_to_u16_le, validate_exact_aafi_witness,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use redb::{ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -64,6 +68,21 @@ pub(crate) const EXACT_FNSP_V3_STATE_HEAD: TableDefinition<u8, &[u8]> =
 /// Dense exact FNSP-v3 append image: zero-based sequence -> strict `F3AR` bytes.
 pub(crate) const EXACT_FNSP_V3_APPEND_RECORDS: TableDefinition<u64, &[u8]> =
     TableDefinition::new("exact_fnsp_v3_append_records_v1");
+/// Derived ordered key -> physical leaf position index for O(log N) online predecessor lookup.
+pub(crate) const EXACT_FNSP_V3_ORDERED_POSITIONS: TableDefinition<&[u8], u64> =
+    TableDefinition::new("exact_fnsp_v3_ordered_positions_v1");
+/// Derived physical leaf image for O(log N) predecessor opening.
+pub(crate) const EXACT_FNSP_V3_LINKED_LEAVES: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("exact_fnsp_v3_linked_leaves_v1");
+/// Derived sparse arity-4 node cache. Missing rows are the canonical empty digest at that level.
+pub(crate) const EXACT_FNSP_V3_SPARSE_NODES: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("exact_fnsp_v3_sparse_nodes_v1");
+/// Derived immutable head at every generation, used for O(log N) historical replay comparison.
+pub(crate) const EXACT_FNSP_V3_HEAD_HISTORY: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("exact_fnsp_v3_head_history_v1");
+
+const TAGGED_KEY_WIRE_LEN: usize = 1 + KEY_LIMBS * 2;
+const LINKED_LEAF_WIRE_LEN: usize = TAGGED_KEY_WIRE_LEN * 2 + VALUE_LIMBS * 2;
 
 /// Strict failures at the exact durable-state boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,6 +131,7 @@ pub enum ExactFnspV3StateStoreError {
     CompareMismatch,
     CandidateSuccessorMismatch,
     CandidateReplayMismatch,
+    OnlineIndexMismatch(&'static str),
     Uninitialized,
     AlreadyInitialized,
     Accumulator(String),
@@ -198,6 +218,10 @@ impl fmt::Display for ExactFnspV3StateStoreError {
             Self::CandidateReplayMismatch => write!(
                 f,
                 "exact FNSP-v3 replay candidate disagrees with the durable append prefix"
+            ),
+            Self::OnlineIndexMismatch(component) => write!(
+                f,
+                "exact FNSP-v3 online index disagrees with durable authority at {component}"
             ),
             Self::Uninitialized => write!(f, "exact FNSP-v3 durable state is not initialized"),
             Self::AlreadyInitialized => {
@@ -931,6 +955,200 @@ fn validate_snapshot(
         records: decoded,
         accumulator,
     }))
+}
+
+fn tagged_key_storage_key(key: ExactTaggedKey) -> [u8; TAGGED_KEY_WIRE_LEN] {
+    let wire = key.wire();
+    let mut out = [0u8; TAGGED_KEY_WIRE_LEN];
+    out[0] = wire.tag;
+    for (chunk, limb) in out[1..].chunks_exact_mut(2).zip(wire.raw_u16_le) {
+        // The redb byte ordering must equal ExactTaggedKey ordering. Big-endian limbs preserve the
+        // numeric u16 lexicographic comparison used by the canonical key type.
+        chunk.copy_from_slice(&limb.to_be_bytes());
+    }
+    out
+}
+
+fn decode_tagged_key_storage(bytes: &[u8]) -> StoreResult<ExactTaggedKey> {
+    if bytes.len() != TAGGED_KEY_WIRE_LEN {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "ordered key wire",
+        )));
+    }
+    let wire = TaggedKeyWire {
+        tag: bytes[0],
+        raw_u16_le: std::array::from_fn(|limb| {
+            let offset = 1 + limb * 2;
+            u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+        }),
+    };
+    wire.decode()
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)
+}
+
+fn encode_linked_leaf(wire: LinkedLeafWire) -> [u8; LINKED_LEAF_WIRE_LEN] {
+    fn put_key(out: &mut [u8], wire: TaggedKeyWire) {
+        out[0] = wire.tag;
+        for (chunk, limb) in out[1..].chunks_exact_mut(2).zip(wire.raw_u16_le) {
+            chunk.copy_from_slice(&limb.to_le_bytes());
+        }
+    }
+
+    let mut out = [0u8; LINKED_LEAF_WIRE_LEN];
+    put_key(&mut out[..TAGGED_KEY_WIRE_LEN], wire.addr);
+    let value_start = TAGGED_KEY_WIRE_LEN;
+    for (chunk, limb) in out[value_start..value_start + VALUE_LIMBS * 2]
+        .chunks_exact_mut(2)
+        .zip(wire.value_u16_le)
+    {
+        chunk.copy_from_slice(&limb.to_le_bytes());
+    }
+    put_key(&mut out[value_start + VALUE_LIMBS * 2..], wire.next_addr);
+    out
+}
+
+fn decode_linked_leaf(bytes: &[u8]) -> StoreResult<ExactLinkedLeaf> {
+    fn get_key(bytes: &[u8]) -> TaggedKeyWire {
+        TaggedKeyWire {
+            tag: bytes[0],
+            raw_u16_le: std::array::from_fn(|limb| {
+                let offset = 1 + limb * 2;
+                u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+            }),
+        }
+    }
+
+    if bytes.len() != LINKED_LEAF_WIRE_LEN {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "linked leaf wire",
+        )));
+    }
+    let value_start = TAGGED_KEY_WIRE_LEN;
+    let wire = LinkedLeafWire {
+        addr: get_key(&bytes[..TAGGED_KEY_WIRE_LEN]),
+        value_u16_le: std::array::from_fn(|limb| {
+            let offset = value_start + limb * 2;
+            u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+        }),
+        next_addr: get_key(&bytes[value_start + VALUE_LIMBS * 2..]),
+    };
+    ExactLinkedLeaf::decode(wire)
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)
+}
+
+fn digest_bytes(digest: Digest8) -> [u8; ROOT_LANES * 4] {
+    let mut out = [0u8; ROOT_LANES * 4];
+    for (chunk, lane) in out.chunks_exact_mut(4).zip(digest) {
+        chunk.copy_from_slice(&lane.as_u32().to_le_bytes());
+    }
+    out
+}
+
+fn decode_digest_bytes(bytes: &[u8], component: &'static str) -> StoreResult<Digest8> {
+    if bytes.len() != ROOT_LANES * 4 {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            component,
+        )));
+    }
+    let lanes: [u32; ROOT_LANES] = std::array::from_fn(|lane| {
+        let offset = lane * 4;
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four bytes"))
+    });
+    validate_lanes(component, lanes).map_err(integrity)?;
+    Ok(lanes_to_digest(lanes))
+}
+
+fn node_key(level: usize, index: u32) -> u64 {
+    debug_assert!(level <= TREE_DEPTH);
+    ((level as u64) << 32) | u64::from(index)
+}
+
+fn empty_digests() -> [Digest8; TREE_DEPTH + 1] {
+    let mut empty = [[BabyBear::ZERO; ROOT_LANES]; TREE_DEPTH + 1];
+    empty[0] = exact_empty_leaf_digest();
+    for level in 1..=TREE_DEPTH {
+        empty[level] = exact_node_digest([empty[level - 1]; TREE_ARITY]);
+    }
+    empty
+}
+
+fn read_sparse_node(
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    level: usize,
+    index: u32,
+    empty: &[Digest8; TREE_DEPTH + 1],
+    overlay: &BTreeMap<u64, Digest8>,
+) -> StoreResult<Digest8> {
+    let key = node_key(level, index);
+    if let Some(digest) = overlay.get(&key) {
+        return Ok(*digest);
+    }
+    nodes
+        .get(key)?
+        .map(|bytes| decode_digest_bytes(bytes.value(), "sparse node"))
+        .transpose()
+        .map(|digest| digest.unwrap_or(empty[level]))
+}
+
+fn sparse_path(
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    position: u32,
+    empty: &[Digest8; TREE_DEPTH + 1],
+    overlay: &BTreeMap<u64, Digest8>,
+) -> StoreResult<ExactPath4> {
+    let mut positions = [0u8; TREE_DEPTH];
+    let mut siblings = [[[BabyBear::ZERO; ROOT_LANES]; TREE_ARITY - 1]; TREE_DEPTH];
+    let mut index = position;
+    for level in 0..TREE_DEPTH {
+        let child = (index % TREE_ARITY as u32) as u8;
+        positions[level] = child;
+        let first = (index / TREE_ARITY as u32) * TREE_ARITY as u32;
+        let mut sibling = 0;
+        for slot in 0..TREE_ARITY {
+            if slot != usize::from(child) {
+                siblings[level][sibling] =
+                    read_sparse_node(nodes, level, first + slot as u32, empty, overlay)?;
+                sibling += 1;
+            }
+        }
+        index /= TREE_ARITY as u32;
+    }
+    Ok(ExactPath4 {
+        positions,
+        siblings,
+    })
+}
+
+fn sparse_replacement_overlay(
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    position: u32,
+    leaf_digest: Digest8,
+    empty: &[Digest8; TREE_DEPTH + 1],
+    base: &BTreeMap<u64, Digest8>,
+) -> StoreResult<BTreeMap<u64, Digest8>> {
+    let mut overlay = base.clone();
+    let mut current = leaf_digest;
+    let mut index = position;
+    overlay.insert(node_key(0, index), current);
+    for level in 0..TREE_DEPTH {
+        let child = (index % TREE_ARITY as u32) as usize;
+        let parent = index / TREE_ARITY as u32;
+        let first = parent * TREE_ARITY as u32;
+        let mut children = [[BabyBear::ZERO; ROOT_LANES]; TREE_ARITY];
+        for (slot, digest) in children.iter_mut().enumerate() {
+            *digest = if slot == child {
+                current
+            } else {
+                read_sparse_node(nodes, level, first + slot as u32, empty, &overlay)?
+            };
+        }
+        current = exact_node_digest(children);
+        index = parent;
+        overlay.insert(node_key(level + 1, index), current);
+    }
+    Ok(overlay)
 }
 
 fn check_frame(
