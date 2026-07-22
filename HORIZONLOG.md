@@ -1,132 +1,32 @@
 # HORIZONLOG — the named-follow-up burn-down
 
-## ⚑⚑⚑⚑ JULY 22 CURRENT AUTHORITY ALERT — banked progress, two concrete quarantines
+## ⚑⚑⚑⚑ JULY 22 CURRENT AUTHORITY ALERT — repaired quarantines, live game rail, shielded apex open
 
-The detailed current ledger is
-`docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md` §0.8.3. The short version:
+Current authority is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md` and the
+product-facing cut is `docs/deos/THE-DARK-BAZAAR.md`. The short version:
 
-- CTM1 live finalization, reciprocal/public FRC1 lookup, the supervised private
-  Bazaar receipt source, party-local q0 staging, exact q0 radix/carrier laws,
-  and opt-in production WGPU BFV batch validation are banked through
-  `a13e1eb82`.
-- The fixed-eight Descent census commit `fc29b03f4` is **quarantined**: the
-  current fields leaf admits a zero-work `+ BabyBear::ORDER` 4-byte source alias,
-  and `field_key_hash : u64 → BabyBear` cannot be injective. A faithful full
-  key/value leaf flag-day is active; no census authority claim survives until
-  it lands and the real game caller consumes it.
-- The former shielded-v4 proof artifact proved only a narrower whole-note swap,
-  not the semantic v4 relation's 19 Dark-AMM + 27 ring lanes. It is being
-  honestly renamed/retyped as substrate while the full FXC4 semantic apex is
-  built.
-- `030b07639` is a banked game-epoch WIP, not generation-safe authority. Exact
-  client-signed binding/head replay repair is active.
-- The Bazaar target draft opened a shadow base-hero ledger instead of the
-  playable durable meta-hero/CharacterStore world. That mount is held until one
-  program-digest-bound authority is shared by worker and frontend.
-
-## ⚑⚑⚑⚑ FHEGG / DARK BAZAAR LIVE CUT — exact v3 executes; v4 is the shielded successor (2026-07-22)
-
-The durable detailed ledger is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md`
-§0.8. Current cut, verified against the production call graph rather than older
-handoff prose:
-
-- **LIVE exact-v3 finality:** `c0aed47d2` diverts strict exact FNSP-v3 before
-  legacy v2/generic execution, verifies the HidingFRI carrier, revalidates under
-  lock, and commits through the exact finalizer. `d52c2e9ea` atomically joins
-  activation, faithful/exact/frame state, receipt, attested root, commit record,
-  and complete executor consensus state. `f60a1919b` fixes first-frame sequence
-  over a nonempty prefix. Fresh-only RAM/event publication is retained.
-- **ONLINE exact state:** `8a052f3af` supplies sparse authenticated state nodes,
-  ordered leaf/position indices, and head history; `aeab921eb`/`4e932492a`
-  maintain and authenticate per-agent receipt predecessor heads. `74e0e61d2`
-  installs a domain-separated rolling faithful↔exact seal and atomic paired
-  append; `d47e2df4c` refuses faithful-only growth as soon as that induction
-  boundary exists. `cbdccedd6`/`cc3c74e56` mint and falsify an opaque O(1)
-  authenticated historical-root token; `0625c82f4` retains it through the exact
-  commit; `a58038562` removes the duplicate live full-history load. Full replay
-  is now boot/first-activation work rather than a per-spend cost.
-- **HONEST v3 boundary:** solo-only, because frame identity binds the local
-  executor key; public value/asset/nullifier; characterized value-zero execution
-  slice. It is exact anti-replay/continuity, not the shielded private-value apex.
-- **SHIELDED v4 substrate:** `d3560fa1e` defines the no-clear-value/asset 100-lane
-  ABI; `bce9d2b63`/`f29768fd5` register the one-opening Lean relation; `0ea02a76a`
-  splits deterministic signer-independent `EXA4`/`EXR4`/`EXF4` cores from a
-  hybrid Ed25519+ML-DSA `EXE4` local envelope. `d3b895d84` adds the fixed 100-PI
-  Lean-authored descriptor over one shared opening; `e7aeec218` proves its atomic
-  composition with FNS4/output notes, signer-independent receipt, causal time,
-  and terminal ACK. `d7ea8b9c5` emits the domain-separated registered JSON
-  descriptor. The real HidingFRI producer/verifier remains active work;
-  persistent v4 writer, live selector, output-note install, and
-  committee/threshold finality authority remain.
-- **CONSENSUS TIME:** `1df9bb868` authenticates a strict timed-turn payload in
-  BlockId and both signatures; `54407562c` replaces ancestor scans with an
-  authenticated immediate-frontier cache and closes generic local bypass;
-  `b0d1e90de` supplies the hostile causal-time teeth. `386b3a1b5` carries the
-  authenticated time into finalized execution. `f23393aed` defines the strict
-  signer-free receipt core over BlockId + deterministic DAG round + authenticated
-  time, with explicit Genesis/LegacyCutover/Core predecessor provenance. It
-  deliberately excludes the validator-local execution ordinal discovered to be
-  divergent under tau mid-prefix catchup. `6ed2ca903`/`8c9e30016` persist FRC1
-  atomically, replay it byte-exactly, and pin restart reauthentication to the
-  activation executor; the focused set is 5/5. Public query and production
-  consumer migration remain active.
-- **FINALIZED ACK — CLOSED FOR TURNS:** `386b3a1b5` adds typed
-  `Committed|DeterministicallyRejected|RetryableOperational|FatalIntegrity`,
-  durable rejection recovery, and prefix stopping. `a58038562` reauthenticates
-  timed-turn terminal state on restart, persists the acknowledged prefix before
-  fatal termination, and never consumes retry/fatal. `29a2528a1`/`05ea68be2`
-  prove the causal-time/terminal-prefix/recovered-cursor laws. Membership and
-  checkpoint outcome durability remain a separate non-turn cut.
-- **BAZAAR WORKER:** `d13b2e0de` adds the durable private worker and exactly-once
-  viewer-blind game consequence. The concrete append-only spool was swept into
-  `386b3a1b5`; `1c0799467` pins one open inode, uses O_NOFOLLOW, enforces
-  owner/mode/regular/nlink=1, revalidates dev+ino around I/O, and serializes
-  writers. Its focused hostile set is 6/6. `1d5d27818` adds the fixed-width v2
-  spool and restart-stable semantic settlement core: fresh local envelopes may
-  revise the same cursor append-only, while semantic forks/cross-deployment
-  replay/stale envelopes fail closed after live-market revalidation. Automatic
-  production supervisor/source wiring remains.
-- **SIDE-STATE CRASH LAW — CLOSED:** `a0199c1e0` writes the immutable typed
-  PromiseResolution batch and manifest in the source turn's finalized redb
-  transaction, with byte-exact replay and restart recovery; `397ccb234` bounds
-  hostile batch/row/reason data before decoding. `74e0e61d2` exposes the durable
-  cursor query, typed NodeEvent, and `promise_resolutions` WebSocket topic.
-  `b8ba574c4`/`a58038562` attach and Fresh-only publish the batch from both exact
-  and generic live finalizers. A crash after commit but before broadcast loses
-  no event: clients resume through `GET /api/promise-resolutions?after=…`.
-- **PRIVATE DEPENDENT SCHEDULER — SAFETY PATH CLOSED:** `7e2030739` adds bounded
-  bearer-gated arm/status/cancel, XChaCha-sealed custody, exact Ready digests,
-  destructive claim, and canonical SignedTurn admission. `960aea92f` gives each
-  claim a durable ingress reservation; `73ccbd946` closes the exact
-  Waiting→ReadyToPublish→Published→Resolved lifecycle and restart canary.
-  `0445f5870` carries the reservation through the live blocklace handle: it
-  produces CTM1 on an isolated lace, atomically persists the exact block with
-  `Submitted`, only then installs/broadcasts, and the ordinary finalizer records
-  the exact wake receipt and turn lookup. Exact replay and post-accept restart
-  are crash-safe. A multi-member crash *before* cadence produces a block retains
-  the reservation but requires explicit recovery; the node still never blindly
-  resends a crash-uncertain claim.
-- **PERF REALITY:** the captured strict Descent/Bazaar custody release run fell
-  from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
-  `fd86eb091` replaces the public decrypt-relation's individual scalar
-  multiplications with one CPU dalek Pippenger MSM while preserving serial
-  transcript order; its full legacy-fold differential is green. The isolated
-  `a283c3423` hbox release tooth completed verified 2-of-3 DKG, two concurrent
-  full proofs, both verifications, combine, and forged-response refusal in
-  201.983s. That is a distinct two-custodian crypto baseline, not a direct
-  before/after comparison with the three-custodian persvati game run.
-  WGPU BFV/TFHE kernels are real; live `fhe_clear`, Dark AMM multiplication, and
-  classical Bulletproof/Ristretto custody remain separate integration work.
-- **BFV TERMINAL AUTHORITY — QUARANTINED:** `6ed2ca903` makes the unlinked q0
-  composite producer/verifier fail closed. Product-to-carrier linkage,
-  butterfly arithmetic, and exact geometry must be repaired before all-RNS
-  widening; the old prototype proof/timing is not authority.
-- **DESCENT OBJECT TRUTH:** `fdb63254a` adds the Lean-authored fixed-eight
-  `countFieldsEq` tooth: every verb's exact relic census must equal the
-  pack/bank/hoard projection. Counter-only loot and two-relic/one-delta attacks
-  fail in the real executor; mutation canaries reopen them when only the new
-  teeth are deleted; the current integration is 17/17. AIR/SlotCaveat/custom-VK
-  coverage for the heap aggregate is the next proof/fold cut.
+- `d5bb140504` closes private dependent claim → CTM1 ingress → ordinary
+  finalization → exact wake atomically.
+- `8113f7a55e` replaces the lossy fields root with the v11 exact full-key /
+  full-value epoch. `e63baf8fa5` rebuilds and registers the Descent census on
+  that root; `5d538dabc4` emits the exact refusal transition. The old census
+  quarantine is closed.
+- `05aed2c8e2`, `cd19363ca8`, `d1b181dec7`, and `ac32f1cc54`
+  bind game actions, private operations, artifacts, and native chat surfaces
+  to host incarnation, generation, operation, advertised head, and signed
+  authority. The earlier generation-replay WIP warning is closed.
+- `d08100655b`, `7bd87790fb`, `ed5c4c5643`, and `190938372b`
+  replace the Bazaar shadow target with signed, checkpoint-continuous,
+  program-bound character worlds shared by worker and Dungeon frontend.
+- `f540ed95a1` deletes the misleading v4 proof name and banks the honest FWS1
+  whole-note HidingFRI substrate. Full semantic v4 still needs the 19+27 FXC4
+  consequence, output-note transaction, selector/persistence, and committee
+  authority.
+- `9dbb0bef55` and `057a9e904a` advance terminal-product binding and exact
+  public LogUp. The fused private terminal in mixed checkpoint `7ba02bc122` is
+  one coordinate and is not a whole-apex green.
+- `6d0e024f19` is the current cut and fixes a real full-Lean timed-close
+  deployment failure. Dirty frontend/game work remains WIP until banked.
 
 ## ⚑⚑⚑ E1 — DEAD v1-FACE COLUMN COMPACTION (the allocator's SECOND flag-day): PROOF HALF LANDED (2026-07-18)
 `docs/EFFICIENCY-BACKLOG-circuit-minimality.md` item E1. On every wide registry member (already

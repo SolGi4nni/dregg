@@ -1,183 +1,180 @@
-# fhEgg — the maturity roadmap: are we building the vision, or the easy waters?
+# fhEgg maturity roadmap — current cut
 
-*Written 2026-07-18; corrected from code and executable artifacts at HEAD 2026-07-19. This is a
-maturity ledger, not a calendar or cost estimate. Companion to `FHEGG-KERNEL.md` (what-is),
-`FHEGG-SDK-READINESS.md` (is-it-shippable), `DREGGFI-VISION.md` (the ambition), and
-`FHEGG-MATHEMATICAL-BRIEF.md` §5-7 (the frontier).*
+*Rewritten 2026-07-22 at `6d0e024f19`. This is a capability and assurance
+roadmap, not a calendar or cost estimate. Current implementation detail lives
+in `HANDOFF-FHEGG-FEASIBILITY-CODEX.md`; the game/product view lives in
+`THE-DARK-BAZAAR.md`.*
 
----
+## 0. The ambition
 
-## 0. The honest self-assessment: where the effort has actually gone
+fhEgg is the private-computation organ of Dregg:
 
-The vision (from the genesis 2026-07-13 → the codex rounds) is a **private convex-derivatives factory**:
-one homomorphic-fold kernel, three privacy tiers, a typed product DSL (`fhIR`), the convex engine at `T>1`,
-real no-viewer — *"you shouldn't have to choose between a market that's private and one you can prove is
-fair."*
+> Evaluate a declared rule over hidden inputs, reveal only its permitted
+> result, and leave a proof-carrying receipt that ordinary Dregg state and
+> consensus can enact.
 
-What we have actually BUILT, graded by **distance-to-vision**, not by effort:
+The mature system must simultaneously provide:
 
-| built | grade | is it the vision, or the tractable foundation? |
+1. Lean-authored or Lean-refined semantics;
+2. exact typed relation identity;
+3. privacy from public observers and proof verifiers;
+4. no single dealer, prover, custodian, or operator with the complete secret;
+5. malicious and replay-safe distributed protocols;
+6. durable atomic integration with cells, receipts, and finality; and
+7. fast-enough portable execution, including WGPU where the complete operation
+   benefits.
+
+Passing one layer never silently grants the others.
+
+## 1. Current maturity ledger
+
+| Capability | Grade | Current truth |
 |---|---|---|
-| addition fold (CPU, Lean-verified; GPU, parity-proven) | WORKING | **foundation.** The additive encrypted primitive. |
-| resident GPU fold arena | WORKING / BOUNDED | Upload-once, device-resident recursive folding, adapter-derived chunking, explicit CPU fallback, and bit parity are implemented. The *whole clearing program* is not GPU-resident yet. |
-| uniform-price clearing + Cert-F + private N4K4 relation | WORKING / RESEARCH | Plaintext settlement is usable; fixed-shape private orders are hidden by `HidingFriPcs` and exact output constraints. The committed-order source weld is not yet a lattice/FHE same-opening proof. |
-| typed `fhIR` compiler | WORKING / PARTLY LEAN-AUTHORITATIVE | The visibility/curvature/phase axes, named reject list, resource/leakage manifests, and runnability checks compile real programs. One canonical rebalance plan is emitted from Lean and strictly interpreted by Rust; the broader Rust grammar is not yet wholly refined to Lean. QP compilation emits an explicit exact SDD/PSD certificate, strict bounded `FHSDD001` transports it, and the runner rechecks its complete integer structure plus bit-exact binding to backend `P` before solving. `FHQPB001` now exports the SDD/PSD admission witness and exact-arithmetic fixed-point KKT residual witness as one bounded canonical artifact, rechecking both and requiring byte-exact agreement on `P`. Lean composes same-matrix SDD with exact-zero KKT into global optimality; the deployed positive-tolerance checker does not by itself inhabit that stronger premise. The source-f64-to-exact rounding refinement is not yet a theorem. |
-| convex engine at `T>1` | WORKING / BOUNDED CLASS | Exact scaled-domain affine iterations, a Lean-shaped noise ceiling, fail-closed window checks, and `T=6` private rebalance are executable. A prox that may bind is refused; private comparison/projection is not silently approximated. |
-| no-single-viewer custody | RESEARCH / REAL PROTOCOL SHAPE | Collective BFV, masked decrypt-to-shares, party MPC, authenticated `t<n` quorum openings, bivariate VSS linked to the actual BFV public-key contribution, and VSS-anchored ZK proofs of the exact decrypt-share equation/quotients/smudge range exist. Six degree-4096 proofs take 1086.009s release; setup-key shortness, malicious MPC, private authenticated deployment channels, durable replay, and interactive proof performance remain. |
-| hidden-reserve Dark AMM | RESEARCH / EXECUTABLE / HOSTED | Reserve state and `dx`/`dy` are ciphertexts; one ct×ct multiplication verifies an exact constant-product transition. The collective-key path generates relin without assembling the secret, threshold-opens only a masked invariant, releases one equality bit, verifies a strict quorum receipt, and atomically commits/refuses without reconstructing the product. Lean proves the receipt state machine (7 clean keystones), authors the two-root semantics (9), and closes the 104-column descriptor's full `Satisfied2->Accepts` bridge (19); the hiding-only prover is green. An owner-only offline producer now carries the private root opening forward, proves the transition, and deterministically encrypts the same amounts. A Tier-1 issuer quorum re-encrypts those exact openings, reconstructs the statement, verifies the proof, and signs one canonical same-opening claim. The v3 authority claim signs the complete canonical BFV parameter digest (including error variance) plus both public BFV wrap-safety bounds and refuses either bound below the witnessed amount; the hiding relation proves ten-bit amounts and no-overdraw. Strict hosted v3 reconstructs every object, rejects all v1/v2 bypasses, and commits receipt replay with the encrypted/root transition; web, Telegram, Discord, startup, and deployment configuration expose only that policy when authority is configured. Separately, `FHDAP002` restarts the complete collective public evaluation state into a host with no secret key, private candidate nonces bind the exact encrypted pre-state, and independently configured `FHDAR001` quorum evidence can commit the ciphertext transition without the in-process decision capability. v2 hashes the canonical full fhe.rs parameter encoding—including error variance—and rejects retired v1. `Market.DarkAmmPublicHost` proves the corresponding state law with ten clean keystones, including independent state-staleness and receipt-replay sequential barriers; `Market.DarkAmmPublicHostLifecycle` adds fourteen clean two-phase staging/commit/abandon/restart laws while leaving cryptographic carriers explicit. A new dreggnet collective service verifies collective Tier-1 same-opening at stage without consuming replay; FHDAR commit atomically installs public ciphertext material/root/sequence plus both exact replay images; pending state is strict-restartable and abandon/restage is live. Its focused gate uses real 3-party DKG/relin and HidingFri but simulates the reveal-only decision transcript; the upstream no-assembled-secret test remains the real masked-computation gate. Relin has signed, session/PK/roster/phase-bound public manifests and a strict restartable coordinator transcript, but fhe.rs exposes no canonical R1/R2 share codec: live parties must resend their opaque typed shares and the manifest ID does not yet commit to that algebraic value. The Tier-1 issuers see the witness and seeds, and the existing player-facing web/Telegram/Discord v3 offering still uses explicit `n=1`; it has not yet been replaced by the standalone collective service. A lattice-ZK/no-viewer replacement for both same-opening and bound soundness, trusted initial-carrier/key-domain evidence, distributed witness production, malicious MPC input binding, floor swaps, malicious-share correctness, rollback-resistant carrier/replay persistence, dropout/party-restart relin, `t<n` relin, and shared-interface collective deployment remain. |
+| Plaintext uniform clearing and Cert-F | **WORKING** | Versioned Rust SDK/CLI, deterministic settlement, verification, fixed proof families, and allocation certificates exist. This carries no privacy claim. |
+| fhIR product language | **WORKING / PARTIAL FORMAL CUTOVER** | Typed admission, explicit refusals, convex/direct-logic families, and several Lean-authored emitted relations exist. The whole Rust compiler/runtime is not yet covered by one Lean refinement. |
+| Exact FNSP-v3 | **LIVE / NON-DARK** | HidingFRI acceptance, durable exact state, replay, finalizer selection, FRC1/CTM1, and private dependent wake are live. Public value/asset/nullifier coordinates make v3 exact continuity, not dark value. |
+| Shared private-game rail | **LIVE / BOUNDED PRODUCT** | One authority-bound game spine serves web, Telegram, and Discord; public cards are viewer-blind; a private durable worker applies one exactly-once Dungeon consequence. |
+| Exact fields and Descent census | **GATED SUBSTRATE** | V11 faithfully commits raw keys/full values; the fixed-eight HidingFRI census binds the exact fields root and declared writes through a canonical-v2 custom VK. It is not a general heap-aggregate proof. |
+| Hidden-reserve Dark AMM | **EXECUTABLE RESEARCH** | Exact encrypted arithmetic, threshold BFV, Dark-AMM relations, hosted lifecycle laws, HidingFRI, and GPU kernels exist. The live player path is not the full shared-witness house-blind apex. |
+| Whole-note shielded proof | **GATED SUBSTRATE** | FWS1 proves a hidden two-input/two-output swap with exact nullifier, conservation, output notes, and state endpoints. It is narrower than semantic v4. |
+| Semantic shielded v4 | **BOUNDARY / OPEN LIVE AUTHORITY** | The no-clear-value 100-lane boundary and FXC4 shape exist. Full 19+27 same-witness proof, persistence, output-note mutation, selector, and committee finality remain. |
+| No-single-viewer BFV/MPC | **RESEARCH / REAL PROTOCOL SHAPE** | Threshold DKG/relin, masked boundaries, party MPC, verified decrypt shares, custody, and distributed relation pieces exist. Some live paths still have a source viewer or trusted issuer boundary. |
+| Dealerless preprocessing | **SUBSTRATE** | FHTRI005 party-local candidate generation, beacon, MAC manifests, cross-term algebra, and one-use custody exist. Production stops at `AwaitingCrossTermProvider`. |
+| Complete private BFV terminal | **PARTIAL / FAIL-CLOSED** | Exact carrier identities, root-order proofs, LogUp KATs, terminal binding theorem, and one fused private coordinate exist. The public unlinked terminal remains quarantined and the full N=4096 family is open. |
+| Portable GPU | **WORKING KERNELS / PARTIAL PIPELINE** | Exact WGPU BFV/TFHE/HidingFRI kernels and CPU differentials exist. The complete market/custody/proof operation is not one resident schedule and not every GPU path wins at small geometry. |
+| Post-quantum end to end | **PARTIAL** | Hash/STARK/lattice/PQ-signature components exist. Classical Ristretto/Pedersen/Bulletproof and missing malicious-PQ distributed protocol seams prevent an “everything Dregg is PQ” claim. |
 
-**The corrected verdict:** fhEgg is no longer only a foundation or a one-iteration sketch. It is an
-executable research system with a typed factory language, a bounded `T>1` encrypted solver, real
-collective-custody paths, hiding proofs, and two end-to-end private market shapes (a six-step portfolio
-rebalance and an exact constant-product transition). It is **not production-private**. The center of
-gravity now belongs at the composition seams: prove that all private representations share the same
-opening, bind the decision circuit's private shares to that opening, make custody/MPC malicious-secure and restart-safe, and
-carry those properties through the player-facing settlement path.
+## 2. What crossed from research into system
 
----
+### 2.1 Protocol consequence
 
-## 1. The residency insight — performance excellence is an ARCHITECTURE, not a shader tweak
+The private result is no longer detached from the game:
 
-**The mistake we measured:** the GPU fold "loses ~5-7×" because the benchmark uploads N ciphertexts,
-does ONE streaming pass of adds (arithmetic intensity ≈ 0), and downloads. The transfer dominates *because
-the data should never have been round-tripping*. We optimized a shader when the problem was the memory
-model.
+- exact proof acceptance reaches ordinary block finality;
+- FRC1 identities and typed terminal dispositions survive restart;
+- private dependent turns enter through ordinary SignedTurn validation;
+- finalized private Bazaar receipts feed a supervised durable worker;
+- worker actions target signed, checkpoint-anchored character worlds; and
+- all hosted surfaces consume one authority-bound game/session protocol.
 
-**The right architecture — GPU-RESIDENT end-to-end.** Encrypted orders should be uploaded ONCE at ingress
-and stay on the device while the whole clearing runs:
+This is the most important maturity transition of the sprint. The remaining
+privacy work can now harden a real consequence path instead of a laboratory
+demo.
 
-```
-ingress: encrypt orders ──upload once──▶  [ GPU-resident ciphertext arena ]
-                                             │  fold        (add, resident — now FREE, no transfer)
-                                             │  histogram   (measured 11.4× at N=1M)
-                                             │  crossing / argmax
-                                             │  convex iterations  x ← prox(x − τAx)   (T of them)
-                                             │  ct×ct multiply  (NTT — the GPU-saturating kernel, Merkle-class 23×)
-                                             ▼
-egress: threshold-decrypt (p*, V*) ◀──download once (a few scalars)
-```
+### 2.2 Faithful commitments
 
-The transfer then amortizes over a long homomorphic computation instead of over one add. Every
-op that already wins on-device (histogram 11×, Merkle-class hashing 23×, DFT 4-6×) wins, and the fold
-becomes *free* (already resident). **This is the performance north star: a resident ciphertext arena + a
-scheduler that keeps data on-device across the whole pipeline, host↔device only at ingress/egress** — the
-same shape real FHE accelerators (Zama CUDA, FPGA) use. `GpuResidentPipelineResidual` — the single
-highest-leverage performance build.
+The fields-root flag day removed a concrete mod-p source alias. Exact nullifier,
+fields, heap, capability, note, and state commitments must continue to obey the
+same law: committed source structure is encoded faithfully before any field
+hash. A convenient one-felt fold is not identity.
 
-**What is already closed:** `fhegg-fhe/src/gpu_arena.rs` implements the retained arena for the additive
-fold, including bounded streaming uploads, device-to-device recursive reduction, one final readback,
-capacity accounting, and parity/refusal tests. **What is not closed:** histogram/crossing, convex
-iterations, ct×ct/NTT, and threshold egress do not yet share one resident scheduler. Do not collapse
-"resident fold" into "resident fhEgg pipeline" in either direction.
+### 2.3 Honest proof naming
 
----
+The former “shielded exact apex v4” proof was renamed FWS1 because it proved a
+narrower whole-note relation. A real smaller proof is valuable; a larger name
+is not.
 
-## 2. The five vision-critical builds (the "fullest fhEgg" — NOT the easy waters)
+## 3. The five load-bearing closure programs
 
-These are the five load-bearing builds, now recorded as a burn-down rather than a list that falsely calls
-implemented work absent:
+### 3.1 Full shared-witness v4
 
-1. **REAL no-viewer — RESEARCH PATH BUILT; MALICIOUS/DEPLOYED PATH OPEN.** `threshold.rs`,
-   `threshold/quorum.rs`, `boundary.rs`, and `mpc_party.rs` now compose collective BFV custody, Lean-pinned
-   smudging bounds, exact masked opening, arithmetic-to-boolean sharing, and output-only MPC. The `t<n`
-   path authenticates a roster and canonical share transcript; its bivariate VSS public images bind the
-   hidden dealer constants to the exact BFV `p0 = -a*s+e` contribution. Its `FHQPv001` certificate now
-   proves the exact negacyclic/RNS decrypt-share equation, both quotient families, and the inclusive
-   `[-2^80,2^80]` smudge range against VSS-anchored Pedersen commitments. Remaining: zero-knowledge
-   ternary/CBD setup-key shortness, a distributed persistent commitment ceremony, malicious MPC
-   input/share validity, real private channels and preprocessing, crash/recovery, and wiring the new
-   canonical replay snapshot into rollback-resistant transactional storage.
-   Six degree-4096 proofs took 1086.009s release, so compression/batching/parallel proving is an immediate
-   product blocker. Independent custodians now have a canonical parallel scheduling API, but the heavy
-   composition has not yet been re-measured through it and each certificate remains large.
-   `NoViewerKeyCustodyResidual` is narrower than it was, not closed.
+One relation must bind the hidden note opening, full nullifier, wide
+value/asset commitment, BFV/TFHE market computation, all 19 Dark-AMM and 27
+ring lanes, conservation/range facts, output notes, exact accumulator, and
+outer before/after state. The accepted result must then install atomically and
+finalize under signer-independent federation authority.
 
-2. **The convex engine at `T>1` — CLOSED FOR THE AFFINE / INACTIVE-PROX CLASS.**
-   `convex_engine::convex_solve` executes exact scaled-domain iterations and refuses past its composed
-   noise ceiling. `e2e_private_derivative.rs` compiles a Tier-0 fhIR rebalance, encrypts under a collective
-   key, runs six iterations, threshold-opens the result, and matches the integer reference bit-for-bit.
-   The residual is no longer `T>1`; it is expressive depth. The first genuinely **active** box product is
-   now built in `fhegg-fhe/src/fhir/private_box.rs`: an n-of-n party-shared canonical integer is range-gated
-   and compared privately against both public faces, then retained as shares in the interior or replaced by
-   a party-zero sharing of the selected endpoint. No operand, difference, residue, or projected value opens;
-   a focused equality-bit boundary checks the output. `Market/PrivateBoxProjection.lean` authors the exact
-   clamp and proves that the runtime share selection reconstructs that clamp, plus range/idempotence laws.
-   Projected shares can be consumed by a second box step without an output-share accessor; the next session
-   must name a digest of the exact prior session, disclosed branch, and reveal-only transcripts.
-   This first product deliberately reveals **which face** was selected and requires the canonical
-   power-of-two comparison domain `t = 2^value_bits`; it is not yet the branch-oblivious prox inside the
-   deployed prime-modulus BFV iteration loop. Remaining: hide the face bits (or prove them acceptable product
-   leakage), bridge/re-share the prime BFV modulus without a truncation seam, chain the shared projection back
-   into subsequent encrypted iterations, add SOC projections, and harden preprocessing/input validity against
-   malicious parties. `ActivePrivateProxResidual` is materially narrowed, not closed.
+**Exit criterion:** substitution of any proof, opening, consequence, output
+note, state endpoint, validator envelope, or predecessor refuses.
 
-3. **`fhIR` — WORKING COMPILER; FORMAL CUTOVER PARTIAL.** `fhegg-fhe/src/fhir/mod.rs` implements the three
-   type axes, syntax, named refusals, six-part admissibility check, tier inference, and direct engine spec.
-   `Market/FhIRClearingPlan.lean` supplies a canonical Lean-authored rebalance family consumed strictly by
-   Rust. The remaining language work is to move the general denotation/compiler into Lean (or prove a
-   faithful twin), add reusable product-authoring libraries and certificate backends, and replace the
-   intentionally refused PSD/exp/private-operator cases with explicit approved implementations.
-   `FhIRGeneralRefinementResidual`.
+### 3.2 Trusted-dealer removal
 
-4. **The GPU-resident pipeline — FOLD CLOSED, WHOLE PROGRAM OPEN.** The arena and bounded resident fold are
-   working. The next performance build is a typed resident plan that keeps the outputs of fold,
-   histogram/comparison, affine iterations, ct×ct multiplication, and proof-friendly commitment kernels
-   on one device allocation until the threshold boundary. `GpuResidentWholeProgramResidual`.
+Implement a malicious-secure PQ cross-term provider for the exact FHTRI005
+`α_i · x_j` relation. Bind ordered parties, direction, roster, candidate
+manifest, correlation profile, session, and one-use custody. Complete
+authenticated q0 broadcast and prove same-opening between the live VSS and q0
+commitments.
 
-5. **A REAL product cleared privately, end-to-end — TWO HONEST BEACHHEADS BUILT.** The portfolio rebalance
-   is fhIR→collective BFV→`T=6` solve→threshold result. The Dark AMM has encrypted reserves and encrypted
-   amounts and verifies an exact transition with one secret×secret product. Neither alone closes the full
-   product claim: the rebalance uses the earlier n-of-n research custody rather than the authenticated
-   `t<n` service; the AMM's masked equality-only rejection is built but still needs malicious share/source
-   validity, amount range proofs, and threshold
-   dropout-tolerant relin/opening custody (the honest n-of-n relin algebra and authenticated/recoverable
-   public control transcript are built, but the upstream opaque-share codec and malicious-share seam remain);
-   the fixed N4K4 hiding proof still needs a proof-authoritative ledger/source
-   relation rather than trusting FHE and proof witnesses to share an opening. `EndToEndPrivateProductWeldResidual`.
+**Exit criterion:** no process sees both inputs; omission, direction swap,
+chosen-input substitution, selective failure, replay, split view, and
+recertification refuse or are attributable.
 
-### 2.1 The next central closures
+### 3.3 Distributed proving
 
-1. Make the hiding proof relation authoritative for the sealed order ledger, and treat fhEgg as an
-   untrusted finder unless/until a dedicated BFV same-opening proof binds ciphertexts to those commitments.
-2. The masked party-MPC equality-to-`k` decision is now built and candidate-bound. Bind every party's
-   arithmetic input to the actual masked ciphertext opening (and authenticate the MPC transport) so a
-   malicious party cannot substitute shares while the bad-swap path continues to reveal only refusal.
-3. ~~Bind the fixed receipt's range/no-overdraw facts and the BFV wrap bounds to the exact encrypted AMM
-   amounts.~~ **DONE AT TIER 1:** the HidingFri relation proves ten-bit amounts and no-overdraw, the issuer
-   re-encrypts those same values, and the signed v3 authority claim pins the full parameters plus both caps and refuses an
-   underdeclared bound. Remaining: make that composition lattice-ZK/no-single-viewer. Separately, the
-   authenticated decrypt-share certificate proves `h = lambda*canonical(c1*s_i) + smudge` with exact RNS
-   quotients and the required smudge range; optimize/batch it to interactive latency and prove DKG
-   ternary/CBD key shortness.
-4. ~~Put the first opaque operations through durable hosted game sessions and receipts—not a separate
-   demonstration endpoint.~~ **BUILT FOR THE CURRENT FAMILIES:** strict Dark AMM v3 and the private raid,
-   preference, shuffle, and quest operations use the common hosted journal and web/Telegram/Discord
-   adapters. Dark AMM v3 now lands real independently session-bound uploads after production-path Telegram
-   initData verification and Discord activity-ticket mint/verification, with cross-surface credential and
-   replay refusal. Remaining: recursive receipt aggregation, production custody services, and an
-   active asset-settlement leg for the AMM game operation.
-5. Extend fhIR's Lean-authoritative product library and resident execution plan so another derivative is
-   expressed, admitted, and executed rather than hand-wired. The active private box projection and exact
-   SDD-to-PSD admission theorem are now real library stones; the general compiler refinement, branch-hidden
-   projection, and one whole-program GPU resident schedule remain.
-6. ~~Emit `Market.DarkAmmPrivateReceipt` as a fixed descriptor and HidingFri prover~~ **DONE:** public
-   `(session,rule,k,oldRoot8,newRoot8)`, private bounded reserves/amounts/blinds, exact nonzero,
-   no-overdraw, derived-state, old/new constant-product gates, full Lean `Satisfied2->Accepts`, and a
-   hiding-only prover are green. ~~Bind the proof to the exact hosted BFV request and ledger transition.~~
-   **DONE AT TIER 1:** the exact re-encryption authority and strict v3 host weld are built. **Remaining:**
-   replace issuer-visible witness checking with lattice-ZK/no-single-viewer same-opening while retaining
-   the now-bound amount range/no-overdraw and wrap-safety guarantees without disclosing them to any one
-   operator.
+HidingFRI hides named witnesses from the verifier. The apex needs
+collaborative witness/proof production so no single prover reconstructs the
+complete book, note opening, or game state.
 
----
+The current research direction is a Dregg-owned share-native tensor-RS /
+BaseFold-compatible backend beside—not blindly replacing—the Plonky3
+HidingFRI differential reference.
 
-## 3. The discipline this doc exists to enforce
+**Exit criterion:** the selected worker threshold learns no witness, corrupt
+partial folds are refused/attributed, and the public proof is
+statement-equivalent to the monolithic reference.
 
-Green isolated stones are useful only when their trust boundaries compose. Before starting a fhEgg unit,
-ask: **which public fact becomes unforgeable, which secret stops reaching a viewer, which refused input
-fails before mutation, or which player-visible operation becomes real?** This keeps proof engineering,
-cryptographic protocol work, solver work, and game integration on the same path.
+### 3.4 Resident portable acceleration
 
-The one-line vision: **fhEgg is a factory for markets that are private and provably fair; it is mature when
-a product can be authored, admitted, found, proved, settled, and recursively verified without any party
-learning more than the declared output.**
+Keep ciphertexts, transforms, comparisons, selection, and proof commitments on
+device across the whole operation. Batch independent books/shares, fuse stages
+where exact dataflow permits, and count uploads, dispatches, waits, and
+readbacks.
+
+**Exit criterion:** release-mode hbox measurements show an exact
+residue-for-residue whole-operation win over CPU, with cold, warm, fallback,
+and failure behavior.
+
+### 3.5 Formal refinement through the host boundary
+
+Lean should own product admission/denotation, descriptor identity, exact
+arithmetic, commitment encodings, state-machine laws, and value-deciding
+composition. Rust/WGPU should implement those relations behind strict
+interpreters and exact differentials, not become a second unconnected spec.
+
+**Exit criterion:** every value-deciding production path points to a named
+semantic theorem, emitted typed relation, strict interpreter, and
+differential/refinement gate; crypto/network assumptions remain explicit.
+
+## 4. Product expansion after the apex
+
+The shared private-game organ should grow from the current bounded Bazaar into:
+
+1. hidden-reserve Dark-AMM swaps;
+2. private shuffle/deal and hidden-hand legality;
+3. guild/party voting and preference aggregation;
+4. private matchmaking and raid formation;
+5. sealed loot councils and DKP/need-greed allocation;
+6. multilateral netting; and
+7. confidential prediction/quest markets.
+
+These mechanics should share identity, session epochs, viewer-blind receipts,
+world cells, predicates, exact consequences, and finality. A new relation does
+not require a new frontend-specific mini-engine.
+
+## 5. What not to claim
+
+- Hiding from the verifier is not hiding from the prover.
+- Threshold-shaped code is not malicious security.
+- Party-local contributions are not authenticated broadcast.
+- A context digest is not a same-opening proof.
+- A fixed public LogUp KAT is not a private runtime carrier.
+- One fused BFV coordinate is not the full terminal family.
+- Exact-v3 continuity is not dark value.
+- A WGPU kernel is not a resident fhEgg pipeline.
+- A Lean model beside Rust is not a proved Rust refinement.
+- Classical Bulletproof/Ristretto acceleration is not post-quantum security.
+- A committed WIP checkpoint is not a captured green.
+
+## 6. Verification economy
+
+Follow `AGENTS.md`:
+
+- Lean stays local; `lake env lean Dregg2/Claims.lean` and registered lint
+  gates are proof authority.
+- Rust uses narrow `cargo nextest` targets.
+- Proof-heavy work runs in release on persvati/hbox.
+- Required-GPU tests identify the real adapter and compare exactly to CPU.
+- Do not rerun the whole workspace to edit this roadmap.
+
+The roadmap advances when a named boundary becomes both *true* and *consumed by
+the next boundary*, not when the repository gains another isolated component.
