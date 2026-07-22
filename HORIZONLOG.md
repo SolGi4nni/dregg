@@ -10790,7 +10790,8 @@ batched readbacks for 77 materialized layers, 30 DFT dispatches, and six retaine
 LDE blits. CPU verification remains authoritative; query/fold work is still
 host-side.
 
-PartyMPC certified preprocessing has hard-swapped to `FHTRI003`: verified-core
+At that checkpoint PartyMPC certified preprocessing had hard-swapped to
+`FHTRI003` (now superseded by the audited live `FHTRI004` cut below): verified-core
 ML-DSA-65 and Ed25519 both sign the same complete raw statement over paired
 authority keys, exact salted rows/batch, and base session/circuit/roster/gate
 context. Keygen/sign/verify refuse without the installed Lean authority even if
@@ -10812,8 +10813,8 @@ malformed kept triple has exactly one accepting one-bit challenge. Rust/Lean
 gates are green; the focused release target is **6/6**. The executable lying-
 response tooth also demonstrates the remaining boundary: without authenticated
 share responses/MAC/ZK, a dishonest party can cancel the residual and force
-acceptance. The rung is therefore not yet wired into `FHTRI003` or the live
-PartyMPC triple source.
+acceptance. At that checkpoint the rung was not yet wired into `FHTRI003` or the
+live PartyMPC triple source; `FHTRI004` below closes that composition.
 
 The portable Ristretto verifier MSM is qualified for correctness, not
 performance. hbox passed the strict group-add and full MSM/R1CS gates with dalek
@@ -11108,9 +11109,19 @@ coefficient big-key reconstruction, then survives a subsequent normal high-
 level addition. The strict hbox gate is **1/1**. Exact plan expansion/upload was
 **317.965ms** and the first typed call against the already prepared plan was
 **143.891ms**; this is one-call qualification, not a repeated warm median.
-Multi-block comparison/control-flow dispatch remains. The reverse-order dense
-transform gate is still useful arithmetic qualification, but it is no longer
-presented as the high-level operation order.
+The first all-block control primitive is now banked too (`86d0115ba`): a
+carry-clean radix-4 `FheUint32 > public u32` lexicographic state machine runs
+one deployed-order KS→transform-resident PBS for each of all 16 blocks and
+returns an ordinary encrypted 0/1 `FheUint32` that drives high-level
+`if_then_else`. Four strict hbox semantic cases match tfhe-rs exactly, including
+encrypted `32768 + 32768 > 65535`; every backend record is the exact transform
+path. Plan preparation was **414.382ms** and each full comparison was
+**1.842–1.901s**. This is the first usable encrypted branch, not yet an
+optimized compare: the 16 PBS calls are serial and host-round-tripped, inputs
+must be carry-clean, output is not native `FheBool`, and ciphertext-to-
+ciphertext comparison/min/select remain. The reverse-order dense transform gate
+is still useful arithmetic qualification, but it is no longer presented as the
+high-level operation order.
 
 The literal native BFV family now has a Lean-first scaling design
 (`04a86e7fa`). `Market.PrivateBookBfvNttFamily` replaces 98,304 separately
@@ -11131,14 +11142,38 @@ hbox RX 6750 XT/Vulkan gate is **1/1 in 0.163s**, the focused NTT suite is
 **7/7**, and the existing `fhe-math` multiplication regression remains green.
 This is exact hardware witness generation and schedule parity, not yet a proof
 that those 48 columns satisfy a production butterfly AIR.
+The first actual 48-column AIR slice is now present (`0e8d652b3`), rather than
+only a schedule plan. It constrains the radix-2^14 product/add/sub reductions,
+shifted 5+3+3 exact carry chains, schedule selectors, and four bus tags; a
+canonical q0/N=8 forward witness passes, while arithmetic, schedule, bus, and
+row-omission mutations refuse. The executable gate conjoins IR2 satisfaction
+with exact cross-stage `List.Perm`, and eleven keystones are kernel-clean. This
+is a concrete first slice. The formal table-faithfulness seam is now closed too
+(`d881d0c25`): every committed boundary table must be an exact permutation of
+both preceding-stage writes and following-stage reads, with a generic theorem
+instantiated at production N=4096/logN=12. Duplicate schedule or bus rows still
+pass the old membership-only AIR and now fail the strengthened gate. Rust IR2
+still needs to carry this faithful multiset/grand-product evidence; twist/bit-
+reversal ingress, inverse normalization, terminal quotient rows, recursive key-
+certificate joining, and `OddNttRefines` also remain.
 
-The binary sacrifice's concrete lying-response seam has advanced
-(`a06ccacd3`). Two independent GF(2^128) authentication lanes now protect bit-
-share openings and reject the formerly accepted forged `tau`; Rust release is
-**7/7 on hbox** and Lean is green. This is not yet a malicious-MPC theorem or
-live `FHTRI003`: the dealer sees bits and global MAC keys, honest share
-provenance and an unpredictable beacon are premises, SHA-512 remains, typestate
-is local, and the joint reduction/network/replay cut is open.
+The binary sacrifice is now the live certified preprocessing path
+(`3967631e7`). `FHTRI004` commits one kept plus 128 sacrificial candidates per
+gate, fixes two independent GF(2^128) MAC lanes before challenge, authenticates
+rho/sigma and tau openings through distinct barriers, and releases only an
+opaque verified kept row. The hybrid formation certificate binds the complete
+roster/session/ceremony/manifest/setup/opening/challenge/row statement and is
+carried in FHDBv002 restart bundles. Post-green audit repairs are included:
+certified sessions reject the legacy factory, every runner revalidates its exact
+certificate/row before ingress or gate zero, compact wire bytes cannot promote
+an unverified binding, and hostile allocation shapes refuse before reservation.
+The current gates are verified-core **5/5 in 23.100s**, protocol **17/17**,
+restart **1/1 in 7.768s**, and strict full apex **1/1 in 222.487s**. At 1,302
+gates the apex uses 335,916 candidates and 1,007,748 authenticated bits. This is
+still authority-operated preprocessing: the dealer sees candidates and MAC
+keys and controls the beacon; the receipt is a signed digest summary, protected
+row copies lack a durable consumption tombstone, private-input validity remains
+semi-honest, and no joint PQ reduction is claimed.
 
 An additive lattice/hash share-commitment prototype is banked
 (`dd9e163ed`) with exact Rust/Lean KATs. Context/slot-bound BabyBear coordinates,
@@ -11163,10 +11198,17 @@ winner and price to one signed epoch/head-bound Dungeon Red-or-Blue `WriteOnce`
 crown. Federation, submitter, nullifier, tender asset/value, market asset,
 winner route, signer, and action are bound; replay, rival crown, wrong signer,
 missing/wrong tender, and receipt mutation refuse. The linked verified archive
-gate is **1/1 in 19.464s**. Remaining: a live caller and durable
-`authorization_id` recovery, roster-aware finality classification, recipient-
-output semantics beyond one-shot redemption, and distributed atomicity across
-the spend/Bazaar/game commits.
+gate is **1/1 in 19.464s**. Durable orchestration is now banked (`2dc0408b4`):
+it verifies the winner signature before private work, derives the current game
+affordance, then atomically reserves the apex-use, faithful-spend-use, and
+composed action IDs before signed-spine dispatch and promotes them after
+landing. The checksummed/fsynced journal fails closed on missing/corrupt restart
+state; cross-hand/session, cross-apex, cross-spend, clone-concurrency, and bad-
+signature teeth are **3/3 + 4/4**. It remains a single-process, O(N)-snapshot
+journal with fail-closed stranded reservations, and one public controller/
+frontend caller is still needed. Roster-aware finality classification,
+recipient-output semantics beyond one-shot redemption, and distributed
+atomicity across the spend/Bazaar/game commits also remain.
 
 The exact nullifier-successor design has also moved past the sentinel-domain
 hole (`3e313161e`). Lean now specifies tagged `BOT | REAL raw256 | TOP` linked
@@ -11177,8 +11219,34 @@ append-order physical update, two depth-16 arity-4 root rewrites, and full
 columns × 16 rows with 76 public inputs**, carrying 128 state16 and 180 range16
 sites per row; its leaf preimage is 39 field inputs and still consumes eleven
 state16 steps. The targeted modules and full **9,918-job** `lake build Dregg2`
-are green. This is the authoritative circuit/runtime cutover plan, not a newly
-emitted proof artifact: the signed committed `FNS3(root8,count4)` prior/post
-state must still be carried through the rotated receipt, followed by independent
-witness/refinement differential, byte-pinned artifact generation, Rust consumer,
-and VK rotation.
+are green. The rotated-state boundary is now welded in Lean too (`3a542b383`):
+`FNS3` replaces the old eight-felt nullifier group, wide before/after commits
+replace caller-supplied checkpoints, all 179 input cells are carried, and the
+other 171 output cells are preserved; the full Dregg2 build is **9,920 jobs
+green**. This is still not a newly emitted proof artifact. The current runtime's
+`faithful_root8_exact()` is the older sorted-dense FNL8/FNN8 tree, not the linked
+append-order FNI2/FNN2 accumulator. Cutover therefore must first reconstruct
+AAFI from persisted sequence records, then change witness production and root
+carriers, build the 3,760-column witness/wide tables/map envelope, emit the
+artifact, rotate the VK, and update the registry.
+The exact Rust twin is now banked independently (`8858e3ebe`): full-domain
+tagged keys, Lean-evaluated hash KATs, an O(depth) sparse append-order tree, two
+authenticated paths, fail-before-mutate insertion, and strict sequence replay
+are focused **7/7** with the library check green. It is deliberately not wired
+into FNSP-v3 or live rotation yet, so this is runtime/refinement substrate—not a
+claim that the old accumulator has already been replaced.
+
+The pre-proof wallet path is now target-independent (`5f0999ab9`, hardened by
+`ba976498b`). A client submits only three public cursors and receives fixed
+pages of commitments, hybrid-authenticated history, and public nullifier rows;
+it reconstructs membership, nullifier, successor, and the HidingFRI proof
+locally. Unknown request fields, duplicate pages, and reordered pages refuse.
+The audit caught and closed a real cache-integrity seam: the node now rebuilds
+the note root from the durable commitment bytes themselves, rather than
+trusting count plus the already-live root. One immutable snapshot is keyed by
+the exact expectation, history head, attestation, and nullifier count, signs its
+FNMS head once, and atomically publishes only after re-reading those coordinates.
+The current gates are **8/8 SDK + 2/2 node cache**. This removes target lookup
+and repeated O(n²)/ML-DSA work; it does not hide the later public FNSP fields or
+network metadata, and its head is threshold-1 pinned-node authority rather than
+federation freshness/finality.

@@ -86,20 +86,20 @@ classical seams into a post-quantum composition.
 | Public-only hosted verifier registry | **GATED** | two hostile registry tests: 2/2 green |
 | Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
 | Sealed native-PQ PartyMPC crossing | **GATED IN STRICT FULL APEX** | protocol teeth above plus strict full apex 1/1; 7.956s crossing vs v4 1,202.240s timeout, exactly six transport signs + six verifies independent of 1,302 gates |
-| Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | mandatory hybrid `FHTRI003` binds exact Beaver rows/base session/batch under verified-core ML-DSA-65 + Ed25519 and the hosted verifier independently pins it; hostile 5/5 in 14.43s; generation remains trusted-dealer |
-| Binary triple sacrifice | **AUTHENTICATED RESPONSE RUNG GATED; LIVE FHTRI003 INTEGRATION OPEN** | exact GF(2) 128-round committed-candidate sacrifice plus two independent GF(2^128) MAC lanes; focused 7/7 on hbox and Lean algebra green; trusted-dealer/honest-share premises and a quantified joint reduction remain explicit |
+| Certified PartyMPC preprocessing | **LIVE FHTRI004 GATED, TRUSTED AUTHORITY** | mandatory hybrid certificate binds exact roster/session, candidate manifest, 128-round binary sacrifice, two GF(2^128) MAC lanes, and kept rows; verified-core 5/5, protocol 17/17, restart 1/1, strict full apex 1/1 in 222.487s; centralized dealer/beacon and no durable use tombstone remain |
+| Binary triple sacrifice | **COMPOSED INTO LIVE FHTRI004** | one kept +128 sacrifice candidates/gate; commit before challenge, authenticated rho/sigma/tau openings, opaque release only after every equation; legacy factory/session downgrade and pre-gate row substitution refuse; this is still authority-operated preprocessing, not dealer-free malicious MPC |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody/semantic/shortness private_book_distributed_inputs: 5/5 release green |
 | Distributed private-order proof | **GATED THROUGH FINAL EXACT BFV RELATION** | base custody plus exact 4×384 quotient derivation; post-custody challenge makes every worker prove one signed 65,536-coordinate masked relation against both certificates; real degree-4096 all-owner gate 1/1 in 91.204s, reduced adversarial gate 1/1 in 14.063s |
 | Distributed real same-opening prover | **EXACT BFV RELATION + CANONICAL PUBLIC WIRE GATED; ROOT/CLEARING COMPOSITION OPEN** | workers never reconstruct orders, openings, or quotient vectors; strict versioned envelope replays all certificates against verifier-supplied policy; Poseidon/root join, clearing certificate, exact sampler image, and PQ replacement remain |
-| Bazaar crown consequence | **GATED THROUGH A REAL SHIELDED SPEND** | persist-minted FNSP-v2 redemption + exact private-BFV apex winner/price/asset + signed epoch-bound Dungeon Red/Blue `WriteOnce` crown; live archive gate 1/1 in 19.464s; orchestration/durable authorization journal remains |
+| Bazaar crown consequence | **GATED THROUGH A REAL SHIELDED SPEND + DURABLE ONE-USE ORCHESTRATION** | persist-minted FNSP-v2 redemption + exact private-BFV apex winner/price/asset + signed epoch-bound Dungeon Red/Blue `WriteOnce` crown; apex-use, spend-use, and composed action are atomically reserved across restart; focused 1/1 apex plus 3/3 orchestration and 4/4 journal; public controller caller remains |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
 | Narrated Dungeon and relic-oath composition | **GATED BY TARGET** | narrated Dungeon 3/3; repaired relic oath 2/2 |
 | Common game-operation spine | **DURABLE EPOCH CUSTODY GATED FOR CATALOG + TELEGRAM** | bound routing 21/21; atomic/fsynced incarnation + monotone per-session generations 4/4; Telegram hostile epoch callbacks 2/2; web/Discord/WeChat/native migration remains |
 | Telegram and viewer-safe web journey | **GATED BY TARGET** | Telegram combined 77 tests plus durable-epoch 2/2; web session rail 2/2 and no-viewer 2/2 |
-| Private Bazaar → Dungeon consequence | **GATED AT TWO REAL GAME MECHANICS** | verifier-minted apex → winner-signed epoch-bound Mender (2/2; real HidingFRI 76.070s) and persist-minted faithful spend → exact-price/asset Red-or-Blue crown (1/1; 19.464s); durable orchestration journal remains |
+| Private Bazaar → Dungeon consequence | **GATED AT TWO REAL GAME MECHANICS; DURABLE CROWN EXECUTION LIVE** | verifier-minted apex → winner-signed epoch-bound Mender (2/2; real HidingFRI 76.070s) and persist-minted faithful spend → exact-price/asset Red-or-Blue crown (1/1; 19.464s); one-use orchestration is 3/3 + 4/4, player-facing controller remains |
 | Private-raid capability/Arena and narrated-relic composition | **GATED BY TARGET** | relic capstone 1/1; surface 8/8; lower atomic forest 2/2 (engine semantics only; its persvati fixture opted into the unaudited PQ test backend) |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **GATED** | both targets are green inside the current dreggnet-offerings 117/117 invocation |
@@ -107,11 +107,11 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact adaptive radix-16/radix-128 required mode through 4096 terms; fixed radix-128 4096 was 4.722s GPU vs 9.563ms dalek and standalone adaptive was 4.643s vs 9.827ms, so disabled by default |
-| Portable encrypted TFHE PBS | **TYPED DEFAULT-ORDER ONE-BLOCK PATH GATED** | default Big-key `FheUint32` now performs exact 2048→918 KS → transform-resident PBS → 2049-coefficient big-key reconstruction and survives a following high-level op; hbox 1/1, 317.965ms plan preparation and 143.891ms first typed call against the prepared plan; multi-block comparison dispatch remains |
-| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY FORMALIZED + SCHEDULED WGPU GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact standalone q0/q1/q2 forward/inverse WGPU transforms, and a reusable 2^18 key certificate, while butterfly AIR/full witness bus/terminal quotient/recursive join remain |
+| Portable encrypted TFHE PBS | **TYPED DEFAULT-ORDER FULL-RADIX PUBLIC COMPARISON GATED** | default Big-key `FheUint32` exact KS→resident-PBS is now composed across all 16 carry-clean radix blocks for `> public u32`; four hbox semantics match tfhe-rs, encrypted predicate drives `if_then_else`, 1.842–1.901s/comparison; ciphertext-to-ciphertext/min/select and serial-roundtrip optimization remain |
+| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY + WGPU + FIRST BUTTERFLY AIR GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact q0/q1/q2 WGPU transforms, reusable 2^18 key certificate, and concrete q0/N8 48-column butterfly AIR/permutation teeth; production faithful tables/full witness/terminal quotient/recursive join remain |
 | Additive PQ share commitment | **EXPERIMENTAL ALGEBRA/KAT; PRODUCTION REFUSED** | context-bound BabyBear/SIS-style additive commitments, exact links, randomized hiding coordinates, and short-kernel extraction are Rust/Lean green; dimensions are not estimator-approved and live wide Ristretto shares are not bounded coordinates, so `productionPqReady = false` |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; accumulator insertion is host-planned rather than recomputed in AIR |
+| Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY; ZERO-TARGET MIRROR GATED** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; wallet sync now sends only three public cursors and reconstructs membership/nullifier/successor locally; exact tagged successor AIR is designed and Lean-green but not yet emitted/rotated |
 | Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
@@ -289,43 +289,36 @@ protocol and still has no proof of honest private-input share formation.
 
 ### Certified preprocessing boundary
 
-**fhegg-fhe/src/mpc_party.rs** now hard-swaps certified custody to `FHTRI003`.
-Before any multiplication gate consumes a row, the authority checks the exact
-GF(2) Beaver relation and both ML-DSA-65 and Ed25519 sign the same canonical raw
-statement: paired authority keys, exact salted row commitments/batch, base
-session/circuit digest, roster size, and gate count. Keygen, sign, and verify
-require the installed verified Lean cores even if `DREGG_ALLOW_UNAUDITED_PQ=1`
-is set. The full canonical binding enters transport/KDF domains and the clearing
-claim; the hosted verifier independently pins it across restart rather than
-trusting a self-carried authority.
+**fhegg-fhe/src/mpc_party.rs** now hard-swaps certified custody to `FHTRI004`.
+For every kept multiplication row the authority generates and commits 128
+sacrificial candidates, fixes two GF(2^128) MAC lanes before challenge, and
+authenticates the rho/sigma and tau openings through distinct commit/check
+barriers. Only an opaque successful sacrifice capability releases the kept row.
+ML-DSA-65 and Ed25519 then sign the same canonical statement over the exact
+roster/base session, unique ceremony, candidate manifest, setup/opening/
+challenge digests, 128 rounds, two lanes, and kept-row commitments. Keygen,
+sign, and verify require the installed verified Lean cores even if
+`DREGG_ALLOW_UNAUDITED_PQ=1` is set.
 
-The archive-linked hostile target is **5/5 green in 14.43s**. It rejects row,
-Ed-signature, ML-DSA-signature, v2 downgrade, relabel, context, batch, authority,
-authenticated-frame, receipt, and replay substitutions, including explicit
-unaudited-runtime refusal. This is mandatory hybrid authentication of audited
-material, not malicious preprocessing: one trusted dealer still sees and
-chooses every triple; input provenance, sacrifice/VSS/OT/VOLE/PCG, durable
-rollback tombstones, and the SHA-256 commitment floor remain named.
+The live runtime boundary was audited after the first green. Certified sessions
+now reject the legacy dealer factory, every runner and transport machine
+revalidates the exact certificate/party row before private ingress or gate zero,
+and FHDBv002 restart transport carries and verifies the full hybrid formation
+certificate rather than promoting compact binding bytes. The parser cross-
+checks receipt/base/roster/party/gate coordinates and refuses FHTRI003,
+trailing bytes, hostile counts, and row/certificate substitution. Allocation
+ceilings are checked before reserving candidate/MAC storage; the full 1,302-gate
+apex uses 335,916 candidates and 1,007,748 authenticated bits.
 
-The first additive sacrifice primitive now exists beside that trusted path but
-is intentionally not wired into it. `mpc_party::sacrifice` commits exact
-per-party GF(2) candidate rows before a post-commit beacon derives 128 challenge
-bits per kept gate, reconstructs full-quorum rho/sigma openings and check
-shares, and releases only an opaque verified batch. Lean proves
-`check = r·error(kept) ⊕ error(sacrifice)`, honest completeness, both-challenge
-detection, and the exact one-bit-per-round ceiling. The focused Rust target is
-**6/6 green** and the Lean module/root build is green.
-
-The first response-authentication rung is now present as well. Each opened bit
-share carries two independent GF(2^128) MAC lanes, and batched opening verifies
-both aggregate tags before the sacrifice residual can be accepted. The old
-executable forged-`tau` response is now rejected; the focused hbox release gate
-is **7/7** and the Lean algebra/root builds are green. This closes that concrete
-lying-response attack, not malicious preprocessing in general. A trusted dealer
-still observes the bits and global MAC keys, honest input-share provenance is a
-premise, the commitment is SHA-512, the beacon must be unpredictable, and the
-typestate is local rather than network/replay durable. A quantified joint
-security reduction and live `FHTRI003` transport integration remain mandatory.
+Current gates are release checks green, verified-core certification **5/5 in
+23.100s**, sacrifice/authentication/transport **17/17**, FHDB restart **1/1 in
+7.768s**, and strict full apex **1/1 in 222.487s**. This closes the concrete
+lying-response and certified-session bypasses; it does not establish malicious
+MPC. One centralized authority still constructs all candidates, sees the MAC
+keys, and supplies the beacon; the receipt is an authority-signed digest summary
+rather than a publicly replayable ceremony transcript; identical protected row
+bytes have no durable compare-and-set consumption tombstone; private-input
+validity remains semi-honest; and no quantified joint PQ reduction exists.
 
 **fhegg-fhe/tests/party_mpc_crossing_transport.rs** starts with the exact four BFV
 proof rows, folds them, masks and threshold-opens only a one-time-padded
@@ -983,8 +976,16 @@ coefficient BSK/KSK, perform 2048→918 KS, centered-mean transform PBS, and
 2049-coefficient big-key reconstruction, then return an ordinary `FheUint32`.
 tfhe-rs decrypt parity and a subsequent normal high-level addition pass **1/1**.
 On hbox, preparation took **317.965ms** and the first typed call against that
-prepared plan took **143.891ms**; this is not a repeated-call median. Multi-block
-comparison/control-flow dispatch and warm-series qualification remain.
+prepared plan took **143.891ms**; this is not a repeated-call median. The first
+full-radix branch is now live as well: carry-clean `FheUint32 > public u32`
+runs an encrypted radix-4 lexicographic state machine through all 16 blocks,
+using exactly one deployed-order KS→transform-PBS per block, and returns an
+ordinary encrypted 0/1 `FheUint32` that drives high-level `if_then_else`. Four
+strict hbox cases match tfhe-rs, including encrypted `32768 + 32768 > 65535`;
+preparation was **414.382ms** and full comparisons were **1.842–1.901s**. The
+current implementation is deliberately unoptimized: sixteen PBS calls are
+serial with host round-trips, dirty carries refuse, output is not native
+`FheBool`, and ciphertext-to-ciphertext comparison/min/select remain.
 
 Lean arithmetic specifications for the BFV NTT and TFHE torus MAC are
 axiom-clean; they specify arithmetic/refinement boundaries, not hardware
@@ -1039,10 +1040,18 @@ root), streams the six exact butterfly residues without allocating the full
 matrix, and decodes every physical row of the `2^20 × 48` family. The fail-closed
 hbox tooth is **1/1 green in 0.163s** on the RX 6750 XT/Vulkan and compares every
 forward/inverse q0/q1/q2 residue with CPU; root/stage/modulus/input/output
-mutations refuse. This is not yet the full AIR/prover: butterfly constraints,
-the complete witness/permutation bus, terminal quotient/canonicality, recursive
-key-certificate join, and production Fourier-orthogonality refinement remain
-named obligations.
+mutations refuse. The first concrete 48-column butterfly AIR slice is now green
+too: exact radix-2^14 product/add/sub carry chains, canonical q0/N8 witness,
+schedule selectors, and an exact cross-stage `List.Perm` bus reject arithmetic,
+schedule, bus, and omitted-row mutations; eleven keystones are kernel-clean.
+This is not yet the full production prover: twist/bit-reversal ingress,
+inverse normalization, terminal quotient rows,
+recursive key-certificate join, and production `OddNttRefines` remain. The
+formal faithful-table condition has since landed: each boundary table is an
+exact permutation of both preceding writes and following reads, generically
+instantiated at N=4096/logN=12, and duplicate schedule/bus rows that pass the
+old membership-only AIR now refuse. The remaining table seam is deployment:
+Rust IR2 must carry the corresponding committed multiset/grand-product evidence.
 
 An experimental additive PQ-share commitment also exists in Rust and Lean. It
 binds context and slot, commits exact BabyBear-coordinate shares with randomized
@@ -1105,6 +1114,43 @@ deployed nullifier root still folds the nullifier to one felt, and value/asset
 are public. The authoritative conservation proof remains
 Ristretto/Pedersen/Bulletproof-based. Solo-mode already-applied finalization,
 committee rollover, and O(all-leaves) recovery also remain.
+
+The wallet no longer asks the node for a target note, position, membership
+quote, or nullifier context (`5f0999ab9`). Its only supported mirror request is
+a deny-unknown three-cursor record; the node returns fixed pages of 256 note
+commitments, 16 hybrid-authenticated FNHR edges, and 256 public nullifier rows.
+The SDK pins the mirror head and FNHR authority, reconstructs both accumulators
+locally, and creates the membership, nullifier, successor, and HidingFRI proof
+without disclosing which note it owns. Focused SDK tests are **7/7**, the node
+request-shape tooth is **1/1**, and the node library check is green. The audit
+follow-up is now **8/8 SDK + 2/2 node cache**: one immutable exact-head snapshot
+reconstructs the note root from the durable commitment bytes, authenticates the
+history/attestation/nullifier image, signs FNMS once, and serves every fixed
+page without repeated full-chain or ML-DSA work. This closes
+target lookup before proof construction, not submission anonymity: the public
+FNSP turn still exposes nullifier/value/asset and can be correlated with the
+receiver/IP absent a relay, mix, or oblivious ingress. The current head is a
+threshold-1 pinned-node statement rather than federation finality/freshness.
+The cache retains one O(chain-state) snapshot; privileged raw DB mutation after
+publish is not observed until restart or an authenticated head change.
+
+The exact successor design now covers the complete nullifier domain
+(`3e313161e`). Lean uses tagged `BOT | REAL raw256 | TOP` leaves rather than
+stealing raw all-zero/all-FF values as sentinels, proves bracketed sorted
+insertion and duplicate refusal, and binds append-order physical update, two
+depth-16 arity-4 root rewrites, authenticated indices, and the full 33-bit
+terminal count. The FNSP-v3 descriptor plan is 2,442 columns × 16 rows with 76
+public inputs; targeted builds and full `lake build Dregg2` (9,918 jobs) are
+green. The rotated-state weld is also Lean-green at 3,760 columns/76 PI:
+`FNS3(root8,count4)` replaces the old nullifier group, wide before/after commits
+replace caller checkpoints, all 179 input cells are carried, and the other 171
+output cells are preserved. The exact Rust twin is focused **7/7** with Lean
+hash KATs, O(depth) sparse insertion, two authenticated paths, transactional
+refusal, and strict durable-sequence replay. It is not yet a checked live
+artifact: the current accumulator is still sorted-dense FNL8/FNN8. Cutover must
+reconstruct AAFI from persisted sequence records, change rotation/root/witness
+carriers, build the full witness and tables, emit byte-pinned artifacts, and
+rotate the VK/registry.
 
 ### Cell-owned PQ identity and rotation
 
@@ -1259,6 +1305,9 @@ from first principles.
   borrows the bundle-owned certificate, eliminating the 2,117,632-byte dense
   clone measured at n=256.
 - private_clearing_crown_consequence — **1/1 heavy-release green**.
+- shielded crown orchestration — **3/3 feature + 4/4 durable journal green**;
+  apex-use, finalized-spend-use, and composed action are atomically reserved
+  before dispatch, with corrupt/missing restart state failing closed.
 - dungeon_narrated_operation — **3/3 green**.
 - relic_oath_branch — repaired target **2/2 green**.
 - relic_raid_narrated_forest — **1/1 green**.
@@ -1284,13 +1333,16 @@ from first principles.
   transform-resident warm GPU was **115.746ms** versus **422.847ms** coefficient
   GPU and **1,380.391ms CPU**. The actual default-order one-block
   KS→transform-PBS→big-key `FheUint32` adapter is also **1/1**, including a
-  following high-level op; multi-block comparison dispatch remains.
+  following high-level op; full 16-block `> public u32` is **1/1** across four
+  semantics at 1.842–1.901s/comparison and drives encrypted `if_then_else`.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - native exact-BFV HidingFRI slice — exact 4,096-term coefficient equation plus
   the same hidden order/root relation **1/1 green in 22.414s**; real encoder
   table **128/128**; the full 98,304-equation odd-NTT family is now formalized as
-  one 2^20×48 schedule, with its AIR/witness/WGPU implementation still open.
+  one 2^20×48 schedule; exact q0/q1/q2 scheduled WGPU forward/inverse parity is
+  **1/1 green in 0.163s** on hbox and all 1,048,576 rows decode/recompose, while
+  butterfly AIR/full witness bus/terminal quotient/recursive join remain open.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
   **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
   history **6/6**; live finalized `NoteCreate` leaves, history edge, exact
@@ -1345,14 +1397,16 @@ These are the next truth-producing gates:
    clearing. Reuse the live exact native-field slice, materialize or prove the
    other 98,303 equations, then make the apex consume the family before
    revisiting any no-single-viewer language.
-3. Compose the staged 128-round binary sacrifice with authenticated response
-   shares/MAC-or-ZK and one-time custody, then replace trusted-authority Beaver
-   generation and add private-input share-formation evidence. Signed, encrypted
-   routing alone cannot satisfy LiveMpcBackend.sound.
-4. Move successor-nullifier accumulator insertion and conservation authority
-   into the now-live faithful hidden-spend relation, then widen the deployed
-   one-felt nullifier root. Separately compose the landed PQ-identity AIR row
-   with both outer ML-DSA predicates before removing either proof-path refusal.
+3. Replace FHTRI004's centralized candidate/MAC/beacon setup with a distributed,
+   jointly unpredictable ceremony, add durable compare-and-set consumption for
+   protected rows, and prove private-input share formation. The live sacrifice
+   and response authentication are now composed, but authority-signed setup
+   alone still cannot satisfy `LiveMpcBackend.sound`.
+4. Emit and rotate the exact tagged FNSP-v3 successor design, carry signed
+   `FNS3(root8,count4)` pre/post state through the receipt, and compose its
+   accumulator insertion with conservation authority. Separately compose the
+   landed PQ-identity AIR row with both outer ML-DSA predicates before removing
+   either proof-path refusal.
 
 Heavy Rust proof gates belong in the release-only nextest heavy profile and on
 the build node. Lean stays local with the warm metatheory/.lake cache.
