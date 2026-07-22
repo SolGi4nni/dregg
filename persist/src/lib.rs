@@ -273,6 +273,13 @@ impl PersistentStore {
             // from the complete durable append-record image.
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_STATE_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_APPEND_RECORDS)?;
+            // Rebuildable exact-state online index: ordered predecessor positions, linked leaves,
+            // sparse Merkle nodes, and immutable generation heads. Canonical authority remains the
+            // signed frame + dense append image; these rows only remove replay from the live path.
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_LINKED_LEAVES)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_SPARSE_NODES)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_HEAD_HISTORY)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_ACTIVATION)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_RECORDS)?;
