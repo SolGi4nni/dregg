@@ -271,6 +271,22 @@ pub fn configure_turn_executor(
             });
     *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
 
+    // Receipt-chain continuity is consensus state too. Node executors are
+    // short-lived, so restoring only the one agent an ingress happens to name
+    // leaves every other author at a false genesis head. Rebuild all per-agent
+    // heads from the already recovered durable log before any execution. The
+    // helper validates the complete interleaved log before mutating the fresh
+    // executor, so a malformed suffix cannot yield a partially seeded view.
+    crate::executor_state_admission::restore_executor_receipt_heads(
+        executor,
+        s.cclerk.receipt_log(),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "STORE INTEGRITY EVENT: durable receipt log cannot seed a turn executor; refusing construction: {error}"
+        )
+    });
+
     executor.set_local_federation_id(federation_id_for_executor(s));
     executor.set_timestamp(wall_clock_secs());
     enroll_known_pq_identities(executor, s);
@@ -356,6 +372,37 @@ pub fn execute_via_producer(
     lean_producer_enabled: bool,
 ) -> dregg_turn::TurnResult {
     use tracing::{error, info, warn};
+
+    // Exact FNSP-v3 currently owns one proof-local subreceipt joined to one
+    // genuine full-turn receipt. Until every mutable executor side table has a
+    // durable node-owned reconstruction, composing an exact spend with another
+    // effect would let the latter mutate state outside that staged exact frame.
+    // Refuse before the Rust or Lean producer touches either ledger or side
+    // tables; the consequence must be a separately finalized outbox turn.
+    if let Err(route_error) =
+        crate::executor_state_admission::validate_exact_fnsp_v3_route(turn, ledger)
+    {
+        return dregg_turn::TurnResult::Rejected {
+            reason: dregg_turn::TurnError::InvalidEffect {
+                reason: format!("exact FNSP-v3 route refused: {route_error}"),
+            },
+            at_action: Vec::new(),
+        };
+    }
+
+    // The verified Lean producer does not yet project the exact FNS3,
+    // commitment, or revocation side accumulators. Its generic root-agreement
+    // classifier therefore cannot author this exact route without silently
+    // dropping consensus state. Keep the staged exact epoch on the Rust
+    // producer after the strict fence until that projection is implemented and
+    // differentially pinned.
+    if crate::executor_state_admission::is_strict_exact_fnsp_v3_route(turn) {
+        warn!(
+            agent = ?turn.agent,
+            "exact FNSP-v3 route is fenced onto the Rust producer until Lean projects executor side-state roots"
+        );
+        return executor.execute(turn, ledger);
+    }
 
     if !lean_producer_enabled {
         return executor.execute(turn, ledger);
@@ -470,7 +517,6 @@ pub fn commit_effects_as(
     // Size the fee to the estimated computron cost so the executor budget gate passes.
     turn.fee = executor.estimate_cost(&turn);
 
-    crate::api::seed_executor_receipt_head(&executor, agent, prev);
     let lean_producer_enabled = s.lean_producer_enabled;
     match execute_via_producer(&executor, &turn, &mut s.ledger, lean_producer_enabled) {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

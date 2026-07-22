@@ -4978,7 +4978,6 @@ async fn execute_finalized_turn(
         );
         return;
     }
-    crate::api::seed_executor_receipt_head(&executor, agent, expected_prev);
 
     // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
     // verified Lean shadow's clock / chain-head / budget legs are decided by THIS node's own state
@@ -8309,7 +8308,6 @@ mod tests {
         {
             let mut s = state.write().await;
             let executor = crate::executor_setup::new_submit_executor(&s);
-            crate::api::seed_executor_receipt_head(&executor, signed.turn.agent, None);
             let mut scratch = s.ledger.clone();
             match crate::executor_setup::execute_via_producer(
                 &executor,
@@ -8457,7 +8455,6 @@ mod tests {
         {
             let mut s = state.write().await;
             let executor = crate::executor_setup::new_submit_executor(&s);
-            crate::api::seed_executor_receipt_head(&executor, signed2.turn.agent, None);
             let mut scratch = s.ledger.clone();
             match crate::executor_setup::execute_via_producer(
                 &executor,

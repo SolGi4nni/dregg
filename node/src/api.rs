@@ -2906,16 +2906,6 @@ fn receipt_infos_from_chain_with_witnesses(
         .collect()
 }
 
-pub(crate) fn seed_executor_receipt_head(
-    executor: &dregg_turn::TurnExecutor,
-    agent: CellId,
-    previous_receipt_hash: Option<[u8; 32]>,
-) {
-    if let Some(head) = previous_receipt_hash {
-        executor.set_last_receipt_hash(agent, head);
-    }
-}
-
 /// Query for `GET /api/server/{cell}/affordances?viewer=<authlabel>` — the discovery
 /// route for a hosted deos-host private server's cap-gated affordance surface.
 #[derive(Debug, Deserialize)]
@@ -3487,7 +3477,6 @@ async fn post_submit_turn(
     // (#171): same authoritative (Lean-producer-aware) path as the signed
     // envelope ingress and blocklace-finalized turns.
     let executor = crate::executor_setup::new_submit_executor(&s);
-    seed_executor_receipt_head(&executor, turn.agent, previous_receipt_hash);
     let lean_producer_enabled = s.lean_producer_enabled;
     let exec_result = crate::executor_setup::execute_via_producer(
         &executor,
@@ -3758,9 +3747,6 @@ async fn post_submit_signed_turn(
     // a remote agent's turn is covered by the verified Lean producer exactly
     // like a local one (its SDK stamps `valid_until`, so it does not fall off
     // the wire marshal).
-    // Seed only from independently stored node state, never from the turn's own
-    // claim. The executor rechecks exact equality before its prologue.
-    seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
     let lean_producer_enabled = s.lean_producer_enabled;
     // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
     // client turn — `execute_finalized_turn` runs identically on every node and
@@ -4225,8 +4211,6 @@ async fn post_submit_encrypted_turn(
     // Defense-in-depth: the executor's own encrypted-turn path re-runs the
     // validity gate (the handler already gated above before decrypting).
     executor.set_require_validity_proof(true);
-    let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
-    seed_executor_receipt_head(&executor, encrypted.agent, expected_prev);
 
     // O(touched) atomic rollback: arm an undo journal rather than cloning the
     // whole O(cells) ledger. The executor mutates `s.ledger` in place; the
@@ -7408,7 +7392,6 @@ async fn post_faucet(
     };
 
     let executor = crate::executor_setup::new_submit_executor(&s);
-    seed_executor_receipt_head(&executor, faucet_turn.agent, faucet_prev_receipt);
     // Size the fee (= computron budget cap) to the estimated cost so the budget
     // gate passes; the faucet cell holds the genesis supply and covers it.
     faucet_turn.fee = executor.estimate_cost(&faucet_turn);
@@ -9566,21 +9549,6 @@ mod tests {
         assert_eq!(first["federation_id"], first["id"]);
         assert!(first["latest_height"].is_u64());
         assert!(first["num_finalized_roots"].is_u64());
-    }
-
-    #[test]
-    fn submit_handlers_seed_executor_with_committed_receipt_head() {
-        let executor = dregg_turn::TurnExecutor::new(ComputronCosts::default());
-        let agent = CellId([0x42; 32]);
-        let head = [0xAB; 32];
-
-        assert_eq!(executor.get_last_receipt_hash(&agent), None);
-        seed_executor_receipt_head(&executor, agent, Some(head));
-        assert_eq!(
-            executor.get_last_receipt_hash(&agent),
-            Some(head),
-            "fresh per-request executors must inherit the node's committed receipt head"
-        );
     }
 
     /// THE PERSISTENCE TIME-BOMB, DEFUSED (AUDIT-wallet.md P3-6). Under a

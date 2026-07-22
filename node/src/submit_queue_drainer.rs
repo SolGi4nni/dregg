@@ -342,7 +342,6 @@ async fn execute_submission(state: &NodeState, signed_turn: &[u8]) -> DrainOutco
     // THE ONE executor gate (#171): execute through the producer-aware path —
     // the verified Lean producer is authoritative for the covered set, exactly
     // as for a locally- or HTTP-submitted turn. No new execution path.
-    crate::api::seed_executor_receipt_head(&executor, signed.turn.agent, expected_prev);
     // The queue drainer mutates authoritative state in-place, so weld its
     // receipt-log append to that mutation with the ledger restore journal.
     s.ledger.begin_restore_point();

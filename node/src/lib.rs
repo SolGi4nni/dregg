@@ -46,11 +46,14 @@ mod epoch_transition_e2e;
 pub mod equivocation_court_service;
 pub mod events;
 #[cfg(feature = "prover")]
+mod exact_fnsp_v3_activation;
+#[cfg(feature = "prover")]
 mod exact_fnsp_v3_execution_authority;
 #[cfg(feature = "prover")]
 mod exact_fnsp_v3_finalization;
 pub mod execution_cursor;
 pub mod executor_setup;
+mod executor_state_admission;
 pub mod finalization_votes;
 pub mod genesis;
 pub mod gossip;
