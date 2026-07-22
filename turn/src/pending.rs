@@ -432,6 +432,17 @@ pub struct PendingTurnRegistry {
     /// serialization must be byte-identical regardless of insertion history so
     /// nodes can CAS and replay this state without HashMap iteration entropy.
     pending: BTreeMap<[u8; 32], PendingEntry>,
+    /// Preserve the exact durable predecessor generation across reconstruction.
+    /// A legacy DPRG1 image must hash exactly as stored until a release-state
+    /// transition promotes the registry to DPRG2 in that same transaction.
+    wire_version: PendingRegistryWireVersion,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PendingRegistryWireVersion {
+    #[default]
+    V1,
+    V2,
 }
 
 /// Private v1 wire. `Turn` contains a `HashMap` of sovereign witnesses, so
@@ -476,11 +487,19 @@ impl PendingTurnRegistry {
     pub fn new() -> Self {
         Self {
             pending: BTreeMap::new(),
+            wire_version: PendingRegistryWireVersion::V1,
         }
     }
 
     /// Canonical, versioned durable representation.
     pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
+        match self.wire_version {
+            PendingRegistryWireVersion::V1 => self.to_canonical_bytes_v1(),
+            PendingRegistryWireVersion::V2 => self.to_canonical_bytes_v2(),
+        }
+    }
+
+    fn to_canonical_bytes_v2(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
         self.validate()?;
         let entries = self
             .pending
@@ -654,12 +673,19 @@ impl PendingTurnRegistry {
                 return Err(PendingRegistryCodecError::NonCanonical);
             }
         }
-        let decoded = Self { pending };
+        let decoded = Self {
+            pending,
+            wire_version: if is_v1 {
+                PendingRegistryWireVersion::V1
+            } else {
+                PendingRegistryWireVersion::V2
+            },
+        };
         decoded.validate()?;
         let canonical = if is_v1 {
             decoded.to_canonical_bytes_v1()?
         } else {
-            decoded.to_canonical_bytes()?
+            decoded.to_canonical_bytes_v2()?
         };
         if canonical.as_slice() != bytes {
             return Err(PendingRegistryCodecError::NonCanonical);
@@ -863,6 +889,7 @@ impl PendingTurnRegistry {
                 if let Some(entry) = self.pending.get_mut(&dep_hash) {
                     if entry.release_state == PendingReleaseState::Waiting {
                         entry.release_state = PendingReleaseState::ReadyToPublish;
+                        self.wire_version = PendingRegistryWireVersion::V2;
                     }
                 }
                 // NOTE: We do NOT recursively cascade here. The node will execute the
@@ -975,6 +1002,7 @@ impl PendingTurnRegistry {
             .get_mut(pending_id)
             .ok_or(PendingReactError::NotRegistered)?;
         entry.release_state = PendingReleaseState::ReadyToPublish;
+        self.wire_version = PendingRegistryWireVersion::V2;
         Ok(())
     }
 
@@ -1736,6 +1764,10 @@ mod tests {
                 10,
             )
             .expect("register wake");
+        let legacy_before_release = registry
+            .to_canonical_bytes()
+            .expect("encode waiting legacy registry");
+        assert!(legacy_before_release.starts_with(PENDING_REGISTRY_MAGIC_V1));
 
         registry
             .mark_react_ready(&wake_hash, &wake.agent, &condition, &wake, 50)
@@ -1755,6 +1787,8 @@ mod tests {
         // Crash/restart before publication: ReadyToPublish is canonical durable
         // state and emits exactly one Ready event after restore.
         let before_publish = registry.to_canonical_bytes().expect("encode released wake");
+        assert!(before_publish.starts_with(PENDING_REGISTRY_MAGIC_V2));
+        assert_ne!(before_publish, legacy_before_release);
         let mut restarted =
             PendingTurnRegistry::from_canonical_bytes(&before_publish).expect("restart restore");
         assert!(restarted.is_released(&wake_hash));
@@ -1830,20 +1864,18 @@ mod tests {
         assert!(restored.get_pending(&a.hash()).is_some());
         assert!(restored.get_pending(&b.hash()).is_some());
 
-        // Historical v1 snapshots remain strictly decodable.  They migrate to
-        // Waiting entries and are emitted as the explicit v2 schema on the
-        // next durable write.
+        // Historical v1 snapshots remain strictly decodable and byte-exact
+        // until a transaction actually changes release state. This is the
+        // persisted-predecessor/CAS compatibility tooth.
         let encoded_v1 = left.to_canonical_bytes_v1().expect("encode v1");
         assert!(encoded_v1.starts_with(PENDING_REGISTRY_MAGIC_V1));
         let migrated =
             PendingTurnRegistry::from_canonical_bytes(&encoded_v1).expect("restore historical v1");
         assert!(migrated.get_pending(&a.hash()).is_some());
         assert!(migrated.get_pending(&b.hash()).is_some());
-        assert!(
-            migrated
-                .to_canonical_bytes()
-                .expect("migrate to v2")
-                .starts_with(PENDING_REGISTRY_MAGIC_V2)
+        assert_eq!(
+            migrated.to_canonical_bytes().expect("preserve v1"),
+            encoded_v1
         );
 
         let mut trailing = encoded;

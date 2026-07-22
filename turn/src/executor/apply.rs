@@ -4835,6 +4835,10 @@ mod react_executor_tests {
             )
             .expect("notify registers promise");
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        let legacy_before_react = executor
+            .reactive_registry_canonical_bytes()
+            .expect("encode waiting registry before React");
+        assert!(legacy_before_react.starts_with(b"DPRG1"));
 
         let react = react_effect(&wake, condition, proof);
         let mut react_journal = LedgerJournal::new();
@@ -4864,6 +4868,13 @@ mod react_executor_tests {
                 .unwrap()
                 .contains(&pending_id)
         );
+        assert!(
+            executor
+                .reactive_registry_canonical_bytes()
+                .expect("encode released registry")
+                .starts_with(b"DPRG2"),
+            "the release transaction must promote the durable schema"
+        );
 
         react_journal.rollback(
             &mut ledger,
@@ -4888,6 +4899,13 @@ mod react_executor_tests {
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
+        );
+        assert_eq!(
+            executor
+                .reactive_registry_canonical_bytes()
+                .expect("encode rolled-back registry"),
+            legacy_before_react,
+            "rollback must restore the byte-exact DPRG1 CAS predecessor"
         );
 
         notify_journal.rollback(

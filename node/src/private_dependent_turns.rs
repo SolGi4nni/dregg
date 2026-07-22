@@ -626,6 +626,87 @@ async fn submit_claimed_turn(
 mod tests {
     use super::*;
 
+    fn lifecycle_turn(marker: u8, actor: dregg_cell::CellId) -> dregg_turn::Turn {
+        dregg_turn::Turn {
+            agent: actor,
+            nonce: u64::from(marker),
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            call_forest: dregg_turn::CallForest::new(),
+            depends_on: vec![],
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    fn lifecycle_receipt(turn: &dregg_turn::Turn, marker: u8) -> dregg_turn::TurnReceipt {
+        dregg_turn::TurnReceipt {
+            turn_hash: turn.hash(),
+            forest_hash: turn.call_forest.compute_hash(),
+            pre_state_hash: [marker; 32],
+            post_state_hash: [marker.wrapping_add(1); 32],
+            timestamp: i64::from(marker),
+            effects_hash: [marker.wrapping_add(2); 32],
+            computrons_used: 0,
+            action_count: 0,
+            previous_receipt_hash: None,
+            agent: turn.agent,
+            federation_id: [marker.wrapping_add(3); 32],
+            routing_directives: vec![],
+            introduction_exports: vec![],
+            derivation_records: vec![],
+            emitted_events: vec![],
+            executor_signature: None,
+            finality: Default::default(),
+            was_encrypted: false,
+            was_burn: false,
+            consumed_capabilities: vec![],
+        }
+    }
+
+    fn lifecycle_commit_record(
+        ordinal: u64,
+        turn_hash: [u8; 32],
+        receipt_hash: [u8; 32],
+    ) -> dregg_persist::CommitRecord {
+        dregg_persist::CommitRecord {
+            ordinal,
+            height: ordinal + 1,
+            block_id: [0x80u8.wrapping_add(ordinal as u8); 32],
+            block_executed_up_to: ordinal,
+            turn_hash,
+            creator: [0x90; 32],
+            receipt_hash,
+            ledger_root: [0xA0u8.wrapping_add(ordinal as u8); 32],
+            touched_cells: Vec::new(),
+            removed: Vec::new(),
+        }
+    }
+
+    fn lifecycle_executor_state(
+        predecessor: &[u8],
+        successor: Vec<u8>,
+        promise_resolutions: Vec<dregg_persist::PromiseResolutionCandidateV1>,
+    ) -> dregg_persist::FinalizedExecutorConsensusState {
+        dregg_persist::FinalizedExecutorConsensusState {
+            reactive_registry: dregg_persist::ReactiveRegistryCasV1::new(
+                dregg_persist::reactive_registry_commitment(predecessor),
+                successor,
+            ),
+            promise_resolutions,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn custody_aead_binds_promise_digest_and_expiry() {
         let secret = [7; 32];
@@ -718,6 +799,183 @@ mod tests {
         assert!(matches!(
             arm_private_dependent_turn(&state, &trailing, 100).await,
             Err(PrivateDependentTurnError::Decode(_))
+        ));
+    }
+
+    /// Composition canary for the complete durable lifecycle without entering
+    /// blocklace internals: legacy waiting registry → finalized Ready outbox +
+    /// DPRG2 successor in one commit → process restart → unique private claim →
+    /// exact finalized wake receipt → durable Resolved row and removal.
+    #[test]
+    fn finalized_ready_survives_restart_and_only_exact_receipt_closes_wake() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.redb");
+        let store = dregg_persist::PersistentStore::open(&path).unwrap();
+        let actor = dregg_cell::CellId::from_bytes([0x31; 32]);
+        let wake = lifecycle_turn(1, actor);
+        let wake_hash = wake.hash();
+        let condition = dregg_turn::ProofCondition::HashPreimage { hash: [0x41; 32] };
+
+        // Commit the pre-armed Waiting image first. It is deliberately DPRG1:
+        // restoring it must preserve the byte-exact CAS predecessor.
+        let mut registry = dregg_turn::PendingTurnRegistry::new();
+        let empty_v1 = registry.to_canonical_bytes().unwrap();
+        assert!(empty_v1.starts_with(b"DPRG1"));
+        registry
+            .try_submit_pending_at(
+                wake.clone(),
+                dregg_turn::ResolutionCondition::AwaitCondition(condition.clone()),
+                100,
+                0,
+            )
+            .unwrap();
+        let waiting_v1 = registry.to_canonical_bytes().unwrap();
+        assert!(waiting_v1.starts_with(b"DPRG1"));
+        store
+            .commit_finalized_turn_with_executor_state(
+                0,
+                &lifecycle_commit_record(0, [0x50; 32], [0x51; 32]),
+                &[],
+                &lifecycle_executor_state(&empty_v1, waiting_v1.clone(), vec![]),
+            )
+            .unwrap();
+        store
+            .arm_private_dependent_turn_v1(wake_hash, wake_hash, vec![0xCC; 80], 100)
+            .unwrap();
+
+        // The carrier's finalized receipt publishes Ready and the promoted
+        // registry as one executor-state transaction.
+        registry
+            .mark_react_ready(&wake_hash, &actor, &condition, &wake, 10)
+            .unwrap();
+        let carrier = lifecycle_turn(2, actor);
+        let carrier_receipt = lifecycle_receipt(&carrier, 0x61);
+        let ready = registry.resolve(
+            carrier.hash(),
+            dregg_turn::ResolutionOutcome::Resolved(carrier_receipt.clone()),
+        );
+        assert!(matches!(
+            ready.as_slice(),
+            [dregg_turn::ResolutionEvent::ReadyToExecute { turn_hash, turn }]
+                if *turn_hash == wake_hash && turn.hash() == wake_hash
+        ));
+        let published_v2 = registry.to_canonical_bytes().unwrap();
+        assert!(published_v2.starts_with(b"DPRG2"));
+        let ready_candidates = crate::promise_resolutions::resolution_candidates(
+            1,
+            carrier_receipt.receipt_hash(),
+            &ready,
+        )
+        .unwrap();
+        store
+            .commit_finalized_turn_with_executor_state(
+                1,
+                &lifecycle_commit_record(1, carrier.hash(), carrier_receipt.receipt_hash()),
+                &[],
+                &lifecycle_executor_state(&waiting_v1, published_v2.clone(), ready_candidates),
+            )
+            .unwrap();
+
+        // Process death after the finalized commit cannot erase Ready or emit
+        // it twice. The private scheduler consumes the durable row exactly once.
+        drop(store);
+        let store = dregg_persist::PersistentStore::open(&path).unwrap();
+        let durable_ready = store
+            .promise_resolution_batch_for_commit_v1(1)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            durable_ready.as_slice(),
+            [row]
+                if row.pending_id == wake_hash
+                    && row.outcome == dregg_persist::PromiseResolutionKindV1::ReadyToExecute
+        ));
+        let claim = store
+            .claim_private_dependent_turn_v1(wake_hash, durable_ready[0].sequence)
+            .unwrap()
+            .expect("restart scheduler claims durable Ready once");
+        assert_eq!(claim.promise_id, wake_hash);
+        assert!(
+            store
+                .claim_private_dependent_turn_v1(wake_hash, durable_ready[0].sequence)
+                .unwrap()
+                .is_none()
+        );
+
+        let restored_bytes = store
+            .load_latest_reactive_registry_snapshot_bytes()
+            .unwrap();
+        assert_eq!(restored_bytes, published_v2);
+        let mut restored =
+            dregg_turn::PendingTurnRegistry::from_canonical_bytes(&restored_bytes).unwrap();
+        assert_eq!(
+            restored.authorize_react(&wake_hash, &actor, &condition, &wake, 11),
+            Err(dregg_turn::PendingReactError::AlreadyReleased),
+            "restart must retain Published and refuse a second release"
+        );
+
+        // A receipt for a different turn cannot consume the retained wake.
+        let other = lifecycle_turn(3, actor);
+        assert!(
+            restored
+                .resolve(
+                    wake_hash,
+                    dregg_turn::ResolutionOutcome::Resolved(lifecycle_receipt(&other, 0x71)),
+                )
+                .is_empty()
+        );
+        assert!(restored.get_pending(&wake_hash).is_some());
+
+        // Only the exact wake receipt closes the registry and publishes the
+        // terminal Resolved observer row in the next finalized transaction.
+        let wake_receipt = lifecycle_receipt(&wake, 0x72);
+        let resolved = restored.resolve(
+            wake_hash,
+            dregg_turn::ResolutionOutcome::Resolved(wake_receipt.clone()),
+        );
+        assert!(matches!(
+            resolved.as_slice(),
+            [dregg_turn::ResolutionEvent::Resolved { turn_hash, receipt }]
+                if *turn_hash == wake_hash && receipt.turn_hash == wake_hash
+        ));
+        let resolved_candidates = crate::promise_resolutions::resolution_candidates(
+            2,
+            wake_receipt.receipt_hash(),
+            &resolved,
+        )
+        .unwrap();
+        store
+            .commit_finalized_turn_with_executor_state(
+                2,
+                &lifecycle_commit_record(2, wake_hash, wake_receipt.receipt_hash()),
+                &[],
+                &lifecycle_executor_state(
+                    &published_v2,
+                    restored.to_canonical_bytes().unwrap(),
+                    resolved_candidates,
+                ),
+            )
+            .unwrap();
+        drop(store);
+
+        let reopened = dregg_persist::PersistentStore::open(&path).unwrap();
+        let terminal = dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+            &reopened
+                .load_latest_reactive_registry_snapshot_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(terminal.is_empty());
+        let rows = reopened.promise_resolutions_after_v1(None, 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].outcome,
+            dregg_persist::PromiseResolutionKindV1::ReadyToExecute
+        );
+        assert!(matches!(
+            rows[1].outcome,
+            dregg_persist::PromiseResolutionKindV1::Resolved { receipt_hash }
+                if receipt_hash == wake_receipt.receipt_hash()
         ));
     }
 }
