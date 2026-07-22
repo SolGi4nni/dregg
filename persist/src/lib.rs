@@ -272,7 +272,6 @@ impl PersistentStore {
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_ACTIVATION)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_RECORDS)?;
-            let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_RECEIPT_HEADS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
@@ -433,11 +432,6 @@ impl PersistentStore {
             )));
         }
         table.insert(index, encoded)?;
-        // Once exact-v3 is activated, its live writer must be able to prove the submitting
-        // agent's causal receipt predecessor without rescanning the complete global log.  Keep
-        // that derived head in the same transaction as the canonical receipt append.  Boot still
-        // performs the full replay and rebuilds this index; it is never a substitute for recovery.
-        exact_fnsp_v3_frame_head::stage_receipt_head_on_append_in(write_txn, index, encoded)?;
         Ok(())
     }
 
