@@ -64,6 +64,7 @@ use serenity::all::{
     EditInteractionResponse, InputTextStyle, ModalInteraction,
 };
 
+use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
     Action, Audience, AudienceProjection, CollectiveDecision, DreggIdentity, Offering, Outcome,
     SessionConfig, SessionId, SessionMoveLog, SessionResumeStore, Tally, VerifyReport, VoteCount,
@@ -1195,23 +1196,17 @@ pub fn text_modal<O: DiscordOffering>(
     ])
 }
 
-/// An honest account of a resolved move: a landed receipt (with its real `turn_hash`) or the
-/// executor's own refusal reason — never laundered.
+/// An honest account of a resolved move: a landed receipt (with its complete `receipt_hash`) or
+/// the executor's own refusal reason — never laundered.
 pub fn outcome_note(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Landed { receipt, ended } => {
-            let h = hex::encode(&receipt.turn_hash[..8]);
-            let tail = if *ended {
-                " — the session ended."
-            } else {
-                ""
-            };
+            let card = PlayerTurnReceipt::from_landed(receipt, *ended);
             format!(
-                "**A verified turn landed.** `turn_hash {h}…`{tail}\n> This hash seals the \
-                 move into the session's hash-linked receipt chain — every later turn commits \
-                 to it, so mutating ANY past move changes every hash after it. Press ⛓ \
-                 **re-verify chain** and the bot recomputes the whole chain from the move \
-                 history in front of you."
+                "**A verified turn landed.**\n> {}\n> This complete id is the copyable join into \
+                 the session's hash-linked receipt chain; every later turn commits to the \
+                 record before it.",
+                card.compact_text(PlayerReplaySurface::Discord)
             )
         }
         Outcome::Refused(why) => format!(
@@ -2498,5 +2493,27 @@ mod tests {
             note.contains("below quorum"),
             "the executor's own reason survives: {note}"
         );
+
+        let mut receipt = dregg_app_framework::TurnReceipt {
+            turn_hash: [0x11; 32],
+            post_state_hash: [0x22; 32],
+            ..Default::default()
+        };
+        let landed = Outcome::Landed {
+            receipt: receipt.clone(),
+            ended: false,
+        };
+        let note = outcome_note(&landed);
+        let first_id = PlayerTurnReceipt::from_landed(&receipt, false).receipt_hex();
+        assert!(
+            note.contains(&first_id),
+            "complete receipt id missing: {note}"
+        );
+        assert!(note.contains("Session continues"), "{note}");
+
+        // The card is the receipt-chain join, not merely the stable turn id.
+        receipt.post_state_hash = [0x33; 32];
+        let second_id = PlayerTurnReceipt::from_landed(&receipt, false).receipt_hex();
+        assert_ne!(first_id, second_id);
     }
 }

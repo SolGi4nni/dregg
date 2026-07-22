@@ -83,6 +83,7 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use dreggnet_discord_identity::seed_for;
+use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
     Action, Attribution, DreggIdentity, HostError, Outcome, SessionId, SignedError, TurnSigner,
 };
@@ -1435,19 +1436,10 @@ async fn post_da_act(
 
     let claimed = viewer.0.clone();
     let notice = match outcome {
-        Ok(Outcome::Landed { ended, .. }) => {
-            if ended {
-                format!(
-                    "Turn committed — signed by {claimed} (verified, Discord-attested); the \
-                     session reached its objective, one real turn at a time."
-                )
-            } else {
-                format!(
-                    "Turn committed — signed by {claimed} (verified, Discord-attested); a real \
-                     verified receipt landed."
-                )
-            }
-        }
+        Ok(Outcome::Landed { receipt, ended }) => format!(
+            "Turn committed — {} Signed by {claimed} (verified, Discord-attested).",
+            PlayerTurnReceipt::from_landed(&receipt, ended).compact_text(PlayerReplaySurface::Web)
+        ),
         Ok(Outcome::Refused(why)) => {
             metrics::inc_turn_refused();
             format!("Refused: {why} (nothing committed — anti-ghost).")

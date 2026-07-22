@@ -88,6 +88,8 @@ pub mod operation;
 /// next on a real committed turn. Re-homes `attested-dm`'s proven overworld design onto the real
 /// executor. See [`overworld::OverworldOffering`].
 pub mod overworld;
+/// The one viewer-blind, copyable receipt card shared by every hosted game surface.
+pub mod player_turn_receipt;
 /// THE SESSION-RESUME SEAM — the [`OfferingHost`]'s durable-store closure. A live session is held
 /// in memory (some `!Send`) and lost on restart; this module persists ONLY the reproducible public
 /// input (the seed + the ordered landed advances — a [`resume::SessionMoveLog`]) and reopens a

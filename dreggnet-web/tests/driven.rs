@@ -132,6 +132,23 @@ async fn a_winning_line_plays_through_the_web_surface() {
         body.contains("Turn committed"),
         "the honest banner reports a committed turn"
     );
+    let receipt_start = body
+        .find("executor receipt ")
+        .expect("the landing banner publishes a copyable receipt-chain join")
+        + "executor receipt ".len();
+    let receipt_id = &body[receipt_start..receipt_start + 64];
+    assert!(
+        receipt_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "the complete 32-byte receipt id is lowercase hex: {receipt_id}"
+    );
+    assert!(
+        body.contains("class=\"replay-verify\"")
+            && body.contains("href=\"/session/win/verify\"")
+            && body.contains(">Replay-verify</a>"),
+        "the receipt has an actual replay control, not only a status label: {body}"
+    );
     assert_eq!(
         state.current_room(&sid).as_deref(),
         Some("hall"),

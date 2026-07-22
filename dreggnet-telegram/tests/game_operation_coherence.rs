@@ -152,7 +152,7 @@ fn status_is_viewer_safe_and_a_landed_ack_names_the_exact_receipt() {
         HostPress::Advanced {
             outcome: Outcome::Landed { receipt, .. },
             ..
-        } => hex::encode(receipt.turn_hash),
+        } => hex::encode(receipt.receipt_hash()),
         other => panic!("the offered Descent action lands: {other:?}"),
     };
     let ack = describe_press(press);

@@ -1191,9 +1191,9 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
                 None,
             ));
         }
-        Ok((turn.narrated.receipt.turn_hash, turn.ended))
+        Ok((turn.narrated.receipt.receipt_hash(), turn.ended))
     });
-    let (turn_hash, ended) = match applied {
+    let (receipt_id, ended) = match applied {
         Some(Ok(applied)) => applied,
         Some(Err(error)) => {
             ack::edit_slash(
@@ -1226,7 +1226,7 @@ async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: 
     let public_receipt = ViewerBlindChutesReceipt::new(
         model,
         command_label.clone(),
-        turn_hash,
+        receipt_id,
         operator_spend_micro_usd,
     )
     .expect("Chutes public metadata was validated before executor mutation");

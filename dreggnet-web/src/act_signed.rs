@@ -58,6 +58,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
+use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
     Action, Attribution, DreggIdentity, HostError, Outcome, SessionId, SignedAction, SignedError,
 };
@@ -375,19 +376,10 @@ pub async fn post_offering_act_signed(
     }
 
     let notice = match outcome {
-        Ok(Outcome::Landed { ended, .. }) => {
-            if ended {
-                format!(
-                    "Turn committed — signed by {claimed} (verified); the session reached its \
-                     objective, one real turn at a time."
-                )
-            } else {
-                format!(
-                    "Turn committed — signed by {claimed} (verified); a real verified receipt \
-                     landed."
-                )
-            }
-        }
+        Ok(Outcome::Landed { receipt, ended }) => format!(
+            "Turn committed — {} Signed by {claimed} (verified).",
+            PlayerTurnReceipt::from_landed(&receipt, ended).compact_text(PlayerReplaySurface::Web)
+        ),
         // The signature VERIFIED; the executor refused the move itself — the same anti-ghost
         // banner (and status) the unsigned twin gives a refused move.
         Ok(Outcome::Refused(why)) => {

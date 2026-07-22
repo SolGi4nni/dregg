@@ -133,6 +133,7 @@ use deos_view::{MenuItem, SessionFormBackend, SurfaceBackend, ViewNode};
 #[cfg(feature = "hosted-binary-operations")]
 use dreggnet_offerings::BinaryOperationDescriptor;
 use dreggnet_offerings::dungeon::{DungeonOffering, DungeonSession};
+use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
     Action, Attribution, DreggIdentity, FileResumeStore, Frontend, HostError, Offering,
     OfferingHost, OfferingInfo, Outcome, PolicyRefusal, SessionConfig, SessionId, SessionPolicy,
@@ -480,12 +481,15 @@ async fn post_act(
                 state.offering.advance(session, action, actor)
             };
             match outcome {
-                Outcome::Landed { ended, .. } => {
+                Outcome::Landed { receipt, ended } => {
+                    let card = PlayerTurnReceipt::from_landed(&receipt, ended)
+                        .compact_text(PlayerReplaySurface::Web);
                     if ended {
-                        "The Keep is cleared — the objective is met, one real turn at a time."
-                            .to_string()
+                        format!(
+                            "The Keep is cleared — the objective is met, one real turn at a time. {card}"
+                        )
                     } else {
-                        "Turn committed — a real verified receipt landed.".to_string()
+                        format!("Turn committed — {card}")
                     }
                 }
                 // The executor is the sole referee: a crafted POST of a dimmed / ineligible
@@ -538,7 +542,11 @@ fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyRep
         id = esc(&id.0),
         notice = notice_html(notice),
         fragment = fragment,
-        receipt = receipt_html(verify, "chain re-verified by replay"),
+        receipt = receipt_html(
+            verify,
+            "chain re-verified by replay",
+            &format!("/session/{}/verify", esc(&id.0)),
+        ),
     );
     document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
 }
@@ -1153,12 +1161,13 @@ fn notice_html(notice: Option<&str>) -> String {
 
 /// The receipt strip — the product's signature line, in the mono voice: the chain, re-verified by
 /// replay, right now, with its turn count and the verifier's own detail.
-fn receipt_html(verify: &VerifyReport, label: &str) -> String {
+fn receipt_html(verify: &VerifyReport, label: &str, verify_href: &str) -> String {
     let cls = if verify.verified { "ok" } else { "refused" };
     format!(
         "<div class=\"receipt {cls}\"><span class=\"dot\"></span>\
          <span class=\"label\">{label}</span><span class=\"verdict\">{v}</span>\
-         <span>{turns}</span><span class=\"detail\">{detail}</span></div>",
+         <span>{turns}</span><span class=\"detail\">{detail}</span>\
+         <a class=\"replay-verify\" rel=\"nofollow\" href=\"{verify_href}\">Replay-verify</a></div>",
         cls = cls,
         label = esc(label),
         v = if verify.verified {
@@ -1168,6 +1177,7 @@ fn receipt_html(verify: &VerifyReport, label: &str) -> String {
         },
         turns = turn_count(verify.turns),
         detail = esc(&verify.detail),
+        verify_href = esc(verify_href),
     )
 }
 
@@ -1677,13 +1687,12 @@ async fn post_offering_act(
     });
 
     let notice = match acted {
-        CatalogAct::Advanced(Outcome::Landed { ended, .. }) => {
-            if ended {
-                "Turn committed — the session reached its objective, one real turn at a time."
-                    .to_string()
-            } else {
-                "Turn committed — a real verified receipt landed.".to_string()
-            }
+        CatalogAct::Advanced(Outcome::Landed { receipt, ended }) => {
+            format!(
+                "Turn committed — {}",
+                PlayerTurnReceipt::from_landed(&receipt, ended)
+                    .compact_text(PlayerReplaySurface::Web)
+            )
         }
         CatalogAct::Advanced(Outcome::Refused(why)) => {
             metrics::inc_turn_refused();
@@ -1898,7 +1907,11 @@ fn offering_surface_fragment(
         notice = notice_html(notice),
         forms = forms,
         operation_forms = operation_forms,
-        receipt = receipt_html(&verify, "chain re-verified by replay"),
+        receipt = receipt_html(
+            &verify,
+            "chain re-verified by replay",
+            &format!("/offerings/{}/session/{}/verify", esc(key), esc(&id.0)),
+        ),
     ))
 }
 

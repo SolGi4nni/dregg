@@ -8,6 +8,10 @@
 
 use std::fmt;
 
+use crate::player_turn_receipt::{
+    PlayerReplaySurface, PlayerSessionDisposition, PlayerTurnReceipt,
+};
+
 /// Exact, versioned consent value transported by web forms and Telegram callbacks.
 pub const CHUTES_CONSENT_WIRE: &str = "chutes-consent-v1";
 /// The only player charge an explicit Chutes turn may consume after its verified receipt lands.
@@ -124,11 +128,11 @@ pub enum ChutesReplaySurface {
 }
 
 impl ChutesReplaySurface {
-    const fn instruction(self) -> &'static str {
+    const fn player_surface(self) -> PlayerReplaySurface {
         match self {
-            Self::Discord => "Run `/dungeon verify` to replay-verify the session.",
-            Self::Web => "Follow the Replay-verify link to replay the session.",
-            Self::Telegram => "Use the Verify action to replay the session.",
+            Self::Discord => PlayerReplaySurface::DiscordDungeon,
+            Self::Web => PlayerReplaySurface::Web,
+            Self::Telegram => PlayerReplaySurface::Telegram,
         }
     }
 }
@@ -172,23 +176,24 @@ impl ViewerBlindChutesReceipt {
     }
 
     pub fn receipt_hex(&self) -> String {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut out = String::with_capacity(64);
-        for byte in self.receipt_hash {
-            out.push(HEX[(byte >> 4) as usize] as char);
-            out.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        out
+        PlayerTurnReceipt::from_verified_id(
+            self.receipt_hash,
+            PlayerSessionDisposition::Undisclosed,
+        )
+        .receipt_hex()
     }
 
     pub fn compact_text(&self, replay_surface: ChutesReplaySurface) -> String {
+        let receipt = PlayerTurnReceipt::from_verified_id(
+            self.receipt_hash,
+            PlayerSessionDisposition::Undisclosed,
+        );
         bounded(format!(
-            "Verified Chutes turn · command `{}` · provider `chutes:{}` · player charge 1 run credit · operator spend ${} · executor receipt `{}`. {} This shared record contains no player identity, balance, prompt/tool input, private result, or token count.",
+            "Verified Chutes turn · command `{}` · provider `chutes:{}` · player charge 1 run credit · operator spend ${}. {} This shared record contains no player identity, balance, prompt/tool input, private result, or token count.",
             self.command,
             self.model,
             dollars(self.operator_spend_micro_usd),
-            self.receipt_hex(),
-            replay_surface.instruction(),
+            receipt.compact_text(replay_surface.player_surface()),
         ))
     }
 }

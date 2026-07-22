@@ -37,6 +37,7 @@ use serde_json::{Value, json};
 use dreggnet_catalog::{
     PlayerWorlds, PublicGameAttribution, PublicGameReceipt, PublicGameReceiptResult,
 };
+use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::resume::SessionResumeStore;
 use dreggnet_offerings::{FileResumeStore, OfferingHost, Outcome, VerifyReport};
 
@@ -409,11 +410,12 @@ pub fn parse_operation_caption(caption: &str) -> Option<&str> {
 pub enum PressDecision {
     /// A menu press opened the named offering.
     Opened(String),
-    /// A turn landed — carries THE receipt-chain join (`hex(TurnReceipt.turn_hash)`).
+    /// A turn landed — carries the executor's turn id for the audit record.
     Landed {
         /// The offering key the turn advanced.
         key: String,
-        /// `hex(TurnReceipt.turn_hash)` — the join to the committed chain.
+        /// `hex(TurnReceipt.turn_hash)` — the committed turn id.  The player-facing
+        /// acknowledgement separately publishes the complete receipt-chain join.
         turn_hash: String,
         /// Whether the session ended.
         ended: bool,
@@ -1050,16 +1052,11 @@ pub fn describe_press(press: HostPress) -> String {
         HostPress::Advanced {
             outcome: Outcome::Landed { receipt, ended },
             ..
-        } => {
-            let receipt = audit::hex32(&receipt.turn_hash);
-            if ended {
-                format!(
-                    "Turn landed · receipt {receipt}. Session complete; /verify replays the exact record."
-                )
-            } else {
-                format!("Turn landed · receipt {receipt}. /status inspects the game record.")
-            }
-        }
+        } => format!(
+            "Turn landed · {}",
+            PlayerTurnReceipt::from_landed(&receipt, ended)
+                .compact_text(PlayerReplaySurface::Telegram)
+        ),
         HostPress::Advanced {
             outcome: Outcome::Refused(why),
             ..
