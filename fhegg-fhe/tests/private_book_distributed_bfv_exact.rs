@@ -10,8 +10,9 @@ use dregg_circuit_prove::dark_bazaar_private::{statement, PrivateBookWitness, Pr
 use ed25519_dalek::SigningKey;
 use fhegg_fhe::private_book_distributed_bfv::{
     BfvQuotientCoordinator, BfvQuotientWorkerMachine, BfvRelationCoordinator,
-    BfvWorkerRelationProof, DistributedBfvError, DistributedBfvPublicRelation,
-    DistributedBfvRelationRound, DistributedBfvRound, OwnerBfvQuotients,
+    BfvWorkerRelationProof, DistributedBfvError, DistributedBfvProofEnvelope,
+    DistributedBfvPublicRelation, DistributedBfvRelationRound, DistributedBfvRound,
+    OwnerBfvQuotients,
 };
 use fhegg_fhe::private_book_distributed_inputs::{
     DealerOutput, DistributedInputCoordinator, DistributedWitnessSession, LocalOrderWitness,
@@ -208,10 +209,54 @@ fn exact_fhe_rs_rows_derive_bounded_private_quotients_for_every_owner() {
     let relation_certificate = relation_coordinator
         .finish()
         .expect("exact BFV relation certificate");
-    relation_certificate
-        .verify(&relation_round)
-        .expect("public exact BFV relation verification");
     assert_ne!(relation_certificate.transcript_digest(), [0; 32]);
+
+    let envelope = DistributedBfvProofEnvelope::new(
+        &session,
+        &exact_public,
+        input_certificate.clone(),
+        quotient_certificate.clone(),
+        relation_certificate,
+    )
+    .expect("transportable complete public proof");
+    let envelope_wire = envelope.to_bytes();
+    let decoded = DistributedBfvProofEnvelope::from_bytes(&envelope_wire, &session, &exact_public)
+        .expect("strict complete public proof decode");
+    assert_eq!(decoded.to_bytes(), envelope_wire);
+    assert_ne!(decoded.transcript_digest(), [0; 32]);
+    let input_len = envelope.input_certificate().to_bytes().len();
+    let quotient_len = envelope.quotient_certificate().to_bytes().len();
+    let relation_len = envelope.relation_certificate().to_bytes().len();
+    assert_eq!(
+        envelope_wire.len(),
+        150 + input_len + quotient_len + relation_len
+    );
+    let mut truncated = envelope_wire.clone();
+    truncated.pop();
+    assert!(matches!(
+        DistributedBfvProofEnvelope::from_bytes(&truncated, &session, &exact_public),
+        Err(DistributedBfvError::MalformedWire)
+    ));
+    let quotient_length_offset = 78 + input_len;
+    let relation_length_offset = quotient_length_offset + 4 + quotient_len;
+    for offset in [74usize, quotient_length_offset, relation_length_offset] {
+        for encoded in [0u32, u32::MAX] {
+            let mut malformed = envelope_wire.clone();
+            malformed[offset..offset + 4].copy_from_slice(&encoded.to_be_bytes());
+            let checksum_start = malformed.len() - 32;
+            let mut hasher = blake3::Hasher::new_derive_key(
+                "fhegg/private-book-distributed-bfv/public-envelope-checksum/v1",
+            );
+            hasher.update(&(checksum_start as u64).to_be_bytes());
+            hasher.update(&malformed[..checksum_start]);
+            let checksum = *hasher.finalize().as_bytes();
+            malformed[checksum_start..].copy_from_slice(&checksum);
+            assert!(matches!(
+                DistributedBfvProofEnvelope::from_bytes(&malformed, &session, &exact_public),
+                Err(DistributedBfvError::MalformedWire)
+            ));
+        }
+    }
 
     let mut wrong_rows = ciphertexts.rows().clone();
     wrong_rows[0].polys[0].rows[0][0] ^= 1;
@@ -225,5 +270,9 @@ fn exact_fhe_rs_rows_derive_bounded_private_quotients_for_every_owner() {
     assert!(matches!(
         DistributedBfvRound::new(&session, &input_certificate, &wrong_public),
         Err(DistributedBfvError::ExactPublicRelation)
+    ));
+    assert!(matches!(
+        DistributedBfvProofEnvelope::from_bytes(&envelope_wire, &session, &wrong_public),
+        Err(DistributedBfvError::MalformedWire)
     ));
 }

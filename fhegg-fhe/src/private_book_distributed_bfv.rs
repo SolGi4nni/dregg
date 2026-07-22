@@ -67,6 +67,20 @@ const WORKER_RELATION_SIGNATURE_DOMAIN: &[u8] =
     b"fhegg/private-book-distributed-bfv/worker-relation-signature/v1";
 const RELATION_CERTIFICATE_DOMAIN: &str =
     "fhegg/private-book-distributed-bfv/relation-certificate/v1";
+const QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/quotient-certificate-checksum/v1";
+const RELATION_CERTIFICATE_CHECKSUM_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/relation-certificate-checksum/v1";
+const ENVELOPE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/public-envelope/v1";
+const ENVELOPE_CHECKSUM_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/public-envelope-checksum/v1";
+const QUOTIENT_CERTIFICATE_MAGIC: &[u8; 8] = b"FHQCT001";
+const WORKER_RELATION_PROOF_MAGIC: &[u8; 8] = b"FHRWP001";
+const RELATION_CERTIFICATE_MAGIC: &[u8; 8] = b"FHRLC001";
+const ENVELOPE_MAGIC: &[u8; 8] = b"FHDBE001";
+const PUBLIC_WIRE_VERSION: u16 = 1;
+const WORKER_RELATION_PROOF_CHECKSUM_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/worker-relation-wire-checksum/v1";
 
 const PADDED_QUOTIENT_COUNT: usize = OWNER_BFV_QUOTIENT_COUNT.next_power_of_two();
 const QUOTIENT_R1CS_CAPACITY: usize =
@@ -86,6 +100,7 @@ const _: () = assert!(
 #[cfg(test)]
 thread_local! {
     static QUOTIENT_PROOF_VERIFICATION_CALLS: Cell<usize> = const { Cell::new(0) };
+    static RELATION_PROOF_VERIFICATION_CALLS: Cell<usize> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -96,6 +111,16 @@ fn reset_quotient_proof_verification_count() {
 #[cfg(test)]
 fn quotient_proof_verification_count() -> usize {
     QUOTIENT_PROOF_VERIFICATION_CALLS.with(Cell::get)
+}
+
+#[cfg(test)]
+fn reset_relation_proof_verification_count() {
+    RELATION_PROOF_VERIFICATION_CALLS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn relation_proof_verification_count() -> usize {
+    RELATION_PROOF_VERIFICATION_CALLS.with(Cell::get)
 }
 
 type Result<T> = std::result::Result<T, DistributedBfvError>;
@@ -125,6 +150,7 @@ pub enum DistributedBfvError {
     DuplicateWorkerProof,
     MissingWorkerProofs,
     RelationRejected,
+    MalformedWire,
     IntegerOverflow,
 }
 
@@ -157,6 +183,7 @@ impl fmt::Display for DistributedBfvError {
             Self::DuplicateWorkerProof => "duplicate distributed BFV worker relation proof",
             Self::MissingWorkerProofs => "distributed BFV worker relation proofs are incomplete",
             Self::RelationRejected => "distributed BFV collapsed exact relation was rejected",
+            Self::MalformedWire => "distributed BFV public wire is malformed or non-canonical",
             Self::IntegerOverflow => "exact distributed BFV integer evaluation overflowed",
         };
         f.write_str(message)
@@ -211,7 +238,10 @@ impl DistributedBfvRound {
         if session.relation_digest() != public_relation.relation_digest() {
             return Err(DistributedBfvError::ExactPublicRelation);
         }
-        Self::new_inner(session, input_certificate)
+        input_certificate
+            .verify(session)
+            .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        Self::new_after_verified_input(session, input_certificate)
     }
 
     #[cfg(test)]
@@ -219,16 +249,16 @@ impl DistributedBfvRound {
         session: &DistributedWitnessSession,
         input_certificate: &DistributedInputCertificate,
     ) -> Result<Self> {
-        Self::new_inner(session, input_certificate)
-    }
-
-    fn new_inner(
-        session: &DistributedWitnessSession,
-        input_certificate: &DistributedInputCertificate,
-    ) -> Result<Self> {
         input_certificate
             .verify(session)
             .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        Self::new_after_verified_input(session, input_certificate)
+    }
+
+    fn new_after_verified_input(
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+    ) -> Result<Self> {
         let input_certificate_digest = input_certificate.transcript_digest();
         let joint_input_commitment = input_certificate
             .joint_input_commitment()
@@ -563,6 +593,11 @@ impl BfvQuotientDealerContribution {
     }
 
     fn verify(&self, round: &DistributedBfvRound) -> Result<()> {
+        self.verify_authentication(round)?;
+        self.verify_proof(round)
+    }
+
+    fn verify_authentication(&self, round: &DistributedBfvRound) -> Result<()> {
         if self.round_digest != round.digest
             || self.owner >= ORDER_COUNT
             || self.share_commitments.len() != round.n_workers()
@@ -603,6 +638,10 @@ impl BfvQuotientDealerContribution {
         if share_sum != owner_point {
             return Err(DistributedBfvError::CommitmentMismatch);
         }
+        Ok(())
+    }
+
+    fn verify_proof(&self, round: &DistributedBfvRound) -> Result<()> {
         #[cfg(test)]
         QUOTIENT_PROOF_VERIFICATION_CALLS.with(|count| count.set(count.get() + 1));
         self.proof.verify(
@@ -904,6 +943,160 @@ impl BfvQuotientCertificate {
         self.transcript_digest
     }
 
+    /// Strict canonical public encoding. Private quotient shares and openings
+    /// are capabilities and never appear in this wire.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut body = self.canonical_body();
+        let checksum = hash_parts(QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN, &[body.as_slice()]);
+        body.extend_from_slice(&checksum);
+        body
+    }
+
+    /// Decode and fully reverify the public quotient custody transcript.
+    pub fn from_bytes(bytes: &[u8], round: &DistributedBfvRound) -> Result<Self> {
+        if bytes.len() != quotient_certificate_wire_len(round.n_workers())? {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let checksum_start = bytes
+            .len()
+            .checked_sub(32)
+            .ok_or(DistributedBfvError::MalformedWire)?;
+        if bytes[checksum_start..]
+            != hash_parts(
+                QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN,
+                &[&bytes[..checksum_start]],
+            )
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let mut input = WireReader::new(&bytes[..checksum_start]);
+        if input.take::<8>()? != *QUOTIENT_CERTIFICATE_MAGIC
+            || input.u16()? != PUBLIC_WIRE_VERSION
+            || input.take::<32>()? != round.digest
+            || input.usize_u16()? != ORDER_COUNT
+            || input.usize_u16()? != round.n_workers()
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let mut dealers = Vec::with_capacity(ORDER_COUNT);
+        for expected_owner in 0..ORDER_COUNT {
+            let owner = input.usize_u16()?;
+            if owner != expected_owner {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let owner_commitment = input.take::<32>()?;
+            let mut share_commitments = Vec::with_capacity(round.n_workers());
+            for _ in 0..round.n_workers() {
+                share_commitments.push(input.take::<32>()?);
+            }
+            let digest = input.take::<32>()?;
+            if input.usize_u16()? != OWNER_BFV_QUOTIENT_COUNT {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let mut shifted_commitments = Vec::with_capacity(OWNER_BFV_QUOTIENT_COUNT);
+            for _ in 0..OWNER_BFV_QUOTIENT_COUNT {
+                shifted_commitments.push(input.take::<32>()?);
+            }
+            let range_len = input.usize_u32()?;
+            if range_len != expected_quotient_range_proof_len()? {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let range_proof = input.take_slice(range_len)?.to_vec();
+            let link_len = input.usize_u32()?;
+            if link_len != expected_linear_proof_len(PADDED_QUOTIENT_COUNT)? {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let link_proof = input.take_slice(link_len)?.to_vec();
+            let signature = input.take::<64>()?;
+            dealers.push(BfvQuotientDealerContribution {
+                round_digest: round.digest,
+                owner,
+                owner_commitment,
+                share_commitments,
+                digest,
+                proof: OwnerQuotientProof {
+                    shifted_commitments,
+                    range_proof,
+                    link_proof,
+                },
+                signature,
+            });
+        }
+        let acknowledgement_count = input.usize_u16()?;
+        if acknowledgement_count != ORDER_COUNT * round.n_workers() {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let mut acknowledgements = Vec::with_capacity(acknowledgement_count);
+        for owner in 0..ORDER_COUNT {
+            for worker in 0..round.n_workers() {
+                let parsed_owner = input.usize_u16()?;
+                let parsed_worker = input.usize_u16()?;
+                if parsed_owner != owner || parsed_worker != worker {
+                    return Err(DistributedBfvError::MalformedWire);
+                }
+                acknowledgements.push(BfvQuotientAcknowledgement {
+                    round_digest: round.digest,
+                    owner,
+                    worker,
+                    dealer_digest: input.take::<32>()?,
+                    signature: input.take::<64>()?,
+                });
+            }
+        }
+        let transcript_digest = input.take::<32>()?;
+        input.finish()?;
+        let certificate = Self {
+            round_digest: round.digest,
+            dealers,
+            acknowledgements,
+            transcript_digest,
+        };
+        certificate.verify(round)?;
+        if certificate.to_bytes() != bytes {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        Ok(certificate)
+    }
+
+    fn canonical_body(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(QUOTIENT_CERTIFICATE_MAGIC);
+        out.extend_from_slice(&PUBLIC_WIRE_VERSION.to_be_bytes());
+        out.extend_from_slice(&self.round_digest);
+        out.extend_from_slice(&(self.dealers.len() as u16).to_be_bytes());
+        let workers = self
+            .dealers
+            .first()
+            .map_or(0, |dealer| dealer.share_commitments.len());
+        out.extend_from_slice(&(workers as u16).to_be_bytes());
+        for dealer in &self.dealers {
+            out.extend_from_slice(&(dealer.owner as u16).to_be_bytes());
+            out.extend_from_slice(&dealer.owner_commitment);
+            for commitment in &dealer.share_commitments {
+                out.extend_from_slice(commitment);
+            }
+            out.extend_from_slice(&dealer.digest);
+            out.extend_from_slice(&(dealer.proof.shifted_commitments.len() as u16).to_be_bytes());
+            for commitment in &dealer.proof.shifted_commitments {
+                out.extend_from_slice(commitment);
+            }
+            out.extend_from_slice(&(dealer.proof.range_proof.len() as u32).to_be_bytes());
+            out.extend_from_slice(&dealer.proof.range_proof);
+            out.extend_from_slice(&(dealer.proof.link_proof.len() as u32).to_be_bytes());
+            out.extend_from_slice(&dealer.proof.link_proof);
+            out.extend_from_slice(&dealer.signature);
+        }
+        out.extend_from_slice(&(self.acknowledgements.len() as u16).to_be_bytes());
+        for acknowledgement in &self.acknowledgements {
+            out.extend_from_slice(&(acknowledgement.owner as u16).to_be_bytes());
+            out.extend_from_slice(&(acknowledgement.worker as u16).to_be_bytes());
+            out.extend_from_slice(&acknowledgement.dealer_digest);
+            out.extend_from_slice(&acknowledgement.signature);
+        }
+        out.extend_from_slice(&self.transcript_digest);
+        out
+    }
+
     pub fn owner_commitment(&self, owner: usize) -> Option<[u8; 32]> {
         self.dealers
             .get(owner)
@@ -928,7 +1121,7 @@ impl BfvQuotientCertificate {
             if dealer.owner != owner {
                 return Err(DistributedBfvError::CertificateMismatch);
             }
-            dealer.verify(round)?;
+            dealer.verify_authentication(round)?;
         }
         for owner in 0..ORDER_COUNT {
             for worker in 0..round.n_workers() {
@@ -943,6 +1136,11 @@ impl BfvQuotientCertificate {
             != quotient_certificate_digest(round, &self.dealers, &self.acknowledgements)
         {
             return Err(DistributedBfvError::CertificateMismatch);
+        }
+        // All cheap structure, digests, commitment sums, and signatures have
+        // passed before the first expensive R1CS/LinearProof verification.
+        for dealer in &self.dealers {
+            dealer.verify_proof(round)?;
         }
         Ok(())
     }
@@ -977,10 +1175,39 @@ impl DistributedBfvRelationRound {
         quotient_certificate: &BfvQuotientCertificate,
         public: &DistributedBfvPublicRelation,
     ) -> Result<Self> {
-        let context = Self::context(round, input_certificate, quotient_certificate)?;
+        let context = Self::context(round, input_certificate, quotient_certificate, true)?;
         if public.relation_digest() != round.session.relation_digest() {
             return Err(DistributedBfvError::ExactPublicRelation);
         }
+        let (public_coefficients, public_constant) = collapse_exact_relation(
+            round,
+            public,
+            &context.second_challenge,
+            context.block_width,
+        )?;
+        Ok(Self {
+            round: round.clone(),
+            quotient_certificate_digest: quotient_certificate.transcript_digest,
+            digest: context.digest,
+            second_challenge: context.second_challenge,
+            block_width: context.block_width,
+            public_coefficients: public_coefficients.into(),
+            public_constant,
+            generators: context.generators.into(),
+            worker_commitments: context.worker_commitments,
+        })
+    }
+
+    fn new_after_verified_certificates(
+        round: &DistributedBfvRound,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+        public: &DistributedBfvPublicRelation,
+    ) -> Result<Self> {
+        if public.relation_digest() != round.session.relation_digest() {
+            return Err(DistributedBfvError::ExactPublicRelation);
+        }
+        let context = Self::context(round, input_certificate, quotient_certificate, false)?;
         let (public_coefficients, public_constant) = collapse_exact_relation(
             round,
             public,
@@ -1006,7 +1233,7 @@ impl DistributedBfvRelationRound {
         input_certificate: &DistributedInputCertificate,
         quotient_certificate: &BfvQuotientCertificate,
     ) -> Result<Self> {
-        let context = Self::context(round, input_certificate, quotient_certificate)?;
+        let context = Self::context(round, input_certificate, quotient_certificate, true)?;
         let (public_coefficients, public_constant) =
             collapse_test_copy_relation(round, &context.second_challenge, context.block_width)?;
         Ok(Self {
@@ -1026,10 +1253,14 @@ impl DistributedBfvRelationRound {
         round: &DistributedBfvRound,
         input_certificate: &DistributedInputCertificate,
         quotient_certificate: &BfvQuotientCertificate,
+        verify_certificates: bool,
     ) -> Result<RelationContext> {
-        input_certificate
-            .verify(&round.session)
-            .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        if verify_certificates {
+            input_certificate
+                .verify(&round.session)
+                .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+            quotient_certificate.verify(round)?;
+        }
         if input_certificate.transcript_digest() != round.input_certificate_digest
             || input_certificate
                 .joint_input_commitment()
@@ -1038,7 +1269,6 @@ impl DistributedBfvRelationRound {
         {
             return Err(DistributedBfvError::CertificateMismatch);
         }
-        quotient_certificate.verify(round)?;
         let block_width = owner_bfv_block_width(round.degree())?;
         let relation_width = block_width
             .checked_mul(ORDER_COUNT)
@@ -1248,12 +1478,80 @@ impl BfvWorkerRelationProof {
         self.worker
     }
 
+    /// Canonical worker-to-coordinator public transport frame.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(176 + self.proof.len());
+        body.extend_from_slice(WORKER_RELATION_PROOF_MAGIC);
+        body.extend_from_slice(&PUBLIC_WIRE_VERSION.to_be_bytes());
+        body.extend_from_slice(&self.relation_round_digest);
+        body.extend_from_slice(&(self.worker as u16).to_be_bytes());
+        body.extend_from_slice(&self.image);
+        body.extend_from_slice(&(self.proof.len() as u32).to_be_bytes());
+        body.extend_from_slice(&self.proof);
+        body.extend_from_slice(&self.signature);
+        let checksum = hash_parts(WORKER_RELATION_PROOF_CHECKSUM_DOMAIN, &[body.as_slice()]);
+        body.extend_from_slice(&checksum);
+        body
+    }
+
+    /// Strictly decode and verify a worker-to-coordinator frame.
+    pub fn from_bytes(bytes: &[u8], relation_round: &DistributedBfvRelationRound) -> Result<Self> {
+        let proof_len = expected_linear_proof_len(relation_round.relation_width())?;
+        if bytes.len() != 176 + proof_len {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let checksum_start = bytes.len() - 32;
+        if bytes[checksum_start..]
+            != hash_parts(
+                WORKER_RELATION_PROOF_CHECKSUM_DOMAIN,
+                &[&bytes[..checksum_start]],
+            )
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let mut input = WireReader::new(&bytes[..checksum_start]);
+        if input.take::<8>()? != *WORKER_RELATION_PROOF_MAGIC
+            || input.u16()? != PUBLIC_WIRE_VERSION
+            || input.take::<32>()? != relation_round.digest
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let worker = input.usize_u16()?;
+        let image = input.take::<32>()?;
+        if input.usize_u32()? != proof_len {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let proof = input.take_slice(proof_len)?.to_vec();
+        let signature = input.take::<64>()?;
+        input.finish()?;
+        let result = Self {
+            relation_round_digest: relation_round.digest,
+            worker,
+            image,
+            proof,
+            signature,
+        };
+        result.verify(relation_round)?;
+        if result.to_bytes() != bytes {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        Ok(result)
+    }
+
     fn image_scalar(&self) -> Result<Scalar> {
         Option::<Scalar>::from(Scalar::from_canonical_bytes(self.image))
             .ok_or(DistributedBfvError::InvalidProof)
     }
 
     fn verify(&self, relation_round: &DistributedBfvRelationRound) -> Result<()> {
+        let image = self.verify_authentication(relation_round)?;
+        self.verify_linear_proof(relation_round, image)
+    }
+
+    fn verify_authentication(
+        &self,
+        relation_round: &DistributedBfvRelationRound,
+    ) -> Result<Scalar> {
         if self.relation_round_digest != relation_round.digest
             || self.worker >= relation_round.n_workers()
             || self.proof.len() != expected_linear_proof_len(relation_round.relation_width())?
@@ -1279,7 +1577,16 @@ impl BfvWorkerRelationProof {
             &Signature::from_bytes(&self.signature),
         )
         .map_err(|_| DistributedBfvError::InvalidSignature)?;
+        Ok(image)
+    }
 
+    fn verify_linear_proof(
+        &self,
+        relation_round: &DistributedBfvRelationRound,
+        image: Scalar,
+    ) -> Result<()> {
+        #[cfg(test)]
+        RELATION_PROOF_VERIFICATION_CALLS.with(|count| count.set(count.get() + 1));
         let worker_commitment = relation_round.worker_commitments[self.worker];
         let statement =
             (decode_point(&worker_commitment)? + image * PedersenGens::default().B).compress();
@@ -1372,24 +1679,370 @@ impl BfvRelationCertificate {
         self.transcript_digest
     }
 
+    /// Canonical public final-relation certificate wire.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut body = self.canonical_body();
+        let checksum = hash_parts(RELATION_CERTIFICATE_CHECKSUM_DOMAIN, &[body.as_slice()]);
+        body.extend_from_slice(&checksum);
+        body
+    }
+
+    /// Decode and reverify every signed worker proof and the public zero sum.
+    pub fn from_bytes(bytes: &[u8], relation_round: &DistributedBfvRelationRound) -> Result<Self> {
+        if bytes.len()
+            != relation_certificate_wire_len(
+                relation_round.n_workers(),
+                relation_round.relation_width(),
+            )?
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let checksum_start = bytes
+            .len()
+            .checked_sub(32)
+            .ok_or(DistributedBfvError::MalformedWire)?;
+        if bytes[checksum_start..]
+            != hash_parts(
+                RELATION_CERTIFICATE_CHECKSUM_DOMAIN,
+                &[&bytes[..checksum_start]],
+            )
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let mut input = WireReader::new(&bytes[..checksum_start]);
+        if input.take::<8>()? != *RELATION_CERTIFICATE_MAGIC
+            || input.u16()? != PUBLIC_WIRE_VERSION
+            || input.take::<32>()? != relation_round.digest
+            || input.usize_u16()? != relation_round.n_workers()
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let proof_len = expected_linear_proof_len(relation_round.relation_width())?;
+        let mut proofs = Vec::with_capacity(relation_round.n_workers());
+        for worker in 0..relation_round.n_workers() {
+            if input.usize_u16()? != worker {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let image = input.take::<32>()?;
+            if input.usize_u32()? != proof_len {
+                return Err(DistributedBfvError::MalformedWire);
+            }
+            let proof = input.take_slice(proof_len)?.to_vec();
+            let signature = input.take::<64>()?;
+            proofs.push(BfvWorkerRelationProof {
+                relation_round_digest: relation_round.digest,
+                worker,
+                image,
+                proof,
+                signature,
+            });
+        }
+        let transcript_digest = input.take::<32>()?;
+        input.finish()?;
+        let certificate = Self {
+            relation_round_digest: relation_round.digest,
+            proofs,
+            transcript_digest,
+        };
+        certificate.verify(relation_round)?;
+        if certificate.to_bytes() != bytes {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        Ok(certificate)
+    }
+
+    fn canonical_body(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(RELATION_CERTIFICATE_MAGIC);
+        out.extend_from_slice(&PUBLIC_WIRE_VERSION.to_be_bytes());
+        out.extend_from_slice(&self.relation_round_digest);
+        out.extend_from_slice(&(self.proofs.len() as u16).to_be_bytes());
+        for proof in &self.proofs {
+            out.extend_from_slice(&(proof.worker as u16).to_be_bytes());
+            out.extend_from_slice(&proof.image);
+            out.extend_from_slice(&(proof.proof.len() as u32).to_be_bytes());
+            out.extend_from_slice(&proof.proof);
+            out.extend_from_slice(&proof.signature);
+        }
+        out.extend_from_slice(&self.transcript_digest);
+        out
+    }
+
     pub fn verify(&self, relation_round: &DistributedBfvRelationRound) -> Result<()> {
         if self.relation_round_digest != relation_round.digest
             || self.proofs.len() != relation_round.n_workers()
         {
             return Err(DistributedBfvError::CertificateMismatch);
         }
+        let mut images = Vec::with_capacity(self.proofs.len());
         for (worker, proof) in self.proofs.iter().enumerate() {
             if proof.worker != worker {
                 return Err(DistributedBfvError::CertificateMismatch);
             }
-            proof.verify(relation_round)?;
+            images.push(proof.verify_authentication(relation_round)?);
         }
-        verify_relation_sum(relation_round, &self.proofs)?;
+        if images
+            .into_iter()
+            .fold(relation_round.public_constant, |sum, image| sum + image)
+            != Scalar::ZERO
+        {
+            return Err(DistributedBfvError::RelationRejected);
+        }
         if self.transcript_digest != relation_certificate_digest(relation_round, &self.proofs) {
+            return Err(DistributedBfvError::CertificateMismatch);
+        }
+        // Defer every expensive inner-product proof until the complete cheap
+        // authentication/digest/sum layer has succeeded.
+        for proof in &self.proofs {
+            proof.verify_linear_proof(relation_round, proof.image_scalar()?)?;
+        }
+        Ok(())
+    }
+}
+
+/// One transportable public object for the complete distributed exact-BFV
+/// ceremony. Public statement, ciphertexts, BFV parameters, collective key,
+/// and roster remain independently supplied verifier policy; this envelope
+/// contains the three proof certificates and binds their ordered digests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistributedBfvProofEnvelope {
+    session_digest: [u8; 32],
+    relation_digest: [u8; 32],
+    input_certificate: DistributedInputCertificate,
+    quotient_certificate: BfvQuotientCertificate,
+    relation_certificate: BfvRelationCertificate,
+    transcript_digest: [u8; 32],
+}
+
+impl DistributedBfvProofEnvelope {
+    pub fn new(
+        session: &DistributedWitnessSession,
+        public: &DistributedBfvPublicRelation,
+        input_certificate: DistributedInputCertificate,
+        quotient_certificate: BfvQuotientCertificate,
+        relation_certificate: BfvRelationCertificate,
+    ) -> Result<Self> {
+        let round = DistributedBfvRound::new(session, &input_certificate, public)?;
+        quotient_certificate.verify(&round)?;
+        let relation_round = DistributedBfvRelationRound::new(
+            &round,
+            &input_certificate,
+            &quotient_certificate,
+            public,
+        )?;
+        relation_certificate.verify(&relation_round)?;
+        let mut envelope = Self {
+            session_digest: session.digest(),
+            relation_digest: public.relation_digest(),
+            input_certificate,
+            quotient_certificate,
+            relation_certificate,
+            transcript_digest: [0; 32],
+        };
+        envelope.transcript_digest = envelope.compute_transcript_digest();
+        Ok(envelope)
+    }
+
+    pub const fn transcript_digest(&self) -> [u8; 32] {
+        self.transcript_digest
+    }
+
+    pub const fn input_certificate(&self) -> &DistributedInputCertificate {
+        &self.input_certificate
+    }
+
+    pub const fn quotient_certificate(&self) -> &BfvQuotientCertificate {
+        &self.quotient_certificate
+    }
+
+    pub const fn relation_certificate(&self) -> &BfvRelationCertificate {
+        &self.relation_certificate
+    }
+
+    pub fn verify(
+        &self,
+        session: &DistributedWitnessSession,
+        public: &DistributedBfvPublicRelation,
+    ) -> Result<()> {
+        if self.session_digest != session.digest()
+            || self.relation_digest != session.relation_digest()
+            || self.relation_digest != public.relation_digest()
+        {
+            return Err(DistributedBfvError::SessionMismatch);
+        }
+        let round = DistributedBfvRound::new(session, &self.input_certificate, public)?;
+        self.quotient_certificate.verify(&round)?;
+        let relation_round = DistributedBfvRelationRound::new(
+            &round,
+            &self.input_certificate,
+            &self.quotient_certificate,
+            public,
+        )?;
+        self.relation_certificate.verify(&relation_round)?;
+        if self.transcript_digest != self.compute_transcript_digest() {
             return Err(DistributedBfvError::CertificateMismatch);
         }
         Ok(())
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let input = self.input_certificate.to_bytes();
+        let quotient = self.quotient_certificate.to_bytes();
+        let relation = self.relation_certificate.to_bytes();
+        let mut body = Vec::with_capacity(
+            8 + 2 + 2 * 32 + 3 * 4 + input.len() + quotient.len() + relation.len() + 64,
+        );
+        body.extend_from_slice(ENVELOPE_MAGIC);
+        body.extend_from_slice(&PUBLIC_WIRE_VERSION.to_be_bytes());
+        body.extend_from_slice(&self.session_digest);
+        body.extend_from_slice(&self.relation_digest);
+        for component in [&input, &quotient, &relation] {
+            body.extend_from_slice(&(component.len() as u32).to_be_bytes());
+            body.extend_from_slice(component);
+        }
+        body.extend_from_slice(&self.transcript_digest);
+        let checksum = hash_parts(ENVELOPE_CHECKSUM_DOMAIN, &[body.as_slice()]);
+        body.extend_from_slice(&checksum);
+        body
+    }
+
+    /// Strict bounded decode. The parser reconstructs both Fiat--Shamir rounds
+    /// from independently supplied verifier policy and reverifies every nested
+    /// proof, signature, commitment sum, and final relation image sum.
+    pub fn from_bytes(
+        bytes: &[u8],
+        session: &DistributedWitnessSession,
+        public: &DistributedBfvPublicRelation,
+    ) -> Result<Self> {
+        if bytes.len() < 160 {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let checksum_start = bytes
+            .len()
+            .checked_sub(32)
+            .ok_or(DistributedBfvError::MalformedWire)?;
+        if bytes[checksum_start..]
+            != hash_parts(ENVELOPE_CHECKSUM_DOMAIN, &[&bytes[..checksum_start]])
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        validate_envelope_framing(&bytes[..checksum_start], session)?;
+        let mut input = WireReader::new(&bytes[..checksum_start]);
+        if input.take::<8>()? != *ENVELOPE_MAGIC
+            || input.u16()? != PUBLIC_WIRE_VERSION
+            || input.take::<32>()? != session.digest()
+            || input.take::<32>()? != session.relation_digest()
+            || public.relation_digest() != session.relation_digest()
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let input_len = input.usize_u32()?;
+        if input_len
+            != DistributedInputCertificate::expected_wire_len(session)
+                .map_err(|_| DistributedBfvError::MalformedWire)?
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let input_certificate =
+            DistributedInputCertificate::from_bytes(input.take_slice(input_len)?, session)
+                .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        let round = DistributedBfvRound::new_after_verified_input(session, &input_certificate)?;
+
+        let quotient_len = input.usize_u32()?;
+        if quotient_len != quotient_certificate_wire_len(session.n_workers())? {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let quotient_certificate =
+            BfvQuotientCertificate::from_bytes(input.take_slice(quotient_len)?, &round)?;
+        let relation_round = DistributedBfvRelationRound::new_after_verified_certificates(
+            &round,
+            &input_certificate,
+            &quotient_certificate,
+            public,
+        )?;
+
+        let relation_len = input.usize_u32()?;
+        if relation_len
+            != relation_certificate_wire_len(
+                session.n_workers(),
+                owner_bfv_block_width(session.degree())?
+                    .checked_mul(ORDER_COUNT)
+                    .ok_or(DistributedBfvError::MalformedWire)?,
+            )?
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        let relation_certificate =
+            BfvRelationCertificate::from_bytes(input.take_slice(relation_len)?, &relation_round)?;
+        let transcript_digest = input.take::<32>()?;
+        input.finish()?;
+        let envelope = Self {
+            session_digest: session.digest(),
+            relation_digest: public.relation_digest(),
+            input_certificate,
+            quotient_certificate,
+            relation_certificate,
+            transcript_digest,
+        };
+        if envelope.compute_transcript_digest() != transcript_digest || envelope.to_bytes() != bytes
+        {
+            return Err(DistributedBfvError::MalformedWire);
+        }
+        Ok(envelope)
+    }
+
+    fn compute_transcript_digest(&self) -> [u8; 32] {
+        hash_parts(
+            ENVELOPE_DOMAIN,
+            &[
+                self.session_digest.as_slice(),
+                self.relation_digest.as_slice(),
+                self.input_certificate.transcript_digest().as_slice(),
+                self.quotient_certificate.transcript_digest.as_slice(),
+                self.relation_certificate.transcript_digest.as_slice(),
+            ],
+        )
+    }
+}
+
+fn validate_envelope_framing(body: &[u8], session: &DistributedWitnessSession) -> Result<()> {
+    let input_len = DistributedInputCertificate::expected_wire_len(session)
+        .map_err(|_| DistributedBfvError::MalformedWire)?;
+    let quotient_len = quotient_certificate_wire_len(session.n_workers())?;
+    let relation_width = owner_bfv_block_width(session.degree())?
+        .checked_mul(ORDER_COUNT)
+        .ok_or(DistributedBfvError::MalformedWire)?;
+    let relation_len = relation_certificate_wire_len(session.n_workers(), relation_width)?;
+    let expected_body_len = 8usize
+        .checked_add(2 + 32 + 32)
+        .and_then(|value| value.checked_add(4 + input_len))
+        .and_then(|value| value.checked_add(4 + quotient_len))
+        .and_then(|value| value.checked_add(4 + relation_len))
+        .and_then(|value| value.checked_add(32))
+        .ok_or(DistributedBfvError::MalformedWire)?;
+    if body.len() != expected_body_len {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    let mut input = WireReader::new(body);
+    if input.take::<8>()? != *ENVELOPE_MAGIC
+        || input.u16()? != PUBLIC_WIRE_VERSION
+        || input.take::<32>()? != session.digest()
+        || input.take::<32>()? != session.relation_digest()
+        || input.usize_u32()? != input_len
+    {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    input.take_slice(input_len)?;
+    if input.usize_u32()? != quotient_len {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    input.take_slice(quotient_len)?;
+    if input.usize_u32()? != relation_len {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    input.take_slice(relation_len)?;
+    input.take::<32>()?;
+    input.finish()
 }
 
 fn collapse_exact_relation(
@@ -1508,6 +2161,52 @@ fn expected_linear_proof_len(width: usize) -> Result<usize> {
         .and_then(|value| value.checked_add(3))
         .and_then(|value| value.checked_mul(32)))
     .ok_or(DistributedBfvError::InvalidProof)
+}
+
+fn expected_quotient_range_proof_len() -> Result<usize> {
+    (13usize)
+        .checked_add(2 * QUOTIENT_R1CS_CAPACITY.trailing_zeros() as usize)
+        .and_then(|elements| elements.checked_mul(32))
+        .and_then(|bytes| bytes.checked_add(1))
+        .ok_or(DistributedBfvError::InvalidProof)
+}
+
+fn quotient_certificate_wire_len(workers: usize) -> Result<usize> {
+    if !(2..=8).contains(&workers) {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    let dealer_bytes = 2usize
+        .checked_add(32)
+        .and_then(|value| value.checked_add(32 * workers))
+        .and_then(|value| value.checked_add(32 + 2 + 32 * OWNER_BFV_QUOTIENT_COUNT + 4))
+        .and_then(|value| value.checked_add(expected_quotient_range_proof_len().ok()?))
+        .and_then(|value| value.checked_add(4))
+        .and_then(|value| value.checked_add(expected_linear_proof_len(PADDED_QUOTIENT_COUNT).ok()?))
+        .and_then(|value| value.checked_add(64))
+        .ok_or(DistributedBfvError::MalformedWire)?;
+    8usize
+        .checked_add(2 + 32 + 2 + 2)
+        .and_then(|value| value.checked_add(ORDER_COUNT * dealer_bytes))
+        .and_then(|value| value.checked_add(2 + ORDER_COUNT * workers * 100))
+        .and_then(|value| value.checked_add(32 + 32))
+        .ok_or(DistributedBfvError::MalformedWire)
+}
+
+fn relation_certificate_wire_len(workers: usize, relation_width: usize) -> Result<usize> {
+    if !(2..=8).contains(&workers) {
+        return Err(DistributedBfvError::MalformedWire);
+    }
+    let proof_len = expected_linear_proof_len(relation_width)?;
+    let worker_bytes = 2usize
+        .checked_add(32 + 4)
+        .and_then(|value| value.checked_add(proof_len))
+        .and_then(|value| value.checked_add(64))
+        .ok_or(DistributedBfvError::MalformedWire)?;
+    8usize
+        .checked_add(2 + 32 + 2)
+        .and_then(|value| value.checked_add(workers * worker_bytes))
+        .and_then(|value| value.checked_add(32 + 32))
+        .ok_or(DistributedBfvError::MalformedWire)
 }
 
 fn worker_relation_transcript(
@@ -1763,8 +2462,8 @@ impl OwnerQuotientProof {
     ) -> Result<()> {
         if owner >= ORDER_COUNT
             || self.shifted_commitments.len() != OWNER_BFV_QUOTIENT_COUNT
-            || self.range_proof.len() > 64 * 1024
-            || self.link_proof.len() > 16 * 1024
+            || self.range_proof.len() != expected_quotient_range_proof_len()?
+            || self.link_proof.len() != expected_linear_proof_len(PADDED_QUOTIENT_COUNT)?
         {
             return Err(DistributedBfvError::InvalidProof);
         }
@@ -2164,6 +2863,57 @@ fn quotient_certificate_digest(
     *hasher.finalize().as_bytes()
 }
 
+struct WireReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> WireReader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
+        self.take_slice(N)?
+            .try_into()
+            .map_err(|_| DistributedBfvError::MalformedWire)
+    }
+
+    fn take_slice(&mut self, len: usize) -> Result<&'a [u8]> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(DistributedBfvError::MalformedWire)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(DistributedBfvError::MalformedWire)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u16(&mut self) -> Result<u16> {
+        Ok(u16::from_be_bytes(self.take::<2>()?))
+    }
+
+    fn usize_u16(&mut self) -> Result<usize> {
+        Ok(usize::from(self.u16()?))
+    }
+
+    fn usize_u32(&mut self) -> Result<usize> {
+        usize::try_from(u32::from_be_bytes(self.take::<4>()?))
+            .map_err(|_| DistributedBfvError::MalformedWire)
+    }
+
+    fn finish(self) -> Result<()> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err(DistributedBfvError::MalformedWire)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2176,6 +2926,12 @@ mod tests {
 
     fn keys<const N: usize>(base: u8) -> [SigningKey; N] {
         core::array::from_fn(|index| SigningKey::from_bytes(&[base + index as u8; 32]))
+    }
+
+    fn refresh_wire_checksum(wire: &mut [u8], domain: &str) {
+        let checksum_start = wire.len() - 32;
+        let checksum = hash_parts(domain, &[&wire[..checksum_start]]);
+        wire[checksum_start..].copy_from_slice(&checksum);
     }
 
     fn base_ceremony(
@@ -2324,6 +3080,61 @@ mod tests {
         let certificate = coordinator.finish().expect("quotient certificate");
         certificate.verify(&round).expect("public verification");
         assert_ne!(certificate.transcript_digest(), [0; 32]);
+        let quotient_wire = certificate.to_bytes();
+        assert_eq!(
+            quotient_wire.len(),
+            quotient_certificate_wire_len(round.n_workers()).unwrap()
+        );
+        assert_eq!(
+            BfvQuotientCertificate::from_bytes(&quotient_wire, &round).unwrap(),
+            certificate
+        );
+        reset_quotient_proof_verification_count();
+        for cut in 0..quotient_wire.len() {
+            assert!(matches!(
+                BfvQuotientCertificate::from_bytes(&quotient_wire[..cut], &round),
+                Err(DistributedBfvError::MalformedWire)
+            ));
+        }
+        let mut trailing = quotient_wire.clone();
+        trailing.push(0);
+        assert!(matches!(
+            BfvQuotientCertificate::from_bytes(&trailing, &round),
+            Err(DistributedBfvError::MalformedWire)
+        ));
+        for (offset, replacement) in [(0usize, 0xffu8), (8, 0xff), (43, 0), (45, 0), (46, 1)] {
+            let mut malformed = quotient_wire.clone();
+            malformed[offset] = replacement;
+            refresh_wire_checksum(&mut malformed, QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN);
+            assert!(matches!(
+                BfvQuotientCertificate::from_bytes(&malformed, &round),
+                Err(DistributedBfvError::MalformedWire)
+            ));
+        }
+        let first_range_len =
+            46 + 2 + 32 + 32 * round.n_workers() + 32 + 2 + 32 * OWNER_BFV_QUOTIENT_COUNT;
+        for encoded in [0u32, u32::MAX] {
+            let mut malformed = quotient_wire.clone();
+            malformed[first_range_len..first_range_len + 4].copy_from_slice(&encoded.to_be_bytes());
+            refresh_wire_checksum(&mut malformed, QUOTIENT_CERTIFICATE_CHECKSUM_DOMAIN);
+            assert!(matches!(
+                BfvQuotientCertificate::from_bytes(&malformed, &round),
+                Err(DistributedBfvError::MalformedWire)
+            ));
+        }
+        assert_eq!(quotient_proof_verification_count(), 0);
+        let mut forged_quotient = certificate.clone();
+        forged_quotient.dealers[0].corrupt_signature_for_test();
+        forged_quotient.transcript_digest = quotient_certificate_digest(
+            &round,
+            &forged_quotient.dealers,
+            &forged_quotient.acknowledgements,
+        );
+        assert!(matches!(
+            BfvQuotientCertificate::from_bytes(&forged_quotient.to_bytes(), &round),
+            Err(DistributedBfvError::InvalidSignature)
+        ));
+        assert_eq!(quotient_proof_verification_count(), 0);
         for owner in 0..ORDER_COUNT {
             assert_eq!(
                 decode_point(&certificate.owner_commitment(owner).unwrap()).unwrap(),
@@ -2372,6 +3183,17 @@ mod tests {
             bad_signature.verify(&relation_round),
             Err(DistributedBfvError::InvalidSignature)
         );
+        for proof in &relation_proofs {
+            let worker_wire = proof.to_bytes();
+            assert_eq!(
+                worker_wire.len(),
+                176 + expected_linear_proof_len(relation_round.relation_width()).unwrap()
+            );
+            assert_eq!(
+                BfvWorkerRelationProof::from_bytes(&worker_wire, &relation_round).unwrap(),
+                *proof
+            );
+        }
 
         let mut wrong_public_constant = relation_round.clone();
         wrong_public_constant.public_constant += Scalar::ONE;
@@ -2395,6 +3217,42 @@ mod tests {
             .verify(&relation_round)
             .expect("public exact relation verification");
         assert_ne!(relation_certificate.transcript_digest(), [0; 32]);
+        let relation_wire = relation_certificate.to_bytes();
+        assert_eq!(
+            relation_wire.len(),
+            relation_certificate_wire_len(
+                relation_round.n_workers(),
+                relation_round.relation_width()
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            BfvRelationCertificate::from_bytes(&relation_wire, &relation_round).unwrap(),
+            relation_certificate
+        );
+        reset_relation_proof_verification_count();
+        for cut in 0..relation_wire.len() {
+            assert!(matches!(
+                BfvRelationCertificate::from_bytes(&relation_wire[..cut], &relation_round),
+                Err(DistributedBfvError::MalformedWire)
+            ));
+        }
+        let mut trailing = relation_wire.clone();
+        trailing.push(0);
+        assert!(matches!(
+            BfvRelationCertificate::from_bytes(&trailing, &relation_round),
+            Err(DistributedBfvError::MalformedWire)
+        ));
+        assert_eq!(relation_proof_verification_count(), 0);
+        let mut forged_relation = relation_certificate.clone();
+        forged_relation.proofs[0].corrupt_signature_for_test();
+        forged_relation.transcript_digest =
+            relation_certificate_digest(&relation_round, &forged_relation.proofs);
+        assert!(matches!(
+            BfvRelationCertificate::from_bytes(&forged_relation.to_bytes(), &relation_round),
+            Err(DistributedBfvError::InvalidSignature)
+        ));
+        assert_eq!(relation_proof_verification_count(), 0);
     }
 
     #[test]

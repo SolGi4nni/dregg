@@ -2274,6 +2274,13 @@ impl DistributedInputCertificate {
         self.transcript_digest
     }
 
+    /// Exact canonical public-wire length under independently supplied session
+    /// policy. Continuation protocols use this for a framing-only pass before
+    /// invoking any signature or proof verifier.
+    pub(crate) fn expected_wire_len(session: &DistributedWitnessSession) -> Result<usize> {
+        certificate_wire_len(session.degree, session.n_workers())
+    }
+
     /// Commitment to one worker's additive share of one owner vector.
     ///
     /// This is crate-private because the public certificate wire remains the
