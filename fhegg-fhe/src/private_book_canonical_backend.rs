@@ -50,6 +50,7 @@
 
 use std::fmt;
 use std::iter;
+use std::sync::OnceLock;
 
 use bulletproofs_r1cs::{BulletproofGens, LinearProof, PedersenGens};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
@@ -59,8 +60,8 @@ use merlin::Transcript;
 use rand::thread_rng;
 
 use crate::private_book_distributed_inputs::{
-    DistributedInputCertificate, PreparedWitnessShare, DERIVED_ORDER_WIDTH, ORDER_COUNT,
-    ROOT_BLINDING_WIDTH,
+    DistributedInputCertificate, PreparedWitnessShare, BFV_DEGREE, DERIVED_ORDER_WIDTH,
+    ORDER_COUNT, ROOT_BLINDING_WIDTH,
 };
 use crate::private_book_distributed_prover::{
     PublicDistributedProofVerifier, WorkerLocalProofBackend, WorkerProofArtifact,
@@ -83,6 +84,28 @@ const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 512 * 1024;
 const ACK_WIRE_LEN: usize = 2 + 2 + 32 + 64;
 const ZERO_CLAIM_COUNT: usize = ORDER_COUNT - 1;
 const ARTIFACT_FIXED_BYTES: usize = 8 + 2 + 2 + 4 + 4 + 32 + 32 + 2 + 2 + 32;
+
+/// The deployed degree-4096 share proof used to hash 131,072 Ristretto
+/// generators afresh for every worker and then repeat that work in the public
+/// verifier.  The generator namespace is immutable and protocol-fixed, so
+/// retain one process-wide copy for the production shape.  Smaller bounded
+/// shapes keep their exact per-call generator set below.
+fn production_generators() -> &'static BulletproofGens {
+    static GENS: OnceLock<BulletproofGens> = OnceLock::new();
+    GENS.get_or_init(|| {
+        let width = witness_width(BFV_DEGREE)
+            .expect("the protocol-fixed BFV degree has a bounded witness width");
+        let padded_width = width
+            .checked_next_power_of_two()
+            .expect("the protocol-fixed witness width has a power-of-two padding");
+        BulletproofGens::new(padded_width, ORDER_COUNT)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn warm_production_generators_for_test() {
+    let _ = production_generators();
+}
 
 /// Errors from the cryptographic share-opening proof backend.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,11 +163,27 @@ pub fn canonical_share_opening_protocol_id() -> [u8; 32] {
 /// Worker-local logarithmic proof-of-opening producer.
 pub struct CanonicalShareOpeningBackend {
     worker: usize,
+    #[cfg(test)]
+    force_fresh_generators: bool,
 }
 
 impl CanonicalShareOpeningBackend {
     pub const fn new(worker: usize) -> Self {
-        Self { worker }
+        Self {
+            worker,
+            #[cfg(test)]
+            force_fresh_generators: false,
+        }
+    }
+
+    /// Differential-only constructor reproducing the pre-cache generator
+    /// lifecycle without changing the proof statement or transcript.
+    #[cfg(test)]
+    pub(crate) const fn new_with_fresh_generators_for_test(worker: usize) -> Self {
+        Self {
+            worker,
+            force_fresh_generators: true,
+        }
     }
 }
 
@@ -174,7 +213,16 @@ impl WorkerLocalProofBackend for CanonicalShareOpeningBackend {
         let padded_width = width
             .checked_next_power_of_two()
             .ok_or(CanonicalBackendError::InvalidWitnessWidth)?;
-        let generators = BulletproofGens::new(padded_width, ORDER_COUNT);
+        let use_production_cache = view.degree == BFV_DEGREE;
+        #[cfg(test)]
+        let use_production_cache = use_production_cache && !self.force_fresh_generators;
+        let fallback_generators;
+        let generators = if use_production_cache {
+            production_generators()
+        } else {
+            fallback_generators = BulletproofGens::new(padded_width, ORDER_COUNT);
+            &fallback_generators
+        };
         let pedersen = PedersenGens::default();
         let mut proofs = Vec::with_capacity(ORDER_COUNT);
         let mut root_constraint_proofs = Vec::with_capacity(ZERO_CLAIM_COUNT);
@@ -313,6 +361,8 @@ pub struct CanonicalShareOpeningVerifier {
     degree: usize,
     n_workers: usize,
     share_commitments: Vec<Vec<[u8; 32]>>,
+    #[cfg(test)]
+    force_fresh_generators: bool,
 }
 
 impl CanonicalShareOpeningVerifier {
@@ -325,7 +375,20 @@ impl CanonicalShareOpeningVerifier {
             degree: view.degree,
             n_workers: view.n_workers,
             share_commitments: view.share_commitments,
+            #[cfg(test)]
+            force_fresh_generators: false,
         })
+    }
+
+    /// Differential-only verifier reproducing the pre-cache generator
+    /// lifecycle over the identical public artifacts and transcript.
+    #[cfg(test)]
+    pub(crate) fn new_with_fresh_generators_for_test(
+        input_certificate: &DistributedInputCertificate,
+    ) -> Result<Self, CanonicalBackendError> {
+        let mut verifier = Self::new(input_certificate)?;
+        verifier.force_fresh_generators = true;
+        Ok(verifier)
     }
 }
 
@@ -353,29 +416,48 @@ impl PublicDistributedProofVerifier for CanonicalShareOpeningVerifier {
         let padded_width = width
             .checked_next_power_of_two()
             .ok_or(CanonicalBackendError::InvalidWitnessWidth)?;
-        let generators = BulletproofGens::new(padded_width, ORDER_COUNT);
+        // Keep malformed public artifacts on the cheap path.  In particular,
+        // do not trigger the one-time production generator derivation or copy
+        // its owner vectors until every bounded artifact has parsed under the
+        // exact request context.
+        let decoded_artifacts = artifacts
+            .iter()
+            .enumerate()
+            .map(|(worker, artifact)| {
+                decode_artifact(artifact.as_bytes(), context, worker, width, padded_width)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let use_production_cache = self.degree == BFV_DEGREE;
+        #[cfg(test)]
+        let use_production_cache = use_production_cache && !self.force_fresh_generators;
+        let fallback_generators;
+        let generators = if use_production_cache {
+            production_generators()
+        } else {
+            fallback_generators = BulletproofGens::new(padded_width, ORDER_COUNT);
+            &fallback_generators
+        };
         let pedersen = PedersenGens::default();
         let public_coefficients = vec![Scalar::ZERO; padded_width];
+        // Verification never mutates its generator vectors.  Materialize each
+        // owner namespace once, then reuse it across every worker's opening
+        // and root-constraint proof instead of copying O(N) points 7W times.
+        let proof_generators = (0..ORDER_COUNT)
+            .map(|owner| generators.share(owner).G(padded_width).copied().collect())
+            .collect::<Vec<Vec<RistrettoPoint>>>();
         let mut root_constraint_sums = [Scalar::ZERO; ZERO_CLAIM_COUNT];
 
-        for (worker, artifact) in artifacts.iter().enumerate() {
-            let decoded =
-                decode_artifact(artifact.as_bytes(), context, worker, width, padded_width)?;
+        for (worker, decoded) in decoded_artifacts.iter().enumerate() {
             for (owner, proof) in decoded.opening_proofs.iter().enumerate() {
                 let commitment = canonical_point(self.share_commitments[owner][worker])
                     .ok_or(CanonicalBackendError::InvalidCertificate)?;
-                let proof_generators = generators
-                    .share(owner)
-                    .G(padded_width)
-                    .copied()
-                    .collect::<Vec<_>>();
                 let mut transcript =
                     proof_transcript(context, worker, owner, width, padded_width, &commitment);
                 proof
                     .verify(
                         &mut transcript,
                         &commitment,
-                        &proof_generators,
+                        &proof_generators[owner],
                         &pedersen.B,
                         &pedersen.B_blinding,
                         public_coefficients.clone(),
@@ -391,11 +473,6 @@ impl PublicDistributedProofVerifier for CanonicalShareOpeningVerifier {
                     .ok_or(CanonicalBackendError::InvalidCertificate)?
                     + claim.image * pedersen.B)
                     .compress();
-                let proof_generators = generators
-                    .share(owner)
-                    .G(padded_width)
-                    .copied()
-                    .collect::<Vec<_>>();
                 let public_coefficients =
                     root_constraint_coefficients(context, owner, width, padded_width)?;
                 let mut transcript = root_constraint_transcript(
@@ -412,7 +489,7 @@ impl PublicDistributedProofVerifier for CanonicalShareOpeningVerifier {
                     .verify(
                         &mut transcript,
                         &statement,
-                        &proof_generators,
+                        &proof_generators[owner],
                         &pedersen.B,
                         &pedersen.B_blinding,
                         public_coefficients,
@@ -810,6 +887,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn aggregate_root_constraint_rejects_any_nonzero_owner_image() {
@@ -821,5 +899,55 @@ mod tests {
             verify_root_constraint_sums(&sums),
             Err(CanonicalBackendError::LinearConstraintRejected { owner: 2 })
         );
+    }
+
+    #[test]
+    fn authenticated_encrypted_orders_gate_real_game_asset_settlement_cached_generators_match_fresh_under_concurrent_init(
+    ) {
+        let width = witness_width(BFV_DEGREE).unwrap();
+        let padded_width = width.checked_next_power_of_two().unwrap();
+        let barrier = Arc::new(Barrier::new(8));
+        let observations = std::thread::scope(|scope| {
+            let workers = (0..8)
+                .map(|_| {
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let generators = production_generators();
+                        let final_point = generators
+                            .share(ORDER_COUNT - 1)
+                            .G(padded_width)
+                            .last()
+                            .expect("production generator namespace is nonempty")
+                            .compress()
+                            .to_bytes();
+                        (generators as *const BulletproofGens as usize, final_point)
+                    })
+                })
+                .collect::<Vec<_>>();
+            workers
+                .into_iter()
+                .map(|worker| {
+                    worker
+                        .join()
+                        .expect("generator initializer thread survived")
+                })
+                .collect::<Vec<_>>()
+        });
+        assert!(observations
+            .windows(2)
+            .all(|pair| pair[0].0 == pair[1].0 && pair[0].1 == pair[1].1));
+
+        let cached = production_generators();
+        let fresh = BulletproofGens::new(padded_width, ORDER_COUNT);
+        assert_eq!(cached.gens_capacity, fresh.gens_capacity);
+        assert_eq!(cached.party_capacity, fresh.party_capacity);
+        for owner in 0..ORDER_COUNT {
+            let cached_points = cached.share(owner).G(padded_width);
+            let fresh_points = fresh.share(owner).G(padded_width);
+            assert!(cached_points
+                .zip(fresh_points)
+                .all(|(left, right)| left.compress().to_bytes() == right.compress().to_bytes()));
+        }
     }
 }

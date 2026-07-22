@@ -8,12 +8,13 @@ mod private_book_distributed_inputs;
 mod private_book_distributed_prover;
 
 use private_book_canonical_backend::{
-    canonical_share_opening_protocol_id, CanonicalShareOpeningBackend,
-    CanonicalShareOpeningVerifier,
+    canonical_share_opening_protocol_id, warm_production_generators_for_test,
+    CanonicalShareOpeningBackend, CanonicalShareOpeningVerifier,
 };
 use private_book_distributed_inputs::{
     DistributedInputCertificate, DistributedInputCoordinator, DistributedWitnessSession,
-    LocalOrderWitness, PreparedWitnessShare, PrivateSide, WitnessPartyMachine, ORDER_COUNT,
+    LocalOrderWitness, PreparedWitnessShare, PrivateSide, WitnessPartyMachine, BFV_DEGREE,
+    ORDER_COUNT,
 };
 use private_book_distributed_prover::{
     DistributedProverCoordinator, DistributedProverError, ShareBoundProverRequest,
@@ -25,6 +26,7 @@ use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::SigningKey;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use std::time::Instant;
 
 fn keys<const N: usize>(base: u8) -> [SigningKey; N] {
     core::array::from_fn(|index| SigningKey::from_bytes(&[base + index as u8; 32]))
@@ -33,6 +35,14 @@ fn keys<const N: usize>(base: u8) -> [SigningKey; N] {
 fn session(
     owner_keys: &[SigningKey; ORDER_COUNT],
     worker_keys: &[SigningKey; 3],
+) -> DistributedWitnessSession {
+    session_with_degree(owner_keys, worker_keys, 8)
+}
+
+fn session_with_degree(
+    owner_keys: &[SigningKey; ORDER_COUNT],
+    worker_keys: &[SigningKey; 3],
+    degree: usize,
 ) -> DistributedWitnessSession {
     DistributedWitnessSession::new_for_test(
         [0x41; 32],
@@ -44,7 +54,7 @@ fn session(
             .iter()
             .map(|key| key.verifying_key().to_bytes())
             .collect(),
-        8,
+        degree,
     )
     .unwrap()
 }
@@ -100,6 +110,16 @@ fn canonical_contributions(
     worker_keys: &[SigningKey; 3],
     shares: Vec<PreparedWitnessShare>,
 ) -> Vec<WorkerProofContribution> {
+    canonical_contributions_with_generator_mode(session, certificate, worker_keys, shares, false)
+}
+
+fn canonical_contributions_with_generator_mode(
+    session: &DistributedWitnessSession,
+    certificate: &DistributedInputCertificate,
+    worker_keys: &[SigningKey; 3],
+    shares: Vec<PreparedWitnessShare>,
+    force_fresh_generators: bool,
+) -> Vec<WorkerProofContribution> {
     let request =
         ShareBoundProverRequest::new(session, certificate, canonical_share_opening_protocol_id())
             .unwrap();
@@ -107,11 +127,16 @@ fn canonical_contributions(
         .into_iter()
         .enumerate()
         .map(|(worker, share)| {
+            let backend = if force_fresh_generators {
+                CanonicalShareOpeningBackend::new_with_fresh_generators_for_test(worker)
+            } else {
+                CanonicalShareOpeningBackend::new(worker)
+            };
             WorkerProofProcess::new(
                 session.clone(),
                 worker,
                 worker_keys[worker].clone(),
-                CanonicalShareOpeningBackend::new(worker),
+                backend,
             )
             .unwrap()
             .run(&request, certificate, share)
@@ -287,6 +312,123 @@ fn exact_local_openings_produce_the_only_publicly_accepted_contributions() {
     assert!(envelope
         .worker_public_artifacts()
         .all(|(_, artifact)| artifact.len() < 8 * 1024));
+}
+
+#[test]
+fn authenticated_encrypted_orders_gate_real_game_asset_settlement_canonical_generator_cache_profile(
+) {
+    let owner_keys = keys::<ORDER_COUNT>(0x18);
+    let worker_keys = keys::<3>(0x38);
+    let session = session_with_degree(&owner_keys, &worker_keys, BFV_DEGREE);
+
+    let fresh_inputs_started = Instant::now();
+    let (fresh_certificate, fresh_shares) =
+        prepare_inputs(&session, &owner_keys, &worker_keys, 0x68);
+    eprintln!(
+        "fhegg canonical-generator profile: fresh-input-preparation={:?}",
+        fresh_inputs_started.elapsed()
+    );
+    let fresh_prove_started = Instant::now();
+    let fresh_contributions = canonical_contributions_with_generator_mode(
+        &session,
+        &fresh_certificate,
+        &worker_keys,
+        fresh_shares,
+        true,
+    );
+    eprintln!(
+        "fhegg canonical-generator profile: fresh-prove-three={:?}",
+        fresh_prove_started.elapsed()
+    );
+    let fresh_envelope =
+        envelope_from_contributions(&session, &fresh_certificate, fresh_contributions);
+    let fresh_request = ShareBoundProverRequest::new(
+        &session,
+        &fresh_certificate,
+        canonical_share_opening_protocol_id(),
+    )
+    .unwrap();
+    let fresh_verifier =
+        CanonicalShareOpeningVerifier::new_with_fresh_generators_for_test(&fresh_certificate)
+            .unwrap();
+    let fresh_verify_started = Instant::now();
+    fresh_envelope
+        .verify_backend(
+            &session,
+            &fresh_request,
+            &fresh_certificate,
+            &fresh_verifier,
+        )
+        .unwrap();
+    eprintln!(
+        "fhegg canonical-generator profile: fresh-public-verify={:?}",
+        fresh_verify_started.elapsed()
+    );
+
+    let cached_inputs_started = Instant::now();
+    let (cached_certificate, cached_shares) =
+        prepare_inputs(&session, &owner_keys, &worker_keys, 0x68);
+    // The certificates contain randomized zero-knowledge proofs, so their
+    // bytes are intentionally not a stable comparison oracle.  What must be
+    // identical across the fresh/cache generator lifecycles is the public
+    // statement: the owner commitments and every worker-share commitment.
+    fresh_certificate.verify(&session).unwrap();
+    cached_certificate.verify(&session).unwrap();
+    assert_eq!(
+        cached_certificate.joint_input_commitment().unwrap(),
+        fresh_certificate.joint_input_commitment().unwrap()
+    );
+    for owner in 0..ORDER_COUNT {
+        assert_eq!(
+            cached_certificate.owner_commitment(owner),
+            fresh_certificate.owner_commitment(owner)
+        );
+        for worker in 0..session.n_workers() {
+            assert_eq!(
+                cached_certificate.share_commitment(owner, worker),
+                fresh_certificate.share_commitment(owner, worker)
+            );
+        }
+    }
+    eprintln!(
+        "fhegg canonical-generator profile: cached-input-preparation={:?}",
+        cached_inputs_started.elapsed()
+    );
+    let cold_init_started = Instant::now();
+    warm_production_generators_for_test();
+    eprintln!(
+        "fhegg canonical-generator profile: cold-cache-init={:?}",
+        cold_init_started.elapsed()
+    );
+    let cached_prove_started = Instant::now();
+    let cached_contributions =
+        canonical_contributions(&session, &cached_certificate, &worker_keys, cached_shares);
+    eprintln!(
+        "fhegg canonical-generator profile: warm-prove-three={:?}",
+        cached_prove_started.elapsed()
+    );
+    let cached_envelope =
+        envelope_from_contributions(&session, &cached_certificate, cached_contributions);
+    let cached_request = ShareBoundProverRequest::new(
+        &session,
+        &cached_certificate,
+        canonical_share_opening_protocol_id(),
+    )
+    .unwrap();
+    let cached_verifier = CanonicalShareOpeningVerifier::new(&cached_certificate).unwrap();
+    let cached_verify_started = Instant::now();
+    cached_envelope
+        .verify_backend(
+            &session,
+            &cached_request,
+            &cached_certificate,
+            &cached_verifier,
+        )
+        .unwrap();
+    eprintln!(
+        "fhegg canonical-generator profile: warm-public-verify={:?}",
+        cached_verify_started.elapsed()
+    );
 }
 
 #[test]
