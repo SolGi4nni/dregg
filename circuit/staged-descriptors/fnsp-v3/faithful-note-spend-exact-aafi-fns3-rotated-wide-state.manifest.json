@@ -1,0 +1,19 @@
+{
+  "artifact": "circuit/staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json",
+  "constraint_count": 1258,
+  "descriptor_sha256": "dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e",
+  "emitter": "metatheory/EmitExactNullifierAafiRotatedState.lean",
+  "ir": 2,
+  "lean_definition": "Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld.exactNullifierAafiRotatedStateDescriptor",
+  "name": "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state",
+  "public_input_count": 76,
+  "status": "staged-unregistered-no-vk",
+  "table_ids": [
+    0,
+    9,
+    1,
+    84,
+    85
+  ],
+  "trace_width": 3760
+}
