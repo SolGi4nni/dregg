@@ -244,6 +244,7 @@ pub mod bridge_action_witness;
 pub mod derivation_air;
 pub mod effect_action_air;
 pub mod exact_nullifier_aafi;
+pub mod exact_nullifier_aafi_rotated_trace;
 pub mod exact_nullifier_aafi_trace;
 pub mod fold_types;
 #[allow(deprecated)]
