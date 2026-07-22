@@ -402,10 +402,11 @@ pub fn hash_many(inputs: &[BabyBear]) -> BabyBear {
 /// the entire input. (Conservative vs reading `state[0..8]` from one final state, which would expose 4
 /// capacity felts; the squeeze-permute-squeeze keeps every output a rate-position squeeze.)
 ///
-/// THIS IS A STANDALONE PRIMITIVE — it is NOT yet wired into the live commitment. A faithful commitment
-/// also requires the Merkle–Damgård CHAIN's intermediate accumulator to be 8 felts wide (else an
-/// adversary collides a 31-bit intermediate carrier); see `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`. Bolting
-/// this onto only the final squeeze would be a laundered widening.
+/// This primitive is live in the exact fields/nullifier trees, where every
+/// intermediate Merkle node is itself an eight-felt sponge digest.  It must
+/// not be bolted only onto the final squeeze of a one-felt chain: that would
+/// merely launder a 31-bit intermediate collision.  See
+/// `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`.
 pub fn hash_many_8(inputs: &[BabyBear]) -> [BabyBear; 8] {
     let rate = 4;
     let mut state = Poseidon2State::new();

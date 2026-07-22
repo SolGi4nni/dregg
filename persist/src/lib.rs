@@ -116,7 +116,7 @@ pub use snapshot::{Snapshot, SnapshotHead};
 /// `pub(crate)` copy in `blocklace_sync.rs` + a byte-for-byte replica in
 /// `starbridge-v2/src/persistence.rs`; the M4 "shared pub fn lift" tail).
 ///
-/// `BLAKE3-derive-key("dregg-ledger-root-v2")` over the cells sorted by id,
+/// `BLAKE3-derive-key("dregg-ledger-root-v3")` over the cells sorted by id,
 /// length-prefixed, each leaf `BLAKE3(postcard(WHOLE cell))` — committing the whole
 /// cell (public_key / token_id / capabilities / lifecycle / state), so two ledgers
 /// that finalized the same turns but ended with divergent cell CONTENT (not just
@@ -152,7 +152,7 @@ pub fn canonical_ledger_leaves(ledger: &dregg_cell::Ledger) -> Vec<([u8; 32], [u
 /// re-hashing cells; the fold order (len prefix, then id then leaf-hash per entry)
 /// is fixed and load-bearing.
 pub fn canonical_ledger_root_from_leaves(entries: &[([u8; 32], [u8; 32])]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v3");
     hasher.update(&(entries.len() as u64).to_le_bytes());
     for (id, h) in entries {
         hasher.update(id);
@@ -238,6 +238,10 @@ pub struct PersistentStore {
 }
 
 impl PersistentStore {
+    /// Canonical-state re-genesis epoch installed in [`tables::METADATA`].
+    /// Epoch 11 pairs the exact fields-root leaf with ledger-root v3.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 11;
+
     /// Open a persistent store backed by a file on disk.
     ///
     /// Creates the file and all necessary tables if they don't exist.
@@ -245,6 +249,7 @@ impl PersistentStore {
         let db = Database::create(path).map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        store.enforce_canonical_state_schema_epoch()?;
         // This migration must precede any generic index rebuild: once a legacy
         // store has compacted records, their write sets are unavailable and an
         // absent provenance baseline is unreconstructable (fail before mutating
@@ -270,12 +275,74 @@ impl PersistentStore {
             .map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        store.enforce_canonical_state_schema_epoch()?;
         store.migrate_per_cell_receipt_head_index_v1()?;
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
         Ok(store)
+    }
+
+    /// Install or validate the v11 canonical-state epoch before any migration
+    /// mutates secondary indexes.  An unmarked store is accepted only when all
+    /// durable authorities capable of carrying cell/ledger state are empty.
+    /// This is deliberately a re-genesis gate, not an in-place reinterpretation
+    /// of V10 fields roots or V2 ledger roots.
+    fn enforce_canonical_state_schema_epoch(&self) -> Result<()> {
+        let read = self.db.begin_read()?;
+        let (installed, commit_cursor) = {
+            let metadata = read.open_table(tables::METADATA)?;
+            (
+                metadata
+                    .get(tables::META_CANONICAL_STATE_SCHEMA_EPOCH)?
+                    .map(|value| value.value()),
+                metadata
+                    .get(tables::META_COMMIT_CURSOR)?
+                    .map(|value| value.value())
+                    .unwrap_or(0),
+            )
+        };
+
+        if let Some(epoch) = installed {
+            if epoch == Self::CANONICAL_STATE_SCHEMA_EPOCH {
+                return Ok(());
+            }
+            return Err(StoreError::Integrity(format!(
+                "canonical state schema epoch {epoch} is incompatible with required epoch {}; \
+                 re-genesis is required",
+                Self::CANONICAL_STATE_SCHEMA_EPOCH
+            )));
+        }
+
+        let authority_populated = commit_cursor != 0
+            || !read.open_table(tables::COMMIT_LOG)?.is_empty()?
+            || !read.open_table(tables::IDX_CELL_BY_ID)?.is_empty()?
+            || !read.open_table(tables::CHECKPOINTS)?.is_empty()?
+            || !read.open_table(tables::LEDGER_CHECKPOINTS)?.is_empty()?
+            || !read.open_table(tables::ATTESTED_ROOTS)?.is_empty()?
+            || !read.open_table(tables::BLOCKLACE_BLOCKS)?.is_empty()?
+            || !read.open_table(tables::RECEIPT_CHAIN)?.is_empty()?;
+        drop(read);
+
+        if authority_populated {
+            return Err(StoreError::Integrity(
+                "populated store has no canonical state schema epoch; refusing to reinterpret \
+                 pre-v11 fields roots / pre-v3 ledger roots (re-genesis required)"
+                    .into(),
+            ));
+        }
+
+        let write = self.db.begin_write()?;
+        {
+            let mut metadata = write.open_table(tables::METADATA)?;
+            metadata.insert(
+                tables::META_CANONICAL_STATE_SCHEMA_EPOCH,
+                Self::CANONICAL_STATE_SCHEMA_EPOCH,
+            )?;
+        }
+        write.commit()?;
+        Ok(())
     }
 
     /// Initialize all tables in the database.

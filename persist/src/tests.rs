@@ -6,12 +6,149 @@
 use crate::federation::{PublicKey, Signature, StoredAttestedRoot};
 use crate::{PersistentStore, StoreError};
 
+// The browser cannot link redb, so Starbridge carries a wasm-safe copy of the
+// pure ledger-root function. Compile that copy in this native authority crate's
+// test target and pin it byte-for-byte to the canonical implementation.
+#[path = "../../starbridge-v2/src/persistence_wasm.rs"]
+mod starbridge_wasm_persistence;
+
 // =============================================================================
 // Helpers
 // =============================================================================
 
 fn new_store() -> PersistentStore {
     PersistentStore::open_in_memory().expect("failed to open in-memory store")
+}
+
+#[test]
+fn fresh_store_is_sealed_to_canonical_state_epoch_11() {
+    let store = new_store();
+    let read = store.db.begin_read().unwrap();
+    let metadata = read.open_table(crate::tables::METADATA).unwrap();
+    assert_eq!(
+        metadata
+            .get(crate::tables::META_CANONICAL_STATE_SCHEMA_EPOCH)
+            .unwrap()
+            .map(|value| value.value()),
+        Some(PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH)
+    );
+}
+
+#[test]
+fn canonical_state_epoch_refuses_populated_unmarked_pre_v11_store_on_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pre-v11.redb");
+    {
+        let store = PersistentStore::open(&path).unwrap();
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut metadata = write.open_table(crate::tables::METADATA).unwrap();
+            metadata
+                .remove(crate::tables::META_CANONICAL_STATE_SCHEMA_EPOCH)
+                .unwrap();
+            drop(metadata);
+            let mut log = write.open_table(crate::tables::COMMIT_LOG).unwrap();
+            log.insert(0, b"pre-v11-authority".as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+    }
+
+    let error = match PersistentStore::open(&path) {
+        Ok(_) => panic!("populated unmarked pre-v11 store must be refused"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, StoreError::Integrity(message)
+        if message.contains("re-genesis required")));
+}
+
+#[test]
+fn canonical_state_epoch_refuses_populated_unmarked_cell_index_on_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pre-v11-cell-index.redb");
+    {
+        let store = PersistentStore::open(&path).unwrap();
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut metadata = write.open_table(crate::tables::METADATA).unwrap();
+            metadata
+                .remove(crate::tables::META_CANONICAL_STATE_SCHEMA_EPOCH)
+                .unwrap();
+            drop(metadata);
+
+            let mut cell_index = write.open_table(crate::tables::IDX_CELL_BY_ID).unwrap();
+            cell_index
+                .insert(&[7u8; 32], b"pre-v11-cell-snapshot".as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+    }
+
+    let error = match PersistentStore::open(&path) {
+        Ok(_) => panic!("unmarked pre-v11 cell index must be refused"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, StoreError::Integrity(message)
+        if message.contains("re-genesis required")));
+}
+
+#[test]
+fn mismatched_canonical_state_epoch_is_refused_on_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("wrong-epoch.redb");
+    {
+        let store = PersistentStore::open(&path).unwrap();
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut metadata = write.open_table(crate::tables::METADATA).unwrap();
+            metadata
+                .insert(crate::tables::META_CANONICAL_STATE_SCHEMA_EPOCH, 10)
+                .unwrap();
+        }
+        write.commit().unwrap();
+    }
+
+    let error = match PersistentStore::open(&path) {
+        Ok(_) => panic!("mismatched canonical-state epoch must be refused"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, StoreError::Integrity(message)
+        if message.contains("epoch 10") && message.contains("re-genesis")));
+}
+
+#[test]
+fn canonical_ledger_root_uses_v3_domain() {
+    let leaves = vec![([1u8; 32], [2u8; 32])];
+    let root = crate::canonical_ledger_root_from_leaves(&leaves);
+
+    let mut v3 = blake3::Hasher::new_derive_key("dregg-ledger-root-v3");
+    v3.update(&1u64.to_le_bytes());
+    v3.update(&leaves[0].0);
+    v3.update(&leaves[0].1);
+    assert_eq!(root, *v3.finalize().as_bytes());
+
+    let mut v2 = blake3::Hasher::new_derive_key("dregg-ledger-root-v2");
+    v2.update(&1u64.to_le_bytes());
+    v2.update(&leaves[0].0);
+    v2.update(&leaves[0].1);
+    assert_ne!(root, *v2.finalize().as_bytes());
+}
+
+#[test]
+fn canonical_ledger_root_matches_starbridge_wasm_copy() {
+    let empty = dregg_cell::Ledger::new();
+    assert_eq!(
+        crate::canonical_ledger_root(&empty),
+        starbridge_wasm_persistence::canonical_ledger_root(&empty)
+    );
+
+    let mut populated = dregg_cell::Ledger::new();
+    populated
+        .insert_cell(dregg_cell::Cell::new([3u8; 32], [9u8; 32]))
+        .unwrap();
+    assert_eq!(
+        crate::canonical_ledger_root(&populated),
+        starbridge_wasm_persistence::canonical_ledger_root(&populated)
+    );
 }
 
 // =============================================================================

@@ -4499,7 +4499,7 @@ mod tests {
     // =========================================================================
 
     /// Commit `n` turns at ascending heights, each touching a DISTINCT cell, with
-    /// every record's `ledger_root` set to the canonical (v2) root of the
+    /// every record's `ledger_root` set to the canonical (v3) root of the
     /// reconstructed prefix THROUGH that turn — i.e. a genuine, self-consistent
     /// log where `recover_to_last_consistent` finds the head converging.
     fn commit_canonical(store: &PersistentStore, n: u64) {

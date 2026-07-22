@@ -18,13 +18,14 @@ rosters, and config blobs (`persist/src/lib.rs:3`). The entry point is
 `canonical_ledger_root(ledger)` is the byte-pinned full-ledger commitment both
 the node (attested-root convergence) and the single-image World (durable-reopen
 convergence) check against (`persist/src/lib.rs:78`). It is
-`BLAKE3-derive-key("dregg-ledger-root-v2")` over cells sorted by id,
+`BLAKE3-derive-key("dregg-ledger-root-v3")` over cells sorted by id,
 length-prefixed, each leaf `BLAKE3(postcard(WHOLE cell))` — committing the whole
 cell (key / token / capabilities / lifecycle / state), so two ledgers that
 finalized the same turns but diverged in cell CONTENT produce DIFFERENT roots
 (`persist/src/lib.rs:62`, `persist/src/lib.rs:78`). Byte-stability is
-load-bearing; the construction is fixed without a domain bump
-(`persist/src/lib.rs:74`).
+load-bearing within an epoch. V3 is the explicit v11 exact-fields re-genesis
+domain; the store refuses populated unmarked, pre-v11, or mismatched-epoch state
+instead of silently reinterpreting it (`persist/src/lib.rs`).
 
 ## The commit log — the recovery spine
 

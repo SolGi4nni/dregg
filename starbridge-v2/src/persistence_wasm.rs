@@ -82,7 +82,7 @@ impl WorldPersist {
 
 /// The durable convergence root — the genuine pure implementation (the same
 /// construction as `dregg_persist::canonical_ledger_root`: domain
-/// `"dregg-ledger-root-v2"`, sort-by-id, length-prefix, whole-cell postcard
+/// `"dregg-ledger-root-v3"`, sort-by-id, length-prefix, whole-cell postcard
 /// leaves), copied here because `dregg-persist` is not in the wasm graph. Depends
 /// only on wasm-safe crates (`dregg_cell` + `postcard` + `blake3`).
 pub fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
@@ -94,7 +94,7 @@ pub fn canonical_ledger_root(ledger: &dregg_cell::Ledger) -> [u8; 32] {
         })
         .collect();
     entries.sort_by_key(|a| a.0);
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v2");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg-ledger-root-v3");
     hasher.update(&(entries.len() as u64).to_le_bytes());
     for (id, h) in &entries {
         hasher.update(id);

@@ -98,6 +98,13 @@ use crate::state::{CellState, FieldVisibility};
 /// anchor checked against the raw key carried by a signed turn; it must move the
 /// ledger root independently of capability-snapshot `delegation_epoch`.
 ///
+/// `v10 → v11` (exact fields root): the `fields_root` limb now commits the
+/// raw numeric `u64` key and all 32 value bytes through canonical `u16` limbs
+/// before Poseidon2 compression.  This removes the old zero-work `+p` aliases
+/// in both `field_key_hash` and the single-felt value fold.  The eight-felt
+/// carrier geometry is unchanged, but every fields root and its dependent
+/// state/ledger commitment belongs to a new re-genesis epoch.
+///
 /// NB — this `v10` is the BLAKE3 *context-string* version (an axis that has
 /// counted v1→v9 over the commitment's history); it is ORTHOGONAL to the
 /// rotated-Poseidon2 commitment's `V9_*` constants below (which name the
@@ -112,7 +119,7 @@ use crate::state::{CellState, FieldVisibility};
 /// would not meaningfully reflect) a tombstone bump. The cryptographic
 /// invalidation of stale post-revoke roots is enforced by the changed cap-root
 /// VALUE flowing into this commitment's PI face, not by a VK-string change.
-pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v10";
+pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v11";
 
 /// Domain-separation context for the canonical capability-set root.
 ///
@@ -198,7 +205,7 @@ fn visibility_byte(vis: FieldVisibility) -> u8 {
 /// initial state. `Hasher::clone` copies that keyed state, so cloning + absorbing
 /// produces output BYTE-IDENTICAL to a fresh `new_derive_key` + absorbing — but
 /// skips re-deriving the key (an extra BLAKE3 compression, ~50ns/call) on every
-/// per-cell commitment. The context string is fixed (`v9`), so the derived key is
+/// per-cell commitment. The context string is fixed (`v11`), so the derived key is
 /// a process constant.
 fn canonical_commitment_base() -> blake3::Hasher {
     static BASE: std::sync::OnceLock<blake3::Hasher> = std::sync::OnceLock::new();
@@ -2178,6 +2185,16 @@ mod tests {
         hasher.update(cell.id.as_bytes());
         hasher.update(&cell.public_key);
         hasher.update(&cell.token_id);
+        match &cell.pq_identity {
+            Some(identity) => {
+                hasher.update(&[1]);
+                hasher.update(&identity.key_epoch.to_le_bytes());
+                hasher.update(&identity.ml_dsa_key_commitment);
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
         let mode_byte: u8 = match cell.mode {
             crate::cell::CellMode::Hosted => 0,
             crate::cell::CellMode::Sovereign => 1,

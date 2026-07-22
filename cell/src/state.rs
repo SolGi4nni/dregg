@@ -5,6 +5,7 @@ use dregg_circuit::heap_root::{
     CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf,
     compute_canonical_heap_root_8 as compute_canonical_heap_root_8_circuit, heap_addr,
 };
+use dregg_circuit::openable_fields_root::{CanonicalExactFieldsTree8, ExactFieldsLeaf};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -407,12 +408,46 @@ pub fn empty_system_roots_digest() -> [u8; 32] {
 /// Domain-separation context for the user-field-map keyed digest
 /// ([`CellState::fields_root`]). Distinct from the canonical-state-commitment
 /// context so a map root can never be confused with a full-cell commitment.
-pub const FIELDS_ROOT_CONTEXT: &str = "dregg-cell:fields-root v1";
+pub const FIELDS_ROOT_CONTEXT: &str = "dregg-cell:fields-root v2-exact";
+
+/// The canonical V2 leaf set for a user-field map.  Every raw `u64` key and
+/// every bit of each 32-byte value survives into sub-modulus `u16` limbs in
+/// [`ExactFieldsLeaf::preimage`].  The refusal-audit key is always represented:
+/// as a PRESENT leaf when the map carries it, otherwise as an explicit
+/// RESERVED leaf (which is distinct from a present all-zero value).
+pub fn exact_fields_root_leaves(map: &BTreeMap<u64, FieldElement>) -> Vec<ExactFieldsLeaf> {
+    let mut leaves: Vec<ExactFieldsLeaf> = map
+        .iter()
+        .map(|(&key, &value)| ExactFieldsLeaf::present(key, value))
+        .collect();
+    if !map.contains_key(&REFUSAL_AUDIT_EXT_KEY) {
+        leaves.push(ExactFieldsLeaf::reserved(REFUSAL_AUDIT_EXT_KEY));
+    }
+    leaves
+}
+
+/// Build the canonical exact V2 fields tree.  This is a flag-day schema: it
+/// has no compatibility acceptance for the modular-folded V1 leaf.  Duplicate
+/// keys cannot arise from `BTreeMap`; capacity overflow still fails loudly.
+pub fn canonical_exact_fields_tree_8(
+    map: &BTreeMap<u64, FieldElement>,
+) -> CanonicalExactFieldsTree8 {
+    CanonicalExactFieldsTree8::try_new(exact_fields_root_leaves(map), HEAP_TREE_DEPTH)
+        .expect("cell fields map exceeds the exact V2 tree contract")
+}
+
+/// The exact-encoding V2 root.  The leaf preimage is injective in the raw key
+/// and value bytes; the eight-felt Merkle root remains a cryptographic digest,
+/// so its guarantee is collision resistance rather than literal injectivity.
+pub fn compute_canonical_exact_fields_root_8(map: &BTreeMap<u64, FieldElement>) -> Faithful8 {
+    canonical_exact_fields_tree_8(map).root8()
+}
 
 /// The sorted-tree leaf set committing a user-field map, in the OPENABLE
-/// scheme. Each overflow entry `(key, value)` becomes a [`HeapLeaf`] keyed by
-/// the domain-tagged sort-key felt [`field_key_hash`] and valued by the folded
-/// 32-byte field value. The cell that can refuse carries the
+/// legacy V1 scheme. Each overflow entry `(key, value)` becomes a [`HeapLeaf`]
+/// keyed by the lossy sort-key felt [`field_key_hash`] and valued by a
+/// modular-folded 32-byte field value. Both encodings have concrete `+p`
+/// aliases; new code must use [`exact_fields_root_leaves`]. The cell that can refuse carries the
 /// [`REFUSAL_AUDIT_EXT_KEY`] slot RESERVED (a position-stable value-ZERO leaf)
 /// so the in-circuit refusal map-op is a value WRITE at a present key (the
 /// noteSpend `.write` discipline) rather than a re-indexing insert.
@@ -439,8 +474,8 @@ pub fn fields_root_leaves(map: &BTreeMap<u64, FieldElement>) -> Vec<HeapLeaf> {
 }
 
 /// The canonical sort-key felt for an overflow user-field key. A
-/// domain-tagged Poseidon2 image of the unbounded `u64` key (both 32-bit limbs
-/// fold, so [`REFUSAL_AUDIT_EXT_KEY`] = `2^32` binds its high limb). Mirrors
+/// legacy domain-tagged Poseidon2 image of a `u64` key after both `u32` chunks
+/// are reduced modulo BabyBear. It is not injective on `u64`. Mirrors
 /// `dregg_circuit::openable_fields_root::field_key_hash` — pinned equal by the
 /// differential — so the cell-side root and the in-circuit map-op address the
 /// same sorted positions.
@@ -466,9 +501,10 @@ pub fn empty_fields_root() -> Faithful8 {
 /// sorted Poseidon2 binary Merkle root (the SAME `dregg_circuit::heap_root`
 /// scheme the nullifier / accounts / heap roots use) over the
 /// [`fields_root_leaves`]. Sorted by sort-key (`field_key_hash`), sentinel-
-/// bracketed, so the root is order-canonical and injective (two distinct maps
-/// cannot share a root — the anti-vacuity guarantee, a `:= 0` stub is
-/// forbidden). An empty map yields the fixed [`empty_fields_root`].
+/// bracketed. This V1 encoding is order-canonical but not faithfully binding:
+/// distinct raw keys/values have concrete pre-hash modular aliases. The V2
+/// replacement is [`compute_canonical_exact_fields_root_8`]. An empty map
+/// yields the fixed [`empty_fields_root`].
 ///
 /// The returned 32 bytes are the [`crate::commitment::digest8_to_bytes32`]
 /// packing of the FULL native-`node8` 8-felt root ([`compute_canonical_fields_root_8`]):
@@ -487,23 +523,15 @@ pub fn compute_fields_root(map: &BTreeMap<u64, FieldElement>) -> [u8; 32] {
     crate::commitment::digest8_to_bytes32(compute_canonical_fields_root_8(map).limbs())
 }
 
-/// Compute the FAITHFUL 8-felt canonical fields root over a user-field map: the
-/// FULL native-`node8` (arity-16) sorted-Poseidon2 Merkle root the EffectVM
-/// circuit's 8-felt `fields_root` column GROUP carries (lane 0 ‖ lanes 1..7).
-/// Lane 0 is byte-identical to the lane-0 projection the historical scalar
-/// [`compute_fields_root`] committed; lanes 1..7 are the ~124-bit completion the
-/// faithful weld commits at the rotated-block limbs 36 (lane 0) ‖ 65,66,19..23
-/// (lanes 1..7) in `compute_rotated_pre_limbs`. The fields tree reuses the SAME
-/// [`HeapLeaf`] / `heap_node8` lane as cap/heap (cap/heap/fields all share one
-/// node8 lane), folded over the SAME [`fields_root_leaves`] the 1-felt
-/// [`compute_fields_root`] uses. Cell and circuit fold through the SAME
-/// implementation, so they agree lane-for-lane (the fields GENTIAN differential
-/// guards it). The 8-felt twin of [`compute_canonical_heap_root_8`] and
-/// [`crate::commitment::compute_canonical_capability_root_8`].
+/// Compute the V2 exact-encoding canonical fields root.  This is the v11
+/// canonical-state flag day: the former hashed-key/single-felt-value leaf is no
+/// longer accepted.  The raw numeric `u64` key and all 32 value bytes enter the
+/// leaf sponge as exact `u16` limbs, while the external root remains eight
+/// BabyBear felts so the state/PI carrier geometry does not change.
 pub fn compute_canonical_fields_root_8(
     map: &BTreeMap<u64, FieldElement>,
 ) -> dregg_circuit::Faithful8 {
-    compute_canonical_heap_root_8_circuit(fields_root_leaves(map))
+    compute_canonical_exact_fields_root_8(map)
 }
 
 /// The digest of the **empty** heap — the fixed `heap_root` constant a legacy
@@ -1370,7 +1398,8 @@ mod fields_map_tests {
             root_before, s.fields_root,
             "tampering a value must flip the root"
         );
-        // Distinct maps cannot share a root: a drop also flips it.
+        // This concrete map change flips the root (the root is a cryptographic
+        // digest, not a mathematically injective map encoding).
         s.set_field_ext(17, fe(1));
         let two_entries = s.fields_root;
         s.fields_map.remove(&17);
@@ -1392,6 +1421,47 @@ mod fields_map_tests {
         b.set_field_ext(17, fe(2));
         b.set_field_ext(16, fe(1));
         assert_eq!(a.fields_root, b.fields_root);
+    }
+
+    /// V11 value-alias tooth: the old `u32 -> BabyBear` value encoder identified
+    /// these two chunks because they differ by exactly the field modulus.  The
+    /// exact-u16 leaf must commit them differently.
+    #[test]
+    fn fields_root_v11_separates_concrete_value_mod_p_alias() {
+        let mut value_a = [0u8; 32];
+        value_a[..4].copy_from_slice(&0x0800_0000u32.to_le_bytes());
+        let mut value_b = [0u8; 32];
+        value_b[..4].copy_from_slice(&0x8000_0001u32.to_le_bytes());
+        assert_eq!(fold_bytes32(&value_a), fold_bytes32(&value_b));
+
+        let mut a = BTreeMap::new();
+        a.insert(16, value_a);
+        let mut b = BTreeMap::new();
+        b.insert(16, value_b);
+        assert_ne!(
+            compute_canonical_fields_root_8(&a),
+            compute_canonical_fields_root_8(&b)
+        );
+    }
+
+    /// V11 key-alias tooth: v1 reduced each `u32` half modulo BabyBear before
+    /// hashing, so `k` and `k + p` had the same address and one was silently
+    /// deduplicated.  Raw-u64 ordering plus exact limbs separates them.
+    #[test]
+    fn fields_root_v11_separates_concrete_key_mod_p_alias() {
+        const P: u64 = 2_013_265_921;
+        let key_a = 16u64;
+        let key_b = key_a + P;
+        assert_eq!(field_key_hash(key_a), field_key_hash(key_b));
+
+        let mut a = BTreeMap::new();
+        a.insert(key_a, [0x5a; 32]);
+        let mut b = BTreeMap::new();
+        b.insert(key_b, [0x5a; 32]);
+        assert_ne!(
+            compute_canonical_fields_root_8(&a),
+            compute_canonical_fields_root_8(&b)
+        );
     }
 
     /// An existing serialized cell (no `fields_root`/`fields_map`) deserializes

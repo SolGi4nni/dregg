@@ -77,8 +77,13 @@
 //! trusted post-cell.
 
 use crate::cap_root::{CAP_TREE_DEPTH, cap_node};
+use crate::exact_nullifier_aafi::{raw_to_u16_le, u64_to_u16_le};
+use crate::faithful8::Faithful8;
 use crate::field::BabyBear;
-use crate::poseidon2::hash_many;
+use crate::heap_root::HEAP_DIGEST_W;
+use crate::poseidon2::{hash_many, hash_many_8};
+use std::error::Error;
+use std::fmt;
 
 pub use crate::heap_root::{SENTINEL_MAX, SENTINEL_MIN};
 
@@ -88,18 +93,452 @@ pub use crate::heap_root::{SENTINEL_MAX, SENTINEL_MIN};
 /// re-rotates the tree in practice.
 pub const FIELDS_TREE_DEPTH: usize = CAP_TREE_DEPTH;
 
-/// The canonical sort key for an overflow field key: a domain-separated
-/// Poseidon2 image of the (unbounded) `u64` key, so the sorted-tree positions
-/// are well-distributed and a `u64` key (`REFUSAL_AUDIT_EXT_KEY = 2^32` is far
-/// above any app key) maps injectively into the BabyBear sort domain. Mirrors
-/// [`crate::cap_root::slot_hash`] in spirit (a hashed sort key, not the raw
-/// integer).
+// ============================================================================
+// EXACT FIELDS ROOT V2 — flag-day replacement for the modular-folded v1 leaf.
+// ============================================================================
+
+/// ASCII `FLD2`: domain of an exact fields-map leaf preimage.
+pub const EXACT_FIELDS_LEAF_DOMAIN: u32 = 0x464c_4432;
+/// ASCII `FLN2`: domain of an exact fields-map binary node preimage.
+pub const EXACT_FIELDS_NODE_DOMAIN: u32 = 0x464c_4e32;
+/// ASCII `FLE2`: domain of an exact fields-map padding leaf.
+pub const EXACT_FIELDS_EMPTY_DOMAIN: u32 = 0x464c_4532;
+
+/// A `u64` field key is carried as four little-endian `u16` limbs.  Each limb
+/// is strictly below the BabyBear modulus, so this encoding has no modular
+/// alias.  Tree ordering is nevertheless by the original numeric `u64`, not
+/// by a hash or by lexicographic little-endian limbs.
+pub const EXACT_FIELDS_KEY_LIMBS: usize = 4;
+/// A 32-byte field value is carried as sixteen little-endian `u16` limbs.
+/// This is an injective encoding *into the hash preimage*.  The resulting
+/// eight-felt digest/root is collision-resistant, not mathematically injective.
+pub const EXACT_FIELDS_VALUE_LIMBS: usize = 16;
+/// `domain || occupancy || key[4] || value[16]`.
+pub const EXACT_FIELDS_LEAF_PREIMAGE_LEN: usize =
+    1 + 1 + EXACT_FIELDS_KEY_LIMBS + EXACT_FIELDS_VALUE_LIMBS;
+
+/// Whether an exact field slot contains a value or is a protocol-reserved
+/// position.  A reserved zero slot and a present all-zero value are distinct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExactFieldsOccupancy {
+    Reserved = 0,
+    Present = 1,
+}
+
+/// One canonical fields-map record.  It retains the raw key and all 32 value
+/// bytes; no BabyBear reduction occurs before the leaf hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExactFieldsLeaf {
+    key: u64,
+    value: [u8; 32],
+    occupancy: ExactFieldsOccupancy,
+}
+
+impl ExactFieldsLeaf {
+    pub const fn present(key: u64, value: [u8; 32]) -> Self {
+        Self {
+            key,
+            value,
+            occupancy: ExactFieldsOccupancy::Present,
+        }
+    }
+
+    pub const fn reserved(key: u64) -> Self {
+        Self {
+            key,
+            value: [0; 32],
+            occupancy: ExactFieldsOccupancy::Reserved,
+        }
+    }
+
+    pub const fn key(&self) -> u64 {
+        self.key
+    }
+
+    pub const fn value(&self) -> [u8; 32] {
+        self.value
+    }
+
+    pub const fn occupancy(&self) -> ExactFieldsOccupancy {
+        self.occupancy
+    }
+
+    pub const fn is_present(&self) -> bool {
+        matches!(self.occupancy, ExactFieldsOccupancy::Present)
+    }
+
+    /// The exact, canonical 22-felt leaf preimage.  Every source bit survives
+    /// into a sub-modulus limb before cryptographic compression.
+    pub fn preimage(&self) -> [BabyBear; EXACT_FIELDS_LEAF_PREIMAGE_LEN] {
+        let mut out = [BabyBear::ZERO; EXACT_FIELDS_LEAF_PREIMAGE_LEN];
+        out[0] = BabyBear::new(EXACT_FIELDS_LEAF_DOMAIN);
+        out[1] = BabyBear::new(self.occupancy as u32);
+        for (dst, limb) in out[2..2 + EXACT_FIELDS_KEY_LIMBS]
+            .iter_mut()
+            .zip(u64_to_u16_le(self.key))
+        {
+            *dst = BabyBear::new(u32::from(limb));
+        }
+        for (dst, limb) in out[2 + EXACT_FIELDS_KEY_LIMBS..]
+            .iter_mut()
+            .zip(raw_to_u16_le(self.value))
+        {
+            *dst = BabyBear::new(u32::from(limb));
+        }
+        out
+    }
+
+    pub fn digest8(&self) -> [BabyBear; HEAP_DIGEST_W] {
+        hash_many_8(&self.preimage())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExactFieldsTreeError {
+    DuplicateKey(u64),
+    DuplicateReservedKey(u64),
+    NonCanonicalReservedValue(u64),
+    CapacityExceeded { entries: usize, capacity: usize },
+}
+
+impl fmt::Display for ExactFieldsTreeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateKey(key) => write!(f, "duplicate exact fields key {key}"),
+            Self::DuplicateReservedKey(key) => {
+                write!(f, "duplicate reserved exact fields key {key}")
+            }
+            Self::NonCanonicalReservedValue(key) => {
+                write!(f, "reserved exact fields key {key} carries a nonzero value")
+            }
+            Self::CapacityExceeded { entries, capacity } => write!(
+                f,
+                "exact fields map ({entries} entries) exceeds tree capacity {capacity}"
+            ),
+        }
+    }
+}
+
+impl Error for ExactFieldsTreeError {}
+
+/// Domain-separated binary node compression for exact fields roots.
+pub fn exact_fields_node8(
+    left: [BabyBear; HEAP_DIGEST_W],
+    right: [BabyBear; HEAP_DIGEST_W],
+) -> [BabyBear; HEAP_DIGEST_W] {
+    let mut preimage = [BabyBear::ZERO; 1 + 2 * HEAP_DIGEST_W];
+    preimage[0] = BabyBear::new(EXACT_FIELDS_NODE_DOMAIN);
+    preimage[1..1 + HEAP_DIGEST_W].copy_from_slice(&left);
+    preimage[1 + HEAP_DIGEST_W..].copy_from_slice(&right);
+    hash_many_8(&preimage)
+}
+
+pub fn exact_fields_empty_leaf8() -> [BabyBear; HEAP_DIGEST_W] {
+    hash_many_8(&[BabyBear::new(EXACT_FIELDS_EMPTY_DOMAIN)])
+}
+
+fn exact_fields_empty_roots(depth: usize) -> Vec<[BabyBear; HEAP_DIGEST_W]> {
+    let mut roots = Vec::with_capacity(depth + 1);
+    roots.push(exact_fields_empty_leaf8());
+    for level in 0..depth {
+        roots.push(exact_fields_node8(roots[level], roots[level]));
+    }
+    roots
+}
+
+/// Canonical exact fields tree.  Leaves are sorted by the raw numeric `u64`
+/// key.  Duplicate keys are refused; none are silently dropped or overwritten.
+#[derive(Clone, Debug)]
+pub struct CanonicalExactFieldsTree8 {
+    levels: Vec<Vec<[BabyBear; HEAP_DIGEST_W]>>,
+    sorted_leaves: Vec<ExactFieldsLeaf>,
+    empty_roots: Vec<[BabyBear; HEAP_DIGEST_W]>,
+    depth: usize,
+}
+
+impl CanonicalExactFieldsTree8 {
+    pub fn try_new(
+        mut leaves: Vec<ExactFieldsLeaf>,
+        depth: usize,
+    ) -> Result<Self, ExactFieldsTreeError> {
+        for leaf in &leaves {
+            if leaf.occupancy == ExactFieldsOccupancy::Reserved && leaf.value != [0; 32] {
+                return Err(ExactFieldsTreeError::NonCanonicalReservedValue(leaf.key));
+            }
+        }
+        leaves.sort_by_key(ExactFieldsLeaf::key);
+        if let Some(duplicate) = leaves.windows(2).find(|pair| pair[0].key == pair[1].key) {
+            return Err(ExactFieldsTreeError::DuplicateKey(duplicate[0].key));
+        }
+
+        let capacity = 1usize.checked_shl(depth as u32).unwrap_or(0);
+        if capacity == 0 || leaves.len() > capacity {
+            return Err(ExactFieldsTreeError::CapacityExceeded {
+                entries: leaves.len(),
+                capacity,
+            });
+        }
+
+        let empty_roots = exact_fields_empty_roots(depth);
+        let leaf_digests: Vec<[BabyBear; HEAP_DIGEST_W]> =
+            leaves.iter().map(ExactFieldsLeaf::digest8).collect();
+        let mut levels = Vec::with_capacity(depth + 1);
+        levels.push(leaf_digests);
+        for level in 0..depth {
+            let previous = levels.last().expect("exact fields level exists");
+            let next_len = previous.len().div_ceil(2);
+            let mut next = Vec::with_capacity(next_len);
+            for index in 0..next_len {
+                let left = previous[2 * index];
+                let right = previous
+                    .get(2 * index + 1)
+                    .copied()
+                    .unwrap_or(empty_roots[level]);
+                next.push(exact_fields_node8(left, right));
+            }
+            levels.push(next);
+        }
+
+        Ok(Self {
+            levels,
+            sorted_leaves: leaves,
+            empty_roots,
+            depth,
+        })
+    }
+
+    /// Flag-day convenience constructor.  Hostile/untrusted callers should
+    /// prefer [`Self::try_new`] so duplicate/capacity refusal stays typed.
+    pub fn new(leaves: Vec<ExactFieldsLeaf>, depth: usize) -> Self {
+        Self::try_new(leaves, depth).expect("invalid exact fields tree")
+    }
+
+    fn node8(&self, level: usize, index: usize) -> [BabyBear; HEAP_DIGEST_W] {
+        self.levels[level]
+            .get(index)
+            .copied()
+            .unwrap_or(self.empty_roots[level])
+    }
+
+    pub fn root8(&self) -> Faithful8 {
+        Faithful8::from_root8(self.node8(self.depth, 0))
+    }
+
+    pub fn sorted_leaves(&self) -> &[ExactFieldsLeaf] {
+        &self.sorted_leaves
+    }
+
+    pub const fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn position_of(&self, key: u64) -> Option<usize> {
+        self.sorted_leaves
+            .binary_search_by_key(&key, ExactFieldsLeaf::key)
+            .ok()
+    }
+
+    pub fn prove_membership(
+        &self,
+        position: usize,
+    ) -> Option<(Vec<[BabyBear; HEAP_DIGEST_W]>, Vec<u8>)> {
+        if position >= self.sorted_leaves.len() {
+            return None;
+        }
+        let mut siblings = Vec::with_capacity(self.depth);
+        let mut directions = Vec::with_capacity(self.depth);
+        let mut index = position;
+        for level in 0..self.depth {
+            siblings.push(self.node8(level, index ^ 1));
+            directions.push((index & 1) as u8);
+            index >>= 1;
+        }
+        Some((siblings, directions))
+    }
+
+    pub fn update_witness(&self, new_leaf: ExactFieldsLeaf) -> Option<ExactFieldsUpdateWitness8> {
+        let position = self.position_of(new_leaf.key)?;
+        let old_leaf = self.sorted_leaves[position];
+        let (siblings, directions) = self.prove_membership(position)?;
+        let new_root = recompose_exact_fields8(new_leaf.digest8(), &siblings, &directions);
+        Some(ExactFieldsUpdateWitness8 {
+            old_leaf,
+            new_leaf,
+            siblings,
+            directions,
+            old_root: self.root8().limbs(),
+            new_root,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExactFieldsUpdateWitness8 {
+    pub old_leaf: ExactFieldsLeaf,
+    pub new_leaf: ExactFieldsLeaf,
+    pub siblings: Vec<[BabyBear; HEAP_DIGEST_W]>,
+    pub directions: Vec<u8>,
+    pub old_root: [BabyBear; HEAP_DIGEST_W],
+    pub new_root: [BabyBear; HEAP_DIGEST_W],
+}
+
+impl ExactFieldsUpdateWitness8 {
+    pub fn is_genuine(&self) -> bool {
+        recompose_exact_fields8(self.old_leaf.digest8(), &self.siblings, &self.directions)
+            == self.old_root
+            && recompose_exact_fields8(self.new_leaf.digest8(), &self.siblings, &self.directions)
+                == self.new_root
+    }
+}
+
+pub fn recompose_exact_fields8(
+    mut current: [BabyBear; HEAP_DIGEST_W],
+    siblings: &[[BabyBear; HEAP_DIGEST_W]],
+    directions: &[u8],
+) -> [BabyBear; HEAP_DIGEST_W] {
+    assert_eq!(siblings.len(), directions.len());
+    for (sibling, direction) in siblings.iter().zip(directions) {
+        current = match direction {
+            0 => exact_fields_node8(current, *sibling),
+            1 => exact_fields_node8(*sibling, current),
+            other => panic!("exact fields direction {other} is not binary"),
+        };
+    }
+    current
+}
+
+/// Add protocol-reserved positions without hashing/deduplicating their raw
+/// keys.  A real entry wins over a reservation for the same key; duplicate
+/// reservation declarations are rejected.
+pub fn exact_fields_with_reserved(
+    mut entries: Vec<ExactFieldsLeaf>,
+    reserved_keys: &[u64],
+    depth: usize,
+) -> Result<CanonicalExactFieldsTree8, ExactFieldsTreeError> {
+    use std::collections::BTreeSet;
+
+    let present: BTreeSet<u64> = entries.iter().map(ExactFieldsLeaf::key).collect();
+    if present.len() != entries.len() {
+        entries.sort_by_key(ExactFieldsLeaf::key);
+        let duplicate = entries
+            .windows(2)
+            .find(|pair| pair[0].key == pair[1].key)
+            .expect("length mismatch implies duplicate");
+        return Err(ExactFieldsTreeError::DuplicateKey(duplicate[0].key));
+    }
+    let mut seen = BTreeSet::new();
+    for &key in reserved_keys {
+        if !seen.insert(key) {
+            return Err(ExactFieldsTreeError::DuplicateReservedKey(key));
+        }
+        if !present.contains(&key) {
+            entries.push(ExactFieldsLeaf::reserved(key));
+        }
+    }
+    CanonicalExactFieldsTree8::try_new(entries, depth)
+}
+
+#[cfg(test)]
+mod exact_v2_tests {
+    use super::*;
+
+    const TEST_DEPTH: usize = 4;
+    const BABYBEAR_PRIME: u32 = 2_013_265_921;
+
+    fn one_leaf_root(key: u64, value: [u8; 32]) -> [BabyBear; HEAP_DIGEST_W] {
+        CanonicalExactFieldsTree8::new(vec![ExactFieldsLeaf::present(key, value)], TEST_DEPTH)
+            .root8()
+            .limbs()
+    }
+
+    #[test]
+    fn concrete_mod_p_value_alias_is_separated() {
+        // The old 8×u32 -> BabyBear encoding identifies these first chunks:
+        // 0x0800_0000 + p = 0x8000_0001.  The v2 u16 preimage does not.
+        let mut value_a = [0u8; 32];
+        value_a[..4].copy_from_slice(&0x0800_0000u32.to_le_bytes());
+        let mut value_b = [0u8; 32];
+        value_b[..4].copy_from_slice(&0x8000_0001u32.to_le_bytes());
+
+        assert_eq!(
+            BabyBear::new(u32::from_le_bytes(value_a[..4].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(value_b[..4].try_into().unwrap())),
+            "canary must exercise the old +p alias"
+        );
+        assert_ne!(one_leaf_root(8, value_a), one_leaf_root(8, value_b));
+    }
+
+    #[test]
+    fn concrete_mod_p_key_alias_is_separated() {
+        let key_a = 8u64;
+        let key_b = key_a + u64::from(BABYBEAR_PRIME);
+        assert_eq!(
+            field_key_hash(key_a),
+            field_key_hash(key_b),
+            "canary must exercise the old one-felt key alias"
+        );
+        assert_ne!(one_leaf_root(key_a, [7; 32]), one_leaf_root(key_b, [7; 32]));
+    }
+
+    #[test]
+    fn duplicate_raw_key_is_refused_not_deduplicated() {
+        let error = CanonicalExactFieldsTree8::try_new(
+            vec![
+                ExactFieldsLeaf::present(9, [1; 32]),
+                ExactFieldsLeaf::present(9, [2; 32]),
+            ],
+            TEST_DEPTH,
+        )
+        .unwrap_err();
+        assert_eq!(error, ExactFieldsTreeError::DuplicateKey(9));
+    }
+
+    #[test]
+    fn raw_u64_numeric_order_is_canonical() {
+        let tree = CanonicalExactFieldsTree8::new(
+            vec![
+                ExactFieldsLeaf::present(0x0001_0000, [1; 32]),
+                ExactFieldsLeaf::present(0x0000_ffff, [2; 32]),
+            ],
+            TEST_DEPTH,
+        );
+        assert_eq!(tree.sorted_leaves()[0].key(), 0x0000_ffff);
+        assert_eq!(tree.sorted_leaves()[1].key(), 0x0001_0000);
+    }
+
+    #[test]
+    fn reserved_zero_and_present_zero_are_distinct() {
+        let reserved = one_leaf_root_for(ExactFieldsLeaf::reserved(12));
+        let present = one_leaf_root_for(ExactFieldsLeaf::present(12, [0; 32]));
+        assert_ne!(reserved, present);
+    }
+
+    fn one_leaf_root_for(leaf: ExactFieldsLeaf) -> [BabyBear; HEAP_DIGEST_W] {
+        CanonicalExactFieldsTree8::new(vec![leaf], TEST_DEPTH)
+            .root8()
+            .limbs()
+    }
+
+    #[test]
+    fn reserved_slot_update_witness_recomposes_both_roots() {
+        let tree = exact_fields_with_reserved(Vec::new(), &[17], TEST_DEPTH).unwrap();
+        let witness = tree
+            .update_witness(ExactFieldsLeaf::present(17, [0xa5; 32]))
+            .unwrap();
+        assert!(witness.is_genuine());
+        assert_ne!(witness.old_root, witness.new_root);
+    }
+}
+
+/// Legacy v1 sort-key domain.  The v1 encoder maps two `u32` chunks into two
+/// BabyBear felts before hashing, so it is **not injective** on `u64`: adding
+/// the BabyBear modulus to either chunk is a zero-work alias.  New roots use
+/// [`CanonicalExactFieldsTree8`] and order by the raw numeric key.
 const FIELDS_KEY_TAG: u32 = 0x0F1E_1D50; // "fields"
 
-/// The canonical sort key for an overflow field key `key: u64`. Folds both
-/// 32-bit limbs through the domain-tagged Poseidon2 sponge so the full 64-bit
-/// key binds (`REFUSAL_AUDIT_EXT_KEY` lives at `2^32`, so the high limb is
-/// load-bearing).
+/// Legacy v1 sort key.  Retained only while old descriptors are being
+/// regenerated; it does not faithfully bind all 64 source bits.
 pub fn field_key_hash(key: u64) -> BabyBear {
     hash_many(&[
         BabyBear::new(FIELDS_KEY_TAG),
@@ -108,16 +547,16 @@ pub fn field_key_hash(key: u64) -> BabyBear {
     ])
 }
 
-/// Fold a 32-byte field value into a single BabyBear felt: `hash_many` over the
-/// 8 little-endian limbs (`BabyBear::encode_hash`). The deployed audit value
-/// (and any overflow `FieldElement`) is 32 bytes; this is the canonical,
-/// collision-resistant fold (the same shape [`crate::cap_root::fold_bytes32`]
-/// uses for `target` / `breadstuff`).
+/// Legacy v1 32-byte fold.  `BabyBear::encode_hash` reduces each `u32` chunk
+/// modulo the field before hashing, so source bytes differing by `+p` in one
+/// chunk alias deterministically.  This is neither a faithful encoding nor a
+/// collision-resistant commitment to the source bytes.  V2 uses sixteen
+/// exact `u16` limbs in [`ExactFieldsLeaf::preimage`].
 pub fn fold_value32(bytes: &[u8; 32]) -> BabyBear {
     hash_many(&BabyBear::encode_hash(bytes))
 }
 
-/// One openable-fields entry: the sorted-tree leaf `(key_hash, value)`. The
+/// One legacy-v1 openable-fields entry: the sorted-tree leaf `(key_hash, value)`. The
 /// leaf digest is the arity-2 image `hash[key_hash, value]` — the same 2-field
 /// shape [`crate::heap_root::HeapLeaf`] uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

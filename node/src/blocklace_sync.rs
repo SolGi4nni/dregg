@@ -13124,5 +13124,5 @@ pub(crate) fn provision_transfer_destinations(
 // `Vec<([u8;32],[u8;32])>` sorting/hashing `*id.as_bytes()`. Since
 // `CellId(pub [u8;32])` derives `Ord` (sorts by `.0`) and `as_bytes()` returns
 // `&self.0`, the sort order and the hashed id bytes are identical — same domain
-// (`dregg-ledger-root-v2`), same length prefix, same whole-cell postcard leaves.
+// (`dregg-ledger-root-v3`), same length prefix, same whole-cell postcard leaves.
 pub(crate) use dregg_persist::canonical_ledger_root;

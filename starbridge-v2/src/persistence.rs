@@ -56,14 +56,10 @@ use dregg_turn::turn::{Turn, TurnReceipt};
 /// LANDED). The byte-for-byte replica that used to live here is RETIRED: the
 /// single-image World now calls the SAME implementation as the node durability
 /// spine, so there is one source of truth. The construction (domain
-/// `"dregg-ledger-root-v2"`, sort-by-id, length-prefix, whole-cell postcard leaves)
-/// is unchanged, so the recovered root stays byte-identical to the node's
+/// `"dregg-ledger-root-v3"`, sort-by-id, length-prefix, whole-cell postcard leaves)
+/// is the v11 canonical-state re-genesis domain, so the recovered root stays byte-identical to the node's
 /// `recovered_ledger_root()` — the fail-closed convergence check is preserved (and
 /// covered by `close_and_reopen_restores_the_exact_image`).
-///
-/// REMAINING (the node lane, not this workspace): node's own `pub(crate)` copy in
-/// `blocklace_sync.rs::canonical_ledger_root` is the last caller to migrate onto
-/// this shared fn — its edit, the byte-pin unchanged.
 pub use dregg_persist::canonical_ledger_root;
 
 /// The METADATA_BYTES config-key prefix for a durably-persisted input `Turn`,

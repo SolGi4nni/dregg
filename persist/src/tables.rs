@@ -23,6 +23,12 @@ pub const ATTESTED_ROOTS: TableDefinition<u64, &[u8]> = TableDefinition::new("at
 /// Value: u64 value (used for counters like audit_sequence).
 pub const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata");
 
+/// Re-genesis epoch of the canonical cell-state/ledger commitment schema.
+/// Epoch 11 introduces the exact fields-root leaf and ledger-root v3.  A
+/// missing marker is installable only on an authority-empty store; populated
+/// unmarked/older stores are refused rather than silently reinterpreted.
+pub const META_CANONICAL_STATE_SCHEMA_EPOCH: &str = "canonical_state_schema_epoch";
+
 /// Note commitment tree: position (u64) -> 32-byte commitment hash.
 ///
 /// Key: position in the append-only tree (0-based, monotonically increasing).
