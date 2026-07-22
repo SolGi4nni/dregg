@@ -231,10 +231,15 @@ Helm-through-multiparty deployment.
 5. **Finality-facing rejection observability.** Deterministic rejection records
    exist; operator, client, and game surfaces should expose them so an HTTP
    acknowledgement cannot be mistaken for a committed game turn.
-6. **Rejection/cursor atomicity.** A finalized-payload rejection is stored
-   deterministically, but its persistence is not welded to the in-memory served
-   cursor. A rejection-store failure is logged rather than preventing that
-   payload from being considered served.
+6. **Finalized-outcome/cursor atomicity.** The cursor currently marks a finalized
+   block served while `poll_finalized_blocks` is only constructing work, before
+   application has returned an outcome. A finalized-payload rejection is stored
+   separately, and its persistence failure is logged rather than preventing that
+   payload from being considered served. The exact-v3 branch also currently
+   collapses operational failures (stale local snapshot, proof worker failure,
+   store I/O, or commit failure) into the same permanent rejection path as a bad
+   payload. This is unsafe until the typed outcome and acknowledgement law in
+   `docs/deos/FINALIZED-EXECUTION-OUTCOME-ACK.md` is installed.
 
 ## Commit ledger for this repair wave
 
