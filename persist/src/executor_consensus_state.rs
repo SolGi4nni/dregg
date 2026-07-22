@@ -8,7 +8,8 @@
 
 use std::collections::HashSet;
 
-use redb::{ReadableTable, ReadableTableMetadata, WriteTransaction};
+use dregg_cell::factory::FactoryRegistrySnapshot;
+use redb::{ReadableTable, ReadableTableMetadata, TableDefinition, WriteTransaction};
 
 use crate::{PersistentStore, Result, StoreError, tables};
 
@@ -44,10 +45,15 @@ pub struct ExecutorAccumulatorSnapshot {
 /// forward (and means canonical empty at ordinal zero). It never means reset.
 /// `Some(bytes)` replaces the snapshot at this commit ordinal; bytes are the
 /// node's strictly decoded/re-encoded canonical rate-state envelope.
+///
+/// `factory_registry_snapshot` has the same sparse replacement semantics, but
+/// is decoded and canonicalized again at this persistence boundary. The two
+/// optional byte images share one hard size envelope.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FinalizedExecutorConsensusState {
     pub accumulators: ExecutorAccumulatorSnapshot,
     pub rate_limit_snapshot: Option<Vec<u8>>,
+    pub factory_registry_snapshot: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,19 +274,76 @@ fn prefix_agrees<T: PartialEq>(durable: &[T], submitted: &[T]) -> bool {
     submitted.get(..durable.len()) == Some(durable)
 }
 
-fn stage_rate_snapshot_in(
+fn latest_sparse_snapshot_before(
     write_txn: &WriteTransaction,
+    table_definition: TableDefinition<u64, &[u8]>,
+    ordinal: u64,
+) -> Result<Option<Vec<u8>>> {
+    let table = write_txn.open_table(table_definition)?;
+    let mut latest = None;
+    for entry in table.range(0..ordinal)? {
+        let (_, bytes) = entry.map_err(|error| StoreError::Database(error.to_string()))?;
+        latest = Some(bytes.value().to_vec());
+    }
+    Ok(latest)
+}
+
+fn validate_sparse_snapshot_envelope(
+    write_txn: &WriteTransaction,
+    ordinal: u64,
+    state: &FinalizedExecutorConsensusState,
+) -> Result<()> {
+    let carried_rate = if state.rate_limit_snapshot.is_none() {
+        latest_sparse_snapshot_before(write_txn, tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1, ordinal)?
+    } else {
+        None
+    };
+    let carried_factory = if state.factory_registry_snapshot.is_none() {
+        latest_sparse_snapshot_before(
+            write_txn,
+            tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1,
+            ordinal,
+        )?
+    } else {
+        None
+    };
+    let effective_rate = state
+        .rate_limit_snapshot
+        .as_deref()
+        .or(carried_rate.as_deref());
+    let effective_factory = state
+        .factory_registry_snapshot
+        .as_deref()
+        .or(carried_factory.as_deref());
+    let rate_bytes = effective_rate.map_or(0, <[u8]>::len);
+    let factory_bytes = effective_factory.map_or(0, <[u8]>::len);
+    let total = rate_bytes.checked_add(factory_bytes).ok_or_else(|| {
+        StoreError::Integrity("executor snapshot envelope byte length overflow".to_string())
+    })?;
+    if total > MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES {
+        return Err(StoreError::Integrity(format!(
+            "executor snapshot envelope is {total} bytes (maximum {MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES})"
+        )));
+    }
+    if let Some(bytes) = effective_factory {
+        FactoryRegistrySnapshot::from_canonical_bytes(bytes).map_err(|error| {
+            StoreError::Integrity(format!(
+                "executor factory-registry snapshot is not canonical: {error}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn stage_sparse_snapshot_in(
+    write_txn: &WriteTransaction,
+    table_definition: TableDefinition<u64, &[u8]>,
+    kind: &str,
     ordinal: u64,
     snapshot: Option<&[u8]>,
     fresh: bool,
 ) -> Result<()> {
-    if snapshot.is_some_and(|bytes| bytes.len() > MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES) {
-        return Err(StoreError::Integrity(format!(
-            "executor rate snapshot exceeds {} bytes",
-            MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES
-        )));
-    }
-    let mut table = write_txn.open_table(tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1)?;
+    let mut table = write_txn.open_table(table_definition)?;
     let existing = table.get(ordinal)?.map(|guard| guard.value().to_vec());
     match (fresh, snapshot, existing.as_deref()) {
         (true, Some(bytes), None) => {
@@ -288,16 +351,16 @@ fn stage_rate_snapshot_in(
         }
         (true, None, None) => {}
         (true, _, Some(_)) => {
-            return Err(StoreError::Integrity(
-                "fresh executor rate snapshot ordinal already exists".to_string(),
-            ));
+            return Err(StoreError::Integrity(format!(
+                "fresh executor {kind} snapshot ordinal already exists"
+            )));
         }
         (false, Some(bytes), Some(existing)) if existing == bytes => {}
         (false, None, None) => {}
         (false, _, _) => {
-            return Err(StoreError::Integrity(
-                "replayed executor rate snapshot differs from durable ordinal".to_string(),
-            ));
+            return Err(StoreError::Integrity(format!(
+                "replayed executor {kind} snapshot differs from durable ordinal"
+            )));
         }
     }
     Ok(())
@@ -313,6 +376,7 @@ pub(crate) fn stage_fresh_executor_consensus_state_in(
     state: &FinalizedExecutorConsensusState,
 ) -> Result<u64> {
     state.accumulators.validate_canonical()?;
+    validate_sparse_snapshot_envelope(write_txn, ordinal, state)?;
     let durable = load_accumulators_from_write(write_txn, durable_note_count)?;
     if !prefix_agrees(
         &durable.note_commitments,
@@ -391,10 +455,20 @@ pub(crate) fn stage_fresh_executor_consensus_state_in(
         let encoded = encode_frontier(frontier);
         frontiers.insert(ordinal, &encoded)?;
     }
-    stage_rate_snapshot_in(
+    stage_sparse_snapshot_in(
         write_txn,
+        tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1,
+        "rate-limit",
         ordinal,
         state.rate_limit_snapshot.as_deref(),
+        true,
+    )?;
+    stage_sparse_snapshot_in(
+        write_txn,
+        tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1,
+        "factory-registry",
+        ordinal,
+        state.factory_registry_snapshot.as_deref(),
         true,
     )?;
     Ok(frontier.notes)
@@ -408,6 +482,7 @@ pub(crate) fn verify_replayed_executor_consensus_state_in(
     state: &FinalizedExecutorConsensusState,
 ) -> Result<()> {
     state.accumulators.validate_canonical()?;
+    validate_sparse_snapshot_envelope(write_txn, ordinal, state)?;
     let frontiers = write_txn.open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
     let Some(frontier) = frontiers.get(ordinal)? else {
         return Err(StoreError::Integrity(
@@ -465,10 +540,20 @@ pub(crate) fn verify_replayed_executor_consensus_state_in(
                 .to_string(),
         ));
     }
-    stage_rate_snapshot_in(
+    stage_sparse_snapshot_in(
         write_txn,
+        tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1,
+        "rate-limit",
         ordinal,
         state.rate_limit_snapshot.as_deref(),
+        false,
+    )?;
+    stage_sparse_snapshot_in(
+        write_txn,
+        tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1,
+        "factory-registry",
+        ordinal,
+        state.factory_registry_snapshot.as_deref(),
         false,
     )
 }
@@ -512,6 +597,20 @@ pub(crate) fn truncate_executor_consensus_state_in(
             .collect::<Result<_>>()?;
         for ordinal in doomed {
             rates.remove(ordinal)?;
+        }
+    }
+    {
+        let mut factories = write_txn.open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)?;
+        let doomed: Vec<u64> = factories
+            .range(new_cursor..)?
+            .map(|entry| {
+                entry
+                    .map(|(ordinal, _)| ordinal.value())
+                    .map_err(|error| StoreError::Database(error.to_string()))
+            })
+            .collect::<Result<_>>()?;
+        for ordinal in doomed {
+            factories.remove(ordinal)?;
         }
     }
 
@@ -653,6 +752,45 @@ impl PersistentStore {
         }
         Ok(latest.map(|(_, bytes)| bytes))
     }
+
+    /// Latest sparse canonical factory-registry snapshot at or before
+    /// `commit_cursor - 1`. `None` is the canonical empty registry.
+    pub fn load_latest_factory_registry_snapshot_bytes(&self) -> Result<Option<Vec<u8>>> {
+        let cursor = self.commit_cursor()?;
+        if cursor == 0 {
+            return Ok(None);
+        }
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)?;
+        let mut latest = None;
+        for entry in table.range(0..cursor)? {
+            let (ordinal, bytes) =
+                entry.map_err(|error| StoreError::Database(error.to_string()))?;
+            latest = Some((ordinal.value(), bytes.value().to_vec()));
+        }
+        let Some((_, bytes)) = latest else {
+            return Ok(None);
+        };
+        FactoryRegistrySnapshot::from_canonical_bytes(&bytes).map_err(|error| {
+            StoreError::Integrity(format!(
+                "durable factory-registry snapshot is not canonical: {error}"
+            ))
+        })?;
+        Ok(Some(bytes))
+    }
+
+    /// Typed form of [`Self::load_latest_factory_registry_snapshot_bytes`].
+    pub fn load_latest_factory_registry_snapshot(&self) -> Result<Option<FactoryRegistrySnapshot>> {
+        self.load_latest_factory_registry_snapshot_bytes()?
+            .map(|bytes| {
+                FactoryRegistrySnapshot::from_canonical_bytes(&bytes).map_err(|error| {
+                    StoreError::Integrity(format!(
+                        "durable factory-registry snapshot is not canonical: {error}"
+                    ))
+                })
+            })
+            .transpose()
+    }
 }
 
 #[cfg(test)]
@@ -678,6 +816,15 @@ mod tests {
         }
     }
 
+    fn factory_bytes(epoch: u64) -> Vec<u8> {
+        FactoryRegistrySnapshot {
+            current_epoch: epoch,
+            ..FactoryRegistrySnapshot::default()
+        }
+        .to_canonical_bytes()
+        .unwrap()
+    }
+
     fn state_one(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
         FinalizedExecutorConsensusState {
             accumulators: ExecutorAccumulatorSnapshot {
@@ -694,11 +841,13 @@ mod tests {
                 bridged_nullifiers: vec![[3; 32]],
             },
             rate_limit_snapshot: rate.map(|bytes| bytes.to_vec()),
+            factory_registry_snapshot: Some(factory_bytes(7)),
         }
     }
 
     fn state_two(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
         let mut state = state_one(rate);
+        state.factory_registry_snapshot = Some(factory_bytes(8));
         state
             .accumulators
             .note_commitments
@@ -744,6 +893,18 @@ mod tests {
             store.load_latest_rate_limit_snapshot_bytes().unwrap(),
             Some(b"canonical-rate-v1".to_vec())
         );
+        assert_eq!(
+            store.load_latest_factory_registry_snapshot_bytes().unwrap(),
+            state.factory_registry_snapshot
+        );
+        assert_eq!(
+            store
+                .load_latest_factory_registry_snapshot()
+                .unwrap()
+                .unwrap()
+                .current_epoch,
+            7
+        );
 
         let mut commitments = CommitmentSet::from_records(
             restored
@@ -774,13 +935,14 @@ mod tests {
     fn late_atomic_failure_leaves_accumulators_and_cursor_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let store = PersistentStore::open(&dir.path().join("atomic-abort.redb")).unwrap();
+        let preexisting_factory = factory_bytes(99);
         {
             let write = store.db.begin_write().unwrap();
             {
-                let mut rates = write
-                    .open_table(tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1)
+                let mut factories = write
+                    .open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)
                     .unwrap();
-                rates.insert(0, b"preexisting".as_slice()).unwrap();
+                factories.insert(0, preexisting_factory.as_slice()).unwrap();
             }
             write.commit().unwrap();
         }
@@ -798,11 +960,22 @@ mod tests {
             store.load_executor_accumulator_snapshot().unwrap(),
             ExecutorAccumulatorSnapshot::default()
         );
+        assert_eq!(
+            store.load_latest_factory_registry_snapshot_bytes().unwrap(),
+            None
+        );
         let read = store.db.begin_read().unwrap();
         let rates = read
             .open_table(tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1)
             .unwrap();
-        assert_eq!(rates.get(0).unwrap().unwrap().value(), b"preexisting");
+        assert!(rates.get(0).unwrap().is_none());
+        let factories = read
+            .open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)
+            .unwrap();
+        assert_eq!(
+            factories.get(0).unwrap().unwrap().value(),
+            preexisting_factory.as_slice()
+        );
     }
 
     #[test]
@@ -836,6 +1009,20 @@ mod tests {
                 .commit_finalized_turn_with_executor_state(0, &record, &[[1; 32]], &omitted)
                 .is_err()
         );
+        let mut wrong_factory = state.clone();
+        wrong_factory.factory_registry_snapshot = Some(factory_bytes(8));
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(0, &record, &[[1; 32]], &wrong_factory)
+                .is_err()
+        );
+        let mut omitted_factory = state.clone();
+        omitted_factory.factory_registry_snapshot = None;
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(0, &record, &[[1; 32]], &omitted_factory)
+                .is_err()
+        );
 
         let store = PersistentStore::open(&dir.path().join("replay-none.redb")).unwrap();
         let state = state_one(None);
@@ -860,6 +1047,23 @@ mod tests {
             .bridged_nullifiers
             .push([3; 32]);
         assert!(duplicate_bridge.accumulators.validate_canonical().is_err());
+        let mut invalid_factory = state_one(None);
+        invalid_factory.factory_registry_snapshot = Some(b"not-a-factory-registry".to_vec());
+        let store = PersistentStore::open_in_memory().unwrap();
+        let write = store.db.begin_write().unwrap();
+        assert!(validate_sparse_snapshot_envelope(&write, 0, &invalid_factory).is_err());
+
+        let canonical_factory = factory_bytes(1);
+        let mut oversized = state_one(None);
+        oversized.rate_limit_snapshot = Some(vec![
+            0;
+            MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES
+                - canonical_factory.len()
+                + 1
+        ]);
+        oversized.factory_registry_snapshot = Some(canonical_factory);
+        assert!(validate_sparse_snapshot_envelope(&write, 0, &oversized).is_err());
+        drop(write);
 
         let dir = tempfile::tempdir().unwrap();
         let store = PersistentStore::open(&dir.path().join("legacy.redb")).unwrap();
@@ -910,5 +1114,14 @@ mod tests {
             store.load_latest_rate_limit_snapshot_bytes().unwrap(),
             Some(b"rate-one".to_vec())
         );
+        assert_eq!(
+            store.load_latest_factory_registry_snapshot_bytes().unwrap(),
+            first.factory_registry_snapshot
+        );
+        let read = store.db.begin_read().unwrap();
+        let factories = read
+            .open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)
+            .unwrap();
+        assert!(factories.get(1).unwrap().is_none());
     }
 }

@@ -71,6 +71,15 @@ pub const EXECUTOR_ACCUMULATOR_FRONTIERS_V1: TableDefinition<u64, &[u8; 24]> =
 pub const EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
     TableDefinition::new("executor_rate_limit_snapshots_v1");
 
+/// Sparse canonical factory-registry snapshots keyed by commit ordinal.
+///
+/// A present row replaces the preceding registry. Absence means carry forward;
+/// absence at ordinal zero means the canonical empty registry. Unlike the
+/// opaque rate snapshot, these bytes are strictly decoded and re-encoded by
+/// `dregg-cell` at the persistence boundary before they can be committed.
+pub const EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("executor_factory_registry_snapshots_v1");
+
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
 pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =
