@@ -146,6 +146,23 @@ impl PrivateBazaarXpAdapter {
         private_receipt: &PrivateClearingReceipt,
         hero: &DungeonWorldCell,
     ) -> Result<&'a PrivateBazaarPublicReceipt, PrivateBazaarGameAdapterError> {
+        let dispatching =
+            self.begin_dispatch(operation, journey, session, private_receipt, hero)?;
+        let applied = self.dispatch_to_target(dispatching, hero)?;
+        self.record_applied_and_install(applied, journey, session, private_receipt, hero)
+    }
+
+    /// Validate the complete target join and durably seal `Dispatching` before
+    /// any game-engine call. This split is the production worker's crash seam:
+    /// after this succeeds it must never call the target twice.
+    pub fn begin_dispatch(
+        &self,
+        operation: PreparedPrivateBazaarXp,
+        journey: &PrivateBazaarRaidJourney,
+        session: &DarkBazaarSession,
+        private_receipt: &PrivateClearingReceipt,
+        hero: &DungeonWorldCell,
+    ) -> Result<DispatchingPrivateBazaarXp, PrivateBazaarGameAdapterError> {
         journey.require_pending(session)?;
         validate_operation_target(
             &operation.authority,
@@ -159,17 +176,61 @@ impl PrivateBazaarXpAdapter {
             return Err(PrivateBazaarGameAdapterError::TargetChangedBeforeDispatch);
         }
 
-        let dispatch = self.authority_store.begin_dispatch(&operation.authority)?;
+        let dispatch_token = self.authority_store.begin_dispatch(&operation.authority)?;
+        Ok(DispatchingPrivateBazaarXp {
+            operation,
+            dispatch_token,
+        })
+    }
+
+    /// Execute one already-sealed target effect. Losing the returned opaque
+    /// handle is safe: restart recovery scans the target receipt chain by the
+    /// exact operation id and never redispatches a `Dispatching` operation.
+    pub fn dispatch_to_target(
+        &self,
+        dispatching: DispatchingPrivateBazaarXp,
+        hero: &DungeonWorldCell,
+    ) -> Result<AppliedPrivateBazaarXp, PrivateBazaarGameAdapterError> {
+        let effect = dispatching.operation.authority.effect();
         let receipt = gain_private_bazaar_xp(
             hero,
-            operation.authority.operation_id(),
+            dispatching.operation.authority.operation_id(),
             effect.expected_before(),
             effect.reward_amount(),
         )
         .map_err(|error| PrivateBazaarGameAdapterError::DispatchUncertain(error.to_string()))?;
+        Ok(AppliedPrivateBazaarXp {
+            dispatching,
+            receipt,
+        })
+    }
+
+    /// Verify and durably record the just-returned final receipt, commit the
+    /// one-shot authority, and publish only the viewer-blind journey receipt.
+    pub fn record_applied_and_install<'a>(
+        &self,
+        applied: AppliedPrivateBazaarXp,
+        journey: &'a mut PrivateBazaarRaidJourney,
+        session: &DarkBazaarSession,
+        private_receipt: &PrivateClearingReceipt,
+        hero: &DungeonWorldCell,
+    ) -> Result<&'a PrivateBazaarPublicReceipt, PrivateBazaarGameAdapterError> {
+        let AppliedPrivateBazaarXp {
+            dispatching,
+            receipt,
+        } = applied;
+        let operation = dispatching.operation;
+        validate_operation_target(
+            &operation.authority,
+            journey,
+            session,
+            private_receipt,
+            hero,
+        )?;
+        let effect = operation.authority.effect();
         let policy = operation.authority.policy();
         self.authority_store
-            .record_applied(dispatch, &receipt, |candidate| {
+            .record_applied(dispatching.dispatch_token, &receipt, |candidate| {
                 verify_private_bazaar_xp_receipt(
                     hero,
                     candidate,
@@ -254,6 +315,22 @@ pub struct PreparedPrivateBazaarXp {
     authority: PrivateBazaarExecutorAuthority,
 }
 
+/// Opaque state after the durable dispatch CAS and before the target receipt is
+/// recorded. It cannot be cloned into a second dispatch lane.
+#[derive(Debug)]
+pub struct DispatchingPrivateBazaarXp {
+    operation: PreparedPrivateBazaarXp,
+    dispatch_token: crate::private_bazaar_authority::PrivateBazaarDispatchToken,
+}
+
+/// Opaque result of exactly one target call. If the process dies before this is
+/// recorded, the target's immutable receipt index is the recovery authority.
+#[derive(Debug)]
+pub struct AppliedPrivateBazaarXp {
+    dispatching: DispatchingPrivateBazaarXp,
+    receipt: dregg_app_framework::TurnReceipt,
+}
+
 impl PreparedPrivateBazaarXp {
     pub const fn operation_id(&self) -> [u8; 32] {
         self.authority.operation_id()
@@ -281,6 +358,10 @@ impl ResumedPrivateBazaarXp {
 
     pub fn operation(&self) -> &PreparedPrivateBazaarXp {
         &self.operation
+    }
+
+    pub fn into_operation(self) -> PreparedPrivateBazaarXp {
+        self.operation
     }
 }
 

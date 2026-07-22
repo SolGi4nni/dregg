@@ -52,6 +52,8 @@ pub mod game_spine;
 pub mod player_worlds;
 #[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_live;
+#[cfg(feature = "private-bazaar-live")]
+pub mod private_bazaar_worker;
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub mod private_fhegg_game_consequence;
 pub mod seated;
@@ -79,6 +81,11 @@ pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 pub use private_bazaar_live::{
     PRIVATE_BAZAAR_RAID_TITLE, PrivateBazaarLiveDeployment, build_full_catalog_with_private_bazaar,
     full_catalog_host_with_private_bazaar,
+};
+#[cfg(feature = "private-bazaar-live")]
+pub use private_bazaar_worker::{
+    FinalizedPrivateBazaarReceipt, FinalizedPrivateBazaarReceiptSource, PrivateBazaarWorkerError,
+    PrivateBazaarWorkerListener, PrivateBazaarWorkerPoll, PrivateBazaarWorkerTargets,
 };
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub use private_fhegg_game_consequence::{

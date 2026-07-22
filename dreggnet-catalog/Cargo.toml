@@ -30,6 +30,7 @@ default = []
 private-bazaar-live = [
     "dreggnet-market/private-clearing",
     "dep:dungeon-on-dregg",
+    "dep:dregg-turn",
     "dep:dregg-types",
 ]
 # Typed hard-tech weld: a full BFV/HidingFRI/native-PQ Dark Bazaar authority
@@ -49,6 +50,7 @@ dreggnet-offerings = { path = "../dreggnet-offerings" }
 # Exact Mender-choice vocabulary for the private-fhEgg consequence gate. The
 # feature also enables the offering's independently verified raid assignment.
 dungeon-on-dregg = { path = "../dungeon-on-dregg", optional = true }
+dregg-turn = { path = "../turn", optional = true }
 # Persist-minted authority for the finalized faithful-note spend consumed by
 # the shielded-crown mechanic.  The type has private fields and is returned only
 # after the note/nullifier/receipt/root transaction is durable.

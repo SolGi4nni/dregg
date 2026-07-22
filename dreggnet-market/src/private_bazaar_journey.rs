@@ -543,6 +543,20 @@ impl PrivateBazaarRaidPolicy {
         )
     }
 
+    /// Worker-only routing helper for an out-of-band verified private receipt.
+    /// It reveals no winner and returns only the policy-pinned target cell that
+    /// the concrete game adapter will independently revalidate before dispatch.
+    /// Public frontends never receive the raw receipt required to call it.
+    pub fn worker_target_cell_for_verified_receipt(
+        &self,
+        receipt: &crate::private_clearing::PrivateClearingReceipt,
+    ) -> Result<dregg_types::CellId, PrivateBazaarJourneyError> {
+        Ok(self
+            .allocation_for_verified_receipt(receipt)?
+            .selected_member()
+            .character_cell)
+    }
+
     /// Offline/deployment tooling helper. Runtime code should load the returned
     /// digest from independent configuration, not recompute it from a request.
     pub fn reward_commitment_for_configuration(
