@@ -245,6 +245,15 @@ fn write_table_semantics(
         TableSem::UMemory => writer.u8(5),
         TableSem::UMemBoundary => writer.u8(6),
         TableSem::UMemBoundaryCohort => writer.u8(7),
+        TableSem::ExactPublicRows { rows } => {
+            writer.u8(8);
+            writer.sequence("TableSem::ExactPublicRows.rows", rows, |writer, row| {
+                writer.sequence("TableSem::ExactPublicRows.row", row, |writer, value| {
+                    writer.u32(*value);
+                    Ok(())
+                })
+            })?;
+        }
     }
     Ok(())
 }
@@ -693,6 +702,11 @@ fn read_table_semantics(reader: &mut Reader<'_>) -> Result<TableSem, CanonicalDe
         5 => Ok(TableSem::UMemory),
         6 => Ok(TableSem::UMemBoundary),
         7 => Ok(TableSem::UMemBoundaryCohort),
+        8 => Ok(TableSem::ExactPublicRows {
+            rows: reader.sequence("TableSem::ExactPublicRows.rows", |reader| {
+                reader.sequence("TableSem::ExactPublicRows.row", Reader::u32)
+            })?,
+        }),
         tag => Err(unknown("TableSem", tag)),
     }
 }
@@ -897,6 +911,9 @@ mod tests {
             TableSem::UMemory,
             TableSem::UMemBoundary,
             TableSem::UMemBoundaryCohort,
+            TableSem::ExactPublicRows {
+                rows: vec![vec![1, 10], vec![2, 20]],
+            },
         ];
         let tables = table_semantics
             .into_iter()

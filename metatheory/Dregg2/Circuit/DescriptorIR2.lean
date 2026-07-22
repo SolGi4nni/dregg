@@ -99,6 +99,11 @@ inductive RowSemantics where
   /-- One row per declared universal address: the `(domain, key)` boundary image
   (init/final `Option` cells), domain-major strictly increasing. -/
   | umemBoundaryRow
+  /-- A verifier-known finite multiset.  Every listed row is one unit-capacity
+  LogUp receive; duplicates are therefore meaningful multiplicities.  The
+  descriptor commits the complete row list, rather than merely naming a
+  prover-supplied membership relation. -/
+  | exactPublicRows (rows : List (List Nat))
   deriving Repr, DecidableEq
 
 /-- A declared table: id, display name, column arity, row semantics. -/
@@ -437,6 +442,39 @@ structure VmTrace where
   pub  : Assignment
   tf   : TraceFamily
 
+/-- Canonical field representatives carried by an `exactPublicRows` manifest,
+viewed in the integer denotation used by `VmTrace`. -/
+def exactPublicTable (rows : List (List Nat)) : Table :=
+  rows.map (List.map Int.ofNat)
+
+/-- A declared exact-public table has exactly its descriptor-carried multiset.
+Other row-semantics are enforced by their existing specialized global legs. -/
+def TableDef.publicContentsFaithful (td : TableDef) (tf : TraceFamily) : Prop :=
+  match td.sem with
+  | .exactPublicRows rows => tf td.id = exactPublicTable rows
+  | _ => True
+
+/-- Every exact-public table declaration is a complete contents commitment.
+This is strictly stronger than the row-local `Lookup.holdsAt` membership leg. -/
+def PublicTablesFaithful (d : EffectVmDescriptor2) (t : VmTrace) : Prop :=
+  ∀ td ∈ d.tables, td.publicContentsFaithful t.tf
+
+/-- Every row-local lookup occurrence targeting `table` in main-trace order. -/
+def lookupLog (d : EffectVmDescriptor2) (t : VmTrace) (table : TableId) : Table :=
+  t.rows.flatMap fun row =>
+    d.constraints.filterMap fun c =>
+      match c with
+      | .lookup l =>
+          if l.table = table then some (l.tuple.map (·.eval row)) else none
+      | _ => none
+
+/-- The LogUp balance required by an exact-public declaration: main lookups are
+the exact descriptor-carried multiset, not merely members of it. -/
+def PublicLookupBalanced (d : EffectVmDescriptor2) (t : VmTrace) : Prop :=
+  ∀ td ∈ d.tables, match td.sem with
+    | .exactPublicRows rows => (lookupLog d t td.id).Perm (exactPublicTable rows)
+    | _ => True
+
 /-- The all-zero assignment (off-the-end default; never semantically load-bearing on a
 well-formed trace). -/
 def zeroAsg : Assignment := fun _ => 0
@@ -620,6 +658,25 @@ structure Satisfied2 (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
   memBalanced : MemoryChecking.MemCheck minit mfin maddrs (memLog d t)
   memTableFaithful : t.tf .memory = (memLog d t).map opRow
   mapTableFaithful : t.tf .mapOps = mapLog d t
+
+/-- The exact-public extension of `Satisfied2`.  It is additive so existing
+descriptors retain their current denotation; a descriptor using
+`exactPublicRows` is interpreted through this stronger structure. -/
+structure Satisfied2Public (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace) : Prop extends Satisfied2 hash d minit mfin maddrs t where
+  publicTablesFaithful : PublicTablesFaithful d t
+  publicLookupBalanced : PublicLookupBalanced d t
+
+theorem Satisfied2Public.exact_lookup_perm
+    {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    {t : VmTrace} (h : Satisfied2Public hash d minit mfin maddrs t)
+    {td : TableDef} (htd : td ∈ d.tables) {rows : List (List Nat)}
+    (hsem : td.sem = .exactPublicRows rows) :
+    (lookupLog d t td.id).Perm (exactPublicTable rows) := by
+  have hbal := h.publicLookupBalanced td htd
+  simpa [hsem] using hbal
 
 /-- **Memory consistency of a satisfying witness — BLUM'S THEOREM APPLIED (no hypothesis).**
 A v2-satisfying trace's memory log is CONSISTENT against the boundary image: every read returns
@@ -1424,6 +1481,7 @@ def RowSemantics.tag : RowSemantics → String
   | .mapReconcile    => "map_ops"
   | .umemAccess      => "umemory"
   | .umemBoundaryRow => "umem_boundary"
+  | .exactPublicRows _ => "exact_public_rows"
 
 /-- The universal memory table: one row per universal state access
 (`[domain, key, present, value, prev_present, prev_value, prev_serial, kind]` = `uopRow`). -/
@@ -1440,6 +1498,8 @@ def TableDef.toJson (td : TableDef) : String :=
   (match td.sem with
    | .rangeLimb bits => ",\"bits\":" ++ toString bits
    | .permutation    => ",\"params\":" ++ chipParamsJson
+   | .exactPublicRows rows =>
+       ",\"rows\":" ++ jsonArray (jsonArray toString) rows
    | _ => "") ++ "}"
 
 /-- The map-op kind wire strings. -/
@@ -1525,6 +1585,66 @@ def demoV2 : EffectVmDescriptor2 :=
 -- grammar is THIS string's grammar; v1 strings (no `"ir"` key) parse as version 1 unchanged.
 #guard emitVmJson2 demoV2 ==
   "{\"name\":\"demo-v2\",\"ir\":2,\"trace_width\":2,\"public_input_count\":1,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":2,\"sem\":\"main\"},{\"id\":1,\"name\":\"poseidon2_chip\",\"arity\":25,\"sem\":\"poseidon2_chip\",\"params\":{\"field_modulus\":2013265921,\"d\":4,\"width\":16,\"sbox_degree\":7,\"sbox_registers\":1,\"half_full_rounds\":4,\"partial_rounds\":13,\"rate\":8,\"rc_source\":\"BABYBEAR_POSEIDON2_RC_16\",\"internal_diag_source\":\"BABYBEAR_POSEIDON2_INTERNAL_DIAG_16\"}},{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30},{\"id\":3,\"name\":\"memory\",\"arity\":5,\"sem\":\"memory\"},{\"id\":4,\"name\":\"map_ops\",\"arity\":5,\"sem\":\"map_ops\"}],\"constraints\":[{\"t\":\"transition\",\"hi\":0,\"lo\":0},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":0}]},{\"t\":\"mem_op\",\"kind\":\"read\",\"guard\":{\"t\":\"const\",\"v\":1},\"addr\":{\"t\":\"var\",\"v\":0},\"value\":{\"t\":\"var\",\"v\":1},\"prev_value\":{\"t\":\"var\",\"v\":1},\"prev_serial\":{\"t\":\"const\",\"v\":0}},{\"t\":\"map_op\",\"op\":\"write\",\"guard\":{\"t\":\"const\",\"v\":1},\"root\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":0}],\"key\":{\"t\":\"var\",\"v\":1},\"value\":{\"t\":\"const\",\"v\":0},\"new_root\":[{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
+
+/-! ### §10a′ — exact-public LogUp contents: emitted identity + both-polarity replay. -/
+
+def demoPublicRows : List (List Nat) := [[1, 10], [2, 20], [3, 30], [4, 40]]
+
+def demoPublic : EffectVmDescriptor2 :=
+  { name := "demo-exact-public", traceWidth := 2, piCount := 0
+  , tables := [⟨.custom 20, "demo_public", 2, .exactPublicRows demoPublicRows⟩]
+  , constraints := [.lookup ⟨.custom 20, [.var 0, .var 1]⟩]
+  , hashSites := [], ranges := [] }
+
+#guard emitVmJson2 demoPublic ==
+  "{\"name\":\"demo-exact-public\",\"ir\":2,\"trace_width\":2,\"public_input_count\":0,\"tables\":[{\"id\":25,\"name\":\"demo_public\",\"arity\":2,\"sem\":\"exact_public_rows\",\"rows\":[[1,10],[2,20],[3,30],[4,40]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":25,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1}]}],\"hash_sites\":[],\"ranges\":[]}"
+
+def publicRow (a b : Nat) : Assignment := fun column =>
+  if column = 0 then Int.ofNat a else if column = 1 then Int.ofNat b else 0
+
+def publicTraceOf (rows : List (Nat × Nat)) : VmTrace :=
+  { rows := rows.map fun row => publicRow row.1 row.2
+  , pub := zeroAsg
+  , tf := fun table =>
+      if table = .custom 20 then exactPublicTable demoPublicRows else [] }
+
+def demoPublicTrace : VmTrace :=
+  publicTraceOf [(1, 10), (2, 20), (3, 30), (4, 40)]
+
+def demoPublicDuplicateTrace : VmTrace :=
+  publicTraceOf [(1, 10), (1, 10), (3, 30), (4, 40)]
+
+def demoPublicOmittedTrace : VmTrace :=
+  publicTraceOf [(1, 10), (2, 20), (3, 30)]
+
+def demoPublicExtraTrace : VmTrace :=
+  publicTraceOf [(1, 10), (2, 20), (3, 30), (4, 40), (4, 40)]
+
+theorem demoPublic_contents_and_logup_faithful :
+    PublicTablesFaithful demoPublic demoPublicTrace ∧
+      PublicLookupBalanced demoPublic demoPublicTrace := by
+  simp [PublicTablesFaithful, PublicLookupBalanced, TableDef.publicContentsFaithful,
+    demoPublic, demoPublicTrace, publicTraceOf, lookupLog, publicRow, EmittedExpr.eval,
+    demoPublicRows, exactPublicTable]
+
+theorem demoPublic_duplicate_omission_refused :
+    ¬ PublicLookupBalanced demoPublic demoPublicDuplicateTrace := by
+  intro h
+  simp [PublicLookupBalanced, demoPublic, demoPublicDuplicateTrace, publicTraceOf,
+    lookupLog, publicRow, EmittedExpr.eval, demoPublicRows, exactPublicTable] at h
+  have hm : ([2, 20] : List Int) ∈ [[1, 10], [3, 30], [4, 40]] :=
+    h.mem_iff.mpr (by simp)
+  simp at hm
+
+theorem demoPublic_omission_refused :
+    ¬ PublicLookupBalanced demoPublic demoPublicOmittedTrace := by
+  simp [PublicLookupBalanced, demoPublic, demoPublicOmittedTrace, publicTraceOf,
+    lookupLog, publicRow, EmittedExpr.eval, demoPublicRows, exactPublicTable]
+
+theorem demoPublic_extra_refused :
+    ¬ PublicLookupBalanced demoPublic demoPublicExtraTrace := by
+  simp [PublicLookupBalanced, demoPublic, demoPublicExtraTrace, publicTraceOf,
+    lookupLog, publicRow, EmittedExpr.eval, demoPublicRows, exactPublicTable]
 
 -- The chip's INPUT-LANE COUNT is 16 (Phase H3 widened it 11 → 16 = full width for the node8 L8‖R8
 -- Merkle compression); the sponge rate stays the REAL babyBearD4W16 base rate (8). The chip row is
@@ -1838,6 +1958,11 @@ def brokenEngine : ProofEngine :=
 #guard ¬ decide (brokenEngine.vkOf true = brokenEngine.vkOf false)
 
 #assert_axioms TableId.wireId_injective
+#assert_axioms Satisfied2Public.exact_lookup_perm
+#assert_axioms demoPublic_contents_and_logup_faithful
+#assert_axioms demoPublic_duplicate_omission_refused
+#assert_axioms demoPublic_omission_refused
+#assert_axioms demoPublic_extra_refused
 #assert_axioms domainCode_injective
 -- §7 chip lever (the deployed 17-wide single-output head lever + the §7w WIDE generalization):
 #assert_axioms chip_lookup_sound

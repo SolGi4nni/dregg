@@ -373,6 +373,16 @@ const BUS_UMEM_LOG: &str = "ir2_umem_log";
 const BUS_UMEM_CHECK: &str = "ir2_umem_check";
 const BUS_UMEM_ADDRS: &str = "ir2_umem_addrs";
 
+/// Exact-public rows are currently the small, descriptor-carried tooth.  Each
+/// row becomes one batch instance, so bound the grammar before allocation.
+const MAX_EXACT_PUBLIC_ROWS: usize = 128;
+const MAX_EXACT_PUBLIC_ARITY: usize = 64;
+const MAX_EXACT_PUBLIC_CELLS: usize = 4_096;
+
+fn exact_public_bus_name(table_id: usize) -> String {
+    format!("ir2_exact_public_{table_id}")
+}
+
 /// The low-limb width of the CANONICAL BabyBear key decomposition
 /// `key = hi4 · 2^27 + lo27` (BabyBear `p = 2^31 − 2^27 + 1 = 15 · 2^27 + 1`, so the canonical
 /// range `[0, p)` is exactly `hi4 < 15 ∨ (hi4 = 15 ∧ lo27 = 0)` — the `is15 · lo27 = 0` tooth
@@ -418,6 +428,12 @@ pub enum TableSem {
     /// single-row discipline is enforced in-circuit; a multi-row witness is refused. Selected by
     /// the welded single-domain leg ([`crate::effect_vm_descriptors::weld_umem_into_rotated_descriptor`]).
     UMemBoundaryCohort,
+    /// A complete verifier-known finite multiset. Each listed row is one
+    /// unit-capacity LogUp receive; duplicate rows encode multiplicity.
+    ExactPublicRows {
+        /// Canonical BabyBear representatives, emitted by Lean in descriptor order.
+        rows: Vec<Vec<u32>>,
+    },
 }
 
 /// A declared table (Lean `TableDef`).
@@ -822,6 +838,7 @@ fn parse_table_def(c: &mut JsonCursor) -> Result<TableDef2, String> {
     let mut arity: Option<usize> = None;
     let mut sem_tag: Option<String> = None;
     let mut bits: Option<usize> = None;
+    let mut rows: Option<Vec<Vec<u32>>> = None;
     loop {
         let key = c.parse_string()?;
         c.expect(b':')?;
@@ -831,6 +848,17 @@ fn parse_table_def(c: &mut JsonCursor) -> Result<TableDef2, String> {
             "arity" => arity = Some(parse_usize(c, "table arity")?),
             "sem" => sem_tag = Some(c.parse_string()?),
             "bits" => bits = Some(parse_usize(c, "range bits")?),
+            "rows" => {
+                let parsed = parse_array(c, |c| {
+                    parse_array(c, |c| {
+                        let value = parse_usize(c, "exact-public table cell")?;
+                        u32::try_from(value).map_err(|_| {
+                            format!("exact-public table cell {value} does not fit u32")
+                        })
+                    })
+                })?;
+                rows = Some(parsed);
+            }
             "params" => parse_chip_params(c)?,
             other => return Err(format!("unknown table-def key \"{other}\"")),
         }
@@ -859,6 +887,9 @@ fn parse_table_def(c: &mut JsonCursor) -> Result<TableDef2, String> {
         Some("umemory") => TableSem::UMemory,
         Some("umem_boundary") => TableSem::UMemBoundary,
         Some("umem_boundary_cohort") => TableSem::UMemBoundaryCohort,
+        Some("exact_public_rows") => TableSem::ExactPublicRows {
+            rows: rows.ok_or("exact-public table def missing \"rows\"")?,
+        },
         Some(other) => return Err(format!("unknown table sem \"{other}\"")),
         None => return Err("table def missing \"sem\"".to_string()),
     };
@@ -1379,11 +1410,29 @@ impl MainLayout {
                     ));
                 }
                 other => {
-                    return Err(format!(
-                        "constraint {ci}: custom table id {other} has no realized relation \
-                         (only the submask table, id {TID_CUSTOM_SUBMASK}, is bound; the \
-                         custom-table contents manifest is the named IR follow-up)"
-                    ));
+                    let Some(table) = desc.tables.iter().find(|table| table.id == other) else {
+                        return Err(format!(
+                            "constraint {ci}: custom table id {other} has no declaration"
+                        ));
+                    };
+                    match &table.sem {
+                        TableSem::ExactPublicRows { .. } => {
+                            if l.tuple.len() != table.arity {
+                                return Err(format!(
+                                    "constraint {ci}: exact-public lookup tuple arity {} != \
+                                     declared arity {}",
+                                    l.tuple.len(),
+                                    table.arity
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(format!(
+                                "constraint {ci}: custom table id {other} has no realized \
+                                 lookup relation"
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -1413,6 +1462,57 @@ fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
              embedV1-shaped descriptors keep the v1 path during the epoch"
                 .to_string(),
         );
+    }
+    let mut declared = BTreeMap::new();
+    for table in &desc.tables {
+        if declared.insert(table.id, table.name.as_str()).is_some() {
+            return Err(format!(
+                "duplicate table declaration for wire id {}",
+                table.id
+            ));
+        }
+        if let TableSem::ExactPublicRows { rows } = &table.sem {
+            if table.id <= TID_P2_STATE16 {
+                return Err(format!(
+                    "exact-public table {} reuses reserved wire id {}",
+                    table.name, table.id
+                ));
+            }
+            if table.arity == 0 || table.arity > MAX_EXACT_PUBLIC_ARITY {
+                return Err(format!(
+                    "exact-public table {} arity {} is outside 1..={MAX_EXACT_PUBLIC_ARITY}",
+                    table.name, table.arity
+                ));
+            }
+            if rows.len() > MAX_EXACT_PUBLIC_ROWS
+                || rows.len().saturating_mul(table.arity) > MAX_EXACT_PUBLIC_CELLS
+            {
+                return Err(format!(
+                    "exact-public table {} has {}x{} cells; bounded tooth permits at most \
+                     {MAX_EXACT_PUBLIC_ROWS} rows and {MAX_EXACT_PUBLIC_CELLS} cells",
+                    table.name,
+                    rows.len(),
+                    table.arity
+                ));
+            }
+            for (row_index, row) in rows.iter().enumerate() {
+                if row.len() != table.arity {
+                    return Err(format!(
+                        "exact-public table {} row {row_index} arity {} != {}",
+                        table.name,
+                        row.len(),
+                        table.arity
+                    ));
+                }
+                if let Some(value) = row.iter().find(|&&value| value >= BABYBEAR_P) {
+                    return Err(format!(
+                        "exact-public table {} row {row_index} contains non-canonical \
+                         BabyBear representative {value}",
+                        table.name
+                    ));
+                }
+            }
+        }
     }
     let w = desc.trace_width;
     let chk = |e: &LeanExpr, what: &str, ci: usize| -> Result<(), String> {
@@ -2175,6 +2275,10 @@ pub enum Ir2Air {
     /// dropped (`Nodup` is `nodup_singleton`, Lean `universal_memory_sound_single`). Refuses a
     /// multi-row witness in-circuit via `(next.is_real = 0)` on every transition.
     UMemBoundaryCohort,
+    /// One unit-capacity row of a Lean-emitted exact-public table manifest.
+    /// One AIR instance per row keeps the constraint degree constant and makes
+    /// the descriptor values literal verifier-known constants.
+    ExactPublicRow { table_id: usize, values: Vec<u32> },
 }
 
 /// Public re-export wrapper of the resolved main layout (kept opaque; constructed by
@@ -2195,6 +2299,7 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
             Ir2Air::UMemory => UM_WIDTH,
             Ir2Air::UMemBoundary => UB_WIDTH,
             Ir2Air::UMemBoundaryCohort => UBC_WIDTH,
+            Ir2Air::ExactPublicRow { values, .. } => values.len() + 1,
         }
     }
 
@@ -2567,6 +2672,24 @@ where
                         let tuple: Vec<AB::Expr> =
                             l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
                         p2s.lookup_key(builder, tuple, AB::Expr::ONE);
+                    }
+                }
+
+                // -- Lean-emitted exact-public tables. Unlike chip/range subset tables,
+                //    every manifest row has fixed unit capacity on its own AIR instance,
+                //    so global LogUp balance proves exact multiset equality.
+                for k in &desc.constraints {
+                    let VmConstraint2::Lookup(l) = k else {
+                        continue;
+                    };
+                    let Some(table) = desc.tables.iter().find(|table| table.id == l.table) else {
+                        continue;
+                    };
+                    if matches!(table.sem, TableSem::ExactPublicRows { .. }) {
+                        let tuple: Vec<AB::Expr> =
+                            l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
+                        let bus_name = exact_public_bus_name(table.id);
+                        LookupBus::new(&bus_name).lookup_key(builder, tuple, AB::Expr::ONE);
                     }
                 }
 
@@ -3788,6 +3911,28 @@ where
                     local[UBC_ADDR_MULT].into(),
                 );
             }
+            // ----------------------------------------------------------------
+            Ir2Air::ExactPublicRow { table_id, values } => {
+                let multiplicity: AB::Expr = local[values.len()].into();
+                builder.assert_zero(multiplicity.clone() * (multiplicity.clone() - AB::Expr::ONE));
+                builder
+                    .when_first_row()
+                    .assert_zero(multiplicity.clone() - AB::Expr::ONE);
+                builder
+                    .when_transition()
+                    .assert_zero(next[values.len()].into());
+                for (column, value) in values.iter().enumerate() {
+                    builder
+                        .assert_zero(local[column].into() - AB::Expr::from_u64(u64::from(*value)));
+                }
+                let bus_name = exact_public_bus_name(*table_id);
+                let bus = LookupBus::new(&bus_name);
+                bus.table_entry(
+                    builder,
+                    local[..values.len()].iter().map(|&value| value.into()),
+                    multiplicity,
+                );
+            }
         }
     }
 }
@@ -4132,6 +4277,7 @@ struct Ir2Traces {
     map_absent: Option<Vec<Vec<BabyBear>>>,
     umemory: Option<Vec<Vec<BabyBear>>>,
     umem_boundary: Option<Vec<Vec<BabyBear>>>,
+    exact_public_rows: Vec<Vec<Vec<BabyBear>>>,
 }
 
 /// Witness fill of one canonical decomposition block `[hi4, lo27 limbs, is15, inv15]` of a
@@ -4246,6 +4392,43 @@ fn build_traces(
     check: bool,
 ) -> Result<Ir2Traces, String> {
     let mut byte_hist = [0u64; BYTE_TABLE_HEIGHT];
+
+    if check {
+        for table in &desc.tables {
+            let TableSem::ExactPublicRows { rows: expected } = &table.sem else {
+                continue;
+            };
+            let mut actual: Vec<Vec<u32>> = base_trace
+                .iter()
+                .flat_map(|row| {
+                    desc.constraints.iter().filter_map(|constraint| {
+                        let VmConstraint2::Lookup(lookup) = constraint else {
+                            return None;
+                        };
+                        (lookup.table == table.id).then(|| {
+                            lookup
+                                .tuple
+                                .iter()
+                                .map(|expr| eval_c(expr, row).as_u32())
+                                .collect()
+                        })
+                    })
+                })
+                .collect();
+            let mut expected = expected.clone();
+            actual.sort_unstable();
+            expected.sort_unstable();
+            if actual != expected {
+                return Err(format!(
+                    "exact-public table {} lookup multiset does not equal its \
+                     Lean-emitted manifest ({} queries, {} rows)",
+                    table.name,
+                    actual.len(),
+                    expected.len()
+                ));
+            }
+        }
+    }
 
     // ---- main: base wires + range limb blocks + submask bit blocks. ----
     let mut main: Vec<Vec<BabyBear>> = Vec::with_capacity(base_trace.len());
@@ -5558,6 +5741,26 @@ fn build_traces(
             .collect()
     });
 
+    let exact_public_rows: Vec<Vec<Vec<BabyBear>>> = desc
+        .tables
+        .iter()
+        .flat_map(|table| match &table.sem {
+            TableSem::ExactPublicRows { rows } => rows
+                .iter()
+                .map(|values| {
+                    let mut real: Vec<BabyBear> =
+                        values.iter().copied().map(BabyBear::new).collect();
+                    real.push(BabyBear::ONE);
+                    let mut pad: Vec<BabyBear> =
+                        values.iter().copied().map(BabyBear::new).collect();
+                    pad.push(BabyBear::ZERO);
+                    vec![real, pad]
+                })
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+
     Ok(Ir2Traces {
         main,
         chip,
@@ -5569,6 +5772,7 @@ fn build_traces(
         map_absent,
         umemory,
         umem_boundary: umem_boundary_rows,
+        exact_public_rows,
     })
 }
 
@@ -5610,6 +5814,16 @@ fn instance_airs(
         } else {
             Ir2Air::UMemBoundary
         });
+    }
+    for table in &desc.tables {
+        if let TableSem::ExactPublicRows { rows } = &table.sem {
+            for values in rows {
+                airs.push(Ir2Air::ExactPublicRow {
+                    table_id: table.id,
+                    values: values.clone(),
+                });
+            }
+        }
     }
     airs
 }
@@ -5764,6 +5978,9 @@ where
     .flatten()
     {
         matrices.push(to_matrix(t));
+    }
+    for trace in &traces.exact_public_rows {
+        matrices.push(to_matrix(trace));
     }
     debug_assert_eq!(matrices.len(), airs.len());
     let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
@@ -6078,6 +6295,122 @@ mod tests {
         Outcome, classify, must_accept, must_panic_containing, must_refuse,
         must_refuse_or_unsat_panic,
     };
+
+    const DEMO_EXACT_PUBLIC: &str = r#"{"name":"demo-exact-public","ir":2,"trace_width":2,"public_input_count":0,"tables":[{"id":25,"name":"demo_public","arity":2,"sem":"exact_public_rows","rows":[[1,10],[2,20],[3,30],[4,40]]}],"constraints":[{"t":"lookup","table":25,"tuple":[{"t":"var","v":0},{"t":"var","v":1}]}],"hash_sites":[],"ranges":[]}"#;
+
+    fn demo_exact_public_desc() -> EffectVmDescriptor2 {
+        parse_vm_descriptor2(DEMO_EXACT_PUBLIC)
+            .expect("Lean-emitted exact-public demo descriptor must parse")
+    }
+
+    fn public_rows(rows: &[(u32, u32)]) -> Vec<Vec<BabyBear>> {
+        rows.iter()
+            .map(|&(left, right)| vec![BabyBear::new(left), BabyBear::new(right)])
+            .collect()
+    }
+
+    fn exact_public_hostile_refuses(desc: &EffectVmDescriptor2, rows: &[Vec<BabyBear>]) {
+        let refusal = must_refuse_or_unsat_panic("exact-public hostile multiset", || {
+            let proof = prove_vm_descriptor2_inner(
+                desc,
+                rows,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+                &UMemBoundaryWitness::default(),
+                false,
+                &ir2_config(),
+            )?;
+            verify_vm_descriptor2(desc, &proof, &[]).map(|()| proof)
+        });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("Lookup mismatch")
+                || reason.contains("constraints not satisfied")
+                || reason.contains("verification failed")
+                || reason.contains("OodEvaluationMismatch"),
+            "hostile exact-public multiset refused for the wrong reason: {reason}"
+        );
+    }
+
+    /// The exact-public table grammar is emitted by Lean and survives the typed
+    /// canonical codec. Manifest rows are part of relation identity.
+    #[test]
+    fn exact_public_rows_parse_and_typed_identity() {
+        use crate::descriptor_ir2_canonical::{
+            decode_canonical_effect_vm_descriptor2, effect_vm_descriptor2_semantic_fingerprint,
+        };
+
+        let desc = demo_exact_public_desc();
+        let bytes = crate::descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes(&desc)
+            .expect("exact-public descriptor is canonically representable");
+        assert_eq!(
+            decode_canonical_effect_vm_descriptor2(&bytes).expect("strict typed roundtrip"),
+            desc
+        );
+        let mut substituted = desc.clone();
+        let TableSem::ExactPublicRows { rows } = &mut substituted.tables[0].sem else {
+            panic!("demo table must carry exact-public semantics");
+        };
+        rows[1][1] += 1;
+        assert_ne!(
+            effect_vm_descriptor2_semantic_fingerprint(&desc).expect("fingerprint"),
+            effect_vm_descriptor2_semantic_fingerprint(&substituted).expect("fingerprint"),
+            "changing one public row must move typed relation identity"
+        );
+    }
+
+    /// One unit-capacity receive per Lean-emitted row turns the custom-table
+    /// lookup into exact multiset equality: order is irrelevant, while every
+    /// omission, duplicate substitution, and extra query is cryptographically refused.
+    #[test]
+    fn exact_public_rows_logup_is_exact_multiset() {
+        let desc = demo_exact_public_desc();
+        let honest = public_rows(&[(3, 30), (1, 10), (4, 40), (2, 20)]);
+        let proof = prove_vm_descriptor2(&desc, &honest, &[], &MemBoundaryWitness::default(), &[])
+            .expect("honest permutation of the public manifest must prove");
+        verify_vm_descriptor2(&desc, &proof, &[])
+            .expect("honest exact-public LogUp proof must verify");
+
+        let duplicate_omission = public_rows(&[(1, 10), (1, 10), (3, 30), (4, 40)]);
+        assert!(
+            prove_vm_descriptor2(
+                &desc,
+                &duplicate_omission,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+            )
+            .is_err(),
+            "producer preflight must refuse duplicate+omission"
+        );
+        exact_public_hostile_refuses(&desc, &duplicate_omission);
+
+        let omitted = public_rows(&[(1, 10), (2, 20)]);
+        exact_public_hostile_refuses(&desc, &omitted);
+
+        let extra = public_rows(&[
+            (1, 10),
+            (2, 20),
+            (3, 30),
+            (4, 40),
+            (5, 50),
+            (6, 60),
+            (7, 70),
+            (8, 80),
+        ]);
+        exact_public_hostile_refuses(&desc, &extra);
+
+        let mut substituted = desc.clone();
+        let TableSem::ExactPublicRows { rows } = &mut substituted.tables[0].sem else {
+            unreachable!()
+        };
+        rows[1][1] += 1;
+        assert!(
+            verify_vm_descriptor2(&substituted, &proof, &[]).is_err(),
+            "an old proof must not verify under a one-cell manifest substitution"
+        );
+    }
 
     /// **THE 8-FELT CHAIN ↔ CHIP BYTE-IDENTITY CROSS-CHECK** (Phase B-ROTATION). The plain
     /// `poseidon2::single_perm_compress` (the cell/turn/Lean-mirrored chain step) computes lanes
