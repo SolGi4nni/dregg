@@ -1103,6 +1103,12 @@ pub(crate) fn stage_receipt_head_on_append_in(
         ));
     }
     let receipt = decode_canonical_receipt(encoded)?;
+    if receipt.finality != Finality::Final
+        || receipt.federation_id != activation.federation_id
+        || verify_receipt_signature_with_keys(&receipt, &[activation.executor_public_key]).is_err()
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
     let hash = receipt.receipt_hash();
     let mut heads = write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
     let previous = heads
@@ -1705,6 +1711,28 @@ fn validate_activation_cutover(
     }
 }
 
+fn validate_active_epoch_receipts(
+    activation: &UntrustedExactFnspV3ActivationV1,
+    receipt_rows: &ValidatedReceiptLog,
+) -> StoreResult<()> {
+    let cutover = usize::try_from(activation.receipt_cutover_next_index)
+        .map_err(|_| integrity(ExactFnspV3FrameStoreError::ActivationCutoverMismatch))?;
+    for row in receipt_rows
+        .rows
+        .get(cutover..)
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationCutoverMismatch))?
+    {
+        if row.receipt.finality != Finality::Final
+            || row.receipt.federation_id != activation.federation_id
+            || verify_receipt_signature_with_keys(&row.receipt, &[activation.executor_public_key])
+                .is_err()
+        {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+    }
+    Ok(())
+}
+
 fn validate_snapshot(
     activation_bytes: Option<Vec<u8>>,
     head_bytes: Option<Vec<u8>>,
@@ -1725,6 +1753,7 @@ fn validate_snapshot(
     };
     let activation = UntrustedExactFnspV3ActivationV1::decode(&activation_bytes)?;
     validate_activation_cutover(&activation, &receipt_rows)?;
+    validate_active_epoch_receipts(&activation, &receipt_rows)?;
     let expected_count = exact_head
         .generation()
         .checked_sub(activation.exact_initial.generation())
