@@ -37,6 +37,7 @@ use dregg_circuit::exact_nullifier_aafi_trace::{
     EXACT_AAFI_TRACE_ROWS, LEVEL_COL, NULLIFIER_RAW_BASE, POST_COUNT_BASE, PRE_COUNT_BASE,
     SUCCESSOR_NULLIFIER_ROOT_BASE, VALUE_BASE, marshal_exact_aafi_trace, node_digest_cols,
 };
+use dregg_circuit::field::BABYBEAR_P;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::stark_zk::{DreggZkStarkConfig, create_zk_config};
@@ -54,6 +55,13 @@ const EXPECTED_STATE16_LOOKUPS: usize = 128;
 const EXPECTED_WIDE_LOOKUPS: usize = 120;
 const EXPECTED_RANGE15_LOOKUPS: usize = 48;
 const EXPECTED_RANGE16_LOOKUPS: usize = 132;
+const EXPECTED_DESCRIPTOR_TABLES: usize = 5;
+// The two graduated range table IDs share the one canonical byte-table AIR/commitment.  Therefore
+// the five descriptor table definitions produce four committed batch instances in this order:
+// main, wide Poseidon2, state16 Poseidon2, byte/range.
+const EXPECTED_PROOF_INSTANCES: usize = 4;
+const EXPECTED_HIDING_DEGREE_BITS: [usize; EXPECTED_PROOF_INSTANCES] = [5, 8, 11, 5];
+pub const STAGED_PUBLIC_WIRE_BYTES: usize = STAGED_PUBLIC_INPUT_COUNT * 4;
 
 const PI_PRIOR_ROOT_BASE: usize = 44;
 const PI_PRE_COUNT_BASE: usize = 52;
@@ -97,6 +105,71 @@ impl FaithfulNoteSpendExactV3Witness {
     pub fn inherited_public(&self) -> FaithfulNoteSpendPublic {
         self.inherited_public
     }
+
+    pub fn public_statement(&self) -> StagedFaithfulNoteSpendExactV3Public {
+        StagedFaithfulNoteSpendExactV3Public {
+            lanes: self.public_inputs,
+        }
+    }
+}
+
+/// Canonical public statement for the exact staged predicate.  Its wire form is exactly 76
+/// little-endian canonical BabyBear `u32` lanes (304 bytes), without length prefixes or trailing
+/// extension space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StagedFaithfulNoteSpendExactV3Public {
+    lanes: [BabyBear; STAGED_PUBLIC_INPUT_COUNT],
+}
+
+impl StagedFaithfulNoteSpendExactV3Public {
+    pub fn try_from_u32s(values: &[u32]) -> Result<Self, String> {
+        if values.len() != STAGED_PUBLIC_INPUT_COUNT {
+            return Err(format!(
+                "staged exact FNSP-v3 expects {STAGED_PUBLIC_INPUT_COUNT} public lanes, got {}",
+                values.len()
+            ));
+        }
+        let mut lanes = [BabyBear::ZERO; STAGED_PUBLIC_INPUT_COUNT];
+        for (index, value) in values.iter().copied().enumerate() {
+            if value >= BABYBEAR_P {
+                return Err(format!(
+                    "staged exact FNSP-v3 public lane {index}={value} is noncanonical for BabyBear"
+                ));
+            }
+            lanes[index] = BabyBear::new(value);
+        }
+        Ok(Self { lanes })
+    }
+
+    pub fn as_felts(&self) -> &[BabyBear; STAGED_PUBLIC_INPUT_COUNT] {
+        &self.lanes
+    }
+
+    pub fn as_u32_array(&self) -> [u32; STAGED_PUBLIC_INPUT_COUNT] {
+        self.lanes.map(BabyBear::as_u32)
+    }
+
+    pub fn to_le_bytes(&self) -> [u8; STAGED_PUBLIC_WIRE_BYTES] {
+        let mut bytes = [0u8; STAGED_PUBLIC_WIRE_BYTES];
+        for (index, value) in self.as_u32_array().into_iter().enumerate() {
+            bytes[4 * index..4 * index + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    pub fn from_le_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() != STAGED_PUBLIC_WIRE_BYTES {
+            return Err(format!(
+                "staged exact FNSP-v3 public wire expects {STAGED_PUBLIC_WIRE_BYTES} bytes, got {}",
+                bytes.len()
+            ));
+        }
+        let mut values = [0u32; STAGED_PUBLIC_INPUT_COUNT];
+        for (index, chunk) in bytes.chunks_exact(4).enumerate() {
+            values[index] = u32::from_le_bytes(chunk.try_into().expect("four-byte chunk"));
+        }
+        Self::try_from_u32s(&values)
+    }
 }
 
 /// Opaque HidingFRI proof for the exact staged JSON.  This type is intentionally not accepted by
@@ -105,12 +178,61 @@ pub struct StagedFaithfulNoteSpendExactV3Proof {
     proof: Ir2BatchProof<DreggZkStarkConfig>,
 }
 
+impl StagedFaithfulNoteSpendExactV3Proof {
+    pub fn to_postcard(&self) -> Result<Vec<u8>, String> {
+        postcard::to_allocvec(&self.proof)
+            .map_err(|error| format!("staged exact FNSP-v3 proof encode failed: {error}"))
+    }
+
+    /// Strict transport decode: consume the complete byte string and require the exact four
+    /// committed HidingFRI instances produced by the five-table staged descriptor.
+    pub fn from_postcard(bytes: &[u8]) -> Result<Self, String> {
+        let (proof, trailing) =
+            postcard::take_from_bytes::<Ir2BatchProof<DreggZkStarkConfig>>(bytes)
+                .map_err(|error| format!("staged exact FNSP-v3 proof decode failed: {error}"))?;
+        if !trailing.is_empty() {
+            return Err(format!(
+                "staged exact FNSP-v3 proof has {} trailing bytes",
+                trailing.len()
+            ));
+        }
+        validate_proof_shape(&proof)?;
+        Ok(Self { proof })
+    }
+}
+
+fn validate_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(), String> {
+    if proof.degree_bits.as_slice() != EXPECTED_HIDING_DEGREE_BITS {
+        return Err(format!(
+            "staged exact FNSP-v3 proof degree vector {:?} != fixed HidingFRI vector {:?}",
+            proof.degree_bits, EXPECTED_HIDING_DEGREE_BITS
+        ));
+    }
+    if proof.opened_values.instances.len() != EXPECTED_PROOF_INSTANCES {
+        return Err(format!(
+            "staged exact FNSP-v3 proof has {} opened instances, expected {EXPECTED_PROOF_INSTANCES}",
+            proof.opened_values.instances.len()
+        ));
+    }
+    if proof.commitments.random.is_none()
+        || proof
+            .opened_values
+            .instances
+            .iter()
+            .any(|instance| instance.base_opened_values.random.is_none())
+    {
+        return Err("staged exact FNSP-v3 proof is not a complete HidingFRI proof".to_owned());
+    }
+    Ok(())
+}
+
 /// Parse and pin the exact unregistered Lean emission used by this composition lane.
 pub fn staged_descriptor() -> Result<EffectVmDescriptor2, String> {
     let descriptor = parse_vm_descriptor2(STAGED_DESCRIPTOR_JSON)?;
     if descriptor.name != STAGED_PREDICATE_NAME
         || descriptor.trace_width != STAGED_TRACE_WIDTH
         || descriptor.public_input_count != STAGED_PUBLIC_INPUT_COUNT
+        || descriptor.tables.len() != EXPECTED_DESCRIPTOR_TABLES
         || descriptor.constraints.len() != EXPECTED_CONSTRAINT_COUNT
         || !descriptor.hash_sites.is_empty()
         || !descriptor.ranges.is_empty()
@@ -312,6 +434,7 @@ pub fn prove_staged_exact_v3_zk(
         &UMemBoundaryWitness::default(),
         &create_zk_config(),
     )?;
+    validate_proof_shape(&proof)?;
     Ok(StagedFaithfulNoteSpendExactV3Proof { proof })
 }
 
@@ -320,12 +443,23 @@ pub fn verify_staged_exact_v3_zk(
     proof: &StagedFaithfulNoteSpendExactV3Proof,
     public_inputs: &[BabyBear; STAGED_PUBLIC_INPUT_COUNT],
 ) -> Result<(), String> {
+    validate_proof_shape(&proof.proof)?;
     verify_vm_descriptor2_with_config(
         &staged_descriptor()?,
         &proof.proof,
         public_inputs,
         &create_zk_config(),
     )
+}
+
+/// Strict transport verifier for only this exact staged descriptor and HidingFRI configuration.
+pub fn verify_staged_exact_v3_postcard(
+    proof_bytes: &[u8],
+    public_values: &[u32],
+) -> Result<(), String> {
+    let proof = StagedFaithfulNoteSpendExactV3Proof::from_postcard(proof_bytes)?;
+    let public = StagedFaithfulNoteSpendExactV3Public::try_from_u32s(public_values)?;
+    verify_staged_exact_v3_zk(&proof, public.as_felts())
 }
 
 #[cfg(test)]
@@ -416,6 +550,51 @@ mod tests {
     }
 
     #[test]
+    fn public_statement_transport_is_exact_and_canonical() {
+        let (opening, path, claim, exact, before) = fixture();
+        let witness = compose_staged_exact_v3_witness(&opening, &path, claim, &exact, before)
+            .expect("complete statement composes");
+        let public = witness.public_statement();
+        assert_eq!(
+            StagedFaithfulNoteSpendExactV3Public::try_from_u32s(&public.as_u32_array())
+                .expect("canonical lanes decode"),
+            public
+        );
+        let wire = public.to_le_bytes();
+        assert_eq!(wire.len(), STAGED_PUBLIC_WIRE_BYTES);
+        assert_eq!(
+            StagedFaithfulNoteSpendExactV3Public::from_le_bytes(&wire)
+                .expect("exact public wire decodes"),
+            public
+        );
+
+        assert!(
+            StagedFaithfulNoteSpendExactV3Public::try_from_u32s(
+                &public.as_u32_array()[..STAGED_PUBLIC_INPUT_COUNT - 1]
+            )
+            .is_err()
+        );
+        let mut too_long = public.as_u32_array().to_vec();
+        too_long.push(0);
+        assert!(StagedFaithfulNoteSpendExactV3Public::try_from_u32s(&too_long).is_err());
+        let mut noncanonical = public.as_u32_array();
+        noncanonical[PI_POST_COUNT_BASE] = BABYBEAR_P;
+        assert!(StagedFaithfulNoteSpendExactV3Public::try_from_u32s(&noncanonical).is_err());
+        assert!(
+            StagedFaithfulNoteSpendExactV3Public::from_le_bytes(
+                &wire[..STAGED_PUBLIC_WIRE_BYTES - 1]
+            )
+            .is_err()
+        );
+        let mut wire_with_trailer = wire.to_vec();
+        wire_with_trailer.push(0);
+        assert!(StagedFaithfulNoteSpendExactV3Public::from_le_bytes(&wire_with_trailer).is_err());
+        let mut noncanonical_wire = wire;
+        noncanonical_wire[0..4].copy_from_slice(&BABYBEAR_P.to_le_bytes());
+        assert!(StagedFaithfulNoteSpendExactV3Public::from_le_bytes(&noncanonical_wire).is_err());
+    }
+
+    #[test]
     fn cross_band_nullifier_value_and_rotated_checkpoint_mismatches_refuse() {
         let (opening, path, claim, exact, before) = fixture();
 
@@ -466,12 +645,91 @@ mod tests {
         let (opening, path, claim, exact, before) = fixture();
         let witness = compose_staged_exact_v3_witness(&opening, &path, claim, &exact, before)
             .expect("complete staged witness composes");
-        let proof = prove_staged_exact_v3_zk(&witness).expect("complete staged witness proves");
-        verify_staged_exact_v3_zk(&proof, witness.public_inputs())
-            .expect("staged exact proof verifies");
+        let public = witness.public_statement();
+        let mut proof = prove_staged_exact_v3_zk(&witness).expect("complete staged witness proves");
+        assert_eq!(proof.proof.degree_bits, EXPECTED_HIDING_DEGREE_BITS);
+        verify_staged_exact_v3_zk(&proof, public.as_felts()).expect("staged exact proof verifies");
 
-        let mut forged = *witness.public_inputs();
-        forged[PI_OUTER_BASE + 7] += BabyBear::ONE;
-        assert!(verify_staged_exact_v3_zk(&proof, &forged).is_err());
+        let proof_bytes = proof.to_postcard().expect("proof serializes");
+        let transported = StagedFaithfulNoteSpendExactV3Proof::from_postcard(&proof_bytes)
+            .expect("strict transported proof decodes");
+        verify_staged_exact_v3_zk(&transported, public.as_felts())
+            .expect("transported staged proof verifies");
+        verify_staged_exact_v3_postcard(&proof_bytes, &public.as_u32_array())
+            .expect("strict postcard verifier accepts exact transport");
+
+        let mut with_trailer = proof_bytes.clone();
+        with_trailer.push(0);
+        assert!(StagedFaithfulNoteSpendExactV3Proof::from_postcard(&with_trailer).is_err());
+        assert!(
+            StagedFaithfulNoteSpendExactV3Proof::from_postcard(
+                &proof_bytes[..proof_bytes.len() - 1]
+            )
+            .is_err()
+        );
+
+        let mut corrupted = proof_bytes.clone();
+        let corrupt_index = corrupted.len() / 2;
+        corrupted[corrupt_index] ^= 0x80;
+        let corrupt_refused = match StagedFaithfulNoteSpendExactV3Proof::from_postcard(&corrupted) {
+            Err(_) => true,
+            Ok(decoded) => verify_staged_exact_v3_zk(&decoded, public.as_felts()).is_err(),
+        };
+        assert!(corrupt_refused, "corrupt proof transport must refuse");
+
+        let original_main_degree = proof.proof.degree_bits[0];
+        proof.proof.degree_bits[0] += 1;
+        let wrong_shape = proof.to_postcard().expect("wrong-shape proof serializes");
+        proof.proof.degree_bits[0] = original_main_degree;
+        assert!(StagedFaithfulNoteSpendExactV3Proof::from_postcard(&wrong_shape).is_err());
+
+        let removed_instance = proof
+            .proof
+            .opened_values
+            .instances
+            .pop()
+            .expect("genuine proof has four opened instances");
+        let short_batch = proof.to_postcard().expect("short batch serializes");
+        proof.proof.opened_values.instances.push(removed_instance);
+        assert!(StagedFaithfulNoteSpendExactV3Proof::from_postcard(&short_batch).is_err());
+
+        let random_commitment = proof
+            .proof
+            .commitments
+            .random
+            .take()
+            .expect("genuine proof has a hiding commitment");
+        let nonhiding_commitment = proof
+            .to_postcard()
+            .expect("non-hiding commitment shape serializes");
+        proof.proof.commitments.random = Some(random_commitment);
+        assert!(StagedFaithfulNoteSpendExactV3Proof::from_postcard(&nonhiding_commitment).is_err());
+
+        let random_opening = proof.proof.opened_values.instances[0]
+            .base_opened_values
+            .random
+            .take()
+            .expect("genuine main instance has hiding openings");
+        let nonhiding_opening = proof
+            .to_postcard()
+            .expect("non-hiding opening shape serializes");
+        proof.proof.opened_values.instances[0]
+            .base_opened_values
+            .random = Some(random_opening);
+        assert!(StagedFaithfulNoteSpendExactV3Proof::from_postcard(&nonhiding_opening).is_err());
+
+        let mut forged = public.as_u32_array();
+        forged[PI_OUTER_BASE + 7] = (forged[PI_OUTER_BASE + 7] + 1) % BABYBEAR_P;
+        assert!(verify_staged_exact_v3_postcard(&proof_bytes, &forged).is_err());
+        assert!(
+            verify_staged_exact_v3_postcard(
+                &proof_bytes,
+                &public.as_u32_array()[..STAGED_PUBLIC_INPUT_COUNT - 1]
+            )
+            .is_err()
+        );
+        let mut noncanonical = public.as_u32_array();
+        noncanonical[0] = BABYBEAR_P;
+        assert!(verify_staged_exact_v3_postcard(&proof_bytes, &noncanonical).is_err());
     }
 }
