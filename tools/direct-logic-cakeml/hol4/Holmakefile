@@ -1,0 +1,17 @@
+INCLUDES = $(DREGG_CAKEMLDIR)/misc \
+           $(DREGG_CAKEMLDIR)/basis/pure \
+           $(DREGG_CAKEMLDIR)/basis \
+           $(DREGG_CAKEMLDIR)/semantics \
+           $(DREGG_CAKEMLDIR)/semantics/proofs \
+           $(DREGG_CAKEMLDIR)/semantics/ffi \
+           $(DREGG_CAKEMLDIR)/translator \
+           $(DREGG_CAKEMLDIR)/compiler \
+           $(DREGG_CAKEMLDIR)/compiler/backend \
+           $(DREGG_CAKEMLDIR)/compiler/backend/proofs \
+           $(DREGG_CAKEMLDIR)/compiler/backend/x64 \
+           $(DREGG_CAKEMLDIR)/compiler/backend/x64/proofs \
+           $(DREGG_CAKEMLDIR)/compiler/encoders/asm \
+           $(DREGG_CAKEMLDIR)/compiler/encoders/x64
+
+all: $(DEFAULT_TARGETS)
+.PHONY: all

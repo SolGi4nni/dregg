@@ -1,0 +1,57 @@
+DREG direct-logic checker HOL4/CakeML audit
+Date: 2026-07-22
+Build host: Linux 6.11.0-29-generic x86_64
+Poly/ML: 5.9.2 (v5.9.2-309-gfcd823f3)
+HOL4: a9846ebe221d7c6617188a6bf66f30d5d8136b84 (Trindemossen 2, stdknl)
+CakeML: ed31510b3b0d0523283b68ef7066882526d77df9
+
+BUILD
+  Holmake DirectLogicCheckerTheory.uo: OK (1 theory)
+  Holmake DirectLogicCheckerProgTheory.uo: OK (including translations of
+    source_eval, target_eval, lower, check_bundle, byte_valid, bytes_valid,
+    decode_source_fuel, decode_target_fuel, LENGTH, decode_bundle, check_bytes)
+
+INDEPENDENT SML FIXTURES
+  direct-logic SML checker: 15/15 fixtures passed
+
+FRESH HOL4 TAG AUDIT
+  lower_correct
+    oracles = [DISK_THM]
+    axiomdeps = []
+  check_bundle_sound
+    oracles = [DISK_THM]
+    axiomdeps = []
+  check_bytes_sound
+    oracles = [DISK_THM]
+    axiomdeps = []
+  canonical_top_accepts
+    oracles = [DISK_THM]
+    axiomdeps = []
+  canonical_policy_accepts
+    oracles = [DISK_THM]
+    axiomdeps = []
+  unknown_version_rejects
+    oracles = [DISK_THM]
+    axiomdeps = []
+  trailing_byte_rejects
+    oracles = [DISK_THM]
+    axiomdeps = []
+  noncanonical_target_rejects
+    oracles = [DISK_THM]
+    axiomdeps = []
+  check_bytes_v_thm (CakeML translation certificate)
+    oracles = [DISK_THM]
+    axiomdeps = []
+
+  THEORY AXIOMS: DirectLogicChecker = 0
+
+HEADLINE STATEMENT
+  |- !bytes.
+       check_bytes bytes ==>
+       ?version source target.
+         decode_bundle bytes = SOME (DLBundle version source target) /\
+         version = 1 /\
+         !env. target_eval env target <=> source_eval env source
+
+`DISK_THM` is HOL4's ordinary tag for a theorem loaded from an exported theory,
+not a custom oracle or axiom. The explicit theory-axiom census is zero.
