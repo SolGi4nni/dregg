@@ -107,4 +107,3 @@ No Ristretto/Bulletproof claim is used to call this relation post-quantum. If th
 conservation proof remains curve-based, the live composite remains classical even though the wide
 carrier and FRI layer are hash-based. The native-PQ route is to emit conservation directly in this
 fixed relation or replace every classical subproof with a proved same-opening PQ construction.
-
