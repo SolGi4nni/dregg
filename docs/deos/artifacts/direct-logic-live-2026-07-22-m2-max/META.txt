@@ -1,0 +1,22 @@
+utc=2026-07-22T07:05:09Z
+host=nextop.local
+Darwin nextop.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:39:09 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6020 arm64
+cpu=Apple M2 Max
+logical_cpus=12
+memory_bytes=103079215104
+ProductName: macOS
+ProductVersion: 26.5.1
+BuildVersion: 25F80
+rustc=1.98.0-nightly (8b6558a02 2026-06-20)
+rustc_commit=8b6558a02b2774acfb25cf15e199467c37ba7490
+rustc_host=aarch64-apple-darwin
+LLVM=22.1.7
+cargo=1.98.0-nightly (a595d0da2 2026-06-20)
+cargo_commit=a595d0da21f228b7fdae64d3d5c0e527ea66bb59
+git_head_during_capture=debc27f5a0743646399256055592c2dcf8938a95
+frontend_sha256=e9c998c412a64b63d2714b9ee6314a765c1a9ff0f89b6ee5d24e255d73bf1568
+harness_sha256=b1492c385937f70d555a5a059b9dbdba95fc6a53ca832ff55fd6923e05a36907
+cargo_lock_sha256=ec6ce78569f97efc3dce339328240447f0c26cfad75f56cec9077bbf9341f70f
+load_average=31.34 37.81 38.25
+raw_log_sha256=66b37bf19bfffe505b967b03fdf44a0cc8bde22ca232493417fe3350b9ef3b1e
+summary_sha256=39a623da8ea21a03e69a6f420d5b49ce52762a9e4cbb9fefbdb21e7ae661db73
