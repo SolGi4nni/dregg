@@ -1,17 +1,23 @@
 /-
 # Dregg2.Games.DescentCensusDescriptor
 
-Lean-authored custom relation for the Descent relic-custody census.  It opens the eight fixed
-custody leaves (external keys 16..23) against the cell's native-eight `fields_root`, then publishes
-the exact counts of custody codes `[carried=8, banked=9, floor1=1, floor2=2, floor3=3, floor4=4]`.
+Lean-authored custom relation for the Descent fixed-eight relic-custody census.  It opens the
+eight exact overflow-field leaves at raw keys 16..23 against the cell's native-eight V2
+`fields_root`, then publishes the exact counts of custody codes
+`[carried=8, banked=9, floor1=1, floor2=2, floor3=3, floor4=4]`.
 
-The path is deliberately a dedicated custom VK, not a SlotCaveat claim: SlotCaveat only sees the
-fixed `fields[0..8]` projection and cannot authenticate overflow-map values.  Here every leaf uses
-the deployed arity-3 IMT digest `(field_key_hash(key), fold_bytes32(value), next_addr)` and every
-level uses the deployed native-eight Poseidon2 node digest.  Eight paths run in parallel over the
-16-row main trace, staying below the 1024-column compiler limit.
+This descriptor speaks the same flag-day exact schema as Rust `openable_fields_root`:
+
+* leaf: `FLD2 || occupancy || key_u16_le[4] || value_u16_le[16]`;
+* node: `FLN2 || left8 || right8`;
+* both are the deployed rate-four `hash_many_8` sponge, lowered through the full state16 bus.
+
+In particular, no key or value is reduced modulo BabyBear before it reaches the sponge.  The
+previous single-felt value fold admitted concrete `+p` aliases and was not an authority boundary.
+Every custody value is instead forced byte-for-byte to canonical `field_from_u64(zone)` before its
+exact leaf digest is recomposed to the public root.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.FullStateChip
 
 namespace Dregg2.Games.DescentCensusDescriptor
 
@@ -24,6 +30,9 @@ def RELICS : Nat := 8
 def DEPTH : Nat := 16
 def ZONES : Nat := 6
 def DIGEST : Nat := 8
+def STATE_LANES : Nat := 16
+def KEY_LIMBS : Nat := 4
+def VALUE_LIMBS : Nat := 16
 
 /-! Public ABI: `[old8 || new8 || post_fields_root8 || six_counts]`. -/
 def PI_OLD : Nat := 0
@@ -32,28 +41,19 @@ def PI_FIELDS_ROOT : Nat := 16
 def PI_COUNTS : Nat := 24
 def PI_COUNT : Nat := 30
 
-/-! The exact field-address image and sorted-IMT successor for keys 16..23 in a Descent cell.
-The successor constants include the reserved refusal-audit leaf.  They pin these openings to the
-real schema leaves, rather than allowing the prover to choose eight convenient map positions. -/
-def relicAddr : Fin RELICS → Int
-  | ⟨0, _⟩ => 1903373793
-  | ⟨1, _⟩ => 206503848
-  | ⟨2, _⟩ => 186807208
-  | ⟨3, _⟩ => 1229116775
-  | ⟨4, _⟩ => 1194514939
-  | ⟨5, _⟩ => 1456787871
-  | ⟨6, _⟩ => 1049436545
-  | ⟨7, _⟩ => 14058645
+/-! Exact V2 fields-root domains.  These are ASCII `FLD2` and `FLN2`. -/
+def FLD2 : Int := 0x464c4432
+def FLN2 : Int := 0x464c4e32
 
-def relicNextAddr : Fin RELICS → Int
-  | ⟨0, _⟩ => 2013265920
-  | ⟨1, _⟩ => 529176517
-  | ⟨2, _⟩ => 206503848
-  | ⟨3, _⟩ => 1456787871
-  | ⟨4, _⟩ => 1229116775
-  | ⟨5, _⟩ => 1903373793
-  | ⟨6, _⟩ => 1194514939
-  | ⟨7, _⟩ => 186807208
+def relicKey : Fin RELICS → Int
+  | ⟨0, _⟩ => 16
+  | ⟨1, _⟩ => 17
+  | ⟨2, _⟩ => 18
+  | ⟨3, _⟩ => 19
+  | ⟨4, _⟩ => 20
+  | ⟨5, _⟩ => 21
+  | ⟨6, _⟩ => 22
+  | ⟨7, _⟩ => 23
 
 def zoneCode : Fin ZONES → Int
   | ⟨0, _⟩ => 8
@@ -63,38 +63,52 @@ def zoneCode : Fin ZONES → Int
   | ⟨4, _⟩ => 3
   | ⟨5, _⟩ => 4
 
-/-! ## Column geometry -/
+/-! ## Column geometry
+
+Each row is one Merkle level.  Eight paths run in parallel.  Leaf states are constant down the
+trace; node states vary with the level.  A 22-felt leaf takes six absorbs plus one squeeze, and a
+17-felt node takes five absorbs plus one squeeze.
+-/
 
 def STATE_BASE : Nat := 0
 def STATE_SPAN : Nat := 16
 def PATH_BASE : Nat := STATE_BASE + STATE_SPAN
+def LEAF_STATE_STEPS : Nat := 7
+def NODE_STATE_STEPS : Nat := 6
 
-/-- Per-relic column span:
-`raw(1), value_hash8, leaf8, cur8, sibling8, left8, right8, parent8, dir(1), eq6, inv6`. -/
-def PATH_SPAN : Nat := 70
+/-- `key4, value16, leaf_state112, cur8, sibling8, left8, right8,
+node_state96, dir1, eq6, inv6`. -/
+def PATH_SPAN : Nat := 273
 def pathBase (r : Fin RELICS) : Nat := PATH_BASE + r.val * PATH_SPAN
-def rawCol (r : Fin RELICS) : Nat := pathBase r
-def valueHashCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 1 + i.val
-def valueHashHead (r : Fin RELICS) : Nat := pathBase r + 1
-def leafCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 9 + i.val
-def curCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 17 + i.val
-def siblingCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 25 + i.val
-def leftCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 33 + i.val
-def rightCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 41 + i.val
-def parentCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := pathBase r + 49 + i.val
-def dirCol (r : Fin RELICS) : Nat := pathBase r + 57
-def eqCol (r : Fin RELICS) (z : Fin ZONES) : Nat := pathBase r + 58 + z.val
-def invCol (r : Fin RELICS) (z : Fin ZONES) : Nat := pathBase r + 64 + z.val
+def keyBase (r : Fin RELICS) : Nat := pathBase r
+def keyCol (r : Fin RELICS) (i : Fin KEY_LIMBS) : Nat := keyBase r + i.val
+def valueBase (r : Fin RELICS) : Nat := keyBase r + KEY_LIMBS
+def valueCol (r : Fin RELICS) (i : Fin VALUE_LIMBS) : Nat := valueBase r + i.val
+def leafStateBase (r : Fin RELICS) : Nat := valueBase r + VALUE_LIMBS
+def curBase (r : Fin RELICS) : Nat := leafStateBase r + STATE_LANES * LEAF_STATE_STEPS
+def curCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := curBase r + i.val
+def siblingBase (r : Fin RELICS) : Nat := curBase r + DIGEST
+def siblingCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := siblingBase r + i.val
+def leftBase (r : Fin RELICS) : Nat := siblingBase r + DIGEST
+def leftCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := leftBase r + i.val
+def rightBase (r : Fin RELICS) : Nat := leftBase r + DIGEST
+def rightCol (r : Fin RELICS) (i : Fin DIGEST) : Nat := rightBase r + i.val
+def nodeStateBase (r : Fin RELICS) : Nat := rightBase r + DIGEST
+def dirCol (r : Fin RELICS) : Nat := nodeStateBase r + STATE_LANES * NODE_STATE_STEPS
+def eqCol (r : Fin RELICS) (z : Fin ZONES) : Nat := dirCol r + 1 + z.val
+def invCol (r : Fin RELICS) (z : Fin ZONES) : Nat := dirCol r + 1 + ZONES + z.val
 
 def COUNT_COL_BASE : Nat := PATH_BASE + RELICS * PATH_SPAN
 def countCol (z : Fin ZONES) : Nat := COUNT_COL_BASE + z.val
 def TRACE_WIDTH : Nat := COUNT_COL_BASE + ZONES
 
-#guard PATH_SPAN == 70
-#guard TRACE_WIDTH == 582
-#guard TRACE_WIDTH < 1024
+#guard PATH_SPAN == 273
+#guard TRACE_WIDTH == 2206
+#guard curBase ⟨0, by decide⟩ == 148
+#guard nodeStateBase ⟨0, by decide⟩ == 180
+#guard dirCol ⟨0, by decide⟩ == 276
 
-/-! ## Expression helpers and row-local constraints -/
+/-! ## Expression and exact-sponge helpers -/
 
 def ev (c : Nat) : EmittedExpr := .var c
 def ek (x : Int) : EmittedExpr := .const x
@@ -103,29 +117,102 @@ def emul (a b : EmittedExpr) : EmittedExpr := .mul a b
 def eneg (a : EmittedExpr) : EmittedExpr := emul (ek (-1)) a
 def esub (a b : EmittedExpr) : EmittedExpr := eadd a (eneg b)
 
-def digestCols (f : Fin DIGEST → Nat) : List Nat := List.ofFn f
-def digestExprs (f : Fin DIGEST → Nat) : List EmittedExpr := (digestCols f).map ev
+def cols (base count : Nat) : List Nat := (List.range count).map (base + ·)
+def vars (base count : Nat) : List EmittedExpr := (cols base count).map .var
+def stateCols (base step : Nat) : List Nat := cols (base + STATE_LANES * step) STATE_LANES
+def chunks4 {α : Type} (xs : List α) : List (List α) := xs.toChunks 4
 
-/-- `field_from_u64(code)` puts a one-byte custody code at byte 31; the deployed byte-fold
-encodes 4-byte chunks little-endian, hence the eighth chip input is `code * 2^24`. -/
-def encodedCustodyInputs (r : Fin RELICS) : List EmittedExpr :=
-  [ek 0, ek 0, ek 0, ek 0, ek 0, ek 0, ek 0, emul (ek 16777216) (ev (rawCol r))]
+def initialStateExpr (inputLength : Nat) : List EmittedExpr :=
+  (List.range STATE_LANES).map fun i => if i = 4 then .const inputLength else .const 0
 
-def valueHashLookup (r : Fin RELICS) : Lookup :=
-  { table := .poseidon2
-  , tuple := chipLookupTupleN (encodedCustodyInputs r) (digestCols (valueHashCol r)) }
+def padChunk (chunk : List EmittedExpr) : List EmittedExpr :=
+  chunk ++ List.replicate (4 - chunk.length) (.const 0)
 
-def leafLookup (r : Fin RELICS) : Lookup :=
-  { table := .poseidon2
-  , tuple := chipLookupTupleN
-      [ek (relicAddr r), ev (valueHashHead r), ek (relicNextAddr r)]
-      (digestCols (leafCol r)) }
+def priorStateExpr (stateBase stage : Nat) : List EmittedExpr :=
+  if stage = 0 then [] else (stateCols stateBase (stage - 1)).map .var
 
-def nodeLookup (r : Fin RELICS) : Lookup :=
-  { table := .poseidon2
-  , tuple := chipLookupTupleN
-      (digestExprs (leftCol r) ++ digestExprs (rightCol r))
-      (digestCols (parentCol r)) }
+def absorbInputExpr (stateBase inputLength stage : Nat) (chunk : List EmittedExpr) :
+    List EmittedExpr :=
+  let prior := if stage = 0 then initialStateExpr inputLength else priorStateExpr stateBase stage
+  let rate := padChunk chunk
+  (List.range STATE_LANES).map fun i =>
+    if i < 4 then eadd (prior.getD i (.const 0)) (rate.getD i (.const 0))
+    else prior.getD i (.const 0)
+
+structure State16Step where
+  input : List EmittedExpr
+  outputCols : List Nat
+  deriving Repr
+
+/-- Exact live `hash_many_8`: absorb-permute each rate-four chunk, then one final permutation. -/
+def spongePlan (stateBase : Nat) (preimage : List EmittedExpr) : List State16Step :=
+  let chunks := chunks4 preimage
+  let absorb := chunks.mapIdx fun stage chunk =>
+    ⟨absorbInputExpr stateBase preimage.length stage chunk, stateCols stateBase stage⟩
+  let squeeze :=
+    ⟨(stateCols stateBase (chunks.length - 1)).map .var, stateCols stateBase chunks.length⟩
+  absorb ++ [squeeze]
+
+def spongeSteps (inputLength : Nat) : Nat := (inputLength + 3) / 4 + 1
+
+/-- Digest lanes are absorb-state lanes 0..3 followed by final-squeeze lanes 0..3. -/
+def spongeDigestCols (stateBase inputLength : Nat) : List Nat :=
+  let absorbs := (inputLength + 3) / 4
+  cols (stateBase + STATE_LANES * (absorbs - 1)) 4 ++
+    cols (stateBase + STATE_LANES * absorbs) 4
+
+def leafPreimage (r : Fin RELICS) : List EmittedExpr :=
+  [ek FLD2, ek 1] ++ vars (keyBase r) KEY_LIMBS ++ vars (valueBase r) VALUE_LIMBS
+
+def leafDigestCols (r : Fin RELICS) : List Nat :=
+  spongeDigestCols (leafStateBase r) (leafPreimage r).length
+
+def nodePreimage (r : Fin RELICS) : List EmittedExpr :=
+  ek FLN2 :: (vars (leftBase r) DIGEST ++ vars (rightBase r) DIGEST)
+
+def nodeDigestCols (r : Fin RELICS) : List Nat :=
+  spongeDigestCols (nodeStateBase r) (nodePreimage r).length
+
+#guard (leafPreimage ⟨0, by decide⟩).length == 22
+#guard (nodePreimage ⟨0, by decide⟩).length == 17
+#guard spongeSteps 22 == LEAF_STATE_STEPS
+#guard spongeSteps 17 == NODE_STATE_STEPS
+#guard (leafDigestCols ⟨0, by decide⟩).length == DIGEST
+#guard (nodeDigestCols ⟨0, by decide⟩).length == DIGEST
+
+/-! ## Exact custody, path, and census constraints -/
+
+def keyLimbExpected (r : Fin RELICS) (i : Fin KEY_LIMBS) : Int :=
+  if i.val = 0 then relicKey r else 0
+
+/-- `field_from_u64(zone)` is a 32-byte big-endian integer, then the exact leaf converts adjacent
+bytes to little-endian u16 limbs.  For the six byte-sized codes this is therefore zero in limbs
+0..14 and `256 * zone` in limb 15. -/
+def valueLimbExpected (z : Fin ZONES) (i : Fin VALUE_LIMBS) : Int :=
+  if i.val = 15 then 256 * zoneCode z else 0
+
+def eqDiff (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
+  esub (ev (valueCol r ⟨15, by decide⟩)) (ek (valueLimbExpected z ⟨15, by decide⟩))
+
+def eqZero (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
+  emul (eqDiff r z) (ev (eqCol r z))
+
+def eqInverse (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
+  esub (emul (eqDiff r z) (ev (invCol r z)))
+    (esub (ek 1) (ev (eqCol r z)))
+
+def eqBinary (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
+  emul (ev (eqCol r z)) (esub (ev (eqCol r z)) (ek 1))
+
+def zoneOneHot (r : Fin RELICS) : EmittedExpr :=
+  esub ((List.finRange ZONES).foldr (fun z acc => eadd (ev (eqCol r z)) acc) (ek 0)) (ek 1)
+
+def selectedValueLimb (r : Fin RELICS) (i : Fin VALUE_LIMBS) : EmittedExpr :=
+  (List.finRange ZONES).foldr
+    (fun z acc => eadd (emul (ev (eqCol r z)) (ek (valueLimbExpected z i))) acc) (ek 0)
+
+def valueLimbGate (r : Fin RELICS) (i : Fin VALUE_LIMBS) : EmittedExpr :=
+  esub (ev (valueCol r i)) (selectedValueLimb r i)
 
 def dirBinary (r : Fin RELICS) : EmittedExpr :=
   emul (ev (dirCol r)) (esub (ev (dirCol r)) (ek 1))
@@ -140,42 +227,31 @@ def rightSelect (r : Fin RELICS) (i : Fin DIGEST) : EmittedExpr :=
     (eadd (ev (siblingCol r i))
       (emul (ev (dirCol r)) (esub (ev (curCol r i)) (ev (siblingCol r i)))))
 
-def eqDiff (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
-  esub (ev (rawCol r)) (ek (zoneCode z))
-
-def eqZero (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
-  emul (eqDiff r z) (ev (eqCol r z))
-
-def eqInverse (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
-  esub (emul (eqDiff r z) (ev (invCol r z)))
-    (esub (ek 1) (ev (eqCol r z)))
-
-def eqBinary (r : Fin RELICS) (z : Fin ZONES) : EmittedExpr :=
-  emul (ev (eqCol r z)) (esub (ev (eqCol r z)) (ek 1))
-
-/-- Every authenticated relic has exactly one legal custody zone.  Without this gate a canonical
-but out-of-vocabulary code (0/5/6/7/...) makes all six equality indicators zero and disappears
-from the published census. -/
-def zoneOneHot (r : Fin RELICS) : EmittedExpr :=
-  esub ((List.finRange ZONES).foldr (fun z acc => eadd (ev (eqCol r z)) acc) (ek 0)) (ek 1)
+def state16Lookups (r : Fin RELICS) : List VmConstraint2 :=
+  (spongePlan (leafStateBase r) (leafPreimage r) ++
+    spongePlan (nodeStateBase r) (nodePreimage r)).map fun step =>
+      .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols⟩
 
 def perPathConstraints (r : Fin RELICS) : List VmConstraint2 :=
-  [ .lookup (valueHashLookup r)
-  , .lookup (leafLookup r)
-  , .lookup (nodeLookup r)
-  , .base (.gate (dirBinary r))
+  state16Lookups r ++
+  (List.finRange KEY_LIMBS).map (fun i =>
+    .base (.gate (esub (ev (keyCol r i)) (ek (keyLimbExpected r i))))) ++
+  [ .base (.gate (dirBinary r))
   , .base (.gate (zoneOneHot r)) ] ++
+  (List.finRange VALUE_LIMBS).map (fun i => .base (.gate (valueLimbGate r i))) ++
   (List.finRange DIGEST).flatMap (fun i =>
     [.base (.gate (leftSelect r i)), .base (.gate (rightSelect r i))]) ++
   (List.finRange ZONES).flatMap (fun z =>
     [.base (.gate (eqZero r z)), .base (.gate (eqInverse r z)),
       .base (.gate (eqBinary r z))]) ++
   (List.finRange DIGEST).map (fun i =>
-    .windowGate ⟨.add (.nxt (curCol r i)) (.mul (.const (-1)) (.loc (parentCol r i))), true⟩) ++
+    .windowGate ⟨.add (.nxt (curCol r i))
+      (.mul (.const (-1)) (.loc ((nodeDigestCols r).getD i.val 0))), true⟩) ++
   (List.finRange DIGEST).map (fun i =>
-    .base (.boundary .first (esub (ev (curCol r i)) (ev (leafCol r i))))) ++
+    .base (.boundary .first
+      (esub (ev (curCol r i)) (ev ((leafDigestCols r).getD i.val 0))))) ++
   (List.finRange DIGEST).map (fun i =>
-    .base (.piBinding .last (parentCol r i) (PI_FIELDS_ROOT + i.val)))
+    .base (.piBinding .last ((nodeDigestCols r).getD i.val 0) (PI_FIELDS_ROOT + i.val)))
 
 def censusSum (z : Fin ZONES) : EmittedExpr :=
   (List.finRange RELICS).foldr (fun r acc => eadd (ev (eqCol r z)) acc) (ek 0)
@@ -189,10 +265,10 @@ def statePins : List VmConstraint2 :=
   (List.range STATE_SPAN).map (fun i => .base (.piBinding .first i i))
 
 def descentCensusDescriptor : EffectVmDescriptor2 :=
-  { name := "dregg-descent-custody-census-fixed8-v1"
+  { name := "dregg-descent-custody-census-fixed8-v2"
   , traceWidth := TRACE_WIDTH
   , piCount := PI_COUNT
-  , tables := [poseidon2ChipTableDef]
+  , tables := [mainTableDef TRACE_WIDTH, poseidon2State16ChipTableDef]
   , constraints := statePins ++
       (List.finRange RELICS).flatMap perPathConstraints ++ countConstraints
   , hashSites := []
@@ -200,12 +276,12 @@ def descentCensusDescriptor : EffectVmDescriptor2 :=
 
 def descriptorJson : String := emitVmJson2 descentCensusDescriptor
 
-/-! Structural regression teeth: eight real openings, three wide lookups per path, six public
-counts, and no host-only `mapOp` masquerading as authenticated membership. -/
-#guard descentCensusDescriptor.traceWidth == 582
+/-! Structural regression teeth: eight exact openings, thirteen full-state permutations per path,
+six public counts, and no host-only `mapOp` masquerading as authenticated membership. -/
+#guard descentCensusDescriptor.traceWidth == 2206
 #guard descentCensusDescriptor.piCount == 30
 #guard ((descentCensusDescriptor.constraints.filter fun c =>
-  match c with | .lookup _ => true | _ => false).length) == RELICS * 3
+  match c with | .lookup l => l.table == poseidon2state16 | _ => false).length) == RELICS * 13
 #guard ((descentCensusDescriptor.constraints.filter fun c =>
   match c with | .windowGate _ => true | _ => false).length) == RELICS * DIGEST
 #guard ((descentCensusDescriptor.constraints.filter fun c =>

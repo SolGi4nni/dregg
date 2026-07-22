@@ -358,6 +358,7 @@ impl TurnExecutor {
             let Some(binding) = verifier.app_write_binding() else {
                 continue;
             };
+            let encoding = verifier.app_write_encoding();
 
             if !binding.is_well_formed() {
                 return Err(mismatch(i, format!("ill-formed binding {binding:?}")));
@@ -458,13 +459,12 @@ impl TurnExecutor {
                         ),
                     ));
                 }
-                let mut expected_value = [0u8; 32];
-                expected_value[..4].copy_from_slice(&raw_pi.to_le_bytes());
+                let expected_value = encoding.encode(raw_pi);
                 if value != &expected_value {
                     return Err(mismatch(
                         i,
                         format!(
-                            "SetField lane {j} value is not the canonical 32-byte encoding of app PI {raw_pi}"
+                            "SetField lane {j} value is not the {encoding:?} canonical 32-byte encoding of app PI {raw_pi}"
                         ),
                     ));
                 }
@@ -3525,6 +3525,7 @@ mod custom_effect_dispatch_tests {
     struct AppWriteVerifier {
         vk: [u8; 32],
         binding: AppRootBinding,
+        encoding: dregg_cell::CustomAppWriteEncoding,
     }
 
     impl CustomEffectVerifier for AppWriteVerifier {
@@ -3543,11 +3544,27 @@ mod custom_effect_dispatch_tests {
         fn app_write_binding(&self) -> Option<AppRootBinding> {
             Some(self.binding)
         }
+
+        fn app_write_encoding(&self) -> dregg_cell::CustomAppWriteEncoding {
+            self.encoding
+        }
     }
 
     fn registry_with_app_write(
         canonical: &[u8],
         binding: AppRootBinding,
+    ) -> (CustomEffectRegistry, [u8; 32]) {
+        registry_with_app_write_encoding(
+            canonical,
+            binding,
+            dregg_cell::CustomAppWriteEncoding::BabyBearLe,
+        )
+    }
+
+    fn registry_with_app_write_encoding(
+        canonical: &[u8],
+        binding: AppRootBinding,
+        encoding: dregg_cell::CustomAppWriteEncoding,
     ) -> (CustomEffectRegistry, [u8; 32]) {
         let vk = canonical_vk_v2(&VkComponents {
             program_bytes: canonical,
@@ -3562,7 +3579,11 @@ mod custom_effect_dispatch_tests {
                 air_fp(),
                 verifier_fp(),
                 proving_system(),
-                Arc::new(AppWriteVerifier { vk, binding }),
+                Arc::new(AppWriteVerifier {
+                    vk,
+                    binding,
+                    encoding,
+                }),
             )
             .expect("register bounded app-write verifier");
         (registry, vk)
@@ -3631,6 +3652,47 @@ mod custom_effect_dispatch_tests {
         executor
             .enforce_custom_effect_proofs(&turn, &cell, &Ledger::new())
             .expect("Custom followed by its exact PI-equal SetField run must pass");
+    }
+
+    #[test]
+    fn custom_app_write_accepts_explicit_dregg_u64_encoding_and_refuses_le_substitution() {
+        use dregg_cell::CustomAppWriteEncoding;
+
+        let cell = cell_id(0xA7);
+        let (registry, vk) = registry_with_app_write_encoding(
+            b"bounded-app-write-u64be",
+            app_binding(),
+            CustomAppWriteEncoding::DreggU64Be,
+        );
+        let executor = executor_with(registry);
+        let mut turn = app_write_turn(cell, vk);
+        for (effect, value) in turn.call_forest.roots[0].action.effects[1..]
+            .iter_mut()
+            .zip([7, 9])
+        {
+            let Effect::SetField {
+                value: field_value, ..
+            } = effect
+            else {
+                unreachable!("fixture tail is SetField")
+            };
+            *field_value = CustomAppWriteEncoding::DreggU64Be.encode(value);
+        }
+
+        executor
+            .enforce_custom_effect_proofs(&turn, &cell, &Ledger::new())
+            .expect("integer-authored custom app writes use exact field_from_u64 bytes");
+
+        let Effect::SetField { value, .. } = &mut turn.call_forest.roots[0].action.effects[1]
+        else {
+            unreachable!("fixture tail is SetField")
+        };
+        *value = scalar_field(7);
+        assert_app_write_refusal(
+            executor
+                .enforce_custom_effect_proofs(&turn, &cell, &Ledger::new())
+                .expect_err("native BabyBear LE substitution must not satisfy u64-BE policy"),
+        );
     }
 
     #[test]

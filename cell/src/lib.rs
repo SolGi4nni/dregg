@@ -104,7 +104,8 @@ pub use commitment::{
 };
 pub use commitment_set::CommitmentSet;
 pub use custom_effect::{
-    CustomEffectError, CustomEffectRegistry, CustomEffectVerifier, StubCustomEffectVerifier,
+    CustomAppWriteEncoding, CustomEffectError, CustomEffectRegistry, CustomEffectVerifier,
+    StubCustomEffectVerifier,
 };
 pub use delegation::DelegatedRef;
 pub use derivation::{

@@ -65,6 +65,32 @@ use std::sync::Arc;
 use crate::predicate::canonical_predicate_vk;
 use crate::vk_v2::{ProvingSystemId, VerifierFingerprint, VkComponents, canonical_vk_v2};
 
+/// Canonical cell-field encoding used by an opt-in custom app-write binding.
+///
+/// Most custom roots are native BabyBear limbs and retain the original
+/// four-byte little-endian lane.  Integer-authored applications use dregg's
+/// ordinary `field_from_u64` convention instead: a big-endian `u64` in the
+/// trailing eight bytes.  The verifier chooses explicitly so admission never
+/// guesses how a published scalar maps into committed state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CustomAppWriteEncoding {
+    #[default]
+    BabyBearLe,
+    DreggU64Be,
+}
+
+impl CustomAppWriteEncoding {
+    /// Encode one canonical BabyBear public scalar as an exact cell field.
+    pub fn encode(self, value: u32) -> crate::FieldElement {
+        let mut out = [0u8; 32];
+        match self {
+            Self::BabyBearLe => out[..4].copy_from_slice(&value.to_le_bytes()),
+            Self::DreggU64Be => out[24..].copy_from_slice(&(value as u64).to_be_bytes()),
+        }
+        out
+    }
+}
+
 /// Errors a [`CustomEffectVerifier`] can produce.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CustomEffectError {
@@ -184,8 +210,8 @@ pub trait CustomEffectVerifier: Send + Sync {
     /// - its paired `Effect::Custom` is immediately followed by those
     ///   `SetField`s, targeting the same cell and fields
     ///   `binding.field_key .. binding.field_key + binding.app_root_len`;
-    /// - every field is the canonical 32-byte encoding of the corresponding
-    ///   scalar (`u32::to_le_bytes`, then 28 zero bytes); and
+    /// - every field is the verifier-declared canonical 32-byte encoding of
+    ///   the corresponding scalar (see [`Self::app_write_encoding`]); and
     /// - the whole range lies in the wide leg's exposed `fields[0..8]` octet.
     ///
     /// The outer EffectVM proof already attests that exact effect sequence and
@@ -201,6 +227,15 @@ pub trait CustomEffectVerifier: Send + Sync {
         &self,
     ) -> Option<dregg_circuit::effect_vm::custom_state_binding::AppRootBinding> {
         None
+    }
+
+    /// Exact encoding of each published scalar into its paired `SetField`.
+    ///
+    /// The default preserves the original native-BabyBear app-root ABI. An
+    /// integer-authored verifier must opt into [`CustomAppWriteEncoding::DreggU64Be`]
+    /// so its app-write face is byte-identical to `field_from_u64`.
+    fn app_write_encoding(&self) -> CustomAppWriteEncoding {
+        CustomAppWriteEncoding::BabyBearLe
     }
 }
 
@@ -483,6 +518,19 @@ mod tests {
     fn register_and_verify_round_trips() {
         let (reg, vk_hash, _) = registry_with_one_entry();
         reg.verify(&vk_hash, b"pi", b"proof").expect("accept");
+    }
+
+    #[test]
+    fn app_write_scalar_encodings_are_explicit_and_byte_distinct() {
+        let value = 0x0102_0304;
+        let native = CustomAppWriteEncoding::BabyBearLe.encode(value);
+        assert_eq!(&native[..4], &value.to_le_bytes());
+        assert!(native[4..].iter().all(|byte| *byte == 0));
+
+        let integer = CustomAppWriteEncoding::DreggU64Be.encode(value);
+        assert!(integer[..24].iter().all(|byte| *byte == 0));
+        assert_eq!(&integer[24..], &(value as u64).to_be_bytes());
+        assert_ne!(native, integer);
     }
 
     #[test]

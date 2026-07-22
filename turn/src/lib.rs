@@ -95,6 +95,8 @@ pub mod conflict;
 pub mod continuation;
 pub mod continuation_resume;
 pub mod cross_fed_cite;
+#[cfg(feature = "prover")]
+pub mod descent_census_custom;
 pub mod dsl;
 pub mod economics;
 pub mod encrypted;

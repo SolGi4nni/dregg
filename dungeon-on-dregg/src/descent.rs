@@ -653,19 +653,23 @@ impl Descent {
                 value: field_from_u64(v),
             });
         };
-        set_reg("depth", sim.depth);
-        set_reg("spent", sim.spent);
-        set_reg("wounds", sim.wounds);
-        set_reg("fate", sim.fate);
+        // Keep the six proof-authored custody projections immediately
+        // contiguous, in the same order as the census AIR public ABI.  A
+        // shielded turn can prepend its `Effect::Custom` and the executor then
+        // consumes exactly this SetField run as the mandatory app-write face.
         set_reg("pack", sim.pack());
         set_reg("bank", sim.bank());
-        set_reg("way_2", sim.ways[0]);
-        set_reg("way_3", sim.ways[1]);
-        set_reg("way_4", sim.ways[2]);
         set_reg("hoard_1", sim.hoard_at(1));
         set_reg("hoard_2", sim.hoard_at(2));
         set_reg("hoard_3", sim.hoard_at(3));
         set_reg("hoard_4", sim.hoard_at(4));
+        set_reg("depth", sim.depth);
+        set_reg("spent", sim.spent);
+        set_reg("wounds", sim.wounds);
+        set_reg("fate", sim.fate);
+        set_reg("way_2", sim.ways[0]);
+        set_reg("way_3", sim.ways[1]);
+        set_reg("way_4", sim.ways[2]);
         drop(set_reg);
         for (i, &c) in sim.custody.iter().enumerate() {
             effects.push(Effect::SetField {
