@@ -2195,9 +2195,6 @@ impl AuthenticatedQuorumCombiner {
                 return Err(QuorumError::SessionMismatch);
             }
             self.roster.verify_share(&signed)?;
-            if let Some(transcript) = &self.roster.verified_transcript {
-                verify_decrypt_share_relation(&signed.share, transcript, params)?;
-            }
             let canonical = signed.to_wire_bytes();
             if canonical.as_slice() != wire.as_slice() {
                 return Err(QuorumError::MalformedWire);
@@ -2206,6 +2203,14 @@ impl AuthenticatedQuorumCombiner {
             transcript.update((canonical.len() as u64).to_le_bytes());
             transcript.update(&canonical);
             shares.push(signed.share);
+        }
+        // Authenticate, canonicalize, and bind the complete ordered roster
+        // before starting expensive ZK work.  Independent public share proofs
+        // then verify concurrently.  The helper collects indexed Rayon output
+        // and replays errors in canonical party order, so scheduling cannot
+        // make externally observed failure precedence nondeterministic.
+        if let Some(verified_transcript) = &self.roster.verified_transcript {
+            verify_decrypt_share_relations_parallel(&shares, verified_transcript, params)?;
         }
 
         let opened = combine_quorum(&shares, expected, params)?;
@@ -3063,6 +3068,21 @@ fn verify_decrypt_share_relation(
     let challenge = transcript_challenge_scalar(&mut transcript, b"relation-challenge");
     if response * pc_gens.B_blinding != nonce + challenge * relation {
         return Err(QuorumError::InvalidDecryptShareProof { party: share.party });
+    }
+    Ok(())
+}
+
+fn verify_decrypt_share_relations_parallel(
+    shares: &[QuorumDecryptShare],
+    setup: &VerifiedDkgTranscript,
+    params: &BfvParams,
+) -> Result<()> {
+    let outcomes = shares
+        .par_iter()
+        .map(|share| verify_decrypt_share_relation(share, setup, params))
+        .collect::<Vec<_>>();
+    for outcome in outcomes {
+        outcome?;
     }
     Ok(())
 }
@@ -4059,6 +4079,17 @@ mod vss_tests {
             finish_verified_keygen(&session, verified_dealers, &params)
                 .unwrap()
                 .into_parts();
+        let keys = (0..3)
+            .map(|party| SigningKey::from_bytes(&[0xc0 + party as u8; 32]))
+            .collect::<Vec<_>>();
+        let roster = AuthenticatedQuorumRoster::new_verified(
+            session.clone(),
+            &transcript,
+            keys.iter()
+                .map(|key| key.verifying_key().to_bytes())
+                .collect(),
+        )
+        .unwrap();
         let mut parties = assemblies
             .into_iter()
             .enumerate()
@@ -4101,25 +4132,74 @@ mod vss_tests {
             prove_started.elapsed()
         );
         assert!(shares.iter().all(|share| share.proof.is_some()));
+        let framed = shares
+            .iter()
+            .map(|share| {
+                roster
+                    .sign_share(share.clone(), &keys[share.party])
+                    .unwrap()
+                    .to_wire_bytes()
+            })
+            .collect::<Vec<_>>();
         let verify_started = Instant::now();
+        let mut combiner = AuthenticatedQuorumCombiner::new(roster.clone());
+        let opened = combiner
+            .combine_framed(&opening, &ciphertext, &framed, &params)
+            .unwrap();
+        eprintln!(
+            "fhegg verified-share profile: parallel-verify-two={:?}",
+            verify_started.elapsed()
+        );
+        assert_eq!(&opened[..4], &[7, 19, 31, 43]);
+        // A same-process, same-fixture reference makes the scheduling gain
+        // measurable without comparing unlike hosts or historical builds.
+        // Run it second so any shared code/data warmth favors the serial
+        // reference rather than the production parallel path.
+        let serial_verify_started = Instant::now();
         for share in &shares {
             verify_decrypt_share_relation(share, &transcript, &params).unwrap();
         }
         eprintln!(
-            "fhegg verified-share profile: verify-two={:?}",
-            verify_started.elapsed()
-        );
-        assert_eq!(
-            &combine_quorum(&shares, &opening, &params).unwrap()[..4],
-            &[7, 19, 31, 43]
+            "fhegg verified-share profile: serial-verify-two={:?}",
+            serial_verify_started.elapsed()
         );
 
-        let mut forged = shares[0].clone();
-        forged.proof.as_mut().unwrap().relation_response[0] ^= 1;
-        assert!(matches!(
-            verify_decrypt_share_relation(&forged, &transcript, &params),
-            Err(QuorumError::InvalidDecryptShareProof { .. })
-        ));
+        let mut forged = shares.clone();
+        for share in &mut forged {
+            share.proof.as_mut().unwrap().relation_response[0] ^= 1;
+        }
+        let mut forged_framed = forged
+            .iter()
+            .map(|share| {
+                roster
+                    .sign_share(share.clone(), &keys[share.party])
+                    .unwrap()
+                    .to_wire_bytes()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            AuthenticatedQuorumCombiner::new(roster.clone()).combine_framed(
+                &opening,
+                &ciphertext,
+                &forged_framed,
+                &params,
+            ),
+            Err(QuorumError::InvalidDecryptShareProof {
+                party: shares[0].party
+            })
+        );
+        *forged_framed[0].last_mut().unwrap() ^= 1;
+        assert_eq!(
+            AuthenticatedQuorumCombiner::new(roster).combine_framed(
+                &opening,
+                &ciphertext,
+                &forged_framed,
+                &params,
+            ),
+            Err(QuorumError::InvalidSignature {
+                party: shares[0].party
+            })
+        );
         eprintln!(
             "fhegg verified-share profile: total={:?}",
             total_started.elapsed()
