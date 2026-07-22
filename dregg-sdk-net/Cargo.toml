@@ -31,6 +31,7 @@ dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-turn = { path = "../turn" }
 dregg-commit = { path = "../commit" }
 dregg-circuit = { path = "../circuit" }
+dregg-federation = { path = "../federation" }
 dregg-intent = { path = "../intent" }
 dregg-macaroon = { workspace = true, features = ["crypto"] }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }

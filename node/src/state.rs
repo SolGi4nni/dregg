@@ -201,6 +201,82 @@ pub struct NodeState {
     prove_pool: Arc<RwLock<Option<crate::prove_pool::ProvePool>>>,
 }
 
+/// One fixed-size, cursor-only page of the public append-only faithful note
+/// mirror.  Callers cannot select a note or page number: the supported client
+/// path starts at cursor zero and consumes every returned continuation.
+#[derive(Clone, Debug)]
+pub struct FaithfulNoteMirrorPage {
+    pub commitment_cursor: u64,
+    pub next_commitment_cursor: u64,
+    pub history_cursor: u64,
+    pub next_history_cursor: u64,
+    pub nullifier_cursor: u64,
+    pub next_nullifier_cursor: u64,
+    pub nullifier_count: u64,
+    pub commitments: Vec<[u8; 32]>,
+    pub nullifiers: Vec<([u8; 32], u64, u64)>,
+    pub anchor: dregg_persist::FaithfulNoteRootAnchorV1,
+    pub history: Vec<dregg_persist::FaithfulNoteRootEnvelopeV1>,
+    pub head: dregg_persist::FaithfulNoteRootExpectationV1,
+    pub latest_attested_root: dregg_persist::StoredAttestedRoot,
+    /// Target-independent FNMS-v1 certificate over the exact mirror head,
+    /// hybrid-signed by the same pinned node author as FNHR rows.
+    pub head_hybrid_quorum: Vec<dregg_types::HybridQuorumSig>,
+}
+
+pub const FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE: usize = 256;
+pub const FAITHFUL_MIRROR_HISTORY_PAGE_SIZE: usize = 16;
+pub const FAITHFUL_MIRROR_NULLIFIER_PAGE_SIZE: usize = 256;
+
+fn faithful_mirror_head_signing_message(
+    anchor: &dregg_persist::FaithfulNoteRootAnchorV1,
+    head: dregg_persist::FaithfulNoteRootExpectationV1,
+    nullifier_count: u64,
+    nullifier_root: [u8; 32],
+) -> [u8; 176] {
+    let mut out = [0u8; 176];
+    out[0..4].copy_from_slice(b"FNMS");
+    out[4..6].copy_from_slice(&1u16.to_le_bytes());
+    out[6..8].copy_from_slice(&0u16.to_le_bytes());
+    out[8..40].copy_from_slice(&anchor.session_id);
+    out[40..72].copy_from_slice(&anchor.federation_id);
+    out[72..80].copy_from_slice(&anchor.committee_epoch.to_le_bytes());
+    out[80..88].copy_from_slice(&head.records.to_le_bytes());
+    out[88..96].copy_from_slice(&head.height.to_le_bytes());
+    out[96..104].copy_from_slice(&head.note_count.to_le_bytes());
+    out[104..136].copy_from_slice(head.root.as_bytes());
+    out[136..144].copy_from_slice(&nullifier_count.to_le_bytes());
+    out[144..176].copy_from_slice(&nullifier_root);
+    out
+}
+
+/// Fail-closed refusal from the target-independent faithful mirror surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaithfulMirrorError {
+    /// No sealed faithful history/latest attestation exists yet.
+    NoAuthenticatedHead,
+    /// Durable state could not be read or reconstructed exactly.
+    DurableState(String),
+    /// Two supposedly authoritative views of the current head disagree.
+    InconsistentHead(String),
+}
+
+impl std::fmt::Display for FaithfulMirrorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAuthenticatedHead => {
+                write!(f, "no authenticated faithful note-root head is available")
+            }
+            Self::DurableState(reason) => write!(f, "durable faithful state refused: {reason}"),
+            Self::InconsistentHead(reason) => {
+                write!(f, "faithful head/tree consistency check refused: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FaithfulMirrorError {}
+
 /// The inner mutable state of the node.
 // Some fields back cfg-conditional / not-yet-consulted node surfaces (routing,
 // cross-federation revocation, threshold shares); retained as wired scaffolding.
@@ -2515,6 +2591,193 @@ impl NodeStateInner {
     // Poseidon2 Note Tree Methods
     // =========================================================================
 
+    fn load_authenticated_faithful_history(
+        &self,
+        expectation: dregg_persist::FaithfulNoteRootExpectationV1,
+    ) -> Result<dregg_persist::FaithfulNoteRootHistoryV1, FaithfulMirrorError> {
+        let seed = self.cclerk.gossip_signing_key().to_bytes();
+        let local_ed = self.cclerk.public_key();
+        let (local_pq, _) = dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+        self.store
+            .load_faithful_note_root_history_hybrid(
+                std::slice::from_ref(&local_ed),
+                std::slice::from_ref(&local_pq),
+                1,
+                expectation,
+            )
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))
+    }
+
+    /// Return one target-independent mirror page.  Both cursors are prefix
+    /// lengths, never note selectors.  The production SDK starts at `(0, 0, 0)`
+    /// and follows only the returned continuations, downloading every
+    /// intervening commitment and authenticated history row.
+    pub fn faithful_note_mirror_page(
+        &self,
+        commitment_cursor: u64,
+        history_cursor: u64,
+        nullifier_cursor: u64,
+    ) -> Result<FaithfulNoteMirrorPage, FaithfulMirrorError> {
+        const FAITHFUL_NOTE_DEPTH: usize = 16;
+
+        let expectation = self
+            .store
+            .faithful_note_root_expectation()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
+        let latest = self
+            .store
+            .latest_attested_root()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
+        let history = self.load_authenticated_faithful_history(expectation)?;
+        let commitments: Vec<[u8; 32]> = self
+            .store
+            .load_all_note_commitments()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .into_iter()
+            .map(|commitment| commitment.0)
+            .collect();
+        let nullifiers = self
+            .store
+            .load_faithful_nullifier_records()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?;
+
+        if self.note_tree.depth() != FAITHFUL_NOTE_DEPTH {
+            return Err(FaithfulMirrorError::InconsistentHead(format!(
+                "live note-tree depth {} != required {FAITHFUL_NOTE_DEPTH}",
+                self.note_tree.depth()
+            )));
+        }
+        let durable_count = u64::try_from(commitments.len()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("durable note count does not fit u64".to_string())
+        })?;
+        let live_count = u64::try_from(self.note_tree.size()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("live note count does not fit u64".to_string())
+        })?;
+        let live_root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            self.note_tree.faithful_root_immutable(),
+        );
+        if durable_count != expectation.note_count
+            || live_count != expectation.note_count
+            || live_root != expectation.root
+            || latest.height != expectation.height
+            || latest.note_tree_root != Some(expectation.root.to_bytes())
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "durable commitments, live tree, authenticated history, and latest attestation do not share one head"
+                    .to_string(),
+            ));
+        }
+        let durable_nullifier_set = dregg_cell::nullifier_set::NullifierSet::from_records(
+            nullifiers.clone(),
+        )
+        .map_err(|error| {
+            FaithfulMirrorError::DurableState(format!(
+                "exact nullifier accumulator reconstruction failed: {error}"
+            ))
+        })?;
+        let nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
+        if latest.nullifier_set_root != Some(nullifier_root) {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "durable nullifier records do not reconstruct the latest attested root".to_string(),
+            ));
+        }
+        let nullifier_count = u64::try_from(nullifiers.len()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "durable nullifier count does not fit u64".to_string(),
+            )
+        })?;
+        if commitment_cursor > expectation.note_count
+            || history_cursor > expectation.records
+            || nullifier_cursor > nullifier_count
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "mirror cursor is beyond the authenticated append-only head".to_string(),
+            ));
+        }
+
+        let commitment_start = usize::try_from(commitment_cursor).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "commitment cursor does not fit usize".to_string(),
+            )
+        })?;
+        let history_start = usize::try_from(history_cursor).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("history cursor does not fit usize".to_string())
+        })?;
+        let nullifier_start = usize::try_from(nullifier_cursor).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("nullifier cursor does not fit usize".to_string())
+        })?;
+        let commitment_end = commitment_start
+            .saturating_add(FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE)
+            .min(commitments.len());
+        let history_end = history_start
+            .saturating_add(FAITHFUL_MIRROR_HISTORY_PAGE_SIZE)
+            .min(history.envelopes().len());
+        let nullifier_end = nullifier_start
+            .saturating_add(FAITHFUL_MIRROR_NULLIFIER_PAGE_SIZE)
+            .min(nullifiers.len());
+        let next_commitment_cursor = u64::try_from(commitment_end).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "next commitment cursor does not fit u64".to_string(),
+            )
+        })?;
+        let next_history_cursor = u64::try_from(history_end).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "next history cursor does not fit u64".to_string(),
+            )
+        })?;
+        let next_nullifier_cursor = u64::try_from(nullifier_end).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "next nullifier cursor does not fit u64".to_string(),
+            )
+        })?;
+        let anchor = history.anchor().clone();
+        let head_message = faithful_mirror_head_signing_message(
+            &anchor,
+            expectation,
+            nullifier_count,
+            nullifier_root,
+        );
+        let seed = self.cclerk.gossip_signing_key().to_bytes();
+        let local_ed = self.cclerk.public_key();
+        let signing_key = dregg_types::SigningKey::from_bytes(&seed);
+        let classical_signature = dregg_types::sign(&signing_key, &head_message);
+        let (local_pq, local_pq_signing_key) =
+            dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+        let pq_signature = local_pq_signing_key.sign(&head_message).ok_or_else(|| {
+            FaithfulMirrorError::DurableState(
+                "ML-DSA faithful mirror-head signing failed".to_string(),
+            )
+        })?;
+        let head_hybrid_quorum = vec![dregg_types::HybridQuorumSig {
+            pubkey: local_ed,
+            signature: classical_signature,
+            ml_dsa_pubkey: local_pq.0.to_vec(),
+            pq_signature,
+        }];
+
+        Ok(FaithfulNoteMirrorPage {
+            commitment_cursor,
+            next_commitment_cursor,
+            history_cursor,
+            next_history_cursor,
+            nullifier_cursor,
+            next_nullifier_cursor,
+            nullifier_count,
+            commitments: commitments[commitment_start..commitment_end].to_vec(),
+            nullifiers: nullifiers[nullifier_start..nullifier_end]
+                .iter()
+                .map(|(nullifier, value, seq)| (nullifier.0, *value, *seq))
+                .collect(),
+            anchor,
+            history: history.envelopes()[history_start..history_end].to_vec(),
+            head: expectation,
+            latest_attested_root: latest,
+            head_hybrid_quorum,
+        })
+    }
+
     /// Append a note commitment (BLAKE3 bytes) to the Poseidon2 note tree.
     ///
     /// Converts the 32-byte BLAKE3 commitment to a BabyBear field element
@@ -2542,6 +2805,7 @@ impl NodeStateInner {
     }
 }
 
+/// Minimal hex encoding (no extra dep needed).
 /// Minimal hex encoding (no extra dep needed).
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {

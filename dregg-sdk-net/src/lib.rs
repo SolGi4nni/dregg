@@ -35,6 +35,7 @@ pub mod deos_server;
 pub mod discharge;
 pub mod discovery;
 pub mod events;
+pub mod faithful_spend;
 pub mod mailbox;
 pub mod names;
 pub mod node_world_sink;
@@ -86,6 +87,12 @@ pub use discovery::{
     PirTransport, PrivateDiscoveryClient, discover_intents_privately, discover_matching_intents,
 };
 pub use events::{NodeEvents, ReceiptFilter, ReceiptStream};
+pub use faithful_spend::{
+    FaithfulNoteMirror, FaithfulNoteMirrorAnchor, FaithfulNoteMirrorHead, FaithfulNoteMirrorRecord,
+    FaithfulNoteMirrorRequest, FaithfulNoteMirrorResponse, FaithfulNoteMirrorTrust,
+    FaithfulNullifierMirrorRecord, FaithfulPriorSpend, FaithfulPriorSpendContext,
+    FaithfulSpendProverContext, LocalFaithfulNoteWitness,
+};
 pub use remote::RemoteRuntime;
 
 // ── The wire codec over the wire-free `DreggEngine` ──────────────────────────

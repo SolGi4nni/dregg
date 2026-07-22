@@ -36,7 +36,9 @@ use dregg_sdk::{Attenuation, AuthRequest, CellId, SignedTurn};
 use dregg_token::BudgetSpec;
 use dregg_turn::{CallForest, Turn};
 
-use crate::state::{ActivityProofStatus, ActivityStatus, CommittedEvent, NodeEvent, NodeState};
+use crate::state::{
+    ActivityProofStatus, ActivityStatus, CommittedEvent, FaithfulMirrorError, NodeEvent, NodeState,
+};
 use crate::ws::handle_ws;
 
 // =============================================================================
@@ -161,6 +163,93 @@ pub struct NodeIdentityResponse {
     pub agent_balance: Option<i64>,
     /// Current nonce of the agent cell, if it exists.
     pub agent_nonce: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct FaithfulMirrorErrorResponse {
+    pub error: String,
+}
+
+/// Cursor-only request for the public append-only faithful note mirror.
+/// Page sizes are protocol constants chosen by the node; callers cannot ask
+/// for a note position or a narrow page.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaithfulNoteMirrorRequest {
+    #[serde(default)]
+    pub commitment_cursor: u64,
+    #[serde(default)]
+    pub history_cursor: u64,
+    #[serde(default)]
+    pub nullifier_cursor: u64,
+}
+
+#[derive(Serialize)]
+pub struct FaithfulNoteMirrorAnchorResponse {
+    pub session_id: String,
+    pub federation_id: String,
+    pub committee_epoch: u64,
+    pub height: u64,
+    pub note_count: u64,
+    pub root8: [u32; 8],
+}
+
+#[derive(Serialize)]
+pub struct FaithfulNoteMirrorRecordResponse {
+    pub session_id: String,
+    pub federation_id: String,
+    pub committee_epoch: u64,
+    pub previous_height: u64,
+    pub height: u64,
+    pub previous_note_count: u64,
+    pub note_count: u64,
+    pub predecessor_root8: [u32; 8],
+    pub successor_root8: [u32; 8],
+    pub block_id: String,
+    /// Node-author hybrid authentication over the canonical FNHR message.
+    /// This is intentionally not described as a federation quorum.
+    pub hybrid_quorum: Vec<dregg_types::HybridQuorumSig>,
+}
+
+#[derive(Serialize)]
+pub struct FaithfulNoteMirrorHeadResponse {
+    pub history_records: u64,
+    pub height: u64,
+    pub note_count: u64,
+    pub root8: [u32; 8],
+    pub nullifier_count: u64,
+    pub attested_nullifier_root8: [u32; 8],
+}
+
+#[derive(Serialize)]
+pub struct FaithfulNullifierMirrorRecordResponse {
+    pub nullifier: String,
+    pub value: u64,
+    pub seq: u64,
+}
+
+#[derive(Serialize)]
+pub struct FaithfulNoteMirrorResponse {
+    pub protocol: &'static str,
+    pub commitment_cursor: u64,
+    pub next_commitment_cursor: u64,
+    pub history_cursor: u64,
+    pub next_history_cursor: u64,
+    pub nullifier_cursor: u64,
+    pub next_nullifier_cursor: u64,
+    /// Fixed-size prefix page, encoded as lowercase 32-byte hex strings.
+    pub commitments: Vec<String>,
+    pub nullifiers: Vec<FaithfulNullifierMirrorRecordResponse>,
+    pub anchor: FaithfulNoteMirrorAnchorResponse,
+    pub history: Vec<FaithfulNoteMirrorRecordResponse>,
+    pub head: FaithfulNoteMirrorHeadResponse,
+    /// FNMS-v1 hybrid signature over the complete target-independent head.
+    pub head_hybrid_quorum: Vec<dregg_types::HybridQuorumSig>,
+    pub complete: bool,
+    /// Transport observers still learn mirror-sync timing and lag.  The SDK
+    /// therefore walks from zero through every continuation. PIR/broadcast
+    /// distribution is a later transport optimization, not claimed here.
+    pub privacy: &'static str,
 }
 
 #[derive(Serialize)]
@@ -1686,6 +1775,9 @@ pub fn router_with_cors(
 
     // Rate limiter for turn submission: DEFAULT_TURN_RATE_LIMIT per 60 seconds per IP.
     let turn_limiter = RateLimiter::new(DEFAULT_TURN_RATE_LIMIT, 60);
+    // Shared by both faithful-mirror aliases so changing the path cannot double
+    // an attacker's ML-DSA signing budget.
+    let faithful_mirror_limiter = RateLimiter::new(120, 60);
 
     // Public routes (no auth required)
     let mut public_routes = Router::new()
@@ -1761,6 +1853,22 @@ pub fn router_with_cors(
         })
         .route("/api/events", get(get_events))
         .route("/api/events/stream", get(crate::events::events_stream))
+        // Public, target-independent faithful-note synchronization.  Both
+        // cursors are append-only prefix lengths and page sizes are fixed;
+        // the SDK consumes every continuation from zero.  FNMS includes a
+        // fresh ML-DSA signature, so cap public CPU amplification per real IP.
+        .route("/notes/faithful-spend/mirror", {
+            let limiter = faithful_mirror_limiter.clone();
+            post(move |connect_info, headers, state, body| {
+                post_faithful_note_mirror(connect_info, headers, state, body, limiter)
+            })
+        })
+        .route("/api/notes/faithful-spend/mirror", {
+            let limiter = faithful_mirror_limiter.clone();
+            post(move |connect_info, headers, state, body| {
+                post_faithful_note_mirror(connect_info, headers, state, body, limiter)
+            })
+        })
         .route("/observability/stream", get(observability_stream))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
@@ -2208,6 +2316,147 @@ async fn get_node_identity(State(state): State<NodeState>) -> Json<NodeIdentityR
         agent_balance,
         agent_nonce,
     })
+}
+
+fn faithful_mirror_error(
+    error: FaithfulMirrorError,
+) -> (StatusCode, Json<FaithfulMirrorErrorResponse>) {
+    let status = match error {
+        FaithfulMirrorError::NoAuthenticatedHead
+        | FaithfulMirrorError::DurableState(_)
+        | FaithfulMirrorError::InconsistentHead(_) => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (
+        status,
+        Json(FaithfulMirrorErrorResponse {
+            error: error.to_string(),
+        }),
+    )
+}
+
+fn faithful_root8_lanes(root: dregg_persist::CanonicalFaithfulRoot) -> [u32; 8] {
+    root.to_faithful()
+        .limbs()
+        .map(dregg_circuit::field::BabyBear::as_u32)
+}
+
+/// POST `/notes/faithful-spend/mirror` (gateway alias under `/api/`).
+///
+/// This is a public broadcast-shaped feed, not a note lookup.  Fixed page
+/// sizes plus cursor-only continuations let the SDK maintain one incremental
+/// global mirror and construct all membership paths locally.  A caller that
+/// fetches only a late continuation can still leak sync metadata; the supported
+/// SDK path always starts at zero and consumes every intervening page.
+async fn post_faithful_note_mirror(
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
+    State(state): State<NodeState>,
+    Json(req): Json<FaithfulNoteMirrorRequest>,
+    limiter: RateLimiter,
+) -> Result<Json<FaithfulNoteMirrorResponse>, (StatusCode, Json<FaithfulMirrorErrorResponse>)> {
+    if !limiter.check_request(addr.ip(), &headers).await {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(FaithfulMirrorErrorResponse {
+                error: "faithful mirror rate limit exceeded".to_string(),
+            }),
+        ));
+    }
+    let page = state
+        .read()
+        .await
+        .faithful_note_mirror_page(
+            req.commitment_cursor,
+            req.history_cursor,
+            req.nullifier_cursor,
+        )
+        .map_err(faithful_mirror_error)?;
+    let attested_nullifier_root =
+        page.latest_attested_root
+            .nullifier_set_root
+            .ok_or_else(|| {
+                faithful_mirror_error(FaithfulMirrorError::InconsistentHead(
+                    "latest attestation has no faithful nullifier root".to_string(),
+                ))
+            })?;
+    let attested_nullifier_root8 = faithful_root8_lanes(
+        dregg_persist::CanonicalFaithfulRoot::from_bytes(attested_nullifier_root).map_err(
+            |error| {
+                faithful_mirror_error(FaithfulMirrorError::InconsistentHead(format!(
+                    "latest attestation carries a noncanonical nullifier root: {error}"
+                )))
+            },
+        )?,
+    );
+    let history = page
+        .history
+        .into_iter()
+        .map(|envelope| {
+            let record = envelope.record;
+            FaithfulNoteMirrorRecordResponse {
+                session_id: hex_encode(&record.session_id),
+                federation_id: hex_encode(&record.federation_id),
+                committee_epoch: record.committee_epoch,
+                previous_height: record.previous_height,
+                height: record.height,
+                previous_note_count: record.previous_note_count,
+                note_count: record.note_count,
+                predecessor_root8: faithful_root8_lanes(record.predecessor),
+                successor_root8: faithful_root8_lanes(record.successor),
+                block_id: hex_encode(&record.block_id),
+                hybrid_quorum: envelope.hybrid_quorum,
+            }
+        })
+        .collect();
+    let complete = page.next_commitment_cursor == page.head.note_count
+        && page.next_history_cursor == page.head.records
+        && page.next_nullifier_cursor == page.nullifier_count;
+
+    Ok(Json(FaithfulNoteMirrorResponse {
+        protocol: "dregg-faithful-note-mirror-v1",
+        commitment_cursor: page.commitment_cursor,
+        next_commitment_cursor: page.next_commitment_cursor,
+        history_cursor: page.history_cursor,
+        next_history_cursor: page.next_history_cursor,
+        nullifier_cursor: page.nullifier_cursor,
+        next_nullifier_cursor: page.next_nullifier_cursor,
+        commitments: page
+            .commitments
+            .iter()
+            .map(|commitment| hex_encode(commitment))
+            .collect(),
+        nullifiers: page
+            .nullifiers
+            .iter()
+            .map(
+                |(nullifier, value, seq)| FaithfulNullifierMirrorRecordResponse {
+                    nullifier: hex_encode(nullifier),
+                    value: *value,
+                    seq: *seq,
+                },
+            )
+            .collect(),
+        anchor: FaithfulNoteMirrorAnchorResponse {
+            session_id: hex_encode(&page.anchor.session_id),
+            federation_id: hex_encode(&page.anchor.federation_id),
+            committee_epoch: page.anchor.committee_epoch,
+            height: page.anchor.height,
+            note_count: page.anchor.note_count,
+            root8: faithful_root8_lanes(page.anchor.root),
+        },
+        history,
+        head: FaithfulNoteMirrorHeadResponse {
+            history_records: page.head.records,
+            height: page.head.height,
+            note_count: page.head.note_count,
+            root8: faithful_root8_lanes(page.head.root),
+            nullifier_count: page.nullifier_count,
+            attested_nullifier_root8,
+        },
+        head_hybrid_quorum: page.head_hybrid_quorum,
+        complete,
+        privacy: "cursor-only global mirror; SDK downloads every continuation; public volume and transport timing/lag remain observable; FNHR is threshold-1 pinned-node hybrid-authenticated and attested faithful roots remain a trusted-node transport boundary until finalization votes bind them",
+    }))
 }
 
 async fn get_cclerk(State(state): State<NodeState>) -> Json<CipherclerkResponse> {
@@ -3248,32 +3497,10 @@ async fn post_submit_turn(
     );
 
     match exec_result {
-        dregg_turn::TurnResult::Committed { mut receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::inc_turns_executed("committed");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
-
-            // Solo mode: record in nullifier log, mark receipt as Tentative,
-            // and advance the solo consensus height.
-            let node_signing_key = s.cclerk.gossip_signing_key().to_bytes();
-            if let Some(ref mut solo) = s.solo_consensus
-                && solo.is_solo
-            {
-                receipt.finality = dregg_turn::Finality::Tentative;
-                // Finality is bound into receipt_hash and the executor already
-                // signed the optimistic Final; re-sign with the node key so the
-                // executor_signature matches the committed (Tentative) receipt.
-                resign_receipt_committed(&mut receipt, &node_signing_key);
-                // Record any nullifiers from this turn in the solo nullifier log.
-                // The turn_hash itself serves as the sequencing entry for ordering.
-                let height = solo.height;
-                let _ = solo
-                    .nullifier_log
-                    .insert(turn_hash_bytes, turn_hash_bytes, height);
-                solo.advance_height();
-                #[cfg(debug_assertions)]
-                debug_assert_signed_last(&receipt, &node_signing_key);
-            }
 
             // F-DOS-1 / PATH-PRESERVE Phase 5b: the authoritative executor ALREADY
             // validated + committed this turn above (the soundness boundary), so
@@ -3281,25 +3508,12 @@ async fn post_submit_turn(
             // the lock (the wedge F-DOS-1 closed). The succinct composed proof — its
             // effect-vm leg through the LEAN-emitted ROTATED descriptor — is built +
             // self-verified asynchronously off the lock by the prove pool below.
-            if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                s.ledger.rollback_restore_point();
-                crate::metrics::inc_turns_executed("rejected");
-                drop(s);
-                return Ok(Json(SubmitTurnResponse {
-                    accepted: false,
-                    turn_hash: Some(format!("receipt chain mismatch: {err}")),
-                    proof_status: ActivityProofStatus::NotCommitted,
-                    has_witness: false,
-                    witness_count: 0,
-                    error: Some(format!("receipt chain mismatch: {err}")),
-                }));
-            }
-            // Receipt is on the chain: read the pre-turn actor/effect cells from
-            // the journal (the O(touched) stand-in for the old `pre_ledger` clone),
-            // then drop the journal — the in-place commit stands.
+            // Admission staging only.  Consensus finalization is the single
+            // authoritative ledger + receipt + faithful-state commit for n=1
+            // and n>1 alike, so an ingress crash cannot leave a durable receipt
+            // ahead of the ledger/commit cursor.
             let pre_ledger = s.ledger.pre_turn_touched_ledger();
-            s.ledger.commit_restore_point();
-            crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
+            s.ledger.rollback_restore_point();
             let receipt_hash = receipt.receipt_hash();
             // Gather the rotated attestation material from the REAL before/after
             // actor cells (pre_ledger / the just-committed s.ledger). A build hiccup
@@ -3518,7 +3732,6 @@ async fn post_submit_signed_turn(
         }));
     }
 
-    let is_solo = s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo);
     // Every agent has an independent immutable receipt chain in the node's
     // global receipt log. Compare the complete Option, so `None` means genesis
     // only; omitting the link after an accepted turn cannot reset a foreign
@@ -3576,68 +3789,27 @@ async fn post_submit_signed_turn(
     // Capture the pre-turn actor/effect cells from the journal BEFORE resolving
     // it (the O(touched) stand-in for the old full `pre_ledger` clone).
     let pre_ledger = s.ledger.pre_turn_touched_ledger();
-    // MULTI-PARTY: restore the authoritative ledger to its pre-turn state NOW, so
-    // every subsequent path sees it untouched. SOLO keeps the journal armed and
-    // resolves it below on the receipt-append outcome.
-    if !is_solo {
-        s.ledger.rollback_restore_point();
-    }
+    // Consensus finalization is the sole authoritative application in every
+    // committee size, including n=1.  The old solo split committed RAM + a
+    // durable receipt here, then wrote faithful leaves/nullifiers/cursors later;
+    // a crash between those writes restored the receipt but not the ledger and
+    // made finalization falsely skip execution.  This ingress run is admission
+    // staging only, exactly like multi-party mode, so roll it back unconditionally.
+    s.ledger.rollback_restore_point();
 
     match exec_result {
-        dregg_turn::TurnResult::Committed { mut receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::inc_turns_executed("committed");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
-
-            let node_signing_key = s.cclerk.gossip_signing_key().to_bytes();
-            if let Some(ref mut solo) = s.solo_consensus
-                && solo.is_solo
-            {
-                receipt.finality = dregg_turn::Finality::Tentative;
-                // Re-sign after the committed finality downgrade: finality is bound
-                // into receipt_hash, and the executor signed the optimistic Final.
-                resign_receipt_committed(&mut receipt, &node_signing_key);
-                let height = solo.height;
-                let _ = solo
-                    .nullifier_log
-                    .insert(turn_hash_bytes, turn_hash_bytes, height);
-                solo.advance_height();
-                #[cfg(debug_assertions)]
-                debug_assert_signed_last(&receipt, &node_signing_key);
-            }
 
             // F-DOS-1 / PATH-PRESERVE Phase 5b: the executor already validated +
             // committed this turn (the soundness boundary); no inline proving / no
             // inline re-check. The composed proof (rotated effect-vm leg) is built +
             // self-verified asynchronously off the lock by the prove pool below.
-            // In multi-party mode ingress is receipt-only and its ledger changes
-            // were rolled back: finalization is the sole authoritative append for
-            // every agent, including the operator. Solo ingress is authoritative
-            // and appends immediately. Appending an operator receipt here in full
-            // mode would leave an unapplied receipt at its causal head and make the
-            // later finalized execution look like a stale-link replay.
-            if is_solo {
-                if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                    // SOLO: undo the in-place commit. MULTI-PARTY: already rolled
-                    // back above (no-op). Either way the ledger ends pre-turn.
-                    s.ledger.rollback_restore_point();
-                    crate::metrics::inc_turns_executed("rejected");
-                    drop(s);
-                    return Ok(Json(SubmitSignedTurnResponse {
-                        accepted: false,
-                        turn_hash: Some(turn_hash),
-                        signer: Some(signer),
-                        action_count,
-                        proof_status: ActivityProofStatus::NotCommitted,
-                        has_witness: false,
-                        witness_count: 0,
-                        error: Some(format!("receipt chain mismatch: {err}")),
-                    }));
-                }
-                crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
-            }
-            // SOLO success: keep the in-place commit, drop the journal. (No-op
-            // under MULTI-PARTY, already resolved to untouched above.)
+            // The receipt is an admission artifact only.  Finalization welds its
+            // canonical receipt into the durable log with ledger state, faithful
+            // leaves, nullifiers, history, attestation, and both cursors.
             s.ledger.commit_restore_point();
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
@@ -7100,7 +7272,6 @@ async fn post_faucet(
     // so the receipt this node returns matches the authoritative finalized outcome.
     // Solo mode mints the canonical hosted cell (with the known pk) directly, since
     // it is the sole authority.
-    let recipient_created_authoritatively = is_solo && s.ledger.get(&recipient_cell_id).is_none();
     let provision_recipient = |ledger: &mut dregg_cell::Ledger| {
         if ledger.get(&recipient_cell_id).is_some() {
             return;
@@ -7117,16 +7288,6 @@ async fn post_faucet(
         let _ = ledger.insert_cell(recipient_cell);
     };
 
-    if is_solo {
-        // Solo: provision authoritatively (no finalization pass).
-        if s.ledger.get(&faucet_cell_id).is_none() {
-            let faucet_cell =
-                dregg_cell::Cell::with_balance(faucet_pubkey, FAUCET_TOKEN_ID, 1_000_000);
-            let _ = s.ledger.insert_cell(faucet_cell);
-        }
-        provision_recipient(&mut s.ledger);
-    }
-
     let tx_hash = compute_faucet_activity_hash(&recipient_cell_id, req.amount);
 
     if req.amount == 0 {
@@ -7136,15 +7297,10 @@ async fn post_faucet(
         // here regardless of mode (insert-if-absent; idempotent across nodes for a
         // pk-derived id). This is the one provisioning the faucet still applies
         // directly under multi-party, and it carries no value.
-        let recipient_created = if is_solo {
-            recipient_created_authoritatively
-        } else {
-            let created = s.ledger.get(&recipient_cell_id).is_none();
-            if created {
-                provision_recipient(&mut s.ledger);
-            }
-            created
-        };
+        let recipient_created = s.ledger.get(&recipient_cell_id).is_none();
+        if recipient_created {
+            provision_recipient(&mut s.ledger);
+        }
         if recipient_created {
             push_committed_event(
                 &mut s,
@@ -7228,11 +7384,7 @@ async fn post_faucet(
     // second faucet turn provisioned its destination but the transfer never funded it
     // (`found:true, balance:0`), silently breaking sustained faucet finality. `None`
     // matches the finalized expectation uniformly on all nodes.
-    let faucet_prev_receipt = if is_solo {
-        s.cclerk.receipt_chain().last().map(|r| r.receipt_hash())
-    } else {
-        None
-    };
+    let faucet_prev_receipt = s.cclerk.agent_receipt_head_hash(&faucet_cell_id);
     let mut faucet_turn = Turn {
         agent: faucet_cell_id,
         nonce: faucet_nonce,
@@ -7285,77 +7437,30 @@ async fn post_faucet(
     // `provision_transfer_destinations` / `execute_finalized_turn`). Solo (n=1)
     // keeps the direct authoritative commit — it has no separate finalization pass
     // and already provisioned the faucet + recipient cells above.
-    let exec_result = if is_solo {
-        // ONE executor gate (#171): solo faucet turns commit through the same
-        // producer-aware path as every other ingress, authoritatively.
-        crate::executor_setup::execute_via_producer(
-            &executor,
-            &faucet_turn,
-            &mut s.ledger,
-            lean_producer_enabled,
-        )
-    } else {
-        // Full mode: receipt-only IN-PLACE execution, rolled back below so the
-        // authoritative ledger ends untouched (finalization is authoritative,
-        // cross-node). Provision the Transfer destination — the IDENTICAL function
-        // the finalized path uses on the SAME call forest — so the receipt-building
-        // Transfer does not hit `TransferDestNotFound`; the provisioning is journaled
-        // and undone by the rollback.
-        crate::blocklace_sync::provision_transfer_destinations(
-            &mut s.ledger,
-            &faucet_turn.call_forest,
-        );
-        // PIPELINING: the faucet nonce only advances at finalization. For a turn
-        // submitted before the prior finalizes, `faucet_nonce` (the reserved
-        // pipelined nonce) is ahead of the authoritative nonce, so the executor's
-        // exact nonce gate would reject the receipt build. Reflect the reserved
-        // nonce onto the faucet cell so the receipt builds for the turn that WILL be
-        // valid at finalization; this is journaled and restored by the rollback, so
-        // the authoritative ledger is untouched.
-        if let Some(cell) = s.ledger.get_mut(&faucet_cell_id) {
-            cell.state.set_nonce(faucet_nonce);
-        }
-        crate::executor_setup::execute_via_producer(
-            &executor,
-            &faucet_turn,
-            &mut s.ledger,
-            lean_producer_enabled,
-        )
-    };
+    // Admission staging is identical at every committee size.  Provision the
+    // same deterministic destination the finalized path will see, reflect a
+    // reserved pipelined nonce only inside the undo journal, execute, and roll
+    // everything back below.  Finalization owns the sole durable application.
+    crate::blocklace_sync::provision_transfer_destinations(&mut s.ledger, &faucet_turn.call_forest);
+    if let Some(cell) = s.ledger.get_mut(&faucet_cell_id) {
+        cell.state.set_nonce(faucet_nonce);
+    }
+    let exec_result = crate::executor_setup::execute_via_producer(
+        &executor,
+        &faucet_turn,
+        &mut s.ledger,
+        lean_producer_enabled,
+    );
 
     // Capture the pre-turn cells from the journal BEFORE resolving it (the
     // O(touched) stand-in for the old full `pre_ledger` clone), then resolve:
-    // SOLO keeps the authoritative in-place commit; MULTI-PARTY restores the
-    // untouched ledger for finalization. Both drop the journal.
+    // Every mode restores the untouched ledger for finalization.
     let pre_ledger = s.ledger.pre_turn_touched_ledger();
-    if is_solo {
-        s.ledger.commit_restore_point();
-    } else {
-        s.ledger.rollback_restore_point();
-    }
+    s.ledger.rollback_restore_point();
 
     match exec_result {
-        dregg_turn::TurnResult::Committed { mut receipt, .. } => {
+        dregg_turn::TurnResult::Committed { receipt, .. } => {
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
-
-            // Solo mode: tentative finality + height advance, exactly like the
-            // /turn/submit commit path.
-            let node_signing_key = s.cclerk.gossip_signing_key().to_bytes();
-            if let Some(ref mut solo) = s.solo_consensus
-                && solo.is_solo
-            {
-                receipt.finality = dregg_turn::Finality::Tentative;
-                // Re-sign after the committed finality downgrade: finality is bound
-                // into receipt_hash, and the executor signed the optimistic Final.
-                resign_receipt_committed(&mut receipt, &node_signing_key);
-                let height = solo.height;
-                let _ = solo
-                    .nullifier_log
-                    .insert(turn_hash_bytes, turn_hash_bytes, height);
-                solo.advance_height();
-                #[cfg(debug_assertions)]
-                debug_assert_signed_last(&receipt, &node_signing_key);
-            }
 
             // The faucet turn is a REAL committed turn: append its receipt to
             // the chain and hand it to the async prove pool, the same pipeline as
@@ -7367,17 +7472,6 @@ async fn post_faucet(
             // is built + self-verified off the lock. The attestation is best-effort
             // for the faucet (the commit stands either way; an unattested faucet
             // grant is a devnet-liveness issue, not a soundness one).
-            let appended = match s.cclerk.append_receipt(receipt.clone()) {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!(
-                        turn_hash = %turn_hash_hex,
-                        error = %err,
-                        "faucet receipt could not be appended to the receipt chain"
-                    );
-                    false
-                }
-            };
             let receipt_hash = receipt.receipt_hash();
             // Build the rotated attestation material from the actor's before/after
             // cells. In full mode the authoritative `s.ledger` was not mutated (the
@@ -7420,21 +7514,7 @@ async fn post_faucet(
 
             // Async STARK attestation, off the lock — flips the receipt's
             // has_proof once the pool lands the proof.
-            if appended {
-                if let Some(rotatable) = pending_proof {
-                    enqueue_async_proof(
-                        &state,
-                        rotatable,
-                        receipt.clone(),
-                        receipt_hash,
-                        turn_hash_hex.clone(),
-                    )
-                    .await;
-                }
-                state.emit(crate::state::NodeEvent::Receipt {
-                    hash: turn_hash_hex.clone(),
-                });
-            }
+            let _ = pending_proof;
 
             let turn_data_for_gossip = turn_data.clone();
             if let Some(gossip) = state.gossip().await {
@@ -8683,6 +8763,32 @@ mod tests {
         assert_eq!(input.len(), 64);
         assert_eq!(hex_decode_32(&input), None);
         assert!(hex_decode_32_result(&input).is_err());
+    }
+
+    #[test]
+    fn faithful_mirror_request_accepts_only_three_global_cursors() {
+        let request: FaithfulNoteMirrorRequest = serde_json::from_value(serde_json::json!({
+            "commitment_cursor": 256,
+            "history_cursor": 16,
+            "nullifier_cursor": 256
+        }))
+        .expect("global continuation cursors are accepted");
+        assert_eq!(request.commitment_cursor, 256);
+        assert_eq!(request.history_cursor, 16);
+        assert_eq!(request.nullifier_cursor, 256);
+
+        for target_specific in [
+            serde_json::json!({"position": 9}),
+            serde_json::json!({"commitment": "11".repeat(32)}),
+            serde_json::json!({"nullifier": "22".repeat(32)}),
+            serde_json::json!({"value": 7}),
+            serde_json::json!({"asset_type": 3}),
+        ] {
+            assert!(
+                serde_json::from_value::<FaithfulNoteMirrorRequest>(target_specific).is_err(),
+                "target-specific request fields must not survive the mirror cutover"
+            );
+        }
     }
 
     /// Fail-CLOSED authority-label parsing (twin of the deos-js `parse_auth_label` fix):
