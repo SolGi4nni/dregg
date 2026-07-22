@@ -26,6 +26,132 @@ claim. A Lean theorem proves the model stated in that module; it does not silent
 prove the Rust codec, cryptography, transport, or refinement hidden behind an
 explicit backend premise.
 
+## 0.8. July 22 live-finality and shielded-v4 checkpoint
+
+This section supersedes sections 0.5–0.7 and section 14 wherever they describe
+exact FNSP-v3 as having no production caller, the hosted Bazaar as having no
+worker, the exact accumulator as requiring an online full-prefix scan, or
+consensus time as unauthenticated. It records banked commits through
+`54407562c`. Current dirty-tree ACK, private-spool, promise-resolution,
+Descent-census, and BFV-terminal work is deliberately excluded until each lane
+banks its own coherent checkpoint.
+
+### What is in the live exact-v3 finalization path
+
+- `c0aed47d2` places exact FNSP-v3 in the production blocklace finalizer. The
+  strict SignedTurn is validated first; the exact-v3 route is classified before
+  the legacy v2/generic charge path; the proof is verified and reexecuted
+  off-lock; the lock is reacquired; actor, cursor, signer, history, and state
+  coordinates are revalidated; and only a fresh durable result publishes the
+  ledger, receipt, artifacts, and observer events. Legacy faithful-only
+  NoteSpend growth is refused after exact activation.
+- `d52c2e9ea` makes the first activation and every exact successor a single
+  redb transaction over activation, faithful/exact/frame state, receipt,
+  attested root, commit record, and the complete executor consensus-state
+  snapshot. Pending-promise resolution is applied to the retained post-executor
+  before the successor snapshot. `f60a1919b` fixes nonempty-prefix activation:
+  the first frame sequence is the activation exact generation, rather than a
+  hard-coded zero.
+- `8a052f3af` replaces online full exact-prefix reconstruction with sparse
+  authenticated nodes, ordered leaf/position indices, and head history: lookup
+  is logarithmic in the predecessor/path and fresh mutation is proportional to
+  tree depth. Boot still reconstructs from canonical durable records. The
+  analogous receipt-predecessor boundary is maintained incrementally by
+  `aeab921eb` and authenticated across the active suffix by `4e932492a`.
+- The live exact path is still explicitly **solo-only**. Its v3 frame identity
+  binds the local executor key, so committee validators would derive different
+  frame chains. It is also not the private-value apex: its public statement
+  exposes value, asset, nullifier, and exact coordinates, and the characterized
+  execution slice admits the value-zero form. These are protocol boundaries,
+  not documentation caveats to erase.
+- A current whole focused exact-v3 gate has not completed cleanly against the
+  concurrent node redesign. The production call graph and narrow component
+  gates are real; do not promote them to a current full-suite green.
+
+### The actual shielded and federation successor
+
+- `d3560fa1e` defines the strict 100-lane ShieldedExactApexV4 ABI. Clear
+  value/asset are absent. The statement binds a full-width nullifier, sixteen
+  u16 lanes each for value and asset, the consumed input, market consequence,
+  output-note root, and exact before/after endpoints under distinct `FNI4`,
+  `FNS4`, `FXC4`, and `FXA4` domains. Its compatibility token is explicitly not
+  same-opening authority.
+- `bce9d2b63`, registered by `f29768fd5`, supplies the Lean relation over one
+  hidden `NoteOpening`: full nullifier derivation, wide value/asset binding,
+  selected consumption, fixed market rule, per-asset conservation, exact
+  output notes/root, and one-step exact append. Collision reductions and the
+  still-uninhabited pinned-verifier knowledge-soundness contract are explicit.
+  The registered tree passed the full local `lake build Dregg2` gate.
+- `0ea02a76a` makes v4 consensus identity signer-independent. Canonical
+  `EXA4`/`EXR4`/`EXF4` cores determine activation, deterministic receipt, and
+  frame identity; the separate `EXE4` local envelope requires both Ed25519 and
+  ML-DSA-65 and is checked against an independently expected validator
+  identity. Receipt identity excludes local timestamp and signature bytes.
+- V4 is not live yet. It has no emitted/pinned shared-witness verifier and VK,
+  no persistent v4 activation/frame/state writer, no node selector, no atomic
+  output-note installation, and no committee finality/threshold certificate
+  over the fixed core. The ABI, Lean relation, and consensus-core substrate are
+  the right pieces, not a deployed shielded market.
+
+### Consensus time and durable finalization outcomes
+
+- `1df9bb868` adds a strict fixed-record consensus-time claim and a versioned
+  timed-turn payload. Canonical block payload bytes bind time and artifacts, so
+  both Ed25519 and ML-DSA signatures and the BlockId authenticate the same
+  claim. Admission enforces immutable genesis, monotone predecessor time, a
+  protocol upper bound, strict legacy refusal after enablement, and no local
+  wall-clock decision in the blocklace relation.
+- `54407562c` replaces the repeated ancestor walk with an authenticated derived
+  frontier proportional to immediate predecessor count, requires an empty lace
+  at greenfield enablement, and routes generic local creation through the same
+  fallible validation boundary. `dregg-blocklace` checks green at this cut.
+- The node still must carry the authenticated time into a typed
+  `FinalizedExecutionContextV1`; receipt validity, expiry, capability refresh,
+  and rate windows must consume that context rather than `SystemTime::now`.
+  Separately, the poller must advance the executed-block cursor only for a
+  durably terminal `Committed` or `DeterministicallyRejected` outcome. A
+  `RetryableOperational` failure must stop the prefix without consuming the
+  block, and `FatalIntegrity` must stop rather than launder corruption into a
+  rejection. `3b2cbef99` is the banked contract; the live typed-ACK repair is
+  active working-tree work, not yet a banked guarantee.
+
+### Hosted private Bazaar and game consequence
+
+- `d13b2e0de` adds the production worker abstraction. A bounded
+  `FinalizedPrivateBazaarReceiptSource` feeds a durable worker whose authority
+  phases are `Prepared` → `Dispatching` → `Applied` → `Committed`. The worker
+  persists claim/outbox/cursor state, recovers a crash after target dispatch
+  from the immutable target receipt, avoids duplicate Dungeon XP, and publishes
+  only a viewer-blind journey. Private blind/input, winner, and raw receipt stay
+  in worker custody. The focused worker gate was green.
+- This commit does not provide a concrete node/queue/network source or an
+  auto-spawned supervisor. A strict append-only 0600/fsync spool and deployment
+  runner are active in the dirty tree and their transport units are 4/4, but
+  they are not implementation authority until banked. Full host restart also
+  needs deterministic restoration of the exact settlement receipt (or a
+  semantic reissue protocol anchored to the claim/cursor); weakening fork
+  refusal is not an acceptable substitute.
+
+### Durable executor side-state and GPU/FHE boundary
+
+- `9af0f439b`, `4fd4ad745`, `174f9a46c`, and `96288b41b` persist and restore
+  reactive registry/nullifiers, the complete finalized executor state, and
+  per-cell receipt provenance across compaction. `fc8704c86` makes the separate
+  React replay domain explicit in Lean. `c6fc06cbb` publishes promise-resolution
+  events only after durability; it does not make the current separate
+  post-commit resolution journal crash-complete. The replacement must persist
+  or derive the immutable event batch in the same finalized transaction.
+- `51030b01b` binds the real q0 N=8/N=4096 BFV forward/inverse table carrier and
+  threshold-decrypt terminal relation to transform boundaries. It is public
+  carrier substrate, not IR2/HidingFRI/ZK authority, covers q0 rather than the
+  full active RNS set, and carries no DKG/parameter-domain root.
+- The measured strict Descent/Bazaar custody proof remains CPU-bound: the
+  latest captured release run was about 514.6 seconds on persvati, down from
+  1086.0 seconds but still far from an interactive game loop. Portable WGPU
+  BFV/TFHE kernels are real; the live `fhe_clear`, Dark AMM multiplication, and
+  classical Bulletproof/Ristretto custody path are not thereby GPU-resident or
+  post-quantum.
+
 ## 0.5. July 22 superseding checkpoint
 
 This section supersedes older residual sentences below where they disagree. It

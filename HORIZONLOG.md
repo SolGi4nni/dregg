@@ -1,5 +1,54 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ FHEGG / DARK BAZAAR LIVE CUT — exact v3 executes; v4 is the shielded successor (2026-07-22)
+
+The durable detailed ledger is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md`
+§0.8. Current cut, verified against the production call graph rather than older
+handoff prose:
+
+- **LIVE exact-v3 finality:** `c0aed47d2` diverts strict exact FNSP-v3 before
+  legacy v2/generic execution, verifies the HidingFRI carrier, revalidates under
+  lock, and commits through the exact finalizer. `d52c2e9ea` atomically joins
+  activation, faithful/exact/frame state, receipt, attested root, commit record,
+  and complete executor consensus state. `f60a1919b` fixes first-frame sequence
+  over a nonempty prefix. Fresh-only RAM/event publication is retained.
+- **ONLINE exact state:** `8a052f3af` supplies sparse authenticated state nodes,
+  ordered leaf/position indices, and head history; `aeab921eb`/`4e932492a`
+  maintain and authenticate per-agent receipt predecessor heads. Remaining hot
+  cost is the full faithful↔exact historical equality audit in the live envelope;
+  the active repair is a domain-separated rolling bridge plus an opaque
+  authenticated historical-root token. Full replay stays a boot/audit gate.
+- **HONEST v3 boundary:** solo-only, because frame identity binds the local
+  executor key; public value/asset/nullifier; characterized value-zero execution
+  slice. It is exact anti-replay/continuity, not the shielded private-value apex.
+- **SHIELDED v4 substrate:** `d3560fa1e` defines the no-clear-value/asset 100-lane
+  ABI; `bce9d2b63`/`f29768fd5` register the one-opening Lean relation; `0ea02a76a`
+  splits deterministic signer-independent `EXA4`/`EXR4`/`EXF4` cores from a
+  hybrid Ed25519+ML-DSA `EXE4` local envelope. Still missing: emitted/pinned
+  shared-witness verifier/VK, persistent v4 writer, live selector, atomic output
+  notes, and committee/threshold finality authority.
+- **CONSENSUS TIME:** `1df9bb868` authenticates a strict timed-turn payload in
+  BlockId and both signatures; `54407562c` replaces ancestor scans with an
+  authenticated immediate-frontier cache and closes generic local bypass.
+  Remaining live cut: typed execution context must drive receipts/expiry/rates;
+  no local wall clock may enter deterministic receipt identity.
+- **FINALIZED ACK IS P0:** `3b2cbef99` names the typed outcome contract. Only
+  durable `Committed`/`DeterministicallyRejected` may advance the executed-block
+  cursor. Retry/fatal stop the prefix. The node splice is active and unbanked.
+- **BAZAAR WORKER:** `d13b2e0de` adds the durable private worker and exactly-once
+  viewer-blind game consequence. The active append-only 0600/fsync spool has 4/4
+  transport units; verified full integration and restart-stable exact receipt
+  identity remain before it is banked or auto-spawned.
+- **SIDE-STATE CRASH LAW:** reactive/per-cell state is now in the finalized
+  snapshot, but typed PromiseResolution publication cannot live in a second
+  postcommit journal. The immutable event batch must be written or derivable in
+  the same finalized transaction; a crash-between-commit/publication falsifier
+  is required.
+- **PERF REALITY:** the captured strict Descent/Bazaar custody release run fell
+  from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
+  WGPU BFV/TFHE kernels are real; live `fhe_clear`, Dark AMM multiplication, and
+  classical Bulletproof/Ristretto custody remain separate integration work.
+
 ## ⚑⚑⚑ E1 — DEAD v1-FACE COLUMN COMPACTION (the allocator's SECOND flag-day): PROOF HALF LANDED (2026-07-18)
 `docs/EFFICIENCY-BACKLOG-circuit-minimality.md` item E1. On every wide registry member (already
 S2-compacted) a per-member band of v1-face columns is DEAD — referenced by ZERO surviving
