@@ -201,6 +201,16 @@ canonically to:
 - the sacrifice transcript root and retained-row root; and
 - the durable batch identity consumed by custody.
 
+The old authority signature cannot remain the only reason this object is
+trusted. The first deployable profile should carry an exact-roster set of
+ML-DSA signatures over the final transcript root, accepted only after every
+formation proof has verified. This is deliberately a set of independent PQ
+signatures, not a nonexistent claim of standardized threshold ML-DSA. A later
+recursive Dregg proof can compress the public transcript and verification work;
+its statement must include the same root and roster. Classical signatures may
+remain as compatibility authentication, but never as the sole security jaw of
+the dealerless profile.
+
 The decoder returns an unverified claim. Only a verifier that checks the complete
 formation certificate may construct dealerless protected material. `FHTRI004`
 continues to decode only as `TrustedAuthority`; legacy shape-only triples remain
