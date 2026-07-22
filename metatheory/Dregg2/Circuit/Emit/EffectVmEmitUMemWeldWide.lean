@@ -35,6 +35,7 @@ import Dregg2.Circuit.Emit.CapOpenEmit
 import Dregg2.Circuit.Emit.CapOpenTurnPins
 import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.Emit.FieldsOpenEmit
+import Dregg2.Circuit.Emit.ExactFieldsRefusalEmit
 import Dregg2.Circuit.Emit.AccumulatorInsertEmit
 import Dregg2.Circuit.Emit.CarrierComposed
 import Dregg2.Circuit.Emit.AvailWideMembers
@@ -176,14 +177,7 @@ fields-write over the full ~124-bit BEFORE/AFTER fields-root blocks
 GENUINE after-spine wide, not the stale record-pin refusal (`v3RegistryCapOpenWide`'s own position-7
 entry is the pre-after-spine refusal; the bare emit + this welded emit both override it). -/
 def refusalAfterSpineWide : EffectVmDescriptor2 :=
-  -- rc-EMIT (the bare-probe mirror): the welded host rides `withDfaRcPins` exactly as the bare
-  -- `EmitWideRegistryProbe` row does, so the weld parity (welded == Rust weld of bare) holds.
-  let rfHost := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
-    (Dregg2.Circuit.Emit.FieldsOpenEmit.effFieldsWriteV3
-      Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3
-      "dregg-effectvm-refusal-v1-rot24-v3-write-fieldsopen")
-  let rfBB := Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
-  Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend rfHost rfBB (rfBB + 239)
+  Dregg2.Circuit.Emit.ExactFieldsRefusalEmit.refusalExactFieldsWide
 
 /-- **The §J′ INSERT-shaped accumulator wide hosts** — the insert twins of `refusalAfterSpineWide`. Each
 is `wideAppend (effAccumInsertV3 groupCol keyCol valueCol baseV3 …) bb (bb+151)` at the accumulator's v1

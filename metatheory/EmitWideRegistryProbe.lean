@@ -33,6 +33,7 @@ import Dregg2.Circuit.Emit.CapOpenTurnPins
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.Emit.FieldsOpenEmit
+import Dregg2.Circuit.Emit.ExactFieldsRefusalEmit
 import Dregg2.Circuit.Emit.AccumulatorInsertEmit
 import Dregg2.Circuit.Emit.CarrierComposed
 import Dregg2.Circuit.Emit.AvailWideMembers
@@ -80,28 +81,13 @@ def emitCompact (key : String) (d : EffectVmDescriptor2) : IO Unit := do
 def main : IO Unit := do
   -- positions 0..44: the 45 emit-source wide members (`v3RegistryCapOpenWide`), keyed by the live
   -- registry key (`burnVmDescriptor2R24` etc., `#guard`-proven name-stable with `v3RegistryCapOpen`).
-  -- OPTION I (fields): position 7 (`refusalVmDescriptor2R24`) is REPLACED IN PLACE by the after-spine
-  -- membership-forcing `effFieldsWriteV3 refusalFieldsWriteV3 …` (EXACTLY as heap deploys `effHeapWriteV3`
-  -- at position 46 and cap deploys `effCapOpenWriteV3`) — the DEPLOYED refusal descriptor's `Satisfied2`
-  -- FORCES the faithful 8-felt fields-write over the full ~124-bit BEFORE/AFTER fields-root blocks
-  -- (`FieldsOpenEmit.effFieldsWriteV3_forces_write8`), never the lane-0 squeeze the map_op-only host would
-  -- leave. The wide member stays keyed `refusalVmDescriptor2R24` (member count UNCHANGED at 57); only the
-  -- host (name + width) grows — the base `refusalFieldsWriteV3` (829) widened by the fields-open READ
-  -- appendix (329) + the AFTER-spine appendix (143) → host 1301, wide 1669. `bb` is the refusal FACE width
-  -- (`refusalVmDescriptor.traceWidth = EFFECT_VM_WIDTH = 188`), aligning the after-spine's committed
-  -- fields-root blocks (`fieldsRootGroupCol (EFFECT_VM_WIDTH + 239)`) with the wide AFTER rotated carrier.
+  -- EXACT V2 FIELDS EPOCH: position 7 (`refusalVmDescriptor2R24`) is replaced in place by the
+  -- FLD2/FLN2 state16 update.  The 32-byte audit is published as sixteen exact u16 PIs and opened at
+  -- raw key 2^32 over one shared before/after path.  No modularly-folded scalar map-op remains.
   for (key, d) in v3RegistryCapOpenWide do
     if key == "refusalVmDescriptor2R24" then
-      -- rc-EMIT FIX: the welded host rides the uniform DSL rc wrap (`withDfaRcPins`, 4 additive
-      -- tail pins — host PIs THEN rc THEN the 16 wide anchors), matching the live cohort member +
-      -- the producer's PI layout (per-effect extras first, rc last-pre-wide). Without the wrap the
-      -- emitted row dropped the 4 rc PIs the producer publishes (70 ≠ the live 74).
-      let rfHost := withDfaRcPins (Dregg2.Circuit.Emit.FieldsOpenEmit.effFieldsWriteV3
-        Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalFieldsWriteV3
-        "dregg-effectvm-refusal-v1-rot24-v3-write-fieldsopen")
-      let rfBB := Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
-      let rfWide := wideAppend rfHost rfBB (rfBB + 239)
-      emitCompact key (weldWide key rfWide)
+      emitCompact key (weldWide key
+        Dregg2.Circuit.Emit.ExactFieldsRefusalEmit.refusalExactFieldsWide)
     -- §J′ (INSERT-shaped accumulator deploy): positions 3/4/22 (noteSpend/noteCreate/createCell) are
     -- REPLACED IN PLACE by the insert-shaped `effAccumInsertV3 … base …` host (EXACTLY as refusal is
     -- advanced to `effFieldsWriteV3`, heap to `effHeapWriteV3`, cap to `effCapOpenWriteV3`). The DEPLOYED
