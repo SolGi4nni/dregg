@@ -133,6 +133,25 @@ enum ReceiptWeldMode<'a> {
     ExistingExact { index: u64, encoded: &'a [u8] },
 }
 
+enum ExactFnspV3Weld {
+    #[cfg(test)]
+    AccumulatorOnly(crate::ExactFnspV3StateCasV1),
+    Frame {
+        exact: crate::ExactFnspV3StateCasV1,
+        frame: crate::UntrustedExactFnspV3FrameV1,
+    },
+}
+
+impl ExactFnspV3Weld {
+    const fn exact(&self) -> crate::ExactFnspV3StateCasV1 {
+        match self {
+            #[cfg(test)]
+            Self::AccumulatorOnly(exact) => *exact,
+            Self::Frame { exact, .. } => *exact,
+        }
+    }
+}
+
 impl ReceiptWeldMode<'_> {
     fn entry(&self) -> (u64, &[u8]) {
         match self {
@@ -285,6 +304,18 @@ pub struct CommitOutcome {
     pub freshly_committed: bool,
 }
 
+/// Durable success for the exact-frame apex.  The frame head has no public constructor and is
+/// minted only after a fresh writer commit or after byte-exact replay verification.
+pub struct ExactFnspV3FrameCommitOutcome {
+    pub outcome: CommitOutcome,
+    pub committed_head: crate::CommittedExactFnspV3FrameHeadV1,
+}
+
+struct WeldedCommitOutcome {
+    outcome: CommitOutcome,
+    committed_head: Option<crate::CommittedExactFnspV3FrameHeadV1>,
+}
+
 fn validate_faithful_commit_coordinates(
     record: &CommitRecord,
     faithful: &FinalizedFaithfulRootWeld<'_>,
@@ -418,7 +449,9 @@ fn durable_faithful_exact_append_records_in(
 
 /// Require the exact-v3 and legacy faithful authorities to describe the same complete append
 /// history before a dual-write finalized turn begins.
-fn validate_exact_fnsp_v3_faithful_prefix_in(write: &redb::WriteTransaction) -> Result<()> {
+pub(crate) fn validate_exact_fnsp_v3_faithful_prefix_in(
+    write: &redb::WriteTransaction,
+) -> Result<()> {
     let legacy = durable_faithful_exact_append_records_in(write)?;
     let exact = crate::exact_fnsp_v3_state::exact_fnsp_v3_append_records_in(write)?;
     if exact != legacy {
@@ -930,6 +963,7 @@ impl PersistentStore {
             None,
             None,
         )
+        .map(|outcome| outcome.outcome)
     }
 
     /// [`Self::commit_finalized_turn_with_notes`] PLUS the exact serialized
@@ -961,6 +995,7 @@ impl PersistentStore {
             None,
             None,
         )
+        .map(|outcome| outcome.outcome)
     }
 
     /// The live faithful-root apex: commit record, exact note leaves, receipt,
@@ -1006,7 +1041,8 @@ impl PersistentStore {
     /// Predicate registration remains a separate fail-closed cut: callers must not use this
     /// persistence method as evidence that an exact-v3 proof identity was accepted.
     #[allow(clippy::too_many_arguments)]
-    pub fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3(
+    #[cfg(test)]
+    pub(crate) fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3(
         &self,
         expected_ordinal: u64,
         record: &CommitRecord,
@@ -1025,7 +1061,33 @@ impl PersistentStore {
                 encoded: encoded_receipt,
             },
             faithful,
-            Some(exact),
+            Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
+        )
+    }
+
+    /// Production exact-v3 apex: the executor-produced receipt, faithful state, exact append, and
+    /// restart-safe signed frame record/head land under one writer transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        exact: crate::ExactFnspV3StateCasV1,
+        frame: crate::UntrustedExactFnspV3FrameV1,
+    ) -> Result<ExactFnspV3FrameCommitOutcome> {
+        self.commit_finalized_turn_with_exact_fnsp_v3_frame_receipt_mode(
+            expected_ordinal,
+            record,
+            ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            exact,
+            frame,
         )
     }
 
@@ -1065,7 +1127,8 @@ impl PersistentStore {
     /// [`Self::commit_finalized_turn_with_faithful_root_existing_receipt`].
     /// The receipt must already exist byte-for-byte; this method never repairs or appends it.
     #[allow(clippy::too_many_arguments)]
-    pub fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_existing_receipt(
+    #[cfg(test)]
+    pub(crate) fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_existing_receipt(
         &self,
         expected_ordinal: u64,
         record: &CommitRecord,
@@ -1084,8 +1147,83 @@ impl PersistentStore {
                 encoded: encoded_receipt,
             },
             faithful,
-            Some(exact),
+            Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
         )
+    }
+
+    /// Crash-replay counterpart of
+    /// [`Self::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame_existing_receipt(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        exact: crate::ExactFnspV3StateCasV1,
+        frame: crate::UntrustedExactFnspV3FrameV1,
+    ) -> Result<ExactFnspV3FrameCommitOutcome> {
+        self.commit_finalized_turn_with_exact_fnsp_v3_frame_receipt_mode(
+            expected_ordinal,
+            record,
+            ReceiptWeldMode::ExistingExact {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            exact,
+            frame,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_finalized_turn_with_exact_fnsp_v3_frame_receipt_mode(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        receipt_entry: ReceiptWeldMode<'_>,
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        exact: crate::ExactFnspV3StateCasV1,
+        frame: crate::UntrustedExactFnspV3FrameV1,
+    ) -> Result<ExactFnspV3FrameCommitOutcome> {
+        if !faithful.envelope.verify_hybrid(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+            1,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root author hybrid signature failed".to_string(),
+            ));
+        }
+        if !faithful.attested_root.has_any_valid_committee_signature(
+            faithful.author_committee,
+            faithful.author_ml_dsa_committee,
+        ) {
+            return Err(StoreError::Integrity(
+                "faithful note-root attestation has no valid author signature".to_string(),
+            ));
+        }
+        validate_faithful_commit_coordinates(record, &faithful)?;
+        validate_exact_fnsp_v3_finalization_coordinates(&faithful, exact)?;
+        let welded = self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            &[],
+            Some(receipt_entry),
+            Some(faithful),
+            Some(ExactFnspV3Weld::Frame { exact, frame }),
+        )?;
+        let committed_head = welded.committed_head.ok_or_else(|| {
+            StoreError::Integrity(
+                "exact FNSP-v3 frame commit returned without a committed head".to_string(),
+            )
+        })?;
+        Ok(ExactFnspV3FrameCommitOutcome {
+            outcome: welded.outcome,
+            committed_head,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1096,7 +1234,7 @@ impl PersistentStore {
         note_commitments: &[[u8; 32]],
         receipt_entry: ReceiptWeldMode<'_>,
         faithful: FinalizedFaithfulRootWeld<'_>,
-        exact_fnsp_v3: Option<crate::ExactFnspV3StateCasV1>,
+        exact_fnsp_v3: Option<ExactFnspV3Weld>,
     ) -> Result<CommitOutcome> {
         if !faithful.envelope.verify_hybrid(
             faithful.author_committee,
@@ -1116,8 +1254,8 @@ impl PersistentStore {
             ));
         }
         validate_faithful_commit_coordinates(record, &faithful)?;
-        if let Some(exact) = exact_fnsp_v3 {
-            validate_exact_fnsp_v3_finalization_coordinates(&faithful, exact)?;
+        if let Some(exact) = exact_fnsp_v3.as_ref() {
+            validate_exact_fnsp_v3_finalization_coordinates(&faithful, exact.exact())?;
         }
         self.commit_finalized_turn_welded(
             expected_ordinal,
@@ -1128,6 +1266,7 @@ impl PersistentStore {
             Some(faithful),
             exact_fnsp_v3,
         )
+        .map(|outcome| outcome.outcome)
     }
 
     /// [`Self::commit_finalized_turn`] PLUS forever-digest burns in the SAME
@@ -1148,7 +1287,7 @@ impl PersistentStore {
         burns: &[(u8, [u8; 32], [u8; 32])],
     ) -> Result<u64> {
         self.commit_finalized_turn_welded(expected_ordinal, record, burns, &[], None, None, None)
-            .map(|o| o.ordinal)
+            .map(|outcome| outcome.outcome.ordinal)
     }
 
     /// The single atomic finalized-turn commit: record + secondary index +
@@ -1165,8 +1304,8 @@ impl PersistentStore {
         note_commitments: &[[u8; 32]],
         receipt_entry: Option<ReceiptWeldMode<'_>>,
         faithful: Option<FinalizedFaithfulRootWeld<'_>>,
-        exact_fnsp_v3: Option<crate::ExactFnspV3StateCasV1>,
-    ) -> Result<CommitOutcome> {
+        exact_fnsp_v3: Option<ExactFnspV3Weld>,
+    ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
         // Exact-v3 is a shadow/cutover authority over the SAME ordered public spend history, not
         // a second namespace.  Validate equality before the first finalized-turn write.  Since the
@@ -1241,19 +1380,41 @@ impl PersistentStore {
                                         false,
                                     )?;
                                 }
-                                if let Some(exact) = exact_fnsp_v3 {
-                                    crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
-                                        &write_txn,
-                                        exact,
-                                    )?;
-                                }
+                                let committed_head = match exact_fnsp_v3.as_ref() {
+                                    #[cfg(test)]
+                                    Some(ExactFnspV3Weld::AccumulatorOnly(exact)) => {
+                                        crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
+                                            &write_txn,
+                                            *exact,
+                                        )?;
+                                        None
+                                    }
+                                    Some(ExactFnspV3Weld::Frame { exact, frame }) => {
+                                        crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
+                                            &write_txn,
+                                            *exact,
+                                        )?;
+                                        crate::exact_fnsp_v3_frame_head::verify_replayed_exact_fnsp_v3_frame_in(
+                                            &write_txn,
+                                            *exact,
+                                            frame,
+                                        )?;
+                                        Some(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable(
+                                            frame.clone(),
+                                        ))
+                                    }
+                                    None => None,
+                                };
                                 // Already durably committed; nothing to do. The
                                 // welded notes/burns were written by the original
                                 // commit; signal a replay so the caller does NOT
                                 // re-apply purely-in-RAM derived state.
-                                return Ok(CommitOutcome {
-                                    ordinal: expected_ordinal,
-                                    freshly_committed: false,
+                                return Ok(WeldedCommitOutcome {
+                                    outcome: CommitOutcome {
+                                        ordinal: expected_ordinal,
+                                        freshly_committed: false,
+                                    },
+                                    committed_head,
                                 });
                             }
                             return Err(StoreError::Integrity(format!(
@@ -1442,19 +1603,32 @@ impl PersistentStore {
         // writer and returns it only after independently replaying the durable prefix and writing
         // both the append record and successor head.  Any stale/forged/late storage failure drops
         // the sole transaction here, so none of the finalized-turn rows above can leak through.
-        let write_txn = match exact_fnsp_v3 {
-            Some(exact) => {
-                crate::exact_fnsp_v3_state::compare_and_commit_exact_fnsp_v3_append_in(
-                    write_txn, exact,
-                )?
-                .0
+        let (write_txn, staged_frame) = match exact_fnsp_v3 {
+            #[cfg(test)]
+            Some(ExactFnspV3Weld::AccumulatorOnly(exact)) => {
+                let (write, _) =
+                    crate::exact_fnsp_v3_state::compare_and_commit_exact_fnsp_v3_append_in(
+                        write_txn, exact,
+                    )?;
+                (write, None)
             }
-            None => write_txn,
+            Some(ExactFnspV3Weld::Frame { exact, frame }) => {
+                let (write, staged) =
+                    crate::exact_fnsp_v3_frame_head::stage_exact_fnsp_v3_frame_in(
+                        write_txn, exact, frame,
+                    )?;
+                (write, Some(staged))
+            }
+            None => (write_txn, None),
         };
         write_txn.commit()?;
-        Ok(CommitOutcome {
-            ordinal: assigned,
-            freshly_committed: true,
+        Ok(WeldedCommitOutcome {
+            outcome: CommitOutcome {
+                ordinal: assigned,
+                freshly_committed: true,
+            },
+            committed_head: staged_frame
+                .map(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable),
         })
     }
 

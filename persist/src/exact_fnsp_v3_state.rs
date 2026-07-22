@@ -15,10 +15,10 @@
 //! A stale concurrent writer, duplicate nullifier, forged successor, missing/trailing record,
 //! truncated wire, non-canonical field lane, or head/record disagreement fails before commit.
 //! The public API is deliberately not wired into turn dispatch or the predicate registry yet.
-//! [`PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3`](crate::PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3)
+//! [`PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame`](crate::PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame)
 //! invokes the consuming CAS from the finalized-turn transaction, so the commit record, receipt,
-//! note-root edge, attested state, exact append row, and exact head share one crash boundary.  That
-//! transaction-owned substrate does not by itself authorize a proof identity or make v3 live.
+//! note-root edge, attested state, exact append row, signed frame row, and both heads share one
+//! crash boundary.  That transaction-owned substrate does not by itself register v3 live.
 //!
 //! The BLAKE3 seals below detect accidental/torn byte corruption; they are not signatures.  A
 //! hostile actor able to rewrite the entire redb image can recompute them or roll the whole store
@@ -541,6 +541,7 @@ pub(crate) fn initialize_exact_fnsp_v3_state_in(
     write: WriteTransaction,
     records: impl IntoIterator<Item = ExactAppendRecord>,
 ) -> StoreResult<(WriteTransaction, ExactFnspV3StateHeadV1)> {
+    crate::exact_fnsp_v3_frame_head::ensure_frame_authority_absent_in_write(&write)?;
     if load_snapshot_from_write(&write)?.is_some() {
         return Err(integrity(ExactFnspV3StateStoreError::AlreadyInitialized));
     }
@@ -692,6 +693,18 @@ pub(crate) fn exact_fnsp_v3_append_records_in(
         .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))
 }
 
+/// Load the exact accumulator head through the caller-owned writer after full replay validation.
+///
+/// The durable frame-head lane uses this to bind an activation and every exact receipt frame to
+/// the same writer-owned accumulator snapshot.  It intentionally returns no unchecked table row.
+pub(crate) fn exact_fnsp_v3_state_head_in(
+    write: &WriteTransaction,
+) -> StoreResult<ExactFnspV3StateHeadV1> {
+    load_snapshot_from_write(write)?
+        .map(|snapshot| snapshot.head)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))
+}
+
 fn prepare_from_snapshot(
     mut snapshot: ValidatedSnapshot,
     raw: [u8; 32],
@@ -766,6 +779,13 @@ fn load_snapshot_from_read(read: &ReadTransaction) -> StoreResult<Option<Validat
         (collect_heads(&heads)?, collect_records(&records)?)
     };
     validate_snapshot(head_rows, record_rows).map_err(integrity)
+}
+
+/// Load the exact head through a caller-owned reader after complete record replay validation.
+pub(crate) fn load_state_head_from_read(
+    read: &ReadTransaction,
+) -> StoreResult<Option<ExactFnspV3StateHeadV1>> {
+    load_snapshot_from_read(read).map(|snapshot| snapshot.map(|snapshot| snapshot.head))
 }
 
 fn load_snapshot_from_write(write: &WriteTransaction) -> StoreResult<Option<ValidatedSnapshot>> {

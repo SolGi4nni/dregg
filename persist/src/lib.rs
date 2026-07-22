@@ -31,6 +31,7 @@ pub mod blocklace_store;
 pub mod channel_rosters;
 pub mod checkpoint;
 pub mod commit_log;
+pub mod exact_fnsp_v3_frame_head;
 pub mod exact_fnsp_v3_state;
 pub mod faithful_note_root_history;
 pub mod federation;
@@ -51,7 +52,16 @@ use std::path::Path;
 use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub use blocklace_store::BlocklaceMeta;
-pub use commit_log::{CellOverlayOp, CommitRecord, FinalizedNullifierRecord, IndexAuditReport};
+pub use commit_log::{
+    CellOverlayOp, CommitRecord, ExactFnspV3FrameCommitOutcome, FinalizedNullifierRecord,
+    IndexAuditReport,
+};
+pub use exact_fnsp_v3_frame_head::{
+    CommittedExactFnspV3FrameHeadV1, EXACT_FNSP_V3_ACTIVATION_V1_WIRE_LEN,
+    EXACT_FNSP_V3_FRAME_V1_WIRE_LEN, ExactFnspV3DurableReceiptLinkV1, ExactFnspV3FrameStoreError,
+    StoreAuthenticatedExactFnspV3ActivationV1, UntrustedExactFnspV3ActivationV1,
+    UntrustedExactFnspV3FrameV1,
+};
 pub use exact_fnsp_v3_state::{
     EXACT_FNSP_V3_APPEND_RECORD_V1_WIRE_LEN, EXACT_FNSP_V3_STATE_HEAD_V1_WIRE_LEN,
     ExactFnspV3StateCasV1, ExactFnspV3StateHeadV1, ExactFnspV3StateStoreError,
@@ -211,6 +221,7 @@ impl PersistentStore {
         // One-time index-shape migration for stores written before the
         // (height, creator, ordinal) key (no-op on fresh/migrated stores).
         store.migrate_height_creator_index()?;
+        store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
 
@@ -224,6 +235,7 @@ impl PersistentStore {
             .map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
 
@@ -245,6 +257,9 @@ impl PersistentStore {
             // from the complete durable append-record image.
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_STATE_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_APPEND_RECORDS)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_ACTIVATION)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_HEAD)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_RECORDS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
