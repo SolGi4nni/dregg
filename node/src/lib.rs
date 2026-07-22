@@ -70,6 +70,7 @@ mod node_integrator_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+mod program_registry_persistence;
 pub mod prove_pool;
 pub mod relay_dispute;
 pub mod relay_service;

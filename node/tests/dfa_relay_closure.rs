@@ -279,6 +279,11 @@ async fn foreign_deployed_program_cannot_discharge_a_dfa_caveat() {
             "the open deploy surface is REAL: the attacker's circuit is in s.program_registry \
              (this is the registry that must NOT reach the Dfa verifier)"
         );
+        assert!(
+            executor.program_registry.contains(&attacker_vk),
+            "the short-lived executor must receive the node's deployed custom-program registry; \
+             keeping that application registry live must not widen the separate Dfa registry"
+        );
         assert_ne!(
             attacker_vk,
             route_circuit_vk(),

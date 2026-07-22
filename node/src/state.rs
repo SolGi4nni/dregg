@@ -1175,6 +1175,12 @@ impl NodeState {
         // the wrong predecessor even though redb held every note.
         let note_tree = restore_and_verify_faithful_note_tree(&store, &cclerk)?;
 
+        // Caller-deployed custom programs are verifier configuration, not
+        // process-local cache. Revalidate the canonical durable snapshot before
+        // serving; corrupt/invalid bytes fail the boot instead of silently
+        // making custom-program cells unverifiable after a restart.
+        let program_registry = crate::program_registry_persistence::load_program_registry(&store)?;
+
         // Issue 10: the freshly-constructed state has no federation keys yet.
         // This is expected: `run_node` loads them from `genesis.json` (via
         // `set_federation_keys`) immediately after construction, which emits the
@@ -1230,7 +1236,7 @@ impl NodeState {
                 mcp_cap_enforce: mcp_cap_enforce_env_enabled(),
                 pir_index_cache: None,
                 discharge_gateway: None,
-                program_registry: ProgramRegistry::new(),
+                program_registry,
                 budget_coordinators: HashMap::new(),
                 fast_unlock_manager: None,
                 silo_id,
@@ -1387,6 +1393,7 @@ impl NodeState {
         channels.restore_rosters(&store, &ledger);
 
         let note_tree = restore_and_verify_faithful_note_tree(&store, &cclerk)?;
+        let program_registry = crate::program_registry_persistence::load_program_registry(&store)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
@@ -1431,7 +1438,7 @@ impl NodeState {
                 mcp_cap_enforce: mcp_cap_enforce_env_enabled(),
                 pir_index_cache: None,
                 discharge_gateway: None,
-                program_registry: ProgramRegistry::new(),
+                program_registry,
                 budget_coordinators: HashMap::new(),
                 fast_unlock_manager: None,
                 silo_id,

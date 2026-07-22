@@ -6851,14 +6851,36 @@ async fn post_deploy_program(
     // Create the CellProgram (computes VK hash).
     let program = dregg_dsl_runtime::CellProgram::new(descriptor, req.version);
 
-    // Deploy to registry (validates safety bounds).
+    // Validate into a candidate registry, durably publish the complete
+    // canonical snapshot, and only then expose it to live executors. A failed
+    // store write therefore cannot create a process-only deployment that
+    // disappears at restart. Program deployment is an authenticated node-admin
+    // operation today, not a consensus-ordered turn; this transaction makes the
+    // node-local registry crash-consistent but does not claim federation-wide
+    // deployment consensus.
     let mut s = state.write().await;
-    match s.program_registry.deploy(program) {
-        Ok(vk_hash) => Ok(Json(DeployProgramResponse {
-            deployed: true,
-            vk_hash: Some(hex_encode(&vk_hash)),
-            error: None,
-        })),
+    let mut candidate = s.program_registry.clone();
+    match candidate.deploy(program) {
+        Ok(vk_hash) => match crate::program_registry_persistence::persist_program_registry(
+            &s.store, &candidate,
+        ) {
+            Ok(()) => {
+                s.program_registry = candidate;
+                Ok(Json(DeployProgramResponse {
+                    deployed: true,
+                    vk_hash: Some(hex_encode(&vk_hash)),
+                    error: None,
+                }))
+            }
+            Err(error) => {
+                tracing::error!(%error, "custom program deployment durability failed");
+                Ok(Json(DeployProgramResponse {
+                    deployed: false,
+                    vk_hash: None,
+                    error: Some(error),
+                }))
+            }
+        },
         Err(e) => Ok(Json(DeployProgramResponse {
             deployed: false,
             vk_hash: None,

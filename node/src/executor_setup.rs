@@ -70,11 +70,12 @@ pub fn route_circuit_vk() -> [u8; 32] {
     route_circuit_program().vk_hash
 }
 
-/// The registry the node's `Dfa` verifier resolves against: the node's deployed
-/// programs PLUS the routing circuit at [`route_circuit_vk`].
+/// The registry the node's `Dfa` verifier resolves against: exactly the pinned
+/// routing circuit at [`route_circuit_vk`].
 ///
-/// Deployment is idempotent (`ProgramRegistry::deploy` keys by vk_hash), so a
-/// registry that already carries the routing program is unchanged.
+/// Caller-deployed custom programs live in `NodeStateInner::program_registry`
+/// and are copied to `TurnExecutor::program_registry` for custom cell-program
+/// verification. They must never enter this route-policy registry.
 pub fn program_registry_with_route_circuit(_s: &NodeStateInner) -> ProgramRegistry {
     // A FRESH registry holding EXACTLY the canonical route circuit — deliberately
     // NOT `s.program_registry`.
@@ -287,6 +288,14 @@ pub fn configure_turn_executor(
         )
     });
 
+    // Custom cell-program verification resolves the program VK committed by a
+    // cell against the node's durable deployed-program registry. Executors are
+    // short-lived, so leaving the constructor default (empty) would make every
+    // deployed program disappear at the next submit/verify boundary. This is a
+    // distinct registry from the Dfa verifier below: arbitrary caller-deployed
+    // programs are valid application code, but never trusted route policy.
+    executor.set_program_registry(s.program_registry.clone());
+
     executor.set_local_federation_id(federation_id_for_executor(s));
     executor.set_timestamp(wall_clock_secs());
     enroll_known_pq_identities(executor, s);
@@ -304,8 +313,8 @@ pub fn configure_turn_executor(
         dregg_federation::court::register_equivocation_court(registry);
 
         // DFA ROUTE-COMMITMENT (the relay's caveat): install the real
-        // `DslCircuitDfaVerifier` over the node's deployed programs + the
-        // canonical routing circuit. The executor default
+        // `DslCircuitDfaVerifier` over ONLY the canonical routing circuit. The
+        // executor default
         // (`registry_with_real_verifiers`) leaves `Dfa` FAIL-CLOSED because the
         // kind needs a host-trusted `ProgramRegistry`; this supplies it, so a
         // relay's `Witnessed { Dfa }` caveat carrying `route_circuit_vk()` now
