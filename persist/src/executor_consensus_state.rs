@@ -15,6 +15,76 @@ use crate::{PersistentStore, Result, StoreError, tables};
 
 pub const MAX_EXECUTOR_ACCUMULATOR_RECORDS: u64 = 1_000_000;
 pub const MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_REACTIVE_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
+pub const REACTIVE_NULLIFIER_DOMAIN_V1: &str = "dregg-reactive-nullifiers-v1";
+pub const REACTIVE_REGISTRY_DOMAIN_V1: &str = "dregg-pending-registry-v1";
+pub const EMPTY_REACTIVE_REGISTRY_V1: &[u8; 6] = b"DPRG1\0";
+
+/// Compare-and-swap candidate for the durable pending-turn registry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReactiveRegistryCasV1 {
+    pub expected_pre_commitment: [u8; 32],
+    pub successor_bytes: Vec<u8>,
+}
+
+impl ReactiveRegistryCasV1 {
+    pub fn new(expected_pre_commitment: [u8; 32], successor_bytes: Vec<u8>) -> Self {
+        Self {
+            expected_pre_commitment,
+            successor_bytes,
+        }
+    }
+}
+
+impl Default for ReactiveRegistryCasV1 {
+    fn default() -> Self {
+        Self {
+            expected_pre_commitment: reactive_registry_commitment(EMPTY_REACTIVE_REGISTRY_V1),
+            successor_bytes: EMPTY_REACTIVE_REGISTRY_V1.to_vec(),
+        }
+    }
+}
+
+/// Compare-and-swap candidate for the React-only replay gate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReactiveNullifierCasV1 {
+    pub expected_pre_commitment: [u8; 32],
+    /// Strictly sorted and duplicate-free successor image.
+    pub successor_keys: Vec<[u8; 32]>,
+}
+
+impl ReactiveNullifierCasV1 {
+    pub fn new(expected_pre_commitment: [u8; 32], successor_keys: Vec<[u8; 32]>) -> Self {
+        Self {
+            expected_pre_commitment,
+            successor_keys,
+        }
+    }
+}
+
+impl Default for ReactiveNullifierCasV1 {
+    fn default() -> Self {
+        Self {
+            expected_pre_commitment: reactive_nullifier_commitment(&[]),
+            successor_keys: Vec::new(),
+        }
+    }
+}
+
+pub fn reactive_registry_commitment(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(REACTIVE_REGISTRY_DOMAIN_V1);
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+pub fn reactive_nullifier_commitment(keys: &[[u8; 32]]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(REACTIVE_NULLIFIER_DOMAIN_V1);
+    hasher.update(&(keys.len() as u64).to_le_bytes());
+    for key in keys {
+        hasher.update(key);
+    }
+    *hasher.finalize().as_bytes()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExecutorNoteCommitmentRecord {
@@ -54,6 +124,8 @@ pub struct FinalizedExecutorConsensusState {
     pub accumulators: ExecutorAccumulatorSnapshot,
     pub rate_limit_snapshot: Option<Vec<u8>>,
     pub factory_registry_snapshot: Option<Vec<u8>>,
+    pub reactive_registry: ReactiveRegistryCasV1,
+    pub reactive_nullifiers: ReactiveNullifierCasV1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,11 +387,15 @@ fn validate_sparse_snapshot_envelope(
         .factory_registry_snapshot
         .as_deref()
         .or(carried_factory.as_deref());
+    validate_reactive_registry_bytes(&state.reactive_registry.successor_bytes)?;
     let rate_bytes = effective_rate.map_or(0, <[u8]>::len);
     let factory_bytes = effective_factory.map_or(0, <[u8]>::len);
-    let total = rate_bytes.checked_add(factory_bytes).ok_or_else(|| {
-        StoreError::Integrity("executor snapshot envelope byte length overflow".to_string())
-    })?;
+    let total = rate_bytes
+        .checked_add(factory_bytes)
+        .and_then(|bytes| bytes.checked_add(state.reactive_registry.successor_bytes.len()))
+        .ok_or_else(|| {
+            StoreError::Integrity("executor snapshot envelope byte length overflow".to_string())
+        })?;
     if total > MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES {
         return Err(StoreError::Integrity(format!(
             "executor snapshot envelope is {total} bytes (maximum {MAX_DURABLE_EXECUTOR_SNAPSHOT_BYTES})"
@@ -331,6 +407,202 @@ fn validate_sparse_snapshot_envelope(
                 "executor factory-registry snapshot is not canonical: {error}"
             ))
         })?;
+    }
+    Ok(())
+}
+
+fn validate_reactive_registry_bytes(bytes: &[u8]) -> Result<()> {
+    if bytes.len() > MAX_REACTIVE_REGISTRY_BYTES {
+        return Err(StoreError::Integrity(format!(
+            "reactive registry is {} bytes (maximum {MAX_REACTIVE_REGISTRY_BYTES})",
+            bytes.len()
+        )));
+    }
+    dregg_turn::PendingTurnRegistry::from_canonical_bytes(bytes).map_err(|error| {
+        StoreError::Integrity(format!(
+            "reactive registry is not a canonical pending-turn image: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+fn validate_reactive_nullifier_keys(keys: &[[u8; 32]]) -> Result<()> {
+    if u64::try_from(keys.len()).unwrap_or(u64::MAX) > MAX_EXECUTOR_ACCUMULATOR_RECORDS {
+        return Err(StoreError::Integrity(
+            "reactive-nullifier image exceeds the durable record bound".to_string(),
+        ));
+    }
+    if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(StoreError::Integrity(
+            "reactive-nullifier image is not strictly sorted and unique".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn latest_reactive_registry_before(write_txn: &WriteTransaction, ordinal: u64) -> Result<Vec<u8>> {
+    Ok(latest_sparse_snapshot_before(
+        write_txn,
+        tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1,
+        ordinal,
+    )?
+    .unwrap_or_else(|| EMPTY_REACTIVE_REGISTRY_V1.to_vec()))
+}
+
+fn load_reactive_nullifiers_from_write(
+    write_txn: &WriteTransaction,
+    at_or_before_ordinal: Option<u64>,
+) -> Result<Vec<[u8; 32]>> {
+    let table = write_txn.open_table(tables::REACTIVE_NULLIFIERS_V1)?;
+    if table.len()? > MAX_EXECUTOR_ACCUMULATOR_RECORDS {
+        return Err(StoreError::Integrity(
+            "durable reactive-nullifier table exceeds its record bound".to_string(),
+        ));
+    }
+    let mut keys = Vec::with_capacity(checked_capacity(table.len()?, "reactive nullifier")?);
+    for entry in table.iter()? {
+        let (key, inserted_at) = entry.map_err(|error| StoreError::Database(error.to_string()))?;
+        if at_or_before_ordinal.is_none_or(|ordinal| inserted_at.value() <= ordinal) {
+            keys.push(*key.value());
+        }
+    }
+    validate_reactive_nullifier_keys(&keys)?;
+    Ok(keys)
+}
+
+fn stage_fresh_reactive_state_in(
+    write_txn: &WriteTransaction,
+    ordinal: u64,
+    state: &FinalizedExecutorConsensusState,
+) -> Result<()> {
+    validate_reactive_registry_bytes(&state.reactive_registry.successor_bytes)?;
+    validate_reactive_nullifier_keys(&state.reactive_nullifiers.successor_keys)?;
+
+    let durable_registry = latest_reactive_registry_before(write_txn, ordinal)?;
+    if reactive_registry_commitment(&durable_registry)
+        != state.reactive_registry.expected_pre_commitment
+    {
+        return Err(StoreError::Integrity(
+            "reactive-registry compare-and-swap predecessor differs from durable state".to_string(),
+        ));
+    }
+    {
+        let mut snapshots =
+            write_txn.open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)?;
+        if snapshots.get(ordinal)?.is_some() {
+            return Err(StoreError::Integrity(
+                "fresh reactive-registry ordinal already exists".to_string(),
+            ));
+        }
+        snapshots.insert(ordinal, state.reactive_registry.successor_bytes.as_slice())?;
+    }
+
+    let durable_nullifiers = load_reactive_nullifiers_from_write(write_txn, None)?;
+    if reactive_nullifier_commitment(&durable_nullifiers)
+        != state.reactive_nullifiers.expected_pre_commitment
+    {
+        return Err(StoreError::Integrity(
+            "reactive-nullifier compare-and-swap predecessor differs from durable state"
+                .to_string(),
+        ));
+    }
+    if durable_nullifiers.iter().any(|key| {
+        state
+            .reactive_nullifiers
+            .successor_keys
+            .binary_search(key)
+            .is_err()
+    }) {
+        return Err(StoreError::Integrity(
+            "reactive-nullifier successor is not an extension of durable state".to_string(),
+        ));
+    }
+    {
+        let mut nullifiers = write_txn.open_table(tables::REACTIVE_NULLIFIERS_V1)?;
+        for key in &state.reactive_nullifiers.successor_keys {
+            if durable_nullifiers.binary_search(key).is_err() {
+                nullifiers.insert(key, ordinal)?;
+            }
+        }
+    }
+    {
+        let mut frontiers =
+            write_txn.open_table(tables::EXECUTOR_REACTIVE_NULLIFIER_FRONTIERS_V1)?;
+        if frontiers.get(ordinal)?.is_some() {
+            return Err(StoreError::Integrity(
+                "fresh reactive-nullifier frontier already exists".to_string(),
+            ));
+        }
+        let count =
+            u64::try_from(state.reactive_nullifiers.successor_keys.len()).map_err(|_| {
+                StoreError::Integrity("reactive-nullifier count does not fit u64".to_string())
+            })?;
+        frontiers.insert(ordinal, count)?;
+    }
+    Ok(())
+}
+
+fn verify_replayed_reactive_state_in(
+    write_txn: &WriteTransaction,
+    ordinal: u64,
+    state: &FinalizedExecutorConsensusState,
+) -> Result<()> {
+    validate_reactive_registry_bytes(&state.reactive_registry.successor_bytes)?;
+    validate_reactive_nullifier_keys(&state.reactive_nullifiers.successor_keys)?;
+    let registry_predecessor = latest_reactive_registry_before(write_txn, ordinal)?;
+    if reactive_registry_commitment(&registry_predecessor)
+        != state.reactive_registry.expected_pre_commitment
+    {
+        return Err(StoreError::Integrity(
+            "replayed reactive-registry predecessor commitment differs from durable history"
+                .to_string(),
+        ));
+    }
+    let snapshots = write_txn.open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)?;
+    let Some(registry) = snapshots.get(ordinal)? else {
+        return Err(StoreError::Integrity(
+            "replayed finalized turn has no reactive-registry successor".to_string(),
+        ));
+    };
+    if registry.value() != state.reactive_registry.successor_bytes.as_slice() {
+        return Err(StoreError::Integrity(
+            "replayed reactive-registry successor differs from durable ordinal".to_string(),
+        ));
+    }
+    drop(registry);
+    drop(snapshots);
+
+    let frontiers = write_txn.open_table(tables::EXECUTOR_REACTIVE_NULLIFIER_FRONTIERS_V1)?;
+    let Some(count) = frontiers.get(ordinal)? else {
+        return Err(StoreError::Integrity(
+            "replayed finalized turn has no reactive-nullifier frontier".to_string(),
+        ));
+    };
+    if count.value()
+        != u64::try_from(state.reactive_nullifiers.successor_keys.len()).unwrap_or(u64::MAX)
+    {
+        return Err(StoreError::Integrity(
+            "replayed reactive-nullifier frontier differs from durable ordinal".to_string(),
+        ));
+    }
+    let predecessor = if ordinal == 0 {
+        Vec::new()
+    } else {
+        load_reactive_nullifiers_from_write(write_txn, Some(ordinal - 1))?
+    };
+    if reactive_nullifier_commitment(&predecessor)
+        != state.reactive_nullifiers.expected_pre_commitment
+    {
+        return Err(StoreError::Integrity(
+            "replayed reactive-nullifier predecessor commitment differs from durable history"
+                .to_string(),
+        ));
+    }
+    let durable = load_reactive_nullifiers_from_write(write_txn, Some(ordinal))?;
+    if durable != state.reactive_nullifiers.successor_keys {
+        return Err(StoreError::Integrity(
+            "replayed reactive-nullifier image differs from durable history".to_string(),
+        ));
     }
     Ok(())
 }
@@ -377,6 +649,7 @@ pub(crate) fn stage_fresh_executor_consensus_state_in(
 ) -> Result<u64> {
     state.accumulators.validate_canonical()?;
     validate_sparse_snapshot_envelope(write_txn, ordinal, state)?;
+    stage_fresh_reactive_state_in(write_txn, ordinal, state)?;
     let durable = load_accumulators_from_write(write_txn, durable_note_count)?;
     if !prefix_agrees(
         &durable.note_commitments,
@@ -483,6 +756,7 @@ pub(crate) fn verify_replayed_executor_consensus_state_in(
 ) -> Result<()> {
     state.accumulators.validate_canonical()?;
     validate_sparse_snapshot_envelope(write_txn, ordinal, state)?;
+    verify_replayed_reactive_state_in(write_txn, ordinal, state)?;
     let frontiers = write_txn.open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
     let Some(frontier) = frontiers.get(ordinal)? else {
         return Err(StoreError::Integrity(
@@ -611,6 +885,64 @@ pub(crate) fn truncate_executor_consensus_state_in(
             .collect::<Result<_>>()?;
         for ordinal in doomed {
             factories.remove(ordinal)?;
+        }
+    }
+    {
+        let mut registries =
+            write_txn.open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)?;
+        let doomed: Vec<u64> = registries
+            .range(new_cursor..)?
+            .map(|entry| {
+                entry
+                    .map(|(ordinal, _)| ordinal.value())
+                    .map_err(|error| StoreError::Database(error.to_string()))
+            })
+            .collect::<Result<_>>()?;
+        for ordinal in doomed {
+            registries.remove(ordinal)?;
+        }
+    }
+    let reactive_target = {
+        let mut frontiers =
+            write_txn.open_table(tables::EXECUTOR_REACTIVE_NULLIFIER_FRONTIERS_V1)?;
+        let mut target = 0;
+        if new_cursor > 0 {
+            for entry in frontiers.range(0..new_cursor)? {
+                let (_, count) = entry.map_err(|error| StoreError::Database(error.to_string()))?;
+                target = count.value();
+            }
+        }
+        let doomed: Vec<u64> = frontiers
+            .range(new_cursor..)?
+            .map(|entry| {
+                entry
+                    .map(|(ordinal, _)| ordinal.value())
+                    .map_err(|error| StoreError::Database(error.to_string()))
+            })
+            .collect::<Result<_>>()?;
+        for ordinal in doomed {
+            frontiers.remove(ordinal)?;
+        }
+        target
+    };
+    {
+        let mut nullifiers = write_txn.open_table(tables::REACTIVE_NULLIFIERS_V1)?;
+        let doomed: Vec<[u8; 32]> = nullifiers
+            .iter()?
+            .filter_map(|entry| match entry {
+                Ok((key, inserted_at)) => {
+                    (inserted_at.value() >= new_cursor).then_some(Ok(*key.value()))
+                }
+                Err(error) => Some(Err(StoreError::Database(error.to_string()))),
+            })
+            .collect::<Result<_>>()?;
+        for key in doomed {
+            nullifiers.remove(&key)?;
+        }
+        if nullifiers.len()? != reactive_target {
+            return Err(StoreError::Integrity(
+                "reactive-nullifier rollback does not match surviving frontier".to_string(),
+            ));
         }
     }
 
@@ -791,6 +1123,37 @@ impl PersistentStore {
             })
             .transpose()
     }
+
+    /// Exact canonical pending-turn registry at the durable commit cursor.
+    pub fn load_latest_reactive_registry_snapshot_bytes(&self) -> Result<Vec<u8>> {
+        let cursor = self.commit_cursor()?;
+        if cursor == 0 {
+            return Ok(EMPTY_REACTIVE_REGISTRY_V1.to_vec());
+        }
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)?;
+        let mut latest = None;
+        for entry in table.range(0..cursor)? {
+            let (_, bytes) = entry.map_err(|error| StoreError::Database(error.to_string()))?;
+            latest = Some(bytes.value().to_vec());
+        }
+        let bytes = latest.unwrap_or_else(|| EMPTY_REACTIVE_REGISTRY_V1.to_vec());
+        validate_reactive_registry_bytes(&bytes)?;
+        Ok(bytes)
+    }
+
+    /// Strictly sorted React-only replay keys at the durable commit cursor.
+    pub fn load_reactive_nullifier_keys(&self) -> Result<Vec<[u8; 32]>> {
+        let cursor = self.commit_cursor()?;
+        let write_txn = self.db.begin_write()?;
+        let keys = if cursor == 0 {
+            Vec::new()
+        } else {
+            load_reactive_nullifiers_from_write(&write_txn, Some(cursor - 1))?
+        };
+        drop(write_txn);
+        Ok(keys)
+    }
 }
 
 #[cfg(test)]
@@ -842,6 +1205,8 @@ mod tests {
             },
             rate_limit_snapshot: rate.map(|bytes| bytes.to_vec()),
             factory_registry_snapshot: Some(factory_bytes(7)),
+            reactive_registry: ReactiveRegistryCasV1::default(),
+            reactive_nullifiers: ReactiveNullifierCasV1::default(),
         }
     }
 
@@ -865,6 +1230,22 @@ mod tests {
                 seq: 1,
             });
         state.accumulators.bridged_nullifiers.push([6; 32]);
+        state
+    }
+
+    fn reactive_state_one(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
+        let mut state = state_one(rate);
+        state.reactive_nullifiers =
+            ReactiveNullifierCasV1::new(reactive_nullifier_commitment(&[]), vec![[0x71; 32]]);
+        state
+    }
+
+    fn reactive_state_two(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
+        let mut state = state_two(rate);
+        state.reactive_nullifiers = ReactiveNullifierCasV1::new(
+            reactive_nullifier_commitment(&[[0x71; 32]]),
+            vec![[0x71; 32], [0x72; 32]],
+        );
         state
     }
 
@@ -976,6 +1357,115 @@ mod tests {
             factories.get(0).unwrap().unwrap().value(),
             preexisting_factory.as_slice()
         );
+        drop(factories);
+        drop(read);
+        assert_eq!(store.load_reactive_nullifier_keys().unwrap(), Vec::new());
+        assert_eq!(
+            store
+                .load_latest_reactive_registry_snapshot_bytes()
+                .unwrap(),
+            EMPTY_REACTIVE_REGISTRY_V1
+        );
+    }
+
+    #[test]
+    fn reactive_state_is_restart_durable_exact_on_replay_and_domain_separated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reactive-state.redb");
+        let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
+        let first_record = record(0, empty_root);
+        let state = reactive_state_one(None);
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            store
+                .commit_finalized_turn_with_executor_state(0, &first_record, &[[1; 32]], &state)
+                .unwrap();
+            assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        }
+
+        let store = PersistentStore::open(&path).unwrap();
+        assert_eq!(
+            store.load_reactive_nullifier_keys().unwrap(),
+            vec![[0x71; 32]]
+        );
+        assert_eq!(
+            store
+                .load_latest_reactive_registry_snapshot_bytes()
+                .unwrap(),
+            EMPTY_REACTIVE_REGISTRY_V1
+        );
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+        assert!(
+            !store
+                .commit_finalized_turn_with_executor_state(0, &first_record, &[[1; 32]], &state)
+                .unwrap()
+                .freshly_committed
+        );
+
+        let mut wrong_replay = state.clone();
+        wrong_replay.reactive_nullifiers.successor_keys = vec![[0x72; 32]];
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    0,
+                    &first_record,
+                    &[[1; 32]],
+                    &wrong_replay,
+                )
+                .is_err()
+        );
+        let mut wrong_reactive_predecessor = state.clone();
+        wrong_reactive_predecessor
+            .reactive_nullifiers
+            .expected_pre_commitment = [0x99; 32];
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    0,
+                    &first_record,
+                    &[[1; 32]],
+                    &wrong_reactive_predecessor,
+                )
+                .is_err()
+        );
+        let mut wrong_registry_predecessor = state.clone();
+        wrong_registry_predecessor
+            .reactive_registry
+            .expected_pre_commitment = [0x98; 32];
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    0,
+                    &first_record,
+                    &[[1; 32]],
+                    &wrong_registry_predecessor,
+                )
+                .is_err()
+        );
+
+        let mut cross_domain = state_two(None);
+        cross_domain.reactive_nullifiers = ReactiveNullifierCasV1::new(
+            reactive_registry_commitment(EMPTY_REACTIVE_REGISTRY_V1),
+            vec![[0x71; 32], [0x72; 32]],
+        );
+        assert_ne!(
+            reactive_registry_commitment(EMPTY_REACTIVE_REGISTRY_V1),
+            reactive_nullifier_commitment(&[[0x71; 32]])
+        );
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    1,
+                    &record(1, empty_root),
+                    &[[4; 32]],
+                    &cross_domain,
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store.load_reactive_nullifier_keys().unwrap(),
+            vec![[0x71; 32]]
+        );
     }
 
     #[test]
@@ -1084,8 +1574,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = PersistentStore::open(&dir.path().join("rollback.redb")).unwrap();
         let empty_root = crate::canonical_ledger_root(&dregg_cell::Ledger::new());
-        let first = state_one(Some(b"rate-one"));
-        let second = state_two(Some(b"rate-two"));
+        let first = reactive_state_one(Some(b"rate-one"));
+        let second = reactive_state_two(Some(b"rate-two"));
         store
             .commit_finalized_turn_with_executor_state(
                 0,
@@ -1117,6 +1607,16 @@ mod tests {
         assert_eq!(
             store.load_latest_factory_registry_snapshot_bytes().unwrap(),
             first.factory_registry_snapshot
+        );
+        assert_eq!(
+            store.load_reactive_nullifier_keys().unwrap(),
+            first.reactive_nullifiers.successor_keys
+        );
+        assert_eq!(
+            store
+                .load_latest_reactive_registry_snapshot_bytes()
+                .unwrap(),
+            first.reactive_registry.successor_bytes
         );
         let read = store.db.begin_read().unwrap();
         let factories = read

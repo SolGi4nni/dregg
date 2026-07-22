@@ -54,6 +54,19 @@ pub const REVOCATION_RECORDS_V1: TableDefinition<&[u8; 32], &[u8; 16]> =
 pub const BRIDGED_NULLIFIERS_V1: TableDefinition<&[u8; 32], u64> =
     TableDefinition::new("bridged_nullifiers_v1");
 
+/// Restart-durable React replay gate.
+///
+/// Key: promise-hole nullifier in the React semantic domain. Value: the
+/// finalized commit ordinal that first consumed it, allowing exact tail
+/// rollback. These keys MUST NOT enter `NULLIFIERS`, whose sequence is the
+/// proven faithful/exact-FNSP NoteSpend history.
+pub const REACTIVE_NULLIFIERS_V1: TableDefinition<&[u8; 32], u64> =
+    TableDefinition::new("reactive_nullifiers_v1");
+
+/// Exact per-commit frontier for the dedicated React replay set.
+pub const EXECUTOR_REACTIVE_NULLIFIER_FRONTIERS_V1: TableDefinition<u64, u64> =
+    TableDefinition::new("executor_reactive_nullifier_frontiers_v1");
+
 /// Post-turn accumulator frontier for every commit carrying executor side state.
 ///
 /// Value: `commitment_count_le || revocation_count_le || bridged_count_le`.
@@ -79,6 +92,14 @@ pub const EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
 /// `dregg-cell` at the persistence boundary before they can be committed.
 pub const EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
     TableDefinition::new("executor_factory_registry_snapshots_v1");
+
+/// Canonical pending-turn registry successor at every executor-state commit.
+///
+/// Unlike sparse policy snapshots, every committed candidate carries an exact
+/// successor. The writer verifies its expected predecessor commitment before
+/// inserting this row; replay requires byte identity at the original ordinal.
+pub const EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("executor_reactive_registry_snapshots_v1");
 
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.

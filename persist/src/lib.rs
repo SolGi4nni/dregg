@@ -70,7 +70,8 @@ pub use exact_fnsp_v3_state::{
 };
 pub use executor_consensus_state::{
     ExecutorAccumulatorSnapshot, ExecutorNoteCommitmentRecord, ExecutorRevocationRecord,
-    FinalizedExecutorConsensusState,
+    FinalizedExecutorConsensusState, ReactiveNullifierCasV1, ReactiveRegistryCasV1,
+    reactive_nullifier_commitment, reactive_registry_commitment,
 };
 pub use faithful_note_root_history::{
     CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1,
@@ -257,9 +258,12 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::NOTE_COMMITMENT_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::REVOCATION_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::BRIDGED_NULLIFIERS_V1)?;
+            let _ = write_txn.open_table(tables::REACTIVE_NULLIFIERS_V1)?;
             let _ = write_txn.open_table(tables::EXECUTOR_ACCUMULATOR_FRONTIERS_V1)?;
+            let _ = write_txn.open_table(tables::EXECUTOR_REACTIVE_NULLIFIER_FRONTIERS_V1)?;
             let _ = write_txn.open_table(tables::EXECUTOR_RATE_LIMIT_SNAPSHOTS_V1)?;
             let _ = write_txn.open_table(tables::EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1)?;
+            let _ = write_txn.open_table(tables::EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1)?;
             let _ = write_txn.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
             let _ = write_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
