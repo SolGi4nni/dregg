@@ -186,20 +186,10 @@ The audited public claim does not survive technical review.
   material.
 ])
 
-== Evidence classes
-
-#table(
-  columns: (1.15fr, 2.85fr),
-  align: (left, left),
-  table.header([*Class*], [*Meaning in this report*]),
-  [Kernel-checked], [A Lean or HOL4 theorem whose declared dependencies pass the
-    stated axiom-hygiene gate.],
-  [Executable model], [A concrete checker, compiler, counterexample, witness, or
-    cost function evaluated within a stated semantics.],
-  [Measured execution], [A recorded implementation run with workload, exclusions,
-    and environment stated; not silently promoted into a general ratio.],
-  [Theorem socket], [A law package whose hypotheses must still be instantiated by
-    a code, transcript, backend, or cryptographic reduction.],
-  [Marketing claim], [A performance or product statement without a public
-    reproducible benchmark in the reviewed material.],
-)
+#callout([EVIDENCE LEGEND], [
+  *Kernel-checked* means a Lean or HOL4 theorem behind the stated axiom-hygiene
+  gate. *Executable* means a concrete compiler, checker, counterexample, witness,
+  or evaluator. *Measured* means a recorded implementation run with its workload
+  and exclusions. A *theorem socket* still needs a protocol or backend
+  instantiation. A *marketing claim* lacks a public reproducibility path.
+])

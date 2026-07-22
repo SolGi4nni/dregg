@@ -25,10 +25,131 @@
 //! / `from_records`.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
+use dregg_circuit::Faithful8;
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::poseidon2::hash_many_8;
 use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteError, Nullifier};
+
+/// Depth of the exact spent-nullifier tree (`4^16 = 2^32` leaves).
+///
+/// This intentionally matches the faithful note tree.  A fixed depth makes the
+/// root geometry protocol data rather than a function of the current set size.
+pub const EXACT_NULLIFIER_TREE_DEPTH: usize = 16;
+/// Number of canonical `u16` lanes carrying one raw 32-byte nullifier.
+pub const EXACT_NULLIFIER_LANES: usize = 16;
+/// Number of canonical `u16` lanes carrying one full `u64` spent-note value.
+pub const EXACT_NULLIFIER_VALUE_LANES: usize = 4;
+/// Number of BabyBear lanes in every hashed node and root.
+pub const EXACT_NULLIFIER_ROOT_LANES: usize = 8;
+
+/// Exact-leaf Poseidon2 domain, ASCII `"FNL8"`.
+pub const EXACT_NULLIFIER_LEAF_DOMAIN: u32 = 0x464e_4c38;
+/// Exact 4-ary internal-node Poseidon2 domain, ASCII `"FNN8"`.
+pub const EXACT_NULLIFIER_NODE_DOMAIN: u32 = 0x464e_4e38;
+/// Exact empty-leaf Poseidon2 domain, ASCII `"FNE8"`.
+pub const EXACT_NULLIFIER_EMPTY_DOMAIN: u32 = 0x464e_4538;
+
+/// Raw, injective field encoding of a nullifier: sixteen little-endian `u16`
+/// limbs.  Every limb is canonical in BabyBear, so no pre-hash reduction can
+/// identify two different byte strings.
+#[inline]
+pub fn exact_nullifier_lanes16(nullifier: &[u8; 32]) -> [BabyBear; EXACT_NULLIFIER_LANES] {
+    core::array::from_fn(|lane| {
+        let offset = lane * 2;
+        BabyBear::new(u16::from_le_bytes([nullifier[offset], nullifier[offset + 1]]) as u32)
+    })
+}
+
+/// Raw, injective field encoding of the full spent-note value: four
+/// little-endian `u16` limbs.  In particular this does not discard the high 34
+/// bits as the legacy grow-gate leaf does.
+#[inline]
+pub fn exact_nullifier_value_lanes4(value: u64) -> [BabyBear; EXACT_NULLIFIER_VALUE_LANES] {
+    let bytes = value.to_le_bytes();
+    core::array::from_fn(|lane| {
+        let offset = lane * 2;
+        BabyBear::new(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as u32)
+    })
+}
+
+fn exact_hash_to_8(domain: u32, inputs: &[BabyBear]) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
+    let mut preimage = Vec::with_capacity(1 + inputs.len());
+    preimage.push(BabyBear::new(domain));
+    preimage.extend_from_slice(inputs);
+    hash_many_8(&preimage)
+}
+
+/// Exact faithful-eight leaf digest of `(raw nullifier, full u64 value)`.
+///
+/// Preimage geometry is fixed and descriptor-friendly:
+/// `FNL8 || nf_u16_le[16] || value_u16_le[4]`.
+pub fn exact_nullifier_leaf8(
+    nullifier: &[u8; 32],
+    value: u64,
+) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
+    let nullifier_lanes = exact_nullifier_lanes16(nullifier);
+    let value_lanes = exact_nullifier_value_lanes4(value);
+    let mut inputs = [BabyBear::ZERO; EXACT_NULLIFIER_LANES + EXACT_NULLIFIER_VALUE_LANES];
+    inputs[..EXACT_NULLIFIER_LANES].copy_from_slice(&nullifier_lanes);
+    inputs[EXACT_NULLIFIER_LANES..].copy_from_slice(&value_lanes);
+    exact_hash_to_8(EXACT_NULLIFIER_LEAF_DOMAIN, &inputs)
+}
+
+/// Exact 4-ary internal-node compression:
+/// `FNN8 || child0[8] || child1[8] || child2[8] || child3[8]`.
+pub fn exact_nullifier_node8(
+    children: &[[BabyBear; EXACT_NULLIFIER_ROOT_LANES]; 4],
+) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
+    let mut inputs = [BabyBear::ZERO; 4 * EXACT_NULLIFIER_ROOT_LANES];
+    for (child_index, child) in children.iter().enumerate() {
+        let start = child_index * EXACT_NULLIFIER_ROOT_LANES;
+        inputs[start..start + EXACT_NULLIFIER_ROOT_LANES].copy_from_slice(child);
+    }
+    exact_hash_to_8(EXACT_NULLIFIER_NODE_DOMAIN, &inputs)
+}
+
+#[inline]
+fn exact_nullifier_empty_leaf8() -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
+    exact_hash_to_8(EXACT_NULLIFIER_EMPTY_DOMAIN, &[])
+}
+
+static EXACT_NULLIFIER_EMPTY_HASHES: LazyLock<
+    [[BabyBear; EXACT_NULLIFIER_ROOT_LANES]; EXACT_NULLIFIER_TREE_DEPTH + 1],
+> = LazyLock::new(|| {
+    let mut empty = [[BabyBear::ZERO; EXACT_NULLIFIER_ROOT_LANES]; EXACT_NULLIFIER_TREE_DEPTH + 1];
+    empty[0] = exact_nullifier_empty_leaf8();
+    for level in 1..=EXACT_NULLIFIER_TREE_DEPTH {
+        empty[level] = exact_nullifier_node8(&[empty[level - 1]; 4]);
+    }
+    empty
+});
+
+/// Canonical exact empty-subtree digest at `level` (`0` is an empty leaf and
+/// `16` is the empty protocol root).  Exposed so witness/prover code can share
+/// the same padding constants rather than duplicating tree construction.
+pub fn exact_nullifier_empty_hash8_at_level(
+    level: usize,
+) -> [BabyBear; EXACT_NULLIFIER_ROOT_LANES] {
+    assert!(
+        level <= EXACT_NULLIFIER_TREE_DEPTH,
+        "exact nullifier empty level {level} exceeds depth {EXACT_NULLIFIER_TREE_DEPTH}"
+    );
+    EXACT_NULLIFIER_EMPTY_HASHES[level]
+}
+
+fn faithful8_from_exact_lanes(lanes: [BabyBear; EXACT_NULLIFIER_ROOT_LANES]) -> Faithful8 {
+    let mut bytes = [0u8; 32];
+    for (lane, felt) in lanes.iter().enumerate() {
+        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
+    // These are already canonical permutation outputs, so from_bytes32
+    // recovers the same eight lanes exactly.
+    Faithful8::from_bytes32(&bytes)
+}
 
 /// A stored accumulator entry: the spent-note `value` PLUS the entry's
 /// **append sequence** (`seq`) — the gap-#5 AAFI (append-at-free-index)
@@ -504,6 +625,57 @@ impl NullifierSet {
         .root8()
     }
 
+    /// Exact faithful-eight root of the spent-nullifier accumulator.
+    ///
+    /// This is an **additive successor** to [`Self::root8`], whose lossy
+    /// `(fold_bytes32_to_bb(nullifier), low30(value))` leaves remain unchanged
+    /// for rotated-proof compatibility.  Here the map's canonical sorted-key
+    /// order supplies dense leaf positions in a fixed depth-16 4-ary tree.
+    /// Each leaf binds all 32 raw nullifier bytes as sixteen `u16` limbs and all
+    /// 64 value bits as four `u16` limbs before any hashing.  Every internal
+    /// node remains eight BabyBear lanes; empty leaves and internal nodes are
+    /// separately domain-separated.
+    ///
+    /// The result therefore has no deterministic high-byte or high-value alias
+    /// inherited from the legacy accumulator encoding.  Its root is
+    /// insertion-order-independent because [`BTreeMap`] iteration, rather than
+    /// append sequence, defines the canonical dense layout.
+    pub fn faithful_root8_exact(&self) -> Faithful8 {
+        const CAPACITY: u128 = 1u128 << (2 * EXACT_NULLIFIER_TREE_DEPTH);
+        assert!(
+            (self.nullifiers.len() as u128) <= CAPACITY,
+            "exact nullifier tree capacity exceeded: {} entries > 4^{}",
+            self.nullifiers.len(),
+            EXACT_NULLIFIER_TREE_DEPTH
+        );
+
+        if self.nullifiers.is_empty() {
+            return faithful8_from_exact_lanes(
+                EXACT_NULLIFIER_EMPTY_HASHES[EXACT_NULLIFIER_TREE_DEPTH],
+            );
+        }
+
+        let mut nodes: Vec<[BabyBear; EXACT_NULLIFIER_ROOT_LANES]> = self
+            .nullifiers
+            .iter()
+            .map(|(nullifier, record)| exact_nullifier_leaf8(&nullifier.0, record.value))
+            .collect();
+
+        for level in 0..EXACT_NULLIFIER_TREE_DEPTH {
+            let parent_count = nodes.len().div_ceil(4);
+            let mut parents = Vec::with_capacity(parent_count);
+            for chunk in nodes.chunks(4) {
+                let mut children = [EXACT_NULLIFIER_EMPTY_HASHES[level]; 4];
+                children[..chunk.len()].copy_from_slice(chunk);
+                parents.push(exact_nullifier_node8(&children));
+            }
+            nodes = parents;
+        }
+
+        debug_assert_eq!(nodes.len(), 1);
+        faithful8_from_exact_lanes(nodes[0])
+    }
+
     /// Verify a non-membership proof against the current root.
     ///
     /// This verifies:
@@ -957,5 +1129,168 @@ mod tests {
             "the re-executed insert must reuse the rolled-back append rank"
         );
         assert_eq!(set.aafi_next_free_index(), 3);
+    }
+
+    #[test]
+    fn exact_nullifier_and_value_codecs_are_injective_u16_limbs() {
+        let mut nullifier = [0u8; 32];
+        nullifier[0..2].copy_from_slice(&0x3210u16.to_le_bytes());
+        nullifier[30..32].copy_from_slice(&0xfedcu16.to_le_bytes());
+        let nullifier_lanes = exact_nullifier_lanes16(&nullifier);
+        assert_eq!(nullifier_lanes[0], BabyBear::new(0x3210));
+        assert_eq!(nullifier_lanes[15], BabyBear::new(0xfedc));
+        assert!(
+            nullifier_lanes
+                .iter()
+                .all(|lane| lane.as_u32() <= u16::MAX as u32)
+        );
+
+        let value_lanes = exact_nullifier_value_lanes4(0xfedc_ba98_7654_3210);
+        assert_eq!(
+            value_lanes.map(|lane| lane.as_u32()),
+            [0x3210, 0x7654, 0xba98, 0xfedc]
+        );
+    }
+
+    /// A raw high-chunk mutation by exactly the BabyBear modulus is a
+    /// deterministic collision in the legacy `u32 mod p` nullifier fold.  The
+    /// exact sixteen-u16 tree must distinguish it.
+    #[test]
+    fn faithful_root8_exact_rejects_legacy_high_byte_nullifier_alias() {
+        use dregg_circuit::field::BABYBEAR_P;
+
+        let zero = Nullifier([0u8; 32]);
+        let mut aliased_bytes = [0u8; 32];
+        aliased_bytes[28..32].copy_from_slice(&BABYBEAR_P.to_le_bytes());
+        let high_chunk_alias = Nullifier(aliased_bytes);
+
+        assert_ne!(zero, high_chunk_alias);
+        assert_ne!(zero.0[31], high_chunk_alias.0[31]);
+        assert_eq!(
+            dregg_circuit::effect_vm::fold_bytes32_to_bb(&zero.0),
+            dregg_circuit::effect_vm::fold_bytes32_to_bb(&high_chunk_alias.0),
+            "vacuity guard: the two hostile raw nullifiers must alias in the legacy fold"
+        );
+
+        let mut zero_set = NullifierSet::new();
+        zero_set.insert(zero, 17).unwrap();
+        let mut alias_set = NullifierSet::new();
+        alias_set.insert(high_chunk_alias, 17).unwrap();
+
+        assert_eq!(
+            zero_set.root8(),
+            alias_set.root8(),
+            "vacuity guard: legacy accumulator roots really do alias"
+        );
+        assert_ne!(
+            zero_set.faithful_root8_exact(),
+            alias_set.faithful_root8_exact(),
+            "the exact tree must bind the hostile high nullifier bytes"
+        );
+    }
+
+    /// Values with equal low 30 bits are identical in the legacy grow-gate
+    /// leaf.  The exact four-u16 value carrier must bind the high bits too.
+    #[test]
+    fn faithful_root8_exact_rejects_legacy_high_value_alias() {
+        let nullifier = Nullifier([0x5a; 32]);
+        let low_value = 17u64;
+        let high_value = low_value | (1u64 << 50);
+        assert_eq!(
+            dregg_circuit::effect_vm::split_u64(low_value).0,
+            dregg_circuit::effect_vm::split_u64(high_value).0,
+            "vacuity guard: values must share the legacy low-30-bit leaf value"
+        );
+
+        let mut low_set = NullifierSet::new();
+        low_set.insert(nullifier, low_value).unwrap();
+        let mut high_set = NullifierSet::new();
+        high_set.insert(nullifier, high_value).unwrap();
+
+        assert_eq!(
+            low_set.root8(),
+            high_set.root8(),
+            "vacuity guard: legacy accumulator roots really do erase these high value bits"
+        );
+        assert_ne!(
+            low_set.faithful_root8_exact(),
+            high_set.faithful_root8_exact(),
+            "the exact tree must bind all 64 spent-note value bits"
+        );
+    }
+
+    #[test]
+    fn faithful_root8_exact_is_insertion_order_independent() {
+        let records = [
+            (Nullifier([0x71; 32]), 0xfedc_ba98_7654_3210),
+            (Nullifier([0x03; 32]), 7),
+            (Nullifier([0xa4; 32]), 1u64 << 63),
+            (Nullifier([0x29; 32]), u64::MAX),
+        ];
+
+        let mut forward = NullifierSet::new();
+        for (nullifier, value) in records {
+            forward.insert(nullifier, value).unwrap();
+        }
+        let mut reverse = NullifierSet::new();
+        for (nullifier, value) in records.into_iter().rev() {
+            reverse.insert(nullifier, value).unwrap();
+        }
+
+        assert_ne!(
+            forward.iter_in_append_order().collect::<Vec<_>>(),
+            reverse.iter_in_append_order().collect::<Vec<_>>(),
+            "vacuity guard: append histories must genuinely differ"
+        );
+        assert_eq!(
+            forward.faithful_root8_exact(),
+            reverse.faithful_root8_exact(),
+            "sorted BTreeMap order must define one canonical exact root"
+        );
+    }
+
+    #[test]
+    fn faithful_root8_exact_protocol_kat() {
+        let empty = NullifierSet::new().faithful_root8_exact();
+
+        let records = [
+            (Nullifier([0x00; 32]), 0),
+            (Nullifier([0x42; 32]), 0x0123_4567_89ab_cdef),
+            (Nullifier([0xff; 32]), u64::MAX),
+        ];
+        let mut populated = NullifierSet::new();
+        for (nullifier, value) in records {
+            populated.insert(nullifier, value).unwrap();
+        }
+        let populated = populated.faithful_root8_exact();
+
+        assert_eq!(
+            empty.limbs().map(BabyBear::as_u32),
+            [
+                768_613_698,
+                1_452_235_473,
+                718_406_171,
+                1_903_835_779,
+                1_364_836_315,
+                473_124_031,
+                551_926_833,
+                749_468_772,
+            ],
+            "depth-16 exact empty-root KAT drift"
+        );
+        assert_eq!(
+            populated.limbs().map(BabyBear::as_u32),
+            [
+                1_647_317_803,
+                728_336_069,
+                1_383_164_904,
+                1_719_721_481,
+                1_680_827_369,
+                1_264_445_032,
+                1_706_504_034,
+                869_270_356,
+            ],
+            "three-record exact-root KAT drift"
+        );
     }
 }

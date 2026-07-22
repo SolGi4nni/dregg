@@ -22,7 +22,7 @@ variant *unrepresentable* rather than merely fixed. §4 is the honest coverage c
 | M04 | `dreggnet-asset/src/lib.rs:59` | doc-claims-absent-seam + harness-tests-own-mirror | low |
 | M05 | `dreggnet-adventure/src/lib.rs:282` | fixture-on-live-path | **high** |
 | M06 | `dreggnet-guild/src/leaderboard.rs:76` | host-vs-proven | medium |
-| M07 | `dregg-multiway-tug/src/surface.rs:266` | re-authored-peer / fresh-per-caller-world | **high** |
+| M07 | `dregg-multiway-tug/src/surface.rs` | re-authored-peer / fresh-per-caller-world | **closed 2026-07-20** |
 | M08 | `dregg-automatafl/src/surface.rs:864` | fixture-on-live-path | medium |
 | M09 | `spween-dregg/src/world.rs:331` | host-vs-proven + doc-claims-absent-seam | medium |
 | M10 | `dreggnet-telegram/tests/full_parity_through_telegram.rs:33` | harness-tests-own-mirror + re-authored-peer | medium |
@@ -180,7 +180,32 @@ doc calls load-bearing. The tested one is not the deployed one.*
 *A second authoring of an object that already exists, built side-by-side with the real one and never
 reconciled. Includes the shared-constant sub-shape: two identity systems bound only by a label string.*
 
-### M07 — the tug surface deals a SECOND hand that is not the hand the round plays · **HIGH**
+### M07 — the tug surface deals a SECOND hand that is not the hand the round plays · **CLOSED**
+
+**HEAD REPAIR — CLOSED 2026-07-20.** The engine now shuffles the 21 **distinct card ids** and
+projects them through one shared `deck_guild`; `TugOffering` commits the engine's exact current
+hand rather than fabricating `0..6` / `6..12`; every `ResolvedMove` reports all exact cards it
+consumed (4/3/2/1), and the live root is rebuilt from the exact post-draw/post-play hand. The
+terminal private fold record contains all ten cards actually entrusted to each seat and all ten
+actual plays, and is unavailable through the public API until SCORE. The old finding below is
+retained as the falsified historical counterexample and repair rationale. Canaries now compare
+the commitment/render to `Engine::hand` (the independent source), require seed-dependent guilds,
+and reject a forged peer commitment.
+
+**FOLLOW-ON LIVE-ADMISSION CLOSURE — 2026-07-20.** The playable Offering now DEAL-pins each
+seat's ten-card private round-inventory root. Every 4/3/2/1-card action supplies the opening and
+Poseidon2 path for **every exact card it consumes** to arity-specific
+`Witnessed{MerkleMembership}` cases; the proof-free `play` case is absent/default-denied. The
+Lean-authored rules cell and the hidden-hand cell share one `EmbeddedExecutor`, and their two signed
+actions are submitted in one atomic turn: a missing/fabricated/tampered/wrong-root witness refuses
+the move and rolls the rules projection back with it. Fresh-seed `/verify` replays the accepted
+inputs and compares both the public projection and private remaining-inventory commitments.
+
+**Honest residual:** membership is checked against the static DEAL-pinned inventory root.
+Exact-card duplicate consumption is prevented by the host's private remaining-inventory ratchet and
+rechecked by fresh replay, not yet by a protocol-native dynamic-root/nullifier constraint. The live
+admission weld and cross-cell atomicity are closed; the native nullifier/dynamic-root tooth and the
+succinct whole-match lowering remain proof work.
 
 - **CLAIM** — `dregg-multiway-tug/src/surface.rs:13-14`: "the viewer's OWN hand is revealed (**the card
   ids they hold**, sourced from the `crate::hidden_hand` committed `HandTree`)" · `:20-21` "**The two
@@ -245,10 +270,9 @@ reconciled. Includes the shared-constant sub-shape: two identity systems bound o
   pair — currently `[0,0,1,1,2,2]` for every seed); `played_card_leaves_the_committed_hand`. Retarget
   `seat_card_ids` (`tests.rs:52-55`) to read `session.engine.hand(seat)` so the fog tests measure the
   render against the ROUND, not against itself.
-- **Named residual this exposes (do NOT let the prose imply it is closed):** `HiddenHandLedger` / the
-  executor-checked `Witnessed{MerkleMembership}` gate (`hidden_hand.rs:38-46`) is **not wired into
-  `TugOffering` at all** — the "committed root" the fog shows (`surface.rs:211`) binds nothing the
-  executor checks. Separate, honest, NAMED-NEXT seam.
+- **Historical residual, subsequently closed by the follow-on above:** `HiddenHandLedger` / the
+  executor-checked `Witnessed{MerkleMembership}` gate was not wired into `TugOffering`. It now is;
+  retain this paragraph only as the original audit's repair trail, not as a HEAD claim.
 
 ### M03 — `TradeWorld::reclaim`'s depositor gate is `x != x`; the escrow party is a re-authored identity · **medium**
 
@@ -1589,7 +1613,7 @@ arithmetization bug behind its doc lie.*
 | 3 | **M14** | high | soundness-hole (gate dead) | the CI gate protecting all 25 by-name goldens | n/a — it is the mechanism that let M13 ship |
 | 4 | **M11** | high | soundness-hole (tripwire dead) | executor↔AIR projection; 4 sites cite a fictional invariant | no live exploit; a real SetField divergence is shipping undetected |
 | 5 | **M21** | high | soundness-hole (proof scope) | metatheory guarantee A's warrant | no — 27 vs 33; `Promise`/`React`/`ShieldedTransfer` unexamined |
-| 6 | **M07** | high | false-claim | 4 shipped frontends incl. the hbox devnet | no value; the marquee feature shows a hand nobody holds |
+| 6 | **M07** | **closed 2026-07-20** | repaired false-claim | 4 shipped frontends incl. the hbox devnet | no — the committed/rendered hand is now derived from the engine deal |
 | 7 | **M05** | high | false-claim | the flagship `Adventure::play` loop | no value; a faucet where a fair draw is claimed |
 | 8 | **M16** | high (harness) | false-claim + real AIR bug | the differential harness's advertised teeth | the diff-le AIR is genuinely forgeable in range |
 | 9 | **M15** | medium | soundness-hole (sim vacuous) | CI differential; conceals a live `gen_kimchi` emitter bug | no — emit-only backend |

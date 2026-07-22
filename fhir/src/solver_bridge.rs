@@ -291,8 +291,7 @@ impl RunOutcome {
                 exact,
             } => match exact {
                 ExactCertQpVerdict::Checked {
-                    cert: exact_cert,
-                    ..
+                    cert: exact_cert, ..
                 } => {
                     let checked = exact_cert.check();
                     format!(
@@ -327,9 +326,7 @@ impl RunOutcome {
                 let eg_objective: f64 = (0..cert.n_buyers)
                     .map(|i| {
                         let utility: f64 = (0..cert.n_goods)
-                            .map(|j| {
-                                cert.util[i * cert.n_goods + j] * cert.x[i * cert.n_goods + j]
-                            })
+                            .map(|j| cert.util[i * cert.n_goods + j] * cert.x[i * cert.n_goods + j])
                             .sum();
                         cert.budgets[i] * utility.max(1e-12).ln()
                     })

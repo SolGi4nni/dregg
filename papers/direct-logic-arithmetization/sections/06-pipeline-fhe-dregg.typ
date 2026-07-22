@@ -130,7 +130,9 @@ Those percentages are exact symbolic reductions for one specimen, not prover
 latency ratios.  They are nevertheless stronger than an optimizer's assertion:
 `optimize_checked`, `optimize_holds_iff`, `optimize_accepts_iff`, and
 `optimize_cost_nonincrease` independently expose the certificate, semantics,
-field relation, and cost proof.
+field relation, and cost proof.  This is an abstract materialized `BoolGraph`
+ledger, not the current live DescriptorIR2 layout, so it proves no present live
+prover saving.
 
 The standalone reference tool adds per-subformula representation search.
 `tools/direct-logic-reference` keeps a Pareto frontier of positive no-wrap
@@ -226,6 +228,15 @@ Thus the mixed plan uses one third fewer ciphertext multiplications and half the
 symbolic multiplicative depth on this specimen.  It also owes one private
 residual-zero boundary.  Omitting that last column would make the comparison
 misleading.
+
+#boundary([
+  Three cost scopes must remain separate.  The 30-to-13 optimizer result counts
+  an abstract materialized `BoolGraph`, not current live DescriptorIR2.  The
+  theorem-side presentation search uses meta-level `HybridEvidence` glue, so a
+  zero search score omits backend recombination and conversion.  Finally,
+  `boundaryZeroDecision` is a semantic counter: the 6-versus-9 hybrid ledger
+  neither implements nor prices an encrypted residual-to-bit BFV zero test.
+])
 
 == Executable backends
 
@@ -417,6 +428,8 @@ sequencing policy, hardware, confirmation rule, and latency distribution under
 load and faults.  Logic arithmetization can change proving cost, but finality is
 also a consensus, networking, execution, and data-availability property.
 
+#pagebreak()
+
 == Constructive public comparison
 
 As inspected on 22 July 2026, the public
@@ -460,9 +473,9 @@ a deployed chain.
   )
 ]
 
-DREGG surpasses the reviewed public artifact today in auditable semantics,
-executable falsification, compositional construction, replayable certificates,
-exact wire commitments, and independent checking.  That is an openness and
-assurance result, not a latency or finality win.  A public Modulus implementation
-should enter as `M-IMPL`, run the same sound workloads, and publish its raw
-artifacts.
+#theorem([the public lead], [
+  DREGG's present advantage is auditable semantics and compositional evidence:
+  source, countermodels, repair theorems, compilers, certificates, fixtures,
+  and boundary assumptions can all be inspected.  It is not yet an established
+  advantage in prover latency, proof size, monetary cost, or chain finality.
+])

@@ -104,7 +104,10 @@ impl fmt::Display for WireError {
             WireError::EmptyOrderId => write!(f, "empty order id"),
             WireError::DuplicateOrderId(id) => write!(f, "duplicate order id '{id}'"),
             WireError::OffGridPrice { id, price } => {
-                write!(f, "order '{id}': price {price} is not on the tick grid (off-grid prices are refused, never rounded)")
+                write!(
+                    f,
+                    "order '{id}': price {price} is not on the tick grid (off-grid prices are refused, never rounded)"
+                )
             }
             WireError::ZeroQty { id } => write!(f, "order '{id}': zero quantity"),
             WireError::QtyOverflow => write!(f, "total book quantity overflows u64"),

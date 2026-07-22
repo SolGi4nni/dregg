@@ -48,6 +48,11 @@ import Market.DarkAmmCollectiveTwoAuthority
 import Market.DarkAmmContextBoundDecision
 import Market.PrivateComparison
 import Market.PrivateBoxProjection
+import Market.PartyMpcTransportBoundary
+import Market.DarkBazaarPrivateIngressCutover
+import Market.DarkBazaarLiveApexHost
+import Market.PrivateClearingGameConsequence
+import Market.DistributedPrivateProverBoundary
 import Market.FhEggLedgerBinding
 import Market.CertF
 import Market.CertFDescriptor

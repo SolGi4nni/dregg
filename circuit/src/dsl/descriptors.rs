@@ -335,7 +335,13 @@ pub const PREDICATE_DSL_AIR_NAME: &str = "dregg-predicate-dsl-v2";
 /// AIR name for DSL relational predicate proofs.
 pub const RELATIONAL_PREDICATE_DSL_AIR_NAME: &str = "dregg-relational-predicate-dsl-v2";
 
-/// AIR name for DSL compound predicate proofs.
+/// AIR name for the quarantined experimental compound-predicate descriptor.
+///
+/// The current descriptor does not bind its selected sub-results/custom gates to
+/// the claimed composed result, so this name is intentionally absent from the
+/// public dispatch functions below.  Direct construction remains available for
+/// regression tests while it is replaced by the exact `Dregg2.Logic.PredBoolGraph`
+/// compiler.
 pub const COMPOUND_PREDICATE_DSL_AIR_NAME: &str = "dregg-compound-predicate-dsl-v2";
 
 /// Returns `true` if the given AIR name matches any of the standard DSL circuits.
@@ -351,7 +357,6 @@ pub fn is_known_dsl_air(air_name: &str) -> bool {
             | DERIVATION_AIR_NAME
             | PREDICATE_DSL_AIR_NAME
             | RELATIONAL_PREDICATE_DSL_AIR_NAME
-            | COMPOUND_PREDICATE_DSL_AIR_NAME
     )
 }
 
@@ -371,9 +376,21 @@ pub fn circuit_for_air_name(air_name: &str) -> Option<DslCircuit> {
         RELATIONAL_PREDICATE_DSL_AIR_NAME => Some(DslCircuit::new(
             crate::dsl::predicates::relational_predicate_descriptor(),
         )),
-        COMPOUND_PREDICATE_DSL_AIR_NAME => {
-            Some(crate::dsl::predicates::compound_predicate_dsl_circuit())
-        }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fail closed until the exact BoolGraph lowering replaces the incomplete
+    /// compound relation.  Keeping the name constant makes accidental
+    /// re-registration a visible compatibility decision rather than silently
+    /// accepting old proofs again.
+    #[test]
+    fn incomplete_compound_predicate_is_not_publicly_dispatched() {
+        assert!(!is_known_dsl_air(COMPOUND_PREDICATE_DSL_AIR_NAME));
+        assert!(circuit_for_air_name(COMPOUND_PREDICATE_DSL_AIR_NAME).is_none());
     }
 }
