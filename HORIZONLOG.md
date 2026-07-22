@@ -3554,27 +3554,27 @@ that pass an EMPTY `map_heaps` against the now-firing Update map_op; the capabil
 via `cap_open_attenuate_leg_proves_and_verifies_end_to_end` — re-enable needs the BEFORE cap-tree map_heaps
 plumbed into their hand-built trace.)
 
-## ⚑ REACT CIRCUIT WITNESS — the `reactSpendA` descriptor (the in-circuit grow-gate for `Effect::React`), 2026-06-21
+## ⚑ REACT PROOF WITNESS — bind the dedicated executor-side replay frontier, 2026-06-21; corrected 2026-07-22
 The first-class reactive effect landed at the EXECUTOR layer (Track 2): `Effect::Promise/Notify/React`
-(`turn/src/action.rs`) dispatch through `TurnExecutor::apply_react` (`turn/src/executor/apply.rs`), which
-spends `pending_id` into the SAME production `note_nullifiers` set `NoteSpend` rides — so react-twice /
-replayed-pending_id is rejected by the identical double-spend gate (genuine end-to-end +
-forge-detector tests green in `react_executor_tests`). NAMED follow-up = the in-circuit witness:
-a light client verifying a batch bearing a `React` must SEE the promise-hole nullifier grow exactly as
-`noteSpendA` does. The descriptor to add: **`dregg-effectvm-react-spend-ir2.json`** (a sibling of
-`dregg-effectvm-note-spend-ir2.json`), with the matching Lean **`Inst.ReactA` + `Witness.ReactWitness`**
-(mirror `Dregg2.Circuit.Inst.noteSpendA` + `Dregg2.Circuit.Witness.NoteSpendWitness`): touched component =
-the `nullifiers` LIST; guard = anti-replay `pending_id ∉ nullifiers`; the log GROWS by the react receipt;
-the concrete digest reads the nullifier list positionally (the `refP2` Poseidon2 sponge), so a forged
-nullifier-set rewrite is visible to the BIND gate. The refinement rung: `reactSpend_descriptorRefines_sat`
-(mirror `noteSpend`'s rung). The ONE difference from noteSpend: React's spend carries no monetary value
-delta (no paired NoteCreate / conservation leg) — the `value` column is fixed `0`, so the descriptor is
-the value-erased noteSpend grow-gate. SHORTCUT TO EVALUATE FIRST: because the spend is byte-identical at
-the nullifier-set level, the `effect_vm_bridge` MAY be able to project `React` to `VmEffect::NoteSpend {
-nullifier: pending_id, value: 0 }` and ride the EXISTING `noteSpendA` rung unchanged — confirm whether the
-existing descriptor's `value=0` path is sound for a no-paired-create spend before building a new descriptor.
-Closure: land the descriptor (or the VmEffect::NoteSpend projection) + the rung, VK-affecting → ember-gated
-redeploy. (`docs/deos/REACTIVE-EFFECTS.md` §6.)
+(`turn/src/action.rs`) dispatch through `TurnExecutor::apply_react` (`turn/src/executor/apply.rs`). The original
+implementation inserted `pending_id` into the faithful `note_nullifiers` set. That model is now historical:
+`64477cd9c` split React authority into the dedicated, domain-separated `ReactiveNullifierSet`, and `9af0f439b`
+joined that grow-only set plus the canonical pending registry to the atomic executor-consensus-state CAS. This
+separation is load-bearing: React has no note-spend statement, so its ids MUST NOT enter the exact FNSP sequence.
+React-twice/replayed-`pending_id` is still rejected, but by the dedicated React replay gate.
+
+NAMED proof follow-up: a light client accepting `Effect::React` must bind the predecessor/successor reactive
+nullifier commitment and pending-registry transition carried by the finalized executor-consensus envelope. It
+must not project React to `VmEffect::NoteSpend { value: 0 }`, reuse `noteSpendA`, or mutate the faithful note
+nullifier root. The circuit/Lean shape should be a separate executor-side frontier transition: registered
+`pending_id` + actor + exact condition/wake/deadline authorization, genuine condition resolution, fresh insert
+into the React-domain set, and canonical registry removal/cascade. The Rust persistence boundary already has
+domain-separated CAS and exact replay-image checks; the fixed public surface and verifier rung remain to be
+specified and welded. VK-affecting proof changes remain ember-gated. (`docs/deos/REACTIVE-EFFECTS.md` §6.)
+
+NAMED delivery follow-up: publish a typed, durable `PromiseResolution` query/`NodeEvent` surface for Discord,
+Telegram, and web after fresh durable success. `ReadyToExecute` contains an unsigned dependent turn and MUST
+remain notification-only; never auto-submit it to the signed consensus queue.
 
 ## ✅ CELL CENSUS 4-vs-8 — RESOLVED: NOT a bug (cockpit installs reflexive UI cells), 2026-06-21
 The cockpit shows 8 cells, the raw `demo_world` ledger has 4. RESOLVED: `Cockpit::with_node`
@@ -7373,8 +7373,9 @@ refused).
 ### THE FORGE-DETECTOR ANTIBODY: every tree-write effect gets a non-vacuous forge-detector (overwrite the post-root,
 ### assert rejected) — the dormant-guard class is closed by census (forge-sweep ac5553da: 4 instances, all fixed).
 
-### TRACK-2 STATUS: reactive effect BANKED 727b9a800 (sound-by-construction — react-twice = the noteSpend nullifier
-### gate; 6 green tests incl. genuine react_twice_rejected). 4 more capacities in flight (above). Next after these:
+### TRACK-2 STATUS: reactive effect BANKED 727b9a800 (historically used the noteSpend nullifier gate; superseded
+### by the dedicated domain-separated `ReactiveNullifierSet` in 64477cd9c, with durable CAS in 9af0f439b;
+### genuine react_twice_rejected remains green). 4 more capacities in flight (above). Next after these:
 ### bank each genuine-working slice; the reactive Effect-vocab lift + circuit witness is the deepening.
 ### TRACK-2 DERIVED/RELATIONAL CELL (built, uncommitted): cell/src/derived.rs — a cell whose committed state IS a
 ### verifiable function of OTHER cells (sum/sumField/count/filtered-sum view). Binding rides the committed heap
@@ -7387,8 +7388,9 @@ refused).
 ### ⟳ SWARM PROGRESS (2026-06-21, post-compact integration):
 ### ✅ SWARM FULLY SETTLED + INTEGRATED. 6 Track-2 HOUSE capacities banked, each with a genuine both-polarity
 ###   forge-detector (honest-accept + forge-reject share ONE verify core -> non-vacuous by construction):
-###   - reactive Effect::{Promise,Notify,React} lifted to first-class executor vocab (5c4bd17e1) — React spends
-###     pending_id into the SAME production note_nullifiers set as NoteSpend -> react-twice = double-spend. 10/10.
+###   - reactive Effect::{Promise,Notify,React} lifted to first-class executor vocab (5c4bd17e1). HISTORICAL
+###     implementation shared production note nullifiers; 64477cd9c repaired this to a dedicated React-domain
+###     one-shot set and 9af0f439b made its image restart/replay durable. React-twice remains a rejected replay.
 ###   - derived/relational cells + membrane/forwarder (34ef4a048, 8/8 + 13/13).
 ###   - sealed escrow — atomic 2-of-2 value swap (4c20cf700, 15/15).
 ###   - Hatchery abstraction-mint — user-defined verified kinds (5b99f27ab, 13/13).
@@ -8223,7 +8225,8 @@ Stop-hook-forced audit closed the effect-coverage overclaim honestly, then close
   squares PROVED (017aa70f6). Effect coverage now **32 of 33** deployed Effect variants.
 - The last 1 + the reactive trio are genuinely OUTSIDE the finite-map interp scope, named not faked:
   ShieldedTransfer = STARK-verified (DEBT-A); Notify/React/Promise = reactive "Track-2" subsystem
-  (turn/src/reactive.rs; a promise-hole IS a nullifier, React spends it). No Argus RecStmt program, by design.
+  (`turn/src/reactive.rs`; React spends a dedicated React-domain one-shot id, not a faithful note nullifier).
+  No deployed Argus `RecStmt` program covers that executor-side transition.
 - Honest boundary on SpawnWithDelegation: models the delegations c-list (authority content); the deployed
   delegation_epoch/timestamp stamp is the tree's DOCUMENTED kernel-vs-runtime divergence (RefreshDelegation.lean:77),
   outside the kernel model — named.
