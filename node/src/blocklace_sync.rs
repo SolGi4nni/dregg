@@ -4317,116 +4317,6 @@ async fn backfill_finalization_quorums(state: &NodeState, handle: &BlocklaceHand
     }
 }
 
-/// SOLO IDEMPOTENT FINALIZATION — persist the attested root for a finalized turn
-/// that solo INGRESS already applied authoritatively (double-apply fix; see the
-/// gated branch in [`execute_finalized_turn`]).
-///
-/// Builds + persists the `AttestedRoot` over the ALREADY-committed ledger,
-/// advancing the attested height (`latest_height`), and emits the root event. It
-/// does NOT re-execute the turn (the state is already committed by ingress) and
-/// does NOT touch the receipt chain (the receipt is already appended by ingress).
-///
-/// This MIRRORS the attested-root construction in `execute_finalized_turn`'s
-/// `Committed` arm (the fresh-execution path). The two must stay in sync: both
-/// build the same `AttestedRoot`/`StoredAttestedRoot` shape (single-validator
-/// self-signature meets the default threshold of 1; the hybrid quorum is mapped
-/// from any assembled finalization votes). Full mode never calls this — its turns
-/// are applied exactly once through the `Committed` arm.
-async fn persist_solo_finalized_attested_root(
-    s: &mut crate::state::NodeStateInner,
-    handle: &BlocklaceHandle,
-    state: &NodeState,
-    block_id: BlockId,
-    receipt: &dregg_turn::TurnReceipt,
-    new_height: u64,
-    now: i64,
-    finality_round: Option<u64>,
-) {
-    // The attested merkle_root is the canonical root of the CURRENT ledger — which
-    // already reflects the ingress-committed turn.
-    let merkle_root = canonical_ledger_root(&s.ledger);
-    let federation_keys = s.known_federation_keys.clone();
-    let federation_threshold = s.decryption_threshold.max(1);
-    let signing_key_bytes = s.cclerk.gossip_signing_key().to_bytes();
-    // Each finalized block carries exactly one turn; the receipt stream for this
-    // attestation period is the singleton of the already-committed receipt.
-    let receipt_stream_root = Some(dregg_types::merkle_root_of_receipt_hashes(&[
-        receipt.receipt_hash()
-    ]));
-
-    let mut attested = dregg_types::AttestedRoot {
-        merkle_root,
-        note_tree_root: Some(s.note_tree.faithful_root_immutable().to_bytes32()),
-        nullifier_set_root: None,
-        height: new_height,
-        timestamp: now,
-        blocklace_block_id: Some(block_id.0),
-        finality_round,
-        quorum_signatures: Vec::new(),
-        threshold_qc: None,
-        threshold: federation_threshold,
-        federation_id: dregg_types::FederationId(s.federation_id),
-        receipt_stream_root,
-        hybrid_quorum: Vec::new(),
-    };
-    let signing_msg = attested.signing_message();
-    let local_pk = s.cclerk.public_key();
-    let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
-    let sig = dregg_types::sign(&signing_key, &signing_msg);
-    // Solo / single-validator: our signature alone meets the threshold (default 1),
-    // so the persisted root is a genuine quorum and the node restarts cleanly.
-    if federation_keys.is_empty() || federation_keys.contains(&local_pk) {
-        attested.quorum_signatures.push((local_pk, sig));
-    }
-
-    let finalization_quorum = handle
-        .votes
-        .read()
-        .await
-        .assembled_quorum(&block_id)
-        .filter(|(root, _)| *root == attested.merkle_root)
-        .map(|(_, sigs)| sigs)
-        .unwrap_or_default();
-    attested.hybrid_quorum = finalization_quorum
-        .iter()
-        .map(|qs| dregg_types::HybridQuorumSig {
-            pubkey: qs.voter,
-            signature: qs.signature,
-            ml_dsa_pubkey: qs.ml_dsa_pubkey.clone(),
-            pq_signature: qs.pq_signature.clone(),
-        })
-        .collect();
-
-    let stored = dregg_persist::StoredAttestedRoot {
-        merkle_root: attested.merkle_root,
-        note_tree_root: attested.note_tree_root,
-        nullifier_set_root: attested.nullifier_set_root,
-        height: attested.height,
-        timestamp: attested.timestamp,
-        blocklace_block_id: attested.blocklace_block_id,
-        finality_round: attested.finality_round,
-        quorum_signatures: attested.quorum_signatures.clone(),
-        threshold_qc: attested.threshold_qc.clone(),
-        threshold: attested.threshold,
-        federation_id: attested.federation_id,
-        receipt_stream_root: attested.receipt_stream_root,
-        finalization_quorum,
-    };
-    if let Err(e) = s.store.store_attested_root(&stored) {
-        warn!(
-            error = %e,
-            height = new_height,
-            "failed to persist attested root (solo idempotent finalization)"
-        );
-    }
-
-    state.emit(NodeEvent::Root {
-        height: new_height,
-        merkle_root: dregg_types::hex_encode(&stored.merkle_root),
-        timestamp: stored.timestamp,
-    });
-}
-
 /// A fresh store or legacy image has no faithful-history segment yet.  Derive a
 /// deterministic nonzero federation context even for solo bootstrap (whose
 /// historical `federation_id` placeholder is zero), so every node with the same
@@ -4458,14 +4348,53 @@ fn faithful_history_session_id(federation_id: [u8; 32], committee_epoch: u64) ->
 /// depth is semantically significant: nested actions execute too, so collecting
 /// only root actions would produce a live tree that omits committed notes.
 fn finalized_note_commitments(forest: &dregg_turn::CallForest) -> Vec<[u8; 32]> {
-    forest
-        .total_effects()
-        .into_iter()
-        .filter_map(|effect| match effect {
-            dregg_turn::Effect::NoteCreate { commitment, .. } => Some(commitment.0),
-            _ => None,
-        })
-        .collect()
+    fn collect(effect: &dregg_turn::Effect, out: &mut Vec<[u8; 32]>) {
+        match effect {
+            dregg_turn::Effect::NoteCreate { commitment, .. } => out.push(commitment.0),
+            dregg_turn::Effect::ExerciseViaCapability { inner_effects, .. } => {
+                for inner in inner_effects {
+                    collect(inner, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    for effect in forest.total_effects() {
+        collect(effect, &mut out);
+    }
+    out
+}
+
+/// The off-lock executor result may be installed only if the durable global
+/// frontier it started from is still current.  Cell-level conflict detection
+/// alone is insufficient: a concurrent spend by a disjoint agent changes the
+/// global nullifier accumulator without touching any of this turn's cells.
+fn finalized_global_snapshot_matches(
+    expected_cursor: u64,
+    expected_nullifier_root: [u8; 32],
+    current_cursor: u64,
+    current_nullifier_root: [u8; 32],
+) -> bool {
+    expected_cursor == current_cursor && expected_nullifier_root == current_nullifier_root
+}
+
+/// A receipt durably staged by the historical solo ingress path may differ
+/// from a receipt re-executed after restart only in the executor's wall clock
+/// and the solo `Tentative` finality bit (plus the signature over those bytes).
+/// Every semantic transition field must otherwise be byte-identical.
+fn staged_receipt_matches_reexecution(
+    staged: &dregg_turn::TurnReceipt,
+    reexecuted: &dregg_turn::TurnReceipt,
+) -> bool {
+    let mut normalized = reexecuted.clone();
+    normalized.timestamp = staged.timestamp;
+    normalized.finality = staged.finality;
+    // `executor_signature` is not folded into `receipt_hash`; copy it only so
+    // future equality implementations cannot accidentally make it relevant.
+    normalized.executor_signature = staged.executor_signature.clone();
+    normalized.receipt_hash() == staged.receipt_hash()
 }
 
 /// Public nullifier-accumulator inputs of every finalized NoteSpend, including
@@ -4504,21 +4433,56 @@ fn finalized_note_spends(
     out
 }
 
-/// Decode every NoteSpend's strict versioned carrier and lift its root bytes
-/// into the canonical eight-felt type wall. The opaque inner proof remains for
-/// the note-spend verifier; this boundary decides only which authenticated
-/// historical frontier that proof claims to open.
+/// Rebuild the exact successor chain a DFS-ordered batch of spends produces.
+///
+/// The returned roots are *per effect*, not one repeated batch root: root `i`
+/// is the accumulator after inserting spends `0..=i`.  FNSP carriers bind these
+/// staged roots because the executor applies the same effects sequentially.
+fn planned_ordered_nullifier_successors(
+    durable: &dregg_cell::nullifier_set::NullifierSet,
+    spends: &[dregg_persist::FinalizedNullifierRecord],
+) -> Result<(dregg_cell::nullifier_set::NullifierSet, Vec<[u8; 32]>), [u8; 32]> {
+    let mut successor = durable.clone();
+    let mut roots = Vec::with_capacity(spends.len());
+    for spend in spends {
+        successor
+            .insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
+            .map_err(|_| spend.nullifier)?;
+        roots.push(successor.faithful_root8_exact().to_bytes32());
+    }
+    Ok((successor, roots))
+}
+
+/// Decode every NoteSpend's strict versioned carrier and lift both root byte
+/// strings into the canonical eight-felt type wall. The opaque inner proof
+/// remains for the note-spend verifier; this boundary identifies the exact
+/// authenticated historical frontier it opens and the exact nullifier
+/// successor finalization must atomically persist.
 fn finalized_faithful_spend_claims(
     forest: &dregg_turn::CallForest,
-) -> Result<Vec<(u64, dregg_persist::CanonicalFaithfulRoot)>, ()> {
+) -> Result<
+    Vec<(
+        u64,
+        dregg_persist::CanonicalFaithfulRoot,
+        dregg_persist::CanonicalFaithfulRoot,
+        u64,
+    )>,
+    (),
+> {
     fn collect(
         effect: &dregg_turn::Effect,
-        out: &mut Vec<(u64, dregg_persist::CanonicalFaithfulRoot)>,
+        out: &mut Vec<(
+            u64,
+            dregg_persist::CanonicalFaithfulRoot,
+            dregg_persist::CanonicalFaithfulRoot,
+            u64,
+        )>,
     ) -> Result<(), ()> {
         match effect {
             dregg_turn::Effect::NoteSpend {
                 note_tree_root,
                 spending_proof,
+                asset_type,
                 ..
             } => {
                 let carrier =
@@ -4528,7 +4492,11 @@ fn finalized_faithful_spend_claims(
                     .map_err(|_| ())?;
                 let root = dregg_persist::CanonicalFaithfulRoot::from_bytes(*note_tree_root)
                     .map_err(|_| ())?;
-                out.push((carrier.root_height(), root));
+                let successor = dregg_persist::CanonicalFaithfulRoot::from_bytes(
+                    carrier.successor_nullifier_root(),
+                )
+                .map_err(|_| ())?;
+                out.push((carrier.root_height(), root, successor, *asset_type));
             }
             dregg_turn::Effect::ExerciseViaCapability { inner_effects, .. } => {
                 for inner in inner_effects {
@@ -4784,10 +4752,10 @@ async fn execute_finalized_turn(
                 return;
             }
         };
-        if let Some((height, root)) = faithful_spend_claims
+        if let Some((height, root, _, _)) = faithful_spend_claims
             .iter()
             .copied()
-            .find(|(height, root)| !faithful_history_contains_pair(&history, *height, *root))
+            .find(|(height, root, _, _)| !faithful_history_contains_pair(&history, *height, *root))
         {
             persist_finalized_payload_rejection(
                 &s,
@@ -4853,12 +4821,55 @@ async fn execute_finalized_turn(
             return;
         }
     };
-    let mut successor_nullifier_set = durable_nullifier_set.clone();
-    for spend in &finalized_nullifier_spends {
-        if successor_nullifier_set
-            .insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
-            .is_err()
-        {
+    let durable_nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
+    let durable_commit_cursor = match s.store.commit_cursor() {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-finalization-snapshot-malformed",
+            );
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "could not capture the durable commit cursor before off-lock execution"
+            );
+            return;
+        }
+    };
+    if faithful_spend_claims.len() != finalized_nullifier_spends.len() {
+        persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            "faithful-note-spend-claim-count-mismatch",
+        );
+        error!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            claims = faithful_spend_claims.len(),
+            spends = finalized_nullifier_spends.len(),
+            "faithful NoteSpend carrier/effect traversal produced different ordered lengths"
+        );
+        return;
+    }
+
+    // Each carrier names the successor immediately after ITS spend in DFS/effect
+    // order.  This is the same sequential pre-state the executor sees while it
+    // applies a multi-input turn.  Comparing every carrier with only the final
+    // batch root would make a two-spend turn impossible: the first insertion's
+    // root is necessarily different from the second insertion's root.
+    let (successor_nullifier_set, ordered_successors) = match planned_ordered_nullifier_successors(
+        &durable_nullifier_set,
+        &finalized_nullifier_spends,
+    ) {
+        Ok(plan) => plan,
+        Err(nullifier) => {
             persist_finalized_payload_rejection(
                 &s,
                 block_id,
@@ -4869,31 +4880,88 @@ async fn execute_finalized_turn(
             warn!(
                 block_id = %block_id,
                 turn_hash = %turn_hash_hex,
-                nullifier = %dregg_types::hex_encode(&spend.nullifier),
+                nullifier = %dregg_types::hex_encode(&nullifier),
                 "finalized NoteSpend duplicates a durable or within-turn nullifier; refused before mutation"
             );
             return;
         }
+    };
+    for ((spend, (height, _, claimed_successor, _)), step_successor) in finalized_nullifier_spends
+        .iter()
+        .zip(faithful_spend_claims.iter().copied())
+        .zip(ordered_successors.iter())
+    {
+        if claimed_successor.to_bytes() != *step_successor {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "faithful-nullifier-successor-mismatch",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                root_height = height,
+                nullifier = %dregg_types::hex_encode(&spend.nullifier),
+                claimed_successor = %dregg_types::hex_encode(claimed_successor.as_bytes()),
+                planned_successor = %dregg_types::hex_encode(step_successor),
+                "faithful NoteSpend proof does not bind its exact ordered nullifier successor"
+            );
+            return;
+        }
     }
-    let planned_nullifier_root = successor_nullifier_set.root8().to_bytes32();
+    let finalized_faithful_spends: Vec<dregg_persist::FinalizedFaithfulSpendInput> =
+        finalized_nullifier_spends
+            .iter()
+            .zip(faithful_spend_claims.iter().copied())
+            .map(
+                |(
+                    spend,
+                    (root_height, historical_note_root, successor_nullifier_root, asset_type),
+                )| {
+                    dregg_persist::FinalizedFaithfulSpendInput {
+                        root_height,
+                        historical_note_root,
+                        nullifier: spend.nullifier,
+                        value: spend.value,
+                        asset_type,
+                        successor_nullifier_root,
+                    }
+                },
+            )
+            .collect();
+    let planned_nullifier_root = successor_nullifier_set.faithful_root8_exact().to_bytes32();
     *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
 
     let agent = signed_turn.turn.agent;
     // Solo ingress may already have applied and logged this exact turn; retain
     // that idempotent finality-bookkeeping case. Every genuinely new finalized
     // turn must name the independently stored head for its own agent.
-    let already_applied_solo_receipt = if s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo) {
+    let staged_solo_receipt = if s.solo_consensus.as_ref().is_some_and(|sc| sc.is_solo) {
+        // The old solo ingress could durably append a receipt before the
+        // finalized ledger/faithful commit.  Its global log index is required
+        // for byte-exact recovery; the agent projection deliberately discards
+        // that position.  Do NOT infer that the ledger was applied merely from
+        // this receipt: after a crash RAM is pre-turn while the receipt survives.
         s.cclerk
-            .agent_receipts(&agent)
-            .find(|receipt| receipt.turn_hash == computed_hash)
-            .cloned()
+            .receipt_log()
+            .iter()
+            .enumerate()
+            .find(|(_, receipt)| receipt.agent == agent && receipt.turn_hash == computed_hash)
+            .and_then(|(index, receipt)| {
+                u64::try_from(index)
+                    .ok()
+                    .map(|index| (index, receipt.clone()))
+            })
     } else {
         None
     };
-    let expected_prev = s.cclerk.agent_receipt_head_hash(&agent);
-    if already_applied_solo_receipt.is_none()
-        && signed_turn.turn.previous_receipt_hash != expected_prev
-    {
+    let expected_prev = staged_solo_receipt
+        .as_ref()
+        .map(|(_, receipt)| receipt.previous_receipt_hash)
+        .unwrap_or_else(|| s.cclerk.agent_receipt_head_hash(&agent));
+    if signed_turn.turn.previous_receipt_hash != expected_prev {
         persist_finalized_payload_rejection(
             &s,
             block_id,
@@ -4942,63 +5010,9 @@ async fn execute_finalized_turn(
     let new_height = executor.block_height;
     let now = executor.current_timestamp;
 
-    // ─── IDEMPOTENT SOLO FINALIZATION (double-apply fix) ──────────────────────
-    // In solo (n=1) mode the INGRESS path (`api.rs` /turn/submit, /turns, faucet)
-    // is the AUTHORITATIVE apply: it commits the turn in place, appends the receipt
-    // to the local cclerk chain, and advances the solo height — solo has NO
-    // receipt-only+rollback ingress. This finalization pass then sees the SAME turn,
-    // but the agent cell's nonce is ALREADY ticked, so re-executing it below hits
-    // the executor's exact-nonce gate → `NonceReplay` → the `Rejected` arm, and the
-    // attested root that advances `latest_height` is NEVER written: `/status` stays
-    // at height 0 forever while the DAG climbs (executed=0). Detect the already-
-    // applied turn — its receipt is already on our committed chain (the unambiguous
-    // signal) — and complete ONLY the finality bookkeeping: persist the attested
-    // root (advancing the height), resolve pending waiters, emit events. We do NOT
-    // re-apply state (already committed by ingress; a re-apply against a rewound
-    // clone would double-debit) and do NOT re-append the receipt (already on chain).
-    // The turn is treated as FINALIZED, not Rejected.
-    //
-    // Full mode (n>=2) NEVER reaches this branch: it is gated on `is_solo`, AND full
-    // ingress is receipt-only + rolled back (the receipt is NOT on the chain here),
-    // so full-mode turns fall through to the authoritative SINGLE apply below —
-    // exactly-once preserved.
-    if let Some(receipt) = already_applied_solo_receipt {
-        // The already-applied turn is ALREADY counted in `solo.height` (ingress
-        // advanced it), so the attested root records the CURRENT height
-        // (`max(store, solo)`), NOT `executor.block_height` (= Next = base+1),
-        // which would double-count and skip a height. For the first solo turn this
-        // is 1 (store=0, solo=1) — matching the fresh-execution path's 0 -> 1.
-        let solo_attested_height = crate::executor_setup::attested_block_height(&s);
-        persist_solo_finalized_attested_root(
-            &mut s,
-            handle,
-            state,
-            block_id,
-            &receipt,
-            solo_attested_height,
-            now,
-            finality_round,
-        )
-        .await;
-        // Resolve any async waiter on this turn with the already-committed receipt.
-        s.pending_turns.resolve(
-            computed_hash,
-            dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
-        );
-        drop(s);
-        state.emit(NodeEvent::Receipt {
-            hash: turn_hash_hex.clone(),
-        });
-        info!(
-            turn_hash = %turn_hash_hex,
-            block_id = %block_id,
-            height = solo_attested_height,
-            round = ?finality_round,
-            "finalized turn already applied by solo ingress; finality bookkeeping \
-             completed (idempotent — attested root persisted, no state re-apply)"
-        );
-        return;
-    }
+    // Finalization is now the sole authoritative application in solo and
+    // committee modes alike.  A historical durable solo receipt is recovery
+    // input, never evidence that the RAM-only ledger mutation survived a crash.
 
     // Full-turn proving (commit-path): capture the actor cell's pre-execution
     // state BEFORE the executor mutates the ledger. The full-turn proof binds
@@ -5213,6 +5227,60 @@ async fn execute_finalized_turn(
     // Re-acquire the global write lock BRIEFLY to install the result.
     let mut s = state.write().await;
 
+    // GLOBAL concurrency guard. The per-cell diff below cannot observe a
+    // disjoint-agent turn advancing the node-wide nullifier accumulator while
+    // the verified executor ran off-lock. Re-read both the commit cursor and
+    // the exact durable accumulator before changing RAM; on any drift, abandon
+    // this stale result so recovery/replay executes it against the new frontier.
+    let current_commit_cursor = match s.store.commit_cursor() {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "could not revalidate the durable commit cursor after off-lock execution"
+            );
+            return;
+        }
+    };
+    let current_nullifier_root = match s
+        .store
+        .load_faithful_nullifier_records()
+        .map_err(|error| error.to_string())
+        .and_then(|records| {
+            dregg_cell::nullifier_set::NullifierSet::from_records(records)
+                .map_err(|error| error.to_string())
+        }) {
+        Ok(set) => set.faithful_root8_exact().to_bytes32(),
+        Err(e) => {
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %e,
+                "could not reconstruct the durable exact nullifier root after off-lock execution"
+            );
+            return;
+        }
+    };
+    if !finalized_global_snapshot_matches(
+        durable_commit_cursor,
+        durable_nullifier_root,
+        current_commit_cursor,
+        current_nullifier_root,
+    ) {
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            expected_cursor = durable_commit_cursor,
+            current_cursor = current_commit_cursor,
+            expected_nullifier_root = %dregg_types::hex_encode(&durable_nullifier_root),
+            current_nullifier_root = %dregg_types::hex_encode(&current_nullifier_root),
+            "global finalized frontier changed during off-lock execution; stale result refused before RAM overlay"
+        );
+        return;
+    }
+
     // CONCURRENCY GUARD (validate-or-reject, never overwrite). The FFI executed
     // against a snapshot taken while the lock was released. In multi-party mode
     // the other ingress paths only STAGE during this window (the faucet executes
@@ -5256,10 +5324,53 @@ async fn execute_finalized_turn(
 
     match exec_result {
         dregg_turn::TurnResult::Committed {
-            receipt,
+            receipt: reexecuted_receipt,
             ref ledger_delta,
             ..
         } => {
+            // Crash recovery for the former solo ingress split: a receipt may
+            // already be durable while its RAM-only ledger mutation was lost.
+            // Re-execution above is authoritative.  Reuse the immutable staged
+            // receipt only after proving it describes this exact transition and
+            // is genuinely signed by this node; otherwise refuse before the
+            // faithful commit can bless unrelated bytes.
+            let (receipt, receipt_log_index, receipt_already_in_log) = if let Some((
+                index,
+                staged,
+            )) =
+                staged_solo_receipt.as_ref()
+            {
+                if !staged_receipt_matches_reexecution(staged, &reexecuted_receipt) {
+                    error!(
+                        block_id = %block_id,
+                        turn_hash = %turn_hash_hex,
+                        receipt_index = *index,
+                        "durable staged solo receipt does not describe the exact re-executed transition; refusing finalization"
+                    );
+                    return;
+                }
+                if let Err(error) = dregg_turn::verify_receipt_signature_with_keys(
+                    staged,
+                    &[s.cclerk.public_key().0],
+                ) {
+                    error!(
+                        block_id = %block_id,
+                        turn_hash = %turn_hash_hex,
+                        receipt_index = *index,
+                        error = ?error,
+                        "durable staged solo receipt has no valid local executor signature; refusing finalization"
+                    );
+                    return;
+                }
+                (staged.clone(), *index, true)
+            } else {
+                let index = s.cclerk.receipt_log_next_index();
+                s.cclerk
+                    .validate_receipt_append(&reexecuted_receipt)
+                    .expect("finalized executor receipt must match the prechecked agent head");
+                (reexecuted_receipt, index, false)
+            };
+
             let receipt_hash_hex: String = receipt
                 .turn_hash
                 .iter()
@@ -5298,10 +5409,6 @@ async fn execute_finalized_turn(
             // the welded receipt and the executed-block cursor atomically, and
             // an anomalous direct re-entry is refused by the pre-mutation
             // predecessor check above (the restored head is already this turn).
-            let receipt_log_index = s.cclerk.receipt_log_next_index();
-            s.cclerk
-                .validate_receipt_append(&receipt)
-                .expect("finalized executor receipt must match the prechecked agent head");
             let encoded_receipt =
                 postcard::to_stdvec(&receipt).expect("TurnReceipt postcard encoding is infallible");
 
@@ -6094,24 +6201,39 @@ async fn execute_finalized_turn(
                 // transaction (bug #58): the note leaves and the turn record land
                 // together-or-not-at-all in one fsync boundary, so a crash-retry
                 // can never double-append a note leaf.
-                match s.store.commit_finalized_turn_with_faithful_root(
-                    expected_ordinal,
-                    &commit_record,
-                    &note_commitments,
-                    receipt_log_index,
-                    &encoded_receipt,
-                    dregg_persist::commit_log::FinalizedFaithfulRootWeld {
-                        initial_anchor: initial_faithful_anchor.as_ref(),
-                        envelope: &faithful_envelope,
-                        author_committee: std::slice::from_ref(&local_pk),
-                        author_ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
-                        attested_root: &stored,
-                        spent_nullifiers: &finalized_nullifier_spends,
-                    },
-                ) {
+                let faithful_weld = dregg_persist::commit_log::FinalizedFaithfulRootWeld {
+                    initial_anchor: initial_faithful_anchor.as_ref(),
+                    envelope: &faithful_envelope,
+                    author_committee: std::slice::from_ref(&local_pk),
+                    author_ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
+                    attested_root: &stored,
+                    spent_nullifiers: &finalized_nullifier_spends,
+                    finalized_spends: &finalized_faithful_spends,
+                };
+                let durable_outcome = if receipt_already_in_log {
+                    s.store
+                        .commit_finalized_turn_with_faithful_root_existing_receipt(
+                            expected_ordinal,
+                            &commit_record,
+                            &note_commitments,
+                            receipt_log_index,
+                            &encoded_receipt,
+                            faithful_weld,
+                        )
+                } else {
+                    s.store.commit_finalized_turn_with_faithful_root(
+                        expected_ordinal,
+                        &commit_record,
+                        &note_commitments,
+                        receipt_log_index,
+                        &encoded_receipt,
+                        faithful_weld,
+                    )
+                };
+                match durable_outcome {
                     Ok(outcome) => {
                         let assigned = outcome.ordinal;
-                        if outcome.freshly_committed {
+                        if outcome.freshly_committed && !receipt_already_in_log {
                             s.cclerk
                                 .append_receipt_already_durable(
                                     receipt_log_index,
@@ -6409,7 +6531,22 @@ mod tests {
         }
 
         let mut forest = dregg_turn::CallForest::new();
-        let root = forest.add_root(action(0x10, vec![note(0x11)]));
+        let root = forest.add_root(action(
+            0x10,
+            vec![
+                note(0x11),
+                dregg_turn::Effect::ExerciseViaCapability {
+                    cap_slot: 0,
+                    inner_effects: vec![
+                        note(0x12),
+                        dregg_turn::Effect::ExerciseViaCapability {
+                            cap_slot: 1,
+                            inner_effects: vec![note(0x13)],
+                        },
+                    ],
+                },
+            ],
+        ));
         let child = root.add_child(action(
             0x20,
             vec![
@@ -6423,8 +6560,69 @@ mod tests {
 
         assert_eq!(
             finalized_note_commitments(&forest),
-            vec![[0x11; 32], [0x21; 32], [0x31; 32]],
-            "every executed NoteCreate becomes one positional faithful leaf"
+            vec![[0x11; 32], [0x12; 32], [0x13; 32], [0x21; 32], [0x31; 32]],
+            "every executed NoteCreate, including capability-wrapped effects, becomes one positional faithful leaf in execution order"
+        );
+    }
+
+    #[test]
+    fn off_lock_finalization_refuses_global_cursor_or_nullifier_drift() {
+        let cursor = 17;
+        let root = [0x42; 32];
+        assert!(finalized_global_snapshot_matches(
+            cursor, root, cursor, root
+        ));
+        assert!(!finalized_global_snapshot_matches(
+            cursor,
+            root,
+            cursor + 1,
+            root
+        ));
+        let mut changed_root = root;
+        changed_root[31] ^= 1;
+        assert!(!finalized_global_snapshot_matches(
+            cursor,
+            root,
+            cursor,
+            changed_root
+        ));
+    }
+
+    #[test]
+    fn ordered_faithful_nullifier_successors_match_executor_staging() {
+        let durable = dregg_cell::nullifier_set::NullifierSet::new();
+        let spends = [
+            dregg_persist::FinalizedNullifierRecord {
+                nullifier: [0x41; 32],
+                value: 700,
+            },
+            dregg_persist::FinalizedNullifierRecord {
+                nullifier: [0x51; 32],
+                value: 900,
+            },
+        ];
+
+        let (successor, roots) = planned_ordered_nullifier_successors(&durable, &spends)
+            .expect("two fresh spends have an exact ordered successor chain");
+        assert_eq!(roots.len(), 2);
+        assert_ne!(
+            roots[0], roots[1],
+            "the first carrier must not be compared with the final batch root"
+        );
+
+        let mut first_only = durable.clone();
+        first_only
+            .insert(dregg_cell::Nullifier(spends[0].nullifier), spends[0].value)
+            .unwrap();
+        assert_eq!(roots[0], first_only.faithful_root8_exact().to_bytes32());
+        assert_eq!(roots[1], successor.faithful_root8_exact().to_bytes32());
+
+        let duplicate = [spends[0], spends[0]];
+        assert_eq!(
+            planned_ordered_nullifier_successors(&durable, &duplicate)
+                .expect_err("within-turn duplicate nullifiers must refuse"),
+            spends[0].nullifier,
+            "within-turn duplicate nullifiers refuse before mutation"
         );
     }
 
@@ -6445,8 +6643,10 @@ mod tests {
             }
         }
         fn spend(tag: u8, value: u64, height: u64, root: [u8; 32]) -> dregg_turn::Effect {
+            let successor = dregg_circuit::Faithful8::ZERO.to_bytes32();
             let carrier = dregg_turn::faithful_note_spend::FaithfulNoteSpendProofCarrier::new(
                 height,
+                successor,
                 vec![tag, tag.wrapping_add(1)],
             )
             .unwrap();
@@ -6482,7 +6682,20 @@ mod tests {
         );
         assert_eq!(
             finalized_faithful_spend_claims(&forest).unwrap(),
-            vec![(9, root), (12, root)]
+            vec![
+                (
+                    9,
+                    root,
+                    dregg_persist::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap(),
+                    7,
+                ),
+                (
+                    12,
+                    root,
+                    dregg_persist::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap(),
+                    7,
+                ),
+            ]
         );
 
         let anchor =
@@ -8022,27 +8235,19 @@ mod tests {
         );
     }
 
-    /// FALSIFIER for the SOLO double-apply bug: on a solo (n=1) node, ingress is
-    /// the authoritative apply (state committed + receipt on the chain + solo
-    /// height advanced), then the finalization pass sees the SAME turn. Before the
-    /// idempotency fix, `execute_finalized_turn` re-executed it, hit the exact-nonce
-    /// gate (`NonceReplay`, the agent nonce already ticked), landed in the `Rejected`
-    /// arm, and NEVER wrote the attested root — so `latest_height` stuck at 0 while
-    /// the DAG climbed (the observed `executed=0`, `/status latest_height: 0`).
+    /// FALSIFIER for the old solo receipt/ledger split: a crash could leave the
+    /// ingress receipt durable while the authoritative ledger mutation existed
+    /// only in RAM and was lost.  Receipt presence must therefore NEVER make
+    /// finalization skip execution.
     ///
-    /// This drives that exact sequence: simulate solo ingress (authoritative commit
-    /// + receipt append), assert `latest_height` is still 0, then run
-    /// `execute_finalized_turn` and assert it (a) ADVANCES `latest_height` 0 -> 1
-    /// (the turn genuinely finalizes, not Rejected), and (b) does NOT re-apply state
-    /// (the sender is debited EXACTLY once, no double-debit) and does NOT
-    /// double-append the receipt. Reverting the idempotency branch reds (a) (height
-    /// stuck at 0); a mutation that re-applied instead of skipping reds (b)
-    /// (double-debit). Full-mode exactly-once is guarded by the sibling test
-    /// `a1_finalized_turn_advances_height_zero_to_one_off_lock` (a NON-solo node
-    /// where the turn is NOT pre-applied still applies once through the `Committed`
-    /// arm — an over-aggressive "always skip" mutation reds that test).
+    /// This drives the crash image exactly: build and durably append the admission
+    /// receipt against a scratch ledger, leave the node ledger untouched, then
+    /// finalize.  The finalized path must re-execute once, byte-verify/reuse the
+    /// old receipt without appending, and atomically advance every ordinary commit
+    /// coordinate.  A receipt-as-applied shortcut leaves the balances unchanged
+    /// and reds this test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn solo_finalization_is_idempotent_after_ingress_double_apply() {
+    async fn solo_finalization_recovers_receipt_durable_ledger_absent_crash() {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
@@ -8053,6 +8258,8 @@ mod tests {
             s.lean_producer_enabled = false;
             let sk = s.cclerk.gossip_signing_key().to_bytes();
             s.solo_consensus = Some(dregg_federation::solo::SoloConsensusState::new(sk));
+            s.federation_configured = true;
+            s.federation_id = [0u8; 32];
         }
 
         // Bare-executor convention (the Rust producer path the ingress simulation and
@@ -8098,42 +8305,37 @@ mod tests {
         let fee = signed.turn.fee as i64;
         let turn_data = postcard::to_stdvec(&signed).expect("encode signed turn");
 
-        // ── SIMULATE SOLO INGRESS: the authoritative in-place commit + receipt
-        // append + solo height advance (mirrors `api.rs` /turn/submit solo path). ──
+        // ── SIMULATE THE CRASH IMAGE: receipt durable, ledger absent. ──
         {
             let mut s = state.write().await;
-            let lean = s.lean_producer_enabled;
-            let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            crate::api::seed_executor_receipt_head(&executor, signed.turn.agent, None);
+            let mut scratch = s.ledger.clone();
             match crate::executor_setup::execute_via_producer(
                 &executor,
                 &signed.turn,
-                &mut s.ledger,
-                lean,
+                &mut scratch,
+                false,
             ) {
                 dregg_turn::TurnResult::Committed { receipt, .. } => {
-                    // Preserve the executor-signed link byte-for-byte; append
-                    // validates it against this agent's independent head.
                     s.cclerk.append_receipt(receipt).expect("ingress append");
-                    if let Some(ref mut solo) = s.solo_consensus {
-                        solo.advance_height();
-                    }
                 }
                 other => panic!("solo ingress must commit the transfer, got {other:?}"),
             }
         }
 
-        // Ingress applied the transfer authoritatively...
+        // The durable receipt survived, but the authoritative ledger did not.
         {
             let s = state.read().await;
             assert_eq!(
                 s.ledger.get(&sender).expect("sender").state.balance(),
-                1_000_000 - 4_200 - fee,
-                "ingress debited the sender exactly once"
+                1_000_000,
+                "crash-restored ledger is still pre-turn"
             );
             assert_eq!(
                 s.ledger.get(&dest).expect("dest").state.balance(),
-                4_200,
-                "ingress credited the destination"
+                0,
+                "receipt presence alone must not imply ledger application"
             );
             assert_eq!(
                 s.cclerk.receipt_chain_length(),
@@ -8180,18 +8382,19 @@ mod tests {
              not be rejected as a nonce replay"
         );
 
-        // (b) IDEMPOTENT: state is unchanged (NO double-apply), receipt not re-appended.
+        // (b) EXACTLY ONCE: finalization applied the missing ledger transition,
+        // while reusing (not re-appending) the durable receipt.
         {
             let s = state.read().await;
             assert_eq!(
                 s.ledger.get(&sender).expect("sender").state.balance(),
                 1_000_000 - 4_200 - fee,
-                "sender is debited EXACTLY once — finalization must not re-apply the turn"
+                "sender is debited EXACTLY once by finalization"
             );
             assert_eq!(
                 s.ledger.get(&dest).expect("dest").state.balance(),
                 4_200,
-                "destination balance unchanged by the idempotent finalization"
+                "destination is credited exactly once by finalization"
             );
             assert_eq!(
                 s.cclerk.receipt_chain_length(),
@@ -8253,19 +8456,17 @@ mod tests {
         let turn_data2 = postcard::to_stdvec(&signed2).expect("encode signed turn 2");
         {
             let mut s = state.write().await;
-            let lean = s.lean_producer_enabled;
-            let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            crate::api::seed_executor_receipt_head(&executor, signed2.turn.agent, None);
+            let mut scratch = s.ledger.clone();
             match crate::executor_setup::execute_via_producer(
                 &executor,
                 &signed2.turn,
-                &mut s.ledger,
-                lean,
+                &mut scratch,
+                false,
             ) {
                 dregg_turn::TurnResult::Committed { receipt, .. } => {
                     s.cclerk.append_receipt(receipt).expect("ingress append 2");
-                    if let Some(ref mut solo) = s.solo_consensus {
-                        solo.advance_height();
-                    }
                 }
                 other => panic!("second solo ingress must commit, got {other:?}"),
             }

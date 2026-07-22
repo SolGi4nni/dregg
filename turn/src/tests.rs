@@ -32,6 +32,7 @@ use crate::builder::{ActionBuilder, TurnBuilder};
 use crate::composer::{ComposeError, SignedFragment, TurnComposer};
 use crate::error::TurnError;
 use crate::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
+use crate::faithful_note_spend::FaithfulNoteSpendProofCarrier;
 use crate::forest::{CallForest, CallTree};
 use crate::turn::{Turn, TurnResult};
 
@@ -144,6 +145,41 @@ fn execute_chained(
 /// Helper: create an executor with default costs.
 fn default_executor() -> TurnExecutor {
     TurnExecutor::new(ComputronCosts::default_costs())
+}
+
+/// Canonical, non-zero faithful-eight root for test NoteSpend historical state.
+///
+/// The strict FNSP v2 cut rejects arbitrary byte strings such as `[0xFF; 32]`:
+/// every 4-byte lane must be a canonical BabyBear element.  Use the actual
+/// depth-16 faithful note tree's empty root so the fixture has the right
+/// semantic domain as well as the right byte shape.
+fn canonical_nonzero_note_root8() -> [u8; 32] {
+    let root = dregg_commit::poseidon2_tree::Poseidon2NoteTree16::new()
+        .root_immutable()
+        .to_bytes32();
+    assert_ne!(root, [0; 32]);
+    root
+}
+
+/// Build a strict FNSP v2 carrier whose successor is the exact accumulator
+/// root after `prior_spends` followed by `(nullifier, value)`.
+///
+/// The opaque inner bytes are intentionally tiny: AlwaysAccept/RejectVerifier
+/// tests exercise executor gates, while the carrier itself must still bind the
+/// real successor that production recomputes before invoking either verifier.
+fn strict_note_spend_proof(
+    prior_spends: &[(dregg_cell::Nullifier, u64)],
+    nullifier: dregg_cell::Nullifier,
+    value: u64,
+) -> Vec<u8> {
+    let mut planned = dregg_cell::NullifierSet::new();
+    for &(prior_nullifier, prior_value) in prior_spends {
+        planned.insert(prior_nullifier, prior_value).unwrap();
+    }
+    planned.insert(nullifier, value).unwrap();
+    FaithfulNoteSpendProofCarrier::new(0, planned.faithful_root8_exact().to_bytes32(), vec![0x01])
+        .unwrap()
+        .encode()
 }
 
 /// A test proof verifier that always accepts proofs.
@@ -4809,10 +4845,14 @@ fn test_note_conservation() {
             effects: vec![
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([0xAA; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
@@ -4839,10 +4879,14 @@ fn test_note_conservation() {
             effects: vec![
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([0xAA; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
@@ -4861,10 +4905,14 @@ fn test_note_conservation() {
             effects: vec![
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 0,
                     asset_type: 0xDEAD_BEEF,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([0xAA; 32]),
+                        0,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
@@ -4883,18 +4931,26 @@ fn test_note_conservation() {
             effects: vec![
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([1u8; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([1u8; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([2u8; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 50,
                     asset_type: 2,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[(dregg_cell::Nullifier([1u8; 32]), 100)],
+                        dregg_cell::Nullifier([2u8; 32]),
+                        50,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
@@ -4921,10 +4977,14 @@ fn test_note_conservation() {
             effects: vec![
                 Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([1u8; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([1u8; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 },
                 Effect::NoteCreate {
@@ -5006,7 +5066,7 @@ fn test_note_spend_rejected_without_proof() {
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_no_proof", agent_id)
                 .effect(Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
                     spending_proof: vec![], // empty = missing
@@ -5055,10 +5115,15 @@ fn test_note_spend_rejected_with_invalid_proof() {
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_bad_proof", agent_id)
                 .effect(Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0xDE, 0xAD, 0xBE, 0xEF], // garbage proof
+                    // Canonical carrier, opaque inner proof rejected by the verifier.
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([0xAA; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 })
                 .effect(Effect::NoteCreate {
@@ -5104,10 +5169,14 @@ fn test_note_spend_rejected_without_verifier() {
             ActionBuilder::new_unchecked_for_tests(agent_id, "note_spend_no_verifier", agent_id)
                 .effect(Effect::NoteSpend {
                     nullifier: dregg_cell::Nullifier([0xAA; 32]),
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 100,
                     asset_type: 1,
-                    spending_proof: vec![0x01, 0x02, 0x03],
+                    spending_proof: strict_note_spend_proof(
+                        &[],
+                        dregg_cell::Nullifier([0xAA; 32]),
+                        100,
+                    ),
                     value_commitment: None,
                 })
                 .effect(Effect::NoteCreate {
@@ -6789,10 +6858,10 @@ fn test_committed_conservation_valid_proof_passes() {
             ActionBuilder::new_unchecked_for_tests(agent_id, "committed_transfer", agent_id)
                 .effect(Effect::NoteSpend {
                     nullifier,
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 500,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(&[], nullifier, 500),
                     value_commitment: Some(input_vc_bytes),
                 })
                 .effect(Effect::NoteCreate {
@@ -6839,7 +6908,7 @@ fn test_committed_conservation_valid_proof_passes() {
 #[test]
 fn test_committed_conservation_inflated_output_fails() {
     use curve25519_dalek::scalar::Scalar;
-    use dregg_cell_crypto::{ValueCommitment, prove_conservation};
+    use dregg_cell_crypto::{BulletproofRangeProof, ValueCommitment, prove_conservation};
 
     // Setup: single agent cell with open permissions and a proof verifier.
     let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
@@ -6866,6 +6935,7 @@ fn test_committed_conservation_inflated_output_fails() {
 
     let input_vc_bytes = input_vc.to_bytes().0;
     let output_vc_bytes = output_vc.to_bytes().0;
+    let output_range_proof = BulletproofRangeProof::prove_range(600, &r_out);
 
     // Build the turn with committed note effects.
     let nullifier = dregg_cell::Nullifier([0xEE; 32]);
@@ -6877,10 +6947,10 @@ fn test_committed_conservation_inflated_output_fails() {
             ActionBuilder::new_unchecked_for_tests(agent_id, "inflated_transfer", agent_id)
                 .effect(Effect::NoteSpend {
                     nullifier,
-                    note_tree_root: [0xFFu8; 32],
+                    note_tree_root: canonical_nonzero_note_root8(),
                     value: 500,
                     asset_type: 1,
-                    spending_proof: vec![0x01],
+                    spending_proof: strict_note_spend_proof(&[], nullifier, 500),
                     value_commitment: Some(input_vc_bytes),
                 })
                 .effect(Effect::NoteCreate {
@@ -6889,7 +6959,7 @@ fn test_committed_conservation_inflated_output_fails() {
                     asset_type: 1,
                     encrypted_note: vec![],
                     value_commitment: Some(output_vc_bytes),
-                    range_proof: Some(vec![0x01]), // placeholder range proof
+                    range_proof: Some(output_range_proof.proof_bytes),
                 })
                 .build();
         builder.add_action(action);
@@ -6910,10 +6980,13 @@ fn test_committed_conservation_inflated_output_fails() {
     turn.conservation_proof = Some(proof_bytes);
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(
-        result.is_rejected(),
-        "committed conservation with inflated output should be rejected"
-    );
+    match result {
+        TurnResult::Rejected { reason, .. } => assert!(
+            matches!(reason, TurnError::NoteConservationViolation { .. }),
+            "inflated committed conservation must reach the conservation gate, got {reason:?}"
+        ),
+        other => panic!("committed conservation with inflated output should reject, got {other:?}"),
+    }
 }
 
 // =============================================================================
@@ -9276,10 +9349,10 @@ mod privacy_wiring {
     ) -> Turn {
         let effect = Effect::NoteSpend {
             nullifier,
-            note_tree_root: [1u8; 32],
+            note_tree_root: canonical_nonzero_note_root8(),
             value: 0,
             asset_type: 0,
-            spending_proof: vec![1, 2, 3, 4],
+            spending_proof: strict_note_spend_proof(&[], nullifier, 0),
             value_commitment: None,
         };
         let mut action = Action {
@@ -11804,10 +11877,10 @@ fn test_note_spend_malformed_value_commitment_rejected() {
         let action = ActionBuilder::new_unchecked_for_tests(agent_id, "bad_vc_spend", agent_id)
             .effect(Effect::NoteSpend {
                 nullifier,
-                note_tree_root: [0x01u8; 32],
+                note_tree_root: canonical_nonzero_note_root8(),
                 value: 0,
                 asset_type: 0,
-                spending_proof: vec![0x01u8],
+                spending_proof: strict_note_spend_proof(&[], nullifier, 0),
                 value_commitment: Some(bad_vc_bytes),
             })
             .effect(Effect::NoteCreate {

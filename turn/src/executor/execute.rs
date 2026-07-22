@@ -1574,7 +1574,7 @@ impl TurnExecutor {
 
         let mut mutated_cells = std::collections::HashSet::<CellId>::new();
         let mut first_field_old =
-            std::collections::HashMap::<(CellId, usize), Option<dregg_cell::FieldElement>>::new();
+            std::collections::HashMap::<(CellId, u64), Option<dregg_cell::FieldElement>>::new();
         for entry in journal.entries() {
             match entry {
                 crate::journal::JournalEntry::SetField {
@@ -1627,7 +1627,8 @@ impl TurnExecutor {
                         if idx >= dregg_cell::state::STATE_SLOTS {
                             continue;
                         }
-                        let Some(Some(old_value)) = first_field_old.get(&(cell_id, idx)) else {
+                        let Some(Some(old_value)) = first_field_old.get(&(cell_id, idx as u64))
+                        else {
                             continue;
                         };
                         let new_value = cell.state.fields[idx];

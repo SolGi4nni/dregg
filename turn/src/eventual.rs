@@ -135,7 +135,7 @@ pub enum TurnOutput {
         /// The cell whose state was updated.
         cell: CellId,
         /// Which field index was updated.
-        field: usize,
+        field: u64,
         /// The BLAKE3 hash of the new field value.
         hash: [u8; 32],
     },

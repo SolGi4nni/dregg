@@ -241,6 +241,36 @@ pub fn configure_turn_executor(
     // and the named entry accepts only the exact Lean-emitted v2 relation and
     // fixed 44-felt statement reconstructed by the executor.
     executor.set_proof_verifier(Box::new(dregg_turn::FaithfulNoteSpendVerifier::new()));
+
+    // The spent-note accumulator is durable finalized state, not executor-local
+    // scratch.  Every short-lived production executor must begin at that exact
+    // frontier or a restart (and, before this weld, every ordinary submit after
+    // the first finalized spend) forgets prior nullifiers and evaluates the next
+    // FNSP successor against an empty set.  That both breaks honest cross-turn
+    // proving and weakens the executor's early double-spend refusal.
+    //
+    // Corrupt/gapped durable records are a store-integrity event.  Refuse to
+    // construct an admission executor rather than silently substituting the
+    // empty accumulator: an empty fallback is precisely the unsafe state.
+    let durable_nullifier_records =
+        s.store
+            .load_faithful_nullifier_records()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "STORE INTEGRITY EVENT: could not load finalized faithful nullifiers; \
+                 refusing to construct a turn executor: {error}"
+                )
+            });
+    let durable_nullifier_set =
+        dregg_cell::nullifier_set::NullifierSet::from_records(durable_nullifier_records)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "STORE INTEGRITY EVENT: finalized faithful nullifier sequence is malformed; \
+                     refusing to construct a turn executor: {error}"
+                )
+            });
+    *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
+
     executor.set_local_federation_id(federation_id_for_executor(s));
     executor.set_timestamp(wall_clock_secs());
     enroll_known_pq_identities(executor, s);
