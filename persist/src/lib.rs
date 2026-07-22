@@ -33,6 +33,7 @@ pub mod checkpoint;
 pub mod commit_log;
 pub mod faithful_note_root_history;
 pub mod federation;
+pub mod finalized_faithful_spend;
 pub mod forever_digests;
 pub mod image_builder;
 pub mod ledger_store;
@@ -56,6 +57,7 @@ pub use faithful_note_root_history::{
     FaithfulNoteRootRecordV1, plan_faithful_note_root_transition_v1,
 };
 pub use federation::{QuorumSignature, StoredAttestedRoot};
+pub use finalized_faithful_spend::{FinalizedFaithfulSpend, FinalizedFaithfulSpendInput};
 pub use image_builder::{
     BuildError, CellSpec, ImageArtifact, ImageAttestation, ImageFacts, ImageManifest, VerifyError,
     build_image, verify_image,
@@ -232,6 +234,8 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
             let _ = write_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
+            let _ = write_txn.open_table(tables::FINALIZED_FAITHFUL_SPENDS)?;
+            let _ = write_txn.open_table(tables::FINALIZED_FAITHFUL_SPEND_TURNS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
@@ -720,7 +724,7 @@ impl PersistentStore {
                 "durable nullifier accumulator cannot be reconstructed: {e}"
             ))
         })?;
-        Ok(set.root8().to_bytes32())
+        Ok(set.faithful_root8_exact().to_bytes32())
     }
 
     /// Compute, without mutating the store, the nullifier root that must be
@@ -744,7 +748,7 @@ impl PersistentStore {
                     )
                 })?;
         }
-        Ok(set.root8().to_bytes32())
+        Ok(set.faithful_root8_exact().to_bytes32())
     }
 
     /// Compute the nullifier set root from all stored nullifiers.

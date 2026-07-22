@@ -51,6 +51,27 @@ pub const NULLIFIERS: TableDefinition<&[u8; 32], ()> = TableDefinition::new("nul
 pub const NULLIFIER_RECORDS_V1: TableDefinition<&[u8; 32], &[u8; 16]> =
     TableDefinition::new("nullifier_records_v1");
 
+/// Public-only authorities minted for faithfully finalized note spends.
+///
+/// Key: the exact public nullifier (globally one-shot). Value: the private
+/// persist wire for [`crate::FinalizedFaithfulSpend`].  This table is written
+/// only inside the finalized-turn weld, in the same redb transaction as the
+/// nullifier record, receipt, commit record, faithful note-root edge, attested
+/// root, and commit cursor.
+pub const FINALIZED_FAITHFUL_SPENDS: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("finalized_faithful_spends_v1");
+
+/// Per-turn custody manifest for finalized faithful spends.
+///
+/// A row exists even when the turn finalized zero spends.  It pins the exact
+/// ordered authority set, so an idempotent replay cannot omit a suffix (or the
+/// entire set) and a loader can distinguish an honestly empty turn from a
+/// truncated authority table.  The manifest survives commit-log compaction;
+/// compacted loads additionally require the carrying block id in
+/// [`COMMIT_COMPACTED_BLOCK_IDS`] and a covering finalized checkpoint.
+pub const FINALIZED_FAITHFUL_SPEND_TURNS: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("finalized_faithful_spend_turns_v1");
+
 /// Checkpoints: height (u64) -> serialized Checkpoint.
 ///
 /// Key: checkpoint height (always a multiple of the checkpoint interval).
