@@ -66,8 +66,7 @@ fn first_game_button(
         .find(|button| {
             !button.text.starts_with(LOCK_GLYPH)
                 && button.web_app.is_none()
-                && decode_callback(&button.callback_data)
-                    .is_some_and(|(turn, arg)| !is_verify_callback(&turn, arg))
+                && button.callback_data.starts_with("g.")
         })
         .expect("the live offering exposes an enabled game action")
 }

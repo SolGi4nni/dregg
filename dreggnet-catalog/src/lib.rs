@@ -46,18 +46,28 @@ use dreggnet_council::{CandidateProposal, CouncilOffering};
 use dreggnet_market::{DarkBazaarOffering, MarketOffering};
 use dreggnet_surfaces::private_raid::HostedProofAssignedRaidOffering;
 
+pub mod game_epoch;
 pub mod game_spine;
 pub mod player_worlds;
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub mod private_fhegg_game_consequence;
 pub mod seated;
 
+pub use game_epoch::{GameEpochError, GameEpochLedger};
 pub use game_spine::{
-    GameActionRef, GameAffordance, GameArtifact, GameArtifactRef, GameAudience, GameCommand,
-    GameHostIncarnation, GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionBinding,
-    GameSessionRef, GameSessionView, GameSpineError, execute_asserted_game_command,
-    execute_bound_asserted_game_command, execute_bound_signed_game_turn, execute_signed_game_turn,
+    BoundGameTurnExecution, GameActionRef, GameAffordance, GameArtifact, GameArtifactRef,
+    GameAudience, GameCommand, GameHostIncarnation, GameKind, GameOperationRef, GameReceipt,
+    GameResult, GameSessionBinding, GameSessionRef, GameSessionView, GameSpineError,
+    execute_asserted_game_command, execute_bound_asserted_game_command,
+    execute_bound_asserted_game_turn, execute_bound_signed_game_turn, execute_signed_game_turn,
     game_kind, inspect_bound_game_session, inspect_game_session,
 };
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub use private_fhegg_game_consequence::{
+    PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
+    PrivateFheggGameConsequenceReceipt, PrivateFheggGameMechanic, PrivateFheggWinnerRoute,
+};
 
 /// **The platform-independent inputs a catalog registration needs** — everything a frontend
 /// must decide before the shared list can be registered. All plain `Send` data (raw pubkeys,

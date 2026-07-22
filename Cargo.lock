@@ -7633,6 +7633,8 @@ dependencies = [
 name = "dreggnet-catalog"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "deos-view",
  "dregg-automatafl",
  "dregg-multiway-tug",
  "dreggnet-compute",
@@ -7644,6 +7646,9 @@ dependencies = [
  "dreggnet-names",
  "dreggnet-offerings",
  "dreggnet-surfaces",
+ "dungeon-on-dregg",
+ "getrandom 0.3.4",
+ "tempfile",
 ]
 
 [[package]]
@@ -7824,6 +7829,7 @@ dependencies = [
  "dregg-intent",
  "dregg-sdk",
  "dregg-types",
+ "dreggnet-catalog",
  "dreggnet-offerings",
  "dreggnet-trade",
  "dungeon-on-dregg",
@@ -7992,6 +7998,7 @@ dependencies = [
 name = "dreggnet-telegram"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "deos-view",
  "dregg-sdk",
@@ -8004,6 +8011,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "zeroize",
 ]
 

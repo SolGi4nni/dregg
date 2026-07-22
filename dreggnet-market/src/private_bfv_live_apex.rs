@@ -44,6 +44,7 @@ pub struct PrivateBfvLiveApexReceipt {
 impl PrivateBfvLiveApexReceipt {
     pub fn binding_verifies(&self) -> bool {
         self.authority.binding_verifies()
+            && self.settlement.audit_digest_verifies()
             && self.authority.claim_digest() == self.settlement.fhegg.claim_digest
             && u64::from(self.authority.price()) == self.settlement.fhegg.price
             && u64::from(self.authority.volume()) == self.settlement.fhegg.volume
@@ -226,7 +227,7 @@ mod tests {
             action_count: 1,
             ..TurnReceipt::default()
         };
-        let settlement = AtomicFheggAssetSettlementReceipt {
+        let mut settlement = AtomicFheggAssetSettlementReceipt {
             fhegg: FheggSettlementReceipt {
                 claim_digest,
                 source_commitment: [0x76; 32],
@@ -254,9 +255,10 @@ mod tests {
             },
             world_before: [0x78; 32],
             world_after: [0x79; 32],
-            audit_digest: [0x7a; 32],
+            audit_digest: [0; 32],
             journal_audit: None,
         };
+        settlement.audit_digest = settlement.recompute_audit_digest();
         finish(authority, settlement).expect("exact typed consequence")
     }
 
@@ -284,6 +286,17 @@ mod tests {
         let mut wrong_turn = honest.clone();
         wrong_turn.settlement.fhegg.settlement_turn.turn_hash[0] ^= 1;
         assert!(!wrong_turn.binding_verifies());
+
+        // Mutating both public winner copies used to survive the apex's own
+        // checks if a caller also recomputed its public consequence digest.
+        // The atomic settlement audit is the independently committed binding.
+        let mut wrong_winner = honest.clone();
+        let substituted_winner = DreggIdentity("substituted-winner".to_owned());
+        wrong_winner.settlement.fhegg.winner = substituted_winner.clone();
+        wrong_winner.settlement.asset.winner = substituted_winner;
+        wrong_winner.consequence_digest =
+            super::consequence_digest(&wrong_winner.authority, &wrong_winner.settlement);
+        assert!(!wrong_winner.binding_verifies());
 
         let mut wrong_claim = honest;
         wrong_claim.settlement.fhegg.claim_digest[0] ^= 1;

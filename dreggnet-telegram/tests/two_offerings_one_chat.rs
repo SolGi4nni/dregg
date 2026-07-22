@@ -46,6 +46,35 @@ fn message_of(h: &TelegramHost<MockTransport>, chat: i64, key: &str) -> MessageI
         .unwrap_or_else(|| panic!("{key} has a live surface in chat {chat}"))
 }
 
+/// The opaque wire callback currently paired with one raw typed affordance.
+fn callback_for(
+    h: &TelegramHost<MockTransport>,
+    chat: i64,
+    key: &str,
+    turn: &str,
+    arg: i64,
+) -> String {
+    let surface = TelegramFrontend::<MockTransport>::surface_id(chat, None, key);
+    let slot = h
+        .frontend()
+        .session(&surface)
+        .unwrap_or_else(|| panic!("{key} has a live surface"));
+    let index = slot
+        .presented
+        .iter()
+        .position(|action| action.turn == turn && action.arg == arg)
+        .unwrap_or_else(|| panic!("{key} currently offers {turn}/{arg}"));
+    h.frontend()
+        .transport()
+        .visible(slot.message_id.expect("surface has a message"))
+        .and_then(|request| request.reply_markup.as_ref())
+        .and_then(|markup| markup.inline_keyboard.get(index))
+        .and_then(|row| row.first())
+        .map(|button| button.callback_data.clone())
+        .filter(|callback| callback.starts_with("g."))
+        .unwrap_or_else(|| panic!("{key}'s game action uses an opaque bound callback"))
+}
+
 /// **THE COLLISION TEST.** Two different offerings open in one chat both stay live and addressable:
 /// each owns its own message, each keeps its own keyboard, and a press on either message advances
 /// THAT offering — including a press on the FIRST one after the second was opened, which is the
@@ -99,11 +128,12 @@ fn two_offerings_open_in_one_chat_both_stay_live_and_addressable() {
 
     // A press on the DUNGEON's message advances the DUNGEON — even though the council was opened
     // more recently. This is the press that used to be lost.
+    let dungeon_callback = callback_for(&h, chat, "dungeon", "choose", KP_PRESS_ON as i64);
     match h.press(CallbackQuery::press_on_message(
         chat,
         dungeon_msg,
         ALICE,
-        encode_callback("choose", KP_PRESS_ON as i64),
+        dungeon_callback,
     )) {
         HostPress::Advanced { key, outcome } => {
             assert_eq!(key, "dungeon", "the press routed by ITS OWN message");
@@ -113,11 +143,12 @@ fn two_offerings_open_in_one_chat_both_stay_live_and_addressable() {
     }
 
     // …and a press on the COUNCIL's message advances the COUNCIL.
+    let council_callback = callback_for(&h, chat, "council", "propose", 0);
     match h.press(CallbackQuery::press_on_message(
         chat,
         council_msg,
         ALICE,
-        encode_callback("propose", 0),
+        council_callback,
     )) {
         HostPress::Advanced { key, outcome } => {
             assert_eq!(key, "council", "the press routed by ITS OWN message");
@@ -182,13 +213,14 @@ fn each_surface_keeps_its_own_presented_affordances() {
     // A council turn pressed on the DUNGEON's message is refused before the substrate — the
     // surfaces are genuinely separate, not one pooled affordance list.
     let dungeon_msg = message_of(&h, chat, "dungeon");
+    let council_callback = callback_for(&h, chat, "council", "propose", 0);
     assert!(
         matches!(
             h.press(CallbackQuery::press_on_message(
                 chat,
                 dungeon_msg,
                 ALICE,
-                encode_callback("propose", 0),
+                council_callback,
             )),
             HostPress::NotOffered
         ),
@@ -232,11 +264,12 @@ fn a_press_naming_no_message_routes_to_the_chats_most_recent_surface() {
     }
     // …and the dungeon is still there, unharmed, reachable by its own message.
     let dungeon_msg = message_of(&h, chat, "dungeon");
+    let dungeon_callback = callback_for(&h, chat, "dungeon", "choose", KP_PRESS_ON as i64);
     match h.press(CallbackQuery::press_on_message(
         chat,
         dungeon_msg,
         ALICE,
-        encode_callback("choose", KP_PRESS_ON as i64),
+        dungeon_callback,
     )) {
         HostPress::Advanced { key, .. } => assert_eq!(key, "dungeon"),
         other => panic!("the dungeon is still addressable, got {other:?}"),

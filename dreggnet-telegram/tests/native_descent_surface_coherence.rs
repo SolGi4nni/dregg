@@ -70,7 +70,7 @@ fn telegram_preserves_native_action_order_and_surfaces_locked_executor_reasons()
     let expected = build_present_request(CHAT, None, &offering.render(&session), &actions);
 
     let mut host = host();
-    let sid = host
+    let _sid = host
         .open("descent", CHAT, None, ALICE)
         .expect("native Descent opens through Telegram");
     let actual = host
@@ -93,21 +93,29 @@ fn telegram_preserves_native_action_order_and_surfaces_locked_executor_reasons()
         })
         .cloned()
         .collect();
-    assert_eq!(
-        actual_game_rows,
-        expected
-            .reply_markup
-            .expect("the native actions build a keyboard")
-            .inline_keyboard,
-        "Telegram must consume the native ordered action list verbatim before host controls"
-    );
+    let expected_rows = expected
+        .reply_markup
+        .expect("the native actions build a keyboard")
+        .inline_keyboard;
+    assert_eq!(actual_game_rows.len(), expected_rows.len());
+    for (actual, expected) in actual_game_rows.iter().zip(&expected_rows) {
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert_eq!(actual.text, expected.text);
+            assert_eq!(actual.web_app, expected.web_app);
+            assert!(
+                actual.callback_data.starts_with("g."),
+                "game callback carries the complete bound action identity"
+            );
+            assert!(actual.callback_data.len() <= 64);
+        }
+    }
     let buttons = current_buttons(&host);
     assert_eq!(buttons.len(), actions.len());
     for (button, action) in buttons.iter().zip(&actions) {
-        assert_eq!(
-            decode_callback(&button.callback_data),
-            Some((action.turn.clone(), action.arg)),
-            "button order and typed action identity stay aligned"
+        assert!(
+            button.callback_data.starts_with("g."),
+            "button order stays aligned while action identity is opaque on the wire"
         );
         assert_eq!(
             button.text.starts_with(LOCK_GLYPH),

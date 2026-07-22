@@ -29,10 +29,11 @@
 
 use std::path::PathBuf;
 
+use dreggnet_catalog::GameEpochLedger;
 use dreggnet_telegram::host::TelegramHost;
 use dreggnet_telegram::reqwest_transport::ReqwestHttpPost;
 use dreggnet_telegram::runtime::{
-    BotApi, durable_player_worlds, durable_telegram_host, run_update_loop,
+    BotApi, durable_player_worlds, run_update_loop, try_durable_telegram_host,
 };
 use dreggnet_telegram::transport::RawBotApi;
 
@@ -144,17 +145,30 @@ fn main() {
     //    to the hbox funnel): DMs get "🕹 Play in the app" web_app buttons + /play.
     let webapp_base = dreggnet_telegram::webapp::webapp_base_from_env();
     eprintln!("mini-app launch tier armed at {webapp_base} (TELEGRAM_WEBAPP_BASE overrides)");
-    let dir_for_host = session_dir.clone();
     let dir_for_players = session_dir.clone();
-    let mut host = TelegramHost::with_hosts(
+    let game_epochs = match GameEpochLedger::open(session_dir.join("game-epochs")) {
+        Ok(ledger) => ledger,
+        Err(error) => {
+            eprintln!("cannot open durable game epoch ledger: {error}. Exiting.");
+            std::process::exit(2);
+        }
+    };
+    let dir_for_host = session_dir.clone();
+    let mut host = match TelegramHost::try_with_hosts_and_game_epochs(
         bot_secret,
         transport,
-        move || durable_telegram_host(Some(dir_for_host), members),
+        move || try_durable_telegram_host(dir_for_host, members),
         // The per-identity RPG worlds, durable under the SAME session dir (one subdir per player)
         // — so trade / inventory / craft are isolated AND survive a restart, exactly like Discord.
         move || durable_player_worlds(Some(dir_for_players)),
-    )
-    .with_webapp_base(webapp_base);
+        game_epochs,
+    ) {
+        Ok(host) => host.with_webapp_base(webapp_base),
+        Err(error) => {
+            eprintln!("cannot open durable Telegram host: {error}. Exiting.");
+            std::process::exit(2);
+        }
+    };
 
     // 8. The long-poll loop, with the consumed-updates offset persisted beside the sessions so a
     //    restart does not re-route already-answered presses.

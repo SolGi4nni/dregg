@@ -21,10 +21,26 @@ version = "0.1.0"
 edition = "2024"
 description = "The shared DreggNet offering-catalog registrar: build_full_catalog(host, cfg) registers the ONE 23-offering portfolio (9 games, 9 RPG feature surfaces, 5 service offerings) every frontend (web, Telegram, WeChat, Discord) exposes, plus the single SeatedTug seat-claiming adapter — replacing four drifting per-frontend copies."
 
+[features]
+default = []
+# Typed hard-tech weld: a full BFV/HidingFRI/native-PQ Dark Bazaar authority
+# may authorize one exact signed private-raid mechanic through the bound common
+# game spine. Ordinary catalogs do not pull either proving tower.
+private-fhegg-game-consequence = [
+    "dreggnet-market/private-attested-clearing",
+    "dreggnet-market/fhegg-settlement",
+    "dreggnet-offerings/private-raid-operation",
+    "dep:dungeon-on-dregg",
+]
+
 [dependencies]
 # The Offering trait + OfferingHost — the frontend-agnostic core this crate populates.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+# Exact Mender-choice vocabulary for the private-fhEgg consequence gate. The
+# feature also enables the offering's independently verified raid assignment.
+dungeon-on-dregg = { path = "../dungeon-on-dregg", optional = true }
 blake3 = "1"
+getrandom = { workspace = true }
 
 # The eight portfolio games.
 dreggnet-council = { path = "../dreggnet-council" }
@@ -50,6 +66,7 @@ dreggnet-hermes = { path = "../dreggnet-hermes" }
 
 [dev-dependencies]
 deos-view = { path = "../deos-view", default-features = false }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

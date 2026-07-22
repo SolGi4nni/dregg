@@ -64,7 +64,7 @@ use dreggnet_offerings::{Action, DreggIdentity, Frontend, SessionId, Surface};
 
 use crate::api::{
     InlineKeyboardButton, InlineKeyboardMarkup, SendMessageRequest, TELEGRAM_TEXT_LIMIT,
-    build_present_request, decode_callback,
+    build_present_request_with_callback_data, decode_callback,
 };
 use crate::cipherclerk::TelegramCipherclerk;
 use crate::transport::{MessageId, Transport, TransportError};
@@ -381,9 +381,41 @@ impl<T: Transport> TelegramFrontend<T> {
         actions: &[Action],
         extra_buttons: &[InlineKeyboardButton],
     ) -> Result<MessageId, TransportError> {
+        let callback_data: Vec<String> = actions
+            .iter()
+            .map(|action| crate::api::encode_callback(&action.turn, action.arg))
+            .collect();
+        self.present_result_with_callback_data(
+            session,
+            surface,
+            actions,
+            &callback_data,
+            extra_buttons,
+        )
+    }
+
+    /// [`present_result_with`](Self::present_result_with) with exact callback
+    /// data supplied for every action. The game host uses this to put the full
+    /// bound action-reference digest on the Telegram wire while retaining raw
+    /// [`Action`]s in the session for presentation introspection.
+    pub fn present_result_with_callback_data(
+        &mut self,
+        session: &SessionId,
+        surface: &Surface,
+        actions: &[Action],
+        callback_data: &[String],
+        extra_buttons: &[InlineKeyboardButton],
+    ) -> Result<MessageId, TransportError> {
         let (chat_id, topic) = Self::chat_of(session)
             .ok_or_else(|| TransportError(format!("not a telegram session id: {}", session.0)))?;
-        let mut req = build_present_request(chat_id, topic, surface, actions);
+        let mut req = build_present_request_with_callback_data(
+            chat_id,
+            topic,
+            surface,
+            actions,
+            callback_data,
+        )
+        .map_err(TransportError)?;
         if req.text.chars().count() > TELEGRAM_TEXT_LIMIT {
             return Err(TransportError(format!(
                 "interactive Telegram surface is {} characters; maximum is {TELEGRAM_TEXT_LIMIT}",
@@ -521,6 +553,27 @@ impl<T: Transport> TelegramFrontend<T> {
     ) {
         if let Err(e) = self.present_result_with(session, surface, actions, extra_buttons) {
             self.last_send_error = Some(e);
+        }
+    }
+
+    /// Infallible game-host form of
+    /// [`present_result_with_callback_data`](Self::present_result_with_callback_data).
+    pub fn present_with_callback_data(
+        &mut self,
+        session: &SessionId,
+        surface: &Surface,
+        actions: &[Action],
+        callback_data: &[String],
+        extra_buttons: &[InlineKeyboardButton],
+    ) {
+        if let Err(error) = self.present_result_with_callback_data(
+            session,
+            surface,
+            actions,
+            callback_data,
+            extra_buttons,
+        ) {
+            self.last_send_error = Some(error);
         }
     }
 

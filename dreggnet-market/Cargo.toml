@@ -125,6 +125,10 @@ rand = "0.8"
 dregg-sdk = { path = "../sdk" }
 dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 procgen-dregg = { path = "../procgen-dregg" }
+# Full-apex game consequence: the market's strict private proof result is
+# consumed through the incarnation-bound common game spine. Dev-only avoids a
+# production cycle (the catalog already registers the market).
+dreggnet-catalog = { path = "../dreggnet-catalog", features = ["private-fhegg-game-consequence"] }
 
 [lints]
 workspace = true

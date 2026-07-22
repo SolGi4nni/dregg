@@ -1156,59 +1156,90 @@ pub fn describe_verify(key: &str, report: Option<&VerifyReport>) -> String {
 /// boot-resumes every persisted session by REPLAY — the identical committed state, or a
 /// fail-closed refusal for a tampered log (logged; the file is kept as evidence). An unopenable
 /// dir degrades to the in-memory host with a loud warning (the bot still boots; sessions are
-/// ephemeral) — the same posture as `dreggnet-web`'s `demo_host_over`. `None` → in-memory.
+/// ephemeral) — the same posture as `dreggnet-web`'s `demo_host_over`. The shipped bot uses
+/// [`try_durable_telegram_host`] instead, because durable game state and durable routing epochs
+/// must either boot together or not boot at all. `None` → in-memory.
 pub fn durable_telegram_host(dir: Option<PathBuf>, council_members: Vec<[u8; 32]>) -> OfferingHost {
-    let mut host = telegram_default_host(council_members);
+    let host = telegram_default_host(council_members);
     let Some(dir) = dir else {
         return host;
     };
-    match FileResumeStore::open(&dir) {
-        Ok(store) => {
-            host = host.with_resume_store(Box::new(store));
-            let results = host.resume_all();
-            let resumed = results.iter().filter(|(_, r)| r.is_ok()).count();
-            let refused = results.len() - resumed;
+    match attach_durable_telegram_store(host, &dir) {
+        Ok(host) => host,
+        Err((host, error)) => {
             eprintln!(
-                "session store {} attached: {resumed} session(s) resumed by move-log replay, \
-                 {refused} refused",
-                dir.display()
-            );
-            for (log, outcome) in &results {
-                if let Err(e) = outcome {
-                    eprintln!(
-                        "  REFUSED (fail-closed; file kept): {}/{}: {e}",
-                        log.key, log.id.0
-                    );
-                }
-                // The boot-resume decision, durably (design §2.2: today stderr-only) — one
-                // `resume` event per persisted log, routed (resumed) or refused (fail-closed).
-                let ev = AuditEvent::new(
-                    "telegram",
-                    Actor::system("boot-resume"),
-                    Surface::Resume,
-                    Input::new("resume", json!({ "store": dir.display().to_string() })),
-                )
-                .in_session(Some(log.key.clone()), Some(log.id.0.clone()));
-                audit::log().emit(match outcome {
-                    Ok(_) => ev.decided("routed", ""),
-                    Err(e) => {
-                        ev.decided("refused", "resume_failed")
-                            .with_outcome(AuditOutcome::Error {
-                                what: e.to_string(),
-                            })
-                    }
-                });
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "WARN: cannot open session dir {}: {e} — sessions stay IN-MEMORY (a restart \
+                "WARN: {error} — sessions stay IN-MEMORY (a restart \
                  drops them)",
-                dir.display()
             );
+            host
         }
     }
-    host
+}
+
+/// Build the shared catalog over a required durable move-log store.
+///
+/// Unlike [`durable_telegram_host`], an unopenable store is returned as a boot
+/// error. The production binary uses this constructor so it can never retain a
+/// durable game-incarnation ledger while silently forgetting the concrete game
+/// state that incarnation names.
+pub fn try_durable_telegram_host(
+    dir: PathBuf,
+    council_members: Vec<[u8; 32]>,
+) -> Result<OfferingHost, String> {
+    attach_durable_telegram_store(telegram_default_host(council_members), &dir)
+        .map_err(|(_, error)| error)
+}
+
+fn attach_durable_telegram_store(
+    mut host: OfferingHost,
+    dir: &std::path::Path,
+) -> Result<OfferingHost, (OfferingHost, String)> {
+    let store = match FileResumeStore::open(dir) {
+        Ok(store) => store,
+        Err(error) => {
+            return Err((
+                host,
+                format!("cannot open session dir {}: {error}", dir.display()),
+            ));
+        }
+    };
+    host = host.with_resume_store(Box::new(store));
+    let results = host.resume_all();
+    let resumed = results.iter().filter(|(_, result)| result.is_ok()).count();
+    let refused = results.len() - resumed;
+    eprintln!(
+        "session store {} attached: {resumed} session(s) resumed by move-log replay, \
+         {refused} refused",
+        dir.display()
+    );
+    for (log, outcome) in &results {
+        if let Err(error) = outcome {
+            eprintln!(
+                "  REFUSED (fail-closed; file kept): {}/{}: {error}",
+                log.key, log.id.0
+            );
+        }
+        // The boot-resume decision, durably (design §2.2: today stderr-only) — one
+        // `resume` event per persisted log, routed (resumed) or refused (fail-closed).
+        let event = AuditEvent::new(
+            "telegram",
+            Actor::system("boot-resume"),
+            Surface::Resume,
+            Input::new("resume", json!({ "store": dir.display().to_string() })),
+        )
+        .in_session(Some(log.key.clone()), Some(log.id.0.clone()));
+        audit::log().emit(match outcome {
+            Ok(_) => event.decided("routed", ""),
+            Err(error) => {
+                event
+                    .decided("refused", "resume_failed")
+                    .with_outcome(AuditOutcome::Error {
+                        what: error.to_string(),
+                    })
+            }
+        });
+    }
+    Ok(host)
 }
 
 /// **The per-identity RPG worlds registry over a durable session store** — the per-player half of

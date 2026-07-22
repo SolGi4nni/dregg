@@ -58,6 +58,7 @@ deos-view = { path = "../deos-view", default-features = false, features = ["tele
 dregg-sdk = { path = "../sdk", default-features = false }
 # The seed derivation (BLAKE3 derive_key) + the callback-data hash-free identity path.
 blake3 = "1"
+base64 = { workspace = true }
 # Wipe the transient seed copy handed to `from_key_bytes` (as the discord cclerk does).
 zeroize = { workspace = true }
 # Hex-encode the derived Ed25519 public key (the `DreggIdentity` handle), matching the
@@ -95,6 +96,7 @@ dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 # `MockTransport` and compares its key set against the LIVE web catalog (`demo_host`), not a
 # hand-copied list, so web↔telegram drift in EITHER direction fails the test.
 dreggnet-web = { path = "../dreggnet-web" }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

@@ -657,6 +657,18 @@ pub enum GameResult {
     },
 }
 
+/// One bound ordinary-turn execution, preserving both the frontend's original
+/// substrate [`Outcome`] and the game-spine routing result.
+///
+/// Frontend adapters with an established `Outcome`-based API can therefore
+/// migrate onto exact bound execution without executing twice or discarding
+/// the domain-bound routing receipt.
+#[derive(Clone, Debug)]
+pub struct BoundGameTurnExecution {
+    pub outcome: Outcome,
+    pub result: GameResult,
+}
+
 impl GameResult {
     pub fn receipt(&self) -> Option<&GameReceipt> {
         match self {
@@ -697,6 +709,21 @@ pub fn execute_bound_asserted_game_command(
     execute_asserted_game_command_inner(host, session, command, actor)
 }
 
+/// Execute one adapter-attributed ordinary turn under an exact live authority
+/// epoch while preserving the original substrate outcome for frontend APIs.
+pub fn execute_bound_asserted_game_turn(
+    host: &mut OfferingHost,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+    session: &GameSessionRef,
+    reference: GameActionRef,
+    action: Action,
+    actor: DreggIdentity,
+) -> Result<BoundGameTurnExecution, GameSpineError> {
+    require_live_binding(session, host_incarnation, live_generation)?;
+    execute_asserted_game_turn_inner(host, session, reference, action, actor)
+}
+
 fn execute_asserted_game_command_inner(
     host: &mut OfferingHost,
     session: &GameSessionRef,
@@ -712,49 +739,7 @@ fn execute_asserted_game_command_inner(
 
     match command {
         GameCommand::Turn { reference, action } => {
-            check_expected_head(host, session, &reference.expected_pre_head)?;
-            if !reference.matches(&action) {
-                return Err(GameSpineError::InvalidReference(
-                    "action payload does not match its exact {turn, arg, text} reference"
-                        .to_string(),
-                ));
-            }
-            let outcome = host
-                .advance(
-                    session.offering(),
-                    session.session_id(),
-                    action,
-                    actor.clone(),
-                )
-                .ok_or_else(|| GameSpineError::UnknownSession(session.clone()))?;
-            Ok(match outcome {
-                Outcome::Landed { receipt, ended } => {
-                    let attribution = Attribution::from(actor);
-                    let executor_agent = *receipt.agent.as_bytes();
-                    let inner_receipt_id = receipt.receipt_hash();
-                    let bound_receipt_id = turn_routing_receipt_id(
-                        &reference,
-                        &attribution,
-                        executor_agent,
-                        inner_receipt_id,
-                        receipt.previous_receipt_hash,
-                        ended,
-                    );
-                    GameResult::Landed(GameReceipt::Turn {
-                        action: reference,
-                        attribution,
-                        executor_agent,
-                        bound_receipt_id,
-                        inner_receipt_id,
-                        previous_receipt_id: receipt.previous_receipt_hash,
-                        ended,
-                    })
-                }
-                Outcome::Refused(reason) => GameResult::Refused {
-                    session: session.clone(),
-                    reason,
-                },
-            })
+            Ok(execute_asserted_game_turn_inner(host, session, reference, action, actor)?.result)
         }
         GameCommand::Operation { reference, payload } => {
             check_expected_head(host, session, &reference.expected_pre_head)?;
@@ -849,6 +834,64 @@ fn execute_asserted_game_command_inner(
             }
         }
     }
+}
+
+fn execute_asserted_game_turn_inner(
+    host: &mut OfferingHost,
+    session: &GameSessionRef,
+    reference: GameActionRef,
+    action: Action,
+    actor: DreggIdentity,
+) -> Result<BoundGameTurnExecution, GameSpineError> {
+    if &reference.session != session {
+        return Err(GameSpineError::AddressMismatch {
+            expected: session.clone(),
+            presented: reference.session.clone(),
+        });
+    }
+    check_expected_head(host, session, &reference.expected_pre_head)?;
+    if !reference.matches(&action) {
+        return Err(GameSpineError::InvalidReference(
+            "action payload does not match its exact {turn, arg, text} reference".to_string(),
+        ));
+    }
+    let outcome = host
+        .advance(
+            session.offering(),
+            session.session_id(),
+            action,
+            actor.clone(),
+        )
+        .ok_or_else(|| GameSpineError::UnknownSession(session.clone()))?;
+    let result = match &outcome {
+        Outcome::Landed { receipt, ended } => {
+            let attribution = Attribution::from(actor);
+            let executor_agent = *receipt.agent.as_bytes();
+            let inner_receipt_id = receipt.receipt_hash();
+            let bound_receipt_id = turn_routing_receipt_id(
+                &reference,
+                &attribution,
+                executor_agent,
+                inner_receipt_id,
+                receipt.previous_receipt_hash,
+                *ended,
+            );
+            GameResult::Landed(GameReceipt::Turn {
+                action: reference,
+                attribution,
+                executor_agent,
+                bound_receipt_id,
+                inner_receipt_id,
+                previous_receipt_id: receipt.previous_receipt_hash,
+                ended: *ended,
+            })
+        }
+        Outcome::Refused(reason) => GameResult::Refused {
+            session: session.clone(),
+            reason: reason.clone(),
+        },
+    };
+    Ok(BoundGameTurnExecution { outcome, result })
 }
 
 /// Execute one cryptographically signed ordinary turn at its observed head.

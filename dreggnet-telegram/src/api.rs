@@ -140,32 +140,71 @@ pub fn build_present_request(
     surface: &Surface,
     actions: &[Action],
 ) -> SendMessageRequest {
+    let callback_data: Vec<String> = actions
+        .iter()
+        .map(|action| encode_callback(&action.turn, action.arg))
+        .collect();
+    build_present_request_with_callback_data(
+        chat_id,
+        message_thread_id,
+        surface,
+        actions,
+        &callback_data,
+    )
+    .expect("one callback was derived for every action")
+}
+
+/// Build an interactive surface with caller-supplied callback data for each
+/// action. This is used by the multi-offering game host to carry an opaque
+/// digest of the complete bound action reference; generic frontend callers
+/// continue to use [`build_present_request`]'s `{turn, arg}` wire.
+pub fn build_present_request_with_callback_data(
+    chat_id: i64,
+    message_thread_id: Option<i64>,
+    surface: &Surface,
+    actions: &[Action],
+    callback_data: &[String],
+) -> Result<SendMessageRequest, String> {
+    if actions.len() != callback_data.len() {
+        return Err(format!(
+            "callback/action count mismatch: {} callbacks for {} actions",
+            callback_data.len(),
+            actions.len()
+        ));
+    }
+    if let Some(data) = callback_data
+        .iter()
+        .find(|data| data.is_empty() || data.len() > 64)
+    {
+        return Err(format!(
+            "Telegram callback_data must contain 1..=64 bytes, found {}",
+            data.len()
+        ));
+    }
     let text = render_surface_text(surface);
     let reply_markup = if actions.is_empty() {
         None
     } else {
         let rows = actions
             .iter()
-            .map(|a| {
+            .zip(callback_data)
+            .map(|(a, callback_data)| {
                 let label = if a.enabled {
                     a.label.clone()
                 } else {
                     format!("{LOCK_GLYPH}{}", a.label)
                 };
-                vec![InlineKeyboardButton::callback(
-                    label,
-                    encode_callback(&a.turn, a.arg),
-                )]
+                vec![InlineKeyboardButton::callback(label, callback_data)]
             })
             .collect();
         Some(InlineKeyboardMarkup {
             inline_keyboard: rows,
         })
     };
-    SendMessageRequest {
+    Ok(SendMessageRequest {
         chat_id,
         text,
         reply_markup,
         message_thread_id,
-    }
+    })
 }

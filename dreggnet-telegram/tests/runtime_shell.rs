@@ -12,14 +12,16 @@
 
 use std::path::PathBuf;
 
-use dreggnet_telegram::api::encode_callback;
+use dreggnet_catalog::{GameEpochLedger, PlayerWorlds};
+use dreggnet_telegram::api::{LOCK_GLYPH, encode_callback};
 use dreggnet_telegram::host::{HostPress, TelegramHost};
 use dreggnet_telegram::runtime::{
     BotEvent, HELP_TEXT, durable_telegram_host, parse_updates, route_callback, route_text,
+    try_durable_telegram_host,
 };
 use dreggnet_telegram::transport::MockTransport;
 use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
-use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON};
+use dungeon_on_dregg::KP_PRESS_ON;
 use serde_json::json;
 
 /// A deterministic bot secret (a real deploy loads/derives 32 bytes in the bin).
@@ -46,6 +48,46 @@ fn scratch_dir(tag: &str) -> PathBuf {
     dir
 }
 
+fn current_game_callback(host: &TelegramHost<MockTransport>) -> String {
+    host.frontend()
+        .transport()
+        .last()
+        .and_then(|request| request.reply_markup.as_ref())
+        .into_iter()
+        .flat_map(|markup| markup.inline_keyboard.iter().flatten())
+        .find(|button| {
+            button.callback_data.starts_with("g.") && !button.text.starts_with(LOCK_GLYPH)
+        })
+        .map(|button| button.callback_data.as_str())
+        .expect("the live game surface carries a bound callback")
+        .to_string()
+}
+
+#[test]
+fn production_durable_host_refuses_an_unopenable_store() {
+    let parent = scratch_dir("strict-durable-store");
+    std::fs::create_dir_all(&parent).unwrap();
+    let file = parent.join("not-a-directory");
+    std::fs::write(&file, b"occupied").unwrap();
+
+    let epochs = GameEpochLedger::open(parent.join("epochs")).unwrap();
+    let attempted = file.clone();
+    let error = match TelegramHost::try_with_hosts_and_game_epochs(
+        BOT_SECRET,
+        MockTransport::new(),
+        move || try_durable_telegram_host(attempted, vec![]),
+        PlayerWorlds::new,
+        epochs,
+    ) {
+        Ok(_) => panic!("a regular file cannot be opened as the durable store directory"),
+        Err(error) => error,
+    };
+    assert!(error.contains("cannot open session dir"), "{error}");
+    assert!(error.contains(&file.display().to_string()), "{error}");
+
+    let _ = std::fs::remove_dir_all(parent);
+}
+
 /// A REAL `getUpdates` result body (the exact JSON shape Telegram sends for an inline-button
 /// press) decodes to the typed callback event, routes through the ONE router, lands ONE real
 /// substrate turn, and the surface is re-presented for the next press.
@@ -66,7 +108,7 @@ fn a_simulated_callback_update_drives_a_real_advance_and_represents() {
         .0;
 
     // The wire shape: a callback_query update, its `data` exactly a presented button's payload.
-    let data = encode_callback("choose", KP_PRESS_ON as i64);
+    let data = current_game_callback(&h);
     let result = json!([{
         "update_id": 700,
         "callback_query": {
@@ -176,15 +218,22 @@ fn text_commands_route_through_the_shell() {
 #[test]
 fn a_restart_resumes_a_persisted_session_and_a_stale_press_still_lands() {
     let dir = scratch_dir("restart");
+    let epoch_dir = dir.join("epochs");
+    let session_dir = dir.join("sessions");
     let chat: i64 = 7;
     let sid = TelegramFrontend::<MockTransport>::session_id(chat, None);
 
     // ── Process 1: open the dungeon, land one real turn, then "crash" (drop). ──
-    {
-        let d = dir.clone();
-        let mut h1 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
-            durable_telegram_host(Some(d), vec![])
-        });
+    let captured = {
+        let d = session_dir.clone();
+        let epochs = GameEpochLedger::open(&epoch_dir).unwrap();
+        let mut h1 = TelegramHost::with_hosts_and_game_epochs(
+            BOT_SECRET,
+            MockTransport::new(),
+            move || durable_telegram_host(Some(d), vec![]),
+            PlayerWorlds::new,
+            epochs,
+        );
         h1.open("dungeon", chat, None, ALICE).expect("opens");
         match h1.press(CallbackQuery::press(
             chat,
@@ -196,26 +245,29 @@ fn a_restart_resumes_a_persisted_session_and_a_stale_press_still_lands() {
             }
             other => panic!("expected an advance, got {other:?}"),
         }
-    }
+        current_game_callback(&h1)
+    };
     assert!(
-        std::fs::read_dir(&dir)
+        std::fs::read_dir(&session_dir)
             .map(|d| d.count() > 0)
             .unwrap_or(false),
         "the move-log is durably on disk"
     );
 
     // ── Process 2: a FRESH host over the same dir (the restart). ──
-    let d = dir.clone();
-    let mut h2 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
-        durable_telegram_host(Some(d), vec![])
-    });
+    let d = session_dir.clone();
+    let epochs = GameEpochLedger::open(&epoch_dir).unwrap();
+    let mut h2 = TelegramHost::with_hosts_and_game_epochs(
+        BOT_SECRET,
+        MockTransport::new(),
+        move || durable_telegram_host(Some(d), vec![]),
+        PlayerWorlds::new,
+        epochs,
+    );
 
     // A stale button press from BEFORE the restart: this process never presented anything, so
     // the raw router answers NoSession — route_callback auto-resumes the chat and retries.
-    let ack = route_callback(
-        &mut h2,
-        CallbackQuery::press(chat, ALICE, encode_callback("choose", KP_CLAIM_RED as i64)),
-    );
+    let ack = route_callback(&mut h2, CallbackQuery::press(chat, ALICE, captured));
     assert!(
         ack.contains("landed"),
         "the stale press auto-resumed the chat and landed: {ack}"
@@ -254,14 +306,21 @@ fn a_restart_resumes_a_persisted_session_and_a_stale_press_still_lands() {
 #[test]
 fn the_descent_campaign_is_playable_and_restart_safe_on_telegram() {
     let dir = scratch_dir("descent-campaign-restart");
+    let epoch_dir = dir.join("epochs");
+    let session_dir = dir.join("sessions");
     let chat: i64 = 73;
     let sid = TelegramFrontend::<MockTransport>::session_id(chat, None);
 
-    {
-        let d = dir.clone();
-        let mut h1 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
-            durable_telegram_host(Some(d), vec![])
-        });
+    let captured = {
+        let d = session_dir.clone();
+        let epochs = GameEpochLedger::open(&epoch_dir).unwrap();
+        let mut h1 = TelegramHost::with_hosts_and_game_epochs(
+            BOT_SECRET,
+            MockTransport::new(),
+            move || durable_telegram_host(Some(d), vec![]),
+            PlayerWorlds::new,
+            epochs,
+        );
         h1.open("descent-campaign", chat, None, ALICE)
             .expect("the campaign opens from Telegram's shared catalog");
         match h1.press(CallbackQuery::press(
@@ -280,16 +339,19 @@ fn the_descent_campaign_is_playable_and_restart_safe_on_telegram() {
             .expect("campaign is live");
         assert!(report.verified, "{}", report.detail);
         assert_eq!(report.turns, 2);
-    }
+        current_game_callback(&h1)
+    };
 
-    let d = dir.clone();
-    let mut h2 = TelegramHost::with_host(BOT_SECRET, MockTransport::new(), move || {
-        durable_telegram_host(Some(d), vec![])
-    });
-    let ack = route_callback(
-        &mut h2,
-        CallbackQuery::press(chat, ALICE, encode_callback("smite", 0)),
+    let d = session_dir.clone();
+    let epochs = GameEpochLedger::open(&epoch_dir).unwrap();
+    let mut h2 = TelegramHost::with_hosts_and_game_epochs(
+        BOT_SECRET,
+        MockTransport::new(),
+        move || durable_telegram_host(Some(d), vec![]),
+        PlayerWorlds::new,
+        epochs,
     );
+    let ack = route_callback(&mut h2, CallbackQuery::press(chat, ALICE, captured));
     assert!(
         ack.contains("landed"),
         "the stale campaign press resumes and lands: {ack}"

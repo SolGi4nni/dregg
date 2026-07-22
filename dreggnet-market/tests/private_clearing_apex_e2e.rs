@@ -54,6 +54,12 @@ use dregg_sdk::{
     install_verified_mldsa_verify_core, install_verified_mlkem_decaps_core,
     install_verified_mlkem_encaps_core, install_verified_mlkem_keygen_core,
 };
+use dreggnet_catalog::{
+    GameActionRef, GameAffordance, GameAudience, GameCommand, GameEpochLedger, GameHostIncarnation,
+    GameResult, GameSessionRef, PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
+    PrivateFheggGameMechanic, PrivateFheggWinnerRoute, execute_bound_asserted_game_command,
+    inspect_bound_game_session,
+};
 use dreggnet_market::fhegg_settlement::FheggSettlementError;
 use dreggnet_market::fhegg_transport::{
     FHEGG_SETTLEMENT_MEDIA_TYPE, FHEGG_SETTLEMENT_OPERATION, FheggSettlementBundle,
@@ -68,12 +74,15 @@ use dreggnet_market::private_bfv_attested_clearing::{
     PrivateBfvQuorumSecurity,
 };
 use dreggnet_market::{DarkBazaarOffering, DarkBazaarSession, TURN_LIST};
+use dreggnet_offerings::dungeon::{DungeonOffering, PRIVATE_RAID_OPERATION};
 use dreggnet_offerings::{
     Action, DreggIdentity, FileResumeStore, Offering, OfferingHost, Outcome, SessionConfig,
-    SessionId, SessionResumeStore,
+    SessionId, SessionResumeStore, TurnSigner,
 };
 use dreggnet_trade::{LegSpec, TradeWorld};
 use dungeon_on_dregg::loot::{LootVault, roll_drop};
+use dungeon_on_dregg::private_raid::{RaidRole, prove_private_assignment};
+use dungeon_on_dregg::{KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES, KP_TRADE_BLOWS};
 use ed25519_dalek::SigningKey;
 use fhegg_fhe::attestation::{
     AttestationError, AttestedClearingReceipt, BfvPublicIdentity, ComputationIntegrityEvidence,
@@ -246,6 +255,61 @@ fn install_verified_turn_pq_runtime() {
 
 fn actor(name: &str) -> DreggIdentity {
     DreggIdentity(name.to_owned())
+}
+
+fn inspect_raid_game(
+    host: &OfferingHost,
+    epochs: &GameEpochLedger,
+    session: &GameSessionRef,
+) -> dreggnet_catalog::GameSessionView {
+    let generation = epochs
+        .current_generation(session.offering(), session.session_id())
+        .expect("private apex reads its independently held live generation");
+    inspect_bound_game_session(
+        host,
+        epochs.host_incarnation(),
+        generation,
+        session.clone(),
+        &GameAudience::Shared,
+    )
+    .expect("private apex inspects its bound dungeon session")
+}
+
+fn raid_game_action(
+    view: &dreggnet_catalog::GameSessionView,
+    choice: usize,
+) -> (GameActionRef, Action) {
+    view.affordances
+        .iter()
+        .find_map(|affordance| match affordance {
+            GameAffordance::Turn {
+                reference, action, ..
+            } if i64::try_from(choice).ok() == Some(action.arg) => {
+                Some((reference.clone(), action.clone()))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("private apex dungeon omitted choice {choice}"))
+}
+
+fn raid_assignment_command(
+    view: &dreggnet_catalog::GameSessionView,
+    payload: Vec<u8>,
+) -> GameCommand {
+    view.affordances
+        .iter()
+        .find_map(|affordance| match affordance {
+            GameAffordance::Operation { reference, .. }
+                if reference.operation == PRIVATE_RAID_OPERATION =>
+            {
+                Some(GameCommand::Operation {
+                    reference: reference.clone(),
+                    payload: payload.clone(),
+                })
+            }
+            _ => None,
+        })
+        .expect("private apex dungeon advertises the hiding raid operation")
 }
 
 fn collective_key(params: &BfvParams) -> (KeygenSession, Vec<ThresholdParty>, CollectivePublicKey) {
@@ -803,10 +867,13 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     )
     .expect("source- and invocation-separated crossing preprocessing");
     let preprocessing_authority = SigningKey::from_bytes(&[0x84; 32]);
+    let preprocessing_authority_identity =
+        NativePqTransportIdentity::generate(preprocessing_authority.clone());
     let certified_batch = certified_dealer_triples(
         &base_mpc_session,
         &mut StdRng::from_seed(preprocessing_seed),
         &preprocessing_authority,
+        preprocessing_authority_identity.ml_dsa_signing_key(),
     )
     .expect("preprocessing authority audits and signs every global Beaver relation");
     let (mpc_session, preprocessing_certificate, certified_triples) = certified_batch.into_parts();
@@ -817,6 +884,14 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         preprocessing_certificate.authority_key(),
         preprocessing_authority.verifying_key().to_bytes()
     );
+    assert_eq!(
+        preprocessing_certificate.ml_dsa_authority_key(),
+        preprocessing_authority_identity.public_identity().ml_dsa()
+    );
+    let required_preprocessing = mpc_session
+        .preprocessing_binding()
+        .expect("certified session exposes its exact hybrid authority and batch")
+        .clone();
     let mut preprocessing_commitment =
         blake3::Hasher::new_derive_key("dreggnet-market/certified-party-mpc-preprocessing/v1");
     preprocessing_commitment.update(&mpc_session.preprocessing_binding_bytes());
@@ -913,6 +988,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             public_key.clone(),
             private_ciphertexts.clone(),
             detached_source,
+            required_preprocessing.clone(),
             required_tail_inputs.clone(),
         ),
         Err(PrivateBfvAttestedVerifierConfigError::InvalidSourceInputs)
@@ -929,6 +1005,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             public_key.clone(),
             private_ciphertexts.clone(),
             duplicated_source,
+            required_preprocessing.clone(),
             required_tail_inputs.clone(),
         ),
         Err(PrivateBfvAttestedVerifierConfigError::InvalidSourceInputs)
@@ -943,6 +1020,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             public_key.clone(),
             private_ciphertexts.clone(),
             live_inputs.clone(),
+            required_preprocessing.clone(),
             required_tail_inputs.clone(),
         )
         .expect("receipt-specific relying-party verifier");
@@ -960,13 +1038,47 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             public_key.clone(),
             private_ciphertexts.clone(),
             live_inputs.clone(),
+            required_preprocessing.clone(),
             substituted_tail,
         )
         .expect("well-shaped substituted preprocessing context");
     assert_ne!(
         assembly_verifier.verifier_id(),
         substituted_preprocessing_verifier.verifier_id(),
-        "preprocessing authority/batch substitution must change the hosted verifier identity"
+        "preprocessing tail substitution must change the hosted verifier identity"
+    );
+    let mut substituted_preprocessing_seed = preprocessing_seed;
+    substituted_preprocessing_seed[0] ^= 1;
+    let substituted_preprocessing_batch = certified_dealer_triples(
+        &base_mpc_session,
+        &mut StdRng::from_seed(substituted_preprocessing_seed),
+        &preprocessing_authority,
+        preprocessing_authority_identity.ml_dsa_signing_key(),
+    )
+    .expect("alternate valid batch for hostile verifier-pin test");
+    let substituted_preprocessing = substituted_preprocessing_batch
+        .session()
+        .preprocessing_binding()
+        .expect("alternate batch is certified")
+        .clone();
+    let substituted_batch_verifier =
+        PrivateBfvAttestedClearingVerifier::new_source_bound_native_post_quantum(
+            quorum.clone(),
+            policy.clone(),
+            claim_session_nonce,
+            statement,
+            params.clone(),
+            public_key.clone(),
+            private_ciphertexts.clone(),
+            live_inputs.clone(),
+            substituted_preprocessing,
+            required_tail_inputs.clone(),
+        )
+        .expect("well-shaped alternate certified preprocessing batch");
+    assert_ne!(
+        assembly_verifier.verifier_id(),
+        substituted_batch_verifier.verifier_id(),
+        "an alternate valid batch must change the independently pinned verifier identity"
     );
     let hosted_config = PrivateBfvHostedVerifierConfig::new_native_post_quantum(
         assembly_verifier.verifier_id(),
@@ -980,6 +1092,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         public_key.clone(),
         private_ciphertexts.clone(),
         live_inputs.clone(),
+        required_preprocessing.clone(),
         required_tail_inputs.clone(),
     );
     let signatures = committee_keys
@@ -1241,6 +1354,233 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     assert!(authorized.settlement.audit_digest_verifies());
     assert!(restarted_market.is_settled());
     assert!(restarted_market.clearing().expect("real clear").conserved());
+
+    // The same verifier-minted private authority now drives an actual game
+    // mechanic through the common, incarnation-bound game spine. A separate
+    // HidingFri receipt privately selects the raid roles; its matrix stays with
+    // that producer. The fhEgg adapter receives only the full public authority,
+    // one public role-selected affordance, and the Bazaar winner's signed turn.
+    timing.next("private-fhegg-signed-raid-consequence");
+    let raid_store = FileResumeStore::open(scratch.0.join("private-fhegg-raid"))
+        .expect("durable private fhEgg raid store");
+    let raid_epoch_path = scratch.0.join("private-fhegg-raid-epochs");
+    let raid_epochs =
+        GameEpochLedger::open(&raid_epoch_path).expect("durable private fhEgg epoch custody");
+    let raid_id = SessionId::new("private-fhegg-raid-mender");
+    let raid_incarnation = raid_epochs.host_incarnation();
+    let mut raid_host = OfferingHost::new().with_resume_store(Box::new(raid_store.clone()));
+    raid_host.register("dungeon", "The Warden's Keep", DungeonOffering::new());
+    raid_host
+        .open_session("dungeon", raid_id.clone(), SessionConfig::with_seed(31_337))
+        .expect("private fhEgg raid dungeon opens");
+    let raid_generation = raid_epochs
+        .bind_after_ensure("dungeon", &raid_id, true)
+        .expect("fresh raid receives a durable generation");
+    let raid_session = raid_epochs
+        .bound_session("dungeon", &raid_id)
+        .expect("epoch custody supplies the exact dungeon address");
+
+    for choice in [KP_TRADE_BLOWS, KP_PRESS_ON, KP_DESCEND] {
+        let view = inspect_raid_game(&raid_host, &raid_epochs, &raid_session);
+        let (reference, action) = raid_game_action(&view, choice);
+        let result = execute_bound_asserted_game_command(
+            &mut raid_host,
+            raid_incarnation,
+            raid_generation,
+            &raid_session,
+            GameCommand::Turn { reference, action },
+            actor("raid:pathfinder"),
+        )
+        .expect("ordinary route reaches the sanctum");
+        assert!(matches!(result, GameResult::Landed(_)));
+    }
+
+    let raid_scores = [[0, 3, 0, 0], [3, 0, 0, 0], [0, 0, 3, 0], [0, 0, 0, 3]];
+    let raid_assignment = prove_private_assignment(
+        ((31_337u64 % 2_013_265_920) + 1) as u32,
+        raid_scores,
+        [[true; 4]; 4],
+    )
+    .expect("independent private raid role assignment proves");
+    let mender_seat = raid_assignment
+        .statement()
+        .roles
+        .iter()
+        .position(|role| *role == RaidRole::Mender as u8)
+        .expect("private role proof publishes one exact Mender");
+    let mender_choice = KP_PRIVATE_RAID_MENDER_CHOICES[mender_seat];
+    let view = inspect_raid_game(&raid_host, &raid_epochs, &raid_session);
+    let raid_operation = raid_assignment_command(
+        &view,
+        raid_assignment
+            .to_postcard()
+            .expect("public hiding-proof carrier"),
+    );
+    let proof_applied = execute_bound_asserted_game_command(
+        &mut raid_host,
+        raid_incarnation,
+        raid_generation,
+        &raid_session,
+        raid_operation,
+        actor("raid:proof-uploader"),
+    )
+    .expect("common spine carries the independently verified assignment");
+    assert!(matches!(proof_applied, GameResult::Landed(_)));
+
+    let winner_signer = TurnSigner::from_seed([0x82; 32]);
+    let winner_route = PrivateFheggWinnerRoute::new(actor(WINNER), winner_signer.pubkey_hex())
+        .expect("deployment pins Bazaar winner to the game signing key");
+    let view = inspect_raid_game(&raid_host, &raid_epochs, &raid_session);
+    let (mender_reference, mender_action) = raid_game_action(&view, mender_choice);
+    let mut game_gate = PrivateFheggGameConsequenceGate::new(
+        &authorized,
+        loot.asset_id.0,
+        winner_route.clone(),
+        PrivateFheggGameMechanic::DungeonRaidMender,
+        &raid_epochs,
+        mender_reference.clone(),
+        mender_action.clone(),
+    )
+    .expect("full strict private authority targets the proof-assigned Mender");
+
+    // Signer substitution is rejected before dispatch, so it neither changes
+    // HP nor consumes the private authorization.
+    let thief = TurnSigner::from_seed([0x83; 32]);
+    let stolen = game_gate
+        .execute_signed(
+            &mut raid_host,
+            thief.sign("dungeon", &raid_id, 0, mender_action.clone()),
+        )
+        .expect_err("a different game key cannot spend the Bazaar winner route");
+    assert_eq!(stolen, PrivateFheggGameConsequenceError::WrongGameSigner);
+    assert!(!game_gate.is_consumed());
+    assert!(format!("{:?}", raid_host.render("dungeon", &raid_id).unwrap().0).contains("HP 30"));
+
+    // The live epoch comes from independent durable custody. Rewrapping the
+    // same action under a replacement-host identity cannot instantiate the gate.
+    let wrong_incarnation = GameHostIncarnation::new([0x84; 32]).unwrap();
+    let wrong_session = GameSessionRef::bound(
+        "dungeon",
+        raid_id.clone(),
+        wrong_incarnation,
+        raid_generation,
+    )
+    .unwrap();
+    let wrong_reference = GameActionRef::new(
+        wrong_session,
+        &mender_action,
+        mender_reference.expected_pre_head.clone(),
+    );
+    let wrong_epoch = PrivateFheggGameConsequenceGate::new(
+        &authorized,
+        loot.asset_id.0,
+        winner_route.clone(),
+        PrivateFheggGameMechanic::DungeonRaidMender,
+        &raid_epochs,
+        wrong_reference,
+        mender_action.clone(),
+    )
+    .expect_err("cross-incarnation route substitution is refused");
+    assert_eq!(
+        wrong_epoch,
+        PrivateFheggGameConsequenceError::AuthorityEpochMismatch
+    );
+
+    let game_consequence = game_gate
+        .execute_signed(
+            &mut raid_host,
+            winner_signer.sign("dungeon", &raid_id, 0, mender_action.clone()),
+        )
+        .expect("the exact Bazaar winner spends the proof-assigned Mender once");
+    assert!(game_consequence.binding_verifies());
+    assert_eq!(game_consequence.market_winner, actor(WINNER));
+    assert_eq!(game_consequence.market_asset_id, loot.asset_id.0);
+    assert_eq!(
+        game_consequence.private_root,
+        authorized.authority.private_root()
+    );
+    assert_eq!(game_consequence.target_session, raid_session);
+    assert_eq!(
+        game_consequence.action_preimage_id,
+        mender_reference.routing_preimage_id()
+    );
+    assert!(raid_host.verify("dungeon", &raid_id).unwrap().verified);
+    assert!(format!("{:?}", raid_host.render("dungeon", &raid_id).unwrap().0).contains("HP 50"));
+
+    let replay = game_gate
+        .execute_signed(
+            &mut raid_host,
+            winner_signer.sign("dungeon", &raid_id, 1, mender_action.clone()),
+        )
+        .expect_err("the exact private authorization is consumed before a second dispatch");
+    assert_eq!(replay, PrivateFheggGameConsequenceError::AlreadyConsumed);
+
+    // The public consequence itself is hostile-substitution detecting, and a
+    // restarted gate can restore the exact authorization id before inspecting
+    // or dispatching any stale command.
+    let mut forged_game_consequence = game_consequence.clone();
+    forged_game_consequence.private_root[0] ^= 1;
+    assert!(!forged_game_consequence.binding_verifies());
+    let mut restored_gate = PrivateFheggGameConsequenceGate::new(
+        &authorized,
+        loot.asset_id.0,
+        winner_route,
+        PrivateFheggGameMechanic::DungeonRaidMender,
+        &raid_epochs,
+        mender_reference,
+        mender_action.clone(),
+    )
+    .expect("restart reconstructs the public-only consequence policy");
+    restored_gate
+        .restore_consumed(game_consequence.authorization_id)
+        .expect("durable sidecar restores only the exact authorization id");
+    assert_eq!(
+        restored_gate
+            .execute_signed(
+                &mut raid_host,
+                winner_signer.sign("dungeon", &raid_id, 1, mender_action),
+            )
+            .expect_err("restored authorization cannot dispatch"),
+        PrivateFheggGameConsequenceError::AlreadyConsumed
+    );
+
+    let raid_log = raid_store
+        .load("dungeon", &raid_id)
+        .expect("game timeline is durably journaled");
+    assert_eq!(raid_log.moves.len(), 4);
+    assert_eq!(raid_log.operations.len(), 1);
+    drop(raid_host);
+    let mut restarted_raid = OfferingHost::new().with_resume_store(Box::new(raid_store.clone()));
+    restarted_raid.register("dungeon", "The Warden's Keep", DungeonOffering::new());
+    let resumed = restarted_raid.resume_all();
+    assert_eq!(resumed.len(), 1);
+    assert!(
+        resumed[0].1.is_ok(),
+        "private raid restart failed: {resumed:?}"
+    );
+    let restarted_epochs =
+        GameEpochLedger::open(&raid_epoch_path).expect("epoch custody survives restart");
+    assert_eq!(restarted_epochs.host_incarnation(), raid_incarnation);
+    assert_eq!(
+        restarted_epochs
+            .bind_after_ensure("dungeon", &raid_id, false)
+            .expect("resumed game retains its active generation"),
+        raid_generation
+    );
+    assert_eq!(
+        restarted_epochs
+            .bound_session("dungeon", &raid_id)
+            .expect("restarted epoch resolves the same address"),
+        raid_session
+    );
+    assert!(restarted_raid.verify("dungeon", &raid_id).unwrap().verified);
+    assert!(
+        format!(
+            "{:?}",
+            restarted_raid.render("dungeon", &raid_id).unwrap().0
+        )
+        .contains("HP 50")
+    );
 
     // The proof-selected game outcome has an owned-world consequence in that
     // same commit: the exact Descent note and winning payment crossed sealed escrow.

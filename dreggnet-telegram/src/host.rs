@@ -59,11 +59,12 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
+use base64::Engine as _;
 use deos_view::ViewNode;
-use dreggnet_catalog::game_spine::GameAudience;
 use dreggnet_catalog::{
-    CatalogConfig, GameAffordance, GameSessionRef, PlayerWorlds, game_kind, inspect_game_session,
-    is_rpg_key,
+    CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameEpochLedger,
+    GameHostIncarnation, PlayerWorlds, execute_bound_asserted_game_turn, game_kind,
+    inspect_bound_game_session, is_rpg_key,
 };
 use dreggnet_offerings::{
     Action, Audience, BinaryOperationDescriptor, BinaryOperationReceipt, ChatBinaryOperationPolicy,
@@ -91,6 +92,15 @@ const PRIVATE_RAID_ASSIGN_OPERATION: &str = "party.private-raid-assignment.v1";
 
 fn shared_operation_allowed(key: &str, operation: &str) -> bool {
     key == PRIVATE_RAID_KEY && operation == PRIVATE_RAID_ASSIGN_OPERATION
+}
+
+/// Telegram callback wire for one exact bound game action. `g.` plus a full
+/// base64url-no-pad BLAKE3 digest is 45 bytes, below Telegram's 64-byte ceiling.
+fn bound_game_callback(reference: &GameActionRef) -> String {
+    format!(
+        "g.{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(reference.routing_preimage_id())
+    )
 }
 
 /// Select the only projection a Telegram message with this readership may
@@ -144,6 +154,10 @@ pub struct TelegramGameStatus {
     pub kind: String,
     /// Exact host session handle. The offering key remains a separate part of the address.
     pub session: SessionId,
+    /// Stable authority incarnation of the durable Telegram game host.
+    pub host_incarnation: GameHostIncarnation,
+    /// Monotone generation of this exact `(offering, session)` address.
+    pub session_generation: u64,
     /// Whether Telegram selected the single-reader projection.
     pub private_projection: bool,
     /// Whether the game declares that its private projection may reveal player-only state.
@@ -229,6 +243,38 @@ impl HostThread {
         HostThread { jobs }
     }
 
+    /// Fallible production form of [`spawn`](Self::spawn). The `!Send` host is
+    /// still constructed on its owning thread, while a one-shot startup
+    /// channel reports durable-store failure before the handle is published.
+    pub fn try_spawn(
+        build: impl FnOnce() -> Result<OfferingHost, String> + Send + 'static,
+    ) -> Result<HostThread, String> {
+        let (jobs, rx) = sync_channel::<HostJob>(64);
+        let (started, startup) = sync_channel::<Result<(), String>>(1);
+        std::thread::Builder::new()
+            .name("telegram-offering-host".to_string())
+            .spawn(move || {
+                let mut host = match build() {
+                    Ok(host) => host,
+                    Err(error) => {
+                        let _ = started.send(Err(error));
+                        return;
+                    }
+                };
+                if started.send(Ok(())).is_err() {
+                    return;
+                }
+                while let Ok(job) = rx.recv() {
+                    job(&mut host);
+                }
+            })
+            .map_err(|error| format!("could not spawn Telegram offering-host thread: {error}"))?;
+        startup
+            .recv()
+            .map_err(|_| "Telegram offering-host thread exited during startup".to_string())??;
+        Ok(HostThread { jobs })
+    }
+
     /// Run `f` against the host on the owning thread and hand back its (`Send`) result. Blocks the
     /// caller until the job returns — one short, CPU-bound offering turn.
     pub fn run<R: Send + 'static>(
@@ -297,6 +343,9 @@ impl PlayerHostThread {
 pub enum OpenError {
     /// The [`OfferingHost`] refused (unknown key, a policy gate, a failed deploy / resume).
     Host(HostError),
+    /// The durable game host could not establish or recover the exact
+    /// incarnation/session-generation authority for this address.
+    Epoch(String),
     /// **The chat is SHARED and the offering hides per-player state**
     /// ([`dreggnet_offerings::Offering::hidden_information`]). A group / forum-topic session paints
     /// ONE message that every member reads (a re-present EDITS it in place), so there is no way to
@@ -314,6 +363,7 @@ impl std::fmt::Display for OpenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OpenError::Host(e) => write!(f, "{e}"),
+            OpenError::Epoch(e) => write!(f, "{e}"),
             OpenError::HiddenInSharedChat { why, .. } => write!(f, "{why}"),
         }
     }
@@ -334,6 +384,7 @@ impl OpenError {
     pub fn human(&self, key: &str) -> String {
         match self {
             OpenError::Host(e) => format!("Cannot open {key}: {e}"),
+            OpenError::Epoch(e) => format!("Cannot bind {key} to durable game authority: {e}"),
             OpenError::HiddenInSharedChat { why, .. } => why.clone(),
         }
     }
@@ -409,6 +460,10 @@ pub struct TelegramHost<T: Transport> {
     /// ([`run_offering`](Self::run_offering)), keyed by their derived identity — two Telegram users
     /// therefore have ISOLATED inventories. The shared-layer form of the split Discord already runs.
     players: PlayerHostThread,
+    /// Deployment incarnation and monotone per-address game generations.
+    /// This is frontend routing authority; concrete game state remains owned
+    /// by `host`.
+    game_epochs: GameEpochLedger,
     /// The Telegram affordance-renderer over the transport (records what each chat last presented).
     frontend: TelegramFrontend<T>,
     /// **The chat's MOST RECENT surface's offering** (or [`MENU_KEY`] while browsing) — keyed by
@@ -455,6 +510,8 @@ impl<T: Transport> TelegramHost<T> {
             bot_secret,
             host,
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            game_epochs: GameEpochLedger::in_memory_random()
+                .expect("operating-system randomness is available for the game host incarnation"),
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
             armed: HashMap::new(),
@@ -484,15 +541,57 @@ impl<T: Transport> TelegramHost<T> {
         build: impl FnOnce() -> OfferingHost + Send + 'static,
         build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
     ) -> Self {
+        let game_epochs = GameEpochLedger::in_memory_random()
+            .expect("operating-system randomness is available for the game host incarnation");
+        Self::with_hosts_and_game_epochs(bot_secret, transport, build, build_players, game_epochs)
+    }
+
+    /// Build the production host pair with caller-supplied durable game epoch
+    /// custody. The ledger must be opened before the host threads are spawned;
+    /// corrupt or missing authority state is therefore a boot failure, not an
+    /// in-memory downgrade.
+    pub fn with_hosts_and_game_epochs(
+        bot_secret: [u8; 32],
+        transport: T,
+        build: impl FnOnce() -> OfferingHost + Send + 'static,
+        build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
+        game_epochs: GameEpochLedger,
+    ) -> Self {
         TelegramHost {
             bot_secret,
             host: HostThread::spawn(build),
             players: PlayerHostThread::spawn(build_players),
+            game_epochs,
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
         }
+    }
+
+    /// Fallible production constructor for a durable shared host.
+    ///
+    /// `OfferingHost` is intentionally `!Send`, so `build` executes on the
+    /// owning thread. Durable-store initialization is acknowledged over a
+    /// startup channel before this returns; an error cannot degrade to an
+    /// empty in-memory host hidden behind a live Telegram handle.
+    pub fn try_with_hosts_and_game_epochs(
+        bot_secret: [u8; 32],
+        transport: T,
+        build: impl FnOnce() -> Result<OfferingHost, String> + Send + 'static,
+        build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
+        game_epochs: GameEpochLedger,
+    ) -> Result<Self, String> {
+        Ok(TelegramHost {
+            bot_secret,
+            host: HostThread::try_spawn(build)?,
+            players: PlayerHostThread::spawn(build_players),
+            game_epochs,
+            frontend: TelegramFrontend::new(bot_secret, transport),
+            active: HashMap::new(),
+            armed: HashMap::new(),
+            webapp_base: None,
+        })
     }
 
     /// **Route a `(key, session)`-scoped host job to the host that OWNS it for `viewer`.** An
@@ -595,12 +694,26 @@ impl<T: Transport> TelegramHost<T> {
             // the label is bound into every underlying binary receipt.
             GameAudience::AssertedPrivate(actor.clone())
         };
-        let reference =
-            GameSessionRef::new(key.clone(), session.clone()).map_err(|error| error.to_string())?;
+        let reference = self
+            .game_epochs
+            .bound_session(&key, &session)
+            .map_err(|error| error.to_string())?;
+        let host_incarnation = self.game_epochs.host_incarnation();
+        let session_generation = self
+            .game_epochs
+            .current_generation(&key, &session)
+            .map_err(|error| error.to_string())?;
         let status = {
             let routed_key = key.clone();
             self.run_offering(&key, &actor, move |host| {
-                inspect_game_session(host, reference, &audience).map(|view| {
+                inspect_bound_game_session(
+                    host,
+                    host_incarnation,
+                    session_generation,
+                    reference,
+                    &audience,
+                )
+                .map(|view| {
                     let mut turn_affordances = 0usize;
                     let mut proof_operations = Vec::new();
                     for affordance in &view.affordances {
@@ -615,6 +728,8 @@ impl<T: Transport> TelegramHost<T> {
                         key: routed_key,
                         kind: view.kind.as_str().to_string(),
                         session: view.session.session_id().clone(),
+                        host_incarnation,
+                        session_generation,
                         private_projection: view.projection.private,
                         hidden_information: view.projection.hidden_information,
                         turn_affordances,
@@ -826,13 +941,28 @@ impl<T: Transport> TelegramHost<T> {
         key: &str,
         sid: &SessionId,
         viewer: &DreggIdentity,
-    ) -> Result<(), HostError> {
-        {
+    ) -> Result<(), OpenError> {
+        let newly_opened = {
             let k = key.to_string();
             let s = sid.clone();
             // RPG keys open in the VIEWER's own per-identity world (isolated inventory); the shared
             // tables (games + services) open on the ONE catalog host.
-            self.run_offering(key, viewer, move |h| h.ensure_open(&k, &s))?;
+            self.run_offering(key, viewer, move |h| h.ensure_open(&k, &s))?
+        };
+        if game_kind(key).is_some() {
+            if let Err(error) = self.game_epochs.bind_after_ensure(key, sid, newly_opened) {
+                // A fresh session without a persisted generation is not a
+                // routable game. Roll the host/store mutation back before
+                // reporting the epoch failure.
+                if newly_opened {
+                    let k = key.to_string();
+                    let s = sid.clone();
+                    self.run_offering(key, viewer, move |h| {
+                        h.close(&k, &s);
+                    });
+                }
+                return Err(OpenError::Epoch(error.to_string()));
+            }
         }
         // Spin THIS offering's surface slot, not a bare chat-level one — a stray chat-keyed slot
         // would shadow the offering's own surface for every caller that looks a chat up.
@@ -879,17 +1009,49 @@ impl<T: Transport> TelegramHost<T> {
         // (the affordance moved on), so drop it. Arming a text slot ([`Self::press`]) returns
         // BEFORE this, so the arm survives until the next advance / open / re-present.
         self.armed.remove(&surface_sid);
-        let projection = {
+        let projection = if game_kind(key).is_some() {
+            let Ok(reference) = self.game_epochs.bound_session(key, sid) else {
+                return;
+            };
+            let incarnation = self.game_epochs.host_incarnation();
+            let Ok(generation) = self.game_epochs.current_generation(key, sid) else {
+                return;
+            };
+            let game_audience = if shared {
+                GameAudience::Shared
+            } else {
+                GameAudience::AssertedPrivate(viewer.clone())
+            };
+            self.run_offering(key, viewer, move |host| {
+                inspect_bound_game_session(host, incarnation, generation, reference, &game_audience)
+                    .ok()
+                    .map(|view| {
+                        let mut callbacks = Vec::new();
+                        let mut operations = Vec::new();
+                        for affordance in &view.affordances {
+                            match affordance {
+                                GameAffordance::Turn { reference, .. } => {
+                                    callbacks.push(bound_game_callback(reference));
+                                }
+                                GameAffordance::Operation { descriptor, .. } => {
+                                    operations.push(descriptor.clone());
+                                }
+                            }
+                        }
+                        (view.projection, operations, Some(callbacks))
+                    })
+            })
+        } else {
             let k = key.to_string();
             let s = sid.clone();
             self.run_offering(key, viewer, move |h| {
                 h.project(&k, &s, &audience).map(|projection| {
                     let operations = h.binary_operations(&k, &s).unwrap_or_default();
-                    (projection, operations)
+                    (projection, operations, None)
                 })
             })
         };
-        if let Some((mut projection, operations)) = projection {
+        if let Some((mut projection, operations, callbacks)) = projection {
             let private_projection = projection.private;
             let hidden_information = projection.hidden_information;
             append_game_session_record(
@@ -919,12 +1081,22 @@ impl<T: Transport> TelegramHost<T> {
             // surplus guide messages instead of leaving stale upload instructions behind.
             self.frontend
                 .present_companion_pages(&surface_sid, OPERATION_GUIDE_SLOT, &guide_pages);
-            self.frontend.present_with(
-                &surface_sid,
-                &projection.surface,
-                &projection.actions,
-                &controls,
-            );
+            if let Some(callbacks) = callbacks {
+                self.frontend.present_with_callback_data(
+                    &surface_sid,
+                    &projection.surface,
+                    &projection.actions,
+                    &callbacks,
+                    &controls,
+                );
+            } else {
+                self.frontend.present_with(
+                    &surface_sid,
+                    &projection.surface,
+                    &projection.actions,
+                    &controls,
+                );
+            }
             self.active.insert(sid.clone(), key.to_string());
         }
     }
@@ -1028,6 +1200,37 @@ impl<T: Transport> TelegramHost<T> {
         }
     }
 
+    /// Inspect one Telegram-addressed game through the exact live authority
+    /// epoch. All game rendering and action collection share this path, so a
+    /// frontend cannot accidentally mint a callback from a legacy-unbound
+    /// projection.
+    fn bound_game_view(
+        &self,
+        key: &str,
+        session: &SessionId,
+        viewer: &DreggIdentity,
+        shared: bool,
+    ) -> Result<dreggnet_catalog::GameSessionView, String> {
+        let reference = self
+            .game_epochs
+            .bound_session(key, session)
+            .map_err(|error| error.to_string())?;
+        let incarnation = self.game_epochs.host_incarnation();
+        let generation = self
+            .game_epochs
+            .current_generation(key, session)
+            .map_err(|error| error.to_string())?;
+        let audience = if shared {
+            GameAudience::Shared
+        } else {
+            GameAudience::AssertedPrivate(viewer.clone())
+        };
+        self.run_offering(key, viewer, move |host| {
+            inspect_bound_game_session(host, incarnation, generation, reference, &audience)
+                .map_err(|error| error.to_string())
+        })
+    }
+
     /// **Route a button press.** Resolve WHICH of the chat's live surfaces the press addresses,
     /// decode its `callback_data` into `{turn, arg}`, check the turn is among the affordances that
     /// surface presented (offered), and:
@@ -1081,13 +1284,16 @@ impl<T: Transport> TelegramHost<T> {
         // (the same identity the play turn is attributed to), so a per-viewer offering paints the
         // presser their own surface.
         let viewer = self.frontend.identity(ev.from_user_id);
-        // Decode the pressed button + confirm the turn is on the chat's current surface (offered).
-        let Some((turn, arg)) = crate::api::decode_callback(&ev.data) else {
-            return HostPress::NotOffered;
-        };
+        // Generic/menu controls use the historical `{turn, arg}` codec. Game
+        // messages use an opaque digest of the complete bound reference and
+        // therefore intentionally do not decode here.
+        let decoded = crate::api::decode_callback(&ev.data);
         // The exact reserved host-level verify control bypasses the offered-action check.
         // Read-only: the presented surface and player attribution stay exactly as they were.
-        if crate::verify_control::is_verify_callback(&turn, arg) {
+        if decoded
+            .as_ref()
+            .is_some_and(|(turn, arg)| crate::verify_control::is_verify_callback(turn, *arg))
+        {
             if active == MENU_KEY {
                 return HostPress::NotOffered;
             }
@@ -1103,21 +1309,26 @@ impl<T: Transport> TelegramHost<T> {
                 report,
             };
         }
-        if turn == TURN_VERIFY {
+        if decoded
+            .as_ref()
+            .is_some_and(|(turn, _)| turn == TURN_VERIFY)
+        {
             // Reserve the whole verb namespace: a forged argument must never fall through to a
             // future offering that accidentally reuses the host-control verb.
             return HostPress::NotOffered;
         }
-        let offered = self
-            .frontend
-            .session(&surface_sid)
-            .map(|slot| slot.presented.iter().any(|a| a.turn == turn))
-            .unwrap_or(false);
-        if !offered {
-            return HostPress::NotOffered;
-        }
-
         if active == MENU_KEY {
+            let Some((turn, arg)) = decoded else {
+                return HostPress::NotOffered;
+            };
+            let offered = self
+                .frontend
+                .session(&surface_sid)
+                .map(|slot| slot.presented.iter().any(|action| action.turn == turn))
+                .unwrap_or(false);
+            if !offered {
+                return HostPress::NotOffered;
+            }
             // A menu press: open the offering the button names (by stable catalog index).
             if turn != TURN_OPEN {
                 return HostPress::NotOffered;
@@ -1144,6 +1355,105 @@ impl<T: Transport> TelegramHost<T> {
         }
 
         let key = active;
+
+        if game_kind(&key).is_some() {
+            let shared = ChatKind::classify(ev.chat_id, ev.message_thread_id).is_collective();
+            let Ok(view) = self.bound_game_view(&key, &sid, &viewer, shared) else {
+                return HostPress::NotOffered;
+            };
+            let selected = if ev.data.starts_with("g.") {
+                view.affordances.iter().find_map(|affordance| {
+                    let GameAffordance::Turn {
+                        reference, action, ..
+                    } = affordance
+                    else {
+                        return None;
+                    };
+                    (bound_game_callback(reference) == ev.data)
+                        .then(|| (reference.clone(), action.clone()))
+                })
+            } else if ev.message_id.is_none() {
+                // `/act` and Mini-App round trips name a value-taking turn,
+                // rather than replaying a Telegram message button. Preserve
+                // that compatibility by requiring the turn template to be
+                // live, then bind the caller-supplied final argument and the
+                // current observed head into a fresh exact reference.
+                decoded.and_then(|(turn, arg)| {
+                    let template = view.affordances.iter().find_map(|affordance| {
+                        let GameAffordance::Turn {
+                            reference, action, ..
+                        } = affordance
+                        else {
+                            return None;
+                        };
+                        (reference.turn == turn).then_some(action)
+                    })?;
+                    let action =
+                        if template.wants_text && template.text.is_none() && template.arg == arg {
+                            template.clone()
+                        } else {
+                            Action::new(turn.clone(), turn, arg, true)
+                        };
+                    let reference = GameActionRef::new(
+                        view.session.clone(),
+                        &action,
+                        view.surface_commitment.clone(),
+                    );
+                    Some((reference, action))
+                })
+            } else {
+                // A real game-message callback must carry a bound opaque token;
+                // accepting `{turn,arg}` here would let a captured old button
+                // be reinterpreted in a later session generation.
+                None
+            };
+            let Some((reference, action)) = selected else {
+                return HostPress::NotOffered;
+            };
+            if action.wants_text && action.text.is_none() {
+                self.armed.insert(surface_sid, action.clone());
+                return HostPress::TextArmed { key, action };
+            }
+            let incarnation = self.game_epochs.host_incarnation();
+            let Ok(generation) = self.game_epochs.current_generation(&key, &sid) else {
+                return HostPress::NotOffered;
+            };
+            let session = view.session;
+            let actor = viewer.clone();
+            let execution = self.run_offering(&key, &viewer, move |host| {
+                execute_bound_asserted_game_turn(
+                    host,
+                    incarnation,
+                    generation,
+                    &session,
+                    reference,
+                    action,
+                    actor,
+                )
+            });
+            return match execution {
+                Ok(execution) => {
+                    self.present_offering(&key, &sid, &viewer);
+                    HostPress::Advanced {
+                        key,
+                        outcome: execution.outcome,
+                    }
+                }
+                Err(_) => HostPress::NotOffered,
+            };
+        }
+
+        let Some((turn, arg)) = decoded else {
+            return HostPress::NotOffered;
+        };
+        let offered = self
+            .frontend
+            .session(&surface_sid)
+            .map(|slot| slot.presented.iter().any(|action| action.turn == turn))
+            .unwrap_or(false);
+        if !offered {
+            return HostPress::NotOffered;
+        }
 
         // A play press on a FREE-TEXT affordance (a `wants_text` template — a document
         // insert/set-title, a Hermes prompt, a names register, a compute settle) carries no
@@ -1254,9 +1564,52 @@ impl<T: Transport> TelegramHost<T> {
         // The acting user's derived identity — the viewer every re-present is projected FOR and
         // the actor the edit is attributed to (the same as a play press).
         let viewer = self.frontend.identity(uid);
-        let action = pending.with_text(text.to_string());
-        let actor = viewer.clone();
-        let outcome = {
+        let action = pending.clone().with_text(text.to_string());
+        let outcome = if game_kind(&key).is_some() {
+            let shared = ChatKind::classify(chat_id, topic).is_collective();
+            let Ok(view) = self.bound_game_view(&key, &sid, &viewer, shared) else {
+                return HostPress::NotOffered;
+            };
+            let still_offered = view.affordances.iter().any(|affordance| {
+                matches!(
+                    affordance,
+                    GameAffordance::Turn { action: template, .. }
+                        if template.turn == pending.turn
+                            && template.arg == pending.arg
+                            && template.wants_text
+                            && template.text.is_none()
+                )
+            });
+            if !still_offered {
+                return HostPress::NotOffered;
+            }
+            let reference = GameActionRef::new(
+                view.session.clone(),
+                &action,
+                view.surface_commitment.clone(),
+            );
+            let incarnation = self.game_epochs.host_incarnation();
+            let Ok(generation) = self.game_epochs.current_generation(&key, &sid) else {
+                return HostPress::NotOffered;
+            };
+            let session = view.session;
+            let actor = viewer.clone();
+            match self.run_offering(&key, &viewer, move |host| {
+                execute_bound_asserted_game_turn(
+                    host,
+                    incarnation,
+                    generation,
+                    &session,
+                    reference,
+                    action,
+                    actor,
+                )
+            }) {
+                Ok(execution) => Some(execution.outcome),
+                Err(_) => return HostPress::NotOffered,
+            }
+        } else {
+            let actor = viewer.clone();
             let k = key.clone();
             let s = sid.clone();
             // Routed to the acting user's own world for an RPG key (a per-player document/craft edit).
@@ -1292,8 +1645,52 @@ impl<T: Transport> TelegramHost<T> {
             self.host
                 .run(move |h| h.keys().into_iter().find(|k| h.is_open(k, &s)))?
         };
+        if game_kind(&key).is_some() && self.game_epochs.current_generation(&key, sid).is_err() {
+            return None;
+        }
         self.active.insert(sid.clone(), key.clone());
         Some(key)
+    }
+
+    /// Close one addressed game and retire its current generation.
+    ///
+    /// The concrete host/store is closed first. Epoch retirement follows; if
+    /// that persistence fails, a later genuinely fresh open still increments
+    /// from the retained generation and therefore cannot revive old action
+    /// references.
+    pub fn close_game(
+        &mut self,
+        key: &str,
+        chat_id: ChatId,
+        topic: Option<i64>,
+        uid: TelegramUserId,
+    ) -> Result<bool, String> {
+        if game_kind(key).is_none() {
+            return Err(format!("{key} is not a catalog game"));
+        }
+        let session = TelegramFrontend::<T>::session_id(chat_id, topic);
+        let viewer = self.frontend.identity(uid);
+        let routed_key = key.to_string();
+        let routed_session = session.clone();
+        let removed = self.run_offering(key, &viewer, move |host| {
+            host.close(&routed_key, &routed_session)
+        });
+        if !removed {
+            return Ok(false);
+        }
+        self.game_epochs
+            .mark_closed(key, &session)
+            .map_err(|error| error.to_string())?;
+        if self
+            .active
+            .get(&session)
+            .is_some_and(|active| active == key)
+        {
+            self.active.remove(&session);
+        }
+        let surface = TelegramFrontend::<T>::surface_id(chat_id, topic, key);
+        self.armed.remove(&surface);
+        Ok(true)
     }
 
     /// Re-verify `(key, sid)`'s committed chain by the offering's own proof (`None` if absent).
