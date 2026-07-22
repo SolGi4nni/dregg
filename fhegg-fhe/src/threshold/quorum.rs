@@ -74,6 +74,7 @@ use fhe::mbfv::{Aggregate, PublicKeyShare};
 use fhe_math::rq::{traits::TryConvertFrom, Context as RqContext, Poly, Representation};
 use fhe_traits::{DeserializeParametrized, FheDecoder, FheDecrypter, Serialize as FheSerialize};
 use rand_09::Rng;
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
@@ -2515,14 +2516,18 @@ fn prove_decrypt_share_relation(
     let mut product_blindings = Vec::with_capacity(equations);
     let mut quotient_values = Vec::with_capacity(2 * equations);
     let mut quotient_blindings = Vec::with_capacity(2 * equations);
+    // The exact integer convolution is the dominant native witness cost at
+    // production degree: 2 * N^2 checked I256 products for the deployed two
+    // RNS rows.  Every output coefficient is independent.  Compute those
+    // outputs in parallel, then consume them below in the original canonical
+    // row/coefficient order so OsRng use, commitments, and transcript bytes do
+    // not change.
+    let raw_convolutions =
+        negacyclic_rows_i256_parallel(secret_rows, &share.ct.polys[1].rows, params.degree())?;
     for (row_index, &q) in params.moduli().iter().enumerate() {
         let lambda = lagrange_at_zero(share.party, &share.opening.parties, q)?;
         for coefficient in 0..params.degree() {
-            let raw = negacyclic_coefficient_i256(
-                &secret_rows[row_index],
-                &share.ct.polys[1].rows[row_index],
-                coefficient,
-            )?;
+            let raw = raw_convolutions[row_index * params.degree() + coefficient];
             let q_wide = I256::from(q);
             let mut product_wide = raw % q_wide;
             if product_wide < I256::ZERO {
@@ -2763,30 +2768,34 @@ fn accumulate_decrypt_relation(
     let bound = scalar_from_u128(1u128 << share.smudge_bits);
     let twice_bound = bound + bound;
     let quotient_offset = Scalar::from(DECRYPT_QUOTIENT_OFFSET);
-    let mut secret_weights = vec![Scalar::ZERO; secret_points.len()];
-
     transcript.append_message(b"relation-domain", DECRYPT_SHARE_RELATION_DOMAIN);
+    // Fiat-Shamir challenges must remain byte-for-byte row-major.  Derive them
+    // serially first, then use the immutable weights for both the canonical
+    // relation fold below and the independent per-secret convolution.
+    let mut equation_weights = Vec::with_capacity(params.moduli().len() * degree);
+    for _ in params.moduli() {
+        for _output in 0..degree {
+            let first_weight = transcript_challenge_scalar(transcript, b"product-equation-weight");
+            let second_weight = transcript_challenge_scalar(transcript, b"decrypt-equation-weight");
+            equation_weights.push((first_weight, second_weight));
+        }
+    }
+
+    // Each secret slot is independent.  Its inner loop preserves the exact
+    // original output order, so dalek Scalar additions produce the identical
+    // weight while Rayon spreads the O(R*N^2) work across host cores.
+    let secret_weights = accumulate_secret_weights_parallel(
+        &equation_weights,
+        &share.ct.polys[1].rows,
+        degree,
+        secret_points.len(),
+    )?;
+
     for (row_index, &q) in params.moduli().iter().enumerate() {
         let lambda = Scalar::from(lagrange_at_zero(share.party, &share.opening.parties, q)?);
         let q_scalar = Scalar::from(q);
         for output in 0..degree {
-            let first_weight = transcript_challenge_scalar(transcript, b"product-equation-weight");
-            let second_weight = transcript_challenge_scalar(transcript, b"decrypt-equation-weight");
-            for secret_index in 0..degree {
-                let (cipher_index, negative) = if output >= secret_index {
-                    (output - secret_index, false)
-                } else {
-                    (degree + output - secret_index, true)
-                };
-                let weight =
-                    first_weight * Scalar::from(share.ct.polys[1].rows[row_index][cipher_index]);
-                let slot = row_index * degree + secret_index;
-                if negative {
-                    secret_weights[slot] -= weight;
-                } else {
-                    secret_weights[slot] += weight;
-                }
-            }
+            let (first_weight, second_weight) = equation_weights[row_index * degree + output];
 
             let smudge_low_index = output * 2;
             let smudge_high_index = 2 * degree + output * 2;
@@ -2854,6 +2863,75 @@ fn accumulate_decrypt_relation(
         }
     }
     Ok(())
+}
+
+/// Parallel form of the exact row-wise negacyclic integer convolution.  The
+/// output is always canonical row-major order even though its independent
+/// coefficients may complete in any scheduler order.
+fn negacyclic_rows_i256_parallel(
+    left_rows: &[Vec<u64>],
+    right_rows: &[Vec<u64>],
+    degree: usize,
+) -> Result<Vec<I256>> {
+    if degree == 0
+        || left_rows.len() != right_rows.len()
+        || left_rows.iter().any(|row| row.len() != degree)
+        || right_rows.iter().any(|row| row.len() != degree)
+    {
+        return Err(QuorumError::ParamMismatch);
+    }
+    (0..left_rows.len() * degree)
+        .into_par_iter()
+        .map(|equation| {
+            let row_index = equation / degree;
+            let coefficient = equation % degree;
+            negacyclic_coefficient_i256(&left_rows[row_index], &right_rows[row_index], coefficient)
+        })
+        .collect()
+}
+
+/// Parallelize the O(R*N^2) coefficient fold by final secret slot.  Each slot
+/// still sums output contributions in the canonical increasing order.
+fn accumulate_secret_weights_parallel(
+    equation_weights: &[(Scalar, Scalar)],
+    ciphertext_rows: &[Vec<u64>],
+    degree: usize,
+    secret_point_count: usize,
+) -> Result<Vec<Scalar>> {
+    let expected = ciphertext_rows
+        .len()
+        .checked_mul(degree)
+        .ok_or(QuorumError::UnsupportedDecryptProofParameters)?;
+    if degree == 0
+        || expected != equation_weights.len()
+        || expected != secret_point_count
+        || ciphertext_rows.iter().any(|row| row.len() != degree)
+    {
+        return Err(QuorumError::ParamMismatch);
+    }
+    Ok((0..secret_point_count)
+        .into_par_iter()
+        .map(|slot| {
+            let row_index = slot / degree;
+            let secret_index = slot % degree;
+            let mut total = Scalar::ZERO;
+            for output in 0..degree {
+                let (cipher_index, negative) = if output >= secret_index {
+                    (output - secret_index, false)
+                } else {
+                    (degree + output - secret_index, true)
+                };
+                let first_weight = equation_weights[row_index * degree + output].0;
+                let weight = first_weight * Scalar::from(ciphertext_rows[row_index][cipher_index]);
+                if negative {
+                    total -= weight;
+                } else {
+                    total += weight;
+                }
+            }
+            total
+        })
+        .collect())
 }
 
 fn decrypt_share_proof_transcript(
@@ -3070,6 +3148,75 @@ impl<'a> WireCursor<'a> {
 #[cfg(test)]
 mod vss_tests {
     use super::*;
+
+    #[test]
+    fn parallel_exact_convolution_preserves_canonical_row_order() {
+        let left = vec![
+            vec![1, 3, 5, 7, 11, 13, 17, 19],
+            vec![23, 29, 31, 37, 41, 43, 47, 53],
+        ];
+        let right = vec![
+            vec![59, 61, 67, 71, 73, 79, 83, 89],
+            vec![97, 101, 103, 107, 109, 113, 127, 131],
+        ];
+        let expected = left
+            .iter()
+            .zip(&right)
+            .flat_map(|(left, right)| {
+                (0..left.len()).map(move |output| {
+                    negacyclic_coefficient_i256(left, right, output).expect("valid coefficient")
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            negacyclic_rows_i256_parallel(&left, &right, 8).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn parallel_secret_weight_fold_is_byte_identical_to_nested_loop() {
+        let degree = 8;
+        let ciphertext_rows = vec![
+            vec![2, 3, 5, 7, 11, 13, 17, 19],
+            vec![23, 29, 31, 37, 41, 43, 47, 53],
+        ];
+        let equation_weights = (0..ciphertext_rows.len() * degree)
+            .map(|i| (Scalar::from((i + 1) as u64), Scalar::from((100 + i) as u64)))
+            .collect::<Vec<_>>();
+        let mut expected = vec![Scalar::ZERO; ciphertext_rows.len() * degree];
+        for row_index in 0..ciphertext_rows.len() {
+            for output in 0..degree {
+                let first_weight = equation_weights[row_index * degree + output].0;
+                for secret_index in 0..degree {
+                    let (cipher_index, negative) = if output >= secret_index {
+                        (output - secret_index, false)
+                    } else {
+                        (degree + output - secret_index, true)
+                    };
+                    let weight =
+                        first_weight * Scalar::from(ciphertext_rows[row_index][cipher_index]);
+                    let slot = row_index * degree + secret_index;
+                    if negative {
+                        expected[slot] -= weight;
+                    } else {
+                        expected[slot] += weight;
+                    }
+                }
+            }
+        }
+        let parallel = accumulate_secret_weights_parallel(
+            &equation_weights,
+            &ciphertext_rows,
+            degree,
+            expected.len(),
+        )
+        .unwrap();
+        assert_eq!(
+            parallel.iter().map(Scalar::to_bytes).collect::<Vec<_>>(),
+            expected.iter().map(Scalar::to_bytes).collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn public_vss_commitment_wire_is_canonical_and_digest_checked() {

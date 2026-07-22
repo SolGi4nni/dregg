@@ -55,6 +55,7 @@ fhe = "0.1.1"
 fhe-math = "0.1.1"
 fhe-traits = "0.1.1"
 rand_09 = { package = "rand", version = "0.9" }
+rayon = "1"
 # GPU BFV fold (bfv_gpu.rs): portable wgpu compute — the aggregation hot path at scale is bandwidth-bound.
 wgpu = "24"
 pollster = "0.4"

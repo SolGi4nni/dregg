@@ -8947,6 +8947,7 @@ dependencies = [
  "pollster 0.4.0",
  "rand 0.8.6",
  "rand 0.9.4",
+ "rayon",
  "rustix 1.1.4",
  "serde",
  "serde_json",

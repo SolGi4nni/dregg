@@ -9,18 +9,27 @@
 
 use core::fmt;
 
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+
 use crate::{Finality, TurnReceipt};
 
 const CONTEXT_MAGIC: [u8; 4] = *b"FEC1";
 const CORE_MAGIC: [u8; 4] = *b"FRC1";
+const ENVELOPE_MAGIC: [u8; 4] = *b"FRE1";
 const WIRE_VERSION: u16 = 1;
 const PREFIX_LEN: usize = 8;
 const CORE_ID_DOMAIN: &str = "dregg-finalized-receipt-core-v1";
+const LOCAL_ENVELOPE_SIGNATURE_DOMAIN: &[u8] = b"dregg-finalized-receipt-local-envelope-v1:";
+const LOCAL_ENVELOPE_PQ_CONTEXT: &[u8] = b"dregg-finalized-receipt-local-envelope-pq-v1";
 
 /// Exact canonical width of [`FinalizedExecutionContextV1`].
 pub const FINALIZED_EXECUTION_CONTEXT_V1_LEN: usize = 56;
 /// Exact canonical width of [`FinalizedReceiptCoreV1`].
 pub const FINALIZED_RECEIPT_CORE_V1_LEN: usize = 592;
+/// Exact canonical width of [`HybridLocalFinalizedReceiptEnvelopeV1`].
+pub const HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN: usize =
+    112 + dregg_pq::ML_DSA_PK_LEN + 64 + dregg_pq::ML_DSA_SIG_LEN;
+const LOCAL_ENVELOPE_MESSAGE_LEN: usize = LOCAL_ENVELOPE_SIGNATURE_DOMAIN.len() + 72;
 
 /// Consensus input required by finalized execution.
 ///
@@ -414,6 +423,183 @@ impl FinalizedReceiptCoreV1 {
     }
 }
 
+/// Independently enrolled hybrid validator identity expected by envelope verification.
+///
+/// The keys carried by a local envelope never authorize themselves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HybridFinalizedReceiptValidatorIdentityV1 {
+    pub ed25519: [u8; 32],
+    pub ml_dsa_65: [u8; dregg_pq::ML_DSA_PK_LEN],
+}
+
+/// One validator's hybrid observation of an already-fixed finalized receipt id.
+///
+/// This is local evidence, not a quorum certificate.  Neither validator key nor signature occurs
+/// in [`FinalizedReceiptCoreV1::id`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HybridLocalFinalizedReceiptEnvelopeV1 {
+    receipt_id: FinalizedReceiptIdV1,
+    committee_epoch: u64,
+    block_id: [u8; 32],
+    validator_ed25519_public_key: [u8; 32],
+    validator_ml_dsa_public_key: [u8; dregg_pq::ML_DSA_PK_LEN],
+    ed25519_signature: [u8; 64],
+    ml_dsa_signature: [u8; dregg_pq::ML_DSA_SIG_LEN],
+}
+
+impl HybridLocalFinalizedReceiptEnvelopeV1 {
+    /// Derive both validator keys from one seed and sign the same canonical core coordinate.
+    pub fn sign_from_seed(
+        core: &FinalizedReceiptCoreV1,
+        seed: &[u8; 32],
+    ) -> Result<Self, FinalizedReceiptCoreV1Error> {
+        let receipt_id = core.id();
+        let committee_epoch = core.committee_epoch;
+        let block_id = core.context.block_id;
+        let message = local_envelope_signature_message(receipt_id, committee_epoch, block_id);
+        let classical = SigningKey::from_bytes(seed);
+        let pq = dregg_pq::MlDsaKey::from_ed25519_seed(seed);
+        let validator_ml_dsa_public_key = pq
+            .public_bytes()
+            .try_into()
+            .map_err(|_| FinalizedReceiptCoreV1Error::PqPrimitiveLengthMismatch)?;
+        let ml_dsa_signature = pq
+            .try_sign_deterministic(LOCAL_ENVELOPE_PQ_CONTEXT, &message)
+            .ok_or(FinalizedReceiptCoreV1Error::PqSigningFailed)?
+            .try_into()
+            .map_err(|_| FinalizedReceiptCoreV1Error::PqPrimitiveLengthMismatch)?;
+        Ok(Self {
+            receipt_id,
+            committee_epoch,
+            block_id,
+            validator_ed25519_public_key: classical.verifying_key().to_bytes(),
+            validator_ml_dsa_public_key,
+            ed25519_signature: classical.sign(&message).to_bytes(),
+            ml_dsa_signature,
+        })
+    }
+
+    /// Verify BOTH signature halves against independently expected public keys.
+    pub fn verify_against(
+        &self,
+        core: &FinalizedReceiptCoreV1,
+        expected: &HybridFinalizedReceiptValidatorIdentityV1,
+    ) -> Result<(), FinalizedReceiptCoreV1Error> {
+        if self.receipt_id != core.id()
+            || self.committee_epoch != core.committee_epoch
+            || self.block_id != core.context.block_id
+        {
+            return Err(FinalizedReceiptCoreV1Error::EnvelopeCoreMismatch);
+        }
+        if self.validator_ed25519_public_key != expected.ed25519
+            || self.validator_ml_dsa_public_key != expected.ml_dsa_65
+        {
+            return Err(FinalizedReceiptCoreV1Error::UnexpectedValidatorIdentity);
+        }
+        let message = self.signature_message();
+        let key = VerifyingKey::from_bytes(&expected.ed25519)
+            .map_err(|_| FinalizedReceiptCoreV1Error::InvalidValidatorKey)?;
+        key.verify_strict(
+            &message,
+            &ed25519_dalek::Signature::from_bytes(&self.ed25519_signature),
+        )
+        .map_err(|_| FinalizedReceiptCoreV1Error::InvalidEnvelopeClassicalSignature)?;
+        if !dregg_pq::ml_dsa_verify(
+            &expected.ml_dsa_65,
+            LOCAL_ENVELOPE_PQ_CONTEXT,
+            &message,
+            &self.ml_dsa_signature,
+        ) {
+            return Err(FinalizedReceiptCoreV1Error::InvalidEnvelopePqSignature);
+        }
+        Ok(())
+    }
+
+    pub const fn receipt_id(&self) -> FinalizedReceiptIdV1 {
+        self.receipt_id
+    }
+
+    pub fn validator_identity(&self) -> HybridFinalizedReceiptValidatorIdentityV1 {
+        HybridFinalizedReceiptValidatorIdentityV1 {
+            ed25519: self.validator_ed25519_public_key,
+            ml_dsa_65: self.validator_ml_dsa_public_key,
+        }
+    }
+
+    pub fn signature_message(&self) -> [u8; LOCAL_ENVELOPE_MESSAGE_LEN] {
+        local_envelope_signature_message(self.receipt_id, self.committee_epoch, self.block_id)
+    }
+
+    pub fn to_canonical_bytes(&self) -> [u8; HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN] {
+        let mut out = [0u8; HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN];
+        write_prefix(&mut out, ENVELOPE_MAGIC);
+        let mut cursor = PREFIX_LEN;
+        write_32(&mut out, &mut cursor, self.receipt_id.bytes());
+        write_u64(&mut out, &mut cursor, self.committee_epoch);
+        write_32(&mut out, &mut cursor, self.block_id);
+        write_32(&mut out, &mut cursor, self.validator_ed25519_public_key);
+        out[cursor..cursor + dregg_pq::ML_DSA_PK_LEN]
+            .copy_from_slice(&self.validator_ml_dsa_public_key);
+        cursor += dregg_pq::ML_DSA_PK_LEN;
+        out[cursor..cursor + 64].copy_from_slice(&self.ed25519_signature);
+        cursor += 64;
+        out[cursor..cursor + dregg_pq::ML_DSA_SIG_LEN].copy_from_slice(&self.ml_dsa_signature);
+        cursor += dregg_pq::ML_DSA_SIG_LEN;
+        debug_assert_eq!(cursor, HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN);
+        out
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, FinalizedReceiptCoreV1Error> {
+        require_wire(
+            bytes,
+            HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN,
+            ENVELOPE_MAGIC,
+        )?;
+        let mut cursor = PREFIX_LEN;
+        let receipt_id = FinalizedReceiptIdV1::from_bytes(read_32(bytes, &mut cursor))?;
+        let committee_epoch = read_u64(bytes, &mut cursor);
+        let block_id = read_32(bytes, &mut cursor);
+        let validator_ed25519_public_key = read_32(bytes, &mut cursor);
+        let mut validator_ml_dsa_public_key = [0; dregg_pq::ML_DSA_PK_LEN];
+        validator_ml_dsa_public_key
+            .copy_from_slice(&bytes[cursor..cursor + dregg_pq::ML_DSA_PK_LEN]);
+        cursor += dregg_pq::ML_DSA_PK_LEN;
+        let mut ed25519_signature = [0; 64];
+        ed25519_signature.copy_from_slice(&bytes[cursor..cursor + 64]);
+        cursor += 64;
+        let mut ml_dsa_signature = [0; dregg_pq::ML_DSA_SIG_LEN];
+        ml_dsa_signature.copy_from_slice(&bytes[cursor..cursor + dregg_pq::ML_DSA_SIG_LEN]);
+        cursor += dregg_pq::ML_DSA_SIG_LEN;
+        debug_assert_eq!(cursor, HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN);
+        Ok(Self {
+            receipt_id,
+            committee_epoch,
+            block_id,
+            validator_ed25519_public_key,
+            validator_ml_dsa_public_key,
+            ed25519_signature,
+            ml_dsa_signature,
+        })
+    }
+}
+
+fn local_envelope_signature_message(
+    receipt_id: FinalizedReceiptIdV1,
+    committee_epoch: u64,
+    block_id: [u8; 32],
+) -> [u8; LOCAL_ENVELOPE_MESSAGE_LEN] {
+    let mut out = [0u8; LOCAL_ENVELOPE_MESSAGE_LEN];
+    let mut cursor = 0;
+    out[..LOCAL_ENVELOPE_SIGNATURE_DOMAIN.len()].copy_from_slice(LOCAL_ENVELOPE_SIGNATURE_DOMAIN);
+    cursor += LOCAL_ENVELOPE_SIGNATURE_DOMAIN.len();
+    out[cursor..cursor + 32].copy_from_slice(&receipt_id.bytes());
+    cursor += 32;
+    out[cursor..cursor + 8].copy_from_slice(&committee_epoch.to_le_bytes());
+    cursor += 8;
+    out[cursor..cursor + 32].copy_from_slice(&block_id);
+    out
+}
+
 fn routing_commitment(
     receipt: &TurnReceipt,
 ) -> Result<DisclosureCommitment, FinalizedReceiptCoreV1Error> {
@@ -532,6 +718,13 @@ pub enum FinalizedReceiptCoreV1Error {
     ReceiptPredecessorProvenanceMismatch,
     ReceiptTimestampMismatch { expected: i64, actual: i64 },
     CountOverflow(&'static str),
+    EnvelopeCoreMismatch,
+    UnexpectedValidatorIdentity,
+    InvalidValidatorKey,
+    InvalidEnvelopeClassicalSignature,
+    InvalidEnvelopePqSignature,
+    PqSigningFailed,
+    PqPrimitiveLengthMismatch,
 }
 
 impl fmt::Display for FinalizedReceiptCoreV1Error {
@@ -568,6 +761,25 @@ impl fmt::Display for FinalizedReceiptCoreV1Error {
                 "receipt timestamp {actual} differs from authenticated consensus time {expected}"
             ),
             Self::CountOverflow(field) => write!(f, "finalized receipt {field} count exceeds u64"),
+            Self::EnvelopeCoreMismatch => {
+                f.write_str("local finalized receipt envelope does not match common core")
+            }
+            Self::UnexpectedValidatorIdentity => {
+                f.write_str("local finalized receipt envelope has unexpected validator identity")
+            }
+            Self::InvalidValidatorKey => {
+                f.write_str("invalid local finalized receipt validator key")
+            }
+            Self::InvalidEnvelopeClassicalSignature => {
+                f.write_str("invalid local finalized receipt Ed25519 signature")
+            }
+            Self::InvalidEnvelopePqSignature => {
+                f.write_str("invalid local finalized receipt ML-DSA signature")
+            }
+            Self::PqSigningFailed => f.write_str("local finalized receipt ML-DSA signing failed"),
+            Self::PqPrimitiveLengthMismatch => {
+                f.write_str("local finalized receipt ML-DSA primitive returned wrong length")
+            }
         }
     }
 }
@@ -718,6 +930,70 @@ mod tests {
         assert_eq!(
             FinalizedReceiptCoreV1::decode_canonical(&a.to_canonical_bytes()),
             Ok(a)
+        );
+    }
+
+    #[test]
+    fn local_envelopes_are_fixed_width_and_do_not_change_common_id() {
+        let time = 1_700_000_000;
+        let context = FinalizedExecutionContextV1::new([8; 32], 21, time);
+        let core = FinalizedReceiptCoreV1::from_receipt(
+            context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &receipt_at(time),
+        )
+        .unwrap();
+        let common_id = core.id();
+        let a = HybridLocalFinalizedReceiptEnvelopeV1 {
+            receipt_id: common_id,
+            committee_epoch: 5,
+            block_id: context.block_id(),
+            validator_ed25519_public_key: [1; 32],
+            validator_ml_dsa_public_key: [2; dregg_pq::ML_DSA_PK_LEN],
+            ed25519_signature: [3; 64],
+            ml_dsa_signature: [4; dregg_pq::ML_DSA_SIG_LEN],
+        };
+        let b = HybridLocalFinalizedReceiptEnvelopeV1 {
+            validator_ed25519_public_key: [5; 32],
+            validator_ml_dsa_public_key: [6; dregg_pq::ML_DSA_PK_LEN],
+            ed25519_signature: [7; 64],
+            ml_dsa_signature: [8; dregg_pq::ML_DSA_SIG_LEN],
+            ..a.clone()
+        };
+        assert_ne!(a, b);
+        assert_eq!(a.receipt_id(), common_id);
+        assert_eq!(b.receipt_id(), common_id);
+        assert_eq!(
+            core.id(),
+            common_id,
+            "local signer cannot perturb common id"
+        );
+
+        let bytes = a.to_canonical_bytes();
+        assert_eq!(bytes.len(), HYBRID_LOCAL_FINALIZED_RECEIPT_ENVELOPE_V1_LEN);
+        assert_eq!(
+            HybridLocalFinalizedReceiptEnvelopeV1::decode_canonical(&bytes),
+            Ok(a.clone())
+        );
+        let mut trailing = bytes.to_vec();
+        trailing.push(0);
+        assert!(matches!(
+            HybridLocalFinalizedReceiptEnvelopeV1::decode_canonical(&trailing),
+            Err(FinalizedReceiptCoreV1Error::WrongWireLength { .. })
+        ));
+
+        let other_context = FinalizedExecutionContextV1::new([9; 32], 21, time);
+        let other_core = FinalizedReceiptCoreV1::from_receipt(
+            other_context,
+            5,
+            FinalizedReceiptPredecessorV1::Genesis,
+            &receipt_at(time),
+        )
+        .unwrap();
+        assert_eq!(
+            a.verify_against(&other_core, &a.validator_identity()),
+            Err(FinalizedReceiptCoreV1Error::EnvelopeCoreMismatch)
         );
     }
 
