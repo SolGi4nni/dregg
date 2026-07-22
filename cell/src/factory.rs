@@ -932,10 +932,482 @@ pub struct FactoryRegistry {
     pub current_epoch: u64,
 }
 
+/// Maximum number of deployed factories accepted at the durable boundary.
+pub const MAX_FACTORY_REGISTRY_DESCRIPTORS: usize = 20_000;
+/// Maximum number of live per-epoch budget counters accepted at the durable boundary.
+pub const MAX_FACTORY_REGISTRY_COUNTS: usize = 200_000;
+/// Maximum canonical bytes for one factory descriptor.
+pub const MAX_FACTORY_DESCRIPTOR_BYTES: usize = 1024 * 1024;
+/// Maximum canonical bytes for the complete factory registry.
+pub const MAX_FACTORY_REGISTRY_BYTES: usize = 32 * 1024 * 1024;
+
+const FACTORY_REGISTRY_MAGIC_V1: &[u8] = b"dregg-factory-state-v1\0";
+const FACTORY_REGISTRY_HEADER_BYTES: usize = FACTORY_REGISTRY_MAGIC_V1.len() + 8 + 4 + 4;
+const FACTORY_COUNT_ENTRY_BYTES: usize = 32 + 8 + 8;
+
+/// A deployed factory in canonical key order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FactoryDescriptorEntry {
+    pub factory_vk: [u8; 32],
+    pub descriptor: FactoryDescriptor,
+}
+
+/// A live factory quota counter in canonical `(factory_vk, epoch)` order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FactoryCreationCountEntry {
+    pub factory_vk: [u8; 32],
+    pub epoch: u64,
+    pub count: u64,
+}
+
+/// Complete canonical image of the deployed factory registry.
+///
+/// `FactoryRegistry` deliberately uses hash maps on the hot path.  This sorted
+/// image is the consensus/durability boundary: equal registries have exactly
+/// one byte representation regardless of hash-map insertion order or process.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FactoryRegistrySnapshot {
+    pub current_epoch: u64,
+    pub descriptors: Vec<FactoryDescriptorEntry>,
+    pub creation_counts: Vec<FactoryCreationCountEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FactoryRegistryCodecError {
+    TooLarge {
+        size: usize,
+        max: usize,
+    },
+    TooManyDescriptors {
+        count: usize,
+        max: usize,
+    },
+    TooManyCounts {
+        count: usize,
+        max: usize,
+    },
+    DescriptorTooLarge {
+        size: usize,
+        max: usize,
+    },
+    InvalidMagic,
+    Truncated,
+    TrailingBytes,
+    SizeOverflow,
+    DescriptorDecode(String),
+    NonCanonicalDescriptors,
+    NonCanonicalCounts,
+    DescriptorKeyMismatch {
+        key: [u8; 32],
+        embedded: [u8; 32],
+    },
+    CountForUnknownFactory {
+        factory_vk: [u8; 32],
+    },
+    CountForWrongEpoch {
+        expected: u64,
+        got: u64,
+    },
+    CountForUnlimitedFactory {
+        factory_vk: [u8; 32],
+    },
+    ZeroCount {
+        factory_vk: [u8; 32],
+    },
+    CountExceedsBudget {
+        factory_vk: [u8; 32],
+        count: u64,
+        budget: u64,
+    },
+}
+
+impl std::fmt::Display for FactoryRegistryCodecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge { size, max } => {
+                write!(f, "factory registry is {size} bytes (maximum {max})")
+            }
+            Self::TooManyDescriptors { count, max } => {
+                write!(
+                    f,
+                    "factory registry has {count} descriptors (maximum {max})"
+                )
+            }
+            Self::TooManyCounts { count, max } => {
+                write!(f, "factory registry has {count} counters (maximum {max})")
+            }
+            Self::DescriptorTooLarge { size, max } => {
+                write!(f, "factory descriptor is {size} bytes (maximum {max})")
+            }
+            Self::InvalidMagic => f.write_str("invalid factory-registry magic/version"),
+            Self::Truncated => f.write_str("truncated factory-registry snapshot"),
+            Self::TrailingBytes => f.write_str("factory-registry snapshot has trailing bytes"),
+            Self::SizeOverflow => f.write_str("factory-registry snapshot size overflow"),
+            Self::DescriptorDecode(error) => {
+                write!(f, "factory descriptor decode failed: {error}")
+            }
+            Self::NonCanonicalDescriptors => {
+                f.write_str("factory descriptors are not strictly sorted and unique")
+            }
+            Self::NonCanonicalCounts => {
+                f.write_str("factory counters are not strictly sorted and unique")
+            }
+            Self::DescriptorKeyMismatch { key, embedded } => write!(
+                f,
+                "factory descriptor key {:02x?} does not match embedded VK {:02x?}",
+                &key[..4],
+                &embedded[..4]
+            ),
+            Self::CountForUnknownFactory { factory_vk } => write!(
+                f,
+                "factory counter references unknown factory {:02x?}",
+                &factory_vk[..4]
+            ),
+            Self::CountForWrongEpoch { expected, got } => {
+                write!(
+                    f,
+                    "factory counter epoch {got} does not match current epoch {expected}"
+                )
+            }
+            Self::CountForUnlimitedFactory { factory_vk } => write!(
+                f,
+                "unlimited factory {:02x?} has a non-canonical quota counter",
+                &factory_vk[..4]
+            ),
+            Self::ZeroCount { factory_vk } => write!(
+                f,
+                "factory {:02x?} has a non-canonical zero quota counter",
+                &factory_vk[..4]
+            ),
+            Self::CountExceedsBudget {
+                factory_vk,
+                count,
+                budget,
+            } => write!(
+                f,
+                "factory {:02x?} counter {count} exceeds budget {budget}",
+                &factory_vk[..4]
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FactoryRegistryCodecError {}
+
+impl FactoryRegistrySnapshot {
+    fn validate(&self) -> Result<(), FactoryRegistryCodecError> {
+        if self.descriptors.len() > MAX_FACTORY_REGISTRY_DESCRIPTORS {
+            return Err(FactoryRegistryCodecError::TooManyDescriptors {
+                count: self.descriptors.len(),
+                max: MAX_FACTORY_REGISTRY_DESCRIPTORS,
+            });
+        }
+        if self.creation_counts.len() > MAX_FACTORY_REGISTRY_COUNTS {
+            return Err(FactoryRegistryCodecError::TooManyCounts {
+                count: self.creation_counts.len(),
+                max: MAX_FACTORY_REGISTRY_COUNTS,
+            });
+        }
+        if !self
+            .descriptors
+            .windows(2)
+            .all(|pair| pair[0].factory_vk < pair[1].factory_vk)
+        {
+            return Err(FactoryRegistryCodecError::NonCanonicalDescriptors);
+        }
+        if !self
+            .creation_counts
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        {
+            return Err(FactoryRegistryCodecError::NonCanonicalCounts);
+        }
+
+        for entry in &self.descriptors {
+            if entry.factory_vk != entry.descriptor.factory_vk {
+                return Err(FactoryRegistryCodecError::DescriptorKeyMismatch {
+                    key: entry.factory_vk,
+                    embedded: entry.descriptor.factory_vk,
+                });
+            }
+        }
+        for entry in &self.creation_counts {
+            if entry.epoch != self.current_epoch {
+                return Err(FactoryRegistryCodecError::CountForWrongEpoch {
+                    expected: self.current_epoch,
+                    got: entry.epoch,
+                });
+            }
+            if entry.count == 0 {
+                return Err(FactoryRegistryCodecError::ZeroCount {
+                    factory_vk: entry.factory_vk,
+                });
+            }
+            let descriptor = self
+                .descriptors
+                .binary_search_by_key(&entry.factory_vk, |item| item.factory_vk)
+                .ok()
+                .map(|index| &self.descriptors[index].descriptor)
+                .ok_or(FactoryRegistryCodecError::CountForUnknownFactory {
+                    factory_vk: entry.factory_vk,
+                })?;
+            let budget = descriptor.creation_budget.ok_or(
+                FactoryRegistryCodecError::CountForUnlimitedFactory {
+                    factory_vk: entry.factory_vk,
+                },
+            )?;
+            if entry.count > budget {
+                return Err(FactoryRegistryCodecError::CountExceedsBudget {
+                    factory_vk: entry.factory_vk,
+                    count: entry.count,
+                    budget,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, FactoryRegistryCodecError> {
+        self.validate()?;
+        let descriptor_count = u32::try_from(self.descriptors.len())
+            .map_err(|_| FactoryRegistryCodecError::SizeOverflow)?;
+        let count_count = u32::try_from(self.creation_counts.len())
+            .map_err(|_| FactoryRegistryCodecError::SizeOverflow)?;
+        let mut encoded_descriptors = Vec::with_capacity(self.descriptors.len());
+        let mut size = FACTORY_REGISTRY_HEADER_BYTES
+            .checked_add(
+                self.creation_counts
+                    .len()
+                    .checked_mul(FACTORY_COUNT_ENTRY_BYTES)
+                    .ok_or(FactoryRegistryCodecError::SizeOverflow)?,
+            )
+            .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+        for entry in &self.descriptors {
+            let encoded = postcard::to_allocvec(&entry.descriptor)
+                .map_err(|error| FactoryRegistryCodecError::DescriptorDecode(error.to_string()))?;
+            if encoded.len() > MAX_FACTORY_DESCRIPTOR_BYTES {
+                return Err(FactoryRegistryCodecError::DescriptorTooLarge {
+                    size: encoded.len(),
+                    max: MAX_FACTORY_DESCRIPTOR_BYTES,
+                });
+            }
+            let _ = u32::try_from(encoded.len())
+                .map_err(|_| FactoryRegistryCodecError::SizeOverflow)?;
+            size = size
+                .checked_add(32 + 4)
+                .and_then(|value| value.checked_add(encoded.len()))
+                .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+            encoded_descriptors.push(encoded);
+        }
+        if size > MAX_FACTORY_REGISTRY_BYTES {
+            return Err(FactoryRegistryCodecError::TooLarge {
+                size,
+                max: MAX_FACTORY_REGISTRY_BYTES,
+            });
+        }
+
+        let mut out = Vec::with_capacity(size);
+        out.extend_from_slice(FACTORY_REGISTRY_MAGIC_V1);
+        out.extend_from_slice(&self.current_epoch.to_le_bytes());
+        out.extend_from_slice(&descriptor_count.to_le_bytes());
+        out.extend_from_slice(&count_count.to_le_bytes());
+        for (entry, descriptor_bytes) in self.descriptors.iter().zip(encoded_descriptors) {
+            out.extend_from_slice(&entry.factory_vk);
+            out.extend_from_slice(&(descriptor_bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(&descriptor_bytes);
+        }
+        for entry in &self.creation_counts {
+            out.extend_from_slice(&entry.factory_vk);
+            out.extend_from_slice(&entry.epoch.to_le_bytes());
+            out.extend_from_slice(&entry.count.to_le_bytes());
+        }
+        debug_assert_eq!(out.len(), size);
+        Ok(out)
+    }
+
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, FactoryRegistryCodecError> {
+        if bytes.len() > MAX_FACTORY_REGISTRY_BYTES {
+            return Err(FactoryRegistryCodecError::TooLarge {
+                size: bytes.len(),
+                max: MAX_FACTORY_REGISTRY_BYTES,
+            });
+        }
+        let header = bytes
+            .get(..FACTORY_REGISTRY_HEADER_BYTES)
+            .ok_or(FactoryRegistryCodecError::Truncated)?;
+        if &header[..FACTORY_REGISTRY_MAGIC_V1.len()] != FACTORY_REGISTRY_MAGIC_V1 {
+            return Err(FactoryRegistryCodecError::InvalidMagic);
+        }
+        let mut offset = FACTORY_REGISTRY_MAGIC_V1.len();
+        let current_epoch = u64::from_le_bytes(
+            header[offset..offset + 8]
+                .try_into()
+                .expect("fixed factory header slice"),
+        );
+        offset += 8;
+        let descriptor_count = u32::from_le_bytes(
+            header[offset..offset + 4]
+                .try_into()
+                .expect("fixed factory header slice"),
+        ) as usize;
+        offset += 4;
+        let count_count = u32::from_le_bytes(
+            header[offset..offset + 4]
+                .try_into()
+                .expect("fixed factory header slice"),
+        ) as usize;
+        if descriptor_count > MAX_FACTORY_REGISTRY_DESCRIPTORS {
+            return Err(FactoryRegistryCodecError::TooManyDescriptors {
+                count: descriptor_count,
+                max: MAX_FACTORY_REGISTRY_DESCRIPTORS,
+            });
+        }
+        if count_count > MAX_FACTORY_REGISTRY_COUNTS {
+            return Err(FactoryRegistryCodecError::TooManyCounts {
+                count: count_count,
+                max: MAX_FACTORY_REGISTRY_COUNTS,
+            });
+        }
+
+        let mut offset = FACTORY_REGISTRY_HEADER_BYTES;
+        let mut descriptors = Vec::with_capacity(descriptor_count);
+        for _ in 0..descriptor_count {
+            let prefix = bytes
+                .get(offset..offset + 36)
+                .ok_or(FactoryRegistryCodecError::Truncated)?;
+            let factory_vk = prefix[..32].try_into().expect("fixed descriptor key slice");
+            let descriptor_len =
+                u32::from_le_bytes(prefix[32..36].try_into().expect("fixed length slice")) as usize;
+            if descriptor_len > MAX_FACTORY_DESCRIPTOR_BYTES {
+                return Err(FactoryRegistryCodecError::DescriptorTooLarge {
+                    size: descriptor_len,
+                    max: MAX_FACTORY_DESCRIPTOR_BYTES,
+                });
+            }
+            offset = offset
+                .checked_add(36)
+                .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+            let end = offset
+                .checked_add(descriptor_len)
+                .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+            let descriptor_bytes = bytes
+                .get(offset..end)
+                .ok_or(FactoryRegistryCodecError::Truncated)?;
+            let (descriptor, trailing): (FactoryDescriptor, &[u8]) =
+                postcard::take_from_bytes(descriptor_bytes).map_err(|error| {
+                    FactoryRegistryCodecError::DescriptorDecode(error.to_string())
+                })?;
+            if !trailing.is_empty() {
+                return Err(FactoryRegistryCodecError::TrailingBytes);
+            }
+            descriptors.push(FactoryDescriptorEntry {
+                factory_vk,
+                descriptor,
+            });
+            offset = end;
+        }
+
+        let counts_bytes = count_count
+            .checked_mul(FACTORY_COUNT_ENTRY_BYTES)
+            .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+        let expected_end = offset
+            .checked_add(counts_bytes)
+            .ok_or(FactoryRegistryCodecError::SizeOverflow)?;
+        match bytes.len().cmp(&expected_end) {
+            std::cmp::Ordering::Less => return Err(FactoryRegistryCodecError::Truncated),
+            std::cmp::Ordering::Greater => return Err(FactoryRegistryCodecError::TrailingBytes),
+            std::cmp::Ordering::Equal => {}
+        }
+        let mut creation_counts = Vec::with_capacity(count_count);
+        for _ in 0..count_count {
+            let entry = &bytes[offset..offset + FACTORY_COUNT_ENTRY_BYTES];
+            creation_counts.push(FactoryCreationCountEntry {
+                factory_vk: entry[..32].try_into().expect("fixed counter key slice"),
+                epoch: u64::from_le_bytes(entry[32..40].try_into().expect("fixed epoch slice")),
+                count: u64::from_le_bytes(entry[40..48].try_into().expect("fixed count slice")),
+            });
+            offset += FACTORY_COUNT_ENTRY_BYTES;
+        }
+
+        let snapshot = Self {
+            current_epoch,
+            descriptors,
+            creation_counts,
+        };
+        snapshot.validate()?;
+        if snapshot.to_canonical_bytes()? != bytes {
+            return Err(FactoryRegistryCodecError::TrailingBytes);
+        }
+        Ok(snapshot)
+    }
+}
+
 impl FactoryRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Export the complete registry in canonical key order.
+    pub fn snapshot(&self) -> FactoryRegistrySnapshot {
+        let mut descriptors: Vec<_> = self
+            .descriptors
+            .iter()
+            .map(|(factory_vk, descriptor)| FactoryDescriptorEntry {
+                factory_vk: *factory_vk,
+                descriptor: descriptor.clone(),
+            })
+            .collect();
+        descriptors.sort_by_key(|entry| entry.factory_vk);
+
+        let mut creation_counts: Vec<_> = self
+            .creation_counts
+            .iter()
+            .map(|((factory_vk, epoch), count)| FactoryCreationCountEntry {
+                factory_vk: *factory_vk,
+                epoch: *epoch,
+                count: *count,
+            })
+            .collect();
+        creation_counts.sort_unstable();
+
+        FactoryRegistrySnapshot {
+            current_epoch: self.current_epoch,
+            descriptors,
+            creation_counts,
+        }
+    }
+
+    /// Reconstruct a live registry from a validated canonical image.
+    pub fn from_snapshot(
+        snapshot: &FactoryRegistrySnapshot,
+    ) -> Result<Self, FactoryRegistryCodecError> {
+        snapshot.validate()?;
+        let descriptors = snapshot
+            .descriptors
+            .iter()
+            .map(|entry| (entry.factory_vk, entry.descriptor.clone()))
+            .collect();
+        let creation_counts = snapshot
+            .creation_counts
+            .iter()
+            .map(|entry| ((entry.factory_vk, entry.epoch), entry.count))
+            .collect();
+        Ok(Self {
+            descriptors,
+            creation_counts,
+            current_epoch: snapshot.current_epoch,
+        })
+    }
+
+    /// Atomically replace this registry with a validated canonical image.
+    pub fn restore_snapshot(
+        &mut self,
+        snapshot: &FactoryRegistrySnapshot,
+    ) -> Result<(), FactoryRegistryCodecError> {
+        let restored = Self::from_snapshot(snapshot)?;
+        *self = restored;
+        Ok(())
     }
 
     /// Deploy a factory, registering its descriptor.
@@ -1331,6 +1803,103 @@ mod tests {
 
         // Should succeed again.
         assert!(registry.validate_and_record(&vk, &params).is_ok());
+    }
+
+    #[test]
+    fn factory_registry_snapshot_is_canonical_and_restart_preserves_budget() {
+        let mut first = FactoryRegistry::new();
+        let mut a = worker_factory_descriptor();
+        a.factory_vk = [0x11; 32];
+        a.creation_budget = Some(2);
+        let mut b = worker_factory_descriptor();
+        b.factory_vk = [0x22; 32];
+        b.creation_budget = Some(3);
+        first.deploy(b.clone());
+        first.deploy(a.clone());
+
+        let params = FactoryCreationParams {
+            mode: CellMode::Hosted,
+            program_vk: Some(test_child_vk()),
+            initial_fields: vec![(0, 42), (1, 50)],
+            initial_caps: vec![],
+            owner_pubkey: [2u8; 32],
+        };
+        first.validate_and_record(&a.factory_vk, &params).unwrap();
+        first.validate_and_record(&b.factory_vk, &params).unwrap();
+        first.validate_and_record(&b.factory_vk, &params).unwrap();
+
+        let mut second = FactoryRegistry::new();
+        second.deploy(a.clone());
+        second.deploy(b.clone());
+        second.validate_and_record(&b.factory_vk, &params).unwrap();
+        second.validate_and_record(&a.factory_vk, &params).unwrap();
+        second.validate_and_record(&b.factory_vk, &params).unwrap();
+
+        let first_bytes = first.snapshot().to_canonical_bytes().unwrap();
+        let second_bytes = second.snapshot().to_canonical_bytes().unwrap();
+        assert_eq!(
+            first_bytes, second_bytes,
+            "insertion order is not a wire fact"
+        );
+
+        let decoded = FactoryRegistrySnapshot::from_canonical_bytes(&first_bytes).unwrap();
+        let mut restarted = FactoryRegistry::from_snapshot(&decoded).unwrap();
+        assert_eq!(restarted.snapshot(), first.snapshot());
+
+        // A had used one of two births; exactly one survives restart.
+        restarted
+            .validate_and_record(&a.factory_vk, &params)
+            .expect("second and final birth remains available");
+        assert!(matches!(
+            restarted.validate_and_record(&a.factory_vk, &params),
+            Err(FactoryError::BudgetExceeded { limit: 2, used: 2 })
+        ));
+        // B had used two of three births; exactly one survives restart.
+        restarted
+            .validate_and_record(&b.factory_vk, &params)
+            .expect("third and final birth remains available");
+        assert!(matches!(
+            restarted.validate_and_record(&b.factory_vk, &params),
+            Err(FactoryError::BudgetExceeded { limit: 3, used: 3 })
+        ));
+    }
+
+    #[test]
+    fn factory_registry_snapshot_rejects_noncanonical_or_impossible_images() {
+        let mut registry = FactoryRegistry::new();
+        let mut descriptor = worker_factory_descriptor();
+        descriptor.factory_vk = [0x44; 32];
+        descriptor.creation_budget = Some(1);
+        registry.deploy(descriptor.clone());
+        registry
+            .creation_counts
+            .insert((descriptor.factory_vk, 0), 1);
+
+        let honest = registry.snapshot();
+        let mut bytes = honest.to_canonical_bytes().unwrap();
+        bytes.push(0);
+        assert!(matches!(
+            FactoryRegistrySnapshot::from_canonical_bytes(&bytes),
+            Err(FactoryRegistryCodecError::TrailingBytes)
+        ));
+
+        let mut impossible = honest.clone();
+        impossible.creation_counts[0].count = 2;
+        assert!(matches!(
+            impossible.to_canonical_bytes(),
+            Err(FactoryRegistryCodecError::CountExceedsBudget {
+                count: 2,
+                budget: 1,
+                ..
+            })
+        ));
+
+        let mut wrong_key = honest;
+        wrong_key.descriptors[0].factory_vk = [0x45; 32];
+        assert!(matches!(
+            wrong_key.to_canonical_bytes(),
+            Err(FactoryRegistryCodecError::DescriptorKeyMismatch { .. })
+        ));
     }
 
     #[test]

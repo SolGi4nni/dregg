@@ -2396,8 +2396,10 @@ mod authorize;
 mod execute;
 mod execute_tree;
 mod finalize;
+mod producer_transaction;
 mod proof_verify;
 mod rate_limit_state;
+pub use producer_transaction::ProducerReferenceCheckpoint;
 pub use rate_limit_state::{
     MAX_RATE_LIMIT_STATE_BYTES, MAX_RATE_LIMIT_STATE_ENTRIES, RateLimitCountEntry,
     RateLimitStateCodecError, RateLimitStateSnapshot, RateLimitSumEntry,

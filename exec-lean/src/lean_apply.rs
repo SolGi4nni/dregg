@@ -1798,7 +1798,10 @@ pub fn produce_via_lean(
 
     // REFERENCE: run the Rust executor in place — it mutates `ledger` to the Rust post-state and
     // yields the `TurnResult` (receipt/events) that is the commit-path substrate. This is the
-    // DEMOTED cross-check, not the authority.
+    // DEMOTED cross-check, not the authority. Its executor-owned side tables are speculative too:
+    // a verified rejection must undo receipt heads, factory/budget/rate state, and accumulators in
+    // addition to restoring the ledger.
+    let reference_checkpoint = executor.checkpoint_producer_reference(turn.agent);
     let rust_result = executor.execute(turn, ledger);
     let rust_committed = matches!(rust_result, TurnResult::Committed { .. });
     let rust_root = executor.consensus_state_commitment(ledger, &turn.agent);
@@ -1829,6 +1832,7 @@ pub fn produce_via_lean(
         // exact pre-state the verified rejection mandates. `pre_snapshot` is `Some` here (taken
         // exactly on the `!lean_committed` path above).
         *ledger = pre_snapshot.expect("pre-state snapshot is taken on the verified-reject path");
+        executor.rollback_producer_reference(reference_checkpoint);
         let result = match rust_result {
             // Rust agreed (also rejected): carry its rejection reason unchanged.
             r @ TurnResult::Rejected { .. } => r,
@@ -1871,7 +1875,7 @@ fn authoritative_committed_result(
             // Re-stamp `post_state_hash` to the authoritative installed (Lean) root and re-sign.
             // (`restamp_committed_receipt` lives on the executor so it can re-sign with the
             // executor's key; equal to Rust's root on agreement, the override on a surfaced bug.)
-            let receipt = executor.restamp_committed_receipt(receipt, lean_root);
+            let receipt = executor.restamp_authoritative_committed_receipt(receipt, lean_root);
             TurnResult::Committed {
                 ledger_delta,
                 receipt,

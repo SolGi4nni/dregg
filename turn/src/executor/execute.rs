@@ -248,6 +248,13 @@ impl TurnExecutor {
             None
         };
 
+        // Factory quota is part of the same turn transaction as the newborn
+        // cell. `CreateCellFromFactory` validates/records before all later
+        // ledger checks have completed, so retain the exact pre-image until the
+        // whole turn (including the optional verified veto) has committed.
+        let factory_registry_checkpoint = Self::turn_mutates_factory_registry(turn)
+            .then(|| self.factory_registry.borrow().clone());
+
         // Rate-limit debits are a candidate side-state transition until BOTH
         // the Rust execution and the optional verified Lean veto have accepted.
         // A rejected/vetoed turn drops this value without ever publishing it.
@@ -279,6 +286,9 @@ impl TurnExecutor {
                      back (the verified kernel is the authoritative rejection gate under strict mode)"
                 );
                 *ledger = pre;
+                if let Some(previous) = factory_registry_checkpoint {
+                    *self.factory_registry.borrow_mut() = previous;
+                }
                 #[cfg(feature = "prover")]
                 let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
                 return TurnResult::Rejected {
@@ -290,6 +300,11 @@ impl TurnExecutor {
         #[cfg(feature = "prover")]
         if !result.is_committed() {
             let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
+        }
+        if !result.is_committed() {
+            if let Some(previous) = factory_registry_checkpoint {
+                *self.factory_registry.borrow_mut() = previous;
+            }
         }
         if result.is_committed() {
             staged_rate_limits.commit(self);
