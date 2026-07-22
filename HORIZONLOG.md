@@ -1,5 +1,29 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ JULY 22 CURRENT AUTHORITY ALERT — banked progress, two concrete quarantines
+
+The detailed current ledger is
+`docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md` §0.8.3. The short version:
+
+- CTM1 live finalization, reciprocal/public FRC1 lookup, the supervised private
+  Bazaar receipt source, party-local q0 staging, exact q0 radix/carrier laws,
+  and opt-in production WGPU BFV batch validation are banked through
+  `a13e1eb82`.
+- The fixed-eight Descent census commit `fc29b03f4` is **quarantined**: the
+  current fields leaf admits a zero-work `+ BabyBear::ORDER` 4-byte source alias,
+  and `field_key_hash : u64 → BabyBear` cannot be injective. A faithful full
+  key/value leaf flag-day is active; no census authority claim survives until
+  it lands and the real game caller consumes it.
+- The former shielded-v4 proof artifact proved only a narrower whole-note swap,
+  not the semantic v4 relation's 19 Dark-AMM + 27 ring lanes. It is being
+  honestly renamed/retyped as substrate while the full FXC4 semantic apex is
+  built.
+- `030b07639` is a banked game-epoch WIP, not generation-safe authority. Exact
+  client-signed binding/head replay repair is active.
+- The Bazaar target draft opened a shadow base-hero ledger instead of the
+  playable durable meta-hero/CharacterStore world. That mount is held until one
+  program-digest-bound authority is shared by worker and frontend.
+
 ## ⚑⚑⚑⚑ FHEGG / DARK BAZAAR LIVE CUT — exact v3 executes; v4 is the shielded successor (2026-07-22)
 
 The durable detailed ledger is `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md`

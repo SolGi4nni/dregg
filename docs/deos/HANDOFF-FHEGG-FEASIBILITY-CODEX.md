@@ -253,6 +253,93 @@ banks its own coherent checkpoint.
   not an apples-to-apples replacement for the older three-custodian persvati
   game measurement.
 
+### 0.8.3. Subsequent banked closures through `a13e1eb82` — and two authority quarantines
+
+This is the current banked cut. It supersedes older residual sentences below,
+but it deliberately does **not** promote the active shared-tree repairs to
+authority.
+
+- `450e89a1e` carries authenticated CTM1 causal time through the production
+  submit → blocklace insert → tau finalizer → executor commit → signed
+  `AttestedRoot` path. It also installs the exact typed terminal disposition
+  (`Committed | DeterministicallyRejected | RetryableOperational |
+  FatalIntegrity`) and durable invalid-proof restart/ACK behavior. The complete
+  blocklace set was 253/253 green; focused node/config/genesis/catch-up gates
+  were green. `devnet-causal-v1` is deterministic causal replay time, not fair
+  federation wall time. One exact-v3 control-flow test used
+  `DREGG_ALLOW_UNAUDITED_PQ=1` because that hbox image lacked verified PQ-core
+  exports; that run is not a cryptographic assurance claim.
+- `5776a0ac2`, `bb072a2c8`, and `03435f58b` close the public FRC1 lookup cut.
+  Durable finalized receipt cores are indexed reciprocally by ordinal and core
+  ID; restart audits reject corruption; the bearer-gated node endpoint accepts
+  exactly one selector and returns the canonical fixed 592-byte FRC1 plus
+  context/predecessor/turn/agent/federation metadata. It does not expose the
+  executor-local signature envelope.
+- `73ccbd946` preserves a legacy DPRG1 private-dependent item byte-exactly until
+  its first release transition promotes it to DPRG2 in the same transaction.
+  The final claim → CTM1 ingress → ordinary finalization → exact wake-receipt
+  weld is active shared-tree work and is not banked at this sentence.
+- `205bce74b` banks the bounded private-Bazaar receipt supervisor: verified
+  sources only, restartable v2 spool, leases/backoff/shutdown, typed fault
+  classes, and viewer-blind publication. Its live target mount is **not** yet
+  authority. Review found that the draft target registry opened a base
+  `hero_story` shadow ledger while the playable RPG uses `meta_hero_story` plus
+  `CharacterStore`; both could claim the same CellId despite different
+  programs, and Bazaar XP would not reach the player's world. The active repair
+  therefore requires one program-digest-bound durable meta-hero/CharacterStore
+  authority shared by worker and frontend, in addition to keyed pending-intent
+  custody, exact sealed roster coverage, pinned authority paths, and rollback
+  handling.
+- `fc29b03f4` banks the first fixed-eight Descent custody-census AIR, real field
+  openings, one-hot zone law, and host/Lean connectors. **It is quarantined as
+  proof authority.** The deployed fields-map leaf reduces each 4-byte value
+  chunk modulo BabyBear before folding. For custody code 8, replacing its
+  little-endian chunk `[00 00 00 08]` (`0x08000000`) with `[01 00 00 80]`
+  (`0x08000000 + p`) changes the source `FieldElement` but leaves every encoded
+  felt, leaf, and full fields root identical. The one-felt `field_key_hash` has
+  the analogous structural problem and colliding addresses are silently
+  deduplicated. No Poseidon collision is required. A greenfield faithful
+  full-key/full-value leaf flag-day, refusal/opening migration, and concrete
+  alias teeth must land before the census can authorize custody or be wired as
+  the live Descent custom proof.
+- `a6935df45` stages party-local q0 openings/contributions, an ordered
+  transcript, local-inclusion binding, zero-opening refusal, and a split-view
+  canary. Public ceremony authority still always refuses: the coordinator can
+  still see the private dealer bundles, contributions are not yet an
+  authenticated broadcast, and there is no public same-opening proof between
+  the Ristretto and q0 commitments. `79b597c04` proves the exact q0 radix-2^15,
+  three-limb reconstruction/injectivity/capacity facts; it is algebra, not an
+  SIS/security theorem. `a13e1eb82` names the production q0/N=4096 public
+  carrier geometry (24,576 rows) and pins its arithmetic/schedule/bus tuple.
+  It is explicitly not standalone hiding or committed-LogUp authority.
+- `97dd819a0` replays the BFV carrier arithmetic exactly. `de760440a` adds a
+  bounded portable-WGPU NTT plan/cache and one-submission batch validation for
+  the real private-book seeded equations, checking all 98,304 ciphertext
+  coefficients. It is opt-in under `DREGG_PRIVATE_BOOK_BFV_WGPU` and
+  fail-closed when required. On the RX 6750 XT, eight separate GPU products
+  fell from about 41.657 ms to 15.839 ms (about 7.131 ms in a quiet cached
+  batch), while the CPU oracle remained faster for this small geometry; there
+  is no default-GPU speed claim.
+- `030b07639` banks a WIP durable game-incarnation/generation surface across
+  web, Telegram, and Discord. It is **not yet replay-safe authority**. Review
+  found that the original outer signature omitted the exact game binding/head,
+  so a signed generation-N action or old-tab upload could be wrapped by the
+  server as generation N+1 after close/reopen. The active repair signs the
+  exact binding, generation, action/operation reference, advertised head, and
+  counter before any private projection; coordinates lifecycle/ledger locks;
+  distinguishes committed-publication failure from refusal; and repairs raw
+  binary upload and hostile markup handling. Do not call the banked WIP
+  generation-safe until those follow-up commits and hostile canaries land.
+- The old `shielded-exact-apex-v4` emitted proof module is also under an honest
+  quarantine/rename. Its real HidingFRI relation proves a narrower whole-note
+  two-input/two-output swap with AAFI32, but it does not carry the semantic v4
+  relation's 19 Dark-AMM plus 27 ring lanes or fixed rule. The replacement is
+  being named and typed as a non-authoritative
+  `shielded-whole-note-swap-substrate-v1`; it must not reuse v4 public/result
+  types. Full shielded-v4 authority still requires one canonical FXC4 preimage,
+  the 19+27 lanes, output root/count, pinned AIR rule, Lean refinement, live
+  finalizer/persistence, and committee authority.
+
 ## 0.5. July 22 superseding checkpoint
 
 This section supersedes older residual sentences below where they disagree. It
