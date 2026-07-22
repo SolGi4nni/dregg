@@ -18,6 +18,15 @@ cargo nextest run --release \
   --run-ignored all \
   --no-capture
 
+# Standalone odd-domain BFV transforms used by the 2^20x48 private-book proof
+# family. This pins q0/q1/q2 spectra to Lean's exact roots, not merely the final
+# root-independent negacyclic product.
+cargo nextest run --release \
+  -p fhegg-fhe \
+  --test bfv_odd_ntt_wgpu_required \
+  --run-ignored all \
+  --no-capture
+
 cargo nextest run --release \
   -p fhegg-fhe \
   --features amm-input-binding \

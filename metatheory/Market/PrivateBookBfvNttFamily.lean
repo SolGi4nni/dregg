@@ -416,18 +416,23 @@ mintable proof.  The remaining implementation/proof obligations are exactly:
    spectrum root to the per-book family proof;
 5. prove `OddNttRefines` for the production degree/root table (the three
    `psi^4096 = -1` executable teeth above are necessary root checks, not by
-   themselves the Fourier orthogonality/refinement theorem); and
-6. drive the same scheduled transforms through the portable wgpu prover path,
-   with CPU/reference parity, wrong-root, wrong-stage, wrong-modulus, and
-   changed-coefficient refusal tests.
+   themselves the Fourier orthogonality/refinement theorem).
 
-Until all six close, `oddNtt_family_yields_exact_private_book_bfv_opening`
+The former sixth obligation is now closed in `fhegg-fhe::bfv_ntt_gpu`: the
+standalone scheduled odd forward/inverse transforms pin all three roots above,
+stream exact butterfly rows, cover the complete `2^20 × 48` physical schedule,
+and pass the fail-closed RX 6750 XT WGPU gate with CPU/reference parity plus
+wrong-root, wrong-stage, wrong-modulus, changed-input, and changed-coefficient
+refusals.  This closes device qualification; it does not manufacture any of the
+five remaining AIR/proof obligations.
+
+Until all five close, `oddNtt_family_yields_exact_private_book_bfv_opening`
 correctly retains `OddNttRefines` as an explicit premise.
 -/
 
-def REMAINING_PRODUCTION_OBLIGATIONS : Nat := 6
+def REMAINING_PRODUCTION_OBLIGATIONS : Nat := 5
 
-#guard REMAINING_PRODUCTION_OBLIGATIONS == 6
+#guard REMAINING_PRODUCTION_OBLIGATIONS == 5
 
 #assert_all_clean [
   Market.PrivateBookBfvNttFamily.production_geometry,

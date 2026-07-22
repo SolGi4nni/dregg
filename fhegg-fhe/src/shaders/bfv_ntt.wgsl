@@ -121,6 +121,18 @@ fn twist_both(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
+fn twist_lhs(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    let row = gid.y;
+    if (i >= params.degree || row >= params.n_rows) { return; }
+    let q = row_q(row);
+    let qbits = row_qbits(row);
+    let index = row * params.degree + i;
+    let twist = load_table(1u, row, i);
+    store_coeff(0u, index, mulmod(load_coeff(0u, index), twist, q, qbits));
+}
+
+@compute @workgroup_size(64)
 fn bit_reverse_both(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     let row = gid.y;

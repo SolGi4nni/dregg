@@ -35,6 +35,7 @@ type Result<T> = std::result::Result<T, BfvNttError>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BfvNttError {
     InvalidShape(&'static str),
+    InvalidSchedule(String),
     UnsupportedParameters(String),
     NonCanonical {
         operand: &'static str,
@@ -44,12 +45,19 @@ pub enum BfvNttError {
         modulus: u64,
     },
     GpuExecution(String),
+    OutputMismatch {
+        row: usize,
+        coefficient: usize,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 impl fmt::Display for BfvNttError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidShape(what) => write!(f, "invalid RNS polynomial shape: {what}"),
+            Self::InvalidSchedule(what) => write!(f, "invalid odd-NTT schedule: {what}"),
             Self::UnsupportedParameters(what) => {
                 write!(f, "unsupported RNS NTT parameters: {what}")
             }
@@ -65,6 +73,16 @@ impl fmt::Display for BfvNttError {
                  {value} >= q = {modulus}"
             ),
             Self::GpuExecution(what) => write!(f, "wgpu RNS NTT failed: {what}"),
+            Self::OutputMismatch {
+                row,
+                coefficient,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "odd-NTT output mismatch at row {row}, coefficient {coefficient}: \
+                 expected {expected}, got {actual}"
+            ),
         }
     }
 }
@@ -95,6 +113,261 @@ pub enum RnsNttBackend {
 pub struct RnsNttExecution {
     pub polynomial: RnsPoly,
     pub backend: RnsNttBackend,
+}
+
+/// Direction of the exact odd-domain transform used by the BFV family proof.
+///
+/// `Forward` evaluates a power-basis polynomial at `psi^(2k+1)`. `Inverse`
+/// performs the corresponding interpolation, including both `n^-1` and the
+/// inverse negacyclic twist. The names describe semantic transforms, not just
+/// the cyclic radix-2 core dispatched by the shader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OddNttDirection {
+    Forward,
+    Inverse,
+}
+
+/// One radix-2 stage shared by every RNS row in an odd-NTT dispatch.
+///
+/// This is deliberately explicit proof-witness metadata. `root_table_offset`
+/// selects the forward or inverse half of the packed root table; the two flags
+/// identify the stage boundaries at which the negacyclic twist and inverse
+/// normalization must be constrained by the AIR.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OddNttStage {
+    pub direction: OddNttDirection,
+    pub stage_index: usize,
+    pub len: usize,
+    pub half: usize,
+    pub root_stride: usize,
+    pub root_table_offset: usize,
+    pub consumes_twisted_input: bool,
+    pub produces_normalized_output: bool,
+}
+
+/// Complete deterministic identity of one batched odd-NTT transform.
+///
+/// The schedule contains no prover-chosen root data. For the deployed
+/// degree-4096/q0-q1-q2 family, `psi` is pinned byte-for-byte to the roots in
+/// `Market.PrivateBookBfvNttFamily`; [`OddNttSchedule::validate`] rebuilds and
+/// checks that identity. This prevents two extensionally equivalent polynomial
+/// multipliers with differently ordered spectra from silently producing
+/// incompatible proof witnesses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OddNttSchedule {
+    pub direction: OddNttDirection,
+    pub degree: usize,
+    pub moduli: Vec<u64>,
+    pub psi: Vec<u64>,
+    pub stages: Vec<OddNttStage>,
+}
+
+impl OddNttSchedule {
+    /// Number of AIR butterfly rows emitted by this batched transform.
+    pub fn butterfly_rows(&self) -> usize {
+        self.moduli.len() * (self.degree / 2) * self.stages.len()
+    }
+
+    /// Fail closed if any root, direction, stage, stride, or boundary flag was
+    /// changed after the schedule was produced.
+    pub fn validate(&self) -> Result<()> {
+        let plan = NttPlan::from_shape(self.degree, &self.moduli)?;
+        let expected = Self::from_plan(&plan, self.direction);
+        if *self == expected {
+            Ok(())
+        } else {
+            Err(BfvNttError::InvalidSchedule(
+                "root or radix-2 stage metadata differs from the canonical plan".to_owned(),
+            ))
+        }
+    }
+
+    fn from_plan(plan: &NttPlan, direction: OddNttDirection) -> Self {
+        let mut stages = Vec::with_capacity(plan.log_degree as usize);
+        let mut len = 2usize;
+        let mut stage_index = 0usize;
+        while len <= plan.degree {
+            stages.push(OddNttStage {
+                direction,
+                stage_index,
+                len,
+                half: len / 2,
+                root_stride: plan.degree / len,
+                root_table_offset: match direction {
+                    OddNttDirection::Forward => 0,
+                    OddNttDirection::Inverse => plan.degree,
+                },
+                consumes_twisted_input: direction == OddNttDirection::Forward && stage_index == 0,
+                produces_normalized_output: direction == OddNttDirection::Inverse
+                    && stage_index + 1 == plan.log_degree as usize,
+            });
+            stage_index += 1;
+            len *= 2;
+        }
+        Self {
+            direction,
+            degree: plan.degree,
+            moduli: plan.moduli.clone(),
+            psi: plan.rows.iter().map(|row| row.psi).collect(),
+            stages,
+        }
+    }
+}
+
+/// Result of one standalone odd forward or inverse transform.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OddNttExecution {
+    pub polynomial: RnsPoly,
+    pub schedule: OddNttSchedule,
+    pub backend: RnsNttBackend,
+}
+
+/// One exact butterfly row suitable for streaming into the six-residue portion
+/// of the planned 48-column AIR. The host does not have to allocate a giant
+/// transcript: [`visit_odd_ntt_cpu`] emits rows in canonical
+/// `(modulus, stage, butterfly)` order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OddNttButterfly {
+    pub direction: OddNttDirection,
+    pub modulus_row: usize,
+    pub stage_index: usize,
+    pub butterfly_index: usize,
+    pub left_index: usize,
+    pub right_index: usize,
+    pub twiddle_index: usize,
+    pub modulus: u64,
+    pub left_input: u64,
+    pub right_input: u64,
+    pub twiddle: u64,
+    pub twiddled_right: u64,
+    pub left_output: u64,
+    pub right_output: u64,
+}
+
+/// Roots fixed by `Market.PrivateBookBfvNttFamily.lean` for the deployed BFV
+/// basis. q2 intentionally differs from the first primitive root found by a
+/// generic search; pinning it is required for spectrum/witness identity.
+pub const DEPLOYED_ODD_NTT_PSI: [u64; 3] = [5_546_991_020, 41_019_061_109, 93_693_982_103];
+
+pub const PRIVATE_BOOK_ORDER_COUNT: usize = 4;
+pub const PRIVATE_BOOK_CIPHER_POLY_COUNT: usize = 2;
+pub const PRIVATE_BOOK_RNS_MODULUS_COUNT: usize = 3;
+pub const PRIVATE_BOOK_DEGREE: usize = 4096;
+pub const PRIVATE_BOOK_LOG_DEGREE: usize = 12;
+pub const PRIVATE_BOOK_NTT_TRACE_WIDTH: usize = 48;
+pub const PRIVATE_BOOK_LIVE_FAMILY_ROWS: usize = 1_032_192;
+pub const PRIVATE_BOOK_PADDED_FAMILY_ROWS: usize = 1 << 20;
+
+/// Address of one row in the production private-book NTT-family matrix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrivateBookNttFamilyRow {
+    ForwardU {
+        order: usize,
+        modulus: usize,
+        stage: usize,
+        butterfly: usize,
+    },
+    Pointwise {
+        order: usize,
+        ciphertext_poly: usize,
+        modulus: usize,
+        coefficient: usize,
+    },
+    InverseProduct {
+        order: usize,
+        ciphertext_poly: usize,
+        modulus: usize,
+        stage: usize,
+        butterfly: usize,
+    },
+    Terminal {
+        order: usize,
+        ciphertext_poly: usize,
+        modulus: usize,
+        coefficient_pair: usize,
+    },
+    Padding {
+        padding_row: usize,
+    },
+}
+
+/// Decode a physical row of the exact `2^20 × 48` production family schedule.
+/// Every live transform butterfly, spectral product, and terminal coefficient
+/// pair occurs exactly once; padding occupies only the final 16,384 rows.
+pub fn private_book_ntt_family_row(row: usize) -> Result<PrivateBookNttFamilyRow> {
+    if row >= PRIVATE_BOOK_PADDED_FAMILY_ROWS {
+        return Err(BfvNttError::InvalidSchedule(format!(
+            "family row {row} exceeds the 2^20 matrix"
+        )));
+    }
+    let butterflies_per_stage = PRIVATE_BOOK_DEGREE / 2;
+    let butterflies_per_transform = butterflies_per_stage * PRIVATE_BOOK_LOG_DEGREE;
+    let forward_rows =
+        PRIVATE_BOOK_ORDER_COUNT * PRIVATE_BOOK_RNS_MODULUS_COUNT * butterflies_per_transform;
+    let pointwise_rows = PRIVATE_BOOK_ORDER_COUNT
+        * PRIVATE_BOOK_CIPHER_POLY_COUNT
+        * PRIVATE_BOOK_RNS_MODULUS_COUNT
+        * PRIVATE_BOOK_DEGREE;
+    let inverse_rows = PRIVATE_BOOK_ORDER_COUNT
+        * PRIVATE_BOOK_CIPHER_POLY_COUNT
+        * PRIVATE_BOOK_RNS_MODULUS_COUNT
+        * butterflies_per_transform;
+
+    if row < forward_rows {
+        let transform = row / butterflies_per_transform;
+        let within = row % butterflies_per_transform;
+        return Ok(PrivateBookNttFamilyRow::ForwardU {
+            order: transform / PRIVATE_BOOK_RNS_MODULUS_COUNT,
+            modulus: transform % PRIVATE_BOOK_RNS_MODULUS_COUNT,
+            stage: within / butterflies_per_stage,
+            butterfly: within % butterflies_per_stage,
+        });
+    }
+    let row = row - forward_rows;
+    if row < pointwise_rows {
+        let equation = row / PRIVATE_BOOK_DEGREE;
+        return Ok(PrivateBookNttFamilyRow::Pointwise {
+            order: equation / (PRIVATE_BOOK_CIPHER_POLY_COUNT * PRIVATE_BOOK_RNS_MODULUS_COUNT),
+            ciphertext_poly: (equation / PRIVATE_BOOK_RNS_MODULUS_COUNT)
+                % PRIVATE_BOOK_CIPHER_POLY_COUNT,
+            modulus: equation % PRIVATE_BOOK_RNS_MODULUS_COUNT,
+            coefficient: row % PRIVATE_BOOK_DEGREE,
+        });
+    }
+    let row = row - pointwise_rows;
+    if row < inverse_rows {
+        let transform = row / butterflies_per_transform;
+        let within = row % butterflies_per_transform;
+        return Ok(PrivateBookNttFamilyRow::InverseProduct {
+            order: transform / (PRIVATE_BOOK_CIPHER_POLY_COUNT * PRIVATE_BOOK_RNS_MODULUS_COUNT),
+            ciphertext_poly: (transform / PRIVATE_BOOK_RNS_MODULUS_COUNT)
+                % PRIVATE_BOOK_CIPHER_POLY_COUNT,
+            modulus: transform % PRIVATE_BOOK_RNS_MODULUS_COUNT,
+            stage: within / butterflies_per_stage,
+            butterfly: within % butterflies_per_stage,
+        });
+    }
+    let row = row - inverse_rows;
+    let terminal_rows = PRIVATE_BOOK_ORDER_COUNT
+        * PRIVATE_BOOK_CIPHER_POLY_COUNT
+        * PRIVATE_BOOK_RNS_MODULUS_COUNT
+        * (PRIVATE_BOOK_DEGREE / 2);
+    if row < terminal_rows {
+        let equation_pair = row / (PRIVATE_BOOK_DEGREE / 2);
+        return Ok(PrivateBookNttFamilyRow::Terminal {
+            order: equation_pair
+                / (PRIVATE_BOOK_CIPHER_POLY_COUNT * PRIVATE_BOOK_RNS_MODULUS_COUNT),
+            ciphertext_poly: (equation_pair / PRIVATE_BOOK_RNS_MODULUS_COUNT)
+                % PRIVATE_BOOK_CIPHER_POLY_COUNT,
+            modulus: equation_pair % PRIVATE_BOOK_RNS_MODULUS_COUNT,
+            coefficient_pair: row % (PRIVATE_BOOK_DEGREE / 2),
+        });
+    }
+    let live_row = forward_rows + pointwise_rows + inverse_rows + terminal_rows;
+    debug_assert_eq!(live_row, PRIVATE_BOOK_LIVE_FAMILY_ROWS);
+    Ok(PrivateBookNttFamilyRow::Padding {
+        padding_row: row - terminal_rows,
+    })
 }
 
 /// Reusable dispatch policy. GPU initialization is process-wide and lazy.
@@ -155,6 +428,63 @@ impl RnsNttEngine {
             }
         }
     }
+
+    /// Execute the exact standalone odd-domain forward transform. This is the
+    /// transform used for the twelve shared-u and six reusable public-key
+    /// spectra in the private-book family, rather than a multiplication-only
+    /// API that hides the spectral boundary.
+    pub fn forward_odd(&self, input: &RnsPoly, moduli: &[u64]) -> Result<OddNttExecution> {
+        self.transform_odd(input, moduli, OddNttDirection::Forward)
+    }
+
+    /// Execute the exact standalone odd-domain inverse transform, including
+    /// inverse twist and `n^-1` normalization.
+    pub fn inverse_odd(&self, input: &RnsPoly, moduli: &[u64]) -> Result<OddNttExecution> {
+        self.transform_odd(input, moduli, OddNttDirection::Inverse)
+    }
+
+    fn transform_odd(
+        &self,
+        input: &RnsPoly,
+        moduli: &[u64],
+        direction: OddNttDirection,
+    ) -> Result<OddNttExecution> {
+        let plan = NttPlan::for_poly(input, moduli, "input")?;
+        let schedule = OddNttSchedule::from_plan(&plan, direction);
+        if self.cpu_only {
+            return Ok(OddNttExecution {
+                polynomial: transform_cpu_with_plan(input, &plan, direction),
+                schedule,
+                backend: RnsNttBackend::CpuPolicy,
+            });
+        }
+        match gpu_state() {
+            GpuState::Unavailable(reason) => Ok(OddNttExecution {
+                polynomial: transform_cpu_with_plan(input, &plan, direction),
+                schedule,
+                backend: RnsNttBackend::CpuUnavailable {
+                    reason: reason.clone(),
+                },
+            }),
+            GpuState::Broken(reason) => Err(BfvNttError::GpuExecution(reason.clone())),
+            GpuState::Ready(gpu) => {
+                if let Err(reason) = gpu.supports(&plan) {
+                    return Ok(OddNttExecution {
+                        polynomial: transform_cpu_with_plan(input, &plan, direction),
+                        schedule,
+                        backend: RnsNttBackend::CpuAdapterLimits { reason },
+                    });
+                }
+                Ok(OddNttExecution {
+                    polynomial: gpu.transform_odd(input, &plan, direction)?,
+                    schedule,
+                    backend: RnsNttBackend::Wgpu {
+                        adapter: gpu.adapter.clone(),
+                    },
+                })
+            }
+        }
+    }
 }
 
 impl Default for RnsNttEngine {
@@ -179,8 +509,90 @@ pub fn multiply_rns_cpu(lhs: &RnsPoly, rhs: &RnsPoly, moduli: &[u64]) -> Result<
     Ok(multiply_cpu_with_plan(lhs, rhs, &plan))
 }
 
+/// Exact CPU reference for one standalone odd-domain transform.
+pub fn transform_odd_rns_cpu(
+    input: &RnsPoly,
+    moduli: &[u64],
+    direction: OddNttDirection,
+) -> Result<RnsPoly> {
+    let plan = NttPlan::for_poly(input, moduli, "input")?;
+    Ok(transform_cpu_with_plan(input, &plan, direction))
+}
+
+/// Stream the exact CPU butterfly witness in canonical schedule order while
+/// returning the transformed polynomial. This is the bounded-memory bridge for
+/// filling family AIR rows; callers may encode each callback immediately.
+pub fn visit_odd_ntt_cpu<F>(
+    input: &RnsPoly,
+    moduli: &[u64],
+    direction: OddNttDirection,
+    mut visitor: F,
+) -> Result<RnsPoly>
+where
+    F: FnMut(OddNttButterfly),
+{
+    let plan = NttPlan::for_poly(input, moduli, "input")?;
+    Ok(transform_cpu_with_plan_and_visitor(
+        input,
+        &plan,
+        direction,
+        &mut visitor,
+    ))
+}
+
+/// Recompute and compare every residue against the canonical CPU transform.
+/// Schedule identity is checked first, so root/stage mutations are distinct
+/// from output mutations and never accepted as a different valid transform.
+pub fn verify_odd_ntt_execution(
+    input: &RnsPoly,
+    moduli: &[u64],
+    execution: &OddNttExecution,
+) -> Result<()> {
+    execution.schedule.validate()?;
+    let plan = NttPlan::for_poly(input, moduli, "input")?;
+    let expected_schedule = OddNttSchedule::from_plan(&plan, execution.schedule.direction);
+    if execution.schedule != expected_schedule {
+        return Err(BfvNttError::InvalidSchedule(
+            "execution schedule does not match the input modulus family".to_owned(),
+        ));
+    }
+    let expected = transform_cpu_with_plan(input, &plan, execution.schedule.direction);
+    if execution.polynomial.rows.len() != expected.rows.len()
+        || execution
+            .polynomial
+            .rows
+            .iter()
+            .zip(&expected.rows)
+            .any(|(actual, expected)| actual.len() != expected.len())
+    {
+        return Err(BfvNttError::InvalidShape(
+            "claimed odd-NTT output shape differs from the canonical transform",
+        ));
+    }
+    for (row, (actual, expected)) in execution
+        .polynomial
+        .rows
+        .iter()
+        .zip(&expected.rows)
+        .enumerate()
+    {
+        for (coefficient, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+            if actual != expected {
+                return Err(BfvNttError::OutputMismatch {
+                    row,
+                    coefficient,
+                    expected,
+                    actual,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct RowPlan {
+    psi: u64,
     roots: Vec<u64>,
     inverse_roots: Vec<u64>,
     twists: Vec<u64>,
@@ -196,6 +608,22 @@ struct NttPlan {
 
 impl NttPlan {
     fn new(lhs: &RnsPoly, rhs: &RnsPoly, moduli: &[u64]) -> Result<Self> {
+        let degree = validate_poly(lhs, moduli, "lhs")?;
+        let rhs_degree = validate_poly(rhs, moduli, "rhs")?;
+        if degree != rhs_degree {
+            return Err(BfvNttError::InvalidShape(
+                "operand polynomial degrees differ",
+            ));
+        }
+        Self::from_shape(degree, moduli)
+    }
+
+    fn for_poly(poly: &RnsPoly, moduli: &[u64], operand: &'static str) -> Result<Self> {
+        let degree = validate_poly(poly, moduli, operand)?;
+        Self::from_shape(degree, moduli)
+    }
+
+    fn from_shape(degree: usize, moduli: &[u64]) -> Result<Self> {
         if moduli.is_empty() {
             return Err(BfvNttError::InvalidShape("modulus set is empty"));
         }
@@ -204,12 +632,6 @@ impl NttPlan {
                 "RNS row count exceeds the bounded GPU/CPU plan",
             ));
         }
-        if lhs.rows.len() != moduli.len() || rhs.rows.len() != moduli.len() {
-            return Err(BfvNttError::InvalidShape(
-                "operand row count differs from modulus count",
-            ));
-        }
-        let degree = lhs.rows[0].len();
         if degree < 8 || !degree.is_power_of_two() {
             return Err(BfvNttError::InvalidShape(
                 "degree must be a power of two at least 8",
@@ -219,28 +641,6 @@ impl NttPlan {
             return Err(BfvNttError::InvalidShape(
                 "degree exceeds the bounded NTT implementation",
             ));
-        }
-        if lhs.rows.iter().any(|row| row.len() != degree)
-            || rhs.rows.iter().any(|row| row.len() != degree)
-        {
-            return Err(BfvNttError::InvalidShape(
-                "all operand rows must have the same degree",
-            ));
-        }
-        for (operand, poly) in [("lhs", lhs), ("rhs", rhs)] {
-            for (row, (&q, coefficients)) in moduli.iter().zip(&poly.rows).enumerate() {
-                for (coefficient, &value) in coefficients.iter().enumerate() {
-                    if value >= q {
-                        return Err(BfvNttError::NonCanonical {
-                            operand,
-                            row,
-                            coefficient,
-                            value,
-                            modulus: q,
-                        });
-                    }
-                }
-            }
         }
         if moduli.iter().any(|&q| q >= (1u64 << 62)) {
             return Err(BfvNttError::UnsupportedParameters(
@@ -268,22 +668,73 @@ impl NttPlan {
     }
 }
 
+fn validate_poly(poly: &RnsPoly, moduli: &[u64], operand: &'static str) -> Result<usize> {
+    if moduli.is_empty() {
+        return Err(BfvNttError::InvalidShape("modulus set is empty"));
+    }
+    if poly.rows.len() != moduli.len() {
+        return Err(BfvNttError::InvalidShape(
+            "operand row count differs from modulus count",
+        ));
+    }
+    let degree = poly.rows[0].len();
+    if poly.rows.iter().any(|row| row.len() != degree) {
+        return Err(BfvNttError::InvalidShape(
+            "all operand rows must have the same degree",
+        ));
+    }
+    for (row, (&q, coefficients)) in moduli.iter().zip(&poly.rows).enumerate() {
+        for (coefficient, &value) in coefficients.iter().enumerate() {
+            if value >= q {
+                return Err(BfvNttError::NonCanonical {
+                    operand,
+                    row,
+                    coefficient,
+                    value,
+                    modulus: q,
+                });
+            }
+        }
+    }
+    Ok(degree)
+}
+
 fn build_row_plan(q: u64, degree: usize) -> Result<RowPlan> {
     let order = (degree as u64)
         .checked_mul(2)
         .ok_or(BfvNttError::InvalidShape("2*degree overflows u64"))?;
     let exponent = (q - 1) / order;
-    let mut psi = None;
-    for candidate in 2u64..=1_000_000 {
-        let root = mod_pow(candidate, exponent, q);
-        if mod_pow(root, degree as u64, q) == q - 1 {
-            psi = Some(root);
-            break;
+    let deployed_moduli = crate::bfv_lean::FOLD_MODULI;
+    let prescribed = if degree == PRIVATE_BOOK_DEGREE {
+        deployed_moduli
+            .iter()
+            .position(|candidate| *candidate == q)
+            .map(|row| DEPLOYED_ODD_NTT_PSI[row])
+    } else {
+        None
+    };
+    let psi = match prescribed {
+        Some(root) => Some(root),
+        None => {
+            let mut found = None;
+            for candidate in 2u64..=1_000_000 {
+                let root = mod_pow(candidate, exponent, q);
+                if mod_pow(root, degree as u64, q) == q - 1 {
+                    found = Some(root);
+                    break;
+                }
+            }
+            found
         }
-    }
+    };
     let psi = psi.ok_or_else(|| {
         BfvNttError::UnsupportedParameters(format!("no primitive {order}-th root found modulo {q}"))
     })?;
+    if mod_pow(psi, degree as u64, q) != q - 1 {
+        return Err(BfvNttError::UnsupportedParameters(format!(
+            "prescribed psi={psi} is not a primitive {order}-th negacyclic root modulo {q}"
+        )));
+    }
     let psi_inv = mod_pow(psi, q - 2, q);
     let omega = mod_mul(psi, psi, q);
     let omega_inv = mod_pow(omega, q - 2, q);
@@ -297,6 +748,7 @@ fn build_row_plan(q: u64, degree: usize) -> Result<RowPlan> {
         .map(|value| mod_mul(value, n_inv, q))
         .collect();
     Ok(RowPlan {
+        psi,
         roots,
         inverse_roots,
         twists,
@@ -378,6 +830,106 @@ fn cyclic_ntt(values: &mut [u64], roots: &[u64], modulus: u64) {
     }
 }
 
+fn cyclic_ntt_with_visitor<F>(
+    values: &mut [u64],
+    roots: &[u64],
+    modulus: u64,
+    modulus_row: usize,
+    direction: OddNttDirection,
+    visitor: &mut F,
+) where
+    F: FnMut(OddNttButterfly),
+{
+    bit_reverse_permute(values);
+    let degree = values.len();
+    let mut len = 2usize;
+    let mut stage_index = 0usize;
+    while len <= degree {
+        let half = len / 2;
+        let step = degree / len;
+        let mut butterfly_index = 0usize;
+        for block in (0..degree).step_by(len) {
+            for j in 0..half {
+                let left_index = block + j;
+                let right_index = left_index + half;
+                let twiddle_index = j * step;
+                let left_input = values[left_index];
+                let right_input = values[right_index];
+                let twiddle = roots[twiddle_index];
+                let twiddled_right = mod_mul(right_input, twiddle, modulus);
+                let left_output = add_mod(left_input, twiddled_right, modulus);
+                let right_output = sub_mod(left_input, twiddled_right, modulus);
+                values[left_index] = left_output;
+                values[right_index] = right_output;
+                visitor(OddNttButterfly {
+                    direction,
+                    modulus_row,
+                    stage_index,
+                    butterfly_index,
+                    left_index,
+                    right_index,
+                    twiddle_index,
+                    modulus,
+                    left_input,
+                    right_input,
+                    twiddle,
+                    twiddled_right,
+                    left_output,
+                    right_output,
+                });
+                butterfly_index += 1;
+            }
+        }
+        debug_assert_eq!(butterfly_index, degree / 2);
+        stage_index += 1;
+        len *= 2;
+    }
+}
+
+fn transform_cpu_with_plan(input: &RnsPoly, plan: &NttPlan, direction: OddNttDirection) -> RnsPoly {
+    transform_cpu_with_plan_and_visitor(input, plan, direction, &mut |_| {})
+}
+
+fn transform_cpu_with_plan_and_visitor<F>(
+    input: &RnsPoly,
+    plan: &NttPlan,
+    direction: OddNttDirection,
+    visitor: &mut F,
+) -> RnsPoly
+where
+    F: FnMut(OddNttButterfly),
+{
+    let mut rows = Vec::with_capacity(plan.moduli.len());
+    for (modulus_row, ((input_row, &q), row_plan)) in input
+        .rows
+        .iter()
+        .zip(&plan.moduli)
+        .zip(&plan.rows)
+        .enumerate()
+    {
+        let mut values = match direction {
+            OddNttDirection::Forward => input_row
+                .iter()
+                .zip(&row_plan.twists)
+                .map(|(&value, &twist)| mod_mul(value, twist, q))
+                .collect(),
+            OddNttDirection::Inverse => input_row.clone(),
+        };
+        let roots = match direction {
+            OddNttDirection::Forward => &row_plan.roots,
+            OddNttDirection::Inverse => &row_plan.inverse_roots,
+        };
+        cyclic_ntt_with_visitor(&mut values, roots, q, modulus_row, direction, visitor);
+        if direction == OddNttDirection::Inverse {
+            for (value, &scale) in values.iter_mut().zip(&row_plan.inverse_twists_times_n_inv) {
+                *value = mod_mul(*value, scale, q);
+            }
+        }
+        rows.push(values);
+    }
+    RnsPoly { rows }
+}
+
 fn multiply_cpu_with_plan(lhs: &RnsPoly, rhs: &RnsPoly, plan: &NttPlan) -> RnsPoly {
     let mut rows = Vec::with_capacity(plan.moduli.len());
     for (row, ((left, right), &q)) in lhs.rows.iter().zip(&rhs.rows).zip(&plan.moduli).enumerate() {
@@ -414,6 +966,35 @@ enum GpuState {
     Broken(String),
 }
 
+#[derive(Clone, Copy)]
+enum GpuNttOperation {
+    Multiply,
+    Transform(OddNttDirection),
+}
+
+fn dispatch_stages<F>(
+    dispatch: &mut F,
+    pipeline: &wgpu::ComputePipeline,
+    degree: u32,
+    log_degree: u32,
+    rows: u32,
+    roots_offset: u32,
+) where
+    F: FnMut(&wgpu::ComputePipeline, [u32; 8], u32),
+{
+    let mut len = 2u32;
+    while len <= degree {
+        let half = len / 2;
+        let step = degree / len;
+        dispatch(
+            pipeline,
+            [degree, log_degree, half, step, roots_offset, rows, 0, 0],
+            degree / 2,
+        );
+        len *= 2;
+    }
+}
+
 fn gpu_state() -> &'static GpuState {
     static GPU: OnceLock<GpuState> = OnceLock::new();
     GPU.get_or_init(GpuCtx::initialize)
@@ -427,6 +1008,7 @@ struct GpuCtx {
     limits: wgpu::Limits,
     bgl: wgpu::BindGroupLayout,
     twist_both: wgpu::ComputePipeline,
+    twist_lhs: wgpu::ComputePipeline,
     bit_reverse_both: wgpu::ComputePipeline,
     stage_both: wgpu::ComputePipeline,
     pointwise: wgpu::ComputePipeline,
@@ -495,6 +1077,7 @@ impl GpuCtx {
             })
         };
         let twist_both = make_pipeline("twist_both");
+        let twist_lhs = make_pipeline("twist_lhs");
         let bit_reverse_both = make_pipeline("bit_reverse_both");
         let stage_both = make_pipeline("stage_both");
         let pointwise = make_pipeline("pointwise");
@@ -512,6 +1095,7 @@ impl GpuCtx {
             limits,
             bgl,
             twist_both,
+            twist_lhs,
             bit_reverse_both,
             stage_both,
             pointwise,
@@ -557,6 +1141,25 @@ impl GpuCtx {
     }
 
     fn multiply(&self, lhs: &RnsPoly, rhs: &RnsPoly, plan: &NttPlan) -> Result<RnsPoly> {
+        self.execute(lhs, Some(rhs), plan, GpuNttOperation::Multiply)
+    }
+
+    fn transform_odd(
+        &self,
+        input: &RnsPoly,
+        plan: &NttPlan,
+        direction: OddNttDirection,
+    ) -> Result<RnsPoly> {
+        self.execute(input, None, plan, GpuNttOperation::Transform(direction))
+    }
+
+    fn execute(
+        &self,
+        lhs: &RnsPoly,
+        rhs: Option<&RnsPoly>,
+        plan: &NttPlan,
+        operation: GpuNttOperation,
+    ) -> Result<RnsPoly> {
         use wgpu::util::DeviceExt;
 
         // Any buffer/bind/dispatch validation failure is a kernel error. It
@@ -588,7 +1191,10 @@ impl GpuCtx {
         }
 
         let lhs_words = pack(lhs);
-        let rhs_words = pack(rhs);
+        // The manual bind-group layout is shared by all entry points. A
+        // standalone transform binds one inert coefficient in the unused RHS
+        // slot; no duplicate polynomial upload is performed.
+        let rhs_words = rhs.map(pack).unwrap_or_else(|| vec![0u32; 2]);
         let lhs_buf = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -696,33 +1302,41 @@ impl GpuCtx {
             };
 
         let base_meta = [degree, log_degree, 0, 0, 0, rows, 0, 0];
-        dispatch(&self.twist_both, base_meta, degree);
-        dispatch(&self.bit_reverse_both, base_meta, degree);
-        let mut len = 2u32;
-        while len <= degree {
-            let half = len / 2;
-            let step = degree / len;
-            dispatch(
-                &self.stage_both,
-                [degree, log_degree, half, step, 0, rows, 0, 0],
-                degree / 2,
-            );
-            len *= 2;
+        match operation {
+            GpuNttOperation::Multiply => {
+                dispatch(&self.twist_both, base_meta, degree);
+                dispatch(&self.bit_reverse_both, base_meta, degree);
+                dispatch_stages(&mut dispatch, &self.stage_both, degree, log_degree, rows, 0);
+                dispatch(&self.pointwise, base_meta, degree);
+                dispatch(&self.bit_reverse_lhs, base_meta, degree);
+                dispatch_stages(
+                    &mut dispatch,
+                    &self.stage_lhs,
+                    degree,
+                    log_degree,
+                    rows,
+                    degree,
+                );
+                dispatch(&self.finalize_lhs, base_meta, degree);
+            }
+            GpuNttOperation::Transform(OddNttDirection::Forward) => {
+                dispatch(&self.twist_lhs, base_meta, degree);
+                dispatch(&self.bit_reverse_lhs, base_meta, degree);
+                dispatch_stages(&mut dispatch, &self.stage_lhs, degree, log_degree, rows, 0);
+            }
+            GpuNttOperation::Transform(OddNttDirection::Inverse) => {
+                dispatch(&self.bit_reverse_lhs, base_meta, degree);
+                dispatch_stages(
+                    &mut dispatch,
+                    &self.stage_lhs,
+                    degree,
+                    log_degree,
+                    rows,
+                    degree,
+                );
+                dispatch(&self.finalize_lhs, base_meta, degree);
+            }
         }
-        dispatch(&self.pointwise, base_meta, degree);
-        dispatch(&self.bit_reverse_lhs, base_meta, degree);
-        len = 2;
-        while len <= degree {
-            let half = len / 2;
-            let step = degree / len;
-            dispatch(
-                &self.stage_lhs,
-                [degree, log_degree, half, step, degree, rows, 0, 0],
-                degree / 2,
-            );
-            len *= 2;
-        }
-        dispatch(&self.finalize_lhs, base_meta, degree);
         drop(dispatch);
         encoder.copy_buffer_to_buffer(&lhs_buf, 0, &read_buf, 0, output_bytes);
 
@@ -987,6 +1601,377 @@ mod tests {
                 );
                 eprintln!(
                     "portable BFV RNS NTT GPU parity SKIPPED explicitly; exact CPU fallback used: {fallback:?}"
+                );
+            }
+        }
+    }
+
+    fn direct_odd_forward_at(input: &[u64], frequency: usize, psi: u64, q: u64) -> u64 {
+        input
+            .iter()
+            .enumerate()
+            .fold(0u64, |acc, (coefficient, &value)| {
+                let exponent = ((2 * frequency + 1) * coefficient) as u64;
+                add_mod(acc, mod_mul(value, mod_pow(psi, exponent, q), q), q)
+            })
+    }
+
+    fn direct_odd_inverse_at(spectrum: &[u64], coefficient: usize, psi: u64, q: u64) -> u64 {
+        let psi_inverse = mod_pow(psi, q - 2, q);
+        let n_inverse = mod_pow((spectrum.len() as u64) % q, q - 2, q);
+        let sum = spectrum
+            .iter()
+            .enumerate()
+            .fold(0u64, |acc, (frequency, &value)| {
+                let exponent = ((2 * frequency + 1) * coefficient) as u64;
+                add_mod(acc, mod_mul(value, mod_pow(psi_inverse, exponent, q), q), q)
+            });
+        mod_mul(sum, n_inverse, q)
+    }
+
+    #[test]
+    fn production_family_row_decoder_is_total_exact_and_boundary_pinned() {
+        let butterflies_per_transform = (PRIVATE_BOOK_DEGREE / 2) * PRIVATE_BOOK_LOG_DEGREE;
+        let forward_rows =
+            PRIVATE_BOOK_ORDER_COUNT * PRIVATE_BOOK_RNS_MODULUS_COUNT * butterflies_per_transform;
+        let pointwise_rows = PRIVATE_BOOK_ORDER_COUNT
+            * PRIVATE_BOOK_CIPHER_POLY_COUNT
+            * PRIVATE_BOOK_RNS_MODULUS_COUNT
+            * PRIVATE_BOOK_DEGREE;
+        let inverse_rows = PRIVATE_BOOK_ORDER_COUNT
+            * PRIVATE_BOOK_CIPHER_POLY_COUNT
+            * PRIVATE_BOOK_RNS_MODULUS_COUNT
+            * butterflies_per_transform;
+
+        assert_eq!(PRIVATE_BOOK_NTT_TRACE_WIDTH, 48);
+        assert_eq!(PRIVATE_BOOK_LIVE_FAMILY_ROWS, 1_032_192);
+        assert_eq!(PRIVATE_BOOK_PADDED_FAMILY_ROWS, 1_048_576);
+        assert_eq!(
+            private_book_ntt_family_row(0).unwrap(),
+            PrivateBookNttFamilyRow::ForwardU {
+                order: 0,
+                modulus: 0,
+                stage: 0,
+                butterfly: 0,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(forward_rows - 1).unwrap(),
+            PrivateBookNttFamilyRow::ForwardU {
+                order: 3,
+                modulus: 2,
+                stage: 11,
+                butterfly: 2047,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(forward_rows).unwrap(),
+            PrivateBookNttFamilyRow::Pointwise {
+                order: 0,
+                ciphertext_poly: 0,
+                modulus: 0,
+                coefficient: 0,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(forward_rows + pointwise_rows).unwrap(),
+            PrivateBookNttFamilyRow::InverseProduct {
+                order: 0,
+                ciphertext_poly: 0,
+                modulus: 0,
+                stage: 0,
+                butterfly: 0,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(forward_rows + pointwise_rows + inverse_rows).unwrap(),
+            PrivateBookNttFamilyRow::Terminal {
+                order: 0,
+                ciphertext_poly: 0,
+                modulus: 0,
+                coefficient_pair: 0,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(PRIVATE_BOOK_LIVE_FAMILY_ROWS - 1).unwrap(),
+            PrivateBookNttFamilyRow::Terminal {
+                order: 3,
+                ciphertext_poly: 1,
+                modulus: 2,
+                coefficient_pair: 2047,
+            }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(PRIVATE_BOOK_LIVE_FAMILY_ROWS).unwrap(),
+            PrivateBookNttFamilyRow::Padding { padding_row: 0 }
+        );
+        assert_eq!(
+            private_book_ntt_family_row(PRIVATE_BOOK_PADDED_FAMILY_ROWS - 1).unwrap(),
+            PrivateBookNttFamilyRow::Padding {
+                padding_row: 16_383,
+            }
+        );
+        assert!(matches!(
+            private_book_ntt_family_row(PRIVATE_BOOK_PADDED_FAMILY_ROWS),
+            Err(BfvNttError::InvalidSchedule(_))
+        ));
+
+        // Exhaust the complete physical matrix and invert every decoded
+        // address. This is stronger than checking section endpoints: no live
+        // row can alias another semantic operation or disappear into padding.
+        let mut counts = [0usize; 5];
+        for physical_row in 0..PRIVATE_BOOK_PADDED_FAMILY_ROWS {
+            let recomposed = match private_book_ntt_family_row(physical_row).unwrap() {
+                PrivateBookNttFamilyRow::ForwardU {
+                    order,
+                    modulus,
+                    stage,
+                    butterfly,
+                } => {
+                    counts[0] += 1;
+                    assert!(order < PRIVATE_BOOK_ORDER_COUNT);
+                    assert!(modulus < PRIVATE_BOOK_RNS_MODULUS_COUNT);
+                    assert!(stage < PRIVATE_BOOK_LOG_DEGREE);
+                    assert!(butterfly < PRIVATE_BOOK_DEGREE / 2);
+                    (order * PRIVATE_BOOK_RNS_MODULUS_COUNT + modulus) * butterflies_per_transform
+                        + stage * (PRIVATE_BOOK_DEGREE / 2)
+                        + butterfly
+                }
+                PrivateBookNttFamilyRow::Pointwise {
+                    order,
+                    ciphertext_poly,
+                    modulus,
+                    coefficient,
+                } => {
+                    counts[1] += 1;
+                    assert!(order < PRIVATE_BOOK_ORDER_COUNT);
+                    assert!(ciphertext_poly < PRIVATE_BOOK_CIPHER_POLY_COUNT);
+                    assert!(modulus < PRIVATE_BOOK_RNS_MODULUS_COUNT);
+                    assert!(coefficient < PRIVATE_BOOK_DEGREE);
+                    forward_rows
+                        + ((order * PRIVATE_BOOK_CIPHER_POLY_COUNT + ciphertext_poly)
+                            * PRIVATE_BOOK_RNS_MODULUS_COUNT
+                            + modulus)
+                            * PRIVATE_BOOK_DEGREE
+                        + coefficient
+                }
+                PrivateBookNttFamilyRow::InverseProduct {
+                    order,
+                    ciphertext_poly,
+                    modulus,
+                    stage,
+                    butterfly,
+                } => {
+                    counts[2] += 1;
+                    assert!(order < PRIVATE_BOOK_ORDER_COUNT);
+                    assert!(ciphertext_poly < PRIVATE_BOOK_CIPHER_POLY_COUNT);
+                    assert!(modulus < PRIVATE_BOOK_RNS_MODULUS_COUNT);
+                    assert!(stage < PRIVATE_BOOK_LOG_DEGREE);
+                    assert!(butterfly < PRIVATE_BOOK_DEGREE / 2);
+                    forward_rows
+                        + pointwise_rows
+                        + ((order * PRIVATE_BOOK_CIPHER_POLY_COUNT + ciphertext_poly)
+                            * PRIVATE_BOOK_RNS_MODULUS_COUNT
+                            + modulus)
+                            * butterflies_per_transform
+                        + stage * (PRIVATE_BOOK_DEGREE / 2)
+                        + butterfly
+                }
+                PrivateBookNttFamilyRow::Terminal {
+                    order,
+                    ciphertext_poly,
+                    modulus,
+                    coefficient_pair,
+                } => {
+                    counts[3] += 1;
+                    assert!(order < PRIVATE_BOOK_ORDER_COUNT);
+                    assert!(ciphertext_poly < PRIVATE_BOOK_CIPHER_POLY_COUNT);
+                    assert!(modulus < PRIVATE_BOOK_RNS_MODULUS_COUNT);
+                    assert!(coefficient_pair < PRIVATE_BOOK_DEGREE / 2);
+                    forward_rows
+                        + pointwise_rows
+                        + inverse_rows
+                        + ((order * PRIVATE_BOOK_CIPHER_POLY_COUNT + ciphertext_poly)
+                            * PRIVATE_BOOK_RNS_MODULUS_COUNT
+                            + modulus)
+                            * (PRIVATE_BOOK_DEGREE / 2)
+                        + coefficient_pair
+                }
+                PrivateBookNttFamilyRow::Padding { padding_row } => {
+                    counts[4] += 1;
+                    PRIVATE_BOOK_LIVE_FAMILY_ROWS + padding_row
+                }
+            };
+            assert_eq!(recomposed, physical_row);
+        }
+        assert_eq!(counts, [294_912, 98_304, 589_824, 49_152, 16_384]);
+    }
+
+    #[test]
+    fn deployed_scheduled_odd_ntt_is_lean_pinned_streamable_and_mutation_strict() {
+        let input = deployed_poly(0x6750_4e54_5401);
+        let cpu_engine = RnsNttEngine::cpu_only();
+        let forward = cpu_engine
+            .forward_odd(&input, &FOLD_MODULI)
+            .expect("production CPU odd forward NTT");
+        assert_eq!(forward.backend, RnsNttBackend::CpuPolicy);
+        assert_eq!(forward.schedule.psi, DEPLOYED_ODD_NTT_PSI);
+        assert_eq!(forward.schedule.stages.len(), PRIVATE_BOOK_LOG_DEGREE);
+        assert_eq!(forward.schedule.butterfly_rows(), 3 * 24_576);
+        forward
+            .schedule
+            .validate()
+            .expect("canonical forward schedule");
+
+        // Anchor the staged radix-2 implementation to Lean's direct
+        // sum_j a_j*psi^((2k+1)j) definition at spread frequencies in every
+        // deployed modulus, including the separately pinned q2 root.
+        for (row, (&q, &psi)) in FOLD_MODULI.iter().zip(&DEPLOYED_ODD_NTT_PSI).enumerate() {
+            for frequency in [0usize, 1, 17, 255, 2048, 4095] {
+                assert_eq!(
+                    forward.polynomial.rows[row][frequency],
+                    direct_odd_forward_at(&input.rows[row], frequency, psi, q),
+                    "direct odd-forward mismatch at row={row}, frequency={frequency}"
+                );
+            }
+        }
+
+        let mut butterfly_count = 0usize;
+        let streamed = visit_odd_ntt_cpu(
+            &input,
+            &FOLD_MODULI,
+            OddNttDirection::Forward,
+            |butterfly| {
+                assert_eq!(
+                    butterfly.twiddled_right,
+                    mod_mul(butterfly.right_input, butterfly.twiddle, butterfly.modulus)
+                );
+                assert_eq!(
+                    butterfly.left_output,
+                    add_mod(
+                        butterfly.left_input,
+                        butterfly.twiddled_right,
+                        butterfly.modulus
+                    )
+                );
+                assert_eq!(
+                    butterfly.right_output,
+                    sub_mod(
+                        butterfly.left_input,
+                        butterfly.twiddled_right,
+                        butterfly.modulus
+                    )
+                );
+                butterfly_count += 1;
+            },
+        )
+        .expect("streaming CPU witness");
+        assert_eq!(streamed, forward.polynomial);
+        assert_eq!(butterfly_count, forward.schedule.butterfly_rows());
+
+        let inverse = cpu_engine
+            .inverse_odd(&forward.polynomial, &FOLD_MODULI)
+            .expect("production CPU odd inverse NTT");
+        assert_eq!(inverse.polynomial, input, "odd NTT round trip");
+        inverse
+            .schedule
+            .validate()
+            .expect("canonical inverse schedule");
+        for (row, (&q, &psi)) in FOLD_MODULI.iter().zip(&DEPLOYED_ODD_NTT_PSI).enumerate() {
+            for coefficient in [0usize, 3, 31, 511, 2049, 4095] {
+                assert_eq!(
+                    inverse.polynomial.rows[row][coefficient],
+                    direct_odd_inverse_at(&forward.polynomial.rows[row], coefficient, psi, q),
+                    "direct odd-inverse mismatch at row={row}, coefficient={coefficient}"
+                );
+            }
+        }
+        verify_odd_ntt_execution(&input, &FOLD_MODULI, &forward)
+            .expect("honest execution verifies");
+
+        let mut wrong_coefficient = forward.clone();
+        wrong_coefficient.polynomial.rows[2][2049] = add_mod(
+            wrong_coefficient.polynomial.rows[2][2049],
+            1,
+            FOLD_MODULI[2],
+        );
+        assert!(matches!(
+            verify_odd_ntt_execution(&input, &FOLD_MODULI, &wrong_coefficient),
+            Err(BfvNttError::OutputMismatch {
+                row: 2,
+                coefficient: 2049,
+                ..
+            })
+        ));
+
+        let mut wrong_stage = forward.clone();
+        wrong_stage.schedule.stages[7].root_stride += 1;
+        assert!(matches!(
+            verify_odd_ntt_execution(&input, &FOLD_MODULI, &wrong_stage),
+            Err(BfvNttError::InvalidSchedule(_))
+        ));
+        let mut wrong_root = forward.clone();
+        wrong_root.schedule.psi[2] = 61_409_057_737; // another valid q2 root, wrong spectrum identity
+        assert!(matches!(
+            verify_odd_ntt_execution(&input, &FOLD_MODULI, &wrong_root),
+            Err(BfvNttError::InvalidSchedule(_))
+        ));
+        let mut wrong_modulus = forward.clone();
+        wrong_modulus.schedule.moduli.swap(0, 1);
+        assert!(matches!(
+            verify_odd_ntt_execution(&input, &FOLD_MODULI, &wrong_modulus),
+            Err(BfvNttError::InvalidSchedule(_))
+        ));
+        let mut changed_input = input.clone();
+        changed_input.rows[1][997] = add_mod(changed_input.rows[1][997], 1, FOLD_MODULI[1]);
+        assert!(matches!(
+            verify_odd_ntt_execution(&changed_input, &FOLD_MODULI, &forward),
+            Err(BfvNttError::OutputMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn deployed_scheduled_odd_ntt_wgpu_matches_every_cpu_residue() {
+        let input = deployed_poly(0x6750_4e54_5402);
+        let cpu_forward = transform_odd_rns_cpu(&input, &FOLD_MODULI, OddNttDirection::Forward)
+            .expect("CPU forward reference");
+        let engine = RnsNttEngine::new();
+        let gpu_forward = engine
+            .forward_odd(&input, &FOLD_MODULI)
+            .expect("GPU or explicit capability fallback forward transform");
+        assert_eq!(gpu_forward.polynomial, cpu_forward);
+        verify_odd_ntt_execution(&input, &FOLD_MODULI, &gpu_forward)
+            .expect("forward execution verifies");
+
+        let cpu_inverse =
+            transform_odd_rns_cpu(&cpu_forward, &FOLD_MODULI, OddNttDirection::Inverse)
+                .expect("CPU inverse reference");
+        let gpu_inverse = engine
+            .inverse_odd(&gpu_forward.polynomial, &FOLD_MODULI)
+            .expect("GPU or explicit capability fallback inverse transform");
+        assert_eq!(gpu_inverse.polynomial, cpu_inverse);
+        assert_eq!(gpu_inverse.polynomial, input);
+        verify_odd_ntt_execution(&gpu_forward.polynomial, &FOLD_MODULI, &gpu_inverse)
+            .expect("inverse execution verifies");
+
+        match (&gpu_forward.backend, &gpu_inverse.backend) {
+            (
+                RnsNttBackend::Wgpu { adapter: forward },
+                RnsNttBackend::Wgpu { adapter: inverse },
+            ) => {
+                assert_eq!(forward, inverse);
+                eprintln!(
+                    "scheduled BFV odd forward/inverse parity GREEN on {forward}: \
+                     2 transforms × 3 moduli × 4096 residues"
+                );
+            }
+            (forward, inverse) => {
+                assert!(
+                    std::env::var_os("DREGG_REQUIRE_WGPU").is_none(),
+                    "DREGG_REQUIRE_WGPU is set but odd NTT used {forward:?}/{inverse:?}"
+                );
+                eprintln!(
+                    "scheduled BFV odd NTT GPU parity SKIPPED explicitly: {forward:?}/{inverse:?}"
                 );
             }
         }

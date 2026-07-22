@@ -108,7 +108,7 @@ classical seams into a post-quantum composition.
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact adaptive radix-16/radix-128 required mode through 4096 terms; fixed radix-128 4096 was 4.722s GPU vs 9.563ms dalek and standalone adaptive was 4.643s vs 9.827ms, so disabled by default |
 | Portable encrypted TFHE PBS | **TYPED DEFAULT-ORDER ONE-BLOCK PATH GATED** | default Big-key `FheUint32` now performs exact 2048→918 KS → transform-resident PBS → 2049-coefficient big-key reconstruction and survives a following high-level op; hbox 1/1, 317.965ms plan preparation and 143.891ms first typed call against the prepared plan; multi-block comparison dispatch remains |
-| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; FULL NTT FAMILY FORMALIZED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family now has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows) plus a reusable 2^18 key certificate, while butterfly AIR/witness bus/terminal quotient/recursive join/WGPU parity remain |
+| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY FORMALIZED + SCHEDULED WGPU GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact standalone q0/q1/q2 forward/inverse WGPU transforms, and a reusable 2^18 key certificate, while butterfly AIR/full witness bus/terminal quotient/recursive join remain |
 | Additive PQ share commitment | **EXPERIMENTAL ALGEBRA/KAT; PRODUCTION REFUSED** | context-bound BabyBear/SIS-style additive commitments, exact links, randomized hiding coordinates, and short-kernel extraction are Rust/Lean green; dimensions are not estimator-approved and live wide Ristretto shares are not bounded coordinates, so `productionPqReady = false` |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; accumulator insertion is host-planned rather than recomputed in AIR |
@@ -1031,11 +1031,18 @@ back to the existing exact coefficient opening. Twelve shared `u` transforms,
 **1,032,192 live rows**, padded once to **2^20 × 48**—a 384× reduction from the
 literal padded-row family. The reusable dynamic public-key certificate is
 147,456 live rows, padded to **2^18**. All eight coefficients across production
-q0/q1 execute with mutation refusal, and the Lean root is green. This is a
-formal family and executable narrow gate, not yet the full AIR/prover: butterfly
-constraints, witness/permutation bus, terminal quotient/canonicality, recursive
-key-certificate join, production Fourier-orthogonality refinement, and scheduled
-WGPU transform parity remain named obligations.
+q0/q1 execute with mutation refusal, and the Lean root is green. The Rust/WGSL
+path now also exposes standalone scheduled odd forward/inverse transforms, pins
+all three deployed spectra to Lean's exact roots (including q2, where generic
+root search previously selected a different valid but witness-incompatible
+root), streams the six exact butterfly residues without allocating the full
+matrix, and decodes every physical row of the `2^20 × 48` family. The fail-closed
+hbox tooth is **1/1 green in 0.163s** on the RX 6750 XT/Vulkan and compares every
+forward/inverse q0/q1/q2 residue with CPU; root/stage/modulus/input/output
+mutations refuse. This is not yet the full AIR/prover: butterfly constraints,
+the complete witness/permutation bus, terminal quotient/canonicality, recursive
+key-certificate join, and production Fourier-orthogonality refinement remain
+named obligations.
 
 An experimental additive PQ-share commitment also exists in Rust and Lean. It
 binds context and slot, commits exact BabyBear-coordinate shares with randomized

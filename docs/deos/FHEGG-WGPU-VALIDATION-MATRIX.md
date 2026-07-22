@@ -11,6 +11,8 @@ The executable matrix lives in:
   portable torus negacyclic MAC;
 - `fhegg-fhe/tests/private_book_bfv_wgpu_matrix.rs` for the private-book
   signed-dot precompute behind `amm-input-binding`;
+- `fhegg-fhe/tests/bfv_odd_ntt_wgpu_required.rs` for the standalone scheduled
+  odd forward/inverse transforms used by the private-book NTT-family witness;
 - focused kernel unit tests beside each implementation.
 
 ## Matrix
@@ -19,6 +21,7 @@ The executable matrix lives in:
 |---|---|---|---|---|
 | BFV resident fold | `bfv_lean::fold` | degrees 1..4096; 1/2/many rows; zero, `q-1`, u32 carry boundary; level/shape/noncanonical/wrap refusals | CPU-only is explicit; unsupported RNS shape is labelled; malformed acceptance is adapter-independent | exact deployed RNS shape must report `GpuResident` |
 | BFV RNS NTT multiply | `bfv_ntt_gpu::multiply_rns_cpu` | degrees 8..4096; zero, `q-1`, u32 carry boundary; row/degree/modulus/noncanonical refusals | CPU policy, unavailable adapter, and adapter-limit fallbacks have distinct labels; execution errors never fall back | deployed degree-4096, three-RNS shape must report `Wgpu` |
+| BFV scheduled odd NTT | Lean `oddNtt`/`oddIntt` direct sums plus `transform_odd_rns_cpu` | every q0/q1/q2 output is CPU/GPU differential-checked; spread coefficients are independently checked against the direct sums; changed coefficient/input and wrong root/stage/modulus refuse | every execution carries a validated root/stage schedule and the actual backend label | standalone forward and inverse at degree 4096 must both report the same named `Wgpu` adapter |
 | TFHE torus MAC frontier | `torus_negacyclic_mac_cpu` | power-of-two degrees; multiple products; `u64::MAX`, high-bit, carry and negacyclic-sign wraparound; malformed dimensions | capability fallback returns `CpuFallback(reason)`; execution errors after selection do not fall back | supported shape must report `Wgpu` |
 | Private-book signed dots | local exact `i128` signed sum | word-boundary degrees; all-positive/all-negative/random signs; 37-bit RNS values across u32 carry | direct kernel never falls back; production is CPU unless wgpu is requested, then absence is an error | deployed-size shape must execute with a named adapter |
 
