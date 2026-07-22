@@ -1,0 +1,318 @@
+diff --git a/fri/src/hiding_pcs.rs b/fri/src/hiding_pcs.rs
+index 6f357d99..eba6c6b8 100644
+--- a/fri/src/hiding_pcs.rs
++++ b/fri/src/hiding_pcs.rs
+@@ -20,24 +20,28 @@ use spin::Mutex;
+ use tracing::info_span;
+
+ use crate::verifier::FriError;
+-use crate::{FriParameters, FriProof, TwoAdicFriPcs};
++use crate::{
++    CpuTwoAdicFriFold, FriParameters, FriProof, TwoAdicFriFoldBackend, TwoAdicFriPcs,
++};
+
+ /// A hiding FRI PCS. Both MMCSs must also be hiding; this is not enforced at compile time so it's
+ /// the user's responsibility to configure.
+ #[derive(Debug)]
+-pub struct HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R> {
+-    inner: TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs>,
++pub struct HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, Fold = CpuTwoAdicFriFold> {
++    inner: TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold>,
+     num_random_codewords: usize,
+     rng: Mutex<R>,
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs, R> Clone for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R>
++impl<Val, Dft, InputMmcs, FriMmcs, R, Fold> Clone
++    for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, Fold>
+ where
+     Val: Clone,
+     Dft: Clone,
+     InputMmcs: Clone,
+     FriMmcs: Clone,
+     R: Clone,
++    Fold: Clone,
+ {
+     fn clone(&self) -> Self {
+         Self {
+@@ -48,7 +52,9 @@ where
+     }
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs, R> HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R> {
++impl<Val, Dft, InputMmcs, FriMmcs, R>
++    HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, CpuTwoAdicFriFold>
++{
+     pub const fn new(
+         dft: Dft,
+         mmcs: InputMmcs,
+@@ -65,8 +71,27 @@ impl<Val, Dft, InputMmcs, FriMmcs, R> HidingFriPcs<Val, Dft, InputMmcs, FriMmcs,
+     }
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger, R> Pcs<Challenge, Challenger>
+-    for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R>
++impl<Val, Dft, InputMmcs, FriMmcs, R, Fold>
++    HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, Fold>
++{
++    pub const fn new_with_fold_backend(
++        dft: Dft,
++        mmcs: InputMmcs,
++        params: FriParameters<FriMmcs>,
++        num_random_codewords: usize,
++        rng: R,
++        fold: Fold,
++    ) -> Self {
++        Self {
++            inner: TwoAdicFriPcs::new_with_fold_backend(dft, mmcs, params, fold),
++            num_random_codewords,
++            rng: Mutex::new(rng),
++        }
++    }
++}
++
++impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger, R, Fold> Pcs<Challenge, Challenger>
++    for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, Fold>
+ where
+     Val: TwoAdicField,
+     StandardUniform: Distribution<Val>,
+@@ -77,6 +102,7 @@ where
+     Challenger:
+         FieldChallenger<Val> + CanObserve<FriMmcs::Commitment> + GrindingChallenger<Witness = Val>,
+     R: Rng + Send + Sync,
++    Fold: TwoAdicFriFoldBackend<Val, Challenge>,
+ {
+     type Domain = TwoAdicMultiplicativeCoset<Val>;
+     type Commitment = InputMmcs::Commitment;
+@@ -94,12 +120,12 @@ where
+     const ZK: bool = true;
+
+     fn natural_domain_for_degree(&self, degree: usize) -> Self::Domain {
+-        <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> as Pcs<Challenge, Challenger>>::natural_domain_for_degree(
++        <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold> as Pcs<Challenge, Challenger>>::natural_domain_for_degree(
+             &self.inner, degree)
+     }
+
+     fn log_max_lde_height(&self) -> usize {
+-        <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> as Pcs<Challenge, Challenger>>::log_max_lde_height(
++        <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold> as Pcs<Challenge, Challenger>>::log_max_lde_height(
+             &self.inner)
+     }
+
+@@ -266,7 +292,7 @@ where
+         idx: usize,
+         domain: Self::Domain,
+     ) -> Self::EvaluationsOnDomain<'a> {
+-        let inner_evals = <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> as Pcs<
++        let inner_evals = <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold> as Pcs<
+             Challenge,
+             Challenger,
+         >>::get_evaluations_on_domain(
+@@ -284,7 +310,7 @@ where
+         idx: usize,
+         domain: Self::Domain,
+     ) -> Self::EvaluationsOnDomain<'a> {
+-        let inner_evals = <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> as Pcs<
++        let inner_evals = <TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold> as Pcs<
+             Challenge,
+             Challenger,
+         >>::get_evaluations_on_domain(
+@@ -424,8 +450,8 @@ where
+     }
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs, R> BuildPeriodicLdeTableFast
+-    for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R>
++impl<Val, Dft, InputMmcs, FriMmcs, R, Fold> BuildPeriodicLdeTableFast
++    for HidingFriPcs<Val, Dft, InputMmcs, FriMmcs, R, Fold>
+ where
+     Val: TwoAdicField,
+     Dft: TwoAdicSubgroupDft<Val>,
+diff --git a/fri/src/two_adic_pcs.rs b/fri/src/two_adic_pcs.rs
+index f2aac620..d50a33e5 100644
+--- a/fri/src/two_adic_pcs.rs
++++ b/fri/src/two_adic_pcs.rs
+@@ -48,19 +48,66 @@ use crate::{FriFoldingStrategy, FriParameters, FriProof, prover};
+ /// proof to show that the evaluations of `(f(x) - f(z))/(x - z)` over
+ /// `gH` are low degree.
+ #[derive(Clone, Debug)]
+-pub struct TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> {
++pub struct TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold = CpuTwoAdicFriFold> {
+     pub(crate) dft: Dft,
+     pub(crate) mmcs: InputMmcs,
+     pub(crate) fri: FriParameters<FriMmcs>,
++    pub(crate) fold: Fold,
+     _phantom: PhantomData<Val>,
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs> TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs> {
++/// Prover backend for the extension-field FRI matrix fold. Implementations
++/// must be value-identical to [`TwoAdicFriFolding::fold_matrix`]. This seam
++/// changes where arithmetic runs, not the verifier or proof wire.
++pub trait TwoAdicFriFoldBackend<F: TwoAdicField, EF: ExtensionField<F>>:
++    Clone + Debug + Send + Sync
++{
++    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, log_arity: usize, matrix: M) -> Vec<EF>;
++}
++
++/// Existing CPU fold, retained as the source-compatible default.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct CpuTwoAdicFriFold;
++
++impl<F: TwoAdicField, EF: ExtensionField<F>> TwoAdicFriFoldBackend<F, EF>
++    for CpuTwoAdicFriFold
++{
++    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, log_arity: usize, matrix: M) -> Vec<EF> {
++        <TwoAdicFriFolding<(), core::convert::Infallible> as FriFoldingStrategy<F, EF>>::fold_matrix(
++            &TwoAdicFriFolding(PhantomData),
++            beta,
++            log_arity,
++            matrix,
++        )
++    }
++}
++
++impl<Val, Dft, InputMmcs, FriMmcs>
++    TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, CpuTwoAdicFriFold>
++{
+     pub const fn new(dft: Dft, mmcs: InputMmcs, fri: FriParameters<FriMmcs>) -> Self {
+         Self {
+             dft,
+             mmcs,
+             fri,
++            fold: CpuTwoAdicFriFold,
++            _phantom: PhantomData,
++        }
++    }
++}
++
++impl<Val, Dft, InputMmcs, FriMmcs, Fold> TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold> {
++    pub const fn new_with_fold_backend(
++        dft: Dft,
++        mmcs: InputMmcs,
++        fri: FriParameters<FriMmcs>,
++        fold: Fold,
++    ) -> Self {
++        Self {
++            dft,
++            mmcs,
++            fri,
++            fold,
+             _phantom: PhantomData,
+         }
+     }
+@@ -96,6 +143,58 @@ pub struct TwoAdicFriFolding<InputProof, InputError>(pub PhantomData<(InputProof
+ pub type TwoAdicFriFoldingForMmcs<F, M> =
+     TwoAdicFriFolding<Vec<BatchOpening<F, M>>, <M as Mmcs<F>>::Error>;
+
++/// Existing query-row folding plus a replaceable prover matrix backend.
++pub struct BackendTwoAdicFriFolding<'a, InputProof, InputError, Backend> {
++    backend: &'a Backend,
++    _phantom: PhantomData<(InputProof, InputError)>,
++}
++
++impl<
++    F: TwoAdicField,
++    InputProof: Sync,
++    InputError: Debug + Sync,
++    EF: ExtensionField<F>,
++    Backend: TwoAdicFriFoldBackend<F, EF>,
++> FriFoldingStrategy<F, EF>
++    for BackendTwoAdicFriFolding<'_, InputProof, InputError, Backend>
++{
++    type InputProof = InputProof;
++    type InputError = InputError;
++
++    fn extra_query_index_bits(&self) -> usize {
++        0
++    }
++
++    fn fold_row(
++        &self,
++        index: usize,
++        log_height: usize,
++        log_arity: usize,
++        beta: EF,
++        evals: impl Iterator<Item = EF>,
++    ) -> EF {
++        <TwoAdicFriFolding<InputProof, InputError> as FriFoldingStrategy<F, EF>>::fold_row(
++            &TwoAdicFriFolding(PhantomData),
++            index,
++            log_height,
++            log_arity,
++            beta,
++            evals,
++        )
++    }
++
++    fn fold_matrix<M: Matrix<EF>>(&self, beta: EF, log_arity: usize, matrix: M) -> Vec<EF> {
++        self.backend.fold_matrix(beta, log_arity, matrix)
++    }
++}
++
++pub type BackendTwoAdicFriFoldingForMmcs<'a, F, M, Backend> = BackendTwoAdicFriFolding<
++    'a,
++    Vec<BatchOpening<F, M>>,
++    <M as Mmcs<F>>::Error,
++    Backend,
++>;
++
+ impl<F: TwoAdicField, InputProof: Sync, InputError: Debug + Sync, EF: ExtensionField<F>>
+     FriFoldingStrategy<F, EF> for TwoAdicFriFolding<InputProof, InputError>
+ {
+@@ -259,8 +358,8 @@ fn lagrange_interpolate_at<F: TwoAdicField, EF: ExtensionField<F>>(
+     result * l_z
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs, Challenge, Challenger> Pcs<Challenge, Challenger>
+-    for TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs>
++impl<Val, Dft, InputMmcs, FriMmcs, Fold, Challenge, Challenger> Pcs<Challenge, Challenger>
++    for TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold>
+ where
+     Val: TwoAdicField,
+     Dft: TwoAdicSubgroupDft<Val>,
+@@ -269,6 +368,7 @@ where
+     Challenge: ExtensionField<Val>,
+     Challenger:
+         FieldChallenger<Val> + CanObserve<FriMmcs::Commitment> + GrindingChallenger<Witness = Val>,
++    Fold: TwoAdicFriFoldBackend<Val, Challenge>,
+ {
+     type Domain = TwoAdicMultiplicativeCoset<Val>;
+     type Commitment = InputMmcs::Commitment;
+@@ -657,7 +757,11 @@ where
+         // low degree functions.
+         let fri_input = reduced_openings.into_iter().rev().flatten().collect_vec();
+
+-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
++        let folding: BackendTwoAdicFriFoldingForMmcs<'_, Val, InputMmcs, Fold> =
++            BackendTwoAdicFriFolding {
++                backend: &self.fold,
++                _phantom: PhantomData,
++            };
+
+         // Produce the FRI proof.
+         let fri_proof = prover::prove_fri(
+@@ -692,7 +796,11 @@ where
+             }
+         }
+
+-        let folding: TwoAdicFriFoldingForMmcs<Val, InputMmcs> = TwoAdicFriFolding(PhantomData);
++        let folding: BackendTwoAdicFriFoldingForMmcs<'_, Val, InputMmcs, Fold> =
++            BackendTwoAdicFriFolding {
++                backend: &self.fold,
++                _phantom: PhantomData,
++            };
+
+         verifier::verify_fri(
+             &folding,
+@@ -707,8 +815,8 @@ where
+     }
+ }
+
+-impl<Val, Dft, InputMmcs, FriMmcs> BuildPeriodicLdeTableFast
+-    for TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs>
++impl<Val, Dft, InputMmcs, FriMmcs, Fold> BuildPeriodicLdeTableFast
++    for TwoAdicFriPcs<Val, Dft, InputMmcs, FriMmcs, Fold>
+ where
+     Val: TwoAdicField,
+     Dft: TwoAdicSubgroupDft<Val> + Default,

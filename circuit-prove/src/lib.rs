@@ -40,6 +40,7 @@ pub mod field_delta_range_air;
 pub mod gnark_witness_export;
 pub use gnark_witness_export::export_gnark_witness_json;
 pub mod gpu_backend;
+pub mod gpu_hidingfri_fold;
 pub mod hatchery_leaf_adapter;
 pub mod ivc_turn_chain;
 pub mod joint_turn_aggregation;
