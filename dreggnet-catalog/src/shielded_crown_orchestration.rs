@@ -15,14 +15,13 @@
 
 use dregg_persist::FinalizedFaithfulSpend;
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
-use dreggnet_offerings::{
-    Action, OfferingHost, SessionId, SignedAction, SignedError, verify_signed,
-};
+use dreggnet_offerings::{Action, OfferingHost, SessionId, SignedError, verify_signed};
 
 use crate::{
     GameAffordance, GameAudience, GameAuthorizationPhase, GameEpochError, GameEpochLedger,
     GameSpineError, PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
-    PrivateFheggGameConsequenceReceipt, PrivateFheggWinnerRoute, inspect_bound_game_session,
+    PrivateFheggGameConsequenceReceipt, PrivateFheggWinnerRoute, SignedGameAction,
+    inspect_bound_game_session, verify_signed_game_action,
 };
 
 const DUNGEON_KEY: &str = "dungeon";
@@ -97,7 +96,7 @@ impl ShieldedCrownPolicy {
 pub struct ShieldedCrownAction {
     pub session: SessionId,
     pub hand: ShieldedCrownHand,
-    pub signed_action: SignedAction,
+    pub signed_action: SignedGameAction,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -301,10 +300,16 @@ where
             request.hand,
         ))?;
 
-    if !same_executor_action(&request.signed_action.action, &target_action) {
+    if request.signed_action.reference != target_reference
+        || !same_executor_action(&request.signed_action.signed_action.action, &target_action)
+    {
         return Err(ShieldedCrownOrchestrationError::SignedActionMismatch);
     }
-    if request.signed_action.actor_pubkey_hex.to_ascii_lowercase()
+    if request
+        .signed_action
+        .signed_action
+        .actor_pubkey_hex
+        .to_ascii_lowercase()
         != winner_route.game_signer_pubkey_hex()
     {
         return Err(ShieldedCrownOrchestrationError::WrongGameSigner);
@@ -323,8 +328,9 @@ where
         DUNGEON_KEY,
         &request.session,
         expected_counter,
-        &request.signed_action,
+        &request.signed_action.signed_action,
     )?;
+    verify_signed_game_action(&request.signed_action)?;
 
     let mut gate = make_gate(target_reference, target_action)?;
     let authorization_id = gate.authorization_id();
@@ -532,6 +538,37 @@ mod tests {
         assert!(matches!(result, GameResult::Landed(_)));
     }
 
+    fn signed_crown_command(
+        host: &OfferingHost,
+        ledger: &GameEpochLedger,
+        signer: &TurnSigner,
+        session: &SessionId,
+        hand: ShieldedCrownHand,
+        counter: u64,
+    ) -> SignedGameAction {
+        let bound = ledger.bound_session("dungeon", session).unwrap();
+        let view = inspect_bound_game_session(
+            host,
+            ledger.host_incarnation(),
+            ledger.current_generation("dungeon", session).unwrap(),
+            bound,
+            &GameAudience::Shared,
+        )
+        .unwrap();
+        let (reference, action) = view
+            .affordances
+            .into_iter()
+            .find_map(|affordance| match affordance {
+                GameAffordance::Turn {
+                    reference, action, ..
+                } if action.arg == hand.choice_index() => Some((reference, action)),
+                _ => None,
+            })
+            .expect("requested crown hand is currently afforded");
+        crate::sign_game_action(signer, reference, counter, action)
+            .expect("fixture command matches the authority-bound affordance")
+    }
+
     fn fixture_policy(signer: &TurnSigner) -> ShieldedCrownPolicy {
         ShieldedCrownPolicy::new(
             [0x18; 32],
@@ -566,12 +603,7 @@ mod tests {
         .unwrap();
         ledger.bind_after_ensure("dungeon", &session, true).unwrap();
         advance_to_hall(host, ledger, &session);
-        let action = host
-            .actions("dungeon", &session)
-            .unwrap()
-            .into_iter()
-            .find(|action| action.arg == hand.choice_index())
-            .unwrap();
+        let signed_action = signed_crown_command(host, ledger, signer, &session, hand, 0);
         execute_shielded_crown_with_factory(
             host,
             ledger,
@@ -579,7 +611,7 @@ mod tests {
             ShieldedCrownAction {
                 session: session.clone(),
                 hand,
-                signed_action: signer.sign("dungeon", &session, 0, action),
+                signed_action,
             },
             |reference, action| {
                 PrivateFheggGameConsequenceGate::fixture_shielded_crown_sources(
@@ -609,29 +641,17 @@ mod tests {
 
         let signer = TurnSigner::from_seed([0x51; 32]);
         let policy = fixture_policy(&signer);
-        let crown_action = inspect_bound_game_session(
-            &host,
-            ledger.host_incarnation(),
-            1,
-            ledger.bound_session("dungeon", &session).unwrap(),
-            &GameAudience::Shared,
-        )
-        .unwrap()
-        .affordances
-        .into_iter()
-        .find_map(|affordance| match affordance {
-            GameAffordance::Turn { action, .. }
-                if action.arg == dungeon_on_dregg::KP_CLAIM_RED as i64 =>
-            {
-                Some(action)
-            }
-            _ => None,
-        })
-        .unwrap();
         let request = ShieldedCrownAction {
             session: session.clone(),
             hand: ShieldedCrownHand::Red,
-            signed_action: signer.sign("dungeon", &session, 0, crown_action),
+            signed_action: signed_crown_command(
+                &host,
+                &ledger,
+                &signer,
+                &session,
+                ShieldedCrownHand::Red,
+                0,
+            ),
         };
         let receipt = execute_shielded_crown_with_factory(
             &mut host,
@@ -781,16 +801,17 @@ mod tests {
         let winner = TurnSigner::from_seed([0x51; 32]);
         let thief = TurnSigner::from_seed([0x52; 32]);
         let policy = fixture_policy(&winner);
-        let action = host
-            .actions("dungeon", &session)
-            .unwrap()
-            .into_iter()
-            .find(|action| action.arg == dungeon_on_dregg::KP_CLAIM_BLUE as i64)
-            .unwrap();
         let request = ShieldedCrownAction {
             session: session.clone(),
             hand: ShieldedCrownHand::Blue,
-            signed_action: thief.sign("dungeon", &session, 0, action),
+            signed_action: signed_crown_command(
+                &host,
+                &ledger,
+                &thief,
+                &session,
+                ShieldedCrownHand::Blue,
+                0,
+            ),
         };
         let error = execute_shielded_crown_with_factory(
             &mut host,
@@ -803,14 +824,15 @@ mod tests {
         assert_eq!(error, ShieldedCrownOrchestrationError::WrongGameSigner);
         assert_eq!(host.verify("dungeon", &session).unwrap().turns, 1);
 
-        let action = host
-            .actions("dungeon", &session)
-            .unwrap()
-            .into_iter()
-            .find(|action| action.arg == dungeon_on_dregg::KP_CLAIM_BLUE as i64)
-            .unwrap();
-        let mut forged = winner.sign("dungeon", &session, 0, action);
-        forged.signature[0] ^= 1;
+        let mut forged = signed_crown_command(
+            &host,
+            &ledger,
+            &winner,
+            &session,
+            ShieldedCrownHand::Blue,
+            0,
+        );
+        forged.signed_action.signature[0] ^= 1;
         let error = execute_shielded_crown_with_factory(
             &mut host,
             &ledger,
@@ -841,16 +863,17 @@ mod tests {
         advance_to_hall(&mut host, &ledger, &session);
         let signer = TurnSigner::from_seed([0x53; 32]);
         let policy = fixture_policy(&signer);
-        let action = host
-            .actions("dungeon", &session)
-            .unwrap()
-            .into_iter()
-            .find(|action| action.arg == dungeon_on_dregg::KP_CLAIM_RED as i64)
-            .unwrap();
         let request = ShieldedCrownAction {
             session: session.clone(),
             hand: ShieldedCrownHand::Red,
-            signed_action: signer.sign("dungeon", &session, 0, action),
+            signed_action: signed_crown_command(
+                &host,
+                &ledger,
+                &signer,
+                &session,
+                ShieldedCrownHand::Red,
+                0,
+            ),
         };
         let error = execute_shielded_crown_with_factory(
             &mut host,

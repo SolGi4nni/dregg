@@ -2,8 +2,9 @@ use deos_view::ViewNode;
 use dreggnet_catalog::{
     CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameCommand, GameHostIncarnation,
     GameKind, GameOperationRef, GameReceipt, GameResult, GameSessionRef, GameSpineError,
-    execute_asserted_game_command, execute_bound_asserted_game_command, execute_signed_game_turn,
-    full_catalog_host, inspect_bound_game_session, inspect_game_session,
+    execute_asserted_game_command, execute_bound_asserted_game_command,
+    execute_bound_asserted_game_turn, execute_bound_signed_game_turn, execute_signed_game_turn,
+    full_catalog_host, inspect_bound_game_session, inspect_game_session, sign_game_action,
 };
 use dreggnet_offerings::{
     Action, Attribution, BinaryOperationDescriptor, BinaryOperationError, BinaryOperationReceipt,
@@ -469,6 +470,70 @@ fn signed_turn_path_preserves_verified_attribution_instead_of_upgrading_a_label(
         Attribution::Signed {
             pubkey_hex: signer.pubkey_hex().to_string()
         }
+    );
+}
+
+#[test]
+fn signed_bound_command_refuses_cross_generation_replay_and_a_stale_head() {
+    let incarnation = GameHostIncarnation::new([0x51; 32]).unwrap();
+    let signer = TurnSigner::from_seed([0x31; 32]);
+    let actor = DreggIdentity("head-advancer".to_string());
+
+    let mut host = OfferingHost::new();
+    host.register("dungeon", "signed bound fixture", ChoiceDungeon);
+    let id = SessionId::new("signed-bound-generation");
+    host.open_session("dungeon", id.clone(), SessionConfig::with_seed(13))
+        .unwrap();
+    let generation_one = GameSessionRef::bound("dungeon", id.clone(), incarnation, 1).unwrap();
+    let view = inspect_bound_game_session(
+        &host,
+        incarnation,
+        1,
+        generation_one.clone(),
+        &GameAudience::Shared,
+    )
+    .unwrap();
+    let (reference, action) = primary_turn(&view);
+    let captured = sign_game_action(&signer, reference.clone(), 0, action.clone()).unwrap();
+
+    // A different landed turn changes the surface head without consuming the
+    // captured signer's counter. The authentic envelope is nevertheless stale.
+    execute_bound_asserted_game_turn(
+        &mut host,
+        incarnation,
+        1,
+        &generation_one,
+        reference,
+        action,
+        actor,
+    )
+    .unwrap();
+    let stale = execute_bound_signed_game_turn(
+        &mut host,
+        incarnation,
+        1,
+        &generation_one,
+        captured.clone(),
+    )
+    .unwrap_err();
+    assert!(matches!(stale, GameSpineError::StaleCommand { .. }));
+    assert_eq!(
+        host.signed_counter("dungeon", &id, signer.pubkey_hex()),
+        None
+    );
+
+    assert!(host.close("dungeon", &id));
+    host.open_session("dungeon", id.clone(), SessionConfig::with_seed(13))
+        .unwrap();
+    let generation_two = GameSessionRef::bound("dungeon", id.clone(), incarnation, 2).unwrap();
+    let replay =
+        execute_bound_signed_game_turn(&mut host, incarnation, 2, &generation_two, captured)
+            .unwrap_err();
+    assert!(matches!(replay, GameSpineError::AddressMismatch { .. }));
+    assert_eq!(host.verify("dungeon", &id).unwrap().turns, 0);
+    assert_eq!(
+        host.signed_counter("dungeon", &id, signer.pubkey_hex()),
+        None
     );
 }
 

@@ -82,7 +82,7 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
-use dreggnet_catalog::game_kind;
+use dreggnet_catalog::{game_kind, sign_game_action};
 use dreggnet_discord_identity::seed_for;
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
@@ -91,7 +91,7 @@ use dreggnet_offerings::{
 use webauth_core::link_registry::LinkStore;
 
 use crate::{
-    CatalogState, act_signed, audit, game_epoch_refusal_response, metrics, open_audit_parts,
+    CatalogGameError, CatalogState, OfferingActForm, act_signed, audit, metrics, open_audit_parts,
     refused_open_response, render_offering_response, wants_fragment,
 };
 
@@ -1135,23 +1135,20 @@ async fn get_da_session(
     let viewer = state.identity_for(user.user_id);
     let sid = SessionId::new(id);
 
-    let opened = {
-        let k = key.clone();
-        let sid = sid.clone();
-        let opener = Attribution::Asserted {
+    let opened = state.catalog.ensure_open_and_bind(
+        &key,
+        &sid,
+        &viewer,
+        Some(Attribution::Asserted {
             label: viewer.0.clone(),
-        };
-        // RPG keys open in the VERIFIED viewer's own per-identity world (isolated inventory); the
-        // shared tables (games + services) open on the ONE catalog host.
-        state.catalog.run_offering(&key, &viewer, move |h| {
-            h.ensure_open_as(&k, &sid, Some(&opener))
-        })
-    };
+        }),
+    );
     metrics::set_sessions_open(state.catalog.shared_session_count() as f64);
     {
         let (kind, reason) = match &opened {
             Ok(_) => ("routed", String::new()),
-            Err(e) => open_audit_parts(e),
+            Err(CatalogGameError::Host(e)) => open_audit_parts(e),
+            Err(e) => ("gated", e.to_string()),
         };
         audit::log().emit(
             audit::AuditEvent::new(
@@ -1165,24 +1162,24 @@ async fn get_da_session(
             .decided(kind, reason),
         );
     }
-    let newly_opened = match opened {
-        Ok(newly_opened) => newly_opened,
-        Err(HostError::UnknownOffering(k)) => {
+    match opened {
+        Ok(_) => {}
+        Err(CatalogGameError::Host(HostError::UnknownOffering(k))) => {
             return (
                 StatusCode::NOT_FOUND,
                 format!("no offering registered under key {k:?}"),
             )
                 .into_response();
         }
-        Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
+        Err(CatalogGameError::Host(
+            e @ (HostError::Policy(_) | HostError::ResumeFailed { .. }),
+        )) => {
             return refused_open_response(&sid, &e);
         }
-        Err(error) => {
+        Err(CatalogGameError::Host(error)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
         }
-    };
-    if let Err(error) = state.catalog.bind_game_after_open(&key, &sid, newly_opened) {
-        return game_epoch_refusal_response(&sid, &error);
+        Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
     }
 
     Html(render_offering_response(
@@ -1304,6 +1301,14 @@ pub struct DaActForm {
     /// Optional free-text payload (signed; absent signs as empty).
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub game_host_incarnation: Option<String>,
+    #[serde(default)]
+    pub game_session_generation: Option<u64>,
+    #[serde(default)]
+    pub game_expected_pre_head: Option<String>,
+    #[serde(default)]
+    pub game_form_token: Option<String>,
 }
 
 /// `POST /da/offerings/{key}/session/{id}/act` — validate the ticket, rebuild the custodial signer
@@ -1348,61 +1353,111 @@ async fn post_da_act(
         .in_session(Some(key.clone()), Some(sid.0.clone()))
     };
 
-    // Ensure open first (lazily, lifecycle-aware) — mirroring the act-signed twin. RPG keys open
-    // in the verified viewer's own per-identity world; the shared tables on the ONE catalog host.
-    let opened = {
-        let k = key.clone();
-        let sid = sid.clone();
-        let opener = Attribution::Asserted {
-            label: viewer.0.clone(),
-        };
-        state.catalog.run_offering(&key, &viewer, move |h| {
-            h.ensure_open_as(&k, &sid, Some(&opener))
-        })
-    };
-    let newly_opened = match opened {
-        Ok(newly_opened) => newly_opened,
-        Err(HostError::UnknownOffering(k)) => {
-            audit::log().emit(act_event(audit_detail).decided("refused", "unknown_offering"));
-            return (
-                StatusCode::NOT_FOUND,
-                format!("no offering registered under key {k:?}"),
-            )
-                .into_response();
-        }
-        Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
-            let (kind, reason) = open_audit_parts(&e);
-            audit::log().emit(act_event(audit_detail).decided(kind, reason));
-            return refused_open_response(&sid, &e);
-        }
-        Err(error) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
-        }
-    };
-    if let Err(error) = state.catalog.bind_game_after_open(&key, &sid, newly_opened) {
-        return game_epoch_refusal_response(&sid, &error);
-    }
-    let game_context = if game_kind(&key).is_some() {
-        match state.catalog.game_epoch_context(&key, &sid) {
-            Ok(context) => Some(context),
-            Err(error) => return game_epoch_refusal_response(&sid, &error),
-        }
-    } else {
-        None
-    };
-
     let mut action = Action::new(form.turn.clone(), form.turn, form.arg, true);
     if let Some(text) = form.text.filter(|t| !t.is_empty()) {
         action = action.with_text(text);
     }
 
+    let presented_game = if game_kind(&key).is_some() {
+        let authority_form = OfferingActForm {
+            turn: action.turn.clone(),
+            arg: action.arg,
+            game_host_incarnation: form.game_host_incarnation,
+            game_session_generation: form.game_session_generation,
+            game_expected_pre_head: form.game_expected_pre_head,
+            game_form_token: form.game_form_token,
+        };
+        match state
+            .catalog
+            .presented_game_action_for(&key, &sid, &authority_form, &action)
+        {
+            Ok(reference) => Some(reference),
+            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+        }
+    } else {
+        None
+    };
+
+    if presented_game.is_none() {
+        match state.catalog.ensure_open_and_bind(
+            &key,
+            &sid,
+            &viewer,
+            Some(Attribution::Signed {
+                pubkey_hex: viewer.0.clone(),
+            }),
+        ) {
+            Ok(_) => {}
+            Err(CatalogGameError::Host(HostError::UnknownOffering(k))) => {
+                audit::log().emit(act_event(audit_detail).decided("refused", "unknown_offering"));
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!("no offering registered under key {k:?}"),
+                )
+                    .into_response();
+            }
+            Err(CatalogGameError::Host(
+                e @ (HostError::Policy(_) | HostError::ResumeFailed { .. }),
+            )) => {
+                let (kind, reason) = open_audit_parts(&e);
+                audit::log().emit(act_event(audit_detail).decided(kind, reason));
+                return refused_open_response(&sid, &e);
+            }
+            Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
+        }
+    }
+
     // ONE atomic host-thread job: floor-read → sign at exactly the expected counter → verify →
     // consume → executor referees the move. No other job can interleave. Routed to the viewer's
     // own world for an RPG key.
-    let outcome = {
+    let outcome = if let Some(reference) = presented_game {
+        let presented = reference.session.clone();
         let k = key.clone();
         let sid = sid.clone();
-        let routed_viewer = viewer.clone();
+        let opener = Attribution::Signed {
+            pubkey_hex: viewer.0.clone(),
+        };
+        match state.catalog.run_presented_bound_game(
+            presented,
+            &viewer,
+            opener,
+            move |h, incarnation, generation, session| {
+                let expected = match h.signed_counter(&k, &sid, signer.pubkey_hex()) {
+                    None => 0,
+                    Some(last) => match last.checked_add(1) {
+                        Some(n) => n,
+                        None => {
+                            return act_signed::SignedAdvance::HostError(HostError::Signature(
+                                SignedError::StaleCounter {
+                                    presented: u64::MAX,
+                                    expected: u64::MAX,
+                                },
+                            ));
+                        }
+                    },
+                };
+                let command = match sign_game_action(&signer, reference, expected, action) {
+                    Ok(command) => command,
+                    Err(error) => {
+                        return act_signed::SignedAdvance::GameRouteRefused(error.to_string());
+                    }
+                };
+                act_signed::advance_signed_on_host(
+                    h,
+                    k,
+                    sid,
+                    Some((incarnation, generation, session)),
+                    act_signed::RoutedSignedAction::Game(command),
+                )
+            },
+        ) {
+            Ok(outcome) => outcome,
+            Err(CatalogGameError::Host(error)) => act_signed::SignedAdvance::HostError(error),
+            Err(error) => act_signed::SignedAdvance::GameRouteRefused(error.to_string()),
+        }
+    } else {
+        let k = key.clone();
+        let sid = sid.clone();
         state.catalog.run_offering(&key, &viewer, move |h| {
             let expected = match h.signed_counter(&k, &sid, signer.pubkey_hex()) {
                 None => 0,
@@ -1419,7 +1474,13 @@ async fn post_da_act(
                 },
             };
             let sa = signer.sign(&k, &sid, expected, action);
-            act_signed::advance_signed_on_host(h, k, sid, routed_viewer, game_context, sa)
+            act_signed::advance_signed_on_host(
+                h,
+                k,
+                sid,
+                None,
+                act_signed::RoutedSignedAction::Legacy(sa),
+            )
         })
     };
 
@@ -1444,6 +1505,16 @@ async fn post_da_act(
                 String::new(),
                 audit::AuditOutcome::Refused { why: why.clone() },
             ),
+            act_signed::SignedAdvance::CommittedButPublicationFailed { outcome, error, .. } => {
+                let out = match outcome {
+                    Outcome::Landed { receipt, ended } => audit::AuditOutcome::Landed {
+                        turn_hash: audit::hex32(&receipt.turn_hash),
+                        ended: *ended,
+                    },
+                    Outcome::Refused(why) => audit::AuditOutcome::Refused { why: why.clone() },
+                };
+                ("committed", format!("publication_failed:{error}"), out)
+            }
             act_signed::SignedAdvance::HostError(HostError::Signature(e)) => (
                 "error",
                 format!("custodial_verifier_refused: {e}"),
@@ -1470,14 +1541,15 @@ async fn post_da_act(
         act_signed::SignedAdvance::Advanced {
             outcome: Outcome::Landed { receipt, ended },
             publication,
+            ..
         } => format!(
             "Turn committed — {}",
             publication.as_ref().map_or_else(
                 || PlayerTurnReceipt::from_landed(&receipt, ended)
-                    .compact_text(PlayerReplaySurface::Web),
+                    .compact_text(PlayerReplaySurface::Discord),
                 |publication| crate::game_session::public_receipt_text(
                     publication,
-                    PlayerReplaySurface::Web,
+                    PlayerReplaySurface::Discord,
                 ),
             )
         ),
@@ -1488,6 +1560,9 @@ async fn post_da_act(
             metrics::inc_turn_refused();
             format!("Refused: {why} (nothing committed — anti-ghost).")
         }
+        act_signed::SignedAdvance::CommittedButPublicationFailed { error, .. } => format!(
+            "Turn committed, but its public receipt could not be rendered ({error}). Do not retry; refresh to inspect the committed state."
+        ),
         act_signed::SignedAdvance::HostError(HostError::Signature(e)) => {
             tracing::error!(
                 error = %e,

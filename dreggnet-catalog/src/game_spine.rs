@@ -12,7 +12,8 @@ use std::collections::BTreeSet;
 use dreggnet_offerings::{
     Action, Attribution, Audience, AudienceProjection, BinaryArtifactDescriptor,
     BinaryOperationDescriptor, DreggIdentity, HostArtifactError, HostOperationError, OfferingHost,
-    Outcome, RunCost, SessionId, SignedAction, VerifyReport,
+    Outcome, RunCost, SessionId, SignedAction, SignedError, TurnSigner, VerifyReport,
+    verify_detached,
 };
 
 /// The distinct rule families mounted in the shared game catalog.
@@ -262,6 +263,80 @@ impl GameActionRef {
         hash_field(&mut hasher, &self.expected_pre_head);
         *hasher.finalize().as_bytes()
     }
+}
+
+/// Domain for a client-signed game command. Its message signs the
+/// [`GameActionRef::routing_preimage_id`] (therefore the exact host
+/// incarnation, generation, session, action, and observed head) plus the
+/// offering replay counter.
+pub const GAME_ACTION_SIGNING_DOMAIN: &[u8] = b"dregg-game-action-command-v1:";
+
+/// Canonical bytes signed by the outer game command envelope.
+pub fn game_action_signing_message(reference: &GameActionRef, counter: u64) -> Vec<u8> {
+    let mut message = Vec::with_capacity(GAME_ACTION_SIGNING_DOMAIN.len() + 32 + 8);
+    message.extend_from_slice(GAME_ACTION_SIGNING_DOMAIN);
+    message.extend_from_slice(&reference.routing_preimage_id());
+    message.extend_from_slice(&counter.to_le_bytes());
+    message
+}
+
+/// A client-signed game turn whose authority coordinates are part of the
+/// signature, rather than a legacy [`SignedAction`] wrapped by the server after
+/// receipt. The inner envelope remains for the OfferingHost replay-counter and
+/// attribution machinery; `authority_signature` prevents it from being moved
+/// to a different generation or state head.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedGameAction {
+    pub reference: GameActionRef,
+    pub signed_action: SignedAction,
+    pub authority_signature: [u8; 64],
+}
+
+/// Sign both the legacy offering envelope and the exact bound game command.
+/// Custodial adapters and user-held clients must call this with the reference
+/// presented by the rendered surface; recomputing a current reference at POST
+/// time would reintroduce stale-tab replay.
+pub fn sign_game_action(
+    signer: &TurnSigner,
+    reference: GameActionRef,
+    counter: u64,
+    action: Action,
+) -> Result<SignedGameAction, GameSpineError> {
+    if !reference.session.binding().is_bound() {
+        return Err(GameSpineError::BindingContextRequired(
+            reference.session.clone(),
+        ));
+    }
+    if !reference.matches(&action) {
+        return Err(GameSpineError::InvalidReference(
+            "action does not match the exact signed game reference".to_string(),
+        ));
+    }
+    let signed_action = signer.sign(
+        reference.session.offering(),
+        reference.session.session_id(),
+        counter,
+        action,
+    );
+    let authority_signature =
+        signer.sign_detached(&game_action_signing_message(&reference, counter));
+    Ok(SignedGameAction {
+        reference,
+        signed_action,
+        authority_signature,
+    })
+}
+
+/// Verify only the cryptographic actor/authority envelope. This is deliberately
+/// non-consuming so a web boundary can derive the authenticated viewer before
+/// any private projection; replay consumption remains atomic with execution in
+/// [`OfferingHost::advance_signed`].
+pub fn verify_signed_game_action(command: &SignedGameAction) -> Result<DreggIdentity, SignedError> {
+    verify_detached(
+        &command.signed_action.actor_pubkey_hex,
+        &game_action_signing_message(&command.reference, command.signed_action.counter),
+        &command.authority_signature,
+    )
 }
 
 /// Stable identity of one opaque proof/attestation operation in a session.
@@ -914,12 +989,10 @@ pub fn execute_bound_signed_game_turn(
     host_incarnation: GameHostIncarnation,
     live_generation: u64,
     session: &GameSessionRef,
-    reference: GameActionRef,
-    signed: SignedAction,
+    command: SignedGameAction,
 ) -> Result<GameResult, GameSpineError> {
     require_live_binding(session, host_incarnation, live_generation)?;
-    execute_signed_game_turn_inner(host, session, reference, signed)
-        .map(|execution| execution.result)
+    execute_bound_signed_game_turn_inner(host, session, command).map(|execution| execution.result)
 }
 
 /// Execute one signed game turn under a live authority epoch while retaining
@@ -930,11 +1003,28 @@ pub fn execute_bound_signed_game_turn_with_outcome(
     host_incarnation: GameHostIncarnation,
     live_generation: u64,
     session: &GameSessionRef,
-    reference: GameActionRef,
-    signed: SignedAction,
+    command: SignedGameAction,
 ) -> Result<BoundGameTurnExecution, GameSpineError> {
     require_live_binding(session, host_incarnation, live_generation)?;
-    execute_signed_game_turn_inner(host, session, reference, signed)
+    execute_bound_signed_game_turn_inner(host, session, command)
+}
+
+fn execute_bound_signed_game_turn_inner(
+    host: &mut OfferingHost,
+    session: &GameSessionRef,
+    command: SignedGameAction,
+) -> Result<BoundGameTurnExecution, GameSpineError> {
+    if &command.reference.session != session {
+        return Err(GameSpineError::AddressMismatch {
+            expected: session.clone(),
+            presented: command.reference.session.clone(),
+        });
+    }
+    // Authenticate the client-presented generation/head coordinates before
+    // looking at state or private affordances. The host consumes the legacy
+    // replay counter only after this outer authority signature passes.
+    verify_signed_game_action(&command).map_err(|error| GameSpineError::Host(error.to_string()))?;
+    execute_signed_game_turn_inner(host, session, command.reference, command.signed_action)
 }
 
 fn execute_signed_game_turn_inner(

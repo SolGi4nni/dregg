@@ -531,8 +531,7 @@ impl<S: CharacterStore> DailyDescentOffering<S> {
         let genesis_state = driver.playthrough().genesis_state;
         let (world, _no_steps) = driver.finish();
 
-        let sheet = self.store.load(&who);
-        let character = Character::open(who.clone(), sheet);
+        let character = Character::open_from_store(who.clone(), &self.store);
 
         Ok(DailyRun {
             who,

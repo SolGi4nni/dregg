@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use dreggnet_catalog::PrivateBazaarLiveDeployment;
+use dreggnet_catalog::{PrivateBazaarDurableTargetRegistry, PrivateBazaarLiveDeployment};
 use dreggnet_market::private_bazaar_journey::{
     PrivateBazaarDeploymentPin, PrivateBazaarRaidPolicy, TURN_ENTER_PRIVATE_BAZAAR,
 };
@@ -19,6 +19,38 @@ use dungeon_on_dregg::progression::{
     PRIVATE_BAZAAR_XP_METHOD, deploy_hero, private_bazaar_xp_event_topic,
 };
 use tower::ServiceExt;
+use zeroize::Zeroizing;
+
+use spween_dregg::{
+    FileWorldCellCheckpointAnchor, WorldCellCheckpointAnchor, WorldCellSigningCustody,
+};
+
+struct TestCustody {
+    seed: [u8; 32],
+    anchor: Arc<FileWorldCellCheckpointAnchor>,
+}
+
+impl TestCustody {
+    fn new(seed: [u8; 32], anchor_dir: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            seed,
+            anchor: Arc::new(
+                FileWorldCellCheckpointAnchor::open_or_create(anchor_dir)
+                    .expect("test checkpoint anchor"),
+            ),
+        }
+    }
+}
+
+impl WorldCellSigningCustody for TestCustody {
+    fn acquire_signing_seed(&self) -> Result<Zeroizing<[u8; 32]>, String> {
+        Ok(Zeroizing::new(self.seed))
+    }
+
+    fn checkpoint_anchor(&self) -> Arc<dyn WorldCellCheckpointAnchor> {
+        self.anchor.clone()
+    }
+}
 
 async fn body(response: axum::response::Response) -> (StatusCode, String) {
     let status = response.status();
@@ -51,7 +83,13 @@ async fn web_catalog_opens_and_drives_the_real_private_bazaar_host() {
     let policy = PrivateBazaarRaidPolicy::load(pin, roster, reward).unwrap();
     let temp = tempfile::tempdir().unwrap();
     let deployment = PrivateBazaarLiveDeployment::open(policy, 1, temp.path()).unwrap();
-    let state = Arc::new(CatalogState::with_private_bazaar(deployment.clone()));
+    let custody = TestCustody::new([0x62; 32], temp.path().join("checkpoint-anchors"));
+    let target_registry =
+        PrivateBazaarDurableTargetRegistry::provision(&deployment, &custody, &[0x61]).unwrap();
+    let state = Arc::new(CatalogState::with_private_bazaar(
+        deployment.clone(),
+        target_registry.character_store(),
+    ));
     let app = catalog_router(state);
 
     let session = "web-private-bazaar";
@@ -136,12 +174,16 @@ async fn durable_web_boot_replay_reconstructs_worker_registry() {
     let session_dir = root.path().join("sessions");
     let session = "web-private-bazaar-restart";
     let seed = seed_from_id(session);
+    let custody = TestCustody::new([0x92; 32], root.path().join("checkpoint-anchors"));
 
     {
         let deployment =
             PrivateBazaarLiveDeployment::open(policy.clone(), 1, &authority_dir).unwrap();
+        let target_registry =
+            PrivateBazaarDurableTargetRegistry::provision(&deployment, &custody, &[0x91]).unwrap();
         let state = Arc::new(CatalogState::with_private_bazaar_over(
             deployment.clone(),
+            target_registry.character_store(),
             Some(session_dir.clone()),
             SessionPolicy::default(),
         ));
@@ -176,8 +218,10 @@ async fn durable_web_boot_replay_reconstructs_worker_registry() {
     }
 
     let restarted = PrivateBazaarLiveDeployment::open(policy, 1, authority_dir).unwrap();
+    let restarted_targets = PrivateBazaarDurableTargetRegistry::load(&restarted, &custody).unwrap();
     let restarted_state = Arc::new(CatalogState::with_private_bazaar_over(
         restarted.clone(),
+        restarted_targets.character_store(),
         Some(session_dir),
         SessionPolicy::default(),
     ));

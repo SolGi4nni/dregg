@@ -57,13 +57,36 @@ fn get(path: &str) -> Request<Body> {
         .unwrap()
 }
 
-fn act(path: &str, turn: &str, arg: i64) -> Request<Body> {
+fn hidden_value<'a>(html: &'a str, name: &str) -> &'a str {
+    let marker = format!("name=\"{name}\" value=\"");
+    let rest = html
+        .split_once(&marker)
+        .unwrap_or_else(|| panic!("rendered game surface omitted {name}: {html}"))
+        .1;
+    rest.split_once('"').unwrap().0
+}
+
+fn act(path: &str, turn: &str, arg: i64, surface: &str) -> Request<Body> {
+    let incarnation = hidden_value(surface, "game_host_incarnation");
+    let generation = hidden_value(surface, "game_session_generation");
+    let head = hidden_value(surface, "game_expected_pre_head");
+    let token = hidden_value(surface, "game_form_token");
     Request::builder()
         .method("POST")
         .uri(format!("{path}/act"))
         .header("content-type", "application/x-www-form-urlencoded")
         .header("cookie", "dregg_user=epoch-player")
-        .body(Body::from(format!("turn={turn}&arg={arg}")))
+        .body(Body::from(format!(
+            "turn={turn}&arg={arg}&game_host_incarnation={incarnation}&game_session_generation={generation}&game_expected_pre_head={head}&game_form_token={token}"
+        )))
+        .unwrap()
+}
+
+async fn verified_turns(app: &axum::Router, path: &str) -> u64 {
+    let (status, body) = response(app, get(&format!("{path}/verify"))).await;
+    assert_eq!(status, StatusCode::OK, "verify route: {body}");
+    serde_json::from_str::<serde_json::Value>(&body).unwrap()["turns"]
+        .as_u64()
         .unwrap()
 }
 
@@ -76,12 +99,13 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
 
     let state = state_over(&root);
     let app = catalog_router(Arc::clone(&state));
-    assert_eq!(response(&app, get(path)).await.0, StatusCode::OK);
+    let (status, generation_one_surface) = response(&app, get(path)).await;
+    assert_eq!(status, StatusCode::OK);
     let generation_one = state
         .bound_game_session("dungeon", &sid)
         .expect("first bound route");
 
-    let (status, landed) = response(&app, act(path, "choose", 0)).await;
+    let (status, landed) = response(&app, act(path, "choose", 0, &generation_one_surface)).await;
     assert_eq!(status, StatusCode::OK, "{landed}");
     assert!(
         landed.contains("publication") && landed.contains("Verified dungeon receipt"),
@@ -93,11 +117,20 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
             .close_game_session("dungeon", &sid, &viewer)
             .expect("retire generation one")
     );
-    assert_eq!(response(&app, get(path)).await.0, StatusCode::OK);
+    let (status, generation_two_surface) = response(&app, get(path)).await;
+    assert_eq!(status, StatusCode::OK);
     let generation_two = state
         .bound_game_session("dungeon", &sid)
         .expect("reopened bound route");
     assert_ne!(generation_one, generation_two);
+    let turns_before_stale_post = verified_turns(&app, path).await;
+    let (status, stale_notice) = response(&app, act(path, "choose", 1, &landed)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "stale tab: {stale_notice}");
+    assert_eq!(
+        verified_turns(&app, path).await,
+        turns_before_stale_post,
+        "the generation-one tab must not mutate generation two"
+    );
     assert!(
         state
             .inspect_game_session(generation_one, GameAudience::Shared)
@@ -117,6 +150,22 @@ async fn web_game_epoch_survives_restart_and_close_reopen_retires_old_route() {
             .expect("restart route"),
         generation_two,
         "ordinary restart retains incarnation and live generation"
+    );
+    let turns_before_restart_stale_post = verified_turns(&restarted_app, path).await;
+    let (status, stale_notice) = response(
+        &restarted_app,
+        act(path, "choose", 1, &generation_two_surface),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a pre-restart form token must fail closed: {stale_notice}"
+    );
+    assert_eq!(
+        verified_turns(&restarted_app, path).await,
+        turns_before_restart_stale_post,
+        "restart-invalidated form bytes must not mutate the durable generation"
     );
 
     let foreign = GameSessionRef::bound(

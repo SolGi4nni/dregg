@@ -7038,6 +7038,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-federation",
+ "dregg-turn",
  "dregg-types",
  "ed25519-dalek",
  "postcard",
@@ -7698,9 +7699,12 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "deos-view",
+ "dregg-app-framework",
  "dregg-automatafl",
  "dregg-multiway-tug",
  "dregg-persist",
+ "dregg-turn",
+ "dregg-types",
  "dreggnet-compute",
  "dreggnet-council",
  "dreggnet-doc",
@@ -7712,7 +7716,9 @@ dependencies = [
  "dreggnet-surfaces",
  "dungeon-on-dregg",
  "getrandom 0.3.4",
+ "spween-dregg",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -7892,6 +7898,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-intent",
  "dregg-sdk",
+ "dregg-turn",
  "dregg-types",
  "dreggnet-catalog",
  "dreggnet-offerings",
@@ -7906,6 +7913,7 @@ dependencies = [
  "rand 0.8.6",
  "rand 0.9.4",
  "starbridge-sealed-auction",
+ "tempfile",
 ]
 
 [[package]]
@@ -8139,6 +8147,7 @@ dependencies = [
  "dungeon-on-dregg",
  "ed25519-dalek",
  "fhegg-fhe",
+ "getrandom 0.3.4",
  "hmac 0.12.1",
  "metrics",
  "metrics-exporter-prometheus",

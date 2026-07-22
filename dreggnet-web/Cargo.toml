@@ -160,6 +160,7 @@ serde_json = "1"
 # Deterministic identity derivation (mirror of the MockFrontend shape: a web user ->
 # a stable DreggIdentity via blake3) + a deterministic session seed from a session id.
 blake3 = "1"
+getrandom = { workspace = true }
 
 # THE TELEGRAM MINI APP surface (src/telegram_miniapp.rs) — the /tg scope validates Telegram
 # initData server-side and lands turns with verified Signed provenance:

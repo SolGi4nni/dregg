@@ -136,7 +136,8 @@ pub use resume::{
     SessionResumeStore,
 };
 pub use signed::{
-    Attribution, SignedAction, SignedError, TurnSigner, signing_message, verify_signed,
+    Attribution, SignedAction, SignedError, TurnSigner, signing_message, verify_detached,
+    verify_signed,
 };
 
 use dregg_app_framework::TurnReceipt;

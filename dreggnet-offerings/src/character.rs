@@ -45,6 +45,7 @@
 //!   replay-verified character-turn chain) builds ON this seam — named, not built here.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use deos_view::ViewNode;
 use dregg_app_framework::TurnReceipt;
@@ -116,6 +117,13 @@ pub trait CharacterStore {
     fn load(&self, who: &DreggIdentity) -> CharacterSheet;
     /// Persist `who`'s character sheet (the carried state a later [`load`](CharacterStore::load) returns).
     fn save(&mut self, who: &DreggIdentity, sheet: CharacterSheet);
+
+    /// Optional canonical live world owned by the store. Durable deployments
+    /// use this to hand gameplay the exact same receipted cell that external
+    /// consequences mutate; sheet-only stores retain the reconstruction path.
+    fn world(&self, _who: &DreggIdentity) -> Option<Arc<WorldCell>> {
+        None
+    }
 }
 
 /// The in-process [`CharacterStore`] the tests drive — a map from identity to sheet. The durable
@@ -165,7 +173,7 @@ fn hero_seed(who: &DreggIdentity) -> u8 {
 /// value the [`CharacterStore`] saves.
 pub struct Character {
     who: DreggIdentity,
-    world: WorldCell,
+    world: Arc<WorldCell>,
 }
 
 impl Character {
@@ -203,7 +211,20 @@ impl Character {
         if world.read_var("level") == 0 {
             let _ = progression::level_up(&world);
         }
-        Character { who, world }
+        Character {
+            who,
+            world: Arc::new(world),
+        }
+    }
+
+    /// Open from a store that may own the canonical live world. A durable
+    /// store's world wins over sheet reconstruction, preventing two ledgers
+    /// with the same deterministic cell id from diverging.
+    pub fn open_from_store<S: CharacterStore + ?Sized>(who: DreggIdentity, store: &S) -> Character {
+        match store.world(&who) {
+            Some(world) => Character { who, world },
+            None => Character::open(who.clone(), store.load(&who)),
+        }
     }
 
     /// This character's owner identity.
@@ -314,6 +335,34 @@ impl Character {
     pub fn claim_boon(&self) -> Result<TurnReceipt, WorldError> {
         meta::claim_boon(&self.world)
     }
+
+    /// Paint this canonical character above an existing game surface. The
+    /// caller supplies the viewer-bound character, so no other roster member's
+    /// private progression is disclosed.
+    pub fn render_over(&self, base: Surface) -> Surface {
+        let c = self.sheet();
+        let next = c.level + 1;
+        let to_next = xp_threshold(next);
+        let xp_line = if to_next == u64::MAX {
+            format!("XP {} · level {} (max)", c.xp, c.level)
+        } else {
+            format!(
+                "XP {} · level {} · next level at {}",
+                c.xp, c.level, to_next
+            )
+        };
+        let character_panel = ViewNode::Section {
+            title: format!("{} — {}", short_name(&self.who), c.class_name()),
+            tag: "genuine".to_string(),
+            children: vec![ViewNode::Text(xp_line)],
+        };
+        let Surface(game) = base;
+        Surface(ViewNode::Section {
+            title: "Adventure".to_string(),
+            tag: "accent".to_string(),
+            children: vec![character_panel, game],
+        })
+    }
 }
 
 // ── The XP reward binding (real dungeon outcomes → earned XP) ─────────────────────
@@ -404,9 +453,8 @@ impl<S: CharacterStore> AdventurerOffering<S> {
         who: DreggIdentity,
         cfg: SessionConfig,
     ) -> Result<AdventureSession, OfferingError> {
-        let sheet = self.store.load(&who);
         let dungeon = self.dungeon.open(cfg)?;
-        let character = Character::open(who.clone(), sheet);
+        let character = Character::open_from_store(who.clone(), &self.store);
         Ok(AdventureSession {
             who,
             dungeon,
@@ -471,32 +519,9 @@ impl<S: CharacterStore> AdventurerOffering<S> {
     /// next-level floor) atop the dungeon room render. A returning session reflects the carried
     /// character.
     pub fn render(&self, session: &AdventureSession) -> Surface {
-        let c = session.character.sheet();
-        let next = c.level + 1;
-        let to_next = xp_threshold(next);
-        let xp_line = if to_next == u64::MAX {
-            format!("XP {} · level {} (max)", c.xp, c.level)
-        } else {
-            format!(
-                "XP {} · level {} · next level at {}",
-                c.xp, c.level, to_next
-            )
-        };
-
-        let character_panel = ViewNode::Section {
-            title: format!("{} — {}", short_name(&session.who), c.class_name()),
-            tag: "genuine".to_string(),
-            children: vec![ViewNode::Text(xp_line)],
-        };
-
-        // The dungeon's own room render (prose + party state + affordances), nested beneath.
-        let Surface(room) = self.dungeon.render(&session.dungeon);
-
-        Surface(ViewNode::Section {
-            title: "Adventure".to_string(),
-            tag: "accent".to_string(),
-            children: vec![character_panel, room],
-        })
+        session
+            .character
+            .render_over(self.dungeon.render(&session.dungeon))
     }
 }
 

@@ -61,7 +61,7 @@ use dreggnet_catalog::{
     GameResult, GameSessionRef, PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
     PrivateFheggGameMechanic, PrivateFheggWinnerRoute, ShieldedDungeonPublicCard,
     ShieldedDungeonPublicationError, execute_bound_asserted_game_command,
-    inspect_bound_game_session,
+    inspect_bound_game_session, sign_game_action,
 };
 use dreggnet_market::fhegg_settlement::FheggSettlementError;
 use dreggnet_market::fhegg_transport::{
@@ -1539,7 +1539,8 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     let stolen = game_gate
         .execute_signed(
             &mut raid_host,
-            thief.sign("dungeon", &raid_id, 0, mender_action.clone()),
+            sign_game_action(&thief, mender_reference.clone(), 0, mender_action.clone())
+                .expect("thief still signs the exact authority-bound command"),
         )
         .expect_err("a different game key cannot spend the Bazaar winner route");
     assert_eq!(stolen, PrivateFheggGameConsequenceError::WrongGameSigner);
@@ -1579,7 +1580,13 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     let (game_consequence, public_game_receipt) = game_gate
         .execute_signed_public(
             &mut raid_host,
-            winner_signer.sign("dungeon", &raid_id, 0, mender_action.clone()),
+            sign_game_action(
+                &winner_signer,
+                mender_reference.clone(),
+                0,
+                mender_action.clone(),
+            )
+            .expect("winner signs the exact authority-bound command"),
         )
         .expect("the exact Bazaar winner spends the proof-assigned Mender once and publishes it");
     assert!(game_consequence.binding_verifies());
@@ -1671,7 +1678,13 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     let game_replay_error = game_gate
         .execute_signed(
             &mut raid_host,
-            winner_signer.sign("dungeon", &raid_id, 1, mender_action.clone()),
+            sign_game_action(
+                &winner_signer,
+                mender_reference.clone(),
+                1,
+                mender_action.clone(),
+            )
+            .expect("replay is still a well-formed authority-bound command"),
         )
         .expect_err("the exact private authorization is consumed before a second dispatch");
     assert_eq!(
@@ -1691,7 +1704,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         winner_route,
         PrivateFheggGameMechanic::DungeonRaidMender,
         &raid_epochs,
-        mender_reference,
+        mender_reference.clone(),
         mender_action.clone(),
     )
     .expect("restart reconstructs the public-only consequence policy");
@@ -1702,7 +1715,8 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         restored_gate
             .execute_signed(
                 &mut raid_host,
-                winner_signer.sign("dungeon", &raid_id, 1, mender_action),
+                sign_game_action(&winner_signer, mender_reference, 1, mender_action)
+                    .expect("restored replay command remains authority-bound"),
             )
             .expect_err("restored authorization cannot dispatch"),
         PrivateFheggGameConsequenceError::AlreadyConsumed

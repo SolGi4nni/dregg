@@ -14,6 +14,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::private_bazaar_live::PrivateBazaarLiveDeployment;
+use crate::private_bazaar_targets::PrivateBazaarDurableTargetRegistry;
 use crate::private_bazaar_worker::{
     PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarSpoolAppend,
     PrivateBazaarSpoolScope, PrivateBazaarWorkerError, PrivateBazaarWorkerTargets,
@@ -329,8 +330,11 @@ impl std::fmt::Debug for PrivateBazaarLiveRuntime {
 impl PrivateBazaarLiveRuntime {
     pub fn start(
         deployment: PrivateBazaarLiveDeployment,
-        targets: PrivateBazaarWorkerTargets,
+        targets: PrivateBazaarDurableTargetRegistry,
     ) -> Result<Self, PrivateBazaarWorkerServiceError> {
+        let targets = targets
+            .into_worker_targets_for(&deployment)
+            .map_err(|_| PrivateBazaarWorkerServiceError::TargetRegistry)?;
         if targets.is_empty()? {
             return Err(PrivateBazaarWorkerServiceError::NoTargets);
         }
@@ -348,10 +352,9 @@ impl PrivateBazaarLiveRuntime {
         &self.deployment
     }
 
-    /// A clone of the authenticated registry, for installing newly recovered
-    /// durable cells without replacing the running supervisor.
-    pub fn targets(&self) -> PrivateBazaarWorkerTargets {
-        self.targets.clone()
+    /// Public-safe immutable target coverage retained by this runtime.
+    pub fn target_count(&self) -> usize {
+        self.targets.len()
     }
 
     pub fn health(&self) -> PrivateBazaarWorkerHealth {
@@ -563,8 +566,7 @@ fn classify_worker_error(error: &PrivateBazaarWorkerError) -> PrivateBazaarWorke
         PrivateBazaarWorkerError::StaleLiveMarket | PrivateBazaarWorkerError::Host(_) => {
             PrivateBazaarWorkerFaultClass::LiveMarketUnavailable
         }
-        PrivateBazaarWorkerError::TargetNotInstalled(_)
-        | PrivateBazaarWorkerError::TargetRegistryPoisoned => {
+        PrivateBazaarWorkerError::TargetNotInstalled(_) => {
             PrivateBazaarWorkerFaultClass::TargetUnavailable
         }
         PrivateBazaarWorkerError::SourceExceededBound { .. }
@@ -589,6 +591,7 @@ fn classify_worker_error(error: &PrivateBazaarWorkerError) -> PrivateBazaarWorke
         | PrivateBazaarWorkerError::UnfinalizedEvidence
         | PrivateBazaarWorkerError::UnsupportedReceiptField(_)
         | PrivateBazaarWorkerError::ReceiptCodec(_)
+        | PrivateBazaarWorkerError::DuplicateTarget
         | PrivateBazaarWorkerError::ClaimMismatch
         | PrivateBazaarWorkerError::PublishedClaimMismatch
         | PrivateBazaarWorkerError::ClaimMissingAfterApply
@@ -614,6 +617,7 @@ pub enum PrivateBazaarWorkerServiceError {
     Config(&'static str),
     InvalidMillis(&'static str),
     NoTargets,
+    TargetRegistry,
     Worker(PrivateBazaarWorkerError),
     ThreadSpawn,
     ThreadPanicked,

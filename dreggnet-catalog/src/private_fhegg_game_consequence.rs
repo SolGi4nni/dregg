@@ -50,14 +50,14 @@
 use dregg_persist::FinalizedFaithfulSpend;
 use dreggnet_market::private_bfv_attested_clearing::PrivateBfvQuorumSecurity;
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
-use dreggnet_offerings::{Action, Attribution, DreggIdentity, OfferingHost, SignedAction};
+use dreggnet_offerings::{Action, Attribution, DreggIdentity, OfferingHost};
 
 use crate::game_publication::{
     GamePublicationError, PublicGameReceipt, project_public_game_receipt,
 };
 use crate::game_spine::{
     GameActionRef, GameHostIncarnation, GameKind, GameReceipt, GameResult, GameSessionBinding,
-    GameSessionRef, GameSpineError, execute_bound_signed_game_turn,
+    GameSessionRef, GameSpineError, SignedGameAction, execute_bound_signed_game_turn,
 };
 use crate::{GameEpochError, GameEpochLedger};
 
@@ -706,7 +706,7 @@ impl PrivateFheggGameConsequenceGate {
     pub fn execute_signed(
         &mut self,
         host: &mut OfferingHost,
-        signed_action: SignedAction,
+        signed_action: SignedGameAction,
     ) -> Result<PrivateFheggGameConsequenceReceipt, PrivateFheggGameConsequenceError> {
         self.execute_signed_public(host, signed_action)
             .map(|(receipt, _public)| receipt)
@@ -725,7 +725,7 @@ impl PrivateFheggGameConsequenceGate {
     pub fn execute_signed_public(
         &mut self,
         host: &mut OfferingHost,
-        signed_action: SignedAction,
+        signed_action: SignedGameAction,
     ) -> Result<
         (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
         PrivateFheggGameConsequenceError,
@@ -736,7 +736,7 @@ impl PrivateFheggGameConsequenceGate {
     fn execute_signed_outputs(
         &mut self,
         host: &mut OfferingHost,
-        signed_action: SignedAction,
+        signed_action: SignedGameAction,
     ) -> Result<
         (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
         PrivateFheggGameConsequenceError,
@@ -744,14 +744,18 @@ impl PrivateFheggGameConsequenceGate {
         if self.consumed {
             return Err(PrivateFheggGameConsequenceError::AlreadyConsumed);
         }
-        if signed_action.actor_pubkey_hex.to_ascii_lowercase()
+        if signed_action
+            .signed_action
+            .actor_pubkey_hex
+            .to_ascii_lowercase()
             != self.winner_route.game_signer_pubkey_hex
         {
             return Err(PrivateFheggGameConsequenceError::WrongGameSigner);
         }
-        if signed_action.action.turn != self.target_action.turn
-            || signed_action.action.arg != self.target_action.arg
-            || signed_action.action.text != self.target_action.text
+        if signed_action.reference != self.target_reference
+            || signed_action.signed_action.action.turn != self.target_action.turn
+            || signed_action.signed_action.action.arg != self.target_action.arg
+            || signed_action.signed_action.action.text != self.target_action.text
         {
             return Err(PrivateFheggGameConsequenceError::ActionReferenceMismatch);
         }
@@ -772,7 +776,6 @@ impl PrivateFheggGameConsequenceGate {
             self.host_incarnation,
             self.session_generation,
             &self.target_reference.session,
-            self.target_reference.clone(),
             signed_action,
         )?;
         let receipt = match result {
@@ -1218,6 +1221,16 @@ mod tests {
             .unwrap_or_else(|| panic!("live dungeon omitted choice {arg}"))
     }
 
+    fn signed_command(
+        signer: &TurnSigner,
+        reference: &GameActionRef,
+        counter: u64,
+        action: Action,
+    ) -> SignedGameAction {
+        crate::sign_game_action(signer, reference.clone(), counter, action)
+            .expect("test action matches its authority-bound reference")
+    }
+
     fn operation_at(
         view: &crate::game_spine::GameSessionView,
         name: &str,
@@ -1343,7 +1356,10 @@ mod tests {
         // not stale the target head or consume the authorization.
         let thief = TurnSigner::from_seed([0x52; 32]);
         let stolen = gate
-            .execute_signed(&mut host, thief.sign("dungeon", &id, 0, action.clone()))
+            .execute_signed(
+                &mut host,
+                signed_command(&thief, &reference, 0, action.clone()),
+            )
             .expect_err("nonwinner key cannot spend the Bazaar result");
         assert_eq!(stolen, PrivateFheggGameConsequenceError::WrongGameSigner);
         assert!(!gate.is_consumed());
@@ -1356,7 +1372,7 @@ mod tests {
         let replaced = gate
             .execute_signed(
                 &mut host,
-                winner_signer.sign("dungeon", &id, 0, action.clone()),
+                signed_command(&winner_signer, &reference, 0, action.clone()),
             )
             .expect_err("captured generation cannot survive epoch replacement");
         assert_eq!(
@@ -1387,7 +1403,7 @@ mod tests {
         let (landed, public) = gate
             .execute_signed_public(
                 &mut host,
-                winner_signer.sign("dungeon", &id, 0, action.clone()),
+                signed_command(&winner_signer, &current_reference, 0, action.clone()),
             )
             .expect("winner's exact signed Mender turn lands");
         assert!(landed.binding_verifies());
@@ -1440,7 +1456,10 @@ mod tests {
         }
 
         let replay = gate
-            .execute_signed(&mut host, winner_signer.sign("dungeon", &id, 1, action))
+            .execute_signed(
+                &mut host,
+                signed_command(&winner_signer, &current_reference, 1, action),
+            )
             .expect_err("private authorization is one-shot before dispatch");
         assert_eq!(replay, PrivateFheggGameConsequenceError::AlreadyConsumed);
     }
@@ -1507,7 +1526,7 @@ mod tests {
         let stolen = gate
             .execute_signed(
                 &mut host,
-                thief.sign("dungeon", &id, 0, claim_action.clone()),
+                signed_command(&thief, &claim_reference, 0, claim_action.clone()),
             )
             .expect_err("unmapped signer cannot spend the shielded authorization");
         assert_eq!(stolen, PrivateFheggGameConsequenceError::WrongGameSigner);
@@ -1516,7 +1535,7 @@ mod tests {
         let landed = gate
             .execute_signed(
                 &mut host,
-                winner_signer.sign("dungeon", &id, 0, claim_action.clone()),
+                signed_command(&winner_signer, &claim_reference, 0, claim_action.clone()),
             )
             .expect("mapped Bazaar winner lands the exact crown turn");
         assert!(landed.binding_verifies());
@@ -1558,7 +1577,7 @@ mod tests {
         let replay = gate
             .execute_signed(
                 &mut host,
-                winner_signer.sign("dungeon", &id, 1, claim_action),
+                signed_command(&winner_signer, &claim_reference, 1, claim_action),
             )
             .expect_err("shielded authorization is one-shot before dispatch");
         assert_eq!(replay, PrivateFheggGameConsequenceError::AlreadyConsumed);

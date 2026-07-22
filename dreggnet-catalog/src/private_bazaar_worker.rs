@@ -711,7 +711,7 @@ struct DecodedSpoolRecord {
 /// policy-selected cell chooses the entry; an event cannot nominate a target.
 #[derive(Clone, Default)]
 pub struct PrivateBazaarWorkerTargets {
-    inner: Arc<RwLock<Vec<(CellId, Arc<DungeonWorldCell>)>>>,
+    inner: Arc<Vec<(CellId, Arc<DungeonWorldCell>)>>,
 }
 
 impl PrivateBazaarWorkerTargets {
@@ -719,31 +719,31 @@ impl PrivateBazaarWorkerTargets {
     /// target. Production runtime startup uses this to fail closed instead of
     /// launching a worker that can only back off forever.
     pub fn is_empty(&self) -> Result<bool, PrivateBazaarWorkerError> {
-        Ok(self
-            .inner
-            .read()
-            .map_err(|_| PrivateBazaarWorkerError::TargetRegistryPoisoned)?
-            .is_empty())
+        Ok(self.inner.is_empty())
     }
 
-    pub fn install(&self, target: Arc<DungeonWorldCell>) -> Result<(), PrivateBazaarWorkerError> {
-        let cell = target.cell_id();
-        let mut entries = self
-            .inner
-            .write()
-            .map_err(|_| PrivateBazaarWorkerError::TargetRegistryPoisoned)?;
-        if let Some(existing) = entries.iter_mut().find(|(candidate, _)| *candidate == cell) {
-            existing.1 = target;
-        } else {
-            entries.push((cell, target));
+    pub(crate) fn from_worlds(
+        worlds: impl IntoIterator<Item = Arc<DungeonWorldCell>>,
+    ) -> Result<Self, PrivateBazaarWorkerError> {
+        let mut entries = worlds
+            .into_iter()
+            .map(|world| (world.cell_id(), world))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|(cell, _)| *cell);
+        if entries.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+            return Err(PrivateBazaarWorkerError::DuplicateTarget);
         }
-        Ok(())
+        Ok(Self {
+            inner: Arc::new(entries),
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
     }
 
     fn resolve(&self, cell: CellId) -> Result<Arc<DungeonWorldCell>, PrivateBazaarWorkerError> {
         self.inner
-            .read()
-            .map_err(|_| PrivateBazaarWorkerError::TargetRegistryPoisoned)?
             .iter()
             .find(|(candidate, _)| *candidate == cell)
             .map(|(_, target)| Arc::clone(target))
@@ -1806,7 +1806,7 @@ pub enum PrivateBazaarWorkerError {
     UnfinalizedEvidence,
     UnsupportedReceiptField(&'static str),
     ReceiptCodec(String),
-    TargetRegistryPoisoned,
+    DuplicateTarget,
     TargetNotInstalled(CellId),
     Host(String),
     GameAdapter(String),

@@ -16,6 +16,9 @@ use axum::http::{Request, StatusCode};
 use dreggnet_web::{CatalogState, catalog_router};
 use tower::ServiceExt; // oneshot
 
+use dreggnet_catalog::{
+    GameHostIncarnation, GameSessionBinding, GameSessionRef, SignedGameAction, sign_game_action,
+};
 use dreggnet_offerings::{Action, SessionId, SignedAction, TurnSigner};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON};
 
@@ -34,7 +37,7 @@ fn sig_hex(sig: &[u8; 64]) -> String {
 
 /// The JSON wire the extension README's step-4 fetch assembles from a [`SignedAction`], with the
 /// counter as a JSON number or a decimal string (both legs of the wire contract).
-fn wire_json(sa: &SignedAction, counter: serde_json::Value) -> String {
+fn legacy_wire_json(sa: &SignedAction, counter: serde_json::Value) -> String {
     serde_json::json!({
         "action": {
             "label": sa.action.label,
@@ -48,6 +51,58 @@ fn wire_json(sa: &SignedAction, counter: serde_json::Value) -> String {
         "signature_hex": sig_hex(&sa.signature),
     })
     .to_string()
+}
+
+fn game_wire_json(command: &SignedGameAction, counter: serde_json::Value) -> String {
+    let GameSessionBinding::Bound {
+        host_incarnation,
+        session_generation,
+    } = command.reference.session.binding()
+    else {
+        panic!("game test command must be authority-bound")
+    };
+    let sa = &command.signed_action;
+    serde_json::json!({
+        "action": {
+            "label": sa.action.label,
+            "turn": sa.action.turn,
+            "arg": sa.action.arg,
+            "enabled": sa.action.enabled,
+            "text": sa.action.text,
+        },
+        "actor_pubkey_hex": sa.actor_pubkey_hex,
+        "counter": counter,
+        "signature_hex": sig_hex(&sa.signature),
+        "game_authority": {
+            "host_incarnation_hex": hex_bytes(host_incarnation.as_bytes()),
+            "session_generation": session_generation,
+            "expected_pre_head_hex": hex_bytes(&command.reference.expected_pre_head),
+            "authority_signature_hex": sig_hex(&command.authority_signature),
+        }
+    })
+    .to_string()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn decode_hex_32(value: &str) -> [u8; 32] {
+    assert_eq!(value.len(), 64);
+    let mut out = [0; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        out[index] = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
+    }
+    out
+}
+
+fn hidden_value<'a>(html: &'a str, name: &str) -> &'a str {
+    let marker = format!("name=\"{name}\" value=\"");
+    let rest = html
+        .split_once(&marker)
+        .unwrap_or_else(|| panic!("rendered game surface omitted {name}: {html}"))
+        .1;
+    rest.split_once('"').unwrap().0
 }
 
 async fn post_json(app: &axum::Router, uri: &str, body: String) -> (StatusCode, String) {
@@ -98,13 +153,34 @@ async fn verified_turns(app: &axum::Router, key: &str, id: &str) -> u64 {
 
 /// A signed dungeon move for `(session, counter, arg)` under `signer` — the canonical message the
 /// extension builds, signed by the SAME primitive the server verifies.
-fn sign_choose(signer: &TurnSigner, session: &str, counter: u64, arg: i64) -> SignedAction {
-    signer.sign(
-        "dungeon",
-        &SessionId::new(session),
+async fn sign_choose(
+    app: &axum::Router,
+    signer: &TurnSigner,
+    session: &str,
+    counter: u64,
+    arg: i64,
+) -> SignedGameAction {
+    let (status, surface) = get(app, &format!("/offerings/dungeon/session/{session}")).await;
+    assert_eq!(status, StatusCode::OK, "game authority surface: {surface}");
+    let incarnation = GameHostIncarnation::new(decode_hex_32(hidden_value(
+        &surface,
+        "game_host_incarnation",
+    )))
+    .unwrap();
+    let generation = hidden_value(&surface, "game_session_generation")
+        .parse::<u64>()
+        .unwrap();
+    let head = decode_hex_32(hidden_value(&surface, "game_expected_pre_head")).to_vec();
+    let action = Action::new("choose", "choose", arg, true);
+    let session =
+        GameSessionRef::bound("dungeon", SessionId::new(session), incarnation, generation).unwrap();
+    sign_game_action(
+        signer,
+        dreggnet_catalog::GameActionRef::new(session, &action, head),
         counter,
-        Action::new("choose", "choose", arg, true),
+        action,
     )
+    .unwrap()
 }
 
 /// GENUINE: a real key signs a turn → 200, the turn commits (verify counts it), and the actor
@@ -122,8 +198,8 @@ async fn a_signed_turn_lands_with_the_verified_pubkey_as_actor() {
     assert_eq!(verified_turns(&app, "dungeon", "sg-1").await, 1);
 
     // Counter 0 as a JSON NUMBER.
-    let sa = sign_choose(&signer, "sg-1", 0, KP_PRESS_ON as i64);
-    let (status, body) = post_json(&app, act, wire_json(&sa, serde_json::json!(0))).await;
+    let sa = sign_choose(&app, &signer, "sg-1", 0, KP_PRESS_ON as i64).await;
+    let (status, body) = post_json(&app, act, game_wire_json(&sa, serde_json::json!(0))).await;
     assert_eq!(status, StatusCode::OK, "genuine signed turn lands: {body}");
     assert!(
         body.contains("Turn committed"),
@@ -136,8 +212,8 @@ async fn a_signed_turn_lands_with_the_verified_pubkey_as_actor() {
     assert_eq!(verified_turns(&app, "dungeon", "sg-1").await, 2);
 
     // Counter 1 as a decimal STRING (the extension's counterWire form beyond 2^53 − 1).
-    let sa = sign_choose(&signer, "sg-1", 1, KP_CLAIM_RED as i64);
-    let (status, body) = post_json(&app, act, wire_json(&sa, serde_json::json!("1"))).await;
+    let sa = sign_choose(&app, &signer, "sg-1", 1, KP_CLAIM_RED as i64).await;
+    let (status, body) = post_json(&app, act, game_wire_json(&sa, serde_json::json!("1"))).await;
     assert_eq!(status, StatusCode::OK, "string-counter wire lands: {body}");
     assert!(body.contains("Turn committed"), "{body}");
     assert_eq!(verified_turns(&app, "dungeon", "sg-1").await, 3);
@@ -152,10 +228,10 @@ async fn a_forged_signature_is_403_and_the_session_is_unmoved() {
     let imposter = TurnSigner::from_seed([8u8; 32]);
     let act = "/offerings/dungeon/session/sg-forge/act-signed";
 
-    let mut forged = sign_choose(&imposter, "sg-forge", 0, KP_PRESS_ON as i64);
-    forged.actor_pubkey_hex = signer.pubkey_hex().to_string();
+    let mut forged = sign_choose(&app, &imposter, "sg-forge", 0, KP_PRESS_ON as i64).await;
+    forged.signed_action.actor_pubkey_hex = signer.pubkey_hex().to_string();
 
-    let (status, body) = post_json(&app, act, wire_json(&forged, serde_json::json!(0))).await;
+    let (status, body) = post_json(&app, act, game_wire_json(&forged, serde_json::json!(0))).await;
     assert_eq!(
         status,
         StatusCode::FORBIDDEN,
@@ -177,8 +253,8 @@ async fn a_replayed_counter_is_403_and_commits_nothing_twice() {
     let signer = TurnSigner::from_seed([7u8; 32]);
     let act = "/offerings/dungeon/session/sg-replay/act-signed";
 
-    let sa = sign_choose(&signer, "sg-replay", 0, KP_PRESS_ON as i64);
-    let wire = wire_json(&sa, serde_json::json!(0));
+    let sa = sign_choose(&app, &signer, "sg-replay", 0, KP_PRESS_ON as i64).await;
+    let wire = game_wire_json(&sa, serde_json::json!(0));
 
     let (status, body) = post_json(&app, act, wire.clone()).await;
     assert_eq!(
@@ -213,11 +289,11 @@ async fn a_malformed_body_is_400_before_any_crypto() {
     let app = app();
     let signer = TurnSigner::from_seed([7u8; 32]);
     let act = "/offerings/dungeon/session/sg-bad/act-signed";
-    let sa = sign_choose(&signer, "sg-bad", 0, KP_PRESS_ON as i64);
+    let sa = sign_choose(&app, &signer, "sg-bad", 0, KP_PRESS_ON as i64).await;
 
     // Bad signature hex: right length, non-hex chars.
     let mut v: serde_json::Value =
-        serde_json::from_str(&wire_json(&sa, serde_json::json!(0))).unwrap();
+        serde_json::from_str(&game_wire_json(&sa, serde_json::json!(0))).unwrap();
     v["signature_hex"] = serde_json::json!("zz".repeat(64));
     let (status, body) = post_json(&app, act, v.to_string()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -225,14 +301,14 @@ async fn a_malformed_body_is_400_before_any_crypto() {
 
     // Short signature hex.
     let mut v: serde_json::Value =
-        serde_json::from_str(&wire_json(&sa, serde_json::json!(0))).unwrap();
+        serde_json::from_str(&game_wire_json(&sa, serde_json::json!(0))).unwrap();
     v["signature_hex"] = serde_json::json!("ab");
     let (status, _) = post_json(&app, act, v.to_string()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Missing field: no actor_pubkey_hex.
     let mut v: serde_json::Value =
-        serde_json::from_str(&wire_json(&sa, serde_json::json!(0))).unwrap();
+        serde_json::from_str(&game_wire_json(&sa, serde_json::json!(0))).unwrap();
     v.as_object_mut().unwrap().remove("actor_pubkey_hex");
     let (status, body) = post_json(&app, act, v.to_string()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -241,20 +317,21 @@ async fn a_malformed_body_is_400_before_any_crypto() {
     let (status, body) = post_json(
         &app,
         act,
-        wire_json(&sa, serde_json::json!("not-a-counter")),
+        game_wire_json(&sa, serde_json::json!("not-a-counter")),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body.contains("counter"), "{body}");
 
     // Negative counter (a u64 wire).
-    let (status, _) = post_json(&app, act, wire_json(&sa, serde_json::json!(-1))).await;
+    let (status, _) = post_json(&app, act, game_wire_json(&sa, serde_json::json!(-1))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // A pubkey that is not 32 bytes of hex — well-formed JSON, malformed KEY (400, not 403).
     let mut short_key = sa.clone();
-    short_key.actor_pubkey_hex = "abcd".to_string();
-    let (status, body) = post_json(&app, act, wire_json(&short_key, serde_json::json!(0))).await;
+    short_key.signed_action.actor_pubkey_hex = "abcd".to_string();
+    let (status, body) =
+        post_json(&app, act, game_wire_json(&short_key, serde_json::json!(0))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
     // Non-JSON body.
@@ -265,7 +342,7 @@ async fn a_malformed_body_is_400_before_any_crypto() {
     assert_eq!(verified_turns(&app, "dungeon", "sg-bad").await, 1);
 
     // And the genuine envelope still lands afterwards — the 400s consumed no counter.
-    let (status, body) = post_json(&app, act, wire_json(&sa, serde_json::json!(0))).await;
+    let (status, body) = post_json(&app, act, game_wire_json(&sa, serde_json::json!(0))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(verified_turns(&app, "dungeon", "sg-bad").await, 2);
 }
@@ -284,7 +361,7 @@ async fn an_unknown_offering_is_404() {
     let (status, body) = post_json(
         &app,
         "/offerings/no-such-offering/session/s-1/act-signed",
-        wire_json(&sa, serde_json::json!(0)),
+        legacy_wire_json(&sa, serde_json::json!(0)),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");

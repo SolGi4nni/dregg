@@ -264,6 +264,28 @@ pub fn verify_signed(
     Ok(DreggIdentity(pk.hex()))
 }
 
+/// Verify a higher-layer, domain-separated envelope under the same actor key
+/// used by [`SignedAction`]. This does not inspect or consume the host replay
+/// counter; callers must still route the admitted command through
+/// [`OfferingHost::advance_signed`](crate::OfferingHost::advance_signed).
+///
+/// The helper exists so typed layers can bind authority coordinates that do
+/// not belong in the legacy offering wire (for example a game host
+/// incarnation, close/reopen generation, and observed surface head) without
+/// claiming that a server-created wrapper was signed by the client.
+pub fn verify_detached(
+    actor_pubkey_hex: &str,
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Result<DreggIdentity, SignedError> {
+    let key_bytes = decode_hex_32(actor_pubkey_hex).ok_or(SignedError::MalformedKey)?;
+    let pk = PublicKey(key_bytes);
+    if !dregg_types::verify(&pk, message, &Signature(*signature)) {
+        return Err(SignedError::BadSignature);
+    }
+    Ok(DreggIdentity(pk.hex()))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THE SIGNER — the same primitive the adapters' cipherclerks hold.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,6 +343,13 @@ impl TurnSigner {
             counter,
             signature: sig.0,
         }
+    }
+
+    /// Sign an already-domain-separated higher-layer message with this turn
+    /// identity. The caller owns the domain and canonical layout; the matching
+    /// verifier is [`verify_detached`].
+    pub fn sign_detached(&self, message: &[u8]) -> [u8; 64] {
+        dregg_types::sign(&self.key, message).0
     }
 }
 

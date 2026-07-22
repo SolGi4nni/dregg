@@ -33,6 +33,12 @@
 //!   uses `DREGG_DARK_AMM_SECRET_KEY_FILE` + `DREGG_DARK_AMM_INITIAL_ROOT`. Each pair is optional,
 //!   but a half-pair, malformed roster/root, unsafe/corrupt key, or failed cryptographic registrar
 //!   refuses startup before the socket binds rather than leaving a healthy featureless service;
+//! - live private Bazaar (the `private-bazaar-live` build): the complete pinned deployment config
+//!   plus `DREGG_PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE` must be present. The server opens an
+//!   already-provisioned durable Dungeon target for every roster cell under
+//!   `<authority-dir>/private-targets`, authenticates its checkpoint/recovery against the pinned
+//!   executor, and owns the settlement runtime until shutdown. Missing/extra targets or unsafe key
+//!   custody refuse startup; ordinary server startup never fabricates a character;
 //! - log level: the standard `RUST_LOG` env (`tracing_subscriber` env-filter), default `info`.
 //!
 //! ## Honest scope (the deploy scout's Phase-0)
@@ -108,23 +114,50 @@ async fn main() {
     // Bazaar build remains absent unless its complete pinned deployment config resolves; a
     // partial config is a startup refusal, never a healthy-looking unmounted feature.
     #[cfg(feature = "private-bazaar-live")]
-    let (app, catalog) = match dreggnet_catalog::PrivateBazaarLiveDeployment::from_env() {
-        Ok(Some(deployment)) => {
-            tracing::info!(
-                key = dreggnet_market::private_bazaar_live_host::PRIVATE_BAZAAR_RAID_KEY,
-                "configured private Bazaar deployment mounted into web/Telegram-Mini-App/Discord-Activity catalog routes"
-            );
-            dreggnet_web::make_app_parts_with_private_bazaar(
-                dreggnet_web::resolve_demo_descent(),
-                deployment,
-            )
-        }
-        Ok(None) => dreggnet_web::make_app_parts(),
-        Err(error) => {
-            tracing::error!(%error, "private Bazaar deployment configuration refused");
-            std::process::exit(2);
-        }
-    };
+    let (app, catalog, _private_bazaar_runtime) =
+        match dreggnet_catalog::PrivateBazaarLiveDeployment::from_env() {
+            Ok(Some(deployment)) => {
+                let durable_targets =
+                    match dreggnet_catalog::PrivateBazaarDurableTargetRegistry::load_from_env(
+                        &deployment,
+                    ) {
+                        Ok(targets) => targets,
+                        Err(error) => {
+                            tracing::error!(%error, "private Bazaar durable targets refused");
+                            std::process::exit(2);
+                        }
+                    };
+                let target_count = durable_targets.len();
+                let character_store = durable_targets.character_store();
+                let runtime_deployment = deployment.clone();
+                let (app, catalog) = dreggnet_web::make_app_parts_with_private_bazaar(
+                    dreggnet_web::resolve_demo_descent(),
+                    deployment,
+                    character_store,
+                );
+                let runtime = match runtime_deployment.start_private_runtime(durable_targets) {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        tracing::error!(%error, "private Bazaar production runtime refused");
+                        std::process::exit(2);
+                    }
+                };
+                tracing::info!(
+                    key = dreggnet_market::private_bazaar_live_host::PRIVATE_BAZAAR_RAID_KEY,
+                    target_count,
+                    "configured private Bazaar deployment and durable settlement runtime mounted into web/Telegram-Mini-App/Discord-Activity catalog routes"
+                );
+                (app, catalog, Some(runtime))
+            }
+            Ok(None) => {
+                let (app, catalog) = dreggnet_web::make_app_parts();
+                (app, catalog, None)
+            }
+            Err(error) => {
+                tracing::error!(%error, "private Bazaar deployment configuration refused");
+                std::process::exit(2);
+            }
+        };
     #[cfg(not(feature = "private-bazaar-live"))]
     let (app, catalog) = dreggnet_web::make_app_parts();
 

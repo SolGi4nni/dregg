@@ -39,6 +39,7 @@ use crate::private_bazaar_service::{
     PrivateBazaarLiveRuntime, PrivateBazaarWorkerServiceConfig, PrivateBazaarWorkerServiceError,
     PrivateBazaarWorkerSupervisor,
 };
+use crate::private_bazaar_targets::PrivateBazaarDurableTargetRegistry;
 use crate::private_bazaar_worker::{
     PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarSpoolScope,
     PrivateBazaarWorkerError, PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
@@ -58,6 +59,8 @@ pub const PRIVATE_BAZAAR_REWARD_METHOD_ENV: &str = "DREGG_PRIVATE_BAZAAR_REWARD_
 pub const PRIVATE_BAZAAR_REWARD_EVENT_TOPIC_ENV: &str = "DREGG_PRIVATE_BAZAAR_REWARD_EVENT_TOPIC";
 pub const PRIVATE_BAZAAR_EXECUTOR_PUBKEY_ENV: &str = "DREGG_PRIVATE_BAZAAR_EXECUTOR_PUBKEY";
 pub const PRIVATE_BAZAAR_EXECUTOR_FEDERATION_ENV: &str = "DREGG_PRIVATE_BAZAAR_EXECUTOR_FEDERATION";
+pub const PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE_ENV: &str =
+    "DREGG_PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE";
 pub const PRIVATE_BAZAAR_RESERVE_ENV: &str = "DREGG_PRIVATE_BAZAAR_RESERVE";
 pub const PRIVATE_BAZAAR_AUTHORITY_DIR_ENV: &str = "DREGG_PRIVATE_BAZAAR_AUTHORITY_DIR";
 
@@ -116,17 +119,12 @@ impl PrivateBazaarLiveDeployment {
         reserve: u64,
         authority_dir: impl AsRef<Path>,
     ) -> Result<Self, PrivateBazaarLiveDeploymentError> {
-        let authority_dir = authority_dir.as_ref().to_path_buf();
+        let authority_dir = pin_private_authority_directory(authority_dir.as_ref())?;
         let registry = PrivateBazaarLiveRegistry::new();
         let offering = PrivateBazaarRaidOffering::new(policy.clone(), reserve, registry.clone())?;
         let xp_adapter = PrivateBazaarXpAdapter::open(&authority_dir)?;
         let commitment_store =
             PrivateClearingCommitmentStore::open(authority_dir.join("private-commitments"))?;
-        let authority_dir = fs::canonicalize(&authority_dir).map_err(|error| {
-            PrivateBazaarLiveDeploymentError::Config(format!(
-                "private Bazaar authority directory could not be pinned: {error}"
-            ))
-        })?;
         Ok(Self {
             offering,
             policy,
@@ -217,13 +215,51 @@ impl PrivateBazaarLiveDeployment {
     /// one owned value suitable for a catalog process.
     pub fn start_private_runtime(
         &self,
-        targets: PrivateBazaarWorkerTargets,
+        targets: PrivateBazaarDurableTargetRegistry,
     ) -> Result<PrivateBazaarLiveRuntime, PrivateBazaarWorkerServiceError> {
         PrivateBazaarLiveRuntime::start(self.clone(), targets)
     }
 
     pub(crate) fn private_worker_root(&self) -> PathBuf {
         self.authority_dir.join("private-worker")
+    }
+
+    pub(crate) fn private_target_root(&self) -> PathBuf {
+        self.authority_dir.join("private-targets")
+    }
+
+    pub(crate) fn private_target_checkpoint_root(&self) -> PathBuf {
+        self.authority_dir.join("private-target-checkpoints")
+    }
+
+    pub(crate) fn private_target_cells(&self) -> Vec<CellId> {
+        self.policy
+            .roster()
+            .ordered_members()
+            .iter()
+            .map(|member| member.character_cell)
+            .collect()
+    }
+
+    pub(crate) fn private_target_members(&self) -> Vec<(DreggIdentity, CellId)> {
+        self.policy
+            .roster()
+            .ordered_members()
+            .iter()
+            .map(|member| (member.actor.clone(), member.character_cell))
+            .collect()
+    }
+
+    pub(crate) fn private_executor_pubkey(&self) -> [u8; 32] {
+        self.policy.pin().executor_pubkey()
+    }
+
+    pub(crate) fn private_executor_federation(&self) -> [u8; 32] {
+        self.policy.pin().executor_federation()
+    }
+
+    pub(crate) fn private_policy_id(&self) -> [u8; 32] {
+        self.policy.policy_id()
     }
 
     pub(crate) fn private_spool_scope(&self) -> PrivateBazaarSpoolScope {
@@ -366,6 +402,7 @@ impl PrivateBazaarLiveDeployment {
             PRIVATE_BAZAAR_REWARD_EVENT_TOPIC_ENV,
             PRIVATE_BAZAAR_EXECUTOR_PUBKEY_ENV,
             PRIVATE_BAZAAR_EXECUTOR_FEDERATION_ENV,
+            PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE_ENV,
             PRIVATE_BAZAAR_RESERVE_ENV,
             PRIVATE_BAZAAR_AUTHORITY_DIR_ENV,
             PRIVATE_BAZAAR_WORKER_POLL_MS_ENV,
@@ -451,8 +488,46 @@ impl PrivateBazaarLiveDeployment {
             &required(PRIVATE_BAZAAR_RESERVE_ENV)?,
         )?;
         let authority_dir = required(PRIVATE_BAZAAR_AUTHORITY_DIR_ENV)?;
+        // The production loader validates contents, permissions, and the
+        // derived public key. Requiring the handle here prevents a complete
+        // market policy from presenting as enabled without its target custody.
+        let _ = required(PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE_ENV)?;
         Ok(Some(Self::open(policy, reserve, authority_dir)?))
     }
+}
+
+fn pin_private_authority_directory(
+    path: &Path,
+) -> Result<PathBuf, PrivateBazaarLiveDeploymentError> {
+    fs::create_dir_all(path).map_err(|error| {
+        PrivateBazaarLiveDeploymentError::Config(format!(
+            "private Bazaar authority directory could not be created: {error}"
+        ))
+    })?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        PrivateBazaarLiveDeploymentError::Config(format!(
+            "private Bazaar authority directory could not be inspected: {error}"
+        ))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(PrivateBazaarLiveDeploymentError::Config(
+            "private Bazaar authority path is not a regular directory".to_owned(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
+            PrivateBazaarLiveDeploymentError::Config(format!(
+                "private Bazaar authority permissions could not be restricted: {error}"
+            ))
+        })?;
+    }
+    fs::canonicalize(path).map_err(|error| {
+        PrivateBazaarLiveDeploymentError::Config(format!(
+            "private Bazaar authority directory could not be pinned: {error}"
+        ))
+    })
 }
 
 fn parse_hex32(
@@ -759,29 +834,6 @@ mod tests {
     }
 
     #[test]
-    fn production_runtime_requires_targets_and_owns_clean_shutdown() {
-        let temp = tempfile::tempdir().unwrap();
-        let deployment = deployment(temp.path());
-        assert!(matches!(
-            deployment.start_private_runtime(PrivateBazaarWorkerTargets::default()),
-            Err(PrivateBazaarWorkerServiceError::NoTargets)
-        ));
-
-        let targets = PrivateBazaarWorkerTargets::default();
-        targets
-            .install(Arc::new(deploy_hero(0x95)))
-            .expect("install authenticated target cell");
-        let runtime = deployment
-            .start_private_runtime(targets)
-            .expect("start deployment-owned private Bazaar runtime");
-        assert_eq!(runtime.targets().is_empty().unwrap(), false);
-        assert_eq!(
-            runtime.shutdown().unwrap().phase,
-            PrivateBazaarWorkerServicePhase::Stopped
-        );
-    }
-
-    #[test]
     fn production_supervisor_faults_once_on_spool_corruption() {
         let temp = tempfile::tempdir().unwrap();
         let deployment = deployment(temp.path());
@@ -966,8 +1018,7 @@ mod tests {
         let id = SessionId::new("catalog-private-bazaar-listener");
         let seed = 0xB4_2A_B4;
         let commitment_blinding = [0x0011_57E9; 8];
-        let targets = PrivateBazaarWorkerTargets::default();
-        targets.install(Arc::clone(&hero)).unwrap();
+        let targets = PrivateBazaarWorkerTargets::from_worlds([Arc::clone(&hero)]).unwrap();
 
         let first_receipt = {
             let deployment =
@@ -1093,8 +1144,7 @@ mod tests {
         hero.set_executor_signing_key([0xA9; 32]);
         let deployment =
             PrivateBazaarLiveDeployment::open(playable_policy(&hero), 1, &authority_dir).unwrap();
-        let targets = PrivateBazaarWorkerTargets::default();
-        targets.install(Arc::clone(&hero)).unwrap();
+        let targets = PrivateBazaarWorkerTargets::from_worlds([Arc::clone(&hero)]).unwrap();
         let mut host =
             full_catalog_host_with_private_bazaar(&CatalogConfig::default(), &deployment);
         let id = SessionId::new("catalog-private-bazaar-file-worker");
@@ -1165,6 +1215,14 @@ mod tests {
             stray_worker,
             Err(PrivateBazaarLiveDeploymentError::Config(_))
         ));
+        let stray_signer = PrivateBazaarLiveDeployment::from_config_source(|name| {
+            (name == PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE_ENV)
+                .then(|| "/not/opened/by-config-parser".to_owned())
+        });
+        assert!(matches!(
+            stray_signer,
+            Err(PrivateBazaarLiveDeploymentError::Config(_))
+        ));
 
         let temp = tempfile::tempdir().unwrap();
         let deployment = deployment(temp.path());
@@ -1222,6 +1280,10 @@ mod tests {
             (
                 PRIVATE_BAZAAR_AUTHORITY_DIR_ENV,
                 temp.path().display().to_string(),
+            ),
+            (
+                PRIVATE_BAZAAR_EXECUTOR_SIGNING_SEED_FILE_ENV,
+                "/not-opened-by-config-parser".to_owned(),
             ),
         ]);
         assert!(
