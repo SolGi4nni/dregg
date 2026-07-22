@@ -288,6 +288,89 @@ pub(crate) fn reconstruct_per_cell_receipt_heads(
     Ok(heads)
 }
 
+/// A validated durable projection could not be installed in a fresh executor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PerCellReceiptHeadInstallError {
+    Reconstruction(PerCellReceiptHeadReconstructionError),
+    DurableCurrentMismatch {
+        cell: CellId,
+        expected: Option<PerCellReceiptHead>,
+        got: Option<PerCellReceiptHead>,
+    },
+    ExecutorLockPoisoned,
+}
+
+impl fmt::Display for PerCellReceiptHeadInstallError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Reconstruction(error) => error.fmt(f),
+            Self::DurableCurrentMismatch {
+                cell,
+                expected,
+                got,
+            } => write!(
+                f,
+                "durable current per-cell receipt head for {cell:?} is {got:?}, expected {expected:?} from compacted baseline plus live suffix"
+            ),
+            Self::ExecutorLockPoisoned => {
+                f.write_str("fresh executor per-cell receipt-head mutex is poisoned")
+            }
+        }
+    }
+}
+
+impl Error for PerCellReceiptHeadInstallError {}
+
+impl From<PerCellReceiptHeadReconstructionError> for PerCellReceiptHeadInstallError {
+    fn from(error: PerCellReceiptHeadReconstructionError) -> Self {
+        Self::Reconstruction(error)
+    }
+}
+
+/// Validate a durable baseline/current pair, then atomically seed a fresh
+/// executor's generic per-cell provenance map.
+///
+/// The durable `current` table is never trusted as a cache: it must equal the
+/// executable reconstruction from `baseline` plus the dense live suffix.  Only
+/// after that equality holds is the executor mutex acquired and replaced in one
+/// assignment, so a corrupt suffix cannot partially seed provenance authority.
+pub(crate) fn install_executor_per_cell_receipt_heads(
+    executor: &TurnExecutor,
+    compacted_floor: u64,
+    cursor: u64,
+    baseline: &HashMap<CellId, PerCellReceiptHead>,
+    durable_current: &HashMap<CellId, PerCellReceiptHead>,
+    live_records: &[CommitRecord],
+) -> Result<usize, PerCellReceiptHeadInstallError> {
+    let reconstructed =
+        reconstruct_per_cell_receipt_heads(compacted_floor, cursor, baseline, live_records)?;
+    if reconstructed != *durable_current {
+        let cell = reconstructed
+            .keys()
+            .chain(durable_current.keys())
+            .find(|cell| reconstructed.get(*cell) != durable_current.get(*cell))
+            .copied()
+            .expect("unequal maps have a differing key");
+        return Err(PerCellReceiptHeadInstallError::DurableCurrentMismatch {
+            cell,
+            expected: reconstructed.get(&cell).copied(),
+            got: durable_current.get(&cell).copied(),
+        });
+    }
+
+    let installed: HashMap<CellId, [u8; 32]> = reconstructed
+        .into_iter()
+        .map(|(cell, head)| (cell, head.receipt_hash))
+        .collect();
+    let count = installed.len();
+    let mut guard = executor
+        .per_cell_receipt_head
+        .lock()
+        .map_err(|_| PerCellReceiptHeadInstallError::ExecutorLockPoisoned)?;
+    *guard = installed;
+    Ok(count)
+}
+
 /// Why an exact FNSP-v3 route was refused before execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExactFnspV3RouteFenceError {
