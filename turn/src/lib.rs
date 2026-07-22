@@ -197,7 +197,8 @@ pub use faithful_note_spend_exact_v3_anchor::{
 pub use faithful_note_spend_exact_v3_receipt_epoch::{
     ExactFnspV3OuterCommit, ExactFnspV3ReceiptEpoch, ExactFnspV3ReceiptEpochError,
     ExactFnspV3ReceiptEpochV1, ExactFnspV3ReceiptLinkV1, ExactFnspV3StatePoint,
-    PreparedExactFnspV3ReceiptFrameV1,
+    FullTurnReceiptStateCommit8, PreparedExactFnspV3ReceiptFrameV1,
+    UntrustedExactFnspV3CommittedFrameHeadBindingV1, UntrustedExactFnspV3ReceiptFrameJoinV1,
 };
 #[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;

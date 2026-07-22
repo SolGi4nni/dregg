@@ -51,7 +51,10 @@ use std::error::Error;
 use dregg_circuit::exact_nullifier_aafi::{Digest8, TREE_CAPACITY, exact_state_commit};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 
-use crate::{AcceptedFaithfulNoteSpendExactV3, Finality, TurnReceipt};
+use crate::{
+    AcceptedFaithfulNoteSpendExactV3, Effect, FaithfulNoteSpendExactV3AcceptanceBinding, Finality,
+    TurnReceipt,
+};
 
 const ACTIVATION_HASH_DOMAIN: &str = "dregg-exact-fnsp-v3-receipt-epoch-activation-v1";
 const FRAME_HASH_DOMAIN: &str = "dregg-exact-fnsp-v3-receipt-state-frame-v1";
@@ -131,7 +134,10 @@ impl ExactFnspV3StatePoint {
     }
 }
 
-/// Canonical eight-lane outer rotated-state commitment.
+/// Canonical proof-local outer rotated-state commitment for exact FNSP-v3.
+///
+/// This is not the full-turn receipt commitment when nonce, fees, or other
+/// effects move in the same execution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExactFnspV3OuterCommit(Digest8);
 
@@ -144,6 +150,23 @@ impl ExactFnspV3OuterCommit {
         Ok(Self(canonical_digest(name, lanes)?))
     }
 
+    pub const fn lanes(self) -> Digest8 {
+        self.0
+    }
+
+    pub fn to_bytes(self) -> [u8; 32] {
+        digest_bytes(self.0)
+    }
+}
+
+/// Canonical full-turn state commitment carried by [`TurnReceipt`].
+///
+/// A distinct type prevents a legacy/full receipt commitment from being passed
+/// where the proof-local exact descriptor anchor is expected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullTurnReceiptStateCommit8(Digest8);
+
+impl FullTurnReceiptStateCommit8 {
     fn from_bytes(
         name: &'static str,
         bytes: [u8; 32],
@@ -152,7 +175,7 @@ impl ExactFnspV3OuterCommit {
         for (index, chunk) in bytes.chunks_exact(4).enumerate() {
             lanes[index] = u32::from_le_bytes(chunk.try_into().expect("four-byte lane"));
         }
-        Self::from_u32(name, lanes)
+        Ok(Self(canonical_digest(name, lanes)?))
     }
 
     pub const fn lanes(self) -> Digest8 {
@@ -176,7 +199,7 @@ pub struct ExactFnspV3ReceiptEpochV1 {
     federation_id: [u8; 32],
     agent: dregg_cell::CellId,
     legacy_tip_receipt_hash: [u8; 32],
-    legacy_tip_outer_commit: ExactFnspV3OuterCommit,
+    legacy_tip_outer_commit: FullTurnReceiptStateCommit8,
     exact_initial: ExactFnspV3StatePoint,
     activation_hash: [u8; 32],
 }
@@ -196,7 +219,7 @@ impl ExactFnspV3ReceiptEpochV1 {
         if legacy_tip.finality != Finality::Final {
             return Err(ExactFnspV3ReceiptEpochError::LegacyTipNotFinal);
         }
-        let legacy_tip_outer_commit = ExactFnspV3OuterCommit::from_bytes(
+        let legacy_tip_outer_commit = FullTurnReceiptStateCommit8::from_bytes(
             "legacy tip outer commitment",
             legacy_tip.post_state_hash,
         )?;
@@ -229,7 +252,7 @@ impl ExactFnspV3ReceiptEpochV1 {
         self.legacy_tip_receipt_hash
     }
 
-    pub const fn legacy_tip_outer_commit(&self) -> ExactFnspV3OuterCommit {
+    pub const fn legacy_tip_outer_commit(&self) -> FullTurnReceiptStateCommit8 {
         self.legacy_tip_outer_commit
     }
 
@@ -275,17 +298,84 @@ impl ExactFnspV3ReceiptLinkV1 {
     }
 }
 
-/// Non-`Clone`, proof-bound exact receipt-state frame.
+/// Structural projection of a durably committed exact-frame head.
 ///
-/// This token proves only that its coordinates were joined to an opaque exact
-/// proof-acceptance token.  It does not prove the receipt was produced from a
-/// durable executor snapshot; the future executor-result token must add that
-/// fact before node finalization can become live.
+/// This value is intentionally named `Untrusted`: matching fields do not prove
+/// they were persisted.  The node/persistence layer must mint an opaque
+/// committed-head authority only after its writer CAS succeeds; that authority
+/// may expose this projection when preparing the next frame after restart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
+    epoch: ExactFnspV3ReceiptEpoch,
+    activation_hash: [u8; 32],
+    frame_hash: [u8; 32],
+    full_receipt_hash: [u8; 32],
+    full_post_state_hash: [u8; 32],
+    exact_after: ExactFnspV3StatePoint,
+    federation_id: [u8; 32],
+    agent: dregg_cell::CellId,
+}
+
+impl UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
+    /// Assemble structural coordinates.  This does not mint committed authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_untrusted_coordinates(
+        epoch: ExactFnspV3ReceiptEpoch,
+        activation_hash: [u8; 32],
+        frame_hash: [u8; 32],
+        full_receipt_hash: [u8; 32],
+        full_post_state_hash: [u8; 32],
+        exact_after: ExactFnspV3StatePoint,
+        federation_id: [u8; 32],
+        agent: dregg_cell::CellId,
+    ) -> Self {
+        Self {
+            epoch,
+            activation_hash,
+            frame_hash,
+            full_receipt_hash,
+            full_post_state_hash,
+            exact_after,
+            federation_id,
+            agent,
+        }
+    }
+
+    pub const fn epoch(self) -> ExactFnspV3ReceiptEpoch {
+        self.epoch
+    }
+    pub const fn activation_hash(self) -> [u8; 32] {
+        self.activation_hash
+    }
+    pub const fn frame_hash(self) -> [u8; 32] {
+        self.frame_hash
+    }
+    pub const fn full_receipt_hash(self) -> [u8; 32] {
+        self.full_receipt_hash
+    }
+    pub const fn full_post_state_hash(self) -> [u8; 32] {
+        self.full_post_state_hash
+    }
+    pub const fn exact_after(self) -> ExactFnspV3StatePoint {
+        self.exact_after
+    }
+    pub const fn federation_id(self) -> [u8; 32] {
+        self.federation_id
+    }
+    pub const fn agent(self) -> dregg_cell::CellId {
+        self.agent
+    }
+}
+
+/// Private structural frame core.  Hostile structural tests exercise this type
+/// without manufacturing an opaque proof-acceptance token; it is never exposed
+/// as runtime authority.
 #[derive(Debug)]
-pub struct PreparedExactFnspV3ReceiptFrameV1 {
+struct ExactFnspV3ReceiptFrameCoreV1 {
     epoch: ExactFnspV3ReceiptEpoch,
     activation_hash: [u8; 32],
     predecessor: ExactFnspV3ReceiptLinkV1,
+    full_predecessor_receipt_hash: [u8; 32],
     receipt: TurnReceipt,
     before: ExactFnspV3StatePoint,
     after: ExactFnspV3StatePoint,
@@ -296,27 +386,7 @@ pub struct PreparedExactFnspV3ReceiptFrameV1 {
     frame_hash: [u8; 32],
 }
 
-impl PreparedExactFnspV3ReceiptFrameV1 {
-    /// Prepare the first frame after a cutover activation.
-    pub fn begin(
-        activation: &ExactFnspV3ReceiptEpochV1,
-        receipt: TurnReceipt,
-        accepted: &AcceptedFaithfulNoteSpendExactV3,
-    ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
-        let binding = ExactFrameBinding::from_accepted(accepted)?;
-        Self::begin_with_binding(activation, receipt, binding)
-    }
-
-    /// Prepare a continuation frame in the same exact epoch.
-    pub fn extend(
-        previous: &Self,
-        receipt: TurnReceipt,
-        accepted: &AcceptedFaithfulNoteSpendExactV3,
-    ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
-        let binding = ExactFrameBinding::from_accepted(accepted)?;
-        Self::extend_with_binding(previous, receipt, binding)
-    }
-
+impl ExactFnspV3ReceiptFrameCoreV1 {
     fn begin_with_binding(
         activation: &ExactFnspV3ReceiptEpochV1,
         receipt: TurnReceipt,
@@ -340,21 +410,21 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
         )
     }
 
-    fn extend_with_binding(
-        previous: &Self,
+    fn extend_from_head_binding(
+        previous: UntrustedExactFnspV3CommittedFrameHeadBindingV1,
         receipt: TurnReceipt,
         binding: ExactFrameBinding,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
         validate_receipt_scope(
             &receipt,
-            previous.receipt.federation_id,
-            previous.receipt.agent,
-            previous.receipt.receipt_hash(),
+            previous.federation_id,
+            previous.agent,
+            previous.full_receipt_hash,
         )?;
-        if binding.before != previous.after {
+        if binding.before != previous.exact_after {
             return Err(ExactFnspV3ReceiptEpochError::ExactStateChainBreak);
         }
-        if receipt.pre_state_hash != previous.receipt.post_state_hash {
+        if receipt.pre_state_hash != previous.full_post_state_hash {
             return Err(ExactFnspV3ReceiptEpochError::FullTurnStateChainBreak);
         }
         Self::finish(
@@ -385,10 +455,14 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
                 after: binding.after.count,
             });
         }
+        let full_predecessor_receipt_hash = receipt
+            .previous_receipt_hash
+            .ok_or(ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch)?;
         let mut frame = Self {
             epoch,
             activation_hash,
             predecessor,
+            full_predecessor_receipt_hash,
             receipt,
             before: binding.before,
             after: binding.after,
@@ -414,6 +488,11 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
         self.predecessor
     }
 
+    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+        self.full_predecessor_receipt_hash
+    }
+
+    #[cfg(test)]
     pub const fn receipt(&self) -> &TurnReceipt {
         &self.receipt
     }
@@ -450,17 +529,48 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
         self.frame_hash
     }
 
-    /// Future executor-signature message for this exact versioned frame.
+    /// Deterministic v1 message a future executor-signature weld may sign.
     ///
     /// Today's `TurnReceipt::canonical_executor_signed_message` does not cover
-    /// FNS3 or the epoch activation.  A live cut must sign this message (or an
-    /// equivalent quorum-certified superset), not merely retain the v4 inner
-    /// receipt signature.
-    pub fn canonical_executor_signed_message(&self) -> [u8; FRAME_SIGNATURE_DOMAIN.len() + 32] {
+    /// FNS3 or the epoch activation.  This method defines bytes only: until a
+    /// joined executor authority actually signs and verifies them, possession of
+    /// this message or frame is not signature authority and the message is not a
+    /// live receipt-chain format.
+    pub fn executor_signature_message_v1(&self) -> [u8; FRAME_SIGNATURE_DOMAIN.len() + 32] {
         let mut message = [0u8; FRAME_SIGNATURE_DOMAIN.len() + 32];
         message[..FRAME_SIGNATURE_DOMAIN.len()].copy_from_slice(FRAME_SIGNATURE_DOMAIN);
         message[FRAME_SIGNATURE_DOMAIN.len()..].copy_from_slice(&self.frame_hash);
         message
+    }
+
+    fn validate_authorized_epoch(
+        &self,
+        authorized_epoch: &ExactFnspV3ReceiptEpochV1,
+    ) -> Result<(), ExactFnspV3ReceiptEpochError> {
+        if self.epoch != authorized_epoch.epoch {
+            return Err(ExactFnspV3ReceiptEpochError::CrossEpoch);
+        }
+        if self.activation_hash != authorized_epoch.activation_hash
+            || self.receipt.federation_id != authorized_epoch.federation_id
+            || self.receipt.agent != authorized_epoch.agent
+        {
+            return Err(ExactFnspV3ReceiptEpochError::ActivationMismatch);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn untrusted_head_binding(&self) -> UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
+        UntrustedExactFnspV3CommittedFrameHeadBindingV1 {
+            epoch: self.epoch,
+            activation_hash: self.activation_hash,
+            frame_hash: self.frame_hash,
+            full_receipt_hash: self.receipt.receipt_hash(),
+            full_post_state_hash: self.receipt.post_state_hash,
+            exact_after: self.after,
+            federation_id: self.receipt.federation_id,
+            agent: self.receipt.agent,
+        }
     }
 
     fn compute_hash(&self) -> [u8; 32] {
@@ -480,6 +590,210 @@ impl PreparedExactFnspV3ReceiptFrameV1 {
     }
 }
 
+/// Non-`Clone`, proof-bound exact receipt-state frame.
+///
+/// Public construction consumes the opaque accepted-proof token and retains it
+/// for the eventual node join.  There is no runtime state in which a
+/// `PreparedExactFnspV3ReceiptFrameV1` lacks proof authority.  The frame still
+/// is not executor authority: its full [`TurnReceipt`] is caller-carried until
+/// [`Self::into_join_parts_for_epoch`] is consumed beside the node's opaque
+/// executor-produced result.
+pub struct PreparedExactFnspV3ReceiptFrameV1 {
+    core: ExactFnspV3ReceiptFrameCoreV1,
+    accepted: AcceptedFaithfulNoteSpendExactV3,
+}
+
+impl PreparedExactFnspV3ReceiptFrameV1 {
+    /// Structurally prepare the first proof-bound frame after a cutover.
+    pub fn begin(
+        activation: &ExactFnspV3ReceiptEpochV1,
+        receipt: TurnReceipt,
+        accepted: AcceptedFaithfulNoteSpendExactV3,
+    ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
+        let binding = ExactFrameBinding::from_accepted(&accepted)?;
+        let core = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(activation, receipt, binding)?;
+        Ok(Self { core, accepted })
+    }
+
+    /// Structurally prepare a continuation from a persisted-head projection.
+    ///
+    /// `previous` is not authority by itself.  A live node may call this only
+    /// from its opaque committed-head token, minted after the frame and exact
+    /// state advance atomically persist.  This survives restart without
+    /// retaining or reconstructing the prior accepted-proof token.
+    pub fn extend_from_head_binding(
+        previous: UntrustedExactFnspV3CommittedFrameHeadBindingV1,
+        receipt: TurnReceipt,
+        accepted: AcceptedFaithfulNoteSpendExactV3,
+    ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
+        let binding = ExactFrameBinding::from_accepted(&accepted)?;
+        let core =
+            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(previous, receipt, binding)?;
+        Ok(Self { core, accepted })
+    }
+
+    pub const fn epoch(&self) -> ExactFnspV3ReceiptEpoch {
+        self.core.epoch()
+    }
+
+    pub const fn activation_hash(&self) -> [u8; 32] {
+        self.core.activation_hash()
+    }
+
+    pub const fn predecessor(&self) -> ExactFnspV3ReceiptLinkV1 {
+        self.core.predecessor()
+    }
+
+    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+        self.core.full_predecessor_receipt_hash()
+    }
+
+    pub fn full_receipt_hash(&self) -> [u8; 32] {
+        self.core.receipt.receipt_hash()
+    }
+
+    pub const fn before(&self) -> ExactFnspV3StatePoint {
+        self.core.before()
+    }
+
+    pub const fn after(&self) -> ExactFnspV3StatePoint {
+        self.core.after()
+    }
+
+    pub const fn proof_outer_before(&self) -> ExactFnspV3OuterCommit {
+        self.core.proof_outer_before()
+    }
+
+    pub const fn proof_outer_after(&self) -> ExactFnspV3OuterCommit {
+        self.core.proof_outer_after()
+    }
+
+    pub const fn accepted_statement_digest(&self) -> [u8; 32] {
+        self.core.accepted_statement_digest()
+    }
+
+    pub const fn signed_spending_proof_digest(&self) -> [u8; 32] {
+        self.core.signed_spending_proof_digest()
+    }
+
+    pub const fn frame_hash(&self) -> [u8; 32] {
+        self.core.frame_hash()
+    }
+
+    pub fn executor_signature_message_v1(&self) -> [u8; FRAME_SIGNATURE_DOMAIN.len() + 32] {
+        self.core.executor_signature_message_v1()
+    }
+
+    /// Consume this proof-bound but executor-untrusted frame for a node join.
+    pub fn into_join_parts_for_epoch(
+        self,
+        authorized_epoch: &ExactFnspV3ReceiptEpochV1,
+    ) -> Result<UntrustedExactFnspV3ReceiptFrameJoinV1, ExactFnspV3ReceiptEpochError> {
+        self.core.validate_authorized_epoch(authorized_epoch)?;
+        Ok(UntrustedExactFnspV3ReceiptFrameJoinV1 {
+            core: self.core,
+            accepted: self.accepted,
+        })
+    }
+}
+
+/// Non-`Clone` structural input for the node's executor-authority join.
+///
+/// The name is deliberately honest: this value owns genuine proof acceptance,
+/// but its full-turn receipt coordinates are still caller-carried until the
+/// node consumes it beside `ExecutorProducedFinalizedTurn`, checks every receipt
+/// identity/hash coordinate, and signs/verifies [`Self::executor_signature_message_v1`].
+pub struct UntrustedExactFnspV3ReceiptFrameJoinV1 {
+    core: ExactFnspV3ReceiptFrameCoreV1,
+    accepted: AcceptedFaithfulNoteSpendExactV3,
+}
+
+impl UntrustedExactFnspV3ReceiptFrameJoinV1 {
+    pub const fn epoch(&self) -> ExactFnspV3ReceiptEpoch {
+        self.core.epoch
+    }
+
+    pub const fn activation_hash(&self) -> [u8; 32] {
+        self.core.activation_hash
+    }
+
+    pub const fn predecessor(&self) -> ExactFnspV3ReceiptLinkV1 {
+        self.core.predecessor
+    }
+
+    pub const fn full_predecessor_receipt_hash(&self) -> [u8; 32] {
+        self.core.full_predecessor_receipt_hash
+    }
+
+    pub fn full_receipt_hash(&self) -> [u8; 32] {
+        self.core.receipt.receipt_hash()
+    }
+
+    pub const fn turn_hash(&self) -> [u8; 32] {
+        self.core.receipt.turn_hash
+    }
+
+    pub const fn forest_hash(&self) -> [u8; 32] {
+        self.core.receipt.forest_hash
+    }
+
+    pub const fn agent(&self) -> dregg_cell::CellId {
+        self.core.receipt.agent
+    }
+
+    pub const fn federation_id(&self) -> [u8; 32] {
+        self.core.receipt.federation_id
+    }
+
+    pub const fn full_pre_state_hash(&self) -> [u8; 32] {
+        self.core.receipt.pre_state_hash
+    }
+
+    pub const fn full_post_state_hash(&self) -> [u8; 32] {
+        self.core.receipt.post_state_hash
+    }
+
+    pub const fn before(&self) -> ExactFnspV3StatePoint {
+        self.core.before
+    }
+
+    pub const fn after(&self) -> ExactFnspV3StatePoint {
+        self.core.after
+    }
+
+    pub const fn proof_outer_before(&self) -> ExactFnspV3OuterCommit {
+        self.core.proof_outer_before
+    }
+
+    pub const fn proof_outer_after(&self) -> ExactFnspV3OuterCommit {
+        self.core.proof_outer_after
+    }
+
+    pub const fn accepted_statement_digest(&self) -> [u8; 32] {
+        self.core.accepted_statement_digest
+    }
+
+    pub const fn signed_spending_proof_digest(&self) -> [u8; 32] {
+        self.core.signed_spending_proof_digest
+    }
+
+    pub const fn frame_hash(&self) -> [u8; 32] {
+        self.core.frame_hash
+    }
+
+    pub fn executor_signature_message_v1(&self) -> [u8; FRAME_SIGNATURE_DOMAIN.len() + 32] {
+        self.core.executor_signature_message_v1()
+    }
+
+    pub fn accepted_binding(&self) -> FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
+        self.accepted.binding()
+    }
+
+    pub fn matches_signed_effect(&self, effect: &Effect) -> bool {
+        self.accepted.matches_signed_effect(effect)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ExactFrameBinding {
     before: ExactFnspV3StatePoint,
@@ -495,12 +809,12 @@ impl ExactFrameBinding {
         accepted: &AcceptedFaithfulNoteSpendExactV3,
     ) -> Result<Self, ExactFnspV3ReceiptEpochError> {
         let binding = accepted.binding();
-        let mut statement_hasher = blake3::Hasher::new_derive_key(ACCEPTED_STATEMENT_HASH_DOMAIN);
-        for lane in accepted.public_input_lanes() {
-            statement_hasher.update(&lane.to_le_bytes());
-        }
         let signed_spending_proof_digest = accepted.signed_spending_proof_digest();
-        statement_hasher.update(&signed_spending_proof_digest);
+        let accepted_statement_digest = accepted_statement_digest(
+            accepted.public_input_lanes(),
+            signed_spending_proof_digest,
+            binding.value_commitment(),
+        );
         Ok(Self {
             before: ExactFnspV3StatePoint::from_u32(
                 binding.prior_root(),
@@ -520,10 +834,32 @@ impl ExactFrameBinding {
                 "exact outer AFTER commitment",
                 binding.after_outer_commit(),
             )?,
-            accepted_statement_digest: *statement_hasher.finalize().as_bytes(),
+            accepted_statement_digest,
             signed_spending_proof_digest,
         })
     }
+}
+
+fn accepted_statement_digest(
+    public_lanes: &[u32],
+    signed_spending_proof_digest: [u8; 32],
+    value_commitment: Option<[u8; 32]>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(ACCEPTED_STATEMENT_HASH_DOMAIN);
+    for lane in public_lanes {
+        hasher.update(&lane.to_le_bytes());
+    }
+    hasher.update(&signed_spending_proof_digest);
+    match value_commitment {
+        None => {
+            hasher.update(&[0]);
+        }
+        Some(commitment) => {
+            hasher.update(&[1]);
+            hasher.update(&commitment);
+        }
+    };
+    *hasher.finalize().as_bytes()
 }
 
 fn validate_receipt_scope(
@@ -532,6 +868,14 @@ fn validate_receipt_scope(
     agent: dregg_cell::CellId,
     inner_predecessor: [u8; 32],
 ) -> Result<(), ExactFnspV3ReceiptEpochError> {
+    FullTurnReceiptStateCommit8::from_bytes(
+        "full-turn receipt BEFORE commitment",
+        receipt.pre_state_hash,
+    )?;
+    FullTurnReceiptStateCommit8::from_bytes(
+        "full-turn receipt AFTER commitment",
+        receipt.post_state_hash,
+    )?;
     if receipt.finality != Finality::Final {
         return Err(ExactFnspV3ReceiptEpochError::ExactReceiptNotFinal);
     }
@@ -602,6 +946,8 @@ pub enum ExactFnspV3ReceiptEpochError {
     FederationMismatch,
     AgentMismatch,
     FullTurnPredecessorMismatch,
+    CrossEpoch,
+    ActivationMismatch,
     CutoverExactStateMismatch,
     ExactStateChainBreak,
     FullTurnStateChainBreak,
@@ -635,6 +981,12 @@ impl fmt::Display for ExactFnspV3ReceiptEpochError {
             Self::FullTurnPredecessorMismatch => f.write_str(
                 "inner full-turn receipt does not extend the prior full-turn receipt hash",
             ),
+            Self::CrossEpoch => {
+                f.write_str("exact receipt frame belongs to a different authorized epoch")
+            }
+            Self::ActivationMismatch => f.write_str(
+                "exact receipt frame activation/federation/agent differs from authorized epoch",
+            ),
             Self::CutoverExactStateMismatch => {
                 f.write_str("first exact receipt does not begin at the activated exact state")
             }
@@ -654,6 +1006,9 @@ impl Error for ExactFnspV3ReceiptEpochError {}
 mod tests {
     use super::*;
     use dregg_cell::Cell;
+    use dregg_cell::commitment_set::CommitmentSet;
+    use dregg_cell::nullifier_set::NullifierSet;
+    use dregg_cell::revoked_set::RevokedSet;
     use dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi;
 
     fn state() -> ExactFnspV3StatePoint {
@@ -714,6 +1069,35 @@ mod tests {
         }
     }
 
+    fn nonce_advancing_full_receipt(
+        mut actor: Cell,
+        federation: [u8; 32],
+        previous: [u8; 32],
+    ) -> TurnReceipt {
+        actor.state.set_nonce(0);
+        let agent = actor.id();
+        let mut pre = dregg_cell::Ledger::new();
+        pre.insert_cell(actor).expect("pre actor");
+        let mut post = pre.clone();
+        post.get_mut(&agent).expect("post actor").state.set_nonce(1);
+        let nullifiers = NullifierSet::new().root8();
+        let commitments = CommitmentSet::new().root8();
+        let revoked = RevokedSet::new().root8();
+        let pre_ctx = crate::state_commit::consensus_ctx(&pre, nullifiers, commitments, revoked);
+        let post_ctx = crate::state_commit::consensus_ctx(&post, nullifiers, commitments, revoked);
+        TurnReceipt {
+            agent,
+            federation_id: federation,
+            previous_receipt_hash: Some(previous),
+            pre_state_hash: crate::state_commit::consensus_state_commitment(&pre, &agent, &pre_ctx),
+            post_state_hash: crate::state_commit::consensus_state_commitment(
+                &post, &agent, &post_ctx,
+            ),
+            finality: Finality::Final,
+            ..TurnReceipt::default()
+        }
+    }
+
     #[test]
     fn epoch_zero_and_tentative_cutover_refuse() {
         assert_eq!(
@@ -757,7 +1141,7 @@ mod tests {
             outer(100),
         );
         assert_eq!(
-            PreparedExactFnspV3ReceiptFrameV1::begin_with_binding(
+            ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
                 &activation,
                 conflated,
                 binding(exact, next, outer(5), outer(6)),
@@ -783,7 +1167,7 @@ mod tests {
         )
         .unwrap();
         let first_receipt = receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100));
-        let first = PreparedExactFnspV3ReceiptFrameV1::begin_with_binding(
+        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
             first_receipt,
             binding(exact0, exact1, outer(5), outer(6)),
@@ -805,14 +1189,21 @@ mod tests {
             outer(101),
         );
         assert_eq!(
-            PreparedExactFnspV3ReceiptFrameV1::extend_with_binding(
-                &first,
+            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+                first.untrusted_head_binding(),
                 conflated_link,
                 binding(exact1, exact2, outer(6), outer(7)),
             )
             .unwrap_err(),
             ExactFnspV3ReceiptEpochError::FullTurnPredecessorMismatch
         );
+
+        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            binding(exact0, exact1, outer(5), outer(6)),
+        )
+        .expect("rebuilt linear predecessor");
 
         // Correct full-turn link, but a different prior exact root/FNS3 pair is
         // not rescued by matching real receipt state hashes.
@@ -826,14 +1217,145 @@ mod tests {
         let mixed_prior =
             ExactFnspV3StatePoint::new([BabyBear::new_canonical(99); 8], exact1.count()).unwrap();
         assert_eq!(
-            PreparedExactFnspV3ReceiptFrameV1::extend_with_binding(
-                &first,
+            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+                first.untrusted_head_binding(),
                 correct_link,
                 binding(mixed_prior, exact2, outer(6), outer(7)),
             )
             .unwrap_err(),
             ExactFnspV3ReceiptEpochError::ExactStateChainBreak
         );
+    }
+
+    #[test]
+    fn nonce_advancing_full_receipt_coexists_with_proof_local_exact_subreceipt() {
+        let actor = Cell::new([1; 32], [2; 32]);
+        let agent = actor.id();
+        let federation = [4; 32];
+        let exact0 = state();
+        let exact1 = successor(exact0, 11);
+        let tip = legacy_tip(agent, federation);
+        let activation = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
+            &tip,
+            exact0,
+        )
+        .unwrap();
+        let full = nonce_advancing_full_receipt(actor, federation, tip.receipt_hash());
+        assert_ne!(full.pre_state_hash, full.post_state_hash);
+
+        let frame = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            full,
+            binding(exact0, exact1, outer(5), outer(6)),
+        )
+        .expect("full nonce transition and exact subreceipt coexist");
+        assert_ne!(
+            frame.receipt().pre_state_hash,
+            frame.proof_outer_before().to_bytes()
+        );
+        assert_ne!(
+            frame.receipt().post_state_hash,
+            frame.proof_outer_after().to_bytes()
+        );
+        assert_eq!(frame.before(), exact0);
+        assert_eq!(frame.after(), exact1);
+    }
+
+    #[test]
+    fn full_state_break_and_cross_epoch_refuse() {
+        let agent = Cell::new([1; 32], [2; 32]).id();
+        let federation = [4; 32];
+        let exact0 = state();
+        let exact1 = successor(exact0, 11);
+        let exact2 = successor(exact1, 12);
+        let tip = legacy_tip(agent, federation);
+        let epoch7 = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
+            &tip,
+            exact0,
+        )
+        .unwrap();
+        let epoch8 = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(8).unwrap(),
+            &tip,
+            exact0,
+        )
+        .unwrap();
+        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &epoch7,
+            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            binding(exact0, exact1, outer(5), outer(6)),
+        )
+        .unwrap();
+        assert_eq!(
+            first.validate_authorized_epoch(&epoch8),
+            Err(ExactFnspV3ReceiptEpochError::CrossEpoch)
+        );
+
+        let next = receipt(
+            agent,
+            federation,
+            first.receipt().receipt_hash(),
+            outer(999),
+            outer(101),
+        );
+        assert_eq!(
+            ExactFnspV3ReceiptFrameCoreV1::extend_from_head_binding(
+                first.untrusted_head_binding(),
+                next,
+                binding(exact1, exact2, outer(6), outer(7)),
+            )
+            .unwrap_err(),
+            ExactFnspV3ReceiptEpochError::FullTurnStateChainBreak
+        );
+    }
+
+    #[test]
+    fn frame_hash_binds_the_exact_accepted_proof_identity() {
+        let agent = Cell::new([1; 32], [2; 32]).id();
+        let federation = [4; 32];
+        let exact0 = state();
+        let exact1 = successor(exact0, 11);
+        let tip = legacy_tip(agent, federation);
+        let activation = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(7).unwrap(),
+            &tip,
+            exact0,
+        )
+        .unwrap();
+        let mut other_binding = binding(exact0, exact1, outer(5), outer(6));
+        other_binding.signed_spending_proof_digest = [0x99; 32];
+        let frame_a = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            binding(exact0, exact1, outer(5), outer(6)),
+        )
+        .unwrap();
+        let frame_b = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
+            &activation,
+            receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
+            other_binding,
+        )
+        .unwrap();
+        assert_ne!(frame_a.frame_hash(), frame_b.frame_hash());
+        assert_ne!(
+            frame_a.executor_signature_message_v1(),
+            frame_b.executor_signature_message_v1()
+        );
+    }
+
+    #[test]
+    fn accepted_statement_digest_binds_optional_value_commitment_tag_and_bytes() {
+        let lanes = [7u32; 76];
+        let proof = [8u8; 32];
+        let none = accepted_statement_digest(&lanes, proof, None);
+        let zero = accepted_statement_digest(&lanes, proof, Some([0; 32]));
+        let a = accepted_statement_digest(&lanes, proof, Some([9; 32]));
+        let b = accepted_statement_digest(&lanes, proof, Some([10; 32]));
+        assert_ne!(none, zero, "None must not alias Some(all-zero)");
+        assert_ne!(a, b, "different value commitments must not splice");
+        assert_ne!(none, a);
     }
 
     #[test]
@@ -849,13 +1371,13 @@ mod tests {
             exact0,
         )
         .unwrap();
-        let first = PreparedExactFnspV3ReceiptFrameV1::begin_with_binding(
+        let first = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &activation,
             receipt(agent, federation, tip.receipt_hash(), outer(3), outer(100)),
             binding(exact0, exact1, outer(5), outer(6)),
         )
         .unwrap();
-        let message = first.canonical_executor_signed_message();
+        let message = first.executor_signature_message_v1();
         assert_eq!(
             &message[..FRAME_SIGNATURE_DOMAIN.len()],
             FRAME_SIGNATURE_DOMAIN
@@ -869,7 +1391,7 @@ mod tests {
             exact0,
         )
         .unwrap();
-        let other = PreparedExactFnspV3ReceiptFrameV1::begin_with_binding(
+        let other = ExactFnspV3ReceiptFrameCoreV1::begin_with_binding(
             &other_epoch,
             receipt(
                 agent,
