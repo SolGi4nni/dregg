@@ -261,6 +261,14 @@ pub const TID_UMEM_BOUNDARY: usize = 7;
 /// send an 18-wide `[arity, ins, out0]` lookup here (no output lanes) instead of the 25-wide
 /// `TID_P2`. Served by the SAME chip rows (`BUS_P2_1`, `CHIP_MULT_NARROW`); 0..7 are taken.
 pub const TID_P2_NARROW: usize = 8;
+/// Wire id of the full-state Poseidon2 permutation receiver.  A lookup is the fixed
+/// 33-felt tuple `[16, state[0..16], perm(state)[0..16]]`: unlike the absorb buses above,
+/// the input is an arbitrary complete permutation state, so repeated lookups can implement
+/// the deployed multi-block sponge without losing the capacity lanes between absorbs.
+///
+/// This rides its own conditionally-present AIR instance.  Descriptors that do not use wire
+/// id 9 therefore retain the exact pre-existing chip instance list, width, and verifier key.
+pub const TID_P2_STATE16: usize = 9;
 
 /// **THE WIDTH-TAGGED CUSTOM RANGE-TABLE WIRE BASE.** The multi-width graduation (Lean
 /// `EffectVmEmitV2.rangeTidW`) lowers every non-30-bit range tooth into a WIDTH-TAGGED custom
@@ -270,11 +278,12 @@ pub const TID_P2_NARROW: usize = 8;
 /// availability-weld descriptors carry the 15-bit borrow-limb table as wire id `64 + 15 + 5 = 84`.
 pub const RANGE_W_TID_WIRE_BASE: usize = 64 + TID_CUSTOM_SUBMASK; // 69
 
-/// The non-`BAL_LIMB_BITS` range widths the wide graduation admits (Lean `WIDE_RANGE_WIDTHS ∖
-/// {BAL_LIMB_BITS}`): the availability weld's 15-bit borrow limbs. A `.custom` range wire id whose
+/// The non-`BAL_LIMB_BITS` range widths the wide graduation admits: the availability weld's
+/// 15-bit borrow limbs and the faithful note-spend descriptor's canonical u16 lanes. A `.custom`
+/// range wire id whose
 /// decoded width (`tid − RANGE_W_TID_WIRE_BASE`) is not one of these is NOT a range table — the
 /// caller fails closed on it (an unrealized custom table, exactly as before).
-pub const CUSTOM_RANGE_WIDTHS: [usize; 1] = [15];
+pub const CUSTOM_RANGE_WIDTHS: [usize; 2] = [15, 16];
 
 /// The nullifier domain's wire code (`DescriptorIR2.domainCode .nullifiers`). The universal
 /// memory table enforces the INSERT-ONLY discipline on this domain in-circuit (a write
@@ -305,6 +314,8 @@ pub const CHIP_RATE: usize = 16;
 pub const POSEIDON2_SPONGE_RATE: usize = 8;
 /// The chip tuple arity on the wire: `1 (arity) + CHIP_RATE (inputs) + 8 (output lanes)`.
 pub const CHIP_TUPLE_LEN: usize = CHIP_RATE + 1 + 8;
+/// Full-state permutation tuple: fixed width tag + all 16 input lanes + all 16 output lanes.
+pub const CHIP_STATE16_TUPLE_LEN: usize = 1 + POSEIDON2_WIDTH + POSEIDON2_WIDTH;
 /// The wide single-permutation absorb arity (Phase B-GATE-INPUT): the 8-felt commitment carrier
 /// `d8` (8 lanes) + `WIDE_K` new limbs/step. The wide Merkle–Damgård step `d8 ← perm(d8 ‖
 /// new_limbs)[0..8]` of the faithful commitment (Phase B-ROTATION). `≤ CHIP_RATE ≤ WIDTH`.
@@ -350,6 +361,8 @@ const BUS_P2: &str = "ir2_p2";
 /// The NARROW absorb bus (tuple-narrowing pass): single-output sites look up `[arity, ins, out0]`
 /// (18-wide, NO lanes) here instead of the 25-wide `BUS_P2` — the chip serves both from the same rows.
 const BUS_P2_1: &str = "ir2_p2_narrow";
+/// The arbitrary-full-state permutation bus used to replay multi-block sponge transitions.
+const BUS_P2_STATE16: &str = "ir2_p2_state16";
 const BUS_BYTE: &str = "ir2_byte";
 const BUS_MEM_LOG: &str = "ir2_mem_log";
 const BUS_MEM_CHECK: &str = "ir2_mem_check";
@@ -1231,11 +1244,12 @@ impl MainLayout {
         // Any declared table whose row semantics are `Range { bits }` realizes the SAME byte-limb
         // decomposition at ITS OWN width. The deployed avail-weld descriptors carry the 15-bit
         // borrow table as a LOOKUP without a matching `tables` entry (the Lean `graduateV1Wide`
-        // declares it, but the deployed rows omit the declaration); recover its width from the
+        // declares it, but the deployed rows omit the declaration); the same fallback admits the
+        // faithful spend's canonical 16-bit lanes. Recover its width from the
         // committed wire id (`bits = tid − RANGE_W_TID_WIRE_BASE`, the inverse of `rangeTidW`) and
         // realize the identical byte-limb range relation. The width is PINNED by the committed
-        // tid — a forger cannot loosen the 15-bit bound without changing the descriptor bytes
-        // (⟹ a different VK) — so this is the exact `rangeRows 15` relation, not a laundered gate.
+        // tid — a forger cannot loosen either bound without changing the descriptor bytes
+        // (⟹ a different VK) — so these are exact `rangeRows bits` relations, not laundered gates.
         let range_bits_for = |tid: usize| -> Option<usize> {
             if let Some(bits) = desc
                 .tables
@@ -1315,6 +1329,45 @@ impl MainLayout {
                             "constraint {ci}: narrow chip lookup tuple arity {} != {}",
                             l.tuple.len(),
                             1 + CHIP_RATE + 1
+                        ));
+                    }
+                }
+                TID_P2_STATE16 => {
+                    // Full-state permutation lookup: the tag is FIXED at 16 and all input/output
+                    // lanes ride the tuple.  This is not another variable-arity hash-site shape:
+                    // it is the raw permutation transition needed to chain sponge blocks while
+                    // preserving the complete capacity state.
+                    if l.tuple.len() != CHIP_STATE16_TUPLE_LEN {
+                        return Err(format!(
+                            "constraint {ci}: state16 chip lookup tuple arity {} != \
+                             {CHIP_STATE16_TUPLE_LEN}",
+                            l.tuple.len()
+                        ));
+                    }
+                    if l.tuple.first() != Some(&LeanExpr::Const(POSEIDON2_WIDTH as i64)) {
+                        return Err(format!(
+                            "constraint {ci}: state16 chip lookup must carry the literal \
+                             width tag {POSEIDON2_WIDTH}"
+                        ));
+                    }
+                    let state_table = desc
+                        .tables
+                        .iter()
+                        .find(|t| t.id == TID_P2_STATE16)
+                        .ok_or_else(|| {
+                            format!(
+                                "constraint {ci}: state16 chip lookup is missing its fixed \
+                                 table declaration (wire id {TID_P2_STATE16})"
+                            )
+                        })?;
+                    if state_table.name != "poseidon2_state16_chip"
+                        || state_table.arity != CHIP_STATE16_TUPLE_LEN
+                        || state_table.sem != TableSem::Poseidon2Chip
+                    {
+                        return Err(format!(
+                            "constraint {ci}: malformed state16 chip table declaration: \
+                             expected name poseidon2_state16_chip, arity \
+                             {CHIP_STATE16_TUPLE_LEN}, Poseidon2 semantics"
                         ));
                     }
                 }
@@ -2078,6 +2131,10 @@ const CHIP_AUX0: usize = CHIP_NODE8 + 1;
 /// (the permutation constraints read `CHIP_AUX0..CHIP_AUX0+PERM_AUX` — untouched). Zero until sites are
 /// routed to the narrow bus; the narrow entry then balances at 0 for the deployed (wide-only) path.
 const CHIP_MULT_NARROW: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS;
+/// On [`Ir2Air::ChipState16`] the final column is instead the multiplicity of the full-state
+/// 33-tuple bus.  Reusing the same column index in a distinct AIR variant keeps the ordinary
+/// chip width and every existing descriptor/VK shape unchanged.
+const CHIP_MULT_STATE16: usize = CHIP_MULT_NARROW;
 const CHIP_WIDTH: usize = CHIP_MULT_NARROW + 1;
 
 /// The five-table interpreter AIR. One Rust type covering every instance of the batch
@@ -2093,6 +2150,10 @@ pub enum Ir2Air {
     },
     /// The Poseidon2 chip table (every row a REAL permutation; `ChipTableSound`).
     Chip,
+    /// A conditionally-present raw full-state Poseidon2 permutation table.  Its rows use the
+    /// same permutation constraints and width as [`Ir2Air::Chip`], but serve only the fixed
+    /// `[16, input_state16, output_state16]` bus; it is absent from every legacy descriptor.
+    ChipState16,
     /// The `[0,256)` byte table (value column pinned to the row index).
     ByteTable,
     /// The memory access table (Blum discipline + the read/write multiset legs).
@@ -2125,7 +2186,7 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
     fn width(&self) -> usize {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
-            Ir2Air::Chip => CHIP_WIDTH,
+            Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
             Ir2Air::ByteTable => 2,
             Ir2Air::Memory => MEM_WIDTH,
             Ir2Air::MemBoundary => MB_WIDTH,
@@ -2152,7 +2213,7 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for Ir2Air {
             // on transfer at (lb=3, q=38), and the low blowup it would enable loses
             // to high-blowup/few-queries anyway (.docs-history-noclaude/PROOF-ECONOMICS.md §2c).
             // Guarded by `ir2_degree_budget`.
-            Ir2Air::Chip => Some(7),
+            Ir2Air::Chip | Ir2Air::ChipState16 => Some(7),
             // Let the symbolic analysis infer the rest (map-ops is lookup-spine only now;
             // descriptor gates vary on main).
             _ => None,
@@ -2495,6 +2556,20 @@ where
                     }
                 }
 
+                // -- Full-state permutation lookups: a fixed 33-wide
+                //    `[16, input_state16, output_state16]` tuple.  The distinct bus is served by
+                //    the conditionally-present `ChipState16` AIR and is absent from legacy VKs. --
+                let p2s = LookupBus::new(BUS_P2_STATE16);
+                for k in &desc.constraints {
+                    if let VmConstraint2::Lookup(l) = k
+                        && l.table == TID_P2_STATE16
+                    {
+                        let tuple: Vec<AB::Expr> =
+                            l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
+                        p2s.lookup_key(builder, tuple, AB::Expr::ONE);
+                    }
+                }
+
                 // -- Range lookups: the byte-limb realization, every row. --
                 for rb in &layout.0.ranges {
                     let cols = decomp_cols(rb.bits);
@@ -2579,7 +2654,12 @@ where
             }
 
             // ----------------------------------------------------------------
-            Ir2Air::Chip => {
+            Ir2Air::Chip | Ir2Air::ChipState16 => {
+                // These two AIR instances share the exact permutation constraint system and
+                // trace width.  Only their lookup interface differs: the legacy instance serves
+                // the 8-output/narrow/fact buses, while the additive state16 instance serves the
+                // complete 16-input/16-output transition bus.
+                let serves_state16 = matches!(self, Ir2Air::ChipState16);
                 let arity: AB::Expr = local[CHIP_ARITY].into();
                 let is_fact: AB::Expr = local[CHIP_IS_FACT].into();
                 let big: AB::Expr = local[CHIP_BIG].into();
@@ -2604,6 +2684,16 @@ where
                         * (arity.clone() - eleven.clone())
                         * (arity.clone() - sixteen.clone()),
                 );
+                if serves_state16 {
+                    // Only the arity-16 branch is the raw `perm(input_state16)` relation: smaller
+                    // absorb arities inject their length tag into lane 4.  Pin every row with a
+                    // nonzero state-bus multiplicity to arity 16, so the fixed tag cannot be
+                    // laundered through a seed-from-zero absorb row.  Zero-multiplicity pads stay
+                    // free to use the genuine arity-0 chip row.
+                    builder.assert_zero(
+                        local[CHIP_MULT_STATE16].into() * (arity.clone() - sixteen.clone()),
+                    );
+                }
                 // A fact row carries arity 0 (so the genuine fact state's zero tag is
                 // expressible — no hybrid absorb/fact state is).
                 builder.assert_zero(is_fact.clone() * arity.clone());
@@ -2776,52 +2866,71 @@ where
                     builder.assert_zero(local[CHIP_OUT + i].into() - lanes[i].clone());
                 }
 
-                // Provide the (arity, ins, out0..out7) tuple on the absorb bus, consumed `mult`
-                // times — fact rows provide ZERO here (no fact digest can serve a
-                // hash-site lookup) and vice versa.
-                let bus = LookupBus::new(BUS_P2);
-                let mut tuple: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-                tuple.push(local[CHIP_ARITY].into());
-                for i in 0..CHIP_RATE {
-                    tuple.push(local[CHIP_IN0 + i].into());
+                if serves_state16 {
+                    // Raw permutation transition: `[16, complete input state, complete output
+                    // state]`.  The last 16 aux columns are the already-constrained final
+                    // permutation state.  (The shared helper returns only its first 8 lanes.)
+                    // Exposing the whole final aux block here therefore adds no witness columns
+                    // and cannot leave lanes 8..15 free.
+                    let state_bus = LookupBus::new(BUS_P2_STATE16);
+                    let mut state_tuple: Vec<AB::Expr> = Vec::with_capacity(CHIP_STATE16_TUPLE_LEN);
+                    state_tuple.push(AB::Expr::from_u64(POSEIDON2_WIDTH as u64));
+                    for i in 0..POSEIDON2_WIDTH {
+                        state_tuple.push(local[CHIP_IN0 + i].into());
+                    }
+                    let final_state = POSEIDON2_PERM_AUX_COLS - POSEIDON2_WIDTH;
+                    for lane in aux.iter().skip(final_state).take(POSEIDON2_WIDTH) {
+                        state_tuple.push((*lane).into());
+                    }
+                    state_bus.table_entry(
+                        builder,
+                        state_tuple,
+                        local[CHIP_MULT_STATE16].into() * (AB::Expr::ONE - is_fact.clone()),
+                    );
+                } else {
+                    // Provide the (arity, ins, out0..out7) tuple on the absorb bus, consumed `mult`
+                    // times — fact rows provide ZERO here (no fact digest can serve a
+                    // hash-site lookup) and vice versa.
+                    let bus = LookupBus::new(BUS_P2);
+                    let mut tuple: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
+                    tuple.push(local[CHIP_ARITY].into());
+                    for i in 0..CHIP_RATE {
+                        tuple.push(local[CHIP_IN0 + i].into());
+                    }
+                    for i in 0..CHIP_OUT_LANES {
+                        tuple.push(local[CHIP_OUT + i].into());
+                    }
+                    bus.table_entry(
+                        builder,
+                        tuple,
+                        local[CHIP_MULT].into() * (AB::Expr::ONE - is_fact.clone()),
+                    );
+                    // NARROW receive (tuple-narrowing pass): the SAME row also serves single-output
+                    // sites via an 18-wide tuple `[arity, ins, out0]` — no output lanes.
+                    let bus1 = LookupBus::new(BUS_P2_1);
+                    let mut ntuple: Vec<AB::Expr> = Vec::with_capacity(1 + CHIP_RATE + 1);
+                    ntuple.push(local[CHIP_ARITY].into());
+                    for i in 0..CHIP_RATE {
+                        ntuple.push(local[CHIP_IN0 + i].into());
+                    }
+                    ntuple.push(local[CHIP_OUT].into());
+                    bus1.table_entry(
+                        builder,
+                        ntuple,
+                        local[CHIP_MULT_NARROW].into() * (AB::Expr::ONE - is_fact.clone()),
+                    );
+                    // Provide (l, r, out) on the fact bus for fact rows only.
+                    let fact_bus = LookupBus::new(BUS_FACT);
+                    fact_bus.table_entry(
+                        builder,
+                        [
+                            local[CHIP_IN0].into(),
+                            local[CHIP_IN0 + 1].into(),
+                            local[CHIP_OUT].into(),
+                        ],
+                        local[CHIP_MULT].into() * is_fact,
+                    );
                 }
-                for i in 0..CHIP_OUT_LANES {
-                    tuple.push(local[CHIP_OUT + i].into());
-                }
-                bus.table_entry(
-                    builder,
-                    tuple,
-                    local[CHIP_MULT].into() * (AB::Expr::ONE - is_fact.clone()),
-                );
-                // NARROW receive (tuple-narrowing pass): the SAME row also serves single-output sites
-                // via an 18-wide tuple `[arity, ins, out0]` — no output lanes. out0 is the same bound
-                // digest column as the wide entry, so a narrow lookup is 1-felt-sound at the head
-                // (Lean `chip_lookup_sound_narrow`). Consumed `CHIP_MULT_NARROW` times; ZERO for the
-                // deployed wide-only descriptors, so the narrow bus balances at 0 and the wide path and
-                // chip permutation constraints are byte-for-byte unchanged.
-                let bus1 = LookupBus::new(BUS_P2_1);
-                let mut ntuple: Vec<AB::Expr> = Vec::with_capacity(1 + CHIP_RATE + 1);
-                ntuple.push(local[CHIP_ARITY].into());
-                for i in 0..CHIP_RATE {
-                    ntuple.push(local[CHIP_IN0 + i].into());
-                }
-                ntuple.push(local[CHIP_OUT].into());
-                bus1.table_entry(
-                    builder,
-                    ntuple,
-                    local[CHIP_MULT_NARROW].into() * (AB::Expr::ONE - is_fact.clone()),
-                );
-                // Provide (l, r, out) on the fact bus for fact rows only.
-                let fact_bus = LookupBus::new(BUS_FACT);
-                fact_bus.table_entry(
-                    builder,
-                    [
-                        local[CHIP_IN0].into(),
-                        local[CHIP_IN0 + 1].into(),
-                        local[CHIP_OUT].into(),
-                    ],
-                    local[CHIP_MULT].into() * is_fact,
-                );
             }
 
             // ----------------------------------------------------------------
@@ -3720,6 +3829,17 @@ fn perm_lanes(st: [BabyBear; POSEIDON2_WIDTH]) -> [BabyBear; CHIP_OUT_LANES] {
     core::array::from_fn(|i| aux[base + i])
 }
 
+/// Apply the exact Poseidon2 permutation constrained by the IR2 chip and return its complete
+/// 16-lane final state.  This is the honest-witness helper for [`TID_P2_STATE16`]; chaining its
+/// result into the next lookup preserves the capacity lanes required by `hash_many_8`'s
+/// multi-block sponge.  No absorption or length tagging is performed here: callers pass the
+/// already-formed complete state.
+pub fn chip_permute_state16(st: [BabyBear; POSEIDON2_WIDTH]) -> [BabyBear; POSEIDON2_WIDTH] {
+    let aux = poseidon2_permute_aux_witness(st);
+    let base = aux.len() - POSEIDON2_WIDTH;
+    core::array::from_fn(|i| aux[base + i])
+}
+
 /// **Phase B-GATE producer helper: the 7 exposed chip lanes 1..7 of an absorb.** Seeds the
 /// permutation EXACTLY as the chip witness-gen (`build_traces`): the rate-8 inputs, with
 /// `state[4..7]` carrying the arity-blend (`big = arity == 7`, else `state[4] = arity`), and
@@ -3921,6 +4041,9 @@ impl UMemBoundaryWitness {
 struct Presence {
     /// Chip table: any chip lookup, or any map op (the openings' permutations ride it).
     chip: bool,
+    /// Raw full-state permutation table: present only for a wire-id-9 state16 lookup.  Kept
+    /// separate from `chip` so existing descriptors retain their exact AIR instance list/VK.
+    chip_state16: bool,
     /// Byte table: any range-lookup limb, any mem/umem op (gap/address decompositions), or
     /// any absent map op (the canonical-decomposition comparators).
     byte: bool,
@@ -3970,6 +4093,10 @@ impl Presence {
             .constraints
             .iter()
             .any(|k| matches!(k, VmConstraint2::Lookup(l) if l.table == TID_P2 || l.table == TID_P2_NARROW));
+        let has_state16_lookup = desc
+            .constraints
+            .iter()
+            .any(|k| matches!(k, VmConstraint2::Lookup(l) if l.table == TID_P2_STATE16));
         let umem_cohort = has_umem
             && desc
                 .tables
@@ -3977,6 +4104,7 @@ impl Presence {
                 .any(|t| t.sem == TableSem::UMemBoundaryCohort);
         Presence {
             chip: has_chip_lookup || has_map_rw || has_map_absent,
+            chip_state16: has_state16_lookup,
             byte: !layout.ranges.is_empty()
                 || has_mem
                 || has_umem
@@ -3996,6 +4124,7 @@ impl Presence {
 struct Ir2Traces {
     main: Vec<Vec<BabyBear>>,
     chip: Option<Vec<Vec<BabyBear>>>,
+    chip_state16: Option<Vec<Vec<BabyBear>>>,
     byte: Option<Vec<Vec<BabyBear>>>,
     memory: Option<Vec<Vec<BabyBear>>>,
     boundary: Option<Vec<Vec<BabyBear>>>,
@@ -4204,6 +4333,30 @@ fn build_traces(
                     }
                     chip_hist.entry(full.clone()).or_insert(0); // ensure a chip row exists to serve it
                     *narrow_hist.entry(full).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // ---- full-state permutation histogram: the main trace supplies complete input/output
+    //      states.  As with the legacy wide histogram, the consumer's output values remain in
+    //      the key only for multiplicity accounting; the table trace below RE-DERIVES the genuine
+    //      output from the input state, so a forged high lane cannot balance the lookup bus. ----
+    let mut state16_hist: BTreeMap<Vec<u32>, u64> = BTreeMap::new();
+    if presence.chip_state16 {
+        for base_row in base_trace {
+            for k in &desc.constraints {
+                if let VmConstraint2::Lookup(l) = k
+                    && l.table == TID_P2_STATE16
+                {
+                    let tuple: Vec<u32> = l
+                        .tuple
+                        .iter()
+                        .map(|e| eval_c(e, base_row).as_u32())
+                        .collect();
+                    debug_assert_eq!(tuple.len(), CHIP_STATE16_TUPLE_LEN);
+                    debug_assert_eq!(tuple[0], POSEIDON2_WIDTH as u32);
+                    *state16_hist.entry(tuple).or_insert(0) += 1;
                 }
             }
         }
@@ -5338,6 +5491,61 @@ fn build_traces(
         None
     };
 
+    // ---- full-state chip table: one row per claimed `[16, state16, next_state16]` key,
+    //      with `next_state16` always re-derived from the genuine permutation.  This is a
+    //      separate AIR/commitment from `chip`, so adding it cannot move a legacy VK. ----
+    let chip_state16: Option<Vec<Vec<BabyBear>>> = if presence.chip_state16 {
+        let mut rows: Vec<Vec<BabyBear>> = Vec::new();
+        for (tuple, mult) in &state16_hist {
+            debug_assert_eq!(tuple.len(), CHIP_STATE16_TUPLE_LEN);
+            debug_assert_eq!(tuple[0], POSEIDON2_WIDTH as u32);
+
+            // The existing chip permutation constraints' arity-16 branch reads all sixteen
+            // input columns directly into the state.  Its selector/source columns must still be
+            // filled exactly, even though this table exposes a different lookup tuple.
+            let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
+            row[CHIP_ARITY] = BabyBear::new(POSEIDON2_WIDTH as u32);
+            for i in 0..POSEIDON2_WIDTH {
+                row[CHIP_IN0 + i] = BabyBear::new(tuple[1 + i]);
+            }
+            row[CHIP_MULT] = BabyBear::ZERO;
+            row[CHIP_IS_FACT] = BabyBear::ZERO;
+            row[CHIP_BIG] = BabyBear::ZERO;
+            row[CHIP_WIDE] = BabyBear::ZERO;
+            row[CHIP_NODE8] = BabyBear::ONE;
+            row[CHIP_S4] = row[CHIP_IN0 + 4];
+            row[CHIP_S5] = row[CHIP_IN0 + 5];
+            row[CHIP_S6] = row[CHIP_IN0 + 6];
+
+            let st: [BabyBear; POSEIDON2_WIDTH] = core::array::from_fn(|i| row[CHIP_IN0 + i]);
+            let output = chip_permute_state16(st);
+            row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&output[..CHIP_OUT_LANES]);
+            let (aux, _digest) = perm_aux(st);
+            row.extend(aux);
+            row.push(BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32));
+            debug_assert_eq!(row.len(), CHIP_WIDTH);
+            rows.push(row);
+        }
+
+        // Genuine zero-state arity-0 pads, with state-bus multiplicity zero.  Pads never answer
+        // a main lookup (whose static tag is 16), but remain valid rows of the shared chip AIR.
+        let zero = [BabyBear::ZERO; POSEIDON2_WIDTH];
+        let output = chip_permute_state16(zero);
+        let (aux, _digest) = perm_aux(zero);
+        let mut pad = vec![BabyBear::ZERO; CHIP_AUX0];
+        pad[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&output[..CHIP_OUT_LANES]);
+        pad.extend(aux);
+        pad.push(BabyBear::ZERO);
+        debug_assert_eq!(pad.len(), CHIP_WIDTH);
+        let target = next_pow2(rows.len());
+        while rows.len() < target {
+            rows.push(pad.clone());
+        }
+        Some(rows)
+    } else {
+        None
+    };
+
     // ---- the byte table (height pinned at 256). ----
     let byte: Option<Vec<Vec<BabyBear>>> = presence.byte.then(|| {
         (0..BYTE_TABLE_HEIGHT)
@@ -5353,6 +5561,7 @@ fn build_traces(
     Ok(Ir2Traces {
         main,
         chip,
+        chip_state16,
         byte,
         memory,
         boundary,
@@ -5377,6 +5586,9 @@ fn instance_airs(
     }];
     if presence.chip {
         airs.push(Ir2Air::Chip);
+    }
+    if presence.chip_state16 {
+        airs.push(Ir2Air::ChipState16);
     }
     if presence.byte {
         airs.push(Ir2Air::ByteTable);
@@ -5539,6 +5751,7 @@ where
     let mut matrices = vec![to_matrix(&traces.main)];
     for t in [
         &traces.chip,
+        &traces.chip_state16,
         &traces.byte,
         &traces.memory,
         &traces.boundary,
@@ -5824,7 +6037,10 @@ where
     // individually constrained and multiset/lookup-balanced; padding is gated), but
     // THIS one is pinned to the deployed `BYTE_TABLE_HEIGHT`.
     if presence.byte {
-        let byte_idx = 1 + usize::from(presence.chip);
+        // Canonical instance order is main, legacy chip (iff present), state16 chip (iff
+        // present), then byte.  Omitting the additive state16 term makes a state16+range
+        // verifier inspect the chip degree as though it were the byte-table height.
+        let byte_idx = 1 + usize::from(presence.chip) + usize::from(presence.chip_state16);
         // `HidingFriPcs` doubles every trace with random rows, so the committed
         // domain is one log-height larger while the constrained real prefix is
         // still exactly the 2^LIMB_BITS byte table.  Pin the PCS-adjusted
@@ -5922,6 +6138,7 @@ mod tests {
                 let name = match air {
                     Ir2Air::Main { .. } => "main",
                     Ir2Air::Chip => "chip",
+                    Ir2Air::ChipState16 => "chip_state16",
                     Ir2Air::ByteTable => "byte",
                     Ir2Air::Memory => "memory",
                     Ir2Air::MemBoundary => "boundary",
@@ -6322,6 +6539,169 @@ mod tests {
             wide.trace_width
         );
         assert_eq!(wide.trace_width - narrow.trace_width, CHIP_OUT_LANES - 1);
+    }
+
+    fn state16_desc() -> EffectVmDescriptor2 {
+        let mut tuple = Vec::with_capacity(CHIP_STATE16_TUPLE_LEN);
+        tuple.push(LeanExpr::Const(POSEIDON2_WIDTH as i64));
+        tuple.extend((0..POSEIDON2_WIDTH).map(LeanExpr::Var));
+        tuple.extend((POSEIDON2_WIDTH..2 * POSEIDON2_WIDTH).map(LeanExpr::Var));
+        EffectVmDescriptor2 {
+            name: "ir2-state16".to_string(),
+            trace_width: 2 * POSEIDON2_WIDTH,
+            public_input_count: 0,
+            tables: vec![TableDef2 {
+                id: TID_P2_STATE16,
+                name: "poseidon2_state16_chip".to_string(),
+                arity: CHIP_STATE16_TUPLE_LEN,
+                sem: TableSem::Poseidon2Chip,
+            }],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2_STATE16,
+                tuple,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        }
+    }
+
+    fn state16_trace() -> Vec<Vec<BabyBear>> {
+        // Capacity lanes are deliberately non-zero: this is an arbitrary complete state, not a
+        // seed-from-zero absorb.  A repeated four-row main trace keeps the focused proof tiny.
+        let input: [BabyBear; POSEIDON2_WIDTH] =
+            core::array::from_fn(|i| BabyBear::new(0x1000 + (i as u32) * 0x101));
+        let output = chip_permute_state16(input);
+        let mut row = input.to_vec();
+        row.extend_from_slice(&output);
+        vec![row; 4]
+    }
+
+    /// The additive full-state table proves and verifies an arbitrary 16-lane transition while
+    /// legacy descriptors retain the old chip AIR alone.  This is the exact primitive required
+    /// to chain every internal state of the deployed multi-block sponge.
+    #[test]
+    fn ir2_state16_permutation_proves_and_preserves_legacy_shape() {
+        let desc = state16_desc();
+        let layout = check_descriptor2(&desc).expect("state16 descriptor checks");
+        let presence = Presence::of(&desc, &layout);
+        assert!(
+            !presence.chip,
+            "state16 does not widen the legacy chip instance"
+        );
+        assert!(presence.chip_state16);
+        let airs = instance_airs(&desc, layout, presence);
+        assert!(matches!(
+            airs.as_slice(),
+            [Ir2Air::Main { .. }, Ir2Air::ChipState16]
+        ));
+
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &state16_trace(),
+            &[],
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .expect("arbitrary full-state permutation must prove");
+        assert_eq!(proof.degree_bits.len(), 2, "main + state16 chip only");
+        verify_vm_descriptor2(&desc, &proof, &[]).expect("state16 proof must verify");
+
+        let legacy = test_desc();
+        let legacy_layout = check_descriptor2(&legacy).expect("legacy descriptor checks");
+        let legacy_presence = Presence::of(&legacy, &legacy_layout);
+        assert!(!legacy_presence.chip_state16);
+        assert!(
+            instance_airs(&legacy, legacy_layout, legacy_presence)
+                .iter()
+                .all(|air| !matches!(air, Ir2Air::ChipState16))
+        );
+    }
+
+    /// Hostile high-lane tooth: changing output lane 15 leaves the legacy exposed lanes 0..7
+    /// untouched, but the full-state bus must become unsatisfiable.
+    #[test]
+    fn ir2_state16_high_output_lane_mutation_refuses() {
+        let desc = state16_desc();
+        let mut rows = state16_trace();
+        rows[0][2 * POSEIDON2_WIDTH - 1] += BabyBear::ONE;
+        let refusal = must_refuse_or_unsat_panic("state16 high-output-lane tooth", || {
+            prove_vm_descriptor2(&desc, &rows, &[], &MemBoundaryWitness::default(), &[])
+        });
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "high output lane must be refused by the state16 permutation bus, got: {reason}"
+        );
+    }
+
+    /// The faithful spend's sixteen-bit limb table is admitted both through its explicit Lean
+    /// `Range { bits: 16 }` declaration and through the width-tagged wire-id fallback.  The exact
+    /// upper boundary is live: 65535 proves, 65536 refuses before proving.
+    #[test]
+    fn ir2_custom_range16_is_exact_and_fallback_whitelisted() {
+        let tid = RANGE_W_TID_WIRE_BASE + 16;
+        let mut desc = EffectVmDescriptor2 {
+            name: "ir2-range16".to_string(),
+            trace_width: 1,
+            public_input_count: 0,
+            tables: vec![TableDef2 {
+                id: tid,
+                name: "range_w16".to_string(),
+                arity: 1,
+                sem: TableSem::Range { bits: 16 },
+            }],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: tid,
+                tuple: vec![LeanExpr::Var(0)],
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let good = vec![vec![BabyBear::new(u16::MAX as u32)]; 4];
+        let proof = prove_vm_descriptor2(&desc, &good, &[], &MemBoundaryWitness::default(), &[])
+            .expect("the maximum canonical u16 must prove");
+        verify_vm_descriptor2(&desc, &proof, &[]).expect("range16 proof must verify");
+
+        let bad = vec![vec![BabyBear::new((u16::MAX as u32) + 1)]; 4];
+        assert!(
+            prove_vm_descriptor2(&desc, &bad, &[], &MemBoundaryWitness::default(), &[],).is_err(),
+            "2^16 must be outside the canonical u16 relation"
+        );
+
+        desc.tables.clear();
+        let fallback = check_descriptor2(&desc).expect("wire-id-85 fallback is explicitly pinned");
+        assert_eq!(fallback.ranges.len(), 1);
+        assert_eq!(fallback.ranges[0].bits, 16);
+    }
+
+    /// Regression for verifier instance indexing: with both additive state16 and byte tables the
+    /// byte table is instance 2 (`main, state16, byte`), not instance 1.  Honest proof/verification
+    /// across that exact FNSP-shaped table prefix must succeed.
+    #[test]
+    fn ir2_state16_plus_range16_proves_and_verifies() {
+        let mut desc = state16_desc();
+        let range_tid = RANGE_W_TID_WIRE_BASE + 16;
+        desc.tables.push(TableDef2 {
+            id: range_tid,
+            name: "range_w16".to_string(),
+            arity: 1,
+            sem: TableSem::Range { bits: 16 },
+        });
+        desc.constraints.push(VmConstraint2::Lookup(LookupSpec {
+            table: range_tid,
+            tuple: vec![LeanExpr::Var(0)],
+        }));
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &state16_trace(),
+            &[],
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .expect("state16 + range16 witness must prove");
+        assert_eq!(proof.degree_bits.len(), 3, "main + state16 + byte");
+        verify_vm_descriptor2(&desc, &proof, &[])
+            .expect("verifier must index the byte table after state16");
     }
 
     /// A tampered memory READ (claims value 7 where the init image holds 9) must REFUSE:
@@ -6951,6 +7331,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,
@@ -7327,6 +7708,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,
@@ -7400,6 +7782,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,
@@ -8237,6 +8620,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,
@@ -8320,6 +8704,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,
@@ -8503,6 +8888,7 @@ mod tests {
         let mut matrices = vec![to_matrix(&traces.main)];
         for t in [
             &traces.chip,
+            &traces.chip_state16,
             &traces.byte,
             &traces.memory,
             &traces.boundary,

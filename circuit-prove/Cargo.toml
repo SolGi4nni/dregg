@@ -9,6 +9,7 @@ description = "Heavy PROVE surface for dregg circuits: the p3-recursion tower (I
 
 [dependencies]
 dregg-circuit = { path = "../circuit" }
+dregg-commit = { path = "../commit" }
 
 # Plonky3 core (workspace-pinned). The prove surface needs the full STARK + DFT
 # stack plus the three RECURSION-ONLY crates (p3-recursion / p3-circuit /

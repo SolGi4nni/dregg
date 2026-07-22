@@ -236,6 +236,11 @@ pub fn configure_turn_executor(
     s: &NodeStateInner,
     height_mode: BlockHeightMode,
 ) {
+    // `NoteSpend` is a hard predicate-specific HidingFRI path.  Install its
+    // verifier on every production executor: the predicate-less entry refuses,
+    // and the named entry accepts only the exact Lean-emitted v2 relation and
+    // fixed 44-felt statement reconstructed by the executor.
+    executor.set_proof_verifier(Box::new(dregg_turn::FaithfulNoteSpendVerifier::new()));
     executor.set_local_federation_id(federation_id_for_executor(s));
     executor.set_timestamp(wall_clock_secs());
     enroll_known_pq_identities(executor, s);

@@ -66,6 +66,13 @@ pub struct PositionedNote {
     pub tree_position: u64,
 }
 
+/// Domain of the faithful-v2 eight-felt note commitment (`"FNC2"`).
+pub const FAITHFUL_NOTE_COMMIT_DOMAIN_V2: u32 = 0x464e_4332;
+/// Domain of the faithful-v2 shielded owner/address derivation (`"FNO2"`).
+pub const FAITHFUL_NOTE_OWNER_DOMAIN_V2: u32 = 0x464e_4f32;
+/// Domain of the faithful-v2 eight-felt nullifier (`"FNF2"`).
+pub const FAITHFUL_NOTE_NULLIFIER_DOMAIN_V2: u32 = 0x464e_4632;
+
 /// Errors that can occur in note operations.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NoteError {
@@ -164,7 +171,49 @@ fn u64_to_limbs(v: u64) -> [dregg_circuit::field::BabyBear; 2] {
     ]
 }
 
+/// Injective raw-byte mapping used by the faithful-v2 spend predicate.
+#[inline]
+fn bytes32_to_u16_limbs(b: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 16] {
+    use dregg_circuit::field::BabyBear;
+    core::array::from_fn(|i| {
+        let off = 2 * i;
+        BabyBear::new(u16::from_le_bytes([b[off], b[off + 1]]) as u32)
+    })
+}
+
+/// Injective full-u64 mapping used by the faithful-v2 spend predicate.
+#[inline]
+fn u64_to_u16_limbs(v: u64) -> [dregg_circuit::field::BabyBear; 4] {
+    use dregg_circuit::field::BabyBear;
+    core::array::from_fn(|i| BabyBear::new(((v >> (16 * i)) & 0xffff) as u32))
+}
+
+/// Canonically pack a genuine eight-felt digest as 32 bytes.
+#[inline]
+fn digest8_to_bytes32(digest: [dregg_circuit::field::BabyBear; 8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (lane, felt) in digest.iter().enumerate() {
+        out[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
+    out
+}
+
 impl Note {
+    /// Derive the public faithful-v2 shielded owner/address for a spending key.
+    ///
+    /// A sender needs only this 32-byte address to create a note.  The spend
+    /// predicate keeps the key hidden and proves that this exact address is the
+    /// domain-separated `hash_many_8` image of its sixteen canonical key limbs.
+    pub fn faithful_owner_v2(spending_key: &[u8; 32]) -> [u8; 32] {
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_many_8;
+
+        let mut preimage = Vec::with_capacity(17);
+        preimage.push(BabyBear::new(FAITHFUL_NOTE_OWNER_DOMAIN_V2));
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(spending_key));
+        digest8_to_bytes32(hash_many_8(&preimage))
+    }
+
     /// Create a note with explicit randomness and creation nonce (for deterministic tests).
     pub fn with_randomness(owner: [u8; 32], fields: [u64; 8], randomness: [u8; 32]) -> Self {
         // Derive a deterministic creation_nonce from the randomness.
@@ -241,6 +290,58 @@ impl Note {
         preimage.extend_from_slice(&bytes32_to_limbs(spending_key)); // 8
         preimage.extend_from_slice(&bytes32_to_limbs(&self.creation_nonce)); // 8
         Nullifier(crate::felt_to_bytes32(hash_many(&preimage)))
+    }
+
+    /// Compute the exact faithful-v2 note commitment used by the FNSP HidingFRI
+    /// predicate and the sixteen-`u16` note tree.
+    ///
+    /// Every byte of owner/nonce/randomness and every bit of value/asset is
+    /// injectively mapped before a domain-separated `hash_many_8`; no source
+    /// chunk is reduced modulo BabyBear.  Spend authority is the separate
+    /// in-predicate equality `owner = faithful_owner_v2(spending_key)`, allowing
+    /// a sender to construct the commitment from the public address alone.
+    /// The result is eight canonical output felts packed as 32 bytes, so the
+    /// note tree's raw sixteen-`u16` leaf codec recovers the exact digest bytes.
+    pub fn faithful_commitment_v2(&self) -> NoteCommitment {
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_many_8;
+
+        let mut preimage = Vec::with_capacity(57);
+        preimage.push(BabyBear::new(FAITHFUL_NOTE_COMMIT_DOMAIN_V2));
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(&self.owner));
+        preimage.extend_from_slice(&u64_to_u16_limbs(self.fields[1]));
+        preimage.extend_from_slice(&u64_to_u16_limbs(self.fields[0]));
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(&self.creation_nonce));
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(&self.randomness));
+        NoteCommitment(digest8_to_bytes32(hash_many_8(&preimage)))
+    }
+
+    /// Compute the exact faithful-v2 nullifier derived inside the same FNSP
+    /// predicate as [`Self::faithful_commitment_v2`].
+    ///
+    /// The relation hashes the commitment's genuine eight-felt digest together
+    /// with all 32 spending-key bytes and all 32 creation-nonce bytes, each as
+    /// canonical `u16` limbs.  The published nullifier is another canonical
+    /// eight-felt digest packing, not a one-felt value padded with zeros.
+    pub fn faithful_nullifier_v2(&self, spending_key: &[u8; 32]) -> Nullifier {
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::poseidon2::hash_many_8;
+
+        let commitment = self.faithful_commitment_v2().0;
+        let commitment8: [BabyBear; 8] = core::array::from_fn(|lane| {
+            let off = lane * 4;
+            BabyBear::new(u32::from_le_bytes(
+                commitment[off..off + 4]
+                    .try_into()
+                    .expect("four-byte canonical digest lane"),
+            ))
+        });
+        let mut preimage = Vec::with_capacity(41);
+        preimage.push(BabyBear::new(FAITHFUL_NOTE_NULLIFIER_DOMAIN_V2));
+        preimage.extend_from_slice(&commitment8);
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(spending_key));
+        preimage.extend_from_slice(&bytes32_to_u16_limbs(&self.creation_nonce));
+        Nullifier(digest8_to_bytes32(hash_many_8(&preimage)))
     }
 
     /// Check if this note represents a fungible asset.
@@ -350,6 +451,51 @@ mod tests {
         key[0] = seed;
         key[1] = 0xBB;
         key
+    }
+
+    #[test]
+    fn faithful_v2_commitment_and_nullifier_bind_every_high_byte() {
+        let key = [0x44; 32];
+        let owner = Note::faithful_owner_v2(&key);
+        let base = Note::with_nonce(
+            owner,
+            [7, 0x0123_4567_89ab_cdef, 0, 0, 0, 0, 0, 0],
+            [0x22; 32],
+            [0x33; 32],
+        );
+        let commitment = base.faithful_commitment_v2();
+        let nullifier = base.faithful_nullifier_v2(&key);
+
+        // A genuine eight-felt result occupies lanes beyond the old padded
+        // scalar head, while every lane remains canonical on the wire.
+        assert_ne!(&commitment.0[4..], &[0; 28]);
+        assert_ne!(&nullifier.0[4..], &[0; 28]);
+        for bytes in commitment
+            .0
+            .chunks_exact(4)
+            .chain(nullifier.0.chunks_exact(4))
+        {
+            assert!(
+                u32::from_le_bytes(bytes.try_into().unwrap()) < dregg_circuit::field::BABYBEAR_P
+            );
+        }
+
+        for byte in [5usize, 17, 31] {
+            let mut changed = base.clone();
+            changed.owner[byte] ^= 0x80;
+            assert_ne!(changed.faithful_commitment_v2(), commitment);
+        }
+        let mut high_value = base.clone();
+        high_value.fields[1] ^= 1u64 << 63;
+        assert_ne!(high_value.faithful_commitment_v2(), commitment);
+
+        let mut high_key = key;
+        high_key[31] ^= 0x80;
+        assert_ne!(Note::faithful_owner_v2(&high_key), owner);
+        assert_ne!(base.faithful_nullifier_v2(&high_key), nullifier);
+        let mut high_nonce = base.clone();
+        high_nonce.creation_nonce[31] ^= 0x80;
+        assert_ne!(high_nonce.faithful_nullifier_v2(&key), nullifier);
     }
 
     /// The 32-byte `NoteCommitment` IS Poseidon2 (not BLAKE3): it equals the

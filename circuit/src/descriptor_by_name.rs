@@ -133,6 +133,10 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-presentation-freshness::summary-v1",
         PRESENTATION_FRESHNESS_JSON,
     ),
+    (
+        "faithful-note-spend-v2::exact-note16-root8-hiding",
+        FAITHFUL_NOTE_SPEND_V2_JSON,
+    ),
     ("dregg-bound-presentation::v1", BOUND_PRESENTATION_JSON),
     ("dregg-blinded-membership::v1", BLINDED_MEMBERSHIP_JSON),
     ("dregg-derivation-v1", DERIVATION_JSON),
@@ -219,6 +223,10 @@ const PREDICATE_ARITH_INRANGE_JSON: &str =
 /// (the `FITS_WITH_NAMED_GATE` verdict), so it is not internalized here.
 const PRESENTATION_FRESHNESS_JSON: &str =
     include_str!("../descriptors/by-name/presentation-freshness.json");
+/// Exact shielded-owner opening, faithful note-tree membership, and nullifier relation authored
+/// in `Dregg2/Circuit/Emit/FaithfulNoteSpendDescriptorPlan.lean`.
+const FAITHFUL_NOTE_SPEND_V2_JSON: &str =
+    include_str!("../descriptors/by-name/faithful-note-spend-v2.json");
 /// The **bound-presentation** family (`dregg-bound-presentation::v1`), authored in
 /// `metatheory/Dregg2/Circuit/Emit/BoundPresentationEmit.lean` (`boundPresentationDesc`) and
 /// byte-pinned there by an `emitVmJson2` `#guard`. This is the Golden-Lift-stage-1 successor to the
@@ -415,6 +423,26 @@ mod tests {
                 });
             }
         }
+    }
+
+    #[test]
+    fn faithful_note_spend_v2_dispatches_exact_hidden_shape() {
+        use crate::descriptor_ir2::TID_P2_STATE16;
+
+        const NAME: &str = "faithful-note-spend-v2::exact-note16-root8-hiding";
+        let desc = descriptor_by_name(NAME).expect("faithful spend v2 must dispatch");
+        assert_eq!(desc.name, NAME);
+        assert_eq!(desc.trace_width, 1023);
+        assert_eq!(desc.public_input_count, 44);
+        check_descriptor2_wellformed(&desc).expect("faithful spend v2 descriptor must check");
+        assert_eq!(
+            desc.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_STATE16))
+                .count(),
+            50,
+            "owner, commitment, nullifier, leaf, and node sponges must ride the state16 bus"
+        );
     }
 
     /// STRUCTURAL ANTI-FORK GATE for the WHOLE arithmetic-predicate family: every dispatched

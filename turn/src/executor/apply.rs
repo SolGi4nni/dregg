@@ -1361,28 +1361,77 @@ impl TurnExecutor {
                 path.to_vec(),
             )
         })?;
-        // Public inputs for the note spending STARK (advisory buffer for
-        // the wire-side verifier; the real PI lives in the embedded proof):
-        // nullifier || note_tree_root || value || asset_type || dest_fed
-        //
-        // SECURITY: value and asset_type are bound via boundary constraints
-        // to the actual note preimage columns. A spender cannot claim a
-        // different value/asset_type than what is committed in the note —
-        // the proof verification will fail. destination_federation is
-        // ZERO for local (non-bridge) spends; the AIR boundary pins col 18
-        // to pi[4] so a bridge-shaped proof (non-zero dest) cannot be
-        // replayed against the local-spend path.
-        let mut public_inputs = Vec::with_capacity(112);
-        public_inputs.extend_from_slice(&nullifier.0);
-        public_inputs.extend_from_slice(note_tree_root);
-        public_inputs.extend_from_slice(&value.to_le_bytes());
-        public_inputs.extend_from_slice(&asset_type.to_le_bytes());
-        // destination_federation = ZERO for local spends.
-        public_inputs.extend_from_slice(&[0u8; 32]);
-        if !verifier.verify(spending_proof, "note-spend", "note-tree", &public_inputs) {
+        // Hard cut to the strict FNSP v2 carrier.  It names the authenticated
+        // historical height and the exact nullifier-accumulator successor; the
+        // executor supplies the trusted predicate identity and reconstructs all
+        // 44 public inputs from signed effect fields.  A legacy bare proof has no
+        // predicate/root-transition binding and is intentionally unrepresentable.
+        let carrier =
+            crate::faithful_note_spend::FaithfulNoteSpendProofCarrier::decode(spending_proof)
+                .map_err(|error| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: format!("NoteSpend faithful proof carrier rejected: {error}"),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+        let statement = crate::faithful_note_spend::FaithfulNoteSpendPublicStatement::from_effect(
+            &carrier,
+            *note_tree_root,
+            nullifier.0,
+            value,
+            asset_type,
+        )
+        .map_err(|error| {
+            (
+                TurnError::InvalidEffect {
+                    reason: format!("NoteSpend faithful public statement rejected: {error}"),
+                },
+                path.to_vec(),
+            )
+        })?;
+
+        // Recompute the successor BEFORE proof verification.  This makes the
+        // transition binding bite on every executor surface (not only full-node
+        // finalization) and avoids spending prover time on a proof whose claimed
+        // durable frontier cannot be the result of this exact effect.
+        let planned_successor = {
+            let current = self.note_nullifiers.lock().unwrap();
+            let mut planned = current.clone();
+            planned.insert(*nullifier, value).map_err(|_| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: "double-spend: nullifier already in note_nullifiers set".into(),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+            planned.faithful_root8_exact().to_bytes32()
+        };
+        if carrier.successor_nullifier_root() != planned_successor {
             return Err((
                 TurnError::InvalidEffect {
-                    reason: "NoteSpend spending proof verification failed".into(),
+                    reason:
+                        "NoteSpend proof successor does not match the exact planned nullifier root"
+                            .into(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        let public_inputs = statement.encode_public_inputs();
+        if !verifier.verify_with_predicate(
+            crate::faithful_note_spend::FAITHFUL_NOTE_SPEND_PREDICATE,
+            carrier.inner_proof_bytes(),
+            "note-spend",
+            "faithful-note-tree",
+            &public_inputs,
+        ) {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "NoteSpend predicate-specific HidingFRI proof verification failed"
+                        .into(),
                 },
                 path.to_vec(),
             ));
