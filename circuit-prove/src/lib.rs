@@ -51,6 +51,7 @@ pub mod membership_leaf_adapter;
 pub mod merge_pool;
 pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
+pub mod packed_interleaved_merkle;
 pub mod plonky3_recursion_impl;
 pub mod presentation_leaf_adapter;
 pub mod private_book_bfv_slice;
