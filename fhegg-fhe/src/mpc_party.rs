@@ -61,6 +61,9 @@ use sha2::{Digest, Sha256};
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
+/// Additive committed-candidate GF(2) sacrifice protocol.  This is a staged
+/// preprocessing primitive, not yet the live PartyMPC triple source.
+pub mod sacrifice;
 /// Bounded authenticated process transport for equality and full crossing.
 /// Transport authentication does not upgrade the semi-honest MPC arithmetic
 /// to malicious security.
