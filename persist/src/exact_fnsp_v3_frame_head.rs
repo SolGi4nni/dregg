@@ -93,6 +93,15 @@ pub(crate) const EXACT_FNSP_V3_FRAME_HEAD: TableDefinition<u8, &[u8]> =
     TableDefinition::new("exact_fnsp_v3_frame_head_v1");
 pub(crate) const EXACT_FNSP_V3_FRAME_RECORDS: TableDefinition<u64, &[u8]> =
     TableDefinition::new("exact_fnsp_v3_frame_records_v1");
+/// Derived per-agent receipt head for the active exact epoch.
+///
+/// This is an online-validation index, not an independent authority: store open rebuilds it from
+/// the complete canonical receipt replay before any writer can use it.  Every post-activation
+/// receipt append advances the corresponding row in the same redb transaction.
+pub(crate) const EXACT_FNSP_V3_RECEIPT_HEADS: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("exact_fnsp_v3_receipt_heads_v1");
+
+const RECEIPT_HEAD_WIRE_LEN: usize = 8 + 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactFnspV3DurableReceiptLinkV1 {
@@ -851,6 +860,17 @@ struct ValidatedFrameSnapshot {
     frames: Vec<UntrustedExactFnspV3FrameV1>,
 }
 
+/// The boundary rows needed by an online exact writer.
+///
+/// Opening the store has already replayed every receipt and exact frame.  A live writer therefore
+/// revalidates the signed singleton activation, the signed current frame (and its immediate exact
+/// predecessor), plus dense-table arithmetic.  It never turns this boundary cache into a recovery
+/// authority: [`load_snapshot_from_read`] remains the full O(receipts + frames) boot/audit path.
+struct ValidatedLiveFrameAuthority {
+    activation: Option<UntrustedExactFnspV3ActivationV1>,
+    head: Option<UntrustedExactFnspV3FrameV1>,
+}
+
 impl PersistentStore {
     /// Return the dense receipt-log cursor and optional terminal row from one read snapshot.
     ///
@@ -883,13 +903,32 @@ impl PersistentStore {
     /// Boot gate: a partial exact state/activation/frame image is an integrity failure, never an
     /// implicit rollback to legacy mode.
     pub(crate) fn validate_exact_fnsp_v3_receipt_authority_on_open(&self) -> StoreResult<()> {
-        let read = self.db.begin_read()?;
-        match crate::exact_fnsp_v3_state::load_state_head_from_read(&read)? {
-            Some(exact_head) => {
-                load_snapshot_from_read(&read, exact_head)?;
+        // The full canonical replay is the authority.  The per-agent head table is a derived
+        // online index and is rebuilt only after this audit succeeds, so an interrupted/malformed
+        // cache can never bless receipt history.
+        let receipt_heads = {
+            let read = self.db.begin_read()?;
+            match crate::exact_fnsp_v3_state::load_state_head_from_read(&read)? {
+                Some(exact_head) => {
+                    let snapshot = load_snapshot_from_read(&read, exact_head)?;
+                    if snapshot.activation.is_some() {
+                        Some(
+                            collect_receipts(&read.open_table(crate::tables::RECEIPT_CHAIN)?)?
+                                .latest_heads(),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                None => {
+                    ensure_frame_authority_absent(&read)?;
+                    None
+                }
             }
-            None => ensure_frame_authority_absent(&read)?,
-        }
+        };
+        let write = self.db.begin_write()?;
+        replace_receipt_head_index_in(&write, receipt_heads.as_ref())?;
+        write.commit()?;
         Ok(())
     }
 
@@ -924,6 +963,7 @@ impl PersistentStore {
             ));
         }
         validate_activation_cutover(&activation, &receipts)?;
+        replace_receipt_head_index_in(&write, Some(&receipts.latest_heads()))?;
         {
             let mut table = write.open_table(EXACT_FNSP_V3_ACTIVATION)?;
             let encoded = activation.encode();
@@ -967,13 +1007,49 @@ impl PersistentStore {
             .cloned()
             .map(CommittedExactFnspV3FrameHeadV1))
     }
+
+    /// Return the currently signed exact-epoch boundary without replaying historical tables.
+    ///
+    /// This is intended for online node admission/finalization after `PersistentStore::open` has
+    /// completed the full canonical audit.  It checks singleton cardinality, signatures/seals,
+    /// dense frame-key arithmetic, the immediate exact predecessor, and the durable exact head in
+    /// O(log N).  Recovery and offline audits must use the ordinary getters above.
+    pub fn exact_fnsp_v3_live_authority(
+        &self,
+    ) -> StoreResult<
+        Option<(
+            StoreAuthenticatedExactFnspV3ActivationV1,
+            Option<CommittedExactFnspV3FrameHeadV1>,
+        )>,
+    > {
+        let read = self.db.begin_read()?;
+        let exact_head = match crate::exact_fnsp_v3_state::load_state_head_from_read(&read)? {
+            Some(head) => head,
+            None => {
+                ensure_frame_authority_absent(&read)?;
+                return Ok(None);
+            }
+        };
+        let live = load_live_authority_from_read(&read, exact_head)?;
+        Ok(live.activation.map(|activation| {
+            (
+                StoreAuthenticatedExactFnspV3ActivationV1(activation),
+                live.head.map(CommittedExactFnspV3FrameHeadV1),
+            )
+        }))
+    }
 }
 
 fn ensure_frame_authority_absent(read: &ReadTransaction) -> StoreResult<()> {
     let activation = read.open_table(EXACT_FNSP_V3_ACTIVATION)?;
     let head = read.open_table(EXACT_FNSP_V3_FRAME_HEAD)?;
     let records = read.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
-    if activation.len()? != 0 || head.len()? != 0 || records.len()? != 0 {
+    let receipt_heads = read.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
+    if activation.len()? != 0
+        || head.len()? != 0
+        || records.len()? != 0
+        || receipt_heads.len()? != 0
+    {
         return Err(integrity(
             ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
         ));
@@ -986,11 +1062,60 @@ pub(crate) fn ensure_frame_authority_absent_in_write(write: &WriteTransaction) -
     let activation = write.open_table(EXACT_FNSP_V3_ACTIVATION)?;
     let head = write.open_table(EXACT_FNSP_V3_FRAME_HEAD)?;
     let records = write.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
-    if activation.len()? != 0 || head.len()? != 0 || records.len()? != 0 {
+    let receipt_heads = write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
+    if activation.len()? != 0
+        || head.len()? != 0
+        || records.len()? != 0
+        || receipt_heads.len()? != 0
+    {
         return Err(integrity(
             ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
         ));
     }
+    Ok(())
+}
+
+/// Advance the derived per-agent receipt head after a fresh dense receipt append.
+///
+/// `PersistentStore::write_receipt_chain_entry_in` calls this after inserting the canonical row,
+/// in the same write transaction.  Before activation the index is intentionally empty.  After
+/// activation every appended receipt must extend exactly the indexed head for its own agent; this
+/// is the O(log N) witness that no same-agent receipt sits between the predecessor named by an
+/// exact frame and its current receipt.
+pub(crate) fn stage_receipt_head_on_append_in(
+    write: &WriteTransaction,
+    index: u64,
+    encoded: &[u8],
+) -> StoreResult<()> {
+    let activation = collect_singleton(&write.open_table(EXACT_FNSP_V3_ACTIVATION)?)?;
+    let Some(activation) = activation else {
+        if write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?.len()? != 0 {
+            return Err(integrity(
+                ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
+            ));
+        }
+        return Ok(());
+    };
+    let activation = UntrustedExactFnspV3ActivationV1::decode(&activation)?;
+    if index < activation.receipt_cutover_next_index {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+        ));
+    }
+    let receipt = decode_canonical_receipt(encoded)?;
+    let hash = receipt.receipt_hash();
+    let mut heads = write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
+    let previous = heads
+        .get(&receipt.agent.0)?
+        .map(|value| decode_receipt_head(value.value()))
+        .transpose()?;
+    if receipt.previous_receipt_hash != previous.map(|(_, hash)| hash)
+        || previous.is_some_and(|(previous_index, _)| previous_index >= index)
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+    let head = encode_receipt_head(index, hash);
+    heads.insert(&receipt.agent.0, head.as_slice())?;
     Ok(())
 }
 
@@ -1001,13 +1126,12 @@ pub(crate) fn stage_exact_fnsp_v3_frame_in(
 ) -> StoreResult<(WriteTransaction, UntrustedExactFnspV3FrameV1)> {
     frame.validate().map_err(integrity)?;
     let exact_head = exact_fnsp_v3_state_head_in(&write)?;
-    let snapshot = load_snapshot_from_write(&write, exact_head)?;
-    let activation = snapshot
+    let live = load_live_authority_from_write(&write, exact_head)?;
+    let activation = live
         .activation
         .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
-    validate_frame_against_snapshot(&frame, &activation, &snapshot.frames, exact, false)?;
-    let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
-    validate_frame_receipt(&frame, &receipts, true)?;
+    validate_fresh_frame_against_live(&frame, &activation, live.head.as_ref(), exact)?;
+    validate_frame_receipt_online(&write, &frame, true, true)?;
     let (write, successor) = compare_and_commit_exact_fnsp_v3_append_in(write, exact)?;
     if successor != frame.exact_after {
         return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
@@ -1032,21 +1156,19 @@ pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
 ) -> StoreResult<()> {
     frame.validate().map_err(integrity)?;
     let exact_head = exact_fnsp_v3_state_head_in(write)?;
-    let snapshot = load_snapshot_from_write(write, exact_head)?;
-    let activation = snapshot
+    let live = load_live_authority_from_write(write, exact_head)?;
+    let activation = live
         .activation
         .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
-    validate_frame_against_snapshot(frame, &activation, &snapshot.frames, exact, true)?;
-    let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
-    validate_frame_receipt(frame, &receipts, false)
+    validate_replayed_frame_against_live(write, frame, &activation, exact)?;
+    validate_frame_receipt_online(write, frame, false, false)
 }
 
-fn validate_frame_against_snapshot(
+fn validate_fresh_frame_against_live(
     frame: &UntrustedExactFnspV3FrameV1,
     activation: &UntrustedExactFnspV3ActivationV1,
-    frames: &[UntrustedExactFnspV3FrameV1],
+    head: Option<&UntrustedExactFnspV3FrameV1>,
     exact: ExactFnspV3StateCasV1,
-    replay: bool,
 ) -> StoreResult<()> {
     if frame.exact_before != exact.expected() || frame.exact_after != exact.successor() {
         return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
@@ -1058,18 +1180,7 @@ fn validate_frame_against_snapshot(
     {
         return Err(integrity(ExactFnspV3FrameStoreError::ActivationReplacement));
     }
-    if replay {
-        let offset = frame
-            .sequence
-            .checked_sub(activation.exact_initial.generation())
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReplayMismatch))?;
-        if frames.get(offset) != Some(frame) {
-            return Err(integrity(ExactFnspV3FrameStoreError::FrameReplayMismatch));
-        }
-        return Ok(());
-    }
-    let (expected_link, prior_receipt_log_index, expected_exact) = match frames.last() {
+    let (expected_link, prior_receipt_log_index, expected_exact) = match head {
         Some(previous) => (
             ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash),
             Some(previous.receipt_log_index),
@@ -1099,6 +1210,175 @@ fn validate_frame_against_snapshot(
         )));
     }
     Ok(())
+}
+
+fn validate_replayed_frame_against_live(
+    write: &WriteTransaction,
+    frame: &UntrustedExactFnspV3FrameV1,
+    activation: &UntrustedExactFnspV3ActivationV1,
+    exact: ExactFnspV3StateCasV1,
+) -> StoreResult<()> {
+    if frame.exact_before != exact.expected() || frame.exact_after != exact.successor() {
+        return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
+    }
+    if frame.epoch != activation.epoch
+        || frame.activation_hash != activation.activation_hash
+        || frame.federation_id != activation.federation_id
+        || frame.executor_public_key != activation.executor_public_key
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::ActivationReplacement));
+    }
+    let records = write.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
+    let durable = records
+        .get(frame.sequence)?
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReplayMismatch))?;
+    if durable.value() != frame.encode().as_slice() {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReplayMismatch));
+    }
+    Ok(())
+}
+
+fn load_live_authority_from_read(
+    read: &ReadTransaction,
+    exact_head: ExactFnspV3StateHeadV1,
+) -> StoreResult<ValidatedLiveFrameAuthority> {
+    let activation = collect_singleton(&read.open_table(EXACT_FNSP_V3_ACTIVATION)?)?;
+    let head = collect_singleton(&read.open_table(EXACT_FNSP_V3_FRAME_HEAD)?)?;
+    let records = read.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
+    validate_live_authority(activation, head, &records, exact_head)
+}
+
+fn load_live_authority_from_write(
+    write: &WriteTransaction,
+    exact_head: ExactFnspV3StateHeadV1,
+) -> StoreResult<ValidatedLiveFrameAuthority> {
+    let activation = collect_singleton(&write.open_table(EXACT_FNSP_V3_ACTIVATION)?)?;
+    let head = collect_singleton(&write.open_table(EXACT_FNSP_V3_FRAME_HEAD)?)?;
+    let records = write.open_table(EXACT_FNSP_V3_FRAME_RECORDS)?;
+    validate_live_authority(activation, head, &records, exact_head)
+}
+
+/// Validate only the append boundary.  The `(len, first, last)` arithmetic proves the u64 frame
+/// keys are the complete dense interval: there are exactly `len` distinct integer keys and only
+/// `len` positions between the asserted endpoints.  The last two signed rows then re-establish the
+/// exact/frame/receipt ordering edge that the next append will extend.
+fn validate_live_authority(
+    activation_bytes: Option<Vec<u8>>,
+    head_bytes: Option<Vec<u8>>,
+    records: &impl ReadableTable<u64, &'static [u8]>,
+    exact_head: ExactFnspV3StateHeadV1,
+) -> StoreResult<ValidatedLiveFrameAuthority> {
+    let Some(activation_bytes) = activation_bytes else {
+        if head_bytes.is_some() || records.len()? != 0 {
+            return Err(integrity(
+                ExactFnspV3FrameStoreError::FrameRowsWithoutActivation,
+            ));
+        }
+        return Ok(ValidatedLiveFrameAuthority {
+            activation: None,
+            head: None,
+        });
+    };
+    let activation = UntrustedExactFnspV3ActivationV1::decode(&activation_bytes)?;
+    let expected_count = exact_head
+        .generation()
+        .checked_sub(activation.exact_initial.generation())
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameCountMismatch))?;
+    if records.len()? != expected_count {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameCountMismatch));
+    }
+    if expected_count == 0 {
+        if head_bytes.is_some() {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameHeadWithoutRows));
+        }
+        if exact_head != activation.exact_initial {
+            return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
+        }
+        return Ok(ValidatedLiveFrameAuthority {
+            activation: Some(activation),
+            head: None,
+        });
+    }
+
+    let head_bytes =
+        head_bytes.ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameRowsWithoutHead))?;
+    let expected_first = activation.exact_initial.generation();
+    let expected_last = exact_head
+        .generation()
+        .checked_sub(1)
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameCountMismatch))?;
+    let (first_key, _) = records
+        .first()?
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameCountMismatch))?;
+    let (last_key, last_bytes) = records
+        .last()?
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameCountMismatch))?;
+    if first_key.value() != expected_first {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameRecordGap {
+            expected: expected_first,
+            found: first_key.value(),
+        }));
+    }
+    if last_key.value() != expected_last {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameRecordGap {
+            expected: expected_last,
+            found: last_key.value(),
+        }));
+    }
+    if last_bytes.value() != head_bytes.as_slice() {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameHeadMismatch));
+    }
+    let head = UntrustedExactFnspV3FrameV1::decode(&head_bytes)?;
+    if head.sequence != expected_last
+        || head.epoch != activation.epoch
+        || head.activation_hash != activation.activation_hash
+        || head.federation_id != activation.federation_id
+        || head.executor_public_key != activation.executor_public_key
+        || head.receipt_log_index < activation.receipt_cutover_next_index
+        || head.exact_after != exact_head
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
+            "live head",
+        )));
+    }
+    if expected_count == 1 {
+        if head.predecessor
+            != ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash)
+            || head.exact_before != activation.exact_initial
+        {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
+                "live first frame",
+            )));
+        }
+    } else {
+        let previous_key = expected_last
+            .checked_sub(1)
+            .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameCountMismatch))?;
+        let previous_bytes = records.get(previous_key)?.ok_or_else(|| {
+            integrity(ExactFnspV3FrameStoreError::FrameRecordGap {
+                expected: previous_key,
+                found: expected_last,
+            })
+        })?;
+        let previous = UntrustedExactFnspV3FrameV1::decode(previous_bytes.value())?;
+        if previous.sequence != previous_key
+            || previous.epoch != activation.epoch
+            || previous.activation_hash != activation.activation_hash
+            || previous.federation_id != activation.federation_id
+            || previous.executor_public_key != activation.executor_public_key
+            || head.predecessor != ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash)
+            || head.receipt_log_index <= previous.receipt_log_index
+            || head.exact_before != previous.exact_after
+        {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
+                "live predecessor",
+            )));
+        }
+    }
+    Ok(ValidatedLiveFrameAuthority {
+        activation: Some(activation),
+        head: Some(head),
+    })
 }
 
 fn load_snapshot_from_read(
@@ -1167,6 +1447,69 @@ impl ValidatedReceiptLog {
     fn get(&self, index: usize) -> Option<&ValidatedReceiptRow> {
         self.rows.get(index)
     }
+
+    fn latest_heads(&self) -> HashMap<[u8; 32], (u64, [u8; 32])> {
+        let mut heads = HashMap::new();
+        for (index, row) in self.rows.iter().enumerate() {
+            heads.insert(
+                row.receipt.agent.0,
+                (
+                    u64::try_from(index).expect("receipt index was originally a u64 table key"),
+                    row.hash,
+                ),
+            );
+        }
+        heads
+    }
+}
+
+fn decode_canonical_receipt(encoded: &[u8]) -> StoreResult<TurnReceipt> {
+    let receipt: TurnReceipt = postcard::from_bytes(encoded)
+        .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    let canonical = postcard::to_stdvec(&receipt)
+        .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    if canonical.as_slice() != encoded {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+    Ok(receipt)
+}
+
+fn encode_receipt_head(index: u64, hash: [u8; 32]) -> [u8; RECEIPT_HEAD_WIRE_LEN] {
+    let mut encoded = [0u8; RECEIPT_HEAD_WIRE_LEN];
+    encoded[..8].copy_from_slice(&index.to_le_bytes());
+    encoded[8..].copy_from_slice(&hash);
+    encoded
+}
+
+fn decode_receipt_head(encoded: &[u8]) -> StoreResult<(u64, [u8; 32])> {
+    if encoded.len() != RECEIPT_HEAD_WIRE_LEN {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+    Ok((
+        u64::from_le_bytes(encoded[..8].try_into().expect("eight bytes")),
+        encoded[8..].try_into().expect("32 bytes"),
+    ))
+}
+
+fn replace_receipt_head_index_in(
+    write: &WriteTransaction,
+    expected: Option<&HashMap<[u8; 32], (u64, [u8; 32])>>,
+) -> StoreResult<()> {
+    let mut table = write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
+    let keys: Vec<[u8; 32]> = table
+        .iter()?
+        .map(|entry| entry.map(|(key, _)| *key.value()))
+        .collect::<std::result::Result<_, redb::StorageError>>()?;
+    for key in keys {
+        table.remove(&key)?;
+    }
+    if let Some(expected) = expected {
+        for (agent, (index, hash)) in expected {
+            let encoded = encode_receipt_head(*index, *hash);
+            table.insert(agent, encoded.as_slice())?;
+        }
+    }
+    Ok(())
 }
 
 /// Decode the dense receipt log exactly once and derive each actor's causal predecessor at that
@@ -1185,13 +1528,7 @@ fn collect_receipts(
             return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
         }
         let encoded = value.value();
-        let receipt: TurnReceipt = postcard::from_bytes(encoded)
-            .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
-        let canonical = postcard::to_stdvec(&receipt)
-            .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
-        if canonical.as_slice() != encoded {
-            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
-        }
+        let receipt = decode_canonical_receipt(encoded)?;
         let hash = receipt.receipt_hash();
         if !seen_hashes.insert(hash) {
             return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
@@ -1246,6 +1583,86 @@ fn validate_frame_receipt(
         || verify_receipt_signature_with_keys(&receipt, &[frame.executor_public_key]).is_err()
     {
         return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+    Ok(())
+}
+
+/// Validate one exact receipt by direct table lookup.
+///
+/// Fresh writes additionally require the derived per-agent index to name this exact current row.
+/// That index was advanced by the receipt append only after checking the prior per-agent head, so
+/// the check preserves the "latest same-agent predecessor" law without a global receipt scan.
+/// Historical replay compares the explicitly named predecessor row instead; full boot replay has
+/// already established that it was the latest row at that historical point.
+fn validate_frame_receipt_online(
+    write: &WriteTransaction,
+    frame: &UntrustedExactFnspV3FrameV1,
+    require_current_tail: bool,
+    require_indexed_agent_head: bool,
+) -> StoreResult<()> {
+    let receipts = write.open_table(crate::tables::RECEIPT_CHAIN)?;
+    let count = receipts.len()?;
+    let last = receipts.last()?;
+    match (count, last.as_ref()) {
+        (0, None) => {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+        (0, Some(_)) | (_, None) => {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+        (count, Some((key, _))) if key.value() == count - 1 => {}
+        _ => return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch)),
+    }
+    if frame.receipt_log_index >= count
+        || (require_current_tail && frame.receipt_log_index.checked_add(1) != Some(count))
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+    let current_bytes = receipts
+        .get(frame.receipt_log_index)?
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    let receipt = decode_canonical_receipt(current_bytes.value())?;
+    let current_hash = receipt.receipt_hash();
+    if receipt.finality != Finality::Final
+        || current_hash != frame.full_receipt_hash
+        || receipt.previous_receipt_hash != frame.predecessor_receipt_hash
+        || receipt.turn_hash != frame.turn_hash
+        || receipt.forest_hash != frame.forest_hash
+        || receipt.pre_state_hash != frame.full_pre_state_hash
+        || receipt.post_state_hash != frame.full_post_state_hash
+        || receipt.federation_id != frame.federation_id
+        || receipt.agent.0 != frame.agent
+        || verify_receipt_signature_with_keys(&receipt, &[frame.executor_public_key]).is_err()
+    {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+    }
+
+    match (
+        frame.predecessor_receipt_index,
+        frame.predecessor_receipt_hash,
+    ) {
+        (None, None) => {}
+        (Some(index), Some(expected_hash)) => {
+            let predecessor_bytes = receipts
+                .get(index)?
+                .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+            let predecessor = decode_canonical_receipt(predecessor_bytes.value())?;
+            if predecessor.receipt_hash() != expected_hash || predecessor.agent.0 != frame.agent {
+                return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+            }
+        }
+        _ => return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch)),
+    }
+
+    if require_indexed_agent_head {
+        let heads = write.open_table(EXACT_FNSP_V3_RECEIPT_HEADS)?;
+        let indexed = heads
+            .get(&frame.agent)?
+            .map(|value| decode_receipt_head(value.value()))
+            .transpose()?;
+        if indexed != Some((frame.receipt_log_index, frame.full_receipt_hash)) {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
     }
     Ok(())
 }
@@ -2152,11 +2569,11 @@ mod tests {
         );
         let first_receipt_hash = frame1.full_receipt_hash();
         let write = store.db.begin_write().expect("first writer");
-        let (write, frame1) =
+        let (write, _frame1) =
             stage_exact_fnsp_v3_frame_in(write, exact1, frame1).expect("first frame");
         write.commit().expect("commit first");
 
-        append_ordinary_receipt(
+        let (ordinary_index, ordinary_hash) = append_ordinary_receipt(
             &store,
             &activation,
             &key,
@@ -2164,25 +2581,180 @@ mod tests {
             Some(first_receipt_hash),
             0xB2,
         );
-        let exact2 = store
-            .prepare_exact_fnsp_v3_append([0xB3; 32], 113)
-            .expect("second exact");
-        let stale = frame_candidate(
-            &store,
-            &activation,
-            exact2,
-            &key,
-            [0xA1; 32],
-            Some((0, first_receipt_hash)),
-            Some(&frame1),
-            0xB3,
-        );
         let head_before = store.exact_fnsp_v3_state_head().expect("head before");
-        let write = store.db.begin_write().expect("stale writer");
-        assert!(stage_exact_fnsp_v3_frame_in(write, exact2, stale).is_err());
+        let receipt_len_before = store.receipt_chain_len().expect("receipt len");
+        let mut stale = TurnReceipt {
+            turn_hash: [0xB3; 32],
+            forest_hash: [0xB4; 32],
+            pre_state_hash: [0xB5; 32],
+            post_state_hash: [0xB6; 32],
+            agent: dregg_cell::CellId([0xA1; 32]),
+            federation_id: activation.federation_id,
+            previous_receipt_hash: Some(first_receipt_hash),
+            finality: Finality::Final,
+            ..TurnReceipt::default()
+        };
+        stale.executor_signature = Some(
+            sign(&key, &stale.canonical_executor_signed_message())
+                .0
+                .to_vec(),
+        );
+        assert!(
+            store
+                .append_receipt_chain_entry(
+                    receipt_len_before,
+                    &postcard::to_stdvec(&stale).expect("encode stale receipt"),
+                )
+                .is_err(),
+            "the derived head must reject a signed stale predecessor at receipt append"
+        );
+        assert_eq!(
+            store.receipt_chain_len().expect("receipt len after"),
+            receipt_len_before
+        );
         assert_eq!(
             store.exact_fnsp_v3_state_head().expect("head after"),
             head_before
+        );
+        let read = store.db.begin_read().expect("read head index");
+        let heads = read
+            .open_table(EXACT_FNSP_V3_RECEIPT_HEADS)
+            .expect("receipt heads");
+        assert_eq!(
+            decode_receipt_head(
+                heads
+                    .get(&[0xA1; 32])
+                    .expect("read indexed head")
+                    .expect("indexed head")
+                    .value(),
+            )
+            .expect("decode indexed head"),
+            (ordinary_index, ordinary_hash),
+            "failed append must not advance the online head"
+        );
+    }
+
+    #[test]
+    fn online_boundary_matches_full_audit_after_large_interleaved_receipt_table() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("exact-online-boundary.redb");
+        let exact_agent = [3u8; 32];
+        let exact_receipt_hash;
+        let (key, public) = generate_keypair();
+        {
+            let store = PersistentStore::open(&path).expect("store");
+            let initial = store
+                .initialize_exact_fnsp_v3_state(std::iter::empty())
+                .expect("exact genesis");
+            let activation = activation_candidate(initial, &key, public);
+            store
+                .install_exact_fnsp_v3_activation(activation.clone())
+                .expect("activation");
+
+            let mut player_heads = HashMap::new();
+            for tag in 1u8..=128 {
+                let agent = [tag % 8; 32];
+                let previous = player_heads.get(&agent).map(|(_, hash)| *hash);
+                let head = append_ordinary_receipt(&store, &activation, &key, agent, previous, tag);
+                player_heads.insert(agent, head);
+            }
+            let exact = store
+                .prepare_exact_fnsp_v3_append([0xD1; 32], 209)
+                .expect("exact append");
+            let frame = frame_candidate(
+                &store,
+                &activation,
+                exact,
+                &key,
+                exact_agent,
+                player_heads.get(&exact_agent).copied(),
+                None,
+                0xD1,
+            );
+            exact_receipt_hash = frame.full_receipt_hash();
+            let expected_frame_hash = frame.frame_hash();
+            let write = store.db.begin_write().expect("writer");
+            let (write, _) = stage_exact_fnsp_v3_frame_in(write, exact, frame)
+                .expect("online writer over large receipt table");
+            write.commit().expect("commit exact frame");
+
+            let (live_activation, live_head) = store
+                .exact_fnsp_v3_live_authority()
+                .expect("live authority")
+                .expect("activated live authority");
+            let full_activation = store
+                .exact_fnsp_v3_activation()
+                .expect("full activation audit")
+                .expect("full activation");
+            let full_head = store
+                .exact_fnsp_v3_committed_frame_head()
+                .expect("full frame audit")
+                .expect("full frame");
+            assert_eq!(
+                live_activation.activation_hash(),
+                full_activation.activation_hash()
+            );
+            assert_eq!(
+                live_head.expect("live frame").frame_hash(),
+                full_head.frame_hash()
+            );
+            assert_eq!(full_head.frame_hash(), expected_frame_hash);
+        }
+
+        // Reopen performs the full O(receipts + frames) replay and rebuilds the online index.
+        // A subsequent same-agent append proves that rebuilt index retained the exact receipt.
+        let reopened = PersistentStore::open(&path).expect("full replay + index rebuild");
+        let activation = reopened
+            .exact_fnsp_v3_activation()
+            .expect("activation audit")
+            .expect("activation");
+        let result = append_ordinary_receipt(
+            &reopened,
+            &activation.0,
+            &key,
+            exact_agent,
+            Some(exact_receipt_hash),
+            0xD2,
+        );
+        assert_eq!(result.0, 129);
+    }
+
+    #[test]
+    fn online_writer_rejects_missing_derived_agent_head_before_exact_cas() {
+        let (store, initial) = setup_store();
+        let (key, public) = generate_keypair();
+        let activation = activation_candidate(initial, &key, public);
+        store
+            .install_exact_fnsp_v3_activation(activation.clone())
+            .expect("activation");
+        let exact = store
+            .prepare_exact_fnsp_v3_append([0xE1; 32], 225)
+            .expect("exact append");
+        let frame = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xE2; 32],
+            None,
+            None,
+            0xE1,
+        );
+        let exact_before = store.exact_fnsp_v3_state_head().expect("exact before");
+        let write = store.db.begin_write().expect("tamper derived index");
+        write
+            .open_table(EXACT_FNSP_V3_RECEIPT_HEADS)
+            .expect("receipt heads")
+            .remove(&[0xE2; 32])
+            .expect("remove derived head");
+        write.commit().expect("commit derived-index fault");
+
+        let write = store.db.begin_write().expect("exact writer");
+        assert!(stage_exact_fnsp_v3_frame_in(write, exact, frame).is_err());
+        assert_eq!(
+            store.exact_fnsp_v3_state_head().expect("exact after"),
+            exact_before,
+            "online-index failure must occur before exact CAS mutation"
         );
     }
 }
