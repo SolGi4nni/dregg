@@ -183,6 +183,92 @@ theorem acknowledgePrefix_length_le
   | cons head tail ih =>
       cases head <;> simp [acknowledgePrefix, ih]
 
+/-! ## Crash recovery: the cursor is a projection of the durable log -/
+
+/-- One finalized identity paired with the result of attempting its transition. -/
+structure FinalizedAttempt (BlockId Commit Rejection Error : Type) where
+  blockId : BlockId
+  outcome : FinalizedExecutionOutcome Commit Rejection Error
+  deriving DecidableEq, Repr
+
+/-- A durable terminal row is the sole authority from which an executed identity is recovered. -/
+structure DurableExecutionRecord (BlockId Commit Rejection : Type) where
+  blockId : BlockId
+  terminal : DurableTerminal Commit Rejection
+  deriving DecidableEq, Repr
+
+/-- Turn one attempted result into a durable row exactly when it is terminal. -/
+def durableRecord? (attempt : FinalizedAttempt BlockId Commit Rejection Error) :
+    Option (DurableExecutionRecord BlockId Commit Rejection) :=
+  (durableTerminal? attempt.outcome).map fun terminal =>
+    { blockId := attempt.blockId, terminal }
+
+/-- Persist the longest ordered terminal prefix.  Never apply a later block over a hole. -/
+def durableAttemptPrefix : List (FinalizedAttempt BlockId Commit Rejection Error) →
+    List (DurableExecutionRecord BlockId Commit Rejection)
+  | [] => []
+  | attempt :: rest =>
+      match durableRecord? attempt with
+      | some record => record :: durableAttemptPrefix rest
+      | none => []
+
+/-- Restart derives the cursor from committed/rejected rows, rather than trusting a side marker. -/
+def recoverExecutedCursor
+    (records : List (DurableExecutionRecord BlockId Commit Rejection)) : List BlockId :=
+  records.map (·.blockId)
+
+@[simp] theorem durableRecord?_retryable_none (blockId : BlockId) (error : Error) :
+    durableRecord? ({ blockId, outcome := .retryableOperational error } :
+      FinalizedAttempt BlockId Commit Rejection Error) = none :=
+  rfl
+
+@[simp] theorem durableRecord?_fatal_none (blockId : BlockId) (error : Error) :
+    durableRecord? ({ blockId, outcome := .fatalIntegrity error } :
+      FinalizedAttempt BlockId Commit Rejection Error) = none :=
+  rfl
+
+@[simp] theorem durableAttemptPrefix_stops_at_retry
+    (blockId : BlockId) (error : Error)
+    (rest : List (FinalizedAttempt BlockId Commit Rejection Error)) :
+    durableAttemptPrefix ({ blockId, outcome := .retryableOperational error } :: rest) = [] :=
+  rfl
+
+@[simp] theorem durableAttemptPrefix_stops_at_fatal
+    (blockId : BlockId) (error : Error)
+    (rest : List (FinalizedAttempt BlockId Commit Rejection Error)) :
+    durableAttemptPrefix ({ blockId, outcome := .fatalIntegrity error } :: rest) = [] :=
+  rfl
+
+/-- Every recovered executed identity is an ordered prefix of the attempted identities. -/
+theorem recovered_cursor_is_attempted_prefix
+    (attempts : List (FinalizedAttempt BlockId Commit Rejection Error)) :
+    List.IsPrefix
+      (recoverExecutedCursor (durableAttemptPrefix attempts))
+      (attempts.map (·.blockId)) := by
+  induction attempts with
+  | nil => exact List.prefix_rfl
+  | cons attempt rest ih =>
+      unfold recoverExecutedCursor at ih ⊢
+      cases attempt with
+      | mk blockId outcome =>
+          cases outcome <;>
+            simp [durableAttemptPrefix, durableRecord?, ih]
+
+/-- A retry/fatal at the head reconstructs no executed identity, even if later attempts exist. -/
+theorem operational_hole_recovers_empty
+    (attempt : FinalizedAttempt BlockId Commit Rejection Error)
+    (rest : List (FinalizedAttempt BlockId Commit Rejection Error))
+    (h : durableTerminal? attempt.outcome = none) :
+    recoverExecutedCursor (durableAttemptPrefix (attempt :: rest)) = [] := by
+  simp [durableAttemptPrefix, durableRecord?, h, recoverExecutedCursor]
+
+/-- The recovered cursor length is bounded by the attempted batch length. -/
+theorem recovered_cursor_length_le
+    (attempts : List (FinalizedAttempt BlockId Commit Rejection Error)) :
+    (recoverExecutedCursor (durableAttemptPrefix attempts)).length ≤ attempts.length :=
+  by
+    simpa using (recovered_cursor_is_attempted_prefix attempts).length_le
+
 /-! ## Executable teeth -/
 
 private def demoPolicy : TimePolicy := { genesis := 1_700_000_000, maxForward := 300 }
@@ -208,5 +294,12 @@ private def demoPolicy : TimePolicy := { genesis := 1_700_000_000, maxForward :=
 #assert_axioms acknowledgePrefix_stops_at_retry
 #assert_axioms acknowledgePrefix_stops_at_fatal
 #assert_axioms acknowledgePrefix_length_le
+#assert_axioms durableRecord?_retryable_none
+#assert_axioms durableRecord?_fatal_none
+#assert_axioms durableAttemptPrefix_stops_at_retry
+#assert_axioms durableAttemptPrefix_stops_at_fatal
+#assert_axioms recovered_cursor_is_attempted_prefix
+#assert_axioms operational_hole_recovers_empty
+#assert_axioms recovered_cursor_length_le
 
 end Dregg2.Distributed.ConsensusTimeAck
