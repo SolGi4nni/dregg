@@ -93,16 +93,12 @@ Also CLOSED — residual (iii), THE ASSEMBLY (§6.5):
     the cell with `cellAlgebra` through the indicator glue. `forkCollide_bool_of_sat` supplies the
     fork/collide range `selection_of_sat` did not, which is what makes the NON-surviving direction
     (`surv = 0 ⇒ the reference really does drop both moves`) provable rather than one-sided.
-  * `resolve_step_sat_imp_applyTurn` — **THE WHOLE TURN.** Leg R sat + Leg A sat + the FOLD-ENFORCED
-    PUBLIC-INPUT equality (Leg R's MID commitment PIs = Leg A's OLD commitment PIs). The board-level
-    seam that used to be assumed here is now DERIVED, via the packed commitment's injectivity
-    (`AutomataflCommitRefine.seam_of_pack_congr`) ⇒ the decoded NEW board IS
-    `Automatafl.applyTurn` of the decoded OLD board with the two decoded moves, cell-wise. Glued by
-    `Automatafl.applyTurn_factors` and the cell-wise congruence `Automatafl.automatonStep_congr`,
-    over `AutomataflStepRefine.astep_sat_imp_automatonStep`. What is still assumed is the PI
-    equality itself — the fold-level join, which this file has no fold object to discharge — but it
-    is now a hypothesis about PUBLISHED PUBLIC INPUTS (each side forced by its own `.piBinding`),
-    not about the two witnesses' private board columns.
+  * THE WHOLE TURN now lives at the deployed `n = 11` in `AutomataflTurnCapstone.
+    turn_sat_imp_roundStep_pi` (over `roundStep` / `resolveMoves` / the FINAL corrected board
+    `cMidV4`), not here. The V2 `resolve_step_sat_imp_applyTurn` (`new = applyTurn(old, moves)` at
+    `NN = 2`, over the buggy `resolveMid` board) is RETIRED — see §D.6b: its crypto-free seam rode
+    the `mid` commitment, and the commitment now packs `cMidV4`. This file supplies the Leg-R side
+    of that emitted seam via `resolve_midPack_pi_of_sat` (re-pointed to `cMidV4`).
 
 There is no `sorry`, no assumed arithmetization hypothesis, no assumed mid-board link beyond that
 named seam, and no weakened or vacuous capstone standing in for either.
@@ -2860,13 +2856,14 @@ theorem rcommit_oldAlpha (hsat : Satisfied2 hash (automataflResolveDescN n) mini
     (gate_of_mem hsat 0 (by omega) (mem_resolve_of_mem_boardRange (br_old n c hcK)))
     (canon_loc hc 0 _)
 
-/-- The MID board cells likewise. -/
-theorem rcommit_midAlpha (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
+/-- The COMMITTED FINAL board cells `cMidV4` likewise — off the NEW `assert_member(cMidV4, {0,1,2,3})`
+range gate. This is the `{0,1,2,3}` precondition the packed-`cMidV4` commitment transport needs. -/
+theorem rcommit_cMidV4Alpha (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
     (hc : StepCanon t) (hlen : 1 < t.rows.length) (c : Nat) (hcK : c < n * n) :
-    ((envAt t 0).loc (NGen.mid n c) = 0 ∨ (envAt t 0).loc (NGen.mid n c) = 1
-      ∨ (envAt t 0).loc (NGen.mid n c) = 2 ∨ (envAt t 0).loc (NGen.mid n c) = 3) :=
+    ((envAt t 0).loc (NGen.cMidV4 n c) = 0 ∨ (envAt t 0).loc (NGen.cMidV4 n c) = 1
+      ∨ (envAt t 0).loc (NGen.cMidV4 n c) = 2 ∨ (envAt t 0).loc (NGen.cMidV4 n c) = 3) :=
   AutomataflStepRefine.mem4_of_gate
-    (gate_of_mem hsat 0 (by omega) (mem_resolve_of_mem_boardRange (br_mid n c hcK)))
+    (gate_of_mem hsat 0 (by omega) (mem_resolve_of_mem_boardRange (br_cMidV4 n c hcK)))
     (canon_loc hc 0 _)
 
 theorem rcommit_oldPack_mem (j : Nat) (hj : j < feltCount n) :
@@ -2878,7 +2875,7 @@ theorem rcommit_oldPack_mem (j : Nat) (hj : j < feltCount n) :
     (List.mem_append_left _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩))))
 
 theorem rcommit_midPack_mem (j : Nat) (hj : j < feltCount n) :
-    linGate (packTermsAt n j (NGen.mid n) (NGen.packMidFelt n)) 0
+    linGate (packTermsAt n j (NGen.cMidV4 n) (NGen.packMidFelt n)) 0
       ∈ (automataflResolveDescN n).constraints := by
   refine mem_resolve_of_mem_commit ?_
   unfold NGen.commitBoardsConstraints
@@ -2926,16 +2923,23 @@ theorem resolve_oldPack_pi_of_sat
     (fun idx hidx => rcommit_oldAlpha hsat hc hlen idx hidx)
     (rcommit_oldPack_mem j hj) (rcommit_oldPi_mem j hj)
 
-/-- **`resolve_midPack_pi_of_sat` — THE SEAM SIDE.** `PI[16+fc+j]` IS the `j`-th packed felt of Leg
-R's MID board — the very board Leg A must start from. -/
+/-- **`resolve_midPack_pi_of_sat` — THE SEAM SIDE, now over the FINAL corrected board `cMidV4`.**
+`PI[16+fc+j]` IS the `j`-th packed felt of Leg R's `cMidV4` board — the THIRD-wound-fixed FINAL board
+that `AutomataflResolveMovesCapstone.resolve_sat_imp_roundBoardN` pins to the `AutomataflRules.
+roundStep` resolve board (`old` on a clash, the VALIDATED `resolveMoves` cell otherwise). The
+commitment window packs `cMidV4` (not the V2 `mid`), so this is an EMITTED transport off the pack
+gate + the `.piBinding` + the NEW `cMidV4` alphabet range gate — no hash, no chip-soundness
+hypothesis. This is exactly the `hRmidPack` ingredient the whole-turn cell seam
+(`AutomataflTurnCapstone.turn_sat_imp_roundStep_pi`) needs, so that seam is now fully
+emitted-crypto-free (it takes only the fold PI-equalities). -/
 theorem resolve_midPack_pi_of_sat
     (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
     (hc : StepCanon t) (hlen : 1 < t.rows.length) (j : Nat) (hj : j < feltCount n) :
     t.pub (16 + NGen.RFC n + j)
-      ≡ packCell (boardCode (boardDecodeCommitAt n (NGen.mid n) (envAt t 0)) n) j
+      ≡ packCell (boardCode (boardDecodeCommitAt n (NGen.cMidV4 n) (envAt t 0)) n) j
         [ZMOD 2013265921] :=
-  pack_pi_of_mem hsat hlen (NGen.mid n) (NGen.packMidFelt n) (16 + NGen.RFC n) j
-    (fun idx hidx => rcommit_midAlpha hsat hc hlen idx hidx)
+  pack_pi_of_mem hsat hlen (NGen.cMidV4 n) (NGen.packMidFelt n) (16 + NGen.RFC n) j
+    (fun idx hidx => rcommit_cMidV4Alpha hsat hc hlen idx hidx)
     (rcommit_midPack_mem j hj) (rcommit_midPi_mem j hj)
 
 theorem resolve_autoX_pi_of_sat
@@ -2951,143 +2955,40 @@ theorem resolve_autoY_pi_of_sat
   piFirst_of_mem hsat hlen _ _ rcommit_autoY_mem
 
 /-- **`resolve_forge_rejected`** — the Leg-R transport BITES: no satisfying canonical witness can
-publish a MID commitment that is not the genuine pack of the MID columns the rewrite proved over. -/
+publish a MID commitment that is not the genuine pack of the FINAL corrected board `cMidV4` the
+roundStep-faithful rewrite proved over. -/
 theorem resolve_forge_rejected
     (hsat : Satisfied2 hash (automataflResolveDescN n) minit mfin maddrs t)
     (hc : StepCanon t) (hlen : 1 < t.rows.length) (j : Nat) (hj : j < feltCount n)
     (hforge : ¬ (t.pub (16 + NGen.RFC n + j)
-      ≡ packCell (boardCode (boardDecodeCommitAt n (NGen.mid n) (envAt t 0)) n) j
+      ≡ packCell (boardCode (boardDecodeCommitAt n (NGen.cMidV4 n) (envAt t 0)) n) j
         [ZMOD 2013265921])) : False :=
   hforge (resolve_midPack_pi_of_sat hsat hc hlen j hj)
 
-/-- Leg R's decoded MID board and the commitment decode at the `mid` base agree on every in-bounds
-cell (same columns, same alphabet decode; only the irrelevant `automaton` placeholder differs). -/
-theorem boardDecodeMid_commit_cellAt (e : VmRowEnv) (x y : Nat) (hx : x < NN) (hy : y < NN) :
-    (boardDecodeMid e).cellAt ⟨x, y⟩
-      = (boardDecodeCommitAt NN (NGen.mid NN) e).cellAt ⟨x, y⟩ := by
-  simp only [Board.cellAt, boardDecodeMid, boardDecodeCommitAt, NGen.mid, NGen.KK, mid, KK, NN]
-
 end RCommit
 
-/-- **THE WHOLE TURN — the seam is now DISCHARGED, not assumed.**
+/-! ## §D.6b — THE V2 WHOLE-TURN THEOREM `resolve_step_sat_imp_applyTurn` IS RETIRED.
 
-Leg R's satisfying first row adjudicates `old → mid`; Leg A's satisfying first row runs `mid → new`;
-the two are joined by the FOLD-ENFORCED PUBLIC-INPUT EQUALITY — Leg R's MID commitment PIs equal Leg
-A's OLD commitment PIs. Under that, the decoded NEW board IS the reference `applyTurn` of Leg R's
-decoded OLD board with the two decoded moves, cell-wise.
-
-WHAT CHANGED FROM THE PREVIOUS FORM. This theorem used to take two BOARD-LEVEL hypotheses —
-`hseamCell` ("Leg A's decoded old board agrees cell-wise with Leg R's decoded mid board") and
-`hseamAuto` ("…and on the automaton coordinate"). Those are statements about the two witnesses'
-private columns: nothing a verifier can check, and exactly the thing a fold is supposed to enforce.
-They are GONE. What is assumed now is only equality of PUBLISHED PUBLIC INPUTS, which is what a fold
-/ light client actually reads and constrains, and the board agreement is DERIVED inside:
-
-  * `hseamPack` feeds `resolve_midPack_pi_of_sat` (Leg R's MID pack) and
-    `astep_oldPack_pi_of_sat` (Leg A's OLD pack) into `seam_of_pack_congr`, whose engine is
-    `AutomataflCommit.pack_injective_modp` — base-4 positional decode with no modular collision
-    (`packed_j < 4^15 < p`). That yields cell-wise agreement as a THEOREM.
-  * `hseamAutoX` / `hseamAutoY` do the same for the automaton coordinate through the two
-    `.piBinding`s. The coordinate needs its own binding: a `Board` is cells AND a coordinate, and no
-    emitted gate forbids a second `AUTO`-coded cell, so cell agreement alone cannot recover it.
-
-WHAT IT STILL ASSUMES, PLAINLY. (i) Both traces are `Satisfied2` and `StepCanon` with at least two
-rows. (ii) The three PI equalities above — the fold-level join, still a hypothesis HERE because this
-file has no fold object; it is now, however, a hypothesis about PUBLIC data with a `.piBinding`
-forcing each side, not about private columns. (iii) Row `0` of each trace, because the commitment is
-a first-row boundary binding. (iv) `n = 2`, the size at which the byte-pinned descriptors are
-instantiated. NO hash assumption and NO chip-table soundness assumption anywhere on this path — the
-retired `board_root8` commitment carried one. -/
-theorem resolve_step_sat_imp_applyTurn
-    {hashR : List ℤ → ℤ} {minitR : ℤ → ℤ} {mfinR : ℤ → ℤ × Nat} {maddrsR : List ℤ} {tR : VmTrace}
-    {hashA : List ℤ → ℤ} {minitA : ℤ → ℤ} {mfinA : ℤ → ℤ × Nat} {maddrsA : List ℤ} {tA : VmTrace}
-    (hsatR : Satisfied2 hashR automataflResolveDesc minitR mfinR maddrsR tR)
-    (hcR : StepCanon tR) (hlenR : 1 < tR.rows.length)
-    (hsatA : Satisfied2 hashA Dregg2.Circuit.Emit.AutomataflStepEmit.automataflStepDesc
-      minitA mfinA maddrsA tA)
-    (hcA : StepCanon tA) (hlenA : 1 < tA.rows.length)
-    -- THE FOLD-ENFORCED SEAM: Leg R's MID commitment == Leg A's OLD commitment, on PUBLIC INPUTS.
-    (hseamPack : ∀ j, j < AutomataflCommit.feltCount NN →
-      tR.pub (16 + NGen.RFC NN + j) = tA.pub (16 + j))
-    (hseamAutoX : tR.pub (NGen.AUTO_PI_BASE NN)
-      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE NN))
-    (hseamAutoY : tR.pub (NGen.AUTO_PI_BASE NN + 1)
-      = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE NN + 1)) :
-    ∀ x y : Nat, x < NN → y < NN →
-      codeToParticle ((envAt tA 0).loc
-          (Dregg2.Circuit.Emit.AutomataflStepEmit.new (y * NN + x)))
-        = (applyTurn (boardDecodeOld (envAt tR 0))
-            [moveDecode (envAt tR 0) 0, moveDecode (envAt tR 0) 1]).cellAt ⟨x, y⟩ := by
-  set bA := Dregg2.Circuit.Emit.AutomataflStepRefine.boardDecode (envAt tA 0) with hbA
-  set bR := resolveMid (boardDecodeOld (envAt tR 0))
-    [moveDecode (envAt tR 0) 0, moveDecode (envAt tR 0) 1] with hbR
-  -- (1) THE CELL-WISE SEAM, DERIVED from the published pack equality.
-  have hseamCell : ∀ x y : Nat, x < NN → y < NN →
-      bA.cellAt ⟨x, y⟩ = (boardDecodeMid (envAt tR 0)).cellAt ⟨x, y⟩ := by
-    have hpack := AutomataflCommitRefine.seam_of_pack_congr (n := NN)
-      (Dregg2.Circuit.Emit.AutomataflCommitRefine.boardDecodeCommitAt NN
-        (Dregg2.Circuit.Emit.AutomataflStepEmit.NGen.old NN) (envAt tA 0))
-      (Dregg2.Circuit.Emit.AutomataflCommitRefine.boardDecodeCommitAt NN (NGen.mid NN) (envAt tR 0))
-      (fun j => tA.pub (16 + j)) (fun j => tR.pub (16 + NGen.RFC NN + j))
-      (fun j hj => AutomataflCommitRefine.astep_oldPack_pi_of_sat hsatA hcA hlenA j hj)
-      (fun j hj => resolve_midPack_pi_of_sat hsatR hcR hlenR j hj)
-      (fun j hj => (hseamPack j hj).symm)
-    intro x y hx hy
-    rw [hbA, AutomataflCommitRefine.astep_boardDecode_cellAt (envAt tA 0) x y hx hy,
-      boardDecodeMid_commit_cellAt (envAt tR 0) x y hx hy]
-    exact hpack x y hx hy
-  -- (2) THE AUTOMATON COORDINATE, DERIVED from its two published bindings.
-  have haX : (envAt tA 0).loc Dregg2.Circuit.Emit.AutomataflStepEmit.AX
-      = (envAt tR 0).loc AX_C :=
-    eq_of_modEq_canon (canon_loc hcA 0 _) (canon_loc hcR 0 _)
-      (((AutomataflCommitRefine.astep_autoX_pi_of_sat hsatA hlenA).trans
-        (Int.ModEq.symm (hseamAutoX ▸ Int.ModEq.refl _))).trans
-        (resolve_autoX_pi_of_sat hsatR hlenR).symm)
-  have haY : (envAt tA 0).loc Dregg2.Circuit.Emit.AutomataflStepEmit.AY
-      = (envAt tR 0).loc AY_C :=
-    eq_of_modEq_canon (canon_loc hcA 0 _) (canon_loc hcR 0 _)
-      (((AutomataflCommitRefine.astep_autoY_pi_of_sat hsatA hlenA).trans
-        (Int.ModEq.symm (hseamAutoY ▸ Int.ModEq.refl _))).trans
-        (resolve_autoY_pi_of_sat hsatR hlenR).symm)
-  have hseamAuto : bA.automaton = (boardDecodeMid (envAt tR 0)).automaton := by
-    simp only [hbA, Dregg2.Circuit.Emit.AutomataflStepRefine.boardDecode, boardDecodeMid,
-      haX, haY]
-  -- (3) the original composition, now on DERIVED inputs.
-  have hmidEq : ∀ x y : Nat, x < NN → y < NN → bA.cellAt ⟨x, y⟩ = bR.cellAt ⟨x, y⟩ := by
-    intro x y hx hy
-    rw [hseamCell x y hx hy, boardDecodeMid_cell _ x y hx hy,
-      resolve_sat_imp_resolveMid hsatR hcR 0 (by omega) x y hx hy]
-  have hsz : bA.size = bR.size := rfl
-  have hau : bA.automaton = bR.automaton := hseamAuto
-  have hcol : bA.useColumnRule = bR.useColumnRule := rfl
-  have hcell : ∀ c : Coord, c.x < bA.size → c.y < bA.size → bA.cellAt c = bR.cellAt c := by
-    rintro ⟨cx, cy⟩ h1 h2
-    have h1' : cx < NN := h1
-    have h2' : cy < NN := h2
-    exact hmidEq cx cy h1' h2'
-  obtain ⟨-, -, hstep⟩ := automatonStep_congr bA bR hsz hau hcol hcell
-  intro x y hx hy
-  obtain ⟨-, -, hA⟩ :=
-    Dregg2.Circuit.Emit.AutomataflStepRefine.astep_sat_imp_automatonStep hsatA hcA 0 (by omega)
-  have hAxy : codeToParticle ((envAt tA 0).loc
-      (Dregg2.Circuit.Emit.AutomataflStepEmit.new (y * NN + x)))
-      = (automatonStep bA).cellAt ⟨x, y⟩ := hA x y hx hy
-  rw [hAxy, applyTurn_factors, ← hbR]
-  exact hstep ⟨x, y⟩ hx hy
+It proved `new = applyTurn(old, moves)` at `NN = 2` by discharging the cell seam from Leg R's MID
+commitment pack transport. The commitment now packs the FINAL corrected board `cMidV4` (not the V2
+`mid`), so that crypto-free seam over the `mid` columns no longer exists — and its `applyTurn =
+automatonStep ∘ resolveMid` conclusion is the SUPERSEDED V2 spec (the buggy board the occlusion /
+2-cycle corrections were built to fix). The correct whole turn is
+`AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` at the deployed `n = 11`, over `roundStep` /
+`resolveMoves` / `cMidV4`, with the cell seam now a fully EMITTED-crypto-free consequence of
+`resolve_midPack_pi_of_sat` (this file, re-pointed to `cMidV4`). -/
 
 #print axioms resolveFacts_of_sat
 #print axioms midCell_of_facts
 #print axioms resolve_sat_imp_resolveMid
-#print axioms resolve_step_sat_imp_applyTurn
 -- LEG R's PACKED COMMITMENT TRANSPORT (the seam ingredients).
 #print axioms rcommit_oldAlpha
-#print axioms rcommit_midAlpha
+#print axioms rcommit_cMidV4Alpha
 #print axioms resolve_oldPack_pi_of_sat
 #print axioms resolve_midPack_pi_of_sat
 #print axioms resolve_autoX_pi_of_sat
 #print axioms resolve_autoY_pi_of_sat
 #print axioms resolve_forge_rejected
-#print axioms boardDecodeMid_commit_cellAt
 
 /-! ## §D.7 — THE OCCLUSION-INDEPENDENT ADJUDICATION CORE, AT ARBITRARY BOARD SIZE `n`.
 

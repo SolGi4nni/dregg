@@ -23,6 +23,7 @@ no-collision statement remains conditional and is not used by the game braid.
 -/
 import Dregg2.Circuit.Emit.AutomataflResolveRefine
 import Dregg2.Circuit.Emit.AutomataflRevealJoin
+import Dregg2.Circuit.Emit.AutomataflTurnCapstone
 
 namespace Dregg2.Games.AutomataflBraid
 
@@ -115,10 +116,14 @@ theorem turnBraid_of_legR_legA {old mid final : Board} {moves : List Move}
     TurnBraid old moves goals ⟨mid, final, winner final goals⟩ :=
   ⟨hR, hA, rfl⟩
 
-/- The two concrete capstones this braid consumes semantically. `#check` deliberately
+/- The concrete capstones this braid consumes semantically. `#check` deliberately
 retains their full real types rather than wrapping away any `Satisfied2`, canonicality,
-row-length, PI-seam, or chip-table premise. -/
-#check Dregg2.Circuit.Emit.AutomataflResolveRefine.resolve_step_sat_imp_applyTurn
+row-length, PI-seam, or chip-table premise. The whole-turn circuit capstone is now
+`AutomataflTurnCapstone.turn_sat_imp_roundStep_pi` at the deployed `n = 11` (over `roundStep` /
+`resolveMoves` / the FINAL corrected board `cMidV4`, with the seam a fully emitted-crypto-free
+consequence of the `cMidV4`-packing commitment); the retired V2 `resolve_step_sat_imp_applyTurn`
+(`applyTurn` / `resolveMid`, `NN = 2`) is superseded by it. -/
+#check @Dregg2.Circuit.Emit.AutomataflTurnCapstone.turn_sat_imp_roundStep_pi
 #check Dregg2.Circuit.Emit.AutomataflRevealRefine.legS_sat_imp_semantics
 
 /-- Leg S selects the move pair; the R/A/winner braid then has one outcome. -/

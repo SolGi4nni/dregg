@@ -34,22 +34,26 @@ constrains — with NO hash and NO chip-table soundness assumption:
   equality. Fully emitted; no residual.
 * `seamCell_of_cMidV4_pack` — the cells, via `AutomataflCommitRefine.seam_of_pack_congr` (whose
   engine is `pack_injective_modp`: base-4 positional decode, `packed < 4^15 < p`, no modular
-  collision). Its Leg-R ingredient is a `cMidV4` pack-transport hypothesis.
+  collision). Its Leg-R ingredient is `cMidV4` pack transport — now an EMITTED theorem (below).
 
 `turn_sat_imp_roundStep_pi` threads all three into a single PI-carried statement.
 
-## HONEST RESIDUAL — the resolve commitment packs `mid`, not `cMidV4`
+## THE COMMITMENT PACKS `cMidV4` — the whole turn is fully emitted-crypto-free
 
-`AutomataflResolveEmit.commitBoardsConstraints` packs the `NGen.mid` columns (the V2
-`write_mid_witnessed` board), NOT the `NGen.cMidV4` columns (the THIRD-wound-fixed FINAL board the
-roundStep-faithful capstone `resolve_sat_imp_roundBoard11` characterizes). `mid` and `cMidV4` are
-DIFFERENT columns and differ semantically whenever the occlusion / 2-cycle corrections bite (a
-`clashCoords`-clean round can still have an occluded path). So the EMITTED `resolve_midPack_pi_of_sat`
-(over `mid`) does NOT connect Leg A's old board to the roundStep resolve board at `n = 11`. The
-crypto-free cell discharge here is therefore stated with Leg R's `cMidV4` pack-transport as a
-hypothesis (`hRmidPack`). CUTOVER: re-point `commitBoardsConstraints`' mid pack from `NGen.mid` to
-`NGen.cMidV4` (and range-check `cMidV4`); then `hRmidPack` becomes an emitted theorem and the whole
-turn takes only fold PI-equalities. This file is ADDITIVE and re-emits nothing.
+`AutomataflResolveEmit.commitBoardsConstraints` packs the `NGen.cMidV4` columns (the THIRD-wound-fixed
+FINAL board the roundStep-faithful capstone `resolve_sat_imp_roundBoard11` characterizes as the
+`AutomataflRules.roundStep` resolve board), and `cMidV4` carries an `assert_member(cMidV4,{0,1,2,3})`
+range gate. So `AutomataflResolveRefine.resolve_midPack_pi_of_sat` is an EMITTED transport
+`PI[16+fc+j] = pack(cMidV4)`, and `turn_sat_imp_roundStep_pi` DISCHARGES the former `hRmidPack`
+hypothesis from it — the whole turn takes ONLY the fold PI-equalities (`hseamPack`, `hseamAutoX`,
+`hseamAutoY`), with NO hash, NO chip-table soundness, and NO un-emitted ingredient. `seamCell_of_
+cMidV4_pack` keeps its general `hRmidPack` parameter (it is a crypto-free lemma with no descriptor
+knowledge); the PI-carried capstone supplies the emitted transport for it. This file re-emits nothing.
+
+(HISTORICAL: the resolve commitment used to pack `NGen.mid` — the V2 `write_mid_witnessed` board,
+which differs from `cMidV4` whenever an occlusion / 2-cycle correction bites, so it committed the
+WRONG board root and the cell seam carried `hRmidPack` as an un-emitted hypothesis. The re-point to
+`cMidV4` closed that.)
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every exported theorem.
@@ -230,10 +234,12 @@ theorem seamAuto_of_pi
   simp only [boardDecodeN, boardDecodeOldN, haX, haY]
 
 /-- **`seamCell_of_cMidV4_pack` — the cell seam, crypto-free via base-4 pack injectivity.** Given
-Leg A's EMITTED old-board pack transport and Leg R's `cMidV4` pack transport (`hRmidPack` — the
-un-emitted commitment, see `## HONEST RESIDUAL`), both pinned to the SAME published PI slot by the
-fold (`hseamPack`), `seam_of_pack_congr` (engine: `pack_injective_modp`, no modular collision) yields
-Leg A's decoded old cell = Leg R's decoded `cMidV4` cell at every in-bounds coordinate. -/
+Leg A's EMITTED old-board pack transport and Leg R's `cMidV4` pack transport (`hRmidPack` — now the
+EMITTED `AutomataflResolveRefine.resolve_midPack_pi_of_sat`, which the PI-carried capstone supplies),
+both pinned to the SAME published PI slot by the fold (`hseamPack`), `seam_of_pack_congr` (engine:
+`pack_injective_modp`, no modular collision) yields Leg A's decoded old cell = Leg R's decoded
+`cMidV4` cell at every in-bounds coordinate. This lemma keeps `hRmidPack` as a general parameter so it
+stays a pure crypto-free statement with no descriptor knowledge. -/
 theorem seamCell_of_cMidV4_pack
     {tR : VmTrace}
     {hashA : List ℤ → ℤ} {minitA : ℤ → ℤ} {mfinA : ℤ → ℤ × Nat} {maddrsA : List ℤ} {tA : VmTrace}
@@ -266,15 +272,18 @@ theorem seamCell_of_cMidV4_pack
     boardDecodeCommitAt_cellAt 11 (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.cMidV4 11)
         (envAt tR 0) x y hx hy]
 
-/-- **`turn_sat_imp_roundStep_pi` — the whole turn with the seam reduced to PUBLIC-INPUT equalities.**
-Same conclusion as `turn_sat_imp_roundStep`, but the board-agreement seam is DISCHARGED inside from:
-the fold's cell/automaton PI equalities (`hseamPack`, `hseamAutoX`, `hseamAutoY`) and Leg R's
-`cMidV4` pack transport (`hRmidPack`, the one un-emitted ingredient — see `## HONEST RESIDUAL`).
-Everything else is emitted-and-proven. -/
+/-- **`turn_sat_imp_roundStep_pi` — the whole turn with the seam reduced to PUBLIC-INPUT equalities,
+now FULLY EMITTED-CRYPTO-FREE.** Same conclusion as `turn_sat_imp_roundStep`, but the board-agreement
+seam is DISCHARGED inside from ONLY the fold's cell/automaton PI equalities (`hseamPack`,
+`hseamAutoX`, `hseamAutoY`). Leg R's `cMidV4` pack transport — the ingredient that used to be carried
+as the un-emitted hypothesis `hRmidPack` — is now the EMITTED theorem
+`AutomataflResolveRefine.resolve_midPack_pi_of_sat` (the commitment packs `cMidV4`), discharged
+below. The seam window is the deployed MID commitment slot `[16 + fc, 16 + 2·fc)` with
+`fc = feltCount 11`. Everything on this path is emitted-and-proven: NO hash, NO chip-table soundness,
+NO un-emitted hypothesis — the whole turn takes only the fold PI-equalities. -/
 theorem turn_sat_imp_roundStep_pi
     {hashR : List ℤ → ℤ} {minitR : ℤ → ℤ} {mfinR : ℤ → ℤ × Nat} {maddrsR : List ℤ} {tR : VmTrace}
     {hashA : List ℤ → ℤ} {minitA : ℤ → ℤ} {mfinA : ℤ → ℤ × Nat} {maddrsA : List ℤ} {tA : VmTrace}
-    {seamBase : Nat}
     (g : GoalAssignment) (seats : List Pid)
     (hsatR : Satisfied2 hashR
       (Dregg2.Circuit.Emit.AutomataflResolveEmit.automataflResolveDescN 11) minitR mfinR maddrsR tR)
@@ -290,12 +299,7 @@ theorem turn_sat_imp_roundStep_pi
         = [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1])
     (hres : resolvableB (boardDecodeOldN 11 (envAt tR 0))
         [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1] = true)
-    (hRmidPack : ∀ j, j < feltCount 11 →
-      tR.pub (seamBase + j)
-        ≡ packCell (boardCode (boardDecodeCommitAt 11
-            (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.cMidV4 11) (envAt tR 0)) 11) j
-          [ZMOD 2013265921])
-    (hseamPack : ∀ j, j < feltCount 11 → tR.pub (seamBase + j) = tA.pub (16 + j))
+    (hseamPack : ∀ j, j < feltCount 11 → tR.pub (16 + feltCount 11 + j) = tA.pub (16 + j))
     (hseamAutoX : tR.pub (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.AUTO_PI_BASE 11)
       = tA.pub (Dregg2.Circuit.Emit.AutomataflStepEmit.AUTO_PI_BASE 11))
     (hseamAutoY : tR.pub (Dregg2.Circuit.Emit.AutomataflResolveEmit.NGen.AUTO_PI_BASE 11 + 1)
@@ -307,7 +311,10 @@ theorem turn_sat_imp_roundStep_pi
               (openRound (boardDecodeOldN 11 (envAt tR 0)) seats)
               [moveDecodeN 11 (envAt tR 0) 0, moveDecodeN 11 (envAt tR 0) 1])).cellAt ⟨x, y⟩ :=
   turn_sat_imp_roundStep g seats hsatR hcR hlenR hsatA hcA hlenA hclean hfresh hres
-    (seamCell_of_cMidV4_pack hsatA hcA hlenA hRmidPack hseamPack)
+    (seamCell_of_cMidV4_pack (seamBase := 16 + feltCount 11) hsatA hcA hlenA
+      (fun j hj => Dregg2.Circuit.Emit.AutomataflResolveRefine.resolve_midPack_pi_of_sat
+        hsatR hcR hlenR j hj)
+      hseamPack)
     (seamAuto_of_pi hsatR hcR hlenR hsatA hcA hlenA hseamAutoX hseamAutoY)
 
 /-! ## The clash branch (honest scope).

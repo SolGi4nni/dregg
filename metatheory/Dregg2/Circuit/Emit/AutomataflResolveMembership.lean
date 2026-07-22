@@ -570,13 +570,20 @@ theorem ar_autoPin (n : Nat) :
   rw [NGen.autoReadConstraints]
   exact List.mem_append_right _ (List.mem_singleton.mpr rfl)
 
-/-! ### boardRange — `n`-dependent (2·KK n cells), navigated by `mem_map`/`mem_range`. -/
+/-! ### boardRange — `n`-dependent (3·KK n cells: old ++ mid ++ committed cMidV4), navigated by
+`mem_map`/`mem_range`. The list is `(old_range ++ mid_range) ++ cMidV4_range` (`++` left-assoc). -/
 theorem br_old (n c : Nat) (hc : c < NGen.KK n) :
     cg (memberExpr (NGen.old n c) [0, 1, 2, 3]) ∈ NGen.boardRangeConstraints n := by
   rw [NGen.boardRangeConstraints]
-  exact List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hc, rfl⟩)
+  exact List.mem_append_left _ (List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hc, rfl⟩))
 theorem br_mid (n c : Nat) (hc : c < NGen.KK n) :
     cg (memberExpr (NGen.mid n c) [0, 1, 2, 3]) ∈ NGen.boardRangeConstraints n := by
+  rw [NGen.boardRangeConstraints]
+  exact List.mem_append_left _ (List.mem_append_right _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hc, rfl⟩))
+/-- The FINAL committed board `cMidV4`'s alphabet range gate is a member — the third boardRange
+segment, the one that makes the packed-`cMidV4` commitment's `{0,1,2,3}` precondition a theorem. -/
+theorem br_cMidV4 (n c : Nat) (hc : c < NGen.KK n) :
+    cg (memberExpr (NGen.cMidV4 n c) [0, 1, 2, 3]) ∈ NGen.boardRangeConstraints n := by
   rw [NGen.boardRangeConstraints]
   exact List.mem_append_right _ (List.mem_map.mpr ⟨c, List.mem_range.mpr hc, rfl⟩)
 
