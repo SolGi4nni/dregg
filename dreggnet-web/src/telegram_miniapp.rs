@@ -63,10 +63,12 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "hosted-binary-operations")]
+use axum::extract::Query;
 use axum::{
-    Router,
+    Json, Router,
     extract::{Form, Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
@@ -113,6 +115,17 @@ pub const DEFAULT_INITDATA_MAX_AGE_SECS: u64 = 86_400;
 
 /// The clock-skew guard: an `auth_date` more than this many seconds in the FUTURE is refused.
 pub const FUTURE_SKEW_SECS: u64 = 300;
+
+/// The Mini App shell may load Telegram's official bridge plus this crate's
+/// same-origin bootstrap module.  Fragment HTML is server-authored; uploaded
+/// proof bytes and refusal bodies never become script or markup.
+const TG_SHELL_CSP: &str = "default-src 'none'; \
+    script-src 'self' https://telegram.org; \
+    style-src 'unsafe-inline'; \
+    connect-src 'self'; \
+    img-src 'self' data:; \
+    base-uri 'none'; object-src 'none'; form-action 'self'; \
+    frame-ancestors https://web.telegram.org https://*.telegram.org";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initData validation — the trust root (design doc §1, pinned).
@@ -498,8 +511,13 @@ impl TgMiniAppState {
 pub fn tg_miniapp_router(state: Arc<TgMiniAppState>) -> Router {
     let router = Router::new()
         .route("/tg", get(get_tg_shell))
+        .route("/tg/static/app.js", get(get_tg_app_js))
         .route("/tg/offerings", get(get_tg_offerings))
         .route("/tg/offerings/{key}/session/{id}", get(get_tg_session))
+        .route(
+            "/tg/offerings/{key}/session/{id}/verify",
+            get(get_tg_verify),
+        )
         .route("/tg/offerings/{key}/session/{id}/act", post(post_tg_act))
         .route("/tg/link/challenge", get(get_tg_link_challenge))
         .route(
@@ -680,10 +698,112 @@ fn verified_user(
     }
 }
 
-/// `GET /tg` — the Mini App shell: static HTML + the Telegram.WebApp bootstrap script. No auth
-/// to SERVE (it is just a page); every state-touching fetch it makes carries the header.
-async fn get_tg_shell() -> Html<String> {
-    Html(shell_page(None))
+/// Build a shell response with the same policy for root and cold deep links.
+fn tg_shell_response(boot: Option<&str>) -> Response {
+    (
+        [
+            (header::CONTENT_SECURITY_POLICY, TG_SHELL_CSP),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        Html(shell_page(boot)),
+    )
+        .into_response()
+}
+
+/// `GET /tg` — the Mini App shell. No auth to SERVE (it is just a page); every
+/// state-touching fetch it makes carries the header.
+async fn get_tg_shell() -> Response {
+    tg_shell_response(None)
+}
+
+/// Same-origin bootstrap so the shell does not require `script-src 'unsafe-inline'`.
+async fn get_tg_app_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        TG_SHELL_SCRIPT,
+    )
+}
+
+/// RFC 3986 path-segment encoding.  `Path` gives handlers decoded values; putting
+/// them back into a route without this step would turn `?`, `#`, `/`, or quotes
+/// into route structure or markup rather than data.
+fn path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
+}
+
+fn tg_session_path(key: &str, id: &str) -> String {
+    format!(
+        "/tg/offerings/{}/session/{}",
+        path_segment(key),
+        path_segment(id)
+    )
+}
+
+/// The shared renderer deliberately speaks the web rail.  Native clients must
+/// not lose their authenticated principal by following its resume/replay URLs,
+/// and their signed provenance must not be labelled as browser-asserted.
+fn tg_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> String {
+    let web_base = format!("/offerings/{}/session/{}", crate::esc(key), crate::esc(id));
+    let native_base = tg_session_path(key, id);
+    let web_verify = format!("{web_base}/verify");
+    let mut native = html.replace(
+        &format!("href=\"{web_base}\" rel=\"bookmark\""),
+        &format!(
+            "href=\"{native_base}\" data-tg-session=\"{native_base}\" rel=\"bookmark\""
+        ),
+    )
+    .replace(
+        &format!("href=\"{web_verify}\""),
+        &format!(
+            "href=\"{native_base}/verify\" data-tg-verify=\"{native_base}/verify\""
+        ),
+    )
+    .replace(
+        &format!("action=\"{web_base}"),
+        &format!("action=\"{native_base}"),
+    )
+    .replace(
+        "data-actor-attribution=\"asserted\"",
+        "data-actor-attribution=\"signed\"",
+    )
+    .replace(
+        "Browser actor attribution is asserted, not authenticated.",
+        "Telegram identity is authenticated by signed initData; turns carry custodial signed provenance.",
+    );
+    if fragment {
+        if let Some(kind) = game_kind(key) {
+            native = format!(
+                "<section class=\"game-session-rail\" data-game-session=\"true\" \
+                 data-game-family=\"{}\" data-session-id=\"{}\" \
+                 data-actor-attribution=\"signed\" aria-label=\"Session continuity and privacy\">\
+                 <div class=\"game-session-resume\"><span class=\"game-session-kicker\">Session</span>\
+                 <strong>{}</strong><a href=\"{native_base}\" data-tg-session=\"{native_base}\" \
+                 rel=\"bookmark\">Resume here</a></div>\
+                 <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
+                 Telegram identity is authenticated by signed initData; turns carry custodial signed provenance. \
+                 Private game fields remain scoped to their owning projection.</p></section>{native}",
+                kind.as_str(),
+                crate::esc(id),
+                crate::esc(id),
+            );
+        }
+    }
+    native
 }
 
 /// `GET /tg/offerings` — the catalog fragment for the VERIFIED viewer: a card per registered
@@ -703,10 +823,8 @@ async fn get_tg_offerings(
     let ident16 = &ident.0[..16.min(ident.0.len())];
     let mut cards = String::new();
     for o in &offerings {
-        let path = format!(
-            "/tg/offerings/{key}/session/tg-{key}-{ident16}",
-            key = o.key
-        );
+        let session = format!("tg-{}-{ident16}", o.key);
+        let path = tg_session_path(&o.key, &session);
         cards.push_str(&format!(
             "<div class=\"card\" style=\"margin:.6rem 0;padding:1rem;border:1px solid \
              var(--border);border-radius:var(--r-md);background:var(--panel)\">\
@@ -714,7 +832,7 @@ async fn get_tg_offerings(
              <a class=\"btn btn-primary\" href=\"{path}\" data-tg-session=\"{path}\">Play</a>\
              </div>",
             title = crate::esc(&o.title),
-            path = path,
+            path = crate::esc(&path),
         ));
     }
     // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) —
@@ -759,10 +877,7 @@ async fn get_tg_session(
     // the header attached. No state is touched and nothing identity-gated is revealed — a
     // fragment fetch (`X-Fragment`) or any request that DID send a header keeps the full gate.
     if !headers.contains_key(INIT_DATA_HEADER) && !wants_fragment(&headers) {
-        return Html(shell_page(Some(&format!(
-            "/tg/offerings/{key}/session/{id}"
-        ))))
-        .into_response();
+        return tg_shell_response(Some(&tg_session_path(&key, &id)));
     }
     let corr = audit::correlation_id();
     let route = "GET /tg/offerings/{key}/session/{id}";
@@ -822,15 +937,88 @@ async fn get_tg_session(
         Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
     }
 
-    Html(render_offering_response(
-        &state.catalog,
+    Html(tg_native_fragment(
+        render_offering_response(
+            &state.catalog,
+            &key,
+            &sid,
+            None,
+            &viewer,
+            wants_fragment(&headers),
+        ),
         &key,
-        &sid,
-        None,
-        &viewer,
+        &sid.0,
         wants_fragment(&headers),
     ))
     .into_response()
+}
+
+/// Ticket-equivalent, initData-authenticated replay verification.  The native
+/// replay link never falls through to the cookie-identity web route.
+async fn get_tg_verify(
+    State(state): State<Arc<TgMiniAppState>>,
+    Path((key, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    let user = match verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /tg/offerings/{key}/session/{id}/verify",
+    ) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let viewer = state.identity_for(user.user_id);
+    let sid = SessionId::new(id);
+    let report = if game_kind(&key).is_some() {
+        match state.catalog.run_current_bound_game(
+            &key,
+            &sid,
+            &viewer,
+            move |host, _, _, session| host.verify(session.offering(), session.session_id()),
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "verified": false,
+                        "turns": 0,
+                        "detail": error.to_string(),
+                        "surface": "telegram",
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        let routed_key = key.clone();
+        let routed_sid = sid.clone();
+        state.catalog.run_offering(&key, &viewer, move |host| {
+            host.verify(&routed_key, &routed_sid)
+        })
+    };
+    match report {
+        Some(report) => Json(serde_json::json!({
+            "verified": report.verified,
+            "turns": report.turns,
+            "detail": report.detail,
+            "surface": "telegram",
+        }))
+        .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "verified": false,
+                "turns": 0,
+                "detail": "no such Telegram game session",
+                "surface": "telegram",
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// Authenticated discovery of transport-bearing affordances on one live
@@ -909,6 +1097,7 @@ async fn get_tg_artifacts(
 async fn get_tg_artifact(
     State(state): State<Arc<TgMiniAppState>>,
     Path((key, id, name)): Path<(String, String, String)>,
+    Query(authority): Query<crate::fhegg_operation::GameResourceAuthorityQuery>,
     headers: HeaderMap,
 ) -> Response {
     let corr = audit::correlation_id();
@@ -927,6 +1116,7 @@ async fn get_tg_artifact(
         id,
         name,
         Some(state.identity_for(user.user_id)),
+        authority,
     )
 }
 
@@ -1251,12 +1441,17 @@ async fn post_tg_act(
         }
     };
 
-    Html(render_offering_response(
-        &state.catalog,
+    Html(tg_native_fragment(
+        render_offering_response(
+            &state.catalog,
+            &key,
+            &sid,
+            Some(&notice),
+            &viewer,
+            wants_fragment(&headers),
+        ),
         &key,
-        &sid,
-        Some(&notice),
-        &viewer,
+        &sid.0,
         wants_fragment(&headers),
     ))
     .into_response()
@@ -1273,13 +1468,32 @@ async fn post_tg_act(
 /// the server never receives or trusts it). Forms rendered by the shared fragment path POST to
 /// `/offerings/...`; the submit interceptor rewrites them onto the `/tg` twin so the turn lands
 /// through the initData-verified custodial-Signed path.
-const TG_SHELL_SCRIPT: &str = r##"<script>
-(function () {
+const TG_SHELL_SCRIPT: &str = r##"(function () {
   var tg = window.Telegram && window.Telegram.WebApp;
   var root = document.getElementById('tg-root');
+
+  function notice(message, cls) {
+    var box = document.createElement('div');
+    box.className = 'notice ' + (cls || 'refused');
+    box.setAttribute('role', 'status');
+    box.textContent = String(message);
+    root.replaceChildren(box);
+  }
+  function failure(error) {
+    notice(error && error.message ? error.message : error, 'refused');
+  }
+  function report(message, cls) {
+    var old = root.querySelector('[data-native-replay-report]');
+    if (old) { old.remove(); }
+    var box = document.createElement('div');
+    box.className = 'notice ' + (cls || 'refused');
+    box.setAttribute('role', 'status');
+    box.setAttribute('data-native-replay-report', 'true');
+    box.textContent = String(message);
+    root.prepend(box);
+  }
   if (!tg || !tg.initData) {
-    root.innerHTML = '<div class="notice refused" role="status">Open this page inside Telegram — ' +
-      'the Mini App needs its signed initData to identify you.</div>';
+    notice('Open this page inside Telegram — the Mini App needs its signed initData to identify you.');
     return;
   }
   // The raw signed string — sent ONLY as a header, never in a URL (URLs leak into logs/Referer).
@@ -1309,25 +1523,82 @@ const TG_SHELL_SCRIPT: &str = r##"<script>
     greet.textContent = 'Welcome, ' + unsafe.user.first_name + '.';
   }
 
-  function tgFetch(path, opts) {
+  // Normalize a server-authored route without ever decoding and rebuilding its
+  // path segments. URL rejects foreign origins and normalizes dot segments.
+  function nativePath(raw) {
+    var url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin) { throw new Error('Refused a cross-origin game route.'); }
+    var path = url.pathname;
+    if (path === '/offerings' || path.indexOf('/offerings/') === 0) { path = '/tg' + path; }
+    if (path !== '/tg/offerings' && path.indexOf('/tg/offerings/') !== 0) {
+      throw new Error('Refused a non-Telegram game route.');
+    }
+    return path + url.search;
+  }
+  function responseError(resp, body) {
+    var detail = body ? ': ' + body.slice(0, 500) : '';
+    return new Error('Request refused (HTTP ' + resp.status + ')' + detail);
+  }
+  function isType(resp, expected) {
+    var actual = (resp.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+    return expected === 'json'
+      ? (actual === 'application/json' || actual.endsWith('+json'))
+      : actual === 'text/html';
+  }
+  async function readHtml(resp) {
+    var body = await resp.text();
+    if (!resp.ok) { throw responseError(resp, body); }
+    if (!isType(resp, 'html')) { throw new Error('Refused a non-HTML fragment response.'); }
+    return body;
+  }
+  async function readJson(resp) {
+    var body = await resp.text();
+    if (!resp.ok) { throw responseError(resp, body); }
+    if (!isType(resp, 'json')) { throw new Error('Refused a non-JSON operation response.'); }
+    try { return JSON.parse(body); } catch (_) { throw new Error('Refused malformed JSON.'); }
+  }
+  function tgRequest(path, opts) {
     opts = opts || {};
-    var headers = opts.headers || {};
-    headers['X-Telegram-Init-Data'] = initData;
-    headers['X-Fragment'] = '1';
+    var headers = new Headers(opts.headers || {});
+    headers.set('X-Telegram-Init-Data', initData);
+    headers.set('X-Fragment', '1');
     opts.headers = headers;
-    return fetch(path, opts).then(function (resp) { return resp.text(); });
+    opts.credentials = 'same-origin';
+    opts.cache = 'no-store';
+    return fetch(path, opts);
+  }
+  function tgFetchHtml(path, opts) {
+    return tgRequest(nativePath(path), opts).then(readHtml);
+  }
+  function encodeForm(form) {
+    var params = new URLSearchParams();
+    new FormData(form).forEach(function (value, name) {
+      if (typeof value !== 'string') { throw new Error('A file is not a turn-form field.'); }
+      params.append(name, value);
+    });
+    return params.toString();
   }
 
   // BackButton = catalog navigation ONLY (turns are receipts; never wired to undo).
   function showCatalog() {
     tg.BackButton.hide();
-    tgFetch('/tg/offerings').then(function (html) { root.innerHTML = html; });
+    tgFetchHtml('/tg/offerings').then(function (html) { root.innerHTML = html; }).catch(failure);
   }
   function openSession(path) {
-    tgFetch(path).then(function (html) {
+    tgFetchHtml(path).then(function (html) {
       root.innerHTML = html;
       tg.BackButton.show();
-    });
+    }).catch(failure);
+  }
+  function showVerification(path) {
+    tgRequest(nativePath(path), { headers: { 'Accept': 'application/json' } })
+      .then(readJson)
+      .then(function (report) {
+        var message = (report.verified ? 'Replay verified' : 'Replay refused') + ' · ' +
+          report.turns + ' turns · ' + report.detail, report.verified ? 'ok' : 'refused');
+        report(message, report.verified ? 'ok' : 'refused');
+      })
+      .catch(failure);
   }
   tg.BackButton.onClick(showCatalog);
 
@@ -1337,35 +1608,69 @@ const TG_SHELL_SCRIPT: &str = r##"<script>
 
   root.addEventListener('click', function (ev) {
     var el = ev.target;
-    while (el && el !== root && !(el.getAttribute && el.getAttribute('data-tg-session'))) {
+    while (el && el !== root && !(el.getAttribute &&
+      (el.getAttribute('data-tg-session') || el.getAttribute('data-tg-verify')))) {
       el = el.parentNode;
     }
     if (!el || el === root || !el.getAttribute) { return; }
+    var verify = el.getAttribute('data-tg-verify');
+    if (verify) { ev.preventDefault(); showVerification(verify); return; }
     var path = el.getAttribute('data-tg-session');
     if (!path) { return; }
     ev.preventDefault();
     openSession(path);
   });
 
-  // Rewrite rendered /offerings/... form POSTs onto the /tg twin: the initData-verified route
-  // that lands the turn with Signed provenance. The response is the re-rendered fragment.
-  root.addEventListener('submit', function (ev) {
+  root.addEventListener('submit', async function (ev) {
     var form = ev.target;
     if (!form || !form.action) { return; }
     ev.preventDefault();
-    var path = new URL(form.action, window.location.origin).pathname;
-    if (path.indexOf('/tg/') !== 0) { path = '/tg' + path; }
-    var body = new URLSearchParams(new FormData(form)).toString();
-    tgFetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body
-    }).then(function (html) { root.innerHTML = html; });
+    var path;
+    try { path = nativePath(form.action); } catch (error) { failure(error); return; }
+
+    // Proof/receipt uploads are opaque bytes.  Never pass a File through
+    // URLSearchParams (which silently serializes it as "[object File]").
+    if (form.classList.contains('binary-operation')) {
+      var input = form.querySelector('input[type=file]');
+      var status = form.querySelector('[role=status]');
+      var file = input && input.files && input.files[0];
+      if (!file) {
+        if (status) { status.textContent = 'Choose the canonical proof or receipt first.'; }
+        return;
+      }
+      form.classList.add('pending');
+      if (status) { status.textContent = 'Verifying opaque receipt…'; }
+      try {
+        var operationResponse = await tgRequest(path, {
+          method: 'POST',
+          headers: {
+            'Content-Type': form.getAttribute('data-media') || 'application/octet-stream',
+            'Accept': 'application/json'
+          },
+          body: file
+        });
+        await readJson(operationResponse);
+        openSession(path.split('/operations/', 1)[0]);
+      } catch (error) {
+        form.classList.remove('pending');
+        if (status) { status.textContent = 'Refused: ' + (error.message || error); }
+      }
+      return;
+    }
+
+    try {
+      var html = await tgFetchHtml(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: encodeForm(form)
+      });
+      root.innerHTML = html;
+    } catch (error) { failure(error); }
   });
 
   if (boot) { openSession(boot); } else { showCatalog(); }
 })();
-</script>"##;
+"##;
 
 /// **The Mini App shell page** — the served HTML for `GET /tg` (and for a cold, header-less
 /// document GET of a deep session path — the bot's launch buttons): the crate's own stylesheet
@@ -1388,10 +1693,9 @@ fn shell_page(boot: Option<&str>) -> String {
          <main class=\"session\">\
          <p class=\"prose\" id=\"tg-greet\">DreggNet offerings — every move is a receipt.</p>\
          <div id=\"tg-root\"{boot_attr}><p class=\"prose\">Loading the catalog…</p></div>\
-         </main>{script}</body></html>",
+         </main><script src=\"/tg/static/app.js\"></script></body></html>",
         style = crate::STYLE,
         boot_attr = boot_attr,
-        script = TG_SHELL_SCRIPT,
     )
 }
 
@@ -1835,6 +2139,27 @@ mod tests {
         (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
+    fn game_authority_fields(fragment: &str) -> String {
+        fn value(fragment: &str, name: &str) -> String {
+            let marker = format!("name=\"{name}\" value=\"");
+            fragment
+                .split_once(&marker)
+                .and_then(|(_, tail)| tail.split_once('\"'))
+                .map(|(value, _)| value.to_string())
+                .unwrap_or_else(|| panic!("missing {name} in game fragment"))
+        }
+        [
+            "game_host_incarnation",
+            "game_session_generation",
+            "game_expected_pre_head",
+            "game_form_token",
+        ]
+        .into_iter()
+        .map(|name| format!("{name}={}", value(fragment, name)))
+        .collect::<Vec<_>>()
+        .join("&")
+    }
+
     /// The cross-platform link ceremony: an initData-authenticated Telegram account presents a
     /// claim signed by root key K binding it to K — it verifies + records; a forged signature is
     /// refused. (The registry write is redirected to a temp dir so the test does not touch the
@@ -1914,7 +2239,7 @@ mod tests {
         // Open the session as the verified viewer.
         let sid = "tg-e2e-1";
         let uri = format!("/tg/offerings/dungeon/session/{sid}");
-        let (status, _) = send(&app, "GET", &uri, Some(&init), None).await;
+        let (status, opened) = send(&app, "GET", &uri, Some(&init), None).await;
         assert_eq!(status, StatusCode::OK);
         let routed_epoch = catalog
             .bound_game_session("dungeon", &SessionId::new(sid))
@@ -1928,7 +2253,11 @@ mod tests {
             "POST",
             &act,
             Some(&init),
-            Some(&format!("turn=choose&arg={}", KP_PRESS_ON)),
+            Some(&format!(
+                "turn=choose&arg={}&{}",
+                KP_PRESS_ON,
+                game_authority_fields(&opened)
+            )),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -1959,7 +2288,11 @@ mod tests {
             "POST",
             &act,
             Some(&init),
-            Some(&format!("turn=choose&arg={}", KP_CLAIM_RED)),
+            Some(&format!(
+                "turn=choose&arg={}&{}",
+                KP_CLAIM_RED,
+                game_authority_fields(&body)
+            )),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -2049,7 +2382,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("https://telegram.org/js/telegram-web-app.js"));
         assert!(
-            body.contains("data-boot=\"/tg/offerings/dungeon/session/tg:42\""),
+            body.contains("data-boot=\"/tg/offerings/dungeon/session/tg%3A42\""),
             "the shell carries the deep path as its boot target: {body}"
         );
         // Serving the shell touched NO session state.
@@ -2078,16 +2411,111 @@ mod tests {
     async fn the_shell_serves_without_auth_and_carries_the_pinned_js_surface() {
         let (state, _, _) = test_state();
         let app = tg_miniapp_router(state);
-        let (status, body) = send(&app, "GET", "/tg", None, None).await;
-        assert_eq!(status, StatusCode::OK);
-        // The official bridge script is the FIRST script; the pinned surface is wired.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/tg")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("Telegram shell ships a CSP")
+            .to_str()
+            .unwrap();
+        assert!(
+            csp.contains("script-src 'self' https://telegram.org"),
+            "{csp}"
+        );
+        assert!(!csp.contains("script-src 'unsafe-inline'"), "{csp}");
+        let body = String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        // The official bridge script is FIRST; our bootstrap is same-origin.
         assert!(body.contains("https://telegram.org/js/telegram-web-app.js"));
-        assert!(body.contains("tg.ready()"));
-        assert!(body.contains("tg.expand()"));
-        assert!(body.contains("themeChanged"));
-        assert!(body.contains("BackButton"));
-        assert!(body.contains("X-Telegram-Init-Data"));
+        assert!(body.contains("/tg/static/app.js"));
+        let (status, script) = send(&app, "GET", "/tg/static/app.js", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(script.contains("tg.ready()"));
+        assert!(script.contains("tg.expand()"));
+        assert!(script.contains("themeChanged"));
+        assert!(script.contains("BackButton"));
+        assert!(script.contains("X-Telegram-Init-Data"));
         // initDataUnsafe appears only in its display-only role.
-        assert!(body.contains("initDataUnsafe"));
+        assert!(script.contains("initDataUnsafe"));
+        // Opaque operation files ride as raw bytes; refusal bodies never become markup.
+        assert!(script.contains("body: file"), "{script}");
+        assert!(
+            !script.contains("new URLSearchParams(new FormData(form))"),
+            "{script}"
+        );
+        assert!(
+            script.contains("box.textContent = String(message)"),
+            "{script}"
+        );
+        assert!(script.contains("if (!resp.ok)"), "{script}");
+        assert!(
+            script.contains("Refused a non-HTML fragment response"),
+            "{script}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn native_fragment_keeps_signed_provenance_resume_and_replay_on_telegram() {
+        let (state, _, _) = test_state();
+        let app = tg_miniapp_router(state);
+        let init = header_for(77);
+        let uri = "/tg/offerings/dungeon/session/hostile.tab-one";
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .header(INIT_DATA_HEADER, init)
+                    .header("x-fragment", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("data-actor-attribution=\"signed\""), "{body}");
+        assert!(body.contains("custodial signed provenance"), "{body}");
+        assert!(
+            !body.contains("Browser actor attribution is asserted"),
+            "{body}"
+        );
+        assert!(
+            body.contains("href=\"/tg/offerings/dungeon/session/hostile.tab-one\""),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "data-tg-verify=\"/tg/offerings/dungeon/session/hostile.tab-one/verify\""
+            ),
+            "{body}"
+        );
+        assert!(!body.contains("href=\"/offerings/"), "{body}");
+        assert_eq!(
+            tg_session_path("dungeon", "quote\"?hash#slash/"),
+            "/tg/offerings/dungeon/session/quote%22%3Fhash%23slash%2F"
+        );
     }
 }

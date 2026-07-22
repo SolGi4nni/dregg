@@ -67,6 +67,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "hosted-binary-operations")]
+use axum::extract::Query;
 use axum::{
     Json, Router,
     extract::{Form, Path, State},
@@ -728,6 +730,10 @@ pub fn discord_activity_router(state: Arc<DiscordActivityState>) -> Router {
         .route("/da/static/app.js", get(get_da_app_js))
         .route("/da/offerings", get(get_da_offerings))
         .route("/da/offerings/{key}/session/{id}", get(get_da_session))
+        .route(
+            "/da/offerings/{key}/session/{id}/verify",
+            get(get_da_verify),
+        )
         .route("/da/offerings/{key}/session/{id}/act", post(post_da_act))
         // The cross-platform LINK ceremony (design §5) — the `/tg/link` twin, `platform="discord"`,
         // recording into the SAME shared `links.tsv` so a link made in the Activity resolves on
@@ -1048,6 +1054,83 @@ async fn post_da_token(
     .into_response()
 }
 
+/// RFC 3986 path-segment encoding for values returned decoded by Axum's
+/// `Path` extractor. Route delimiters and markup never come from a session id.
+fn path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
+}
+
+fn da_session_path(key: &str, id: &str) -> String {
+    format!(
+        "/da/offerings/{}/session/{}",
+        path_segment(key),
+        path_segment(id)
+    )
+}
+
+/// Rebind the shared browser fragment to the Discord-native rail. Resume and
+/// replay stay ticket-authenticated and the common chrome tells the truth about
+/// signed Discord provenance.
+fn da_native_fragment(html: String, key: &str, id: &str, fragment: bool) -> String {
+    let web_base = format!("/offerings/{}/session/{}", crate::esc(key), crate::esc(id));
+    let native_base = da_session_path(key, id);
+    let web_verify = format!("{web_base}/verify");
+    let mut native = html.replace(
+        &format!("href=\"{web_base}\" rel=\"bookmark\""),
+        &format!(
+            "href=\"{native_base}\" data-da-session=\"{native_base}\" rel=\"bookmark\""
+        ),
+    )
+    .replace(
+        &format!("href=\"{web_verify}\""),
+        &format!(
+            "href=\"{native_base}/verify\" data-da-verify=\"{native_base}/verify\""
+        ),
+    )
+    .replace(
+        &format!("action=\"{web_base}"),
+        &format!("action=\"{native_base}"),
+    )
+    .replace(
+        "data-actor-attribution=\"asserted\"",
+        "data-actor-attribution=\"signed\"",
+    )
+    .replace(
+        "Browser actor attribution is asserted, not authenticated.",
+        "Discord identity is authenticated by OAuth ticket; turns carry custodial signed provenance.",
+    );
+    if fragment {
+        if let Some(kind) = game_kind(key) {
+            native = format!(
+                "<section class=\"game-session-rail\" data-game-session=\"true\" \
+                 data-game-family=\"{}\" data-session-id=\"{}\" \
+                 data-actor-attribution=\"signed\" aria-label=\"Session continuity and privacy\">\
+                 <div class=\"game-session-resume\"><span class=\"game-session-kicker\">Session</span>\
+                 <strong>{}</strong><a href=\"{native_base}\" data-da-session=\"{native_base}\" \
+                 rel=\"bookmark\">Resume here</a></div>\
+                 <p class=\"game-session-boundary\"><span aria-hidden=\"true\">◐</span>\
+                 Discord identity is authenticated by OAuth ticket; turns carry custodial signed provenance. \
+                 Private game fields remain scoped to their owning projection.</p></section>{native}",
+                kind.as_str(),
+                crate::esc(id),
+                crate::esc(id),
+            );
+        }
+    }
+    native
+}
+
 /// `GET /da/offerings` — the catalog fragment for the VERIFIED viewer: a card per registered
 /// offering linking that viewer's own default session (`da-{key}-{ident16}` — relaunching the
 /// Activity lands the same player in the same session).
@@ -1065,10 +1148,8 @@ async fn get_da_offerings(
     let ident16 = &ident.0[..16.min(ident.0.len())];
     let mut cards = String::new();
     for o in &offerings {
-        let path = format!(
-            "/da/offerings/{key}/session/da-{key}-{ident16}",
-            key = o.key
-        );
+        let session = format!("da-{}-{ident16}", o.key);
+        let path = da_session_path(&o.key, &session);
         cards.push_str(&format!(
             "<div class=\"card\" style=\"margin:.6rem 0;padding:1rem;border:1px solid \
              var(--border);border-radius:var(--r-md);background:var(--panel)\">\
@@ -1076,7 +1157,7 @@ async fn get_da_offerings(
              <a class=\"btn btn-primary\" href=\"{path}\" data-da-session=\"{path}\">Play</a>\
              </div>",
             title = crate::esc(&o.title),
-            path = path,
+            path = crate::esc(&path),
         ));
     }
     // THE LAB FRAMING (shared words: `dreggnet_catalog::{flagship_pointer, lab_intro}`) — the same
@@ -1182,15 +1263,88 @@ async fn get_da_session(
         Err(error) => return (StatusCode::CONFLICT, error.to_string()).into_response(),
     }
 
-    Html(render_offering_response(
-        &state.catalog,
+    Html(da_native_fragment(
+        render_offering_response(
+            &state.catalog,
+            &key,
+            &sid,
+            None,
+            &viewer,
+            wants_fragment(&headers),
+        ),
         &key,
-        &sid,
-        None,
-        &viewer,
+        &sid.0,
         wants_fragment(&headers),
     ))
     .into_response()
+}
+
+/// Ticket-authenticated replay verification on the Activity rail.  The link
+/// never drops into the cookie-identity web surface.
+async fn get_da_verify(
+    State(state): State<Arc<DiscordActivityState>>,
+    Path((key, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let corr = audit::correlation_id();
+    let user = match verified_user(
+        &state,
+        &headers,
+        &corr,
+        "GET /da/offerings/{key}/session/{id}/verify",
+    ) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let viewer = state.identity_for(user.user_id);
+    let sid = SessionId::new(id);
+    let report = if game_kind(&key).is_some() {
+        match state.catalog.run_current_bound_game(
+            &key,
+            &sid,
+            &viewer,
+            move |host, _, _, session| host.verify(session.offering(), session.session_id()),
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "verified": false,
+                        "turns": 0,
+                        "detail": error.to_string(),
+                        "surface": "discord",
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        let routed_key = key.clone();
+        let routed_sid = sid.clone();
+        state.catalog.run_offering(&key, &viewer, move |host| {
+            host.verify(&routed_key, &routed_sid)
+        })
+    };
+    match report {
+        Some(report) => Json(serde_json::json!({
+            "verified": report.verified,
+            "turns": report.turns,
+            "detail": report.detail,
+            "surface": "discord",
+        }))
+        .into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "verified": false,
+                "turns": 0,
+                "detail": "no such Discord game session",
+                "surface": "discord",
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// Ticket-authenticated discovery of transport-bearing affordances on one live
@@ -1268,6 +1422,7 @@ async fn get_da_artifacts(
 async fn get_da_artifact(
     State(state): State<Arc<DiscordActivityState>>,
     Path((key, id, name)): Path<(String, String, String)>,
+    Query(authority): Query<crate::fhegg_operation::GameResourceAuthorityQuery>,
     headers: HeaderMap,
 ) -> Response {
     let corr = audit::correlation_id();
@@ -1286,6 +1441,7 @@ async fn get_da_artifact(
         id,
         name,
         Some(state.identity_for(user.user_id)),
+        authority,
     )
 }
 
@@ -1593,12 +1749,17 @@ async fn post_da_act(
         }
     };
 
-    Html(render_offering_response(
-        &state.catalog,
+    Html(da_native_fragment(
+        render_offering_response(
+            &state.catalog,
+            &key,
+            &sid,
+            Some(&notice),
+            &viewer,
+            wants_fragment(&headers),
+        ),
         &key,
-        &sid,
-        Some(&notice),
-        &viewer,
+        &sid.0,
         wants_fragment(&headers),
     ))
     .into_response()
@@ -1700,38 +1861,110 @@ console.warn("dregg: @discord/embedded-app-sdk placeholder — vendor the real b
 const DA_APP_JS: &str = r##"const root = document.getElementById("da-root");
 const clientId = root && root.dataset ? root.dataset.clientId : "";
 
-function notice(html, cls) {
-  root.innerHTML = '<div class="notice ' + (cls || "refused") + '" role="status">' + html + "</div>";
+function notice(message, cls) {
+  const box = document.createElement("div");
+  box.className = "notice " + (cls || "refused");
+  box.setAttribute("role", "status");
+  box.textContent = String(message);
+  root.replaceChildren(box);
+}
+function failure(error) {
+  notice(error && error.message ? error.message : error, "refused");
+}
+function report(message, cls) {
+  const old = root.querySelector("[data-native-replay-report]");
+  if (old) { old.remove(); }
+  const box = document.createElement("div");
+  box.className = "notice " + (cls || "refused");
+  box.setAttribute("role", "status");
+  box.setAttribute("data-native-replay-report", "true");
+  box.textContent = String(message);
+  root.prepend(box);
 }
 
 // The SDK must be vendored (window.DiscordSDK). The placeholder degrades to an honest message.
 const SDKCtor = window.DiscordSDK;
 if (window.__DISCORD_SDK_PLACEHOLDER || typeof SDKCtor !== "function") {
   notice("The Discord Embedded App SDK is not vendored on this build yet — the Activity cannot " +
-    "identify you. (Serve the real bundle at <code>/da/static/discord-sdk.js</code>.)", "refused");
+    "identify you. Serve the real same-origin SDK bundle to enable it.", "refused");
 } else {
   bootActivity(new SDKCtor(clientId)).catch(function (e) {
-    notice("Could not start the Activity: " + (e && e.message ? e.message : e), "refused");
+    failure(new Error("Could not start the Activity: " + (e && e.message ? e.message : e)));
   });
 }
 
 // The verified ticket, attached to every state-touching fetch (a HEADER, never a URL).
 let TICKET = null;
 
-function daFetch(path, opts) {
+function nativePath(raw) {
+  const url = new URL(raw, window.location.origin);
+  if (url.origin !== window.location.origin) { throw new Error("Refused a cross-origin game route."); }
+  let path = url.pathname;
+  if (path === "/offerings" || path.indexOf("/offerings/") === 0) { path = "/da" + path; }
+  if (path !== "/da/offerings" && path.indexOf("/da/offerings/") !== 0) {
+    throw new Error("Refused a non-Discord game route.");
+  }
+  return path + url.search;
+}
+function responseError(resp, body) {
+  const detail = body ? ": " + body.slice(0, 500) : "";
+  return new Error("Request refused (HTTP " + resp.status + ")" + detail);
+}
+function isType(resp, expected) {
+  const actual = (resp.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+  return expected === "json"
+    ? (actual === "application/json" || actual.endsWith("+json"))
+    : actual === "text/html";
+}
+async function readHtml(resp) {
+  const body = await resp.text();
+  if (!resp.ok) { throw responseError(resp, body); }
+  if (!isType(resp, "html")) { throw new Error("Refused a non-HTML fragment response."); }
+  return body;
+}
+async function readJson(resp) {
+  const body = await resp.text();
+  if (!resp.ok) { throw responseError(resp, body); }
+  if (!isType(resp, "json")) { throw new Error("Refused a non-JSON operation response."); }
+  try { return JSON.parse(body); } catch (_) { throw new Error("Refused malformed JSON."); }
+}
+function daRequest(path, opts) {
   opts = opts || {};
-  const headers = opts.headers || {};
-  if (TICKET) { headers["X-Dregg-Activity-Ticket"] = TICKET; }
-  headers["X-Fragment"] = "1";
+  const headers = new Headers(opts.headers || {});
+  if (TICKET) { headers.set("X-Dregg-Activity-Ticket", TICKET); }
+  headers.set("X-Fragment", "1");
   opts.headers = headers;
-  return fetch(path, opts).then(function (resp) { return resp.text(); });
+  opts.credentials = "same-origin";
+  opts.cache = "no-store";
+  return fetch(path, opts);
+}
+function daFetchHtml(path, opts) {
+  return daRequest(nativePath(path), opts).then(readHtml);
+}
+function encodeForm(form) {
+  const params = new URLSearchParams();
+  new FormData(form).forEach(function (value, name) {
+    if (typeof value !== "string") { throw new Error("A file is not a turn-form field."); }
+    params.append(name, value);
+  });
+  return params.toString();
 }
 
 function showCatalog() {
-  daFetch("/da/offerings").then(function (html) { root.innerHTML = html; });
+  daFetchHtml("/da/offerings").then(function (html) { root.innerHTML = html; }).catch(failure);
 }
 function openSession(path) {
-  daFetch(path).then(function (html) { root.innerHTML = html; });
+  daFetchHtml(path).then(function (html) { root.innerHTML = html; }).catch(failure);
+}
+function showVerification(path) {
+  daRequest(nativePath(path), { headers: { "Accept": "application/json" } })
+    .then(readJson)
+    .then(function (report) {
+      const message = (report.verified ? "Replay verified" : "Replay refused") + " · " +
+        report.turns + " turns · " + report.detail;
+      report(message, report.verified ? "ok" : "refused");
+    })
+    .catch(failure);
 }
 
 async function bootActivity(sdk) {
@@ -1745,16 +1978,15 @@ async function bootActivity(sdk) {
   });
   // Server-side exchange: the uid is asserted by Discord to the holder of our client_secret, and
   // the server mints the ticket. The client never asserts identity.
-  const resp = await fetch("/da/token", {
+  const tokenResponse = await fetch("/da/token", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    credentials: "same-origin",
+    cache: "no-store",
     body: JSON.stringify({ code }),
   });
-  if (!resp.ok) {
-    const txt = await resp.text();
-    throw new Error("token exchange failed (HTTP " + resp.status + "): " + txt);
-  }
-  const data = await resp.json();
+  const data = await readJson(tokenResponse);
+  if (!data.ticket || typeof data.ticket !== "string") { throw new Error("Token response omitted the activity ticket."); }
   TICKET = data.ticket;
   // Complete the SDK handshake client-side (the access_token is display-only for the server).
   if (data.access_token) {
@@ -1765,26 +1997,62 @@ async function bootActivity(sdk) {
     greet.textContent = "Verified via Discord — playing as " + data.custodial_pubkey_hex.slice(0, 16) + "…";
   }
 
-  // Rewrite rendered /offerings/... form POSTs onto the /da twin: the ticket-verified route that
-  // lands the turn with Signed provenance. The response is the re-rendered fragment.
-  root.addEventListener("submit", function (ev) {
+  root.addEventListener("submit", async function (ev) {
     const form = ev.target;
     if (!form || !form.action) { return; }
     ev.preventDefault();
-    let path = new URL(form.action, window.location.origin).pathname;
-    if (path.indexOf("/da/") !== 0) { path = "/da" + path; }
-    const body = new URLSearchParams(new FormData(form)).toString();
-    daFetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body,
-    }).then(function (html) { root.innerHTML = html; });
+    let path;
+    try { path = nativePath(form.action); } catch (error) { failure(error); return; }
+
+    // Opaque proof/receipt uploads are raw File bodies.  URLSearchParams must
+    // never see them: its coercion would upload "[object File]" instead.
+    if (form.classList.contains("binary-operation")) {
+      const input = form.querySelector("input[type=file]");
+      const status = form.querySelector("[role=status]");
+      const file = input && input.files && input.files[0];
+      if (!file) {
+        if (status) { status.textContent = "Choose the canonical proof or receipt first."; }
+        return;
+      }
+      form.classList.add("pending");
+      if (status) { status.textContent = "Verifying opaque receipt…"; }
+      try {
+        const operationResponse = await daRequest(path, {
+          method: "POST",
+          headers: {
+            "Content-Type": form.getAttribute("data-media") || "application/octet-stream",
+            "Accept": "application/json"
+          },
+          body: file
+        });
+        await readJson(operationResponse);
+        openSession(path.split("/operations/", 1)[0]);
+      } catch (error) {
+        form.classList.remove("pending");
+        if (status) { status.textContent = "Refused: " + (error.message || error); }
+      }
+      return;
+    }
+
+    try {
+      const html = await daFetchHtml(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: encodeForm(form),
+      });
+      root.innerHTML = html;
+    } catch (error) { failure(error); }
   });
-  // Catalog navigation (a card's Play link opens that session WITH the ticket header).
+  // Catalog navigation and native replay verification keep the activity ticket.
   root.addEventListener("click", function (ev) {
     let el = ev.target;
-    while (el && el !== root && !(el.getAttribute && el.getAttribute("data-da-session"))) { el = el.parentNode; }
+    while (el && el !== root && !(el.getAttribute &&
+      (el.getAttribute("data-da-session") || el.getAttribute("data-da-verify")))) {
+      el = el.parentNode;
+    }
     if (!el || el === root || !el.getAttribute) { return; }
+    const verify = el.getAttribute("data-da-verify");
+    if (verify) { ev.preventDefault(); showVerification(verify); return; }
     const path = el.getAttribute("data-da-session");
     if (!path) { return; }
     ev.preventDefault();
@@ -2135,6 +2403,14 @@ function linkClaimMessage(platform, uid, custodialHex, rootHex, challenge){
 let CTX = null;    // {platform, platform_uid, custodial_pubkey_hex, challenge} from /da/link/challenge
 let TICKET = null; // the server-minted activity ticket, attached to every state-touching fetch
 
+async function jsonResponse(resp, label){
+  const body = await resp.text();
+  if (!resp.ok) throw new Error(label + ": HTTP " + resp.status + (body ? ": " + body.slice(0,500) : ""));
+  const type = (resp.headers.get("content-type") || "").split(";",1)[0].trim().toLowerCase();
+  if (type !== "application/json" && !type.endsWith("+json")) throw new Error(label + ": refused a non-JSON response");
+  try { return JSON.parse(body); } catch(_){ throw new Error(label + ": malformed JSON"); }
+}
+
 // Identify via the Discord Embedded App SDK: ready → authorize → the SERVER exchanges the code with
 // our client_secret and mints the ticket. The uid is asserted by Discord to the server, never the
 // client. (prompt:'none' re-issues silently once consent exists — usually already granted by the shell.)
@@ -2146,26 +2422,25 @@ async function acquireTicket(){
   const sdk = new SDKCtor(clientId);
   await sdk.ready();
   const auth = await sdk.commands.authorize({ client_id: clientId, response_type: "code", prompt: "none", scope: ["identify"] });
-  const resp = await fetch("/da/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: auth.code }) });
-  if (!resp.ok){ const t = await resp.text(); throw new Error("token exchange failed (HTTP " + resp.status + "): " + t); }
-  const data = await resp.json();
+  const resp = await fetch("/da/token", { method: "POST", credentials:"same-origin", cache:"no-store",
+    headers: { "Content-Type": "application/json", "Accept":"application/json" }, body: JSON.stringify({ code: auth.code }) });
+  const data = await jsonResponse(resp, "token exchange failed");
   if (data.access_token){ try { await sdk.commands.authenticate({ access_token: data.access_token }); } catch(e){ /* handshake best-effort */ } }
   return data.ticket;
 }
 
 async function fetchChallenge(){
-  const r = await fetch("/da/link/challenge", { headers: { "X-Dregg-Activity-Ticket": TICKET } });
-  if (!r.ok) throw new Error("challenge: HTTP " + r.status);
-  return await r.json();
+  const r = await fetch("/da/link/challenge", { credentials:"same-origin", cache:"no-store",
+    headers: { "X-Dregg-Activity-Ticket": TICKET, "Accept":"application/json" } });
+  return await jsonResponse(r, "challenge");
 }
 async function submit(rootHex, sigHex){
   const body = new URLSearchParams({ root_pubkey_hex: rootHex, signature_hex: sigHex, challenge: CTX.challenge });
   const r = await fetch("/da/link", { method: "POST",
-    headers: { "X-Dregg-Activity-Ticket": TICKET, "content-type": "application/x-www-form-urlencoded" },
+    credentials:"same-origin", cache:"no-store",
+    headers: { "X-Dregg-Activity-Ticket": TICKET, "content-type": "application/x-www-form-urlencoded", "Accept":"application/json" },
     body: body.toString() });
-  const txt = await r.text();
-  if (!r.ok) throw new Error("link refused (HTTP " + r.status + "): " + txt);
-  return txt;
+  return await jsonResponse(r, "link refused");
 }
 
 // ── Custody of the root key K (seed wrapped in localStorage; NEVER auto-minted) ──
@@ -2346,16 +2621,30 @@ $("do-relay").onclick = async () => {
   try {
     TICKET = await acquireTicket();
   } catch(e){
-    $("who").innerHTML = "<span class='err'>Could not identify you via Discord: " + (e.message||e) +
-      " — the link ceremony needs the Activity SDK to prove which Discord account you are.</span>";
+    const error = document.createElement("span");
+    error.className = "err";
+    error.textContent = "Could not identify you via Discord: " + (e.message||e) +
+      " — the link ceremony needs the Activity SDK to prove which Discord account you are.";
+    $("who").replaceChildren(error);
     return;
   }
   try {
     CTX = await fetchChallenge();
-    $("who").innerHTML = "Discord <b>#" + CTX.platform_uid + "</b> · this account's dregg key:<div class='mono'>"
-      + CTX.custodial_pubkey_hex + "</div>";
+    const label = document.createTextNode("Discord ");
+    const uid = document.createElement("b");
+    uid.textContent = "#" + CTX.platform_uid;
+    const suffix = document.createTextNode(" · this account's dregg key:");
+    const key = document.createElement("div");
+    key.className = "mono";
+    key.textContent = CTX.custodial_pubkey_hex;
+    $("who").replaceChildren(label, uid, suffix, key);
     refreshKeyPanel();
-  } catch(e){ $("who").innerHTML = "<span class='err'>" + e.message + "</span>"; }
+  } catch(e){
+    const error = document.createElement("span");
+    error.className = "err";
+    error.textContent = e.message || String(e);
+    $("who").replaceChildren(error);
+  }
 })();
 "####;
 
@@ -2624,6 +2913,27 @@ mod tests {
         (status, String::from_utf8(bytes.to_vec()).unwrap())
     }
 
+    fn game_authority_fields(fragment: &str) -> String {
+        fn value(fragment: &str, name: &str) -> String {
+            let marker = format!("name=\"{name}\" value=\"");
+            fragment
+                .split_once(&marker)
+                .and_then(|(_, tail)| tail.split_once('\"'))
+                .map(|(value, _)| value.to_string())
+                .unwrap_or_else(|| panic!("missing {name} in game fragment"))
+        }
+        [
+            "game_host_incarnation",
+            "game_session_generation",
+            "game_expected_pre_head",
+            "game_form_token",
+        ]
+        .into_iter()
+        .map(|name| format!("{name}={}", value(fragment, name)))
+        .collect::<Vec<_>>()
+        .join("&")
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn get_da_serves_the_shell_with_a_strict_csp_and_the_sdk_wiring() {
         let (state, _catalog) = test_state(1);
@@ -2669,6 +2979,20 @@ mod tests {
         assert!(appjs.contains("/da/token"), "{appjs}");
         assert!(appjs.contains("authorize"), "{appjs}");
         assert!(appjs.contains("scope"), "{appjs}");
+        assert!(appjs.contains("body: file"), "{appjs}");
+        assert!(
+            !appjs.contains("new URLSearchParams(new FormData(form))"),
+            "{appjs}"
+        );
+        assert!(
+            appjs.contains("box.textContent = String(message)"),
+            "{appjs}"
+        );
+        assert!(appjs.contains("if (!resp.ok)"), "{appjs}");
+        assert!(
+            appjs.contains("Refused a non-HTML fragment response"),
+            "{appjs}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2777,7 +3101,7 @@ mod tests {
         // Open the session as the verified viewer.
         let sid = "da-e2e-1";
         let uri = format!("/da/offerings/dungeon/session/{sid}");
-        let (st, _) = send(&app, "GET", &uri, Some(&ticket), None, None).await;
+        let (st, opened) = send(&app, "GET", &uri, Some(&ticket), None, None).await;
         assert_eq!(st, StatusCode::OK);
         let routed_epoch = catalog
             .bound_game_session("dungeon", &SessionId::new(sid))
@@ -2792,7 +3116,11 @@ mod tests {
             &act,
             Some(&ticket),
             Some("application/x-www-form-urlencoded"),
-            Some(&format!("turn=choose&arg={}", KP_PRESS_ON)),
+            Some(&format!(
+                "turn=choose&arg={}&{}",
+                KP_PRESS_ON,
+                game_authority_fields(&opened)
+            )),
         )
         .await;
         assert_eq!(st, StatusCode::OK, "{body}");
@@ -2838,6 +3166,56 @@ mod tests {
             .expect("verify");
         assert!(report.verified);
         assert_eq!(report.turns, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn native_fragment_keeps_signed_provenance_resume_and_replay_on_discord() {
+        let uid = 77;
+        let (state, _) = test_state(uid);
+        let app = discord_activity_router(state);
+        let ticket = mint_ticket(&ticket_key(&BOT_SECRET), uid, unix_now(), NONCE);
+        let uri = "/da/offerings/dungeon/session/hostile.tab-one";
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(uri)
+                    .header(ACTIVITY_TICKET_HEADER, ticket)
+                    .header("x-fragment", "1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(body.contains("data-actor-attribution=\"signed\""), "{body}");
+        assert!(body.contains("custodial signed provenance"), "{body}");
+        assert!(
+            !body.contains("Browser actor attribution is asserted"),
+            "{body}"
+        );
+        assert!(
+            body.contains("href=\"/da/offerings/dungeon/session/hostile.tab-one\""),
+            "{body}"
+        );
+        assert!(
+            body.contains(
+                "data-da-verify=\"/da/offerings/dungeon/session/hostile.tab-one/verify\""
+            ),
+            "{body}"
+        );
+        assert!(!body.contains("href=\"/offerings/"), "{body}");
+        assert_eq!(
+            da_session_path("dungeon", "quote\"?hash#slash/"),
+            "/da/offerings/dungeon/session/quote%22%3Fhash%23slash%2F"
+        );
     }
 
     // ── Family (vi): the audience trap — a token minted for ANOTHER app is rejected. ──
