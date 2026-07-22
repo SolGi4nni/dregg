@@ -62,9 +62,10 @@ use std::sync::mpsc::{SyncSender, sync_channel};
 use base64::Engine as _;
 use deos_view::ViewNode;
 use dreggnet_catalog::{
-    CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameEpochLedger,
-    GameHostIncarnation, PlayerWorlds, execute_bound_asserted_game_turn, game_kind,
-    inspect_bound_game_session, is_rpg_key,
+    CatalogConfig, GameActionRef, GameAffordance, GameAudience, GameCommand, GameEpochLedger,
+    GameHostIncarnation, GameKind, GameOperationRef, GameReceipt, GameResult, PlayerWorlds,
+    PublicGameReceipt, execute_bound_asserted_game_command, execute_bound_asserted_game_turn,
+    game_kind, inspect_bound_game_session, is_rpg_key, project_public_game_receipt,
 };
 use dreggnet_offerings::{
     Action, Audience, BinaryOperationDescriptor, BinaryOperationReceipt, ChatBinaryOperationPolicy,
@@ -146,6 +147,22 @@ pub struct TelegramOperationRoute {
     /// Whether the authenticated update came from a multi-reader chat. Kept private so external
     /// callers cannot manufacture a DM-classified route around the shared-document gate.
     shared: bool,
+    /// Exact authority- and state-head-bound route for a catalog game operation. Non-game
+    /// offering operations retain their established direct host path.
+    game_reference: Option<GameOperationRef>,
+}
+
+/// Result of applying one Telegram document operation at the chat-readership boundary.
+///
+/// A direct receipt is returned only to a single-reader/non-game route. A multi-reader game
+/// route can return only the catalog's viewer-blind publication (or an explicit publication
+/// failure with no receipt body); its raw operation name, fields, actor, payload and state heads
+/// are therefore unrepresentable to the caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TelegramAppliedOperation {
+    Direct(BinaryOperationReceipt),
+    SharedGame(PublicGameReceipt),
+    SharedGameUnpublished,
 }
 
 /// A frontend-neutral account of the game session currently addressed by a Telegram chat.
@@ -187,6 +204,88 @@ pub struct TelegramGameStatus {
     /// Whether the host has a complete replay recipe for the live state. This does not by itself
     /// claim that the process has a durable store mounted.
     pub replay_recipe: bool,
+    /// Most recent landed receipt that crossed the catalog's audited viewer-blind publication
+    /// boundary in this host process. Raw execution receipts are never stored here.
+    pub latest_public_receipt: Option<PublicGameReceipt>,
+}
+
+/// Counts of the three public action families a shared game surface currently offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TelegramPublicGameAffordances {
+    pub ordinary_turns: usize,
+    pub shielded_operations: usize,
+    pub read_only_artifacts: usize,
+}
+
+/// The only game-status object a multi-reader Telegram message may render.
+///
+/// This type deliberately cannot carry a raw session id, host incarnation, actor, operation or
+/// artifact name, verification diagnostic, private result value, action payload, or state head.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TelegramSharedGameStatus {
+    pub kind: GameKind,
+    pub verified: bool,
+    pub verified_turns: usize,
+    pub landed_steps: usize,
+    pub affordances: TelegramPublicGameAffordances,
+    pub replay_recipe: bool,
+    pub latest_receipt: Option<PublicGameReceipt>,
+}
+
+/// A fail-closed refusal at Telegram's multi-reader status boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TelegramSharedGameStatusError {
+    PrivateProjection,
+    UnknownGameKind,
+    InconsistentGameKind,
+    InvalidReceiptBinding,
+    InconsistentReceiptKind,
+}
+
+impl std::fmt::Display for TelegramSharedGameStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("shared game status failed its viewer-blind consistency checks")
+    }
+}
+
+impl std::error::Error for TelegramSharedGameStatusError {}
+
+impl TelegramGameStatus {
+    /// Reduce the host-rich inspection object to the no-viewer grammar used in a group or forum
+    /// topic. A private projection or mismatched receipt refuses instead of being best-effort
+    /// redacted after formatting.
+    pub fn shared_projection(
+        &self,
+    ) -> Result<TelegramSharedGameStatus, TelegramSharedGameStatusError> {
+        if self.private_projection {
+            return Err(TelegramSharedGameStatusError::PrivateProjection);
+        }
+        let kind = game_kind(&self.key).ok_or(TelegramSharedGameStatusError::UnknownGameKind)?;
+        if kind.as_str() != self.kind {
+            return Err(TelegramSharedGameStatusError::InconsistentGameKind);
+        }
+        if let Some(receipt) = &self.latest_public_receipt {
+            receipt
+                .validate()
+                .map_err(|_| TelegramSharedGameStatusError::InvalidReceiptBinding)?;
+            if receipt.kind != kind {
+                return Err(TelegramSharedGameStatusError::InconsistentReceiptKind);
+            }
+        }
+        Ok(TelegramSharedGameStatus {
+            kind,
+            verified: self.verified,
+            verified_turns: self.verified_turns,
+            landed_steps: self.landed_steps,
+            affordances: TelegramPublicGameAffordances {
+                ordinary_turns: self.turn_affordances,
+                shielded_operations: self.proof_operations.len(),
+                read_only_artifacts: self.artifacts.len(),
+            },
+            replay_recipe: self.replay_recipe,
+            latest_receipt: self.latest_public_receipt.clone(),
+        })
+    }
 }
 
 /// A refusal at the ordinary Telegram operation attachment boundary.
@@ -197,6 +296,9 @@ pub enum TelegramOperationError {
     PrivateChatRequired,
     /// No playable offering is active in this chat.
     NoSession,
+    /// A multi-reader game operation failed. Host/verifier diagnostics stay on the private audit
+    /// side of the adapter rather than becoming a group message.
+    SharedGameRefused,
     /// The host could not discover or invoke the addressed operation.
     Refused(String),
 }
@@ -211,6 +313,10 @@ impl std::fmt::Display for TelegramOperationError {
             Self::NoSession => write!(
                 f,
                 "no offering is active in this chat; open one before attaching a receipt"
+            ),
+            Self::SharedGameRefused => write!(
+                f,
+                "the shared game operation was refused; no private verifier diagnostic was published"
             ),
             Self::Refused(reason) => write!(f, "{reason}"),
         }
@@ -484,6 +590,10 @@ pub struct TelegramHost<T: Transport> {
     /// chat's session" for the single-offering UX — which is exactly what it always meant in a
     /// chat with one offering open.
     active: HashMap<SessionId, String>,
+    /// Latest identity-free, viewer-blind receipt publication for each live game address. This
+    /// cache is presentation state, not execution authority; after restart it remains empty until
+    /// a new command lands, while the durable game journal itself remains intact.
+    public_game_receipts: HashMap<(String, SessionId), PublicGameReceipt>,
     /// **The chat's ARMED free-text affordance, if one is selected.** A press on a
     /// [`Action::wants_text`] affordance records it here (see [`HostPress::TextArmed`]); the next
     /// plain-text message routes into it ([`Self::pending_text_action`] / [`Self::press_text`]).
@@ -522,6 +632,7 @@ impl<T: Transport> TelegramHost<T> {
                 .expect("operating-system randomness is available for the game host incarnation"),
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
+            public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
         }
@@ -572,6 +683,7 @@ impl<T: Transport> TelegramHost<T> {
             game_epochs,
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
+            public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
         }
@@ -597,6 +709,7 @@ impl<T: Transport> TelegramHost<T> {
             game_epochs,
             frontend: TelegramFrontend::new(bot_secret, transport),
             active: HashMap::new(),
+            public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
         })
@@ -711,6 +824,10 @@ impl<T: Transport> TelegramHost<T> {
             .game_epochs
             .current_generation(&key, &session)
             .map_err(|error| error.to_string())?;
+        let latest_public_receipt = self
+            .public_game_receipts
+            .get(&(key.clone(), session.clone()))
+            .cloned();
         let status = {
             let routed_key = key.clone();
             self.run_offering(&key, &actor, move |host| {
@@ -752,12 +869,14 @@ impl<T: Transport> TelegramHost<T> {
                         verification_detail: view.verification.detail,
                         landed_steps: view.landed_steps,
                         replay_recipe: view.replay_journal_present,
+                        latest_public_receipt,
                     }
                 })
             })
         };
-        // The derived identity participates only in audience/routing selection. It is deliberately
-        // absent from the returned status, so `/status` is safe to paste.
+        // The derived identity participates only in audience/routing selection. Host-rich
+        // diagnostics remain available to a DM; a multi-reader `/status` must cross
+        // `TelegramGameStatus::shared_projection`, which cannot carry them.
         status.map_err(|error| error.to_string())
     }
 
@@ -971,6 +1090,10 @@ impl<T: Transport> TelegramHost<T> {
                 }
                 return Err(OpenError::Epoch(error.to_string()));
             }
+            if newly_opened {
+                self.public_game_receipts
+                    .remove(&(key.to_string(), sid.clone()));
+            }
         }
         // Spin THIS offering's surface slot, not a bare chat-level one — a stray chat-keyed slot
         // would shadow the offering's own surface for every caller that looks a chat up.
@@ -1132,16 +1255,68 @@ impl<T: Transport> TelegramHost<T> {
             .ok_or(TelegramOperationError::NoSession)?
             .to_string();
         let actor = self.frontend.identity(uid);
-        let operations = {
+        let (operations, game_reference) = if game_kind(&key).is_some() {
+            let view = self
+                .bound_game_view(&key, &session, &actor, shared)
+                .map_err(|reason| {
+                    if shared {
+                        TelegramOperationError::SharedGameRefused
+                    } else {
+                        TelegramOperationError::Refused(reason)
+                    }
+                })?;
+            let mut operations = Vec::new();
+            let mut selected = None;
+            for affordance in view.affordances {
+                if let GameAffordance::Operation {
+                    reference,
+                    descriptor,
+                } = affordance
+                {
+                    if descriptor.name == name {
+                        if selected.is_some() {
+                            return Err(if shared {
+                                TelegramOperationError::SharedGameRefused
+                            } else {
+                                TelegramOperationError::Refused(
+                                    "the game advertised an ambiguous operation route".to_string(),
+                                )
+                            });
+                        }
+                        selected = Some(reference);
+                    }
+                    operations.push(descriptor);
+                }
+            }
+            (operations, selected)
+        } else {
             let routed_key = key.clone();
             let routed_session = session.clone();
-            self.run_offering(&key, &actor, move |host| {
-                host.binary_operations(&routed_key, &routed_session)
-            })
+            let operations = self
+                .run_offering(&key, &actor, move |host| {
+                    host.binary_operations(&routed_key, &routed_session)
+                })
+                .map_err(|error| TelegramOperationError::Refused(error.to_string()))?;
+            (operations, None)
+        };
+        let policy = preflight_chat_binary_operation(&operations, name, declared_bytes).map_err(
+            |error| {
+                if shared {
+                    TelegramOperationError::SharedGameRefused
+                } else {
+                    TelegramOperationError::Refused(error.to_string())
+                }
+            },
+        )?;
+        if game_kind(&key).is_some() && game_reference.is_none() {
+            return Err(if shared {
+                TelegramOperationError::SharedGameRefused
+            } else {
+                TelegramOperationError::Refused(
+                    "the operation is not an exact bound game affordance".to_string(),
+                )
+            });
         }
-        .map_err(|error| TelegramOperationError::Refused(error.to_string()))?;
-        let policy = preflight_chat_binary_operation(&operations, name, declared_bytes)
-            .map_err(|error| TelegramOperationError::Refused(error.to_string()))?;
         if shared && !shared_operation_allowed(&key, &policy.descriptor.name) {
             return Err(TelegramOperationError::PrivateChatRequired);
         }
@@ -1151,6 +1326,7 @@ impl<T: Transport> TelegramHost<T> {
             actor,
             policy,
             shared,
+            game_reference,
         })
     }
 
@@ -1162,13 +1338,14 @@ impl<T: Transport> TelegramHost<T> {
         &mut self,
         route: TelegramOperationRoute,
         payload: Vec<u8>,
-    ) -> Result<BinaryOperationReceipt, TelegramOperationError> {
+    ) -> Result<TelegramAppliedOperation, TelegramOperationError> {
         let TelegramOperationRoute {
             key,
             session,
             actor,
             policy,
             shared,
+            game_reference,
         } = route;
         let name = policy.descriptor.name.clone();
         if shared && !shared_operation_allowed(&key, &name) {
@@ -1176,6 +1353,22 @@ impl<T: Transport> TelegramHost<T> {
         }
         let declared_bytes = policy.declared_bytes;
         let actual_bytes = payload.len();
+        let game_epoch = if game_reference.is_some() {
+            Some((
+                self.game_epochs.host_incarnation(),
+                self.game_epochs
+                    .current_generation(&key, &session)
+                    .map_err(|error| {
+                        if shared {
+                            TelegramOperationError::SharedGameRefused
+                        } else {
+                            TelegramOperationError::Refused(error.to_string())
+                        }
+                    })?,
+            ))
+        } else {
+            None
+        };
         let result = {
             let routed_key = key.clone();
             let routed_session = session.clone();
@@ -1189,22 +1382,87 @@ impl<T: Transport> TelegramHost<T> {
                 current
                     .validate_body_len(actual_bytes)
                     .map_err(|error| error.to_string())?;
-                host.invoke_binary_operation(
-                    &routed_key,
-                    &routed_session,
-                    &name,
-                    &payload,
-                    routed_actor,
-                )
-                .map_err(|error| error.to_string())
+                if let (Some(reference), Some((incarnation, generation))) =
+                    (game_reference, game_epoch)
+                {
+                    let game_session = reference.session.clone();
+                    match execute_bound_asserted_game_command(
+                        host,
+                        incarnation,
+                        generation,
+                        &game_session,
+                        GameCommand::Operation { reference, payload },
+                        routed_actor,
+                    )
+                    .map_err(|error| error.to_string())?
+                    {
+                        GameResult::Landed(receipt) => {
+                            let direct = match &receipt {
+                                GameReceipt::Operation {
+                                    operation,
+                                    inner_receipt_id,
+                                    public_fields,
+                                    ..
+                                } if !shared => Some(BinaryOperationReceipt {
+                                    operation: operation.operation.clone(),
+                                    receipt_id: *inner_receipt_id,
+                                    public_fields: public_fields.clone(),
+                                }),
+                                GameReceipt::Operation { .. } => None,
+                                GameReceipt::Turn { .. } => {
+                                    return Err("game operation returned an ordinary-turn receipt"
+                                        .to_string());
+                                }
+                            };
+                            Ok((direct, Some(receipt)))
+                        }
+                        GameResult::Refused { reason, .. } => Err(reason),
+                    }
+                } else {
+                    host.invoke_binary_operation(
+                        &routed_key,
+                        &routed_session,
+                        &name,
+                        &payload,
+                        routed_actor,
+                    )
+                    .map(|receipt| (Some(receipt), None))
+                    .map_err(|error| error.to_string())
+                }
             })
         };
         match result {
-            Ok(receipt) => {
+            Ok((direct_receipt, game_receipt)) => {
+                let public_receipt = if let Some(game_receipt) = game_receipt {
+                    self.remember_public_game_result(
+                        &key,
+                        &session,
+                        &GameResult::Landed(game_receipt),
+                    )
+                } else {
+                    None
+                };
                 self.present_offering(&key, &session, &actor);
-                Ok(receipt)
+                if shared {
+                    Ok(match public_receipt {
+                        Some(receipt) => TelegramAppliedOperation::SharedGame(receipt),
+                        None => TelegramAppliedOperation::SharedGameUnpublished,
+                    })
+                } else {
+                    direct_receipt
+                        .map(TelegramAppliedOperation::Direct)
+                        .ok_or_else(|| {
+                            TelegramOperationError::Refused(
+                                "private operation omitted its direct receipt".to_string(),
+                            )
+                        })
+                }
             }
-            Err(reason) => Err(TelegramOperationError::Refused(reason)),
+            Err(reason) => Err(if shared {
+                TelegramOperationError::SharedGameRefused
+            } else {
+                TelegramOperationError::Refused(reason)
+            }),
         }
     }
 
@@ -1237,6 +1495,32 @@ impl<T: Transport> TelegramHost<T> {
             inspect_bound_game_session(host, incarnation, generation, reference, &audience)
                 .map_err(|error| error.to_string())
         })
+    }
+
+    /// Retain only the catalog-audited public projection of a newly landed game receipt. A
+    /// projection failure clears the presentation cache for this address; the raw receipt never
+    /// becomes a fallback shared payload.
+    fn remember_public_game_result(
+        &mut self,
+        key: &str,
+        session: &SessionId,
+        result: &GameResult,
+    ) -> Option<PublicGameReceipt> {
+        let Some(receipt) = result.receipt() else {
+            return None;
+        };
+        let address = (key.to_string(), session.clone());
+        match project_public_game_receipt(receipt) {
+            Ok(publication) if publication.validate().is_ok() => {
+                self.public_game_receipts
+                    .insert(address, publication.clone());
+                Some(publication)
+            }
+            Ok(_) | Err(_) => {
+                self.public_game_receipts.remove(&address);
+                None
+            }
+        }
     }
 
     /// **Route a button press.** Resolve WHICH of the chat's live surfaces the press addresses,
@@ -1441,6 +1725,7 @@ impl<T: Transport> TelegramHost<T> {
             });
             return match execution {
                 Ok(execution) => {
+                    let _ = self.remember_public_game_result(&key, &sid, &execution.result);
                     self.present_offering(&key, &sid, &viewer);
                     HostPress::Advanced {
                         key,
@@ -1573,7 +1858,7 @@ impl<T: Transport> TelegramHost<T> {
         // the actor the edit is attributed to (the same as a play press).
         let viewer = self.frontend.identity(uid);
         let action = pending.clone().with_text(text.to_string());
-        let outcome = if game_kind(&key).is_some() {
+        let (outcome, game_result) = if game_kind(&key).is_some() {
             let shared = ChatKind::classify(chat_id, topic).is_collective();
             let Ok(view) = self.bound_game_view(&key, &sid, &viewer, shared) else {
                 return HostPress::NotOffered;
@@ -1613,7 +1898,7 @@ impl<T: Transport> TelegramHost<T> {
                     actor,
                 )
             }) {
-                Ok(execution) => Some(execution.outcome),
+                Ok(execution) => (Some(execution.outcome), Some(execution.result)),
                 Err(_) => return HostPress::NotOffered,
             }
         } else {
@@ -1621,8 +1906,14 @@ impl<T: Transport> TelegramHost<T> {
             let k = key.clone();
             let s = sid.clone();
             // Routed to the acting user's own world for an RPG key (a per-player document/craft edit).
-            self.run_offering(&key, &viewer, move |h| h.advance(&k, &s, action, actor))
+            (
+                self.run_offering(&key, &viewer, move |h| h.advance(&k, &s, action, actor)),
+                None,
+            )
         };
+        if let Some(result) = &game_result {
+            let _ = self.remember_public_game_result(&key, &sid, result);
+        }
         match outcome {
             Some(outcome) => {
                 self.present_offering(&key, &sid, &viewer);
@@ -1689,6 +1980,8 @@ impl<T: Transport> TelegramHost<T> {
         self.game_epochs
             .mark_closed(key, &session)
             .map_err(|error| error.to_string())?;
+        self.public_game_receipts
+            .remove(&(key.to_string(), session.clone()));
         if self
             .active
             .get(&session)

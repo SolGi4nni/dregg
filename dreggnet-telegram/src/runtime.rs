@@ -34,17 +34,20 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use dreggnet_catalog::PlayerWorlds;
+use dreggnet_catalog::{
+    PlayerWorlds, PublicGameAttribution, PublicGameReceipt, PublicGameReceiptResult,
+};
 use dreggnet_offerings::resume::SessionResumeStore;
 use dreggnet_offerings::{FileResumeStore, OfferingHost, Outcome, VerifyReport};
 
 use crate::api::{decode_callback, encode_callback};
 use crate::audit::{self, Actor, AuditEvent, AuditOutcome, Input, Surface};
 use crate::host::{
-    HostPress, TURN_VERIFY, TelegramGameStatus, TelegramHost, telegram_default_host,
+    HostPress, TURN_VERIFY, TelegramAppliedOperation, TelegramGameStatus, TelegramHost,
+    TelegramSharedGameStatus, telegram_default_host,
 };
 use crate::transport::{HttpPost, Transport, TransportError};
-use crate::{CallbackQuery, ChatId, TelegramFrontend, TelegramUserId};
+use crate::{CallbackQuery, ChatId, ChatKind, TelegramFrontend, TelegramUserId};
 
 /// How long the server holds a `getUpdates` long poll open (seconds). The Bot API allows up to
 /// ~50; the HTTP client timeout ([`crate::reqwest_transport`]) sits above this.
@@ -777,7 +780,7 @@ pub fn route_text_decided<T: Transport>(
             let key = host.active_offering(&sid).map(str::to_string);
             match host.game_status(chat_id, topic, uid) {
                 Ok(status) => (
-                    Some(describe_game_status(&status)),
+                    Some(describe_game_status_for_chat(&status, chat_id, topic)),
                     TextDecision::GameStatus {
                         key: Some(status.key),
                         inspected: true,
@@ -1075,10 +1078,18 @@ pub fn describe_press(press: HostPress) -> String {
     }
 }
 
-/// Human rendering of the shared game-session view. It contains no actor identity, private state,
-/// artifact bytes, or proof bytes, so a player can paste it without turning status into a viewer
-/// side channel.
+/// Human rendering of a game-session view. Shared views first cross the typed no-viewer
+/// projection; only a DM-private view may render the host-rich diagnostic fields.
 pub fn describe_game_status(status: &TelegramGameStatus) -> String {
+    if !status.private_projection {
+        return match status.shared_projection() {
+            Ok(shared) => describe_shared_game_status(&shared),
+            Err(_) => {
+                "Game record unavailable: the shared publication boundary refused this projection."
+                    .to_string()
+            }
+        };
+    }
     let audience = if status.private_projection {
         if status.hidden_information {
             "private single-reader projection (player-only state may appear in the game message)"
@@ -1127,6 +1138,127 @@ pub fn describe_game_status(status: &TelegramGameStatus) -> String {
         } else {
             "unavailable"
         },
+    )
+}
+
+/// Render status under the actual Telegram readership classification.
+///
+/// The host normally derives `private_projection` from this same chat address. Rechecking it at
+/// the final formatter means a future host regression cannot route a rich DM projection into a
+/// group merely by setting the wrong flag on the returned object.
+pub fn describe_game_status_for_chat(
+    status: &TelegramGameStatus,
+    chat_id: ChatId,
+    topic: Option<i64>,
+) -> String {
+    if ChatKind::classify(chat_id, topic).is_collective() {
+        return match status.shared_projection() {
+            Ok(shared) => describe_shared_game_status(&shared),
+            Err(_) => {
+                "Game record unavailable: the shared publication boundary refused this projection."
+                    .to_string()
+            }
+        };
+    }
+    describe_game_status(status)
+}
+
+/// Render the deliberately small grammar accepted in a group or forum topic.
+///
+/// Operation and artifact names, verification diagnostics, public-field values, raw session
+/// routes, actors, heads, payloads, and concrete receipt internals are unrepresentable here. The
+/// full receipt and publication commitments remain copyable audit joins.
+pub fn describe_shared_game_status(status: &TelegramSharedGameStatus) -> String {
+    let latest = match &status.latest_receipt {
+        None => "Latest public receipt · none since this bot process started".to_string(),
+        Some(receipt) if receipt.validate().is_err() || receipt.kind != status.kind => {
+            "Latest public receipt · unavailable (viewer-blind binding refused)".to_string()
+        }
+        Some(receipt) => {
+            let attribution = match receipt.attribution {
+                PublicGameAttribution::Signed => "signed",
+                PublicGameAttribution::Asserted => "adapter-asserted",
+            };
+            let result = match &receipt.result {
+                PublicGameReceiptResult::Turn { ended } => {
+                    if *ended {
+                        "ordinary turn · session complete".to_string()
+                    } else {
+                        "ordinary turn · session continues".to_string()
+                    }
+                }
+                PublicGameReceiptResult::Operation { fields } => format!(
+                    "shielded/proven operation · {} audited public field(s) withheld from chat",
+                    fields.len()
+                ),
+            };
+            format!(
+                "Latest public receipt · {result} · {attribution}\n\
+                 Session route · {}\n\
+                 Receipt · {}\n\
+                 Publication · {}",
+                audit::hex32(&receipt.session_route_id),
+                audit::hex32(&receipt.receipt_id),
+                audit::hex32(&receipt.publication_id),
+            )
+        }
+    };
+    format!(
+        "Game record · {}\n\
+         Audience · shared viewer-blind projection\n\
+         Record · {} · {} verified turn(s) · {} landed step(s)\n\
+         Affordances · {} ordinary turn(s) · {} shielded/proven operation(s) · {} read-only artifact(s)\n\
+         Replay recipe · {} (process durability depends on the mounted session store)\n\
+         {}",
+        status.kind.as_str(),
+        if status.verified {
+            "VERIFIED"
+        } else {
+            "FAILED"
+        },
+        status.verified_turns,
+        status.landed_steps,
+        status.affordances.ordinary_turns,
+        status.affordances.shielded_operations,
+        status.affordances.read_only_artifacts,
+        if status.replay_recipe {
+            "complete"
+        } else {
+            "unavailable"
+        },
+        latest,
+    )
+}
+
+/// Minimal immediate acknowledgement after a proven operation lands in a multi-reader chat.
+/// Detailed result values remain available only to an explicitly private surface.
+pub fn describe_shared_game_operation_landed(status: &TelegramSharedGameStatus) -> String {
+    let Some(receipt) = status.latest_receipt.as_ref() else {
+        return "Shielded/proven operation landed. /status inspects the viewer-blind record."
+            .to_string();
+    };
+    if receipt.validate().is_err() || receipt.kind != status.kind {
+        return "Shielded/proven operation landed. The viewer-blind receipt binding was refused."
+            .to_string();
+    }
+    describe_shared_game_receipt_landed(receipt)
+}
+
+/// Immediate multi-reader acknowledgement from the exact viewer-blind receipt returned by the
+/// host boundary. No rich status or direct operation receipt is accepted by this formatter.
+pub fn describe_shared_game_receipt_landed(receipt: &PublicGameReceipt) -> String {
+    if receipt.validate().is_err() {
+        return "Shielded/proven operation landed. The viewer-blind receipt binding was refused."
+            .to_string();
+    }
+    if !matches!(&receipt.result, PublicGameReceiptResult::Operation { .. }) {
+        return "Shielded/proven operation landed. /status inspects the viewer-blind record."
+            .to_string();
+    }
+    format!(
+        "Shielded/proven operation landed · receipt {} · publication {}. /status inspects the viewer-blind record.",
+        audit::hex32(&receipt.receipt_id),
+        audit::hex32(&receipt.publication_id),
     )
 }
 
@@ -1452,28 +1584,54 @@ pub fn run_update_loop<T: Transport, H: HttpPost>(
                                             ("refused", "operation_refused"),
                                             Some(key),
                                         ),
-                                        Ok(receipt) => {
-                                            let fields = receipt
-                                                .public_fields
-                                                .iter()
-                                                .map(|(name, value)| format!("{name}={value}"))
-                                                .collect::<Vec<_>>()
-                                                .join(" · ");
-                                            (
-                                                format!(
-                                                    "Applied `{}` · receipt {}{}",
-                                                    receipt.operation,
-                                                    audit::hex32(&receipt.receipt_id),
-                                                    if fields.is_empty() {
-                                                        String::new()
-                                                    } else {
-                                                        format!(" · {fields}")
-                                                    }
-                                                ),
+                                        Ok(applied) => match applied {
+                                            TelegramAppliedOperation::SharedGame(receipt) => (
+                                                describe_shared_game_receipt_landed(&receipt),
                                                 ("routed", ""),
                                                 Some(key),
-                                            )
-                                        }
+                                            ),
+                                            TelegramAppliedOperation::SharedGameUnpublished => (
+                                                "Shielded/proven operation landed. The shared publication is temporarily unavailable; /status will retry the viewer-blind record."
+                                                    .to_string(),
+                                                ("routed", ""),
+                                                Some(key),
+                                            ),
+                                            TelegramAppliedOperation::Direct(_)
+                                                if ChatKind::classify(chat_id, topic)
+                                                    .is_collective() =>
+                                            {
+                                                (
+                                                    "The operation landed, but Telegram refused a direct receipt at the shared-chat boundary. /status will retry the viewer-blind record."
+                                                        .to_string(),
+                                                    ("error", "shared_operation_direct_receipt"),
+                                                    Some(key),
+                                                )
+                                            }
+                                            TelegramAppliedOperation::Direct(receipt) => {
+                                                let fields = receipt
+                                                    .public_fields
+                                                    .iter()
+                                                    .map(|(name, value)| {
+                                                        format!("{name}={value}")
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                                    .join(" · ");
+                                                (
+                                                    format!(
+                                                        "Applied `{}` · receipt {}{}",
+                                                        receipt.operation,
+                                                        audit::hex32(&receipt.receipt_id),
+                                                        if fields.is_empty() {
+                                                            String::new()
+                                                        } else {
+                                                            format!(" · {fields}")
+                                                        }
+                                                    ),
+                                                    ("routed", ""),
+                                                    Some(key),
+                                                )
+                                            }
+                                        },
                                     },
                                 }
                             }

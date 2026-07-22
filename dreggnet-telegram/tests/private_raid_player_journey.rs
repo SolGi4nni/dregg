@@ -5,10 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use dreggnet_catalog::{CatalogConfig, full_catalog_host};
+use dreggnet_catalog::{CatalogConfig, PublicGameReceiptResult, full_catalog_host};
 use dreggnet_offerings::{FileResumeStore, Outcome, seed_from_id};
 use dreggnet_telegram::api::encode_callback;
-use dreggnet_telegram::host::{HostPress, OPERATION_GUIDE_SLOT, TelegramHost};
+use dreggnet_telegram::host::{
+    HostPress, OPERATION_GUIDE_SLOT, TelegramAppliedOperation, TelegramHost, TelegramOperationError,
+};
+use dreggnet_telegram::runtime::describe_shared_game_receipt_landed;
 use dreggnet_telegram::transport::MockTransport;
 use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
 use dungeon_on_dregg::combat::{Arena, is_hero};
@@ -163,11 +166,16 @@ fn telegram_group_uploads_and_spends_a_bound_private_raid_then_restarts() {
         let forged_claimant = host
             .preflight_operation(chat, None, USERS[1], ASSIGN_OPERATION, proof.len())
             .expect("the public descriptor itself is discoverable to every group member");
+        let forged_error = host
+            .apply_operation(forged_claimant, proof.clone())
+            .expect_err("the proof is not bearer authority for another authenticated uploader");
+        assert_eq!(forged_error, TelegramOperationError::SharedGameRefused);
+        let forged_message = forged_error.to_string();
         assert!(
-            host.apply_operation(forged_claimant, proof.clone())
-                .is_err(),
-            "the proof is not bearer authority for another authenticated uploader"
+            !forged_message.contains(ASSIGN_OPERATION),
+            "{forged_message}"
         );
+        assert!(!forged_message.contains(&sid.0), "{forged_message}");
 
         // The canonical proof is also bound to the session-derived proof id. Reusing it in a
         // second group with the same Telegram roster fails before any proof capability is minted.
@@ -183,18 +191,63 @@ fn telegram_group_uploads_and_spends_a_bound_private_raid_then_restarts() {
         let wrong_session = host
             .preflight_operation(other_chat, None, USERS[0], ASSIGN_OPERATION, proof.len())
             .expect("the second live session has the same operation descriptor");
+        let wrong_session_error = host
+            .apply_operation(wrong_session, proof.clone())
+            .expect_err("a proof document from another session is not a transferable bearer");
+        assert_eq!(
+            wrong_session_error,
+            TelegramOperationError::SharedGameRefused
+        );
+        let wrong_session_message = wrong_session_error.to_string();
         assert!(
-            host.apply_operation(wrong_session, proof.clone()).is_err(),
-            "a proof document from another session is not a transferable bearer"
+            !wrong_session_message.contains(ASSIGN_OPERATION),
+            "{wrong_session_message}"
+        );
+        assert!(
+            !wrong_session_message.contains(&sid.0),
+            "{wrong_session_message}"
         );
 
         let route = host
             .preflight_operation(chat, None, USERS[0], ASSIGN_OPERATION, proof.len())
             .expect("the exact group/session/seat-zero document route preflights");
-        let assignment_receipt = host
+        let applied = host
             .apply_operation(route, proof.clone())
             .expect("the canonical proof is accepted by the live HidingFri verifier");
-        assert_eq!(assignment_receipt.operation, ASSIGN_OPERATION);
+        let applied_debug = format!("{applied:?}");
+        assert!(!applied_debug.contains(ASSIGN_OPERATION), "{applied_debug}");
+        assert!(!applied_debug.contains(&sid.0), "{applied_debug}");
+        let public_receipt = match applied {
+            TelegramAppliedOperation::SharedGame(receipt) => receipt,
+            other => panic!("shared game route returned a non-public object: {other:?}"),
+        };
+        assert!(matches!(
+            &public_receipt.result,
+            PublicGameReceiptResult::Operation { .. }
+        ));
+        assert!(!format!("{public_receipt:?}").contains(ASSIGN_OPERATION));
+        let public_status = host
+            .game_status(chat, None, USERS[0])
+            .expect("the shielded operation updates the common game status")
+            .shared_projection()
+            .expect("the group receives only the typed viewer-blind projection");
+        assert!(matches!(
+            &public_status
+                .latest_receipt
+                .as_ref()
+                .expect("the bound proof operation has a public receipt")
+                .result,
+            PublicGameReceiptResult::Operation { .. }
+        ));
+        assert_eq!(
+            public_status.latest_receipt.as_ref(),
+            Some(&public_receipt),
+            "status and immediate acknowledgement share one exact publication"
+        );
+        let public_ack = describe_shared_game_receipt_landed(&public_receipt);
+        assert!(public_ack.contains("receipt "), "{public_ack}");
+        assert!(public_ack.contains("publication "), "{public_ack}");
+        assert!(!public_ack.contains(ASSIGN_OPERATION), "{public_ack}");
         let neutralized = host
             .frontend()
             .transport()

@@ -18,7 +18,7 @@ use dreggnet_offerings::{
 };
 use dreggnet_telegram::api::{TELEGRAM_TEXT_LIMIT, encode_callback};
 use dreggnet_telegram::host::{
-    HostPress, OPERATION_GUIDE_SLOT, TelegramHost, TelegramOperationError,
+    HostPress, OPERATION_GUIDE_SLOT, TelegramAppliedOperation, TelegramHost, TelegramOperationError,
 };
 use dreggnet_telegram::runtime::{BotApi, BotEvent, parse_operation_caption, parse_updates};
 use dreggnet_telegram::transport::{HttpPost, MockTransport};
@@ -27,6 +27,7 @@ use dreggnet_telegram::{CallbackQuery, TelegramFrontend};
 const SECRET: [u8; 32] = [0x44; 32];
 const UID: u64 = 77;
 const DM: i64 = 7007;
+const FIXTURE_KEY: &str = "ordinary-receipt-fixture";
 
 const PREFERENCE: &str = "dungeon.private-party-preference.v1";
 const SHUFFLE_COMMIT: &str = "dungeon.private-fair-shuffle.commit.v1";
@@ -146,7 +147,7 @@ impl Offering for ReceiptOffering {
 fn host() -> TelegramHost<MockTransport> {
     TelegramHost::with_host(SECRET, MockTransport::new(), || {
         let mut host = OfferingHost::new();
-        host.register("dungeon", "Private dungeon", ReceiptOffering);
+        host.register(FIXTURE_KEY, "Private dungeon", ReceiptOffering);
         host
     })
 }
@@ -194,8 +195,8 @@ fn interactive_surface(host: &TelegramHost<MockTransport>, chat: i64, key: &str)
 #[test]
 fn ordinary_dm_surface_names_the_exact_preference_shuffle_and_quest_uploads() {
     let mut host = host();
-    host.open("dungeon", DM, None, UID).expect("DM opens");
-    let message = operation_guide(&host, DM, "dungeon");
+    host.open(FIXTURE_KEY, DM, None, UID).expect("DM opens");
+    let message = operation_guide(&host, DM, FIXTURE_KEY);
 
     assert!(message.contains("Proof operations"));
     for (operation, media, maximum) in OPERATIONS {
@@ -221,9 +222,8 @@ fn ordinary_dm_surface_names_the_exact_preference_shuffle_and_quest_uploads() {
             "each descriptor appears exactly once in the companion guide"
         );
     }
-    let main = interactive_surface(&host, DM, "dungeon");
-    assert!(main.contains("Session record"));
-    assert!(main.contains("5 proof operation(s)"));
+    let main = interactive_surface(&host, DM, FIXTURE_KEY);
+    assert!(main.contains("Private dungeon mechanics"));
 }
 
 #[test]
@@ -295,9 +295,9 @@ fn production_dungeon_descriptors_are_discoverable_on_the_bounded_ordinary_dm_su
 fn ordinary_group_surface_discloses_operations_but_never_offers_a_document_command() {
     let mut host = host();
     let group = -7007;
-    host.open("dungeon", group, None, UID)
+    host.open(FIXTURE_KEY, group, None, UID)
         .expect("public fixture opens in a group");
-    let message = operation_guide(&host, group, "dungeon");
+    let message = operation_guide(&host, group, FIXTURE_KEY);
 
     assert!(message.contains("Group documents are public"));
     for (operation, _, _) in OPERATIONS {
@@ -311,11 +311,11 @@ fn ordinary_group_surface_discloses_operations_but_never_offers_a_document_comma
         );
     }
 
-    let surface = TelegramFrontend::<MockTransport>::surface_id(group, None, "dungeon");
+    let surface = TelegramFrontend::<MockTransport>::surface_id(group, None, FIXTURE_KEY);
     let guide_ids = host
         .frontend()
         .companion_messages(&surface, OPERATION_GUIDE_SLOT);
-    host.open("dungeon", group, None, UID)
+    host.open(FIXTURE_KEY, group, None, UID)
         .expect("repainting the same group operation is stable");
     assert_eq!(
         host.frontend()
@@ -335,7 +335,7 @@ fn ordinary_group_surface_discloses_operations_but_never_offers_a_document_comma
 fn ordinary_document_path_preflights_before_download_and_rechecks_actual_size() {
     let mut group_host = host();
     group_host
-        .open("dungeon", -7007, None, UID)
+        .open(FIXTURE_KEY, -7007, None, UID)
         .expect("the public fixture opens in the comparison group");
     assert!(matches!(
         group_host.preflight_operation(-7007, None, UID, PREFERENCE, 1),
@@ -343,7 +343,7 @@ fn ordinary_document_path_preflights_before_download_and_rechecks_actual_size() 
     ));
 
     let mut host = host();
-    host.open("dungeon", DM, None, UID).unwrap();
+    host.open(FIXTURE_KEY, DM, None, UID).unwrap();
     assert!(
         host.preflight_operation(DM, None, UID, "forged.operation", 1)
             .is_err()
@@ -362,9 +362,13 @@ fn ordinary_document_path_preflights_before_download_and_rechecks_actual_size() 
             .is_err(),
         "a CDN body that disagrees with metadata is refused"
     );
-    let receipt = host
+    let applied = host
         .apply_operation(route, b"canonical-receipt".to_vec())
         .expect("canonical bounded receipt applies");
+    let receipt = match applied {
+        TelegramAppliedOperation::Direct(receipt) => receipt,
+        other => panic!("DM/non-game operation returned shared publication: {other:?}"),
+    };
     assert_eq!(receipt.operation, PREFERENCE);
     assert_eq!(receipt.public_fields[0].0, "actor");
 }
