@@ -105,6 +105,10 @@
 //! witness (Phase C) — so the leg is a real binding, not a free body-fact wire.
 
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
+use dregg_circuit::exact_nullifier_aafi::{
+    Digest8, ExactAafiError, ExactAafiWitness, ExactAppendRecord, ExactNullifierAafi,
+    ValidatedExactAafiTransition,
+};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::{CellState, generate_effect_vm_trace};
 use dregg_sdk::{
@@ -207,6 +211,110 @@ impl std::fmt::Display for FullTurnProvingError {
 }
 
 impl std::error::Error for FullTurnProvingError {}
+
+/// Failure to prepare the exact append-order nullifier transition for a future FNSP-v3 proof.
+///
+/// This is deliberately separate from [`FullTurnProvingError`]: producing this preparation does
+/// not mean a deployed verifier accepted an FNSP-v3 proof.  The deployed full-turn path remains
+/// unchanged until the Lean-emitted rotated descriptor, witness marshaller, VK, and registry row
+/// are installed together.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExactAafiTurnPreparationError {
+    /// Durable replay or transition validation failed closed in the exact accumulator runtime.
+    Accumulator(ExactAafiError),
+    /// The independently applied runtime transition did not reproduce the witness's FNS3 anchors.
+    InternalAnchorMismatch,
+}
+
+impl From<ExactAafiError> for ExactAafiTurnPreparationError {
+    fn from(value: ExactAafiError) -> Self {
+        Self::Accumulator(value)
+    }
+}
+
+impl std::fmt::Display for ExactAafiTurnPreparationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Accumulator(error) => {
+                write!(f, "exact nullifier AAFI turn preparation refused: {error}")
+            }
+            Self::InternalAnchorMismatch => write!(
+                f,
+                "exact nullifier AAFI transition did not reproduce its FNS3 state anchors"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ExactAafiTurnPreparationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Accumulator(error) => Some(error),
+            Self::InternalAnchorMismatch => None,
+        }
+    }
+}
+
+/// Additive live-preparation artifact for the future exact-nullifier FNSP-v3 rotated proof.
+///
+/// `prior_fns3` and `successor_fns3` are the exact eight-felt `FNS3(root8,count64)` state anchors
+/// that the rotated state16 descriptor will publish. `witness` is the complete two-path
+/// predecessor-rewrite-plus-append witness. `validated` is the runtime-validated semantic view;
+/// it is still **not** a proof or a proof-acceptance result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedExactAafiTurnTransition {
+    pub prior_fns3: Digest8,
+    pub successor_fns3: Digest8,
+    pub witness: ExactAafiWitness,
+    pub validated: ValidatedExactAafiTransition,
+}
+
+/// Reconstruct the exact full-domain append-order accumulator from durable records and prepare one
+/// successor transition without mutating persistence or cutting over the deployed FNSP-v2 path.
+///
+/// The input shape is intentionally the direct output of
+/// `Store::load_faithful_nullifier_records`: `(Nullifier, public_value, append_seq)`. Storage
+/// iteration order is irrelevant, but `append_seq` is authoritative and must be exactly dense.
+/// Malformed history, duplicate keys/sequence numbers, a duplicate new spend, and terminal
+/// capacity all refuse before an artifact is returned.
+pub fn prepare_exact_aafi_turn_transition(
+    durable_records: impl IntoIterator<Item = (dregg_cell::note::Nullifier, u64, u64)>,
+    inserted_nullifier: dregg_cell::note::Nullifier,
+    inserted_value: u64,
+) -> Result<PreparedExactAafiTurnTransition, ExactAafiTurnPreparationError> {
+    let records = durable_records
+        .into_iter()
+        .map(|(nullifier, value, seq)| ExactAppendRecord {
+            seq,
+            raw: nullifier.0,
+            value,
+        });
+    let mut state = ExactNullifierAafi::from_append_records(records)?;
+    let prior_fns3 = state.state_commit();
+    let witness = state.prepare_insert(inserted_nullifier.0, inserted_value)?;
+
+    // `apply_witness` revalidates the complete hostile-input witness against independently held
+    // runtime state before mutating the in-memory candidate. This is a preparation-time check, not
+    // a substitute for the future Lean-authored AIR proof and deployed verifier acceptance.
+    let validated = state.apply_witness(&witness)?;
+    let successor_fns3 = state.state_commit();
+    if prior_fns3 != witness.prior_state_commit
+        || successor_fns3 != witness.successor_state_commit
+        || validated.prior_root() != witness.prior_root
+        || validated.successor_root() != witness.successor_root
+        || validated.prior_count() != witness.prior_count
+        || validated.successor_count() != witness.successor_count
+    {
+        return Err(ExactAafiTurnPreparationError::InternalAnchorMismatch);
+    }
+
+    Ok(PreparedExactAafiTurnTransition {
+        prior_fns3,
+        successor_fns3,
+        witness,
+        validated,
+    })
+}
 
 /// Prove a finalized NON-SPEND turn and gate acceptance on the proof verifying.
 ///
@@ -1665,6 +1773,145 @@ pub fn decode_retained_finalized_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn durable_record(
+        raw: [u8; 32],
+        value: u64,
+        seq: u64,
+    ) -> (dregg_cell::note::Nullifier, u64, u64) {
+        (dregg_cell::note::Nullifier(raw), value, seq)
+    }
+
+    /// LIVE PREPARATION — neither raw256 endpoint is reserved, and durable storage iteration
+    /// order cannot perturb an append-sequence-authored transition. Both FNS3 anchors are the
+    /// independently re-applied runtime anchors, ready to become rotated public inputs only after
+    /// the FNSP-v3 descriptor/VK flag day.
+    #[test]
+    fn exact_aafi_turn_preparation_accepts_full_domain_and_shuffled_storage() {
+        let zero = [0u8; 32];
+        let ff = [0xffu8; 32];
+
+        let zero_insert = prepare_exact_aafi_turn_transition(
+            Vec::<(dregg_cell::note::Nullifier, u64, u64)>::new(),
+            dregg_cell::note::Nullifier(zero),
+            u64::MAX,
+        )
+        .expect("all-zero raw256 is a valid REAL key, not BOT");
+        assert_eq!(zero_insert.validated.inserted_raw(), zero);
+        assert_eq!(zero_insert.validated.inserted_value(), u64::MAX);
+        assert_eq!(zero_insert.validated.prior_count(), 1);
+        assert_eq!(zero_insert.validated.successor_count(), 2);
+        assert_eq!(
+            zero_insert.prior_fns3,
+            zero_insert.witness.prior_state_commit
+        );
+        assert_eq!(
+            zero_insert.successor_fns3,
+            zero_insert.witness.successor_state_commit
+        );
+
+        let ff_insert = prepare_exact_aafi_turn_transition(
+            Vec::<(dregg_cell::note::Nullifier, u64, u64)>::new(),
+            dregg_cell::note::Nullifier(ff),
+            7,
+        )
+        .expect("all-FF raw256 is a valid REAL key, not TOP");
+        assert_eq!(ff_insert.validated.inserted_raw(), ff);
+
+        // The store is key-ordered in practice; the AAFI history is sequence-authored. Feed the
+        // same rows in deliberately different storage orders and require an identical witness,
+        // including both authentication paths and both FNS3 anchors.
+        let append_order = vec![
+            durable_record(zero, 10, 0),
+            durable_record(ff, 20, 1),
+            durable_record([0x11; 32], 30, 2),
+        ];
+        let shuffled_storage = vec![
+            durable_record([0x11; 32], 30, 2),
+            durable_record(ff, 20, 1),
+            durable_record(zero, 10, 0),
+        ];
+        let inserted = dregg_cell::note::Nullifier([0x80; 32]);
+        let ordered = prepare_exact_aafi_turn_transition(append_order, inserted, 40)
+            .expect("dense append history prepares");
+        let shuffled = prepare_exact_aafi_turn_transition(shuffled_storage, inserted, 40)
+            .expect("storage order does not rewrite append order");
+        assert_eq!(ordered, shuffled);
+        assert_eq!(ordered.validated.prior_count(), 4);
+        assert_eq!(ordered.validated.successor_count(), 5);
+    }
+
+    /// HOSTILE DURABILITY — replay metadata and membership are authority, not hints. Every
+    /// malformed shape refuses before returning a transition artifact.
+    #[test]
+    fn exact_aafi_turn_preparation_refuses_malformed_history_and_duplicate_spend() {
+        let raw_a = [0x21u8; 32];
+        let raw_b = [0x22u8; 32];
+        let new = dregg_cell::note::Nullifier([0x23u8; 32]);
+
+        let gap = prepare_exact_aafi_turn_transition(vec![durable_record(raw_a, 1, 1)], new, 3);
+        assert!(matches!(
+            gap,
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::ReplaySeqGap {
+                    expected: 0,
+                    found: 1
+                }
+            ))
+        ));
+
+        let duplicate_seq = prepare_exact_aafi_turn_transition(
+            vec![durable_record(raw_a, 1, 0), durable_record(raw_b, 2, 0)],
+            new,
+            3,
+        );
+        assert!(matches!(
+            duplicate_seq,
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::ReplayDuplicateSeq(0)
+            ))
+        ));
+
+        let duplicate_durable_key = prepare_exact_aafi_turn_transition(
+            vec![durable_record(raw_a, 1, 0), durable_record(raw_a, 2, 1)],
+            new,
+            3,
+        );
+        assert!(matches!(
+            duplicate_durable_key,
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::Duplicate
+            ))
+        ));
+
+        let duplicate_new_spend = prepare_exact_aafi_turn_transition(
+            vec![durable_record(raw_a, 1, 0)],
+            dregg_cell::note::Nullifier(raw_a),
+            99,
+        );
+        assert!(matches!(
+            duplicate_new_spend,
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::Duplicate
+            ))
+        ));
+
+        let capacity = prepare_exact_aafi_turn_transition(
+            vec![durable_record(
+                raw_a,
+                1,
+                dregg_circuit::exact_nullifier_aafi::TREE_CAPACITY - 1,
+            )],
+            new,
+            3,
+        );
+        assert!(matches!(
+            capacity,
+            Err(ExactAafiTurnPreparationError::Accumulator(
+                ExactAafiError::ReplaySeqOutOfRange(_)
+            ))
+        ));
+    }
 
     /// A committed transfer turn carries a proof that VERIFIES against the
     /// expected pre/post commitments (the verify→accept leg succeeds).
