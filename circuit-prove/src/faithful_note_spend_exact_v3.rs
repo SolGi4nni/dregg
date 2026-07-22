@@ -42,6 +42,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 use dregg_circuit::stark_zk::{DreggZkStarkConfig, create_zk_config};
 use dregg_commit::poseidon2_tree::Poseidon2NoteProof16;
+use std::sync::OnceLock;
 
 pub const STAGED_DESCRIPTOR_JSON: &str = include_str!(
     "../../circuit/staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
@@ -76,6 +77,20 @@ const _: () = {
     assert!(STAGED_PUBLIC_INPUT_COUNT == 76);
     assert!(OUTER_PUBLIC_INPUTS == 16);
 };
+
+/// Immutable result of parsing and pinning the 431 KiB Lean emission.  Keep the public-pin plan
+/// beside the descriptor so witness composition does not rescan all 1,258 constraints merely to
+/// revisit the 76 boundary bindings.
+struct PinnedStagedDescriptor {
+    descriptor: EffectVmDescriptor2,
+    public_pins: [(VmRow, usize); STAGED_PUBLIC_INPUT_COUNT],
+}
+
+/// Parsing the descriptor builds a large recursive expression forest.  The bytes are compiled
+/// into this binary and immutable, so parse + ABI validation is a process-lifetime operation, not
+/// a per-witness/per-proof/per-verification operation.  `Result` is cached as well: a malformed
+/// emission remains fail-closed rather than being retried on every request.
+static PINNED_STAGED_DESCRIPTOR: OnceLock<Result<PinnedStagedDescriptor, String>> = OnceLock::new();
 
 /// Host-owned note-tree checkpoint.  Exact nullifier roots/counts are deliberately absent: they
 /// are derived from the hostile-input-validated [`ExactAafiWitness`].
@@ -227,7 +242,7 @@ fn validate_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(),
 }
 
 /// Parse and pin the exact unregistered Lean emission used by this composition lane.
-pub fn staged_descriptor() -> Result<EffectVmDescriptor2, String> {
+fn parse_and_pin_staged_descriptor() -> Result<PinnedStagedDescriptor, String> {
     let descriptor = parse_vm_descriptor2(STAGED_DESCRIPTOR_JSON)?;
     if descriptor.name != STAGED_PREDICATE_NAME
         || descriptor.trace_width != STAGED_TRACE_WIDTH
@@ -294,7 +309,27 @@ pub fn staged_descriptor() -> Result<EffectVmDescriptor2, String> {
     {
         return Err("staged exact FNSP-v3 public-pin ABI drifted".to_owned());
     }
-    Ok(descriptor)
+    let public_pins = core::array::from_fn(|index| {
+        let (row, col, _) = pins[index];
+        (row, col)
+    });
+    Ok(PinnedStagedDescriptor {
+        descriptor,
+        public_pins,
+    })
+}
+
+fn pinned_staged_descriptor() -> Result<&'static PinnedStagedDescriptor, String> {
+    PINNED_STAGED_DESCRIPTOR
+        .get_or_init(parse_and_pin_staged_descriptor)
+        .as_ref()
+        .map_err(|error| error.clone())
+}
+
+/// Borrow the process-lifetime parsed descriptor.  The returned value is immutable; callers do
+/// not clone the 431 KiB recursive AST and cannot mutate the proving/verification plan.
+pub fn staged_descriptor() -> Result<&'static EffectVmDescriptor2, String> {
+    Ok(&pinned_staged_descriptor()?.descriptor)
 }
 
 fn compare_shared_band(
@@ -353,18 +388,15 @@ fn exact_public_prefix(
         .copy_from_slice(&rows[0][POST_COUNT_BASE..POST_COUNT_BASE + 4]);
     public_inputs[PI_OUTER_BASE..].copy_from_slice(outer_public);
 
-    let descriptor = staged_descriptor()?;
-    for constraint in &descriptor.constraints {
-        if let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) = constraint {
-            let bound_row = match row {
-                VmRow::First => &rows[0],
-                VmRow::Last => &rows[EXACT_AAFI_TRACE_ROWS - 1],
-            };
-            if bound_row[*col] != public_inputs[*pi_index] {
-                return Err(format!(
-                    "composed public binding mismatch at pi {pi_index}, column {col}"
-                ));
-            }
+    for (pi_index, (row, col)) in pinned_staged_descriptor()?.public_pins.iter().enumerate() {
+        let bound_row = match row {
+            VmRow::First => &rows[0],
+            VmRow::Last => &rows[EXACT_AAFI_TRACE_ROWS - 1],
+        };
+        if bound_row[*col] != public_inputs[pi_index] {
+            return Err(format!(
+                "composed public binding mismatch at pi {pi_index}, column {col}"
+            ));
         }
     }
     Ok(public_inputs)
@@ -426,7 +458,7 @@ pub fn prove_staged_exact_v3_zk(
 ) -> Result<StagedFaithfulNoteSpendExactV3Proof, String> {
     let descriptor = staged_descriptor()?;
     let proof = prove_vm_descriptor2_for_config(
-        &descriptor,
+        descriptor,
         witness.rows(),
         witness.public_inputs(),
         &MemBoundaryWitness::default(),
@@ -445,7 +477,7 @@ pub fn verify_staged_exact_v3_zk(
 ) -> Result<(), String> {
     validate_proof_shape(&proof.proof)?;
     verify_vm_descriptor2_with_config(
-        &staged_descriptor()?,
+        staged_descriptor()?,
         &proof.proof,
         public_inputs,
         &create_zk_config(),
@@ -547,6 +579,26 @@ mod tests {
                 .as_slice()
         );
         staged_descriptor().expect("exact staged descriptor remains pinned");
+    }
+
+    #[test]
+    fn staged_descriptor_cache_preserves_the_exact_pinned_plan() {
+        let first = pinned_staged_descriptor().expect("staged descriptor parses and pins");
+        let second = pinned_staged_descriptor().expect("staged descriptor cache remains valid");
+        assert!(std::ptr::eq(first, second));
+
+        // Differential against a fresh parse: caching changes ownership and work scheduling only,
+        // never the descriptor, constraint order, or public binding plan.
+        let fresh = parse_and_pin_staged_descriptor().expect("fresh differential parse pins");
+        assert_eq!(first.descriptor, fresh.descriptor);
+        assert_eq!(first.public_pins, fresh.public_pins);
+        assert_eq!(first.public_pins.len(), STAGED_PUBLIC_INPUT_COUNT);
+
+        let public_first = staged_descriptor().expect("public descriptor borrow");
+        let public_second = staged_descriptor().expect("repeated public descriptor borrow");
+        assert!(std::ptr::eq(public_first, public_second));
+        assert!(std::ptr::eq(&first.descriptor, public_first));
+        assert_eq!(public_first.constraints.len(), EXPECTED_CONSTRAINT_COUNT);
     }
 
     #[test]
