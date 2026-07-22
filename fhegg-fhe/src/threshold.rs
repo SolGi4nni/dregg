@@ -596,6 +596,25 @@ impl BfvParams {
         Self { arc }
     }
 
+    /// Degree-8192 128-bit parameter set for the depth-three distributed
+    /// correlation circuit.  The degree-4096 additive-fold set is intentionally
+    /// optimized for additions and does not retain enough measured noise
+    /// headroom for a full 129-candidate sacrifice row.
+    pub fn correlation_set() -> Self {
+        let arc = BfvParameters::default_parameters_128(20)
+            .expect("128-bit BFV params")
+            .nth(3)
+            .expect("degree-8192 parameter set");
+        Self { arc }
+    }
+
+    pub fn is_correlation_set(&self) -> bool {
+        let expected = Self::correlation_set();
+        self.degree() == expected.degree()
+            && self.plaintext_modulus() == expected.plaintext_modulus()
+            && self.moduli() == expected.moduli()
+    }
+
     pub fn arc(&self) -> &Arc<BfvParameters> {
         &self.arc
     }

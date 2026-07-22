@@ -269,6 +269,23 @@ impl CorrelationSession {
     pub fn keygen_session(&self) -> &KeygenSession {
         &self.keygen
     }
+
+    /// Check an independently supplied parameter handle against the exact
+    /// profile committed into this session digest.
+    pub fn matches_parameters(&self, params: &BfvParams) -> bool {
+        self.digest
+            == session_digest(
+                self.nonce,
+                &self.keygen,
+                self.dkg_digest,
+                self.collective_key_digest,
+                self.relin_session_id,
+                self.relin_key_digest,
+                &self.roster,
+                self.triples,
+                params,
+            )
+    }
 }
 
 fn validate_roster(roster: &[Vec<u8>]) -> Result<()> {

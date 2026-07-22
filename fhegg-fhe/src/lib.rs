@@ -81,6 +81,8 @@ pub mod dark_amm_attested;
 /// Authenticated, non-circular binding from an independently signed DKG
 /// contribution roster to the public key carried by a Dark AMM table.
 pub mod dark_amm_dkg;
+/// Typed FHTRI005 composition through the explicit malicious/PQ cross-term seam.
+pub mod dealerless_preprocessing;
 /// Durable quorum-signed companion to the in-process one-bit private decision
 /// capability. The receipt binds the exact candidate/session and reveal-only
 /// transcript while keeping malicious BFV-share validity an explicit residual.
