@@ -76,6 +76,7 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
+use dreggnet_catalog::game_kind;
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
     Action, Attribution, DreggIdentity, HostError, Outcome, SessionId, SignedError, TurnSigner,
@@ -84,8 +85,8 @@ use dreggnet_telegram::cipherclerk::{TelegramCipherclerk, seed_for};
 use webauth_core::link_registry::LinkStore;
 
 use crate::{
-    CatalogState, audit, metrics, open_audit_parts, refused_open_response,
-    render_offering_response, wants_fragment,
+    CatalogState, act_signed, audit, game_epoch_refusal_response, metrics, open_audit_parts,
+    refused_open_response, render_offering_response, wants_fragment,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -804,7 +805,8 @@ async fn get_tg_session(
             .decided(kind, reason),
         );
     }
-    match opened {
+    let newly_opened = match opened {
+        Ok(newly_opened) => newly_opened,
         Err(HostError::UnknownOffering(k)) => {
             return (
                 StatusCode::NOT_FOUND,
@@ -815,7 +817,12 @@ async fn get_tg_session(
         Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
             return refused_open_response(&sid, &e);
         }
-        _ => {}
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(error) = state.catalog.bind_game_after_open(&key, &sid, newly_opened) {
+        return game_epoch_refusal_response(&sid, &error);
     }
 
     Html(render_offering_response(
@@ -1001,7 +1008,8 @@ async fn post_tg_act(
             h.ensure_open_as(&k, &sid, Some(&opener))
         })
     };
-    match opened {
+    let newly_opened = match opened {
+        Ok(newly_opened) => newly_opened,
         Err(HostError::UnknownOffering(k)) => {
             audit::log().emit(act_event(audit_detail).decided("refused", "unknown_offering"));
             return (
@@ -1015,8 +1023,21 @@ async fn post_tg_act(
             audit::log().emit(act_event(audit_detail).decided(kind, reason));
             return refused_open_response(&sid, &e);
         }
-        _ => {}
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(error) = state.catalog.bind_game_after_open(&key, &sid, newly_opened) {
+        return game_epoch_refusal_response(&sid, &error);
     }
+    let game_context = if game_kind(&key).is_some() {
+        match state.catalog.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
+    };
 
     // The typed action — label defaults to the verb, `enabled` is decoration (the executor is
     // the sole referee of a crafted POST, exactly as on every other surface).
@@ -1031,24 +1052,26 @@ async fn post_tg_act(
     let outcome = {
         let k = key.clone();
         let sid = sid.clone();
+        let routed_viewer = viewer.clone();
         state.catalog.run_offering(&key, &viewer, move |h| {
-            let key = k;
-            let expected = match h.signed_counter(&key, &sid, signer.pubkey_hex()) {
+            let expected = match h.signed_counter(&k, &sid, signer.pubkey_hex()) {
                 None => 0,
                 Some(last) => match last.checked_add(1) {
                     Some(n) => n,
                     // A consumed u64::MAX leaves no acceptable next counter — the lane is
                     // exhausted; surface the same refusal advance_signed would.
                     None => {
-                        return Err(HostError::Signature(SignedError::StaleCounter {
-                            presented: u64::MAX,
-                            expected: u64::MAX,
-                        }));
+                        return act_signed::SignedAdvance::HostError(HostError::Signature(
+                            SignedError::StaleCounter {
+                                presented: u64::MAX,
+                                expected: u64::MAX,
+                            },
+                        ));
                     }
                 },
             };
-            let sa = signer.sign(&key, &sid, expected, action);
-            h.advance_signed(&key, &sid, sa)
+            let sa = signer.sign(&k, &sid, expected, action);
+            act_signed::advance_signed_on_host(h, k, sid, routed_viewer, game_context, sa)
         })
     };
 
@@ -1057,7 +1080,10 @@ async fn post_tg_act(
     // server signed for itself in the same atomic job) and is recorded as `error`.
     {
         let (kind, reason, out) = match &outcome {
-            Ok(Outcome::Landed { receipt, ended }) => (
+            act_signed::SignedAdvance::Advanced {
+                outcome: Outcome::Landed { receipt, ended },
+                ..
+            } => (
                 "routed",
                 String::new(),
                 audit::AuditOutcome::Landed {
@@ -1065,21 +1091,27 @@ async fn post_tg_act(
                     ended: *ended,
                 },
             ),
-            Ok(Outcome::Refused(why)) => (
+            act_signed::SignedAdvance::Advanced {
+                outcome: Outcome::Refused(why),
+                ..
+            } => (
                 "routed",
                 String::new(),
                 audit::AuditOutcome::Refused { why: why.clone() },
             ),
-            Err(HostError::Signature(e)) => (
+            act_signed::SignedAdvance::HostError(HostError::Signature(e)) => (
                 "error",
                 format!("custodial_verifier_refused: {e}"),
                 audit::AuditOutcome::Error {
                     what: e.to_string(),
                 },
             ),
-            Err(e) => {
+            act_signed::SignedAdvance::HostError(e) => {
                 let (kind, reason) = open_audit_parts(e);
                 (kind, reason, audit::AuditOutcome::None)
+            }
+            act_signed::SignedAdvance::GameRouteRefused(reason) => {
+                ("gated", reason.clone(), audit::AuditOutcome::None)
             }
         };
         audit::log().emit(
@@ -1089,21 +1121,32 @@ async fn post_tg_act(
         );
     }
 
-    let claimed = viewer.0.clone();
     let notice = match outcome {
-        Ok(Outcome::Landed { receipt, ended }) => format!(
-            "Turn committed — {} Signed by {claimed} (verified, Telegram-attested).",
-            PlayerTurnReceipt::from_landed(&receipt, ended)
-                .compact_text(PlayerReplaySurface::Telegram)
+        act_signed::SignedAdvance::Advanced {
+            outcome: Outcome::Landed { receipt, ended },
+            publication,
+        } => format!(
+            "Turn committed — {}",
+            publication.as_ref().map_or_else(
+                || PlayerTurnReceipt::from_landed(&receipt, ended)
+                    .compact_text(PlayerReplaySurface::Telegram),
+                |publication| crate::game_session::public_receipt_text(
+                    publication,
+                    PlayerReplaySurface::Telegram,
+                ),
+            )
         ),
         // The signature verified; the executor refused the move itself — the anti-ghost banner.
-        Ok(Outcome::Refused(why)) => {
+        act_signed::SignedAdvance::Advanced {
+            outcome: Outcome::Refused(why),
+            ..
+        } => {
             metrics::inc_turn_refused();
             format!("Refused: {why} (nothing committed — anti-ghost).")
         }
         // On the CUSTODIAL path the server signed for itself in the same atomic job, so a
         // verifier refusal is a server bug, not client input — log loudly, refuse honestly.
-        Err(HostError::Signature(e)) => {
+        act_signed::SignedAdvance::HostError(HostError::Signature(e)) => {
             tracing::error!(
                 error = %e,
                 offering = %key,
@@ -1115,14 +1158,21 @@ async fn post_tg_act(
             )
                 .into_response();
         }
-        Err(e @ (HostError::UnknownOffering(_) | HostError::UnknownSession { .. })) => {
+        act_signed::SignedAdvance::HostError(
+            e @ (HostError::UnknownOffering(_) | HostError::UnknownSession { .. }),
+        ) => {
             return (StatusCode::NOT_FOUND, e.to_string()).into_response();
         }
-        Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
+        act_signed::SignedAdvance::HostError(
+            e @ (HostError::Policy(_) | HostError::ResumeFailed { .. }),
+        ) => {
             return refused_open_response(&sid, &e);
         }
-        Err(e @ HostError::Deploy(_)) => {
+        act_signed::SignedAdvance::HostError(e @ HostError::Deploy(_)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+        act_signed::SignedAdvance::GameRouteRefused(reason) => {
+            return (StatusCode::CONFLICT, reason).into_response();
         }
     };
 
@@ -1791,8 +1841,12 @@ mod tests {
         let uri = format!("/tg/offerings/dungeon/session/{sid}");
         let (status, _) = send(&app, "GET", &uri, Some(&init), None).await;
         assert_eq!(status, StatusCode::OK);
+        let routed_epoch = catalog
+            .bound_game_session("dungeon", &SessionId::new(sid))
+            .expect("Mini App GET binds the shared renderer to a live game epoch");
 
-        // POST one turn: it lands, and the response names the VERIFIED custodial pubkey.
+        // POST one turn: it lands through the common game spine. The shared
+        // result card carries signed provenance without publishing the actor.
         let act = format!("{uri}/act");
         let (status, body) = send(
             &app,
@@ -1804,9 +1858,24 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("Turn committed"), "{body}");
+        let notice = body
+            .split_once("role=\"status\">")
+            .and_then(|(_, tail)| tail.split_once("</div>"))
+            .map(|(notice, _)| notice)
+            .expect("landed response has a status notice");
         assert!(
-            body.contains(&expected_ident.0),
-            "the notice names the verified signer — the SAME identity the bot derives: {body}"
+            notice.contains("Verified dungeon receipt") && notice.contains("publication"),
+            "the notice consumes the common public game receipt: {notice}"
+        );
+        assert!(
+            !notice.contains(&expected_ident.0),
+            "the public result notice must not publish the custodial actor: {notice}"
+        );
+        assert_eq!(
+            catalog
+                .bound_game_session("dungeon", &SessionId::new(sid))
+                .expect("Mini App POST retains the same live route"),
+            routed_epoch
         );
 
         // A second POST consumes the NEXT counter (the atomic floor-read works across turns).

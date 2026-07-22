@@ -217,11 +217,24 @@ impl GameEpochLedger {
                 ));
             }
         };
-        let incarnation = open_incarnation(&directory)?;
         let sessions_path = directory.join(SESSIONS_FILE);
         let state = match fs::read(&sessions_path) {
             Ok(bytes) => decode_state(&bytes)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => EpochState::default(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !incarnation_preexisting => {
+                // As with authorization custody, initialize the generation
+                // map before minting the durable incarnation. Once that
+                // incarnation exists, absence is rollback/loss and must not
+                // recycle generation one under the same host identity.
+                let state = EpochState::default();
+                atomic_replace(&directory, SESSIONS_FILE, &encode_state(&state)?)?;
+                state
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(GameEpochError::Corrupt(format!(
+                    "{} is missing for an initialized host incarnation",
+                    sessions_path.display()
+                )));
+            }
             Err(error) => {
                 return Err(GameEpochError::io(
                     "read session generations",
@@ -230,6 +243,7 @@ impl GameEpochLedger {
                 ));
             }
         };
+        let incarnation = open_incarnation(&directory)?;
         Ok(Self(Arc::new(LedgerInner {
             incarnation,
             backing: Backing::Durable(directory),

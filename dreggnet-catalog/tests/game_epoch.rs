@@ -299,6 +299,29 @@ fn initialized_host_refuses_a_missing_authorization_journal() {
 }
 
 #[test]
+fn initialized_host_refuses_a_missing_session_generation_journal() {
+    let directory = tempfile::tempdir().unwrap();
+    let ledger = GameEpochLedger::open(directory.path()).unwrap();
+    let path = directory.path().join("session-generations.v1");
+    let initialized = std::fs::read(&path).unwrap();
+    assert_eq!(&initialized[..8], b"DREGGE01");
+    assert_eq!(&initialized[8..12], &0u32.to_be_bytes());
+
+    let session = SessionId::new("web:no-generation-recycle");
+    assert_eq!(
+        ledger.bind_after_ensure("dungeon", &session, true).unwrap(),
+        1
+    );
+    drop(ledger);
+
+    std::fs::remove_file(path).unwrap();
+    assert!(matches!(
+        GameEpochLedger::open(directory.path()),
+        Err(GameEpochError::Corrupt(_))
+    ));
+}
+
+#[test]
 fn authorization_checksum_and_clone_concurrency_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
     let ledger = GameEpochLedger::open(directory.path()).unwrap();

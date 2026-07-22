@@ -206,13 +206,23 @@ async fn operation_response_omits_actor_and_every_unreviewed_field_by_default() 
     }));
     let app = catalog_router(Arc::clone(&state)).merge(fhegg_operation::router(state));
     let actor = web_identity("private-response-player").0;
+    let session_path = format!("/offerings/dungeon/session/{SESSION}");
+    let (status, page) = response(
+        &app,
+        Request::builder()
+            .uri(&session_path)
+            .header("cookie", "dregg_user=private-response-player")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+
     let (status, body) = response(
         &app,
         Request::builder()
             .method("POST")
-            .uri(format!(
-                "/offerings/dungeon/session/{SESSION}/operations/{HOSTILE_OPERATION}"
-            ))
+            .uri(format!("{session_path}/operations/{HOSTILE_OPERATION}"))
             .header("content-type", HOSTILE_MEDIA_TYPE)
             .header("cookie", "dregg_user=private-response-player")
             .body(Body::from(vec![1, 2, 3]))
@@ -236,13 +246,25 @@ async fn operation_response_omits_actor_and_every_unreviewed_field_by_default() 
     }
     let body: Value = serde_json::from_str(&body).expect("operation response is JSON");
     assert_eq!(body["status"], "applied");
-    assert_eq!(body["publicFields"]["newRoot"], "public-root");
-    assert_eq!(body["publicFields"]["winner"], "north");
+    assert_eq!(body["gameFamily"], "dungeon");
+    assert_eq!(body["attribution"], "asserted");
+    assert_eq!(body["result"]["kind"], "operation");
     assert_eq!(
-        body["publicFields"]
-            .as_object()
-            .expect("public fields is an object")
+        body["result"]["fields"]
+            .as_array()
+            .expect("typed public fields is an array")
             .len(),
-        2
+        0,
+        "an unknown operation route cannot promote even otherwise-audited field names"
     );
+    for commitment in ["sessionRouteId", "receiptId", "publicationId"] {
+        assert_eq!(
+            body[commitment]
+                .as_str()
+                .unwrap_or_else(|| panic!("missing {commitment}"))
+                .len(),
+            64,
+            "{commitment} is a 32-byte hex commitment"
+        );
+    }
 }

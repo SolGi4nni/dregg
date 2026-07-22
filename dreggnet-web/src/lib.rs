@@ -140,7 +140,12 @@ use dreggnet_offerings::{
     Surface, SweepReport, SystemClock, VerifyReport,
 };
 
-use dreggnet_catalog::{PlayerWorlds, is_rpg_key};
+use dreggnet_catalog::{
+    GameActionRef, GameAffordance, GameAudience, GameEpochError, GameEpochLedger,
+    GameHostIncarnation, GameResult, GameSessionRef, GameSpineError, PlayerWorlds,
+    PublicGameReceipt, execute_bound_asserted_game_turn, game_kind, inspect_bound_game_session,
+    is_rpg_key, project_public_game_receipt,
+};
 
 pub(crate) use web_identity_http::web_user;
 
@@ -1316,6 +1321,10 @@ pub struct CatalogState {
     /// ISOLATED inventories: player A forges an item and player B does not see it. This is the
     /// shared-layer form of the split the Discord bot already runs.
     players: PlayerHostThread,
+    /// Deployment custody for every game route. Ordinary restarts retain the
+    /// host incarnation and live generation; a close/reopen advances the
+    /// generation, so an old typed action can never name the new world.
+    game_epochs: GameEpochLedger,
     /// Retains the deployment-owned registry and durable exact-effect adapter
     /// for the opt-in private Bazaar route. The ordinary catalog never invents
     /// a policy and leaves this absent.
@@ -1330,6 +1339,7 @@ impl CatalogState {
         CatalogState {
             host: HostThread::spawn(catalog_default_host),
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            game_epochs: ephemeral_game_epochs(),
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
         }
@@ -1343,6 +1353,7 @@ impl CatalogState {
         CatalogState {
             host: HostThread::spawn(build),
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            game_epochs: ephemeral_game_epochs(),
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
         }
@@ -1356,9 +1367,21 @@ impl CatalogState {
         build_host: impl FnOnce() -> OfferingHost + Send + 'static,
         build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
     ) -> Self {
+        Self::with_hosts_and_game_epochs(build_host, build_players, ephemeral_game_epochs())
+    }
+
+    /// Build both host partitions over an explicitly owned game-epoch ledger.
+    /// Deployments use the durable form; tests and confined embedders may pass
+    /// an in-memory ledger deliberately.
+    pub fn with_hosts_and_game_epochs(
+        build_host: impl FnOnce() -> OfferingHost + Send + 'static,
+        build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
+        game_epochs: GameEpochLedger,
+    ) -> Self {
         CatalogState {
             host: HostThread::spawn(build_host),
             players: PlayerHostThread::spawn(build_players),
+            game_epochs,
             #[cfg(feature = "private-bazaar-live")]
             private_bazaar_deployment: None,
         }
@@ -1384,6 +1407,7 @@ impl CatalogState {
         policy: SessionPolicy,
     ) -> Self {
         let mounted = deployment.clone();
+        let epoch_dir = session_dir.clone();
         CatalogState {
             host: HostThread::spawn(move || {
                 let base = dreggnet_catalog::full_catalog_host_with_private_bazaar(
@@ -1393,6 +1417,7 @@ impl CatalogState {
                 assemble_demo_host(base, session_dir, policy)
             }),
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            game_epochs: resolve_game_epochs(epoch_dir.as_deref()),
             private_bazaar_deployment: Some(deployment),
         }
     }
@@ -1421,6 +1446,90 @@ impl CatalogState {
         } else {
             self.host.run(f)
         }
+    }
+
+    /// Reconcile a successful host open with the authority epoch used by every
+    /// game inspect/turn/operation call. Non-game offerings intentionally have
+    /// no game address and return `Ok(None)`.
+    pub(crate) fn bind_game_after_open(
+        &self,
+        key: &str,
+        id: &SessionId,
+        newly_opened: bool,
+    ) -> Result<Option<GameSessionRef>, GameEpochError> {
+        if game_kind(key).is_none() {
+            return Ok(None);
+        }
+        self.game_epochs.bind_after_ensure(key, id, newly_opened)?;
+        self.game_epochs.bound_session(key, id).map(Some)
+    }
+
+    /// Resolve the exact currently-live game address. This never adopts or
+    /// creates a generation; callers must first pass through
+    /// [`bind_game_after_open`](Self::bind_game_after_open).
+    pub fn bound_game_session(
+        &self,
+        key: &str,
+        id: &SessionId,
+    ) -> Result<GameSessionRef, GameEpochError> {
+        self.game_epochs.bound_session(key, id)
+    }
+
+    pub(crate) fn game_epoch_context(
+        &self,
+        key: &str,
+        id: &SessionId,
+    ) -> Result<(GameHostIncarnation, u64, GameSessionRef), GameEpochError> {
+        let generation = self.game_epochs.current_generation(key, id)?;
+        Ok((
+            self.game_epochs.host_incarnation(),
+            generation,
+            self.game_epochs.bound_session(key, id)?,
+        ))
+    }
+
+    /// Inspect a supplied typed game address against this deployment's live
+    /// authority epoch. This is the reusable native/controller seam behind the
+    /// web renderer and an explicit stale-incarnation/generation gate.
+    pub fn inspect_game_session(
+        &self,
+        session: GameSessionRef,
+        audience: GameAudience,
+    ) -> Result<dreggnet_catalog::GameSessionView, GameSpineError> {
+        let key = session.offering().to_string();
+        let id = session.session_id().clone();
+        let generation = self
+            .game_epochs
+            .current_generation(&key, &id)
+            .map_err(|error| GameSpineError::Host(error.to_string()))?;
+        let incarnation = self.game_epochs.host_incarnation();
+        let routing_viewer = match &audience {
+            GameAudience::Shared => DreggIdentity("viewer-blind-inspection".to_string()),
+            GameAudience::AssertedPrivate(viewer) => viewer.clone(),
+        };
+        self.run_offering(&key, &routing_viewer, move |host| {
+            inspect_bound_game_session(host, incarnation, generation, session, &audience)
+        })
+    }
+
+    /// Close one game world and retire its authority generation. A later open
+    /// receives the next generation; ordinary restart does not.
+    pub fn close_game_session(
+        &self,
+        key: &str,
+        id: &SessionId,
+        viewer: &DreggIdentity,
+    ) -> Result<bool, GameEpochError> {
+        if game_kind(key).is_none() {
+            return Ok(false);
+        }
+        let key_owned = key.to_string();
+        let id_owned = id.clone();
+        let closed = self.run_offering(key, viewer, move |host| host.close(&key_owned, &id_owned));
+        if closed {
+            self.game_epochs.mark_closed(key, id)?;
+        }
+        Ok(closed)
     }
 
     /// The SHARED catalog host's total live-session count — the `dregg_web_sessions_open` gauge
@@ -1597,14 +1706,20 @@ async fn get_offering_session(
             .decided(kind, reason),
         );
     }
-    match opened {
+    let newly_opened = match opened {
+        Ok(newly_opened) => newly_opened,
         Err(HostError::UnknownOffering(_)) => {
             return Html(catalog_missing_offering(&key)).into_response();
         }
         Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
             return refused_open_response(&sid, &e);
         }
-        _ => {}
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(error) = state.bind_game_after_open(&key, &sid, newly_opened) {
+        return game_epoch_refusal_response(&sid, &error);
     }
     // A GET is normally a full navigation (full page); an `X-Fragment: 1` GET (e.g. a script
     // refresh) returns just the swappable surface — additive, and the same one render path.
@@ -1633,10 +1748,18 @@ pub struct OfferingActForm {
 enum CatalogAct {
     /// The affordance was offered and resolved on the substrate (a real landed receipt / refusal).
     Advanced(Outcome),
+    /// A game turn crossed the authority-bound common spine and was reduced
+    /// to the viewer-blind publication grammar before leaving the host thread.
+    AdvancedGame {
+        outcome: Outcome,
+        publication: Option<PublicGameReceipt>,
+    },
     /// The turn is not on the current surface — an honest frontend-level refusal, before the substrate.
     NotOffered,
     /// The offering or session is absent (a routing miss).
     Missing,
+    /// The common game spine refused an internally inconsistent/stale route.
+    GameRouteRefused(String),
 }
 
 /// `POST /offerings/{key}/session/{id}/act` — the real-turn seam for ANY offering. Reads the web
@@ -1669,7 +1792,8 @@ async fn post_offering_act(
         })
     };
     metrics::set_sessions_open(state.shared_session_count() as f64);
-    match opened {
+    let newly_opened = match opened {
+        Ok(newly_opened) => newly_opened,
         Err(HostError::UnknownOffering(_)) => {
             audit::log().emit(
                 act_audit_event(&user, &actor, &key, &sid, &form)
@@ -1683,12 +1807,25 @@ async fn post_offering_act(
                 .emit(act_audit_event(&user, &actor, &key, &sid, &form).decided(kind, reason));
             return refused_open_response(&sid, &e);
         }
-        _ => {}
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(error) = state.bind_game_after_open(&key, &sid, newly_opened) {
+        return game_epoch_refusal_response(&sid, &error);
     }
 
     // PRESENT the current surface + COLLECT the posted affordance + ADVANCE, atomically on the
     // host thread: the turn must be among the offering's current affordances (offered), then the
     // executor is the sole referee of the {turn, arg} on the substrate.
+    let game_context = if game_kind(&key).is_some() {
+        match state.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
+    };
     let acted = {
         let k = key.clone();
         let sid = sid.clone();
@@ -1697,6 +1834,60 @@ async fn post_offering_act(
         let inner_actor = actor.clone();
         // RPG keys resolve in the acting user's own world; the shared tables on the ONE host.
         state.run_offering(&key, &actor, move |h| {
+            if let Some((incarnation, generation, session)) = game_context {
+                let view = match inspect_bound_game_session(
+                    h,
+                    incarnation,
+                    generation,
+                    session.clone(),
+                    &GameAudience::AssertedPrivate(inner_actor.clone()),
+                ) {
+                    Ok(view) => view,
+                    Err(error) => return CatalogAct::GameRouteRefused(error.to_string()),
+                };
+                if !view.affordances.iter().any(|affordance| {
+                    matches!(
+                        affordance,
+                        GameAffordance::Turn { action, .. } if action.turn == turn
+                    )
+                }) {
+                    return CatalogAct::NotOffered;
+                }
+                // Value-taking controls deliberately allow the submitted arg;
+                // the common spine binds that exact value and the concrete
+                // executor remains its sole referee.
+                let action = Action::new(turn.clone(), turn, arg, true);
+                let reference =
+                    GameActionRef::new(session.clone(), &action, view.surface_commitment);
+                return match execute_bound_asserted_game_turn(
+                    h,
+                    incarnation,
+                    generation,
+                    &session,
+                    reference,
+                    action,
+                    inner_actor,
+                ) {
+                    Ok(execution) => {
+                        let publication = match &execution.result {
+                            GameResult::Landed(receipt) => {
+                                match project_public_game_receipt(receipt) {
+                                    Ok(publication) => Some(publication),
+                                    Err(error) => {
+                                        return CatalogAct::GameRouteRefused(error.to_string());
+                                    }
+                                }
+                            }
+                            GameResult::Refused { .. } => None,
+                        };
+                        CatalogAct::AdvancedGame {
+                            outcome: execution.outcome,
+                            publication,
+                        }
+                    }
+                    Err(error) => CatalogAct::GameRouteRefused(error.to_string()),
+                };
+            }
             // Validate against the affordances THIS actor sees (`actions_for`) — a viewer is offered
             // only what their caps allow; the executor remains the sole referee of the typed turn.
             let Some(actions) = h.actions_for(&k, &sid, &inner_actor) else {
@@ -1729,11 +1920,28 @@ async fn post_offering_act(
             act_audit_event(&user, &actor, &key, &sid, &form)
                 .with_outcome(audit::AuditOutcome::Refused { why: why.clone() })
         }
+        CatalogAct::AdvancedGame {
+            outcome: Outcome::Landed { receipt, ended },
+            ..
+        } => act_audit_event(&user, &actor, &key, &sid, &form).with_outcome(
+            audit::AuditOutcome::Landed {
+                turn_hash: audit::hex32(&receipt.turn_hash),
+                ended: *ended,
+            },
+        ),
+        CatalogAct::AdvancedGame {
+            outcome: Outcome::Refused(why),
+            ..
+        } => act_audit_event(&user, &actor, &key, &sid, &form)
+            .with_outcome(audit::AuditOutcome::Refused { why: why.clone() }),
         CatalogAct::NotOffered => {
             act_audit_event(&user, &actor, &key, &sid, &form).decided("refused", "not_offered")
         }
         CatalogAct::Missing => {
             act_audit_event(&user, &actor, &key, &sid, &form).decided("refused", "missing_session")
+        }
+        CatalogAct::GameRouteRefused(reason) => {
+            act_audit_event(&user, &actor, &key, &sid, &form).decided("gated", reason.clone())
         }
     });
 
@@ -1749,10 +1957,31 @@ async fn post_offering_act(
             metrics::inc_turn_refused();
             format!("Refused: {why} (nothing committed — anti-ghost).")
         }
+        CatalogAct::AdvancedGame {
+            outcome: Outcome::Landed { .. },
+            publication: Some(publication),
+        } => format!(
+            "Turn committed — {}",
+            game_session::public_receipt_text(&publication, PlayerReplaySurface::Web)
+        ),
+        CatalogAct::AdvancedGame {
+            outcome: Outcome::Landed { .. },
+            publication: None,
+        } => "Refused: a landed game turn lacked its public receipt projection.".to_string(),
+        CatalogAct::AdvancedGame {
+            outcome: Outcome::Refused(why),
+            ..
+        } => {
+            metrics::inc_turn_refused();
+            format!("Refused: {why} (nothing committed — anti-ghost).")
+        }
         CatalogAct::NotOffered => {
             "Refused: that affordance is not on the current surface.".to_string()
         }
         CatalogAct::Missing => "Refused: no such offering session.".to_string(),
+        CatalogAct::GameRouteRefused(reason) => {
+            format!("Refused: game-session route was stale or invalid: {reason}")
+        }
     };
 
     // Re-render AS the acting user — so the player who just claimed/played a seat sees their own
@@ -1811,6 +2040,25 @@ fn refused_open_response(id: &SessionId, err: &HostError) -> Response {
         }
     }
     resp
+}
+
+fn game_epoch_refusal_response(id: &SessionId, error: &GameEpochError) -> Response {
+    let body = format!(
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">\
+         Refused: game-session authority could not be established: {}. Nothing advanced.</div>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse the Lab</a></p>\
+         </main>",
+        esc(&error.to_string()),
+    );
+    (
+        StatusCode::CONFLICT,
+        Html(document(
+            &format!("DreggNet Cloud — session {} authority refused", id.0),
+            "",
+            &body,
+        )),
+    )
+        .into_response()
 }
 
 /// The unsigned `/act` twin's audit-envelope skeleton (asserted-cookie attribution; the
@@ -1921,6 +2169,14 @@ fn offering_surface_fragment(
     notice: Option<&str>,
     viewer: &DreggIdentity,
 ) -> Option<String> {
+    let game_context = if game_kind(key).is_some() {
+        // A game surface without a live typed authority route must not fall
+        // through to the legacy renderer: doing so would make a stale or lost
+        // generation look like an ordinary unbound session.
+        Some(state.game_epoch_context(key, id).ok()?)
+    } else {
+        None
+    };
     let rendered = {
         let k = key.to_string();
         let id = id.clone();
@@ -1930,6 +2186,32 @@ fn offering_surface_fragment(
         // (their inventory), so the render reads the ledger their turns landed in — the whole
         // per-viewer isolation reaching the web surface.
         state.run_offering(key, viewer, move |h| {
+            if let Some((incarnation, generation, session)) = game_context {
+                let view = inspect_bound_game_session(
+                    h,
+                    incarnation,
+                    generation,
+                    session,
+                    &GameAudience::AssertedPrivate(v),
+                )
+                .ok()?;
+                #[cfg(feature = "hosted-binary-operations")]
+                {
+                    let operations = view
+                        .affordances
+                        .into_iter()
+                        .filter_map(|affordance| match affordance {
+                            GameAffordance::Operation { descriptor, .. } => Some(descriptor),
+                            GameAffordance::Turn { .. } => None,
+                        })
+                        .collect();
+                    return Some((view.projection.surface, view.verification, operations));
+                }
+                #[cfg(not(feature = "hosted-binary-operations"))]
+                {
+                    return Some((view.projection.surface, view.verification));
+                }
+            }
             let core = h.render_for(&k, &id, &v).zip(h.verify(&k, &id));
             #[cfg(feature = "hosted-binary-operations")]
             {
@@ -3402,6 +3684,29 @@ pub fn validate_public_shielded_deployment() -> Result<(), String> {
     validate_public_shielded_deployment_from(|name| std::env::var(name).ok())
 }
 
+fn ephemeral_game_epochs() -> GameEpochLedger {
+    GameEpochLedger::in_memory_random()
+        .expect("the operating-system RNG must mint a nonzero game-host incarnation")
+}
+
+/// Resolve the web catalog's game-route authority. When session persistence is
+/// armed this is a required sibling store, not a best-effort cache: losing or
+/// corrupting it would make old game commands indistinguishable from a fresh
+/// host/session generation, so startup fails closed.
+fn resolve_game_epochs(session_dir: Option<&std::path::Path>) -> GameEpochLedger {
+    match session_dir {
+        Some(session_dir) => {
+            GameEpochLedger::open(session_dir.join("game-epochs")).unwrap_or_else(|error| {
+                panic!(
+                    "durable web game-epoch custody at {} refused: {error}",
+                    session_dir.join("game-epochs").display()
+                )
+            })
+        }
+        None => ephemeral_game_epochs(),
+    }
+}
+
 /// **Resolve the demo host from the environment** — the session-durability switch, mirroring
 /// [`resolve_demo_descent`], PLUS the session-lifecycle policy ([`resolve_web_policy`]: capacity /
 /// TTL / per-user quota / open rate). With `DREGGNET_WEB_SESSION_DIR` set (non-empty), the host is
@@ -3728,9 +4033,14 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
     // and the per-identity RPG worlds each resume from their own per-player store (so an
     // inventory/forge survives a restart exactly as Discord's per-player worlds do). See
     // `resolve_demo_host` / `resolve_player_worlds`.
-    let catalog = Arc::new(CatalogState::with_hosts(
+    let game_epoch_dir = std::env::var("DREGGNET_WEB_SESSION_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from);
+    let catalog = Arc::new(CatalogState::with_hosts_and_game_epochs(
         resolve_demo_host,
         resolve_player_worlds,
+        resolve_game_epochs(game_epoch_dir.as_deref()),
     ));
 
     make_app_parts_with_catalog(descent, catalog)

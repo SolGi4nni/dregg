@@ -19,6 +19,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use dreggnet_catalog::{
+    GameAffordance, GameAudience, GameCommand, GameResult, PublicGameAttribution,
+    PublicGameReceipt, PublicGameReceiptResult, execute_bound_asserted_game_command, game_kind,
+    inspect_bound_game_session, project_public_game_receipt,
+};
 #[cfg(feature = "fhegg-settlement")]
 use dreggnet_market::fhegg_transport::{FHEGG_SETTLEMENT_OPERATION, FheggSettlementOperation};
 use dreggnet_offerings::{
@@ -103,7 +108,62 @@ impl From<BinaryOperationDescriptor> for OperationDescriptorWire {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OperationAppliedWire {
+struct PublicGameReceiptWire {
+    status: &'static str,
+    game_family: &'static str,
+    session_route_id: String,
+    receipt_id: String,
+    publication_id: String,
+    attribution: &'static str,
+    result: PublicGameResultWire,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum PublicGameResultWire {
+    Turn { ended: bool },
+    Operation { fields: Vec<PublicGameFieldWire> },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicGameFieldWire {
+    name: &'static str,
+    value: String,
+}
+
+impl From<PublicGameReceipt> for PublicGameReceiptWire {
+    fn from(receipt: PublicGameReceipt) -> Self {
+        let result = match receipt.result {
+            PublicGameReceiptResult::Turn { ended } => PublicGameResultWire::Turn { ended },
+            PublicGameReceiptResult::Operation { fields } => PublicGameResultWire::Operation {
+                fields: fields
+                    .into_iter()
+                    .map(|field| PublicGameFieldWire {
+                        name: field.field.as_str(),
+                        value: field.value,
+                    })
+                    .collect(),
+            },
+        };
+        Self {
+            status: "applied",
+            game_family: receipt.kind.as_str(),
+            session_route_id: hex32(&receipt.session_route_id),
+            receipt_id: hex32(&receipt.receipt_id),
+            publication_id: hex32(&receipt.publication_id),
+            attribution: match receipt.attribution {
+                PublicGameAttribution::Signed => "signed",
+                PublicGameAttribution::Asserted => "asserted",
+            },
+            result,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyOperationAppliedWire {
     status: &'static str,
     operation: String,
     receipt_id: String,
@@ -114,6 +174,11 @@ struct OperationAppliedWire {
 struct OperationErrorWire {
     status: &'static str,
     error: String,
+}
+
+enum HostedOperationResult {
+    Game(GameResult),
+    Legacy(dreggnet_offerings::BinaryOperationReceipt),
 }
 
 fn error(status: StatusCode, reason: impl Into<String>) -> Response {
@@ -162,10 +227,39 @@ async fn get_web_session_operations(
 pub(crate) fn session_operations(catalog: &Arc<CatalogState>, key: String, id: String) -> Response {
     let sid = SessionId::new(id);
     let viewer = DreggIdentity("operation-discovery".to_string());
+    let game_context = if game_kind(&key).is_some() {
+        match catalog.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
+    };
     let result = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         catalog.run_offering(&key, &viewer, move |host| {
+            if let Some((incarnation, generation, session)) = game_context {
+                return inspect_bound_game_session(
+                    host,
+                    incarnation,
+                    generation,
+                    session,
+                    &GameAudience::Shared,
+                )
+                .map(|view| {
+                    view.affordances
+                        .into_iter()
+                        .filter_map(|affordance| match affordance {
+                            GameAffordance::Operation { descriptor, .. } => Some(descriptor),
+                            GameAffordance::Turn { .. } => None,
+                        })
+                        .collect()
+                })
+                .map_err(|error| {
+                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+                });
+            }
             host.binary_operations(&routed_key, &routed_sid)
         })
     };
@@ -202,10 +296,36 @@ async fn get_web_session_artifacts(
 pub(crate) fn session_artifacts(catalog: &Arc<CatalogState>, key: String, id: String) -> Response {
     let sid = SessionId::new(id);
     let viewer = DreggIdentity("artifact-discovery".to_string());
+    let game_context = if game_kind(&key).is_some() {
+        match catalog.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
+    };
     let result = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         catalog.run_offering(&key, &viewer, move |host| {
+            if let Some((incarnation, generation, session)) = game_context {
+                return inspect_bound_game_session(
+                    host,
+                    incarnation,
+                    generation,
+                    session,
+                    &GameAudience::Shared,
+                )
+                .map(|view| {
+                    view.artifacts
+                        .into_iter()
+                        .map(|artifact| artifact.descriptor)
+                        .collect()
+                })
+                .map_err(|error| {
+                    HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
+                });
+            }
             host.binary_artifacts(&routed_key, &routed_sid)
         })
     };
@@ -398,20 +518,60 @@ pub(crate) async fn execute_upload(
     // advertise different media types and limits without growing a second HTTP
     // decoder or weakening the host-selected policy.
     let sid = SessionId::new(id);
-    let descriptor = {
+    let game_context = if game_kind(&key).is_some() {
+        match catalog.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
+    };
+    let (descriptor, game_operation) = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         let routed_name = name.clone();
         let viewer = actor.clone();
-        let operations = catalog.run_offering(&key, &viewer, move |host| {
+        let inspection_viewer = viewer.clone();
+        let inspect_game_context = game_context.clone();
+        let inspected = catalog.run_offering(&key, &viewer, move |host| {
+            if let Some((incarnation, generation, session)) = inspect_game_context {
+                return inspect_bound_game_session(
+                    host,
+                    incarnation,
+                    generation,
+                    session,
+                    &GameAudience::AssertedPrivate(inspection_viewer),
+                )
+                .map(|view| {
+                    view.affordances
+                        .into_iter()
+                        .filter_map(|affordance| match affordance {
+                            GameAffordance::Operation {
+                                reference,
+                                descriptor,
+                            } => Some((descriptor, Some(reference))),
+                            GameAffordance::Turn { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|error| {
+                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+                });
+            }
             host.binary_operations(&routed_key, &routed_sid)
+                .map(|operations| {
+                    operations
+                        .into_iter()
+                        .map(|descriptor| (descriptor, None))
+                        .collect()
+                })
         });
-        match operations {
+        match inspected {
             Ok(operations) => match operations
                 .into_iter()
-                .find(|descriptor| descriptor.name == routed_name)
+                .find(|(descriptor, _)| descriptor.name == routed_name)
             {
-                Some(descriptor) => descriptor,
+                Some(pair) => pair,
                 None => return error(StatusCode::NOT_FOUND, "unknown hosted operation"),
             },
             Err(HostOperationError::UnknownOffering(_)) => {
@@ -437,7 +597,24 @@ pub(crate) async fn execute_upload(
         let routed_sid = sid.clone();
         let routed_name = name.clone();
         let routed_actor = actor.clone();
+        let game_context = game_context.clone();
         catalog.run_offering(&key, &actor, move |host| {
+            if let (Some((incarnation, generation, session)), Some(reference)) =
+                (game_context, game_operation)
+            {
+                return execute_bound_asserted_game_command(
+                    host,
+                    incarnation,
+                    generation,
+                    &session,
+                    GameCommand::Operation { reference, payload },
+                    routed_actor,
+                )
+                .map(HostedOperationResult::Game)
+                .map_err(|error| {
+                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+                });
+            }
             host.invoke_binary_operation(
                 &routed_key,
                 &routed_sid,
@@ -445,10 +622,23 @@ pub(crate) async fn execute_upload(
                 &payload,
                 routed_actor,
             )
+            .map(HostedOperationResult::Legacy)
         })
     };
     match result {
-        Ok(receipt) => Json(OperationAppliedWire {
+        Ok(HostedOperationResult::Game(GameResult::Landed(receipt))) => {
+            match project_public_game_receipt(&receipt) {
+                Ok(publication) => Json(PublicGameReceiptWire::from(publication)).into_response(),
+                Err(projection_error) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("public game receipt projection refused: {projection_error}"),
+                ),
+            }
+        }
+        Ok(HostedOperationResult::Game(GameResult::Refused { reason, .. })) => {
+            error(StatusCode::CONFLICT, reason)
+        }
+        Ok(HostedOperationResult::Legacy(receipt)) => Json(LegacyOperationAppliedWire {
             status: "applied",
             operation: receipt.operation,
             receipt_id: hex32(&receipt.receipt_id),

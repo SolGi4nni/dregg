@@ -58,15 +58,101 @@ use axum::{
 use serde::Deserialize;
 use serde_json::Value;
 
+use dreggnet_catalog::{
+    GameActionRef, GameAffordance, GameAudience, GameHostIncarnation, GameResult, GameSessionRef,
+    PublicGameReceipt, execute_bound_signed_game_turn_with_outcome, game_kind,
+    inspect_bound_game_session, project_public_game_receipt,
+};
 use dreggnet_offerings::player_turn_receipt::{PlayerReplaySurface, PlayerTurnReceipt};
 use dreggnet_offerings::{
-    Action, Attribution, DreggIdentity, HostError, Outcome, SessionId, SignedAction, SignedError,
+    Action, Attribution, DreggIdentity, HostError, OfferingHost, Outcome, SessionId, SignedAction,
+    SignedError,
 };
 
 use crate::{
-    CatalogState, audit, open_audit_parts, refused_open_response, render_offering_response,
-    wants_fragment,
+    CatalogState, audit, game_epoch_refusal_response, open_audit_parts, refused_open_response,
+    render_offering_response, wants_fragment,
 };
+
+pub(crate) enum SignedAdvance {
+    Advanced {
+        outcome: Outcome,
+        publication: Option<PublicGameReceipt>,
+    },
+    HostError(HostError),
+    GameRouteRefused(String),
+}
+
+/// Resolve one already-formed signed action through the authority-bound game
+/// spine, or retain the legacy host path for non-game offerings. Telegram and
+/// Discord call this from the same atomic host job that allocates their
+/// custodial counter, so all signed surfaces share the exact routing and
+/// viewer-blind publication boundary.
+pub(crate) fn advance_signed_on_host(
+    host: &mut OfferingHost,
+    key: String,
+    sid: SessionId,
+    viewer: DreggIdentity,
+    game_context: Option<(GameHostIncarnation, u64, GameSessionRef)>,
+    signed: SignedAction,
+) -> SignedAdvance {
+    if let Some((incarnation, generation, session)) = game_context {
+        let view = match inspect_bound_game_session(
+            host,
+            incarnation,
+            generation,
+            session.clone(),
+            &GameAudience::AssertedPrivate(viewer),
+        ) {
+            Ok(view) => view,
+            Err(error) => return SignedAdvance::GameRouteRefused(error.to_string()),
+        };
+        if !view.affordances.iter().any(|affordance| {
+            matches!(
+                affordance,
+                GameAffordance::Turn { action, .. } if action.turn == signed.action.turn
+            )
+        }) {
+            return SignedAdvance::GameRouteRefused(
+                "signed turn is not a current viewer affordance".to_string(),
+            );
+        }
+        let reference =
+            GameActionRef::new(session.clone(), &signed.action, view.surface_commitment);
+        return match execute_bound_signed_game_turn_with_outcome(
+            host,
+            incarnation,
+            generation,
+            &session,
+            reference,
+            signed,
+        ) {
+            Ok(execution) => {
+                let publication = match &execution.result {
+                    GameResult::Landed(receipt) => match project_public_game_receipt(receipt) {
+                        Ok(publication) => Some(publication),
+                        Err(error) => {
+                            return SignedAdvance::GameRouteRefused(error.to_string());
+                        }
+                    },
+                    GameResult::Refused { .. } => None,
+                };
+                SignedAdvance::Advanced {
+                    outcome: execution.outcome,
+                    publication,
+                }
+            }
+            Err(error) => SignedAdvance::GameRouteRefused(error.to_string()),
+        };
+    }
+    match host.advance_signed(&key, &sid, signed) {
+        Ok(outcome) => SignedAdvance::Advanced {
+            outcome,
+            publication: None,
+        },
+        Err(error) => SignedAdvance::HostError(error),
+    }
+}
 
 /// The act-signed audit-envelope skeleton (`signed` attribution — the user-held-key grade).
 /// The caller stamps decision + outcome; `detail` carries the PUBLIC wire material only
@@ -298,7 +384,8 @@ pub async fn post_offering_act_signed(
             h.ensure_open_as(&k, &sid, Some(&opener))
         })
     };
-    match opened {
+    let newly_opened = match opened {
+        Ok(newly_opened) => newly_opened,
         Err(HostError::UnknownOffering(k)) => {
             audit::log().emit(
                 signed_audit_event(
@@ -328,24 +415,41 @@ pub async fn post_offering_act_signed(
             );
             return refused_open_response(&sid, &e);
         }
-        _ => {}
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    if let Err(error) = state.bind_game_after_open(&key, &sid, newly_opened) {
+        return game_epoch_refusal_response(&sid, &error);
     }
 
     // ONE signature-verified turn on the host thread: verify (key/session/counter-bound) →
     // consume the counter → the executor referees the move → a landed turn records with
     // `Attribution::Signed` provenance.
-    let outcome = {
-        let k = key.clone();
-        let sid = sid.clone();
-        state.run_offering(&key, &viewer, move |h| h.advance_signed(&k, &sid, sa))
+    let game_context = if game_kind(&key).is_some() {
+        match state.game_epoch_context(&key, &sid) {
+            Ok(context) => Some(context),
+            Err(error) => return game_epoch_refusal_response(&sid, &error),
+        }
+    } else {
+        None
     };
+    let routed_key = key.clone();
+    let routed_sid = sid.clone();
+    let routed_viewer = viewer.clone();
+    let outcome = state.run_offering(&key, &viewer, move |h| {
+        advance_signed_on_host(h, routed_key, routed_sid, routed_viewer, game_context, sa)
+    });
 
     // AUDIT EMIT: the signature-verified advance — `Landed` carries the receipt-chain join;
     // a verifier refusal (forged/tampered/replayed counter) is a `gated` envelope, nothing
     // committed (anti-ghost).
     {
         let (kind, reason, out) = match &outcome {
-            Ok(Outcome::Landed { receipt, ended }) => (
+            SignedAdvance::Advanced {
+                outcome: Outcome::Landed { receipt, ended },
+                ..
+            } => (
                 "routed",
                 String::new(),
                 audit::AuditOutcome::Landed {
@@ -353,14 +457,20 @@ pub async fn post_offering_act_signed(
                     ended: *ended,
                 },
             ),
-            Ok(Outcome::Refused(why)) => (
+            SignedAdvance::Advanced {
+                outcome: Outcome::Refused(why),
+                ..
+            } => (
                 "routed",
                 String::new(),
                 audit::AuditOutcome::Refused { why: why.clone() },
             ),
-            Err(e) => {
+            SignedAdvance::HostError(e) => {
                 let (kind, reason) = open_audit_parts(e);
                 (kind, reason, audit::AuditOutcome::None)
+            }
+            SignedAdvance::GameRouteRefused(reason) => {
+                ("gated", reason.clone(), audit::AuditOutcome::None)
             }
         };
         audit::log().emit(
@@ -376,18 +486,31 @@ pub async fn post_offering_act_signed(
     }
 
     let notice = match outcome {
-        Ok(Outcome::Landed { receipt, ended }) => format!(
-            "Turn committed — {} Signed by {claimed} (verified).",
-            PlayerTurnReceipt::from_landed(&receipt, ended).compact_text(PlayerReplaySurface::Web)
+        SignedAdvance::Advanced {
+            outcome: Outcome::Landed { receipt, ended },
+            publication,
+        } => format!(
+            "Turn committed — {}",
+            publication.as_ref().map_or_else(
+                || PlayerTurnReceipt::from_landed(&receipt, ended)
+                    .compact_text(PlayerReplaySurface::Web),
+                |publication| crate::game_session::public_receipt_text(
+                    publication,
+                    PlayerReplaySurface::Web,
+                ),
+            )
         ),
         // The signature VERIFIED; the executor refused the move itself — the same anti-ghost
         // banner (and status) the unsigned twin gives a refused move.
-        Ok(Outcome::Refused(why)) => {
+        SignedAdvance::Advanced {
+            outcome: Outcome::Refused(why),
+            ..
+        } => {
             format!("Refused: {why} (nothing committed — anti-ghost).")
         }
         // A malformed KEY is a request-shape problem (the envelope never named a verifiable
         // signer) — 400, like every other malformation.
-        Err(HostError::Signature(e @ SignedError::MalformedKey)) => {
+        SignedAdvance::HostError(HostError::Signature(e @ SignedError::MalformedKey)) => {
             return (
                 StatusCode::BAD_REQUEST,
                 format!("signed advance refused: {e}"),
@@ -396,21 +519,26 @@ pub async fn post_offering_act_signed(
         }
         // A forged/tampered/spliced signature or a replayed counter is the verifier REFUSING a
         // well-formed envelope: 403, nothing advanced, nothing recorded. Not a server fault.
-        Err(HostError::Signature(e)) => {
+        SignedAdvance::HostError(HostError::Signature(e)) => {
             return (
                 StatusCode::FORBIDDEN,
                 format!("signed advance refused: {e}"),
             )
                 .into_response();
         }
-        Err(e @ (HostError::UnknownOffering(_) | HostError::UnknownSession { .. })) => {
+        SignedAdvance::HostError(
+            e @ (HostError::UnknownOffering(_) | HostError::UnknownSession { .. }),
+        ) => {
             return (StatusCode::NOT_FOUND, e.to_string()).into_response();
         }
-        Err(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
+        SignedAdvance::HostError(e @ (HostError::Policy(_) | HostError::ResumeFailed { .. })) => {
             return refused_open_response(&sid, &e);
         }
-        Err(e @ HostError::Deploy(_)) => {
+        SignedAdvance::HostError(e @ HostError::Deploy(_)) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+        SignedAdvance::GameRouteRefused(reason) => {
+            return (StatusCode::CONFLICT, reason).into_response();
         }
     };
 

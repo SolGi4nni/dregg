@@ -9,8 +9,44 @@
 #[cfg(any(feature = "hosted-binary-operations", test))]
 use std::collections::{BTreeMap, BTreeSet};
 
-use dreggnet_catalog::{GameKind, GameSessionRef};
+use dreggnet_catalog::{
+    GameKind, GameSessionRef, PublicGameAttribution, PublicGameReceipt, PublicGameReceiptResult,
+};
 use dreggnet_offerings::SessionId;
+use dreggnet_offerings::player_turn_receipt::PlayerReplaySurface;
+
+fn hex32(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// One cross-game public receipt sentence. It consumes only the viewer-blind
+/// publication object: no raw session, actor, action/operation name, payload,
+/// state head, or verifier diagnostic is available to accidentally interpolate.
+pub fn public_receipt_text(receipt: &PublicGameReceipt, replay: PlayerReplaySurface) -> String {
+    let provenance = match receipt.attribution {
+        PublicGameAttribution::Signed => "signed actor provenance",
+        PublicGameAttribution::Asserted => "asserted actor provenance",
+    };
+    let disposition = match &receipt.result {
+        PublicGameReceiptResult::Turn { ended: true } => "Session complete.",
+        PublicGameReceiptResult::Turn { ended: false } => "Session continues.",
+        PublicGameReceiptResult::Operation { .. } => "Verified operation applied.",
+    };
+    format!(
+        "Verified {} receipt {} · publication {} · {}. {} {}",
+        receipt.kind.as_str(),
+        hex32(&receipt.receipt_id),
+        hex32(&receipt.publication_id),
+        provenance,
+        disposition,
+        replay.instruction(),
+    )
+}
 
 fn boundary(kind: GameKind) -> &'static str {
     match kind {

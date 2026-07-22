@@ -903,6 +903,7 @@ pub fn execute_signed_game_turn(
 ) -> Result<GameResult, GameSpineError> {
     require_legacy_binding(session)?;
     execute_signed_game_turn_inner(host, session, reference, signed)
+        .map(|execution| execution.result)
 }
 
 /// Execute a signed ordinary turn under an exact live host/session authority
@@ -918,6 +919,22 @@ pub fn execute_bound_signed_game_turn(
 ) -> Result<GameResult, GameSpineError> {
     require_live_binding(session, host_incarnation, live_generation)?;
     execute_signed_game_turn_inner(host, session, reference, signed)
+        .map(|execution| execution.result)
+}
+
+/// Execute one signed game turn under a live authority epoch while retaining
+/// the concrete executor outcome beside its viewer-independent routing result.
+/// This is the signed analogue of [`execute_bound_asserted_game_turn`].
+pub fn execute_bound_signed_game_turn_with_outcome(
+    host: &mut OfferingHost,
+    host_incarnation: GameHostIncarnation,
+    live_generation: u64,
+    session: &GameSessionRef,
+    reference: GameActionRef,
+    signed: SignedAction,
+) -> Result<BoundGameTurnExecution, GameSpineError> {
+    require_live_binding(session, host_incarnation, live_generation)?;
+    execute_signed_game_turn_inner(host, session, reference, signed)
 }
 
 fn execute_signed_game_turn_inner(
@@ -925,7 +942,7 @@ fn execute_signed_game_turn_inner(
     session: &GameSessionRef,
     reference: GameActionRef,
     signed: SignedAction,
-) -> Result<GameResult, GameSpineError> {
+) -> Result<BoundGameTurnExecution, GameSpineError> {
     if &reference.session != session {
         return Err(GameSpineError::AddressMismatch {
             expected: session.clone(),
@@ -942,7 +959,7 @@ fn execute_signed_game_turn_inner(
     let outcome = host
         .advance_signed(session.offering(), session.session_id(), signed)
         .map_err(|error| GameSpineError::Host(error.to_string()))?;
-    Ok(match outcome {
+    let result = match &outcome {
         Outcome::Landed { receipt, ended } => {
             let attribution = Attribution::Signed { pubkey_hex: signer };
             let executor_agent = *receipt.agent.as_bytes();
@@ -953,7 +970,7 @@ fn execute_signed_game_turn_inner(
                 executor_agent,
                 inner_receipt_id,
                 receipt.previous_receipt_hash,
-                ended,
+                *ended,
             );
             GameResult::Landed(GameReceipt::Turn {
                 action: reference,
@@ -962,14 +979,15 @@ fn execute_signed_game_turn_inner(
                 bound_receipt_id,
                 inner_receipt_id,
                 previous_receipt_id: receipt.previous_receipt_hash,
-                ended,
+                ended: *ended,
             })
         }
         Outcome::Refused(reason) => GameResult::Refused {
             session: session.clone(),
-            reason,
+            reason: reason.clone(),
         },
-    })
+    };
+    Ok(BoundGameTurnExecution { outcome, result })
 }
 
 fn check_expected_head(

@@ -75,8 +75,9 @@ pub use game_spine::{
     GameAudience, GameCommand, GameHostIncarnation, GameKind, GameOperationRef, GameReceipt,
     GameResult, GameSessionBinding, GameSessionRef, GameSessionView, GameSpineError,
     execute_asserted_game_command, execute_bound_asserted_game_command,
-    execute_bound_asserted_game_turn, execute_bound_signed_game_turn, execute_signed_game_turn,
-    game_kind, inspect_bound_game_session, inspect_game_session,
+    execute_bound_asserted_game_turn, execute_bound_signed_game_turn,
+    execute_bound_signed_game_turn_with_outcome, execute_signed_game_turn, game_kind,
+    inspect_bound_game_session, inspect_game_session,
 };
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 #[cfg(feature = "private-bazaar-live")]

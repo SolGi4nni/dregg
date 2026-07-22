@@ -118,6 +118,19 @@ async fn five_private_operations_share_the_exact_web_discovery_and_refusal_bound
     let session_path = format!("/offerings/{OFFERING}/session/{SESSION}");
     let operations_path = format!("{session_path}/operations");
 
+    // Enter through the ordinary game lifecycle before asking for affordances:
+    // discovery is authority-bound to this host incarnation and generation.
+    let (status, before) = response(
+        &app,
+        Request::builder()
+            .uri(&session_path)
+            .header("cookie", "dregg_user=web-boundary-player")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
     let (status, discovery) = response(
         &app,
         Request::builder()
@@ -156,17 +169,6 @@ async fn five_private_operations_share_the_exact_web_discovery_and_refusal_bound
         );
         assert_eq!(wire["authentication"].as_str(), Some(AUTHENTICATION));
     }
-
-    let (status, before) = response(
-        &app,
-        Request::builder()
-            .uri(&session_path)
-            .header("cookie", "dregg_user=web-boundary-player")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
 
     for descriptor in &descriptors {
         let route = format!("{operations_path}/{}", descriptor.name);
