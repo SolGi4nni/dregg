@@ -16,6 +16,9 @@
 
 use std::collections::BTreeSet;
 
+use crate::descriptor_ir2::{EffectVmDescriptor2, parse_vm_descriptor2};
+use crate::descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes;
+
 /// The BabyBear prime. Every value transported into the IR2 table must be canonical.
 pub const BABYBEAR_MODULUS: u32 = 2_013_265_921;
 
@@ -25,6 +28,15 @@ pub const BFV_BUTTERFLY_TRACE_WIDTH: usize = 48;
 pub const BFV_BUTTERFLY_SCHEDULE_WIDTH: usize = 17;
 /// Exact width of one boundary-bus row: tag plus three radix-2^14 limbs.
 pub const BFV_BUTTERFLY_BUS_WIDTH: usize = 4;
+
+/// Verbatim Lean-emitted provenance for the executable q0/N=8 relation.  The
+/// carrier identity is *not* a hash of these JSON source bytes: callers must
+/// use [`bfv_q0_n8_descriptor_commitment`], which parses the typed descriptor
+/// and commits its canonical schema encoding.
+pub const BFV_Q0_N8_DESCRIPTOR_JSON: &str =
+    include_str!("../descriptors/by-name/private-book-bfv-odd-ntt-butterfly-q0-n8.json");
+
+const BFV_Q0_N8_DESCRIPTOR_NAME: &str = "private-book-bfv-odd-ntt-butterfly-q0-n8::exact-48-v1";
 
 const MAGIC: &[u8; 8] = b"FHBFM001";
 const CHECKSUM_LEN: usize = 32;
@@ -386,6 +398,9 @@ pub enum BfvTableError {
     Wire(String),
     /// Descriptor identity substitution.
     DescriptorCommitment,
+    /// The Lean-emitted IR2 descriptor failed typed parsing/canonicalization or
+    /// drifted away from the q0/N=8 carrier's pinned outer shape.
+    Descriptor(String),
     /// Main trace shape/order/canonical-field failure.
     MainTrace(String),
     /// A committed digest does not match its canonical rows.
@@ -408,6 +423,7 @@ impl std::fmt::Display for BfvTableError {
             Self::Geometry(s) => write!(f, "BFV butterfly geometry: {s}"),
             Self::Wire(s) => write!(f, "BFV faithful-table wire: {s}"),
             Self::DescriptorCommitment => write!(f, "BFV descriptor commitment mismatch"),
+            Self::Descriptor(s) => write!(f, "BFV typed descriptor: {s}"),
             Self::MainTrace(s) => write!(f, "BFV main trace: {s}"),
             Self::Commitment(which) => write!(f, "BFV {which} commitment mismatch"),
             Self::Schedule(s) => write!(f, "BFV schedule table: {s}"),
@@ -713,15 +729,42 @@ fn commit_residues(domain: &[u8], values: &[u64]) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// Domain-separated commitment to the exact Lean-emitted descriptor bytes consumed by IR2.
-/// Callers should derive the relation identity with this function rather than inventing a
-/// display-name digest.
+/// Low-level domain-separated byte commitment.  A Lean-authored relation must
+/// pass canonical typed `EffectVmDescriptor2` bytes here, never JSON source or
+/// a display name.  Prefer [`commit_bfv_butterfly_typed_descriptor`] and the
+/// fixed [`bfv_q0_n8_descriptor_commitment`] entry point.
 pub fn commit_bfv_butterfly_descriptor(descriptor_bytes: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new();
     h.update(b"dregg/bfv-butterfly/descriptor/v1");
     h.update(&(descriptor_bytes.len() as u64).to_le_bytes());
     h.update(descriptor_bytes);
     *h.finalize().as_bytes()
+}
+
+/// Commit the schema-canonical encoding of a parsed typed IR2 relation.
+/// Whitespace and JSON object-key order therefore cannot change identity,
+/// while any represented typed-field mutation does.
+pub fn commit_bfv_butterfly_typed_descriptor(
+    descriptor: &EffectVmDescriptor2,
+) -> Result<[u8; 32], BfvTableError> {
+    let bytes = canonical_effect_vm_descriptor2_bytes(descriptor)
+        .map_err(|error| BfvTableError::Descriptor(error.to_string()))?;
+    Ok(commit_bfv_butterfly_descriptor(&bytes))
+}
+
+/// Canonical typed-object identity of the exact Lean-emitted q0/N=8 relation.
+pub fn bfv_q0_n8_descriptor_commitment() -> Result<[u8; 32], BfvTableError> {
+    let descriptor =
+        parse_vm_descriptor2(BFV_Q0_N8_DESCRIPTOR_JSON).map_err(BfvTableError::Descriptor)?;
+    if descriptor.name != BFV_Q0_N8_DESCRIPTOR_NAME
+        || descriptor.trace_width != BFV_BUTTERFLY_TRACE_WIDTH
+        || descriptor.public_input_count != 0
+    {
+        return Err(BfvTableError::Descriptor(
+            "Lean q0/N=8 descriptor outer shape drifted".to_string(),
+        ));
+    }
+    commit_bfv_butterfly_typed_descriptor(&descriptor)
 }
 
 /// Canonical commitment used to bind this carrier to its verifier-supplied main trace.
@@ -1547,6 +1590,10 @@ mod tests {
         159, 129, 79, 87, 104, 101, 175, 93, 191, 227, 154, 18, 108, 157, 215, 113, 11, 138, 44,
         24, 200, 47, 233, 235, 34, 252, 227, 1, 54, 214, 11, 90,
     ];
+    const BFV_Q0_N8_DESCRIPTOR_HEADER: &str = concat!(
+        "{\"name\":\"private-book-bfv-odd-ntt-butterfly-q0-n8::exact-48-v1\",",
+        "\"ir\":2,\"trace_width\":48,\"public_input_count\":0,"
+    );
     const LEAN_Q0_N8_ROWS: [[u32; 48]; 12] = [
         [
             0, 0, 0, 0, 0, 0, 1, 0, 7, 0, 0, 1218, 3648, 52, 1, 0, 0, 1218, 3648, 52, 1225, 3648,
@@ -1610,7 +1657,8 @@ mod tests {
         ],
     ];
     fn descriptor_commitment() -> [u8; 32] {
-        commit_bfv_butterfly_descriptor(b"private-book-bfv-odd-ntt-butterfly-q0-n8::exact-48-v1")
+        bfv_q0_n8_descriptor_commitment()
+            .expect("checked-in Lean q0/N8 descriptor parses and canonicalizes")
     }
 
     fn honest() -> (Vec<BfvButterflyRow>, BfvFaithfulTableClaim) {
@@ -1641,6 +1689,48 @@ mod tests {
             .expect("exact table verification");
         assert_eq!(verified.geometry(), BfvButterflyGeometry::Q0_N8);
         assert_eq!(verified.main_trace_commitment(), commit_main_rows(&rows));
+    }
+
+    #[test]
+    fn q0_n8_identity_is_canonical_typed_semantics_not_json_or_display_text() {
+        let descriptor =
+            parse_vm_descriptor2(BFV_Q0_N8_DESCRIPTOR_JSON).expect("Lean q0/N8 JSON parses");
+
+        // Move the first four top-level fields while preserving every nested
+        // Lean-emitted object byte-for-byte.  The descriptor parser's nested
+        // tagged-object grammar is deliberately ordered, so a generic JSON
+        // reserializer would test a different property.
+        let body = BFV_Q0_N8_DESCRIPTOR_JSON
+            .strip_prefix(BFV_Q0_N8_DESCRIPTOR_HEADER)
+            .expect("q0/N8 descriptor header remains recognized");
+        let alternate_json = format!(
+            "{{\n  \"public_input_count\" : 0,\n  \"trace_width\" : 48,\n  \
+             \"name\" : \"{BFV_Q0_N8_DESCRIPTOR_NAME}\",\n  \"ir\" : 2,\n  {body}\n"
+        );
+        assert_ne!(alternate_json, BFV_Q0_N8_DESCRIPTOR_JSON);
+        let alternate = parse_vm_descriptor2(&alternate_json).expect("alternate JSON parses");
+        assert_eq!(alternate, descriptor);
+        assert_eq!(
+            commit_bfv_butterfly_typed_descriptor(&alternate).unwrap(),
+            descriptor_commitment()
+        );
+
+        // The historical display-name digest is not relation identity.
+        let display_name_digest =
+            commit_bfv_butterfly_descriptor(BFV_Q0_N8_DESCRIPTOR_NAME.as_bytes());
+        assert_ne!(display_name_digest, descriptor_commitment());
+
+        // Conversely, a typed semantic mutation changes identity and cannot
+        // authorize a claim committed to the exact Lean relation.
+        let mut typed_mutation = descriptor;
+        typed_mutation.trace_width += 1;
+        let mutated = commit_bfv_butterfly_typed_descriptor(&typed_mutation).unwrap();
+        assert_ne!(mutated, descriptor_commitment());
+        let (rows, claim) = honest();
+        assert!(matches!(
+            claim.verify(mutated, &rows),
+            Err(BfvTableError::DescriptorCommitment)
+        ));
     }
 
     #[test]
