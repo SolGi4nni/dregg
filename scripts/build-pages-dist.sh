@@ -23,6 +23,8 @@
 #   /light-client/     — verify a whole finalized history in ONE recursive proof, in-tab,
 #                        re-witnessing nothing. wasm: reuses /cards/pkg/dregg_wasm.js.
 #   /paper/            — the paper landing + a PDF compiled from paper/main.typ in this build.
+#   /papers/direct-logic-arithmetization/direct-logic-arithmetization.pdf
+#                      — the direct-logic research report, compiled when its source exists.
 #   /transclusion/     — Xanadu made honest: transclude a span (a verified dregg://
 #                        finalized read), amend the source (live follows, snapshot pins),
 #                        forge (REFUSED), receipt-pinned backlinks. wasm: reuses
@@ -77,6 +79,24 @@ cp "$ROOT/site/root/paper.html" "$DIST/paper/index.html"
 typst compile "$ROOT/paper/main.typ" "$DIST/paper/dregg.pdf"
 test -s "$DIST/paper/dregg.pdf"
 test "$(head -c 5 "$DIST/paper/dregg.pdf")" = '%PDF-'
+
+# The direct-logic report is being developed alongside its formalization. Keep
+# today's Pages deploy green before the source lands; once main.typ exists, a
+# missing or invalid PDF is a hard assembly failure. --root lets the report cite
+# checked-in formalization artifacts outside its own directory without weakening
+# Typst's filesystem boundary beyond this repository.
+DIRECT_LOGIC_SRC="$ROOT/papers/direct-logic-arithmetization/main.typ"
+DIRECT_LOGIC_DIST="$DIST/papers/direct-logic-arithmetization"
+DIRECT_LOGIC_PDF="$DIRECT_LOGIC_DIST/direct-logic-arithmetization.pdf"
+if [ -f "$DIRECT_LOGIC_SRC" ]; then
+  echo "=== compile the direct-logic arithmetization report ==="
+  mkdir -p "$DIRECT_LOGIC_DIST"
+  typst compile --root "$ROOT" "$DIRECT_LOGIC_SRC" "$DIRECT_LOGIC_PDF"
+  test -s "$DIRECT_LOGIC_PDF"
+  test "$(head -c 5 "$DIRECT_LOGIC_PDF")" = '%PDF-'
+else
+  echo "=== direct-logic arithmetization report not present yet; skipped ==="
+fi
 # the cloud & userspace subsite — the grain economy (the cloud) + the ~30 starbridge
 # apps (the userspace of the kernel) + trustless serving; deploys at /cloud/.
 cp -R "$ROOT/site/cloud" "$DIST/cloud"
@@ -259,5 +279,6 @@ echo "  /cards/        -> $(du -sh "$DIST/cards" | cut -f1) (the deos-js card ga
 echo "  /explorer/     -> $(du -sh "$DIST/explorer" | cut -f1) (caps as rows)"
 echo "  /light-client/ -> $(du -sh "$DIST/light-client" | cut -f1) (verify a whole history)"
 echo "  /transclusion/ -> $(du -sh "$DIST/transclusion" | cut -f1) (xanadu made honest)"
+[ -f "$DIRECT_LOGIC_PDF" ] && echo "  /papers/direct-logic-arithmetization/ -> $(du -sh "$DIRECT_LOGIC_PDF" | cut -f1) (the direct-logic report)"
 [ -d "$DIST/atlas" ] && echo "  /atlas/        -> $(du -sh "$DIST/atlas" | cut -f1) (the atlas)"
 echo "  total: $(find "$DIST" -type f | wc -l | tr -d ' ') files"

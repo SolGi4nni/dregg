@@ -9,7 +9,9 @@ name: Deploy deos to GitHub Pages
 #   /cards/        the deos-js card gallery (counter · inspector · tally · kv-store · doc-collab)
 #   /explorer/     caps-as-rows (your capabilities expressed as the rows you may read)
 #   /light-client/ verify a whole finalized history in ONE recursive proof, in-tab
-#   /paper/       the paper landing + PDF compiled from paper/main.typ in this run
+#   /paper/        the paper landing + PDF compiled from paper/main.typ in this run
+#   /papers/direct-logic-arithmetization/direct-logic-arithmetization.pdf
+#                  the direct-logic research report, when its Typst source exists
 #   /atlas/        the interactive atlas
 # scripts/build-pages-dist.sh assembles site/dist; this workflow builds + uploads it.
 #
@@ -182,7 +184,7 @@ jobs:
           # real files (not LFS pointer stubs) land in the Pages artifact.
           lfs: true
 
-      - name: Install Typst for the paper
+      - name: Install Typst for the papers
         uses: typst-community/setup-typst@v4
         with:
           typst-version: "0.15.0"
@@ -259,6 +261,16 @@ jobs:
           test -f site/dist/paper/index.html
           test -s site/dist/paper/dregg.pdf
           test "$(head -c 5 site/dist/paper/dregg.pdf)" = '%PDF-'
+          # The direct-logic report becomes a required, freshly compiled Pages
+          # artifact as soon as its source lands. Until then, keep deploys green.
+          report_src=papers/direct-logic-arithmetization/main.typ
+          report_pdf=site/dist/papers/direct-logic-arithmetization/direct-logic-arithmetization.pdf
+          if [ -f "$report_src" ]; then
+            test -s "$report_pdf"
+            test "$(head -c 5 "$report_pdf")" = '%PDF-'
+          else
+            test ! -e "$report_pdf"
+          fi
           # the deos cockpit (WebImage skin)
           test -f site/dist/deos/index.html
           test -s site/dist/deos/pkg/starbridge_web_bg.wasm
