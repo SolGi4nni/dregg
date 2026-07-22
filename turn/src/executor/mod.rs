@@ -700,6 +700,16 @@ pub trait ProofVerifier: Send + Sync {
 mod costs;
 pub use costs::ComputronCosts;
 
+/// Additive, explicitly non-live exact FNSP-v3 nullifier state machine.
+///
+/// It is executor-owned so its prepare/compare-and-commit protocol can run under one mutex at the
+/// future cutover, but no turn-dispatch path consumes it yet.
+pub mod exact_fnsp_state;
+pub use exact_fnsp_state::{
+    CommittedExactFnspV3Append, ExactFnspV3ExecutorState, ExactFnspV3StateError,
+    ExactFnspV3StateToken, PreparedExactFnspV3Append,
+};
+
 // =============================================================================
 // Cell Migration Two-Phase Commit
 // =============================================================================
@@ -1097,6 +1107,12 @@ pub struct TurnExecutor {
     /// mutability pattern as the executor's other host-fed registries; reads are
     /// one map lookup per hybrid authorization.
     pq_identity_registry: Mutex<HashMap<CellId, crate::pq::EnrolledPqIdentity>>,
+    /// Additive exact FNSP-v3 nullifier accumulator state.
+    ///
+    /// This is deliberately not consulted by `apply`/`execute` yet. Keeping it under one mutex
+    /// lets the future proof-production window use typed prepare + compare-and-commit without
+    /// partially mutating its accumulator or append-record image.
+    exact_fnsp_v3_state: Mutex<ExactFnspV3ExecutorState>,
 }
 
 impl TurnExecutor {
@@ -1145,6 +1161,7 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
 
@@ -1211,6 +1228,7 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
 
@@ -1259,6 +1277,7 @@ impl TurnExecutor {
             shadow_observer: std::sync::Arc::new(crate::shadow::NoOpShadowObserver),
             require_pq: std::sync::atomic::AtomicBool::new(false),
             pq_identity_registry: Mutex::new(HashMap::new()),
+            exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
     }
 
