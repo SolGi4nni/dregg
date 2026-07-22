@@ -32,7 +32,9 @@ DREGG_LOGIC_BENCH_WARMUPS=5 \
 The harness prints every timing sample in integer nanoseconds. `summary.csv`
 uses the 50th and 95th percentiles, arithmetic mean, sample standard deviation,
 and deterministic 10,000-resample percentile-bootstrap intervals for both the
-median and mean. Proof bytes are the length of the same postcard encoding used
+median and mean. Regenerate it with
+`python3 summarize.py /path/to/raw.log > reproduced-summary.csv` (NumPy 2.4.6
+was used for this capture). Proof bytes are the length of the same postcard encoding used
 by the live SDK proof path. Release proving does not perform the debug-only
 self-verification; the harness separately verifies every warmup proof and the
 retained measured proof, then times verification separately.
