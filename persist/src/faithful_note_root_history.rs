@@ -1554,6 +1554,34 @@ mod tests {
             "a forged direct row cannot mint store authority"
         );
 
+        // A genuine but stale signed row rekeyed under another height retains
+        // valid signature bytes.  Direct index admission still refuses because
+        // the signed height must equal the lookup key.
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut table = write
+                .open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)
+                .unwrap();
+            let stale_bytes = second.to_bytes().unwrap();
+            table
+                .insert(first.record.height, stale_bytes.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    first.record.height,
+                    first.record.successor.to_bytes(),
+                )
+                .unwrap()
+                .is_none(),
+            "a valid stale row under the wrong height cannot mint authority"
+        );
+
         // Restore the signed row, then leave the two-row table beside a head
         // seal rolled back to the first edge.  Exact count/span/head-to-tail
         // agreement must reject the stale seal without replaying the history.
@@ -1587,6 +1615,76 @@ mod tests {
                     first.record.successor.to_bytes(),
                 )
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn direct_historical_authority_is_membership_equivalent_to_full_replay() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = HybridSigner::new(0x74);
+        let (mut tree, anchor) = empty_anchor();
+        store
+            .initialize_faithful_note_root_history(&anchor)
+            .unwrap();
+        let mut head = anchor.clone();
+        for (block, commitment) in [(14, [0xc1; 32]), (15, [0xc2; 32]), (16, [0xc3; 32])] {
+            let envelope = signed_planned(&signer, &tree, &head, block, &[commitment]);
+            tree.append_blake3_commitment(&commitment);
+            store.append_faithful_note_root_verified(&envelope).unwrap();
+            head = envelope.record.to_anchor();
+        }
+
+        let committee = [signer.ed_pk];
+        let pq_committee = [signer.pq_pk.clone()];
+        let expected = store.faithful_note_root_expectation().unwrap().unwrap();
+        let replayed = store
+            .load_faithful_note_root_history_hybrid(&committee, &pq_committee, 1, expected)
+            .unwrap();
+        let mut members = vec![(replayed.anchor().height, replayed.anchor().root.to_bytes())];
+        members.extend(
+            replayed
+                .envelopes()
+                .iter()
+                .map(|envelope| (envelope.record.height, envelope.record.successor.to_bytes())),
+        );
+        for (height, root) in members {
+            assert!(
+                store
+                    .store_authenticated_historical_root_hybrid(
+                        &committee,
+                        &pq_committee,
+                        1,
+                        height,
+                        root,
+                    )
+                    .unwrap()
+                    .is_some(),
+                "every full-replay member has direct authority"
+            );
+        }
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    replayed.envelopes()[0].record.height,
+                    anchor.root.to_bytes(),
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    head.height + 1,
+                    head.root.to_bytes(),
+                )
+                .unwrap()
+                .is_none()
         );
     }
 
