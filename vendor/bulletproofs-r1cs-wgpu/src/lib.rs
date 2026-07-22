@@ -24,6 +24,8 @@ mod notes {
     mod r1cs_proof {}
 }
 
+#[cfg(all(feature = "wgpu-msm", feature = "std", feature = "yoloproofs"))]
+pub mod compact_edwards_wgpu;
 mod errors;
 mod generators;
 mod inner_product_proof;
