@@ -8,7 +8,6 @@
 //! formed.
 
 use std::process::Command;
-use std::thread;
 use std::time::Duration;
 
 use dregg_pq::{
@@ -119,15 +118,15 @@ fn certified_batch_for_roster(
 }
 
 #[test]
-fn certified_rows_complete_honest_equality_and_bind_the_exact_batch() {
+fn certified_rows_bind_the_exact_batch_and_raw_execution_refuses() {
     in_verified_pq_child(
-        "certified_rows_complete_honest_equality_and_bind_the_exact_batch",
+        "certified_rows_bind_the_exact_batch_and_raw_execution_refuses",
         "FHEGG_CERTIFIED_PREPROCESSING_HONEST_CHILD",
-        certified_rows_complete_honest_equality_and_bind_the_exact_batch_body,
+        certified_rows_bind_the_exact_batch_and_raw_execution_refuses_body,
     );
 }
 
-fn certified_rows_complete_honest_equality_and_bind_the_exact_batch_body() {
+fn certified_rows_bind_the_exact_batch_and_raw_execution_refuses_body() {
     let base = base_session(0x71);
     let batch = certified_batch(&base, 0x7172);
     let (session, certificate, materials) = batch.into_parts();
@@ -208,20 +207,12 @@ fn certified_rows_complete_honest_equality_and_bind_the_exact_batch_body() {
             .unwrap()
         })
         .collect::<Vec<_>>();
-    let (coordinator, endpoints) = local_channels(&session);
-    let parties = inputs
-        .into_iter()
-        .zip(materials)
-        .zip(endpoints)
-        .map(|((input, triples), endpoint)| {
-            thread::spawn(move || run_party_equality(input, triples, endpoint))
-        })
-        .collect::<Vec<_>>();
-    let decision = coordinator.coordinate_equality(&session).unwrap();
-    assert!(decision.is_equal());
-    for party in parties {
-        let report = party.join().unwrap().unwrap();
-        assert_eq!(report.and_gates, session.exact_and_gates());
+    let (_coordinator, endpoints) = local_channels(&session);
+    for ((input, triples), endpoint) in inputs.into_iter().zip(materials).zip(endpoints) {
+        assert!(matches!(
+            run_party_equality(input, triples, endpoint),
+            Err(PartyMpcError::CertifiedPreprocessingRequiresDurableCustody)
+        ));
     }
 }
 
@@ -354,7 +345,10 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body(
         endpoints.remove(0),
     )
     .unwrap_err();
-    assert_eq!(error, PartyMpcError::SessionMismatch);
+    assert_eq!(
+        error,
+        PartyMpcError::CertifiedPreprocessingRequiresDurableCustody
+    );
 
     // Positive control: the other context's own certified row still parses;
     // refusals above did not poison unrelated material.
@@ -363,15 +357,15 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body(
 }
 
 #[test]
-fn authenticated_peer_frames_cannot_cross_certified_batch_domains() {
+fn transport_machines_refuse_uncustodied_certified_rows() {
     in_verified_pq_child(
-        "authenticated_peer_frames_cannot_cross_certified_batch_domains",
+        "transport_machines_refuse_uncustodied_certified_rows",
         "FHEGG_CERTIFIED_PREPROCESSING_TRANSPORT_CHILD",
-        authenticated_peer_frames_cannot_cross_certified_batch_domains_body,
+        transport_machines_refuse_uncustodied_certified_rows_body,
     );
 }
 
-fn authenticated_peer_frames_cannot_cross_certified_batch_domains_body() {
+fn transport_machines_refuse_uncustodied_certified_rows_body() {
     let base = base_session(0x91);
     let keys = [
         SigningKey::from_bytes(&[0x51; 32]),
@@ -415,42 +409,32 @@ fn authenticated_peer_frames_cannot_cross_certified_batch_domains_body() {
         PartyEqualityInput::new(&session_a, 0, 20, 10, &mut StdRng::seed_from_u64(0x9394)).unwrap();
     let input_b =
         PartyEqualityInput::new(&session_b, 1, 30, 11, &mut StdRng::seed_from_u64(0x9495)).unwrap();
-    let mut party_a = EqualityPartyMachine::new(
-        session_a,
-        roster.clone(),
-        0,
-        keys[0].clone(),
-        input_a,
-        materials_a.remove(0),
-    )
-    .unwrap();
-    let mut party_b = EqualityPartyMachine::new(
-        session_b,
-        roster,
-        1,
-        keys[1].clone(),
-        input_b,
-        materials_b.remove(1),
-    )
-    .unwrap();
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    let frame_for_b = loop {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "party A did not emit its certified-session peer ingress"
-        );
-        if let Some(frame) = party_a.try_next_frame().unwrap() {
-            if frame.recipient() == 1 {
-                break frame;
-            }
-        }
-        thread::yield_now();
-    };
-    assert_eq!(
-        party_b.accept_frame(frame_for_b.as_bytes()),
-        Err(EqualityTransportError::SessionMismatch)
-    );
+    assert!(matches!(
+        EqualityPartyMachine::new(
+            session_a,
+            roster.clone(),
+            0,
+            keys[0].clone(),
+            input_a,
+            materials_a.remove(0),
+        ),
+        Err(EqualityTransportError::InvalidConfiguration(
+            "certified preprocessing requires a durable-custody party machine"
+        ))
+    ));
+    assert!(matches!(
+        EqualityPartyMachine::new(
+            session_b,
+            roster,
+            1,
+            keys[1].clone(),
+            input_b,
+            materials_b.remove(1),
+        ),
+        Err(EqualityTransportError::InvalidConfiguration(
+            "certified preprocessing requires a durable-custody party machine"
+        ))
+    ));
 }
 
 #[test]

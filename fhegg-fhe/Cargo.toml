@@ -84,6 +84,9 @@ bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r
 curve25519-dalek = { version = "4", features = ["alloc", "rand_core", "dregg-wgpu-coordinates"] }
 merlin = "3"
 ethnum = "1.5"
+# Pinned descriptor-relative custody namespace and platform-exact durability
+# (`fsync` on Linux, `F_FULLFSYNC` on macOS).
+rustix = { version = "1.1", features = ["fs", "process"] }
 # The Stage-1 untrusted solver's Cert-F IR: the checkable primal-dual optimality
 # certificate this crate binds into a dark-clearing receipt's computation-integrity
 # evidence (`certf_integrity.rs`). Library-only dependency; the solver's GPU bench
@@ -163,6 +166,11 @@ required-features = ["amm-input-binding"]
 [[test]]
 name = "party_mpc_certified_preprocessing"
 path = "tests/party_mpc_certified_preprocessing.rs"
+required-features = ["verified-pq-runtime-tests"]
+
+[[test]]
+name = "party_mpc_preprocessing_use"
+path = "tests/party_mpc_preprocessing_use.rs"
 required-features = ["verified-pq-runtime-tests"]
 
 [[test]]

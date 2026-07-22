@@ -71,6 +71,13 @@ pub mod authenticated_bits;
 /// Roster/session-bound authenticated sacrifice that releases the live
 /// FHTRI004 kept rows.  The trusted dealer remains an explicit security floor.
 pub mod authenticated_preprocessing;
+/// Durable compare-and-set custody for one-shot FHTRI004 protected rows.
+///
+/// This is a runtime-host storage boundary, not a distributed preprocessing
+/// protocol. Its pinned-directory implementation is deliberately available
+/// only on the Unix targets whose durability contract it implements exactly.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod preprocessing_use;
 /// Additive committed-candidate GF(2) sacrifice protocol.  This is a staged
 /// preprocessing primitive, not yet the live PartyMPC triple source.
 pub mod sacrifice;
@@ -511,6 +518,9 @@ pub enum PartyMpcError {
     MalformedTranscriptWire,
     MalformedTripleMaterialWire,
     MissingCertifiedPreprocessing,
+    /// A certified one-time preprocessing row was presented to an unguarded
+    /// runner instead of the durable custody boundary.
+    CertifiedPreprocessingRequiresDurableCustody,
     InvalidTripleFormationCertificate,
     InvalidAuthenticatedPreprocessing,
     VerifiedPostQuantumRuntimeUnavailable {
@@ -789,6 +799,14 @@ impl CertifiedTripleBatch {
 }
 
 impl TripleMaterial {
+    /// Whether this material belongs to a one-shot certified session and may
+    /// therefore execute only behind durable custody.
+    fn requires_durable_custody(&self) -> bool {
+        self.certification.is_some()
+            || self.session.preprocessing.is_some()
+            || self.session.preprocessing_certificate.is_some()
+    }
+
     /// Validate the exact session/certificate/row tuple before input ingress or
     /// gate zero. This deliberately rechecks in-memory dealer output as well as
     /// decoded custody, so a certified session can never execute legacy or
@@ -2100,9 +2118,37 @@ fn require_preprocessing_pq_runtime(operation: PreprocessingPqOperation) -> Resu
     }
 }
 
-/// Execute one party's circuit. This function reconstructs neither input nor
-/// output; all secret state remains in this call until it is dropped.
+/// Execute one party's *uncertified* circuit. This function reconstructs
+/// neither input nor output; all secret state remains in this call until it is
+/// dropped.
+///
+/// Certified FHTRI004 material is a one-shot secret and is refused here before
+/// input ingress or gate zero. It must be reserved and executed through
+/// [`preprocessing_use::run_party_with_durable_preprocessing`].
 pub fn run_party(
+    input: PartyArithmeticInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+) -> Result<PartyReport> {
+    refuse_certified_direct_execution(&preprocessing)?;
+    run_party_impl(input, preprocessing, channels)
+}
+
+// The public runner above is the explicit legacy/test path. This private entry
+// requires the unforgeable token emitted while an opaque ReservedTripleMaterial
+// is unwrapped inside the custody child module. Sibling runtime modules can
+// name neither a token value nor a certified authorization shortcut.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_party_custody_authorized(
+    input: PartyArithmeticInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+    _authorization: preprocessing_use::DurableExecutionAuthorization,
+) -> Result<PartyReport> {
+    run_party_impl(input, preprocessing, channels)
+}
+
+fn run_party_impl(
     input: PartyArithmeticInput,
     preprocessing: TripleMaterial,
     channels: PartyChannels,
@@ -2200,10 +2246,31 @@ pub fn run_party(
     })
 }
 
-/// Execute one party's scalar equality circuit. The party sends exactly one
-/// final XOR share; only the coordinator can reconstruct the decision after a
-/// full quorum, and no operand is opened.
+/// Execute one party's *uncertified* scalar equality circuit. The party sends
+/// exactly one final XOR share; only the coordinator can reconstruct the
+/// decision after a full quorum, and no operand is opened.
+///
+/// Certified FHTRI004 material is refused and must use the durable wrapper.
 pub fn run_party_equality(
+    input: PartyEqualityInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+) -> Result<PartyReport> {
+    refuse_certified_direct_execution(&preprocessing)?;
+    run_party_equality_impl(input, preprocessing, channels)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_party_equality_custody_authorized(
+    input: PartyEqualityInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+    _authorization: preprocessing_use::DurableExecutionAuthorization,
+) -> Result<PartyReport> {
+    run_party_equality_impl(input, preprocessing, channels)
+}
+
+fn run_party_equality_impl(
     input: PartyEqualityInput,
     preprocessing: TripleMaterial,
     channels: PartyChannels,
@@ -2279,9 +2346,29 @@ pub fn run_party_equality(
     })
 }
 
-/// Execute one party's strict-comparison circuit. The only reconstructed value
-/// is the final `left < right` bit after a full quorum.
+/// Execute one party's *uncertified* strict-comparison circuit. The only
+/// reconstructed value is the final `left < right` bit after a full quorum.
+/// Certified FHTRI004 material is refused and must use the durable wrapper.
 pub fn run_party_comparison(
+    input: PartyComparisonInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+) -> Result<PartyReport> {
+    refuse_certified_direct_execution(&preprocessing)?;
+    run_party_comparison_impl(input, preprocessing, channels)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_party_comparison_custody_authorized(
+    input: PartyComparisonInput,
+    preprocessing: TripleMaterial,
+    channels: PartyChannels,
+    _authorization: preprocessing_use::DurableExecutionAuthorization,
+) -> Result<PartyReport> {
+    run_party_comparison_impl(input, preprocessing, channels)
+}
+
+fn run_party_comparison_impl(
     input: PartyComparisonInput,
     preprocessing: TripleMaterial,
     channels: PartyChannels,
@@ -2356,6 +2443,14 @@ pub fn run_party_comparison(
         peer_input_messages_sent: peer_messages,
         peer_input_messages_received: peer_messages,
     })
+}
+
+fn refuse_certified_direct_execution(preprocessing: &TripleMaterial) -> Result<()> {
+    if preprocessing.requires_durable_custody() {
+        Err(PartyMpcError::CertifiedPreprocessingRequiresDurableCustody)
+    } else {
+        Ok(())
+    }
 }
 
 impl CoordinatorChannels {

@@ -1722,6 +1722,11 @@ impl EqualityPartyMachine {
         input: PartyEqualityInput,
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
+        if preprocessing.requires_durable_custody() {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "certified preprocessing requires a durable-custody party machine",
+            ));
+        }
         preprocessing.validate_runtime_binding()?;
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
@@ -2042,6 +2047,11 @@ impl CrossingPartyMachine {
         input: PartyArithmeticInput,
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
+        if preprocessing.requires_durable_custody() {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "certified preprocessing requires a durable-custody party machine",
+            ));
+        }
         preprocessing.validate_runtime_binding()?;
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
