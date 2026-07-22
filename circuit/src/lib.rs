@@ -255,6 +255,7 @@ pub mod multi_step_witness;
 pub mod note_spending_witness;
 #[allow(deprecated)]
 pub mod poseidon2_air;
+pub mod private_book_bfv_tables;
 #[cfg(feature = "plonky3")]
 pub mod temporal_predicate_air;
 
