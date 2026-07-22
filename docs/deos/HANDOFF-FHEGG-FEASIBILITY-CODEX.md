@@ -95,8 +95,9 @@ classical seams into a post-quantum composition.
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
 | Narrated Dungeon and relic-oath composition | **GATED BY TARGET** | narrated Dungeon 3/3; repaired relic oath 2/2 |
-| Common game-operation spine | **GATED WITH DEPLOYMENT CUSTODY RESIDUAL** | bound host incarnation/session generation, complete action preimage and outer routing receipts 21/21; adapters still need durable epoch custody/migration |
-| Telegram and viewer-safe web journey | **GATED BY TARGET** | Telegram combined 77 tests; web session rail 2/2 and no-viewer 2/2 |
+| Common game-operation spine | **DURABLE EPOCH CUSTODY GATED FOR CATALOG + TELEGRAM** | bound routing 21/21; atomic/fsynced incarnation + monotone per-session generations 4/4; Telegram hostile epoch callbacks 2/2; web/Discord/WeChat/native migration remains |
+| Telegram and viewer-safe web journey | **GATED BY TARGET** | Telegram combined 77 tests plus durable-epoch 2/2; web session rail 2/2 and no-viewer 2/2 |
+| Private Bazaar → Dungeon consequence | **GATED AT FOCUSED PROOF/GAME PATH** | verifier-minted apex authority → exact winner-signed epoch-bound Mender turn; focused 2/2, real HidingFRI path 76.070s, HP 30→50/restart/replay teeth; full strict-apex recapture of the new block remains pending |
 | Private-raid capability/Arena and narrated-relic composition | **GATED BY TARGET** | relic capstone 1/1; surface 8/8; lower atomic forest 2/2 (engine semantics only; its persvati fixture opted into the unaudited PQ test backend) |
 | Chutes → Dungeon closed-command weld | **PENDING GATE** | HEAD target contains 3 tests; no result supplied |
 | Lean-native Descent offering/campaign | **GATED** | both targets are green inside the current dreggnet-offerings 117/117 invocation |
@@ -670,6 +671,40 @@ Captured status:
 
 The already-green fhIR allocation checker and private-book apex remain separate
 evidence.
+
+### Durable game epochs and the first private-fhEgg game consequence
+
+`dreggnet-catalog::GameEpochLedger` now owns a random host incarnation and a
+monotone generation for each `(offering, session)`. Persistence is atomic and
+fsynced; corruption fails closed; close/reopen advances the generation while an
+exact process restart preserves incarnation, generation, state head, and valid
+callbacks. The catalog gate is **4/4 green**. Production Telegram requires this
+ledger plus its move-log store, encodes a 45-byte opaque digest of the complete
+bound `GameActionRef`, and re-inspects the live bound view before execution. Its
+hostile epoch gate is **2/2 green**. This is single-writer custody, not an
+active/active lease system, and the other frontend adapters still need the same
+migration.
+
+The feature-gated private-fhEgg consequence accepts no caller-fabricated public
+authority. It projects only from a verifier-minted native-PQ-quorum
+`PrivateBfvLiveApexReceipt`, revalidates the atomic settlement audit, and binds
+the exact verifier, claim/certificate/authority, root/session, roster,
+settlement turn, sold asset, public winner/result, configured winner-to-game-key
+route, epoch, action preimage, and current head. It then invokes the signed
+common spine itself for one Warden's Keep raid-Mender recovery. The focused
+release gate is **2/2 green**; the real HidingFRI raid path took **76.070s**,
+landed HP **30→50**, survived durable restart, and refused wrong signer,
+cross-incarnation substitution, and replay. Private order/opening/score/viewer
+data never crosses this API.
+
+The Bazaar asset settlement and later game turn are not one distributed
+transaction. Deployments must durably record the authorization id after
+success; the Keep's field and host signed-counter journal independently make
+the concrete Mender action one-shot across the persistence window. The existing
+strict-v5 apex remains the full-stack authority evidence, but its newly authored
+game block has not yet completed a fresh strict recapture: that attempt stopped
+before market code at a concurrent distributed-BFV test-cfg compile error. The
+production feature itself passed its release check.
 
 ### Chutes → Dungeon weld — pending
 

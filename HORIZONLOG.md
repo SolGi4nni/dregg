@@ -10756,8 +10756,31 @@ carries a nonzero host/federation incarnation plus monotone session generation
 through action preimages and outer receipts. Cross-incarnation replay,
 close/reopen generation rollback, and receipt/session substitution refuse while
 same-incarnation restart replay remains exact; the expanded catalog target is
-**21/21**. Deployments must still durably own those epochs, and existing
-Telegram/web adapters remain visibly `LegacyUnbound` until migrated.
+**21/21**. The deployable custody cut now persists a random host incarnation
+and monotone per-offering/session generation with atomic write/fsync/rename/
+directory-sync and fail-closed corruption. Catalog epoch tests are **4/4** and
+Telegram hostile epoch tests **2/2**; production Telegram requires both the
+epoch ledger and move-log, emits a 45-byte opaque callback digest of the full
+`GameActionRef`, and re-inspects the current bound view before execution. Old
+callbacks refuse after close/reopen while exact restart retains validity. The
+ledger is intentionally single-writer, not an active/active lease service;
+web/Discord/WeChat/native adapters still need the same migration.
+
+The first proof-to-game consequence is also real: a verifier-minted native-PQ-
+quorum `PrivateBfvLiveApexReceipt` can authorize exactly one winner-key-signed,
+epoch-bound Dungeon Warden's Keep Mender recovery through the common spine.
+The gate binds verifier/claim/certificate/authority, private root/session,
+roster, settlement turn, asset, winner, price/volume, configured winner-key
+route, incarnation/generation, action preimage, and current head; it revalidates
+the atomic settlement audit before use. Focused release tests are **2/2**, with
+the real HidingFRI raid/Mender path taking **76.070s** and moving HP 30→50,
+then surviving durable restart and refusing wrong signer, cross-incarnation
+substitution, and replay. Only public commitments/receipt ids cross the API.
+The prior Bazaar asset settlement and later game turn are not one distributed
+transaction; deployments must durably tombstone the authorization id. The full
+strict Bazaar-apex recapture containing this block remains pending after an
+unrelated distributed-BFV test-cfg compile interruption; the production feature
+itself passed its release check.
 
 The portable HidingFRI path now keeps its salted Merkle layers on the GPU and
 performs one readback/poll per commitment rather than one per tree level. On the
