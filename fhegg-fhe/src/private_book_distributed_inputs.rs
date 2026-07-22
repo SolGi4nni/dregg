@@ -382,7 +382,7 @@ impl DistributedWitnessSession {
         DERIVED_ORDER_WIDTH + 3 * self.degree + ROOT_BLINDING_WIDTH
     }
 
-    fn owner_key(&self, owner: usize) -> Option<[u8; 32]> {
+    pub(crate) fn owner_key(&self, owner: usize) -> Option<[u8; 32]> {
         self.owner_keys.get(owner).copied()
     }
 

@@ -104,6 +104,12 @@ pub mod private_book_bfv_zk;
 /// accepting shares, openings, or arbitrary public assertion bytes.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_canonical_backend;
+/// Post-base-certificate custody protocol for the exact BFV relation's 384
+/// transcript-derived, bounded RNS quotients per owner. Quotients are range
+/// proved, linked to additive worker shares, and remain private inputs to the
+/// second-challenge distributed linear relation.
+#[cfg(feature = "amm-input-binding")]
+pub mod private_book_distributed_bfv;
 /// Owner-local expansion and n-of-n additive sharing of the private BFV/root
 /// witness, with zero-knowledge order ranges, one-hot selection,
 /// semantic-message derivation, and bounded BFV shortness linked to the exact
