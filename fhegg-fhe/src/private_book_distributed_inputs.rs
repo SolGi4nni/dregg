@@ -2274,6 +2274,18 @@ impl DistributedInputCertificate {
         self.transcript_digest
     }
 
+    /// Commitment to one worker's additive share of one owner vector.
+    ///
+    /// This is crate-private because the public certificate wire remains the
+    /// canonical API; the distributed BFV continuation uses it to assemble a
+    /// worker's cross-owner relation-proof statement without opening shares.
+    pub(crate) fn share_commitment(&self, owner: usize, worker: usize) -> Option<[u8; 32]> {
+        self.dealers
+            .get(owner)
+            .and_then(|dealer| dealer.share_commitments.get(worker))
+            .copied()
+    }
+
     /// One hiding commitment binding the concatenation of all four owner
     /// vectors in their separate Bulletproof generator namespaces.
     pub fn joint_input_commitment(&self) -> Result<[u8; 32]> {

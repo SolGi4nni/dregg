@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::iter;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -25,7 +25,7 @@ use rand::{CryptoRng, RngCore};
 use crate::private_book_bfv_exact::{self, ExactBfvBatchEquation, ExactBfvPublicRelation};
 use crate::private_book_distributed_inputs::{
     DistributedInputCertificate, DistributedWitnessSession, OwnerWitnessContinuation,
-    DERIVED_ORDER_WIDTH, ORDER_COUNT, ROOT_BLINDING_WIDTH,
+    PreparedWitnessShare, BFV_DEGREE, DERIVED_ORDER_WIDTH, ORDER_COUNT, ROOT_BLINDING_WIDTH,
 };
 use crate::private_book_relation::PrivateBookCiphertexts;
 use crate::threshold::{BfvParams, CollectivePublicKey};
@@ -57,13 +57,31 @@ const LINK_TRANSCRIPT: &[u8] = b"fhegg/private-book-distributed-bfv/quotient-lin
 const LINK_CHALLENGE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/quotient-link-challenge/v1";
 const PROOF_DIGEST_DOMAIN: &str = "fhegg/private-book-distributed-bfv/proof-digest/v1";
 const CERTIFICATE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/certificate/v1";
+const RELATION_ROUND_DOMAIN: &str = "fhegg/private-book-distributed-bfv/relation-round/v1";
+const SECOND_CHALLENGE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/relation-challenge/v1";
+const RELATION_ALPHA_DOMAIN: &str = "fhegg/private-book-distributed-bfv/relation-alpha/v1";
+const WORKER_RELATION_TRANSCRIPT: &[u8] = b"fhegg/private-book-distributed-bfv/worker-relation/v1";
+const WORKER_RELATION_PROOF_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/worker-relation-proof/v1";
+const WORKER_RELATION_SIGNATURE_DOMAIN: &[u8] =
+    b"fhegg/private-book-distributed-bfv/worker-relation-signature/v1";
+const RELATION_CERTIFICATE_DOMAIN: &str =
+    "fhegg/private-book-distributed-bfv/relation-certificate/v1";
 
 const PADDED_QUOTIENT_COUNT: usize = OWNER_BFV_QUOTIENT_COUNT.next_power_of_two();
 const QUOTIENT_R1CS_CAPACITY: usize =
     (OWNER_BFV_QUOTIENT_COUNT * BFV_QUOTIENT_BITS).next_power_of_two();
+const PRODUCTION_OWNER_BFV_BLOCK_WIDTH: usize = 16_384;
 
 static QUOTIENT_R1CS_GENS: LazyLock<R1csBulletproofGens> =
     LazyLock::new(|| R1csBulletproofGens::new(QUOTIENT_R1CS_CAPACITY, 1));
+static PRODUCTION_BFV_GENS: LazyLock<BulletproofGens> =
+    LazyLock::new(|| BulletproofGens::new(PRODUCTION_OWNER_BFV_BLOCK_WIDTH, ORDER_COUNT));
+
+const _: () = assert!(
+    DERIVED_ORDER_WIDTH + 3 * BFV_DEGREE + ROOT_BLINDING_WIDTH + OWNER_BFV_QUOTIENT_COUNT
+        <= PRODUCTION_OWNER_BFV_BLOCK_WIDTH
+);
 
 #[cfg(test)]
 thread_local! {
@@ -104,6 +122,9 @@ pub enum DistributedBfvError {
     CertificateMismatch,
     ExactPublicRelation,
     ExactRelationMismatch,
+    DuplicateWorkerProof,
+    MissingWorkerProofs,
+    RelationRejected,
     IntegerOverflow,
 }
 
@@ -133,6 +154,9 @@ impl fmt::Display for DistributedBfvError {
             Self::ExactRelationMismatch => {
                 "owner witness does not satisfy an exact compressed BFV equation"
             }
+            Self::DuplicateWorkerProof => "duplicate distributed BFV worker relation proof",
+            Self::MissingWorkerProofs => "distributed BFV worker relation proofs are incomplete",
+            Self::RelationRejected => "distributed BFV collapsed exact relation was rejected",
             Self::IntegerOverflow => "exact distributed BFV integer evaluation overflowed",
         };
         f.write_str(message)
@@ -770,6 +794,24 @@ impl PreparedBfvQuotientShare {
             .get(owner)
             .map(|share| (share.values.as_slice(), share.blinding))
     }
+
+    fn verify_certificate_binding(&self, certificate: &BfvQuotientCertificate) -> Result<()> {
+        if self.round_digest != certificate.round_digest
+            || self.owner_shares.len() != ORDER_COUNT
+            || certificate.dealers.len() != ORDER_COUNT
+        {
+            return Err(DistributedBfvError::SessionMismatch);
+        }
+        for (owner, packet) in self.owner_shares.iter().enumerate() {
+            if packet.owner != owner
+                || packet.recipient != self.worker
+                || packet.dealer_digest != certificate.dealers[owner].digest
+            {
+                return Err(DistributedBfvError::CertificateMismatch);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Public coordinator for the post-challenge quotient custody transcript.
@@ -904,6 +946,639 @@ impl BfvQuotientCertificate {
         }
         Ok(())
     }
+}
+
+/// Post-custody public context for the exact BFV relation proof.
+///
+/// The second challenge is derived only after the complete bounded-quotient
+/// certificate is fixed. All 1,536 exact integer equations are collapsed into
+/// one 65,536-coordinate public linear relation over the four owner generator
+/// namespaces. The per-worker proofs below open only a uniformly masked scalar
+/// image; their sum is the public zero relation.
+#[derive(Clone)]
+pub struct DistributedBfvRelationRound {
+    round: DistributedBfvRound,
+    quotient_certificate_digest: [u8; 32],
+    digest: [u8; 32],
+    second_challenge: [u8; 32],
+    block_width: usize,
+    public_coefficients: Arc<[Scalar]>,
+    public_constant: Scalar,
+    generators: Arc<[RistrettoPoint]>,
+    worker_commitments: Vec<[u8; 32]>,
+}
+
+impl DistributedBfvRelationRound {
+    /// Build the production relation from the independently derived deployed
+    /// BFV coefficient table and both complete custody certificates.
+    pub fn new(
+        round: &DistributedBfvRound,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+        public: &DistributedBfvPublicRelation,
+    ) -> Result<Self> {
+        let context = Self::context(round, input_certificate, quotient_certificate)?;
+        if public.relation_digest() != round.session.relation_digest() {
+            return Err(DistributedBfvError::ExactPublicRelation);
+        }
+        let (public_coefficients, public_constant) = collapse_exact_relation(
+            round,
+            public,
+            &context.second_challenge,
+            context.block_width,
+        )?;
+        Ok(Self {
+            round: round.clone(),
+            quotient_certificate_digest: quotient_certificate.transcript_digest,
+            digest: context.digest,
+            second_challenge: context.second_challenge,
+            block_width: context.block_width,
+            public_coefficients: public_coefficients.into(),
+            public_constant,
+            generators: context.generators.into(),
+            worker_commitments: context.worker_commitments,
+        })
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        round: &DistributedBfvRound,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+    ) -> Result<Self> {
+        let context = Self::context(round, input_certificate, quotient_certificate)?;
+        let (public_coefficients, public_constant) =
+            collapse_test_copy_relation(round, &context.second_challenge, context.block_width)?;
+        Ok(Self {
+            round: round.clone(),
+            quotient_certificate_digest: quotient_certificate.transcript_digest,
+            digest: context.digest,
+            second_challenge: context.second_challenge,
+            block_width: context.block_width,
+            public_coefficients: public_coefficients.into(),
+            public_constant,
+            generators: context.generators.into(),
+            worker_commitments: context.worker_commitments,
+        })
+    }
+
+    fn context(
+        round: &DistributedBfvRound,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+    ) -> Result<RelationContext> {
+        input_certificate
+            .verify(&round.session)
+            .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        if input_certificate.transcript_digest() != round.input_certificate_digest
+            || input_certificate
+                .joint_input_commitment()
+                .map_err(|_| DistributedBfvError::BaseCertificateRejected)?
+                != round.joint_input_commitment
+        {
+            return Err(DistributedBfvError::CertificateMismatch);
+        }
+        quotient_certificate.verify(round)?;
+        let block_width = owner_bfv_block_width(round.degree())?;
+        let relation_width = block_width
+            .checked_mul(ORDER_COUNT)
+            .ok_or(DistributedBfvError::InvalidQuotientCount)?;
+        if !relation_width.is_power_of_two() {
+            return Err(DistributedBfvError::InvalidQuotientCount);
+        }
+        let digest = hash_parts(
+            RELATION_ROUND_DOMAIN,
+            &[
+                round.digest.as_slice(),
+                round.session.relation_digest().as_slice(),
+                round.input_certificate_digest.as_slice(),
+                quotient_certificate.transcript_digest.as_slice(),
+                (block_width as u64).to_be_bytes().as_slice(),
+                (relation_width as u64).to_be_bytes().as_slice(),
+            ],
+        );
+        let second_challenge = hash_parts(
+            SECOND_CHALLENGE_DOMAIN,
+            &[
+                digest.as_slice(),
+                quotient_certificate.transcript_digest.as_slice(),
+            ],
+        );
+        let generators = relation_generators(round.degree(), block_width)?;
+        if generators.len() != relation_width {
+            return Err(DistributedBfvError::InvalidQuotientCount);
+        }
+        let mut worker_commitments = Vec::with_capacity(round.n_workers());
+        for worker in 0..round.n_workers() {
+            let mut commitment = RistrettoPoint::default();
+            for owner in 0..ORDER_COUNT {
+                commitment += decode_point(
+                    &input_certificate
+                        .share_commitment(owner, worker)
+                        .ok_or(DistributedBfvError::CertificateMismatch)?,
+                )?;
+                commitment += decode_point(
+                    &quotient_certificate
+                        .share_commitment(owner, worker)
+                        .ok_or(DistributedBfvError::CertificateMismatch)?,
+                )?;
+            }
+            worker_commitments.push(commitment.compress().to_bytes());
+        }
+        Ok(RelationContext {
+            digest,
+            second_challenge,
+            block_width,
+            generators,
+            worker_commitments,
+        })
+    }
+
+    pub const fn digest(&self) -> [u8; 32] {
+        self.digest
+    }
+
+    pub const fn second_challenge(&self) -> [u8; 32] {
+        self.second_challenge
+    }
+
+    pub fn n_workers(&self) -> usize {
+        self.round.n_workers()
+    }
+
+    fn relation_width(&self) -> usize {
+        self.public_coefficients.len()
+    }
+
+    fn verify_certificate_digests(
+        &self,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+    ) -> Result<()> {
+        if input_certificate.transcript_digest() != self.round.input_certificate_digest
+            || quotient_certificate.transcript_digest != self.quotient_certificate_digest
+        {
+            return Err(DistributedBfvError::CertificateMismatch);
+        }
+        Ok(())
+    }
+}
+
+struct RelationContext {
+    digest: [u8; 32],
+    second_challenge: [u8; 32],
+    block_width: usize,
+    generators: Vec<RistrettoPoint>,
+    worker_commitments: Vec<[u8; 32]>,
+}
+
+/// One proof worker's masked image of the exact BFV relation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BfvWorkerRelationProof {
+    relation_round_digest: [u8; 32],
+    worker: usize,
+    image: [u8; 32],
+    proof: Vec<u8>,
+    signature: [u8; 64],
+}
+
+impl BfvWorkerRelationProof {
+    /// Consume this worker's two private share capabilities and prove their
+    /// collapsed exact relation against the certificate commitments.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create<R: CryptoRng + RngCore>(
+        relation_round: &DistributedBfvRelationRound,
+        input_share: PreparedWitnessShare,
+        quotient_share: PreparedBfvQuotientShare,
+        input_certificate: &DistributedInputCertificate,
+        quotient_certificate: &BfvQuotientCertificate,
+        signing_key: &SigningKey,
+        rng: &mut R,
+    ) -> Result<Self> {
+        relation_round.verify_certificate_digests(input_certificate, quotient_certificate)?;
+        input_share
+            .verify_certificate_binding(input_certificate)
+            .map_err(|_| DistributedBfvError::BaseCertificateRejected)?;
+        quotient_share.verify_certificate_binding(quotient_certificate)?;
+        let worker = input_share.worker();
+        if worker != quotient_share.worker() || worker >= relation_round.n_workers() {
+            return Err(DistributedBfvError::SessionMismatch);
+        }
+        let expected_key = relation_round
+            .round
+            .session
+            .worker_key(worker)
+            .ok_or(DistributedBfvError::PartyOutOfRange)?;
+        if signing_key.verifying_key().to_bytes() != expected_key {
+            return Err(DistributedBfvError::SigningKeyMismatch);
+        }
+
+        let base_width = base_witness_width(relation_round.round.degree())?;
+        let mut secret = Vec::with_capacity(relation_round.relation_width());
+        let mut blinding = Scalar::ZERO;
+        for owner in 0..ORDER_COUNT {
+            let block_start = secret.len();
+            let (base_values, base_blinding) = input_share
+                .owner_share(owner)
+                .ok_or(DistributedBfvError::MissingDealers)?;
+            let (quotient_values, quotient_blinding) = quotient_share
+                .owner_share(owner)
+                .ok_or(DistributedBfvError::MissingDealers)?;
+            if base_values.len() != base_width || quotient_values.len() != OWNER_BFV_QUOTIENT_COUNT
+            {
+                return Err(DistributedBfvError::InvalidQuotientCount);
+            }
+            secret.extend_from_slice(base_values);
+            secret.extend_from_slice(quotient_values);
+            secret.resize(block_start + relation_round.block_width, Scalar::ZERO);
+            blinding += base_blinding + quotient_blinding;
+        }
+        if secret.len() != relation_round.relation_width() {
+            return Err(DistributedBfvError::InvalidQuotientCount);
+        }
+        let image = secret
+            .iter()
+            .zip(relation_round.public_coefficients.iter())
+            .fold(Scalar::ZERO, |sum, (value, coefficient)| {
+                sum + value * coefficient
+            });
+        let worker_commitment = relation_round.worker_commitments[worker];
+        let statement =
+            (decode_point(&worker_commitment)? + image * PedersenGens::default().B).compress();
+        let mut transcript = worker_relation_transcript(
+            relation_round,
+            worker,
+            &worker_commitment,
+            &image.to_bytes(),
+        );
+        let proof = LinearProof::create(
+            &mut transcript,
+            rng,
+            &statement,
+            blinding,
+            secret,
+            relation_round.public_coefficients.to_vec(),
+            relation_round.generators.to_vec(),
+            &PedersenGens::default().B,
+            &PedersenGens::default().B_blinding,
+        )
+        .map_err(|_| DistributedBfvError::ProofRejected)?
+        .to_bytes();
+        let proof_digest = worker_relation_proof_digest(&proof);
+        let mut result = Self {
+            relation_round_digest: relation_round.digest,
+            worker,
+            image: image.to_bytes(),
+            proof,
+            signature: [0; 64],
+        };
+        result.signature = signing_key
+            .sign(&worker_relation_signing_message(
+                &relation_round.digest,
+                worker,
+                &result.image,
+                &proof_digest,
+            ))
+            .to_bytes();
+        result.verify(relation_round)?;
+        Ok(result)
+    }
+
+    pub const fn worker(&self) -> usize {
+        self.worker
+    }
+
+    fn image_scalar(&self) -> Result<Scalar> {
+        Option::<Scalar>::from(Scalar::from_canonical_bytes(self.image))
+            .ok_or(DistributedBfvError::InvalidProof)
+    }
+
+    fn verify(&self, relation_round: &DistributedBfvRelationRound) -> Result<()> {
+        if self.relation_round_digest != relation_round.digest
+            || self.worker >= relation_round.n_workers()
+            || self.proof.len() != expected_linear_proof_len(relation_round.relation_width())?
+        {
+            return Err(DistributedBfvError::InvalidProof);
+        }
+        let image = self.image_scalar()?;
+        let key = VerifyingKey::from_bytes(
+            &relation_round
+                .round
+                .session
+                .worker_key(self.worker)
+                .ok_or(DistributedBfvError::PartyOutOfRange)?,
+        )
+        .map_err(|_| DistributedBfvError::InvalidSignature)?;
+        key.verify_strict(
+            &worker_relation_signing_message(
+                &relation_round.digest,
+                self.worker,
+                &self.image,
+                &worker_relation_proof_digest(&self.proof),
+            ),
+            &Signature::from_bytes(&self.signature),
+        )
+        .map_err(|_| DistributedBfvError::InvalidSignature)?;
+
+        let worker_commitment = relation_round.worker_commitments[self.worker];
+        let statement =
+            (decode_point(&worker_commitment)? + image * PedersenGens::default().B).compress();
+        let proof =
+            LinearProof::from_bytes(&self.proof).map_err(|_| DistributedBfvError::InvalidProof)?;
+        let mut transcript = worker_relation_transcript(
+            relation_round,
+            self.worker,
+            &worker_commitment,
+            &self.image,
+        );
+        proof
+            .verify(
+                &mut transcript,
+                &statement,
+                &relation_round.generators,
+                &PedersenGens::default().B,
+                &PedersenGens::default().B_blinding,
+                relation_round.public_coefficients.to_vec(),
+            )
+            .map_err(|_| DistributedBfvError::ProofRejected)
+    }
+
+    #[cfg(test)]
+    fn corrupt_signature_for_test(&mut self) {
+        self.signature[0] ^= 1;
+    }
+}
+
+/// Public collector for exactly one relation proof from every proof worker.
+pub struct BfvRelationCoordinator {
+    relation_round: DistributedBfvRelationRound,
+    proofs: Vec<Option<BfvWorkerRelationProof>>,
+}
+
+impl BfvRelationCoordinator {
+    pub fn new(relation_round: DistributedBfvRelationRound) -> Self {
+        let proofs = iter::repeat_with(|| None)
+            .take(relation_round.n_workers())
+            .collect();
+        Self {
+            relation_round,
+            proofs,
+        }
+    }
+
+    pub fn accept(&mut self, proof: BfvWorkerRelationProof) -> Result<()> {
+        proof.verify(&self.relation_round)?;
+        if self.proofs[proof.worker].is_some() {
+            return Err(DistributedBfvError::DuplicateWorkerProof);
+        }
+        let worker = proof.worker;
+        self.proofs[worker] = Some(proof);
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<BfvRelationCertificate> {
+        if self.proofs.iter().any(Option::is_none) {
+            return Err(DistributedBfvError::MissingWorkerProofs);
+        }
+        let proofs = self
+            .proofs
+            .into_iter()
+            .map(|proof| proof.expect("all worker relation proofs checked"))
+            .collect::<Vec<_>>();
+        verify_relation_sum(&self.relation_round, &proofs)?;
+        let transcript_digest = relation_certificate_digest(&self.relation_round, &proofs);
+        let certificate = BfvRelationCertificate {
+            relation_round_digest: self.relation_round.digest,
+            proofs,
+            transcript_digest,
+        };
+        certificate.verify(&self.relation_round)?;
+        Ok(certificate)
+    }
+}
+
+/// Final public exact-BFV certificate: each worker proved its committed base
+/// and quotient shares under the post-custody challenge, and the masked images
+/// sum to the canonical public zero relation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BfvRelationCertificate {
+    relation_round_digest: [u8; 32],
+    proofs: Vec<BfvWorkerRelationProof>,
+    transcript_digest: [u8; 32],
+}
+
+impl BfvRelationCertificate {
+    pub const fn transcript_digest(&self) -> [u8; 32] {
+        self.transcript_digest
+    }
+
+    pub fn verify(&self, relation_round: &DistributedBfvRelationRound) -> Result<()> {
+        if self.relation_round_digest != relation_round.digest
+            || self.proofs.len() != relation_round.n_workers()
+        {
+            return Err(DistributedBfvError::CertificateMismatch);
+        }
+        for (worker, proof) in self.proofs.iter().enumerate() {
+            if proof.worker != worker {
+                return Err(DistributedBfvError::CertificateMismatch);
+            }
+            proof.verify(relation_round)?;
+        }
+        verify_relation_sum(relation_round, &self.proofs)?;
+        if self.transcript_digest != relation_certificate_digest(relation_round, &self.proofs) {
+            return Err(DistributedBfvError::CertificateMismatch);
+        }
+        Ok(())
+    }
+}
+
+fn collapse_exact_relation(
+    round: &DistributedBfvRound,
+    public: &DistributedBfvPublicRelation,
+    second_challenge: &[u8; 32],
+    block_width: usize,
+) -> Result<(Vec<Scalar>, Scalar)> {
+    let base_width = base_witness_width(round.degree())?;
+    if base_width + OWNER_BFV_QUOTIENT_COUNT > block_width {
+        return Err(DistributedBfvError::InvalidQuotientCount);
+    }
+    let relation_width = block_width
+        .checked_mul(ORDER_COUNT)
+        .ok_or(DistributedBfvError::InvalidQuotientCount)?;
+    let mut coefficients = vec![Scalar::ZERO; relation_width];
+    let mut public_constant = Scalar::ZERO;
+    for owner in 0..ORDER_COUNT {
+        let equations = public
+            .exact
+            .owner_batch_equations(&round.coefficient_challenge, owner, round.degree())
+            .map_err(|_| DistributedBfvError::ExactPublicRelation)?;
+        if equations.len() != OWNER_BFV_QUOTIENT_COUNT {
+            return Err(DistributedBfvError::ExactPublicRelation);
+        }
+        let block_start = owner * block_width;
+        for (equation_index, equation) in equations.iter().enumerate() {
+            if equation.base_coefficients.len() != base_width || equation.modulus == 0 {
+                return Err(DistributedBfvError::ExactPublicRelation);
+            }
+            let alpha = relation_alpha(second_challenge, owner, equation_index);
+            for (coordinate, coefficient) in equation.base_coefficients.iter().enumerate() {
+                coefficients[block_start + coordinate] += alpha * signed_i128_scalar(*coefficient);
+            }
+            coefficients[block_start + base_width + equation_index] -=
+                alpha * Scalar::from(equation.modulus);
+            public_constant += alpha * signed_i128_scalar(equation.public_constant);
+        }
+    }
+    Ok((coefficients, public_constant))
+}
+
+#[cfg(test)]
+fn collapse_test_copy_relation(
+    round: &DistributedBfvRound,
+    second_challenge: &[u8; 32],
+    block_width: usize,
+) -> Result<(Vec<Scalar>, Scalar)> {
+    let base_width = base_witness_width(round.degree())?;
+    if base_width + OWNER_BFV_QUOTIENT_COUNT > block_width {
+        return Err(DistributedBfvError::InvalidQuotientCount);
+    }
+    let mut coefficients = vec![Scalar::ZERO; block_width * ORDER_COUNT];
+    for owner in 0..ORDER_COUNT {
+        let block_start = owner * block_width;
+        for equation in 0..OWNER_BFV_QUOTIENT_COUNT {
+            let alpha = relation_alpha(second_challenge, owner, equation);
+            coefficients[block_start + equation % base_width] += alpha;
+            coefficients[block_start + base_width + equation] -= alpha;
+        }
+    }
+    Ok((coefficients, Scalar::ZERO))
+}
+
+fn relation_alpha(second_challenge: &[u8; 32], owner: usize, equation: usize) -> Scalar {
+    uniform_nonzero_scalar(
+        RELATION_ALPHA_DOMAIN,
+        &[second_challenge.as_slice()],
+        owner * OWNER_BFV_QUOTIENT_COUNT + equation,
+    )
+}
+
+fn signed_i128_scalar(value: i128) -> Scalar {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&value.unsigned_abs().to_le_bytes());
+    let magnitude = Scalar::from_bytes_mod_order(bytes);
+    if value < 0 {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+fn relation_generators(degree: usize, block_width: usize) -> Result<Vec<RistrettoPoint>> {
+    if block_width != owner_bfv_block_width(degree)? {
+        return Err(DistributedBfvError::InvalidQuotientCount);
+    }
+    let mut generators = Vec::with_capacity(block_width * ORDER_COUNT);
+    if degree == BFV_DEGREE {
+        if block_width != PRODUCTION_OWNER_BFV_BLOCK_WIDTH {
+            return Err(DistributedBfvError::InvalidQuotientCount);
+        }
+        for owner in 0..ORDER_COUNT {
+            generators.extend(PRODUCTION_BFV_GENS.share(owner).G(block_width).copied());
+        }
+    } else {
+        #[cfg(test)]
+        {
+            let test_generators = BulletproofGens::new(block_width, ORDER_COUNT);
+            for owner in 0..ORDER_COUNT {
+                generators.extend(test_generators.share(owner).G(block_width).copied());
+            }
+        }
+        #[cfg(not(test))]
+        return Err(DistributedBfvError::InvalidQuotientCount);
+    }
+    Ok(generators)
+}
+
+fn expected_linear_proof_len(width: usize) -> Result<usize> {
+    if !width.is_power_of_two() {
+        return Err(DistributedBfvError::InvalidProof);
+    }
+    (2usize
+        .checked_mul(width.trailing_zeros() as usize)
+        .and_then(|value| value.checked_add(3))
+        .and_then(|value| value.checked_mul(32)))
+    .ok_or(DistributedBfvError::InvalidProof)
+}
+
+fn worker_relation_transcript(
+    relation_round: &DistributedBfvRelationRound,
+    worker: usize,
+    worker_commitment: &[u8; 32],
+    image: &[u8; 32],
+) -> Transcript {
+    let mut transcript = Transcript::new(WORKER_RELATION_TRANSCRIPT);
+    transcript.append_message(b"relation-round", &relation_round.digest);
+    transcript.append_message(
+        b"quotient-certificate",
+        &relation_round.quotient_certificate_digest,
+    );
+    transcript.append_message(b"second-challenge", &relation_round.second_challenge);
+    transcript.append_u64(b"worker", worker as u64);
+    transcript.append_u64(b"owner-block-width", relation_round.block_width as u64);
+    transcript.append_u64(b"relation-width", relation_round.relation_width() as u64);
+    transcript.append_message(b"worker-commitment", worker_commitment);
+    transcript.append_message(b"masked-image", image);
+    transcript
+}
+
+fn worker_relation_proof_digest(proof: &[u8]) -> [u8; 32] {
+    hash_parts(WORKER_RELATION_PROOF_DOMAIN, &[proof])
+}
+
+fn worker_relation_signing_message(
+    relation_round_digest: &[u8; 32],
+    worker: usize,
+    image: &[u8; 32],
+    proof_digest: &[u8; 32],
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(WORKER_RELATION_SIGNATURE_DOMAIN.len() + 104);
+    message.extend_from_slice(WORKER_RELATION_SIGNATURE_DOMAIN);
+    message.extend_from_slice(relation_round_digest);
+    message.extend_from_slice(&(worker as u64).to_be_bytes());
+    message.extend_from_slice(image);
+    message.extend_from_slice(proof_digest);
+    message
+}
+
+fn verify_relation_sum(
+    relation_round: &DistributedBfvRelationRound,
+    proofs: &[BfvWorkerRelationProof],
+) -> Result<()> {
+    let image_sum = proofs
+        .iter()
+        .try_fold(relation_round.public_constant, |sum, proof| {
+            proof.image_scalar().map(|image| sum + image)
+        })?;
+    if image_sum != Scalar::ZERO {
+        return Err(DistributedBfvError::RelationRejected);
+    }
+    Ok(())
+}
+
+fn relation_certificate_digest(
+    relation_round: &DistributedBfvRelationRound,
+    proofs: &[BfvWorkerRelationProof],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(RELATION_CERTIFICATE_DOMAIN);
+    hasher.update(&relation_round.digest);
+    hasher.update(&(proofs.len() as u64).to_be_bytes());
+    for proof in proofs {
+        hasher.update(&(proof.worker as u64).to_be_bytes());
+        hasher.update(&proof.image);
+        hasher.update(&worker_relation_proof_digest(&proof.proof));
+        hasher.update(&proof.signature);
+    }
+    *hasher.finalize().as_bytes()
 }
 
 fn base_witness_width(degree: usize) -> Result<usize> {
@@ -1292,13 +1967,30 @@ fn quotient_generators(degree: usize, owner: usize, count: usize) -> Result<Vec<
     if start + count > block {
         return Err(DistributedBfvError::InvalidQuotientCount);
     }
-    Ok(BulletproofGens::new(block, ORDER_COUNT)
-        .share(owner)
-        .G(block)
-        .skip(start)
-        .take(count)
-        .copied()
-        .collect())
+    if degree == BFV_DEGREE {
+        if block != PRODUCTION_OWNER_BFV_BLOCK_WIDTH {
+            return Err(DistributedBfvError::InvalidQuotientCount);
+        }
+        return Ok(PRODUCTION_BFV_GENS
+            .share(owner)
+            .G(block)
+            .skip(start)
+            .take(count)
+            .copied()
+            .collect());
+    }
+    #[cfg(test)]
+    {
+        return Ok(BulletproofGens::new(block, ORDER_COUNT)
+            .share(owner)
+            .G(block)
+            .skip(start)
+            .take(count)
+            .copied()
+            .collect());
+    }
+    #[cfg(not(test))]
+    Err(DistributedBfvError::InvalidQuotientCount)
 }
 
 fn quotient_vector_commitment(
@@ -1490,7 +2182,12 @@ mod tests {
         owner_keys: &[SigningKey; ORDER_COUNT],
         worker_keys: &[SigningKey; 3],
         nonce: [u8; 32],
-    ) -> (DistributedWitnessSession, DistributedInputCertificate) {
+    ) -> (
+        DistributedWitnessSession,
+        DistributedInputCertificate,
+        Vec<PreparedWitnessShare>,
+        Vec<OwnerWitnessContinuation>,
+    ) {
         let session = DistributedWitnessSession::new_for_test(
             [0x41; 32],
             nonce,
@@ -1512,6 +2209,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut coordinator = DistributedInputCoordinator::new(session.clone());
+        let mut continuations = Vec::with_capacity(ORDER_COUNT);
         for owner in 0..ORDER_COUNT {
             let witness = LocalOrderWitness::from_seed(
                 &session,
@@ -1532,6 +2230,7 @@ mod tests {
                 .deal(&session, &owner_keys[owner], &mut rng)
                 .expect("base deal");
             let contribution = output.contribution.clone();
+            continuations.push(output.continuation);
             coordinator
                 .accept_dealer(output.contribution)
                 .expect("base public deal");
@@ -1544,18 +2243,20 @@ mod tests {
                     .expect("base acknowledgement");
             }
         }
-        for worker in workers {
-            let _ = worker.finish().expect("complete base share");
-        }
+        let prepared = workers
+            .into_iter()
+            .map(|worker| worker.finish().expect("complete base share"))
+            .collect();
         let certificate = coordinator.finish().expect("base certificate");
-        (session, certificate)
+        (session, certificate, prepared, continuations)
     }
 
     #[test]
     fn bounded_quotients_are_privately_shared_and_publicly_certified() {
         let owner_keys = keys::<ORDER_COUNT>(0x10);
         let worker_keys = keys::<3>(0x30);
-        let (session, base_certificate) = base_ceremony(&owner_keys, &worker_keys, [0x42; 32]);
+        let (session, base_certificate, prepared_inputs, continuations) =
+            base_ceremony(&owner_keys, &worker_keys, [0x42; 32]);
         let round =
             DistributedBfvRound::new_for_test(&session, &base_certificate).expect("BFV round");
         assert_ne!(round.coefficient_challenge(), [0; 32]);
@@ -1578,7 +2279,18 @@ mod tests {
         let mut expected = Vec::with_capacity(ORDER_COUNT);
         for owner in 0..ORDER_COUNT {
             let values = (0..OWNER_BFV_QUOTIENT_COUNT)
-                .map(|coordinate| ((coordinate + 17 * owner) % 257) as i64 - 128)
+                .map(|coordinate| {
+                    let base_coordinate = coordinate % base_witness_width(round.degree()).unwrap();
+                    i64::try_from(
+                        witness_integer(
+                            &continuations[owner].values()[base_coordinate],
+                            base_coordinate,
+                            round.degree(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap()
+                })
                 .collect::<Vec<_>>();
             expected.push(
                 values
@@ -1628,13 +2340,69 @@ mod tests {
                 assert_eq!(reconstructed, expected[owner][coordinate]);
             }
         }
+
+        let relation_round =
+            DistributedBfvRelationRound::new_for_test(&round, &base_certificate, &certificate)
+                .expect("post-custody relation round");
+        assert_ne!(relation_round.second_challenge(), [0; 32]);
+        assert_eq!(relation_round.relation_width(), 4_096);
+        let mut relation_proofs = Vec::with_capacity(round.n_workers());
+        for (worker, (input_share, quotient_share)) in prepared_inputs
+            .into_iter()
+            .zip(prepared.into_iter())
+            .enumerate()
+        {
+            let mut rng = StdRng::from_seed([0xb0 + worker as u8; 32]);
+            relation_proofs.push(
+                BfvWorkerRelationProof::create(
+                    &relation_round,
+                    input_share,
+                    quotient_share,
+                    &base_certificate,
+                    &certificate,
+                    &worker_keys[worker],
+                    &mut rng,
+                )
+                .expect("worker exact relation proof"),
+            );
+        }
+        let mut bad_signature = relation_proofs[0].clone();
+        bad_signature.corrupt_signature_for_test();
+        assert_eq!(
+            bad_signature.verify(&relation_round),
+            Err(DistributedBfvError::InvalidSignature)
+        );
+
+        let mut wrong_public_constant = relation_round.clone();
+        wrong_public_constant.public_constant += Scalar::ONE;
+        let mut rejected = BfvRelationCoordinator::new(wrong_public_constant);
+        for proof in relation_proofs.iter().cloned() {
+            rejected.accept(proof).expect("valid worker proof");
+        }
+        assert!(matches!(
+            rejected.finish(),
+            Err(DistributedBfvError::RelationRejected)
+        ));
+
+        let mut relation_coordinator = BfvRelationCoordinator::new(relation_round.clone());
+        for proof in relation_proofs {
+            relation_coordinator.accept(proof).expect("worker proof");
+        }
+        let relation_certificate = relation_coordinator
+            .finish()
+            .expect("exact relation certificate");
+        relation_certificate
+            .verify(&relation_round)
+            .expect("public exact relation verification");
+        assert_ne!(relation_certificate.transcript_digest(), [0; 32]);
     }
 
     #[test]
     fn quotient_bounds_signatures_and_round_binding_fail_closed() {
         let owner_keys = keys::<ORDER_COUNT>(0x11);
         let worker_keys = keys::<3>(0x31);
-        let (session, base_certificate) = base_ceremony(&owner_keys, &worker_keys, [0x43; 32]);
+        let (session, base_certificate, _, _) =
+            base_ceremony(&owner_keys, &worker_keys, [0x43; 32]);
         let round =
             DistributedBfvRound::new_for_test(&session, &base_certificate).expect("BFV round");
         let mut outside = vec![0i64; OWNER_BFV_QUOTIENT_COUNT];
@@ -1678,7 +2446,8 @@ mod tests {
             Err(DistributedBfvError::InvalidProof | DistributedBfvError::ProofRejected)
         ));
 
-        let (other_session, other_base) = base_ceremony(&owner_keys, &worker_keys, [0x44; 32]);
+        let (other_session, other_base, _, _) =
+            base_ceremony(&owner_keys, &worker_keys, [0x44; 32]);
         let other_round =
             DistributedBfvRound::new_for_test(&other_session, &other_base).expect("other round");
         let witness =

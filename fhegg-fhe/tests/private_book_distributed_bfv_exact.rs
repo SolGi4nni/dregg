@@ -9,8 +9,9 @@
 use dregg_circuit_prove::dark_bazaar_private::{statement, PrivateBookWitness, PrivateOrder, Side};
 use ed25519_dalek::SigningKey;
 use fhegg_fhe::private_book_distributed_bfv::{
-    BfvQuotientCoordinator, BfvQuotientWorkerMachine, DistributedBfvError,
-    DistributedBfvPublicRelation, DistributedBfvRound, OwnerBfvQuotients,
+    BfvQuotientCoordinator, BfvQuotientWorkerMachine, BfvRelationCoordinator,
+    BfvWorkerRelationProof, DistributedBfvError, DistributedBfvPublicRelation,
+    DistributedBfvRelationRound, DistributedBfvRound, OwnerBfvQuotients,
 };
 use fhegg_fhe::private_book_distributed_inputs::{
     DealerOutput, DistributedInputCoordinator, DistributedWitnessSession, LocalOrderWitness,
@@ -128,7 +129,7 @@ fn exact_fhe_rs_rows_derive_bounded_private_quotients_for_every_owner() {
         }
         continuations.push(continuation);
     }
-    let _prepared_inputs = input_workers
+    let prepared_inputs = input_workers
         .into_iter()
         .map(|worker| worker.finish().expect("prepared base share"))
         .collect::<Vec<_>>();
@@ -169,12 +170,48 @@ fn exact_fhe_rs_rows_derive_bounded_private_quotients_for_every_owner() {
                 .expect("quotient ack");
         }
     }
-    for worker in quotient_workers {
-        let _ = worker.finish().expect("prepared quotient share");
-    }
-    quotient_coordinator
+    let prepared_quotients = quotient_workers
+        .into_iter()
+        .map(|worker| worker.finish().expect("prepared quotient share"))
+        .collect::<Vec<_>>();
+    let quotient_certificate = quotient_coordinator
         .finish()
         .expect("bounded quotient certificate");
+
+    let relation_round = DistributedBfvRelationRound::new(
+        &round,
+        &input_certificate,
+        &quotient_certificate,
+        &exact_public,
+    )
+    .expect("post-custody exact relation round");
+    assert_ne!(relation_round.second_challenge(), [0; 32]);
+    let mut relation_coordinator = BfvRelationCoordinator::new(relation_round.clone());
+    for (worker, (input_share, quotient_share)) in prepared_inputs
+        .into_iter()
+        .zip(prepared_quotients)
+        .enumerate()
+    {
+        let mut rng = StdRng::from_seed([0xb0 + worker as u8; 32]);
+        let proof = BfvWorkerRelationProof::create(
+            &relation_round,
+            input_share,
+            quotient_share,
+            &input_certificate,
+            &quotient_certificate,
+            &worker_keys[worker],
+            &mut rng,
+        )
+        .expect("worker exact relation proof");
+        relation_coordinator.accept(proof).expect("worker proof");
+    }
+    let relation_certificate = relation_coordinator
+        .finish()
+        .expect("exact BFV relation certificate");
+    relation_certificate
+        .verify(&relation_round)
+        .expect("public exact BFV relation verification");
+    assert_ne!(relation_certificate.transcript_digest(), [0; 32]);
 
     let mut wrong_rows = ciphertexts.rows().clone();
     wrong_rows[0].polys[0].rows[0][0] ^= 1;
