@@ -87,6 +87,7 @@ classical seams into a post-quantum composition.
 | Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
 | Sealed native-PQ PartyMPC crossing | **GATED IN STRICT FULL APEX** | protocol teeth above plus strict full apex 1/1; 7.956s crossing vs v4 1,202.240s timeout, exactly six transport signs + six verifies independent of 1,302 gates |
 | Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | mandatory hybrid `FHTRI003` binds exact Beaver rows/base session/batch under verified-core ML-DSA-65 + Ed25519 and the hosted verifier independently pins it; hostile 5/5 in 14.43s; generation remains trusted-dealer |
+| Binary triple sacrifice | **STAGED, NOT LIVE MALICIOUS PREPROCESSING** | exact GF(2) 128-round committed-candidate sacrifice + Lean algebra, focused 6/6; executable lying-response tooth shows authenticated shares/MAC/ZK are still required before FHTRI003 integration |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
@@ -304,6 +305,21 @@ unaudited-runtime refusal. This is mandatory hybrid authentication of audited
 material, not malicious preprocessing: one trusted dealer still sees and
 chooses every triple; input provenance, sacrifice/VSS/OT/VOLE/PCG, durable
 rollback tombstones, and the SHA-256 commitment floor remain named.
+
+The first additive sacrifice primitive now exists beside that trusted path but
+is intentionally not wired into it. `mpc_party::sacrifice` commits exact
+per-party GF(2) candidate rows before a post-commit beacon derives 128 challenge
+bits per kept gate, reconstructs full-quorum rho/sigma openings and check
+shares, and releases only an opaque verified batch. Lean proves
+`check = r·error(kept) ⊕ error(sacrifice)`, honest completeness, both-challenge
+detection, and the exact one-bit-per-round ceiling. The focused Rust target is
+**6/6 green** and the Lean module/root build is green.
+
+This is algebraic sacrifice under honest response computation, not a malicious-
+MPC theorem. An executable hostile test shows that a lying check response can
+cancel the public residual and force acceptance. Authenticated share responses,
+MAC/ZK, one-time custody, durable replay treatment, and live `FHTRI003`
+integration remain mandatory.
 
 **fhegg-fhe/tests/party_mpc_crossing_transport.rs** starts with the exact four BFV
 proof rows, folds them, masks and threshold-opens only a one-time-padded
@@ -1220,9 +1236,10 @@ These are the next truth-producing gates:
    clearing. Reuse the live exact native-field slice, materialize or prove the
    other 98,303 equations, then make the apex consume the family before
    revisiting any no-single-viewer language.
-3. Replace trusted-authority Beaver certification with malicious preprocessing
-   and add private-input share-formation evidence; signed, encrypted routing
-   alone cannot satisfy LiveMpcBackend.sound.
+3. Compose the staged 128-round binary sacrifice with authenticated response
+   shares/MAC-or-ZK and one-time custody, then replace trusted-authority Beaver
+   generation and add private-input share-formation evidence. Signed, encrypted
+   routing alone cannot satisfy LiveMpcBackend.sound.
 4. Move successor-nullifier accumulator insertion and conservation authority
    into the now-live faithful hidden-spend relation, then widen the deployed
    one-felt nullifier root. Separately compose the landed PQ-identity AIR row

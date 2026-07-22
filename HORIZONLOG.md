@@ -10802,6 +10802,19 @@ substitutions and explicit unaudited-runtime refusal. The dealer still sees and
 chooses every triple; this is hybrid authentication, not sacrifice/VSS/OT/VOLE/
 PCG or malicious-input proof, and SHA-256 plus durable tombstone residuals remain.
 
+An additive binary-triple sacrifice rung is now banked (`20a126205`) without
+being mislabeled as live preprocessing. Candidate GF(2) rows are committed
+before a SHA-512-derived beacon supplies 128 independent challenge bits per
+kept gate; full-quorum rho/sigma openings and check shares release only an
+opaque verified batch. Lean proves the exact identity
+`check = r·error(kept) ⊕ error(sacrifice)`, honest completeness, and that a
+malformed kept triple has exactly one accepting one-bit challenge. Rust/Lean
+gates are green; the focused release target is **6/6**. The executable lying-
+response tooth also demonstrates the remaining boundary: without authenticated
+share responses/MAC/ZK, a dishonest party can cancel the residual and force
+acceptance. The rung is therefore not yet wired into `FHTRI003` or the live
+PartyMPC triple source.
+
 The portable Ristretto verifier MSM is qualified for correctness, not
 performance. hbox passed the strict group-add and full MSM/R1CS gates with dalek
 independently recomputing the returned result. The follow-up exact radix-16
