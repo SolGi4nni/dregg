@@ -24,7 +24,10 @@ pub const TURN_REFRESH_PRIVATE_BAZAAR: &str = "refresh-private-bazaar";
 
 const JOURNEY_DOMAIN: &str = "dreggnet-market/private-bazaar-player-journey/v2";
 #[cfg(feature = "private-clearing")]
-const MARKET_INSTANCE_DOMAIN: &str = "dreggnet-market/private-bazaar-market-instance/v2";
+// v3 names the logical replay-stable listing, not the embedded executor's
+// ephemeral agent key or the physical auction cell derived from that key.
+// `SessionConfig::seed` is the listing nonce at this application boundary.
+const MARKET_INSTANCE_DOMAIN: &str = "dreggnet-market/private-bazaar-market-instance/v3";
 #[cfg(feature = "private-clearing")]
 const POLICY_DOMAIN: &str = "dreggnet-market/private-bazaar-deployment-policy/v1";
 #[cfg(feature = "private-clearing")]
@@ -564,7 +567,7 @@ impl PrivateBazaarMarketIdentity {
         deployment_id: [u8; 32],
     ) -> Result<Self, PrivateBazaarJourneyError> {
         let market = &session.market;
-        let auction_cell = market
+        market
             .auction_cell
             .ok_or(PrivateBazaarJourneyError::MarketNotReady)?;
         let seller = market
@@ -573,7 +576,6 @@ impl PrivateBazaarMarketIdentity {
             .ok_or(PrivateBazaarJourneyError::MarketNotReady)?;
         let mut hasher = blake3::Hasher::new_derive_key(MARKET_INSTANCE_DOMAIN);
         hasher.update(&deployment_id);
-        hasher.update(auction_cell.as_bytes());
         hasher.update(&market.seed.to_be_bytes());
         hasher.update(&market.reserve.to_be_bytes());
         hasher.update(&(seller.0.len() as u64).to_be_bytes());

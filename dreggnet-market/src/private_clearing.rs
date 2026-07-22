@@ -29,8 +29,12 @@
 #[path = "private_batch_optimizer.rs"]
 pub mod batch_optimizer;
 
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+
 use dregg_circuit_prove::dark_bazaar_private::{
-    self, DarkBazaarPrivateZkProof, PrivateOrder, PublicStatement,
+    self, DarkBazaarPrivateZkProof, PrivateBookWitness, PrivateOrder, PublicStatement, Side,
 };
 use dreggnet_offerings::{DreggIdentity, Outcome};
 use starbridge_sealed_auction::Phase;
@@ -44,6 +48,11 @@ const BABYBEAR_P: u64 = 2_013_265_921;
 /// Domain for deriving a fixed-family public session felt from the offering's
 /// replay-stable `SessionConfig::seed`.
 const SESSION_DOMAIN: &str = "dreggnet-market/dark-bazaar-private/session/v1";
+const PRIVATE_INPUT_DOMAIN: &str = "dregg.private-bazaar-private-input.v1";
+const BLIND_FINGERPRINT_DOMAIN: &str = "dregg.private-bazaar-commitment-blind.v1";
+const BINDING_CHECKSUM_DOMAIN: &str = "dregg.private-bazaar-commitment-binding.v1";
+const BINDING_MAGIC: &[u8; 8] = b"DBCB0001";
+const BINDING_RECORD_LEN: usize = 8 + 32 + 4 + 4 + 32 + (8 * 4) + 32;
 
 /// Public values pinned independently of the proof being verified.
 ///
@@ -115,6 +124,194 @@ pub struct PrivateClearingReceipt {
     pub settlement_turn: dregg_app_framework::TurnReceipt,
 }
 
+/// Worker-private durable binding between one commitment blind and one exact
+/// canonical private book. Fields have no public accessors: frontends never
+/// receive the blind or private-input digest.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PrivateClearingCommitmentBinding {
+    market_instance_id: [u8; 32],
+    proof_session: u32,
+    rule: u32,
+    private_input_digest: [u8; 32],
+    blinding: [u32; dark_bazaar_private::DIGEST_WIDTH],
+}
+
+impl std::fmt::Debug for PrivateClearingCommitmentBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrivateClearingCommitmentBinding")
+            .field("market_instance_id", &self.market_instance_id)
+            .field("proof_session", &self.proof_session)
+            .field("rule", &self.rule)
+            .field("private_input_digest", &"<worker-private>")
+            .field("blinding", &"<worker-private>")
+            .finish()
+    }
+}
+
+impl PrivateClearingCommitmentBinding {
+    fn new(
+        session: &DarkBazaarSession,
+        market_instance_id: [u8; 32],
+        blinding: [u32; dark_bazaar_private::DIGEST_WIDTH],
+    ) -> Result<Self, PrivateClearingError> {
+        if market_instance_id == [0; 32] {
+            return Err(PrivateClearingError::InvalidMarketInstance);
+        }
+        // The witness constructor is the canonical field-range check for all
+        // blind lanes. Building it also checks the current fixed book shape.
+        let orders = private_orders(session)?;
+        PrivateBookWitness::try_from_orders_with_blinding(&orders, blinding)
+            .map_err(PrivateClearingError::InvalidProof)?;
+        Ok(Self {
+            market_instance_id,
+            proof_session: session.private_proof_session(),
+            rule: dark_bazaar_private::RULE_ID,
+            private_input_digest: private_input_digest(&orders),
+            blinding,
+        })
+    }
+
+    fn validate(
+        &self,
+        session: &DarkBazaarSession,
+        market_instance_id: [u8; 32],
+    ) -> Result<Vec<PrivateOrder>, PrivateClearingError> {
+        let orders = private_orders(session)?;
+        if self.market_instance_id != market_instance_id
+            || self.proof_session != session.private_proof_session()
+            || self.rule != dark_bazaar_private::RULE_ID
+            || self.private_input_digest != private_input_digest(&orders)
+        {
+            return Err(PrivateClearingError::CommitmentBindingMismatch);
+        }
+        Ok(orders)
+    }
+
+    fn blind_fingerprint(&self) -> [u8; 32] {
+        blind_fingerprint(self.blinding)
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(BINDING_RECORD_LEN);
+        out.extend_from_slice(BINDING_MAGIC);
+        out.extend_from_slice(&self.market_instance_id);
+        out.extend_from_slice(&self.proof_session.to_be_bytes());
+        out.extend_from_slice(&self.rule.to_be_bytes());
+        out.extend_from_slice(&self.private_input_digest);
+        for lane in self.blinding {
+            out.extend_from_slice(&lane.to_be_bytes());
+        }
+        let checksum = binding_checksum(&out);
+        out.extend_from_slice(&checksum);
+        out
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, PrivateClearingError> {
+        if bytes.len() != BINDING_RECORD_LEN || &bytes[..8] != BINDING_MAGIC {
+            return Err(PrivateClearingError::CorruptCommitmentBinding);
+        }
+        if binding_checksum(&bytes[..BINDING_RECORD_LEN - 32]) != bytes[BINDING_RECORD_LEN - 32..] {
+            return Err(PrivateClearingError::CorruptCommitmentBinding);
+        }
+        let mut blinding = [0u32; dark_bazaar_private::DIGEST_WIDTH];
+        for (index, lane) in blinding.iter_mut().enumerate() {
+            let offset = 80 + index * 4;
+            *lane = u32::from_be_bytes(
+                bytes[offset..offset + 4]
+                    .try_into()
+                    .expect("fixed commitment-binding length checked"),
+            );
+        }
+        let binding = Self {
+            market_instance_id: bytes[8..40]
+                .try_into()
+                .expect("fixed commitment-binding length checked"),
+            proof_session: u32::from_be_bytes(
+                bytes[40..44]
+                    .try_into()
+                    .expect("fixed commitment-binding length checked"),
+            ),
+            rule: u32::from_be_bytes(
+                bytes[44..48]
+                    .try_into()
+                    .expect("fixed commitment-binding length checked"),
+            ),
+            private_input_digest: bytes[48..80]
+                .try_into()
+                .expect("fixed commitment-binding length checked"),
+            blinding,
+        };
+        if binding.market_instance_id == [0; 32]
+            || binding.private_input_digest == [0; 32]
+            || binding.rule != dark_bazaar_private::RULE_ID
+            || binding
+                .blinding
+                .iter()
+                .any(|lane| u64::from(*lane) >= BABYBEAR_P)
+        {
+            return Err(PrivateClearingError::CorruptCommitmentBinding);
+        }
+        Ok(binding)
+    }
+}
+
+/// Durable worker-only registry enforcing one blind per exact private input
+/// claim and one bound commitment per market instance.
+#[derive(Clone, Debug)]
+pub struct PrivateClearingCommitmentStore {
+    root: PathBuf,
+}
+
+impl PrivateClearingCommitmentStore {
+    pub fn open(root: impl AsRef<Path>) -> Result<Self, PrivateClearingError> {
+        let root = root.as_ref().to_path_buf();
+        fs::create_dir_all(root.join("by-market"))
+            .map_err(|error| PrivateClearingError::commitment_io("create market index", error))?;
+        fs::create_dir_all(root.join("by-blind"))
+            .map_err(|error| PrivateClearingError::commitment_io("create blind index", error))?;
+        Ok(Self { root })
+    }
+
+    /// Load the existing binding for `market_instance_id`, or atomically bind a
+    /// new caller-supplied blind. Existing bindings need no blind supplied after
+    /// restart. A blind already reserved for different market/session/rule/order
+    /// bytes is refused globally.
+    pub fn bind_or_load(
+        &self,
+        session: &DarkBazaarSession,
+        market_instance_id: [u8; 32],
+        new_blinding: Option<[u32; dark_bazaar_private::DIGEST_WIDTH]>,
+    ) -> Result<PrivateClearingCommitmentBinding, PrivateClearingError> {
+        let market_path = self
+            .root
+            .join("by-market")
+            .join(format!("{}.binding", hex32(market_instance_id)));
+        if market_path.exists() {
+            let binding = read_binding(&market_path)?;
+            binding.validate(session, market_instance_id)?;
+            if new_blinding.is_some_and(|candidate| candidate != binding.blinding) {
+                return Err(PrivateClearingError::CommitmentAlreadyBound);
+            }
+            verify_blind_reservation(&self.root, &binding)?;
+            return Ok(binding);
+        }
+
+        let blinding = new_blinding.ok_or(PrivateClearingError::CommitmentBindingNotFound)?;
+        let binding = PrivateClearingCommitmentBinding::new(session, market_instance_id, blinding)?;
+        write_new_or_verify_binding(
+            &blind_path(&self.root, binding.blind_fingerprint()),
+            &binding.encode(),
+            PrivateClearingError::CommitmentBlindAlreadyUsed,
+        )?;
+        write_new_or_verify_binding(
+            &market_path,
+            &binding.encode(),
+            PrivateClearingError::CommitmentAlreadyBound,
+        )?;
+        Ok(binding)
+    }
+}
+
 impl PrivateClearingReceipt {
     /// The verified first-price clearing value.
     pub const fn price(&self) -> u32 {
@@ -160,6 +357,32 @@ pub enum PrivateClearingError {
     SettlementRefused(String),
     /// The executor landed but its recorded winner/price diverged from preflight.
     PostSettlementMismatch(&'static str),
+    /// A zero market identity cannot name a durable private claim.
+    InvalidMarketInstance,
+    /// The stored blind is bound to different market/session/rule/order bytes.
+    CommitmentBindingMismatch,
+    /// A persisted commitment binding is malformed or has failed its checksum.
+    CorruptCommitmentBinding,
+    /// This market already has a different worker-private commitment binding.
+    CommitmentAlreadyBound,
+    /// This blind has already been reserved for a different private claim.
+    CommitmentBlindAlreadyUsed,
+    /// No durable binding exists and the caller did not supply a new blind.
+    CommitmentBindingNotFound,
+    /// Durable worker-private commitment storage failed.
+    CommitmentIo {
+        operation: &'static str,
+        detail: String,
+    },
+}
+
+impl PrivateClearingError {
+    fn commitment_io(operation: &'static str, error: io::Error) -> Self {
+        Self::CommitmentIo {
+            operation,
+            detail: error.to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for PrivateClearingError {
@@ -213,6 +436,36 @@ impl std::fmt::Display for PrivateClearingError {
             Self::PostSettlementMismatch(why) => {
                 write!(f, "authorized settlement diverged after landing: {why}")
             }
+            Self::InvalidMarketInstance => {
+                write!(f, "private commitment requires a nonzero market identity")
+            }
+            Self::CommitmentBindingMismatch => write!(
+                f,
+                "private commitment binding does not match this market/session/rule/order book"
+            ),
+            Self::CorruptCommitmentBinding => {
+                write!(f, "private commitment binding record is corrupt")
+            }
+            Self::CommitmentAlreadyBound => {
+                write!(
+                    f,
+                    "market already has a different private commitment binding"
+                )
+            }
+            Self::CommitmentBlindAlreadyUsed => write!(
+                f,
+                "private commitment blind is already bound to a different claim"
+            ),
+            Self::CommitmentBindingNotFound => write!(
+                f,
+                "private commitment binding does not exist and no new blind was supplied"
+            ),
+            Self::CommitmentIo { operation, detail } => {
+                write!(
+                    f,
+                    "private commitment storage failed to {operation}: {detail}"
+                )
+            }
         }
     }
 }
@@ -249,17 +502,157 @@ impl DarkBazaarSession {
     pub fn prepare_private_clearing_zk(
         &self,
     ) -> Result<PrivateClearingAuthorization, PrivateClearingError> {
-        let live = live_clear(self)?;
-        let mut orders = Vec::with_capacity(self.market.bids.len() + 1);
-        for placed in &self.market.bids {
-            orders.push(PrivateOrder::bid(1, placed.bid.value as u8));
-        }
-        orders.push(PrivateOrder::ask(1, live.price as u8));
+        let orders = private_orders(self)?;
         let (proof, statement) =
             dark_bazaar_private::prove_orders_zk(self.private_proof_session(), &orders)
                 .map_err(PrivateClearingError::InvalidProof)?;
         Ok(PrivateClearingAuthorization::new(proof, statement))
     }
+
+    /// Re-prove the exact private book under its worker-owned durable binding.
+    ///
+    /// A durable private worker uses this when reconstructing an already
+    /// accepted semantic claim after restart: it persists the eight private
+    /// blind limbs beside its private inputs, then creates a fresh hiding proof
+    /// and executor receipt for the same `(session, order_root, p*, V*)`.
+    /// The opaque binding is revalidated against the market identity and exact
+    /// current book before its blind can be used. Callers cannot pass an
+    /// unbound raw blind through this API.
+    pub fn prepare_private_clearing_zk_with_binding(
+        &self,
+        market_instance_id: [u8; 32],
+        binding: &PrivateClearingCommitmentBinding,
+    ) -> Result<PrivateClearingAuthorization, PrivateClearingError> {
+        let orders = binding.validate(self, market_instance_id)?;
+        let witness = PrivateBookWitness::try_from_orders_with_blinding(&orders, binding.blinding)
+            .map_err(PrivateClearingError::InvalidProof)?;
+        let (proof, statement) =
+            dark_bazaar_private::prove_zk(self.private_proof_session(), &witness)
+                .map_err(PrivateClearingError::InvalidProof)?;
+        Ok(PrivateClearingAuthorization::new(proof, statement))
+    }
+}
+
+fn private_orders(session: &DarkBazaarSession) -> Result<Vec<PrivateOrder>, PrivateClearingError> {
+    let live = live_clear(session)?;
+    let mut orders = Vec::with_capacity(session.market.bids.len() + 1);
+    for placed in &session.market.bids {
+        orders.push(PrivateOrder::bid(1, placed.bid.value as u8));
+    }
+    orders.push(PrivateOrder::ask(1, live.price as u8));
+    Ok(orders)
+}
+
+/// Hash the exact fixed-width canonical order record consumed by the relation.
+/// Canonical zero-quantity padding is included, so alternative variable-length
+/// encodings cannot alias the worker's persisted claim.
+fn private_input_digest(orders: &[PrivateOrder]) -> [u8; 32] {
+    let witness = PrivateBookWitness::try_from_orders_with_blinding(orders, [0; 8])
+        .expect("private orders are validated before commitment binding");
+    let mut hasher = blake3::Hasher::new_derive_key(PRIVATE_INPUT_DOMAIN);
+    hasher.update(&(dark_bazaar_private::ORDER_COUNT as u64).to_be_bytes());
+    for order in witness.orders {
+        hasher.update(&[match order.side {
+            Side::Bid => 0,
+            Side::Ask => 1,
+        }]);
+        hasher.update(&[order.qty, order.limit]);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn blind_fingerprint(blinding: [u32; dark_bazaar_private::DIGEST_WIDTH]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(BLIND_FINGERPRINT_DOMAIN);
+    for lane in blinding {
+        hasher.update(&lane.to_be_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn binding_checksum(bytes: &[u8]) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(BINDING_CHECKSUM_DOMAIN)
+        .update(bytes)
+        .finalize()
+        .as_bytes()
+}
+
+fn blind_path(root: &Path, fingerprint: [u8; 32]) -> PathBuf {
+    root.join("by-blind")
+        .join(format!("{}.binding", hex32(fingerprint)))
+}
+
+fn verify_blind_reservation(
+    root: &Path,
+    binding: &PrivateClearingCommitmentBinding,
+) -> Result<(), PrivateClearingError> {
+    let reserved = read_binding(&blind_path(root, binding.blind_fingerprint()))?;
+    if &reserved == binding {
+        Ok(())
+    } else {
+        Err(PrivateClearingError::CommitmentBlindAlreadyUsed)
+    }
+}
+
+fn write_new_or_verify_binding(
+    path: &Path,
+    expected: &[u8],
+    collision: PrivateClearingError,
+) -> Result<(), PrivateClearingError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(expected)
+                .map_err(|error| PrivateClearingError::commitment_io("write binding", error))?;
+            file.sync_all()
+                .map_err(|error| PrivateClearingError::commitment_io("sync binding", error))?;
+            sync_binding_parent(path)
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let mut found = Vec::new();
+            File::open(path)
+                .and_then(|mut file| file.read_to_end(&mut found))
+                .map_err(|error| {
+                    PrivateClearingError::commitment_io("read existing binding", error)
+                })?;
+            if found == expected {
+                Ok(())
+            } else {
+                Err(collision)
+            }
+        }
+        Err(error) => Err(PrivateClearingError::commitment_io("create binding", error)),
+    }
+}
+
+fn read_binding(path: &Path) -> Result<PrivateClearingCommitmentBinding, PrivateClearingError> {
+    let bytes = fs::read(path)
+        .map_err(|error| PrivateClearingError::commitment_io("read binding", error))?;
+    PrivateClearingCommitmentBinding::decode(&bytes)
+}
+
+fn sync_binding_parent(path: &Path) -> Result<(), PrivateClearingError> {
+    let parent = path
+        .parent()
+        .ok_or(PrivateClearingError::CorruptCommitmentBinding)?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| PrivateClearingError::commitment_io("sync binding directory", error))
+}
+
+fn hex32(bytes: [u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 impl DarkBazaarOffering {
@@ -532,6 +925,81 @@ mod tests {
         assert!(session.is_settled());
         assert_eq!(session.clearing().expect("clear").price(), 3);
         assert!(session.clearing().expect("clear").conserved());
+    }
+
+    #[test]
+    fn durable_blind_is_exactly_bound_and_stabilizes_only_the_same_claim() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = PrivateClearingCommitmentStore::open(temp.path()).unwrap();
+        let offering = DarkBazaarOffering::new();
+        let mut session = listed_two_bid_session(&offering, 0xD4_43);
+        let market_id = [0x41; 32];
+        let blind = [0x00C0_FFEE; dark_bazaar_private::DIGEST_WIDTH];
+
+        let first = store
+            .bind_or_load(&session, market_id, Some(blind))
+            .expect("bind exact private book");
+        let loaded = store
+            .bind_or_load(&session, market_id, None)
+            .expect("load durable binding without resupplying blind");
+        assert_eq!(loaded, first);
+
+        let first_orders = first.validate(&session, market_id).unwrap();
+        let first_witness =
+            PrivateBookWitness::try_from_orders_with_blinding(&first_orders, first.blinding)
+                .unwrap();
+        let loaded_orders = loaded.validate(&session, market_id).unwrap();
+        let loaded_witness =
+            PrivateBookWitness::try_from_orders_with_blinding(&loaded_orders, loaded.blinding)
+                .unwrap();
+        let first_statement =
+            dark_bazaar_private::statement(session.private_proof_session(), &first_witness)
+                .unwrap();
+        let loaded_statement =
+            dark_bazaar_private::statement(session.private_proof_session(), &loaded_witness)
+                .unwrap();
+        assert_eq!(first_statement.order_root, loaded_statement.order_root);
+
+        // The same canonical book under a different blind is a distinct claim.
+        let second_session = listed_two_bid_session(&offering, 0xD4_43);
+        let second_market_id = [0x42; 32];
+        let second = store
+            .bind_or_load(
+                &second_session,
+                second_market_id,
+                Some([0x000B_AA42; dark_bazaar_private::DIGEST_WIDTH]),
+            )
+            .unwrap();
+        let second_orders = second.validate(&second_session, second_market_id).unwrap();
+        let second_witness =
+            PrivateBookWitness::try_from_orders_with_blinding(&second_orders, second.blinding)
+                .unwrap();
+        let second_statement =
+            dark_bazaar_private::statement(second_session.private_proof_session(), &second_witness)
+                .unwrap();
+        assert_ne!(first_statement.order_root, second_statement.order_root);
+
+        // Changing even one private order invalidates the market binding.
+        assert!(
+            offering
+                .advance(
+                    &mut session,
+                    Action::new("changed bid", TURN_BID, 1, true),
+                    actor("carol"),
+                )
+                .landed()
+        );
+        assert!(matches!(
+            store.bind_or_load(&session, market_id, None),
+            Err(PrivateClearingError::CommitmentBindingMismatch)
+        ));
+
+        // The blind reservation is global: another market cannot reuse it for
+        // the changed book (nor for any other market-bound claim).
+        assert!(matches!(
+            store.bind_or_load(&session, [0x43; 32], Some(blind)),
+            Err(PrivateClearingError::CommitmentBlindAlreadyUsed)
+        ));
     }
 
     #[test]

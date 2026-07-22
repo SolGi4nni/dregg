@@ -129,6 +129,7 @@ ed25519-dalek = { version = "2", features = ["std"], optional = true }
 
 [dev-dependencies]
 rand = "0.8"
+tempfile = { workspace = true }
 dregg-sdk = { path = "../sdk" }
 procgen-dregg = { path = "../procgen-dregg" }
 # Full-apex game consequence: the market's strict private proof result is

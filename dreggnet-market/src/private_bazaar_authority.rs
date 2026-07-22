@@ -40,15 +40,22 @@ use crate::private_clearing_guild_allocation::{
     PrivateClearingGuildAllocation, PrivateClearingGuildAllocationError,
 };
 
-const SOURCE_USE_DOMAIN: &str = "dregg.private-bazaar-global-source-use.v1";
+// v2 identifies the semantic private-clearing claim, not either of its
+// timestamped executor evidence envelopes. A restart may reissue an
+// independently authenticated receipt and turn for the same claim; that must
+// recover the same one-shot source rather than minting a second spend key.
+const SOURCE_USE_DOMAIN: &str = "dregg.private-bazaar-global-source-use.v2";
 const OPERATION_DOMAIN: &str = "dregg.private-bazaar-exact-operation.v1";
-const AUTHORITY_DOMAIN: &str = "dregg.private-bazaar-executor-authority.v1";
+const AUTHORITY_DOMAIN: &str = "dregg.private-bazaar-executor-authority.v2";
+const ALLOCATION_DOMAIN: &str = "dregg.private-bazaar-semantic-allocation.v1";
 const EFFECT_DOMAIN: &str = "dregg.private-bazaar-exact-effect.v1";
 
-const SOURCE_MAGIC: &[u8; 8] = b"DBSRC001";
-const RECORD_MAGIC: &[u8; 8] = b"DBOP0001";
+// Deliberate fail-closed migration: v1 records bound `receipt_hash`, whose
+// timestamp makes it an unstable semantic identity. They must never alias v2.
+const SOURCE_MAGIC: &[u8; 8] = b"DBSRC002";
+const RECORD_MAGIC: &[u8; 8] = b"DBOP0002";
 const SOURCE_RECORD_LEN: usize = 8 + 32 + 32 + 32;
-const OPERATION_RECORD_LEN: usize = 8 + 1 + (8 * 32);
+const OPERATION_RECORD_LEN: usize = 8 + 1 + (7 * 32);
 const MAX_METHOD_BYTES: usize = 256;
 const MAX_REWARD_KIND_BYTES: usize = 256;
 
@@ -205,7 +212,6 @@ pub struct PrivateBazaarExecutorAuthority {
     market_instance_id: [u8; 32],
     policy_id: [u8; 32],
     allocation_digest: [u8; 32],
-    settlement_receipt_hash: [u8; 32],
     effect: PrivateBazaarExactEffect,
     policy: PrivateBazaarExecutorPolicy,
 }
@@ -245,10 +251,11 @@ impl PrivateBazaarExecutorAuthority {
             .receipts
             .last()
             .ok_or(PrivateBazaarAuthorityError::MissingSettlementReceipt)?;
+        let settlement_turn_hash = receipt.settlement_turn.turn_hash;
         let settlement_receipt_hash = receipt.settlement_turn.receipt_hash();
-        if live_receipt.receipt_hash() != settlement_receipt_hash
-            || live_receipt.turn_hash != receipt.settlement_turn.turn_hash
-            || receipt.settlement_turn.turn_hash == [0; 32]
+        if live_receipt.turn_hash != settlement_turn_hash
+            || live_receipt.receipt_hash() != settlement_receipt_hash
+            || settlement_turn_hash == [0; 32]
         {
             return Err(PrivateBazaarAuthorityError::ReceiptDoesNotMatchMarket);
         }
@@ -276,8 +283,13 @@ impl PrivateBazaarExecutorAuthority {
         )?;
         let market_instance_id = market.digest();
         let policy_id = raid_policy.policy_id();
-        let source_use_id = source_use_id(receipt, settlement_receipt_hash, market_instance_id);
-        let allocation_digest = rebuilt.allocation_digest();
+        let source_use_id = private_bazaar_source_use_id(market_instance_id, receipt);
+        let allocation_digest = semantic_allocation_digest(
+            source_use_id,
+            policy_id,
+            raid_policy,
+            rebuilt.selected_member(),
+        );
         let operation_id = operation_id(
             source_use_id,
             market_instance_id,
@@ -292,7 +304,6 @@ impl PrivateBazaarExecutorAuthority {
             market_instance_id,
             policy_id,
             allocation_digest,
-            settlement_receipt_hash,
             &effect,
             policy,
         );
@@ -303,7 +314,6 @@ impl PrivateBazaarExecutorAuthority {
             market_instance_id,
             policy_id,
             allocation_digest,
-            settlement_receipt_hash,
             effect,
             policy,
         })
@@ -336,10 +346,6 @@ impl PrivateBazaarExecutorAuthority {
         self.allocation_digest
     }
 
-    pub const fn settlement_receipt_hash(&self) -> [u8; 32] {
-        self.settlement_receipt_hash
-    }
-
     pub fn effect(&self) -> &PrivateBazaarExactEffect {
         &self.effect
     }
@@ -370,7 +376,6 @@ impl PrivateBazaarExecutorAuthority {
         record.source_use_id == self.source_use_id
             && record.operation_id == self.operation_id
             && record.authority_digest == self.authority_digest
-            && record.settlement_receipt_hash == self.settlement_receipt_hash
             && record.effect_digest == self.effect.digest()
     }
 }
@@ -456,7 +461,6 @@ impl CommittedPrivateBazaarEffect {
         self.authority.source_use_id == authority.source_use_id
             && self.authority.operation_id == authority.operation_id
             && self.authority.authority_digest == authority.authority_digest
-            && self.authority.settlement_receipt_hash == authority.settlement_receipt_hash
             && self.authority.effect == authority.effect
             && self.authority.policy == authority.policy
     }
@@ -800,7 +804,6 @@ struct OperationRecord {
     source_use_id: [u8; 32],
     operation_id: [u8; 32],
     authority_digest: [u8; 32],
-    settlement_receipt_hash: [u8; 32],
     effect_digest: [u8; 32],
     game_receipt_hash: [u8; 32],
     game_turn_hash: [u8; 32],
@@ -814,7 +817,6 @@ impl OperationRecord {
             source_use_id: authority.source_use_id,
             operation_id: authority.operation_id,
             authority_digest: authority.authority_digest,
-            settlement_receipt_hash: authority.settlement_receipt_hash,
             effect_digest: authority.effect.digest(),
             game_receipt_hash: [0; 32],
             game_turn_hash: [0; 32],
@@ -830,7 +832,6 @@ impl OperationRecord {
             self.source_use_id,
             self.operation_id,
             self.authority_digest,
-            self.settlement_receipt_hash,
             self.effect_digest,
             self.game_receipt_hash,
             self.game_turn_hash,
@@ -852,11 +853,10 @@ impl OperationRecord {
             source_use_id: array_at(bytes, 9),
             operation_id: array_at(bytes, 41),
             authority_digest: array_at(bytes, 73),
-            settlement_receipt_hash: array_at(bytes, 105),
-            effect_digest: array_at(bytes, 137),
-            game_receipt_hash: array_at(bytes, 169),
-            game_turn_hash: array_at(bytes, 201),
-            game_post_state: array_at(bytes, 233),
+            effect_digest: array_at(bytes, 105),
+            game_receipt_hash: array_at(bytes, 137),
+            game_turn_hash: array_at(bytes, 169),
+            game_post_state: array_at(bytes, 201),
         };
         let game_fields = [
             record.game_receipt_hash,
@@ -945,10 +945,12 @@ impl std::fmt::Display for PrivateBazaarAuthorityError {
 
 impl std::error::Error for PrivateBazaarAuthorityError {}
 
-fn source_use_id(
-    receipt: &PrivateClearingReceipt,
-    receipt_hash: [u8; 32],
+/// The one canonical one-shot source identity shared by authority reservation
+/// and every consumer adapter. Receipt/turn hashes are independently verified
+/// evidence for an issuance, never inputs to semantic identity.
+pub(crate) fn private_bazaar_source_use_id(
     market_instance_id: [u8; 32],
+    receipt: &PrivateClearingReceipt,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(SOURCE_USE_DOMAIN);
     hash_field(&mut hasher, &market_instance_id);
@@ -960,8 +962,24 @@ fn source_use_id(
     hash_field(&mut hasher, &receipt.statement.p_star.to_be_bytes());
     hash_field(&mut hasher, &receipt.statement.v_star.to_be_bytes());
     hash_field(&mut hasher, receipt.winner.0.as_bytes());
-    hash_field(&mut hasher, &receipt.settlement_turn.turn_hash);
-    hash_field(&mut hasher, &receipt_hash);
+    *hasher.finalize().as_bytes()
+}
+
+fn semantic_allocation_digest(
+    source_use_id: [u8; 32],
+    policy_id: [u8; 32],
+    raid_policy: &PrivateBazaarRaidPolicy,
+    selected: &crate::private_clearing_guild_allocation::GuildMember,
+) -> [u8; 32] {
+    let reward = raid_policy.reward();
+    let mut hasher = blake3::Hasher::new_derive_key(ALLOCATION_DOMAIN);
+    hash_field(&mut hasher, &source_use_id);
+    hash_field(&mut hasher, &policy_id);
+    hash_field(&mut hasher, &raid_policy.roster().digest());
+    hash_field(&mut hasher, selected.actor.0.as_bytes());
+    hash_field(&mut hasher, &selected.character_cell.0);
+    hash_field(&mut hasher, reward.kind.as_bytes());
+    hash_field(&mut hasher, &reward.amount.to_be_bytes());
     *hasher.finalize().as_bytes()
 }
 
@@ -994,7 +1012,6 @@ fn authority_digest(
     market_instance_id: [u8; 32],
     policy_id: [u8; 32],
     allocation_digest: [u8; 32],
-    settlement_receipt_hash: [u8; 32],
     effect: &PrivateBazaarExactEffect,
     policy: PrivateBazaarExecutorPolicy,
 ) -> [u8; 32] {
@@ -1005,7 +1022,6 @@ fn authority_digest(
         market_instance_id,
         policy_id,
         allocation_digest,
-        settlement_receipt_hash,
         effect.digest(),
         policy.executor_pubkey,
         policy.federation_id,
@@ -1060,24 +1076,9 @@ fn market_instance_id(
     session: &DarkBazaarSession,
     deployment_id: [u8; 32],
 ) -> Result<[u8; 32], PrivateBazaarAuthorityError> {
-    let auction_cell = session
-        .market
-        .auction_cell
-        .ok_or(PrivateBazaarAuthorityError::ReceiptDoesNotMatchMarket)?;
-    let seller = session
-        .market
-        .seller
-        .as_ref()
-        .ok_or(PrivateBazaarAuthorityError::ReceiptDoesNotMatchMarket)?;
-    let mut hasher =
-        blake3::Hasher::new_derive_key("dreggnet-market/private-bazaar-market-instance/v2");
-    hasher.update(&deployment_id);
-    hasher.update(auction_cell.as_bytes());
-    hasher.update(&session.market.seed.to_be_bytes());
-    hasher.update(&session.market.reserve.to_be_bytes());
-    hasher.update(&(seller.0.len() as u64).to_be_bytes());
-    hasher.update(seller.0.as_bytes());
-    Ok(*hasher.finalize().as_bytes())
+    PrivateBazaarMarketIdentity::from_session(session, deployment_id)
+        .map(|market| market.digest())
+        .map_err(|_| PrivateBazaarAuthorityError::ReceiptDoesNotMatchMarket)
 }
 
 fn write_new_or_verify(path: &Path, expected: &[u8]) -> Result<(), PrivateBazaarAuthorityError> {
@@ -1164,6 +1165,31 @@ fn hex32(bytes: [u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_circuit_prove::dark_bazaar_private::{PublicStatement, RULE_ID};
+    use dreggnet_offerings::DreggIdentity;
+
+    fn semantic_receipt(
+        session: u32,
+        order_root: [u32; 8],
+        turn_hash: [u8; 32],
+        timestamp: i64,
+    ) -> PrivateClearingReceipt {
+        PrivateClearingReceipt {
+            statement: PublicStatement {
+                session,
+                rule: RULE_ID,
+                order_root,
+                p_star: 3,
+                v_star: 1,
+            },
+            winner: DreggIdentity("semantic-winner".to_owned()),
+            settlement_turn: TurnReceipt {
+                turn_hash,
+                timestamp,
+                ..TurnReceipt::default()
+            },
+        }
+    }
 
     fn fake_authority(source: u8, operation: u8) -> PrivateBazaarExecutorAuthority {
         let effect = PrivateBazaarExactEffect::new(
@@ -1182,7 +1208,6 @@ mod tests {
             market_instance_id: [15; 32],
             policy_id: [16; 32],
             allocation_digest: [6; 32],
-            settlement_receipt_hash: [7; 32],
             effect,
             policy: PrivateBazaarExecutorPolicy::new([4; 32], [5; 32]).unwrap(),
         }
@@ -1206,6 +1231,49 @@ mod tests {
         assert_eq!(
             store.prepare(&rebound).unwrap_err(),
             PrivateBazaarAuthorityError::SourceAlreadyReserved
+        );
+    }
+
+    #[test]
+    fn semantic_source_id_ignores_reissued_receipt_and_turn_evidence() {
+        let market = [0x31; 32];
+        let first = semantic_receipt(7, [11; 8], [0x41; 32], 100);
+        let reissued = semantic_receipt(7, [11; 8], [0x42; 32], 200);
+
+        assert_ne!(
+            first.settlement_turn.turn_hash,
+            reissued.settlement_turn.turn_hash
+        );
+        assert_ne!(
+            first.settlement_turn.receipt_hash(),
+            reissued.settlement_turn.receipt_hash()
+        );
+        assert_eq!(
+            private_bazaar_source_use_id(market, &first),
+            private_bazaar_source_use_id(market, &reissued),
+            "evidence reissuance must recover the same global one-shot source"
+        );
+    }
+
+    #[test]
+    fn semantic_source_id_distinguishes_session_and_order_root_at_same_outcome() {
+        let market = [0x51; 32];
+        let base = semantic_receipt(7, [11; 8], [0x61; 32], 100);
+        let another_session = semantic_receipt(8, [11; 8], [0x61; 32], 100);
+        let mut changed_root = [11; 8];
+        changed_root[3] = 12;
+        let another_root = semantic_receipt(7, changed_root, [0x61; 32], 100);
+        let base_id = private_bazaar_source_use_id(market, &base);
+
+        assert_ne!(
+            base_id,
+            private_bazaar_source_use_id(market, &another_session),
+            "distinct proof sessions must not dedupe merely because outcome matches"
+        );
+        assert_ne!(
+            base_id,
+            private_bazaar_source_use_id(market, &another_root),
+            "distinct committed order roots must not dedupe merely because outcome matches"
         );
     }
 
@@ -1240,6 +1308,24 @@ mod tests {
         let store = PrivateBazaarAuthorityStore::open(directory.path()).unwrap();
         store.prepare(&authority).unwrap();
         fs::write(store.operation_path(authority.operation_id()), b"truncated").unwrap();
+
+        assert!(matches!(
+            store.phase(&authority),
+            Err(PrivateBazaarAuthorityError::Corrupt(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_receipt_hash_keyed_records_fail_closed_after_semantic_identity_upgrade() {
+        let directory = tempfile::tempdir().unwrap();
+        let authority = fake_authority(31, 32);
+        let store = PrivateBazaarAuthorityStore::open(directory.path()).unwrap();
+        store.prepare(&authority).unwrap();
+
+        let path = store.operation_path(authority.operation_id());
+        let mut legacy = fs::read(&path).unwrap();
+        legacy[..8].copy_from_slice(b"DBOP0001");
+        fs::write(path, legacy).unwrap();
 
         assert!(matches!(
             store.phase(&authority),

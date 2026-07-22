@@ -27,16 +27,18 @@ use dungeon_on_dregg::progression::{
 use crate::DarkBazaarSession;
 use crate::private_bazaar_authority::{
     PrivateBazaarAuthorityError, PrivateBazaarAuthorityPhase, PrivateBazaarAuthorityStore,
-    PrivateBazaarExactEffect, PrivateBazaarExecutorAuthority,
+    PrivateBazaarExactEffect, PrivateBazaarExecutorAuthority, private_bazaar_source_use_id,
 };
 use crate::private_bazaar_journey::{
     PrivateBazaarJourneyError, PrivateBazaarPublicReceipt, PrivateBazaarRaidJourney,
 };
 use crate::private_clearing::PrivateClearingReceipt;
 
-const LOOKUP_DOMAIN: &str = "dregg.private-bazaar-xp-adapter-lookup.v1";
-const RECORD_DOMAIN: &str = "dregg.private-bazaar-xp-adapter-record.v1";
-const RECORD_MAGIC: &[u8; 8] = b"DBXP0001";
+const LOOKUP_DOMAIN: &str = "dregg.private-bazaar-xp-adapter-lookup.v2";
+const RECORD_DOMAIN: &str = "dregg.private-bazaar-xp-adapter-record.v2";
+// v1 keyed recovery by timestamped receipt hash. Refuse it rather than
+// silently aliasing it with the stable semantic-claim identity in v2.
+const RECORD_MAGIC: &[u8; 8] = b"DBXP0002";
 const RECORD_LEN: usize = 8 + (7 * 32) + 8 + 32;
 
 /// Cloneable deployment-owned adapter. Both its semantic recovery record and
@@ -451,9 +453,8 @@ impl XpOperationRecord {
     ) -> Self {
         Self {
             lookup_id: lookup_id_from_parts(
-                journey.market_identity().digest(),
                 journey.policy().policy_id(),
-                authority.settlement_receipt_hash(),
+                authority.source_use_id(),
             ),
             source_use_id: authority.source_use_id(),
             operation_id: authority.operation_id(),
@@ -534,22 +535,15 @@ fn lookup_id(
     journey: &PrivateBazaarRaidJourney,
     private_receipt: &PrivateClearingReceipt,
 ) -> [u8; 32] {
-    lookup_id_from_parts(
-        journey.market_identity().digest(),
-        journey.policy().policy_id(),
-        private_receipt.settlement_turn.receipt_hash(),
-    )
+    let source_use_id =
+        private_bazaar_source_use_id(journey.market_identity().digest(), private_receipt);
+    lookup_id_from_parts(journey.policy().policy_id(), source_use_id)
 }
 
-fn lookup_id_from_parts(
-    market_instance_id: [u8; 32],
-    policy_id: [u8; 32],
-    settlement_receipt_hash: [u8; 32],
-) -> [u8; 32] {
+fn lookup_id_from_parts(policy_id: [u8; 32], source_use_id: [u8; 32]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(LOOKUP_DOMAIN);
-    hasher.update(&market_instance_id);
     hasher.update(&policy_id);
-    hasher.update(&settlement_receipt_hash);
+    hasher.update(&source_use_id);
     *hasher.finalize().as_bytes()
 }
 

@@ -25,7 +25,9 @@ use dreggnet_market::private_bazaar_journey::{
 use dreggnet_market::private_bazaar_live_host::{
     PrivateBazaarLiveHostError, PrivateBazaarLiveRegistry, PrivateBazaarRaidOffering,
 };
-use dreggnet_market::private_clearing::PrivateClearingReceipt;
+use dreggnet_market::private_clearing::{
+    PrivateClearingCommitmentStore, PrivateClearingError, PrivateClearingReceipt,
+};
 use dreggnet_market::private_clearing_guild_allocation::{GuildMember, GuildReward, GuildRoster};
 use dreggnet_offerings::{DreggIdentity, OfferingHost};
 use dungeon_on_dregg::progression::DungeonWorldCell;
@@ -52,6 +54,7 @@ pub const PRIVATE_BAZAAR_AUTHORITY_DIR_ENV: &str = "DREGG_PRIVATE_BAZAAR_AUTHORI
 pub enum PrivateBazaarLiveDeploymentError {
     Host(PrivateBazaarLiveHostError),
     GameAdapter(PrivateBazaarGameAdapterError),
+    PrivateClearing(PrivateClearingError),
     Config(String),
 }
 
@@ -75,6 +78,12 @@ impl From<PrivateBazaarGameAdapterError> for PrivateBazaarLiveDeploymentError {
     }
 }
 
+impl From<PrivateClearingError> for PrivateBazaarLiveDeploymentError {
+    fn from(error: PrivateClearingError) -> Self {
+        Self::PrivateClearing(error)
+    }
+}
+
 /// Host-retained, worker-reachable configuration for one deployment.
 ///
 /// Clones share both the live-session registry and the same durable store root;
@@ -85,6 +94,7 @@ pub struct PrivateBazaarLiveDeployment {
     offering: PrivateBazaarRaidOffering,
     registry: PrivateBazaarLiveRegistry,
     xp_adapter: PrivateBazaarXpAdapter,
+    commitment_store: PrivateClearingCommitmentStore,
 }
 
 impl PrivateBazaarLiveDeployment {
@@ -93,13 +103,17 @@ impl PrivateBazaarLiveDeployment {
         reserve: u64,
         authority_dir: impl AsRef<Path>,
     ) -> Result<Self, PrivateBazaarLiveDeploymentError> {
+        let authority_dir = authority_dir.as_ref();
         let registry = PrivateBazaarLiveRegistry::new();
         let offering = PrivateBazaarRaidOffering::new(policy, reserve, registry.clone())?;
         let xp_adapter = PrivateBazaarXpAdapter::open(authority_dir)?;
+        let commitment_store =
+            PrivateClearingCommitmentStore::open(authority_dir.join("private-commitments"))?;
         Ok(Self {
             offering,
             registry,
             xp_adapter,
+            commitment_store,
         })
     }
 
@@ -130,6 +144,12 @@ impl PrivateBazaarLiveDeployment {
     /// frontend never supplies either value.
     pub fn xp_adapter(&self) -> PrivateBazaarXpAdapter {
         self.xp_adapter.clone()
+    }
+
+    /// Worker-private commitment registry. Its opaque bindings never expose
+    /// either the persisted blind or the exact private-input digest.
+    pub fn commitment_store(&self) -> PrivateClearingCommitmentStore {
+        self.commitment_store.clone()
     }
 
     /// Consume one verified private clearing already installed in the exact
@@ -443,10 +463,11 @@ mod tests {
     fn settle_worker_market(
         deployment: &PrivateBazaarLiveDeployment,
         seed: u64,
+        new_commitment_blinding: Option<[u32; 8]>,
     ) -> PrivateClearingReceipt {
         deployment
             .registry()
-            .with_entered_typed(seed, |market, _journey| {
+            .with_entered_typed(seed, |market, journey| {
                 let offering = DarkBazaarOffering::new();
                 for (actor, value) in [
                     ("catalog-private-low-bidder", 2),
@@ -461,8 +482,13 @@ mod tests {
                         return Err(format!("private worker bid refused: {outcome:?}"));
                     }
                 }
+                let market_instance_id = journey.market_identity().digest();
+                let binding = deployment
+                    .commitment_store()
+                    .bind_or_load(market, market_instance_id, new_commitment_blinding)
+                    .map_err(|error| error.to_string())?;
                 let authorization = market
-                    .prepare_private_clearing_zk()
+                    .prepare_private_clearing_zk_with_binding(market_instance_id, &binding)
                     .map_err(|error| error.to_string())?;
                 let statement = authorization.statement();
                 offering
@@ -530,8 +556,12 @@ mod tests {
         let policy = playable_policy(&hero);
         let id = SessionId::new("catalog-private-bazaar-settlement");
         let seed = 0xB4_2A_A3;
+        // Worker-private durable input: reusing this only for replay of this
+        // exact book keeps the semantic order_root stable while proof/receipt
+        // randomness remains fresh.
+        let commitment_blinding = [0x00C0_FFEE; 8];
 
-        let first_private_receipt = {
+        let (first_private_receipt, first_source_use, first_operation) = {
             let deployment =
                 PrivateBazaarLiveDeployment::open(policy.clone(), 1, &authority_dir).unwrap();
             let store = FileResumeStore::open(&sessions_dir).unwrap();
@@ -547,7 +577,8 @@ mod tests {
                 .contains("pending")
             );
 
-            let private_receipt = settle_worker_market(&deployment, seed);
+            let private_receipt =
+                settle_worker_market(&deployment, seed, Some(commitment_blinding));
             let public = deployment
                 .apply_private_settlement(seed, &private_receipt, &hero)
                 .unwrap();
@@ -566,7 +597,11 @@ mod tests {
                 Err(PrivateBazaarLiveDeploymentError::GameAdapter(_))
             ));
             assert_eq!(hero.read_var("xp"), 144);
-            private_receipt
+            (
+                private_receipt,
+                public.source_use_id().unwrap(),
+                public.operation_id().unwrap(),
+            )
         };
 
         // New host, registry, adapter, and resume-store handles. The public log
@@ -583,17 +618,38 @@ mod tests {
         assert!(results[0].1.is_ok(), "{results:?}");
         assert!(restarted.registry().contains(seed));
 
-        let replayed_private_receipt = settle_worker_market(&restarted, seed);
-        assert_eq!(
+        let replayed_private_receipt = settle_worker_market(&restarted, seed, None);
+        assert_ne!(
+            replayed_private_receipt.settlement_turn.turn_hash,
+            first_private_receipt.settlement_turn.turn_hash,
+            "the replay test must exercise a genuinely reissued executor turn"
+        );
+        assert_ne!(
             replayed_private_receipt.settlement_turn.receipt_hash(),
             first_private_receipt.settlement_turn.receipt_hash(),
-            "deterministic worker replay must reconstruct the exact source receipt"
+            "the replay test must exercise a genuinely reissued receipt envelope"
+        );
+        assert_eq!(
+            replayed_private_receipt.statement, first_private_receipt.statement,
+            "reissued evidence must carry the identical semantic private claim"
+        );
+        assert_eq!(
+            replayed_private_receipt.winner, first_private_receipt.winner,
+            "reissued evidence must select the identical semantic winner"
         );
         let recovered = restarted
             .recover_private_settlement(seed, &replayed_private_receipt, &hero)
             .unwrap();
         assert_eq!(hero.read_var("xp"), 144);
         assert_eq!(recovered.phase().as_str(), "settled");
+        assert_eq!(recovered.source_use_id(), Some(first_source_use));
+        assert_eq!(recovered.operation_id(), Some(first_operation));
+        assert!(
+            restarted
+                .recover_private_settlement(seed, &replayed_private_receipt, &hero)
+                .is_err()
+        );
+        assert_eq!(hero.read_var("xp"), 144);
         let rendered = format!(
             "{:?}",
             host.render(PRIVATE_BAZAAR_RAID_KEY, &id).unwrap().view()
