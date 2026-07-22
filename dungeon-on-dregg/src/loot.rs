@@ -186,6 +186,26 @@ pub fn roll_drop(run_seed: &CommittedSeed, chest: &str, seq: u64) -> LootDraw {
     }
 }
 
+/// The chest label a **BANKED descent relic** mints its loot note under. It encodes the
+/// relic's custody SLOT (its identity on the run), so the drop's provenance names the exact
+/// banked relic — NOT a hand-typed boss/chest string. Paired with the run's committed
+/// day-seed (the provenance root), `(day_seed, slot)` fixes the drop.
+pub fn banked_relic_chest(slot: usize) -> String {
+    format!("descent:banked-relic:{slot}")
+}
+
+/// **Roll the drop a BANKED descent relic mints under** — the bank → asset binding. The run's
+/// committed day-seed is the provenance root (unpredictable-until-revealed when it is a real
+/// beacon day-seed); the chest + seq encode the exact custody SLOT the relic banked in. The
+/// draw is a pure verified function of `(day_seed, slot)` through the same [`roll_drop`] path,
+/// so re-running the banked run re-derives the identical draw → the identical
+/// content-addressed [`AssetId`]: the minted note's provenance **replays to the banked run**,
+/// not to a manufactured `roll_drop("boss:…")`. A relic that banked in slot `s` on the run
+/// seeded by `day_seed` always mints THIS drop, and only this drop.
+pub fn banked_relic_drop(day_seed: &CommittedSeed, slot: usize) -> LootDraw {
+    roll_drop(day_seed, &banked_relic_chest(slot), slot as u64)
+}
+
 /// **Re-verify a drop is a real fair draw** — the tooth that refuses a forged loot claim.
 /// Recomputes the loot seed from the claimed run/chest/seq (a mismatch = a forged
 /// provenance), re-derives the honest roll from the committed seed through the same

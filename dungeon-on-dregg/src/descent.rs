@@ -50,8 +50,11 @@ use dregg_app_framework::{
 use dregg_cell::program::{HeapAtom, SimpleStateConstraint};
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
+use procgen_dregg::CommittedSeed;
 use serde::Deserialize;
 use spween_dregg::{CompiledStory, GENESIS_DONE_EXT_KEY, WorldCell, WorldError};
+
+use crate::loot::{LootError, LootItem, LootVault, banked_relic_drop};
 
 /// The scene id that fixes the deterministic world-cell identity (must match the Lean
 /// emit's `Dregg2.Games.Dungeon.Prog.sceneId`).
@@ -601,18 +604,62 @@ impl Sim {
     }
 }
 
+/// The domain tag for deriving a run's committed day-seed from its `u8` deploy seed, so a
+/// plain [`Descent::deploy`] has a reproducible provenance root even without a supplied beacon.
+const DAY_SEED_DOMAIN: &[u8] = b"dungeon-on-dregg/descent/day-seed/v1";
+
+/// Derive the reproducible run day-seed a plain [`Descent::deploy`] mints its banked relics
+/// under — a domain-separated hash of the deploy seed. [`Descent::deploy_on_day`] overrides this
+/// with a real beacon day-seed; either way the day-seed is the provenance root a banked relic's
+/// loot note is content-addressed under.
+pub fn day_seed_from_deploy_seed(seed: u8) -> CommittedSeed {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(DAY_SEED_DOMAIN.len() as u64).to_le_bytes());
+    hasher.update(DAY_SEED_DOMAIN);
+    hasher.update(&[seed]);
+    CommittedSeed::from_bytes(*hasher.finalize().as_bytes())
+}
+
+/// A **banked relic minted as a real owned loot note** — the output of the bank → asset wire
+/// ([`Descent::mint_banked_relics`]). `slot` is the relic's custody position on the run (its
+/// identity); `item`'s [`AssetId`](dreggnet_asset::AssetId) provenance is content-addressed to
+/// THIS banked relic (the run's day-seed + this slot), so it replays to the banked run rather
+/// than to a manufactured draw.
+#[derive(Clone, Debug)]
+pub struct BankedRelicMint {
+    /// The custody slot the relic banked in (relic 0 = the prize; 1–3 = way keys; 4–7 = treasures).
+    pub slot: usize,
+    /// The minted owned note whose provenance encodes this banked relic.
+    pub item: LootItem,
+}
+
 /// A deployed descent on a real world-cell: the Lean-sourced teeth installed on the
 /// real `EmbeddedExecutor`; every verb ONE cap-bounded turn.
 pub struct Descent {
     dep: Deployment,
     world: WorldCell,
     sim: Sim,
+    /// The run's committed day-seed — the provenance root a banked relic's minted loot note is
+    /// content-addressed under (see [`Descent::mint_banked_relics`]).
+    day_seed: CommittedSeed,
 }
 
 impl Descent {
     /// Deploy the Lean-loaded story on a real world-cell (deterministic in
-    /// `SCENE_ID` + `seed`) and commit the one-shot genesis mint.
+    /// `SCENE_ID` + `seed`) and commit the one-shot genesis mint. The run's committed day-seed —
+    /// the provenance root a banked relic's loot note is minted under
+    /// ([`mint_banked_relics`](Self::mint_banked_relics)) — is derived deterministically from
+    /// `seed`, so a replay of the same deploy re-derives the same day-seed (hence the same minted
+    /// notes). Use [`deploy_on_day`](Self::deploy_on_day) to bind a real beacon day-seed instead.
     pub fn deploy(seed: u8) -> Result<Self, WorldError> {
+        Self::deploy_on_day(seed, day_seed_from_deploy_seed(seed))
+    }
+
+    /// Deploy on a world-cell birthed under `seed`, binding an explicit committed `day_seed` as
+    /// the run's provenance root (the flagship supplies the verified drand-beacon day-seed the run
+    /// is played on, so a banked relic's minted note is unpredictable-until-revealed). Everything
+    /// else matches [`deploy`](Self::deploy).
+    pub fn deploy_on_day(seed: u8, day_seed: CommittedSeed) -> Result<Self, WorldError> {
         let dep = Deployment::new();
         let story = dep.story();
         let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
@@ -620,6 +667,7 @@ impl Descent {
             dep,
             world,
             sim: Sim::genesis(),
+            day_seed,
         };
         let genesis = Sim::genesis();
         game.world.apply_raw(GENESIS, game.effects_for(&genesis))?;
@@ -635,6 +683,12 @@ impl Descent {
     }
     pub fn sim(&self) -> &Sim {
         &self.sim
+    }
+    /// The run's committed day-seed — the provenance root a banked relic's minted loot note is
+    /// content-addressed under. Reproducible from the deploy seed unless a real beacon day-seed
+    /// was bound via [`deploy_on_day`](Self::deploy_on_day).
+    pub fn day_seed(&self) -> &CommittedSeed {
+        &self.day_seed
     }
     pub fn cell(&self) -> CellId {
         self.world.cell_id()
@@ -727,6 +781,34 @@ impl Descent {
     }
     pub fn flee(&mut self) -> Result<TurnReceipt, WorldError> {
         self.commit_verb(FLEE, self.sim.flee())
+    }
+
+    /// **Mint the run's BANKED relics as real owned loot notes** — the bank → asset wire that
+    /// closes the gap between a banked custody relic (a real committed executor object) and a
+    /// tradeable [`dreggnet_asset`] note. For each relic the run banked (`custody == BANKED`,
+    /// reached only through a terminal [`flee`](Sim::flee)), this feeds the ACTUAL banked slot and
+    /// the run's committed day-seed into [`LootVault::claim`] via
+    /// [`banked_relic_drop`](crate::loot::banked_relic_drop). The minted note's
+    /// [`AssetId`](dreggnet_asset::AssetId) provenance therefore encodes THE BANKED RELIC (the run
+    /// day-seed + custody slot) and **replays to the banked run** — it is not a manufactured
+    /// `roll_drop("boss:…")` draw. The mint is driven from the committed `sim.custody`, so a run
+    /// that banked nothing mints nothing, and the `LootVault::claim` forged-claim gate still
+    /// refuses any draw that is not the fair `(day_seed, slot)` drop. Returns one
+    /// [`BankedRelicMint`] per banked relic, in slot order.
+    pub fn mint_banked_relics(
+        &self,
+        vault: &mut LootVault,
+        player: &str,
+    ) -> Result<Vec<BankedRelicMint>, LootError> {
+        let mut minted = Vec::new();
+        for (slot, &custody) in self.sim.custody.iter().enumerate() {
+            if custody == BANKED {
+                let draw = banked_relic_drop(&self.day_seed, slot);
+                let item = vault.claim(player, &draw)?;
+                minted.push(BankedRelicMint { slot, item });
+            }
+        }
+        Ok(minted)
     }
 
     /// Drive a raw turn (the illegal-move test builder): whatever `effects`, under
