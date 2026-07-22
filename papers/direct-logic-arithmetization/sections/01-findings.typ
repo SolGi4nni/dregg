@@ -1,9 +1,9 @@
 #import "../section-helpers.typ": callout, theorem, boundary
 
-= What was built, what failed, what got faster
+= What was built, what failed, what got smaller
 
 Direct logic arithmetization is salvageable, generalizable, and useful. The
-reviewed public BitLogic presentation is not yet a sound instance of it. This
+reviewed public BitLogic presentation is not a sound instance of it. This
 report does more than separate those statements: it supplies the missing
 constructions.
 
@@ -12,12 +12,14 @@ constructions.
   zero semantics, added two exact finite-field repairs, and constructed a
   fixed-shape private-witness matrix relation in DREGG's live DescriptorIR2. We
   then closed its external-statement boundary with a six-input public direct-table
-  relation and built a
-  general finite-signature FOL compiler, a checker-gated optimizer, a same-opening
-  proof/FHE certificate, an intensional cartesian closed compiler with explicit
-  sharing, a presheaf embedding for arbitrary small CCCs, and a bias-aware robust
-  transcript theorem. The public BitLogic equations still fail the permanent
-  counterexample suite. The positive stack does not.
+  relation and built a general finite-signature FOL compiler, public statement-
+  bound optimized descriptors for four production DREGG decisions, a fully priced
+  proof/FHE boundary, a per-subterm certified presentation compiler, a strong-CCC
+  shared-net compiler with a live interaction receipt, and categorical query and
+  realizability coverage theorems. The public BitLogic equations still fail the
+  permanent counterexample suite. The positive stack now reaches formal source,
+  emitted descriptor bytes, live proofs, encrypted execution, and independent
+  cross-language checking.
 ])
 
 == The construction stack
@@ -45,15 +47,19 @@ constructions.
     [Finite FOL],
     [Closed de Bruijn syntax with equality, many relations of independent
      arities, total public function tables, every connective, and exhaustive
-     finite quantification.],
-    [`FiniteSignatureFOLDescriptorIR2`; exact canonical layout, live relation,
-     certificate, and emitted bytes.],
+     finite quantification. Four public Boolean skeletons are proved equivalent
+     to DREGG Admission, Upgrade, Clearance, and Strand decisions.],
+    [`FiniteSignatureFOLDescriptorIR2` and `DirectLogicDreggWorkloads`; exact
+     layouts, statement soundness, live relations, certificates, and bytes.
+     Interior arithmetic, hash, membership, lifecycle, lookup, and receipt atoms
+     remain an explicit boundary.],
     [Certified optimization],
     [Local rules reconstruct both endpoints; a fail-closed checker proves
-     semantic equivalence and coordinatewise cost nonincrease; the recursive
-     optimizer emits its own certificate.],
-    [`DirectLogicOptimizerCertificate`; an independent reference tool also
-     performs checked Pareto search across residual and Boolean presentations.],
+     semantic equivalence and cost nonincrease. The public lowering binds every
+     atom residual to a PI and is sound for arbitrary nonempty satisfying traces.],
+    [`DirectLogicBoolGraphDescriptorIR2`: the public factor descriptor moves from
+     35 to 18 constraints, 26 to 13 multiplications, and width 21 to 12 while
+     pinning optimizer endpoints, PI layout, and exact bytes.],
   )
 ]
 
@@ -66,29 +72,32 @@ constructions.
     table.header([*Layer (continued)*], [*Verified construction*], [*Exact boundary*]),
     [Proof and FHE],
     [One raw opening feeds the proof relation and a BFV plan through an explicit
-     conversion witness. A mixed plan carries exact resource counts and an
-     acceptance-equivalence theorem.],
-    [`CertifiedHybridProofFhe`; algebraic and scheduling theorem, not a
-     Rust-to-Lean refinement or a parameter-security theorem.],
+     conversion witness. Bounded encrypted zero observation and threshold opening
+     now have explicit arithmetic, message, re-encryption, and leakage ledgers.],
+    [`CertifiedHybridProofFheZeroObservation`; full accounting removes the former
+     6-versus-9 multiplication advantage. No general BFV noise/security theorem or
+     deployed same-opening verifier is claimed.],
     [Higher order],
-    [Typed STLC compiles to shared nets with local beta, eta, and product
-     evidence. The semantic quotient is a genuine CCC and the compiler is a
-     strong-CCC functor.],
-    [`IntensionalCCCTrace`, `IntensionalCCCInteractionBridge`, and
-     `IntensionalCCCCategory`; exact for the formalized language.],
+    [A four-mode indexed compiler charges conversions and glue per subterm. Typed
+     STLC compiles strongly-CCC to shared nets; local steps emit live public
+     interaction receipts through direct depth 14.],
+    [`CertifiedIndexedPresentationCompiler` and
+     `IntensionalCCCInteractionDescriptorIR2`; exact for the represented fragment,
+     with a proved typed-syntax-erasure boundary.],
     [General CCC boundary],
-    [Every small CCC embeds fully faithfully by Yoneda into presheaves, preserving
-     terminal objects, products, and representable exponentials. Fixed-meaning
-     evidence fibres are CCCs; the global category of meaning-changing
-     presentations provably is not.],
-    [`SmallCCCYonedaPresheaf` and `CertifiedPresentationFibredCCC`; no finiteness
-     or finite-field succinctness is inferred.],
+    [Every small CCC embeds by Yoneda. A faithful family of finite polynomial
+     actions exists exactly for locally finite hom-sets, but no fixed finite width
+     works in general, already for finite sets.],
+    [`FamilyPolynomialYonedaFrontier` and `CertifiedPresentationFibredCCC`;
+     fixed-meaning evidence fibres are CCCs, while the global presentation category
+     is not even cartesian.],
     [Sampled proof objects],
-    [Commit-before-query descent with point binding gives an exact finite union
-     bound. Modular query bias yields the sharp miss term
-     $((1-delta)+delta/N)^k$ when $N mod m=1$.],
-    [`RobustDescentTranscriptGame`; OOD and low-degree errors remain explicit
-     protocol sockets.],
+    [Coverage changes preserve obstruction and miss events exactly; false
+     acceptance factors into OOD, low-degree, binding, and query-miss budgets.
+     Effective assembly covers are pullback-stable and admit regular images.],
+    [`CategoricalDescentQueryProtocol`, `RobustDescentTranscriptGame`, and
+     `AssemblyRegularCoverage`; cryptographic/FRI reductions and the associated
+     topos or exact completion remain external.],
   )
 ]
 
@@ -100,52 +109,61 @@ presentation, with semantics and resources preserved at every edge.
 
 == Performance evidence we can actually claim
 
-The resulting gains are real but narrower than the advertised 10--100x claim.
-They are theorem-checked structural counts on named specimens, plus separately
-recorded executable measurements.
+The strongest performance evidence is now attached to public statement-bound
+descriptors for named DREGG decisions. Exact formal ledgers, retained proof
+serializations, noisy timing samples, and encrypted-boundary costs are reported
+separately; none is relabelled as an end-to-end speedup.
 
 #block(breakable: false)[
-  #set text(size: 8.2pt)
+  #set text(size: 7.55pt)
   #table(
-    columns: (1.55fr, 1.08fr, 1.08fr, 1.45fr),
-    inset: 4.5pt,
+    columns: (1.18fr, 1.05fr, 0.95fr, 0.8fr, 1.3fr),
+    inset: 3.6pt,
     align: left,
-    table.header([*Construction*], [*Before*], [*After*], [*Verified result*]),
-    [Symbolic BoolGraph optimizer],
-    [30 equations#linebreak()26 multiplications#linebreak()17 witnesses],
-    [13 equations#linebreak()13 multiplications#linebreak()8 witnesses],
-    [57%, 50%, and 53% fewer in the materialized BoolGraph ledger.],
-    [Formal hybrid BFV plan],
-    [9 multiplications#linebreak()depth 4],
-    [6 multiplications#linebreak()depth 2],
-    [33% fewer multiplications and half the depth, before one unpriced boundary
-     zero decision.],
-    [Intensional sharing],
-    [16 work nodes#linebreak()19 total nodes],
-    [8 work nodes#linebreak()13 total nodes],
-    [50% less duplicated work and 32% fewer nodes on the beta-sharing specimen.],
+    table.header([*Public case*], [*Constraints*], [*Nonlinear mults*], [*Width*],
+      [*Retained proof bytes*]),
+    [Factor specimen], [35 to 18], [26 to 13], [21 to 12],
+      [Exact statement binding; paired proof not captured],
+    [Admission], [121 to 71], [108 to 58], [77 to 47], [14,016 to 11,894],
+    [Upgrade], [33 to 23], [28 to 18], [21 to 15], [10,431 to 10,081],
+    [Clearance], [33 to 23], [28 to 18], [21 to 15], [10,469 to 10,157],
+    [Strand], [17 = 17], [13 = 13], [11 = 11], [9,850 = 9,850],
   )
 ]
 
-The optimizer counts above do not describe the current live DescriptorIR2
-encoding, which keeps a nested `WindowExpr` and materializes no intermediate
-BoolGraph columns. They therefore establish a certified optimization opportunity,
-not a current live-prover speedup. The hybrid `convertResidual` is likewise a
-semantic boundary: its encrypted residual zero-test is not implemented or priced
-as BFV arithmetic in this result.
+The factor theorem distinguishes 30-to-13 graph equations from the public
+descriptor's complete 35-to-18 constraint ledger: four PI bindings and one
+output-equals-one check are included. Multiplications fall from 26 to 13,
+auxiliaries from 17 to 8, and width from 21 to 12, with degree at most 2.
+`public_statement_sound` covers every nonempty satisfying trace, not only the
+compiler's witness; `public_canonical_trace_complete` supplies the converse for
+true canonical inputs; and `checked_public_statement_sound` transports the result
+through the accepted optimizer while pinning the PI layout and exact JSON bytes.
 
-The real BFV path separately executed a Boolean workload in 22.950435 ms and an
-eight-equality residual workload in 48.197263 ms in one recorded warm release
-run. Those are different computations and SIMD occupancies, so they define no
-speedup ratio. The residual plan's 8 multiplications and depth 1 compare
-symbolically with 15 multiplications and depth 4 for the matching all-Boolean
-eight-equality formula, but exclude the residual's final private zero decision.
+Admission, Upgrade, Clearance, and Strand are Boolean skeletons proved equivalent
+to named production DREGG decisions at the atom boundary. Lean emitted both public
+descriptors and canonical traces; Rust pinned and parsed those bytes, proved and
+verified every variant, and rejected a public-input tamper at the consumer
+verifier. The table's relation ledgers are deterministic theorem facts. Its proof
+sizes are retained postcard encodings and can vary with proof contents.
 
-The current live finite-logic proof path now also has a reproducible absolute
-capture across seven small one-row workloads. On a contended Apple M2 Max, proof
-medians ranged from 2.22-26.83 ms, verification medians from 0.28-0.80 ms, and
-proofs from 9.3-13.1 KB. The medians are nonmonotonic and define no speedup,
-scaling law, Modulus comparison, or finality result.
+The same capture retained 25 proving and 75 verification samples per variant, but
+supports no timing speedup claim: the shared host was severely contended and the
+distributions were wide and nonmonotonic. Strand is the decisive negative control.
+Its source and optimized descriptor, trace, and proof bytes are identical, yet its
+timing medians and tails differ. The capture therefore validates the pipeline and
+quantifies proof-byte changes; it does not establish a latency ratio, scaling law,
+Modulus comparison, or finality result.
+
+Fully pricing encrypted zero observation also removes the apparent residual win.
+For the formal $B=4$ five-equality plan, 6 inner multiplications plus 3 bounded
+zero-conversion multiplications equals the all-Boolean 9, and both reach depth 4.
+For the executable $B=8$ case, 8 plus 7 equals the Boolean 15. The bounded scaled
+conversion executes exactly at $B=2$. At $B=8$ the captured scaled-bit threshold
+observation refused a noncanonical output under the current unproved noise
+envelope, while the separate raw threshold path succeeded by revealing every live
+residual. This is fail-closed engineering and explicit leakage accounting, not an
+FHE speedup or a general noise/security theorem.
 
 The executable conformance corpus evaluated 10,061 cases. The corrected
 `D-NOWRAP` lane passed all 6,737 admitted cases and refused 3,324 unsupported
@@ -155,16 +173,14 @@ Unsound lanes are retained as falsification artifacts and excluded from every
 performance ratio.
 
 #theorem([executable boundary], [
-  The Rust finite-logic front end compiles typed finite inputs, predicates, and
-  quantifiers into the live descriptor grammar; its focused suite contains an
-  honest prove-and-verify round trip and refusal tests. The independent Standard
-  ML checker passed 15/15 version-1 fixtures, while HOL4 proves accepted bytes
-  semantically sound and records zero theory axioms; proof-producing CakeML
-  translation certificates exist for that checker. The reference compiler's
-  checked hybrid search is independently executable. These are substantial
-  implementation artifacts, but no native CakeML checker binary,
-  optimizer-to-live-descriptor lowering theorem, or
-  Rust-to-Lean refinement is claimed.
+  The independent Standard ML checker passed 15/15 version-1 fixtures and its
+  complete live version-2 checker passed 11/11. HOL4 proves semantic soundness for
+  accepted v1 and live-v2 bytes with zero recorded theory axioms, and CakeML
+  translation certificates exist for both checkers. Lean emits the production
+  descriptors; Rust byte-pins, parses, proves, verifies, and tamper-tests them.
+  This is cross-language assurance, but neither a shipped native CakeML checker
+  binary, a Rust-to-Lean verifier refinement, nor a cryptographic same-opening
+  reduction is claimed.
 ])
 
 == The public-audit result

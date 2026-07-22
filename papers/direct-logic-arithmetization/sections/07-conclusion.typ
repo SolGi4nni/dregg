@@ -8,14 +8,15 @@ prompted it.
 
 #callout([DECISIVE RESULT], [
   We now have a coherent path from matrix FOL to sound compiler semantics and a
-  statement-bound public direct-table relation, and from general bounded finite
-  FOL to live DREGG descriptors, certified local
-  optimization, and matching encrypted plans. We also have a genuinely
-  higher-order intensional route: typed shared nets form a cartesian closed
-  category, and the structural compiler preserves the chosen CCC operations.
-  For arbitrary small CCCs, Yoneda supplies the correct general embedding into
-  presheaves. None of these results depends on pretending that FOL or a finite
-  polynomial table is the primitive form of logic.
+  statement-bound public direct-table relation, and from bounded finite logic to
+  optimized public descriptors for four named DREGG decisions. The public factor
+  descriptor moves from 35 to 18 constraints with exact statement soundness; live
+  production proofs retain smaller serialized outputs for three optimized cases,
+  while Strand supplies an unchanged negative control. Fully priced FHE accounting
+  erases the earlier residual multiplication lead instead of hiding its zero
+  observation. Higher-order, categorical, interaction, query, and realizability
+  results then generalize the architecture beyond FOL without pretending that one
+  finite polynomial table is the primitive form of logic.
 ])
 
 == The corrected answer to the original claim
@@ -69,113 +70,140 @@ reference Pareto search chooses residual or Boolean representations per grounded
 subformula; and the hybrid proof/FHE certificate proves both backends decide the
 same raw opening.
 
-This is also where the verified performance results come from. On named formal
-specimens, checked factor sharing reduces equations from 30 to 13,
-multiplications from 26 to 13, and witnesses from 17 to 8. The mixed BFV plan
-reduces multiplications from 9 to 6 and depth from 4 to 2 while exposing one
-boundary zero decision. Intensional sharing reduces duplicated work from 16 to
-8 nodes and total graph size from 19 to 13. These are real 1.5--2.3x structural
-improvements on the measured axes. They are not evidence for a universal
-10--100x prover improvement. In particular, the first result is an abstract
-materialized BoolGraph cost ledger, not a reduction in the current live
-DescriptorIR2 prover, whose formula is a nested expression without intermediate
-BoolGraph columns. The BFV comparison does not implement or price its encrypted
-residual zero-test. Neither result is end-to-end.
+This is also where the verified resource results come from. Checked factor sharing
+reduces graph equations from 30 to 13. Its *public* accepting descriptor includes
+four PI bindings and one output check, so the complete constraint ledger moves
+from 35 to 18; multiplications move from 26 to 13, auxiliaries from 17 to 8, and
+width from 21 to 12. Every constraint has degree at most 2. Arbitrary-trace public
+soundness, canonical completeness, and the accepted optimizer/layout/exact-byte
+certificate make this an exact statement-bound result rather than a witness-only
+cost model.
 
-Separately, the actual live finite-logic prover has an absolute capture on seven
-small one-row workloads: proof medians 2.22-26.83 ms, verification medians
-0.28-0.80 ms, and proof sizes 9.3-13.1 KB on a contended Apple M2 Max. The
-nonmonotonic observations establish an executable baseline, not a speedup,
-scaling law, Modulus comparison, or finality claim.
+The same construction now compiles four production-derived DREGG decisions. For
+Admission, public constraints move 121 to 71, multiplications 108 to 58, width 77
+to 47, and one retained proof 14,016 to 11,894 bytes. Upgrade moves 33 to 23, 28
+to 18, 21 to 15, and 10,431 to 10,081 bytes; Clearance has the same relation
+ledger and moves 10,469 to 10,157 proof bytes. Strand is already normal: 17
+constraints, 13 multiplications, width 11, and 9,850 proof bytes on both sides.
+These skeletons are proved equivalent to the named DREGG decisions while their
+arithmetic, hash, membership, lifecycle, lookup, and receipt-comparison atoms keep
+their existing implementations.
+
+The paired timing capture does not support a speedup claim. Severe host contention
+produced wide, nonmonotonic distributions; most decisively, byte-identical Strand
+source and optimized cases reported different medians and tails. The exact ledgers
+and retained proof-size changes survive that control. A 10--100x latency claim does
+not.
+
+Fully priced FHE accounting closes a second tempting overclaim. At residual bound
+$B=4$, the former 6-versus-9 inner comparison becomes 9 = 9 after the exact bounded
+zero conversion, with depth 4 on both sides. At $B=8$, residual evaluation plus
+conversion is 8 + 7 = 15, equal to the Boolean 15. The scaled conversion executes
+at $B=2$; the captured $B=8$ scaled-bit observer refuses under the current unproved
+noise envelope, while raw threshold opening succeeds only by disclosing all live
+residuals. There is therefore no residual multiplication advantage to advertise,
+and no general BFV noise, security, privacy, or end-to-end latency theorem.
 
 == Higher order and the CCC question
 
-The CCC line is no longer only a no-go theorem.
+The CCC line is now an exact frontier rather than a slogan or a no-go alone.
 
 - The finite extensional polynomial model remains exact but dense. It gives a
   specification semantics for finite equality-HOL, not a succinct compiler for
   arbitrary higher-order programs.
-- The intensional construction supplies the missing operational answer. Typed
-  STLC terms compile to shared nets; beta, eta, and product reductions carry
-  local evidence; those nets form a genuine semantic quotient category with
-  terminal objects, products, and exponentials; and the compiler is a
-  strong-CCC functor for the formalized fragment.
-- Every small CCC embeds fully faithfully by Yoneda into its presheaf category,
-  with terminal objects, binary products, and representable exponentials
-  preserved. This is the correct arbitrary-small-CCC generalization, but it is
-  generally infinite and says nothing by itself about finite-field succinctness.
+- A faithful family of finite-field polynomial Yoneda actions exists exactly when
+  the category is locally finite; each fixed-arrow action is linear. Even the CCC
+  of finite sets admits no faithful *uniformly fixed-width* family, so local
+  finiteness does not imply one bounded backend.
+- The intensional route compiles typed STLC strongly-CCC to shared nets. Its local
+  interaction receipts now reach live public DescriptorIR2 through direct depth
+  14, with arbitrary-trace layout soundness and a proof that the erased receipt
+  cannot reconstruct every exact typed endpoint.
+- The indexed compiler may select dense polynomial, Boolean graph, interaction
+  net, or natural residual per subterm. Its source theorem charges conversions and
+  recombination in a five-axis ledger; selection is only optimal relative to the
+  finite candidate list supplied.
 - The global category of presentations whose meanings vary cannot be CCC: it
-  has no weak terminal object. After fixing the source meaning, the fibre of
-  evidence families is a CCC. This is the precise fibred replacement for the
-  impossible global claim.
+  is not even cartesian. After fixing the source meaning, the fibre of evidence
+  families is a CCC. This is the precise fibred replacement.
 
-Thus arbitrary CCC semantics can be embedded; arbitrary CCCs cannot in general
-be squeezed faithfully and succinctly into one finite polynomial universe. The
-remaining compiler problem is intensional: choose finite representations of the
-part of a presheaf, net, or evidence family that a concrete protocol must expose.
+Thus arbitrary small CCC semantics embed by Yoneda, locally finite CCCs additionally
+admit the exact polynomial family, and represented higher-order programs have an
+operational shared-net route. What is ruled out is the stronger fantasy that all of
+this fits faithfully and succinctly into one uniform finite polynomial universe.
 
 == Proof objects beyond polynomials
 
-Exact descent explains when compatible local evidence determines a global
-object. The new transcript theorem adds the sampled layer without asserting the
-false deterministic total-column bridge. A committed invalid family may pass
-only through an OOD exceptional event, a low-degree exceptional event, or a
-query vector that misses every obstruction. With point binding and modularly
-reduced queries, the sharp composed bound is
+The realizability line now supplies more than analogy. The PCA doctrine has
+arbitrary-map quantifiers and Beck--Chevalley laws; assemblies have pullbacks;
+effective covers are stable under pullback, are kernel-pair coequalizers, and give
+regular-image factorizations, including for compiled program certificates. These
+are concrete ingredients of an exact completion, not yet the exact completion or
+associated topos itself.
+
+The query line is separate and compositional. Coverage presentations form a
+category; exact presentation change preserves obstruction and miss events. A
+locally accepting false statement lies in one of four explicitly priced events:
+OOD, low degree or folding, commitment binding failure, or query miss. The
+commit-before-query transcript theorem then prices the last event without asserting
+a false deterministic total-column bridge. Under point binding and modularly
+reduced queries, the sharp BabyBear-shaped bound is
 
 #align(center)[
   $ epsilon_"OOD" + epsilon_"LDT" + ((1-delta)+delta/N)^k $
 ]
 
-when $N mod m=1$. Additional transcript coordinates product out of the query
-marginal, while OOD and folding events may still inspect the complete
-transcript. This is the right form of a topos/descent contribution to a STARK:
-category theory identifies the global obstruction; coding theory makes it
-dense; commitments bind the local views; and the transcript theorem prices the
-chance that sampling misses it. A topos theorem does not replace a hash, PCS, or
-FRI argument, but it can tell those mechanisms exactly what they must bind and
-test.
+when $N mod m=1$. A computational commitment adds its binding budget. Additional
+transcript coordinates product out of the query marginal, while OOD and folding
+events may inspect the complete transcript. Category theory identifies and
+transports the obstruction; coding theory makes it dense; commitments bind local
+views; and the sampler prices a miss. None of the category or topos results replaces
+the required hash/PCS binding, Fiat--Shamir, OOD, FRI, or verifier-correspondence
+reductions.
 
 == Executable assurance now present
 
-- The Rust finite-logic front end emits canonical live descriptor bytes, pins
-  source and descriptor digests, exhaustively compares source and relation on
-  its finite specimen, proves and verifies one honest trace through the live
-  backend, and fails closed on malformed types, domains, encodings, and limits.
-- Its captured one-row live proofs record absolute prover, verifier, and proof-
-  size measurements; contention and nonmonotonicity are retained rather than
-  interpreted as a performance ratio.
-- The independent Python reference compiler checks versioned residual, Boolean,
-  and hybrid artifacts and recomputes selected derivations rather than trusting
-  their claimed cost.
-- The independent Standard ML checker passed 15/15 version-1 fixtures. HOL4
-  proves that accepted bytes decode to equivalent source and target semantics,
-  reports zero theory axioms, and produces CakeML translation certificates for
-  the checker functions.
-- The BFV executor runs the corresponding Boolean and bounded residual
-  fragments on real ciphertexts. The formal hybrid certificate proves semantic
-  agreement on one opening and exposes multiplication, depth, and boundary
-  decision costs.
+- Lean emits source and optimized public descriptors and canonical traces for
+  Admission, Upgrade, Clearance, and Strand. Rust pins those exact bytes, parses
+  them, proves and verifies all eight cases, recomputes their ledgers, and confirms
+  consumer-verifier rejection after a public-input tamper.
+- The production capture retains every raw timing sample and one serialized proof
+  per endpoint. Exact relation/proof-byte changes are reported; the unchanged
+  Strand control prevents noisy timing differences from being sold as speedup.
+- The independent reference compiler and 10,061-case conformance corpus keep
+  unsound relations as visible falsification artifacts while excluding them from
+  performance comparisons.
+- Independent Standard ML checkers passed 15/15 v1 and 11/11 live-v2 fixtures.
+  HOL4 proves accepted bytes semantically sound with zero recorded theory axioms;
+  proof-producing CakeML translation certificates exist for both checkers.
+- The BFV carrier executes residual evaluation, bounded scaled zero conversion,
+  and n-of-n threshold opening. Its manifests record multiplication, depth,
+  decryption shares, combines, comparisons, re-encryption, coverage, and leakage;
+  noncanonical threshold output is refused rather than coerced to a bit.
 
 This is already a toolchain, not a white-paper sketch. Its remaining trust
-  boundaries are also explicit: the Rust implementations are not yet proved to
-  refine the Lean models; the CakeML certificate has not yet been turned into a
-  shipped native checker binary; the BFV path still needs proved noise and
-  parameter security and an implemented encrypted residual zero-test; the
-  symbolic optimizer still needs a certified lowering that materializes its
-  savings in the live descriptor/prover; and the robust descent theorem still needs a complete
-deployed FRI/PCS reduction and verifier correspondence.
+boundaries are also explicit. Production equivalence stops at the named Boolean
+atom boundary. Rust implementations are not yet proved to refine the Lean models;
+the CakeML certificates are not yet shipped native checker binaries. The BFV path
+still lacks a general noise/security proof and a deployed cryptographic
+same-opening verifier, and raw threshold observation discloses its residuals. The
+query theorems still require concrete commitment, Fiat--Shamir, OOD, FRI, and
+verifier-correspondence reductions. No captured timing establishes an end-to-end
+prover or finality advantage.
 
 == What may be claimed now
 
 #callout([COMPARATIVE RESULT], [
   DREGG surpasses the reviewed public Modulus/BitLogic material in publicly
   checkable semantics, construction depth, falsification coverage, executable
-  tooling, certificate discipline, and reproducibility. The public BitLogic
-  relation is refuted; DREGG's corrected relations are proved exact under stated
-  premises. DREGG also demonstrates certified structural savings. It does not
-  yet establish a 10--100x end-to-end proving advantage, 1--3 second chain
-  finality, or runtime superiority to an unpublished Modulus implementation.
+  tooling, cross-language assurance, certificate discipline, and reproducibility.
+  The public BitLogic relation is refuted; DREGG's corrected public relations are
+  statement-bound and proved exact under stated premises. Three production-derived
+  decisions show exact relation-ledger and retained proof-byte reductions, with an
+  unchanged negative control. Fully priced FHE accounting reports equality rather
+  than a fictitious win. DREGG does not yet establish a 10--100x end-to-end proving
+  advantage, 1--3 second chain finality, or runtime superiority to an unpublished
+  Modulus implementation.
 ])
 
 Finality is a consensus, networking, data-availability, and validator claim; it
