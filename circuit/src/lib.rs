@@ -183,6 +183,9 @@
 //!   soundness ledger above is computed from.
 //! - [`descriptor_ir2`]: the IR-v2 descriptor interpreter and its deployed FRI config
 //!   (`IR2_FRI_*`) — the path a light client verifies against.
+//! - [`descriptor_proof_backend`]: the exact supplied IR-v2 public-statement
+//!   carrier plus compile-time backend/differential seam; registry/provenance
+//!   authenticates Lean emission, and Plonky3 HidingFRI is the reference.
 //! - [`lean_descriptor_air`]: parses a Lean-emitted `EffectVmDescriptor` and rebuilds
 //!   the AIR from the descriptor alone (the prover authors no constraint).
 //! - [`constraint_prover`]: constraint satisfaction checker that validates circuit
@@ -366,6 +369,13 @@ pub mod plonky3_recursion;
 /// `prove_batch`) live here — all on verify-floor p3 deps (`p3-batch-stark` /
 /// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
+
+/// Backend-neutral public statement encoding and compile-time proof-system seam
+/// for DescriptorIR-v2.  Plonky3 HidingFRI remains the real reference backend;
+/// alternative PCS/distributed provers must consume the same statement object.
+/// Its bytes are preserved exactly; their approved Lean origin is authenticated
+/// separately by registry/provenance.
+pub mod descriptor_proof_backend;
 
 /// `CellProgram` → IR-v2 [`descriptor_ir2::EffectVmDescriptor2`] LOWERING (the
 /// prover-free half of the custom-leaf adapter), on the verify floor so the turn
