@@ -66,6 +66,7 @@ use bulletproofs_r1cs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::{
     ristretto::{CompressedRistretto, RistrettoPoint},
     scalar::Scalar,
+    traits::VartimeMultiscalarMul,
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use ethnum::I256;
@@ -2789,9 +2790,6 @@ fn accumulate_decrypt_relation(
     let degree = params.degree();
     let pc_gens = PedersenGens::default();
     let two64 = scalar_from_u128(1u128 << 64);
-    let bound = scalar_from_u128(1u128 << share.smudge_bits);
-    let twice_bound = bound + bound;
-    let quotient_offset = Scalar::from(DECRYPT_QUOTIENT_OFFSET);
     transcript.append_message(b"relation-domain", DECRYPT_SHARE_RELATION_DOMAIN);
     // Fiat-Shamir challenges must remain byte-for-byte row-major.  Derive them
     // serially first, then use the immutable weights for both the canonical
@@ -2815,28 +2813,52 @@ fn accumulate_decrypt_relation(
         secret_points.len(),
     )?;
 
+    // These challenges and every point they weight are public.  Collapse the
+    // verifier/prover's tens of thousands of independent variable-time scalar
+    // multiplications into one dalek Pippenger MSM.  Challenge derivation stays
+    // canonical and serial above; only the public linear-algebra evaluation is
+    // batched.
+    let smudge_complement_weights = (0..degree)
+        .map(|_| transcript_challenge_scalar(transcript, b"smudge-complement-weight"))
+        .collect::<Vec<_>>();
+    let lambdas = params
+        .moduli()
+        .iter()
+        .map(|&q| lagrange_at_zero(share.party, &share.opening.parties, q).map(Scalar::from))
+        .collect::<Result<Vec<_>>>()?;
+    let public_weights = build_public_decrypt_relation_weights(
+        degree,
+        share.smudge_bits,
+        params.moduli(),
+        &lambdas,
+        &share.h,
+        &equation_weights,
+        &smudge_complement_weights,
+        &secret_weights,
+        smudge_points.len(),
+        product_points.len(),
+        quotient_points.len(),
+        secret_points.len(),
+    )?;
+    *relation += evaluate_public_decrypt_relation_msm(
+        &public_weights,
+        smudge_points,
+        product_points,
+        quotient_points,
+        secret_points,
+        &pc_gens.B,
+    );
+
     for (row_index, &q) in params.moduli().iter().enumerate() {
-        let lambda = Scalar::from(lagrange_at_zero(share.party, &share.opening.parties, q)?);
+        let lambda = lambdas[row_index];
         let q_scalar = Scalar::from(q);
         for output in 0..degree {
             let (first_weight, second_weight) = equation_weights[row_index * degree + output];
 
             let smudge_low_index = output * 2;
             let smudge_high_index = 2 * degree + output * 2;
-            let smudge_commitment =
-                smudge_points[smudge_low_index] + two64 * smudge_points[smudge_high_index];
             let equation = row_index * degree + output;
             let quotient_index = equation * 2;
-            let first_quotient = quotient_points[quotient_index];
-            let second_quotient = quotient_points[quotient_index + 1];
-            let product = product_points[equation];
-            *relation += first_weight
-                * (-product - q_scalar * (first_quotient - quotient_offset * pc_gens.B));
-            *relation += second_weight
-                * (lambda * product + smudge_commitment
-                    - bound * pc_gens.B
-                    - Scalar::from(share.h[row_index][output]) * pc_gens.B
-                    - q_scalar * (second_quotient - quotient_offset * pc_gens.B));
             if let (
                 Some(smudge_blindings),
                 Some(product_blindings),
@@ -2863,13 +2885,9 @@ fn accumulate_decrypt_relation(
 
     // Independent random batching for every exact interval-complement equation
     // C(smudge+B) + C(B-smudge) = C(2B).
-    for output in 0..degree {
-        let weight = transcript_challenge_scalar(transcript, b"smudge-complement-weight");
+    for (output, &weight) in smudge_complement_weights.iter().enumerate() {
         let low = output * 2;
         let high = 2 * degree + output * 2;
-        let u = smudge_points[low] + two64 * smudge_points[high];
-        let v = smudge_points[low + 1] + two64 * smudge_points[high + 1];
-        *relation += weight * (u + v - twice_bound * pc_gens.B);
         if let Some(blindings) = smudge_blindings {
             if let Some(total) = relation_blinding.as_deref_mut() {
                 let u_blinding = blindings[low] + two64 * blindings[high];
@@ -2879,14 +2897,126 @@ fn accumulate_decrypt_relation(
         }
     }
 
-    for (index, (&weight, point)) in secret_weights.iter().zip(secret_points).enumerate() {
-        *relation += weight * point;
+    for (index, &weight) in secret_weights.iter().enumerate() {
         if let (Some(blindings), Some(total)) = (secret_blindings, relation_blinding.as_deref_mut())
         {
             *total += weight * blindings[index];
         }
     }
     Ok(())
+}
+
+struct PublicDecryptRelationWeights {
+    smudge: Vec<Scalar>,
+    product: Vec<Scalar>,
+    quotient: Vec<Scalar>,
+    secret: Vec<Scalar>,
+    generator: Scalar,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_public_decrypt_relation_weights(
+    degree: usize,
+    smudge_bits: u32,
+    moduli: &[u64],
+    lambdas: &[Scalar],
+    h: &[Vec<u64>],
+    equation_weights: &[(Scalar, Scalar)],
+    smudge_complement_weights: &[Scalar],
+    secret_weights: &[Scalar],
+    smudge_point_count: usize,
+    product_point_count: usize,
+    quotient_point_count: usize,
+    secret_point_count: usize,
+) -> Result<PublicDecryptRelationWeights> {
+    let equations = moduli
+        .len()
+        .checked_mul(degree)
+        .ok_or(QuorumError::UnsupportedDecryptProofParameters)?;
+    if degree == 0
+        || smudge_bits >= 127
+        || lambdas.len() != moduli.len()
+        || h.len() != moduli.len()
+        || h.iter().any(|row| row.len() != degree)
+        || equation_weights.len() != equations
+        || smudge_complement_weights.len() != degree
+        || secret_weights.len() != equations
+        || smudge_point_count != 4 * degree
+        || product_point_count != equations
+        || quotient_point_count < 2 * equations
+        || secret_point_count != equations
+    {
+        return Err(QuorumError::ParamMismatch);
+    }
+
+    let two64 = scalar_from_u128(1u128 << 64);
+    let bound = scalar_from_u128(1u128 << smudge_bits);
+    let twice_bound = bound + bound;
+    let quotient_offset = Scalar::from(DECRYPT_QUOTIENT_OFFSET);
+    let mut weights = PublicDecryptRelationWeights {
+        smudge: vec![Scalar::ZERO; smudge_point_count],
+        product: vec![Scalar::ZERO; product_point_count],
+        quotient: vec![Scalar::ZERO; quotient_point_count],
+        secret: secret_weights.to_vec(),
+        generator: Scalar::ZERO,
+    };
+
+    for (row_index, &q) in moduli.iter().enumerate() {
+        let lambda = lambdas[row_index];
+        let q_scalar = Scalar::from(q);
+        for output in 0..degree {
+            let equation = row_index * degree + output;
+            let (first_weight, second_weight) = equation_weights[equation];
+            let smudge_low = output * 2;
+            let smudge_high = 2 * degree + output * 2;
+            let quotient = equation * 2;
+
+            weights.product[equation] += -first_weight + second_weight * lambda;
+            weights.quotient[quotient] -= first_weight * q_scalar;
+            weights.quotient[quotient + 1] -= second_weight * q_scalar;
+            weights.smudge[smudge_low] += second_weight;
+            weights.smudge[smudge_high] += second_weight * two64;
+            weights.generator += first_weight * q_scalar * quotient_offset;
+            weights.generator += second_weight
+                * (q_scalar * quotient_offset - bound - Scalar::from(h[row_index][output]));
+        }
+    }
+
+    for (output, &weight) in smudge_complement_weights.iter().enumerate() {
+        let low = output * 2;
+        let high = 2 * degree + output * 2;
+        weights.smudge[low] += weight;
+        weights.smudge[low + 1] += weight;
+        weights.smudge[high] += weight * two64;
+        weights.smudge[high + 1] += weight * two64;
+        weights.generator -= weight * twice_bound;
+    }
+    Ok(weights)
+}
+
+fn evaluate_public_decrypt_relation_msm(
+    weights: &PublicDecryptRelationWeights,
+    smudge_points: &[RistrettoPoint],
+    product_points: &[RistrettoPoint],
+    quotient_points: &[RistrettoPoint],
+    secret_points: &[RistrettoPoint],
+    generator: &RistrettoPoint,
+) -> RistrettoPoint {
+    RistrettoPoint::vartime_multiscalar_mul(
+        weights
+            .smudge
+            .iter()
+            .chain(&weights.product)
+            .chain(&weights.quotient)
+            .chain(&weights.secret)
+            .chain(std::iter::once(&weights.generator)),
+        smudge_points
+            .iter()
+            .chain(product_points)
+            .chain(quotient_points)
+            .chain(secret_points)
+            .chain(std::iter::once(generator)),
+    )
 }
 
 /// Parallel form of the exact row-wise negacyclic integer convolution.  The
@@ -3240,6 +3370,112 @@ mod vss_tests {
             parallel.iter().map(Scalar::to_bytes).collect::<Vec<_>>(),
             expected.iter().map(Scalar::to_bytes).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn public_relation_msm_is_byte_identical_to_legacy_equation_fold() {
+        fn point(index: u64) -> RistrettoPoint {
+            let mut uniform = [0u8; 64];
+            uniform[..8].copy_from_slice(&index.to_le_bytes());
+            uniform[32..40].copy_from_slice(&index.wrapping_mul(0x9e37_79b9).to_le_bytes());
+            RistrettoPoint::from_uniform_bytes(&uniform)
+        }
+
+        let degree = 3;
+        let smudge_bits = 5;
+        let moduli = [17, 19];
+        let lambdas = [Scalar::from(3u64), Scalar::from(7u64)];
+        let h = vec![vec![2, 5, 11], vec![3, 7, 13]];
+        let equation_weights = (0..moduli.len() * degree)
+            .map(|i| {
+                (
+                    Scalar::from((i * 17 + 5) as u64),
+                    Scalar::from((i * 29 + 11) as u64),
+                )
+            })
+            .collect::<Vec<_>>();
+        let complement_weights = [
+            Scalar::from(101u64),
+            Scalar::from(103u64),
+            Scalar::from(107u64),
+        ];
+        let secret_weights = (0..moduli.len() * degree)
+            .map(|i| Scalar::from((i * 31 + 13) as u64))
+            .collect::<Vec<_>>();
+        let smudge_points = (0..4 * degree)
+            .map(|i| point(1 + i as u64))
+            .collect::<Vec<_>>();
+        let product_points = (0..moduli.len() * degree)
+            .map(|i| point(101 + i as u64))
+            .collect::<Vec<_>>();
+        // Include padded quotient commitments: the builder must give their
+        // unused tail exactly zero weight.
+        let quotient_points = (0..16).map(|i| point(201 + i as u64)).collect::<Vec<_>>();
+        let secret_points = (0..moduli.len() * degree)
+            .map(|i| point(301 + i as u64))
+            .collect::<Vec<_>>();
+        let generator = point(999);
+
+        let weights = build_public_decrypt_relation_weights(
+            degree,
+            smudge_bits,
+            &moduli,
+            &lambdas,
+            &h,
+            &equation_weights,
+            &complement_weights,
+            &secret_weights,
+            smudge_points.len(),
+            product_points.len(),
+            quotient_points.len(),
+            secret_points.len(),
+        )
+        .unwrap();
+        let batched = evaluate_public_decrypt_relation_msm(
+            &weights,
+            &smudge_points,
+            &product_points,
+            &quotient_points,
+            &secret_points,
+            &generator,
+        );
+
+        let two64 = scalar_from_u128(1u128 << 64);
+        let bound = scalar_from_u128(1u128 << smudge_bits);
+        let twice_bound = bound + bound;
+        let quotient_offset = Scalar::from(DECRYPT_QUOTIENT_OFFSET);
+        let mut legacy = RistrettoPoint::default();
+        for (row_index, &q) in moduli.iter().enumerate() {
+            let q_scalar = Scalar::from(q);
+            for output in 0..degree {
+                let equation = row_index * degree + output;
+                let (first_weight, second_weight) = equation_weights[equation];
+                let low = output * 2;
+                let high = 2 * degree + output * 2;
+                let quotient = equation * 2;
+                let smudge = smudge_points[low] + two64 * smudge_points[high];
+                legacy += first_weight
+                    * (-product_points[equation]
+                        - q_scalar * (quotient_points[quotient] - quotient_offset * generator));
+                legacy += second_weight
+                    * (lambdas[row_index] * product_points[equation] + smudge
+                        - bound * generator
+                        - Scalar::from(h[row_index][output]) * generator
+                        - q_scalar * (quotient_points[quotient + 1] - quotient_offset * generator));
+            }
+        }
+        for (output, &weight) in complement_weights.iter().enumerate() {
+            let low = output * 2;
+            let high = 2 * degree + output * 2;
+            let u = smudge_points[low] + two64 * smudge_points[high];
+            let v = smudge_points[low + 1] + two64 * smudge_points[high + 1];
+            legacy += weight * (u + v - twice_bound * generator);
+        }
+        for (&weight, point) in secret_weights.iter().zip(&secret_points) {
+            legacy += weight * point;
+        }
+
+        assert_eq!(batched.compress().to_bytes(), legacy.compress().to_bytes());
     }
 
     #[test]
