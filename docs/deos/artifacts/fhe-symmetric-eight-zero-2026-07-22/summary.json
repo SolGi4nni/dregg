@@ -1,0 +1,28 @@
+{
+  "samples": 11,
+  "generic_zero_conversion_ms": {
+    "min": 78.149985,
+    "median": 82.028391,
+    "mean": 108.39271690909091,
+    "max": 217.101809
+  },
+  "symmetric_zero_conversion_ms": {
+    "min": 34.760797,
+    "median": 38.317285,
+    "mean": 46.24969981818182,
+    "max": 80.74367
+  },
+  "median_wall_time_ratio_generic_over_symmetric": 2.1407673064519055,
+  "exact_ciphertext_multiplications": {
+    "residual_evaluation_both": 8,
+    "generic_zero_conversion": 7,
+    "symmetric_zero_conversion": 3,
+    "generic_total": 15,
+    "symmetric_total": 11,
+    "balanced_boolean_baseline": 15
+  },
+  "output_multiplicative_depth_both": 4,
+  "generic_observed_noise_bits_range": [157, 160],
+  "symmetric_observed_noise_bits_range": [158, 160],
+  "every_opened_oracle_vector": [40320, 0, 0, 0]
+}

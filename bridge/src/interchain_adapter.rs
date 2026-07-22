@@ -13,9 +13,9 @@
 //!
 //! This module collapses those four dials onto ONE ordinal, [`TrustRung`], with a
 //! single fail-closed predicate, [`TrustRung::reached_consensus`], which becomes
-//! [`BridgeMintRequest::consensus_verified`]. The gate itself is unchanged: it
+//! [`dregg_turn::BridgeMintRequest::consensus_verified`]. The gate itself is unchanged: it
 //! refuses any request whose `consensus_verified` is `false`
-//! ([`BridgeMintError::TrustTooLow`]). The point of the abstraction is that a
+//! ([`dregg_turn::BridgeMintError::TrustTooLow`]). The point of the abstraction is that a
 //! low-trust dial value (an RPC echo, an unresolved/fraudulent watchtower verdict,
 //! a no-quorum committee) CANNOT reach `true` — the mapping is the only bridge
 //! from a chain's raw evidence to the mint bool, and it is fail-closed by
@@ -36,9 +36,6 @@
 //!    so an empty attestation cannot even produce a mint request.
 
 use std::marker::PhantomData;
-
-use dregg_cell::{CellId, Nullifier};
-use dregg_turn::BridgeMintRequest;
 
 use crate::action_binding::PortableActionBinding;
 use crate::ethereum::SnarkSystem;
@@ -234,10 +231,12 @@ impl std::error::Error for AdapterError {}
 /// The single abstraction every inbound bridge leg implements.
 ///
 /// An adapter turns a chain-specific `Attestation` into (a) its [`TrustRung`] and
-/// (b) a [`PortableActionBinding`], then the provided [`InterchainAdapter::into_mint_request`]
-/// assembles the committed [`BridgeMintRequest`] with
-/// `consensus_verified = trust_rung(att).reached_consensus()`. Because that bool is
-/// derived solely from the rung, a low-trust attestation CANNOT set it `true`.
+/// (b) a [`PortableActionBinding`].  It deliberately exposes no mint-request
+/// constructor: callers must pass both products through
+/// [`crate::conditional_interchain_adapter::ConditionalInterchainAdapter`], which
+/// binds destination, nullifier, recipient, and amount before assembling a
+/// committed request.  This makes the old caller-supplied-recipient substitution
+/// shape unavailable at the trait API.
 pub trait InterchainAdapter {
     /// The chain-specific attestation this adapter consumes.
     type Attestation;
@@ -252,45 +251,6 @@ pub trait InterchainAdapter {
         &self,
         att: &Self::Attestation,
     ) -> Result<PortableActionBinding, AdapterError>;
-
-    /// Assemble the committed mint request. `consensus_verified` is
-    /// [`TrustRung::reached_consensus`] of [`Self::trust_rung`] — NEVER a
-    /// caller-supplied bool — and `lock_nullifier` is taken from the binding, so a
-    /// low-trust or empty attestation cannot authorize a mint.
-    ///
-    /// `actor`, `ledger_cell`, and `recipient` are the executor-side cells the
-    /// relayer already holds (the mint-cap bearer, the committed mirror-ledger, and
-    /// the credited dregg cell); the amount comes from the attested binding.
-    ///
-    /// CALLER RESPONSIBILITY (named seam): the binding's `destination_federation`
-    /// is NOT checked here — the chain-agnostic adapter does not know which
-    /// federation it serves. The relayer MUST verify
-    /// `binding.destination_federation` matches this node before minting, so a
-    /// binding addressed to a different federation is not credited here. (Wiring
-    /// this into the relayers is a followup; see HORIZONLOG.)
-    fn into_mint_request(
-        &self,
-        att: &Self::Attestation,
-        actor: CellId,
-        ledger_cell: CellId,
-        recipient: CellId,
-    ) -> Result<BridgeMintRequest, AdapterError> {
-        let binding = self.to_action_binding(att)?;
-        // Defence in depth: the binding refuses a zero nullifier, but re-check here
-        // so no path can build a request keyed on the uninitialized default.
-        if binding.nullifier == [0u8; 32] {
-            return Err(AdapterError::EmptyAttestation);
-        }
-        let consensus_verified = self.trust_rung(att).reached_consensus();
-        Ok(BridgeMintRequest {
-            actor,
-            ledger_cell,
-            lock_nullifier: Nullifier(binding.nullifier),
-            recipient,
-            amount: binding.amount,
-            consensus_verified,
-        })
-    }
 }
 
 /// A chain-agnostic attestation: the WHAT ([`PortableActionBinding`]) bundled with
@@ -311,8 +271,10 @@ pub struct ChainAttestation<D: TrustDial> {
 ///
 /// `DialAdapter::<LockProofTrust>` is the Solana leg, `DialAdapter::<SnarkSystem>`
 /// the Ethereum leg, `DialAdapter::<Verdict>` the Midnight leg, and
-/// `DialAdapter::<FinalizedAttestation>` the committee leg — all sharing the one
-/// fail-closed [`InterchainAdapter::into_mint_request`].
+/// `DialAdapter::<FinalizedAttestation>` the committee leg.  Each is consumed by
+/// the one statement-bound
+/// [`crate::conditional_interchain_adapter::ConditionalInterchainAdapter`]
+/// request builder.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DialAdapter<D: TrustDial>(PhantomData<D>);
 
@@ -346,6 +308,10 @@ impl<D: TrustDial> InterchainAdapter for DialAdapter<D> {
 #[cfg(test)]
 mod interchain_adapter_tests {
     use super::*;
+    use crate::conditional_interchain_adapter::{
+        ConditionalAdapterError, ConditionalInterchainAdapter, ExpectedCredit,
+    };
+    use dregg_cell::{CellId, Nullifier};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit_prove::ivc_turn_chain::{SEG_ANCHOR_WIDTH, SEG_DIGEST_WIDTH};
     use dregg_lightclient::AttestedHistory;
@@ -395,6 +361,25 @@ mod interchain_adapter_tests {
             amount: 0,
             proof_bytes: Vec::new(),
         }
+    }
+
+    /// Exercise every trust dial through the only request-construction API.  The
+    /// expected statement is the event-side view; equality against the extracted
+    /// binding is rechecked by `ConditionalInterchainAdapter` before construction.
+    fn checked_request<D: TrustDial>(
+        adapter: DialAdapter<D>,
+        att: &ChainAttestation<D>,
+    ) -> Result<dregg_turn::BridgeMintRequest, ConditionalAdapterError> {
+        ConditionalInterchainAdapter::new(adapter, [0x33u8; 32]).into_mint_request(
+            att,
+            cid(2),
+            cid(9),
+            ExpectedCredit {
+                nullifier: att.binding.nullifier,
+                recipient: CellId(att.binding.recipient),
+                amount: att.binding.amount,
+            },
+        )
     }
 
     fn committee_attestation(quorum_signers: usize) -> FinalizedAttestation {
@@ -495,8 +480,7 @@ mod interchain_adapter_tests {
             binding: nonzero_binding(500),
             dial: LockProofTrust::ConsensusVerified,
         };
-        let req = adapter
-            .into_mint_request(&att, cid(2), cid(9), cid(1))
+        let req = checked_request(adapter, &att)
             .expect("a consensus-verified attestation builds a mint request");
         assert!(
             req.consensus_verified,
@@ -516,8 +500,7 @@ mod interchain_adapter_tests {
             binding: nonzero_binding(700),
             dial: committee_attestation(4),
         };
-        let req = adapter
-            .into_mint_request(&att, cid(2), cid(9), cid(1))
+        let req = checked_request(adapter, &att)
             .expect("a quorum-finalized attestation builds a mint request");
         assert!(
             req.consensus_verified,
@@ -541,8 +524,7 @@ mod interchain_adapter_tests {
             binding: nonzero_binding(500),
             dial: LockProofTrust::StructureOnly,
         };
-        let req = adapter
-            .into_mint_request(&att, cid(2), cid(9), cid(1))
+        let req = checked_request(adapter, &att)
             .expect("the request still BUILDS (the gate, not the adapter, refuses it)");
         assert!(
             !req.consensus_verified,
@@ -561,11 +543,7 @@ mod interchain_adapter_tests {
             binding: nonzero_binding(1),
             dial: SnarkSystem::BindingOnly,
         };
-        assert!(
-            !eth.into_mint_request(&eth_att, cid(2), cid(9), cid(1))
-                .unwrap()
-                .consensus_verified
-        );
+        assert!(!checked_request(eth, &eth_att).unwrap().consensus_verified);
 
         // Midnight watchtower verdict of FRAUD → unresolved → false.
         let mid = DialAdapter::<Verdict>::new();
@@ -576,11 +554,7 @@ mod interchain_adapter_tests {
                 reason: crate::midnight_verified::VerifiedBridgeError::NullifierMismatch,
             },
         };
-        assert!(
-            !mid.into_mint_request(&mid_att, cid(2), cid(9), cid(1))
-                .unwrap()
-                .consensus_verified
-        );
+        assert!(!checked_request(mid, &mid_att).unwrap().consensus_verified);
     }
 
     #[test]
@@ -601,10 +575,9 @@ mod interchain_adapter_tests {
             AdapterError::EmptyAttestation
         );
         assert_eq!(
-            adapter
-                .into_mint_request(&att, cid(2), cid(9), cid(1))
+            checked_request(adapter, &att)
                 .expect_err("no mint request is built from an empty attestation"),
-            AdapterError::EmptyAttestation
+            ConditionalAdapterError::Adapter(AdapterError::EmptyAttestation)
         );
     }
 }

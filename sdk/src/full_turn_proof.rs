@@ -1508,7 +1508,10 @@ pub fn prove_effect_vm_rotated_wide(
     after_w: &dregg_turn::rotation_witness::RotationWitness,
     caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
     before_nullifiers: Option<&[BabyBear]>,
-    refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
+    refusal_fields: Option<(
+        &[dregg_circuit::openable_fields_root::ExactFieldsLeaf],
+        [u8; 32],
+    )>,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::Ir2BatchProof<
@@ -1548,7 +1551,10 @@ fn generate_wide_descriptor_and_trace(
     after_w: &dregg_turn::rotation_witness::RotationWitness,
     caveat: &dregg_circuit::effect_vm::trace_rotated::RotatedCaveatManifest,
     before_nullifiers: Option<&[BabyBear]>,
-    refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
+    refusal_fields: Option<(
+        &[dregg_circuit::openable_fields_root::ExactFieldsLeaf],
+        [u8; 32],
+    )>,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
@@ -1633,7 +1639,10 @@ pub fn prove_wide_umem_welded_staged(
     pre: &dregg_turn::umem::UProjection,
     ops: &[dregg_turn::umem::UmemOp],
     before_nullifiers: Option<&[BabyBear]>,
-    refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
+    refusal_fields: Option<(
+        &[dregg_circuit::openable_fields_root::ExactFieldsLeaf],
+        [u8; 32],
+    )>,
 ) -> Result<
     (
         dregg_circuit::descriptor_ir2::Ir2BatchProof<

@@ -1,0 +1,26 @@
+artifact=fhe-symmetric-eight-zero-2026-07-22
+date=2026-07-22
+host=persvati
+kernel=Linux 6.17.0-40-generic x86_64
+cpu=AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M
+logical_cpus=24
+cores=12
+threads_per_core=2
+rustc=rustc 1.98.0-nightly (13f1859f2 2026-06-27)
+cargo=cargo 1.98.0-nightly (a335d47ff 2026-06-26)
+profile=release
+repo_head_at_measurement=d34a3578732acf8728f3d30f58bd2e0c27c29805
+cargo_lock_sha256=f833ad07f604fc1c0cf4b380ebb22e5e4f122a4d8790740ad69372f71bff6311
+rust_source_sha256=adf9567618ef8b035db7955ec66a8f79498d8d293df82e8e7d867df72d54d03b
+rust_test_sha256=e7b40b6d0446655dad0e889fd22892df0de750f5475652563c0952bad0e9ea96
+lean_source_sha256=716a450f9f6ccf6a618bb197dd5a434c4d366aa64dce77aeeb0ea40f341b7963
+fhe_rs_version=0.1.1
+parameter_set=fhegg_fhe::threshold::BfvParams::correlation_set (degree 8192, plaintext modulus 1032193)
+live_simd_slots=4
+samples=11
+command=scripts/pbuild fhegg-wgpu cargo test -q -p fhegg-fhe --release --test fhir_logic_zero_observation_symmetric symmetric_eight_is_exact_and_uses_three_multiplications_on_real_bfv -- --exact --nocapture --test-threads=1
+timed_region=zero conversion only, separately for generic and symmetric evaluators
+included=plaintext constant encoding; ciphertext-plaintext arithmetic; ciphertext multiplication; relinearization; local allocation in the conversion
+excluded=parameter generation; key generation; relinearization-key generation; input encoding and encryption; residual evaluation; same-opening verification; decryption; threshold shares/combine; transport; process startup; build time
+oracle=single-key decryption after the timed region validates exact slots and measures library-reported noise bits
+security_scope=correctness and cost measurement only; no threshold margin theorem, no CPAD theorem, no general BFV noise theorem, no end-to-end latency claim

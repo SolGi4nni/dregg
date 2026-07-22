@@ -1001,9 +1001,9 @@ impl TurnExecutor {
             ROT_PI_COUNT, RotatedBlockWitness, V1_PI_COUNT, empty_caveat_manifest,
             generate_rotated_custom_wide, generate_rotated_note_create_wide,
             generate_rotated_note_spend_wide, generate_rotated_record_pin_wide,
-            generate_rotated_transfer_shape_wide, generate_rotated_transfer_shape_with_fee_wide,
-            rotated_descriptor_name_for_effect, rotated_descriptor_name_for_effect_fee,
-            transfer_caveat_manifest,
+            generate_rotated_refusal_write_wide, generate_rotated_transfer_shape_wide,
+            generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
+            rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
         };
         use dregg_circuit::effect_vm_descriptors::{
             WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
@@ -1234,6 +1234,44 @@ impl TurnExecutor {
                 &[],
             )
             .map(|(t, d, _heaps)| (t, d))
+        } else if matches!(lead, dregg_circuit::effect_vm::Effect::Refusal { .. }) {
+            // Exact refusal V2 is not a generic record-pin shape: it publishes the raw 32-byte
+            // audit as sixteen u16 PIs and proves the FLD2/FLN2 update over the trusted BEFORE
+            // cell's exact fields tree.  Recompute the audit from the kernel effect carried by
+            // this turn; never accept producer-supplied audit limbs.
+            let (offered_action_commitment, refusal_reason) = Self::dfs_collect_effects(turn)
+                .into_iter()
+                .rev()
+                .find_map(|effect| match effect {
+                    Effect::Refusal {
+                        cell,
+                        offered_action_commitment,
+                        refusal_reason,
+                        ..
+                    } if cell == *cell_id => Some((offered_action_commitment, refusal_reason)),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    TurnError::InvalidExecutionProof(
+                        "exact refusal verify: VM refusal has no matching kernel effect".into(),
+                    )
+                })?;
+            let audit = crate::action::refusal_audit_commitment(
+                &offered_action_commitment,
+                &refusal_reason,
+            );
+            let exact_leaves =
+                dregg_cell::state::exact_fields_root_leaves(&record_pin_cell.state.fields_map);
+            generate_rotated_refusal_write_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+                &exact_leaves,
+                audit,
+            )
+            .map(|(t, d, _)| (t, d))
         } else if matches!(
             lead,
             dregg_circuit::effect_vm::Effect::SetPermissions { .. }
@@ -1242,7 +1280,6 @@ impl TurnExecutor {
                 | dregg_circuit::effect_vm::Effect::CellUnseal { .. }
                 | dregg_circuit::effect_vm::Effect::CellDestroy { .. }
                 | dregg_circuit::effect_vm::Effect::ReceiptArchive { .. }
-                | dregg_circuit::effect_vm::Effect::Refusal { .. }
                 | dregg_circuit::effect_vm::Effect::MakeSovereign
         ) {
             // The record-pin family carries the (ROT_PI_COUNT + 1 = 47)-PI base (record/lifecycle pin at PI ROT_PI_COUNT = 46).
@@ -1499,6 +1536,7 @@ impl TurnExecutor {
             ROT_PI_COUNT + 1 + dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN + 16; // lifecycle movers (67)
         let wide_record_pin_count_8 =
             ROT_PI_COUNT + 8 + dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN + 16; // H1 record-digest movers (74)
+        let wide_record_pin_count_refusal_exact = wide_record_pin_count_8 + 16; // exact audit16 (90)
         // The KEYED sovereign member (`makeSovereignV3DeployedWide`): the record-digest-mover base
         // PLUS the 4 KEY_COMMIT teeth claim PIs spliced ahead of the 16 wide anchors (78). The
         // record-pin anchor indices below are BASE-prefix slots (`ROT_PI_COUNT..+8`), untouched by
@@ -1506,6 +1544,7 @@ impl TurnExecutor {
         let wide_record_pin_count_8_keyed = wide_record_pin_count_8 + 4; // makeSovereign (78)
         if (desc.public_input_count == wide_record_pin_count_1
             || desc.public_input_count == wide_record_pin_count_8
+            || desc.public_input_count == wide_record_pin_count_refusal_exact
             || desc.public_input_count == wide_record_pin_count_8_keyed)
             && dpis.len() == desc.public_input_count
         {

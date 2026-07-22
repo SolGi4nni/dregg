@@ -1,0 +1,9 @@
+workload,variant,retained_proofs,proof_bytes,unique_proof_hashes,query_pow_witness,deterministic_repeats,tamper_disposition
+admission,optimized,5,11894,1,81518,true,consumer_verifier_rejected
+admission,source,5,14016,1,98753,true,consumer_verifier_rejected
+clearance,optimized,5,10157,1,13417,true,consumer_verifier_rejected
+clearance,source,5,10469,1,182505,true,consumer_verifier_rejected
+strand,optimized,5,9850,1,12421,true,consumer_verifier_rejected
+strand,source,5,9850,1,12421,true,consumer_verifier_rejected
+upgrade,optimized,5,10081,1,54388,true,consumer_verifier_rejected
+upgrade,source,5,10431,1,102739,true,consumer_verifier_rejected

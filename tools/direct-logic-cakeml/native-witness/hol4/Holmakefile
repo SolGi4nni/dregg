@@ -1,0 +1,26 @@
+INCLUDES = ../../hol4 \
+           $(DREGG_CAKEMLDIR)/misc \
+           $(DREGG_CAKEMLDIR)/basis/pure \
+           $(DREGG_CAKEMLDIR)/basis \
+           $(DREGG_CAKEMLDIR)/semantics \
+           $(DREGG_CAKEMLDIR)/semantics/proofs \
+           $(DREGG_CAKEMLDIR)/semantics/ffi \
+           $(DREGG_CAKEMLDIR)/translator \
+           $(DREGG_CAKEMLDIR)/compiler \
+           $(DREGG_CAKEMLDIR)/compiler/backend \
+           $(DREGG_CAKEMLDIR)/compiler/backend/proofs \
+           $(DREGG_CAKEMLDIR)/compiler/backend/arm8 \
+           $(DREGG_CAKEMLDIR)/compiler/backend/arm8/proofs \
+           $(DREGG_CAKEMLDIR)/compiler/encoders/asm \
+           $(DREGG_CAKEMLDIR)/compiler/encoders/arm8 \
+           $(DREGG_CAKEMLDIR)/compiler/encoders/arm8/proofs \
+           $(DREGG_CAKEMLDIR)/cv_translator
+
+CLINE_OPTIONS = -j1
+
+all: $(DEFAULT_TARGETS)
+.PHONY: all
+
+ifdef POLY
+HOLHEAP = $(DREGG_CAKEMLDIR)/cv_translator/cake_compile_heap
+endif

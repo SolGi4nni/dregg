@@ -1,0 +1,9 @@
+workload,stage,sessions,pairs,median_opt_over_source,hier_boot95_lo,hier_boot95_hi,control_adjusted_ratio,control_adjusted_boot95_lo,control_adjusted_boot95_hi,session_ratio_min,session_ratio_max,optimized_pair_win_rate,direction_unanimous,strand_null_ok,fixed_transcript_only,general_speedup_claim,verdict
+admission,prove,7,210,0.823424,0.820929,0.825574,0.822604,0.818381,0.826079,0.820889,0.826458,0.995238,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+upgrade,prove,7,210,0.531332,0.529574,0.532252,0.530719,0.528605,0.532670,0.529895,0.532229,1.000000,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+clearance,prove,7,210,0.075720,0.075560,0.075873,0.075695,0.075458,0.075876,0.075556,0.075901,1.000000,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+strand,prove,7,210,1.000125,0.998038,1.002716,1.000000,1.000000,1.000000,0.998668,1.006269,0.471429,false,true,true,false,NULL_OK
+admission,verify,7,700,0.763747,0.762603,0.765917,0.763208,0.761218,0.767079,0.762751,0.765748,1.000000,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+upgrade,verify,7,700,0.903915,0.901405,0.906214,0.903428,0.900091,0.907848,0.901863,0.904979,0.998571,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+clearance,verify,7,700,0.902547,0.900307,0.906884,0.902576,0.898776,0.907880,0.900973,0.905053,0.995714,true,true,true,false,FIXED_TRANSCRIPT_OPT_FASTER
+strand,verify,7,700,1.000379,0.996545,1.002657,1.000000,1.000000,1.000000,0.998098,1.001547,0.490000,false,true,true,false,NULL_OK

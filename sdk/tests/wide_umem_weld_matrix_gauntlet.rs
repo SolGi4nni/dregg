@@ -132,7 +132,10 @@ struct RecordPinFixture {
     after_w: rw::RotationWitness,
     proj_pre: dregg_turn::umem::UProjection,
     ops: Vec<UmemOp>,
-    refusal_fields: Option<(Vec<dregg_circuit::heap_root::HeapLeaf>, BabyBear)>,
+    refusal_fields: Option<(
+        Vec<dregg_circuit::openable_fields_root::ExactFieldsLeaf>,
+        [u8; 32],
+    )>,
 }
 
 fn record_pin_fixture(
@@ -163,9 +166,8 @@ fn record_pin_fixture(
             .get(&dregg_cell::state::REFUSAL_AUDIT_EXT_KEY)
             .copied()
             .expect("a refused cell carries the audit slot in fields_map");
-        let before_leaves = dregg_cell::state::fields_root_leaves(&before.state.fields_map);
-        let audit_value = dregg_circuit::cap_root::fold_bytes32(&audit_bytes);
-        Some((before_leaves, audit_value))
+        let before_leaves = dregg_cell::state::exact_fields_root_leaves(&before.state.fields_map);
+        Some((before_leaves, audit_bytes))
     } else {
         None
     };

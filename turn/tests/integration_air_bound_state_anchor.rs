@@ -197,10 +197,10 @@ fn receipt_chain_continuity_holds_under_the_anchor() {
         .expect("the receipt chain must verify under the AIR-bound anchor");
 }
 
-/// A tampered post-state anchor breaks the chain — the anchor is load-bearing,
-/// not decorative.
+/// A tampered post-state anchor is caught by executor authentication, not by
+/// treating per-agent snapshots as a globally contiguous state log.
 #[test]
-fn tampered_post_anchor_breaks_the_chain() {
+fn tampered_post_anchor_breaks_strict_authenticated_verification() {
     let agent = make_open_cell(4, 1_000);
     let peer = make_open_cell(8, 0);
     let (agent_id, peer_id) = (agent.id(), peer.id());
@@ -228,17 +228,31 @@ fn tampered_post_anchor_breaks_the_chain() {
         let receipt = unwrap_receipt(executor.execute(&turn, &mut ledger));
         receipts.push(receipt);
     }
-    dregg_turn::verify::verify_receipt_chain(&receipts).expect("baseline chain must verify");
+    let signing_seed = [0x42u8; 32];
+    for receipt in &mut receipts {
+        receipt.executor_signature = Some(dregg_turn::sign_receipt(receipt, &signing_seed));
+    }
+    let executor_pk = ed25519_dalek::SigningKey::from_bytes(&signing_seed)
+        .verifying_key()
+        .to_bytes();
+    dregg_turn::verify::verify_receipt_chain_strict(&receipts, &[executor_pk])
+        .expect("baseline signed chain must verify");
 
     // Flip one byte of the first receipt's post anchor.
     let mut tampered = receipts.clone();
     tampered[0].post_state_hash[3] ^= 0x01;
-    // Re-link so the ONLY broken thing is state continuity.
+    // Re-link after tampering so structural hash causality remains valid.
     tampered[1].previous_receipt_hash = Some(tampered[0].receipt_hash());
 
+    dregg_turn::verify::verify_receipt_chain(&tampered).expect(
+        "the structural verifier checks per-agent hash causality, not global-state adjacency",
+    );
     assert!(
-        dregg_turn::verify::verify_receipt_chain(&tampered).is_err(),
-        "a tampered post-state anchor must break the chain"
+        matches!(
+            dregg_turn::verify::verify_receipt_chain_strict(&tampered, &[executor_pk]),
+            Err(dregg_turn::VerifyError::ExecutorSignatureInvalid { index: 0 })
+        ),
+        "executor authentication must reject the tampered state snapshot at receipt 0"
     );
 }
 

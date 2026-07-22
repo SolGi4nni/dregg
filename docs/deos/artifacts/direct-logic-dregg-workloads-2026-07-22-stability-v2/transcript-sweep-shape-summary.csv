@@ -1,0 +1,4 @@
+shape,accepting_assignments,optimized_faster_assignments,ratio_min,ratio_median,ratio_max,source_absolute_ms_min,source_absolute_ms_max,optimized_absolute_ms_min,optimized_absolute_ms_max,pow_witness_time_pearson,pow_witness_time_spearman,general_speedup_claim,verdict
+admission,3,2,0.325265,0.811376,9.412217,21.481845,190.089027,16.709599,202.191789,0.990503,0.942857,false,NO_GENERAL_SPEEDUP_DIRECTION_REVERSES
+branch,3,3,0.073691,0.542969,0.736046,88.380691,241.755497,17.815297,67.732823,0.982281,0.942857,false,ALL_THREE_FASTER_BUT_TRANSCRIPT_CENSUS_TOO_SMALL
+strand,7,4,0.967897,0.996407,1.014277,16.395664,223.847711,15.869322,223.017583,0.999743,1.000000,false,BYTE_IDENTICAL_NULL_TIMING_RATIO_NEAR_ONE

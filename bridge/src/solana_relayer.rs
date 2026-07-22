@@ -53,7 +53,10 @@
 use base64::Engine as _;
 
 use crate::action_binding::PortableActionBinding;
-use crate::interchain_adapter::{AdapterError, ChainAttestation, DialAdapter, InterchainAdapter};
+use crate::conditional_interchain_adapter::{
+    ConditionalAdapterError, ConditionalInterchainAdapter, ExpectedCredit,
+};
+use crate::interchain_adapter::{AdapterError, ChainAttestation, DialAdapter};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::solana_consensus::EpochStakeTable;
 use crate::solana_consensus::{BankHashComponents, PohAnchorPolicy, ValidatorVote};
@@ -1140,13 +1143,10 @@ impl ObservedLock {
 /// was refused, over and above the adapter's own [`AdapterError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdapterWiringError {
+    /// The local federation identity is the all-zero/uninitialized value.
+    EmptyLocalFederation,
     /// The action binding is addressed to a DIFFERENT federation than this node
-    /// serves (`binding.destination_federation != this_federation`). The
-    /// chain-agnostic [`InterchainAdapter`] does NOT check the destination — that
-    /// is the named CALLER RESPONSIBILITY (see
-    /// [`InterchainAdapter::into_mint_request`]'s doc) — so the relayer enforces it
-    /// HERE, before any mint, so a lock destined for another federation is never
-    /// credited on this one.
+    /// serves (`binding.destination_federation != this_federation`).
     WrongDestinationFederation {
         /// The federation this relayer serves.
         expected: [u8; 32],
@@ -1154,9 +1154,8 @@ pub enum AdapterWiringError {
         found: [u8; 32],
     },
     /// The supplied binding does not describe the SAME lock the relayer observed
-    /// (its nullifier or amount disagree with this [`ObservedLock`]). Refused so a
-    /// caller cannot pair an observed lock's trust dial with an unrelated binding's
-    /// amount/nullifier.
+    /// (its nullifier, recipient, or amount disagree with this [`ObservedLock`]).
+    /// Refused so a caller cannot pair one lock's trust dial with another credit.
     BindingMismatch,
     /// The [`InterchainAdapter`] itself refused the attestation — e.g. an all-zero
     /// (uninitialized/default) binding, the Nomad-law reject
@@ -1167,6 +1166,10 @@ pub enum AdapterWiringError {
 impl std::fmt::Display for AdapterWiringError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::EmptyLocalFederation => write!(
+                f,
+                "zero/default local federation is not a routable destination"
+            ),
             Self::WrongDestinationFederation { expected, found } => write!(
                 f,
                 "action binding is addressed to federation {} but this relayer serves {} — refused before minting",
@@ -1175,7 +1178,7 @@ impl std::fmt::Display for AdapterWiringError {
             ),
             Self::BindingMismatch => write!(
                 f,
-                "action binding does not describe the observed lock (nullifier/amount mismatch)"
+                "action binding does not describe the observed lock (nullifier/recipient/amount mismatch)"
             ),
             Self::Adapter(e) => write!(f, "{e}"),
         }
@@ -1183,6 +1186,21 @@ impl std::fmt::Display for AdapterWiringError {
 }
 
 impl std::error::Error for AdapterWiringError {}
+
+impl From<ConditionalAdapterError> for AdapterWiringError {
+    fn from(error: ConditionalAdapterError) -> Self {
+        match error {
+            ConditionalAdapterError::EmptyLocalFederation => Self::EmptyLocalFederation,
+            ConditionalAdapterError::WrongDestinationFederation { expected, found } => {
+                Self::WrongDestinationFederation { expected, found }
+            }
+            ConditionalAdapterError::NullifierMismatch
+            | ConditionalAdapterError::RecipientMismatch
+            | ConditionalAdapterError::AmountMismatch => Self::BindingMismatch,
+            ConditionalAdapterError::Adapter(error) => Self::Adapter(error),
+        }
+    }
+}
 
 /// A short hex prefix of a 32-byte identity, for error messages.
 fn hex_short(b: &[u8; 32]) -> String {
@@ -1208,16 +1226,10 @@ impl ObservedLock {
     /// its request carries `consensus_verified = false` and
     /// `bridge_mint_against_lock` refuses it with `TrustTooLow`.
     ///
-    /// Two teeth run BEFORE the adapter:
-    /// 1. **The destination-federation check** (the named caller responsibility the
-    ///    chain-agnostic adapter does not perform): a `binding` whose
-    ///    `destination_federation` is not `this_federation` is refused with
-    ///    [`AdapterWiringError::WrongDestinationFederation`] — a lock destined for
-    ///    another federation is never credited here.
-    /// 2. **The observed-lock consistency check**: the `binding` must describe the
-    ///    SAME lock (its `nullifier` and `amount` match this observation), else
-    ///    [`AdapterWiringError::BindingMismatch`] — a caller cannot pair one lock's
-    ///    trust dial with an unrelated binding's amount/nullifier.
+    /// The statement-bound adapter extracts one immutable binding and checks all
+    /// four authority-bearing fields before construction: destination equals
+    /// `this_federation`, while nullifier, recipient, and amount equal this
+    /// observation.  A mismatched field cannot be copied into the request.
     ///
     /// The adapter's own Nomad-law reject (an all-zero binding) surfaces as
     /// [`AdapterWiringError::Adapter`]. `actor` holds the mirror mint-cap and
@@ -1230,28 +1242,22 @@ impl ObservedLock {
         actor: CellId,
         ledger_cell: CellId,
     ) -> Result<dregg_turn::BridgeMintRequest, AdapterWiringError> {
-        // (1) THE DESTINATION-FEDERATION CHECK (the named caller responsibility).
-        if binding.destination_federation != this_federation {
-            return Err(AdapterWiringError::WrongDestinationFederation {
-                expected: this_federation,
-                found: binding.destination_federation,
-            });
-        }
-        // (2) the binding must describe the SAME lock this relayer observed.
-        if binding.nullifier != self.nullifier.0 || binding.amount != self.amount {
-            return Err(AdapterWiringError::BindingMismatch);
-        }
-        // (3) drive the UNIFIED InterchainAdapter path. `consensus_verified` comes
-        //     solely from TrustRung::reached_consensus() of this lock's dial — the
-        //     rung mapping is the adapter's, not re-implemented here — so a
-        //     StructureOnly observation CANNOT set it true.
         let att = ChainAttestation {
             binding,
             dial: self.trust,
         };
-        DialAdapter::<LockProofTrust>::new()
-            .into_mint_request(&att, actor, ledger_cell, self.recipient)
-            .map_err(AdapterWiringError::Adapter)
+        ConditionalInterchainAdapter::new(DialAdapter::<LockProofTrust>::new(), this_federation)
+            .into_mint_request(
+                &att,
+                actor,
+                ledger_cell,
+                ExpectedCredit {
+                    nullifier: self.nullifier.0,
+                    recipient: self.recipient,
+                    amount: self.amount,
+                },
+            )
+            .map_err(AdapterWiringError::from)
     }
 }
 

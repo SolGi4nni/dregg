@@ -1,0 +1,83 @@
+DREG guarded-witness CakeML pipeline evidence
+Date: 2026-07-22
+Host: Darwin 25.5.0 arm64
+Poly/ML: 5.9.2 Release (v5.9.2-279-gc27c2953)
+HOL4: 2faefbd579453cb5d41f840debaa106d431bcd63
+CakeML: ac654a0a33de8eef7b85de46d951b9df344d8076
+
+LEAN SOURCE/DESCRIPTOR GATE
+  cd metatheory
+  lake env lean Dregg2/Logic/FiniteLogicDescriptorIR2.lean
+  RESULT: #assert_all_clean: 17 keystones pinned kernel-clean
+
+HOL4 + CAKEML + VERIFIED ARM8 COMPILATION
+  cd tools/direct-logic-cakeml/native-witness/hol4
+  DREGG_CAKEMLDIR=/Users/ember/dev/CakeML \
+    /Users/ember/dev/HOL/bin/Holmake --holdir /Users/ember/dev/HOL \
+      DirectLogicWitnessAuditTheory.uo
+  RESULT: all theories built; direct_logic_witness_compiled_arm8 saved;
+          fresh audit theory built.
+
+FRESH KERNEL-TAG / AXIOM AUDIT
+  check_witness_bundle_sound
+    oracles = [DISK_THM]
+    axiomdeps = []
+  check_witness_bytes_sound
+    oracles = [DISK_THM]
+    axiomdeps = []
+  canonical_witness_policy_accepts
+    oracles = [DISK_THM]
+    axiomdeps = []
+  false_witness_policy_rejects
+    oracles = [DISK_THM]
+    axiomdeps = []
+  canonical_witness_policy_tamper_rejects
+    oracles = [DISK_THM]
+    axiomdeps = []
+  check_witness_bytes_v_thm
+    oracles = [DISK_THM]
+    axiomdeps = []
+  direct_logic_witness_compiled_arm8
+    oracles = [DISK_THM]
+    axiomdeps = []
+  THEORY AXIOMS: DirectLogicWitnessChecker = 0
+  THEORY AXIOMS: DirectLogicWitnessCheckerProg = 0
+  THEORY AXIOMS: DirectLogicWitnessCompileArm8 = 0
+
+  DISK_THM is HOL4's normal tag for a theorem reloaded from an exported
+  theory. The audit process declared no custom oracle and found no axiom
+  dependency.
+
+INDEPENDENT STANDARD ML CASE VALIDATION
+  cd tools/direct-logic-cakeml/native-witness
+  poly --script test_witness_checker.sml
+  RESULT: exhaustive 8 rows + 12 hostile/golden checks passed
+
+NATIVE CAKEML EXECUTION
+  Assembly: CakeML arm8 assembly source, 635543 bytes
+    SHA-256 bc794f01fb146f3698f96b0ed7265abcd10d14db436508105e3f847c4e8f7aee
+  Executable: Mach-O 64-bit arm64, 216544 bytes
+    SHA-256 664d766ef6711c5ddd63c0e27a46459d316baca2e4c711c020616799721c9d4b
+
+  poly --script emit_native_fixtures.sml
+  ./test_native.sh
+  RESULT: exhaustive 8-row truth table + 7 hostile raw-byte cases passed
+
+ASSURANCE CLASSIFICATION
+  THEOREM:
+    accepted DREW bytes contain an accepted DREG-v2 certificate, exact
+    reconstructed descriptor bytes, a Boolean row of the certified width,
+    and source/target truth under that row.
+  PROOF-PRODUCING TRANSLATION:
+    check_witness_bytes_v_thm has no generated precondition.
+  VERIFIED COMPILATION:
+    direct_logic_witness_compiled_arm8 is produced by CakeML's verified arm8
+    compiler evaluation. Optional HOL theory HTML is disabled only for this
+    enormous compiler-result theory; it does not alter theorem generation.
+  CASE / TRANSLATION VALIDATION:
+    SML and native fixture results are regressions, not universal proofs.
+    The independently defined Lean/HOL descriptor emitter seam remains pinned
+    by exact-byte validation rather than a cross-kernel theorem transfer.
+  NOT YET CLAIMED:
+    no generic DescriptorIR2 witness interpreter, no generated CakeML witness
+    program, no arbitrary Lean-term extraction, and no IR-v1 CircuitEmit path.

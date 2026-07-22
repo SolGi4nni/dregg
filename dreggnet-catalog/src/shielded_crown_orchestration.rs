@@ -17,6 +17,7 @@ use dregg_persist::FinalizedFaithfulSpend;
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
 use dreggnet_offerings::{Action, OfferingHost, SessionId, SignedError, verify_signed};
 
+use crate::private_fhegg_game_consequence::PrivateFheggGamePostCommitFailure;
 use crate::{
     GameAffordance, GameAudience, GameAuthorizationPhase, GameEpochError, GameEpochLedger,
     GameSpineError, PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
@@ -120,6 +121,16 @@ pub enum ShieldedCrownOrchestrationError {
         authorization_id: [u8; 32],
         cause: PrivateFheggGameConsequenceError,
     },
+    /// The game transition committed, so every private source remains burned
+    /// and the caller must not retry. The optional journal error means the
+    /// replay-blocking `Reserved` marker could not be promoted to `Consumed`;
+    /// both phases still reject reuse.
+    CommittedButReceiptUnavailable {
+        authorization_id: [u8; 32],
+        game_receipt_id: [u8; 32],
+        cause: PrivateFheggGamePostCommitFailure,
+        journal_failure: Option<GameEpochError>,
+    },
     /// The game receipt landed, while the final `Consumed` promotion failed.
     /// The preceding `Reserved` record remains the fail-closed source of truth.
     LandedAwaitingDurability {
@@ -161,6 +172,18 @@ impl std::fmt::Debug for ShieldedCrownOrchestrationError {
                 .field("authorization_id", authorization_id)
                 .field("cause", cause)
                 .finish(),
+            Self::CommittedButReceiptUnavailable {
+                authorization_id,
+                game_receipt_id,
+                cause,
+                journal_failure,
+            } => f
+                .debug_struct("CommittedButReceiptUnavailable")
+                .field("authorization_id", authorization_id)
+                .field("game_receipt_id", game_receipt_id)
+                .field("cause", cause)
+                .field("journal_failure", journal_failure)
+                .finish(),
             Self::LandedAwaitingDurability { receipt, cause } => f
                 .debug_struct("LandedAwaitingDurability")
                 .field("authorization_id", &receipt.authorization_id)
@@ -191,6 +214,20 @@ impl std::fmt::Display for ShieldedCrownOrchestrationError {
             }
             Self::ExecutionSealed { cause, .. } => {
                 write!(f, "sealed private source use could not execute: {cause}")
+            }
+            Self::CommittedButReceiptUnavailable {
+                cause,
+                journal_failure,
+                ..
+            } => {
+                write!(
+                    f,
+                    "crown action committed but its receipt/publication failed; do not retry: {cause}"
+                )?;
+                if let Some(error) = journal_failure {
+                    write!(f, "; consumed-marker promotion also failed: {error}")?;
+                }
+                Ok(())
             }
             Self::LandedAwaitingDurability { cause, .. } => write!(
                 f,
@@ -271,6 +308,35 @@ where
         crate::GameActionRef,
         Action,
     ) -> Result<PrivateFheggGameConsequenceGate, PrivateFheggGameConsequenceError>,
+{
+    execute_shielded_crown_with_factory_and_dispatch(
+        host,
+        epoch_ledger,
+        winner_route,
+        request,
+        make_gate,
+        |gate, host, signed_action| gate.execute_signed(host, signed_action),
+    )
+}
+
+fn execute_shielded_crown_with_factory_and_dispatch<F, D>(
+    host: &mut OfferingHost,
+    epoch_ledger: &GameEpochLedger,
+    winner_route: &PrivateFheggWinnerRoute,
+    request: ShieldedCrownAction,
+    make_gate: F,
+    dispatch: D,
+) -> Result<PrivateFheggGameConsequenceReceipt, ShieldedCrownOrchestrationError>
+where
+    F: FnOnce(
+        crate::GameActionRef,
+        Action,
+    ) -> Result<PrivateFheggGameConsequenceGate, PrivateFheggGameConsequenceError>,
+    D: FnOnce(
+        &mut PrivateFheggGameConsequenceGate,
+        &mut OfferingHost,
+        SignedGameAction,
+    ) -> Result<PrivateFheggGameConsequenceReceipt, PrivateFheggGameConsequenceError>,
 {
     let bound_session = epoch_ledger.bound_session(DUNGEON_KEY, &request.session)?;
     let generation = epoch_ledger.current_generation(DUNGEON_KEY, &request.session)?;
@@ -370,12 +436,30 @@ where
         );
     }
 
-    let receipt = gate
-        .execute_signed(host, request.signed_action)
-        .map_err(|cause| ShieldedCrownOrchestrationError::ExecutionSealed {
+    let receipt = match dispatch(&mut gate, host, request.signed_action) {
+        Ok(receipt) => receipt,
+        Err(PrivateFheggGameConsequenceError::CommittedButReceiptUnavailable {
             authorization_id,
+            game_receipt_id,
             cause,
-        })?;
+        }) => {
+            let journal_failure = epoch_ledger.consume_authorizations(&source_use_ids).err();
+            return Err(
+                ShieldedCrownOrchestrationError::CommittedButReceiptUnavailable {
+                    authorization_id,
+                    game_receipt_id,
+                    cause,
+                    journal_failure,
+                },
+            );
+        }
+        Err(cause) => {
+            return Err(ShieldedCrownOrchestrationError::ExecutionSealed {
+                authorization_id,
+                cause,
+            });
+        }
+    };
     if let Err(cause) = epoch_ledger.consume_authorizations(&source_use_ids) {
         return Err(ShieldedCrownOrchestrationError::LandedAwaitingDurability { receipt, cause });
     }
@@ -903,5 +987,99 @@ mod tests {
             Some(GameAuthorizationPhase::Reserved)
         );
         assert_eq!(host.verify("dungeon", &session).unwrap().turns, 1);
+    }
+
+    #[test]
+    fn postcommit_publication_failure_is_reported_committed_and_consumes_every_source() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let incarnation = GameHostIncarnation::new([0x93; 32]).unwrap();
+        let ledger = GameEpochLedger::in_memory(incarnation);
+        let session = SessionId::new("shielded-crown:postcommit-publication");
+        let mut host = dungeon_host(&session);
+        ledger.bind_after_ensure("dungeon", &session, true).unwrap();
+        advance_to_hall(&mut host, &ledger, &session);
+        let signer = TurnSigner::from_seed([0x54; 32]);
+        let policy = fixture_policy(&signer);
+        let request = ShieldedCrownAction {
+            session: session.clone(),
+            hand: ShieldedCrownHand::Blue,
+            signed_action: signed_crown_command(
+                &host,
+                &ledger,
+                &signer,
+                &session,
+                ShieldedCrownHand::Blue,
+                0,
+            ),
+        };
+        let captured_source_use_ids = Rc::new(RefCell::new(Vec::new()));
+        let ids_from_factory = Rc::clone(&captured_source_use_ids);
+
+        let error = execute_shielded_crown_with_factory_and_dispatch(
+            &mut host,
+            &ledger,
+            policy.winner_route(),
+            request,
+            |reference, action| {
+                let gate = PrivateFheggGameConsequenceGate::fixture_shielded_crown(
+                    policy.winner_route.clone(),
+                    &ledger,
+                    reference,
+                    action,
+                )?;
+                *ids_from_factory.borrow_mut() = gate.source_use_ids();
+                Ok(gate)
+            },
+            |gate, host, signed_action| {
+                gate.execute_signed_with_forced_publication_failure(host, signed_action)
+            },
+        )
+        .expect_err("the hostile publication seam fails after the real turn lands");
+
+        let (authorization_id, game_receipt_id, journal_failure) = match &error {
+            ShieldedCrownOrchestrationError::CommittedButReceiptUnavailable {
+                authorization_id,
+                game_receipt_id,
+                cause: PrivateFheggGamePostCommitFailure::GamePublication(_),
+                journal_failure,
+                ..
+            } => (*authorization_id, *game_receipt_id, journal_failure),
+            other => panic!("postcommit failure was misreported as {other:?}"),
+        };
+        assert!(journal_failure.is_none());
+        assert_ne!(game_receipt_id, [0; 32]);
+        assert_eq!(host.verify("dungeon", &session).unwrap().turns, 2);
+        assert_eq!(captured_source_use_ids.borrow().len(), 3);
+        for source_use_id in captured_source_use_ids.borrow().iter().copied() {
+            assert_eq!(
+                ledger.authorization_phase(source_use_id).unwrap(),
+                Some(GameAuthorizationPhase::Consumed)
+            );
+        }
+        let message = error.to_string();
+        assert!(message.contains("committed"));
+        assert!(message.contains("do not retry"));
+        assert!(!message.contains("could not execute"));
+
+        let replay = attempt_fixture_source_reuse(
+            &mut host,
+            &ledger,
+            &policy,
+            &signer,
+            "shielded-crown:postcommit-replay",
+            ShieldedCrownHand::Red,
+            0,
+            0,
+        );
+        assert!(matches!(
+            replay,
+            ShieldedCrownOrchestrationError::AuthorizationAlreadyRecorded {
+                authorization_id: replayed_id,
+                phase: GameAuthorizationPhase::Consumed,
+                ..
+            } if replayed_id == authorization_id
+        ));
     }
 }

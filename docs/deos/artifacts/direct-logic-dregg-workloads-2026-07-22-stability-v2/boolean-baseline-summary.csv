@@ -1,0 +1,9 @@
+case,samples,iterations_per_sample,median_ns_per_eval,p10_ns_per_eval,p90_ns_per_eval,scope
+admission-optimized,25,10000000,1.060182,1.050186,1.069820,native_boolean_after_atoms_no_proof
+admission-source,25,10000000,1.217057,1.209769,1.227717,native_boolean_after_atoms_no_proof
+clearance-optimized,25,10000000,0.615172,0.610787,0.625677,native_boolean_after_atoms_no_proof
+clearance-source,25,10000000,0.616993,0.609554,0.631797,native_boolean_after_atoms_no_proof
+strand-optimized,25,10000000,0.383497,0.379740,0.396931,native_boolean_after_atoms_no_proof
+strand-source,25,10000000,0.381814,0.380570,0.386822,native_boolean_after_atoms_no_proof
+upgrade-optimized,25,10000000,0.909863,0.908177,0.922497,native_boolean_after_atoms_no_proof
+upgrade-source,25,10000000,0.654752,0.652509,0.659052,native_boolean_after_atoms_no_proof

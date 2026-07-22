@@ -1623,6 +1623,27 @@ pub enum RefusalReason {
     Custom { reason_hash: [u8; 32] },
 }
 
+/// Canonical 32-byte value written to the protocol-reserved refusal audit field.  Keeping this
+/// derivation beside [`RefusalReason`] makes the executor, rotation witness, SDK producer, and
+/// verifier consume one typed object rather than four hand-copied hash transcripts.
+pub fn refusal_audit_commitment(
+    offered_action_commitment: &[u8; 32],
+    refusal_reason: &RefusalReason,
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new_derive_key("dregg-refusal-audit-v1");
+    h.update(offered_action_commitment);
+    match refusal_reason {
+        RefusalReason::Declined => h.update(&[0u8]),
+        RefusalReason::NoAuthority => h.update(&[1u8]),
+        RefusalReason::WindowExpired => h.update(&[2u8]),
+        RefusalReason::Custom { reason_hash } => {
+            h.update(&[3u8]);
+            h.update(reason_hash)
+        }
+    };
+    *h.finalize().as_bytes()
+}
+
 /// An event emitted by an action.
 ///
 /// Events are logged in the receipt but do not modify ledger state.

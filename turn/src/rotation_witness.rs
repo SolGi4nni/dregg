@@ -1372,18 +1372,8 @@ pub fn apply_effect_to_cell(
             ..
         } if target == cell_id => {
             let _ = cell.state.increment_nonce();
-            let mut h = blake3::Hasher::new_derive_key("dregg-refusal-audit-v1");
-            h.update(offered_action_commitment);
-            match refusal_reason {
-                crate::action::RefusalReason::Declined => h.update(&[0u8]),
-                crate::action::RefusalReason::NoAuthority => h.update(&[1u8]),
-                crate::action::RefusalReason::WindowExpired => h.update(&[2u8]),
-                crate::action::RefusalReason::Custom { reason_hash } => {
-                    h.update(&[3u8]);
-                    h.update(reason_hash)
-                }
-            };
-            let audit = *h.finalize().as_bytes();
+            let audit =
+                crate::action::refusal_audit_commitment(offered_action_commitment, refusal_reason);
             cell.state
                 .set_field_ext(dregg_cell::state::REFUSAL_AUDIT_EXT_KEY, audit);
         }

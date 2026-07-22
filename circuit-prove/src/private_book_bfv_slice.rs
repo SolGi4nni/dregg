@@ -52,7 +52,7 @@ const REDUCTION_BIT_BASE: usize = 263;
 const PK_BASE: usize = 270;
 const PK_SLACK_BASE: usize = 273;
 const PK_CAN_CARRY_BASE: usize = 276;
-const ACC_BEFORE_BASE: usize = 278;
+pub(crate) const ACC_BEFORE_BASE: usize = 278;
 const ACC_AFTER_BASE: usize = 281;
 const ACC_SLACK_BASE: usize = 284;
 const ACC_CAN_CARRY_BASE: usize = 287;
@@ -64,7 +64,7 @@ const PK_SLACK_BIT_BASE: usize = 353;
 const ACC_AFTER_BIT_BASE: usize = 398;
 const ACC_SLACK_BIT_BASE: usize = 443;
 const ARITH_CARRY_BIT_BASE: usize = 488;
-const TRACE_WIDTH: usize = 515;
+pub(crate) const TRACE_WIDTH: usize = 515;
 
 #[inline]
 const fn qty_sel(order: usize, qty: usize) -> usize {
@@ -77,7 +77,7 @@ const fn limb_col(base: usize, limb: usize) -> usize {
 }
 
 #[inline]
-fn split_15(mut value: u64) -> [u32; 3] {
+pub(crate) fn split_15(mut value: u64) -> [u32; 3] {
     core::array::from_fn(|_| {
         let limb = (value & 0x7fff) as u32;
         value >>= 15;
@@ -147,7 +147,7 @@ pub struct PrivateBookBfvSlicePublic {
 }
 
 impl PrivateBookBfvSlicePublic {
-    fn as_felts(self) -> Result<[BabyBear; 23], String> {
+    pub(crate) fn as_felts(self) -> Result<[BabyBear; 23], String> {
         if self.book.session >= BABYBEAR_P
             || self.book.rule != RULE_ID
             || self.book.p_star as usize >= PRICE_COUNT
@@ -262,7 +262,7 @@ pub fn public_key_root(coefficients: &[u64]) -> Result<[u32; DIGEST_WIDTH], Stri
     Ok(root.map(BabyBear::as_u32))
 }
 
-fn build_trace(
+pub(crate) fn build_trace(
     session: u32,
     book: &PrivateBookWitness,
     opening: &PrivateBookBfvSliceOpening,

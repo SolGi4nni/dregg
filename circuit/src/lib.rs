@@ -303,6 +303,7 @@ pub mod effect_vm;
 /// `EffectVmDescriptor` JSON, keyed by selector index, with an anti-drift
 /// fingerprint guard. Foundation for the EffectVM circuit cutover.
 pub mod effect_vm_descriptors;
+pub mod exact_cap_root;
 #[allow(deprecated)]
 pub mod garbled;
 /// THE HEAP's canonical, openable commitment (REFINEMENT-DESIGN Decision 1):

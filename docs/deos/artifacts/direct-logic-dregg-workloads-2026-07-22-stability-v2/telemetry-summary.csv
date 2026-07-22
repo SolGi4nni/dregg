@@ -1,0 +1,8 @@
+session,telemetry_seconds,load1_min,load1_max,runnable_max,cpuset,rayon_threads
+session-01,27,5.95,8.32,13,22-23,2
+session-02,27,2.97,3.92,6,22-23,2
+session-03,27,2.97,4.01,14,22-23,2
+session-04,33,4.57,7.73,27,22-23,2
+session-05,28,7.65,10.06,39,22-23,2
+session-06,27,5.07,6.82,6,22-23,2
+session-07,30,4.97,6.89,21,22-23,2

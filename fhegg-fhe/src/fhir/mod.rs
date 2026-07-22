@@ -82,6 +82,9 @@ pub mod logic_schedule;
 /// Explicit, priced encrypted bounded-product and n-of-n threshold-opening
 /// strategies for the zero-observation boundary `logic_schedule` leaves out.
 pub mod logic_zero_observation;
+/// Exact bound-eight zero conversion exploiting symmetric roots and shared
+/// powers: three ciphertext multiplications instead of the generic seven.
+pub mod logic_zero_observation_symmetric;
 /// Executable active box projection over party-owned additive shares.
 /// This is the first fhIR prox product whose clamp may actually bind.
 pub mod private_box;

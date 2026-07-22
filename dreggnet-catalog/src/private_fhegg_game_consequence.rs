@@ -730,17 +730,33 @@ impl PrivateFheggGameConsequenceGate {
         (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
         PrivateFheggGameConsequenceError,
     > {
-        self.execute_signed_outputs(host, signed_action)
+        self.execute_signed_outputs(host, signed_action, project_public_game_receipt)
     }
 
-    fn execute_signed_outputs(
+    #[cfg(test)]
+    pub(crate) fn execute_signed_with_forced_publication_failure(
         &mut self,
         host: &mut OfferingHost,
         signed_action: SignedGameAction,
+    ) -> Result<PrivateFheggGameConsequenceReceipt, PrivateFheggGameConsequenceError> {
+        self.execute_signed_outputs(host, signed_action, |_receipt| {
+            Err(GamePublicationError::InvalidPublicationBinding)
+        })
+        .map(|(receipt, _public)| receipt)
+    }
+
+    fn execute_signed_outputs<P>(
+        &mut self,
+        host: &mut OfferingHost,
+        signed_action: SignedGameAction,
+        project_public: P,
     ) -> Result<
         (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
         PrivateFheggGameConsequenceError,
-    > {
+    >
+    where
+        P: FnOnce(&GameReceipt) -> Result<PublicGameReceipt, GamePublicationError>,
+    {
         if self.consumed {
             return Err(PrivateFheggGameConsequenceError::AlreadyConsumed);
         }
@@ -801,14 +817,20 @@ impl PrivateFheggGameConsequenceGate {
                 ..
             } => (action, attribution, *inner_receipt_id, *ended),
             GameReceipt::Operation { .. } => {
-                return Err(PrivateFheggGameConsequenceError::InvalidGameReceipt(
-                    "signed consequence returned an operation receipt",
+                return Err(self.committed_failure(
+                    &receipt,
+                    PrivateFheggGamePostCommitFailure::InvalidGameReceipt(
+                        "signed consequence returned an operation receipt",
+                    ),
                 ));
             }
         };
         if action != &self.target_reference || !receipt.routing_binding_valid() {
-            return Err(PrivateFheggGameConsequenceError::InvalidGameReceipt(
-                "game receipt does not bind the exact target action",
+            return Err(self.committed_failure(
+                &receipt,
+                PrivateFheggGamePostCommitFailure::InvalidGameReceipt(
+                    "game receipt does not bind the exact target action",
+                ),
             ));
         }
         if attribution
@@ -816,8 +838,11 @@ impl PrivateFheggGameConsequenceGate {
                 pubkey_hex: self.winner_route.game_signer_pubkey_hex.clone(),
             })
         {
-            return Err(PrivateFheggGameConsequenceError::InvalidGameReceipt(
-                "game receipt lost the deployment-pinned signed attribution",
+            return Err(self.committed_failure(
+                &receipt,
+                PrivateFheggGamePostCommitFailure::InvalidGameReceipt(
+                    "game receipt lost the deployment-pinned signed attribution",
+                ),
             ));
         }
         let game_receipt_id = receipt.receipt_id();
@@ -862,9 +887,27 @@ impl PrivateFheggGameConsequenceGate {
             inner_game_receipt_id: inner_receipt_id,
             ended,
         };
-        let public = project_public_game_receipt(&receipt)?;
+        let public = project_public(&receipt).map_err(|error| {
+            self.committed_failure(
+                &receipt,
+                PrivateFheggGamePostCommitFailure::GamePublication(error.to_string()),
+            )
+        })?;
         debug_assert!(public.binding_verifies());
         Ok((consequence, public))
+    }
+
+    fn committed_failure(
+        &self,
+        receipt: &GameReceipt,
+        cause: PrivateFheggGamePostCommitFailure,
+    ) -> PrivateFheggGameConsequenceError {
+        debug_assert!(self.consumed);
+        PrivateFheggGameConsequenceError::CommittedButReceiptUnavailable {
+            authorization_id: self.authorization_id,
+            game_receipt_id: receipt.receipt_id(),
+            cause,
+        }
     }
 }
 
@@ -981,10 +1024,33 @@ pub enum PrivateFheggGameConsequenceError {
     AlreadyConsumed,
     RestoreIdMismatch,
     GameRefused(String),
-    InvalidGameReceipt(&'static str),
     EpochCustody(String),
     GameSpine(String),
+    /// The target executor committed and the one-shot gate was consumed, but
+    /// the landed receipt could not be converted into the required consequence
+    /// and publication objects. This is an audit/reconciliation result, never
+    /// a refusal and never retryable.
+    CommittedButReceiptUnavailable {
+        authorization_id: [u8; 32],
+        game_receipt_id: [u8; 32],
+        cause: PrivateFheggGamePostCommitFailure,
+    },
+}
+
+/// Internal invariant which failed only after the game executor committed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrivateFheggGamePostCommitFailure {
+    InvalidGameReceipt(&'static str),
     GamePublication(String),
+}
+
+impl std::fmt::Display for PrivateFheggGamePostCommitFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidGameReceipt(reason) => write!(f, "invalid landed game receipt: {reason}"),
+            Self::GamePublication(reason) => write!(f, "game publication failed: {reason}"),
+        }
+    }
 }
 
 impl From<GameEpochError> for PrivateFheggGameConsequenceError {
@@ -999,15 +1065,15 @@ impl From<GameSpineError> for PrivateFheggGameConsequenceError {
     }
 }
 
-impl From<GamePublicationError> for PrivateFheggGameConsequenceError {
-    fn from(error: GamePublicationError) -> Self {
-        Self::GamePublication(error.to_string())
-    }
-}
-
 impl std::fmt::Display for PrivateFheggGameConsequenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "private fhEgg game consequence refused: {self:?}")
+        match self {
+            Self::CommittedButReceiptUnavailable { cause, .. } => write!(
+                f,
+                "private fhEgg game consequence committed but its receipt/publication failed; do not retry: {cause}"
+            ),
+            _ => write!(f, "private fhEgg game consequence refused: {self:?}"),
+        }
     }
 }
 

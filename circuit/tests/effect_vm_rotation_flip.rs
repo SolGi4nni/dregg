@@ -736,7 +736,8 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
             || {
                 let mut t = trace.clone();
                 for row in t.iter_mut() {
-                    row[AB + B_NULLIFIER_ROOT] = row[AB + B_NULLIFIER_ROOT] + bump; // a set the kernel never grew
+                    row[AB + B_NULLIFIER_ROOT] = row[AB + B_NULLIFIER_ROOT] + bump;
+                    // a set the kernel never grew
                 }
                 // re-derive the NEW commit PI from the (self-consistently re-filled) forged trace.
                 // (the generator already re-fills the chain in-place via recompute_block_commit on a
@@ -2905,15 +2906,13 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         let mut refusal_map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
         let (trace, dpis) = if expect_name == "refusalVmDescriptor2R24" {
             let before_leaves =
-                dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
-            let audit_value = dregg_circuit::cap_root::fold_bytes32(
-                &after_cell
-                    .state
-                    .fields_map
-                    .get(&AUDIT_KEY)
-                    .copied()
-                    .expect("the refused after-cell carries the audit slot"),
-            );
+                dregg_cell::state::exact_fields_root_leaves(&before_cell.state.fields_map);
+            let audit_value = after_cell
+                .state
+                .fields_map
+                .get(&AUDIT_KEY)
+                .copied()
+                .expect("the refused after-cell carries the audit slot");
             let (t, d, mh) = generate_rotated_refusal_trace_with_fields_tree(
                 &st,
                 &effects,
@@ -3168,7 +3167,8 @@ fn note_create_pins_commitments_and_refuses_tamper() {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut t = trace.clone();
             for row in t.iter_mut() {
-                row[AFTER_BASE + B_COMMITMENTS_ROOT] = row[AFTER_BASE + B_COMMITMENTS_ROOT] + bump; // a commitments-set the kernel never grew
+                row[AFTER_BASE + B_COMMITMENTS_ROOT] = row[AFTER_BASE + B_COMMITMENTS_ROOT] + bump;
+                // a commitments-set the kernel never grew
             }
             let mut p = dpis.clone();
             recompute_after_blocks_for_test(&mut t);

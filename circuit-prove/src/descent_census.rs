@@ -700,9 +700,19 @@ mod tests {
             canonical_vk_hash_for_descriptor(&canonical).unwrap(),
             canonical_vk_hash_for_descriptor(&alternate).unwrap()
         );
+        let typed_recipe = vk_recipe_for_descriptor(&canonical).unwrap();
+        typed_recipe
+            .require_exact_descriptor(&canonical)
+            .expect("strict typed program bytes recover the exact recursion descriptor");
 
         let mut typed_mutation = canonical.clone();
         typed_mutation.trace_width += 1;
+        assert!(
+            typed_recipe
+                .require_exact_descriptor(&typed_mutation)
+                .is_err(),
+            "strict typed program bytes must refuse a different recursion descriptor"
+        );
         assert_ne!(
             air_fingerprint_for_descriptor(&canonical).unwrap(),
             air_fingerprint_for_descriptor(&typed_mutation).unwrap()

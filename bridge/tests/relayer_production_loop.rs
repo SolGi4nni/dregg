@@ -194,14 +194,19 @@ fn consensus_for(
 
 /// A `PortableActionBinding` for the observed lock, addressed to `destination`.
 ///
-/// The adapter's `into_mint_request` decision + the relayer's destination check read
-/// only the plaintext limbs (nullifier / amount / destination), so an empty
-/// `proof_bytes` is a faithful fixture (as in `interchain_adapter`'s own unit tests)
-/// — we do not run the STARK prover here.
-fn binding_for(nullifier: [u8; 32], amount: u64, destination: [u8; 32]) -> PortableActionBinding {
+/// The statement-bound adapter reads the plaintext nullifier, recipient, amount,
+/// and destination.  An empty `proof_bytes` is a focused fixture for this
+/// production-loop wiring test; proof verification lives in the action-binding
+/// suite.
+fn binding_for(
+    nullifier: [u8; 32],
+    recipient: CellId,
+    amount: u64,
+    destination: [u8; 32],
+) -> PortableActionBinding {
     PortableActionBinding {
         nullifier,
-        recipient: [0x33u8; 32],
+        recipient: recipient.0,
         destination_federation: destination,
         amount,
         proof_bytes: Vec::new(),
@@ -211,7 +216,14 @@ fn binding_for(nullifier: [u8; 32], amount: u64, destination: [u8; 32]) -> Porta
 /// A binding lookup addressing every observed lock to `destination` (the relayed
 /// cross-chain message the feed pairs with each lock).
 fn bindings_to(destination: [u8; 32]) -> impl Fn(&ObservedLock) -> Option<PortableActionBinding> {
-    move |lock: &ObservedLock| Some(binding_for(lock.nullifier.0, lock.amount, destination))
+    move |lock: &ObservedLock| {
+        Some(binding_for(
+            lock.nullifier.0,
+            lock.recipient,
+            lock.amount,
+            destination,
+        ))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

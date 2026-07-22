@@ -132,6 +132,11 @@ pub mod verifier;
 /// `TurnExecutor::bridge_mint_against_lock` gate.
 pub mod interchain_adapter;
 
+/// Statement-bound wrapper for interchain adapters: destination, nullifier,
+/// recipient, and amount must match the local observed credit before a mint
+/// request can be assembled.
+pub mod conditional_interchain_adapter;
+
 #[cfg(test)]
 mod tests;
 
@@ -140,6 +145,9 @@ pub use action_binding::{
     ActionBindingError, PortableActionBinding, create_action_binding, verify_action_binding,
 };
 pub use authorize::{AuthError, authorize_with_trace};
+pub use conditional_interchain_adapter::{
+    ConditionalAdapterError, ConditionalInterchainAdapter, ExpectedCredit,
+};
 pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
 pub use ethereum_relayer::{

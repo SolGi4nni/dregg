@@ -7,9 +7,14 @@
 //!
 //! This module provides verification functions that check:
 //! - Hash continuity: each receipt points to the previous one
-//! - State continuity: each receipt's pre_state_hash matches the prior's post_state_hash
 //! - Agent consistency: all receipts in a chain belong to the same agent
 //! - Genesis validity: the first receipt has `previous_receipt_hash = None`
+//!
+//! `pre_state_hash` and `post_state_hash` are authenticated snapshots, not a
+//! second causal link. They include executor-global context roots, so another
+//! agent's intervening turn can legitimately make the next receipt's pre-state
+//! differ from this agent's prior post-state. Per-agent causality is carried by
+//! `previous_receipt_hash`; the executor signature authenticates each snapshot.
 
 use dregg_cell::CellId;
 use ed25519_dalek;
@@ -40,8 +45,14 @@ pub enum VerifyError {
         actual: [u8; 32],
     },
 
-    /// A receipt's `pre_state_hash` does not match the prior receipt's `post_state_hash`.
-    /// This means there's a gap in the state transitions.
+    /// A receipt's state commitment does not match an independently supplied
+    /// expected commitment.
+    ///
+    /// This remains the typed error used by head-binding callers (for example,
+    /// the federation exit verifier). It is deliberately NOT emitted merely
+    /// because two adjacent receipts for one agent have different post/pre
+    /// commitments: an intervening turn by another agent may have advanced the
+    /// executor-global roots committed into those snapshots.
     StateChainBreak {
         /// Index of the receipt with the mismatch (1-indexed into the chain).
         index: usize,
@@ -73,7 +84,7 @@ pub enum VerifyError {
     ///
     /// **The adversary this stops:** one who takes a valid, executor-signed
     /// chain and simply *deletes* the signatures. Every structural check —
-    /// genesis, hash-linking, state continuity, agent consistency — still
+    /// genesis, hash-linking, agent consistency — still
     /// passes, because none of them involve the executor. Distinct from
     /// [`Self::ExecutorSignatureInvalid`] on purpose: a forged signature is
     /// an attacker who tried and failed, an absent one is an attacker
@@ -131,9 +142,15 @@ impl std::error::Error for VerifyError {}
 /// 2. The first receipt has `previous_receipt_hash == None` (genesis).
 /// 3. Each subsequent receipt's `previous_receipt_hash` matches the BLAKE3 hash
 ///    of the previous receipt.
-/// 4. Each subsequent receipt's `pre_state_hash` matches the prior receipt's
-///    `post_state_hash` (state continuity).
-/// 5. All receipts in the chain belong to the same agent.
+/// 4. All receipts in the chain belong to the same agent.
+///
+/// This intentionally does NOT require
+/// `receipts[i].pre_state_hash == receipts[i - 1].post_state_hash`. The chain is
+/// agent-scoped, while each state commitment includes executor-global context
+/// roots (such as shielded-note accumulators). A different agent may advance
+/// those roots between two receipts in this projection. The hash pointer is the
+/// per-agent causal link; use [`verify_receipt_chain_strict`] when the snapshots
+/// also need executor authentication.
 ///
 /// This function does NOT verify that the turns themselves were valid (that was the
 /// executor's job at commit time). It only verifies the chain structure is intact.
@@ -185,15 +202,6 @@ pub fn verify_receipt_chain(receipts: &[TurnReceipt]) -> Result<(), VerifyError>
                 });
             }
         }
-
-        // Check state continuity.
-        if curr.pre_state_hash != prev.post_state_hash {
-            return Err(VerifyError::StateChainBreak {
-                index: i,
-                expected_pre_state: prev.post_state_hash,
-                actual_pre_state: curr.pre_state_hash,
-            });
-        }
     }
 
     Ok(())
@@ -201,8 +209,9 @@ pub fn verify_receipt_chain(receipts: &[TurnReceipt]) -> Result<(), VerifyError>
 
 /// Verify a receipt chain and return the final state commitment.
 ///
-/// On success, returns the `post_state_hash` of the last receipt in the chain.
-/// This is the current state commitment that the chain proves.
+/// On success, returns the `post_state_hash` claimed by the last receipt in the
+/// chain. Structural verification alone does not authenticate that claim; an
+/// untrusted chain should first pass [`verify_receipt_chain_strict`].
 pub fn verify_receipt_chain_head(receipts: &[TurnReceipt]) -> Result<[u8; 32], VerifyError> {
     verify_receipt_chain(receipts)?;
     Ok(receipts.last().unwrap().post_state_hash)
@@ -243,15 +252,6 @@ pub fn verify_receipt_extends(
                 actual: [0u8; 32],
             });
         }
-    }
-
-    // Check state continuity.
-    if next.pre_state_hash != previous.post_state_hash {
-        return Err(VerifyError::StateChainBreak {
-            index: 1,
-            expected_pre_state: previous.post_state_hash,
-            actual_pre_state: next.pre_state_hash,
-        });
     }
 
     Ok(())
@@ -376,7 +376,7 @@ fn verify_chain_signatures(
 /// Verify a receipt's Ed25519 executor signature IN ISOLATION.
 ///
 /// Unlike [`verify_receipt_chain_with_optional_keys`], this performs NO genesis /
-/// `previous_receipt_hash` / hash-chain / state-continuity checks. It answers
+/// `previous_receipt_hash` / hash-chain checks. It answers
 /// exactly one question: does this receipt carry a genuine executor signature
 /// over its canonical executor-signed message that verifies against one of
 /// `executor_pubkeys`?
@@ -550,21 +550,55 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_state_chain_break() {
+    fn per_agent_chain_accepts_an_intervening_global_context_change() {
         let agent = CellId::from_bytes([1u8; 32]);
-        let mut chain = build_valid_chain(agent, 3);
+        let bob = CellId::from_bytes([2u8; 32]);
+        let signing_seed = [0x42u8; 32];
+        let pk = ed25519_dalek::SigningKey::from_bytes(&signing_seed)
+            .verifying_key()
+            .to_bytes();
 
-        // Corrupt the third receipt's pre_state_hash so it doesn't match
-        // the second receipt's post_state_hash.
-        chain[2].pre_state_hash = [0xFF; 32];
-        // Fix the hash chain link to still be valid.
-        chain[2].previous_receipt_hash = Some(chain[1].receipt_hash());
+        let mut alice_1 = make_receipt(agent, [0x10; 32], [0x11; 32], None);
+        alice_1.executor_signature = Some(sign_receipt(&alice_1, &signing_seed));
 
-        let err = verify_receipt_chain(&chain).unwrap_err();
-        match err {
-            VerifyError::StateChainBreak { index, .. } => assert_eq!(index, 2),
-            other => panic!("expected StateChainBreak, got {other:?}"),
-        }
+        // Bob's turn is present in the node-wide log but absent from Alice's
+        // projected causal chain. It advances executor-global context roots.
+        let mut bob_1 = make_receipt(bob, [0x20; 32], [0x21; 32], None);
+        bob_1.executor_signature = Some(sign_receipt(&bob_1, &signing_seed));
+
+        let mut alice_2 = make_receipt(
+            agent,
+            [0x30; 32], // global context after Bob: intentionally != Alice 1 post
+            [0x31; 32],
+            Some(alice_1.receipt_hash()),
+        );
+        alice_2.executor_signature = Some(sign_receipt(&alice_2, &signing_seed));
+
+        let global_log = [alice_1.clone(), bob_1, alice_2.clone()];
+        let alice_chain: Vec<_> = global_log
+            .iter()
+            .filter(|receipt| receipt.agent == agent)
+            .cloned()
+            .collect();
+        assert_ne!(
+            alice_chain[1].pre_state_hash,
+            alice_chain[0].post_state_hash
+        );
+        verify_receipt_chain_strict(&alice_chain, &[pk]).expect(
+            "a correctly signed per-agent chain must survive an intervening global-root change",
+        );
+        verify_receipt_extends(&alice_1, &alice_2)
+            .expect("the exact previous-receipt hash is the per-agent causal link");
+
+        // Hostile pole: a fully signed receipt that points to Bob (or any stale
+        // head) is still rejected. Relaxing snapshot equality must not relax
+        // causal continuity.
+        let mut stale = alice_2;
+        stale.previous_receipt_hash = Some(global_log[1].receipt_hash());
+        stale.executor_signature = Some(sign_receipt(&stale, &signing_seed));
+        let err = verify_receipt_chain_strict(&[alice_1, stale], &[pk])
+            .expect_err("a valid signature cannot authorize a stale/wrong predecessor");
+        assert!(matches!(err, VerifyError::HashChainBreak { index: 1, .. }));
     }
 
     #[test]
@@ -629,15 +663,14 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_receipt_extends_wrong_pre_state() {
+    fn test_verify_receipt_extends_allows_changed_global_context() {
         let agent = CellId::from_bytes([1u8; 32]);
         let chain = build_valid_chain(agent, 2);
-        let mut bad_next = chain[1].clone();
-        bad_next.pre_state_hash = [0xCC; 32];
-        // Fix the hash link.
-        bad_next.previous_receipt_hash = Some(chain[0].receipt_hash());
-        let err = verify_receipt_extends(&chain[0], &bad_next).unwrap_err();
-        assert!(matches!(err, VerifyError::StateChainBreak { .. }));
+        let mut next = chain[1].clone();
+        next.pre_state_hash = [0xCC; 32];
+        next.previous_receipt_hash = Some(chain[0].receipt_hash());
+        verify_receipt_extends(&chain[0], &next)
+            .expect("a global-root change is not a per-agent causal break");
     }
 
     #[test]
@@ -719,7 +752,7 @@ mod tests {
 
     /// **The signature-strip forgery.** Take a valid, fully executor-signed
     /// chain and delete one signature. Every structural check still passes —
-    /// genesis, hash-linking, state continuity, agent consistency all hold,
+    /// genesis, hash-linking, and agent consistency all hold,
     /// because none of them involve the executor at all. Only a verifier that
     /// requires the signature can tell.
     ///

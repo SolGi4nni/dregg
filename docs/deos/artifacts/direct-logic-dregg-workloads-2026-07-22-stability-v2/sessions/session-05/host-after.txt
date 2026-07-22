@@ -1,0 +1,22 @@
+2026-07-22T08:43:51.366158084Z
+ 04:43:51 up 12 days,  5:15, 12 users,  load average: 7.65, 21.55, 81.36
+    PID %CPU %MEM     ELAPSED COMMAND
+3421030  396  0.9       00:04 rustc
+3420918  7.7  0.2       00:05 cargo
+3421533  3.2  0.0       00:00 sshd-session
+   6417  2.3  0.3 12-05:15:13 beam.smp
+3420812  1.2  0.0       00:06 cargo-nextest
+2837287  1.2  0.0       37:12 kworker/9:416-mm_percpu_wq
+3202789  0.7  0.0       20:00 kworker/u96:0-mt76
+   2608  0.5  0.0 12-05:15:22 containerd
+2785000  0.5  0.0       41:54 rustdesk
+   2817  0.5  0.0 12-05:15:17 dockerd
+2794758  0.4  0.3       40:56 beam.smp
+      1  0.3  0.0 12-05:15:29 systemd
+3097726  0.3  0.0       28:10 kworker/u96:1-phy0
+1736481  0.3 15.2  5-02:26:21 deco_binding_de
+   7133  0.3  0.1 12-05:15:06 gnome-shell
+   1252  0.2  0.0 12-05:15:26 napi/phy0-0
+   1251  0.2  0.0 12-05:15:26 napi/phy0-0
+3371785  0.2  0.0       04:22 kworker/u98:2-kvfree_rcu_reclaim
+   2582  0.2  0.0 12-05:15:22 tailscaled

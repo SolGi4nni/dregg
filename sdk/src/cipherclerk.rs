@@ -5855,12 +5855,15 @@ impl AgentCipherclerk {
         // thread the real BEFORE leaves so the HONEST refusal proves on the deployed path. (The witness
         // carries the `fields_root` DIGEST limb only, NOT the leaf set — mirrors the NoteSpend
         // `before_nullifiers` plumbing.)
-        let refusal_fields: Option<(Vec<dregg_circuit::heap_root::HeapLeaf>, BabyBear)> = if matches!(
+        let refusal_fields: Option<(
+            Vec<dregg_circuit::openable_fields_root::ExactFieldsLeaf>,
+            [u8; 32],
+        )> = if matches!(
             vm_effects.first(),
             Some(dregg_circuit::effect_vm::Effect::Refusal { .. })
         ) {
             let before_leaves =
-                dregg_cell::state::fields_root_leaves(&before_cell.state.fields_map);
+                dregg_cell::state::exact_fields_root_leaves(&before_cell.state.fields_map);
             let audit_bytes = after_cell
                 .state
                 .fields_map
@@ -5873,8 +5876,7 @@ impl AgentCipherclerk {
                             .into(),
                     )
                 })?;
-            let audit_value = dregg_circuit::cap_root::fold_bytes32(&audit_bytes);
-            Some((before_leaves, audit_value))
+            Some((before_leaves, audit_bytes))
         } else {
             None
         };

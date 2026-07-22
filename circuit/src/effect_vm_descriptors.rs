@@ -1216,7 +1216,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "e0388c8da63238f539e078ecc289c76eb20f9c23fc8ada5614bba06c879aeac3";
+    "36b1d1c85aa259507a2fc6c2d464f084f07fdd640f0da90332db8f69c75a13e3";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1242,7 +1242,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "fdc462783143760ac69e32e03228fbeeee66fc3ecf01c4ed703bd45e87872be3";
+    "3294426e4810b9b7184c420a0aa7ac70957213b74a4816f2bed01d33fc814d83";
 
 /// **THE LEAN-EMITTED setField VALUE8 EPOCH (STAGED, VK-AFFECTING BUT NON-DESTRUCTIVE).** The 8
 /// written-slot value8 members (`setFieldValue8VmDescriptor2-{slot}R24`) that swap the deployed

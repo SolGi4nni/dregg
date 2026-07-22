@@ -32,6 +32,12 @@ use dregg_circuit::stark_zk::{
     ZK_FRI_MAX_LOG_ARITY, ZK_FRI_NUM_QUERIES, ZK_FRI_QUERY_POW_BITS, create_zk_config,
 };
 
+/// The privacy-preserving one-coordinate product weld.  The legacy public
+/// butterfly composite below remains quarantined; this child module instead
+/// fuses the exact 4,096-term private slice and terminal arithmetic into one
+/// HidingFRI proof.
+pub mod fused;
+
 /// Exact Lean-emitted program bytes. They are the canonical-v2 VK program.
 pub const DESCRIPTOR_JSON: &str = include_str!(
     "../../circuit/descriptors/by-name/private-book-bfv-threshold-terminal-q0-b80.json"

@@ -3344,18 +3344,8 @@ impl TurnExecutor {
         //          offered_action_commitment ||
         //          reason_disc ||
         //          (optional reason_hash))
-        let mut h = blake3::Hasher::new_derive_key("dregg-refusal-audit-v1");
-        h.update(offered_action_commitment);
-        match refusal_reason {
-            crate::action::RefusalReason::Declined => h.update(&[0u8]),
-            crate::action::RefusalReason::NoAuthority => h.update(&[1u8]),
-            crate::action::RefusalReason::WindowExpired => h.update(&[2u8]),
-            crate::action::RefusalReason::Custom { reason_hash } => {
-                h.update(&[3u8]);
-                h.update(reason_hash)
-            }
-        };
-        let audit = *h.finalize().as_bytes();
+        let audit =
+            crate::action::refusal_audit_commitment(offered_action_commitment, refusal_reason);
         // The protocol-reserved EXT audit key (`>= STATE_SLOTS`) lands the commitment in the
         // committed `fields_map` / `fields_root` — folded by `compute_authority_digest_felt`, so the
         // refusal MOVES the record-digest limb (the `refusalV3` forcing gate). Journal the prior

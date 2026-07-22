@@ -1,0 +1,9 @@
+workload,variant,atoms,trace_width,public_inputs,constraints,graph_constraints,multiplications,auxiliaries,descriptor_bytes,formula_true
+admission,source,12,77,12,121,108,108,65,17845,true
+admission,optimized,12,47,12,71,58,58,35,10091,true
+upgrade,source,4,21,4,33,28,28,17,4978,true
+upgrade,optimized,4,15,4,23,18,18,11,3427,true
+clearance,source,4,21,4,33,28,28,17,4978,true
+clearance,optimized,4,15,4,23,18,18,11,3427,true
+strand,source,3,11,3,17,13,13,8,2713,true
+strand,optimized,3,11,3,17,13,13,8,2713,true

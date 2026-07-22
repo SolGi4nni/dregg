@@ -65,6 +65,9 @@ pub const SHIELDED_EXACT_APEX_V4_PUBLIC_INPUT_COUNT: usize = 100;
 /// Canonical fixed-width public wire: 100 little-endian BabyBear representatives.
 pub const SHIELDED_EXACT_APEX_V4_PUBLIC_WIRE_BYTES: usize =
     SHIELDED_EXACT_APEX_V4_PUBLIC_INPUT_COUNT * size_of::<u32>();
+/// Exact canonical FXC4 transcript width: domain/selectors, complete ledger/exact endpoints,
+/// 19 Dark-AMM lanes, 27 ring lanes, and the exact output count/root.
+pub const SHIELDED_CONSEQUENCE_PREIMAGE_LANES: usize = 146;
 
 const PI_HEIGHT: usize = 0;
 const PI_HISTORICAL_NOTE_ROOT: usize = 4;
@@ -87,6 +90,8 @@ const _: () = {
     assert!(SHIELDED_EXACT_APEX_DOMAIN < BABYBEAR_P);
     assert!(RING_LEGS == 2);
     assert!(RING_LEG_CLAIM_LEN == 3);
+    assert!(DARK_AMM_PUBLIC_INPUT_COUNT == 19);
+    assert!(RING_ENDPOINT_PUBLIC_LEN == 27);
     assert!(PI_END == SHIELDED_EXACT_APEX_V4_PUBLIC_INPUT_COUNT);
 };
 
@@ -270,6 +275,58 @@ pub fn verify_wide_binding_compatibility_v4(
     })
 }
 
+/// The complete canonical ledger/exact transition absorbed by FXC4.
+///
+/// Construction validates every BabyBear root lane and the exact `count + 1` law once.  Keeping
+/// these fields in one non-forgeable value prevents the FXC4 transcript and the 100-lane apex public
+/// statement from being assembled from divergent endpoint arguments.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShieldedExactApexV4LedgerTransition {
+    historical_root_height: u64,
+    historical_note_root: [u32; 8],
+    successor_exact_root: [u32; 8],
+    prior_exact_root: [u32; 8],
+    pre_count: u64,
+    post_count: u64,
+    before_outer_commit: [u32; 8],
+    after_outer_commit: [u32; 8],
+}
+
+impl ShieldedExactApexV4LedgerTransition {
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        historical_root_height: u64,
+        historical_note_root: [u32; 8],
+        successor_exact_root: [u32; 8],
+        prior_exact_root: [u32; 8],
+        pre_count: u64,
+        post_count: u64,
+        before_outer_commit: [u32; 8],
+        after_outer_commit: [u32; 8],
+    ) -> Result<Self, ShieldedExactApexV4Error> {
+        validate_count_transition(pre_count, post_count)?;
+        for (name, lanes) in [
+            ("historical note root", historical_note_root),
+            ("successor exact root", successor_exact_root),
+            ("prior exact root", prior_exact_root),
+            ("before outer commit", before_outer_commit),
+            ("after outer commit", after_outer_commit),
+        ] {
+            validate_canonical_lanes(name, &lanes)?;
+        }
+        Ok(Self {
+            historical_root_height,
+            historical_note_root,
+            successor_exact_root,
+            prior_exact_root,
+            pre_count,
+            post_count,
+            before_outer_commit,
+            after_outer_commit,
+        })
+    }
+}
+
 /// A prepared commitment to the fixed current private-AMM and two-leg ring public surfaces.
 ///
 /// This type is non-`Clone` and its fields are private to avoid accidentally treating raw arrays
@@ -278,8 +335,13 @@ pub fn verify_wide_binding_compatibility_v4(
 /// It does **not** verify the Dark-AMM proof or recursively pin/verify the ring apex.
 #[derive(Debug, PartialEq, Eq)]
 pub struct PreparedShieldedConsequenceV4 {
+    ledger: ShieldedExactApexV4LedgerTransition,
+    dark_amm: PublicStatement,
+    ring_public: [u32; RING_ENDPOINT_PUBLIC_LEN],
+    ring_leg: u8,
     nullifier: [u8; 32],
     value_asset_binding: [u32; WIDE_VALUE_BINDING_LANES],
+    output_note_count: u64,
     output_notes_root: [u32; 8],
     root: [u32; 8],
 }
@@ -293,6 +355,7 @@ impl PreparedShieldedConsequenceV4 {
     /// can prove the missing same-opening/full-nullifier bridges without changing this ABI.
     #[allow(clippy::too_many_arguments)]
     pub fn from_current_dark_amm_and_ring_publics(
+        ledger: ShieldedExactApexV4LedgerTransition,
         dark_amm: PublicStatement,
         ring_public: [u32; RING_ENDPOINT_PUBLIC_LEN],
         ring_leg: usize,
@@ -324,33 +387,27 @@ impl PreparedShieldedConsequenceV4 {
         }
         let value_asset_binding = value_binding.value_asset_binding;
 
-        let mut preimage = Vec::with_capacity(
-            1 + 1
-                + 1
-                + 1
-                + 16
-                + WIDE_VALUE_BINDING_LANES
-                + DARK_AMM_PUBLIC_INPUT_COUNT
-                + RING_ENDPOINT_PUBLIC_LEN
-                + 4
-                + 8,
+        let ring_leg = u8::try_from(ring_leg).expect("validated two-leg selector");
+        let preimage = canonical_fxc4_preimage(
+            ledger,
+            dark_amm,
+            ring_public,
+            ring_leg,
+            nullifier,
+            value_asset_binding,
+            output_note_count,
+            output_notes_root,
         );
-        preimage.push(BabyBear::new(SHIELDED_CONSEQUENCE_DOMAIN));
-        // Code-owned relation selectors.  They are not caller-supplied verifier identifiers.
-        preimage.push(BabyBear::new(crate::dark_amm_private::RULE_ID));
-        preimage.push(BabyBear::new(RING_ENDPOINT_PUBLIC_LEN as u32));
-        preimage.push(BabyBear::new(ring_leg as u32));
-        preimage.extend(bytes32_u16_lanes(&nullifier).map(BabyBear::new));
-        preimage.extend(value_asset_binding.map(BabyBear::new));
-        preimage.extend(dark_amm.as_u32_array().map(BabyBear::new));
-        preimage.extend(ring_public.map(BabyBear::new));
-        preimage.extend(u64_u16_lanes(output_note_count).map(BabyBear::new));
-        preimage.extend(output_notes_root.map(BabyBear::new));
         let root = hash_many_8(&preimage).map(BabyBear::as_u32);
 
         Ok(Self {
+            ledger,
+            dark_amm,
+            ring_public,
+            ring_leg,
             nullifier,
             value_asset_binding,
+            output_note_count,
             output_notes_root,
             root,
         })
@@ -359,6 +416,57 @@ impl PreparedShieldedConsequenceV4 {
     pub fn root(&self) -> [u32; 8] {
         self.root
     }
+
+    /// Exact 146-lane canonical FXC4 preimage.  This is transcript data, never proof authority.
+    pub fn canonical_preimage(&self) -> [u32; SHIELDED_CONSEQUENCE_PREIMAGE_LANES] {
+        canonical_fxc4_preimage(
+            self.ledger,
+            self.dark_amm,
+            self.ring_public,
+            self.ring_leg,
+            self.nullifier,
+            self.value_asset_binding,
+            self.output_note_count,
+            self.output_notes_root,
+        )
+        .map(BabyBear::as_u32)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn canonical_fxc4_preimage(
+    ledger: ShieldedExactApexV4LedgerTransition,
+    dark_amm: PublicStatement,
+    ring_public: [u32; RING_ENDPOINT_PUBLIC_LEN],
+    ring_leg: u8,
+    nullifier: [u8; 32],
+    value_asset_binding: [u32; WIDE_VALUE_BINDING_LANES],
+    output_note_count: u64,
+    output_notes_root: [u32; 8],
+) -> [BabyBear; SHIELDED_CONSEQUENCE_PREIMAGE_LANES] {
+    let mut preimage = Vec::with_capacity(SHIELDED_CONSEQUENCE_PREIMAGE_LANES);
+    preimage.push(BabyBear::new(SHIELDED_CONSEQUENCE_DOMAIN));
+    // Code-owned relation selectors.  They are not caller-supplied verifier identifiers.
+    preimage.push(BabyBear::new(crate::dark_amm_private::RULE_ID));
+    preimage.push(BabyBear::new(RING_ENDPOINT_PUBLIC_LEN as u32));
+    preimage.push(BabyBear::new(u32::from(ring_leg)));
+    preimage.extend(u64_u16_lanes(ledger.historical_root_height).map(BabyBear::new));
+    preimage.extend(ledger.historical_note_root.map(BabyBear::new));
+    preimage.extend(bytes32_u16_lanes(&nullifier).map(BabyBear::new));
+    preimage.extend(value_asset_binding.map(BabyBear::new));
+    preimage.extend(ledger.successor_exact_root.map(BabyBear::new));
+    preimage.extend(ledger.prior_exact_root.map(BabyBear::new));
+    preimage.extend(u64_u16_lanes(ledger.pre_count).map(BabyBear::new));
+    preimage.extend(u64_u16_lanes(ledger.post_count).map(BabyBear::new));
+    preimage.extend(ledger.before_outer_commit.map(BabyBear::new));
+    preimage.extend(ledger.after_outer_commit.map(BabyBear::new));
+    preimage.extend(dark_amm.as_u32_array().map(BabyBear::new));
+    preimage.extend(ring_public.map(BabyBear::new));
+    preimage.extend(u64_u16_lanes(output_note_count).map(BabyBear::new));
+    preimage.extend(output_notes_root.map(BabyBear::new));
+    preimage
+        .try_into()
+        .expect("FXC4 canonical preimage has compile-time audited width")
 }
 
 /// Canonical 100-lane v4 statement.  Construction from a prepared consequence makes the shared
@@ -369,47 +477,31 @@ pub struct ShieldedExactApexV4Public {
 }
 
 impl ShieldedExactApexV4Public {
-    #[allow(clippy::too_many_arguments)]
-    pub fn try_new(
-        historical_root_height: u64,
-        historical_note_root: [u32; 8],
-        successor_exact_root: [u32; 8],
-        prior_exact_root: [u32; 8],
-        pre_count: u64,
-        post_count: u64,
-        before_outer_commit: [u32; 8],
-        after_outer_commit: [u32; 8],
-        consequence: PreparedShieldedConsequenceV4,
-    ) -> Result<Self, ShieldedExactApexV4Error> {
-        validate_count_transition(pre_count, post_count)?;
-        for (name, lanes) in [
-            ("historical note root", historical_note_root),
-            ("successor exact root", successor_exact_root),
-            ("prior exact root", prior_exact_root),
-            ("before outer commit", before_outer_commit),
-            ("after outer commit", after_outer_commit),
-        ] {
-            validate_canonical_lanes(name, &lanes)?;
-        }
-
+    /// Construct the public statement from the same already-validated ledger transition absorbed
+    /// by FXC4.  There is intentionally no constructor taking a second set of endpoint arguments.
+    pub fn from_prepared(consequence: PreparedShieldedConsequenceV4) -> Self {
+        let ledger = consequence.ledger;
         let mut lanes = [0u32; SHIELDED_EXACT_APEX_V4_PUBLIC_INPUT_COUNT];
         lanes[PI_HEIGHT..PI_HISTORICAL_NOTE_ROOT]
-            .copy_from_slice(&u64_u16_lanes(historical_root_height));
-        lanes[PI_HISTORICAL_NOTE_ROOT..PI_NULLIFIER].copy_from_slice(&historical_note_root);
+            .copy_from_slice(&u64_u16_lanes(ledger.historical_root_height));
+        lanes[PI_HISTORICAL_NOTE_ROOT..PI_NULLIFIER].copy_from_slice(&ledger.historical_note_root);
         lanes[PI_NULLIFIER..PI_VALUE_ASSET_BINDING]
             .copy_from_slice(&bytes32_u16_lanes(&consequence.nullifier));
         lanes[PI_VALUE_ASSET_BINDING..PI_SUCCESSOR_EXACT_ROOT]
             .copy_from_slice(&consequence.value_asset_binding);
-        lanes[PI_SUCCESSOR_EXACT_ROOT..PI_PRIOR_EXACT_ROOT].copy_from_slice(&successor_exact_root);
-        lanes[PI_PRIOR_EXACT_ROOT..PI_PRE_COUNT].copy_from_slice(&prior_exact_root);
-        lanes[PI_PRE_COUNT..PI_POST_COUNT].copy_from_slice(&u64_u16_lanes(pre_count));
-        lanes[PI_POST_COUNT..PI_CONSEQUENCE_ROOT].copy_from_slice(&u64_u16_lanes(post_count));
+        lanes[PI_SUCCESSOR_EXACT_ROOT..PI_PRIOR_EXACT_ROOT]
+            .copy_from_slice(&ledger.successor_exact_root);
+        lanes[PI_PRIOR_EXACT_ROOT..PI_PRE_COUNT].copy_from_slice(&ledger.prior_exact_root);
+        lanes[PI_PRE_COUNT..PI_POST_COUNT].copy_from_slice(&u64_u16_lanes(ledger.pre_count));
+        lanes[PI_POST_COUNT..PI_CONSEQUENCE_ROOT]
+            .copy_from_slice(&u64_u16_lanes(ledger.post_count));
         lanes[PI_CONSEQUENCE_ROOT..PI_OUTPUT_NOTES_ROOT].copy_from_slice(&consequence.root);
         lanes[PI_OUTPUT_NOTES_ROOT..PI_BEFORE_OUTER_COMMIT]
             .copy_from_slice(&consequence.output_notes_root);
-        lanes[PI_BEFORE_OUTER_COMMIT..PI_AFTER_OUTER_COMMIT].copy_from_slice(&before_outer_commit);
-        lanes[PI_AFTER_OUTER_COMMIT..PI_END].copy_from_slice(&after_outer_commit);
-        Ok(Self { lanes })
+        lanes[PI_BEFORE_OUTER_COMMIT..PI_AFTER_OUTER_COMMIT]
+            .copy_from_slice(&ledger.before_outer_commit);
+        lanes[PI_AFTER_OUTER_COMMIT..PI_END].copy_from_slice(&ledger.after_outer_commit);
+        Self { lanes }
     }
 
     /// Strict verifier-wire decoder.  This mints no proof authority.
@@ -649,6 +741,20 @@ mod tests {
         }
     }
 
+    fn ledger() -> ShieldedExactApexV4LedgerTransition {
+        ShieldedExactApexV4LedgerTransition::try_new(
+            77,
+            root(10),
+            root(20),
+            root(30),
+            8,
+            9,
+            root(40),
+            root(50),
+        )
+        .expect("canonical v4 ledger transition")
+    }
+
     fn ring_public(legacy_nf: u32, legacy_vb: u32) -> [u32; RING_ENDPOINT_PUBLIC_LEN] {
         let mut ring = [0u32; RING_ENDPOINT_PUBLIC_LEN];
         ring[0] = legacy_nf;
@@ -667,7 +773,16 @@ mod tests {
         nullifier: [u8; 32],
         binding: [u32; WIDE_VALUE_BINDING_LANES],
     ) -> PreparedShieldedConsequenceV4 {
+        consequence_with_ledger(ledger(), nullifier, binding)
+    }
+
+    fn consequence_with_ledger(
+        ledger: ShieldedExactApexV4LedgerTransition,
+        nullifier: [u8; 32],
+        binding: [u32; WIDE_VALUE_BINDING_LANES],
+    ) -> PreparedShieldedConsequenceV4 {
         PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger,
             dark_amm(),
             ring_public(17, 23),
             0,
@@ -694,18 +809,7 @@ mod tests {
         nullifier: [u8; 32],
         binding: [u32; WIDE_VALUE_BINDING_LANES],
     ) -> ShieldedExactApexV4Public {
-        ShieldedExactApexV4Public::try_new(
-            77,
-            root(10),
-            root(20),
-            root(30),
-            8,
-            9,
-            root(40),
-            root(50),
-            consequence(nullifier, binding),
-        )
-        .expect("canonical v4 statement")
+        ShieldedExactApexV4Public::from_prepared(consequence(nullifier, binding))
     }
 
     #[test]
@@ -779,6 +883,7 @@ mod tests {
         let ring = ring_public(17, legacy);
         let prepare = |wide: [BabyBear; WIDE_VALUE_BINDING_LANES]| {
             PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+                ledger(),
                 dark_amm(),
                 ring,
                 0,
@@ -838,7 +943,57 @@ mod tests {
     fn consequence_binds_full_nullifier_wide_commitment_market_ring_and_outputs() {
         let nullifier = [0x42; 32];
         let binding = core::array::from_fn(|index| 700 + index as u32);
-        let baseline = consequence(nullifier, binding).root();
+        let baseline_prepared = consequence(nullifier, binding);
+        let transcript = baseline_prepared.canonical_preimage();
+        assert_eq!(transcript[0], SHIELDED_CONSEQUENCE_DOMAIN);
+        assert_eq!(transcript[1], crate::dark_amm_private::RULE_ID);
+        assert_eq!(transcript[2], RING_ENDPOINT_PUBLIC_LEN as u32);
+        assert_eq!(transcript[3], 0);
+        let baseline = baseline_prepared.root();
+
+        let mut changed_ledger = ledger();
+        changed_ledger.historical_root_height += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.historical_note_root[7] += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.successor_exact_root[7] += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.prior_exact_root[7] += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.pre_count += 1;
+        changed_ledger.post_count += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.before_outer_commit[7] += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
+        let mut changed_ledger = ledger();
+        changed_ledger.after_outer_commit[7] += 1;
+        assert_ne!(
+            consequence_with_ledger(changed_ledger, nullifier, binding).root(),
+            baseline
+        );
 
         let mut changed_nullifier = nullifier;
         changed_nullifier[31] ^= 0x80;
@@ -851,6 +1006,7 @@ mod tests {
         let mut changed_amm = dark_amm();
         changed_amm.new_root[7] += 1;
         let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger(),
             changed_amm,
             ring_public(17, 23),
             0,
@@ -863,9 +1019,34 @@ mod tests {
         .unwrap();
         assert_ne!(changed.root(), baseline);
 
+        let dark_lanes = dark_amm().as_u32_array();
+        for lane in 0..DARK_AMM_PUBLIC_INPUT_COUNT {
+            let mut mutated = dark_lanes;
+            mutated[lane] = (mutated[lane] + 1) % BABYBEAR_P;
+            let parsed = PublicStatement::try_from_u32s(&mutated);
+            if lane == 1 {
+                assert!(parsed.is_err(), "fixed Dark-AMM rule selector must refuse");
+                continue;
+            }
+            let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+                ledger(),
+                parsed.expect("canonical mutated Dark-AMM statement"),
+                ring_public(17, 23),
+                0,
+                17,
+                nullifier,
+                compatibility(23, binding),
+                2,
+                root(500),
+            )
+            .unwrap();
+            assert_ne!(changed.root(), baseline, "Dark-AMM lane {lane}");
+        }
+
         let mut changed_ring = ring_public(17, 23);
         changed_ring[endpoint_pi::POST_COMMIT_8] += 1;
         let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger(),
             dark_amm(),
             changed_ring,
             0,
@@ -878,7 +1059,46 @@ mod tests {
         .unwrap();
         assert_ne!(changed.root(), baseline);
 
+        for lane in 0..RING_ENDPOINT_PUBLIC_LEN {
+            let mut changed_ring = ring_public(17, 23);
+            changed_ring[lane] = (changed_ring[lane] + 1) % BABYBEAR_P;
+            let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+                ledger(),
+                dark_amm(),
+                changed_ring,
+                0,
+                17,
+                nullifier,
+                compatibility(23, binding),
+                2,
+                root(500),
+            );
+            if lane == 0 || lane == 2 {
+                assert!(
+                    changed.is_err(),
+                    "selected ring weld lane {lane} must refuse"
+                );
+            } else {
+                assert_ne!(changed.unwrap().root(), baseline, "ring lane {lane}");
+            }
+        }
+
+        let changed_leg = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger(),
+            dark_amm(),
+            ring_public(17, 23),
+            1,
+            18,
+            nullifier,
+            compatibility(24, binding),
+            2,
+            root(500),
+        )
+        .unwrap();
+        assert_ne!(changed_leg.root(), baseline, "selected ring leg selector");
+
         let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger(),
             dark_amm(),
             ring_public(17, 23),
             0,
@@ -892,6 +1112,7 @@ mod tests {
         assert_ne!(changed.root(), baseline);
 
         let changed = PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+            ledger(),
             dark_amm(),
             ring_public(17, 23),
             0,
@@ -943,6 +1164,7 @@ mod tests {
         wrong_ring[2] = 24;
         assert!(matches!(
             PreparedShieldedConsequenceV4::from_current_dark_amm_and_ring_publics(
+                ledger(),
                 dark_amm(),
                 wrong_ring,
                 0,

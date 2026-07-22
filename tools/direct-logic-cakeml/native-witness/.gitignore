@@ -1,0 +1,9 @@
+/build/
+/hol4/.hol/
+/hol4/*.dat
+/hol4/*.sig
+/hol4/*.sml
+!/hol4/*Script.sml
+/hol4/*.ui
+/hol4/*.uo
+/hol4/*.S

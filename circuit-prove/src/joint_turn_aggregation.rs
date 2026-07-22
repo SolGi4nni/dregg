@@ -273,14 +273,38 @@ impl CustomIr2VkRecipe {
 
     /// Parse the recipe's exact program bytes and require byte-authored IR2
     /// semantics to equal the descriptor that the recursion leaf re-proves.
+    ///
+    /// New IR2 programs use the strict typed descriptor codec; older registry
+    /// entries used UTF-8 JSON.  The typed decoder is attempted first and is
+    /// itself canonical/trailing-byte strict.  JSON remains a compatibility
+    /// fallback, never an alternate meaning: either decoding path must produce
+    /// the exact descriptor passed to the recursion leaf.
     pub fn require_exact_descriptor(
         &self,
         descriptor: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
     ) -> Result<(), String> {
-        let json = std::str::from_utf8(&self.program_bytes)
-            .map_err(|e| format!("direct-IR2 canonical program bytes are not UTF-8 JSON: {e}"))?;
-        let recipe_descriptor = dregg_circuit::descriptor_ir2::parse_vm_descriptor2(json)
-            .map_err(|e| format!("direct-IR2 canonical program bytes do not parse: {e}"))?;
+        let recipe_descriptor =
+            match dregg_circuit::descriptor_ir2_canonical::decode_canonical_effect_vm_descriptor2(
+                &self.program_bytes,
+            ) {
+                Ok(descriptor) => descriptor,
+                Err(typed_error) => {
+                    let json = std::str::from_utf8(&self.program_bytes).map_err(|json_error| {
+                        format!(
+                            "direct-IR2 canonical program bytes decode as neither the strict typed \
+                             descriptor ({typed_error}) nor legacy UTF-8 JSON ({json_error})"
+                        )
+                    })?;
+                    dregg_circuit::descriptor_ir2::parse_vm_descriptor2(json).map_err(
+                        |json_error| {
+                            format!(
+                                "direct-IR2 canonical program bytes decode as neither the strict \
+                                 typed descriptor ({typed_error}) nor legacy JSON ({json_error})"
+                            )
+                        },
+                    )?
+                }
+            };
         if &recipe_descriptor != descriptor {
             return Err(
                 "direct-IR2 descriptor differs from canonical-v2 program bytes".to_string(),
@@ -902,7 +926,10 @@ impl RotatedParticipantLeg {
         umem_boundary: &dregg_circuit::descriptor_ir2::UMemBoundaryWitness,
         domain: u32,
         before_nullifiers: Option<&[BabyBear]>,
-        refusal_fields: Option<(&[dregg_circuit::heap_root::HeapLeaf], BabyBear)>,
+        refusal_fields: Option<(
+            &[dregg_circuit::openable_fields_root::ExactFieldsLeaf],
+            [u8; 32],
+        )>,
         cap_write: Option<&dregg_circuit::effect_vm::trace_rotated::CapWriteWideWitness>,
     ) -> Result<RotatedParticipantLeg, String> {
         use crate::ivc_turn_chain::ir2_leaf_wrap_config;

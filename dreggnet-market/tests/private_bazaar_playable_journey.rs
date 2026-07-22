@@ -8,24 +8,25 @@
 
 #![cfg(feature = "private-clearing")]
 
-use dregg_app_framework::symbol;
+use dregg_app_framework::{CellId, symbol};
 use dreggnet_market::private_bazaar_journey::{
-    PrivateBazaarDeploymentPin, PrivateBazaarJourneyError, PrivateBazaarPublicAction,
-    PrivateBazaarPublicPhase, PrivateBazaarRaidJourney, PrivateBazaarRaidPolicy,
+    PrivateBazaarDeploymentPin, PrivateBazaarJourneyError, PrivateBazaarProgressionError,
+    PrivateBazaarPublicAction, PrivateBazaarPublicPhase, PrivateBazaarRaidJourney,
+    PrivateBazaarRaidPolicy, PrivateBazaarRaidProgression,
 };
 use dreggnet_market::private_clearing_guild_allocation::{GuildMember, GuildReward, GuildRoster};
 use dreggnet_market::{DarkBazaarOffering, TURN_LIST};
 use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
-use dungeon_on_dregg::progression::{
-    PRIVATE_BAZAAR_XP_EVENT, PRIVATE_BAZAAR_XP_METHOD, deploy_hero,
-};
+use dungeon_on_dregg::progression::{PRIVATE_BAZAAR_XP_EVENT, PRIVATE_BAZAAR_XP_METHOD};
 
 #[test]
 fn payload_free_entry_mints_only_a_viewer_blind_pending_receipt() {
     let actor = DreggIdentity("journey:guild-member".to_owned());
-    let hero = deploy_hero(0x83);
-    hero.set_executor_signing_key([0xA7; 32]);
-    let roster = GuildRoster::new(vec![GuildMember::new(actor.clone(), hero.cell_id())]).unwrap();
+    // This test exercises only the public pending shell.  Use deployment-pinned
+    // identities directly so it neither generates keys nor suggests that a
+    // pending receipt traversed the private proof/game executor.
+    let roster =
+        GuildRoster::new(vec![GuildMember::new(actor.clone(), CellId([0x83; 32]))]).unwrap();
     let reward = GuildReward::new("raid-xp/ashen-vault/v1", 144).unwrap();
     let pin = PrivateBazaarDeploymentPin::new(
         [0x31; 32],
@@ -33,11 +34,12 @@ fn payload_free_entry_mints_only_a_viewer_blind_pending_receipt() {
         PrivateBazaarRaidPolicy::reward_commitment_for_configuration(&reward),
         PRIVATE_BAZAAR_XP_METHOD,
         symbol(PRIVATE_BAZAAR_XP_EVENT),
-        hero.executor_pubkey().unwrap(),
-        hero.federation_id(),
+        [0xA7; 32],
+        [0xA8; 32],
     )
     .unwrap();
     let policy = PrivateBazaarRaidPolicy::load(pin, roster, reward).unwrap();
+    let policy_id = policy.policy_id();
 
     let offering = DarkBazaarOffering::new();
     let mut market = offering.open(SessionConfig::with_seed(0xB4_2A_A2)).unwrap();
@@ -61,7 +63,8 @@ fn payload_free_entry_mints_only_a_viewer_blind_pending_receipt() {
 
     let receipt = journey
         .advance_public(&PrivateBazaarPublicAction::Enter.offering_action())
-        .unwrap();
+        .unwrap()
+        .clone();
     assert_eq!(receipt.phase(), PrivateBazaarPublicPhase::Pending);
     assert!(receipt.source_use_id().is_none());
     assert!(receipt.operation_id().is_none());
@@ -88,4 +91,22 @@ fn payload_free_entry_mints_only_a_viewer_blind_pending_receipt() {
         );
     }
     assert!(journey.actions().is_empty(), "Enter is write-once");
+
+    let mut progression =
+        PrivateBazaarRaidProgression::new([0x31; 32], policy_id, [0x32; 32], 1).unwrap();
+    let head = progression.head();
+    assert_eq!(
+        progression.advance(head, &receipt),
+        Err(PrivateBazaarProgressionError::SourceNotSettled),
+        "a public Enter/pending receipt cannot mint raid progression"
+    );
+    assert_eq!(progression.head(), head);
+    assert_eq!(progression.sequence(), 0);
+    assert!(
+        receipt
+            .public_fields()
+            .iter()
+            .any(|(name, value)| name == "receiptDigest" && value.len() == 64),
+        "the frontend receives a stable integrity/linking identity, not progression authority"
+    );
 }

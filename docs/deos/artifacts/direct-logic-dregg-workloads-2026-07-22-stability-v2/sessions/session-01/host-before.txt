@@ -1,0 +1,100 @@
+2026-07-22T08:39:44.913253796Z
+persvati
+Linux persvati 6.17.0-40-generic #40-Ubuntu SMP PREEMPT_DYNAMIC Fri Jun 19 16:42:13 UTC 2026 x86_64 GNU/Linux
+ 04:39:44 up 12 days,  5:11, 13 users,  load average: 8.32, 41.59, 104.35
+24
+               total        used        free      shared  buff/cache   available
+Mem:     89992069120 26336714752 19771084800   120946688 44935741440 63655354368
+Swap:    17179865088 17159417856    20447232
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p2  1.9T  1.3T  531G  71% /
+rustc 1.98.0-nightly (13f1859f2 2026-06-27)
+binary: rustc
+commit-hash: 13f1859f2faf97a15664e655624baa7417fdc100
+commit-date: 2026-06-27
+host: x86_64-unknown-linux-gnu
+release: 1.98.0-nightly
+LLVM version: 22.1.8
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           48 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  24
+On-line CPU(s) list:                     0-23
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD Ryzen AI 9 HX PRO 370 w/ Radeon 890M
+CPU family:                              26
+Model:                                   36
+Thread(s) per core:                      2
+Core(s) per socket:                      12
+Socket(s):                               1
+Stepping:                                0
+Frequency boost:                         enabled
+CPU(s) scaling MHz:                      43%
+CPU max MHz:                             5157.8950
+CPU min MHz:                             605.2640
+BogoMIPS:                                3992.24
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d amd_lbr_pmc_freeze
+Virtualization:                          AMD-V
+L1d cache:                               576 KiB (12 instances)
+L1i cache:                               384 KiB (12 instances)
+L2 cache:                                12 MiB (12 instances)
+L3 cache:                                24 MiB (2 instances)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-23
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+CPU NODE SOCKET CORE ONLINE    MAXMHZ   MINMHZ
+  0    0      0    0    yes 5157.8950 605.2640
+  1    0      0    1    yes 5157.8950 605.2640
+  2    0      0    2    yes 5157.8950 605.2640
+  3    0      0    3    yes 5157.8950 605.2640
+  4    0      0    4    yes 3289.4741 605.2640
+  5    0      0    5    yes 3289.4741 605.2640
+  6    0      0    6    yes 3289.4741 605.2640
+  7    0      0    7    yes 3289.4741 605.2640
+  8    0      0    8    yes 3289.4741 605.2640
+  9    0      0    9    yes 3289.4741 605.2640
+ 10    0      0   10    yes 3289.4741 605.2640
+ 11    0      0   11    yes 3289.4741 605.2640
+ 12    0      0    0    yes 5157.8950 605.2640
+ 13    0      0    1    yes 5157.8950 605.2640
+ 14    0      0    2    yes 5157.8950 605.2640
+ 15    0      0    3    yes 5157.8950 605.2640
+ 16    0      0    4    yes 3289.4741 605.2640
+ 17    0      0    5    yes 3289.4741 605.2640
+ 18    0      0    6    yes 3289.4741 605.2640
+ 19    0      0    7    yes 3289.4741 605.2640
+ 20    0      0    8    yes 3289.4741 605.2640
+ 21    0      0    9    yes 3289.4741 605.2640
+ 22    0      0   10    yes 3289.4741 605.2640
+ 23    0      0   11    yes 3289.4741 605.2640
+/sys/devices/system/cpu/cpu22/cpufreq/scaling_governor=performance
+/sys/devices/system/cpu/cpu23/cpufreq/scaling_governor=performance
+b8964198406fd9f7cabffaad18e072162c00d07f017187011858feb92ffccc81  dregg-build/proof-backend-seam/target/release/direct_logic_dregg_workloads_benchmark
+    PID %CPU %MEM     ELAPSED COMMAND
+3381028 99.2  0.7       00:02 rustc
+   6417  2.3  0.3 12-05:11:06 beam.smp
+2837287  1.4  0.0       33:06 kworker/9:416-events
+3202789  0.7  0.0       15:54 kworker/u96:0-mt76
+   2608  0.5  0.0 12-05:11:16 containerd
+2785000  0.5  0.0       37:48 rustdesk
+   2817  0.5  0.0 12-05:11:11 dockerd
+2794758  0.4  0.3       36:50 beam.smp
+      1  0.3  0.0 12-05:11:23 systemd
+3097726  0.3  0.0       24:04 kworker/u96:1-mt76
+1736481  0.3 15.2  5-02:22:15 deco_binding_de
+   7133  0.3  0.1 12-05:10:59 gnome-shell
+   1252  0.2  0.0 12-05:11:20 napi/phy0-0
+   1251  0.2  0.0 12-05:11:20 napi/phy0-0
+   2582  0.2  0.0 12-05:11:16 tailscaled
+   2248  0.2  0.0 12-05:11:17 systemd-machine
+   2842  0.2  0.0 12-05:11:11 rustdesk
+   2899  0.1  0.0 12-05:11:11 gdm3
+     15  0.1  0.0 12-05:11:23 rcu_preempt

@@ -1,0 +1,11 @@
+build_toolchain_context=repository root (therefore rust-toolchain.toml applied)
+rustc=1.98.0-nightly (8b6558a02 2026-06-20)
+rustc_commit=8b6558a02b2774acfb25cf15e199467c37ba7490
+rustc_host=x86_64-unknown-linux-gnu
+llvm=22.1.7
+cargo=1.98.0-nightly (a595d0da2 2026-06-20)
+benchmark_binary_sha256=b8964198406fd9f7cabffaad18e072162c00d07f017187011858feb92ffccc81
+captured_cargo_lock_sha256=606f6d48ecbafe3eb102e6f857e8e160eb56652ff860a1366ec5628b1c5a0d6f
+rust_toolchain_toml_sha256=78316c0351968f4fe896a05fcdca432fae70bfdbab129c58a1f735a35d359116
+benchmark_source_sha256=211e1689606bd451106ee2947fbcdd783a22ca0ce5888e413fca8b9f41b08538
+note=The rustc shown in session-01/host-before.txt was queried from the remote home directory and is the host default, not the repository-pinned build toolchain.
