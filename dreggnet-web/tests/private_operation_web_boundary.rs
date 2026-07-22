@@ -8,10 +8,15 @@
 ))]
 
 use std::sync::Arc;
+use std::{
+    convert::Infallible,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use axum::{
     Router,
-    body::Body,
+    body::{Body, Bytes},
     http::{Request, StatusCode},
 };
 use dreggnet_offerings::dungeon::{
@@ -25,6 +30,22 @@ use dreggnet_offerings::{
 use dreggnet_web::{CatalogState, catalog_router, fhegg_operation, game_session};
 use serde_json::Value;
 use tower::ServiceExt;
+
+struct GatedBody {
+    body_started: Option<tokio::sync::oneshot::Sender<()>>,
+    bytes: tokio_stream::wrappers::ReceiverStream<Result<Bytes, Infallible>>,
+}
+
+impl tokio_stream::Stream for GatedBody {
+    type Item = Result<Bytes, Infallible>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(body_started) = self.body_started.take() {
+            let _ = body_started.send(());
+        }
+        Pin::new(&mut self.bytes).poll_next(cx)
+    }
+}
 
 const OFFERING: &str = "dungeon";
 const SESSION: &str = "private-operation-web-boundary";
@@ -352,5 +373,86 @@ async fn five_private_operations_share_the_exact_web_discovery_and_refusal_bound
     assert_eq!(
         after, before,
         "transport and decoder refusals must not mutate the live game"
+    );
+}
+
+#[tokio::test]
+async fn close_reopen_while_upload_body_is_awaited_refuses_the_captured_operation_epoch() {
+    let descriptor = five_descriptors().remove(0);
+    let catalog = catalog();
+    let app = Router::new()
+        .merge(catalog_router(Arc::clone(&catalog)))
+        .merge(fhegg_operation::router(Arc::clone(&catalog)));
+    let session_path = format!("/offerings/{OFFERING}/session/{SESSION}");
+
+    // Establish generation one before the upload captures its descriptor and
+    // exact GameOperationRef.
+    assert_eq!(
+        response(
+            &app,
+            Request::builder()
+                .uri(&session_path)
+                .header("cookie", "dregg_user=slow-uploader")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+
+    let (body_started_tx, body_started_rx) = tokio::sync::oneshot::channel();
+    let (bytes_tx, bytes_rx) = tokio::sync::mpsc::channel(1);
+    let request = upload(
+        &format!("{session_path}/operations/{}", descriptor.name),
+        &descriptor.input_media_type,
+        Some("dregg_user=slow-uploader"),
+        None,
+        Body::from_stream(GatedBody {
+            body_started: Some(body_started_tx),
+            bytes: tokio_stream::wrappers::ReceiverStream::new(bytes_rx),
+        }),
+    );
+    let upload_task = tokio::spawn({
+        let app = app.clone();
+        async move { response(&app, request).await }
+    });
+    body_started_rx
+        .await
+        .expect("upload reached its bounded body read after descriptor capture");
+
+    let sid = SessionId::new(SESSION);
+    assert!(
+        catalog
+            .close_game_session(
+                OFFERING,
+                &sid,
+                &dreggnet_offerings::DreggIdentity("slow-uploader".to_string()),
+            )
+            .expect("close generation one while upload is suspended")
+    );
+    assert_eq!(
+        response(
+            &app,
+            Request::builder()
+                .uri(&session_path)
+                .header("cookie", "dregg_user=slow-uploader")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .0,
+        StatusCode::OK,
+        "ordinary navigation opens generation two"
+    );
+
+    bytes_tx.send(Ok(Bytes::from_static(&[0]))).await.unwrap();
+    drop(bytes_tx);
+    let (status, body) = upload_task.await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{}", error_reason(&body));
+    assert!(
+        error_reason(&body).contains("address") || error_reason(&body).contains("generation"),
+        "the post-await authority revalidation, not the operation decoder, must refuse: {}",
+        error_reason(&body)
     );
 }

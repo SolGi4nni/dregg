@@ -1545,9 +1545,21 @@ impl CatalogState {
         if game_kind(key).is_none() {
             return Ok((opened, None));
         }
-        self.game_epochs
-            .bind_after_ensure(key, id, opened)
-            .map_err(CatalogGameError::Epoch)?;
+        if let Err(error) = self.game_epochs.bind_after_ensure(key, id, opened) {
+            // `ensure_open_as` may have durably created the host session before
+            // the separately persisted epoch ledger failed.  Never leave that
+            // fresh host object as an unaddressable generationless ghost: it
+            // would make every subsequent opener observe `opened = false` and
+            // therefore permanently refuse to adopt it.
+            if opened {
+                let key_owned = key.to_string();
+                let id_owned = id.clone();
+                self.run_offering(key, viewer, move |host| {
+                    host.close(&key_owned, &id_owned);
+                });
+            }
+            return Err(CatalogGameError::Epoch(error));
+        }
         let session = self
             .game_epochs
             .bound_session(key, id)
@@ -1611,6 +1623,84 @@ impl CatalogState {
             mac.update(field);
         }
         Ok(*mac.finalize().as_bytes())
+    }
+
+    pub(crate) fn game_resource_token(
+        &self,
+        domain: &[u8],
+        session: &GameSessionRef,
+        observed_head: &[u8],
+        resource: &str,
+    ) -> Result<[u8; 32], CatalogGameError> {
+        let GameSessionBinding::Bound {
+            host_incarnation,
+            session_generation,
+        } = session.binding()
+        else {
+            return Err(CatalogGameError::Spine(
+                GameSpineError::BindingContextRequired(session.clone()),
+            ));
+        };
+        if observed_head.len() != 32 || resource.is_empty() {
+            return Err(CatalogGameError::Spine(GameSpineError::InvalidReference(
+                "game resource authority requires a name and exact 32-byte head".to_string(),
+            )));
+        }
+        let generation_bytes = session_generation.to_be_bytes();
+        let mut mac = blake3::Hasher::new_keyed(&self.game_form_key);
+        mac.update(b"dregg.web.game-resource-authority.v1");
+        for field in [
+            domain,
+            session.offering().as_bytes(),
+            session.session_id().0.as_bytes(),
+            host_incarnation.as_bytes(),
+            &generation_bytes,
+            observed_head,
+            resource.as_bytes(),
+        ] {
+            mac.update(&(field.len() as u64).to_be_bytes());
+            mac.update(field);
+        }
+        Ok(*mac.finalize().as_bytes())
+    }
+
+    pub(crate) fn presented_game_resource(
+        &self,
+        domain: &[u8],
+        key: &str,
+        id: &SessionId,
+        resource: &str,
+        host_incarnation_hex: &str,
+        session_generation: u64,
+        observed_head_hex: &str,
+        token_hex: &str,
+    ) -> Result<(GameSessionRef, Vec<u8>), CatalogGameError> {
+        let incarnation = decode_hex_32(host_incarnation_hex).ok_or_else(|| {
+            CatalogGameError::Spine(GameSpineError::InvalidReference(
+                "malformed game resource host incarnation".to_string(),
+            ))
+        })?;
+        let incarnation = GameHostIncarnation::new(incarnation).map_err(CatalogGameError::Spine)?;
+        let observed_head = decode_hex_32(observed_head_hex)
+            .ok_or_else(|| {
+                CatalogGameError::Spine(GameSpineError::InvalidReference(
+                    "malformed game resource observed head".to_string(),
+                ))
+            })?
+            .to_vec();
+        let token = decode_hex_32(token_hex).ok_or_else(|| {
+            CatalogGameError::Spine(GameSpineError::InvalidReference(
+                "malformed game resource authority token".to_string(),
+            ))
+        })?;
+        let session = GameSessionRef::bound(key, id.clone(), incarnation, session_generation)
+            .map_err(CatalogGameError::Spine)?;
+        if token != self.game_resource_token(domain, &session, &observed_head, resource)? {
+            return Err(CatalogGameError::Spine(GameSpineError::InvalidReference(
+                "game resource authority token did not verify".to_string(),
+            )));
+        }
+        Ok((session, observed_head))
     }
 
     pub(crate) fn presented_game_action(

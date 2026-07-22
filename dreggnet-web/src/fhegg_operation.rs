@@ -20,19 +20,21 @@ use axum::{
     routing::{get, post},
 };
 use dreggnet_catalog::{
-    GameAffordance, GameAudience, GameCommand, GameResult, PublicGameAttribution,
-    PublicGameReceipt, PublicGameReceiptResult, execute_bound_asserted_game_command, game_kind,
-    inspect_bound_game_session, project_public_game_receipt,
+    GameAffordance, GameArtifact, GameAudience, GameCommand, GameResult, GameSessionBinding,
+    PublicGameAttribution, PublicGameReceipt, PublicGameReceiptResult,
+    execute_bound_asserted_game_command, game_kind, inspect_bound_game_session,
+    project_public_game_receipt,
 };
 #[cfg(feature = "fhegg-settlement")]
 use dreggnet_market::fhegg_transport::{FHEGG_SETTLEMENT_OPERATION, FheggSettlementOperation};
 use dreggnet_offerings::{
-    BinaryArtifactDescriptor, BinaryArtifactError, BinaryOperationDescriptor, BinaryOperationError,
-    DreggIdentity, HostArtifactError, HostOperationError, SessionId,
+    Attribution, BinaryArtifactDescriptor, BinaryArtifactError, BinaryOperationDescriptor,
+    BinaryOperationError, DreggIdentity, HostArtifactError, HostError, HostOperationError,
+    SessionId,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::{CatalogState, WebQuery, web_identity, web_user};
+use crate::{CatalogGameError, CatalogState, WebQuery, web_identity, web_user};
 
 /// Relative suffix every adapter appends to its own authenticated surface
 /// prefix. Keeping the prefix out of the descriptor makes discovery byte-equal
@@ -56,6 +58,8 @@ struct ArtifactDescriptorWire {
     download_path_suffix: &'static str,
     cache_policy: &'static str,
     integrity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_authority: Option<GameResourceAuthorityWire>,
 }
 
 impl From<BinaryArtifactDescriptor> for ArtifactDescriptorWire {
@@ -71,8 +75,95 @@ impl From<BinaryArtifactDescriptor> for ArtifactDescriptorWire {
             download_path_suffix: ARTIFACT_PATH_SUFFIX,
             cache_policy: "no-store",
             integrity: "BLAKE3 body digest in ETag and X-Dregg-Artifact-Digest",
+            game_authority: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GameResourceAuthorityWire {
+    host_incarnation_hex: String,
+    session_generation: u64,
+    observed_head_hex: String,
+    token_hex: String,
+    query: String,
+}
+
+impl ArtifactDescriptorWire {
+    fn from_game(artifact: GameArtifact, catalog: &CatalogState) -> Result<Self, CatalogGameError> {
+        let GameArtifact {
+            reference,
+            descriptor,
+        } = artifact;
+        let GameSessionBinding::Bound {
+            host_incarnation,
+            session_generation,
+        } = reference.session.binding()
+        else {
+            return Err(CatalogGameError::Spine(
+                dreggnet_catalog::GameSpineError::BindingContextRequired(reference.session.clone()),
+            ));
+        };
+        let token = catalog.game_resource_token(
+            b"artifact-export",
+            &reference.session,
+            &reference.observed_head,
+            &reference.artifact,
+        )?;
+        let host_incarnation_hex = hex32(host_incarnation.as_bytes());
+        let observed_head_hex = hex_bytes(&reference.observed_head);
+        let token_hex = hex32(&token);
+        let query = format!(
+            "game_host_incarnation={host_incarnation_hex}&game_session_generation={session_generation}&game_observed_head={observed_head_hex}&game_resource_token={token_hex}"
+        );
+        let mut wire = Self::from(descriptor);
+        wire.game_authority = Some(GameResourceAuthorityWire {
+            host_incarnation_hex,
+            session_generation: *session_generation,
+            observed_head_hex,
+            token_hex,
+            query,
+        });
+        Ok(wire)
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub(crate) struct GameResourceAuthorityQuery {
+    #[serde(default)]
+    pub game_host_incarnation: Option<String>,
+    #[serde(default)]
+    pub game_session_generation: Option<u64>,
+    #[serde(default)]
+    pub game_observed_head: Option<String>,
+    #[serde(default)]
+    pub game_resource_token: Option<String>,
+}
+
+impl GameResourceAuthorityQuery {
+    fn into_complete(self) -> Result<Option<(String, u64, String, String)>, &'static str> {
+        match (
+            self.game_host_incarnation,
+            self.game_session_generation,
+            self.game_observed_head,
+            self.game_resource_token,
+        ) {
+            (None, None, None, None) => Ok(None),
+            (Some(incarnation), Some(generation), Some(head), Some(token)) => {
+                Ok(Some((incarnation, generation, head, token)))
+            }
+            _ => Err("game artifact authority query is incomplete"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct WebArtifactQuery {
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(flatten)]
+    authority: GameResourceAuthorityQuery,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -181,6 +272,11 @@ enum HostedOperationResult {
     Legacy(dreggnet_offerings::BinaryOperationReceipt),
 }
 
+enum HostedArtifactDescriptor {
+    Game(GameArtifact),
+    Legacy(BinaryArtifactDescriptor),
+}
+
 fn error(status: StatusCode, reason: impl Into<String>) -> Response {
     (
         status,
@@ -192,13 +288,70 @@ fn error(status: StatusCode, reason: impl Into<String>) -> Response {
         .into_response()
 }
 
+fn committed_publication_error(reason: impl Into<String>) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(OperationErrorWire {
+            status: "committed",
+            error: format!(
+                "{}; the operation committed, so do not retry",
+                reason.into()
+            ),
+        }),
+    )
+        .into_response()
+}
+
 fn hex32(bytes: &[u8; 32]) -> String {
-    let mut out = String::with_capacity(64);
+    hex_bytes(bytes)
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         use std::fmt::Write as _;
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+fn ensure_live_session(
+    catalog: &CatalogState,
+    key: &str,
+    sid: &SessionId,
+    viewer: &DreggIdentity,
+) -> Result<(), Response> {
+    if game_kind(key).is_none() {
+        return Ok(());
+    }
+    catalog
+        .ensure_open_and_bind(
+            key,
+            sid,
+            viewer,
+            Some(Attribution::Asserted {
+                label: viewer.0.clone(),
+            }),
+        )
+        .map(|_| ())
+        .map_err(|cause| {
+            let message = cause.to_string();
+            match cause {
+                CatalogGameError::Host(HostError::UnknownOffering(_)) => {
+                    error(StatusCode::NOT_FOUND, "unknown offering")
+                }
+                CatalogGameError::Host(HostError::Policy(reason)) => {
+                    error(StatusCode::TOO_MANY_REQUESTS, reason.to_string())
+                }
+                CatalogGameError::Host(HostError::ResumeFailed { .. }) => {
+                    error(StatusCode::CONFLICT, message)
+                }
+                CatalogGameError::Host(_) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+                CatalogGameError::Epoch(_)
+                | CatalogGameError::Spine(_)
+                | CatalogGameError::Poisoned => error(StatusCode::CONFLICT, message),
+            }
+        })
 }
 
 /// Static discovery payload used by all three surface routers.
@@ -227,39 +380,48 @@ async fn get_web_session_operations(
 pub(crate) fn session_operations(catalog: &Arc<CatalogState>, key: String, id: String) -> Response {
     let sid = SessionId::new(id);
     let viewer = DreggIdentity("operation-discovery".to_string());
-    let game_context = if game_kind(&key).is_some() {
-        match catalog.game_epoch_context(&key, &sid) {
-            Ok(context) => Some(context),
-            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
-        }
+    if let Err(response) = ensure_live_session(catalog, &key, &sid, &viewer) {
+        return response;
+    }
+    let result = if game_kind(&key).is_some() {
+        let inspection_viewer = viewer.clone();
+        catalog
+            .run_current_bound_game(
+                &key,
+                &sid,
+                &viewer,
+                move |host, incarnation, generation, session| {
+                    inspect_bound_game_session(
+                        host,
+                        incarnation,
+                        generation,
+                        session,
+                        &GameAudience::AssertedPrivate(inspection_viewer),
+                    )
+                    .map(|view| {
+                        view.affordances
+                            .into_iter()
+                            .filter_map(|affordance| match affordance {
+                                GameAffordance::Operation { descriptor, .. } => Some(descriptor),
+                                GameAffordance::Turn { .. } => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|error| {
+                        HostOperationError::Operation(BinaryOperationError::Refused(
+                            error.to_string(),
+                        ))
+                    })
+                },
+            )
+            .map_err(|error| {
+                HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+            })
+            .and_then(|result| result)
     } else {
-        None
-    };
-    let result = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         catalog.run_offering(&key, &viewer, move |host| {
-            if let Some((incarnation, generation, session)) = game_context {
-                return inspect_bound_game_session(
-                    host,
-                    incarnation,
-                    generation,
-                    session,
-                    &GameAudience::Shared,
-                )
-                .map(|view| {
-                    view.affordances
-                        .into_iter()
-                        .filter_map(|affordance| match affordance {
-                            GameAffordance::Operation { descriptor, .. } => Some(descriptor),
-                            GameAffordance::Turn { .. } => None,
-                        })
-                        .collect()
-                })
-                .map_err(|error| {
-                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
-                });
-            }
             host.binary_operations(&routed_key, &routed_sid)
         })
     };
@@ -296,47 +458,70 @@ async fn get_web_session_artifacts(
 pub(crate) fn session_artifacts(catalog: &Arc<CatalogState>, key: String, id: String) -> Response {
     let sid = SessionId::new(id);
     let viewer = DreggIdentity("artifact-discovery".to_string());
-    let game_context = if game_kind(&key).is_some() {
-        match catalog.game_epoch_context(&key, &sid) {
-            Ok(context) => Some(context),
-            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
-        }
+    if let Err(response) = ensure_live_session(catalog, &key, &sid, &viewer) {
+        return response;
+    }
+    let result = if game_kind(&key).is_some() {
+        let inspection_viewer = viewer.clone();
+        catalog
+            .run_current_bound_game(
+                &key,
+                &sid,
+                &viewer,
+                move |host, incarnation, generation, session| {
+                    inspect_bound_game_session(
+                        host,
+                        incarnation,
+                        generation,
+                        session,
+                        &GameAudience::AssertedPrivate(inspection_viewer),
+                    )
+                    .map(|view| {
+                        view.artifacts
+                            .into_iter()
+                            .map(HostedArtifactDescriptor::Game)
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|error| {
+                        HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
+                    })
+                },
+            )
+            .map_err(|error| {
+                HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
+            })
+            .and_then(|result| result)
     } else {
-        None
-    };
-    let result = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         catalog.run_offering(&key, &viewer, move |host| {
-            if let Some((incarnation, generation, session)) = game_context {
-                return inspect_bound_game_session(
-                    host,
-                    incarnation,
-                    generation,
-                    session,
-                    &GameAudience::Shared,
-                )
-                .map(|view| {
-                    view.artifacts
-                        .into_iter()
-                        .map(|artifact| artifact.descriptor)
-                        .collect()
-                })
-                .map_err(|error| {
-                    HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
-                });
-            }
             host.binary_artifacts(&routed_key, &routed_sid)
+                .map(|artifacts| {
+                    artifacts
+                        .into_iter()
+                        .map(HostedArtifactDescriptor::Legacy)
+                        .collect::<Vec<_>>()
+                })
         })
     };
     match result {
-        Ok(descriptors) => Json(
-            descriptors
+        Ok(descriptors) => {
+            let wires = descriptors
                 .into_iter()
-                .map(ArtifactDescriptorWire::from)
-                .collect::<Vec<_>>(),
-        )
-        .into_response(),
+                .map(|descriptor| match descriptor {
+                    HostedArtifactDescriptor::Game(artifact) => {
+                        ArtifactDescriptorWire::from_game(artifact, catalog)
+                    }
+                    HostedArtifactDescriptor::Legacy(descriptor) => {
+                        Ok(ArtifactDescriptorWire::from(descriptor))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match wires {
+                Ok(wires) => Json(wires).into_response(),
+                Err(cause) => error(StatusCode::CONFLICT, cause.to_string()),
+            }
+        }
         Err(HostArtifactError::UnknownOffering(_)) => {
             error(StatusCode::NOT_FOUND, "unknown offering")
         }
@@ -357,12 +542,87 @@ pub(crate) fn export_artifact(
     id: String,
     name: String,
     viewer: Option<DreggIdentity>,
+    authority: GameResourceAuthorityQuery,
 ) -> Response {
     let sid = SessionId::new(id);
     let routing_viewer = viewer
         .clone()
         .unwrap_or_else(|| DreggIdentity("anonymous-artifact-reader".to_string()));
-    let result = {
+    let result = if game_kind(&key).is_some() {
+        let (host_incarnation, session_generation, observed_head, token) =
+            match authority.into_complete() {
+                Ok(Some(authority)) => authority,
+                Ok(None) => {
+                    return error(
+                        StatusCode::CONFLICT,
+                        "game artifact URL requires its presented epoch/head authority query",
+                    );
+                }
+                Err(reason) => return error(StatusCode::BAD_REQUEST, reason),
+            };
+        let (presented, observed_head) = match catalog.presented_game_resource(
+            b"artifact-export",
+            &key,
+            &sid,
+            &name,
+            &host_incarnation,
+            session_generation,
+            &observed_head,
+            &token,
+        ) {
+            Ok(authority) => authority,
+            Err(cause) => return error(StatusCode::CONFLICT, cause.to_string()),
+        };
+        let routed_name = name.clone();
+        let routed_viewer = viewer.clone();
+        let audience = routed_viewer
+            .clone()
+            .map(GameAudience::AssertedPrivate)
+            .unwrap_or(GameAudience::Shared);
+        catalog
+            .run_presented_bound_game(
+                presented,
+                &routing_viewer,
+                Attribution::Asserted {
+                    label: routing_viewer.0.clone(),
+                },
+                move |host, incarnation, generation, session| {
+                    let view = inspect_bound_game_session(
+                        host,
+                        incarnation,
+                        generation,
+                        session,
+                        &audience,
+                    )
+                    .map_err(|error| {
+                        HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
+                    })?;
+                    if !view.artifacts.iter().any(|artifact| {
+                        artifact.reference.session == view.session
+                            && artifact.reference.artifact == routed_name
+                            && artifact.reference.observed_head == observed_head
+                            && view.surface_commitment == observed_head
+                    }) {
+                        return Err(HostArtifactError::Artifact(
+                            BinaryArtifactError::UnknownArtifact(routed_name),
+                        ));
+                    }
+                    host.export_binary_artifact(
+                        view.session.offering(),
+                        view.session.session_id(),
+                        &routed_name,
+                        routed_viewer.as_ref(),
+                    )
+                },
+            )
+            .map_err(|error| {
+                HostArtifactError::Artifact(BinaryArtifactError::Refused(error.to_string()))
+            })
+            .and_then(|result| result)
+    } else {
+        if let Err(reason) = authority.into_complete() {
+            return error(StatusCode::BAD_REQUEST, reason);
+        }
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         let routed_name = name.clone();
@@ -436,12 +696,17 @@ pub(crate) fn export_artifact(
 async fn get_web_artifact(
     State(catalog): State<Arc<CatalogState>>,
     Path((key, id, name)): Path<(String, String, String)>,
-    Query(query): Query<WebQuery>,
+    Query(query): Query<WebArtifactQuery>,
     request: Request<Body>,
 ) -> Response {
-    let user = web_user(request.headers(), &query);
+    let user = web_user(
+        request.headers(),
+        &WebQuery {
+            user: query.user.clone(),
+        },
+    );
     let viewer = (user != "anon").then(|| web_identity(&user));
-    export_artifact(&catalog, key, id, name, viewer)
+    export_artifact(&catalog, key, id, name, viewer, query.authority)
 }
 
 /// Read a canonical bundle request without ever formatting or logging its body.
@@ -518,46 +783,51 @@ pub(crate) async fn execute_upload(
     // advertise different media types and limits without growing a second HTTP
     // decoder or weakening the host-selected policy.
     let sid = SessionId::new(id);
-    let game_context = if game_kind(&key).is_some() {
-        match catalog.game_epoch_context(&key, &sid) {
-            Ok(context) => Some(context),
-            Err(error) => return crate::game_epoch_refusal_response(&sid, &error),
-        }
+    if let Err(response) = ensure_live_session(&catalog, &key, &sid, &actor) {
+        return response;
+    }
+    let inspected = if game_kind(&key).is_some() {
+        let inspection_viewer = actor.clone();
+        catalog
+            .run_current_bound_game(
+                &key,
+                &sid,
+                &actor,
+                move |host, incarnation, generation, session| {
+                    inspect_bound_game_session(
+                        host,
+                        incarnation,
+                        generation,
+                        session,
+                        &GameAudience::AssertedPrivate(inspection_viewer),
+                    )
+                    .map(|view| {
+                        view.affordances
+                            .into_iter()
+                            .filter_map(|affordance| match affordance {
+                                GameAffordance::Operation {
+                                    reference,
+                                    descriptor,
+                                } => Some((descriptor, Some(reference))),
+                                GameAffordance::Turn { .. } => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .map_err(|error| {
+                        HostOperationError::Operation(BinaryOperationError::Refused(
+                            error.to_string(),
+                        ))
+                    })
+                },
+            )
+            .map_err(|error| {
+                HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+            })
+            .and_then(|result| result)
     } else {
-        None
-    };
-    let (descriptor, game_operation) = {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
-        let routed_name = name.clone();
-        let viewer = actor.clone();
-        let inspection_viewer = viewer.clone();
-        let inspect_game_context = game_context.clone();
-        let inspected = catalog.run_offering(&key, &viewer, move |host| {
-            if let Some((incarnation, generation, session)) = inspect_game_context {
-                return inspect_bound_game_session(
-                    host,
-                    incarnation,
-                    generation,
-                    session,
-                    &GameAudience::AssertedPrivate(inspection_viewer),
-                )
-                .map(|view| {
-                    view.affordances
-                        .into_iter()
-                        .filter_map(|affordance| match affordance {
-                            GameAffordance::Operation {
-                                reference,
-                                descriptor,
-                            } => Some((descriptor, Some(reference))),
-                            GameAffordance::Turn { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .map_err(|error| {
-                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
-                });
-            }
+        catalog.run_offering(&key, &actor, move |host| {
             host.binary_operations(&routed_key, &routed_sid)
                 .map(|operations| {
                     operations
@@ -565,56 +835,70 @@ pub(crate) async fn execute_upload(
                         .map(|descriptor| (descriptor, None))
                         .collect()
                 })
-        });
-        match inspected {
-            Ok(operations) => match operations
-                .into_iter()
-                .find(|(descriptor, _)| descriptor.name == routed_name)
-            {
-                Some(pair) => pair,
-                None => return error(StatusCode::NOT_FOUND, "unknown hosted operation"),
-            },
-            Err(HostOperationError::UnknownOffering(_)) => {
-                return error(StatusCode::NOT_FOUND, "unknown offering");
-            }
-            Err(HostOperationError::UnknownSession { .. }) => {
-                return error(StatusCode::NOT_FOUND, "unknown live session");
-            }
-            Err(HostOperationError::Operation(_)) => {
-                return error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "unexpected discovery error",
-                );
-            }
+        })
+    };
+    let (descriptor, game_operation) = match inspected {
+        Ok(operations) => match operations
+            .into_iter()
+            .find(|(descriptor, _)| descriptor.name == name)
+        {
+            Some(pair) => pair,
+            None => return error(StatusCode::NOT_FOUND, "unknown hosted operation"),
+        },
+        Err(HostOperationError::UnknownOffering(_)) => {
+            return error(StatusCode::NOT_FOUND, "unknown offering");
+        }
+        Err(HostOperationError::UnknownSession { .. }) => {
+            return error(StatusCode::NOT_FOUND, "unknown live session");
+        }
+        Err(HostOperationError::Operation(_)) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "unexpected discovery error",
+            );
         }
     };
     let payload = match read_bundle(request, &descriptor).await {
         Ok(payload) => payload,
         Err(response) => return response,
     };
-    let result = {
+    let result = if let Some(reference) = game_operation {
+        let presented = reference.session.clone();
+        let routed_actor = actor.clone();
+        catalog
+            .run_presented_bound_game(
+                presented,
+                &actor,
+                Attribution::Asserted {
+                    label: actor.0.clone(),
+                },
+                move |host, incarnation, generation, session| {
+                    execute_bound_asserted_game_command(
+                        host,
+                        incarnation,
+                        generation,
+                        &session,
+                        GameCommand::Operation { reference, payload },
+                        routed_actor,
+                    )
+                    .map(HostedOperationResult::Game)
+                    .map_err(|error| {
+                        HostOperationError::Operation(BinaryOperationError::Refused(
+                            error.to_string(),
+                        ))
+                    })
+                },
+            )
+            .map_err(|error| {
+                HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
+            })
+            .and_then(|result| result)
+    } else {
         let routed_key = key.clone();
         let routed_sid = sid.clone();
         let routed_name = name.clone();
         let routed_actor = actor.clone();
-        let game_context = game_context.clone();
         catalog.run_offering(&key, &actor, move |host| {
-            if let (Some((incarnation, generation, session)), Some(reference)) =
-                (game_context, game_operation)
-            {
-                return execute_bound_asserted_game_command(
-                    host,
-                    incarnation,
-                    generation,
-                    &session,
-                    GameCommand::Operation { reference, payload },
-                    routed_actor,
-                )
-                .map(HostedOperationResult::Game)
-                .map_err(|error| {
-                    HostOperationError::Operation(BinaryOperationError::Refused(error.to_string()))
-                });
-            }
             host.invoke_binary_operation(
                 &routed_key,
                 &routed_sid,
@@ -629,10 +913,9 @@ pub(crate) async fn execute_upload(
         Ok(HostedOperationResult::Game(GameResult::Landed(receipt))) => {
             match project_public_game_receipt(&receipt) {
                 Ok(publication) => Json(PublicGameReceiptWire::from(publication)).into_response(),
-                Err(projection_error) => error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("public game receipt projection refused: {projection_error}"),
-                ),
+                Err(projection_error) => committed_publication_error(format!(
+                    "public game receipt projection refused: {projection_error}"
+                )),
             }
         }
         Ok(HostedOperationResult::Game(GameResult::Refused { reason, .. })) => {

@@ -134,6 +134,24 @@ fn catalog() -> Arc<CatalogState> {
     }))
 }
 
+fn game_catalog() -> Arc<CatalogState> {
+    Arc::new(CatalogState::with_host(|| {
+        let mut host = OfferingHost::new();
+        host.register(
+            "dungeon",
+            "Artifact game fixture",
+            ArtifactOffering(Fixture::Valid),
+        );
+        host.open_session(
+            "dungeon",
+            SessionId::new("artifact-epoch"),
+            SessionConfig::default(),
+        )
+        .expect("fixture game session opens");
+        host
+    }))
+}
+
 fn get(path: &str) -> Request<Body> {
     Request::builder().uri(path).body(Body::empty()).unwrap()
 }
@@ -253,4 +271,84 @@ async fn telegram_and_discord_wrappers_authenticate_before_export() {
         let path = format!("{prefix}/offerings/valid/session/live/artifacts/{PUBLIC}");
         assert_eq!(app.clone().oneshot(get(&path)).await.unwrap().status(), 401);
     }
+}
+
+#[tokio::test]
+async fn game_artifact_url_is_bound_to_its_presented_generation_and_head() {
+    let catalog = game_catalog();
+    let app = Router::new().merge(fhegg_operation::router(Arc::clone(&catalog)));
+    let discovery_path = "/offerings/dungeon/session/artifact-epoch/artifacts";
+    let export_path = format!("{discovery_path}/{PUBLIC}");
+
+    async fn authority_query(app: &Router, path: &str) -> String {
+        let response = app.clone().oneshot(get(path)).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let discovery: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        discovery[0]["gameAuthority"]["query"]
+            .as_str()
+            .expect("game artifact discovery carries an epoch/head query")
+            .to_string()
+    }
+
+    let generation_one_query = authority_query(&app, discovery_path).await;
+    assert_eq!(
+        app.clone()
+            .oneshot(get(&export_path))
+            .await
+            .unwrap()
+            .status(),
+        409,
+        "a game artifact cannot be exported without its presented authority"
+    );
+    let mut tampered_query = generation_one_query.clone();
+    let last = tampered_query.pop().expect("authority query is non-empty");
+    tampered_query.push(if last == '0' { '1' } else { '0' });
+    assert_eq!(
+        app.clone()
+            .oneshot(get(&format!("{export_path}?{tampered_query}")))
+            .await
+            .unwrap()
+            .status(),
+        409,
+        "a modified game artifact authority token must fail closed"
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(get(&format!("{export_path}?{generation_one_query}")))
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+
+    assert!(
+        catalog
+            .close_game_session(
+                "dungeon",
+                &SessionId::new("artifact-epoch"),
+                &DreggIdentity("artifact-reader".to_string()),
+            )
+            .unwrap()
+    );
+    let generation_two_query = authority_query(&app, discovery_path).await;
+    assert_ne!(generation_one_query, generation_two_query);
+    assert_eq!(
+        app.clone()
+            .oneshot(get(&format!("{export_path}?{generation_one_query}")))
+            .await
+            .unwrap()
+            .status(),
+        409,
+        "a bookmarked generation-one export URL must not read generation two"
+    );
+    assert_eq!(
+        app.oneshot(get(&format!("{export_path}?{generation_two_query}")))
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
 }
