@@ -31,6 +31,7 @@ pub mod blocklace_store;
 pub mod channel_rosters;
 pub mod checkpoint;
 pub mod commit_log;
+pub mod exact_fnsp_v3_state;
 pub mod faithful_note_root_history;
 pub mod federation;
 pub mod finalized_faithful_spend;
@@ -51,6 +52,10 @@ use redb::{Database, ReadableTable, ReadableTableMetadata};
 
 pub use blocklace_store::BlocklaceMeta;
 pub use commit_log::{CellOverlayOp, CommitRecord, FinalizedNullifierRecord, IndexAuditReport};
+pub use exact_fnsp_v3_state::{
+    EXACT_FNSP_V3_APPEND_RECORD_V1_WIRE_LEN, EXACT_FNSP_V3_STATE_HEAD_V1_WIRE_LEN,
+    ExactFnspV3StateCasV1, ExactFnspV3StateHeadV1, ExactFnspV3StateStoreError,
+};
 pub use faithful_note_root_history::{
     CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1, FaithfulNoteRootEnvelopeV1,
     FaithfulNoteRootExpectationV1, FaithfulNoteRootHistoryError, FaithfulNoteRootHistoryV1,
@@ -236,6 +241,10 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::FINALIZED_FAITHFUL_SPENDS)?;
             let _ = write_txn.open_table(tables::FINALIZED_FAITHFUL_SPEND_TURNS)?;
+            // Empty until the exact-v3 flag-day seeding transaction installs a head reconstructed
+            // from the complete durable append-record image.
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_STATE_HEAD)?;
+            let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_APPEND_RECORDS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
             // Ledger checkpoint table.
