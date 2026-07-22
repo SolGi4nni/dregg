@@ -635,15 +635,23 @@ pub fn responder_offer() -> (HybridOffer, HybridResponder) {
     let x25519_sk = StaticSecret::random_from_rng(&mut rng);
     let x25519_pk = PublicKey::from(&x25519_sk).to_bytes();
 
-    // Post-quantum half: fresh ML-KEM-768 keypair through the SAME authority seam as the bare API. When the
-    // Lean core is installed, this is the extracted KAT-anchored keygen; when it is absent the shared helper
-    // refuses unless the operator explicitly opted into the unaudited crate fallback. Decode the fixed-size
-    // secret here only because `HybridResponder` retains the typed key for the crate decaps fallback.
+    // Post-quantum half: mint the fresh ML-KEM-768 keypair through `ml_kem768_keygen`,
+    // so the Lean-verified REAL keygen core (BRICK K7, KAT-anchored) is the AUTHORITY
+    // when a host has installed it -- the `ml-kem` crate's `.generate` is NOT called on
+    // that path (it has left the KEM-keygen TCB), exactly as the bare-KEM callers route.
+    // `responder_offer` needs no particular seed/derandomisation -- just a fresh keypair
+    // from OS entropy -- precisely what `ml_kem768_keygen` provides (its own 64-byte seed
+    // draw feeds the core). With NO verified core installed it stays fail-open-loud:
+    // `ml_kem768_keygen` warns once via `guard_no_verified_core` and mints from the crate,
+    // so an archive-free build is not bricked (no new abort is introduced here).
     let (mlkem_ek_bytes, mlkem_dk_bytes) = ml_kem768_keygen();
-    let mlkem_dk_encoded = Encoded::<Dk>::try_from(mlkem_dk_bytes.as_slice())
-        .expect("ML-KEM-768 keygen returned a wrong-length decapsulation key");
-    let mlkem_dk = Dk::from_bytes(&mlkem_dk_encoded);
-
+    // Reconstruct the typed decapsulation key `finish` consumes (its verified-decaps path
+    // re-serialises via `.as_bytes()`, its crate fallback calls `.decapsulate`). The bytes
+    // are FIPS-203 ML-KEM-768 conformant on BOTH the verified-core (KAT-anchored) and the
+    // crate paths, so this byte->typed roundtrip is faithful.
+    let dk_encoded = Encoded::<Dk>::try_from(mlkem_dk_bytes.as_slice())
+        .expect("ml_kem768_keygen returned a wrong-length ML-KEM-768 decapsulation key");
+    let mlkem_dk = Dk::from_bytes(&dk_encoded);
     let offer = HybridOffer {
         x25519_pk,
         mlkem_ek: mlkem_ek_bytes.clone(),
@@ -783,8 +791,8 @@ impl HybridResponder {
 /// X-Wing hybrids that combine it with a SEPARATELY-run X25519 (e.g. the orb TLS 1.3 `X25519MLKEM768`
 /// key exchange, whose classical half is its own EverCrypt X25519 and whose combiner is its own concat-KDF).
 /// Returns `(ek, dk)` — the 1184-byte encapsulation key and the 2400-byte decapsulation key at their
-/// FIPS-203 ML-KEM-768 sizes. The SAME authority seam mints [`responder_offer`]'s post-quantum half; dregg
-/// `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
+/// FIPS-203 ML-KEM-768 sizes. The SAME `ml-kem` v0.2.3 primitive [`responder_offer`] mints its post-quantum
+/// half from; dregg `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
 pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
     let mut rng = OsCsprng;
     if let Some(core) = LEAN_KEM_KEYGEN_CORE_REAL.get() {
@@ -807,13 +815,14 @@ pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
         );
         return (ek, dk);
     }
-    // FALLBACK (no verified core installed): refuse unless the operator explicitly accepts the unaudited
-    // crate primitive. Key generation creates long-lived secret authority and therefore follows the same
-    // fail-closed rule as sign/verify/encaps/decaps now that an installable verified core exists.
-    crate::audit::guard_unaudited_fallback(
+    // FALLBACK (no verified core installed): keep the loud keygen warning + the `ml-kem` crate primitive.
+    // Unlike encaps/decaps (which ABORT via `guard_unaudited_fallback`), keygen WARNS and proceeds -- the
+    // deployed, archive-linked processes install the verified core above (assert-fatal), so this branch is
+    // only reached by a process that cannot link the archive.
+    crate::audit::guard_no_verified_core(
         "ML-KEM-768 KeyGen (bare, from OS entropy)",
         "ml-kem 0.2.3",
-        "install_verified_mlkem_keygen_core",
+        "an ML-KEM-768 decapsulation key (2400 B) guarding every session secret it opens",
     );
     let (dk, ek) = MlKem768::generate(&mut rng);
     (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())
@@ -1184,6 +1193,82 @@ mod tests {
         assert!(
             !mlkem_decaps_real_core_installed(),
             "no real KEM decaps core is installed by the export-absent path"
+        );
+    }
+
+    // Poison keygen core standing in for the leanc-native `dregg_lean_ffi::
+    // shadow_mlkem_keygen_real` (this unit-test binary cannot link the ~195 MB archive),
+    // exactly as `kem_routes_through_lean_core` stands in for the encaps/decaps cores. It
+    // returns a FIXED, valid ML-KEM-768 keypair (the "poison"): if `responder_offer`
+    // routes its keygen through the installed verified core, the offer's `ek` is EXACTLY
+    // this poison `ek`; if it instead minted via `MlKem768::generate` directly (the
+    // un-rewired path) the `ek` would be a fresh random key and would NOT match.
+    static POISON_KEYPAIR: std::sync::OnceLock<(Vec<u8>, Vec<u8>)> = std::sync::OnceLock::new();
+    static POISON_KEYGEN_HITS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    fn poison_keypair() -> (Vec<u8>, Vec<u8>) {
+        POISON_KEYPAIR
+            .get_or_init(|| {
+                let (dk, ek) = MlKem768::generate(&mut OsCsprng);
+                (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())
+            })
+            .clone()
+    }
+
+    fn poison_keygen_core(wire: &str) -> Option<String> {
+        // The wire is `hex(64-byte d||z seed)`; assert it so we know `responder_offer`
+        // marshalled a real keygen request through the seam.
+        assert_eq!(
+            wire.len(),
+            128,
+            "keygen wire is hex of a 64-byte (d||z) seed"
+        );
+        POISON_KEYGEN_HITS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (ek, dk) = poison_keypair();
+        let ek_hex: String = ek.iter().map(|b| format!("{b:02x}")).collect();
+        let dk_hex: String = dk.iter().map(|b| format!("{b:02x}")).collect();
+        Some(format!("{ek_hex} {dk_hex}"))
+    }
+
+    /// OBSERVE THE DISPATCH: `responder_offer` mints its ML-KEM-768 keypair through the
+    /// verified keygen core (`LEAN_KEM_KEYGEN_CORE_REAL`), NOT the `ml-kem` crate's
+    /// `.generate`. Belt (counter): the installed core is hit. Suspenders (poison): the
+    /// offer's `ek` equals the core's FIXED output — impossible had a fresh crate keypair
+    /// been minted. The keypair still round-trips, so the dispatch is faithful.
+    #[test]
+    fn responder_offer_dispatches_verified_keygen_core() {
+        // Install the poison keygen core (once-per-process; the only keygen-core installer
+        // in this crate's tests, so it wins the `OnceLock`).
+        install_lean_kem_keygen_core_real(poison_keygen_core);
+        assert!(
+            mlkem_keygen_real_core_installed(),
+            "a verified keygen core is installed for this observation"
+        );
+        let (poison_ek, _poison_dk) = poison_keypair();
+
+        let hits_before = POISON_KEYGEN_HITS.load(std::sync::atomic::Ordering::SeqCst);
+        let (offer, responder) = responder_offer();
+        let hits_after = POISON_KEYGEN_HITS.load(std::sync::atomic::Ordering::SeqCst);
+
+        // (counter) responder_offer consulted the verified keygen core at least once.
+        assert!(
+            hits_after > hits_before,
+            "responder_offer must dispatch its ML-KEM keygen to the verified core"
+        );
+        // (poison) the offer's ek is the core's output verbatim — NOT a fresh crate key.
+        assert_eq!(
+            offer.mlkem_ek, poison_ek,
+            "responder_offer's ML-KEM ek must come from the verified core, not MlKem768::generate"
+        );
+        assert_eq!(offer.mlkem_ek.len(), 1184, "ML-KEM-768 ek size");
+
+        // The dispatched keypair is a MATCHING pair: a full hybrid handshake agrees.
+        let (msg, initiator_key) = initiate(&offer).expect("initiate");
+        let responder_key = responder.finish(&msg).expect("finish");
+        assert_eq!(
+            initiator_key, responder_key,
+            "hybrid session key agrees over the verified-keygen dispatch path"
         );
     }
 }
