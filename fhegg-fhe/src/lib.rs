@@ -88,6 +88,10 @@ pub mod decision_attestation;
 pub mod fhir;
 pub mod gpu_arena;
 pub mod gpu_qualification;
+/// Canonical public coefficients for the exact deployed BFV relation, shared
+/// by monolithic and distributed proof backends without accepting prover rows.
+#[cfg(feature = "amm-input-binding")]
+pub(crate) mod private_book_bfv_exact;
 /// Exact portable-GPU precompute for the private-book Bulletproof relation's
 /// 805M public signed message-table additions. The proof backend's Ristretto
 /// MSMs remain the named fork-level acceleration seam.

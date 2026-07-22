@@ -63,7 +63,7 @@
 //! be relabeled or called after reconstructing its shares at a coordinator.
 
 use std::fmt;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use bulletproofs_r1cs::r1cs::{
@@ -77,23 +77,26 @@ use dregg_circuit_prove::dark_bazaar_private::{
     ROOT_DOMAIN_TAG, RULE_ID,
 };
 use dregg_circuit_prove::private_book_bfv_slice as native_slice;
-use fhe::bfv::{Ciphertext, Encoding, Plaintext};
 use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
-use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
 use merlin::Transcript;
 use rand_09::rngs::StdRng;
 use rand_09::{RngCore, SeedableRng};
 
-use crate::bfv_lean::{LeanCiphertext, FOLD_DEGREE, FOLD_MODULI};
+use crate::bfv_lean::{FOLD_DEGREE, FOLD_MODULI};
+#[cfg(test)]
+use crate::private_book_bfv_exact::derive_exact_message_table;
+use crate::private_book_bfv_exact::{
+    derive_signs, negacyclic_correlation, parse_public_key, signed_dot, ExactBfvError,
+    ExactBfvPublicRelation as PublicRelation, COMPRESSION_ROUNDS, MAX_ABS_BATCH_QUOTIENT,
+    QUOTIENT_BITS,
+};
 use crate::private_book_relation::{
-    private_book_relation_digest, private_order_slots, verify_private_book_opening,
-    PrivateBookCiphertexts, PrivateBookEncryptionOpening, PRIVATE_BOOK_BFV_CODEC_ID,
-    PRIVATE_BOOK_PUBLIC_BOUND,
+    private_book_relation_digest, verify_private_book_opening, PrivateBookCiphertexts,
+    PrivateBookEncryptionOpening, PRIVATE_BOOK_BFV_CODEC_ID, PRIVATE_BOOK_PUBLIC_BOUND,
 };
 use crate::threshold::{BfvParams, CollectivePublicKey};
 
 const PROOF_TRANSCRIPT: &[u8] = b"fhegg/private-book-bfv-bulletproof/n4k4/v1";
-const SIGN_DOMAIN: &str = "fhegg/private-book-bfv-rademacher/n4k4/v1";
 const PROOF_MAGIC: &[u8; 8] = b"FHPZK001";
 const PROOF_VERSION: u16 = 1;
 const FOLD_PLAINTEXT_MODULUS: u64 = 1_032_193;
@@ -105,8 +108,6 @@ const BFV_VARIANCE: usize = 10;
 // sampler-image membership remains a host preflight, not an R1CS claim.
 const SHORT_SHIFT: i64 = 32;
 const SHORT_BITS: usize = 6;
-const COMPRESSION_ROUNDS: usize = 128;
-const QUOTIENT_BITS: usize = 24;
 const BP_GENS_CAPACITY: usize = 1 << 19;
 const MAX_PROOF_BYTES: usize = 64 * 1024;
 const POSEIDON_WIDTH: usize = 16;
@@ -227,10 +228,6 @@ static BP_GENS: LazyLock<BulletproofGens> =
 // margin.  Before division the absolute integer is < 2^59 for the largest
 // pinned q, far below the ~2^252 Curve25519 scalar order, so Scalar wrap cannot
 // satisfy a false integer equation.
-const MAX_ABS_BATCH_QUOTIENT: u64 = 1_130_496;
-const _: () = assert!(MAX_ABS_BATCH_QUOTIENT < (1 << (QUOTIENT_BITS - 1)));
-const _: () = assert!((MAX_ABS_BATCH_QUOTIENT as u128) * (FOLD_MODULI[2] as u128) < (1u128 << 59));
-
 type Result<T> = std::result::Result<T, PrivateBookBfvZkError>;
 
 #[derive(Debug)]
@@ -263,6 +260,18 @@ impl fmt::Display for PrivateBookBfvZkError {
 }
 
 impl std::error::Error for PrivateBookBfvZkError {}
+
+impl From<ExactBfvError> for PrivateBookBfvZkError {
+    fn from(error: ExactBfvError) -> Self {
+        match error {
+            ExactBfvError::WrongParameters | ExactBfvError::InvalidOwner => Self::WrongParameters,
+            ExactBfvError::InvalidStatement => Self::InvalidStatement,
+            ExactBfvError::PublicKeyWire => Self::PublicKeyWire,
+            ExactBfvError::Encoder(reason) => Self::Encoder(reason),
+            ExactBfvError::Arithmetic(reason) => Self::Arithmetic(reason),
+        }
+    }
+}
 
 impl From<R1CSError> for PrivateBookBfvZkError {
     fn from(error: R1CSError) -> Self {
@@ -348,8 +357,8 @@ pub fn prove_private_book_bfv_zk(
     verify_private_book_opening(statement, witness, ciphertexts, opening, params, public_key)
         .map_err(|error| PrivateBookBfvZkError::InvalidOpening(error.to_string()))?;
 
-    timing.next("public-key-parse");
-    let public = PublicRelation::derive(statement, ciphertexts, params, public_key, &mut timing)?;
+    timing.next("canonical-public-relation");
+    let public = PublicRelation::derive(statement, ciphertexts, params, public_key)?;
     timing.next("secret-witness-extract");
     let secret = SecretRelation::extract(witness, opening)?;
     timing.next("seeded-ring-validation");
@@ -382,8 +391,8 @@ pub fn verify_private_book_bfv_zk(
 ) -> Result<()> {
     let mut timing = PhaseTimings::new("verify", "validate-public");
     validate_public(statement, ciphertexts, params)?;
-    timing.next("public-key-parse");
-    let public = PublicRelation::derive(statement, ciphertexts, params, public_key, &mut timing)?;
+    timing.next("canonical-public-relation");
+    let public = PublicRelation::derive(statement, ciphertexts, params, public_key)?;
     timing.next("proof-parse-and-transcript");
     let r1cs = R1CSProof::from_bytes(&proof.proof).map_err(|_| PrivateBookBfvZkError::ProofWire)?;
     let transcript = relation_transcript(statement, ciphertexts, params, public_key);
@@ -418,7 +427,7 @@ pub fn prove_private_book_bfv_native_slice_zk(
         .map_err(|error| PrivateBookBfvZkError::InvalidOpening(error.to_string()))?;
 
     let mut timing = PhaseTimings::new("native-slice-prove", "public-relation");
-    let public = PublicRelation::derive(statement, ciphertexts, params, public_key, &mut timing)?;
+    let public = PublicRelation::derive(statement, ciphertexts, params, public_key)?;
     let secret = SecretRelation::extract(witness, opening)?;
     secret.validate_seeded_equations(&public)?;
 
@@ -533,54 +542,6 @@ fn relation_transcript(
         &private_book_relation_digest(statement, ciphertexts, params, public_key),
     );
     transcript
-}
-
-#[derive(Clone)]
-struct PublicRelation {
-    pk: LeanCiphertext,
-    ciphertexts: [LeanCiphertext; ORDER_COUNT],
-    /// `[kind * 16 + quantity][modulus][coefficient]`, produced by the real
-    /// SIMD encoder.  This is deliberately an exact finite table rather than
-    /// a linear unit-slot basis: fhe.rs's BFV plaintext lift includes modular
-    /// carry corrections, so integer multiples of an encrypted unit vector
-    /// are not the exact deployed lift.
-    message_table: Vec<Vec<Vec<u64>>>,
-    pk_adjoint_ntt: [Poly; 2],
-    context: Arc<fhe_math::rq::Context>,
-}
-
-impl PublicRelation {
-    fn derive(
-        _statement: PublicStatement,
-        ciphertexts: &PrivateBookCiphertexts,
-        params: &BfvParams,
-        public_key: &CollectivePublicKey,
-        timing: &mut PhaseTimings,
-    ) -> Result<Self> {
-        let pk = parse_public_key(public_key, params)?;
-        timing.next("message-table-129-fhe-encryptions");
-        let message_table = derive_exact_message_table(params, public_key)?;
-        timing.next("public-relation-context");
-        let context = params
-            .arc()
-            .context_at_level(0)
-            .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?
-            .clone();
-        timing.next("public-key-adjoint-ntt");
-        let pk_adjoint_ntt = [0usize, 1usize]
-            .map(|poly| adjoint_ntt(&pk.polys[poly].rows, params, &context))
-            .into_iter()
-            .collect::<Result<Vec<_>>>()?
-            .try_into()
-            .expect("exactly two public-key polynomials");
-        Ok(Self {
-            pk,
-            ciphertexts: ciphertexts.rows().clone(),
-            message_table,
-            pk_adjoint_ntt,
-            context,
-        })
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -854,14 +815,18 @@ fn constrain_bfv_equations<CS: RandomizedConstraintSystem>(
             let mut assignment = secret.map(|_| 0i128);
             for order in 0..ORDER_COUNT {
                 for poly in 0..2 {
-                    let signs = derive_signs(&challenge_bytes, qi, round, order, poly);
+                    let signs = derive_signs(&challenge_bytes, qi, round, order, poly, FOLD_DEGREE);
                     let ntt_started = timing.enabled().then(Instant::now);
                     let gradient = negacyclic_correlation(
                         &signs,
                         &public.pk_adjoint_ntt[poly],
                         &public.context,
                         qi,
-                    )?;
+                        FOLD_DEGREE,
+                    )
+                    .map_err(|error| R1CSError::GadgetError {
+                        description: error.to_string(),
+                    })?;
                     if let Some(started) = ntt_started {
                         correlation_ntt += started.elapsed();
                     }
@@ -962,7 +927,7 @@ fn precompute_message_dots_wgpu(
             for order in 0..ORDER_COUNT {
                 let row = (qi * COMPRESSION_ROUNDS + round) * ORDER_COUNT + order;
                 // Message terms occur only in c0, hence the exact poly=0 row.
-                for (coefficient, sign) in derive_signs(challenge, qi, round, order, 0)
+                for (coefficient, sign) in derive_signs(challenge, qi, round, order, 0, FOLD_DEGREE)
                     .into_iter()
                     .enumerate()
                 {
@@ -1029,192 +994,6 @@ fn add_message_dot(
             }
         }
     }
-}
-
-fn signed_dot(signs: &[i64], values: &[u64]) -> i128 {
-    signs
-        .iter()
-        .zip(values)
-        .map(|(&sign, &value)| sign as i128 * value as i128)
-        .sum()
-}
-
-fn derive_signs(
-    challenge: &[u8; 32],
-    modulus: usize,
-    round: usize,
-    order: usize,
-    poly: usize,
-) -> Vec<i64> {
-    let mut hasher = blake3::Hasher::new_derive_key(SIGN_DOMAIN);
-    hasher.update(challenge);
-    hasher.update(&(modulus as u64).to_be_bytes());
-    hasher.update(&(round as u64).to_be_bytes());
-    hasher.update(&(order as u64).to_be_bytes());
-    hasher.update(&(poly as u64).to_be_bytes());
-    let mut bytes = vec![0u8; FOLD_DEGREE.div_ceil(8)];
-    hasher.finalize_xof().fill(&mut bytes);
-    (0..FOLD_DEGREE)
-        .map(|index| {
-            if bytes[index / 8] & (1 << (index % 8)) == 0 {
-                -1
-            } else {
-                1
-            }
-        })
-        .collect()
-}
-
-fn negacyclic_correlation(
-    signs: &[i64],
-    public_adjoint_ntt: &Poly,
-    context: &Arc<fhe_math::rq::Context>,
-    qi: usize,
-) -> std::result::Result<Vec<u64>, R1CSError> {
-    let mut sign_poly = Poly::try_convert_from(signs, context, false, Representation::PowerBasis)
-        .map_err(|error| R1CSError::GadgetError {
-        description: error.to_string(),
-    })?;
-    sign_poly.change_representation(Representation::Ntt);
-    sign_poly *= public_adjoint_ntt;
-    sign_poly.change_representation(Representation::PowerBasis);
-    let coefficients = Vec::<u64>::from(&sign_poly);
-    Ok(coefficients[qi * FOLD_DEGREE..(qi + 1) * FOLD_DEGREE].to_vec())
-}
-
-fn adjoint_ntt(
-    rows: &[Vec<u64>],
-    _params: &BfvParams,
-    context: &Arc<fhe_math::rq::Context>,
-) -> Result<Poly> {
-    let mut flat = Vec::with_capacity(FOLD_MODULI.len() * FOLD_DEGREE);
-    for (qi, row) in rows.iter().enumerate() {
-        let q = FOLD_MODULI[qi];
-        let mut adjoint = vec![0u64; FOLD_DEGREE];
-        adjoint[0] = row[0];
-        for coefficient in 1..FOLD_DEGREE {
-            adjoint[FOLD_DEGREE - coefficient] = if row[coefficient] == 0 {
-                0
-            } else {
-                q - row[coefficient]
-            };
-        }
-        flat.extend(adjoint);
-    }
-    let mut poly = Poly::try_convert_from(flat, context, false, Representation::PowerBasis)
-        .map_err(|error| PrivateBookBfvZkError::Arithmetic(error.to_string()))?;
-    poly.change_representation(Representation::Ntt);
-    Ok(poly)
-}
-
-fn parse_public_key(
-    public_key: &CollectivePublicKey,
-    params: &BfvParams,
-) -> Result<LeanCiphertext> {
-    let bytes = public_key.pk.to_bytes();
-    let mut offset = 0usize;
-    if bytes.get(offset).copied() != Some(0x0a) {
-        return Err(PrivateBookBfvZkError::PublicKeyWire);
-    }
-    offset += 1;
-    let len = read_varint(&bytes, &mut offset)? as usize;
-    let end = offset
-        .checked_add(len)
-        .filter(|&end| end == bytes.len())
-        .ok_or(PrivateBookBfvZkError::PublicKeyWire)?;
-    let parsed =
-        LeanCiphertext::from_fhe_bytes(&bytes[offset..end], params.moduli(), params.degree(), 0)
-            .map_err(|_| PrivateBookBfvZkError::PublicKeyWire)?;
-    if parsed.level != 0 || parsed.variable_time || parsed.polys.len() != 2 {
-        return Err(PrivateBookBfvZkError::PublicKeyWire);
-    }
-    Ok(parsed)
-}
-
-fn read_varint(bytes: &[u8], offset: &mut usize) -> Result<u64> {
-    let mut value = 0u64;
-    let mut shift = 0u32;
-    loop {
-        let byte = *bytes
-            .get(*offset)
-            .ok_or(PrivateBookBfvZkError::PublicKeyWire)?;
-        *offset += 1;
-        if shift >= 64 {
-            return Err(PrivateBookBfvZkError::PublicKeyWire);
-        }
-        value |= u64::from(byte & 0x7f) << shift;
-        if byte & 0x80 == 0 {
-            return Ok(value);
-        }
-        shift += 7;
-    }
-}
-
-fn derive_exact_message_table(
-    params: &BfvParams,
-    public_key: &CollectivePublicKey,
-) -> Result<Vec<Vec<Vec<u64>>>> {
-    let zero = vec![0u64; FOLD_DEGREE];
-    let zero_ct = deterministic_encrypt_slots(&zero, params, public_key)?;
-    let mut table = Vec::with_capacity(PRIVATE_BOOK_OPTION_COUNT);
-    for kind in 0..2 * PRICE_COUNT {
-        for qty in 0..QUANTITY_COUNT {
-            let order = dark_bazaar_private::PrivateOrder {
-                side: if kind < PRICE_COUNT {
-                    dark_bazaar_private::Side::Bid
-                } else {
-                    dark_bazaar_private::Side::Ask
-                },
-                limit: (kind % PRICE_COUNT) as u8,
-                qty: qty as u8,
-            };
-            let slots = private_order_slots(order, FOLD_DEGREE)
-                .map_err(|error| PrivateBookBfvZkError::Encoder(error.to_string()))?;
-            let option_ct = deterministic_encrypt_slots(&slots, params, public_key)?;
-            // Same RNG seed means u/e/c1 cancel byte-for-byte.  The c0 difference
-            // is therefore exactly fhe.rs Plaintext::to_poly for this complete
-            // legal row, including the library's modular lift corrections.
-            if option_ct.polys[1] != zero_ct.polys[1] {
-                return Err(PrivateBookBfvZkError::Encoder(
-                    "deterministic c1 did not cancel while deriving SIMD table".to_owned(),
-                ));
-            }
-            let mut option_poly = Vec::with_capacity(FOLD_MODULI.len());
-            for (qi, &q) in FOLD_MODULI.iter().enumerate() {
-                option_poly.push(
-                    option_ct.polys[0].rows[qi]
-                        .iter()
-                        .zip(&zero_ct.polys[0].rows[qi])
-                        .map(|(&option, &zero)| {
-                            if option >= zero {
-                                option - zero
-                            } else {
-                                q - (zero - option)
-                            }
-                        })
-                        .collect(),
-                );
-            }
-            table.push(option_poly);
-        }
-    }
-    Ok(table)
-}
-
-fn deterministic_encrypt_slots(
-    slots: &[u64],
-    params: &BfvParams,
-    public_key: &CollectivePublicKey,
-) -> Result<LeanCiphertext> {
-    let plaintext = Plaintext::try_encode(slots, Encoding::simd(), params.arc())
-        .map_err(|error| PrivateBookBfvZkError::Encoder(error.to_string()))?;
-    let mut rng = StdRng::from_seed([0xA7; 32]);
-    let ciphertext: Ciphertext = public_key
-        .pk
-        .try_encrypt(&plaintext, &mut rng)
-        .map_err(|error| PrivateBookBfvZkError::Encoder(error.to_string()))?;
-    LeanCiphertext::from_fhe_bytes(&ciphertext.to_bytes(), params.moduli(), params.degree(), 1)
-        .map_err(|error| PrivateBookBfvZkError::Encoder(error.to_string()))
 }
 
 fn message_coefficient(
