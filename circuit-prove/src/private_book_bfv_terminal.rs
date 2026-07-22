@@ -626,15 +626,17 @@ mod tests {
     fn q0_n4096_composite_authority_is_fail_closed_quarantined() {
         let (butterfly_descriptor, input, rows, output, claim) = carrier(29);
         let terminal = terminal();
-        let prove_error = prove_bound_to_transform(
+        let prove_error = match prove_bound_to_transform(
             &claim,
             butterfly_descriptor,
             &rows,
             &input,
             &output,
             &terminal,
-        )
-        .expect_err("unlinked product/carrier must not mint authority");
+        ) {
+            Ok(_) => panic!("unlinked product/carrier must not mint authority"),
+            Err(error) => error,
+        };
         assert_eq!(prove_error, UNLINKED_PRODUCT_CARRIER_AUTHORITY);
 
         // The internal arithmetic prototype may still be exercised while the
