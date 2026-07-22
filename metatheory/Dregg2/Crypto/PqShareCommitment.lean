@@ -201,6 +201,90 @@ theorem false_opening_link_extracts_msis
   · rw [map_sub]
     exact sub_eq_zero.mpr hcollision
 
+/-! ## Exact BFV q0 radix carrier.
+
+The experimental Rust q0 carrier commits to 4,096 canonical residues by
+expanding each one into three little-endian radix-2^15 coordinates.  This
+section pins that codec and proves it loses no information below q0.  It says
+nothing about binding/hiding parameters, nor does it link this opening to the
+live Ristretto DKG commitment; those remain separate security obligations.
+-/
+
+/-- First production BFV RNS modulus, matching Rust `BFV_Q0_MODULUS`. -/
+def bfvQ0Modulus : Nat := 68_719_403_009
+
+/-- Production BFV polynomial degree. -/
+def bfvQ0Degree : Nat := 4_096
+
+/-- Rust expands each residue into three base-2^15 coordinates. -/
+def bfvQ0Radix : Nat := 32_768
+def bfvQ0LimbsPerCoefficient : Nat := 3
+def bfvQ0ValueWidth : Nat := bfvQ0Degree * bfvQ0LimbsPerCoefficient
+
+#guard bfvQ0Modulus < bfvQ0Radix ^ bfvQ0LimbsPerCoefficient
+#guard bfvQ0ValueWidth = 12_288
+
+/-- Mathematical three-limb expansion.  The high limb is left unreduced so
+the reconstruction theorem is unconditional; `bfvQ0Encode_matches_rust`
+proves that q0's capacity bound makes Rust's third `% radix` identical. -/
+def bfvQ0Encode (x : Nat) : Nat × Nat × Nat :=
+  (x % bfvQ0Radix,
+    (x / bfvQ0Radix) % bfvQ0Radix,
+    x / (bfvQ0Radix * bfvQ0Radix))
+
+/-- Exact three `% radix` operations performed by the Rust loop. -/
+def bfvQ0EncodeRust (x : Nat) : Nat × Nat × Nat :=
+  (x % bfvQ0Radix,
+    (x / bfvQ0Radix) % bfvQ0Radix,
+    (x / (bfvQ0Radix * bfvQ0Radix)) % bfvQ0Radix)
+
+def bfvQ0Decode (limbs : Nat × Nat × Nat) : Nat :=
+  limbs.1 + bfvQ0Radix * limbs.2.1 +
+    bfvQ0Radix * bfvQ0Radix * limbs.2.2
+
+/-- Base-2^15 expansion and reconstruction are exactly inverse over naturals. -/
+theorem bfvQ0Decode_encode (x : Nat) : bfvQ0Decode (bfvQ0Encode x) = x := by
+  simp [bfvQ0Decode, bfvQ0Encode, bfvQ0Radix]
+  omega
+
+/-- Every coordinate is canonical whenever the input fits in three limbs. -/
+theorem bfvQ0Encode_limbBounds (x : Nat) (h : x < bfvQ0Radix ^ 3) :
+    (bfvQ0Encode x).1 < bfvQ0Radix ∧
+      (bfvQ0Encode x).2.1 < bfvQ0Radix ∧
+      (bfvQ0Encode x).2.2 < bfvQ0Radix := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact Nat.mod_lt _ (by norm_num [bfvQ0Radix])
+  · exact Nat.mod_lt _ (by norm_num [bfvQ0Radix])
+  · apply (Nat.div_lt_iff_lt_mul (by norm_num [bfvQ0Radix])).2
+    simpa [bfvQ0Radix, pow_succ] using h
+
+/-- Under the q0 capacity bound, the executable Rust loop is precisely the
+mathematical expansion above. -/
+theorem bfvQ0Encode_matches_rust (x : Nat) (h : x < bfvQ0Radix ^ 3) :
+    bfvQ0EncodeRust x = bfvQ0Encode x := by
+  have hthird : x / (bfvQ0Radix * bfvQ0Radix) < bfvQ0Radix :=
+    (bfvQ0Encode_limbBounds x h).2.2
+  simp [bfvQ0EncodeRust, bfvQ0Encode, Nat.mod_eq_of_lt hthird]
+
+/-- Therefore the literal Rust encoding reconstructs every canonical q0
+residue exactly. -/
+theorem bfvQ0Decode_encodeRust (x : Nat) (h : x < bfvQ0Radix ^ 3) :
+    bfvQ0Decode (bfvQ0EncodeRust x) = x := by
+  rw [bfvQ0Encode_matches_rust x h]
+  exact bfvQ0Decode_encode x
+
+/-- The loop's postcondition (`debug_assert_eq!(remaining, 0)`) follows from
+the same capacity premise. -/
+theorem bfvQ0Rust_leftover_zero (x : Nat) (h : x < bfvQ0Radix ^ 3) :
+    x / bfvQ0Radix / bfvQ0Radix / bfvQ0Radix = 0 := by
+  rw [Nat.div_div_eq_div_mul, Nat.div_div_eq_div_mul]
+  exact Nat.div_eq_of_lt (by simpa [pow_succ, mul_assoc] using h)
+
+/-- All canonical q0 residues satisfy the exact codec's capacity premise. -/
+theorem bfvQ0Residue_fits (x : Nat) (h : x < bfvQ0Modulus) :
+    x < bfvQ0Radix ^ 3 := by
+  exact lt_trans h (by decide)
+
 /-! ## Cross-language executable KAT (explicit tiny matrix, BabyBear). -/
 
 /-- Executable policy pin matching Rust: the current 13-felt/704-blinder
@@ -254,5 +338,11 @@ def katShareB : List Nat :=
 #assert_axioms rerandomize_bijective
 #assert_axioms openingsLink_implies_commitmentsLink
 #assert_axioms false_opening_link_extracts_msis
+#assert_axioms bfvQ0Decode_encode
+#assert_axioms bfvQ0Encode_limbBounds
+#assert_axioms bfvQ0Encode_matches_rust
+#assert_axioms bfvQ0Decode_encodeRust
+#assert_axioms bfvQ0Rust_leftover_zero
+#assert_axioms bfvQ0Residue_fits
 
 end Dregg2.Crypto.PqShareCommitment
