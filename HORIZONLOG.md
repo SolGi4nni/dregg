@@ -11473,3 +11473,47 @@ an opaque executor-produced exact-effect token, a prepare-before-dispatch
 recovery state machine, full market identity, and actual hosted web/chat
 controllers.  Those are active repair lanes; “committed” does not mean “live,”
 and “WIP” is not a reason to discard useful typed substrate.
+
+## 2026-07-22 — exact multiplayer topology + hosted Bazaar + side-state repair wave
+
+Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
+(`b46e939cf`). This paragraph is the short continuity pin.
+
+- Exact FNSP-v3's first signed frame design was restartable but wrong for a
+  multiplayer chain: it forced every exact frame to extend the prior exact
+  frame's player/full state. `ea28662e0` + `e6f58f9b9` replace that with the
+  Lean-green law—one global exact-nullifier/frame chain; independently durable,
+  latest-per-agent receipt predecessor/index; global commit boundary; explicit
+  cutover/federation/executor/exact-head authority. `89a1e112e` is the aligned
+  Rust turn API. Signed frame persistence remains banked non-live WIP in
+  `0cb8b2dd8`; node/persist/blocklace production selection is still active.
+- Do not promote this into “dark value”: v3's witness is hidden, but its 76
+  public inputs expose nullifier/value/asset/root/count/outer coordinates and
+  the currently total executor slice is value-zero with no value commitment.
+  It is the exact anti-double-spend/receipt foundation beneath a future composed
+  ShieldedTransfer/fhEgg conservation+range consequence.
+- `ff7a7fd36` banks the typed Bazaar→Dungeon consequence and `a619f51b4`
+  mounts one deployment-owned opt-in contract through web/Telegram/Discord.
+  The private worker listener is still missing; frontends never carry the
+  winner/witness/raw private receipt. Restart testing found envelope hashes are
+  unstable identity, so the active repair keys one-shot recovery by the typed
+  semantic clearing claim and treats each reissued receipt only as corroborating
+  evidence.
+- Engine side-state work is now explicit: `77c8da611` fences Lean producers
+  across unprojected accumulators; `a977c996d` gives rate limits transactional
+  per-action staging + a strict snapshot codec; `a0591caec` + `d502ecfd2` bind,
+  roll back, and expose candidate APIs for Promise/Notify/React; `af090f03c`
+  durably restores the local custom-program registry. Node-level same-redb
+  state welds remain, and custom program deployment is not yet federation-
+  consensus-ordered.
+- A live generic `blocklace_sync::execute_finalized_turn` atomicity bug is now a
+  named P0: candidate RAM/pending/artifact/activity effects occur before durable
+  success, so rejection or store failure can leave RAM ahead. The repair must
+  implement the already-proved `Dregg2.Exec.Durability` order: isolate candidate,
+  durable commit, then publish fresh-only RAM/head/events/artifacts.
+- Portable GPU truth stayed grounded: BFV/TFHE kernels are exact wgpu/Vulkan on
+  hbox and persvati; live `fhe_clear` and Dark AMM remain CPU at their missing
+  integration seams; WGPU Ristretto remains disabled because it is much slower
+  than dalek. The largest measured game-path cost is the six-share Descent
+  threshold range-proof path (~1086s), now assigned to the owned host-parallel
+  Bulletproof prover + bounded parallel quorum cut before any further GPU claim.
