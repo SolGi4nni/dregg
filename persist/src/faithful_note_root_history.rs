@@ -428,7 +428,7 @@ impl FaithfulNoteRootEnvelopeV1 {
         Ok(bytes)
     }
 
-    fn from_bytes(bytes: &[u8]) -> StoreResult<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> StoreResult<Self> {
         if bytes.len() > MAX_ENVELOPE_BYTES {
             return Err(integrity(FaithfulNoteRootHistoryError::Malformed(
                 "envelope size",
@@ -815,8 +815,9 @@ impl PersistentStore {
 ///
 /// When the store has no segment yet, `initial_anchor` must be the exact
 /// predecessor reconstructed from the durable note table.  `allow_replay` is
-/// used only by the already-committed idempotence path and requires a
-/// byte-identical existing envelope; it never patches a missing history row.
+/// used only by the already-committed idempotence path: it reconstructs the complete current
+/// chain/head and requires byte-identical membership at the requested historical height.  It
+/// never patches a missing row, requires the old edge to remain the tail, or rewinds the seal.
 pub(crate) fn append_faithful_note_root_verified_in(
     write: &redb::WriteTransaction,
     envelope: &FaithfulNoteRootEnvelopeV1,
@@ -834,7 +835,7 @@ pub(crate) fn append_faithful_note_root_verified_in(
         .get(tables::META_FAITHFUL_NOTE_ROOT_HEAD)?
         .map(|guard| guard.value().to_vec());
 
-    let seal = match (anchor_bytes, seal_bytes) {
+    let (installed_anchor, seal) = match (anchor_bytes, seal_bytes) {
         (Some(anchor_bytes), Some(seal_bytes)) => {
             let installed =
                 FaithfulNoteRootAnchorV1::from_bytes(&anchor_bytes).map_err(integrity)?;
@@ -845,12 +846,20 @@ pub(crate) fn append_faithful_note_root_verified_in(
                     "installed anchor",
                 )));
             }
-            HeadSealV1::from_bytes(&seal_bytes).map_err(integrity)?
+            let seal = HeadSealV1::from_bytes(&seal_bytes).map_err(integrity)?;
+            (installed, seal)
         }
         (None, None) => {
             if !table.is_empty()? {
                 return Err(integrity(FaithfulNoteRootHistoryError::Malformed(
                     "records without anchor",
+                )));
+            }
+            // Replay is read-only.  In particular, a missing historical segment may not install
+            // an anchor/head as a side effect before reporting that the requested row is absent.
+            if allow_replay {
+                return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "missing replay record",
                 )));
             }
             let initial = initial_anchor.ok_or_else(|| {
@@ -869,7 +878,7 @@ pub(crate) fn append_faithful_note_root_verified_in(
                 anchor_bytes.as_slice(),
             )?;
             metadata.insert(tables::META_FAITHFUL_NOTE_ROOT_HEAD, seal_bytes.as_slice())?;
-            seal
+            (initial.clone(), seal)
         }
         _ => {
             return Err(integrity(FaithfulNoteRootHistoryError::Malformed(
@@ -884,22 +893,55 @@ pub(crate) fn append_faithful_note_root_verified_in(
         )));
     }
 
+    if allow_replay {
+        // An idempotent replay may name any immutable historical edge, not only the current tail.
+        // Rebuild the complete installed chain before accepting membership: a byte-identical old
+        // row beside a truncated, forked, non-canonical, or head-disagreeing current history is
+        // still corrupt and must fail.  This path performs no writes and never rewinds the seal.
+        let mut history = FaithfulNoteRootHistoryV1::new(installed_anchor);
+        let mut found = false;
+        for entry in table.iter()? {
+            let (height, bytes) = entry?;
+            let stored_bytes = bytes.value();
+            let decoded = FaithfulNoteRootEnvelopeV1::from_bytes(stored_bytes)?;
+            if decoded.to_bytes()?.as_slice() != stored_bytes {
+                return Err(integrity(FaithfulNoteRootHistoryError::Malformed(
+                    "non-canonical replay envelope",
+                )));
+            }
+            if decoded.record.height != height.value() {
+                return Err(integrity(FaithfulNoteRootHistoryError::Malformed(
+                    "height key",
+                )));
+            }
+            if decoded.record.height == envelope.record.height {
+                if decoded != *envelope {
+                    return Err(integrity(FaithfulNoteRootHistoryError::Fork));
+                }
+                found = true;
+            }
+            history.append_structurally(decoded).map_err(integrity)?;
+        }
+        if history.head() != seal.head {
+            return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "persisted head seal",
+            )));
+        }
+        if !found {
+            return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "missing replay record",
+            )));
+        }
+        return Ok(());
+    }
+
     if let Some(existing) = table.get(envelope.record.height)? {
         let decoded = FaithfulNoteRootEnvelopeV1::from_bytes(existing.value())?;
-        if allow_replay && decoded == *envelope && seal.head == envelope.record.to_anchor() {
-            return Ok(());
-        }
         return Err(integrity(if decoded == *envelope {
             FaithfulNoteRootHistoryError::Replay
         } else {
             FaithfulNoteRootHistoryError::Fork
         }));
-    }
-
-    if allow_replay {
-        return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
-            "missing replay record",
-        )));
     }
 
     // A reused block id is replay even if an attacker changes height.
@@ -1141,6 +1183,63 @@ mod tests {
                 .load_faithful_note_root_history_with(expected, |_| true)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn historical_replay_validates_membership_and_the_complete_later_chain() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let (mut tree, anchor) = empty_anchor();
+        store
+            .initialize_faithful_note_root_history(&anchor)
+            .unwrap();
+
+        let first_commitments = [[0x81; 32]];
+        let first = planned(&tree, &anchor, 8, &first_commitments);
+        for commitment in &first_commitments {
+            tree.append_blake3_commitment(commitment);
+        }
+        let second_anchor = first.record.to_anchor();
+        let second = planned(&tree, &second_anchor, 9, &[[0x82; 32]]);
+        store.append_faithful_note_root_verified(&first).unwrap();
+        store.append_faithful_note_root_verified(&second).unwrap();
+
+        // The first edge is immutable history even though the current seal names the second.
+        let write = store.db.begin_write().unwrap();
+        append_faithful_note_root_verified_in(&write, &first, Some(&anchor), true).unwrap();
+        write.abort().unwrap();
+
+        // Same height is not enough: the exact canonical envelope must be byte-identical.
+        let mut wrong = first.clone();
+        wrong.record.block_id = tag(10);
+        let write = store.db.begin_write().unwrap();
+        assert!(matches!(
+            append_faithful_note_root_verified_in(&write, &wrong, Some(&anchor), true),
+            Err(StoreError::Integrity(ref message)) if message.contains("fork")
+        ));
+        write.abort().unwrap();
+
+        // Exact historical membership beside a plausible but stale current-head seal is still a
+        // corrupt snapshot.  Replay may neither accept it nor rewind the seal to the old edge.
+        let write = store.db.begin_write().unwrap();
+        {
+            let stale_seal = HeadSealV1 {
+                records: 2,
+                head: first.record.to_anchor(),
+            }
+            .to_bytes();
+            write
+                .open_table(tables::METADATA_BYTES)
+                .unwrap()
+                .insert(tables::META_FAITHFUL_NOTE_ROOT_HEAD, stale_seal.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        let write = store.db.begin_write().unwrap();
+        assert!(matches!(
+            append_faithful_note_root_verified_in(&write, &first, Some(&anchor), true),
+            Err(StoreError::Integrity(ref message)) if message.contains("persisted head seal")
+        ));
+        write.abort().unwrap();
     }
 
     #[test]

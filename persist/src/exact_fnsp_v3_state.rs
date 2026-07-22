@@ -15,9 +15,10 @@
 //! A stale concurrent writer, duplicate nullifier, forged successor, missing/trailing record,
 //! truncated wire, non-canonical field lane, or head/record disagreement fails before commit.
 //! The public API is deliberately not wired into turn dispatch or the predicate registry yet.
-//! Live promotion still has to invoke [`compare_and_commit_exact_fnsp_v3_append_in`] from the
-//! finalized-turn transaction so the commit record, receipt, note-root edge, attested state, exact
-//! append row, and exact head share one crash boundary.
+//! [`PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3`](crate::PersistentStore::commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3)
+//! invokes the consuming CAS from the finalized-turn transaction, so the commit record, receipt,
+//! note-root edge, attested state, exact append row, and exact head share one crash boundary.  That
+//! transaction-owned substrate does not by itself authorize a proof identity or make v3 live.
 //!
 //! The BLAKE3 seals below detect accidental/torn byte corruption; they are not signatures.  A
 //! hostile actor able to rewrite the entire redb image can recompute them or roll the whole store
@@ -110,6 +111,7 @@ pub enum ExactFnspV3StateStoreError {
     },
     CompareMismatch,
     CandidateSuccessorMismatch,
+    CandidateReplayMismatch,
     Uninitialized,
     AlreadyInitialized,
     Accumulator(String),
@@ -192,6 +194,10 @@ impl fmt::Display for ExactFnspV3StateStoreError {
             Self::CandidateSuccessorMismatch => write!(
                 f,
                 "exact FNSP-v3 candidate successor disagrees with independent append replay"
+            ),
+            Self::CandidateReplayMismatch => write!(
+                f,
+                "exact FNSP-v3 replay candidate disagrees with the durable append prefix"
             ),
             Self::Uninitialized => write!(f, "exact FNSP-v3 durable state is not initialized"),
             Self::AlreadyInitialized => {
@@ -437,7 +443,13 @@ impl PersistentStore {
     /// This is migration/test infrastructure, not live dispatch.  The records are fully replayed,
     /// sorted by their encoded sequence, then installed with the corresponding head in one redb
     /// transaction.  Existing or partial authority refuses rather than being overwritten.
-    pub fn initialize_exact_fnsp_v3_state(
+    ///
+    /// Test-only because accepting caller-supplied records can create an exact prefix unrelated to
+    /// the live faithful nullifier image.  Production bootstrap is owned by
+    /// `initialize_exact_fnsp_v3_state_from_faithful_nullifiers`, which derives every record from
+    /// the validated durable legacy authority.
+    #[cfg(test)]
+    pub(crate) fn initialize_exact_fnsp_v3_state(
         &self,
         records: impl IntoIterator<Item = ExactAppendRecord>,
     ) -> StoreResult<ExactFnspV3StateHeadV1> {
@@ -462,12 +474,58 @@ impl PersistentStore {
         prepare_from_snapshot(snapshot, raw, value).map_err(integrity)
     }
 
+    /// Prepare either the next fresh append or the immutable coordinates of a durable replay.
+    ///
+    /// Finalized-turn recovery cannot infer which case applies from the current head: after a
+    /// restart an old append remains in the dense record image while later turns may already have
+    /// advanced the authority.  This method fully validates that image first, then returns the
+    /// current-tail candidate only when `raw` is absent.  When `raw` is already present, its value
+    /// and dense sequence must agree and the original expected/successor heads are reconstructed
+    /// from the historical prefixes.  A duplicate raw with a different value fails closed.
+    pub fn prepare_exact_fnsp_v3_append_or_replay(
+        &self,
+        raw: [u8; 32],
+        value: u64,
+    ) -> StoreResult<ExactFnspV3StateCasV1> {
+        let read = self.db.begin_read()?;
+        let snapshot = load_snapshot_from_read(&read)?
+            .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
+        match snapshot.records.iter().position(|record| record.raw == raw) {
+            Some(index) => reconstruct_replay_from_snapshot(snapshot, index, raw, value),
+            None => prepare_from_snapshot(snapshot, raw, value).map_err(integrity),
+        }
+    }
+
+    /// Reconstruct the immutable CAS coordinates for an already durable historical append.
+    ///
+    /// Restart/idempotent replay cannot call [`Self::prepare_exact_fnsp_v3_append`]: the current
+    /// accumulator correctly reports the historical nullifier as a duplicate.  This method locates
+    /// the exact durable record, rebuilds only its predecessor prefix, and independently prepares
+    /// the same append again.  Missing keys, changed values, gaps, or mismatching coordinates fail
+    /// closed.  It performs no mutation.
+    pub fn reconstruct_exact_fnsp_v3_replay_candidate(
+        &self,
+        raw: [u8; 32],
+        value: u64,
+    ) -> StoreResult<ExactFnspV3StateCasV1> {
+        let read = self.db.begin_read()?;
+        let snapshot = load_snapshot_from_read(&read)?
+            .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
+        let index = snapshot
+            .records
+            .iter()
+            .position(|record| record.raw == raw)
+            .ok_or_else(|| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
+        reconstruct_replay_from_snapshot(snapshot, index, raw, value)
+    }
+
     /// Atomically compare the durable head, replay the append, and commit record plus successor.
     ///
-    /// This closes store-level cross-executor races.  It deliberately does not make v3 live or
-    /// join the wider finalized-turn transaction; that later weld must call the crate-private
-    /// transaction helper below.
-    pub fn compare_and_commit_exact_fnsp_v3_append(
+    /// This closes store-level cross-executor races.  It deliberately does not make v3 live; the
+    /// finalized-turn route uses the crate-private consuming helper below instead of this separate
+    /// transaction convenience API.
+    #[cfg(test)]
+    pub(crate) fn compare_and_commit_exact_fnsp_v3_append(
         &self,
         candidate: ExactFnspV3StateCasV1,
     ) -> StoreResult<ExactFnspV3StateHeadV1> {
@@ -521,7 +579,7 @@ pub(crate) fn initialize_exact_fnsp_v3_state_in(
     Ok((write, head))
 }
 
-/// Durable CAS/finalization seam for a future caller-owned finalized-turn transaction.
+/// Durable CAS/finalization seam for the caller-owned finalized-turn transaction.
 ///
 /// No head-only helper exists: this function independently validates/replays the current prefix
 /// and proposed append, then inserts the record and head under one writer transaction.
@@ -573,6 +631,67 @@ pub(crate) fn compare_and_commit_exact_fnsp_v3_append_in(
     Ok((write, candidate.successor))
 }
 
+/// Verify that a previously committed finalized turn already owns this exact append.
+///
+/// A replay may arrive after later turns advanced the exact authority, so comparing `candidate`
+/// with the current head would be wrong.  Instead, replay the durable prefix immediately before
+/// and after the candidate's sequence and require both historical heads plus the exact record to
+/// match.  This is read-only and is intended for the idempotent branch of the caller-owned
+/// finalized-turn transaction.
+pub(crate) fn verify_replayed_exact_fnsp_v3_append_in(
+    write: &WriteTransaction,
+    candidate: ExactFnspV3StateCasV1,
+) -> StoreResult<()> {
+    candidate.validate_shape().map_err(integrity)?;
+    let snapshot = load_snapshot_from_write(write)?
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
+    let index = usize::try_from(candidate.append_record.seq)
+        .map_err(|_| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
+    if snapshot.records.get(index).copied() != Some(candidate.append_record) {
+        return Err(integrity(
+            ExactFnspV3StateStoreError::CandidateReplayMismatch,
+        ));
+    }
+
+    let prior = ExactNullifierAafi::from_append_records(snapshot.records[..index].iter().copied())
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let expected = ExactFnspV3StateHeadV1::from_accumulator(candidate.append_record.seq, &prior)
+        .map_err(integrity)?;
+
+    let successor_generation = candidate
+        .append_record
+        .seq
+        .checked_add(1)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
+    let successor =
+        ExactNullifierAafi::from_append_records(snapshot.records[..=index].iter().copied())
+            .map_err(ExactFnspV3StateStoreError::from)
+            .and_then(|accumulator| {
+                ExactFnspV3StateHeadV1::from_accumulator(successor_generation, &accumulator)
+            })
+            .map_err(integrity)?;
+
+    if expected != candidate.expected || successor != candidate.successor {
+        return Err(integrity(
+            ExactFnspV3StateStoreError::CandidateReplayMismatch,
+        ));
+    }
+    Ok(())
+}
+
+/// Load the complete exact append image from a caller-owned writer after full head/record replay.
+///
+/// This is the cross-authority prefix seam used by finalized-turn bootstrap and dual-write.  An
+/// absent, partial, corrupt, or head-disagreeing exact authority is an error, never an empty prefix.
+pub(crate) fn exact_fnsp_v3_append_records_in(
+    write: &WriteTransaction,
+) -> StoreResult<Vec<ExactAppendRecord>> {
+    load_snapshot_from_write(write)?
+        .map(|snapshot| snapshot.records)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))
+}
+
 fn prepare_from_snapshot(
     mut snapshot: ValidatedSnapshot,
     raw: [u8; 32],
@@ -597,6 +716,46 @@ fn prepare_from_snapshot(
         },
     };
     candidate.validate_shape()?;
+    Ok(candidate)
+}
+
+fn reconstruct_replay_from_snapshot(
+    snapshot: ValidatedSnapshot,
+    index: usize,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<ExactFnspV3StateCasV1> {
+    let target = snapshot.records[index];
+    if target.raw != raw || target.value != value || usize::try_from(target.seq).ok() != Some(index)
+    {
+        return Err(integrity(
+            ExactFnspV3StateStoreError::CandidateReplayMismatch,
+        ));
+    }
+
+    let records = snapshot.records[..index].to_vec();
+    let accumulator = ExactNullifierAafi::from_append_records(records.iter().copied())
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let generation = u64::try_from(index)
+        .map_err(|_| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
+    let head =
+        ExactFnspV3StateHeadV1::from_accumulator(generation, &accumulator).map_err(integrity)?;
+    let candidate = prepare_from_snapshot(
+        ValidatedSnapshot {
+            head,
+            records,
+            accumulator,
+        },
+        raw,
+        value,
+    )
+    .map_err(integrity)?;
+    if candidate.append_record != target {
+        return Err(integrity(
+            ExactFnspV3StateStoreError::CandidateReplayMismatch,
+        ));
+    }
     Ok(candidate)
 }
 
@@ -928,6 +1087,76 @@ mod tests {
     }
 
     #[test]
+    fn append_or_replay_recovers_historical_coordinates_after_restart_and_later_append() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("exact-v3-replay.redb");
+        let first;
+        let second;
+        {
+            let store = PersistentStore::open(&path).expect("open");
+            store
+                .initialize_exact_fnsp_v3_state(std::iter::empty())
+                .expect("seed");
+            first = store
+                .prepare_exact_fnsp_v3_append_or_replay(raw(31), 310)
+                .expect("prepare first");
+            store
+                .compare_and_commit_exact_fnsp_v3_append(first)
+                .expect("commit first");
+            second = store
+                .prepare_exact_fnsp_v3_append_or_replay(raw(32), 320)
+                .expect("prepare second");
+            store
+                .compare_and_commit_exact_fnsp_v3_append(second)
+                .expect("commit second");
+        }
+
+        let reopened = PersistentStore::open(&path).expect("reopen");
+        assert_eq!(
+            reopened
+                .prepare_exact_fnsp_v3_append_or_replay(raw(31), 310)
+                .expect("recover historical first"),
+            first
+        );
+        assert_eq!(
+            reopened
+                .prepare_exact_fnsp_v3_append_or_replay(raw(32), 320)
+                .expect("recover historical second"),
+            second
+        );
+        assert_integrity_contains(
+            reopened.prepare_exact_fnsp_v3_append_or_replay(raw(31), 311),
+            "durable append prefix",
+        );
+
+        let fresh = reopened
+            .prepare_exact_fnsp_v3_append_or_replay(raw(33), 330)
+            .expect("absent raw prepares current-tail append");
+        assert_eq!(fresh.expected(), second.successor());
+        assert_eq!(fresh.append_record().seq, 2);
+
+        // Full snapshot validation precedes both branches: a corrupt head cannot be used to
+        // reconstruct an old append or to prepare a new one.
+        {
+            let write = reopened.db.begin_write().expect("corrupt writer");
+            write
+                .open_table(EXACT_FNSP_V3_STATE_HEAD)
+                .expect("heads")
+                .insert(HEAD_KEY, &[0u8; 7][..])
+                .expect("truncate head");
+            write.commit().expect("commit corruption");
+        }
+        assert_integrity_contains(
+            reopened.prepare_exact_fnsp_v3_append_or_replay(raw(31), 310),
+            "wire length 7",
+        );
+        assert_integrity_contains(
+            reopened.prepare_exact_fnsp_v3_append_or_replay(raw(34), 340),
+            "wire length 7",
+        );
+    }
+
+    #[test]
     fn competing_writer_and_duplicate_refuse_without_mutation() {
         let store = PersistentStore::open_in_memory().expect("store");
         store
@@ -1010,6 +1239,40 @@ mod tests {
             store.exact_fnsp_v3_append_records().expect("records"),
             Some(vec![committed.append_record()])
         );
+    }
+
+    #[test]
+    fn replay_verifier_checks_the_historical_prefix_after_later_appends() {
+        let store = PersistentStore::open_in_memory().expect("store");
+        store
+            .initialize_exact_fnsp_v3_state(std::iter::empty())
+            .expect("seed");
+        let first = store
+            .prepare_exact_fnsp_v3_append(raw(11), 110)
+            .expect("first");
+        store
+            .compare_and_commit_exact_fnsp_v3_append(first)
+            .expect("commit first");
+        let second = store
+            .prepare_exact_fnsp_v3_append(raw(12), 120)
+            .expect("second");
+        store
+            .compare_and_commit_exact_fnsp_v3_append(second)
+            .expect("commit second");
+
+        let write = store.db.begin_write().expect("replay snapshot");
+        verify_replayed_exact_fnsp_v3_append_in(&write, first)
+            .expect("old turn still owns its exact historical prefix");
+        verify_replayed_exact_fnsp_v3_append_in(&write, second)
+            .expect("new turn owns its exact tail");
+
+        let mut forged = first;
+        forged.append_record.value ^= 1;
+        assert_integrity_contains(
+            verify_replayed_exact_fnsp_v3_append_in(&write, forged),
+            "durable append prefix",
+        );
+        write.abort().expect("read-only writer abort");
     }
 
     #[test]
