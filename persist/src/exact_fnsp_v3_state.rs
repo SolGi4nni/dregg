@@ -26,7 +26,7 @@
 
 use dregg_circuit::exact_nullifier_aafi::{
     Digest8, ExactAafiError, ExactAppendRecord, ExactNullifierAafi, TREE_CAPACITY,
-    exact_state_commit,
+    ValidatedExactAafiTransition, exact_state_commit,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use redb::{ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
@@ -382,6 +382,27 @@ pub struct ExactFnspV3StateCasV1 {
     append_record: ExactAppendRecord,
 }
 
+/// One store-snapshot-owned exact transition for proof acceptance and the later writer CAS.
+///
+/// The validated semantic transition and CAS coordinates are derived by the same accumulator
+/// replay.  Callers therefore cannot accidentally verify a proof against one read snapshot and
+/// commit coordinates reconstructed from another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedExactFnspV3StateTransitionV1 {
+    cas: ExactFnspV3StateCasV1,
+    validated: ValidatedExactAafiTransition,
+}
+
+impl PreparedExactFnspV3StateTransitionV1 {
+    pub fn cas(&self) -> ExactFnspV3StateCasV1 {
+        self.cas
+    }
+
+    pub fn validated(&self) -> &ValidatedExactAafiTransition {
+        &self.validated
+    }
+}
+
 impl ExactFnspV3StateCasV1 {
     pub fn expected(self) -> ExactFnspV3StateHeadV1 {
         self.expected
@@ -493,6 +514,25 @@ impl PersistentStore {
         match snapshot.records.iter().position(|record| record.raw == raw) {
             Some(index) => reconstruct_replay_from_snapshot(snapshot, index, raw, value),
             None => prepare_from_snapshot(snapshot, raw, value).map_err(integrity),
+        }
+    }
+
+    /// Prepare the proof-facing validated transition and writer-facing CAS from one snapshot.
+    ///
+    /// This is the live exact-v3 pre-execution seam.  A historical replay receives the original
+    /// immutable transition; a fresh append receives the current tail transition.  The later
+    /// redb writer still independently compares/replays `cas` before committing.
+    pub fn prepare_exact_fnsp_v3_transition_or_replay(
+        &self,
+        raw: [u8; 32],
+        value: u64,
+    ) -> StoreResult<PreparedExactFnspV3StateTransitionV1> {
+        let read = self.db.begin_read()?;
+        let snapshot = load_snapshot_from_read(&read)?
+            .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
+        match snapshot.records.iter().position(|record| record.raw == raw) {
+            Some(index) => reconstruct_prepared_replay_from_snapshot(snapshot, index, raw, value),
+            None => prepare_transition_from_snapshot(snapshot, raw, value).map_err(integrity),
         }
     }
 
@@ -706,12 +746,20 @@ pub(crate) fn exact_fnsp_v3_state_head_in(
 }
 
 fn prepare_from_snapshot(
-    mut snapshot: ValidatedSnapshot,
+    snapshot: ValidatedSnapshot,
     raw: [u8; 32],
     value: u64,
 ) -> std::result::Result<ExactFnspV3StateCasV1, ExactFnspV3StateStoreError> {
+    prepare_transition_from_snapshot(snapshot, raw, value).map(|prepared| prepared.cas)
+}
+
+fn prepare_transition_from_snapshot(
+    mut snapshot: ValidatedSnapshot,
+    raw: [u8; 32],
+    value: u64,
+) -> std::result::Result<PreparedExactFnspV3StateTransitionV1, ExactFnspV3StateStoreError> {
     let witness = snapshot.accumulator.prepare_insert(raw, value)?;
-    snapshot.accumulator.apply_witness(&witness)?;
+    let validated = snapshot.accumulator.apply_witness(&witness)?;
     let successor_generation = snapshot
         .head
         .generation
@@ -729,7 +777,10 @@ fn prepare_from_snapshot(
         },
     };
     candidate.validate_shape()?;
-    Ok(candidate)
+    Ok(PreparedExactFnspV3StateTransitionV1 {
+        cas: candidate,
+        validated,
+    })
 }
 
 fn reconstruct_replay_from_snapshot(
@@ -738,6 +789,16 @@ fn reconstruct_replay_from_snapshot(
     raw: [u8; 32],
     value: u64,
 ) -> StoreResult<ExactFnspV3StateCasV1> {
+    reconstruct_prepared_replay_from_snapshot(snapshot, index, raw, value)
+        .map(|prepared| prepared.cas)
+}
+
+fn reconstruct_prepared_replay_from_snapshot(
+    snapshot: ValidatedSnapshot,
+    index: usize,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<PreparedExactFnspV3StateTransitionV1> {
     let target = snapshot.records[index];
     if target.raw != raw || target.value != value || usize::try_from(target.seq).ok() != Some(index)
     {
@@ -754,7 +815,7 @@ fn reconstruct_replay_from_snapshot(
         .map_err(|_| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
     let head =
         ExactFnspV3StateHeadV1::from_accumulator(generation, &accumulator).map_err(integrity)?;
-    let candidate = prepare_from_snapshot(
+    let prepared = prepare_transition_from_snapshot(
         ValidatedSnapshot {
             head,
             records,
@@ -764,12 +825,12 @@ fn reconstruct_replay_from_snapshot(
         value,
     )
     .map_err(integrity)?;
-    if candidate.append_record != target {
+    if prepared.cas.append_record != target {
         return Err(integrity(
             ExactFnspV3StateStoreError::CandidateReplayMismatch,
         ));
     }
-    Ok(candidate)
+    Ok(prepared)
 }
 
 fn load_snapshot_from_read(read: &ReadTransaction) -> StoreResult<Option<ValidatedSnapshot>> {
@@ -1174,6 +1235,37 @@ mod tests {
             reopened.prepare_exact_fnsp_v3_append_or_replay(raw(34), 340),
             "wire length 7",
         );
+    }
+
+    #[test]
+    fn proof_transition_and_writer_cas_share_one_validated_snapshot() {
+        let store = PersistentStore::open_in_memory().expect("store");
+        store
+            .initialize_exact_fnsp_v3_state(std::iter::empty())
+            .expect("seed");
+        let prepared = store
+            .prepare_exact_fnsp_v3_transition_or_replay(raw(41), 410)
+            .expect("prepare transition");
+        let cas = prepared.cas();
+        assert_eq!(prepared.validated().prior_root(), cas.expected().root());
+        assert_eq!(prepared.validated().prior_count(), cas.expected().count());
+        assert_eq!(
+            prepared.validated().successor_root(),
+            cas.successor().root()
+        );
+        assert_eq!(
+            prepared.validated().successor_count(),
+            cas.successor().count()
+        );
+        store
+            .compare_and_commit_exact_fnsp_v3_append(cas)
+            .expect("commit");
+
+        let replay = store
+            .prepare_exact_fnsp_v3_transition_or_replay(raw(41), 410)
+            .expect("replay transition");
+        assert_eq!(replay.cas(), cas);
+        assert_eq!(replay.validated(), prepared.validated());
     }
 
     #[test]

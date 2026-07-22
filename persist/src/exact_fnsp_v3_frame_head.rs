@@ -10,6 +10,7 @@
 //! activation and every frame pin that executor key; recovery re-verifies every signature.  This
 //! is deliberately named as a devnet policy rather than a quorum-finality claim.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use dregg_circuit::exact_nullifier_aafi::{Digest8, exact_state_commit};
@@ -40,15 +41,15 @@ const ACTIVATION_SEAL_DOMAIN: &str = "dregg-exact-fnsp-v3-durable-activation-v1"
 const FRAME_SEAL_DOMAIN: &str = "dregg-exact-fnsp-v3-durable-frame-v1";
 
 const A_EPOCH: usize = HEADER_LEN;
-const A_INITIAL_GENERATION: usize = A_EPOCH + 8;
+const A_CUTOVER_NEXT_INDEX: usize = A_EPOCH + 8;
+const A_CUTOVER_TAIL_TAG: usize = A_CUTOVER_NEXT_INDEX + 8;
+const A_CUTOVER_TAIL_HASH: usize = A_CUTOVER_TAIL_TAG + 8;
+const A_INITIAL_GENERATION: usize = A_CUTOVER_TAIL_HASH + 32;
 const A_INITIAL_COUNT: usize = A_INITIAL_GENERATION + 8;
 const A_INITIAL_ROOT: usize = A_INITIAL_COUNT + 8;
 const A_INITIAL_FNS3: usize = A_INITIAL_ROOT + 32;
 const A_FEDERATION: usize = A_INITIAL_FNS3 + 32;
-const A_AGENT: usize = A_FEDERATION + 32;
-const A_LEGACY_RECEIPT: usize = A_AGENT + 32;
-const A_LEGACY_OUTER: usize = A_LEGACY_RECEIPT + 32;
-const A_HASH: usize = A_LEGACY_OUTER + 32;
+const A_HASH: usize = A_FEDERATION + 32;
 const A_EXECUTOR_KEY: usize = A_HASH + 32;
 const A_SIGNATURE: usize = A_EXECUTOR_KEY + 32;
 const A_SEAL: usize = A_SIGNATURE + 64;
@@ -56,12 +57,19 @@ pub const EXACT_FNSP_V3_ACTIVATION_V1_WIRE_LEN: usize = A_SEAL + 32;
 
 const F_SEQUENCE: usize = HEADER_LEN;
 const F_EPOCH: usize = F_SEQUENCE + 8;
-const F_PREDECESSOR_TAG: usize = F_EPOCH + 8;
+const F_RECEIPT_LOG_INDEX: usize = F_EPOCH + 8;
+const F_PREDECESSOR_TAG: usize = F_RECEIPT_LOG_INDEX + 8;
 const F_ACTIVATION_HASH: usize = F_PREDECESSOR_TAG + 8;
 const F_PREDECESSOR_HASH: usize = F_ACTIVATION_HASH + 32;
 const F_FRAME_HASH: usize = F_PREDECESSOR_HASH + 32;
-const F_PREVIOUS_RECEIPT: usize = F_FRAME_HASH + 32;
-const F_RECEIPT_HASH: usize = F_PREVIOUS_RECEIPT + 32;
+const F_PLAYER_PREDECESSOR_TAG: usize = F_FRAME_HASH + 32;
+const F_PLAYER_PREDECESSOR_INDEX: usize = F_PLAYER_PREDECESSOR_TAG + 8;
+const F_PLAYER_PREDECESSOR_HASH: usize = F_PLAYER_PREDECESSOR_INDEX + 8;
+const F_AGENT: usize = F_PLAYER_PREDECESSOR_HASH + 32;
+const F_FEDERATION: usize = F_AGENT + 32;
+const F_TURN_HASH: usize = F_FEDERATION + 32;
+const F_FOREST_HASH: usize = F_TURN_HASH + 32;
+const F_RECEIPT_HASH: usize = F_FOREST_HASH + 32;
 const F_FULL_PRE: usize = F_RECEIPT_HASH + 32;
 const F_FULL_POST: usize = F_FULL_PRE + 32;
 const F_BEFORE_COUNT: usize = F_FULL_POST + 32;
@@ -74,9 +82,7 @@ const F_PROOF_OUTER_BEFORE: usize = F_AFTER_FNS3 + 32;
 const F_PROOF_OUTER_AFTER: usize = F_PROOF_OUTER_BEFORE + 32;
 const F_ACCEPTED_STATEMENT: usize = F_PROOF_OUTER_AFTER + 32;
 const F_SIGNED_SPENDING_PROOF: usize = F_ACCEPTED_STATEMENT + 32;
-const F_FEDERATION: usize = F_SIGNED_SPENDING_PROOF + 32;
-const F_AGENT: usize = F_FEDERATION + 32;
-const F_EXECUTOR_KEY: usize = F_AGENT + 32;
+const F_EXECUTOR_KEY: usize = F_SIGNED_SPENDING_PROOF + 32;
 const F_SIGNATURE: usize = F_EXECUTOR_KEY + 32;
 const F_SEAL: usize = F_SIGNATURE + 64;
 pub const EXACT_FNSP_V3_FRAME_V1_WIRE_LEN: usize = F_SEAL + 32;
@@ -118,9 +124,8 @@ pub struct UntrustedExactFnspV3ActivationV1 {
     epoch: u64,
     exact_initial: ExactFnspV3StateHeadV1,
     federation_id: [u8; 32],
-    agent: [u8; 32],
-    legacy_tip_receipt_hash: [u8; 32],
-    legacy_tip_outer_commit: [u8; 32],
+    receipt_cutover_next_index: u64,
+    receipt_cutover_tail_hash: Option<[u8; 32]>,
     activation_hash: [u8; 32],
     executor_public_key: [u8; 32],
     executor_signature: Signature,
@@ -132,9 +137,8 @@ impl UntrustedExactFnspV3ActivationV1 {
         epoch: u64,
         exact_initial: ExactFnspV3StateHeadV1,
         federation_id: [u8; 32],
-        agent: [u8; 32],
-        legacy_tip_receipt_hash: [u8; 32],
-        legacy_tip_outer_commit: [u8; 32],
+        receipt_cutover_next_index: u64,
+        receipt_cutover_tail_hash: Option<[u8; 32]>,
         activation_hash: [u8; 32],
         executor_public_key: [u8; 32],
         executor_signature: Signature,
@@ -143,9 +147,8 @@ impl UntrustedExactFnspV3ActivationV1 {
             epoch,
             exact_initial,
             federation_id,
-            agent,
-            legacy_tip_receipt_hash,
-            legacy_tip_outer_commit,
+            receipt_cutover_next_index,
+            receipt_cutover_tail_hash,
             activation_hash,
             executor_public_key,
             executor_signature,
@@ -163,14 +166,11 @@ impl UntrustedExactFnspV3ActivationV1 {
     pub const fn federation_id(&self) -> [u8; 32] {
         self.federation_id
     }
-    pub const fn agent(&self) -> [u8; 32] {
-        self.agent
+    pub const fn receipt_cutover_next_index(&self) -> u64 {
+        self.receipt_cutover_next_index
     }
-    pub const fn legacy_tip_receipt_hash(&self) -> [u8; 32] {
-        self.legacy_tip_receipt_hash
-    }
-    pub const fn legacy_tip_outer_commit(&self) -> [u8; 32] {
-        self.legacy_tip_outer_commit
+    pub const fn receipt_cutover_tail_hash(&self) -> Option<[u8; 32]> {
+        self.receipt_cutover_tail_hash
     }
     pub const fn activation_hash(&self) -> [u8; 32] {
         self.activation_hash
@@ -190,13 +190,15 @@ impl UntrustedExactFnspV3ActivationV1 {
         if self.epoch == 0 {
             return Err(ExactFnspV3FrameStoreError::LegacyEpoch);
         }
-        validate_digest_bytes("legacy outer commitment", self.legacy_tip_outer_commit)?;
+        if (self.receipt_cutover_next_index == 0) != self.receipt_cutover_tail_hash.is_none() {
+            return Err(ExactFnspV3FrameStoreError::ActivationCutoverMismatch);
+        }
         let computed = activation_hash(
             self.epoch,
             self.federation_id,
-            self.agent,
-            self.legacy_tip_receipt_hash,
-            self.legacy_tip_outer_commit,
+            self.executor_public_key,
+            self.receipt_cutover_next_index,
+            self.receipt_cutover_tail_hash,
             self.exact_initial,
         );
         if computed != self.activation_hash {
@@ -219,16 +221,22 @@ impl UntrustedExactFnspV3ActivationV1 {
         put_u64(&mut out, A_EPOCH, self.epoch);
         put_u64(
             &mut out,
+            A_CUTOVER_NEXT_INDEX,
+            self.receipt_cutover_next_index,
+        );
+        if let Some(hash) = self.receipt_cutover_tail_hash {
+            out[A_CUTOVER_TAIL_TAG] = 1;
+            out[A_CUTOVER_TAIL_HASH..A_INITIAL_GENERATION].copy_from_slice(&hash);
+        }
+        put_u64(
+            &mut out,
             A_INITIAL_GENERATION,
             self.exact_initial.generation(),
         );
         put_u64(&mut out, A_INITIAL_COUNT, self.exact_initial.count());
         put_digest(&mut out, A_INITIAL_ROOT, self.exact_initial.root());
         put_digest(&mut out, A_INITIAL_FNS3, self.exact_initial.fns3());
-        out[A_FEDERATION..A_AGENT].copy_from_slice(&self.federation_id);
-        out[A_AGENT..A_LEGACY_RECEIPT].copy_from_slice(&self.agent);
-        out[A_LEGACY_RECEIPT..A_LEGACY_OUTER].copy_from_slice(&self.legacy_tip_receipt_hash);
-        out[A_LEGACY_OUTER..A_HASH].copy_from_slice(&self.legacy_tip_outer_commit);
+        out[A_FEDERATION..A_HASH].copy_from_slice(&self.federation_id);
         out[A_HASH..A_EXECUTOR_KEY].copy_from_slice(&self.activation_hash);
         out[A_EXECUTOR_KEY..A_SIGNATURE].copy_from_slice(&self.executor_public_key);
         out[A_SIGNATURE..A_SEAL].copy_from_slice(&self.executor_signature.0);
@@ -246,6 +254,20 @@ impl UntrustedExactFnspV3ActivationV1 {
             A_SEAL,
             ACTIVATION_SEAL_DOMAIN,
         )?;
+        if bytes[A_CUTOVER_TAIL_TAG + 1..A_CUTOVER_TAIL_HASH] != [0; 7] {
+            return Err(integrity(ExactFnspV3FrameStoreError::NonZeroReserved(
+                "activation cutover tail",
+            )));
+        }
+        let receipt_cutover_tail_hash = match bytes[A_CUTOVER_TAIL_TAG] {
+            0 if take32(bytes, A_CUTOVER_TAIL_HASH) == [0; 32] => None,
+            1 => Some(take32(bytes, A_CUTOVER_TAIL_HASH)),
+            _ => {
+                return Err(integrity(
+                    ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+                ));
+            }
+        };
         let initial = decode_head(
             get_u64(bytes, A_INITIAL_GENERATION),
             get_digest(bytes, A_INITIAL_ROOT)?,
@@ -256,9 +278,8 @@ impl UntrustedExactFnspV3ActivationV1 {
             epoch: get_u64(bytes, A_EPOCH),
             exact_initial: initial,
             federation_id: take32(bytes, A_FEDERATION),
-            agent: take32(bytes, A_AGENT),
-            legacy_tip_receipt_hash: take32(bytes, A_LEGACY_RECEIPT),
-            legacy_tip_outer_commit: take32(bytes, A_LEGACY_OUTER),
+            receipt_cutover_next_index: get_u64(bytes, A_CUTOVER_NEXT_INDEX),
+            receipt_cutover_tail_hash,
             activation_hash: take32(bytes, A_HASH),
             executor_public_key: take32(bytes, A_EXECUTOR_KEY),
             executor_signature: Signature(take64(bytes, A_SIGNATURE)),
@@ -282,14 +303,11 @@ impl StoreAuthenticatedExactFnspV3ActivationV1 {
     pub const fn federation_id(&self) -> [u8; 32] {
         self.0.federation_id
     }
-    pub const fn agent(&self) -> [u8; 32] {
-        self.0.agent
+    pub const fn receipt_cutover_next_index(&self) -> u64 {
+        self.0.receipt_cutover_next_index
     }
-    pub const fn legacy_tip_receipt_hash(&self) -> [u8; 32] {
-        self.0.legacy_tip_receipt_hash
-    }
-    pub const fn legacy_tip_outer_commit(&self) -> [u8; 32] {
-        self.0.legacy_tip_outer_commit
+    pub const fn receipt_cutover_tail_hash(&self) -> Option<[u8; 32]> {
+        self.0.receipt_cutover_tail_hash
     }
     pub const fn activation_hash(&self) -> [u8; 32] {
         self.0.activation_hash
@@ -305,10 +323,16 @@ impl StoreAuthenticatedExactFnspV3ActivationV1 {
 pub struct UntrustedExactFnspV3FrameV1 {
     sequence: u64,
     epoch: u64,
+    receipt_log_index: u64,
     predecessor: ExactFnspV3DurableReceiptLinkV1,
     activation_hash: [u8; 32],
     frame_hash: [u8; 32],
-    predecessor_receipt_hash: [u8; 32],
+    predecessor_receipt_index: Option<u64>,
+    predecessor_receipt_hash: Option<[u8; 32]>,
+    agent: [u8; 32],
+    federation_id: [u8; 32],
+    turn_hash: [u8; 32],
+    forest_hash: [u8; 32],
     full_receipt_hash: [u8; 32],
     full_pre_state_hash: [u8; 32],
     full_post_state_hash: [u8; 32],
@@ -318,8 +342,6 @@ pub struct UntrustedExactFnspV3FrameV1 {
     proof_outer_after: [u8; 32],
     accepted_statement_digest: [u8; 32],
     signed_spending_proof_digest: [u8; 32],
-    federation_id: [u8; 32],
-    agent: [u8; 32],
     executor_public_key: [u8; 32],
     executor_signature: Signature,
 }
@@ -328,10 +350,16 @@ impl UntrustedExactFnspV3FrameV1 {
     #[allow(clippy::too_many_arguments)]
     pub fn authenticate_devnet_executor(
         epoch: u64,
+        receipt_log_index: u64,
         predecessor: ExactFnspV3DurableReceiptLinkV1,
         activation_hash: [u8; 32],
         frame_hash: [u8; 32],
-        predecessor_receipt_hash: [u8; 32],
+        predecessor_receipt_index: Option<u64>,
+        predecessor_receipt_hash: Option<[u8; 32]>,
+        agent: [u8; 32],
+        federation_id: [u8; 32],
+        turn_hash: [u8; 32],
+        forest_hash: [u8; 32],
         full_receipt_hash: [u8; 32],
         full_pre_state_hash: [u8; 32],
         full_post_state_hash: [u8; 32],
@@ -341,18 +369,22 @@ impl UntrustedExactFnspV3FrameV1 {
         proof_outer_after: [u8; 32],
         accepted_statement_digest: [u8; 32],
         signed_spending_proof_digest: [u8; 32],
-        federation_id: [u8; 32],
-        agent: [u8; 32],
         executor_public_key: [u8; 32],
         executor_signature: Signature,
     ) -> StoreResult<Self> {
         let value = Self {
             sequence: exact_before.generation(),
             epoch,
+            receipt_log_index,
             predecessor,
             activation_hash,
             frame_hash,
+            predecessor_receipt_index,
             predecessor_receipt_hash,
+            agent,
+            federation_id,
+            turn_hash,
+            forest_hash,
             full_receipt_hash,
             full_pre_state_hash,
             full_post_state_hash,
@@ -362,8 +394,6 @@ impl UntrustedExactFnspV3FrameV1 {
             proof_outer_after,
             accepted_statement_digest,
             signed_spending_proof_digest,
-            federation_id,
-            agent,
             executor_public_key,
             executor_signature,
         };
@@ -377,6 +407,9 @@ impl UntrustedExactFnspV3FrameV1 {
     pub const fn epoch(&self) -> u64 {
         self.epoch
     }
+    pub const fn receipt_log_index(&self) -> u64 {
+        self.receipt_log_index
+    }
     pub const fn predecessor(&self) -> ExactFnspV3DurableReceiptLinkV1 {
         self.predecessor
     }
@@ -386,8 +419,17 @@ impl UntrustedExactFnspV3FrameV1 {
     pub const fn frame_hash(&self) -> [u8; 32] {
         self.frame_hash
     }
-    pub const fn predecessor_receipt_hash(&self) -> [u8; 32] {
+    pub const fn predecessor_receipt_index(&self) -> Option<u64> {
+        self.predecessor_receipt_index
+    }
+    pub const fn predecessor_receipt_hash(&self) -> Option<[u8; 32]> {
         self.predecessor_receipt_hash
+    }
+    pub const fn turn_hash(&self) -> [u8; 32] {
+        self.turn_hash
+    }
+    pub const fn forest_hash(&self) -> [u8; 32] {
+        self.forest_hash
     }
     pub const fn full_receipt_hash(&self) -> [u8; 32] {
         self.full_receipt_hash
@@ -427,13 +469,24 @@ impl UntrustedExactFnspV3FrameV1 {
         if self.epoch == 0 {
             return Err(ExactFnspV3FrameStoreError::LegacyEpoch);
         }
+        let successor_sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or(ExactFnspV3FrameStoreError::ExactStepMismatch)?;
         if self.sequence != self.exact_before.generation()
-            || self.exact_after.generation() != self.sequence.checked_add(1).unwrap_or(u64::MAX)
+            || self.exact_after.generation() != successor_sequence
         {
             return Err(ExactFnspV3FrameStoreError::ExactStepMismatch);
         }
         if self.frame_hash == [0; 32] || self.full_receipt_hash == [0; 32] {
             return Err(ExactFnspV3FrameStoreError::ZeroHash);
+        }
+        if self.predecessor_receipt_index.is_some() != self.predecessor_receipt_hash.is_some()
+            || self
+                .predecessor_receipt_index
+                .is_some_and(|index| index >= self.receipt_log_index)
+        {
+            return Err(ExactFnspV3FrameStoreError::FrameReceiptMismatch);
         }
         validate_digest_bytes("proof outer before", self.proof_outer_before)?;
         validate_digest_bytes("proof outer after", self.proof_outer_after)?;
@@ -459,11 +512,23 @@ impl UntrustedExactFnspV3FrameV1 {
         out[4] = WIRE_VERSION;
         put_u64(&mut out, F_SEQUENCE, self.sequence);
         put_u64(&mut out, F_EPOCH, self.epoch);
+        put_u64(&mut out, F_RECEIPT_LOG_INDEX, self.receipt_log_index);
         out[F_PREDECESSOR_TAG] = self.predecessor.tag();
         out[F_ACTIVATION_HASH..F_PREDECESSOR_HASH].copy_from_slice(&self.activation_hash);
         out[F_PREDECESSOR_HASH..F_FRAME_HASH].copy_from_slice(&self.predecessor.hash());
-        out[F_FRAME_HASH..F_PREVIOUS_RECEIPT].copy_from_slice(&self.frame_hash);
-        out[F_PREVIOUS_RECEIPT..F_RECEIPT_HASH].copy_from_slice(&self.predecessor_receipt_hash);
+        out[F_FRAME_HASH..F_PLAYER_PREDECESSOR_TAG].copy_from_slice(&self.frame_hash);
+        if let (Some(index), Some(hash)) = (
+            self.predecessor_receipt_index,
+            self.predecessor_receipt_hash,
+        ) {
+            out[F_PLAYER_PREDECESSOR_TAG] = 1;
+            put_u64(&mut out, F_PLAYER_PREDECESSOR_INDEX, index);
+            out[F_PLAYER_PREDECESSOR_HASH..F_AGENT].copy_from_slice(&hash);
+        }
+        out[F_AGENT..F_FEDERATION].copy_from_slice(&self.agent);
+        out[F_FEDERATION..F_TURN_HASH].copy_from_slice(&self.federation_id);
+        out[F_TURN_HASH..F_FOREST_HASH].copy_from_slice(&self.turn_hash);
+        out[F_FOREST_HASH..F_RECEIPT_HASH].copy_from_slice(&self.forest_hash);
         out[F_RECEIPT_HASH..F_FULL_PRE].copy_from_slice(&self.full_receipt_hash);
         out[F_FULL_PRE..F_FULL_POST].copy_from_slice(&self.full_pre_state_hash);
         out[F_FULL_POST..F_BEFORE_COUNT].copy_from_slice(&self.full_post_state_hash);
@@ -477,10 +542,8 @@ impl UntrustedExactFnspV3FrameV1 {
         out[F_PROOF_OUTER_AFTER..F_ACCEPTED_STATEMENT].copy_from_slice(&self.proof_outer_after);
         out[F_ACCEPTED_STATEMENT..F_SIGNED_SPENDING_PROOF]
             .copy_from_slice(&self.accepted_statement_digest);
-        out[F_SIGNED_SPENDING_PROOF..F_FEDERATION]
+        out[F_SIGNED_SPENDING_PROOF..F_EXECUTOR_KEY]
             .copy_from_slice(&self.signed_spending_proof_digest);
-        out[F_FEDERATION..F_AGENT].copy_from_slice(&self.federation_id);
-        out[F_AGENT..F_EXECUTOR_KEY].copy_from_slice(&self.agent);
         out[F_EXECUTOR_KEY..F_SIGNATURE].copy_from_slice(&self.executor_public_key);
         out[F_SIGNATURE..F_SEAL].copy_from_slice(&self.executor_signature.0);
         let seal = seal(FRAME_SEAL_DOMAIN, &out[..F_SEAL]);
@@ -508,14 +571,42 @@ impl UntrustedExactFnspV3FrameV1 {
             2 => ExactFnspV3DurableReceiptLinkV1::ExactFrame(predecessor_hash),
             _ => return Err(integrity(ExactFnspV3FrameStoreError::BadPredecessorTag)),
         };
+        if bytes[F_PLAYER_PREDECESSOR_TAG + 1..F_PLAYER_PREDECESSOR_INDEX] != [0; 7] {
+            return Err(integrity(ExactFnspV3FrameStoreError::NonZeroReserved(
+                "player receipt predecessor",
+            )));
+        }
+        let predecessor_receipt_hash_bytes = take32(bytes, F_PLAYER_PREDECESSOR_HASH);
+        let predecessor_receipt_index_raw = get_u64(bytes, F_PLAYER_PREDECESSOR_INDEX);
+        let (predecessor_receipt_index, predecessor_receipt_hash) =
+            match bytes[F_PLAYER_PREDECESSOR_TAG] {
+                0 if predecessor_receipt_index_raw == 0
+                    && predecessor_receipt_hash_bytes == [0; 32] =>
+                {
+                    (None, None)
+                }
+                1 => (
+                    Some(predecessor_receipt_index_raw),
+                    Some(predecessor_receipt_hash_bytes),
+                ),
+                _ => {
+                    return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+                }
+            };
         let sequence = get_u64(bytes, F_SEQUENCE);
         let value = Self {
             sequence,
             epoch: get_u64(bytes, F_EPOCH),
+            receipt_log_index: get_u64(bytes, F_RECEIPT_LOG_INDEX),
             predecessor,
             activation_hash: take32(bytes, F_ACTIVATION_HASH),
             frame_hash: take32(bytes, F_FRAME_HASH),
-            predecessor_receipt_hash: take32(bytes, F_PREVIOUS_RECEIPT),
+            predecessor_receipt_index,
+            predecessor_receipt_hash,
+            agent: take32(bytes, F_AGENT),
+            federation_id: take32(bytes, F_FEDERATION),
+            turn_hash: take32(bytes, F_TURN_HASH),
+            forest_hash: take32(bytes, F_FOREST_HASH),
             full_receipt_hash: take32(bytes, F_RECEIPT_HASH),
             full_pre_state_hash: take32(bytes, F_FULL_PRE),
             full_post_state_hash: take32(bytes, F_FULL_POST),
@@ -537,8 +628,6 @@ impl UntrustedExactFnspV3FrameV1 {
             proof_outer_after: take32(bytes, F_PROOF_OUTER_AFTER),
             accepted_statement_digest: take32(bytes, F_ACCEPTED_STATEMENT),
             signed_spending_proof_digest: take32(bytes, F_SIGNED_SPENDING_PROOF),
-            federation_id: take32(bytes, F_FEDERATION),
-            agent: take32(bytes, F_AGENT),
             executor_public_key: take32(bytes, F_EXECUTOR_KEY),
             executor_signature: Signature(take64(bytes, F_SIGNATURE)),
         };
@@ -552,6 +641,27 @@ impl UntrustedExactFnspV3FrameV1 {
         hasher.update(&self.activation_hash);
         hasher.update(&[self.predecessor.tag()]);
         hasher.update(&self.predecessor.hash());
+        hasher.update(&self.receipt_log_index.to_le_bytes());
+        match self.predecessor_receipt_index {
+            None => hasher.update(&[0]),
+            Some(index) => {
+                hasher.update(&[1]);
+                hasher.update(&index.to_le_bytes())
+            }
+        };
+        hasher.update(&self.agent);
+        hasher.update(&self.federation_id);
+        hasher.update(&self.turn_hash);
+        hasher.update(&self.forest_hash);
+        match self.predecessor_receipt_hash {
+            None => hasher.update(&[0]),
+            Some(hash) => {
+                hasher.update(&[1]);
+                hasher.update(&hash)
+            }
+        };
+        hasher.update(&self.full_pre_state_hash);
+        hasher.update(&self.full_post_state_hash);
         hasher.update(&self.full_receipt_hash);
         hash_exact_state_point(&mut hasher, self.exact_before);
         hash_exact_state_point(&mut hasher, self.exact_after);
@@ -577,6 +687,9 @@ impl CommittedExactFnspV3FrameHeadV1 {
     }
     pub const fn frame_hash(&self) -> [u8; 32] {
         self.0.frame_hash
+    }
+    pub const fn receipt_log_index(&self) -> u64 {
+        self.0.receipt_log_index
     }
     pub const fn full_receipt_hash(&self) -> [u8; 32] {
         self.0.full_receipt_hash
@@ -621,6 +734,7 @@ pub enum ExactFnspV3FrameStoreError {
         value: u32,
     },
     ActivationHashMismatch,
+    ActivationCutoverMismatch,
     ActivationSignatureInvalid,
     FrameHashMismatch,
     FrameSignatureInvalid,
@@ -674,6 +788,9 @@ impl fmt::Display for ExactFnspV3FrameStoreError {
                 "exact FNSP-v3 {component} lane {lane} is non-canonical: {value}"
             ),
             Self::ActivationHashMismatch => f.write_str("exact FNSP-v3 activation hash mismatch"),
+            Self::ActivationCutoverMismatch => {
+                f.write_str("exact FNSP-v3 activation receipt cutover coordinates mismatch")
+            }
             Self::ActivationSignatureInvalid => {
                 f.write_str("exact FNSP-v3 devnet activation signature invalid")
             }
@@ -735,6 +852,34 @@ struct ValidatedFrameSnapshot {
 }
 
 impl PersistentStore {
+    /// Return the dense receipt-log cursor and optional terminal row from one read snapshot.
+    ///
+    /// Callers that need a staleness coordinate must not separately read the length and tail:
+    /// another writer could advance the log between those reads.  The exact pre-execution actor
+    /// authority uses this O(1) snapshot instead of loading the complete receipt history.
+    pub fn receipt_chain_head(&self) -> StoreResult<(u64, Option<Vec<u8>>)> {
+        let read = self.db.begin_read()?;
+        let table = read.open_table(crate::tables::RECEIPT_CHAIN)?;
+        let count = table.len()?;
+        match (count, table.last()?) {
+            (0, None) => Ok((0, None)),
+            (0, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "receipt log has key {} but reports zero entries",
+                key.value()
+            ))),
+            (count, Some((key, value))) if key.value() == count - 1 => {
+                Ok((count, Some(value.value().to_vec())))
+            }
+            (count, Some((key, _))) => Err(StoreError::Integrity(format!(
+                "receipt log is not dense: {count} entries but highest index is {}",
+                key.value()
+            ))),
+            (count, None) => Err(StoreError::Integrity(format!(
+                "receipt log reports {count} entries but has no last key"
+            ))),
+        }
+    }
+
     /// Boot gate: a partial exact state/activation/frame image is an integrity failure, never an
     /// implicit rollback to legacy mode.
     pub(crate) fn validate_exact_fnsp_v3_receipt_authority_on_open(&self) -> StoreResult<()> {
@@ -772,6 +917,13 @@ impl PersistentStore {
         if activation.exact_initial != exact_head {
             return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
         }
+        let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
+        if usize::try_from(activation.receipt_cutover_next_index).ok() != Some(receipts.len()) {
+            return Err(integrity(
+                ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+            ));
+        }
+        validate_activation_cutover(&activation, &receipts)?;
         {
             let mut table = write.open_table(EXACT_FNSP_V3_ACTIVATION)?;
             let encoded = activation.encode();
@@ -855,7 +1007,7 @@ pub(crate) fn stage_exact_fnsp_v3_frame_in(
         .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
     validate_frame_against_snapshot(&frame, &activation, &snapshot.frames, exact, false)?;
     let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
-    validate_frame_receipt(&frame, &receipts)?;
+    validate_frame_receipt(&frame, &receipts, true)?;
     let (write, successor) = compare_and_commit_exact_fnsp_v3_append_in(write, exact)?;
     if successor != frame.exact_after {
         return Err(integrity(ExactFnspV3FrameStoreError::ExactHeadMismatch));
@@ -884,7 +1036,9 @@ pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
     let activation = snapshot
         .activation
         .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationMissing))?;
-    validate_frame_against_snapshot(frame, &activation, &snapshot.frames, exact, true)
+    validate_frame_against_snapshot(frame, &activation, &snapshot.frames, exact, true)?;
+    let receipts = collect_receipts(&write.open_table(crate::tables::RECEIPT_CHAIN)?)?;
+    validate_frame_receipt(frame, &receipts, false)
 }
 
 fn validate_frame_against_snapshot(
@@ -900,7 +1054,6 @@ fn validate_frame_against_snapshot(
     if frame.epoch != activation.epoch
         || frame.activation_hash != activation.activation_hash
         || frame.federation_id != activation.federation_id
-        || frame.agent != activation.agent
         || frame.executor_public_key != activation.executor_public_key
     {
         return Err(integrity(ExactFnspV3FrameStoreError::ActivationReplacement));
@@ -916,17 +1069,15 @@ fn validate_frame_against_snapshot(
         }
         return Ok(());
     }
-    let (expected_link, expected_receipt, expected_pre, expected_exact) = match frames.last() {
+    let (expected_link, prior_receipt_log_index, expected_exact) = match frames.last() {
         Some(previous) => (
             ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash),
-            previous.full_receipt_hash,
-            previous.full_post_state_hash,
+            Some(previous.receipt_log_index),
             previous.exact_after,
         ),
         None => (
             ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash),
-            activation.legacy_tip_receipt_hash,
-            activation.legacy_tip_outer_commit,
+            None,
             activation.exact_initial,
         ),
     };
@@ -935,14 +1086,11 @@ fn validate_frame_against_snapshot(
             "frame predecessor",
         )));
     }
-    if frame.predecessor_receipt_hash != expected_receipt {
+    if frame.receipt_log_index < activation.receipt_cutover_next_index
+        || prior_receipt_log_index.is_some_and(|index| frame.receipt_log_index <= index)
+    {
         return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
-            "full receipt predecessor",
-        )));
-    }
-    if frame.full_pre_state_hash != expected_pre {
-        return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
-            "full state predecessor",
+            "global receipt order",
         )));
     }
     if frame.exact_before != expected_exact {
@@ -1001,40 +1149,96 @@ fn collect_records(
         .collect()
 }
 
-fn collect_receipts(table: &impl ReadableTable<u64, &'static [u8]>) -> StoreResult<Vec<Vec<u8>>> {
+struct ValidatedReceiptRow {
+    receipt: TurnReceipt,
+    hash: [u8; 32],
+    player_predecessor: Option<(u64, [u8; 32])>,
+}
+
+struct ValidatedReceiptLog {
+    rows: Vec<ValidatedReceiptRow>,
+}
+
+impl ValidatedReceiptLog {
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&ValidatedReceiptRow> {
+        self.rows.get(index)
+    }
+}
+
+/// Decode the dense receipt log exactly once and derive each actor's causal predecessor at that
+/// row.  Snapshot recovery can then validate every sparse exact frame in O(receipts + frames),
+/// rather than rescanning the receipt prefix and full hash set for each exact frame.
+fn collect_receipts(
+    table: &impl ReadableTable<u64, &'static [u8]>,
+) -> StoreResult<ValidatedReceiptLog> {
     let mut expected = 0u64;
-    let mut receipts = Vec::new();
+    let mut rows = Vec::new();
+    let mut latest_by_agent: HashMap<[u8; 32], (u64, [u8; 32])> = HashMap::new();
+    let mut seen_hashes = HashSet::new();
     for entry in table.iter()? {
         let (key, value) = entry?;
         if key.value() != expected {
             return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
         }
-        receipts.push(value.value().to_vec());
+        let encoded = value.value();
+        let receipt: TurnReceipt = postcard::from_bytes(encoded)
+            .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+        let canonical = postcard::to_stdvec(&receipt)
+            .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+        if canonical.as_slice() != encoded {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+        let hash = receipt.receipt_hash();
+        if !seen_hashes.insert(hash) {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+        let player_predecessor = latest_by_agent.get(&receipt.agent.0).copied();
+        if receipt.previous_receipt_hash != player_predecessor.map(|(_, hash)| hash) {
+            return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
+        }
+        rows.push(ValidatedReceiptRow {
+            receipt,
+            hash,
+            player_predecessor,
+        });
+        latest_by_agent.insert(
+            rows.last().expect("just pushed receipt").receipt.agent.0,
+            (expected, hash),
+        );
         expected = expected
             .checked_add(1)
             .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
     }
-    Ok(receipts)
+    Ok(ValidatedReceiptLog { rows })
 }
 
 fn validate_frame_receipt(
     frame: &UntrustedExactFnspV3FrameV1,
-    receipt_rows: &[Vec<u8>],
+    receipt_rows: &ValidatedReceiptLog,
+    require_current_tail: bool,
 ) -> StoreResult<()> {
-    let mut matching = None;
-    for encoded in receipt_rows {
-        let receipt: TurnReceipt = postcard::from_bytes(encoded)
-            .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
-        if receipt.receipt_hash() == frame.full_receipt_hash {
-            if matching.replace(receipt).is_some() {
-                return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
-            }
-        }
+    let index = usize::try_from(frame.receipt_log_index)
+        .map_err(|_| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    if require_current_tail && index.checked_add(1) != Some(receipt_rows.len()) {
+        return Err(integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch));
     }
-    let receipt =
-        matching.ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    let row = receipt_rows
+        .get(index)
+        .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::FrameReceiptMismatch))?;
+    let receipt = &row.receipt;
     if receipt.finality != Finality::Final
-        || receipt.previous_receipt_hash != Some(frame.predecessor_receipt_hash)
+        || row.hash != frame.full_receipt_hash
+        || receipt.previous_receipt_hash != frame.predecessor_receipt_hash
+        || row.player_predecessor
+            != frame
+                .predecessor_receipt_index
+                .zip(frame.predecessor_receipt_hash)
+        || receipt.turn_hash != frame.turn_hash
+        || receipt.forest_hash != frame.forest_hash
         || receipt.pre_state_hash != frame.full_pre_state_hash
         || receipt.post_state_hash != frame.full_post_state_hash
         || receipt.federation_id != frame.federation_id
@@ -1046,11 +1250,49 @@ fn validate_frame_receipt(
     Ok(())
 }
 
+fn validate_activation_cutover(
+    activation: &UntrustedExactFnspV3ActivationV1,
+    receipt_rows: &ValidatedReceiptLog,
+) -> StoreResult<()> {
+    let cutover = usize::try_from(activation.receipt_cutover_next_index)
+        .map_err(|_| integrity(ExactFnspV3FrameStoreError::ActivationCutoverMismatch))?;
+    if cutover > receipt_rows.len() {
+        return Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+        ));
+    }
+    match (cutover, activation.receipt_cutover_tail_hash) {
+        (0, None) => Ok(()),
+        (0, Some(_)) | (_, None) => Err(integrity(
+            ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+        )),
+        (cutover, Some(expected_hash)) => {
+            let row = receipt_rows
+                .get(cutover - 1)
+                .ok_or_else(|| integrity(ExactFnspV3FrameStoreError::ActivationCutoverMismatch))?;
+            if row.hash != expected_hash
+                || row.receipt.finality != Finality::Final
+                || row.receipt.federation_id != activation.federation_id
+                || verify_receipt_signature_with_keys(
+                    &row.receipt,
+                    &[activation.executor_public_key],
+                )
+                .is_err()
+            {
+                return Err(integrity(
+                    ExactFnspV3FrameStoreError::ActivationCutoverMismatch,
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_snapshot(
     activation_bytes: Option<Vec<u8>>,
     head_bytes: Option<Vec<u8>>,
     record_rows: Vec<(u64, Vec<u8>)>,
-    receipt_rows: Vec<Vec<u8>>,
+    receipt_rows: ValidatedReceiptLog,
     exact_head: ExactFnspV3StateHeadV1,
 ) -> StoreResult<ValidatedFrameSnapshot> {
     let Some(activation_bytes) = activation_bytes else {
@@ -1065,6 +1307,7 @@ fn validate_snapshot(
         });
     };
     let activation = UntrustedExactFnspV3ActivationV1::decode(&activation_bytes)?;
+    validate_activation_cutover(&activation, &receipt_rows)?;
     let expected_count = exact_head
         .generation()
         .checked_sub(activation.exact_initial.generation())
@@ -1110,35 +1353,32 @@ fn validate_snapshot(
                 found: frame.sequence,
             }));
         }
-        let (link, receipt, pre, exact) = match frames.last() {
+        let (link, prior_receipt_log_index, exact) = match frames.last() {
             Some(previous) => (
                 ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash),
-                previous.full_receipt_hash,
-                previous.full_post_state_hash,
+                Some(previous.receipt_log_index),
                 previous.exact_after,
             ),
             None => (
                 ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash),
-                activation.legacy_tip_receipt_hash,
-                activation.legacy_tip_outer_commit,
+                None,
                 activation.exact_initial,
             ),
         };
         if frame.epoch != activation.epoch
             || frame.activation_hash != activation.activation_hash
             || frame.federation_id != activation.federation_id
-            || frame.agent != activation.agent
             || frame.executor_public_key != activation.executor_public_key
             || frame.predecessor != link
-            || frame.predecessor_receipt_hash != receipt
-            || frame.full_pre_state_hash != pre
+            || frame.receipt_log_index < activation.receipt_cutover_next_index
+            || prior_receipt_log_index.is_some_and(|index| frame.receipt_log_index <= index)
             || frame.exact_before != exact
         {
             return Err(integrity(ExactFnspV3FrameStoreError::FrameChainBreak(
                 "recovery",
             )));
         }
-        validate_frame_receipt(&frame, &receipt_rows)?;
+        validate_frame_receipt(&frame, &receipt_rows, false)?;
         frames.push(frame);
     }
     let last = frames.last().expect("nonempty frame rows");
@@ -1157,17 +1397,23 @@ fn validate_snapshot(
 fn activation_hash(
     epoch: u64,
     federation_id: [u8; 32],
-    agent: [u8; 32],
-    legacy_tip_receipt_hash: [u8; 32],
-    legacy_tip_outer_commit: [u8; 32],
+    executor_public_key: [u8; 32],
+    receipt_cutover_next_index: u64,
+    receipt_cutover_tail_hash: Option<[u8; 32]>,
     exact_initial: ExactFnspV3StateHeadV1,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key(ACTIVATION_HASH_DOMAIN);
     hasher.update(&epoch.to_le_bytes());
     hasher.update(&federation_id);
-    hasher.update(&agent);
-    hasher.update(&legacy_tip_receipt_hash);
-    hasher.update(&legacy_tip_outer_commit);
+    hasher.update(&executor_public_key);
+    hasher.update(&receipt_cutover_next_index.to_le_bytes());
+    match receipt_cutover_tail_hash {
+        None => hasher.update(&[0]),
+        Some(hash) => {
+            hasher.update(&[1]);
+            hasher.update(&hash)
+        }
+    };
     hasher.update(&digest_bytes(exact_initial.root()));
     hasher.update(&exact_initial.count().to_le_bytes());
     hasher.update(&digest_bytes(exact_initial.fns3()));
@@ -1315,31 +1561,13 @@ mod tests {
     ) -> UntrustedExactFnspV3ActivationV1 {
         let epoch = 7;
         let federation = [0x21; 32];
-        let agent = [0x22; 32];
-        let legacy_receipt = [0x23; 32];
-        let legacy_outer = [0; 32];
-        let hash = activation_hash(
-            epoch,
-            federation,
-            agent,
-            legacy_receipt,
-            legacy_outer,
-            initial,
-        );
+        let hash = activation_hash(epoch, federation, public.0, 0, None, initial);
         let signature = sign(
             key,
             &UntrustedExactFnspV3ActivationV1::signature_message(hash),
         );
         UntrustedExactFnspV3ActivationV1::authenticate_devnet_executor(
-            epoch,
-            initial,
-            federation,
-            agent,
-            legacy_receipt,
-            legacy_outer,
-            hash,
-            public.0,
-            signature,
+            epoch, initial, federation, 0, None, hash, public.0, signature,
         )
         .expect("signed activation")
     }
@@ -1349,17 +1577,22 @@ mod tests {
         activation: &UntrustedExactFnspV3ActivationV1,
         exact: ExactFnspV3StateCasV1,
         key: &SigningKey,
+        agent: [u8; 32],
+        player_predecessor: Option<(u64, [u8; 32])>,
+        exact_predecessor: Option<&UntrustedExactFnspV3FrameV1>,
         tag: u8,
     ) -> UntrustedExactFnspV3FrameV1 {
+        let receipt_log_index = store.receipt_chain_len().expect("receipt len");
+        let pre_state_hash = [tag.wrapping_add(5); 32];
         let post_state_hash = [tag.wrapping_add(2); 32];
         let mut receipt = TurnReceipt {
             turn_hash: [tag; 32],
             forest_hash: [tag.wrapping_add(1); 32],
-            pre_state_hash: activation.legacy_tip_outer_commit,
+            pre_state_hash,
             post_state_hash,
-            agent: dregg_cell::CellId(activation.agent),
+            agent: dregg_cell::CellId(agent),
             federation_id: activation.federation_id,
-            previous_receipt_hash: Some(activation.legacy_tip_receipt_hash),
+            previous_receipt_hash: player_predecessor.map(|(_, hash)| hash),
             finality: Finality::Final,
             ..TurnReceipt::default()
         };
@@ -1372,17 +1605,25 @@ mod tests {
         let proof_outer_after = [0; 32];
         let accepted_statement_digest = [tag.wrapping_add(3); 32];
         let signed_spending_proof_digest = [tag.wrapping_add(4); 32];
-        let mut unsigned = UntrustedExactFnspV3FrameV1 {
+        let predecessor = exact_predecessor.map_or(
+            ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash),
+            |previous| ExactFnspV3DurableReceiptLinkV1::ExactFrame(previous.frame_hash),
+        );
+        let unsigned = UntrustedExactFnspV3FrameV1 {
             sequence: exact.expected().generation(),
             epoch: activation.epoch,
-            predecessor: ExactFnspV3DurableReceiptLinkV1::EpochActivation(
-                activation.activation_hash,
-            ),
+            receipt_log_index,
+            predecessor,
             activation_hash: activation.activation_hash,
             frame_hash: [0; 32],
-            predecessor_receipt_hash: activation.legacy_tip_receipt_hash,
+            predecessor_receipt_index: player_predecessor.map(|(index, _)| index),
+            predecessor_receipt_hash: player_predecessor.map(|(_, hash)| hash),
+            agent,
+            federation_id: activation.federation_id,
+            turn_hash: receipt.turn_hash,
+            forest_hash: receipt.forest_hash,
             full_receipt_hash: receipt.receipt_hash(),
-            full_pre_state_hash: activation.legacy_tip_outer_commit,
+            full_pre_state_hash: pre_state_hash,
             full_post_state_hash: post_state_hash,
             exact_before: exact.expected(),
             exact_after: exact.successor(),
@@ -1390,8 +1631,6 @@ mod tests {
             proof_outer_after,
             accepted_statement_digest,
             signed_spending_proof_digest,
-            federation_id: activation.federation_id,
-            agent: activation.agent,
             executor_public_key: activation.executor_public_key,
             executor_signature: Signature([0; 64]),
         };
@@ -1399,8 +1638,6 @@ mod tests {
         let mut message = Vec::from(FRAME_SIGNATURE_DOMAIN);
         message.extend_from_slice(&frame_hash);
         let signature = sign(key, &message);
-        unsigned.frame_hash = frame_hash;
-        unsigned.executor_signature = signature;
         store
             .append_receipt_chain_entry(
                 store.receipt_chain_len().expect("receipt len"),
@@ -1409,12 +1646,18 @@ mod tests {
             .expect("append receipt");
         UntrustedExactFnspV3FrameV1::authenticate_devnet_executor(
             activation.epoch,
-            ExactFnspV3DurableReceiptLinkV1::EpochActivation(activation.activation_hash),
+            receipt_log_index,
+            predecessor,
             activation.activation_hash,
             frame_hash,
-            activation.legacy_tip_receipt_hash,
+            player_predecessor.map(|(index, _)| index),
+            player_predecessor.map(|(_, hash)| hash),
+            agent,
+            activation.federation_id,
+            receipt.turn_hash,
+            receipt.forest_hash,
             receipt.receipt_hash(),
-            activation.legacy_tip_outer_commit,
+            pre_state_hash,
             post_state_hash,
             exact.expected(),
             exact.successor(),
@@ -1422,12 +1665,45 @@ mod tests {
             proof_outer_after,
             accepted_statement_digest,
             signed_spending_proof_digest,
-            activation.federation_id,
-            activation.agent,
             activation.executor_public_key,
             signature,
         )
         .expect("signed frame")
+    }
+
+    fn append_ordinary_receipt(
+        store: &PersistentStore,
+        activation: &UntrustedExactFnspV3ActivationV1,
+        key: &SigningKey,
+        agent: [u8; 32],
+        predecessor_hash: Option<[u8; 32]>,
+        tag: u8,
+    ) -> (u64, [u8; 32]) {
+        let index = store.receipt_chain_len().expect("receipt len");
+        let mut receipt = TurnReceipt {
+            turn_hash: [tag; 32],
+            forest_hash: [tag.wrapping_add(1); 32],
+            pre_state_hash: [tag.wrapping_add(2); 32],
+            post_state_hash: [tag.wrapping_add(3); 32],
+            agent: dregg_cell::CellId(agent),
+            federation_id: activation.federation_id,
+            previous_receipt_hash: predecessor_hash,
+            finality: Finality::Final,
+            ..TurnReceipt::default()
+        };
+        receipt.executor_signature = Some(
+            sign(key, &receipt.canonical_executor_signed_message())
+                .0
+                .to_vec(),
+        );
+        let hash = receipt.receipt_hash();
+        store
+            .append_receipt_chain_entry(
+                index,
+                &postcard::to_stdvec(&receipt).expect("encode ordinary receipt"),
+            )
+            .expect("append ordinary receipt");
+        (index, hash)
     }
 
     #[test]
@@ -1448,7 +1724,16 @@ mod tests {
             let exact = store
                 .prepare_exact_fnsp_v3_append([0x31; 32], 31)
                 .expect("prepare");
-            let frame = frame_candidate(&store, &activation, exact, &key, 0x41);
+            let frame = frame_candidate(
+                &store,
+                &activation,
+                exact,
+                &key,
+                [0xA1; 32],
+                None,
+                None,
+                0x41,
+            );
             expected_hash = frame.frame_hash();
             let write = store.db.begin_write().expect("writer");
             let (write, staged) =
@@ -1488,12 +1773,30 @@ mod tests {
         let exact = store
             .prepare_exact_fnsp_v3_append([0x51; 32], 51)
             .expect("prepare");
-        let winner = frame_candidate(&store, &activation, exact, &key, 0x52);
-        let stale = frame_candidate(&store, &activation, exact, &key, 0x53);
+        let winner = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xA2; 32],
+            None,
+            None,
+            0x52,
+        );
         let write = store.db.begin_write().expect("writer");
         let (write, winner) = stage_exact_fnsp_v3_frame_in(write, exact, winner).expect("winner");
         write.commit().expect("commit winner");
 
+        let stale = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xA3; 32],
+            None,
+            Some(&winner),
+            0x53,
+        );
         let write = store.db.begin_write().expect("stale writer");
         assert!(stage_exact_fnsp_v3_frame_in(write, exact, stale).is_err());
         assert_eq!(
@@ -1508,7 +1811,16 @@ mod tests {
         let next = store
             .prepare_exact_fnsp_v3_append([0x54; 32], 54)
             .expect("next");
-        let mut mixed = frame_candidate(&store, &activation, next, &key, 0x55);
+        let mut mixed = frame_candidate(
+            &store,
+            &activation,
+            next,
+            &key,
+            [0xA4; 32],
+            None,
+            Some(&winner),
+            0x55,
+        );
         mixed.epoch += 1;
         let write = store.db.begin_write().expect("mixed writer");
         assert!(stage_exact_fnsp_v3_frame_in(write, next, mixed).is_err());
@@ -1525,7 +1837,16 @@ mod tests {
         let exact = store
             .prepare_exact_fnsp_v3_append([0x61; 32], 61)
             .expect("prepare");
-        let frame = frame_candidate(&store, &activation, exact, &key, 0x62);
+        let frame = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xA5; 32],
+            None,
+            None,
+            0x62,
+        );
         let write = store.db.begin_write().expect("writer");
         let (write, _) = stage_exact_fnsp_v3_frame_in(write, exact, frame).expect("frame");
         write.commit().expect("commit");
@@ -1584,7 +1905,16 @@ mod tests {
             let exact = store
                 .prepare_exact_fnsp_v3_append([0x71; 32], 71)
                 .expect("prepare");
-            let frame = frame_candidate(&store, &activation, exact, &key, 0x72);
+            let frame = frame_candidate(
+                &store,
+                &activation,
+                exact,
+                &key,
+                [0xA6; 32],
+                None,
+                None,
+                0x72,
+            );
             let write = store.db.begin_write().expect("writer");
             let (write, _) = stage_exact_fnsp_v3_frame_in(write, exact, frame).expect("frame");
             write.commit().expect("commit");
@@ -1613,7 +1943,16 @@ mod tests {
         let exact = store
             .prepare_exact_fnsp_v3_append([0x81; 32], 81)
             .expect("prepare");
-        let frame = frame_candidate(&store, &activation, exact, &key, 0x82);
+        let frame = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xA7; 32],
+            None,
+            None,
+            0x82,
+        );
         let write = store.db.begin_write().expect("writer");
         let (write, _) = stage_exact_fnsp_v3_frame_in(write, exact, frame).expect("frame");
         write.commit().expect("commit");
@@ -1651,6 +1990,199 @@ mod tests {
         assert!(
             store.exact_fnsp_v3_committed_frame_head().is_err(),
             "the executor signature authenticates the recomputed frame preimage, not the seal"
+        );
+    }
+
+    #[test]
+    fn global_exact_chain_accepts_different_players_and_new_player_has_no_predecessor() {
+        let (store, initial) = setup_store();
+        let (key, public) = generate_keypair();
+        let activation = activation_candidate(initial, &key, public);
+        store
+            .install_exact_fnsp_v3_activation(activation.clone())
+            .expect("activation");
+
+        let alice_exact = store
+            .prepare_exact_fnsp_v3_append([0x91; 32], 91)
+            .expect("alice exact");
+        let alice = frame_candidate(
+            &store,
+            &activation,
+            alice_exact,
+            &key,
+            [0xA1; 32],
+            None,
+            None,
+            0x91,
+        );
+        let write = store.db.begin_write().expect("alice writer");
+        let (write, alice) =
+            stage_exact_fnsp_v3_frame_in(write, alice_exact, alice).expect("alice frame");
+        write.commit().expect("commit alice");
+
+        let bob_exact = store
+            .prepare_exact_fnsp_v3_append([0x92; 32], 92)
+            .expect("bob exact");
+        let bob = frame_candidate(
+            &store,
+            &activation,
+            bob_exact,
+            &key,
+            [0xB2; 32],
+            None,
+            Some(&alice),
+            0x92,
+        );
+        let bob_receipt_hash = bob.full_receipt_hash();
+        let write = store.db.begin_write().expect("bob writer");
+        let (write, bob) = stage_exact_fnsp_v3_frame_in(write, bob_exact, bob).expect("bob frame");
+        write.commit().expect("commit bob");
+
+        assert_eq!(bob.predecessor_receipt_index(), None);
+        assert_eq!(bob.predecessor_receipt_hash(), None);
+        assert_eq!(bob.agent(), [0xB2; 32]);
+        assert_eq!(
+            store
+                .exact_fnsp_v3_committed_frame_head()
+                .expect("head")
+                .expect("frame")
+                .full_receipt_hash(),
+            bob_receipt_hash
+        );
+    }
+
+    #[test]
+    fn recovery_accepts_ordinary_and_cross_player_receipt_interleaving() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("exact-interleaving.redb");
+        let expected_head;
+        {
+            let store = PersistentStore::open(&path).expect("store");
+            let initial = store
+                .initialize_exact_fnsp_v3_state(std::iter::empty())
+                .expect("genesis");
+            let (key, public) = generate_keypair();
+            let activation = activation_candidate(initial, &key, public);
+            store
+                .install_exact_fnsp_v3_activation(activation.clone())
+                .expect("activation");
+
+            let exact1 = store
+                .prepare_exact_fnsp_v3_append([0xA8; 32], 108)
+                .expect("exact one");
+            let frame1 = frame_candidate(
+                &store,
+                &activation,
+                exact1,
+                &key,
+                [0xA1; 32],
+                None,
+                None,
+                0xA8,
+            );
+            let alice_exact_receipt = frame1.full_receipt_hash();
+            let write = store.db.begin_write().expect("first writer");
+            let (write, frame1) =
+                stage_exact_fnsp_v3_frame_in(write, exact1, frame1).expect("first frame");
+            write.commit().expect("commit first");
+
+            let (alice_ordinary_index, alice_ordinary_hash) = append_ordinary_receipt(
+                &store,
+                &activation,
+                &key,
+                [0xA1; 32],
+                Some(alice_exact_receipt),
+                0xA9,
+            );
+            append_ordinary_receipt(&store, &activation, &key, [0xB2; 32], None, 0xAA);
+
+            let exact2 = store
+                .prepare_exact_fnsp_v3_append([0xAB; 32], 109)
+                .expect("exact two");
+            let frame2 = frame_candidate(
+                &store,
+                &activation,
+                exact2,
+                &key,
+                [0xA1; 32],
+                Some((alice_ordinary_index, alice_ordinary_hash)),
+                Some(&frame1),
+                0xAB,
+            );
+            assert_eq!(frame2.receipt_log_index(), 3);
+            expected_head = frame2.frame_hash();
+            let write = store.db.begin_write().expect("second writer");
+            let (write, _) =
+                stage_exact_fnsp_v3_frame_in(write, exact2, frame2).expect("second frame");
+            write.commit().expect("commit second");
+        }
+
+        let reopened = PersistentStore::open(&path).expect("interleaved recovery");
+        assert_eq!(reopened.receipt_chain_len().expect("receipt len"), 4);
+        assert_eq!(
+            reopened
+                .exact_fnsp_v3_committed_frame_head()
+                .expect("head")
+                .expect("frame")
+                .frame_hash(),
+            expected_head
+        );
+    }
+
+    #[test]
+    fn stale_same_player_receipt_predecessor_is_rejected_without_exact_mutation() {
+        let (store, initial) = setup_store();
+        let (key, public) = generate_keypair();
+        let activation = activation_candidate(initial, &key, public);
+        store
+            .install_exact_fnsp_v3_activation(activation.clone())
+            .expect("activation");
+        let exact1 = store
+            .prepare_exact_fnsp_v3_append([0xB1; 32], 111)
+            .expect("first exact");
+        let frame1 = frame_candidate(
+            &store,
+            &activation,
+            exact1,
+            &key,
+            [0xA1; 32],
+            None,
+            None,
+            0xB1,
+        );
+        let first_receipt_hash = frame1.full_receipt_hash();
+        let write = store.db.begin_write().expect("first writer");
+        let (write, frame1) =
+            stage_exact_fnsp_v3_frame_in(write, exact1, frame1).expect("first frame");
+        write.commit().expect("commit first");
+
+        append_ordinary_receipt(
+            &store,
+            &activation,
+            &key,
+            [0xA1; 32],
+            Some(first_receipt_hash),
+            0xB2,
+        );
+        let exact2 = store
+            .prepare_exact_fnsp_v3_append([0xB3; 32], 113)
+            .expect("second exact");
+        let stale = frame_candidate(
+            &store,
+            &activation,
+            exact2,
+            &key,
+            [0xA1; 32],
+            Some((0, first_receipt_hash)),
+            Some(&frame1),
+            0xB3,
+        );
+        let head_before = store.exact_fnsp_v3_state_head().expect("head before");
+        let write = store.db.begin_write().expect("stale writer");
+        assert!(stage_exact_fnsp_v3_frame_in(write, exact2, stale).is_err());
+        assert_eq!(
+            store.exact_fnsp_v3_state_head().expect("head after"),
+            head_before
         );
     }
 }
