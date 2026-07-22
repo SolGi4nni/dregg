@@ -124,9 +124,14 @@ fn load_digit(coefficient: u32) -> vec2<u32> {
     return vec2<u32>(digit_lwes[limb], digit_lwes[limb + 1u]);
 }
 
-fn load_lwe_at(buffer: ptr<storage, array<u32>, read>, block: u32, coefficient: u32) -> vec2<u32> {
+fn load_state_at(block: u32, coefficient: u32) -> vec2<u32> {
     let limb = (block * params.input_lwe_size + coefficient) * 2u;
-    return vec2<u32>((*buffer)[limb], (*buffer)[limb + 1u]);
+    return vec2<u32>(state_lwe[limb], state_lwe[limb + 1u]);
+}
+
+fn load_digit_at(block: u32, coefficient: u32) -> vec2<u32> {
+    let limb = (block * params.input_lwe_size + coefficient) * 2u;
+    return vec2<u32>(digit_lwes[limb], digit_lwes[limb + 1u]);
 }
 
 fn load_small_at(block: u32, coefficient: u32) -> vec2<u32> {
@@ -142,11 +147,11 @@ fn store_small_at(block: u32, coefficient: u32, value: vec2<u32>) {
 
 fn load_packed_batch_input(batch: u32, coefficient: u32) -> vec2<u32> {
     let digit = shl64(
-        load_lwe_at(&digit_lwes, params.digit_block + batch, coefficient),
+        load_digit_at(params.digit_block + batch, coefficient),
         params.digit_scale_log,
     );
     if (params.include_state == 0u) { return digit; }
-    return add64(load_lwe_at(&state_lwe, 0u, coefficient), digit);
+    return add64(load_state_at(0u, coefficient), digit);
 }
 
 fn load_input(coefficient: u32) -> vec2<u32> {
@@ -197,8 +202,8 @@ fn add_large_lwe_pairs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let block = gid.y;
     if (coefficient >= params.input_lwe_size) { return; }
     let value = add64(
-        load_lwe_at(&state_lwe, block, coefficient),
-        load_lwe_at(&digit_lwes, params.digit_block + block, coefficient),
+        load_state_at(block, coefficient),
+        load_digit_at(params.digit_block + block, coefficient),
     );
     let limb = (block * params.input_lwe_size + coefficient) * 2u;
     small_lwe[limb] = value.x;
