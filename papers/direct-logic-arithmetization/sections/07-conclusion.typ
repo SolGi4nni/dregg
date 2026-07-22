@@ -7,8 +7,8 @@ The useful result of this audit is a stronger architecture than the claim that
 prompted it.
 
 #callout([DECISIVE RESULT], [
-  We now have a coherent path from matrix FOL and general bounded finite FOL to
-  sound finite-field relations, live DREGG descriptors, certified local
+  We now have a coherent path from matrix FOL to sound compiler semantics, and
+  from general bounded finite FOL to live DREGG descriptors, certified local
   optimization, and matching encrypted plans. We also have a genuinely
   higher-order intensional route: typed shared nets form a cartesian closed
   category, and the structural compiler preserves the chosen CCC operations.
@@ -29,8 +29,12 @@ The repaired compiler makes that transport explicit. It either proves numerator
 and denominator bounds before field projection, or converts truth to canonical
 bits with checked zero witnesses. `GabbayMatrixCompiler` reconstructs the actual
 matrix language and interpolation mechanism; `GabbayMatrixBridge` proves the two
-formal presentations coherent; and `GabbayDescriptorIR2` carries a nontrivial
-Skolem table into the live proof relation. `FiniteSignatureFOLDescriptorIR2` then
+formal presentations coherent; and `GabbayDescriptorIR2` supplies a fixed-shape
+private Skolem-witness relation in the live proof grammar.
+`GabbayDescriptorIR2PublicBoundary` proves that this descriptor has zero public
+inputs and no hash or range sites: acceptance does not attest an independently
+named external table, and the fixed instance is not interpolation-performance
+evidence. `FiniteSignatureFOLDescriptorIR2` then
 extends the live route to many relation symbols, total public function symbols,
 equality, all connectives, and nested finite quantifiers.
 
@@ -70,6 +74,12 @@ materialized BoolGraph cost ledger, not a reduction in the current live
 DescriptorIR2 prover, whose formula is a nested expression without intermediate
 BoolGraph columns. The BFV comparison does not implement or price its encrypted
 residual zero-test. Neither result is end-to-end.
+
+Separately, the actual live finite-logic prover has an absolute capture on seven
+small one-row workloads: proof medians 2.22-26.83 ms, verification medians
+0.28-0.80 ms, and proof sizes 9.3-13.1 KB on a contended Apple M2 Max. The
+nonmonotonic observations establish an executable baseline, not a speedup,
+scaling law, Modulus comparison, or finality claim.
 
 == Higher order and the CCC question
 
@@ -125,6 +135,9 @@ test.
   source and descriptor digests, exhaustively compares source and relation on
   its finite specimen, proves and verifies one honest trace through the live
   backend, and fails closed on malformed types, domains, encodings, and limits.
+- Its captured one-row live proofs record absolute prover, verifier, and proof-
+  size measurements; contention and nonmonotonicity are retained rather than
+  interpreted as a performance ratio.
 - The independent Python reference compiler checks versioned residual, Boolean,
   and hybrid artifacts and recomputes selected derivations rather than trusting
   their claimed cost.

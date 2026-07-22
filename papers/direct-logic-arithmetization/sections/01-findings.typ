@@ -9,8 +9,8 @@ constructions.
 
 #callout([RESULT], [
   We reconstructed Gabbay's matrix-language compiler, proved its characteristic-
-  zero semantics, added two exact finite-field repairs, and emitted a certified
-  fixed matrix instance into DREGG's live DescriptorIR2 relation. We then built a
+  zero semantics, added two exact finite-field repairs, and constructed a
+  fixed-shape private-witness matrix relation in DREGG's live DescriptorIR2. We then built a
   general finite-signature FOL compiler, a checker-gated optimizer, a same-opening
   proof/FHE certificate, an intensional cartesian closed compiler with explicit
   sharing, a presheaf embedding for arbitrary small CCCs, and a bias-aware robust
@@ -34,11 +34,12 @@ constructions.
     [`GabbayMatrixCompiler` and `GabbayMatrixBridge`; positive one-index matrix
      fragment, not arbitrary recursion.],
     [Live matrix relation],
-    [A three-entry Skolem successor table is denominator-cleared and compiled to
-     actual `EffectVmDescriptor2` constraints, with constructive trace,
-     soundness, completeness, and tamper refusal.],
-    [`GabbayDescriptorIR2`; fixed arity over BabyBear, not yet a symbolic
-     variable-length matrix emitter.],
+    [A three-entry Skolem successor table has a constructive accepting trace in
+     actual `EffectVmDescriptor2`. Coefficient columns are checked, while the
+     residual and acceptance gates read the private table cells directly.],
+    [`GabbayDescriptorIR2PublicBoundary` proves `piCount = 0`, with no hash or
+     range sites: this is an existential witness relation, not an attestation of
+     an external table or evidence of interpolation performance.],
     [Finite FOL],
     [Closed de Bruijn syntax with equality, many relations of independent
      arities, total public function tables, every connective, and exhaustive
@@ -137,6 +138,12 @@ run. Those are different computations and SIMD occupancies, so they define no
 speedup ratio. The residual plan's 8 multiplications and depth 1 compare
 symbolically with 15 multiplications and depth 4 for the matching all-Boolean
 eight-equality formula, but exclude the residual's final private zero decision.
+
+The current live finite-logic proof path now also has a reproducible absolute
+capture across seven small one-row workloads. On a contended Apple M2 Max, proof
+medians ranged from 2.22-26.83 ms, verification medians from 0.28-0.80 ms, and
+proofs from 9.3-13.1 KB. The medians are nonmonotonic and define no speedup,
+scaling law, Modulus comparison, or finality result.
 
 The executable conformance corpus evaluated 10,061 cases. The corrected
 `D-NOWRAP` lane passed all 6,737 admitted cases and refused 3,324 unsupported

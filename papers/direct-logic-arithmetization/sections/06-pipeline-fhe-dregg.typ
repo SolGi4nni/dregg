@@ -92,6 +92,15 @@ ordinary bounded source formula; successor data is accepted, while a tampered
 entry and the known unchecked modulus-five projection are refused.  Arbitrary
 matrix length remains a separate symbolic compiler problem because it must emit
 and cost an interpolation algorithm rather than hide divisions in witness data.
+The fixed theorem constructs a trace from an externally named three-entry
+table, but the descriptor itself proves only an existential private-witness
+relation.  `GabbayDescriptorIR2PublicBoundary` proves that its public-input,
+hash-site, and range surfaces are all empty and that all constructed tables have
+the same public assignment.  It therefore cannot attest an independently named
+external table.  Moreover, interpolation coefficients are consistency columns;
+the logical residual and final acceptance read the raw input/output cells.
+This specimen establishes a fixed-shape semantic relation, not an interpolation
+performance result.
 
 == Certificates optimize the relation without changing it
 
@@ -264,6 +273,48 @@ This is the first live Rust prove/verify path for the construction.  It is not
 yet a proof that the Rust compiler refines the Lean compiler, and one tiny
 roundtrip says nothing about production throughput or finality.
 
+The path now also has an absolute release benchmark.  It measures
+`LogicProgram` to `compile_logic_program` to `EffectVmDescriptor2` to one-row
+trace to `prove_vm_descriptor2` and `verify_vm_descriptor2`.  The capture used an
+Apple M2 Max with 12 logical CPUs and 96 GiB RAM, five warmups, 30 proving
+samples, and 100 verification samples.  The live BatchSTARK parameters were
+BabyBear, extension degree 4, FRI log blowup 6, 19 queries, and 16 query-PoW
+bits.  All proofs had `degree_bits = 0`; proof sizes are the live SDK's postcard
+encoding.
+
+#block(breakable: false)[
+  #set text(size: 7.55pt)
+  #table(
+    columns: (1.35fr, 0.72fr, 1.05fr, 1.08fr, 0.82fr),
+    inset: 3.3pt,
+    align: left,
+    table.header([*Workload*], [*Cols / gates*], [*Prove median / p95*], [*Verify median / p95*], [*Proof bytes*]),
+    [`bool-eq`], [1 / 2], [2.219 / 4.572 ms], [0.282 / 0.789 ms], [9,262],
+    [`enum-eq-4`], [4 / 6], [6.911 / 9.829 ms], [0.293 / 0.691 ms], [9,342],
+    [`enum-eq-16`], [16 / 18], [4.497 / 7.140 ms], [0.309 / 0.686 ms], [9,721],
+    [`enum-eq-64`], [64 / 66], [6.728 / 8.596 ms], [0.500 / 0.862 ms], [10,924],
+    [`forall-4`], [4 / 6], [19.637 / 23.838 ms], [0.361 / 0.794 ms], [10,202],
+    [`forall-8`], [8 / 10], [8.828 / 10.630 ms], [0.488 / 1.086 ms], [11,165],
+    [`forall-16`], [16 / 18], [26.833 / 31.437 ms], [0.800 / 1.695 ms], [13,101],
+  )
+]
+
+The proving medians are visibly nonmonotone.  The shared development host had
+load averages 31.34 / 37.81 / 38.25, so the result supplies neither a scaling
+law nor a speedup comparison.  Release proving excludes debug self-verification;
+the harness separately verified every warmup and retained proof.  It does not
+measure the abstract optimizer, a conventional-circuit or Modulus baseline,
+zero knowledge, network inclusion, or finality.
+
+#block(breakable: false)[
+  #set text(size: 8.15pt)
+  Stable capture: `docs/deos/artifacts/direct-logic-live-2026-07-22-m2-max`.
+  Summary SHA-256:
+  `39a623da8ea21a03e69a6f420d5b49ce52762a9e4cbb9fefbdb21e7ae661db73`.
+  Raw-log SHA-256:
+  `66b37bf19bfffe505b967b03fdf44a0cc8bde22ca232493417fe3350b9ef3b1e`.
+]
+
 === Independent HOL4 and CakeML checker boundary
 
 `tools/direct-logic-cakeml` reimplements the certificate check independently of
@@ -427,8 +478,6 @@ proof size, data-availability path, network delay and loss model, batching and
 sequencing policy, hardware, confirmation rule, and latency distribution under
 load and faults.  Logic arithmetization can change proving cost, but finality is
 also a consensus, networking, execution, and data-availability property.
-
-#pagebreak()
 
 == Constructive public comparison
 
