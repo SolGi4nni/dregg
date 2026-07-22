@@ -158,6 +158,7 @@ fn finalized_order(finality_lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<
         let payload = match &block.payload {
             Payload::Turn(d) => d.clone(),
             Payload::TurnBundle(b) => b.signed_turn.clone(),
+            Payload::ConsensusTimedTurnV1(b) => b.signed_turn().to_vec(),
             Payload::Ack => vec![],
             Payload::Checkpoint { root, height } => {
                 let mut buf = Vec::with_capacity(40);

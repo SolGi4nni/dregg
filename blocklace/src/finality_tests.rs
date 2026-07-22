@@ -7,7 +7,9 @@ use rand::rngs::OsRng;
 
 use crate::dregg_bridge::{CodManager, DreggBlocklaceBridge, ExecutionTier, classify_turn};
 use crate::finality::{
-    Block, BlockError, Blocklace, FinalityLevel, FinalityTracker, Payload, TurnArtifactBundle,
+    Block, BlockError, Blocklace, CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS,
+    CONSENSUS_TIME_V1_WIRE_LEN, ConsensusTimePolicyV1, ConsensusTimeV1, ConsensusTimeWireError,
+    ConsensusTimedTurnPayloadV1, FinalityLevel, FinalityTracker, Payload, TurnArtifactBundle,
 };
 
 fn random_key() -> SigningKey {
@@ -58,6 +60,199 @@ fn turn_bundle_payload_roundtrips_and_binds_signature() {
         panic!("decoded payload must be a turn bundle");
     }
     assert!(tampered.verify_signature().is_err());
+}
+
+// ─── Consensus-authenticated time ───────────────────────────────────────────
+
+#[test]
+fn consensus_time_wire_is_fixed_width_and_strict() {
+    let claim = ConsensusTimeV1::new(-1_234_567_890);
+    let encoded = claim.encode();
+    assert_eq!(encoded.len(), CONSENSUS_TIME_V1_WIRE_LEN);
+    assert_eq!(ConsensusTimeV1::decode(&encoded), Ok(claim));
+
+    assert!(matches!(
+        ConsensusTimeV1::decode(&encoded[..encoded.len() - 1]),
+        Err(ConsensusTimeWireError::Length(_))
+    ));
+    let mut trailing = encoded.to_vec();
+    trailing.push(0);
+    assert!(matches!(
+        ConsensusTimeV1::decode(&trailing),
+        Err(ConsensusTimeWireError::Length(_))
+    ));
+    let mut bad_magic = encoded;
+    bad_magic[0] ^= 1;
+    assert_eq!(
+        ConsensusTimeV1::decode(&bad_magic),
+        Err(ConsensusTimeWireError::Magic)
+    );
+    let mut bad_version = encoded;
+    bad_version[4] = 2;
+    assert_eq!(
+        ConsensusTimeV1::decode(&bad_version),
+        Err(ConsensusTimeWireError::Version(2))
+    );
+    let mut bad_reserved = encoded;
+    bad_reserved[6] = 1;
+    assert_eq!(
+        ConsensusTimeV1::decode(&bad_reserved),
+        Err(ConsensusTimeWireError::Reserved)
+    );
+}
+
+#[test]
+fn consensus_time_is_signed_block_identity_not_local_clock_input() {
+    let key = random_key();
+    let unrelated_local_clock_a = 1_i64;
+    let unrelated_local_clock_b = i64::MAX;
+    assert_ne!(unrelated_local_clock_a, unrelated_local_clock_b);
+
+    let payload = ConsensusTimedTurnPayloadV1::with_artifacts(
+        1_700_000_000,
+        b"signed-turn".to_vec(),
+        Some(b"receipt".to_vec()),
+        vec![b"witness".to_vec()],
+    );
+    let a = Block::new(
+        &key,
+        7,
+        Payload::ConsensusTimedTurnV1(payload.clone()),
+        vec![],
+    );
+    let b = Block::new(&key, 7, Payload::ConsensusTimedTurnV1(payload), vec![]);
+    assert_eq!(a.id(), b.id(), "local clocks are not an execution input");
+    assert_eq!(a.signature, b.signature);
+
+    let different_time = Block::new(
+        &key,
+        7,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+            1_700_000_001,
+            b"signed-turn".to_vec(),
+        )),
+        vec![],
+    );
+    assert_ne!(a.id(), different_time.id());
+    assert_ne!(a.signature, different_time.signature);
+
+    let decoded = Block::from_bytes(&a.to_bytes()).expect("timed block decodes");
+    assert_eq!(decoded, a);
+    assert!(decoded.verify_signature().is_ok());
+    let mut tampered = decoded;
+    if let Payload::ConsensusTimedTurnV1(payload) = &mut tampered.payload {
+        *payload = ConsensusTimedTurnPayloadV1::new(1_700_000_002, b"signed-turn".to_vec());
+    }
+    assert!(tampered.verify_signature().is_err());
+}
+
+#[test]
+fn consensus_time_admission_is_causal_bounded_and_ack_transparent() {
+    let anchor = 1_700_000_000;
+    let key_a = random_key();
+    let key_b = random_key();
+    let mut lace = Blocklace::new_simple(random_key());
+    lace.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+
+    let genesis = Block::new(
+        &key_a,
+        1,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(anchor, b"g".to_vec())),
+        vec![],
+    );
+    lace.receive_block(genesis.clone()).unwrap();
+
+    // A non-turn block inherits the frontier. The next turn need inspect only this immediate ACK,
+    // not walk through it to rediscover the timed ancestor.
+    let ack = Block::new(&key_b, 1, Payload::Ack, vec![genesis.id()]);
+    lace.receive_block(ack.clone()).unwrap();
+    let at_bound = Block::new(
+        &key_a,
+        2,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+            anchor + CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS,
+            b"at-bound".to_vec(),
+        )),
+        vec![ack.id()],
+    );
+    lace.receive_block(at_bound.clone()).unwrap();
+
+    let regression = Block::new(
+        &key_b,
+        2,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+            anchor + CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS - 1,
+            b"regression".to_vec(),
+        )),
+        vec![at_bound.id()],
+    );
+    assert!(matches!(
+        lace.receive_block(regression),
+        Err(BlockError::ConsensusTimeRegression { .. })
+    ));
+
+    let too_far = Block::new(
+        &key_b,
+        3,
+        Payload::ConsensusTimedTurnV1(ConsensusTimedTurnPayloadV1::new(
+            anchor + 2 * CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS + 1,
+            b"future".to_vec(),
+        )),
+        vec![at_bound.id()],
+    );
+    assert!(matches!(
+        lace.receive_block(too_far),
+        Err(BlockError::ConsensusTimeForwardBound { .. })
+    ));
+
+    let legacy = Block::new(
+        &key_b,
+        4,
+        Payload::Turn(b"timestamp-less".to_vec()),
+        vec![at_bound.id()],
+    );
+    assert!(matches!(
+        lace.receive_block(legacy),
+        Err(BlockError::LegacyTurnAfterConsensusTimeCutover)
+    ));
+}
+
+#[test]
+fn consensus_time_flag_day_and_failed_local_production_are_atomic() {
+    let anchor = 1_700_000_000;
+    let mut nonempty = Blocklace::new_simple(random_key());
+    nonempty.add_block(Payload::Data(b"prehistory".to_vec()));
+    assert!(matches!(
+        nonempty.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor)),
+        Err(BlockError::ConsensusTimeFlagDayRequiresEmptyLace)
+    ));
+
+    let mut lace = Blocklace::new_simple(random_key());
+    lace.enable_consensus_time_v1(ConsensusTimePolicyV1::new(anchor))
+        .unwrap();
+    let before_tips = lace.tips().clone();
+    assert!(matches!(
+        lace.try_add_block(Payload::ConsensusTimedTurnV1(
+            ConsensusTimedTurnPayloadV1::new(anchor + 1, b"wrong-genesis".to_vec())
+        )),
+        Err(BlockError::ConsensusGenesisTimeMismatch { .. })
+    ));
+    assert_eq!(lace.len(), 0);
+    assert_eq!(lace.tips(), &before_tips);
+
+    let first = lace
+        .add_consensus_timed_turn_v1(ConsensusTimedTurnPayloadV1::new(anchor, b"first".to_vec()))
+        .unwrap();
+    assert_eq!(first.seq, 1, "failed attempt must not consume sequence");
+    let before_len = lace.len();
+    let before_tips = lace.tips().clone();
+    assert!(matches!(
+        lace.try_add_block(Payload::Turn(b"legacy".to_vec())),
+        Err(BlockError::LegacyTurnAfterConsensusTimeCutover)
+    ));
+    assert_eq!(lace.len(), before_len);
+    assert_eq!(lace.tips(), &before_tips);
 }
 
 // ─── Virtual Chain ───────────────────────────────────────────────────────────
