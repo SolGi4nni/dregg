@@ -65,8 +65,9 @@ pub use game_spine::{
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub use private_fhegg_game_consequence::{
-    PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
-    PrivateFheggGameConsequenceReceipt, PrivateFheggGameMechanic, PrivateFheggWinnerRoute,
+    FaithfulSpendGameAuthorityReceipt, PrivateFheggGameConsequenceError,
+    PrivateFheggGameConsequenceGate, PrivateFheggGameConsequenceReceipt, PrivateFheggGameMechanic,
+    PrivateFheggWinnerRoute,
 };
 
 /// **The platform-independent inputs a catalog registration needs** — everything a frontend

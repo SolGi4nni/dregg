@@ -9,25 +9,39 @@
 //! as a second caller assertion, and is re-read immediately before dispatch.
 //!
 //! The first deployed mechanic is the Warden's Keep raid-Mender recovery.  The
-//! Keep independently requires a verified hiding raid-assignment receipt and
-//! commits that assignment's public result into the world turn.  This adapter
-//! adds the other half: only the deployment-pinned signer mapped from the
-//! verified private Bazaar winner may spend that exact Mender action.
+//! second is a shielded crown claim: a finalized FNSP-v2 tender redemption whose
+//! public value equals the verified Bazaar price authorizes its deployment-pinned
+//! Bazaar winner to land one exact Red/Blue `WriteOnce` crown turn.  The spend authority is
+//! not a raw proof or a caller boolean.  It is a private-field
+//! [`dregg_persist::FinalizedFaithfulSpend`] minted only by the atomic durable
+//! finalization transaction after HidingFRI verification, historical-root
+//! authentication, exact ordered nullifier insertion, receipt commit, and
+//! attested-root persistence have all succeeded.
 //!
-//! Neither the private order witness, BFV openings, raid score matrix, nor a
-//! viewer projection crosses this API.  The adapter accepts no asserted actor
-//! label and no caller-supplied game receipt: it invokes the signed spine itself.
-//! Its output contains public commitments and receipt ids only.
-//! `NativePostQuantum` below names the authenticated quorum-crossing profile;
-//! it does not make the current Ristretto/Bulletproof same-opening argument PQ.
+//! Neither the private order witness, BFV openings, faithful note opening/path,
+//! raid score matrix, nor a viewer projection crosses this API.  The adapter
+//! accepts no asserted actor label and no caller-supplied game receipt: it
+//! invokes the signed spine itself. Its output contains public commitments and
+//! receipt ids only. FNSP-v2 intentionally makes value, asset type, nullifier,
+//! and roots public; those public fields remain visible here.
+//! The private BFV authority requires its `NativePostQuantum` authenticated
+//! quorum-crossing profile; that does not make the current Ristretto/Bulletproof
+//! same-opening argument PQ. The persist-minted spend binds a real attested-root
+//! author signature and federation id, but its committee-finality security is
+//! deliberately unclassified here: the hybrid quorum may be backfilled after
+//! the atomic spend record and must be evaluated by a later roster-aware view.
 //!
-//! Atomicity is the target engine's one committed turn.  The preceding Bazaar
-//! asset settlement and this game turn are not a distributed transaction.  A
-//! deployment must persist [`PrivateFheggGameConsequenceGate::authorization_id`]
+//! Atomicity is the target engine's one committed turn.  The preceding faithful
+//! spend, Bazaar asset settlement, and this game turn are not one distributed
+//! transaction.  FNSP-v2 establishes a durable one-shot note redemption, not a
+//! recipient output; the apex's atomic asset/value cross remains the Bazaar
+//! payment. A deployment must persist
+//! [`PrivateFheggGameConsequenceGate::authorization_id`]
 //! after success (and restore it on restart); the Keep's Mender field and the
 //! host's signed-counter journal independently make the concrete mechanic
 //! one-shot across the post-turn persistence window.
 
+use dregg_persist::FinalizedFaithfulSpend;
 use dreggnet_market::private_bfv_attested_clearing::PrivateBfvQuorumSecurity;
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
 use dreggnet_offerings::{Action, Attribution, DreggIdentity, OfferingHost, SignedAction};
@@ -41,6 +55,7 @@ use crate::{GameEpochError, GameEpochLedger};
 const AUTHORIZATION_DOMAIN: &str = "dregg.private-fhegg-game-authorization.v1";
 const CONSEQUENCE_DOMAIN: &str = "dregg.private-fhegg-game-consequence.v1";
 const WINNER_ROUTE_DOMAIN: &str = "dregg.private-fhegg-winner-route.v1";
+const FAITHFUL_AUTHORITY_DOMAIN: &str = "dregg.finalized-faithful-spend-game-authority.v1";
 
 /// The deliberately small initial vocabulary of private-fhEgg game effects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -48,13 +63,22 @@ pub enum PrivateFheggGameMechanic {
     /// Spend the Mender seat selected by the independently verified private
     /// raid assignment, raising the Keep party from 30 HP to 50 HP once.
     DungeonRaidMender,
+    /// A finalized FNSP-v2 tender redemption matching the private Bazaar's exact
+    /// one-lot price lets the mapped winner claim either Red or Blue's
+    /// executor-enforced `WriteOnce` crown.
+    DungeonShieldedCrown,
 }
 
 impl PrivateFheggGameMechanic {
     const fn tag(self) -> &'static [u8] {
         match self {
             Self::DungeonRaidMender => b"dungeon/raid-mender/v1",
+            Self::DungeonShieldedCrown => b"dungeon/shielded-crown/v1",
         }
+    }
+
+    const fn requires_faithful_spend(self) -> bool {
+        matches!(self, Self::DungeonShieldedCrown)
     }
 
     fn validate_target(
@@ -69,6 +93,19 @@ impl PrivateFheggGameMechanic {
                     || !dungeon_on_dregg::KP_PRIVATE_RAID_MENDER_CHOICES
                         .iter()
                         .any(|choice| i64::try_from(*choice).ok() == Some(action.arg))
+                {
+                    return Err(PrivateFheggGameConsequenceError::WrongMechanicTarget);
+                }
+            }
+            Self::DungeonShieldedCrown => {
+                if reference.session.kind() != GameKind::Dungeon
+                    || action.turn != dreggnet_offerings::dungeon::TURN_CHOOSE
+                    || ![
+                        dungeon_on_dregg::KP_CLAIM_RED,
+                        dungeon_on_dregg::KP_CLAIM_BLUE,
+                    ]
+                    .iter()
+                    .any(|choice| i64::try_from(*choice).ok() == Some(action.arg))
                 {
                     return Err(PrivateFheggGameConsequenceError::WrongMechanicTarget);
                 }
@@ -122,6 +159,148 @@ impl PrivateFheggWinnerRoute {
 
     pub const fn digest(&self) -> [u8; 32] {
         self.digest
+    }
+}
+
+/// Public-only projection of the exact finalized faithful spend consumed by a
+/// game authorization. It carries no note opening, Merkle path, or proof bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FaithfulSpendGameAuthorityReceipt {
+    /// Catalog-domain commitment to this whole public projection.
+    pub authority_digest: [u8; 32],
+    /// Persist's independent digest, minted inside the atomic finalization
+    /// transaction and embedded here so a different durable spend cannot be
+    /// substituted under a recomputed catalog projection.
+    pub persisted_authority_digest: [u8; 32],
+    pub federation_id: [u8; 32],
+    pub attested_root_digest: [u8; 32],
+    pub finalized_height: u64,
+    pub block_id: [u8; 32],
+    pub finality_round: Option<u64>,
+    pub turn_hash: [u8; 32],
+    pub turn_receipt_hash: [u8; 32],
+    pub spend_agent: [u8; 32],
+    pub spend_index: u32,
+    pub root_height: u64,
+    pub historical_note_root: [u8; 32],
+    pub nullifier: [u8; 32],
+    pub value: u64,
+    pub asset_type: u64,
+    pub successor_nullifier_root: [u8; 32],
+}
+
+impl FaithfulSpendGameAuthorityReceipt {
+    pub fn binding_verifies(&self) -> bool {
+        self.authority_digest == faithful_spend_authority_digest(self)
+            && self.persisted_authority_digest != [0; 32]
+            && self.federation_id != [0; 32]
+            && self.attested_root_digest != [0; 32]
+            && self.block_id != [0; 32]
+            && self.turn_hash != [0; 32]
+            && self.turn_receipt_hash != [0; 32]
+            && self.spend_agent != [0; 32]
+            && self.nullifier != [0; 32]
+            && self.root_height <= self.finalized_height
+    }
+
+    /// Rejoin this portable public projection to the private-field durable
+    /// authority loaded by a verifier from its trusted persistence boundary.
+    pub fn matches_finalized_spend(&self, spend: &FinalizedFaithfulSpend) -> bool {
+        self.binding_verifies()
+            && self.persisted_authority_digest == spend.authority_digest()
+            && self.federation_id == spend.federation_id()
+            && self.attested_root_digest == spend.attested_root_digest()
+            && self.finalized_height == spend.finalized_height()
+            && self.block_id == spend.block_id()
+            && self.finality_round == spend.finality_round()
+            && self.turn_hash == spend.turn_hash()
+            && self.turn_receipt_hash == spend.turn_receipt_hash()
+            && self.spend_agent == spend.spend_agent()
+            && self.spend_index == spend.spend_index()
+            && self.root_height == spend.root_height()
+            && self.historical_note_root == spend.historical_note_root8()
+            && self.nullifier == spend.nullifier()
+            && self.value == spend.value()
+            && self.asset_type == spend.asset_type()
+            && self.successor_nullifier_root == spend.successor_nullifier_root8()
+    }
+}
+
+/// Catalog-private wrapper around persistence's unforgeable-in-production
+/// authority.  Production construction consumes only the private-field type
+/// loaded from the finalized-spend table; it cannot be reconstructed from raw
+/// proof bytes or caller-selected public fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FinalizedFaithfulSpendAuthority {
+    public: FaithfulSpendGameAuthorityReceipt,
+}
+
+impl FinalizedFaithfulSpendAuthority {
+    fn from_persisted(
+        spend: &FinalizedFaithfulSpend,
+        expected_federation_id: [u8; 32],
+        expected_spend_agent: [u8; 32],
+    ) -> Result<Self, PrivateFheggGameConsequenceError> {
+        if expected_federation_id == [0; 32] || spend.federation_id() != expected_federation_id {
+            return Err(PrivateFheggGameConsequenceError::SpendFederationMismatch);
+        }
+        if expected_spend_agent == [0; 32] || spend.spend_agent() != expected_spend_agent {
+            return Err(PrivateFheggGameConsequenceError::SpendAgentMismatch);
+        }
+        let mut public = FaithfulSpendGameAuthorityReceipt {
+            authority_digest: [0; 32],
+            persisted_authority_digest: spend.authority_digest(),
+            federation_id: spend.federation_id(),
+            attested_root_digest: spend.attested_root_digest(),
+            finalized_height: spend.finalized_height(),
+            block_id: spend.block_id(),
+            finality_round: spend.finality_round(),
+            turn_hash: spend.turn_hash(),
+            turn_receipt_hash: spend.turn_receipt_hash(),
+            spend_agent: expected_spend_agent,
+            spend_index: spend.spend_index(),
+            root_height: spend.root_height(),
+            historical_note_root: spend.historical_note_root8(),
+            nullifier: spend.nullifier(),
+            value: spend.value(),
+            asset_type: spend.asset_type(),
+            successor_nullifier_root: spend.successor_nullifier_root8(),
+        };
+        if public.persisted_authority_digest == [0; 32]
+            || public.turn_hash == [0; 32]
+            || public.turn_receipt_hash == [0; 32]
+            || public.nullifier == [0; 32]
+        {
+            return Err(PrivateFheggGameConsequenceError::InvalidFaithfulSpendAuthority);
+        }
+        public.authority_digest = faithful_spend_authority_digest(&public);
+        debug_assert!(public.binding_verifies());
+        Ok(Self { public })
+    }
+
+    #[cfg(test)]
+    fn fixture(value: u64, asset_type: u64, spend_agent: [u8; 32]) -> Self {
+        let mut public = FaithfulSpendGameAuthorityReceipt {
+            authority_digest: [0; 32],
+            persisted_authority_digest: [0x70; 32],
+            federation_id: [0x71; 32],
+            attested_root_digest: [0x72; 32],
+            finalized_height: 9,
+            block_id: [0x73; 32],
+            finality_round: Some(4),
+            turn_hash: [0x74; 32],
+            turn_receipt_hash: [0x75; 32],
+            spend_agent,
+            spend_index: 0,
+            root_height: 7,
+            historical_note_root: [0x76; 32],
+            nullifier: [0x77; 32],
+            value,
+            asset_type,
+            successor_nullifier_root: [0x78; 32],
+        };
+        public.authority_digest = faithful_spend_authority_digest(&public);
+        Self { public }
     }
 }
 
@@ -237,6 +416,7 @@ impl PrivateFheggGameAuthority {
 #[derive(Debug)]
 pub struct PrivateFheggGameConsequenceGate {
     authority: PrivateFheggGameAuthority,
+    faithful_spend: Option<FinalizedFaithfulSpendAuthority>,
     winner_route: PrivateFheggWinnerRoute,
     mechanic: PrivateFheggGameMechanic,
     target_reference: GameActionRef,
@@ -273,9 +453,71 @@ impl PrivateFheggGameConsequenceGate {
         )
     }
 
+    /// Join a verifier-minted private Bazaar result to a genuinely finalized
+    /// FNSP-v2 tender redemption and one exact Dungeon crown claim. The expected
+    /// federation and spend agent are deployment policy: `spend_agent` is the
+    /// public finalized-turn submitter and does not reveal or assert the hidden
+    /// note owner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_shielded_crown(
+        apex: &PrivateBfvLiveApexReceipt,
+        required_market_asset_id: [u8; 32],
+        required_tender_asset_type: u64,
+        expected_spend_federation_id: [u8; 32],
+        expected_spend_agent: [u8; 32],
+        finalized_spend: &FinalizedFaithfulSpend,
+        winner_route: PrivateFheggWinnerRoute,
+        epoch_ledger: &GameEpochLedger,
+        target_reference: GameActionRef,
+        target_action: Action,
+    ) -> Result<Self, PrivateFheggGameConsequenceError> {
+        let authority = PrivateFheggGameAuthority::from_live_apex(apex)?;
+        let faithful_spend = FinalizedFaithfulSpendAuthority::from_persisted(
+            finalized_spend,
+            expected_spend_federation_id,
+            expected_spend_agent,
+        )?;
+        Self::from_authorities(
+            authority,
+            Some(faithful_spend),
+            required_market_asset_id,
+            Some(required_tender_asset_type),
+            winner_route,
+            PrivateFheggGameMechanic::DungeonShieldedCrown,
+            epoch_ledger,
+            target_reference,
+            target_action,
+        )
+    }
+
     fn from_authority(
         authority: PrivateFheggGameAuthority,
         required_asset_id: [u8; 32],
+        winner_route: PrivateFheggWinnerRoute,
+        mechanic: PrivateFheggGameMechanic,
+        epoch_ledger: &GameEpochLedger,
+        target_reference: GameActionRef,
+        target_action: Action,
+    ) -> Result<Self, PrivateFheggGameConsequenceError> {
+        Self::from_authorities(
+            authority,
+            None,
+            required_asset_id,
+            None,
+            winner_route,
+            mechanic,
+            epoch_ledger,
+            target_reference,
+            target_action,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_authorities(
+        authority: PrivateFheggGameAuthority,
+        faithful_spend: Option<FinalizedFaithfulSpendAuthority>,
+        required_asset_id: [u8; 32],
+        required_tender_asset_type: Option<u64>,
         winner_route: PrivateFheggWinnerRoute,
         mechanic: PrivateFheggGameMechanic,
         epoch_ledger: &GameEpochLedger,
@@ -287,6 +529,22 @@ impl PrivateFheggGameConsequenceGate {
         }
         if authority.market_winner != winner_route.market_winner {
             return Err(PrivateFheggGameConsequenceError::WinnerRouteMismatch);
+        }
+        match (mechanic.requires_faithful_spend(), faithful_spend.as_ref()) {
+            (true, None) => {
+                return Err(PrivateFheggGameConsequenceError::MissingFaithfulSpendAuthority);
+            }
+            (false, Some(_)) => {
+                return Err(PrivateFheggGameConsequenceError::UnexpectedFaithfulSpendAuthority);
+            }
+            (true, Some(spend)) => {
+                if spend.public.value != u64::from(authority.price)
+                    || Some(spend.public.asset_type) != required_tender_asset_type
+                {
+                    return Err(PrivateFheggGameConsequenceError::FaithfulTenderMismatch);
+                }
+            }
+            (false, None) => {}
         }
         if target_reference.expected_pre_head.is_empty()
             || target_reference.turn != target_action.turn
@@ -312,10 +570,16 @@ impl PrivateFheggGameConsequenceGate {
         if live_session != target_reference.session {
             return Err(PrivateFheggGameConsequenceError::AuthorityEpochMismatch);
         }
-        let authorization_id =
-            authorization_id(&authority, &winner_route, mechanic, &target_reference);
+        let authorization_id = authorization_id(
+            &authority,
+            faithful_spend.as_ref(),
+            &winner_route,
+            mechanic,
+            &target_reference,
+        );
         Ok(Self {
             authority,
+            faithful_spend,
             winner_route,
             mechanic,
             target_reference,
@@ -437,6 +701,7 @@ impl PrivateFheggGameConsequenceGate {
         let consequence_digest = consequence_digest(
             self.authorization_id,
             self.mechanic,
+            self.faithful_spend.as_ref().map(|spend| &spend.public),
             self.authority.authority_digest,
             self.authority.certificate_digest,
             self.authority.private_session,
@@ -456,6 +721,10 @@ impl PrivateFheggGameConsequenceGate {
             authorization_id: self.authorization_id,
             consequence_digest,
             mechanic: self.mechanic,
+            faithful_spend: self
+                .faithful_spend
+                .as_ref()
+                .map(|spend| spend.public.clone()),
             authority_digest: self.authority.authority_digest,
             certificate_digest: self.authority.certificate_digest,
             private_session: self.authority.private_session,
@@ -475,11 +744,14 @@ impl PrivateFheggGameConsequenceGate {
 
 /// Public-only receipt joining the exact verified private source to the exact
 /// common-spine game turn.  It carries commitments, never proof witnesses.
+/// [`Self::binding_verifies`] checks internal substitution resistance;
+/// [`Self::matches_authorities`] additionally rejoins the two typed sources.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateFheggGameConsequenceReceipt {
     pub authorization_id: [u8; 32],
     pub consequence_digest: [u8; 32],
     pub mechanic: PrivateFheggGameMechanic,
+    pub faithful_spend: Option<FaithfulSpendGameAuthorityReceipt>,
     pub authority_digest: [u8; 32],
     pub certificate_digest: [u8; 32],
     pub private_session: u32,
@@ -501,6 +773,7 @@ impl PrivateFheggGameConsequenceReceipt {
             == consequence_digest(
                 self.authorization_id,
                 self.mechanic,
+                self.faithful_spend.as_ref(),
                 self.authority_digest,
                 self.certificate_digest,
                 self.private_session,
@@ -523,6 +796,42 @@ impl PrivateFheggGameConsequenceReceipt {
             && self.market_asset_id != [0; 32]
             && self.target_session.binding().is_bound()
             && is_canonical_pubkey_hex(&self.game_signer_pubkey_hex)
+            && self.winner_route_digest
+                == winner_route_digest(&self.market_winner, &self.game_signer_pubkey_hex)
+            && match (
+                self.mechanic.requires_faithful_spend(),
+                &self.faithful_spend,
+            ) {
+                (true, Some(spend)) => spend.binding_verifies(),
+                (false, None) => true,
+                _ => false,
+            }
+    }
+
+    /// Rejoin the portable consequence to the typed private-market authority
+    /// and, for shielded mechanics, the exact store-minted spend authority.
+    /// `binding_verifies` alone establishes internal commitment consistency;
+    /// this method establishes the external authority anchors.
+    pub fn matches_authorities(
+        &self,
+        apex: &PrivateBfvLiveApexReceipt,
+        finalized_spend: Option<&FinalizedFaithfulSpend>,
+    ) -> bool {
+        let Ok(authority) = PrivateFheggGameAuthority::from_live_apex(apex) else {
+            return false;
+        };
+        self.binding_verifies()
+            && self.authority_digest == authority.authority_digest
+            && self.certificate_digest == authority.certificate_digest
+            && self.private_session == authority.private_session
+            && self.private_root == authority.private_root
+            && self.market_asset_id == authority.market_asset_id
+            && self.market_winner == authority.market_winner
+            && match (&self.faithful_spend, finalized_spend) {
+                (Some(receipt), Some(spend)) => receipt.matches_finalized_spend(spend),
+                (None, None) => true,
+                _ => false,
+            }
     }
 }
 
@@ -530,6 +839,12 @@ impl PrivateFheggGameConsequenceReceipt {
 pub enum PrivateFheggGameConsequenceError {
     InvalidPrivateAuthority(&'static str),
     InvalidWinnerRoute(&'static str),
+    InvalidFaithfulSpendAuthority,
+    SpendFederationMismatch,
+    SpendAgentMismatch,
+    FaithfulTenderMismatch,
+    MissingFaithfulSpendAuthority,
+    UnexpectedFaithfulSpendAuthority,
     MarketAssetMismatch,
     WinnerRouteMismatch,
     WrongMechanicTarget,
@@ -565,6 +880,41 @@ impl std::fmt::Display for PrivateFheggGameConsequenceError {
 
 impl std::error::Error for PrivateFheggGameConsequenceError {}
 
+fn faithful_spend_authority_digest(spend: &FaithfulSpendGameAuthorityReceipt) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(FAITHFUL_AUTHORITY_DOMAIN);
+    for digest in [
+        spend.persisted_authority_digest,
+        spend.federation_id,
+        spend.attested_root_digest,
+        spend.block_id,
+        spend.turn_hash,
+        spend.turn_receipt_hash,
+        spend.spend_agent,
+        spend.historical_note_root,
+        spend.nullifier,
+        spend.successor_nullifier_root,
+    ] {
+        hash_field(&mut hasher, &digest);
+    }
+    hash_field(&mut hasher, &spend.spend_index.to_be_bytes());
+    for number in [
+        spend.finalized_height,
+        spend.root_height,
+        spend.value,
+        spend.asset_type,
+    ] {
+        hash_field(&mut hasher, &number.to_be_bytes());
+    }
+    match spend.finality_round {
+        Some(round) => {
+            hash_field(&mut hasher, &[1]);
+            hash_field(&mut hasher, &round.to_be_bytes());
+        }
+        None => hash_field(&mut hasher, &[0]),
+    }
+    *hasher.finalize().as_bytes()
+}
+
 fn is_canonical_pubkey_hex(value: &str) -> bool {
     value.len() == 64
         && value
@@ -581,6 +931,7 @@ fn winner_route_digest(winner: &DreggIdentity, signer: &str) -> [u8; 32] {
 
 fn authorization_id(
     authority: &PrivateFheggGameAuthority,
+    faithful_spend: Option<&FinalizedFaithfulSpendAuthority>,
     winner_route: &PrivateFheggWinnerRoute,
     mechanic: PrivateFheggGameMechanic,
     target: &GameActionRef,
@@ -607,6 +958,13 @@ fn authorization_id(
     }
     hash_field(&mut hasher, &authority.price.to_be_bytes());
     hash_field(&mut hasher, &authority.volume.to_be_bytes());
+    match faithful_spend {
+        Some(spend) => {
+            hash_field(&mut hasher, &[1]);
+            hash_field(&mut hasher, &spend.public.authority_digest);
+        }
+        None => hash_field(&mut hasher, &[0]),
+    }
     hash_field(&mut hasher, mechanic.tag());
     *hasher.finalize().as_bytes()
 }
@@ -614,6 +972,7 @@ fn authorization_id(
 fn consequence_digest(
     authorization_id: [u8; 32],
     mechanic: PrivateFheggGameMechanic,
+    faithful_spend: Option<&FaithfulSpendGameAuthorityReceipt>,
     authority_digest: [u8; 32],
     certificate_digest: [u8; 32],
     private_session: u32,
@@ -631,6 +990,13 @@ fn consequence_digest(
     let mut hasher = blake3::Hasher::new_derive_key(CONSEQUENCE_DOMAIN);
     hash_field(&mut hasher, &authorization_id);
     hash_field(&mut hasher, mechanic.tag());
+    match faithful_spend {
+        Some(spend) => {
+            hash_field(&mut hasher, &[1]);
+            hash_field(&mut hasher, &spend.authority_digest);
+        }
+        None => hash_field(&mut hasher, &[0]),
+    }
     hash_field(&mut hasher, &authority_digest);
     hash_field(&mut hasher, &certificate_digest);
     hash_field(&mut hasher, &private_session.to_be_bytes());
@@ -676,7 +1042,8 @@ mod tests {
     use dreggnet_offerings::{DreggIdentity, OfferingHost, SessionConfig, SessionId, TurnSigner};
     use dungeon_on_dregg::private_raid::{RaidRole, prove_private_assignment};
     use dungeon_on_dregg::{
-        KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES, KP_TRADE_BLOWS,
+        KP_CLAIM_BLUE, KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES,
+        KP_TRADE_BLOWS,
     };
 
     use crate::game_spine::{
@@ -909,6 +1276,144 @@ mod tests {
     }
 
     #[test]
+    fn shielded_bazaar_tender_claims_one_executor_enforced_dungeon_crown() {
+        let incarnation = GameHostIncarnation::new([0x81; 32]).unwrap();
+        let id = SessionId::new("private-fhegg-shielded-crown");
+        let session = GameSessionRef::bound("dungeon", id.clone(), incarnation, GENERATION)
+            .expect("bound dungeon session");
+        let mut host = OfferingHost::new();
+        host.register("dungeon", "The Warden's Keep", DungeonOffering::new());
+        host.open_session("dungeon", id.clone(), SessionConfig::with_seed(99))
+            .expect("dungeon opens");
+        let epochs = GameEpochLedger::in_memory(incarnation);
+        assert_eq!(
+            epochs
+                .bind_after_ensure("dungeon", &id, true)
+                .expect("fresh session obtains a generation"),
+            GENERATION
+        );
+
+        // Reach the contested crown through an ordinary common-spine turn.
+        let view = inspect(&host, incarnation, &session);
+        let (press_reference, press_action) = action_at(&view, KP_PRESS_ON);
+        let pressed = execute_bound_asserted_game_command(
+            &mut host,
+            incarnation,
+            GENERATION,
+            &session,
+            GameCommand::Turn {
+                reference: press_reference,
+                action: press_action,
+            },
+            DreggIdentity("crown-pathfinder".to_owned()),
+        )
+        .expect("hall route is well formed");
+        assert!(matches!(pressed, GameResult::Landed(_)));
+
+        let winner = DreggIdentity("bazaar:shielded-winner".to_owned());
+        let winner_signer = TurnSigner::from_seed([0x82; 32]);
+        let winner_route = PrivateFheggWinnerRoute::new(winner.clone(), winner_signer.pubkey_hex())
+            .expect("deployment pins winner to signer");
+        let authority = PrivateFheggGameAuthority::fixture(winner);
+        let finalized_spend = FinalizedFaithfulSpendAuthority::fixture(3, 77, [0x83; 32]);
+        let view = inspect(&host, incarnation, &session);
+        let (claim_reference, claim_action) = action_at(&view, KP_CLAIM_RED);
+        let mut gate = PrivateFheggGameConsequenceGate::from_authorities(
+            authority,
+            Some(finalized_spend),
+            [0x18; 32],
+            Some(77),
+            winner_route,
+            PrivateFheggGameMechanic::DungeonShieldedCrown,
+            &epochs,
+            claim_reference.clone(),
+            claim_action.clone(),
+        )
+        .expect("the exact finalized shielded tender authorizes the exact crown");
+
+        // Bazaar winner routing is independently enforced: possession of a
+        // finalized spend authority alone cannot substitute the game signer.
+        let thief = TurnSigner::from_seed([0x84; 32]);
+        let stolen = gate
+            .execute_signed(
+                &mut host,
+                thief.sign("dungeon", &id, 0, claim_action.clone()),
+            )
+            .expect_err("unmapped signer cannot spend the shielded authorization");
+        assert_eq!(stolen, PrivateFheggGameConsequenceError::WrongGameSigner);
+        assert!(!gate.is_consumed());
+
+        let landed = gate
+            .execute_signed(
+                &mut host,
+                winner_signer.sign("dungeon", &id, 0, claim_action.clone()),
+            )
+            .expect("mapped Bazaar winner lands the exact crown turn");
+        assert!(landed.binding_verifies());
+        assert_eq!(
+            landed.mechanic,
+            PrivateFheggGameMechanic::DungeonShieldedCrown
+        );
+        let spend = landed
+            .faithful_spend
+            .as_ref()
+            .expect("shielded consequence publishes its secret-free spend authority");
+        assert_eq!(spend.value, 3);
+        assert_eq!(spend.asset_type, 77);
+        assert_eq!(
+            landed.action_preimage_id,
+            claim_reference.routing_preimage_id()
+        );
+        assert!(host.verify("dungeon", &id).unwrap().verified);
+        let rendered = format!("{:?}", host.render("dungeon", &id).unwrap().0);
+        assert!(rendered.contains("crown Red Hand"), "{rendered}");
+
+        // The public consequence commits both authorities. Substituting the
+        // tender, game receipt, or chosen private result breaks verification.
+        for tamper in 0..4 {
+            let mut forged = landed.clone();
+            match tamper {
+                0 => forged.faithful_spend.as_mut().expect("present").asset_type ^= 1,
+                1 => forged.faithful_spend.as_mut().expect("present").nullifier[0] ^= 1,
+                2 => forged.private_root[0] ^= 1,
+                3 => forged.game_receipt_id[0] ^= 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                !forged.binding_verifies(),
+                "public shielded consequence substitution {tamper} must break its binding"
+            );
+        }
+
+        let replay = gate
+            .execute_signed(
+                &mut host,
+                winner_signer.sign("dungeon", &id, 1, claim_action),
+            )
+            .expect_err("shielded authorization is one-shot before dispatch");
+        assert_eq!(replay, PrivateFheggGameConsequenceError::AlreadyConsumed);
+
+        // The world itself has the final anti-double-claim tooth. A rival Blue
+        // claim reaches the real executor and is refused by the shared owner
+        // slot's WriteOnce constraint; it is not a test-only gate boolean.
+        let view = inspect(&host, incarnation, &session);
+        let (blue_reference, blue_action) = action_at(&view, KP_CLAIM_BLUE);
+        let rival = execute_bound_asserted_game_command(
+            &mut host,
+            incarnation,
+            GENERATION,
+            &session,
+            GameCommand::Turn {
+                reference: blue_reference,
+                action: blue_action,
+            },
+            DreggIdentity("rival-hand".to_owned()),
+        )
+        .expect("rival route reaches the executor");
+        assert!(matches!(rival, GameResult::Refused { .. }));
+    }
+
+    #[test]
     fn gate_refuses_unbound_non_mender_and_winner_route_substitution() {
         let winner = DreggIdentity("bazaar:winner".to_owned());
         let signer = TurnSigner::from_seed([0x61; 32]);
@@ -1029,6 +1534,81 @@ mod tests {
                 mender,
             ),
             Err(PrivateFheggGameConsequenceError::AuthorityEpochMismatch)
+        ));
+    }
+
+    #[test]
+    fn shielded_crown_refuses_missing_or_mismatched_finalized_tender() {
+        let winner = DreggIdentity("bazaar:shielded-winner".to_owned());
+        let signer = TurnSigner::from_seed([0x91; 32]);
+        let route = PrivateFheggWinnerRoute::new(winner.clone(), signer.pubkey_hex()).unwrap();
+        let authority = PrivateFheggGameAuthority::fixture(winner);
+        let incarnation = GameHostIncarnation::new([0x92; 32]).unwrap();
+        let id = SessionId::new("shielded-crown-policy");
+        let epochs = GameEpochLedger::in_memory(incarnation);
+        epochs.bind_after_ensure("dungeon", &id, true).unwrap();
+        let session = GameSessionRef::bound("dungeon", id, incarnation, GENERATION).unwrap();
+        let claim = Action::new(
+            "claim red",
+            dreggnet_offerings::dungeon::TURN_CHOOSE,
+            KP_CLAIM_RED as i64,
+            true,
+        );
+        let reference = GameActionRef::new(session, &claim, vec![1]);
+
+        assert!(matches!(
+            PrivateFheggGameConsequenceGate::from_authority(
+                authority.clone(),
+                [0x18; 32],
+                route.clone(),
+                PrivateFheggGameMechanic::DungeonShieldedCrown,
+                &epochs,
+                reference.clone(),
+                claim.clone(),
+            ),
+            Err(PrivateFheggGameConsequenceError::MissingFaithfulSpendAuthority)
+        ));
+
+        for bad_spend in [
+            FinalizedFaithfulSpendAuthority::fixture(4, 77, [0x93; 32]),
+            FinalizedFaithfulSpendAuthority::fixture(3, 78, [0x93; 32]),
+        ] {
+            assert!(matches!(
+                PrivateFheggGameConsequenceGate::from_authorities(
+                    authority.clone(),
+                    Some(bad_spend),
+                    [0x18; 32],
+                    Some(77),
+                    route.clone(),
+                    PrivateFheggGameMechanic::DungeonShieldedCrown,
+                    &epochs,
+                    reference.clone(),
+                    claim.clone(),
+                ),
+                Err(PrivateFheggGameConsequenceError::FaithfulTenderMismatch)
+            ));
+        }
+
+        let mender = Action::new(
+            "mend",
+            dreggnet_offerings::dungeon::TURN_CHOOSE,
+            KP_PRIVATE_RAID_MENDER_CHOICES[0] as i64,
+            true,
+        );
+        let mender_reference = GameActionRef::new(reference.session.clone(), &mender, vec![1]);
+        assert!(matches!(
+            PrivateFheggGameConsequenceGate::from_authorities(
+                authority,
+                Some(FinalizedFaithfulSpendAuthority::fixture(3, 77, [0x93; 32])),
+                [0x18; 32],
+                Some(77),
+                route,
+                PrivateFheggGameMechanic::DungeonRaidMender,
+                &epochs,
+                mender_reference,
+                mender,
+            ),
+            Err(PrivateFheggGameConsequenceError::UnexpectedFaithfulSpendAuthority)
         ));
     }
 }

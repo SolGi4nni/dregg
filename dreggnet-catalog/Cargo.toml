@@ -31,6 +31,7 @@ private-fhegg-game-consequence = [
     "dreggnet-market/fhegg-settlement",
     "dreggnet-offerings/private-raid-operation",
     "dep:dungeon-on-dregg",
+    "dep:dregg-persist",
 ]
 
 [dependencies]
@@ -39,6 +40,10 @@ dreggnet-offerings = { path = "../dreggnet-offerings" }
 # Exact Mender-choice vocabulary for the private-fhEgg consequence gate. The
 # feature also enables the offering's independently verified raid assignment.
 dungeon-on-dregg = { path = "../dungeon-on-dregg", optional = true }
+# Persist-minted authority for the finalized faithful-note spend consumed by
+# the shielded-crown mechanic.  The type has private fields and is returned only
+# after the note/nullifier/receipt/root transaction is durable.
+dregg-persist = { path = "../persist", optional = true }
 blake3 = "1"
 getrandom = { workspace = true }
 
