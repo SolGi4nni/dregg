@@ -11439,3 +11439,35 @@ from the legacy nullifier-root commitment to `FNS3(root8,count)`; an opaque
 executor-produced finalization authority and live selector/registry wiring;
 the house-blind BFV apex installed in the player-facing host; and actual
 web/Discord/Telegram deployment of the shared game journey.
+
+## 2026-07-22 — correction: banked exact-boundary and playable-surface WIP
+
+The preceding checkpoint's list of “active working-tree work” is now stale.
+The canonical executable FNSP relation envelope is banked in `a8ea35b8d`: the
+fixed-record typed descriptor, relation/version/manifest/ABI pins, and recovered
+descriptor are the executed verifier identity; source JSON is provenance only.
+The collaborative Shamir row handoff is banked across `4ec3896a0` and
+`817c6a6d9`; it proves and tests the current custody/encryption/fold boundary but
+does **not** close malicious polynomial consistency, key establishment, or a
+share-native PQ PCS.  The CAS-last faithful/exact persistence transaction and
+historical replay are banked in `f0fa44145` and `98a66d1d3`.
+
+The exact receipt-epoch/executor work is deliberately committed as **WIP** in
+`4b5a19522`, rather than left outside history.  It records the essential
+architectural correction: the proof-local exact `FNS3` transition and the real
+full-turn receipt are two different commitments.  A genuine turn advances
+nonce and may change fees/other state, so its full `post_state_hash` must never
+be equated with the exact descriptor's stable-frame AFTER anchor.  Promotion
+still requires an opaque executor-produced full-turn authority, an owned exact
+subreceipt joined to it, an authorized receipt-epoch activation, frame signing,
+durable head CAS, and block-finalizer revalidation.  Until those land, the old
+raw/synthetic candidate is non-live repair scaffolding, not accepted authority.
+
+The payload-free private Bazaar journey is likewise banked as honest WIP in
+`24fcd81bf`, with the broader shared game/frontend snapshot in `5c80e447d`.
+Its current public projection is useful, but the live path still needs a
+deployment-owned roster/reward policy, a durable global consequence/outbox key,
+an opaque executor-produced exact-effect token, a prepare-before-dispatch
+recovery state machine, full market identity, and actual hosted web/chat
+controllers.  Those are active repair lanes; “committed” does not mean “live,”
+and “WIP” is not a reason to discard useful typed substrate.

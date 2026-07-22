@@ -1537,3 +1537,37 @@ These are the next truth-producing gates:
 
 Heavy Rust proof gates belong in the release-only nextest heavy profile and on
 the build node. Lean stays local with the warm metatheory/.lake cache.
+
+## 14. 2026-07-22 checkpoint correction: what is banked, and what is live
+
+The older “unbanked lanes” wording in this handoff is superseded by the
+following commits:
+
+- `a8ea35b8d` banks the canonical executable exact-FNSP relation envelope.  The
+  validated fixed-record typed descriptor plus code-owned relation version,
+  manifest, ordered ABI, AIR fingerprint, and backend identity are executed and
+  checked.  Lean-emitted JSON remains parser/build provenance, not semantic
+  protocol identity.
+- `4ec3896a0` + `817c6a6d9` bank the collaborative Shamir-row handoff.  It has
+  receiver/owner/frozen-round authenticated encryption, custody assignments,
+  zeroization, and receiver-local fold transcripts; malicious polynomial
+  consistency, live key establishment/replay storage, and a PQ share-native PCS
+  remain open.
+- `f0fa44145` banks the CAS-last dual faithful/exact persistence transaction;
+  `98a66d1d3` banks immutable-prefix historical replay after later appends.
+- `4b5a19522` banks an honest **WIP** exact receipt-epoch and executor-authority
+  scaffold.  It is not registered live.  The key correction is that the exact
+  proof's stable-frame `FNS3` subtransition cannot equal a real receipt's full
+  post-state after nonce/fee/other effects.  The live cut needs an owned exact
+  subreceipt joined to a genuine executor-produced full-turn authority, an
+  authorized epoch/head CAS, frame signature/quorum, and finalizer revalidation.
+- `24fcd81bf` banks the private Bazaar player journey as WIP and `5c80e447d`
+  checkpoints the shared game/frontend surfaces.  Remaining P0/P1 work is a
+  deployment-owned roster/reward policy, durable global exactly-once
+  consequence/outbox identity, opaque exact-effect authority, prepare-before-
+  dispatch recovery, full market identity, and real hosted web/Discord/Telegram
+  mounting.  Fixture-only publication is not a deployment claim.
+
+The current policy is intentionally simple: useful in-progress substrate is
+committed and labelled WIP; genuinely superseded code is deleted once its typed
+replacement lands.  A WIP commit is continuity, not protocol endorsement.
