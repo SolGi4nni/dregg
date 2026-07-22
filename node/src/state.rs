@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tokio::sync::{RwLock, broadcast};
@@ -277,6 +277,37 @@ impl std::fmt::Display for FaithfulMirrorError {
 
 impl std::error::Error for FaithfulMirrorError {}
 
+/// Every coordinate that can change the public faithful mirror.  A cache hit
+/// requires exact equality, including the authenticated history segment and
+/// the complete attested-root record (not merely its height).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaithfulMirrorSnapshotKey {
+    expectation: dregg_persist::FaithfulNoteRootExpectationV1,
+    segment_head: dregg_persist::FaithfulNoteRootAnchorV1,
+    latest_attested_root: dregg_persist::StoredAttestedRoot,
+    nullifier_count: u64,
+}
+
+/// One immutable exact-head image shared by every cursor page at that head.
+/// The cache holds at most one of these O(chain state) snapshots; replacing it
+/// on a head change drops the old image once in-flight pages release their Arc.
+#[derive(Clone, Debug)]
+struct FaithfulMirrorSnapshot {
+    key: FaithfulMirrorSnapshotKey,
+    commitments: Arc<[[u8; 32]]>,
+    nullifiers: Arc<[([u8; 32], u64, u64)]>,
+    anchor: dregg_persist::FaithfulNoteRootAnchorV1,
+    history: Arc<[dregg_persist::FaithfulNoteRootEnvelopeV1]>,
+    head_hybrid_quorum: Arc<[dregg_types::HybridQuorumSig]>,
+}
+
+#[derive(Debug, Default)]
+struct FaithfulMirrorSnapshotCache {
+    snapshot: Option<Arc<FaithfulMirrorSnapshot>>,
+    #[cfg(test)]
+    builds: u64,
+}
+
 /// The inner mutable state of the node.
 // Some fields back cfg-conditional / not-yet-consulted node surfaces (routing,
 // cross-federation revocation, threshold shares); retained as wired scaffolding.
@@ -292,6 +323,11 @@ pub struct NodeStateInner {
     /// persist each appended receipt under the state lock. Transparent to the
     /// `&self` store calls elsewhere (deref coercion).
     pub store: Arc<PersistentStore>,
+    /// Exact-head-keyed, single-entry faithful mirror cache.  Interior
+    /// mutability permits concurrent HTTP readers to share one reconstruction
+    /// and one ML-DSA signature while the outer node-state read lock prevents a
+    /// finalization transition from racing page extraction.
+    faithful_mirror_cache: Mutex<FaithfulMirrorSnapshotCache>,
     /// Federation peer addresses.
     pub peers: Vec<String>,
     /// Whether the cipherclerk is unlocked for signing operations.
@@ -1156,6 +1192,7 @@ impl NodeState {
                 cclerk,
                 ledger,
                 store,
+                faithful_mirror_cache: Mutex::new(FaithfulMirrorSnapshotCache::default()),
                 peers,
                 unlocked: false,
                 passphrase_hash,
@@ -1356,6 +1393,7 @@ impl NodeState {
                 cclerk,
                 ledger,
                 store,
+                faithful_mirror_cache: Mutex::new(FaithfulMirrorSnapshotCache::default()),
                 peers,
                 unlocked: false,
                 passphrase_hash: None,
@@ -2608,6 +2646,238 @@ impl NodeStateInner {
             .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))
     }
 
+    fn faithful_mirror_snapshot_key(
+        &self,
+    ) -> Result<FaithfulMirrorSnapshotKey, FaithfulMirrorError> {
+        let expectation = self
+            .store
+            .faithful_note_root_expectation()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
+        let segment_head = self
+            .store
+            .faithful_note_root_head()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
+        let latest_attested_root = self
+            .store
+            .latest_attested_root()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
+        let nullifier_count = self
+            .store
+            .faithful_nullifier_record_count()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?;
+
+        if segment_head.height != expectation.height
+            || segment_head.note_count != expectation.note_count
+            || segment_head.root != expectation.root
+            || latest_attested_root.height != expectation.height
+            || latest_attested_root.note_tree_root != Some(expectation.root.to_bytes())
+            || latest_attested_root.nullifier_set_root.is_none()
+            || latest_attested_root.federation_id.0 != segment_head.federation_id
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "history seal, segment head, and latest faithful attestation do not share exact coordinates"
+                    .to_string(),
+            ));
+        }
+        Ok(FaithfulMirrorSnapshotKey {
+            expectation,
+            segment_head,
+            latest_attested_root,
+            nullifier_count,
+        })
+    }
+
+    fn validate_live_faithful_mirror_head(
+        &self,
+        key: &FaithfulMirrorSnapshotKey,
+    ) -> Result<(), FaithfulMirrorError> {
+        const FAITHFUL_NOTE_DEPTH: usize = 16;
+        if self.note_tree.depth() != FAITHFUL_NOTE_DEPTH {
+            return Err(FaithfulMirrorError::InconsistentHead(format!(
+                "live note-tree depth {} != required {FAITHFUL_NOTE_DEPTH}",
+                self.note_tree.depth()
+            )));
+        }
+        let durable_count = self
+            .store
+            .note_count()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?;
+        let live_count = u64::try_from(self.note_tree.size()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("live note count does not fit u64".to_string())
+        })?;
+        let live_root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            self.note_tree.faithful_root_immutable(),
+        );
+        if durable_count != key.expectation.note_count
+            || live_count != key.expectation.note_count
+            || live_root != key.expectation.root
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "durable note count, live tree, and authenticated faithful head disagree"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn build_faithful_mirror_snapshot(
+        &self,
+        key: &FaithfulMirrorSnapshotKey,
+    ) -> Result<FaithfulMirrorSnapshot, FaithfulMirrorError> {
+        let history = self.load_authenticated_faithful_history(key.expectation)?;
+        let anchor = history.anchor().clone();
+        if anchor.session_id != key.segment_head.session_id
+            || anchor.federation_id != key.segment_head.federation_id
+            || anchor.committee_epoch != key.segment_head.committee_epoch
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "authenticated history segment identity changed under its sealed head".to_string(),
+            ));
+        }
+        let commitments: Vec<[u8; 32]> = self
+            .store
+            .load_all_note_commitments()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
+            .into_iter()
+            .map(|commitment| commitment.0)
+            .collect();
+        let durable_count = u64::try_from(commitments.len()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead("durable note count does not fit u64".to_string())
+        })?;
+        let history_count = u64::try_from(history.envelopes().len()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "authenticated history count does not fit u64".to_string(),
+            )
+        })?;
+        let durable_tree = dregg_persist::Poseidon2NoteTree::from_blake3_commitments(
+            &commitments,
+            self.note_tree.depth(),
+        );
+        let durable_root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            durable_tree.faithful_root_immutable(),
+        );
+        if durable_count != key.expectation.note_count
+            || history_count != key.expectation.records
+            || durable_root != key.expectation.root
+        {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "durable commitment bytes/root or authenticated history length disagree with the exact sealed head"
+                    .to_string(),
+            ));
+        }
+
+        let durable_nullifiers = self
+            .store
+            .load_faithful_nullifier_records()
+            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?;
+        let decoded_nullifier_count = u64::try_from(durable_nullifiers.len()).map_err(|_| {
+            FaithfulMirrorError::InconsistentHead(
+                "durable nullifier count does not fit u64".to_string(),
+            )
+        })?;
+        if decoded_nullifier_count != key.nullifier_count {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "cheap and decoded durable nullifier counts disagree".to_string(),
+            ));
+        }
+        let durable_nullifier_set =
+            dregg_cell::nullifier_set::NullifierSet::from_records(durable_nullifiers.clone())
+                .map_err(|error| {
+                    FaithfulMirrorError::DurableState(format!(
+                        "exact nullifier accumulator reconstruction failed: {error}"
+                    ))
+                })?;
+        let nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
+        if key.latest_attested_root.nullifier_set_root != Some(nullifier_root) {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "durable nullifier records do not reconstruct the latest attested root".to_string(),
+            ));
+        }
+
+        let head_message = faithful_mirror_head_signing_message(
+            &anchor,
+            key.expectation,
+            key.nullifier_count,
+            nullifier_root,
+        );
+        let seed = self.cclerk.gossip_signing_key().to_bytes();
+        let local_ed = self.cclerk.public_key();
+        let signing_key = dregg_types::SigningKey::from_bytes(&seed);
+        let classical_signature = dregg_types::sign(&signing_key, &head_message);
+        let (local_pq, local_pq_signing_key) =
+            dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+        let pq_signature = local_pq_signing_key.sign(&head_message).ok_or_else(|| {
+            FaithfulMirrorError::DurableState(
+                "ML-DSA faithful mirror-head signing failed".to_string(),
+            )
+        })?;
+        let head_hybrid_quorum: Arc<[dregg_types::HybridQuorumSig]> =
+            Arc::from(vec![dregg_types::HybridQuorumSig {
+                pubkey: local_ed,
+                signature: classical_signature,
+                ml_dsa_pubkey: local_pq.0.to_vec(),
+                pq_signature,
+            }]);
+        let nullifiers: Vec<_> = durable_nullifiers
+            .into_iter()
+            .map(|(nullifier, value, seq)| (nullifier.0, value, seq))
+            .collect();
+
+        Ok(FaithfulMirrorSnapshot {
+            key: key.clone(),
+            commitments: Arc::from(commitments),
+            nullifiers: Arc::from(nullifiers),
+            anchor,
+            history: Arc::from(history.envelopes().to_vec()),
+            head_hybrid_quorum,
+        })
+    }
+
+    fn faithful_mirror_snapshot(&self) -> Result<Arc<FaithfulMirrorSnapshot>, FaithfulMirrorError> {
+        // Serialize misses so concurrent public requests cannot each trigger a
+        // full replay/reconstruction and ML-DSA signature for the same head.
+        let mut cache = self.faithful_mirror_cache.lock().map_err(|_| {
+            FaithfulMirrorError::DurableState("faithful mirror cache lock poisoned".to_string())
+        })?;
+        let key = self.faithful_mirror_snapshot_key()?;
+        self.validate_live_faithful_mirror_head(&key)?;
+        if let Some(snapshot) = &cache.snapshot
+            && snapshot.key == key
+        {
+            return Ok(snapshot.clone());
+        }
+
+        let snapshot = self.build_faithful_mirror_snapshot(&key)?;
+        // The outer NodeState read lock already prevents ordinary finalization
+        // from racing this build.  Re-read anyway so an out-of-band durable
+        // mutation cannot publish a mixed-head cache image.
+        let confirmed_key = self.faithful_mirror_snapshot_key()?;
+        self.validate_live_faithful_mirror_head(&confirmed_key)?;
+        if confirmed_key != key {
+            return Err(FaithfulMirrorError::InconsistentHead(
+                "faithful mirror head changed while its immutable snapshot was built".to_string(),
+            ));
+        }
+        let snapshot = Arc::new(snapshot);
+        cache.snapshot = Some(snapshot.clone());
+        #[cfg(test)]
+        {
+            cache.builds = cache.builds.saturating_add(1);
+        }
+        Ok(snapshot)
+    }
+
+    #[cfg(test)]
+    fn faithful_mirror_snapshot_builds(&self) -> u64 {
+        self.faithful_mirror_cache
+            .lock()
+            .map(|cache| cache.builds)
+            .unwrap_or(u64::MAX)
+    }
+
     /// Return one target-independent mirror page.  Both cursors are prefix
     /// lengths, never note selectors.  The production SDK starts at `(0, 0, 0)`
     /// and follows only the returned continuations, downloading every
@@ -2618,79 +2888,10 @@ impl NodeStateInner {
         history_cursor: u64,
         nullifier_cursor: u64,
     ) -> Result<FaithfulNoteMirrorPage, FaithfulMirrorError> {
-        const FAITHFUL_NOTE_DEPTH: usize = 16;
-
-        let expectation = self
-            .store
-            .faithful_note_root_expectation()
-            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
-            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
-        let latest = self
-            .store
-            .latest_attested_root()
-            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
-            .ok_or(FaithfulMirrorError::NoAuthenticatedHead)?;
-        let history = self.load_authenticated_faithful_history(expectation)?;
-        let commitments: Vec<[u8; 32]> = self
-            .store
-            .load_all_note_commitments()
-            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?
-            .into_iter()
-            .map(|commitment| commitment.0)
-            .collect();
-        let nullifiers = self
-            .store
-            .load_faithful_nullifier_records()
-            .map_err(|error| FaithfulMirrorError::DurableState(error.to_string()))?;
-
-        if self.note_tree.depth() != FAITHFUL_NOTE_DEPTH {
-            return Err(FaithfulMirrorError::InconsistentHead(format!(
-                "live note-tree depth {} != required {FAITHFUL_NOTE_DEPTH}",
-                self.note_tree.depth()
-            )));
-        }
-        let durable_count = u64::try_from(commitments.len()).map_err(|_| {
-            FaithfulMirrorError::InconsistentHead("durable note count does not fit u64".to_string())
-        })?;
-        let live_count = u64::try_from(self.note_tree.size()).map_err(|_| {
-            FaithfulMirrorError::InconsistentHead("live note count does not fit u64".to_string())
-        })?;
-        let live_root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
-            self.note_tree.faithful_root_immutable(),
-        );
-        if durable_count != expectation.note_count
-            || live_count != expectation.note_count
-            || live_root != expectation.root
-            || latest.height != expectation.height
-            || latest.note_tree_root != Some(expectation.root.to_bytes())
-        {
-            return Err(FaithfulMirrorError::InconsistentHead(
-                "durable commitments, live tree, authenticated history, and latest attestation do not share one head"
-                    .to_string(),
-            ));
-        }
-        let durable_nullifier_set = dregg_cell::nullifier_set::NullifierSet::from_records(
-            nullifiers.clone(),
-        )
-        .map_err(|error| {
-            FaithfulMirrorError::DurableState(format!(
-                "exact nullifier accumulator reconstruction failed: {error}"
-            ))
-        })?;
-        let nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
-        if latest.nullifier_set_root != Some(nullifier_root) {
-            return Err(FaithfulMirrorError::InconsistentHead(
-                "durable nullifier records do not reconstruct the latest attested root".to_string(),
-            ));
-        }
-        let nullifier_count = u64::try_from(nullifiers.len()).map_err(|_| {
-            FaithfulMirrorError::InconsistentHead(
-                "durable nullifier count does not fit u64".to_string(),
-            )
-        })?;
-        if commitment_cursor > expectation.note_count
-            || history_cursor > expectation.records
-            || nullifier_cursor > nullifier_count
+        let snapshot = self.faithful_mirror_snapshot()?;
+        if commitment_cursor > snapshot.key.expectation.note_count
+            || history_cursor > snapshot.key.expectation.records
+            || nullifier_cursor > snapshot.key.nullifier_count
         {
             return Err(FaithfulMirrorError::InconsistentHead(
                 "mirror cursor is beyond the authenticated append-only head".to_string(),
@@ -2709,14 +2910,29 @@ impl NodeStateInner {
             FaithfulMirrorError::InconsistentHead("nullifier cursor does not fit usize".to_string())
         })?;
         let commitment_end = commitment_start
-            .saturating_add(FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE)
-            .min(commitments.len());
+            .checked_add(FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE)
+            .ok_or_else(|| {
+                FaithfulMirrorError::InconsistentHead(
+                    "commitment page end does not fit usize".to_string(),
+                )
+            })?
+            .min(snapshot.commitments.len());
         let history_end = history_start
-            .saturating_add(FAITHFUL_MIRROR_HISTORY_PAGE_SIZE)
-            .min(history.envelopes().len());
+            .checked_add(FAITHFUL_MIRROR_HISTORY_PAGE_SIZE)
+            .ok_or_else(|| {
+                FaithfulMirrorError::InconsistentHead(
+                    "history page end does not fit usize".to_string(),
+                )
+            })?
+            .min(snapshot.history.len());
         let nullifier_end = nullifier_start
-            .saturating_add(FAITHFUL_MIRROR_NULLIFIER_PAGE_SIZE)
-            .min(nullifiers.len());
+            .checked_add(FAITHFUL_MIRROR_NULLIFIER_PAGE_SIZE)
+            .ok_or_else(|| {
+                FaithfulMirrorError::InconsistentHead(
+                    "nullifier page end does not fit usize".to_string(),
+                )
+            })?
+            .min(snapshot.nullifiers.len());
         let next_commitment_cursor = u64::try_from(commitment_end).map_err(|_| {
             FaithfulMirrorError::InconsistentHead(
                 "next commitment cursor does not fit u64".to_string(),
@@ -2732,31 +2948,6 @@ impl NodeStateInner {
                 "next nullifier cursor does not fit u64".to_string(),
             )
         })?;
-        let anchor = history.anchor().clone();
-        let head_message = faithful_mirror_head_signing_message(
-            &anchor,
-            expectation,
-            nullifier_count,
-            nullifier_root,
-        );
-        let seed = self.cclerk.gossip_signing_key().to_bytes();
-        let local_ed = self.cclerk.public_key();
-        let signing_key = dregg_types::SigningKey::from_bytes(&seed);
-        let classical_signature = dregg_types::sign(&signing_key, &head_message);
-        let (local_pq, local_pq_signing_key) =
-            dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
-        let pq_signature = local_pq_signing_key.sign(&head_message).ok_or_else(|| {
-            FaithfulMirrorError::DurableState(
-                "ML-DSA faithful mirror-head signing failed".to_string(),
-            )
-        })?;
-        let head_hybrid_quorum = vec![dregg_types::HybridQuorumSig {
-            pubkey: local_ed,
-            signature: classical_signature,
-            ml_dsa_pubkey: local_pq.0.to_vec(),
-            pq_signature,
-        }];
-
         Ok(FaithfulNoteMirrorPage {
             commitment_cursor,
             next_commitment_cursor,
@@ -2764,17 +2955,14 @@ impl NodeStateInner {
             next_history_cursor,
             nullifier_cursor,
             next_nullifier_cursor,
-            nullifier_count,
-            commitments: commitments[commitment_start..commitment_end].to_vec(),
-            nullifiers: nullifiers[nullifier_start..nullifier_end]
-                .iter()
-                .map(|(nullifier, value, seq)| (nullifier.0, *value, *seq))
-                .collect(),
-            anchor,
-            history: history.envelopes()[history_start..history_end].to_vec(),
-            head: expectation,
-            latest_attested_root: latest,
-            head_hybrid_quorum,
+            nullifier_count: snapshot.key.nullifier_count,
+            commitments: snapshot.commitments[commitment_start..commitment_end].to_vec(),
+            nullifiers: snapshot.nullifiers[nullifier_start..nullifier_end].to_vec(),
+            anchor: snapshot.anchor.clone(),
+            history: snapshot.history[history_start..history_end].to_vec(),
+            head: snapshot.key.expectation,
+            latest_attested_root: snapshot.key.latest_attested_root.clone(),
+            head_hybrid_quorum: snapshot.head_hybrid_quorum.to_vec(),
         })
     }
 
@@ -2805,7 +2993,226 @@ impl NodeStateInner {
     }
 }
 
-/// Minimal hex encoding (no extra dep needed).
+#[cfg(test)]
+mod faithful_mirror_snapshot_tests {
+    use super::*;
+
+    fn attested(
+        height: u64,
+        note_root: [u8; 32],
+        nullifier_root: [u8; 32],
+        marker: u8,
+    ) -> dregg_persist::StoredAttestedRoot {
+        dregg_persist::StoredAttestedRoot {
+            merkle_root: [marker; 32],
+            note_tree_root: Some(note_root),
+            nullifier_set_root: Some(nullifier_root),
+            height,
+            timestamp: 1_700_000_000 + i64::from(marker),
+            blocklace_block_id: Some([marker.wrapping_add(1); 32]),
+            finality_round: Some(u64::from(marker)),
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 1,
+            federation_id: dregg_types::FederationId([0x52; 32]),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        }
+    }
+
+    fn signed_history_edge(
+        state: &NodeStateInner,
+        record: dregg_persist::FaithfulNoteRootRecordV1,
+    ) -> (
+        dregg_persist::FaithfulNoteRootEnvelopeV1,
+        dregg_types::PublicKey,
+        dregg_federation::frost::MlDsaPublicKey,
+    ) {
+        let seed = state.cclerk.gossip_signing_key().to_bytes();
+        let signing_key = dregg_types::SigningKey::from_bytes(&seed);
+        let public_key = signing_key.public_key();
+        let (pq_public_key, pq_signing_key) =
+            dregg_federation::frost::MlDsaSigningKey::from_seed(&seed);
+        let message = record.signing_message();
+        (
+            dregg_persist::FaithfulNoteRootEnvelopeV1 {
+                record,
+                hybrid_quorum: vec![dregg_types::HybridQuorumSig {
+                    pubkey: public_key,
+                    signature: dregg_types::sign(&signing_key, &message),
+                    ml_dsa_pubkey: pq_public_key.0.to_vec(),
+                    pq_signature: pq_signing_key.sign(&message).expect("ML-DSA test sign"),
+                }],
+            },
+            public_key,
+            pq_public_key,
+        )
+    }
+
+    #[tokio::test]
+    async fn fixed_head_pages_build_and_sign_once_then_head_advance_invalidates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construct test node state");
+        let mut state = state.write().await;
+
+        let commitments: Vec<[u8; 32]> = (0..(FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE + 1))
+            .map(|index| {
+                let mut commitment = [0x31; 32];
+                commitment[..8].copy_from_slice(&(index as u64).to_le_bytes());
+                commitment
+            })
+            .collect();
+        for commitment in &commitments {
+            state
+                .store
+                .store_note_commitment(&dregg_cell::note::NoteCommitment(*commitment))
+                .expect("persist note commitment");
+            state.note_tree_append_commitment(commitment);
+        }
+        let root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            state.note_tree.faithful_root_immutable(),
+        );
+        let anchor = dregg_persist::FaithfulNoteRootAnchorV1::new(
+            [0x51; 32],
+            [0x52; 32],
+            7,
+            40,
+            commitments.len() as u64,
+            root,
+        )
+        .expect("canonical faithful anchor");
+        state
+            .store
+            .initialize_faithful_note_root_history(&anchor)
+            .expect("initialize history");
+        let empty_nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
+            .faithful_root8_exact()
+            .to_bytes32();
+        state
+            .store
+            .store_attested_root(&attested(
+                anchor.height,
+                anchor.root.to_bytes(),
+                empty_nullifier_root,
+                1,
+            ))
+            .expect("store initial attested root");
+
+        let first = state
+            .faithful_note_mirror_page(0, 0, 0)
+            .expect("first cached page");
+        let second = state
+            .faithful_note_mirror_page(FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE as u64, 0, 0)
+            .expect("second cached page");
+        let repeated = state
+            .faithful_note_mirror_page(0, 0, 0)
+            .expect("repeat cached page");
+        assert_eq!(
+            first.commitments.len(),
+            FAITHFUL_MIRROR_COMMITMENT_PAGE_SIZE
+        );
+        assert_eq!(second.commitments.len(), 1);
+        assert_eq!(first.head_hybrid_quorum, second.head_hybrid_quorum);
+        assert_eq!(first.head_hybrid_quorum, repeated.head_hybrid_quorum);
+        assert_eq!(state.faithful_mirror_snapshot_builds(), 1);
+
+        let appended = [0xA7; 32];
+        let record = dregg_persist::plan_faithful_note_root_transition_v1(
+            &state.note_tree,
+            &anchor,
+            [0x61; 32],
+            &[appended],
+        )
+        .expect("plan exact successor");
+        let (envelope, public_key, pq_public_key) = signed_history_edge(&state, record.clone());
+        state
+            .store
+            .store_note_commitment(&dregg_cell::note::NoteCommitment(appended))
+            .expect("persist successor commitment");
+        state.note_tree_append_commitment(&appended);
+        state
+            .store
+            .append_faithful_note_root_hybrid(
+                &envelope,
+                std::slice::from_ref(&public_key),
+                std::slice::from_ref(&pq_public_key),
+                1,
+            )
+            .expect("append authenticated history edge");
+        state
+            .store
+            .store_attested_root(&attested(
+                record.height,
+                record.successor.to_bytes(),
+                empty_nullifier_root,
+                2,
+            ))
+            .expect("store successor attested root");
+
+        let advanced = state
+            .faithful_note_mirror_page(commitments.len() as u64, 0, 0)
+            .expect("advanced head page");
+        assert_eq!(advanced.commitments, vec![appended]);
+        assert_eq!(advanced.history, vec![envelope]);
+        assert_eq!(advanced.head.height, record.height);
+        assert_ne!(advanced.head_hybrid_quorum, first.head_hybrid_quorum);
+        assert_eq!(state.faithful_mirror_snapshot_builds(), 2);
+    }
+
+    #[tokio::test]
+    async fn same_count_durable_commitment_tamper_refuses_before_cache_publish() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new_with_key_file(tmp.path(), vec![], "node.key")
+            .expect("construct test node state");
+        let mut state = state.write().await;
+        let durable_commitment = [0x81; 32];
+        let authenticated_commitment = [0x82; 32];
+        state
+            .store
+            .store_note_commitment(&dregg_cell::note::NoteCommitment(durable_commitment))
+            .expect("persist mismatching durable row");
+        state.note_tree_append_commitment(&authenticated_commitment);
+        let authenticated_root = dregg_persist::CanonicalFaithfulRoot::from_faithful(
+            state.note_tree.faithful_root_immutable(),
+        );
+        let anchor = dregg_persist::FaithfulNoteRootAnchorV1::new(
+            [0x71; 32],
+            [0x52; 32],
+            3,
+            9,
+            1,
+            authenticated_root,
+        )
+        .expect("canonical faithful anchor");
+        state
+            .store
+            .initialize_faithful_note_root_history(&anchor)
+            .expect("initialize history");
+        let empty_nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
+            .faithful_root8_exact()
+            .to_bytes32();
+        state
+            .store
+            .store_attested_root(&attested(
+                anchor.height,
+                anchor.root.to_bytes(),
+                empty_nullifier_root,
+                3,
+            ))
+            .expect("store attested root");
+
+        let error = state
+            .faithful_note_mirror_page(0, 0, 0)
+            .expect_err("same-count durable row substitution must refuse");
+        assert!(
+            error.to_string().contains("durable commitment bytes/root"),
+            "refusal should name the durable commitment divergence: {error}"
+        );
+        assert_eq!(state.faithful_mirror_snapshot_builds(), 0);
+    }
+}
+
 /// Minimal hex encoding (no extra dep needed).
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {

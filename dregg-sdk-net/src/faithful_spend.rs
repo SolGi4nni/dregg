@@ -54,6 +54,7 @@ pub struct FaithfulPriorSpendContext {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FaithfulNoteMirrorRequest {
     pub commitment_cursor: u64,
     pub history_cursor: u64,
@@ -1129,6 +1130,16 @@ mod tests {
         assert!(json.get("nullifier").is_none());
         assert!(json.get("value").is_none());
         assert!(json.get("asset_type").is_none());
+        assert!(
+            serde_json::from_value::<FaithfulNoteMirrorRequest>(serde_json::json!({
+                "commitment_cursor": 0,
+                "history_cursor": 0,
+                "nullifier_cursor": 0,
+                "target_commitment": hex::encode([0xAA; 32]),
+            }))
+            .is_err(),
+            "target-specific extensions must fail closed instead of being ignored"
+        );
     }
 
     #[test]
@@ -1329,5 +1340,40 @@ mod tests {
         assert_eq!(mirror.nullifier_cursor(), 0);
         assert!(mirror.anchor.is_none());
         assert!(mirror.head.is_none());
+    }
+
+    #[test]
+    fn duplicate_and_reordered_pages_refuse_without_advancing_prefix() {
+        let (mut first, mut trust, seed) = empty_signed_page();
+        let commitments = vec![[0x53; 32]; COMMITMENT_PAGE_SIZE + 1];
+        let mut tree = Poseidon2NoteTree16::from_commitments(&commitments, FAITHFUL_NOTE_DEPTH);
+        let root = tree.root().limbs().map(BabyBear::as_u32);
+        first.anchor.note_count = commitments.len() as u64;
+        first.anchor.root8 = root;
+        first.head.note_count = commitments.len() as u64;
+        first.head.root8 = root;
+        trust.anchor = first.anchor.clone();
+        first.commitments = commitments[..COMMITMENT_PAGE_SIZE].to_vec();
+        first.next_commitment_cursor = COMMITMENT_PAGE_SIZE as u64;
+        first.complete = false;
+        first.head_hybrid_quorum = vec![sign_head(seed, &first.anchor, &first.head).0];
+
+        let mut terminal = first.clone();
+        terminal.commitment_cursor = COMMITMENT_PAGE_SIZE as u64;
+        terminal.next_commitment_cursor = commitments.len() as u64;
+        terminal.commitments = vec![commitments[COMMITMENT_PAGE_SIZE]];
+        terminal.complete = true;
+
+        let mut mirror = FaithfulNoteMirror::default();
+        assert!(!mirror.apply_page(first.clone(), &trust).unwrap());
+        assert_eq!(mirror.commitment_cursor(), COMMITMENT_PAGE_SIZE as u64);
+        assert!(mirror.apply_page(first, &trust).is_err());
+        assert_eq!(mirror.commitment_cursor(), COMMITMENT_PAGE_SIZE as u64);
+
+        let mut fresh = FaithfulNoteMirror::default();
+        assert!(fresh.apply_page(terminal.clone(), &trust).is_err());
+        assert_eq!(fresh.commitment_cursor(), 0);
+        assert!(mirror.apply_page(terminal, &trust).unwrap());
+        assert_eq!(mirror.commitment_cursor(), commitments.len() as u64);
     }
 }

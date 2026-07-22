@@ -714,6 +714,24 @@ impl PersistentStore {
         Ok(out)
     }
 
+    /// Return the exact durable faithful-nullifier row count without decoding
+    /// the full accumulator.  The legacy presence table must have the same
+    /// cardinality; disagreement is an integrity failure, never a cache key.
+    pub fn faithful_nullifier_record_count(&self) -> Result<u64> {
+        let read_txn = self.db.begin_read()?;
+        let presence = read_txn.open_table(tables::NULLIFIERS)?;
+        let records = read_txn.open_table(tables::NULLIFIER_RECORDS_V1)?;
+        let presence_len = presence.len()?;
+        let records_len = records.len()?;
+        if presence_len != records_len {
+            return Err(StoreError::Integrity(format!(
+                "nullifier presence/record table lengths disagree ({presence_len} != {records_len}); \
+                 legacy nonempty images require an explicit value/sequence migration"
+            )));
+        }
+        Ok(records_len)
+    }
+
     /// Exact durable eight-felt nullifier-accumulator root used by live root
     /// attestation. This is separate from [`Self::nullifier_set_root`], the
     /// legacy BLAKE3 key-only non-membership tree.
