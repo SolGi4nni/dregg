@@ -81,16 +81,15 @@ impl PrivateBazaarLiveRegistry {
     }
 
     /// Run one deployment-owned backend operation against the exact market and
-    /// journey mounted in the public host.  Frontend adapters never receive this
-    /// handle; their only mutation is the payload-free Enter action.
-    pub fn with_entered<R>(
+    /// journey mounted in the public host, preserving the operation's own error
+    /// type separately from registry/host failures. Frontend adapters never
+    /// receive this handle; their only mutation is the payload-free Enter
+    /// action.
+    pub fn with_entered_typed<R, E>(
         &self,
         seed: u64,
-        operation: impl FnOnce(
-            &mut DarkBazaarSession,
-            &mut PrivateBazaarRaidJourney,
-        ) -> Result<R, String>,
-    ) -> Result<R, PrivateBazaarLiveHostError> {
+        operation: impl FnOnce(&mut DarkBazaarSession, &mut PrivateBazaarRaidJourney) -> Result<R, E>,
+    ) -> Result<Result<R, E>, PrivateBazaarLiveHostError> {
         let backend = {
             let sessions = self
                 .sessions
@@ -113,7 +112,7 @@ impl PrivateBazaarLiveRegistry {
         let journey = journey
             .as_mut()
             .ok_or(PrivateBazaarLiveHostError::NotEntered(seed))?;
-        operation(market, journey).map_err(PrivateBazaarLiveHostError::Backend)
+        Ok(operation(market, journey))
     }
 
     pub fn contains(&self, seed: u64) -> bool {
@@ -272,7 +271,7 @@ impl Offering for PrivateBazaarRaidOffering {
         }
     }
 
-    fn price(&self, _session: &Self::Session, _input: &Action) -> RunCost {
+    fn price(&self, _input: &Action) -> RunCost {
         RunCost::free()
     }
 }

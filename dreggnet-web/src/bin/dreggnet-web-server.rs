@@ -48,7 +48,6 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use dreggnet_web::make_app_parts;
 use tracing_subscriber::EnvFilter;
 
 /// The bind address the demo server listens on when nothing else is configured.
@@ -105,8 +104,29 @@ async fn main() {
     }
 
     // The merged public-demo app: games + feature surfaces + the seeded no-cheat leaderboard —
-    // plus the catalog handle, for the periodic session-lifecycle sweep below.
-    let (app, catalog) = make_app_parts();
+    // plus the catalog handle, for the periodic session-lifecycle sweep below. The private
+    // Bazaar build remains absent unless its complete pinned deployment config resolves; a
+    // partial config is a startup refusal, never a healthy-looking unmounted feature.
+    #[cfg(feature = "private-bazaar-live")]
+    let (app, catalog) = match dreggnet_catalog::PrivateBazaarLiveDeployment::from_env() {
+        Ok(Some(deployment)) => {
+            tracing::info!(
+                key = dreggnet_market::private_bazaar_live_host::PRIVATE_BAZAAR_RAID_KEY,
+                "configured private Bazaar deployment mounted into web/Telegram-Mini-App/Discord-Activity catalog routes"
+            );
+            dreggnet_web::make_app_parts_with_private_bazaar(
+                dreggnet_web::resolve_demo_descent(),
+                deployment,
+            )
+        }
+        Ok(None) => dreggnet_web::make_app_parts(),
+        Err(error) => {
+            tracing::error!(%error, "private Bazaar deployment configuration refused");
+            std::process::exit(2);
+        }
+    };
+    #[cfg(not(feature = "private-bazaar-live"))]
+    let (app, catalog) = dreggnet_web::make_app_parts();
 
     // THE PERIODIC LIFECYCLE SWEEP — the timer half of the sweep design (documented on
     // `CatalogState::sweep`): the host already sweeps opportunistically on every fresh open, so

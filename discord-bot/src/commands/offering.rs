@@ -2170,6 +2170,8 @@ macro_rules! for_each_generic_offering {
         $per!(dreggnet_council::CouncilOffering);
         $per!(dreggnet_market::MarketOffering);
         $per!(dreggnet_market::DarkBazaarOffering);
+        #[cfg(feature = "private-bazaar-live")]
+        $per!(dreggnet_market::private_bazaar_live_host::PrivateBazaarRaidOffering);
         $per!(dreggnet_hermes::HermesOffering);
         $per!(dreggnet_grain::GrainOffering);
         $per!(dreggnet_doc::DocOffering);
@@ -2475,7 +2477,8 @@ mod tests {
         }
         for key in &mounted {
             let known = dreggnet_catalog::CATALOG_KEYS.contains(key)
-                || crate::commands::portfolio::DISCORD_EXTRA_PLAY_KEYS.contains(key);
+                || crate::commands::portfolio::DISCORD_EXTRA_PLAY_KEYS.contains(key)
+                || crate::commands::portfolio::DISCORD_OPT_IN_PLAY_KEYS.contains(key);
             assert!(
                 known,
                 "mounted key `{key}` is neither a catalog offering nor a declared Discord extra"

@@ -27,6 +27,15 @@ description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trai
 
 [features]
 default = []
+# Explicitly configured private/proven Bazaar raid. The ordinary bot keeps the
+# proof stack out; enabling this feature still requires a deployment-owned
+# roster/reward/executor policy and durable adapter directory.
+private-bazaar-live = [
+    "dreggnet-catalog/private-bazaar-live",
+    "dep:dreggnet-market",
+    "dreggnet-market/private-clearing",
+    "dep:dungeon-on-dregg",
+]
 # Public-only Telegram controller for the private/proven Bazaar -> Dungeon crown.
 # Kept explicit because it pulls the full fhEgg verifier and persistence tower;
 # ordinary Telegram surface work does not need to relink that archive.

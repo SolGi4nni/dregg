@@ -46,6 +46,15 @@ version = "0.1.0"
 edition = "2024"
 description = "Discord bot for the dregg devnet — custodial AppCipherclerk handles, gallery, identity, presence attestation, CapTP, queues, governance, names"
 
+[features]
+default = []
+# Opt-in private/proven Bazaar raid. The binary still requires the complete
+# deployment-owned DREGG_PRIVATE_BAZAAR_* record and refuses partial config.
+private-bazaar-live = [
+    "dreggnet-catalog/private-bazaar-live",
+    "dreggnet-market/private-clearing",
+]
+
 [dependencies]
 blake3 = "1"
 # THE ONE Discord custodial-seed derivation (`seed_for` / `op_token`), extracted into a light

@@ -2359,7 +2359,9 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "bytemuck",
+ "chacha20poly1305",
  "dregg-circuit",
+ "dregg-commit",
  "futures-channel",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
@@ -2393,6 +2395,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "wgpu",
+ "zeroize",
 ]
 
 [[package]]
@@ -3155,6 +3158,7 @@ dependencies = [
  "blake3",
  "dregg-automatafl",
  "dregg-multiway-tug",
+ "dregg-types",
  "dreggnet-compute",
  "dreggnet-council",
  "dreggnet-doc",
@@ -3164,6 +3168,8 @@ dependencies = [
  "dreggnet-names",
  "dreggnet-offerings",
  "dreggnet-surfaces",
+ "dungeon-on-dregg",
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -3337,10 +3343,13 @@ dependencies = [
  "deos-view",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-circuit-prove",
  "dregg-intent",
+ "dregg-turn",
  "dregg-types",
  "dreggnet-offerings",
  "dreggnet-trade",
+ "dungeon-on-dregg",
  "starbridge-sealed-auction",
 ]
 

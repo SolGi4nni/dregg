@@ -42,6 +42,8 @@ use dregg_automatafl::AutomataflOffering;
 use dregg_multiway_tug::Player;
 use dreggnet_compute::ComputeOffering;
 use dreggnet_market::DarkBazaarOffering;
+#[cfg(feature = "private-bazaar-live")]
+use dreggnet_market::private_bazaar_live_host::PrivateBazaarRaidOffering;
 use dreggnet_names::NamesOffering;
 use dreggnet_offerings::campaign::DescentCampaignOffering;
 use dreggnet_offerings::native_descent::NativeDescentOffering;
@@ -146,6 +148,27 @@ impl DiscordOffering for AutomataflOffering {
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
+    fn status_line(&self, session: &Self::Session) -> String {
+        verified_turns(self, session)
+    }
+}
+
+#[cfg(feature = "private-bazaar-live")]
+impl DiscordOffering for PrivateBazaarRaidOffering {
+    const KEY: &'static str = PrivateBazaarRaidOffering::KEY;
+    const TITLE: &'static str = "The Dark Bazaar raid";
+    const COLOR: u32 = 0x4B3F72;
+    const TAGLINE: &'static str =
+        "viewer-blind allocation · exact private settlement · one receipted game consequence";
+
+    fn store() -> &'static Store<Self> {
+        seat_of_store!(PrivateBazaarRaidOffering)
+    }
+
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
+
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
     }
@@ -435,6 +458,14 @@ pub const BESPOKE_COMMAND_KEYS: [&str; 6] =
 /// `dreggnet-catalog`, so they are declared here explicitly instead of riding the derived list.
 pub const DISCORD_EXTRA_PLAY_KEYS: [&str; 3] = ["gear", "talents", "overworld"];
 
+/// Deployment-backed routes which are intentionally not part of the ordinary
+/// synthetic catalog. Their feature gates pull the real verifier/policy stack;
+/// the running bot additionally requires a complete deployment record.
+#[cfg(feature = "private-bazaar-live")]
+pub const DISCORD_OPT_IN_PLAY_KEYS: [&str; 1] = [PrivateBazaarRaidOffering::KEY];
+#[cfg(not(feature = "private-bazaar-live"))]
+pub const DISCORD_OPT_IN_PLAY_KEYS: [&str; 0] = [];
+
 /// The `/play` offering keys — **derived from the shared catalog**
 /// ([`dreggnet_catalog::CATALOG_KEYS`], the ONE statement of what the DreggNet portfolio is)
 /// minus the [`BESPOKE_COMMAND_KEYS`], plus the [`DISCORD_EXTRA_PLAY_KEYS`]. Registering a new
@@ -447,6 +478,7 @@ pub fn play_keys() -> Vec<&'static str> {
         .copied()
         .filter(|k| !BESPOKE_COMMAND_KEYS.contains(k))
         .chain(DISCORD_EXTRA_PLAY_KEYS)
+        .chain(DISCORD_OPT_IN_PLAY_KEYS)
         .collect()
 }
 
@@ -563,6 +595,22 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
             open_and_post::<AutomataflOffering>(ctx, command, || AutomataflOffering, &viewer, cfg)
                 .await
         }
+        #[cfg(feature = "private-bazaar-live")]
+        PrivateBazaarRaidOffering::KEY => match state.private_bazaar_deployment.clone() {
+            Some(deployment) => {
+                open_and_post::<PrivateBazaarRaidOffering>(
+                    ctx,
+                    command,
+                    move || deployment.offering(),
+                    &viewer,
+                    cfg,
+                )
+                .await
+            }
+            None => Err(OfferingError::Deploy(
+                "this bot build has no configured private Bazaar deployment".to_owned(),
+            )),
+        },
         dreggnet_surfaces::private_raid::KEY => {
             open_and_post::<HostedProofAssignedRaidOffering>(
                 ctx,
@@ -657,6 +705,10 @@ async fn handle_play_verify(
         "bazaar" => offering::handle_verify::<DarkBazaarOffering>(ctx, command).await,
         "tug" => offering::handle_verify::<SeatedTug>(ctx, command).await,
         "automatafl" => offering::handle_verify::<AutomataflOffering>(ctx, command).await,
+        #[cfg(feature = "private-bazaar-live")]
+        PrivateBazaarRaidOffering::KEY => {
+            offering::handle_verify::<PrivateBazaarRaidOffering>(ctx, command).await
+        }
         dreggnet_surfaces::private_raid::KEY => {
             offering::handle_verify::<HostedProofAssignedRaidOffering>(ctx, command).await
         }
@@ -1056,6 +1108,62 @@ mod tests {
         let _ = ch; // the macro's channel cursor past the last offering
     }
 
+    #[cfg(feature = "private-bazaar-live")]
+    #[test]
+    fn private_bazaar_opt_in_drives_the_generic_discord_adapter() {
+        use dreggnet_market::private_bazaar_journey::{
+            PrivateBazaarDeploymentPin, PrivateBazaarRaidPolicy, TURN_ENTER_PRIVATE_BAZAAR,
+        };
+        use dreggnet_market::private_clearing_guild_allocation::{
+            GuildMember, GuildReward, GuildRoster,
+        };
+        use dungeon_on_dregg::progression::{
+            PRIVATE_BAZAAR_XP_METHOD, deploy_hero, private_bazaar_xp_event_topic,
+        };
+
+        let hero = deploy_hero(0xA1);
+        hero.set_executor_signing_key([0xA2; 32]);
+        let raider = DreggIdentity("discord-private-raider".to_owned());
+        let roster =
+            GuildRoster::new(vec![GuildMember::new(raider.clone(), hero.cell_id())]).unwrap();
+        let reward = GuildReward::new("raid-xp/discord/v1", 144).unwrap();
+        let pin = PrivateBazaarDeploymentPin::new(
+            [0xA3; 32],
+            roster.digest(),
+            PrivateBazaarRaidPolicy::reward_commitment_for_configuration(&reward),
+            PRIVATE_BAZAAR_XP_METHOD,
+            private_bazaar_xp_event_topic(),
+            hero.executor_pubkey().unwrap(),
+            hero.federation_id(),
+        )
+        .unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let deployment = dreggnet_catalog::PrivateBazaarLiveDeployment::open(
+            PrivateBazaarRaidPolicy::load(pin, roster, reward).unwrap(),
+            1,
+            temp.path(),
+        )
+        .unwrap();
+        let channel = 778_821;
+        close_in::<PrivateBazaarRaidOffering>(channel);
+        let mounted = deployment.clone();
+        offering::open_in::<PrivateBazaarRaidOffering>(
+            channel,
+            move || mounted.offering(),
+            SessionConfig::with_seed(channel),
+        )
+        .unwrap();
+        let control =
+            fire_id_in::<PrivateBazaarRaidOffering>(channel, TURN_ENTER_PRIVATE_BAZAAR, 0)
+                .expect("the viewer-blind Enter control is mounted");
+        assert!(matches!(
+            drive::<PrivateBazaarRaidOffering>(channel, &control, raider),
+            Driven::Fired(Outcome::Landed { .. })
+        ));
+        assert!(deployment.registry().contains(channel));
+        close_in::<PrivateBazaarRaidOffering>(channel);
+    }
+
     /// **The `/play` keys are the shared catalog's, by derivation** — every
     /// `dreggnet_catalog::CATALOG_KEYS` entry is reachable on Discord (a bespoke `/<key>`
     /// command or a `/play` choice), `/play` adds exactly the declared Discord extras beyond
@@ -1089,8 +1197,10 @@ mod tests {
         }
         for k in &keys {
             assert!(
-                dreggnet_catalog::CATALOG_KEYS.contains(k) || DISCORD_EXTRA_PLAY_KEYS.contains(k),
-                "/play key `{k}` is neither a catalog offering nor a declared Discord extra"
+                dreggnet_catalog::CATALOG_KEYS.contains(k)
+                    || DISCORD_EXTRA_PLAY_KEYS.contains(k)
+                    || DISCORD_OPT_IN_PLAY_KEYS.contains(k),
+                "/play key `{k}` is neither a catalog offering nor a declared Discord route"
             );
         }
         // The former hand-maintained list, preserved by the derivation (the regression pin).
@@ -1121,6 +1231,7 @@ mod tests {
             keys.len(),
             dreggnet_catalog::CATALOG_KEYS.len() - BESPOKE_COMMAND_KEYS.len()
                 + DISCORD_EXTRA_PLAY_KEYS.len()
+                + DISCORD_OPT_IN_PLAY_KEYS.len()
         );
     }
 

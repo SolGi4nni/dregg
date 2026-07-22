@@ -24,6 +24,8 @@
 //! - `TELEGRAM_WEBAPP_BASE` (optional) — the public HTTPS base the Mini App (`dreggnet-web`'s
 //!   `/tg` routes) is served from. Default: `https://hbox-dregg.skunk-emperor.ts.net` (the hbox
 //!   funnel). DMs get "Play in the app" `web_app` buttons + the `/play` menu deep-linking it.
+//! - with feature `private-bazaar-live`, the complete `DREGG_PRIVATE_BAZAAR_*`
+//!   deployment record is optional; a partial/malformed record refuses startup.
 //!
 //! Deploy: `deploy/telegram/dregg-telegram-bot.service` + `deploy/telegram/RUNBOOK-TELEGRAM.md`.
 
@@ -154,7 +156,49 @@ fn main() {
         }
     };
     let dir_for_host = session_dir.clone();
-    let mut host = match TelegramHost::try_with_hosts_and_game_epochs(
+    #[cfg(feature = "private-bazaar-live")]
+    let private_bazaar_deployment = match dreggnet_catalog::PrivateBazaarLiveDeployment::from_env()
+    {
+        Ok(deployment) => deployment,
+        Err(error) => {
+            eprintln!("private Bazaar deployment configuration refused: {error}. Exiting.");
+            std::process::exit(2);
+        }
+    };
+
+    #[cfg(feature = "private-bazaar-live")]
+    let host_result = match private_bazaar_deployment {
+        Some(deployment) => {
+            let mounted = deployment.clone();
+            eprintln!(
+                "configured private Bazaar deployment mounted at {}",
+                dreggnet_market::private_bazaar_live_host::PRIVATE_BAZAAR_RAID_KEY
+            );
+            TelegramHost::try_with_private_bazaar_hosts_and_game_epochs(
+                bot_secret,
+                transport,
+                move || {
+                    dreggnet_telegram::runtime::try_durable_telegram_host_with_private_bazaar(
+                        dir_for_host,
+                        members,
+                        &mounted,
+                    )
+                },
+                move || durable_player_worlds(Some(dir_for_players)),
+                game_epochs,
+                deployment,
+            )
+        }
+        None => TelegramHost::try_with_hosts_and_game_epochs(
+            bot_secret,
+            transport,
+            move || try_durable_telegram_host(dir_for_host, members),
+            move || durable_player_worlds(Some(dir_for_players)),
+            game_epochs,
+        ),
+    };
+    #[cfg(not(feature = "private-bazaar-live"))]
+    let host_result = TelegramHost::try_with_hosts_and_game_epochs(
         bot_secret,
         transport,
         move || try_durable_telegram_host(dir_for_host, members),
@@ -162,7 +206,8 @@ fn main() {
         // — so trade / inventory / craft are isolated AND survive a restart, exactly like Discord.
         move || durable_player_worlds(Some(dir_for_players)),
         game_epochs,
-    ) {
+    );
+    let mut host = match host_result {
         Ok(host) => host.with_webapp_base(webapp_base),
         Err(error) => {
             eprintln!("cannot open durable Telegram host: {error}. Exiting.");

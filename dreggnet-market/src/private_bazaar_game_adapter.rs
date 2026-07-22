@@ -26,8 +26,8 @@ use dungeon_on_dregg::progression::{
 
 use crate::DarkBazaarSession;
 use crate::private_bazaar_authority::{
-    CommittedPrivateBazaarEffect, PrivateBazaarAuthorityError, PrivateBazaarAuthorityPhase,
-    PrivateBazaarAuthorityStore, PrivateBazaarExactEffect, PrivateBazaarExecutorAuthority,
+    PrivateBazaarAuthorityError, PrivateBazaarAuthorityPhase, PrivateBazaarAuthorityStore,
+    PrivateBazaarExactEffect, PrivateBazaarExecutorAuthority,
 };
 use crate::private_bazaar_journey::{
     PrivateBazaarJourneyError, PrivateBazaarPublicReceipt, PrivateBazaarRaidJourney,

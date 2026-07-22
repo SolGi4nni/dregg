@@ -1316,6 +1316,11 @@ pub struct CatalogState {
     /// ISOLATED inventories: player A forges an item and player B does not see it. This is the
     /// shared-layer form of the split the Discord bot already runs.
     players: PlayerHostThread,
+    /// Retains the deployment-owned registry and durable exact-effect adapter
+    /// for the opt-in private Bazaar route. The ordinary catalog never invents
+    /// a policy and leaves this absent.
+    #[cfg(feature = "private-bazaar-live")]
+    private_bazaar_deployment: Option<dreggnet_catalog::PrivateBazaarLiveDeployment>,
 }
 
 impl CatalogState {
@@ -1325,6 +1330,8 @@ impl CatalogState {
         CatalogState {
             host: HostThread::spawn(catalog_default_host),
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         }
     }
 
@@ -1336,6 +1343,8 @@ impl CatalogState {
         CatalogState {
             host: HostThread::spawn(build),
             players: PlayerHostThread::spawn(PlayerWorlds::new),
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         }
     }
 
@@ -1350,7 +1359,49 @@ impl CatalogState {
         CatalogState {
             host: HostThread::spawn(build_host),
             players: PlayerHostThread::spawn(build_players),
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         }
+    }
+
+    /// Build the real shared catalog with one explicitly configured private
+    /// Bazaar raid and retain its worker-side registry/adapter beside the host.
+    /// The generic `/offerings/{key}/session/{id}` GET/POST routes need no
+    /// special-case handler: they drive this registered Offering directly.
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn with_private_bazaar(deployment: dreggnet_catalog::PrivateBazaarLiveDeployment) -> Self {
+        Self::with_private_bazaar_over(deployment, None, SessionPolicy::default())
+    }
+
+    /// Production form of [`with_private_bazaar`](Self::with_private_bazaar):
+    /// attach and boot-resume the generic host move log when `session_dir` is
+    /// present. Replaying Enter reconstructs the exact listed market/journey
+    /// and repopulates this deployment's process-local worker registry.
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn with_private_bazaar_over(
+        deployment: dreggnet_catalog::PrivateBazaarLiveDeployment,
+        session_dir: Option<std::path::PathBuf>,
+        policy: SessionPolicy,
+    ) -> Self {
+        let mounted = deployment.clone();
+        CatalogState {
+            host: HostThread::spawn(move || {
+                let base = dreggnet_catalog::full_catalog_host_with_private_bazaar(
+                    &web_catalog_config(),
+                    &mounted,
+                );
+                assemble_demo_host(base, session_dir, policy)
+            }),
+            players: PlayerHostThread::spawn(PlayerWorlds::new),
+            private_bazaar_deployment: Some(deployment),
+        }
+    }
+
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn private_bazaar_deployment(
+        &self,
+    ) -> Option<&dreggnet_catalog::PrivateBazaarLiveDeployment> {
+        self.private_bazaar_deployment.as_ref()
     }
 
     /// **Route a `(key, session)`-scoped host job to the host that OWNS it for `viewer`.** An
@@ -3668,7 +3719,6 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
     // emit sites are no-ops until it exists, and this is the earliest point that covers boot.
     let _ = metrics::install_recorder();
 
-    let web = Arc::new(WebState::new());
     // The session-durability + lifecycle weld: `DREGGNET_WEB_SESSION_DIR` set → the catalog host
     // is built over a durable `FileResumeStore` and boot-resumes persisted sessions; the
     // `DREGGNET_WEB_MAX_SESSIONS` / `DREGGNET_WEB_SESSION_TTL_SECS` / `DREGGNET_WEB_OPENS_PER_USER`
@@ -3682,6 +3732,38 @@ pub fn make_app_parts_with_descent(descent: Arc<DescentState>) -> (Router, Arc<C
         resolve_demo_host,
         resolve_player_worlds,
     ));
+
+    make_app_parts_with_catalog(descent, catalog)
+}
+
+/// Build the complete server router over an explicitly configured private
+/// Bazaar deployment. Its ordinary catalog GET/POST routes become the public
+/// lifecycle; the returned `CatalogState` retains the exact worker registry and
+/// durable XP adapter. This is opt-in because no safe roster/reward/executor
+/// policy can be synthesized by the web server.
+#[cfg(feature = "private-bazaar-live")]
+pub fn make_app_parts_with_private_bazaar(
+    descent: Arc<DescentState>,
+    deployment: dreggnet_catalog::PrivateBazaarLiveDeployment,
+) -> (Router, Arc<CatalogState>) {
+    let _ = metrics::install_recorder();
+    let session_dir = std::env::var("DREGGNET_WEB_SESSION_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from);
+    let catalog = Arc::new(CatalogState::with_private_bazaar_over(
+        deployment,
+        session_dir,
+        resolve_web_policy(),
+    ));
+    make_app_parts_with_catalog(descent, catalog)
+}
+
+fn make_app_parts_with_catalog(
+    descent: Arc<DescentState>,
+    catalog: Arc<CatalogState>,
+) -> (Router, Arc<CatalogState>) {
+    let web = Arc::new(WebState::new());
 
     // THE CROWD-STREAM OVERLAY (docs/CROWD-STREAM-ENGINE-DESIGN.md) — the transparent OBS vote
     // overlay + its server→browser SSE tally push (`GET /overlay`, `GET /overlay/sse`,

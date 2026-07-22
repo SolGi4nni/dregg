@@ -23,6 +23,15 @@ description = "The shared DreggNet offering-catalog registrar: build_full_catalo
 
 [features]
 default = []
+# Opt-in hosted journey for the private/proven Dark Bazaar -> exact game
+# consequence.  The deployment must supply pinned roster/reward/executor policy
+# and a durable authority directory; the ordinary catalog has no synthetic
+# defaults for either.
+private-bazaar-live = [
+    "dreggnet-market/private-clearing",
+    "dep:dungeon-on-dregg",
+    "dep:dregg-types",
+]
 # Typed hard-tech weld: a full BFV/HidingFRI/native-PQ Dark Bazaar authority
 # may authorize one exact signed private-raid mechanic through the bound common
 # game spine. Ordinary catalogs do not pull either proving tower.
@@ -50,6 +59,7 @@ getrandom = { workspace = true }
 # The eight portfolio games.
 dreggnet-council = { path = "../dreggnet-council" }
 dreggnet-market = { path = "../dreggnet-market" }
+dregg-types = { path = "../types", optional = true }
 dregg-automatafl = { path = "../dregg-automatafl" }
 # `dregg-multiway-tug` names its seats by fixed canonical strings; the ONE `seated::SeatedTug`
 # adapter here (collapsing the web/telegram/wechat/discord byte-peers) claims seats for
@@ -71,6 +81,7 @@ dreggnet-hermes = { path = "../dreggnet-hermes" }
 
 [dev-dependencies]
 deos-view = { path = "../deos-view", default-features = false }
+dregg-app-framework = { path = "../app-framework", default-features = false }
 tempfile = { workspace = true }
 
 [lints]

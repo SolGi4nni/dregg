@@ -50,6 +50,8 @@ pub mod game_epoch;
 pub mod game_publication;
 pub mod game_spine;
 pub mod player_worlds;
+#[cfg(feature = "private-bazaar-live")]
+pub mod private_bazaar_live;
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub mod private_fhegg_game_consequence;
 pub mod seated;
@@ -73,6 +75,11 @@ pub use game_spine::{
     game_kind, inspect_bound_game_session, inspect_game_session,
 };
 pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
+#[cfg(feature = "private-bazaar-live")]
+pub use private_bazaar_live::{
+    PRIVATE_BAZAAR_RAID_TITLE, PrivateBazaarLiveDeployment, build_full_catalog_with_private_bazaar,
+    full_catalog_host_with_private_bazaar,
+};
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub use private_fhegg_game_consequence::{
     FaithfulSpendGameAuthorityReceipt, PrivateFheggGameConsequenceError,

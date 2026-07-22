@@ -1125,6 +1125,8 @@ mod tests {
             channel_hermes: std::sync::Mutex::new(std::collections::HashMap::new()),
             pay,
             characters,
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         })
     }
 

@@ -1319,6 +1319,23 @@ pub fn try_durable_telegram_host(
         .map_err(|(_, error)| error)
 }
 
+/// Required-durability production host with the explicitly configured private
+/// Bazaar offering mounted before replay. Registering first is load-bearing:
+/// persisted Enter moves can then reconstruct the hosted market/journey and
+/// repopulate the deployment's fresh process-local worker registry.
+#[cfg(feature = "private-bazaar-live")]
+pub fn try_durable_telegram_host_with_private_bazaar(
+    dir: PathBuf,
+    council_members: Vec<[u8; 32]>,
+    deployment: &dreggnet_catalog::PrivateBazaarLiveDeployment,
+) -> Result<OfferingHost, String> {
+    let host = dreggnet_catalog::full_catalog_host_with_private_bazaar(
+        &dreggnet_catalog::CatalogConfig::with_council_members(council_members),
+        deployment,
+    );
+    attach_durable_telegram_store(host, &dir).map_err(|(_, error)| error)
+}
+
 fn attach_durable_telegram_store(
     mut host: OfferingHost,
     dir: &std::path::Path,

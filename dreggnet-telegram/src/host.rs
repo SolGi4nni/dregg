@@ -607,6 +607,11 @@ pub struct TelegramHost<T: Transport> {
     /// tier ([`Self::with_webapp_base`]). `None` = launch buttons off; the inline-button tier
     /// is unaffected either way.
     webapp_base: Option<String>,
+    /// Retains the exact configured private-Bazaar registry and durable XP
+    /// adapter for as long as this Telegram host is live. The ordinary build
+    /// has no fabricated deployment and leaves this absent.
+    #[cfg(feature = "private-bazaar-live")]
+    private_bazaar_deployment: Option<dreggnet_catalog::PrivateBazaarLiveDeployment>,
 }
 
 impl<T: Transport> TelegramHost<T> {
@@ -635,7 +640,53 @@ impl<T: Transport> TelegramHost<T> {
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         }
+    }
+
+    /// Build the full Telegram catalog plus one explicitly configured private
+    /// Bazaar raid. Generic `/offerings` and press routing then open and drive
+    /// the same payload-free hosted lifecycle as web; policy and durability
+    /// stay in `deployment`, never in callback data.
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn with_private_bazaar(
+        bot_secret: [u8; 32],
+        transport: T,
+        council_member_uids: &[TelegramUserId],
+        deployment: dreggnet_catalog::PrivateBazaarLiveDeployment,
+    ) -> Self {
+        let members: Vec<[u8; 32]> = council_member_uids
+            .iter()
+            .map(|uid| TelegramCipherclerk::derive(&bot_secret, *uid).public_key_bytes())
+            .collect();
+        let mounted = deployment.clone();
+        let host = HostThread::spawn(move || {
+            dreggnet_catalog::full_catalog_host_with_private_bazaar(
+                &CatalogConfig::with_council_members(members),
+                &mounted,
+            )
+        });
+        TelegramHost {
+            bot_secret,
+            host,
+            players: PlayerHostThread::spawn(PlayerWorlds::new),
+            game_epochs: GameEpochLedger::in_memory_random()
+                .expect("operating-system randomness is available for the game host incarnation"),
+            frontend: TelegramFrontend::new(bot_secret, transport),
+            active: HashMap::new(),
+            public_game_receipts: HashMap::new(),
+            armed: HashMap::new(),
+            webapp_base: None,
+            private_bazaar_deployment: Some(deployment),
+        }
+    }
+
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn private_bazaar_deployment(
+        &self,
+    ) -> Option<&dreggnet_catalog::PrivateBazaarLiveDeployment> {
+        self.private_bazaar_deployment.as_ref()
     }
 
     /// Build a host over a caller-provided offering registry (the offerings are registered inside
@@ -686,6 +737,8 @@ impl<T: Transport> TelegramHost<T> {
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
         }
     }
 
@@ -712,6 +765,35 @@ impl<T: Transport> TelegramHost<T> {
             public_game_receipts: HashMap::new(),
             armed: HashMap::new(),
             webapp_base: None,
+            #[cfg(feature = "private-bazaar-live")]
+            private_bazaar_deployment: None,
+        })
+    }
+
+    /// Fallible production constructor for a host whose build closure already
+    /// registered and boot-resumed this exact private Bazaar deployment. The
+    /// retained handle keeps its worker registry and durable consequence
+    /// adapter reachable after the owning host thread starts.
+    #[cfg(feature = "private-bazaar-live")]
+    pub fn try_with_private_bazaar_hosts_and_game_epochs(
+        bot_secret: [u8; 32],
+        transport: T,
+        build: impl FnOnce() -> Result<OfferingHost, String> + Send + 'static,
+        build_players: impl FnOnce() -> PlayerWorlds + Send + 'static,
+        game_epochs: GameEpochLedger,
+        deployment: dreggnet_catalog::PrivateBazaarLiveDeployment,
+    ) -> Result<Self, String> {
+        Ok(TelegramHost {
+            bot_secret,
+            host: HostThread::try_spawn(build)?,
+            players: PlayerHostThread::spawn(build_players),
+            game_epochs,
+            frontend: TelegramFrontend::new(bot_secret, transport),
+            active: HashMap::new(),
+            public_game_receipts: HashMap::new(),
+            armed: HashMap::new(),
+            webapp_base: None,
+            private_bazaar_deployment: Some(deployment),
         })
     }
 

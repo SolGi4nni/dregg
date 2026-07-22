@@ -249,6 +249,11 @@ pub struct BotState {
     /// resumed, XP earned by the party's real outcomes is saved back through the gated character
     /// turn, and a tampered/absent row fails safe to a fresh level-1 character.
     pub characters: character_store::SqliteCharacterStore,
+    /// Exact opt-in private Bazaar policy, live-session worker registry, and
+    /// durable consequence adapter. No configured deployment means the route
+    /// is absent at runtime; Discord never synthesizes cryptographic policy.
+    #[cfg(feature = "private-bazaar-live")]
+    pub private_bazaar_deployment: Option<dreggnet_catalog::PrivateBazaarLiveDeployment>,
 }
 
 /// The main event handler for Discord gateway events.
@@ -899,6 +904,16 @@ async fn main() {
     let orchestrator =
         orchestration::SessionOrchestrator::new().with_persistence(Arc::new(db.clone()));
 
+    #[cfg(feature = "private-bazaar-live")]
+    let private_bazaar_deployment = match dreggnet_catalog::PrivateBazaarLiveDeployment::from_env()
+    {
+        Ok(deployment) => deployment,
+        Err(error) => {
+            error!(%error, "private Bazaar deployment configuration refused");
+            std::process::exit(2);
+        }
+    };
+
     // Build shared state (now carries the real federation + HTTP config).
     let state = Arc::new(BotState {
         config,
@@ -918,6 +933,8 @@ async fn main() {
         channel_hermes: std::sync::Mutex::new(std::collections::HashMap::new()),
         pay,
         characters,
+        #[cfg(feature = "private-bazaar-live")]
+        private_bazaar_deployment,
     });
 
     // §4.7 Production HTTP read surface (Starbridge RemoteRuntime + humans).

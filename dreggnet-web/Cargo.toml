@@ -74,6 +74,13 @@ public-shielded-games = [
     "private-quest-operation",
     "dark-amm-game",
 ]
+# Explicit deployment of the viewer-blind private Bazaar raid. The ordinary
+# server has no synthetic roster/reward/executor defaults; an embedding must
+# pass a validated deployment object and durability root.
+private-bazaar-live = [
+    "dreggnet-catalog/private-bazaar-live",
+    "dreggnet-market/private-clearing",
+]
 
 # THE PUBLIC-DEMO SERVER — the ~15-line-core entrypoint that makes `dreggnet-web` a runnable
 # server (not just a library): it assembles the merged axum app (`make_app`) and serves it.
