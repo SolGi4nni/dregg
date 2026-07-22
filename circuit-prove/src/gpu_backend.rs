@@ -340,6 +340,15 @@ static GPU_BABYBEAR_MMCS_READBACK_BATCHES: AtomicU64 = AtomicU64::new(0);
 /// Number of Merkle layers copied in those batches.  This distinguishes one
 /// genuine whole-tree batch from a root-only readback.
 static GPU_BABYBEAR_MMCS_READBACK_LAYERS: AtomicU64 = AtomicU64::new(0);
+/// Host buffer mappings used to materialize those layers.  The production
+/// path keeps this at exactly one mapping per completed tree, even though the
+/// tree has many independently resident device buffers.
+static GPU_BABYBEAR_MMCS_READBACK_MAPPINGS: AtomicU64 = AtomicU64::new(0);
+/// Authentication-path digests copied from the materialized GPU trees into
+/// HidingFRI query proofs.  This counter closes a subtle audit gap: a GPU tree
+/// commit alone does not prove that the prover subsequently consumed its
+/// opening layers while constructing the Fiat--Shamir query transcript.
+static GPU_BABYBEAR_MMCS_QUERY_AUTH_DIGESTS: AtomicU64 = AtomicU64::new(0);
 
 /// (hits, misses) of the device-resident LDE hand-off across the process —
 /// a hit is one leaf-arena upload replaced by a device→device blit.
@@ -362,6 +371,8 @@ pub struct HidingGpuDispatchCounters {
     pub babybear_merkle_commits: u64,
     pub babybear_merkle_readback_batches: u64,
     pub babybear_merkle_readback_layers: u64,
+    pub babybear_merkle_readback_mappings: u64,
+    pub babybear_query_auth_digests: u64,
 }
 
 pub fn hiding_gpu_dispatch_counters() -> HidingGpuDispatchCounters {
@@ -371,6 +382,9 @@ pub fn hiding_gpu_dispatch_counters() -> HidingGpuDispatchCounters {
         babybear_merkle_readback_batches: GPU_BABYBEAR_MMCS_READBACK_BATCHES
             .load(Ordering::Relaxed),
         babybear_merkle_readback_layers: GPU_BABYBEAR_MMCS_READBACK_LAYERS.load(Ordering::Relaxed),
+        babybear_merkle_readback_mappings: GPU_BABYBEAR_MMCS_READBACK_MAPPINGS
+            .load(Ordering::Relaxed),
+        babybear_query_auth_digests: GPU_BABYBEAR_MMCS_QUERY_AUTH_DIGESTS.load(Ordering::Relaxed),
     }
 }
 
@@ -3342,8 +3356,11 @@ impl BbHashCtx {
     /// device-resident tree build into `log2(height)` GPU/host barriers.  Each
     /// level now has its own resident buffer until the root is complete.  We
     /// enqueue all device-to-host copies together, request all mappings, and
-    /// synchronize exactly once.  Separate staging buffers avoid imposing a
-    /// new whole-tree `max_buffer_size` requirement on large recursion trees.
+    /// synchronize exactly once.  For the normal HidingFRI envelope all layers
+    /// are packed into one staging buffer and therefore require one map
+    /// callback, rather than one callback/allocation per level.  Exceptionally
+    /// large recursion trees retain the segmented-buffer fallback so this
+    /// optimization never imposes a new whole-tree `max_buffer_size` limit.
     fn read_digest_layers_batched(&self, layers: &[(wgpu::Buffer, usize)]) -> Vec<Vec<[u32; 8]>> {
         assert!(
             !layers.is_empty(),
@@ -3353,6 +3370,73 @@ impl BbHashCtx {
             layers.iter().all(|(_, count)| *count > 0),
             "Merkle digest layers must be non-empty"
         );
+
+        let total_words = layers.iter().map(|(_, count)| count * 8).sum::<usize>();
+        if total_words <= self.max_binding_u32s {
+            let offsets = layers
+                .iter()
+                .scan(0usize, |offset, (_, count)| {
+                    let start = *offset;
+                    *offset += count * 8;
+                    Some(start)
+                })
+                .collect::<Vec<_>>();
+            let read = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("bb_dig_read_tree"),
+                size: (total_words * 4) as u64,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut enc = self.device.create_command_encoder(&Default::default());
+            for ((resident, count), offset_words) in layers.iter().zip(&offsets) {
+                enc.copy_buffer_to_buffer(
+                    resident,
+                    0,
+                    &read,
+                    (*offset_words * 4) as u64,
+                    (*count as u64) * 32,
+                );
+            }
+            self.queue.submit([enc.finish()]);
+
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            read.slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = send.send(result);
+                });
+            self.device.poll(wgpu::Maintain::Wait);
+            receive
+                .recv()
+                .expect("BabyBear Merkle readback callback disappeared")
+                .expect("BabyBear Merkle readback mapping failed");
+
+            let out = {
+                let mapped = read.slice(..).get_mapped_range();
+                let words: &[u32] = bytemuck::cast_slice(&mapped);
+                assert_eq!(
+                    words.len(),
+                    total_words,
+                    "BabyBear packed Merkle readback length changed after preflight"
+                );
+                layers
+                    .iter()
+                    .zip(offsets)
+                    .map(|((_, count), offset)| {
+                        words[offset..offset + count * 8]
+                            .chunks_exact(8)
+                            .map(|chunk| chunk.try_into().expect("eight-word digest chunk"))
+                            .collect::<Vec<[u32; 8]>>()
+                    })
+                    .collect::<Vec<_>>()
+            };
+            read.unmap();
+
+            GPU_BABYBEAR_MMCS_READBACK_BATCHES.fetch_add(1, Ordering::Relaxed);
+            GPU_BABYBEAR_MMCS_READBACK_LAYERS.fetch_add(layers.len() as u64, Ordering::Relaxed);
+            GPU_BABYBEAR_MMCS_READBACK_MAPPINGS.fetch_add(1, Ordering::Relaxed);
+            return out;
+        }
 
         let reads = layers
             .iter()
@@ -3411,6 +3495,7 @@ impl BbHashCtx {
 
         GPU_BABYBEAR_MMCS_READBACK_BATCHES.fetch_add(1, Ordering::Relaxed);
         GPU_BABYBEAR_MMCS_READBACK_LAYERS.fetch_add(layers.len() as u64, Ordering::Relaxed);
+        GPU_BABYBEAR_MMCS_READBACK_MAPPINGS.fetch_add(reads.len() as u64, Ordering::Relaxed);
         out
     }
 }
@@ -3433,7 +3518,11 @@ pub enum GpuBbMmcsProverData<M> {
 /// Reinterpret 8 Montgomery u32 words as `[BabyBear; 8]` (BabyBear is
 /// `repr(transparent)` over its Montgomery u32 — the device word IS the value).
 fn bb8_from_monty(d: &[u32; 8]) -> [BabyBear; 8] {
-    core::array::from_fn(|k| u32s_into_bb(vec![d[k]])[0])
+    // `BabyBear` is `repr(transparent)` over its Montgomery u32 and an array
+    // has no padding between elements.  Copying the eight words at once avoids
+    // the old eight one-element heap allocations on every Merkle sibling in
+    // every FRI query.
+    unsafe { core::mem::transmute::<[u32; 8], [BabyBear; 8]>(*d) }
 }
 
 /// The GPU all-BabyBear MMCS. Same `Commitment`/`Proof` types as the CPU
@@ -3924,6 +4013,8 @@ impl Mmcs<BabyBear> for GpuBabyBearMmcs {
                     proof.push(bb8_from_monty(&layer[idx ^ 1]));
                     idx >>= 1;
                 }
+                GPU_BABYBEAR_MMCS_QUERY_AUTH_DIGESTS
+                    .fetch_add(proof_levels as u64, Ordering::Relaxed);
                 BatchOpening::new(opened_values, proof)
             }
         }
@@ -4261,6 +4352,18 @@ pub fn require_hiding_gpu_dispatch_since(
     if after.babybear_merkle_readback_layers <= before.babybear_merkle_readback_layers {
         return Err(
             "HidingFRI GPU Merkle readback did not materialize any opening layer".to_string(),
+        );
+    }
+    if after.babybear_merkle_readback_mappings <= before.babybear_merkle_readback_mappings {
+        return Err(
+            "HidingFRI GPU Merkle readback completed without a mapped transcript buffer"
+                .to_string(),
+        );
+    }
+    if after.babybear_query_auth_digests <= before.babybear_query_auth_digests {
+        return Err(
+            "HidingFRI proof completed without consuming GPU-tree authentication digests"
+                .to_string(),
         );
     }
     Ok(after)

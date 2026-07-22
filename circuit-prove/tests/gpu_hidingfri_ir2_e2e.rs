@@ -99,6 +99,10 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         after.babybear_merkle_readback_batches - before.babybear_merkle_readback_batches;
     let readback_layer_delta =
         after.babybear_merkle_readback_layers - before.babybear_merkle_readback_layers;
+    let readback_mapping_delta =
+        after.babybear_merkle_readback_mappings - before.babybear_merkle_readback_mappings;
+    let query_auth_digest_delta =
+        after.babybear_query_auth_digests - before.babybear_query_auth_digests;
     assert_eq!(
         readback_batch_delta, commit_delta,
         "each GPU Merkle commit must cross the host boundary exactly once"
@@ -106,6 +110,14 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     assert!(
         readback_layer_delta > readback_batch_delta,
         "whole-tree readback counter did not include opening layers"
+    );
+    assert_eq!(
+        readback_mapping_delta, commit_delta,
+        "normal HidingFRI trees must pack every resident layer into one mapped transcript buffer"
+    );
+    assert!(
+        query_auth_digest_delta > 0,
+        "FRI query construction did not consume authentication digests from the GPU trees"
     );
     let (resident_hits_after, _) = lde_residency_counters();
     assert!(
@@ -192,13 +204,15 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     );
 
     eprintln!(
-        "GPU HidingFRI IR2 adapter={adapter}: depth={DEPTH}, proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, whole-tree readback batches +{} ({} layers), DFT dispatches +{}, resident LDE blits +{}",
+        "GPU HidingFRI IR2 adapter={adapter}: depth={DEPTH}, proof={} bytes, GPU={:.3}s CPU={:.3}s, GPU commits +{}, whole-tree readback batches +{} ({} layers, {} mappings), query auth digests +{}, DFT dispatches +{}, resident LDE blits +{}",
         gpu_bytes.len(),
         gpu_elapsed.as_secs_f64(),
         cpu_elapsed.as_secs_f64(),
         commit_delta,
         readback_batch_delta,
         readback_layer_delta,
+        readback_mapping_delta,
+        query_auth_digest_delta,
         after.dft_dispatches - before.dft_dispatches,
         resident_hits_after - resident_hits_before,
     );
