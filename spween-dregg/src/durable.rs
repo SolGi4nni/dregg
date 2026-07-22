@@ -70,6 +70,16 @@ pub struct WorldCellCheckpoint {
 /// Implementations can be backed by a remote service, HSM counter, TPM, or the
 /// hardened local-file implementation below.
 pub trait WorldCellCheckpointAnchor: Send + Sync {
+    /// Establish the first coordinate during explicit provisioning. Exact
+    /// retries are idempotent; this is the only operation allowed to create
+    /// previously absent anchor state.
+    fn initialize_authenticated_checkpoint(
+        &self,
+        checkpoint: &WorldCellCheckpoint,
+    ) -> Result<(), String>;
+
+    /// Observe an already-established coordinate. Missing anchor state is an
+    /// integrity failure, so deletion cannot turn a rollback into first use.
     fn observe_authenticated_checkpoint(
         &self,
         checkpoint: &WorldCellCheckpoint,
@@ -122,13 +132,23 @@ impl FileWorldCellCheckpointAnchor {
 }
 
 impl WorldCellCheckpointAnchor for FileWorldCellCheckpointAnchor {
+    fn initialize_authenticated_checkpoint(
+        &self,
+        checkpoint: &WorldCellCheckpoint,
+    ) -> Result<(), String> {
+        self.validate_directory_identity()
+            .map_err(|error| error.to_string())?;
+        observe_file_checkpoint(&self.directory_handle, &self.directory, checkpoint, true)
+            .map_err(|error| error.to_string())
+    }
+
     fn observe_authenticated_checkpoint(
         &self,
         checkpoint: &WorldCellCheckpoint,
     ) -> Result<(), String> {
         self.validate_directory_identity()
             .map_err(|error| error.to_string())?;
-        observe_file_checkpoint(&self.directory_handle, &self.directory, checkpoint)
+        observe_file_checkpoint(&self.directory_handle, &self.directory, checkpoint, false)
             .map_err(|error| error.to_string())
     }
 }
@@ -529,8 +549,8 @@ impl FileWorldCellDurability {
     fn install_new(&self, image: DurableImage) -> Result<(), WorldError> {
         self.validate_directory_identity()?;
         image.validate_committed(&self.intent_mac_key)?;
+        self.initialize_checkpoint(&image)?;
         write_image(&self.directory_handle, &self.directory, &image, true)?;
-        self.observe_checkpoint(&image)?;
         *self.image.lock().unwrap_or_else(|error| error.into_inner()) = image;
         Ok(())
     }
@@ -569,6 +589,12 @@ impl FileWorldCellDurability {
     fn observe_checkpoint(&self, image: &DurableImage) -> Result<(), WorldError> {
         self.checkpoint_anchor
             .observe_authenticated_checkpoint(&image.checkpoint()?)
+            .map_err(WorldError::Durability)
+    }
+
+    fn initialize_checkpoint(&self, image: &DurableImage) -> Result<(), WorldError> {
+        self.checkpoint_anchor
+            .initialize_authenticated_checkpoint(&image.checkpoint()?)
             .map_err(WorldError::Durability)
     }
 
@@ -716,6 +742,7 @@ fn observe_file_checkpoint(
     directory_handle: &File,
     directory: &Path,
     checkpoint: &WorldCellCheckpoint,
+    allow_initialize: bool,
 ) -> Result<(), WorldError> {
     let cell = cell_hex(checkpoint.target_cell);
     let lock_name = format!("world-cell-{cell}.checkpoint.lock");
@@ -767,6 +794,10 @@ fn observe_file_checkpoint(
             }
             return Ok(());
         }
+    } else if !allow_initialize {
+        return Err(WorldError::Durability(
+            "authenticated world checkpoint anchor is missing".to_owned(),
+        ));
     }
 
     if (checkpoint.final_receipt_count == 0) != checkpoint.final_receipt_head.is_none() {
@@ -1263,7 +1294,10 @@ mod tests {
             authority_root: [0x16; 32],
             state_digest: [0x17; 32],
         };
-        anchor.observe_authenticated_checkpoint(&genesis).unwrap();
+        assert!(anchor.observe_authenticated_checkpoint(&genesis).is_err());
+        anchor
+            .initialize_authenticated_checkpoint(&genesis)
+            .unwrap();
         anchor.observe_authenticated_checkpoint(&genesis).unwrap();
 
         let mut next = genesis.clone();
@@ -1291,6 +1325,13 @@ mod tests {
                 .observe_authenticated_checkpoint(&wrong_program)
                 .is_err()
         );
+
+        let checkpoint_file = temp.path().join("anchor").join(format!(
+            "world-cell-{}.checkpoint",
+            cell_hex(genesis.target_cell)
+        ));
+        fs::remove_file(checkpoint_file).unwrap();
+        assert!(anchor.observe_authenticated_checkpoint(&next).is_err());
     }
 
     #[test]
