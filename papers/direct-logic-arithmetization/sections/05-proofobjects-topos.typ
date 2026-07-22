@@ -1,12 +1,13 @@
 #import "../section-helpers.typ": callout, theorem, boundary
 
-= Proof objects beyond polynomials:\ realizability, descent, and transcript soundness
+= Proof objects beyond polynomials:\ realizability, coverage, and transcript soundness
 
 The corrected arithmetic constructions answer how to present a chosen judgment to a
-chosen algebraic backend. They do not make first-order syntax, polynomial syntax, or
-a finite field the primitive notion of proof. A stronger architecture starts with
-meaning, chooses evidence, gives that evidence a local agreement structure, and only
-then binds and samples it. Each transition needs its own theorem.
+chosen backend. They do not make first-order syntax, polynomial syntax, or a finite
+field the primitive notion of proof. A stronger architecture starts with meaning,
+chooses evidence, changes its presentation with explicit programs and costs, gives
+the evidence a local coverage structure, and only then binds and samples it. Each
+transition now has a named theorem or an explicitly open cryptographic socket.
 
 #block(breakable: false)[
   #table(
@@ -17,17 +18,17 @@ then binds and samples it. Each transition needs its own theorem.
       [What does the judgment assert?],
       [finite semantics; realizability predicates; resource-sensitive denotations],
       [application-specific atoms, effects, and observation policy],
-    [Evidence],
-      [What witnesses the judgment?],
-      [PCA realizers; assembly morphisms; interaction traces; presentation changes],
-      [a complete source-to-evidence compiler],
-    [Agreement],
-      [When do local views determine one global object?],
-      [exact descent; robust-soundness sockets; explicit finite testers],
+    [Evidence / presentation],
+      [What witnesses the judgment, and in what representation?],
+      [PCA realizers; assembly morphisms; interaction traces; per-subterm certified changes],
+      [executable adapters and explicitly charged glue],
+    [Coverage / agreement],
+      [When do local views detect invalidity or determine one global object?],
+      [effective assembly covers; exact descent; finite coverage presentations],
       [a code-specific distance and local-testability theorem],
     [Transcript],
       [How can hidden checks miss an obstruction?],
-      [commit-before-query games; exact miss counts; BabyBear query-bias bound],
+      [natural pullback of protocols; exact miss counts; BabyBear query-bias bound],
       [OOD and low-degree reductions with concrete parameters],
     [Binding],
       [Why can no response rewrite committed evidence?],
@@ -37,14 +38,15 @@ then binds and samples it. Each transition needs its own theorem.
 ]
 
 #align(center)[
-  $ "judgment" arrow "evidence" arrow "local views"
+  $ "judgment" arrow "evidence" arrow "presentation" arrow "local coverage"
     arrow "hidden queries" arrow "bound transcript". $
 ]
 
-The categorical semantics explains what evidence and compatible restriction mean.
-The probability game explains what a sampled verifier can miss. The cryptographic
-backend explains why the prover cannot change an unseen view after learning the
-query. None of those three explanations subsumes the other two.
+The categorical semantics explains what evidence, effective cover, and compatible
+restriction mean. The finite probability game explains what a sampled verifier can
+miss. The cryptographic backend explains why the prover cannot change an unseen view
+after learning the query and why a transcript seed has the modeled distribution.
+None of those explanations subsumes the others.
 
 == Realizability is a semantics of evidence, not a field trick
 
@@ -106,37 +108,63 @@ already at a singleton index.
   classical route]; citation is not a substitute for the missing Lean construction.
 ])
 
-=== Assemblies make the program boundary concrete
+=== Assemblies now carry effective regular coverage
 
 `Assembly` pairs a semantic carrier with a nonempty realizability relation. An
 assembly morphism is an actual semantic function tracked uniformly by one PCA
-element. `categoryAssembly` proves genuine category laws: the derived identity
-combinator tracks identity, the exact composition program tracks composition, and
-arrow equality is equality of the semantic functions.
+element. `categoryAssembly` proves genuine category laws. Terminal objects, binary
+products, and equalizers were already explicit; `AssemblyRegularCoverage` adds
+pullbacks with their full universal property through `pullback_condition`,
+`pullbackLift_fst`, `pullbackLift_snd`, and `pullbackLift_unique`.
 
-This category already has useful finite-limit structure. The terminal assembly has
-its unique incoming arrow. A chosen PCA pairing supplies binary products, with
-`pair_fst`, `pair_snd`, and `pair_unique` proving the universal property. Equalizers
-inherit the source realizers, and `equalizerLift_ι` plus `equalizerLift_unique` prove
-factorization and uniqueness without changing the original tracker.
+The new cover notion is evidence-relevant. `EffectiveCover q` does not merely say
+that $q$ is surjective. It supplies one `liftCode` which, from any realizer of a
+target point, computes a realizer of a source point above it. This is exactly the
+program needed for constructive base change. Theorems `effectiveCover_id`,
+`effectiveCover_comp`, and `effectiveCover_pullback` prove identity, composition,
+and pullback stability, while `effectiveCover_surjective` recovers ordinary semantic
+surjectivity.
 
-Modest assemblies induce partial equivalence relations on realizers.
-`tracker_respects_realizerPER` proves that every uniform tracker transports those
-PERs and returns both output realizers and their exact PCA applications. At the
-compiler boundary, `ProgramCertificate` contains input and output representations,
-a PCA program, and a theorem that the program produces the encoded result.
-`ProgramCertificate.hom` turns it into an assembly morphism, while
-`ProgramCertificate.comp_hom` proves that certificate composition agrees with
-categorical composition. An extensional polynomial function alone supplies none of
-that executable evidence.
+The coverage is regular rather than decorative. `effectiveCover_isKernelPairCoequalizer`
+proves that every effective cover is the coequalizer of its explicit kernel pair.
+Every assembly morphism $f$ also factors as
 
-== Presentations form fibers, not one global CCC
+#align(center)[
+  $ X arrow^"effective cover" "im"(f) arrow^"monic" Y. $
+]
+
+Here `imageQuot_effectiveCover` supplies the cover, `imageIncl_monic` supplies exact
+cancellation, and `image_factorization` proves their composite is $f$.
+`imageQuot_isKernelPairCoequalizer` gives the coequalizer law for the quotient.
+`ProgramCertificate.has_regular_image_factorization` transports the result directly
+to compiled PCA programs. The 29 kernel-clean coverage keystones therefore construct
+the regular-image ingredients of an exact completion, not merely a metaphor about
+local evidence.
+
+Modest assemblies still induce partial equivalence relations on realizers, and
+`tracker_respects_realizerPER` proves their transport by uniform trackers. At the
+compiler boundary, a `ProgramCertificate` contains representations, executable PCA
+code, and its run theorem; `ProgramCertificate.hom` turns it into the morphism to
+which the new factorization applies.
+
+#boundary([
+  Effective regular coverage is not yet the realizability topos. The development
+  does not prove that all internal equivalence relations are effective, construct
+  the exact completion, or establish elementary-topos axioms. Nor does a cover or
+  program certificate imply transcript soundness. The concrete theorem
+  `compiled_regular_image_does_not_supply_query_soundness` exhibits a certified
+  constant-false program with its effective regular image alongside an always-accept
+  attestation that is complete but range-unsound.
+])
+
+== Presentation change is fibred and resource-aware
 
 The resource-aware `Presentation` interface records source meaning, evidence,
 acceptance, and a five-axis backend cost. An exact `Change` maps evidence, preserves
 meaning and acceptance in both directions, and carries a compositional cost bound.
-These changes form a category. This is the right place to compose residual,
-Boolean-graph, shared-net, proof, and FHE representations of the same judgment.
+These changes form a category. Section 4's `CertifiedIndexedPresentationCompiler`
+now makes this operational per subterm: child changes tensor, then recombination is
+charged, and `Plan.accepts_iff` closes the source-semantics induction.
 
 The global category is deliberately not cartesian closed. Its objects may carry
 different meanings, while an exact arrow requires those meanings to be equivalent.
@@ -150,10 +178,11 @@ The positive replacement is fibred. Over one fixed meaning, `EvidenceFamily` obj
 vary only the evidence type. Pointwise evidence transformers form a genuine
 cartesian closed category: unit evidence is terminal, paired evidence is product,
 and evidence transformers form exponentials. `EvidenceFamily.laws` packages product
-beta/eta and exponential beta/eta. This result complements the extensional finite
-CCC boundary in Section 4 without changing it: the exponential here is a space of
-evidence transformers inside one semantic fiber, not a finite-field table of every
-source morphism and not a succinctness theorem.
+beta/eta and exponential beta/eta. This complements the indexed compiler without
+changing the boundary: the exponential is a space of evidence transformers inside
+one semantic fibre, not a finite-field table of every source morphism. Likewise,
+`Boundary.free_glue_claim_is_false` proves that a zero-resource semantic fibre does
+not justify zero-cost materialized recombination.
 
 == Exact descent: compatible local evidence glues uniquely
 
@@ -191,6 +220,95 @@ matching valid patches. The three-patch `WeightedStar` theorem
 `rejection_eq_hubDistance` gives exact equality between rejected weight and distance
 to the hub-selected codeword; its one-error example proves coefficient one sharp and
 refutes a false factor-two bound.
+
+== Coverage presentations make query change natural
+
+Assembly covers describe executable lifting of semantic evidence. A second,
+independent categorical structure now describes how a verifier presents local
+obstructions. A `CoveragePresentation Family Invalid` contains a finite query type,
+a decidable predicate `bad family query`, and a detection theorem saying that every
+invalid family has at least one bad query. It contains no commitment, polynomial,
+transcript, or sampler assumption.
+
+A morphism $P arrow Q$ interprets each query of $Q$ as a query of $P$ and preserves
+*and reflects* `bad`. The query map is therefore contravariant. These morphisms form
+a category. `CoveragePresentation.obstruction_natural` proves the naturality square,
+and `obstruction_natural_comp` proves it through successive presentation changes.
+Finite bad-set membership is natural as well, but cardinality need not be preserved:
+a query interpreter may duplicate a source query.
+
+The protocol layer follows the same variance. `PresentedProtocol.pullback` reindexes
+an opening scheme and local test without changing its commitment relation.
+`PresentedProtocol.pullback_comp` proves that two such changes equal pullback along
+their composite. `misses_natural` and `missEvent_natural` prove exact equality of the
+pointwise and seed-level miss events. This event equality is the safe invariant;
+silently comparing bad-set cardinalities would be false for duplicating maps.
+
+#block(breakable: false)[
+  The realizability connection is explicit but limited.
+  `RealizabilityLayer.obstructionPredicate_natural` proves reindexing naturality for
+  the obstruction predicate in the existing PCA doctrine, and
+  `obstructionPredicate_classified` classifies it by the existing generic predicate.
+  If a query interpreter additionally has one uniform PCA tracker,
+  `TrackedPresentationMap.comp` composes those interpreters as assembly morphisms.
+  Coverage naturality alone does not manufacture that tracker or an associated topos.
+]
+
+#theorem([CATEGORICAL QUERY NATURALITY], [
+  The 37 kernel-clean keystones of `CategoricalDescentQueryProtocol` prove a category
+  of finite coverage presentations, compositional protocol pullback, exact
+  naturality of obstruction and miss events, a realizability reindexing law, and a
+  factored soundness interface. Presentation change adds no hidden cryptographic
+  error term because it proves event equality. Commitment binding, transcript
+  sampling, OOD reduction, and low-degree reduction remain separate inputs.
+])
+
+=== Soundness factors into four independently priced events
+
+For a computational commitment, `BindingFailureAtSeed` records the exact bad event:
+some accepted opening differs from the view fixed by the commitment.
+`locallyAccepts_misses_or_bindingFailure` proves that locally accepted openings
+either miss all precommitted obstructions or exhibit that failure. The event
+inclusion `acceptSeeds_subset_four_events` therefore places every accepting seed in
+one of four classes:
+
+1. an OOD exception;
+2. a low-degree or folding exception;
+3. a binding failure; or
+4. a sampler miss.
+
+`acceptSeed_card_le_budgets_with_binding` gives the exact finite union bound.
+`factored_soundness_with_binding_budget` combines it with coverage detection and a
+`SamplerBound`, yielding
+
+#align(center)[
+  $ #"accepting seeds" <= epsilon_"OOD" + epsilon_"LDT"
+    + epsilon_"bind" + epsilon_"miss", $
+]
+
+where the displayed terms are finite seed counts in this theorem, not silently
+normalized probabilities. `factored_soundness` is the perfect `PointBinding`
+specialization and removes the binding-failure addend. A computational deployment
+must supply a reduction translating its commitment advantage into the corresponding
+budget.
+
+`SamplerBound.independentUniform` supplies the exact information-theoretic reference
+for $k$ uniform queries with replacement. It does *not* prove that Fiat--Shamir or a
+random oracle produces that seed distribution. For the transparent reference,
+`transparent_uniform_acceptance_card` proves the exact count
+$|"good queries"|^k$. In the concrete finite-patch instance,
+`WeightedStarInstance.oneError_uniform_one_query_strict` proves that one uniform
+query has strictly fewer accepting seeds than the complete-overlap query space. This
+is deliberately the *unweighted* complete-overlap sampler; it does not flatten the
+weighted-star example's separate edge weights into the theorem.
+
+#boundary([
+  Categorical naturality says that exact changes of query presentation preserve the
+  obstruction and miss events. It does not prove commitment binding, Fiat--Shamir or
+  random-oracle soundness, an OOD polynomial identity bound, FRI proximity, or the
+  adversarial seed distribution. Those are the explicitly separate premises of
+  `factored_soundness_with_binding_budget` and the transcript theorems below.
+])
 
 == Hidden-query soundness: price the obstruction that was missed
 
@@ -307,12 +425,15 @@ bound is attained exactly.
     [Realizability / tripos],
       [meaning, uniform evidence transformation, logical adjoints, substitution],
       [local testability, hiding, commitment binding, proof size],
-    [Assemblies / PERs],
-      [tracked semantic maps, executable representation boundaries, extensional quotients],
-      [a compiler program without a `ProgramCertificate`],
+    [Assemblies / regular coverage],
+      [tracked maps, pullback-stable effective covers, kernel-pair descent, regular images],
+      [exact completion, a topos, or query soundness],
     [Descent / sheaf condition],
       [unique gluing from complete compatible local data],
       [that a few sampled overlaps expose every inconsistency],
+    [Coverage presentation],
+      [natural obstruction and miss events under exact query change],
+      [binding, Fiat--Shamir, OOD, or FRI budgets],
     [Robust code theorem],
       [distance versus rejected-query weight and proximity gaps],
       [that an adaptive prover is bound to one word],
@@ -325,18 +446,14 @@ bound is attained exactly.
   )
 ]
 
-This separation leaves room for non-polynomial proof objects. First and Kaufman's
-cosystolic expansion of sheaves on posets gives two-query locally testable codes
-#link("https://arxiv.org/abs/2403.19388")[arXiv:2403.19388]. Dinur, Liu, and Zhang's
-HDX Tanner codes combine local Reed--Solomon views with a multiplication property
-#link("https://arxiv.org/abs/2308.15563")[arXiv:2308.15563]. Flowering and Cayley-graph
-IOPPs provide graph-indexed alternatives
-#link("https://arxiv.org/abs/2501.14337")[arXiv:2501.14337]
-#link("https://arxiv.org/abs/2508.10510")[arXiv:2508.10510]. Each is a candidate for
-a quantitative socket, not an imported theorem about DREGG's deployed parameters.
-FRI remains one established polynomial-code realization
-#link("https://doi.org/10.4230/LIPIcs.ICALP.2018.14")[ICALP 2018], not the definition
-of proof-object descent.
+Non-polynomial quantitative sockets remain possible: sheaf cosystolic codes
+#link("https://arxiv.org/abs/2403.19388")[arXiv:2403.19388], HDX Tanner codes with
+local Reed--Solomon views #link("https://arxiv.org/abs/2308.15563")[arXiv:2308.15563],
+and graph IOPPs #link("https://arxiv.org/abs/2501.14337")[arXiv:2501.14337]
+#link("https://arxiv.org/abs/2508.10510")[arXiv:2508.10510]. These are candidate
+sockets, not theorems about DREGG's deployed parameters. FRI is one established
+polynomial-code realization #link("https://doi.org/10.4230/LIPIcs.ICALP.2018.14")[ICALP
+2018], not the definition of proof-object descent.
 
 == Local interaction traces are proof objects too
 
@@ -355,17 +472,31 @@ The executable counterexamples reject cross-kind closing, a rule at the wrong
 location, and silent weakening. These traces are genuine proof objects that need
 not first be formulas or residual polynomials.
 
-They are not yet a succinct argument. The remaining path is concrete: compile a
-typed interaction trace to local patch constraints; prove exact descent of its
-denotation and resource invariant; instantiate a robust code/proximity theorem;
-then bind the encoded patches and apply the transcript game above.
+The new live intensional descriptor closes one local backend boundary. For a typed
+STLC step it emits the lossless root/address receipt, binds every row cell to public
+inputs, and recomputes two domain-separated receipt-layout digests. `trace_complete`
+and `satisfying_trace_relation_sound` connect a satisfying DescriptorIR2 witness to
+both executable receipt acceptance and typed denotational preservation. Its exact
+cost is $d+5$ columns and public inputs, $d+5$ linear PI constraints, two hash sites,
+and $2(d+2)$ absorbed felts at address depth $d$.
+
+That one-row descriptor is still not a succinct argument for a complete trace. The
+live hash-site limit gives $d <= 14$ without a multi-block sponge, and
+`no_exact_typed_source_decoder` proves that the receipt layout has already erased
+the typed endpoint syntax. The remaining route is therefore precise: add typed-net
+statement data where required; encode a sequence of local receipts as covered
+patches; prove exact descent and the resource invariant; instantiate a robust
+code/proximity theorem; then supply binding, Fiat--Shamir, and FRI or another IOPP
+through the factored protocol interface.
 
 #callout([CONSTRUCTION MAP], [
-  Realizability supplies a semantics of evidence and quantification. Assemblies and
-  certified presentations expose program and representation boundaries. Exact
-  descent supplies the local-to-global law. Robust code theorems price inconsistency;
-  the hidden-query and full-transcript games price missed obstructions and modular
-  query bias. Commitments, FRI, graph IOPPs, and interaction traces are composable
-  realizations of particular layers. No layer requires FOL, hashes, or polynomials
-  to be the primitive notion of logic.
+  Realizability supplies a semantics of evidence and quantification. Assembly
+  regular coverage supplies executable lifting, kernel-pair descent, and image
+  factorization. The indexed compiler chooses a presentation per subterm while
+  charging conversion and glue. Exact descent supplies the local-to-global law;
+  coverage presentations make obstruction and miss events natural under query
+  change. Robust code theorems price inconsistency, and the transcript games price
+  missed obstructions and modular query bias. Commitments, Fiat--Shamir, FRI, graph
+  IOPPs, and live interaction receipts instantiate separate layers. No layer
+  requires FOL, hashes, or polynomials to be the primitive notion of logic.
 ])
