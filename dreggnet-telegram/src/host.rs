@@ -76,6 +76,14 @@ use crate::cipherclerk::TelegramCipherclerk;
 use crate::transport::{MessageId, Transport};
 use crate::{ChatId, ChatKind, TelegramFrontend, TelegramUserId};
 
+#[cfg(feature = "shielded-crown-controller")]
+mod shielded_crown;
+#[cfg(feature = "shielded-crown-controller")]
+pub use shielded_crown::{
+    ShieldedCrownAuthorityCustody, ShieldedCrownAuthorityStore, TelegramShieldedCrownError,
+    TelegramShieldedCrownRequest,
+};
+
 /// The affordance verb the offerings-menu buttons carry — a host-level control (open the offering
 /// at `arg` in this chat), distinct from any offering's own turn verbs.
 pub const TURN_OPEN: &str = "open";

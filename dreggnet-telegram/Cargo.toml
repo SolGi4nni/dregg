@@ -25,6 +25,18 @@ version = "0.1.0"
 edition = "2024"
 description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trait: a Telegram user plays the same DungeonOffering on the same real dregg substrate as the Discord bot (derived identity, Surface->inline keyboard, callback->Action), with the Bot API transport INJECTED so the logic is testable with no token/network."
 
+[features]
+default = []
+# Public-only Telegram controller for the private/proven Bazaar -> Dungeon crown.
+# Kept explicit because it pulls the full fhEgg verifier and persistence tower;
+# ordinary Telegram surface work does not need to relink that archive.
+shielded-crown-controller = [
+    "dreggnet-catalog/private-fhegg-game-consequence",
+    "dep:dungeon-on-dregg",
+    "dep:dregg-persist",
+    "dep:dreggnet-market",
+]
+
 [dependencies]
 # THE CORE — the frontend-agnostic Offering/Session/Frontend model + `DungeonOffering`
 # (offering #0) over the real substrate. This crate is a `Frontend` impl; it does NOT
@@ -42,6 +54,13 @@ dreggnet-offerings = { path = "../dreggnet-offerings", features = [
 # `src/seated.rs`), the nine do-once RPG feature surfaces, and the five service offerings — from ONE
 # list instead of this crate's own hand-maintained copy (docs/BOT-SHARED-BACKEND-DESIGN.md).
 dreggnet-catalog = { path = "../dreggnet-catalog" }
+# Exact Red/Blue dungeon vocabulary used only by the optional crown controller.
+dungeon-on-dregg = { path = "../dungeon-on-dregg", optional = true }
+# Trusted typed custody behind the optional shielded-crown controller.  Neither
+# crate contributes a player-supplied decoder: the request carries only public
+# lookup ids, while the controller receives verifier/store-minted Rust values.
+dregg-persist = { path = "../persist", optional = true }
+dreggnet-market = { path = "../dreggnet-market", optional = true }
 # THE INTERACTION-ENVELOPE AUDIT FACILITY (docs/BOT-AUDIT-LOGGING-DESIGN.md) — the shared
 # event shape + non-blocking JSONL writer all three frontends emit through; `src/audit.rs`
 # is only this deploy's log resolution over it.
@@ -88,9 +107,9 @@ name = "dreggnet-telegram-bot"
 path = "src/bin/dreggnet-telegram-bot.rs"
 
 [dev-dependencies]
-# Offering #0's committed universe — the `KP_*` choice constants the driven tests play a
-# winning / illegal line with (exactly as `dreggnet-offerings/tests/driven.rs` does). A
-# test-only dep: the frontend itself is offering-agnostic (it renders any `Offering`).
+# Offering #0's committed universe for the ordinary frontend tests.  The same
+# package is an optional production dependency only when the crown controller
+# is enabled.
 dungeon-on-dregg = { path = "../dungeon-on-dregg" }
 # THE PARITY REFEREE — the both-polarity offering-set test drives this crate's host over
 # `MockTransport` and compares its key set against the LIVE web catalog (`demo_host`), not a
