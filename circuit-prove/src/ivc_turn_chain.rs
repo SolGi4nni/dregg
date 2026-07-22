@@ -292,6 +292,12 @@ pub const SEG_ANCHOR_WIDTH: usize = 8;
 /// `customFieldKExposure` emit / the Rust `generate_rotated_custom_wide` field exposure.
 pub const CUSTOM_APP_FIELD_OCTET_LEN: usize = 8;
 
+/// The native-eight post-state fields-map root published immediately after the
+/// Custom app-field octet and immediately before the 16 wide state anchors.
+/// Lean source: `EffectVmEmitRotationV3.withAfterFieldsRootPins`; Rust witness
+/// source: `trace_rotated::FIELDS_ROOT_GROUP` (non-contiguous rotated columns).
+pub const CUSTOM_POST_FIELDS_ROOT_LEN: usize = 8;
+
 /// Faithful custom-wide ABI: all eight canonical program-VK felts are trace-carried
 /// and pinned at PI 54..61 (low4 params + four exact VK teeth).
 pub const CUSTOM_PROGRAM_VK_PI_LO: usize = 54;
@@ -3298,7 +3304,11 @@ fn mint_rotated_turn_leaf(
                     // octet; the claim is `L = app_root_len` felts wide starting there.
                     let n = leg.public_inputs.len();
                     let octet_lo = n
-                        .checked_sub(2 * SEG_ANCHOR_WIDTH + CUSTOM_APP_FIELD_OCTET_LEN)
+                        .checked_sub(
+                            2 * SEG_ANCHOR_WIDTH
+                                + CUSTOM_POST_FIELDS_ROOT_LEN
+                                + CUSTOM_APP_FIELD_OCTET_LEN,
+                        )
                         .ok_or_else(|| TurnChainError::TurnProofInvalid {
                             index: i,
                             reason: format!(
@@ -3404,46 +3414,112 @@ fn mint_rotated_turn_leaf(
             }
             let n = leg.public_inputs.len();
             let octet_lo = n
-                .checked_sub(2 * SEG_ANCHOR_WIDTH + CUSTOM_APP_FIELD_OCTET_LEN)
+                .checked_sub(
+                    2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN + CUSTOM_APP_FIELD_OCTET_LEN,
+                )
                 .ok_or_else(|| TurnChainError::TurnProofInvalid {
                     index: i,
                     reason: format!("direct-IR2 custom leg publishes only {n} PIs"),
                 })?;
-            let dual = prove_descriptor_leaf_expose_segment_and_claims(
-                &leg.descriptor,
-                &leg.proof,
-                &leg.public_inputs,
-                config,
-                &[
-                    (
-                        crate::joint_turn_recursive::CUSTOM_COMMIT_PI_LO,
-                        crate::joint_turn_recursive::CUSTOM_COMMIT_LEN,
-                    ),
-                    (octet_lo + binding.field_key, binding.app_root_len),
-                    (CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN),
-                ],
-            )
-            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
-            let direct_leaf =
-                crate::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_root_commitment(
-                    &bundle.descriptor,
-                    &bundle.base_trace,
-                    &bundle.public_inputs,
-                    &bundle.vk_recipe,
-                    binding,
-                    config,
-                )
-                .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
-            crate::joint_turn_recursive::prove_direct_ir2_binding_node_app_root_segmented(
-                &dual,
-                &direct_leaf,
-                config,
-                binding.app_root_len,
-            )
-            .map_err(|e| TurnChainError::TurnProofInvalid {
-                index: i,
-                reason: format!("direct-IR2 custom binding node failed: {e:?}"),
-            })?
+            match &bundle.post_fields_root_binding {
+                None => {
+                    let dual = prove_descriptor_leaf_expose_segment_and_claims(
+                        &leg.descriptor,
+                        &leg.proof,
+                        &leg.public_inputs,
+                        config,
+                        &[
+                            (
+                                crate::joint_turn_recursive::CUSTOM_COMMIT_PI_LO,
+                                crate::joint_turn_recursive::CUSTOM_COMMIT_LEN,
+                            ),
+                            (octet_lo + binding.field_key, binding.app_root_len),
+                            (CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN),
+                        ],
+                    )
+                    .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                    let direct_leaf =
+                        crate::custom_leaf_adapter::prove_direct_ir2_leaf_with_app_root_commitment(
+                            &bundle.descriptor,
+                            &bundle.base_trace,
+                            &bundle.public_inputs,
+                            &bundle.vk_recipe,
+                            binding,
+                            config,
+                        )
+                        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                    crate::joint_turn_recursive::prove_direct_ir2_binding_node_app_root_segmented(
+                        &dual,
+                        &direct_leaf,
+                        config,
+                        binding.app_root_len,
+                    )
+                    .map_err(|e| TurnChainError::TurnProofInvalid {
+                        index: i,
+                        reason: format!("direct-IR2 custom binding node failed: {e:?}"),
+                    })?
+                }
+                Some(fields_binding) => {
+                    if !fields_binding.is_well_formed() {
+                        return Err(TurnChainError::TurnProofInvalid {
+                            index: i,
+                            reason: format!(
+                                "direct-IR2 custom post-fields-root binding {fields_binding:?} \
+                                 is ill-formed"
+                            ),
+                        });
+                    }
+                    let fields_root_lo = n
+                        .checked_sub(2 * SEG_ANCHOR_WIDTH + CUSTOM_POST_FIELDS_ROOT_LEN)
+                        .ok_or_else(|| TurnChainError::TurnProofInvalid {
+                            index: i,
+                            reason: format!(
+                                "direct-IR2 custom leg publishes only {n} PIs; no faithful \
+                                 post-fields-root octet precedes its state anchors"
+                            ),
+                        })?;
+                    let dual = prove_descriptor_leaf_expose_segment_and_claims(
+                        &leg.descriptor,
+                        &leg.proof,
+                        &leg.public_inputs,
+                        config,
+                        &[
+                            (
+                                crate::joint_turn_recursive::CUSTOM_COMMIT_PI_LO,
+                                crate::joint_turn_recursive::CUSTOM_COMMIT_LEN,
+                            ),
+                            (octet_lo + binding.field_key, binding.app_root_len),
+                            (fields_root_lo, CUSTOM_POST_FIELDS_ROOT_LEN),
+                            (CUSTOM_PROGRAM_VK_PI_LO, DEPLOYED_CUSTOM_PROGRAM_VK_PI_LEN),
+                        ],
+                    )
+                    .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                    let direct_leaf = crate::custom_leaf_adapter::
+                        prove_direct_ir2_leaf_with_app_and_fields_root_commitment(
+                            &bundle.descriptor,
+                            &bundle.base_trace,
+                            &bundle.public_inputs,
+                            &bundle.vk_recipe,
+                            binding,
+                            fields_binding,
+                            config,
+                        )
+                        .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                    crate::joint_turn_recursive::
+                        prove_direct_ir2_binding_node_app_and_fields_root_segmented(
+                            &dual,
+                            &direct_leaf,
+                            config,
+                            binding.app_root_len,
+                        )
+                        .map_err(|e| TurnChainError::TurnProofInvalid {
+                            index: i,
+                            reason: format!(
+                                "direct-IR2 custom fields-root binding node failed: {e:?}"
+                            ),
+                        })?
+                }
+            }
         }
         // THE BRIDGE FOLD ARM (the 7th carrier) — the named residual CLOSED by the
         // felt-domain mint_hash thread: (STEP 1) the executor re-aligned `mint_hash` to

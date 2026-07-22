@@ -3690,7 +3690,8 @@ pub fn apply_rotated_cap_write_after_spine(
     // binds them.
     if dpis.len() > V1_PI_COUNT + 1 {
         dpis[V1_PI_COUNT] = trace[0][BEFORE_BASE + B_STATE_COMMIT]; // rotated OLD commit
-        dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT]; // rotated NEW commit
+        dpis[V1_PI_COUNT + 1] = trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT];
+        // rotated NEW commit
     }
     Ok(())
 }
@@ -5355,8 +5356,8 @@ pub const CUSTOM_HOST_WIDTH_TEETH: usize =
     CUSTOM_HOST_WIDTH + CUSTOM_COMMIT_TEETH_LEN + CUSTOM_VK_TEETH_LEN; // 1627
 
 /// **THE WIDE custom trace generator (`customVmDescriptor2R24`, host 1627 incl the
-/// commitment/VK teeth / 74 base PIs [46 rot + 16 exposure + 4 rc + 8 app-root field octet] +
-/// 16 wide anchors = 90).**
+/// commitment/VK teeth / 82 base PIs [46 rot + 16 exposure + 4 rc + 8 app-root field octet +
+/// 8 faithful fields-root lanes] + 16 wide anchors = 98).**
 ///
 /// Lay the wide custom row for a [`Effect::Custom`] lead. The descriptor's
 /// `proof_bind` op names two row columns, and (the VK epoch + the proof-bind
@@ -5458,7 +5459,8 @@ pub fn generate_rotated_custom_wide(
         // the 16 exposure PIs, then re-append it.
         let rc_tail: Vec<BabyBear> = base_pis.split_off(base_pis.len() - DFA_RC_LEN);
         for k in 0..4 {
-            base_pis.push(r0[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k]); // PI 46..49
+            base_pis.push(r0[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k]);
+            // PI 46..49
         }
         for k in 0..CUSTOM_COMMIT_TEETH_LEN {
             base_pis.push(r0[CUSTOM_COMMIT_TEETH_BASE + k]); // PI 50..53 (commit limbs 4..8)
@@ -5484,21 +5486,31 @@ pub fn generate_rotated_custom_wide(
         for k in 0..CUSTOM_APP_FIELD_OCTET_LEN {
             base_pis.push(last[AFTER_BASE + CUSTOM_APP_FIELD_ROT_BASE + k]); // PI 66..73
         }
+
+        // THE AUTHENTICATED OVERFLOW-MAP WELD (Lean `withAfterFieldsRootPins`): publish the
+        // non-contiguous native-eight `fields_root` group at PI 74..81.  The Descent census
+        // relation opens its eight custody leaves against this root; the direct-IR2 recursion
+        // node connects all eight lanes to these exact post-state columns.  Reading
+        // `AFTER_BASE + B_FIELDS_ROOT + k` would be WRONG: only lane 0 is contiguous, while the
+        // completion lanes are Lean-generated as `FIELDS_ROOT_GROUP = [36,66,67,19..23]`.
+        for col in FIELDS_ROOT_GROUP {
+            base_pis.push(last[AFTER_BASE + col]); // PI 74..81
+        }
     }
-    // 46 base + 16 custom exposure + 4 rc + 8 app-root field octet = 74
+    // 46 base + 16 custom exposure + 4 rc + 8 app-root field octet + fields_root8 = 82
     debug_assert_eq!(
         base_pis.len(),
-        ROT_PI_COUNT + 16 + DFA_RC_LEN + CUSTOM_APP_FIELD_OCTET_LEN
+        ROT_PI_COUNT + 16 + DFA_RC_LEN + CUSTOM_APP_FIELD_OCTET_LEN + FIELDS_ROOT_GROUP.len()
     );
     let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH_TEETH);
     debug_assert_eq!(
         trace[0].len(),
         CUSTOM_HOST_WIDTH_TEETH + 2 * WIDE_NUM_CARRIERS * 8
     );
-    // 70 + 16 wide anchors = 86 (anchors at [70..86))
+    // 82 + 16 wide anchors = 98 (anchors at [82..98))
     debug_assert_eq!(
         dpis.len(),
-        ROT_PI_COUNT + 12 + DFA_RC_LEN + CUSTOM_APP_FIELD_OCTET_LEN + 16
+        ROT_PI_COUNT + 16 + DFA_RC_LEN + CUSTOM_APP_FIELD_OCTET_LEN + FIELDS_ROOT_GROUP.len() + 16
     );
     Ok((trace, dpis))
 }

@@ -5455,6 +5455,86 @@ theorem withAfterOctetPins_publishes (hash : List ℤ → ℤ) (g : EffectVmDesc
 #assert_axioms satisfied2_of_withAfterOctetPins
 #assert_axioms withAfterOctetPins_publishes
 
+/-! ### §FIELDS-ROOT-PI — publish the native post-state fields-map root for custom folds.
+
+`withAfterOctetPins` can only publish a contiguous block of rotated columns.  The faithful
+`fields_root` group is deliberately non-contiguous (`36, 66, 67, 19..23` within the AFTER block),
+so using the octet helper here would publish the wrong statement.  This wrapper names the real
+`fieldsRootGroupCol` projection lane-by-lane.  The Custom direct-IR2 fold uses these eight PIs to
+connect an application's authenticated map-opening root to the exact post-state root already
+absorbed by the wide state commitment.
+-/
+
+/-- Append eight LAST-row PI pins for the faithful AFTER `fields_root` digest. -/
+def withAfterFieldsRootPins (g : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  { g with
+    piCount := g.piCount + 8
+    constraints := g.constraints ++ (List.finRange 8).map (fun i =>
+      VmConstraint2.base (.piBinding .last
+        (fieldsRootGroupCol (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF) i)
+        (g.piCount + i.val))) }
+
+theorem withAfterFieldsRootPins_constraints (g : EffectVmDescriptor2) :
+    (withAfterFieldsRootPins g).constraints
+      = g.constraints ++ (List.finRange 8).map (fun i =>
+          VmConstraint2.base (.piBinding .last
+            (fieldsRootGroupCol (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF) i)
+            (g.piCount + i.val))) := rfl
+
+/-- The fields-root pins are observational: they do not add memory operations. -/
+theorem memOpsOf_withAfterFieldsRootPins (g : EffectVmDescriptor2) :
+    memOpsOf (withAfterFieldsRootPins g) = memOpsOf g := by
+  simp [memOpsOf, withAfterFieldsRootPins, List.filterMap_append, List.filterMap_map]
+
+/-- The fields-root pins are observational: they do not add map operations. -/
+theorem mapOpsOf_withAfterFieldsRootPins (g : EffectVmDescriptor2) :
+    mapOpsOf (withAfterFieldsRootPins g) = mapOpsOf g := by
+  simp [mapOpsOf, withAfterFieldsRootPins, List.filterMap_append, List.filterMap_map]
+
+/-- Peeling the additive fields-root publication recovers the authored inner relation. -/
+theorem satisfied2_of_withAfterFieldsRootPins (hash : List ℤ → ℤ) (g : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (withAfterFieldsRootPins g) minit mfin maddrs t) :
+    Satisfied2 hash g minit mfin maddrs t := by
+  have hmem : memLog (withAfterFieldsRootPins g) t = memLog g t := by
+    simp [memLog, memOpsOf_withAfterFieldsRootPins]
+  have hmap : mapLog (withAfterFieldsRootPins g) t = mapLog g t := by
+    simp [mapLog, mapOpsOf_withAfterFieldsRootPins]
+  exact
+    { rowConstraints := fun i hi c hc => h.rowConstraints i hi c (by
+        rw [withAfterFieldsRootPins_constraints]; exact List.mem_append_left _ hc)
+    , rowHashes := h.rowHashes
+    , rowRanges := h.rowRanges
+    , memAddrsNodup := h.memAddrsNodup
+    , memClosed := fun op hop => h.memClosed op (by rw [hmem]; exact hop)
+    , memDisciplined := by rw [← hmem]; exact h.memDisciplined
+    , memBalanced := by rw [← hmem]; exact h.memBalanced
+    , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
+    , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
+
+/-- Any satisfying wrapped trace publishes every lane of the exact post-state fields root. -/
+theorem withAfterFieldsRootPins_publishes (hash : List ℤ → ℤ) (g : EffectVmDescriptor2)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (withAfterFieldsRootPins g) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) :
+    ∀ k : Fin 8,
+      (envAt t i).loc (fieldsRootGroupCol (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF) k)
+        ≡ (envAt t i).pub (g.piCount + k.val) [ZMOD 2013265921] := by
+  intro k
+  have hlastt : (i + 1 == t.rows.length) = true := by simp [hlast]
+  have hin : VmConstraint2.base
+      (.piBinding .last (fieldsRootGroupCol (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF) k)
+        (g.piCount + k.val)) ∈ (withAfterFieldsRootPins g).constraints := by
+    rw [withAfterFieldsRootPins_constraints]
+    exact List.mem_append_right _
+      (List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩)
+  have h := hsat.rowConstraints i hi _ hin
+  simp only [VmConstraint2.holdsAt, hlastt, holdsVm_piLast_true] at h
+  exact h
+
+#assert_axioms satisfied2_of_withAfterFieldsRootPins
+#assert_axioms withAfterFieldsRootPins_publishes
+
 /-! ### §VALUE8 — THE setField WRITTEN-SLOT COMPLETION-LANE PINS (`withSetFieldCompletionPins`).
 
 The deployed setField members ride `v3OfFrozen (setFieldTickFace slot)` (freeze-ALL): every one of the

@@ -217,6 +217,31 @@ impl AppRootBinding {
     }
 }
 
+/// A direct-IR2 application declaration that its public inputs contain the
+/// faithful post-state user-fields map root.  The recursion node connects all
+/// eight lanes to the Custom wide leg's Lean-pinned `fields_root` publication.
+///
+/// This is intentionally distinct from [`AppRootBinding`]: `fields_root` is a
+/// state-commitment component, not one of the contiguous fixed `fields[0..8]`
+/// registers.  Treating it as an app field would select unrelated columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PostFieldsRootBinding {
+    /// Public-input offset of the application's native-eight fields root.
+    pub fields_root_pi_offset: usize,
+}
+
+impl PostFieldsRootBinding {
+    pub const LEN: usize = 8;
+
+    pub fn is_well_formed(&self) -> bool {
+        self.fields_root_pi_offset >= CUSTOM_PI_STATE_PREFIX_LEN
+    }
+
+    pub fn fields_root_pi_end(&self) -> usize {
+        self.fields_root_pi_offset.saturating_add(Self::LEN)
+    }
+}
+
 /// Read the published app root `R` a sub-proof's public inputs carry for `binding`. Returns `None`
 /// when the binding is ill-formed or the vector is too short to carry `R` — never zero-padding a
 /// short vector into a false root (the in-circuit mirror refuses the same shape fail-closed).

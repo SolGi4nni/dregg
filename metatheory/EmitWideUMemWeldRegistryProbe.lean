@@ -71,9 +71,10 @@ def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDes
   let host :=
     if e.1 == "customVmDescriptor2R24" then
       Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend
-        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterOctetPins
-          (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
-            Dregg2.Circuit.Emit.EffectVmEmitRotationV3.customV3) 4)
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterFieldsRootPins
+          (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterOctetPins
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
+              Dregg2.Circuit.Emit.EffectVmEmitRotationV3.customV3) 4))
         188 (188 + 239)
     else e.2
   let refused :=

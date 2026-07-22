@@ -430,6 +430,7 @@ pub fn prove_custom_binding_node_app_root_segmented(
         config,
         app_root_len,
         0,
+        0,
     )
 }
 
@@ -448,6 +449,26 @@ pub fn prove_direct_ir2_binding_node_app_root_segmented(
         direct_subproof_leaf,
         config,
         app_root_len,
+        0,
+        8,
+    )
+}
+
+/// Direct-IR2 binding node that additionally connects the application's
+/// authenticated `post_fields_root8` to the exact native-eight fields-root
+/// publication carried by the wide Custom leg.
+pub fn prove_direct_ir2_binding_node_app_and_fields_root_segmented(
+    dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
+    direct_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    config: &DreggRecursionConfig,
+    app_root_len: usize,
+) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
+    prove_custom_binding_node_app_root_segmented_with_vk(
+        dual_expose_leg_leaf,
+        direct_subproof_leaf,
+        config,
+        app_root_len,
+        8,
         8,
     )
 }
@@ -457,6 +478,7 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
     config: &DreggRecursionConfig,
     app_root_len: usize,
+    post_fields_root_len: usize,
     program_vk_len: usize,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::custom_leaf_adapter::custom_app_root_claim_len;
@@ -477,9 +499,18 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
                     .to_string(),
         });
     }
-    let cs_want = custom_app_root_claim_len(app_root_len) + program_vk_len;
-    // The leg must carry: segment ++ commitment(8) ++ field_K(L) ++ optional program_vk8.
-    let ev_want = SEG_WIDTH + CUSTOM_COMMIT_LEN + app_root_len + program_vk_len;
+    if post_fields_root_len != 0 && post_fields_root_len != 8 {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: format!(
+                "fields-root weld fold: root width must be exactly 8 or absent, got \
+                 {post_fields_root_len}"
+            ),
+        });
+    }
+    let cs_want = custom_app_root_claim_len(app_root_len) + post_fields_root_len + program_vk_len;
+    // The leg must carry: segment ++ commitment8 ++ field_K(L) ++ optional fields_root8 ++ VK8.
+    let ev_want =
+        SEG_WIDTH + CUSTOM_COMMIT_LEN + app_root_len + post_fields_root_len + program_vk_len;
 
     let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
         JointAggError::AggregationProofInvalid {
@@ -580,13 +611,21 @@ fn prove_custom_binding_node_app_root_segmented_with_vk(
                 cs[custom_app_root_claim_len(0) + k],
             );
         }
-        // 4. DIRECT-IR2 PROGRAM IDENTITY TOOTH. Ordinary CellProgram leaves pass len=0;
+        // 4. THE FIELDS-ROOT TOOTH.  The leg's native-eight post-state map root follows the app
+        //    field slice; the direct leaf's authenticated root follows its app-root claim.
+        for k in 0..post_fields_root_len {
+            cb.connect(
+                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + l + k],
+                cs[custom_app_root_claim_len(l) + k],
+            );
+        }
+        // 5. DIRECT-IR2 PROGRAM IDENTITY TOOTH. Ordinary CellProgram leaves pass len=0;
         // direct Lean-authored leaves pass exactly 8 and cannot staple a proof of another
         // descriptor/program behind the same state/app-root claims.
         for k in 0..program_vk_len {
             cb.connect(
-                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + l + k],
-                cs[custom_app_root_claim_len(l) + k],
+                ev[SEG_WIDTH + CUSTOM_COMMIT_LEN + l + post_fields_root_len + k],
+                cs[custom_app_root_claim_len(l) + post_fields_root_len + k],
             );
         }
 

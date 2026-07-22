@@ -217,8 +217,9 @@ def main : IO Unit := do
       -- EFFECT_VM_WIDTH` (the custom face base), `ab = bb + 239 = 427`. `withAfterOctetPins` adds NO
       -- columns (only 8 PIs), so the custom wide `traceWidth` is UNCHANGED (a TAIL-APPEND, not a
       -- geometry widen). The refuse weld (`weldWide`) keys off `traceWidth`, so it is unaffected.
-      let cuHost := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterOctetPins
-        (withDfaRcPins Dregg2.Circuit.Emit.EffectVmEmitRotationV3.customV3) 4
+      let cuHost := Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterFieldsRootPins
+        (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withAfterOctetPins
+          (withDfaRcPins Dregg2.Circuit.Emit.EffectVmEmitRotationV3.customV3) 4)
       let cuWide := wideAppend cuHost 188 (188 + 239)
       emitCompact key (weldWide key cuWide)
     else

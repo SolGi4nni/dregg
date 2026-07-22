@@ -63,6 +63,7 @@ import Dregg2.Games.PrivateQuestGraphDescriptor
 import Dregg2.Crypto.PrivateGraphRewriteCellDescriptor
 import Dregg2.Games.PrivatePreferenceDescriptor
 import Dregg2.Games.PrivatePreferenceCellDescriptor
+import Dregg2.Games.DescentCensusDescriptor
 import Dregg2.Games.PrivateRaidAssignmentDescriptor
 import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
@@ -179,13 +180,15 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Crypto.PrivateGraphRewriteCellDescriptor.privateGraphRewriteCellDescriptor)
   , ("private-quest-graph-4x2.json",
       Dregg2.Games.PrivateQuestGraphDescriptor.privateQuestGraphDescriptor)
+  , ("descent-custody-census-fixed8-v1.json",
+      Dregg2.Games.DescentCensusDescriptor.descentCensusDescriptor)
   ]
 
 /- The routing table covers the checked-in directory exactly (41 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 42
+#guard byNameDescriptors.length == 43
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

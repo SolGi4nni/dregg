@@ -987,6 +987,118 @@ pub fn prove_direct_ir2_leaf_with_app_root_commitment(
     .map_err(|e| format!("direct-IR2 custom app-root leaf-wrap failed: {e:?}"))
 }
 
+/// Direct-IR2 leaf for a relation that additionally authenticates the cell's
+/// overflow user-field map.  Its exposed claim is
+/// `[PI-commitment8 || old8 || new8 || app-root || post-fields-root8 || canonical-program-vk8]`.
+/// The dedicated recursion node connects the fields-root octet to the exact
+/// non-contiguous root group published by the wide Custom leg.
+pub fn prove_direct_ir2_leaf_with_app_and_fields_root_commitment(
+    desc2: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+    vk_recipe: &crate::joint_turn_aggregation::CustomIr2VkRecipe,
+    binding: &dregg_circuit::effect_vm::custom_state_binding::AppRootBinding,
+    fields_binding: &dregg_circuit::effect_vm::custom_state_binding::PostFieldsRootBinding,
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::{
+        CUSTOM_PI_STATE_PREFIX_LEN, PostFieldsRootBinding,
+    };
+
+    vk_recipe.require_exact_descriptor(desc2)?;
+    if !binding.is_well_formed() || !fields_binding.is_well_formed() {
+        return Err(format!(
+            "direct-IR2 custom fields-root leaf: ill-formed binding(s): app={binding:?}, \
+             fields={fields_binding:?}"
+        ));
+    }
+    let need = binding
+        .app_root_pi_end()
+        .max(fields_binding.fields_root_pi_end())
+        .max(CUSTOM_PI_STATE_PREFIX_LEN);
+    if public_inputs.len() < need {
+        return Err(format!(
+            "direct-IR2 custom fields-root leaf: descriptor publishes {} public input(s), but \
+             bindings need at least {need}",
+            public_inputs.len()
+        ));
+    }
+    if desc2.public_input_count != public_inputs.len() {
+        return Err(format!(
+            "direct-IR2 custom fields-root leaf: descriptor PI count {} != retained PI count {}",
+            desc2.public_input_count,
+            public_inputs.len()
+        ));
+    }
+    if base_trace.is_empty() || base_trace.iter().any(|row| row.len() != desc2.trace_width) {
+        return Err(format!(
+            "direct-IR2 custom fields-root leaf: retained trace must be non-empty and every row \
+             must have exact descriptor width {}",
+            desc2.trace_width
+        ));
+    }
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        desc2,
+        base_trace,
+        public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        config,
+    )
+    .map_err(|e| format!("direct-IR2 custom fields-root inner prove failed: {e}"))?;
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(desc2, &inner, public_inputs, config)
+            .map_err(|e| format!("direct-IR2 custom fields-root verify-triple failed: {e}"))?;
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    let backend = create_recursion_backend_with_coeff_lookups();
+    let num_pi = public_inputs.len();
+    let app_j = binding.app_root_pi_offset;
+    let app_l = binding.app_root_len;
+    let root_j = fields_binding.fields_root_pi_offset;
+    let vk_felts = vk_recipe.canonical_vk_felts();
+    let claim_len = custom_app_root_claim_len(app_l) + PostFieldsRootBinding::LEN + vk_felts.len();
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+        let main = apt
+            .first()
+            .expect("direct IR2 fields-root leaf has a main descriptor instance");
+        debug_assert!(main.len() >= num_pi);
+        let pis: Vec<Target> = (0..num_pi).map(|k| main[k]).collect();
+        let commit = incircuit_custom_pi_commitment(cb, &pis)
+            .expect("direct IR2 fields-root PI commitment builds from descriptor PIs");
+        let mut claim: Vec<Target> = Vec::with_capacity(claim_len);
+        claim.extend_from_slice(&commit);
+        claim.extend_from_slice(&pis[..CUSTOM_PI_STATE_PREFIX_LEN]);
+        claim.extend_from_slice(&pis[app_j..app_j + app_l]);
+        claim.extend_from_slice(&pis[root_j..root_j + PostFieldsRootBinding::LEN]);
+        claim.extend(
+            vk_felts
+                .iter()
+                .map(|felt| embed_base_const(cb, felt.as_u32())),
+        );
+        debug_assert_eq!(claim.len(), claim_len);
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("direct-IR2 custom fields-root leaf-wrap failed: {e:?}"))
+}
+
 /// Read the published app root `R` (of width `app_root_len`) a
 /// [`prove_custom_leaf_with_app_root_commitment`] leaf exposes — lanes
 /// `[CUSTOM_STATE_CLAIM_LEN .. CUSTOM_STATE_CLAIM_LEN + app_root_len)` of its `expose_claim`.

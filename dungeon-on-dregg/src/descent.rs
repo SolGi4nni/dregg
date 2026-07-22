@@ -89,10 +89,15 @@ pub fn guard_hp(depth: u64) -> u64 {
     }
 }
 
-/// The 13 register components, in allocation order.
+/// The 13 register components, in allocation order.  The six custody
+/// projections occupy fields 0..6 contiguously so the custom recursion fold
+/// can weld the AIR-counted census to the exact post-state registers in one
+/// mandatory app-root binding.  This is a greenfield layout epoch; all game
+/// logic resolves names through [`Deployment::reg`] and does not hard-code the
+/// former numeric order.
 pub const REGISTERS: [&str; 13] = [
-    "depth", "spent", "wounds", "fate", "pack", "bank", "way_2", "way_3", "way_4", "hoard_1",
-    "hoard_2", "hoard_3", "hoard_4",
+    "pack", "bank", "hoard_1", "hoard_2", "hoard_3", "hoard_4", "depth", "spent", "wounds", "fate",
+    "way_2", "way_3", "way_4",
 ];
 
 pub fn relic_name(i: usize) -> String {
@@ -102,19 +107,19 @@ pub fn relic_name(i: usize) -> String {
 /// Build the declared schema: 13 register components + 8 relic-custody collections.
 pub fn schema() -> Schema {
     let mut s = Schema::new(SCENE_ID)
+        .stat("pack", 0, RELICS as u64)
+        .stat("bank", 0, RELICS as u64)
+        .stat("hoard_1", 0, 3)
+        .stat("hoard_2", 0, 2)
+        .stat("hoard_3", 0, 2)
+        .stat("hoard_4", 0, 1)
         .stat("depth", 0, FLOORS)
         .stat("spent", 0, BREATH)
         .stat("wounds", 0, 2)
         .stat("fate", 0, 1)
-        .stat("pack", 0, RELICS as u64)
-        .stat("bank", 0, RELICS as u64)
         .stat("way_2", 0, 1)
         .stat("way_3", 0, 1)
-        .stat("way_4", 0, 1)
-        .stat("hoard_1", 0, 3)
-        .stat("hoard_2", 0, 2)
-        .stat("hoard_3", 0, 2)
-        .stat("hoard_4", 0, 1);
+        .stat("way_4", 0, 1);
     for i in 0..RELICS {
         s = s.collection(relic_name(i));
     }

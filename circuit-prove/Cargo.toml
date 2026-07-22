@@ -10,6 +10,7 @@ description = "Heavy PROVE surface for dregg circuits: the p3-recursion tower (I
 [dependencies]
 dregg-circuit = { path = "../circuit" }
 dregg-commit = { path = "../commit" }
+dregg-cell = { path = "../cell" }
 
 # Plonky3 core (workspace-pinned). The prove surface needs the full STARK + DFT
 # stack plus the three RECURSION-ONLY crates (p3-recursion / p3-circuit /
@@ -85,7 +86,6 @@ getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] 
 futures-channel = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 fhegg-solver = { path = "../fhegg-solver" }
 fhir = { path = "../fhir" }

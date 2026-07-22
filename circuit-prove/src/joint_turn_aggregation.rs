@@ -326,6 +326,11 @@ pub struct CustomIr2WitnessBundle {
     /// decision relation, so silently degrading it to the state-only node is
     /// not an available construction.
     pub app_root_binding: dregg_circuit::effect_vm::custom_state_binding::AppRootBinding,
+    /// Optional native-eight post-state fields-map weld.  When present, the
+    /// direct relation's published root is connected lane-for-lane to the
+    /// Lean-pinned Custom wide leg publication before the segment can fold.
+    pub post_fields_root_binding:
+        Option<dregg_circuit::effect_vm::custom_state_binding::PostFieldsRootBinding>,
 }
 
 /// FOLD-WIRED (the 7th carrier) bridge-carrier bundle — the prover-side inputs

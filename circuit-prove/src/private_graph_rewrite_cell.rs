@@ -249,6 +249,7 @@ pub fn prove_zk(
             app_root_len: DIGEST_WIDTH,
             field_key: GRAPH_ROOT_FIELD_KEY,
         },
+        post_fields_root_binding: None,
     };
     Ok((PrivateGraphRewriteCellZkProof { proof }, public, retained))
 }

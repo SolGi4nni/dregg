@@ -261,6 +261,7 @@ pub fn prove_zk(
             app_root_len: 1,
             field_key: DECISION_WINNER_FIELD_KEY,
         },
+        post_fields_root_binding: None,
     };
     Ok((PrivatePreferenceCellZkProof { proof }, public, retained))
 }
@@ -477,6 +478,7 @@ mod tests {
                 app_root_len: 1,
                 field_key: 0,
             },
+            post_fields_root_binding: None,
         };
         (bundle, claim, vk8, winner, old8, new8)
     }
