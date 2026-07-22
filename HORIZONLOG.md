@@ -11486,7 +11486,11 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
   latest-per-agent receipt predecessor/index; global commit boundary; explicit
   cutover/federation/executor/exact-head authority. `89a1e112e` is the aligned
   Rust turn API. Signed frame persistence remains banked non-live WIP in
-  `0cb8b2dd8`; node/persist/blocklace production selection is still active.
+  `0cb8b2dd8`; `9611b43c6` replaces its persistent topology with arbitrary-
+  player/global CAS frames and O(R+F) recovery, while `b530a5239` authenticates
+  durable actor snapshots across tombstones/compaction. `5eba0b254` banks the
+  corresponding compile-green node activation/execution/finalizer WIP; the
+  production blocklace selection splice is still active.
 - Do not promote this into “dark value”: v3's witness is hidden, but its 76
   public inputs expose nullifier/value/asset/root/count/outer coordinates and
   the currently total executor slice is value-zero with no value commitment.
@@ -11495,10 +11499,13 @@ Detailed claim ledger: `docs/deos/HANDOFF-FHEGG-FEASIBILITY-CODEX.md §0.7`
 - `ff7a7fd36` banks the typed Bazaar→Dungeon consequence and `a619f51b4`
   mounts one deployment-owned opt-in contract through web/Telegram/Discord.
   The private worker listener is still missing; frontends never carry the
-  winner/witness/raw private receipt. Restart testing found envelope hashes are
-  unstable identity, so the active repair keys one-shot recovery by the typed
-  semantic clearing claim and treats each reissued receipt only as corroborating
-  evidence.
+  winner/witness/raw private receipt. `7a873d5d2` now keys restart-safe one-shot
+  recovery by a worker-private-blind-bound typed semantic clearing claim and
+  treats each fresh proof/turn/receipt only as corroborating evidence; its strict
+  binding, authority, and full catalog reissue/exactly-once gates are 8/8 green
+  (the integration used the unaudited PQ test backend, not a PQ assurance
+  claim). The production
+  finalized-private-receipt listener/replay loop remains.
 - Engine side-state work is now explicit: `77c8da611` fences Lean producers
   across unprojected accumulators; `a977c996d` gives rate limits transactional
   per-action staging + a strict snapshot codec; `a0591caec` + `d502ecfd2` bind,

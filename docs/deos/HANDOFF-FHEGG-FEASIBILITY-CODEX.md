@@ -160,6 +160,22 @@ the amount of code landed.
   same-agent predecessor index/hash, enforce index order, and advance exact
   state globally across arbitrary players without imposing false full-state
   adjacency.
+- `9611b43c6` is the aligned persistent authority: arbitrary-player frames over
+  one global CAS, canonical receipt decoding, exact current-row and per-player
+  predecessor proofs, same-snapshot CAS/validated-transition authority, and
+  O(R+F) recovery. Its library check is green; the focused suite reached 8/9,
+  with the remaining test stopped earlier than its old assertion because the
+  concurrent online receipt-head hook now rejects the stale predecessor at
+  generic append time (the stronger production behavior is being moved into
+  that hook's own test).
+- `b530a5239` adds an opaque, non-`Clone` durable actor authority reconstructed
+  from full checkpoint + tombstones, with locked revalidation and hybrid-
+  attested compacted-root authority. Restart/drift/tombstone/compaction and
+  duplicate-signer/solo boundaries are covered. The adapted node activation,
+  execution, and finalizer compile green with `dregg-node --lib --features
+  prover` and are banked as explicit WIP in `5eba0b254`; `03f106d08` updates the
+  actor test API. The files are coherent authority substrate, but still have no
+  production blocklace caller at this sentence.
 - The node/persist redesign and real blocklace selector are still active. At
   this checkpoint `prepare_exact_fnsp_v3_finalization` has no production caller;
   strict v3 is rejected by the legacy v2 carrier path before generic execution.
@@ -187,14 +203,19 @@ the amount of code landed.
   real, but only tests invoke it. No production private-worker listener yet
   consumes an out-of-band clearing receipt and calls that boundary. Frontends
   must never receive the private witness, winner, or raw private receipt.
-- Restart testing found that the banked adapter's one-shot lookup uses receipt or
-  turn envelope identity that changes when a semantically identical settlement
-  is reissued after restart. The active repair derives one canonical private
-  claim from market instance + proof session/rule/order root + clearing
-  price/volume + winner, while independently re-verifying each live receipt as
-  evidence. Until that version/domain bump and hostile restart gate are banked,
-  do not claim reissued-receipt recovery or exactly-once XP across a worker
-  restart.
+- `7a873d5d2` repairs restart identity. A worker-private persisted commitment
+  blind is bound to one exact market instance + proof session/rule + canonical
+  private-order input; reuse with changed bids refuses. The durable source key
+  is the typed semantic clearing claim (order root, price, volume, winner), not
+  a timestamped receipt or chained turn envelope. Fresh proof/turn/receipt
+  evidence is independently reverified. The strict binding/root unit and full
+  catalog restart→reissued-evidence→exactly-once-XP gates join the six authority
+  tests for 8/8 green in isolated clean snapshots. The integration run set
+  `DREGG_ALLOW_UNAUDITED_PQ=1` because the remote archive lacks the verified PQ
+  authority; this is functional evidence, not a PQ assurance claim. The
+  remaining production seam is the actual
+  finalized-private-receipt worker listener and replay loop, including private
+  custody of the blind/input record.
 
 ### Executor consensus side state: repaired layers and live residuals
 
