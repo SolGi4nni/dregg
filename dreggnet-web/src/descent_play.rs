@@ -61,6 +61,7 @@ const DAY_JSON_PATH: &str = "/descent/play/static/day.json";
 /// [`descent_router`](crate::descent_router) / [`router`](crate::router). Serves:
 /// - `GET /descent/play` — the strict-CSP native game shell;
 /// - `GET /descent/play/static/app.js` — the same-origin native controller;
+/// - `GET /descent/play/static/actions.js` — the presentation-only accessible action menu;
 /// - `GET /descent/play/static/dregg_wasm.js` — the vendored wasm glue (or a placeholder);
 /// - `GET /descent/play/static/dregg_wasm_bg.wasm` — the vendored wasm blob (or an honest `503`).
 /// - `GET /descent/play/static/snippets/*` — wasm-bindgen's generated same-origin JS imports.
@@ -68,6 +69,7 @@ pub fn descent_play_router() -> Router {
     Router::new()
         .route("/descent/play", get(get_descent_play))
         .route("/descent/play/static/app.js", get(get_play_app_js))
+        .route("/descent/play/static/actions.js", get(get_play_actions_js))
         .route(DAY_JSON_PATH, get(get_play_day_json))
         .route(
             "/descent/play/static/dregg_wasm.js",
@@ -99,6 +101,13 @@ async fn get_play_app_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, JS_CT)], NATIVE_PLAY_APP_JS)
 }
 
+async fn get_play_actions_js() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, JS_CT)],
+        include_str!("../assets/descent-play-actions.mjs"),
+    )
+}
+
 /// `GET /descent/play/static/day.json` — **TODAY'S REAL DAY**, as the descriptor the in-page
 /// resolver opens the world from.
 ///
@@ -107,8 +116,11 @@ async fn get_play_app_js() -> impl IntoResponse {
 /// served game was a fixture world decoupled from the board's — you could play it, but your run
 /// belonged to no day anyone was scoring. The day is now resolved from
 /// [`crate::descent::todays_day`] — the SAME [`procgen_dregg::descent_day`] helper the board and the
-/// Discord bot resolve — and its committed EPOCH is published here, so the in-tab wasm
-/// `DescentWorld` draws the byte-identical world.
+/// Discord bot resolve. The committed epoch remains public provenance; the in-tab
+/// `NativeDescentWorld` wraps the distinct Lean-native
+/// [`NativeDescentOffering`](dreggnet_offerings::native_descent::NativeDescentOffering) and derives
+/// its normalized seed from this same committed day. Its record therefore goes to
+/// `/descent/native/submit`, never the procgen choice-tape endpoint.
 ///
 /// `no-store`: the day rolls at UTC midnight, and a cached descriptor would pin a stale world.
 async fn get_play_day_json() -> Response {
@@ -116,8 +128,8 @@ async fn get_play_day_json() -> Response {
     let body = serde_json::json!({
         "key": day.key,
         "uri": day.descent_uri(),
-        // The committed epoch the browser opens the day from: `DescentWorld::new(epochHex)` folds it
-        // through the same `daily_seed` this server drew the board's world with.
+        // Full committed-day provenance. The native game does not consume this as a procgen scene;
+        // it consumes `nativeSeed` below under its own Lean-authored ruleset.
         "epochHex": day.epoch_hex(),
         "seedTag": day.seed_tag(),
         // `NativeDescentOffering::open` performs the canonical `% 251 + 1`
@@ -235,7 +247,7 @@ fn read_play_snippet(path: &str) -> Option<Vec<u8>> {
 }
 
 const PLAY_STYLE: &str = r#"<style>
-.nd-page{max-width:980px}.nd-intro{max-width:720px;margin:2rem 0 1.5rem}.nd-intro h1{font-size:clamp(2.6rem,9vw,6.5rem);line-height:.84;margin:.2rem 0 1rem;letter-spacing:-.045em}.nd-intro p{max-width:62ch}.nd-kicker{text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;color:#c9a767}.nd-shell{border:1px solid rgba(201,167,103,.42);background:linear-gradient(145deg,rgba(17,20,32,.96),rgba(7,9,16,.98));box-shadow:0 30px 90px rgba(0,0,0,.42);padding:clamp(1rem,3vw,2rem)}.nd-meta{display:flex;flex-wrap:wrap;gap:.65rem 1.3rem;align-items:center;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.1);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#a8aec4}.nd-proof{margin-left:auto;color:#76d3a2}.nd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgba(255,255,255,.11);margin:1.4rem 0}.nd-stat{background:#0c101c;padding:1rem}.nd-stat b{display:block;font:600 clamp(1.2rem,4vw,2rem)/1.1 ui-monospace,SFMono-Regular,monospace;color:#f0e6cf}.nd-stat span{display:block;margin-top:.35rem;color:#8e95aa;font-size:.68rem;letter-spacing:.13em;text-transform:uppercase}.nd-custody{padding:1rem;border:1px solid rgba(255,255,255,.1);margin-bottom:1.2rem}.nd-custody strong{color:#d4ba82}.nd-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.nd-actions button,.nd-tools button{appearance:none;border:1px solid rgba(201,167,103,.5);background:#151a29;color:#f4eddf;padding:.85rem 1rem;text-align:left;font:inherit;cursor:pointer}.nd-actions button:hover:not(:disabled),.nd-tools button:hover{background:#222a3e;border-color:#d7b978}.nd-actions button:disabled{opacity:.32;cursor:not-allowed}.nd-message{min-height:3.5rem;padding:1rem;margin:1rem 0;background:rgba(255,255,255,.045);border-left:3px solid #6b7288}.nd-message.good{border-color:#68c394}.nd-message.bad{border-color:#c76f69}.nd-tools{display:flex;flex-wrap:wrap;gap:.6rem}.nd-tools button{font-size:.78rem;padding:.6rem .8rem}.nd-root{margin-top:1rem;color:#777f96;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.nd-terminal{color:#e1bf75}.nd-fatal{padding:1rem;border:1px solid #9f514d;background:#261416;color:#f2c9c5}@media(max-width:620px){.nd-page{padding-left:14px!important;padding-right:14px!important}.nd-intro{margin-top:1.2rem}.nd-shell{padding:13px}.nd-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nd-actions{grid-template-columns:1fr}.nd-meta{font-size:.68rem}.nd-proof{margin-left:0;width:100%}.nd-tools button{flex:1 1 auto}.nd-intro h1{font-size:3.8rem}}
+.nd-page{max-width:980px}.nd-intro{max-width:720px;margin:2rem 0 1.5rem}.nd-intro h1{font-size:clamp(2.6rem,9vw,6.5rem);line-height:.84;margin:.2rem 0 1rem;letter-spacing:-.045em}.nd-intro p{max-width:62ch}.nd-kicker{text-transform:uppercase;letter-spacing:.16em;font-size:.72rem;color:#c9a767}.nd-shell{border:1px solid rgba(201,167,103,.42);background:linear-gradient(145deg,rgba(17,20,32,.96),rgba(7,9,16,.98));box-shadow:0 30px 90px rgba(0,0,0,.42);padding:clamp(1rem,3vw,2rem)}.nd-meta{display:flex;flex-wrap:wrap;gap:.65rem 1.3rem;align-items:center;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.1);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:#a8aec4}.nd-proof{margin-left:auto;color:#76d3a2}.nd-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:rgba(255,255,255,.11);margin:1.4rem 0}.nd-stat{background:#0c101c;padding:1rem}.nd-stat b{display:block;font:600 clamp(1.2rem,4vw,2rem)/1.1 ui-monospace,SFMono-Regular,monospace;color:#f0e6cf}.nd-stat span{display:block;margin-top:.35rem;color:#8e95aa;font-size:.68rem;letter-spacing:.13em;text-transform:uppercase}.nd-custody{padding:1rem;border:1px solid rgba(255,255,255,.1);margin-bottom:1.2rem}.nd-custody strong{color:#d4ba82}.nd-action-menu{min-width:0}.nd-action-header{display:flex;gap:.6rem 1rem;align-items:baseline;justify-content:space-between;margin:1.25rem 0 .75rem}.nd-action-heading{margin:0;font-size:1rem}.nd-action-summary{margin:0;color:#8e95aa;font-size:.78rem}.nd-action-assurance{margin:0 0 .75rem;color:#777f96;font-size:.72rem;line-height:1.45}.nd-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem}.nd-actions button,.nd-tools button{appearance:none;border:1px solid rgba(201,167,103,.5);background:#151a29;color:#f4eddf;padding:.85rem 1rem;text-align:left;font:inherit;cursor:pointer}.nd-actions button{min-height:48px;overflow-wrap:anywhere;touch-action:manipulation}.nd-actions button:hover:not(:disabled),.nd-tools button:hover{background:#222a3e;border-color:#d7b978}.nd-actions button:disabled{opacity:.32;cursor:not-allowed}.nd-actions button:focus-visible,.nd-tools button:focus-visible,.nd-unavailable summary:focus-visible{outline:3px solid #76d3a2;outline-offset:3px}.nd-unavailable{margin-top:.85rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.7rem;color:#8e95aa}.nd-unavailable summary{cursor:pointer;font-size:.78rem;min-height:44px;display:flex;align-items:center;touch-action:manipulation}.nd-unavailable ul{list-style:none;margin:.7rem 0 0;padding:0;display:grid;gap:.35rem}.nd-unavailable li{display:flex;justify-content:space-between;gap:1rem;font-size:.75rem}.nd-unavailable-label{color:#b7bdce;overflow-wrap:anywhere}.nd-unavailable-reason{color:#666e84;text-align:right;overflow-wrap:anywhere}.nd-message{min-height:3.5rem;padding:1rem;margin:1rem 0;background:rgba(255,255,255,.045);border-left:3px solid #6b7288}.nd-message.good{border-color:#68c394}.nd-message.bad{border-color:#c76f69}.nd-tools{display:flex;flex-wrap:wrap;gap:.6rem}.nd-tools button{font-size:.78rem;padding:.6rem .8rem;min-height:44px}.nd-share{display:inline-block;margin:.2rem 0 1rem;color:#76d3a2}.nd-root{margin-top:1rem;color:#777f96;font:11px/1.5 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere}.nd-terminal{color:#e1bf75}.nd-fatal{padding:1rem;border:1px solid #9f514d;background:#261416;color:#f2c9c5}@media(max-width:620px){.nd-page{padding-left:14px!important;padding-right:14px!important}.nd-intro{margin-top:1.2rem}.nd-shell{padding:13px}.nd-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nd-actions{grid-template-columns:1fr}.nd-action-header{align-items:flex-start;flex-direction:column}.nd-action-summary{line-height:1.5}.nd-unavailable li{flex-direction:column;gap:.15rem;padding:.25rem 0}.nd-unavailable-reason{text-align:left}.nd-meta{font-size:.68rem}.nd-proof{margin-left:0;width:100%}.nd-tools button{flex:1 1 auto}.nd-intro h1{font-size:3.8rem}}
 </style>"#;
 
 /// Static, strict-CSP chrome around the same-origin native wasm bootstrap.
@@ -278,14 +290,18 @@ fn shell_page() -> String {
 /// Same-origin controller for the native wasm wrapper. Dynamic values only enter
 /// text nodes; game and proof material is never interpolated as HTML.
 const NATIVE_PLAY_APP_JS: &str = r##"// Lean-native Descent browser controller.
+import { mountDescentActionMenu } from "./actions.js";
+
 const root = document.getElementById("descent-play-root");
 const ACTOR_KEY = "dregg.native-descent.actor.v1";
 let NativeDescentWorld = null;
 let world = null;
 let actor = null;
 let recordKey = null;
-let lastMessage = "A fresh run is ready. The first landed move binds it to this browser identity.";
+let lastMessage = "A fresh run is ready. The first landed move binds it to this browser-local pseudonym.";
 let lastKind = "";
+let lastShare = null;
+let lastShareRanked = false;
 
 function notice(msg) {
   const p = document.createElement("p");
@@ -376,17 +392,16 @@ function render() {
   }
   shell.append(custody);
 
-  const actionGrid = node("div", "nd-actions");
-  for (const action of actions) {
-    const button = node("button", "", action.label);
-    button.type = "button";
-    button.disabled = !action.enabled || snapshot.ended;
-    button.addEventListener("click", () => {
+  const actionMenu = node("section", "nd-action-menu");
+  mountDescentActionMenu(actionMenu, actions, {
+    ended: snapshot.ended,
+    onChoose: (action) => {
       let result;
       try { result = JSON.parse(world.advance(action.turn, action.arg, actor)); }
       catch (e) { notice("The native turn boundary failed: " + errorText(e)); return; }
       if (result.ok) {
         save();
+        lastShare = null;
         lastKind = "good";
         lastMessage = "Turn committed · revision " + result.revision + " · receipt " + shortRoot(result.receiptHashHex);
       } else {
@@ -394,10 +409,9 @@ function render() {
         lastMessage = "Refused without advancing: " + (result.error || "the native executor declined the move");
       }
       render();
-    });
-    actionGrid.append(button);
-  }
-  shell.append(actionGrid);
+    },
+  });
+  shell.append(actionMenu);
 
   const message = node("p", "nd-message " + lastKind, lastMessage);
   message.setAttribute("role", "status");
@@ -427,6 +441,43 @@ function render() {
     }
     render();
   });
+  const publish = node("button", "", snapshot.ended ? "Publish verified run" : "Settle before publishing");
+  publish.type = "button";
+  publish.disabled = !snapshot.ended || !world.verify();
+  publish.addEventListener("click", async () => {
+    publish.disabled = true;
+    lastKind = "";
+    lastMessage = "Submitting the full native record for fresh server replay…";
+    render();
+    try {
+      const response = await fetch("/descent/native/submit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          day: root.dataset.dayKey,
+          record: JSON.parse(world.recordJson()),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.verified) {
+        throw new Error(result.error || result.detail || "native replay was refused");
+      }
+      lastShare = result.share;
+      lastShareRanked = result.ranked === true;
+      lastKind = "good";
+      const durability = result.durable === true
+        ? " The artifact is in the durable Descent store."
+        : " The server did not persist this artifact; keep your local replay record.";
+      lastMessage = (lastShareRanked
+        ? "Exact server replay passed. This crowned run now ranks in the native lane."
+        : "Exact server replay passed. This settlement is shareable but did not crown, so it does not rank.") + durability;
+    } catch (e) {
+      lastShare = null;
+      lastKind = "bad";
+      lastMessage = "Publication refused; the local record remains intact: " + errorText(e);
+    }
+    render();
+  });
   const restart = node("button", "", "Abandon this run");
   restart.type = "button";
   restart.addEventListener("click", () => {
@@ -442,12 +493,22 @@ function render() {
     storedRemove(recordKey);
     try { world.free(); } catch (_) {}
     world = new NativeDescentWorld(Number(root.dataset.nativeSeed));
+    lastShare = null;
     lastKind = "";
     lastMessage = "Fresh run opened. No previous record was installed.";
     render();
   });
-  tools.append(verify, copy, restart);
+  tools.append(verify, copy, publish, restart);
   shell.append(tools);
+  if (lastShare) {
+    const share = node(
+      "a",
+      "nd-share",
+      lastShareRanked ? "Open ranked native proof →" : "Open verified native record →"
+    );
+    share.href = lastShare;
+    shell.append(share);
+  }
   shell.append(node(
     "p",
     "nd-root",
@@ -584,6 +645,8 @@ mod tests {
         // No extension-side mirror: this is the thin controller over the native
         // Offering wrapper, including exact restore and verification.
         for needle in [
+            "mountDescentActionMenu",
+            "./actions.js",
             "NativeDescentWorld",
             "fromRecordJson",
             "recordJson",
@@ -594,6 +657,8 @@ mod tests {
             "localStorage",
             "/descent/play/static/dregg_wasm.js",
             "/descent/play/static/day.json",
+            "/descent/native/submit",
+            "Publish verified run",
         ] {
             assert!(js.contains(needle), "bootstrap references {needle}");
         }
@@ -601,6 +666,22 @@ mod tests {
             !js.contains("DescentEngine"),
             "old game engine is not mounted"
         );
+    }
+
+    #[tokio::test]
+    async fn the_accessible_action_helper_is_a_same_origin_javascript_asset() {
+        use axum::body::to_bytes;
+
+        let resp = super::get_play_actions_js().await.into_response();
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+        let body = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let js = std::str::from_utf8(&body).unwrap();
+        assert!(js.contains("export function mountDescentActionMenu"));
+        assert!(js.contains("enabled === true"));
+        assert!(js.contains("unavailable"));
     }
 
     #[test]
@@ -620,8 +701,8 @@ mod tests {
         }
     }
 
-    /// `day.json` serves TODAY'S day — the same world the board opens — with its committed epoch and
-    /// an honest provenance label, uncached (the day rolls at UTC midnight).
+    /// `day.json` serves TODAY'S committed day descriptor with an honest provenance label,
+    /// uncached. Procgen and native game modes derive their distinct deterministic worlds from it.
     #[tokio::test]
     async fn the_day_route_serves_todays_real_day() {
         let resp = super::get_play_day_json().await;
@@ -644,7 +725,8 @@ mod tests {
         );
         // The provenance is REPORTED, never assumed live.
         assert!(v["source"] == "beacon" || v["source"] == "offline-date");
-        // THE WELD: the epoch this page hands the browser draws the SAME world the board scores.
+        // The full epoch re-derives the procgen board seed. Native play intentionally consumes the
+        // separately published normalized native input and submits to its distinct replay lane.
         assert_eq!(
             procgen_dregg::daily_seed(&day.epoch).as_bytes(),
             day.seed.as_bytes()

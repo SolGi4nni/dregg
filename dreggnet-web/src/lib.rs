@@ -53,6 +53,8 @@ pub mod act_signed;
 /// The audit emitter — the interaction envelope around every catalog/Mini-App decision
 /// (docs/BOT-AUDIT-LOGGING-DESIGN.md).
 pub mod audit;
+/// Viewer-blind HTML consent and receipt provenance for explicit paid Chutes narration.
+pub mod chutes_consent;
 /// THE CROWD-STREAM ROUND DRIVER (docs/CROWD-STREAM-ENGINE-DESIGN.md): live-stream events →
 /// weighted ballots → the real quorum-certified `dungeon_on_dregg::collective::CollectiveRound` →
 /// ONE certified world turn per window. See [`crowd_round::CrowdRound`].
@@ -95,7 +97,8 @@ pub mod metrics;
 /// `POST /overlay/ingest[/youtube]`, driven off a [`crowd_round::CrowdRound`]. See [`overlay`].
 pub mod overlay;
 /// The seat-claiming adapter that makes `dregg-multiway-tug` playable by real frontend users (a web
-/// identity is a derived key, never the game's canonical seat string). See [`seated::SeatedTug`].
+/// actor is a derived internal label, never the game's canonical seat string). See
+/// [`seated::SeatedTug`].
 pub mod seated;
 /// The deterministic generative art surface: a `dreggnet_asset::AssetId` → a byte-identical SVG
 /// sprite (`dreggnet-sprite`), served at `GET /sprite/{kind}/{ref}`, painted onto an asset-bearing
@@ -108,6 +111,7 @@ pub mod sprite;
 /// [`telegram_miniapp`] and `docs/TELEGRAM-MINIAPP-DESIGN.md`.
 pub mod telegram_miniapp;
 pub mod tg_link_page;
+mod web_identity_http;
 
 pub use descent::{DescentState, descent_router, run_share_path};
 
@@ -119,6 +123,7 @@ use axum::{
     Router,
     extract::{Form, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
+    middleware,
     response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
 };
@@ -135,6 +140,8 @@ use dreggnet_offerings::{
 };
 
 use dreggnet_catalog::{PlayerWorlds, is_rpg_key};
+
+pub(crate) use web_identity_http::web_user;
 
 /// What the web frontend last presented for a session — the deos [`Surface`] and the cap-gated
 /// [`Action`]s beside it (what it paints as HTML forms). Mirrors `mock::Presented`.
@@ -167,10 +174,9 @@ pub struct WebEvent {
 /// web-specific [`render`](WebFrontend::render): the deos [`Surface`] → an HTML fragment.
 ///
 /// Platform user = a `String` (the web session user); a platform event = a [`WebEvent`]. Identity
-/// is derived deterministically (blake3 of the user id) so the SAME user → the SAME
-/// [`DreggIdentity`] — mirroring the Discord `UserCipherclerk` derivation *shape* (the doc's
-/// mandate: a derived cryptographic identity, not a nickname; the real web deployment would
-/// derive a per-user Ed25519 key the same way the bot does).
+/// is derived deterministically (blake3 of the asserted user label) so the SAME label → the SAME
+/// [`DreggIdentity`]. This is stable browser attribution, not authentication: this surface neither
+/// provisions a keypair nor proves that a caller owns the label it presents.
 #[derive(Debug, Default)]
 pub struct WebFrontend {
     presented: HashMap<SessionId, Presented>,
@@ -230,9 +236,9 @@ impl Frontend for WebFrontend {
     type PlatformUser = String;
     type PlatformEvent = WebEvent;
 
-    /// Derive `user`'s [`DreggIdentity`] — blake3(user) hex. Deterministic: the SAME web user
-    /// always maps to the SAME identity (mirroring the Discord `UserCipherclerk::derive(...)
-    /// .public_key_hex()` derivation *shape*).
+    /// Derive `user`'s internal [`DreggIdentity`] label — blake3(user) hex. Deterministic: the SAME
+    /// asserted web user always maps to the SAME actor. This hash is not a login or proof of key
+    /// ownership.
     fn identity(&self, user: String) -> DreggIdentity {
         web_identity(&user)
     }
@@ -399,8 +405,8 @@ pub struct ActForm {
 /// The `?user=` query params of a request (the web identity, alongside the `dregg_user` cookie).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WebQuery {
-    /// The web user id — a deterministic input to identity derivation. Absent → the cookie, then
-    /// `"anon"`.
+    /// The web user id — a deterministic input to identity derivation. Absent → the cookie, then a
+    /// durable pseudonymous visitor label on the browser-facing routes.
     #[serde(default)]
     pub user: Option<String>,
 }
@@ -414,6 +420,9 @@ pub fn router(state: Arc<WebState>) -> Router {
         .route("/session/{id}", get(get_session))
         .route("/session/{id}/act", post(post_act))
         .route("/session/{id}/verify", get(get_verify))
+        .layer(middleware::from_fn(
+            web_identity_http::bootstrap_visitor_identity,
+        ))
         .with_state(state)
 }
 
@@ -546,34 +555,11 @@ fn page_missing(id: &SessionId) -> String {
     document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
 }
 
-/// The web identity for a request — the `?user=` param, else the `dregg_user` cookie, else
-/// `"anon"`. Fed to [`WebFrontend::identity`] (a deterministic derivation → a stable
-/// [`DreggIdentity`]).
-fn web_user(headers: &HeaderMap, query: &WebQuery) -> String {
-    if let Some(u) = query.user.as_ref() {
-        if !u.is_empty() {
-            return u.clone();
-        }
-    }
-    if let Some(cookie) = headers.get(header::COOKIE).and_then(|v| v.to_str().ok()) {
-        for part in cookie.split(';') {
-            let part = part.trim();
-            if let Some(v) = part.strip_prefix("dregg_user=") {
-                if !v.is_empty() {
-                    return v.to_string();
-                }
-            }
-        }
-    }
-    "anon".to_string()
-}
-
-/// **Derive a web user's frontend-agnostic [`DreggIdentity`]** — `blake3(user)` hex. Deterministic
-/// (the SAME user → the SAME identity), mirroring the Discord `UserCipherclerk::derive(...)
-/// .public_key_hex()` derivation *shape*. Shared by [`WebFrontend::identity`] and the multi-offering
-/// catalog's POST handler so both attribute a turn to the same identity — and so a council registers
-/// its members from the SAME derivation (`blake3(user)` bytes as the member pubkey; see
-/// [`catalog_default_host`]).
+/// **Derive a web user's frontend-agnostic [`DreggIdentity`] label** — `blake3(user)` hex.
+/// Deterministic (the SAME asserted user → the SAME actor), but not authenticated and not proof of a
+/// cryptographic identity. Shared by [`WebFrontend::identity`] and the multi-offering catalog's POST
+/// handler so both attribute a turn to the same actor — and so a council registers its members from
+/// the SAME derivation (`blake3(user)` bytes as the member pubkey; see [`catalog_default_host`]).
 pub fn web_identity(user: &str) -> DreggIdentity {
     DreggIdentity(blake3::hash(user.as_bytes()).to_hex().to_string())
 }
@@ -1489,6 +1475,9 @@ pub fn catalog_router(state: Arc<CatalogState>) -> Router {
             "/offerings/{key}/session/{id}/verify",
             get(get_offering_verify),
         )
+        .layer(middleware::from_fn(
+            web_identity_http::bootstrap_visitor_identity,
+        ))
         .with_state(state)
 }
 
@@ -2671,8 +2660,8 @@ fn catalog_missing_offering(key: &str) -> String {
 // NAMED (ops / ember-gated), deliberately not built here:
 //  * TLS / rate-limit / CORS — a fronting Caddy (ops, external; `demo.dregg.net` terminates TLS
 //    there and reverse-proxies to this bind).
-//  * AUTH — the web identity is the unsigned `dregg_user` cookie / `?user=` (a derived key, not
-//    a signed credential); a real deployment derives a per-user Ed25519 key as the bot does.
+//  * AUTH — the web actor is the unsigned `dregg_user` cookie / `?user=` (a deterministic internal
+//    label, not a signed credential or proof of key ownership).
 // ═════════════════════════════════════════════════════════════════════════════════════════
 
 /// **The public-demo offering host** — the full shared DreggNet portfolio, built through

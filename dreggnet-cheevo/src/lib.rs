@@ -1186,11 +1186,23 @@ fn slot_of(universe: &Universe, var: &str) -> Result<usize, CheevoError> {
     let scene = parse(universe.source(), "cheevo-eval.scene")
         .map_err(|_| CheevoError::UnknownVar(var.to_string()))?;
     let compiled = compile_scene(&scene).map_err(|_| CheevoError::UnknownVar(var.to_string()))?;
-    compiled
+    let key = compiled
         .var_slots
         .get(var)
         .copied()
-        .ok_or_else(|| CheevoError::UnknownVar(var.to_string()))
+        .ok_or_else(|| CheevoError::UnknownVar(var.to_string()))?;
+    if key < spween_dregg::STATE_SLOTS as u64 {
+        return Ok(key as usize);
+    }
+
+    // A playthrough snapshot is the sixteen fixed registers followed by the
+    // compiled ext keys in ascending order. A canonical ext key is not itself
+    // a Vec index (and must never be narrowed to one on wasm32).
+    compiled
+        .ext_keys()
+        .binary_search(&key)
+        .map(|tail| spween_dregg::STATE_SLOTS + tail)
+        .map_err(|_| CheevoError::UnknownVar(var.to_string()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

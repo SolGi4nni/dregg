@@ -145,10 +145,8 @@ pub const STATE_SLOTS: usize = 16;
 /// [`crate::WorldCell::apply_raw`] — so a spilled story var can never collide with a
 /// reserved key or with an application collection.
 ///
-/// (The key is carried as `usize` through [`CompiledStory::var_slots`] and
-/// `Effect::SetField { index: usize }`, so the ext plane — this constant included —
-/// presumes a 64-bit target, exactly as the executor's `SetField` heap lane already
-/// does.)
+/// Keys are carried as canonical `u64`s through [`CompiledStory::var_slots`] and
+/// `Effect::SetField`, so this layout is byte-identical on wasm32 and native hosts.
 pub const SPILL_EXT_BASE: u64 = 0x0000_0004_0000_0000;
 
 /// The deterministic key allocator: fill the fast fixed registers first, then spill
@@ -156,7 +154,7 @@ pub const SPILL_EXT_BASE: u64 = 0x0000_0004_0000_0000;
 /// sorted sequence, so a scene that fits gets exactly its old layout.
 struct KeyAlloc {
     /// The next free register slot (`PASSAGE_SLOT + 1 ..= STATE_SLOTS`).
-    next_slot: usize,
+    next_slot: u64,
     /// How many ext keys have been handed out.
     spilled: u64,
 }
@@ -164,21 +162,21 @@ struct KeyAlloc {
 impl KeyAlloc {
     fn new() -> Self {
         KeyAlloc {
-            next_slot: PASSAGE_SLOT + 1,
+            next_slot: (PASSAGE_SLOT + 1) as u64,
             spilled: 0,
         }
     }
 
     /// The next key: a register while any remain, then an ext key.
-    fn take(&mut self) -> usize {
-        if self.next_slot < STATE_SLOTS {
+    fn take(&mut self) -> u64 {
+        if self.next_slot < STATE_SLOTS as u64 {
             let k = self.next_slot;
             self.next_slot += 1;
             k
         } else {
             let k = SPILL_EXT_BASE + self.spilled;
             self.spilled += 1;
-            k as usize
+            k
         }
     }
 }
@@ -195,11 +193,11 @@ enum Plane {
 
 /// The plane a compiled key names (the SAME `< STATE_SLOTS` test the executor's
 /// `apply_set_field` and `CellState::get_field_ext` use to route a key).
-fn plane_of(key: usize) -> Plane {
-    if key < STATE_SLOTS {
+fn plane_of(key: u64) -> Plane {
+    if key < STATE_SLOTS as u64 {
         Plane::Slot(key as u8)
     } else {
-        Plane::Ext(key as u64)
+        Plane::Ext(key)
     }
 }
 
@@ -262,14 +260,11 @@ pub const GENESIS_METHOD: &str = "genesis";
 /// `REFUSAL_AUDIT_EXT_KEY` (`2^32`) and far below [`SPILL_EXT_BASE`] (`2^34`), so it can
 /// never collide with a spilled story var, a reserved key, or a small `STATE_SLOTS + n`
 /// application-collection key.
-/// The key deliberately fits in `u32`: `Effect::SetField::index` is still a
-/// platform-sized `usize`, so a larger key is not portable to `wasm32`.  The old
-/// `0x0000_0002_0000_0001` value truncated to register `1` in browsers and made
-/// every genesis turn overwrite an ordinary game field.  Keep protocol-reserved
-/// game keys in the high, schema-unallocated portion of the portable index space.
+/// `Effect::SetField::index` is a canonical `u64`, so this key is represented
+/// identically on wasm32 and native hosts. The old platform-sized encoding
+/// truncated this value to register `1` in browsers and made every genesis turn
+/// overwrite an ordinary game field.
 pub const GENESIS_DONE_EXT_KEY: u64 = 0x0000_0000_7000_0011;
-
-const _: () = assert!(GENESIS_DONE_EXT_KEY <= u32::MAX as u64);
 
 /// The reserved dispatch method a raw HEAP-hatch turn ([`WorldCell::apply_raw`] with
 /// heap-keyed effects) presents.
@@ -309,11 +304,11 @@ pub struct CompiledStory {
     /// (`< STATE_SLOTS`) while any remain, then an ext key
     /// (`>= `[`SPILL_EXT_BASE`], the committed `fields_map`). Resolve BY NAME
     /// ([`Self::var_key`]) — a hardcoded index is wrong the moment a scene widens.
-    pub var_slots: BTreeMap<String, usize>,
+    pub var_slots: BTreeMap<String, u64>,
     /// `(category, key)` membership atom → cell FIELD KEY (1 = present, 0 = absent).
     /// Same two planes as [`Self::var_slots`]; membership is allocated after the vars,
     /// so it is what spills first.
-    pub has_slots: BTreeMap<(String, String), usize>,
+    pub has_slots: BTreeMap<(String, String), u64>,
     /// Passage name → index (matches `spween::Runtime`'s enumerate order).
     pub passage_index: BTreeMap<String, usize>,
     /// The installed program: one method-guarded case per choice + a genesis case.
@@ -329,14 +324,14 @@ impl CompiledStory {
     /// projection, or `None` if the scene never named it. THE way to reach a var: a
     /// guessed index is right only for the layout you guessed against.
     pub fn var_key(&self, name: &str) -> Option<u64> {
-        self.var_slots.get(name).map(|&k| k as u64)
+        self.var_slots.get(name).copied()
     }
 
     /// The cell field key holding the `category.key` membership atom.
     pub fn has_key(&self, category: &str, key: &str) -> Option<u64> {
         self.has_slots
             .get(&(category.to_string(), key.to_string()))
-            .map(|&k| k as u64)
+            .copied()
     }
 
     /// Whether `name` SPILLED to the ext plane (the committed `fields_map`) rather
@@ -360,14 +355,14 @@ impl CompiledStory {
 /// [`CompiledStory::ext_keys`] and the hatch-confinement teeth [`compile_scene`]
 /// emits (which needs them before the story exists).
 fn ext_keys_of(
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
 ) -> Vec<u64> {
     let mut keys: Vec<u64> = var_slots
         .values()
         .chain(has_slots.values())
-        .filter(|&&k| k >= STATE_SLOTS)
-        .map(|&k| k as u64)
+        .filter(|&&k| k >= STATE_SLOTS as u64)
+        .copied()
         .collect();
     keys.sort_unstable();
     keys.dedup();
@@ -719,8 +714,8 @@ fn delta_for(effects: &[Effect], var: &str) -> Delta {
 fn lower_gate(
     condition: Option<&Condition>,
     effects: &[Effect],
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
 ) -> (Vec<StateConstraint>, bool) {
     let Some(cond) = condition else {
         return (vec![], true);
@@ -738,8 +733,8 @@ fn lower_gate(
 fn lower_expr(
     expr: &ConditionExpr,
     effects: &[Effect],
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
     out: &mut Vec<StateConstraint>,
 ) -> bool {
     match expr {
@@ -780,8 +775,8 @@ fn lower_expr(
 fn lower_clause(
     clause: &ConditionClause,
     effects: &[Effect],
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
 ) -> Option<Vec<StateConstraint>> {
     match clause {
         ConditionClause::Compare(c) => {
@@ -994,8 +989,8 @@ fn cross_var_teeth(
 fn simple_of_expr(
     expr: &ConditionExpr,
     effects: &[Effect],
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
 ) -> Option<SimpleStateConstraint> {
     match expr {
         ConditionExpr::Atom(clause) => simple_of_clause(clause, effects, var_slots, has_slots),
@@ -1006,8 +1001,8 @@ fn simple_of_expr(
 fn simple_of_clause(
     clause: &ConditionClause,
     effects: &[Effect],
-    var_slots: &BTreeMap<String, usize>,
-    has_slots: &BTreeMap<(String, String), usize>,
+    var_slots: &BTreeMap<String, u64>,
+    has_slots: &BTreeMap<(String, String), u64>,
 ) -> Option<SimpleStateConstraint> {
     use SimpleStateConstraint as S;
     match clause {

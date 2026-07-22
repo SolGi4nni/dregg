@@ -141,7 +141,7 @@ fn gate_lowers_to_a_real_fieldgte_tooth() {
         constraints.iter().any(|c| matches!(
             c,
             StateConstraint::FieldGte { index, value }
-                if *index as usize == key_slot && *value == field_from_u64(1)
+                if *index as u64 == key_slot && *value == field_from_u64(1)
         )),
         "the gate is FieldGte(has_winding_key, 1); got {constraints:?}"
     );
@@ -304,7 +304,7 @@ fn translation_validation_refuses_a_dropped_gate_tooth() {
         .expect("the gated case exists");
     let before = case.constraints.len();
     case.constraints.retain(
-        |c| !matches!(c, StateConstraint::FieldGte { index, .. } if *index as usize == key_slot),
+        |c| !matches!(c, StateConstraint::FieldGte { index, .. } if *index as u64 == key_slot),
     );
     assert_eq!(
         case.constraints.len(),

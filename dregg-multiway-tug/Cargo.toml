@@ -19,7 +19,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Phase 0 of multiway-tug: a 2-player tug-of-influence card game (an original re-theming of the Hanamikoji mechanic) modeled on the real dregg executor — the state as a dregg-schema-allocated layout, the play teeth as a hand-rolled CellProgram::Cases (conservation via SumEquals, one-action-per-round via WriteOnce, monotone scores, win thresholds). A play is a verified turn; an illegal play is a WorldError::Refused."
+description = "A 2-player tug-of-influence card game on dregg: Lean-authored rules, exact-card witnessed hidden hands, atomic rules+privacy turns, recursive match leaves, and per-viewer playable surfaces."
 
 [dependencies]
 # The tooth vocabulary (CellProgram / StateConstraint / TransitionCase / TransitionGuard /

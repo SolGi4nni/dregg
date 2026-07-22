@@ -73,7 +73,9 @@ mod tests {
     use dreggnet_offerings::{DreggIdentity, Outcome, SessionConfig};
 
     use super::*;
-    use crate::commands::offering::{self, Driven, close_in, drive, fire_id, is_open, with_live};
+    use crate::commands::offering::{
+        self, Driven, close_in, drive, fire_id_in, is_open, with_live,
+    };
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -103,7 +105,7 @@ mod tests {
         .expect("the loadout offers an equip affordance");
         match drive::<LoadoutOffering>(
             channel,
-            &fire_id(LoadoutOffering::KEY, &first.turn, first.arg),
+            &fire_id_in::<LoadoutOffering>(channel, &first.turn, first.arg).unwrap(),
             me,
         ) {
             Driven::Fired(outcome) => assert!(

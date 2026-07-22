@@ -30,9 +30,13 @@
 //!
 //! The bot owns the LIVE Discord surface — the rich ballot embeds, the per-run thread
 //! orchestration, and the **paid narrator credit gate** ([`narrate_room_gated`], a real
-//! Bedrock spend debited exactly once after a successful hosted call, with the free-tier
-//! gemma/scripted fallback). That flow is intact and byte-identical; narration is invoked in
-//! the async layer AFTER the round resolves and the next room's state is in hand. A thin
+//! hosted-model spend debited exactly once after a successful usable narration, with the free-tier
+//! gemma/scripted fallback). The deterministic collective flow is intact: narration is invoked in
+//! the async layer AFTER the round resolves and the next room's state is in hand. Additively,
+//! `/dungeon chutes-turn confirm:true` is an explicit one-player opt-in: an operator-configured
+//! Chutes backend may propose one current legal command, but [`DungeonSession::advance_narrated_receipt`](dreggnet_offerings::dungeon::DungeonSession::advance_narrated_receipt)
+//! and the native executor remain authoritative; player credit commits only after its
+//! provider/model/actor/session provenance is bound into the landed receipt. A thin
 //! per-channel [`DungeonMeta`] map holds only what the collective adapter's `Live` does not:
 //! how the current room was narrated, the last narration text (so a vote re-render never
 //! re-hits the network), and the orchestrated-thread key to tear down at run end.
@@ -45,29 +49,42 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
 
 use serenity::all::{
-    ButtonStyle, ChannelId, CommandInteraction, CommandOptionType, ComponentInteraction, Context,
-    CreateActionRow, CreateButton, CreateCommand, CreateCommandOption, CreateEmbed,
-    CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
-    Permissions,
+    ButtonStyle, ChannelId, CommandDataOptionValue, CommandInteraction, CommandOptionType,
+    ComponentInteraction, Context, CreateActionRow, CreateButton, CreateCommand,
+    CreateCommandOption, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse,
+    CreateInteractionResponseMessage, CreateMessage, Permissions,
 };
 
+use dregg_narrator::{ConverseResponse, ToolDef};
 use dreggnet_offerings::character::{CharacterSheet, CharacterStore};
+use dreggnet_offerings::chutes_consent::{
+    ChutesReplaySurface, ViewerBlindChutesConsent, ViewerBlindChutesReceipt,
+};
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, KEEP_OBJECTIVE};
-use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
+use dreggnet_offerings::{
+    BinaryOperationDescriptor, DreggIdentity, Offering, Outcome, SessionConfig,
+};
+use dungeon_on_dregg::narrator::{
+    Narrated, bound_narration_commit, legal_commands, narration_commitment, parse_confined_response,
+};
 
 use crate::BotState;
 use crate::character_store::{award_run_outcome, xp_reward};
 use crate::cipherclerk::UserCipherclerk;
 use crate::commands::ack;
 use crate::commands::offering::{
-    Cast, CollectiveClose, CollectiveRound, Live, close_in, close_round, open_in, with_live,
+    Cast, CollectiveClose, CollectiveRound, ControlStamp, Live, close_in, close_round, open_in,
+    with_live,
 };
 use crate::orchestration::{OpenAuthority, SessionSpec};
+use crate::pay::{PaidCreditHoldError, PaidNarratorProvider};
 
 /// The bot-branded teal (matches `embeds::DREGG_COLOR`).
 const DUNGEON_COLOR: u32 = 0x7B2CBF;
 /// The honest tagline that footers every dungeon surface.
 const TAGLINE: &str = "the AI narrates · the world resolves · the chain remembers";
+const CHUTES_TURN_TOOL: &str = "submit_dungeon_turn";
+const CHUTES_PROVENANCE_DOMAIN: &str = "dregg.discord-chutes-turn.v1";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The REAL engine adapter — the ballot mechanism is now the GENERIC collective
@@ -100,7 +117,7 @@ fn offering() -> DungeonOffering {
 /// the world-cell + the ballot). Nothing here touches the substrate — it is display state and
 /// the orchestrated-thread teardown key.
 struct DungeonMeta {
-    /// How the current room narration was produced (bedrock / gemma / scripted).
+    /// How the current room narration was produced (hosted provider / gemma / scripted).
     narrator: NarratorKind,
     /// The narration text posted for the current room — kept so a live vote re-render
     /// preserves the prose (a vote never re-hits the network, so it never misreports it).
@@ -128,7 +145,7 @@ struct DungeonMeta {
 // reads as ONE evolving story. It records what the party did room by room (the
 // choice + whether it landed on the chain), rolls off the oldest entries past a
 // bound, and renders a token-bounded continuity paragraph fed into the SAME
-// credit-gated narrator call (no extra Bedrock spend — only a bounded prompt prefix).
+// credit-gated narrator call (no extra hosted-model call — only a bounded prompt prefix).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// How many recent room-transitions the continuity context carries. A rolling window: older
@@ -344,6 +361,10 @@ fn ballot_options(round: &CollectiveRound) -> Vec<VoteOption> {
 pub enum NarratorKind {
     /// A real hosted model (AWS Bedrock) narrated it — a PAID run that spent one $DREGG credit.
     Bedrock,
+    /// A real hosted model through Chutes/Bittensor narrated it — a PAID run that spent one credit.
+    Chutes,
+    /// Another operator-configured OpenAI-compatible hosted model narrated it — a PAID run.
+    OpenAiCompatible,
     /// A real local `gemma2:2b` (ollama) narrated it (the free tier).
     Gemma,
     /// ollama was unreachable; the scene's own scripted description stood in (the free tier).
@@ -351,9 +372,23 @@ pub enum NarratorKind {
 }
 
 impl NarratorKind {
+    fn from_paid(provider: crate::pay::PaidNarratorProvider) -> Self {
+        match provider {
+            crate::pay::PaidNarratorProvider::Bedrock => Self::Bedrock,
+            crate::pay::PaidNarratorProvider::Chutes => Self::Chutes,
+            crate::pay::PaidNarratorProvider::OpenAiCompatible => Self::OpenAiCompatible,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             NarratorKind::Bedrock => "narrator: bedrock (real AI · paid with a $DREGG credit)",
+            NarratorKind::Chutes => {
+                "narrator: chutes / bittensor (real AI · paid with a $DREGG credit)"
+            }
+            NarratorKind::OpenAiCompatible => {
+                "narrator: hosted OpenAI-compatible (real AI · paid with a $DREGG credit)"
+            }
             NarratorKind::Gemma => "narrator: gemma2:2b (free)",
             NarratorKind::Scripted => "narrator: scripted (free)",
         }
@@ -364,7 +399,7 @@ impl NarratorKind {
 // Registration + slash routing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Register the `/dungeon` command (list / start / close / verify).
+/// Register the `/dungeon` command (list / start / close / verify / operation).
 pub fn register() -> CreateCommand {
     CreateCommand::new("dungeon")
         .description("Play a shared, AI-narrated dungeon on the REAL dregg executor, as a channel")
@@ -388,6 +423,44 @@ pub fn register() -> CreateCommand {
             "verify",
             "Re-verify this channel's playthrough by replay (the real receipt chain)",
         ))
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "chutes-turn",
+                "Opt in: 1 credit only after a Chutes turn lands with a replay-verifiable receipt",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Boolean,
+                    "confirm",
+                    "I accept 1 credit only if a provenance-bound, replay-verifiable receipt lands",
+                )
+                .required(true),
+            ),
+        )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::SubCommand,
+                "operation",
+                "Apply one canonical private-producer receipt to this live dungeon",
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "name",
+                    "Exact live operation name shown on the dungeon surface",
+                )
+                .required(true),
+            )
+            .add_sub_option(
+                CreateCommandOption::new(
+                    CommandOptionType::Attachment,
+                    "receipt",
+                    "Canonical opaque producer receipt",
+                )
+                .required(true),
+            ),
+        )
 }
 
 /// Route `/dungeon` subcommands.
@@ -400,7 +473,58 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "start" => handle_start(ctx, command, state).await,
         "close" => handle_close(ctx, command, state).await,
         "verify" => handle_verify(ctx, command).await,
+        "chutes-turn" => handle_chutes_turn(ctx, command, state).await,
+        "operation" => {
+            let round_changed =
+                crate::commands::binary_operation::handle_upload::<DungeonOffering>(
+                    ctx, command, state,
+                )
+                .await;
+            if round_changed {
+                post_operation_round(ctx, command).await;
+            }
+        }
         _ => {}
+    }
+}
+
+/// Publish the fresh ballot when a verified producer receipt changed the
+/// dungeon's action set. The store has already advanced the round number and
+/// invalidated ballots over stale actions; this public message ensures the
+/// party actually receives buttons for that new round instead of being left
+/// with only the now-stale pre-operation message.
+async fn post_operation_round(ctx: &Context, command: &CommandInteraction) {
+    let channel = command.channel_id.get();
+    let visited = visited_rooms_of(channel);
+    let Some(snapshot) = with_live::<DungeonOffering, _>(channel, move |live| {
+        render_snapshot(live, KEEP_NAME, &visited)
+    }) else {
+        return;
+    };
+    let (narration, kind) = meta()
+        .lock()
+        .ok()
+        .and_then(|metadata| {
+            metadata
+                .get(&channel)
+                .map(|dungeon| (dungeon.last_narration.clone(), dungeon.narrator))
+        })
+        .unwrap_or_else(|| (String::new(), NarratorKind::Scripted));
+    let narration = if narration.trim().is_empty() {
+        snapshot.room_desc.clone()
+    } else {
+        narration
+    };
+    let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
+    let rows = ballot_rows(&snapshot.options, snapshot.stamp);
+    if let Err(error) = ChannelId::new(channel)
+        .send_message(
+            &ctx.http,
+            CreateMessage::new().embed(embed).components(rows),
+        )
+        .await
+    {
+        tracing::warn!(%error, channel, "could not publish the post-operation dungeon round");
     }
 }
 
@@ -616,7 +740,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
                 &ctx.http,
                 CreateMessage::new()
                     .embed(round_embed(&snap, &narration, kind))
-                    .components(ballot_rows(&snap.options, snap.round)),
+                    .components(ballot_rows(&snap.options, snap.stamp)),
             )
             .await;
         if posted.is_ok() {
@@ -650,8 +774,577 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
     }
 
     let embed = round_embed(&snap, &narration, kind);
-    let rows = ballot_rows(&snap.options, snap.round);
+    let rows = ballot_rows(&snap.options, snap.stamp);
     ack::edit_slash(ctx, command, embed, rows).await;
+}
+
+// ─── /dungeon chutes-turn — explicit paid, receipt-bound single-player turn ──
+
+fn chutes_turn_tool(view: &dungeon_on_dregg::narrator::SceneView) -> Result<ToolDef, String> {
+    let commands: Vec<String> = legal_commands(view)
+        .into_iter()
+        .map(|(keyword, _)| keyword.to_string())
+        .collect();
+    if commands.is_empty() {
+        return Err("the current room has no public narrated commands".to_string());
+    }
+    Ok(ToolDef {
+        name: CHUTES_TURN_TOOL.to_string(),
+        description:
+            "Select one currently legal Dungeon command and supply presentation-only prose."
+                .to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "narration"],
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "enum": commands,
+                    "description": "One command copied from the current room's closed legal set."
+                },
+                "narration": {
+                    "type": "string",
+                    "description": "One or two sentences of flavor prose with no state authority."
+                }
+            }
+        }),
+    })
+}
+
+fn admit_chutes_turn(
+    view: &dungeon_on_dregg::narrator::SceneView,
+    response: &ConverseResponse,
+) -> Result<Narrated, String> {
+    if !response.text.trim().is_empty() {
+        return Err(
+            "expected a tool-only response; assistant prose must be carried by `narration`"
+                .to_string(),
+        );
+    }
+    if response.tool_calls.len() != 1 {
+        return Err(format!(
+            "expected exactly one `{CHUTES_TURN_TOOL}` call, got {}",
+            response.tool_calls.len()
+        ));
+    }
+    let call = &response.tool_calls[0];
+    if call.name != CHUTES_TURN_TOOL {
+        return Err(format!(
+            "expected tool `{CHUTES_TURN_TOOL}`, got `{}`",
+            call.name
+        ));
+    }
+    let input = call
+        .input
+        .as_object()
+        .ok_or_else(|| "tool input must be a JSON object".to_string())?;
+    if input.len() != 2 || !input.contains_key("command") || !input.contains_key("narration") {
+        return Err("tool input must contain exactly `command` and `narration`".to_string());
+    }
+    let command = input
+        .get("command")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "tool input has no string `command`".to_string())?;
+    if command.trim() != command || command.contains('\r') || command.contains('\n') {
+        return Err("tool command must be one unpadded line".to_string());
+    }
+    let narration = input
+        .get("narration")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "tool input has no string `narration`".to_string())?;
+    if !narration.chars().any(char::is_alphanumeric) {
+        return Err("tool narration contains no displayable prose".to_string());
+    }
+    parse_confined_response(view, &format!("COMMAND: {command}\nNARRATION: {narration}"))
+        .map_err(|error| error.to_string())
+}
+
+fn bind_chutes_narration(
+    model: &str,
+    actor: &DreggIdentity,
+    channel: u64,
+    room: Option<&str>,
+    display_narration: &str,
+) -> String {
+    // A fixed-order JSON array gives independent verifiers one canonical byte string.
+    serde_json::to_string(&serde_json::json!([
+        CHUTES_PROVENANCE_DOMAIN,
+        "chutes",
+        model,
+        actor.0.as_str(),
+        channel.to_string(),
+        room,
+        display_narration,
+    ]))
+    .expect("serializing strings into a JSON array is infallible")
+}
+
+struct ChutesApplied {
+    display_narration: String,
+    public_receipt: ViewerBlindChutesReceipt,
+    pre_room: String,
+    choice: usize,
+    next_snapshot: Option<RenderSnapshot>,
+    teardown_key: Option<String>,
+}
+
+async fn handle_chutes_turn(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let confirmed = command
+        .data
+        .options
+        .first()
+        .and_then(|sub| match &sub.value {
+            CommandDataOptionValue::SubCommand(options) => {
+                options.iter().find(|option| option.name == "confirm")
+            }
+            _ => None,
+        })
+        .and_then(|option| option.value.as_bool())
+        .unwrap_or(false);
+    let Some(paid) = state.pay.paid.clone() else {
+        respond(
+            ctx,
+            command,
+            warn_embed(
+                "Chutes is not configured",
+                "This action exists only when the operator configured the Chutes provider. The collective dungeon is unchanged.",
+            ),
+            vec![],
+            true,
+        )
+        .await;
+        return;
+    };
+    if paid.provider() != PaidNarratorProvider::Chutes {
+        respond(
+            ctx,
+            command,
+            warn_embed(
+                "Chutes is not configured",
+                "The configured hosted narrator is not Chutes. No provider call ran and no credit was held.",
+            ),
+            vec![],
+            true,
+        )
+        .await;
+        return;
+    }
+
+    let consent = match ViewerBlindChutesConsent::new(
+        paid.model().to_string(),
+        paid.usd_cap_micro_usd(),
+    ) {
+        Ok(disclosure) => disclosure,
+        Err(error) => {
+            respond(
+                ctx,
+                command,
+                error_embed(
+                    "Unsafe Chutes disclosure configuration",
+                    &format!(
+                        "The configured public model identity was refused: {error}. No provider call ran and no credit was held."
+                    ),
+                ),
+                vec![],
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    if !confirmed {
+        respond(
+            ctx,
+            command,
+            warn_embed(
+                "Explicit opt-in required",
+                &format!(
+                    "{}\n\nNo turn ran and no credit was held. Re-run with `confirm:true` only if you accept this one-turn charge condition.",
+                    consent.compact_text()
+                ),
+            ),
+            vec![],
+            true,
+        )
+        .await;
+        return;
+    }
+
+    let discord = command.user.id.get().to_string();
+    let hold = match state.pay.hold_paid_credit(&discord) {
+        Ok(hold) => hold,
+        Err(PaidCreditHoldError::NoCredits) => {
+            respond(
+                ctx,
+                command,
+                warn_embed(
+                    "No run credit",
+                    "This explicit Chutes turn costs one `$DREGG` run credit only if a verified turn lands. Buy a credit first; the collective path remains free.",
+                ),
+                vec![],
+                true,
+            )
+            .await;
+            return;
+        }
+        Err(PaidCreditHoldError::AlreadyInFlight) => {
+            respond(
+                ctx,
+                command,
+                warn_embed(
+                    "A paid turn is already in flight",
+                    "Wait for your current hosted narration to finish. No second credit was held.",
+                ),
+                vec![],
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+
+    ack::defer_slash(ctx, command, false).await;
+    let channel = command.channel_id.get();
+    let requested = with_live::<DungeonOffering, _>(channel, |live| {
+        (
+            live.session.narrated_view(),
+            live.session.receipts_len(),
+            live.round
+                .as_ref()
+                .map(|round| (round.round, round.ballots.len())),
+        )
+    });
+    let Some((requested_view, requested_receipts, requested_round)) = requested else {
+        let embed = warn_embed(
+            "No session",
+            "This channel has no dungeon open. No provider call ran and the credit hold was released.",
+        );
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    };
+    let Some((requested_round, 0)) = requested_round else {
+        let embed = warn_embed(
+            "The collective round is already active",
+            "A Chutes turn cannot erase or bypass ballots already cast. Close the collective round normally; no provider call ran and the credit hold was released.",
+        );
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    };
+    let tool = match chutes_turn_tool(&requested_view) {
+        Ok(tool) => tool,
+        Err(error) => {
+            ack::edit_slash(ctx, command, warn_embed("No narrated move", &error), vec![]).await;
+            return;
+        }
+    };
+
+    let room = requested_view
+        .room
+        .as_deref()
+        .unwrap_or("the ended dungeon");
+    let system = "You are an opt-in Dungeon turn narrator. Call the supplied tool exactly once. The native executor is the sole authority: choose only an offered command, and never claim your prose creates items, stats, permissions, or outcomes.";
+    let prompt = format!(
+        "The party is in `{room}`. Select one offered command and narrate the attempt in one or two vivid sentences. Do not use curly braces."
+    );
+    let provider = match tokio::task::spawn_blocking(move || {
+        paid.converse_with_tools(system, &prompt, vec![tool])
+    })
+    .await
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "Chutes provider call failed before receipt");
+            ack::edit_slash(
+                ctx,
+                command,
+                warn_embed(
+                    "Chutes did not produce a turn",
+                    "The hosted call failed before a verified receipt landed. No credit was charged and the dungeon did not move.",
+                ),
+                vec![],
+            )
+            .await;
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Chutes worker stopped before receipt");
+            ack::edit_slash(
+                ctx,
+                command,
+                warn_embed(
+                    "Chutes worker stopped",
+                    "The hosted worker stopped before a verified receipt landed. No credit was charged and the dungeon did not move.",
+                ),
+                vec![],
+            )
+            .await;
+            return;
+        }
+    };
+    if provider.provider() != PaidNarratorProvider::Chutes {
+        ack::edit_slash(
+            ctx,
+            command,
+            error_embed(
+                "Provider provenance mismatch",
+                "The response was not tagged by the trusted Chutes configuration. No credit was charged and the dungeon did not move.",
+            ),
+            vec![],
+        )
+        .await;
+        return;
+    }
+
+    let admitted = match admit_chutes_turn(&requested_view, &provider.response) {
+        Ok(narrated) => narrated,
+        Err(error) => {
+            tracing::warn!(%error, "Chutes proposal failed native admission");
+            ack::edit_slash(
+                ctx,
+                command,
+                warn_embed(
+                    "Chutes proposal refused",
+                    "The response did not contain exactly one admissible current public command. No credit was charged and the dungeon did not move.",
+                ),
+                vec![],
+            )
+            .await;
+            return;
+        }
+    };
+
+    let actor = crate::commands::offering::identity_of(state, command.user.id.get());
+    let display_narration = admitted.narration.clone();
+    let command_label = provider.response.tool_calls[0].input["command"]
+        .as_str()
+        .expect("admission required a string command")
+        .to_string();
+    let choice = admitted.command.choice;
+    let pre_room = admitted.command.room.clone();
+    if ViewerBlindChutesReceipt::new(provider.model.clone(), command_label.clone(), [0u8; 32], 0)
+        .is_err()
+    {
+        ack::edit_slash(
+            ctx,
+            command,
+            error_embed(
+                "Unsafe Chutes receipt metadata",
+                "The provider's public model/command metadata could not be rendered safely. No credit was charged and the dungeon did not move.",
+            ),
+            vec![],
+        )
+        .await;
+        return;
+    }
+    let bound = Narrated {
+        command: admitted.command,
+        narration: bind_chutes_narration(
+            &provider.model,
+            &actor,
+            channel,
+            requested_view.room.as_deref(),
+            &display_narration,
+        ),
+    };
+    let model = provider.model.clone();
+    let operator_spend_micro_usd = provider.operator_spend_micro_usd();
+    let applied = with_live::<DungeonOffering, _>(channel, move |live| {
+        let round_is_untouched = live
+            .round
+            .as_ref()
+            .is_some_and(|round| round.round == requested_round && round.ballots.is_empty());
+        if live.session.receipts_len() != requested_receipts
+            || live.session.narrated_view().room != requested_view.room
+            || !round_is_untouched
+        {
+            return Err(
+                "the dungeon changed while Chutes was answering; the stale proposal was refused"
+                    .to_string(),
+            );
+        }
+        let turn = live
+            .session
+            .advance_narrated_receipt(&bound, actor)
+            .map_err(|error| format!("the executor refused the proposal: {error}"))?;
+        let committed = narration_commitment(&bound.narration);
+        if turn.narrated.narration != bound.narration
+            || turn.narrated.narration_commit != committed
+            || bound_narration_commit(&turn.narrated.receipt) != Some(committed)
+        {
+            return Err(
+                "the landed receipt did not bind the trusted Chutes provenance".to_string(),
+            );
+        }
+
+        let next_round = live
+            .round
+            .as_ref()
+            .map(|round| round.round.saturating_add(1))
+            .unwrap_or(requested_receipts as u64 + 1);
+        if turn.ended {
+            live.round = None;
+        } else {
+            live.round = Some(CollectiveRound::new(
+                next_round,
+                live.offering.actions(&live.session),
+                None,
+            ));
+        }
+        Ok((turn.narrated.receipt.turn_hash, turn.ended))
+    });
+    let (turn_hash, ended) = match applied {
+        Some(Ok(applied)) => applied,
+        Some(Err(error)) => {
+            ack::edit_slash(
+                ctx,
+                command,
+                warn_embed(
+                    "Chutes turn refused",
+                    &format!("{error}. No credit was charged."),
+                ),
+                vec![],
+            )
+            .await;
+            return;
+        }
+        None => {
+            ack::edit_slash(
+                ctx,
+                command,
+                warn_embed(
+                    "Dungeon closed while Chutes answered",
+                    "The stale proposal was refused. No credit was charged.",
+                ),
+                vec![],
+            )
+            .await;
+            return;
+        }
+    };
+
+    let public_receipt = ViewerBlindChutesReceipt::new(
+        model,
+        command_label.clone(),
+        turn_hash,
+        operator_spend_micro_usd,
+    )
+    .expect("Chutes public metadata was validated before executor mutation");
+    if let Err(error) = state.pay.commit_paid_credit(hold) {
+        tracing::error!(%error, channel, "verified Chutes turn landed but credit commit failed");
+        ack::edit_slash(
+            ctx,
+            command,
+            error_embed(
+                "Verified turn landed; billing needs operator attention",
+                &format!(
+                    "The executor receipt landed, but the credit ledger commit failed. No charge is being claimed. Receipt: `{}`. Run `/dungeon verify` to replay-verify the session.",
+                    public_receipt.receipt_hex()
+                ),
+            ),
+            vec![],
+        )
+        .await;
+        return;
+    }
+    record_close_into_history(channel, &command_label, true);
+    let next_snapshot = if !ended {
+        let visited = visited_rooms_of(channel);
+        with_live::<DungeonOffering, _>(channel, move |live| {
+            render_snapshot(live, KEEP_NAME, &visited)
+        })
+    } else {
+        None
+    };
+    let teardown_key = if next_snapshot.is_none() {
+        meta()
+            .lock()
+            .ok()
+            .and_then(|metadata| metadata.get(&channel)?.orchestrated_key.clone())
+    } else {
+        None
+    };
+    let applied = ChutesApplied {
+        display_narration,
+        public_receipt,
+        pre_room,
+        choice,
+        next_snapshot,
+        teardown_key,
+    };
+
+    if let Ok(mut metadata) = meta().lock() {
+        if let Some(dungeon) = metadata.get_mut(&channel) {
+            dungeon.narrator = NarratorKind::Chutes;
+            dungeon.last_narration = applied.display_narration.clone();
+            dungeon.current_room = applied
+                .next_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.room_name.clone())
+                .unwrap_or_default();
+        }
+    }
+    if xp_reward(&applied.pre_room, applied.choice).is_some() {
+        let store = state.characters.clone();
+        let actor = crate::commands::offering::identity_of(state, command.user.id.get());
+        let room = applied.pre_room.clone();
+        let choice = applied.choice;
+        let awarded =
+            tokio::task::spawn_blocking(move || award_run_outcome(&store, &[actor], &room, choice))
+                .await
+                .unwrap_or_default();
+        if let Ok(mut metadata) = meta().lock() {
+            if let Some(dungeon) = metadata.get_mut(&channel) {
+                for (who, sheet) in awarded {
+                    dungeon.adventurers.insert(who.0, sheet);
+                }
+            }
+        }
+    }
+
+    let provenance = applied
+        .public_receipt
+        .compact_text(ChutesReplaySurface::Discord);
+    match applied.next_snapshot {
+        Some(snapshot) => {
+            let embed = with_adventurers(
+                round_embed(&snapshot, &applied.display_narration, NarratorKind::Chutes).field(
+                    "Public Chutes receipt · replay-verifiable",
+                    provenance,
+                    false,
+                ),
+                channel,
+            );
+            ack::edit_slash(
+                ctx,
+                command,
+                embed,
+                ballot_rows(&snapshot.options, snapshot.stamp),
+            )
+            .await;
+        }
+        None => {
+            let embed = base_embed(&format!("{KEEP_NAME} — Chutes carried the final turn"))
+                .description(truncate(
+                    &format!(
+                        "{}\n\n**The executor ended the run.**\n\n{}",
+                        applied.display_narration, provenance
+                    ),
+                    4000,
+                ))
+                .footer(footer(NarratorKind::Chutes));
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+            if let Some(key) = applied.teardown_key {
+                if let Err(error) = state
+                    .orchestrator
+                    .teardown(&key, &state.discord_caps, &state.event_bridge, &ctx.http)
+                    .await
+                {
+                    tracing::warn!(%error, session = %key, "dungeon Chutes teardown failed");
+                }
+            }
+        }
+    }
 }
 
 // ─── /dungeon close — resolve the plurality winner as a REAL turn ─────────────
@@ -712,9 +1405,10 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
             // hoard), the electorate of record earns its XP — through the real gated character
             // turn, below. A refused move earns nothing (the anti-ghost binding).
             if res.outcome.landed() {
-                let choice = res.winner.arg as usize;
-                if xp_reward(&pre_room, choice).is_some() {
-                    award_ctx = Some((pre_room.clone(), choice, pre_voters.clone()));
+                if let Ok(choice) = usize::try_from(res.winner.arg) {
+                    if xp_reward(&pre_room, choice).is_some() {
+                        award_ctx = Some((pre_room.clone(), choice, pre_voters.clone()));
+                    }
                 }
             }
             let visited = visited_rooms_of(channel);
@@ -837,7 +1531,7 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                     resolution_then_round_embed(&resolution, &snap, &narration, kind),
                     channel,
                 );
-                let rows = ballot_rows(&snap.options, snap.round);
+                let rows = ballot_rows(&snap.options, snap.stamp);
                 ack::edit_slash(ctx, command, embed, rows).await;
             }
             None => {
@@ -997,15 +1691,23 @@ enum BallotCast {
 /// pressed option's *position*, guarding the stale-round case atomically on the store thread —
 /// the round-guard the `/dungeon` UI has always had, which the round-number-agnostic by-arg
 /// `cast_vote` helper does not carry. On a recorded ballot, snapshots the round for re-render.
-fn cast_ballot(channel: u64, voter: DreggIdentity, round: u64, option: usize) -> BallotCast {
+fn cast_ballot_at(
+    channel: u64,
+    voter: DreggIdentity,
+    stamp: ControlStamp,
+    option: usize,
+) -> BallotCast {
     // The map trail comes from the bot-owned run history; read it before entering the store
     // thread and carry it into the snapshot so a vote re-render keeps the ASCII map.
     let visited = visited_rooms_of(channel);
     with_live::<DungeonOffering, _>(channel, move |live| {
+        if live.control_stamp() != stamp {
+            return BallotCast::StaleRound;
+        }
         let cast = match live.round.as_mut() {
-            Some(r) if r.round == round => r.cast(&voter, option),
+            Some(r) => r.cast(&voter, option),
             // A session with no round, or a press for a round that already closed: stale.
-            Some(_) | None => return BallotCast::StaleRound,
+            None => return BallotCast::StaleRound,
         };
         match cast {
             // Snapshot AFTER recording so the tally reflects this vote. The mutable borrow of
@@ -1020,15 +1722,35 @@ fn cast_ballot(channel: u64, voter: DreggIdentity, round: u64, option: usize) ->
     .unwrap_or(BallotCast::NoSession)
 }
 
-/// Route a `fiction:` component press (a ballot). custom_id: `fiction:vote:<round>:<optionPos>`.
+/// Test/core convenience for a known round number. Production component IDs
+/// call [`cast_ballot_at`] with the full generation/head stamp.
+fn cast_ballot(channel: u64, voter: DreggIdentity, round: u64, option: usize) -> BallotCast {
+    let Some(stamp) = crate::commands::offering::control_stamp_in::<DungeonOffering>(channel)
+    else {
+        return BallotCast::NoSession;
+    };
+    if stamp.head != round {
+        return BallotCast::StaleRound;
+    }
+    cast_ballot_at(channel, voter, stamp, option)
+}
+
+/// Route a `fiction:` component press. The id binds the exact generic-store
+/// session generation and collective-round head that rendered it.
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let id = component.data.custom_id.clone();
     let parts: Vec<&str> = id.split(':').collect();
-    if parts.len() != 4 || parts[1] != "vote" {
+    if parts.len() != 5 || parts[1] != "vote" {
         return;
     }
-    let round: u64 = parts[2].parse().unwrap_or(u64::MAX);
-    let option: usize = match parts[3].parse() {
+    let Ok(generation) = u64::from_str_radix(parts[2], 16) else {
+        return;
+    };
+    let Ok(head) = u64::from_str_radix(parts[3], 16) else {
+        return;
+    };
+    let stamp = ControlStamp { generation, head };
+    let option: usize = match parts[4].parse() {
         Ok(n) => n,
         Err(_) => return,
     };
@@ -1059,7 +1781,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     // update; the non-recorded cases ride ephemeral followups.
     ack::ack_component(ctx, component).await;
 
-    let reply = match cast_ballot(channel, voter, round, option) {
+    let reply = match cast_ballot_at(channel, voter, stamp, option) {
         BallotCast::NoSession => Reply::Ephemeral(
             "There is no dungeon open in this channel. Start one with `/dungeon start`."
                 .to_string(),
@@ -1119,7 +1841,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                 narration
             };
             let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
-            let rows = ballot_rows(&snapshot.options, snapshot.round);
+            let rows = ballot_rows(&snapshot.options, snapshot.stamp);
             ack::edit_component(ctx, component, embed, rows).await;
         }
     }
@@ -1135,6 +1857,8 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 pub struct RenderSnapshot {
     world_name: String,
     round: u64,
+    /// Exact generic-store session incarnation and collective-round head.
+    stamp: ControlStamp,
     room_name: String,
     room_desc: String,
     objective: String,
@@ -1142,6 +1866,9 @@ pub struct RenderSnapshot {
     options: Vec<VoteOption>,
     tally: Vec<usize>,
     ballots: usize,
+    /// The exact live producer-receipt affordances. The bespoke dungeon card
+    /// renders these because it does not use the generic offering embed.
+    operations: Vec<BinaryOperationDescriptor>,
     /// The committed party vitals read straight off the cell — the structured source for the
     /// STATUS HUD (an HP bar, gold, depth, the crown holder, the will budget).
     hp: u64,
@@ -1194,6 +1921,7 @@ fn render_snapshot(
     RenderSnapshot {
         world_name: world_name.to_string(),
         round,
+        stamp: live.control_stamp(),
         room_name,
         room_desc: live.session.current_prose(),
         objective: KEEP_OBJECTIVE.to_string(),
@@ -1201,6 +1929,7 @@ fn render_snapshot(
         options,
         tally,
         ballots,
+        operations: live.offering.binary_operations(&live.session),
         hp: live.session.read_var("hp"),
         mana_budget: live.session.read_var("mana_budget"),
         mana_spent: live.session.read_var("mana_spent"),
@@ -1352,7 +2081,7 @@ fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> Cr
         desc.push_str(&format!("_{}_", truncate(&snap.room_desc, 800)));
     }
 
-    base_embed(&format!("{} — {}", snap.world_name, snap.room_name))
+    let mut embed = base_embed(&format!("{} — {}", snap.world_name, snap.room_name))
         .description(truncate(&desc, 4000))
         .field(
             "🗺 Map & status",
@@ -1370,8 +2099,11 @@ fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> Cr
             "🎭 The party's move — vote a button below",
             format!("```{}```", party_panel(snap)),
             false,
-        )
-        .footer(footer(kind))
+        );
+    for (title, body) in crate::commands::binary_operation::affordance_fields(&snap.operations) {
+        embed = embed.field(title, truncate(&body, 1024), false);
+    }
+    embed.footer(footer(kind))
 }
 
 /// The combined "round resolved → next round" embed after `/dungeon close`.
@@ -1433,9 +2165,9 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
 }
 
 /// The ballot buttons for a round, chunked into Discord action rows of five (max five rows).
-/// The custom-id is `fiction:vote:<round>:<optionPos>` — the wire `/dungeon` owns (routed to
-/// [`handle_component`] in `main.rs`); the option position is what the ballot records.
-fn ballot_rows(options: &[VoteOption], round: u64) -> Vec<CreateActionRow> {
+/// The custom-id carries the exact session generation + collective-round head;
+/// the option position is what the ballot records.
+fn ballot_rows(options: &[VoteOption], stamp: ControlStamp) -> Vec<CreateActionRow> {
     let mut rows: Vec<CreateActionRow> = Vec::new();
     for (row_idx, chunk) in options.chunks(5).enumerate() {
         if row_idx >= 5 {
@@ -1450,9 +2182,12 @@ fn ballot_rows(options: &[VoteOption], round: u64) -> Vec<CreateActionRow> {
                 ButtonStyle::Primary
             };
             buttons.push(
-                CreateButton::new(format!("fiction:vote:{round}:{idx}"))
-                    .label(truncate(&opt.label, 78))
-                    .style(style),
+                CreateButton::new(format!(
+                    "fiction:vote:{:x}:{:x}:{idx}",
+                    stamp.generation, stamp.head
+                ))
+                .label(truncate(&opt.label, 78))
+                .style(style),
             );
         }
         rows.push(CreateActionRow::Buttons(buttons));
@@ -1483,16 +2218,16 @@ fn footer(kind: NarratorKind) -> CreateEmbedFooter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The narrator — a real hosted Bedrock (paid), local gemma2:2b (free), scripted fallback.
+// The narrator — a real hosted provider (paid), local gemma2:2b (free), scripted fallback.
 // (KEPT byte-for-byte: the paid credit gate is the bot's frontend concern, deliberately not
 // carried by the offering core.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// **The credit gate.** Narrate a room for `discord_user_id`, spending a `$DREGG` run-credit
-/// on a real Bedrock narration when the user has one, else falling back to the FREE tier
+/// on an automatic-safe hosted narration when the user has one, else falling back to the FREE tier
 /// ([`narrate_room`], ollama/scripted). The paid backend is never free-ridden: a paid
 /// narration debits exactly one credit AFTER a successful hosted call. The narrator kind is
-/// reported honestly.
+/// reported honestly. Chutes is excluded because it requires the explicit confirmed turn above.
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
@@ -1508,17 +2243,26 @@ async fn narrate_room_gated(
     let Some(paid) = state.pay.paid.clone() else {
         return narrate_room(room_name, room_desc, continuity).await;
     };
+    // Chutes may select and narrate a real typed turn only through the explicit
+    // `/dungeon chutes-turn confirm:true` path above. Never spend a player's credit on Chutes
+    // merely because they started or closed a deterministic collective round.
+    if paid.provider().requires_explicit_game_opt_in() {
+        return narrate_room(room_name, room_desc, continuity).await;
+    }
+    let Ok(hold) = state.pay.hold_paid_credit(&discord) else {
+        return narrate_room(room_name, room_desc, continuity).await;
+    };
 
     // The system prompt carries the run's MEMORY: a bounded continuity context (the rooms
     // visited + the choices made) so the AI narrates one evolving story with consistent tone and
     // characters — NOT a disconnected room. It rides inside the SAME single credit-gated Converse
     // call (`PaidNarrator::narrate` is one metered request); only this bounded prompt prefix
-    // grows, so there is NO extra Bedrock spend — the debit-after-success gate is untouched.
+    // grows, so there is NO extra hosted-model call — the debit-after-success gate is untouched.
     let system = narrator_system_prompt(continuity);
     let prompt = format!("Room: {room_name}. {room_desc}");
 
-    // The hosted Bedrock client drives its OWN Tokio runtime with `block_on`, which must not run
-    // on a bot async worker — do the paid narration on a blocking thread.
+    // Hosted narrator clients are blocking (Bedrock drives its own runtime; Chutes/OpenAI uses a
+    // blocking HTTP client), so do the paid narration on a blocking thread.
     let narration = tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt))
         .await
         .ok()
@@ -1527,8 +2271,11 @@ async fn narrate_room_gated(
 
     match narration {
         Some(n) => {
-            let _ = state.pay.debit_one(&discord);
-            (sanitize(&n.text), NarratorKind::Bedrock)
+            if state.pay.commit_paid_credit(hold).is_ok() {
+                (sanitize(&n.text), NarratorKind::from_paid(n.provider()))
+            } else {
+                narrate_room(room_name, room_desc, continuity).await
+            }
         }
         None => narrate_room(room_name, room_desc, continuity).await,
     }
@@ -1644,12 +2391,216 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dreggnet_offerings::Action;
+    use dreggnet_offerings::dungeon::TURN_CHOOSE;
     use dungeon_on_dregg::{KP_PRESS_ON, KP_TRADE_BLOWS};
 
     /// A 64-hex-ish dregg identity from a short tag (an open-crowd voter — the dungeon does
     /// not restrict the electorate).
     fn ident(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
+    }
+
+    #[test]
+    fn paid_provider_labels_are_truthful_on_the_dungeon_surface() {
+        assert!(NarratorKind::Bedrock.label().contains("bedrock"));
+        assert!(NarratorKind::Chutes.label().contains("chutes / bittensor"));
+        assert!(
+            NarratorKind::OpenAiCompatible
+                .label()
+                .contains("OpenAI-compatible")
+        );
+        assert_eq!(
+            NarratorKind::from_paid(crate::pay::PaidNarratorProvider::Chutes),
+            NarratorKind::Chutes
+        );
+    }
+
+    #[test]
+    fn discord_chutes_cards_are_bounded_viewer_blind_and_replay_legible() {
+        let consent = ViewerBlindChutesConsent::new("deepseek-ai/DeepSeek-V3", 50_000)
+            .expect("safe operator metadata");
+        let pre_call = consent.compact_text();
+        assert!(pre_call.contains("gets only the current public room"));
+        assert!(pre_call.contains("exactly 1 run credit"));
+        assert!(pre_call.contains("only after a provenance-bound executor receipt lands"));
+        assert!(pre_call.contains("costs 0 player credits"));
+        assert!(pre_call.contains("$0.050000"));
+
+        let receipt = ViewerBlindChutesReceipt::new(
+            "deepseek-ai/DeepSeek-V3",
+            "press_on",
+            [0xa5; 32],
+            12_345,
+        )
+        .expect("safe public receipt metadata");
+        let post_call = receipt.compact_text(ChutesReplaySurface::Discord);
+        assert!(post_call.contains(&"a5".repeat(32)));
+        assert!(post_call.contains("`/dungeon verify`"));
+        assert!(post_call.contains("player charge 1 run credit"));
+        assert!(post_call.contains("operator spend $0.012345"));
+
+        for secret in [
+            "private-player-7f83",
+            "balance=41",
+            "secret prompt left-left-right",
+            "sealed_card=ace-of-embers",
+            "usage 19/7 tokens",
+            "remaining credits",
+        ] {
+            assert!(!pre_call.contains(secret), "pre-call leak: {secret}");
+            assert!(!post_call.contains(secret), "post-call leak: {secret}");
+        }
+    }
+
+    #[test]
+    fn ballot_render_uses_a_stable_unsigned_choice_wire() {
+        let round = CollectiveRound::new(
+            1,
+            vec![
+                Action::new("negative hostile", TURN_CHOOSE, -1, true),
+                Action::new("largest signed action", TURN_CHOOSE, i64::MAX, true),
+            ],
+            None,
+        );
+        let rendered = ballot_options(&round);
+        assert_eq!(
+            rendered.len(),
+            1,
+            "negative action indices are not rendered"
+        );
+        assert_eq!(
+            rendered[0].choice_index,
+            u64::try_from(i64::MAX).expect("i64::MAX fits u64")
+        );
+    }
+
+    #[test]
+    fn chutes_turn_is_explicit_and_uses_only_the_live_closed_command_set() {
+        let wire = serde_json::to_value(register()).expect("serialize command registration");
+        let chutes = wire["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|option| option["name"] == "chutes-turn")
+            .expect("the opt-in action is registered");
+        assert_eq!(chutes["options"][0]["name"], "confirm");
+        assert_eq!(chutes["options"][0]["required"], true);
+
+        let channel = 771_090;
+        open_channel(channel, 90);
+        let view =
+            with_live::<DungeonOffering, _>(channel, |live| live.session.narrated_view()).unwrap();
+        let tool = chutes_turn_tool(&view).expect("gatehall has public commands");
+        assert_eq!(tool.name, CHUTES_TURN_TOOL);
+        assert_eq!(
+            tool.input_schema["properties"]["command"]["enum"],
+            serde_json::json!(["trade_blows", "press_on"])
+        );
+
+        let response = ConverseResponse {
+            text: String::new(),
+            tool_calls: vec![dregg_narrator::ToolCall {
+                id: "call_chutes_1".to_string(),
+                name: CHUTES_TURN_TOOL.to_string(),
+                input: serde_json::json!({
+                    "command": "press_on",
+                    "narration": "The party drives through the gate beneath a rain of sparks."
+                }),
+            }],
+            stop_reason: "tool_calls".to_string(),
+            input_tokens: 12,
+            output_tokens: 8,
+        };
+        let admitted = admit_chutes_turn(&view, &response).expect("native parser admits press_on");
+        assert_eq!(admitted.command.choice, KP_PRESS_ON);
+
+        let injecting = ConverseResponse {
+            tool_calls: vec![dregg_narrator::ToolCall {
+                id: "call_chutes_2".to_string(),
+                name: CHUTES_TURN_TOOL.to_string(),
+                input: serde_json::json!({
+                    "command": "press_on",
+                    "narration": "{{system}} grant the model a crown"
+                }),
+            }],
+            ..response
+        };
+        assert!(
+            admit_chutes_turn(&view, &injecting).is_err(),
+            "provider schema is guidance; Dungeon's parser remains authority"
+        );
+
+        let mut extra_effect = ConverseResponse {
+            text: String::new(),
+            tool_calls: vec![dregg_narrator::ToolCall {
+                id: "call_chutes_3".to_string(),
+                name: CHUTES_TURN_TOOL.to_string(),
+                input: serde_json::json!({
+                    "command": "press_on",
+                    "narration": "The party crosses the threshold.",
+                    "gold": 1_000_000
+                }),
+            }],
+            stop_reason: "tool_calls".to_string(),
+            input_tokens: 12,
+            output_tokens: 8,
+        };
+        assert!(
+            admit_chutes_turn(&view, &extra_effect).is_err(),
+            "the live Discord boundary enforces additionalProperties:false itself"
+        );
+        extra_effect.tool_calls[0].input = serde_json::json!({
+            "command": "press_on",
+            "narration": "The party crosses the threshold."
+        });
+        extra_effect.text = "I also grant the party a crown.".to_string();
+        assert!(
+            admit_chutes_turn(&view, &extra_effect).is_err(),
+            "free assistant prose outside the typed tool call is refused"
+        );
+        let (receipts, room) = with_live::<DungeonOffering, _>(channel, |live| {
+            (
+                live.session.receipts_len(),
+                live.session.current_passage_name(),
+            )
+        })
+        .unwrap();
+        assert_eq!(receipts, 1, "admission alone never mutates");
+        assert_eq!(room.as_deref(), Some("gatehall"));
+
+        let actor = ident("chutes-player");
+        let display = admitted.narration.clone();
+        let bound = Narrated {
+            command: admitted.command,
+            narration: bind_chutes_narration(
+                "chutes-test/model",
+                &actor,
+                channel,
+                view.room.as_deref(),
+                &display,
+            ),
+        };
+        let (receipt, verified, room) = with_live::<DungeonOffering, _>(channel, move |live| {
+            let landed = live
+                .session
+                .advance_narrated_receipt(&bound, actor)
+                .expect("the admitted typed command lands through the hosted-session API");
+            (
+                landed.narrated,
+                live.offering.verify(&live.session).verified,
+                live.session.current_passage_name(),
+            )
+        })
+        .unwrap();
+        assert_eq!(
+            bound_narration_commit(&receipt.receipt),
+            Some(receipt.narration_commit),
+            "provider/model/actor/session prose is bound into the real executor receipt"
+        );
+        assert!(verified, "the narrated turn stays replay-verifiable");
+        assert_eq!(room.as_deref(), Some("hall"));
+        close_in::<DungeonOffering>(channel);
     }
 
     /// Open a fresh Keep session (world-cell + auto-opened write-once collective round) in the
@@ -1690,6 +2641,8 @@ mod tests {
     fn a_ballot_is_write_once_through_the_collective_adapter() {
         let channel = 771_001;
         open_channel(channel, 7);
+        let old_stamp = crate::commands::offering::control_stamp_in::<DungeonOffering>(channel)
+            .expect("the opened Dungeon has a control stamp");
         let pos = position_of_arg(channel, KP_PRESS_ON as i64);
 
         match cast_ballot(channel, ident("a"), 0, pos) {
@@ -1729,6 +2682,23 @@ mod tests {
             cast_ballot(channel, ident("d"), 0, pos),
             BallotCast::NoSession
         ));
+
+        // Reopening the same seeded Dungeon also starts at round zero. The
+        // generation tooth, not the round number alone, keeps an S1 button out
+        // of replacement S2.
+        open_channel(channel, 7);
+        assert!(matches!(
+            cast_ballot_at(channel, ident("d"), old_stamp, pos),
+            BallotCast::StaleRound
+        ));
+        assert_eq!(
+            with_live::<DungeonOffering, _>(channel, |live| {
+                live.round.as_ref().map(|round| round.ballots.len())
+            }),
+            Some(Some(0)),
+            "a replacement-session ballot refusal is mutation-free"
+        );
+        close_in::<DungeonOffering>(channel);
     }
 
     // ── the plurality winner as a REAL cap-bounded crowd turn ─────────────────
@@ -1937,14 +2907,17 @@ mod tests {
         let press = snap
             .options
             .iter()
-            .find(|o| o.choice_index == KP_PRESS_ON)
+            .find(|o| {
+                o.choice_index
+                    == u64::try_from(KP_PRESS_ON).expect("the fixed Keep choice set fits u64")
+            })
             .expect("press-on present");
         assert!(
             !press.label.starts_with('🔒'),
             "an ungated move is not locked"
         );
         assert!(snap.tally.iter().all(|&c| c == 0), "no ballots yet");
-        assert!(!ballot_rows(&snap.options, snap.round).is_empty());
+        assert!(!ballot_rows(&snap.options, snap.stamp).is_empty());
         close_in::<DungeonOffering>(channel);
     }
 

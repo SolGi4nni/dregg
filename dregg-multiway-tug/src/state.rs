@@ -197,7 +197,7 @@ impl Deployment {
     pub fn story(&self) -> CompiledStory {
         let mut var_slots = std::collections::BTreeMap::new();
         for name in REGISTERS {
-            var_slots.insert(name.to_string(), self.reg(name) as usize);
+            var_slots.insert(name.to_string(), self.reg(name) as u64);
         }
         CompiledStory {
             scene_id: SCENE_ID.to_string(),

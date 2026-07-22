@@ -50,6 +50,11 @@ use dregg_app_framework::{
 /// real [`TurnReceipt`] via an `EmitEvent` (not a parallel ledger).
 pub mod narrator;
 
+/// A consequential two-relic oath fork whose awakening is executor-owned. With
+/// `private-raid-assignment`, its culminating narrated awakening and proof-verified
+/// raid allocation can land as one real multi-root call forest.
+pub mod relic_resonance;
+
 /// Phase C — the COLLECTIVE landed on the real substrate. A crowd quorum-certifies a
 /// winning [`narrator::Command`] through the REAL [`collective_choice`] engine (WriteOnce
 /// ballots + Monotonic tally + the polis `AffineLe` quorum gate), and that certified

@@ -354,7 +354,11 @@ impl CardApplet {
         // tooth already ran in-band above); the agent is the card cell.
         let mut action = ActionBuilder::new_unchecked_for_tests(self.cell, affordance, self.cell);
         for (slot, value) in writes {
-            action = action.effect_set_field(self.cell, slot, value);
+            action = action.effect_set_field(
+                self.cell,
+                u64::try_from(slot).expect("applet field slot must fit the executor index"),
+                value,
+            );
         }
         let action = action.effect_increment_nonce(self.cell).build();
 

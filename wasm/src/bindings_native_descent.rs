@@ -77,7 +77,7 @@ impl NativeDescentWorld {
     /// deployed genesis is unclaimed; the first landed action binds its actor.
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u32) -> Result<NativeDescentWorld, JsError> {
-        Self::try_new(seed as u64).map_err(|error| JsError::new(&error))
+        Self::try_new(u64::from(seed)).map_err(|error| JsError::new(&error))
     }
 
     /// Restore an untrusted portable record by exact re-execution.
@@ -465,7 +465,7 @@ struct CompletionWire {
     revision: u64,
     root_hex: String,
     settlement_receipt_hash_hex: String,
-    banked_relics: Vec<usize>,
+    banked_relics: Vec<u64>,
     crowned: bool,
 }
 
@@ -485,9 +485,15 @@ impl From<&NativeDescentCompletion> for CompletionWire {
 fn move_wire(command: NativeDescentMove) -> (&'static str, i64) {
     match command {
         NativeDescentMove::Delve => ("delve", 0),
-        NativeDescentMove::Unlock { way } => ("unlock", way as i64),
+        NativeDescentMove::Unlock { way } => (
+            "unlock",
+            i64::try_from(way).expect("an admitted native unlock index fits the action wire"),
+        ),
         NativeDescentMove::Smite => ("smite", 0),
-        NativeDescentMove::Loot { relic } => ("loot", relic as i64),
+        NativeDescentMove::Loot { relic } => (
+            "loot",
+            i64::try_from(relic).expect("an admitted native relic index fits the action wire"),
+        ),
         NativeDescentMove::Flee => ("flee", 0),
     }
 }
@@ -580,5 +586,28 @@ mod tests {
         assert!(record["events"][0]["receipt"].is_object());
         assert_eq!(record["events"][0]["turn"], "flee");
         assert!(world.verify());
+    }
+
+    #[test]
+    fn completion_relic_ids_round_trip_at_the_full_u64_wire_width() {
+        let completion = CompletionWire {
+            actor: "wire-auditor".to_string(),
+            revision: 1,
+            root_hex: "00".repeat(32),
+            settlement_receipt_hash_hex: "11".repeat(32),
+            banked_relics: vec![u64::MAX],
+            crowned: false,
+        };
+        let json = serde_json::to_string(&completion).expect("completion wire serializes");
+        let value = value(&json);
+        assert_eq!(
+            value["bankedRelics"][0],
+            serde_json::json!(u64::MAX),
+            "the browser record must not narrow a stable relic id to usize"
+        );
+        assert_eq!(
+            serde_json::from_str::<CompletionWire>(&json).expect("completion wire decodes"),
+            completion
+        );
     }
 }

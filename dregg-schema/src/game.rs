@@ -165,7 +165,7 @@ pub fn compiled_story(schema: &Schema, layout: &CheckedLayout) -> Result<Compile
     let mut var_slots = BTreeMap::new();
     for a in layout.assignments() {
         if let Slot::Register(r) = a.slot {
-            var_slots.insert(a.component.clone(), r as usize);
+            var_slots.insert(a.component.clone(), r as u64);
         }
     }
 
@@ -206,8 +206,8 @@ impl<'g> Turn<'g> {
                 .resolve(component)
                 .ok_or_else(|| GameError::UnknownComponent(component.clone()))?;
             let index = match slot {
-                Slot::Register(r) => r as usize,
-                Slot::Heap(k) => k as usize,
+                Slot::Register(r) => u64::from(r),
+                Slot::Heap(k) => k,
             };
             effects.push(Effect::SetField {
                 cell,

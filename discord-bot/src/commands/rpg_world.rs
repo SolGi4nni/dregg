@@ -70,7 +70,7 @@ use crate::commands::descent::{
     StoredDescentCompletion, StoredDescentUniverse, reconstruct_universe,
 };
 use crate::commands::offering::{
-    self, DiscordOffering, Press, identity_of, outcome_note, truncate,
+    self, ControlStamp, DiscordOffering, Press, identity_of, outcome_note, truncate,
 };
 use crate::db::Database;
 use crate::rpg_store::SqliteRpgResumeStore;
@@ -121,18 +121,18 @@ fn meta(key: &str) -> Option<(&'static str, u32, &'static str)> {
 }
 
 /// The affordance rows for `key`'s current actions — through the generic adapter's own
-/// [`offering::action_rows`] (same custom-id wire, same 🔒-shown-not-hidden styling), so a press
+/// [`offering::action_rows_at`] (same custom-id wire, same 🔒-shown-not-hidden styling), so a press
 /// on a persistent surface routes exactly like every other offering press.
-fn rows_for(key: &str, actions: &[Action]) -> Vec<CreateActionRow> {
+fn rows_for(key: &str, actions: &[Action], stamp: ControlStamp) -> Vec<CreateActionRow> {
     match key {
-        "trade" => offering::action_rows::<TradeOffering>(actions),
-        "inventory" => offering::action_rows::<InventoryOffering>(actions),
-        "cheevos" => offering::action_rows::<CheevoShowcase>(actions),
-        "guild" => offering::action_rows::<GuildPage>(actions),
-        "craft" => offering::action_rows::<CraftOffering>(actions),
-        "companion" => offering::action_rows::<CompanionOffering>(actions),
-        "tavern" => offering::action_rows::<TavernOffering>(actions),
-        "party" => offering::action_rows::<PartyOffering>(actions),
+        "trade" => offering::action_rows_at::<TradeOffering>(actions, stamp),
+        "inventory" => offering::action_rows_at::<InventoryOffering>(actions, stamp),
+        "cheevos" => offering::action_rows_at::<CheevoShowcase>(actions, stamp),
+        "guild" => offering::action_rows_at::<GuildPage>(actions, stamp),
+        "craft" => offering::action_rows_at::<CraftOffering>(actions, stamp),
+        "companion" => offering::action_rows_at::<CompanionOffering>(actions, stamp),
+        "tavern" => offering::action_rows_at::<TavernOffering>(actions, stamp),
+        "party" => offering::action_rows_at::<PartyOffering>(actions, stamp),
         _ => Vec::new(),
     }
 }
@@ -233,7 +233,22 @@ pub fn earn_player_cheevos(
         let Some((_, universe)) = universes.iter().find(|(id, _)| *id == sc.universe_id_hex) else {
             continue;
         };
-        let Ok(moves) = serde_json::from_str::<Vec<usize>>(&sc.moves_json) else {
+        let Ok(stable_moves) = serde_json::from_str::<Vec<u64>>(&sc.moves_json) else {
+            continue;
+        };
+        if StoredDescentCompletion::new(&sc.universe_id_hex, &sc.player, &stable_moves).key_hex
+            != sc.key_hex
+        {
+            continue;
+        }
+        let Some(moves) = stable_moves
+            .into_iter()
+            .map(|choice| usize::try_from(choice).ok())
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let Ok(claimed_turns) = usize::try_from(sc.claimed_turns) else {
             continue;
         };
         // A tampered (illegal) move sequence is refused by the real executor here.
@@ -244,7 +259,7 @@ pub fn earn_player_cheevos(
             universe: universe.id(),
             player: sc.player.clone(),
             play,
-            claimed_turns: sc.claimed_turns as usize,
+            claimed_turns,
         };
         for ladder in achievement_ladders() {
             for achievement in ladder {
@@ -379,6 +394,43 @@ pub fn evict_player_host(player: &str) {
 // The sync render/press core (host-thread side; only plain data crosses back).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Domain-separated, length-delimited 64-bit projection used only for Discord
+/// control stamps. The owning state commitment remains the full-width value.
+fn hash_u64(domain: &[u8], fields: &[&[u8]]) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    for field in fields {
+        let field_len = u64::try_from(field.len()).expect("a Discord stamp field fits in u64");
+        hasher.update(&field_len.to_le_bytes());
+        hasher.update(field);
+    }
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&hasher.finalize().as_bytes()[..8]);
+    u64::from_le_bytes(out)
+}
+
+/// Exact durable-world address and committed-state head carried by an RPG
+/// control. A replayed restart preserves the stamp only when it reconstructs
+/// the same state; any landed intervening turn makes an old message stale.
+fn persistent_stamp(
+    host: &OfferingHost,
+    key: &str,
+    viewer: &DreggIdentity,
+) -> Option<ControlStamp> {
+    let id = session_id();
+    let commitment = host.commitment(key, &id)?;
+    Some(ControlStamp {
+        generation: hash_u64(
+            b"dregg.discord.persistent-rpg-address.v1\0",
+            &[viewer.0.as_bytes(), key.as_bytes(), id.0.as_bytes()],
+        ),
+        head: hash_u64(
+            b"dregg.discord.persistent-rpg-head.v1\0",
+            &[commitment.as_slice()],
+        ),
+    })
+}
+
 /// Render `key`'s live surface out of `host`, projected FOR `viewer` — embed + affordance rows,
 /// in the same visual grammar as the generic adapter (`embed_for`/`action_rows`), with the honest
 /// persistent-world footer.
@@ -391,6 +443,7 @@ fn surface_from_host(
     let surface = host.render_for(key, &id, viewer)?;
     let actions = host.actions_for(key, &id, viewer).unwrap_or_default();
     let turns = host.verify(key, &id).map(|r| r.turns).unwrap_or(0);
+    let stamp = persistent_stamp(host, key, viewer)?;
     let (title, color, tagline) = meta(key)?;
     let card = deos_view::discord::render_card(title, surface.view(), &[]);
     let embed = card
@@ -400,7 +453,7 @@ fn surface_from_host(
             &format!("{turns} verified turns · {tagline} · your own world — it persists"),
             2040,
         )));
-    Some((embed, rows_for(key, &actions)))
+    Some((embed, rows_for(key, &actions, stamp)))
 }
 
 /// The `Send` result of an open or press against a player's persistent world.
@@ -440,34 +493,53 @@ fn open_core(
 
 /// **Drive one press as one real turn in the PRESSER's own world** (ensure-open first, so a
 /// button on a pre-restart message transparently resumes their world), then re-render.
+fn press_host_at(
+    host: &mut OfferingHost,
+    viewer: &DreggIdentity,
+    key: String,
+    stamp: ControlStamp,
+    turn: String,
+    arg: i64,
+) -> RpgSurface {
+    let id = session_id();
+    if let Err(e) = host.ensure_open(&key, &id) {
+        return RpgSurface {
+            note: format!("**The world did not reopen.** {e}"),
+            surface: None,
+        };
+    }
+    if persistent_stamp(host, &key, viewer) != Some(stamp) {
+        return RpgSurface {
+            note: "That control belongs to an earlier state of your persistent world — nothing was fired."
+                .to_string(),
+            surface: surface_from_host(host, &key, viewer),
+        };
+    }
+    // The label is decoration; the executor resolves the TYPED (turn, arg) — `enabled` is
+    // decoration too (the substrate is the sole referee; an inadmissible move comes back as
+    // a real `Refused`, not a frontend veto).
+    let action = Action::new(turn.clone(), turn, arg, true);
+    let note = match host.advance(&key, &id, action, viewer.clone()) {
+        Some(outcome) => outcome_note(&outcome),
+        None => "No live session — the world did not reopen.".to_string(),
+    };
+    RpgSurface {
+        note,
+        surface: surface_from_host(host, &key, viewer),
+    }
+}
+
 fn press_core(
     db: Database,
     handle: tokio::runtime::Handle,
     player: String,
     key: String,
+    stamp: ControlStamp,
     turn: String,
     arg: i64,
 ) -> RpgSurface {
     with_player_host(db, handle, player, move |host, viewer| {
-        let id = session_id();
-        if let Err(e) = host.ensure_open(&key, &id) {
-            return RpgSurface {
-                note: format!("**The world did not reopen.** {e}"),
-                surface: None,
-            };
-        }
-        // The label is decoration; the executor resolves the TYPED (turn, arg) — `enabled` is
-        // decoration too (the substrate is the sole referee; an inadmissible move comes back as
-        // a real `Refused`, not a frontend veto).
-        let action = Action::new(turn.clone(), turn, arg, true);
-        let note = match host.advance(&key, &id, action, viewer.clone()) {
-            Some(outcome) => outcome_note(&outcome),
-            None => "No live session — the world did not reopen.".to_string(),
-        };
-        RpgSurface {
-            note,
-            surface: surface_from_host(host, &key, viewer),
-        }
+        press_host_at(host, viewer, key, stamp, turn, arg)
     })
 }
 
@@ -579,10 +651,20 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     // The eight identity-owned RPG surfaces declare no value/text prompts, so every press is a direct fire
     // (an `ask`-shaped id would only arise from a stale foreign message — fire it honestly
     // with its arg rather than dead-ending, the same fallback `offering::drive` takes).
-    let (key, turn, arg) = match press {
-        Press::Fire { key, turn, arg } => (key, turn, arg),
-        Press::Ask { key, turn } => (key, turn, 0),
-        Press::AskText { key, turn, arg } => (key, turn, arg),
+    let (key, stamp, turn, arg) = match press {
+        Press::Fire {
+            key,
+            stamp,
+            turn,
+            arg,
+        } => (key, stamp, turn, arg),
+        Press::Ask { key, stamp, turn } => (key, stamp, turn, 0),
+        Press::AskText {
+            key,
+            stamp,
+            turn,
+            arg,
+        } => (key, stamp, turn, arg),
     };
     if !is_rpg_key(&key) {
         return;
@@ -591,7 +673,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
     let db = state.db.clone();
     let handle = tokio::runtime::Handle::current();
     let player = identity_of(state, component.user.id.get()).0;
-    let pressed = press_core(db, handle, player, key, turn, arg);
+    let pressed = press_core(db, handle, player, key, stamp, turn, arg);
     match pressed.surface {
         Some((embed, rows)) => {
             let _ = component
@@ -651,6 +733,58 @@ mod tests {
             )
             .expect("craft session live");
         assert!(out.landed(), "the greatblade craft lands: {out:?}");
+    }
+
+    #[test]
+    fn a_persistent_world_control_is_bound_to_player_and_exact_state_head() {
+        let mut host = build_player_host(Box::new(InMemoryResumeStore::new()), Vec::new());
+        let who = me();
+        host.ensure_open("craft", &session_id())
+            .expect("craft opens");
+        let old = persistent_stamp(&host, "craft", &who).expect("the live world has a stamp");
+        let landed = press_host_at(
+            &mut host,
+            &who,
+            "craft".to_string(),
+            old,
+            "craft".to_string(),
+            0,
+        );
+        assert!(
+            landed.note.contains("verified turn landed"),
+            "{}",
+            landed.note
+        );
+
+        let committed = host
+            .commitment("craft", &session_id())
+            .expect("the landed craft has a commitment");
+        let current = persistent_stamp(&host, "craft", &who).expect("the new head has a stamp");
+        assert_ne!(
+            old, current,
+            "a landed turn advances the Discord control head"
+        );
+        let refused = press_host_at(
+            &mut host,
+            &who,
+            "craft".to_string(),
+            old,
+            "craft".to_string(),
+            0,
+        );
+        assert!(refused.note.contains("earlier state"), "{}", refused.note);
+        assert_eq!(
+            host.commitment("craft", &session_id()),
+            Some(committed),
+            "a stale persistent-world control is mutation-free"
+        );
+
+        let other = DreggIdentity(format!("bb{}", "0".repeat(62)));
+        assert_ne!(
+            persistent_stamp(&host, "craft", &other),
+            Some(current),
+            "the control address is bound to the player identity"
+        );
     }
 
     /// **THE SAGA COMPOSITION (#15's heart)** — a crafted item IS in the player's inventory IS
@@ -827,21 +961,9 @@ A relic gleams.
             .map(|b| format!("{b:02x}"))
             .collect();
         let tag = "abcdef123456";
-        let good = StoredDescentCompletion {
-            key_hex: "k1".into(),
-            universe_id_hex: id_hex.clone(),
-            player: tag.into(),
-            moves_json: "[0,0,0,0]".into(),
-            claimed_turns: 4,
-        };
+        let good = StoredDescentCompletion::new(&id_hex, tag, &[0, 0, 0, 0]);
         // A tampered row: an out-of-range move index the executor refuses on re-drive.
-        let tampered = StoredDescentCompletion {
-            key_hex: "k2".into(),
-            universe_id_hex: id_hex.clone(),
-            player: tag.into(),
-            moves_json: "[9,9]".into(),
-            claimed_turns: 2,
-        };
+        let tampered = StoredDescentCompletion::new(&id_hex, tag, &[u64::MAX]);
         let universes = vec![(id_hex, universe)];
 
         let earned = earn_player_cheevos(tag, &universes, &[good.clone(), tampered]);
@@ -870,6 +992,20 @@ A relic gleams.
         assert!(
             earn_player_cheevos("999999999999", &universes, &[good]).is_empty(),
             "another identity earns nothing from this player's completions"
+        );
+
+        let mut stale_key = StoredDescentCompletion::new(&universes[0].0, tag, &[0, 0, 0, 0]);
+        stale_key.key_hex = "00".repeat(32);
+        assert!(
+            earn_player_cheevos(tag, &universes, &[stale_key]).is_empty(),
+            "an otherwise-winning tape with a stale content key earns nothing"
+        );
+
+        let mut negative_count = StoredDescentCompletion::new(&universes[0].0, tag, &[0, 0, 0, 0]);
+        negative_count.claimed_turns = -1;
+        assert!(
+            earn_player_cheevos(tag, &universes, &[negative_count]).is_empty(),
+            "a negative persisted count does not wrap into an executor count"
         );
     }
 

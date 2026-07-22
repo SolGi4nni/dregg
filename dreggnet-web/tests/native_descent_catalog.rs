@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{FileResumeStore, OfferingHost};
 use dreggnet_web::{CatalogState, catalog_router};
@@ -46,37 +46,51 @@ fn app_over(dir: PathBuf) -> (Router, Arc<CatalogState>) {
 }
 
 async fn response(app: &Router, request: Request<Body>) -> (StatusCode, String) {
+    let (status, _, body) = response_with_set_cookie(app, request).await;
+    (status, body)
+}
+
+async fn response_with_set_cookie(
+    app: &Router,
+    request: Request<Body>,
+) -> (StatusCode, Option<String>, String) {
     let response = app.clone().oneshot(request).await.expect("router responds");
     let status = response.status();
+    let set_cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("bounded response body");
     (
         status,
+        set_cookie,
         String::from_utf8(bytes.to_vec()).expect("utf-8 surface"),
     )
 }
 
-async fn get(app: &Router, suffix: &str, user: &str) -> (StatusCode, String) {
+async fn get(app: &Router, suffix: &str, cookie: &str) -> (StatusCode, String) {
     response(
         app,
         Request::builder()
             .uri(format!("/offerings/{KEY}/session/{SESSION}{suffix}"))
-            .header("cookie", format!("dregg_user={user}"))
+            .header(header::COOKIE, cookie)
             .body(Body::empty())
             .unwrap(),
     )
     .await
 }
 
-async fn act(app: &Router, turn: &str, arg: i64, user: &str) -> (StatusCode, String) {
+async fn act(app: &Router, turn: &str, arg: i64, cookie: &str) -> (StatusCode, String) {
     response(
         app,
         Request::builder()
             .method("POST")
             .uri(format!("/offerings/{KEY}/session/{SESSION}/act"))
             .header("content-type", "application/x-www-form-urlencoded")
-            .header("cookie", format!("dregg_user={user}"))
+            .header(header::COOKIE, cookie)
             .body(Body::from(format!("turn={turn}&arg={arg}")))
             .unwrap(),
     )
@@ -88,8 +102,39 @@ async fn browser_drives_and_restarts_the_native_descent_without_a_state_blob() {
     let dir = scratch_dir();
     let (app, catalog) = app_over(dir.clone());
 
-    let (status, genesis) = get(&app, "", "alice").await;
+    let (status, set_cookie, genesis) = response_with_set_cookie(
+        &app,
+        Request::builder()
+            .uri(format!("/offerings/{KEY}/session/{SESSION}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
+    let set_cookie = set_cookie.expect("a cookie-less native player receives a visitor pseudonym");
+    let player_cookie = set_cookie
+        .split(';')
+        .next()
+        .expect("Set-Cookie starts with the cookie pair")
+        .to_string();
+    assert!(player_cookie.starts_with("dregg_user=visitor-"));
+
+    let (_, other_set_cookie, _) = response_with_set_cookie(
+        &app,
+        Request::builder()
+            .uri(format!("/offerings/{KEY}/session/{SESSION}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let other_cookie = other_set_cookie
+        .expect("an independent browser receives its own visitor pseudonym")
+        .split(';')
+        .next()
+        .expect("Set-Cookie starts with the cookie pair")
+        .to_string();
+    assert_ne!(player_cookie, other_cookie);
+
     assert!(genesis.contains("The Descent"), "{genesis}");
     for native_field in ["light", "carried", "banked", "delve"] {
         assert!(
@@ -98,18 +143,19 @@ async fn browser_drives_and_restarts_the_native_descent_without_a_state_blob() {
         );
     }
 
-    let (status, landed) = act(&app, "delve", 0, "alice").await;
+    let (status, landed) = act(&app, "delve", 0, &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(landed.contains("Turn committed"), "{landed}");
     assert!(landed.contains("depth 1"), "{landed}");
 
-    // Actor ownership is enforced below HTML: another browser identity cannot
-    // move Alice's run, and the refusal extends no journal.
-    let (status, refused) = act(&app, "delve", 0, "bob").await;
+    // Actor ownership is enforced below HTML: another asserted browser actor
+    // cannot move the first visitor's run, and the refusal extends no journal. This is
+    // continuity/ownership inside the game, not web authentication.
+    let (status, refused) = act(&app, "delve", 0, &other_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(refused.contains("Refused"), "{refused}");
 
-    let (status, verified) = get(&app, "/verify", "alice").await;
+    let (status, verified) = get(&app, "/verify", &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(verified.contains("\"verified\":true"), "{verified}");
 
@@ -120,11 +166,11 @@ async fn browser_drives_and_restarts_the_native_descent_without_a_state_blob() {
     // the Lean program and re-drives the admitted command; no serialized game
     // state is trusted.
     let (restarted, restarted_catalog) = app_over(dir.clone());
-    let (status, after_restart) = get(&restarted, "", "alice").await;
+    let (status, after_restart) = get(&restarted, "", &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(after_restart.contains("depth 1"), "{after_restart}");
     assert!(after_restart.contains("revision 1"), "{after_restart}");
-    let (status, verified_again) = get(&restarted, "/verify", "alice").await;
+    let (status, verified_again) = get(&restarted, "/verify", &player_cookie).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         verified_again.contains("\"verified\":true"),

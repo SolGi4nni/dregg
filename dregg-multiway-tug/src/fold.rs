@@ -64,7 +64,7 @@ use dregg_circuit::dsl::circuit::{BoundaryDef, CellProgram};
 use dregg_circuit::dsl::descriptors::merkle_poseidon2_descriptor;
 use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
 
-use crate::hidden_hand::{PlayProof, card_leaf};
+use crate::hidden_hand::{PlayProof, card_leaf, check_play};
 
 // ===========================================================================
 // A foldable leaf bundle (a membership play, or the terminal win/score turn).
@@ -100,6 +100,10 @@ impl From<LoweredMembership> for LeafBundle {
 /// tooth the executor checks in the clear (`hidden_hand::membership_program`). `Err` = a
 /// fabricated card / tampered path (the proof does not climb to the committed root).
 pub fn membership_leaf_for_play(proof: &PlayProof) -> Result<LoweredMembership, String> {
+    // Reject non-canonical 32-byte commitments before the fold's one-felt root projection.
+    // Without this clear-side gate, distinct byte commitments sharing the same low field lane
+    // would lower to the same public input even though Tug's wire commitment is canonical.
+    check_play(proof)?;
     let leaf = card_leaf(proof.card_id, proof.nonce);
     let levels: Vec<MembershipLevel> = proof
         .path

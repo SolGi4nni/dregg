@@ -5,12 +5,13 @@
 //! public, the identities live in the [`crate::reference`] mover). Phase 2 makes the
 //! hidden hand **cryptographic**:
 //!
-//! * **At DEAL, each player's hand is COMMITTED as a Poseidon2 4-ary Merkle root**
-//!   ([`HandTree`]) — the tussle/sealed-auction COMMIT phase, lifted from a BLAKE3
-//!   digest of a scalar to a Merkle root over the dealt cards. Each leaf is a blinded
+//! * **At DEAL, each player's private round inventory is COMMITTED as a Poseidon2 4-ary
+//!   Merkle root** ([`HandTree`]) — opening hand plus deterministic later draws, ten distinct
+//!   cards total. Each leaf is a blinded
 //!   commitment `Poseidon2(DOMAIN, card, nonce, 0)`, so the root HIDES which cards are
-//!   in the hand (the per-card nonce blinds even the small card space) and BINDS the
-//!   player to exactly that multiset.
+//!   in the inventory (the per-card nonce blinds even the small card space) and BINDS the
+//!   player to exactly that round multiset. The current six-or-fewer-card UI hand is a separate
+//!   private commitment rebuilt from the reference engine; it never leaks the future draws.
 //!
 //! * **Each PLAY carries a [`StateConstraint::Witnessed`] `{ MerkleMembership }` proof**
 //!   ([`PlayProof`]) — a Poseidon2 Merkle authentication path from the played card's
@@ -23,10 +24,12 @@
 //!   cannot produce a path to the root (Poseidon2 collision-resistance) and is
 //!   REFUSED.
 //!
-//! * **The remaining-hand root UPDATES** each play ([`HandTree::without`]): the played
-//!   card is removed and the tree recommitted. A re-play of the same committed card
-//!   against the UPDATED remaining root fails membership (its leaf is no longer under
-//!   the root) — the crypto is the no-double-play tooth, not a bookkeeping flag.
+//! * **The remaining-inventory root UPDATES** each play ([`HandTree::without`]): every exact
+//!   card consumed by the 4/3/2/1-card action is removed and the private remainder is
+//!   recommitted. Live membership is executor-enforced against the DEAL-pinned inventory root;
+//!   duplicate consumption is presently an exact-card host ratchet mirrored by fresh replay.
+//!   A protocol-native dynamic-root/nullifier constraint is a named residual — do not mistake
+//!   the host ratchet for an executor-proven non-replay theorem.
 //!
 //! * **The Gift / Competition BLIND PICK + the concealed SECRET ride a commit→reveal**
 //!   ([`BlindPick`]) — the identical construction the sealed-auction / tussle apps use
@@ -38,10 +41,11 @@
 //! ## What is cryptographic NOW vs the named next phases
 //!
 //! The Merkle-committed hand, the membership-proven play, and the commit→reveal picks
-//! run on the EXECUTOR: the membership proof is **executor-checked** — the real
+//! run on the EXECUTOR: every membership proof is **executor-checked** — the real
 //! [`WitnessedPredicateRegistry`] verifier, dispatched by the real cell evaluator, is
-//! the acceptance gate (not a side check). The committed roots + the phase machine
-//! bind into a real [`spween_dregg::WorldCell`] receipt ([`HiddenHandLedger`]), where
+//! the acceptance gate (not a side check). [`HiddenHandLedger`] installs the Lean-authored
+//! rules cell and the hidden-hand cell in one embedded executor; the Offering submits their
+//! signed actions as one atomic turn, so either both land or neither does. On the hidden cell,
 //! the executor's own `WriteOnce` / `StrictMonotonic` / `Monotonic` teeth bite the
 //! committed hand root, the play generation, and the phase.
 //!
@@ -50,26 +54,33 @@
 //! now-Lane-D-unblocked fold (the `MerkleAir` — `circuit/src/merkle_types.rs` — proves
 //! the SAME 4-ary Poseidon2 path this module checks in the clear; a whole private
 //! match → one succinct proof; the Witnessed lowering is the game-turn-slice residual
-//! to wire). **Phase 4** the Lean refinement. **Phase 5** the Offering + frontends.
+//! to wire). **Phase 4** the Lean refinement. The Offering surface and fresh-seed replay are
+//! live; transport-specific private delivery remains a frontend responsibility.
 
 use std::sync::Arc;
 
-use dregg_app_framework::{CellId, Effect, TurnReceipt};
+use dregg_app_framework::{
+    AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect, EmbeddedExecutor, TurnReceipt,
+};
 use dregg_cell::program::{TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag};
 use dregg_cell::{
-    CellProgram, CellState, InputRef, PredicateInput, StateConstraint, WitnessedPredicate,
+    Cell, CellProgram, CellState, InputRef, PredicateInput, StateConstraint, WitnessedPredicate,
     WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateRegistry,
     WitnessedPredicateVerifier, field_from_u64,
 };
-use dregg_circuit::field::BabyBear;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::merkle_types::compute_parent_poseidon2;
 use dregg_circuit::poseidon2::hash_4_to_1;
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
 use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
-use spween_dregg::{CompiledStory, WorldCell, WorldError};
+use dregg_turn::action::{Action, WitnessBlob, WitnessKind};
+use spween_dregg::{CompiledStory, GENESIS_DONE_EXT_KEY, WorldError};
 
-use crate::reference::{INFLUENCE, N_GUILDS, Player};
+use crate::reference::{ActionKind, N_GUILDS, Player, Projection};
+use crate::state::{Deployment as GameDeployment, SCENE_ID as GAME_SCENE_ID, SCORE as GAME_SCORE};
+
+pub use crate::reference::deck_guild;
 
 // ===========================================================================
 // The deck: 21 distinct favor cards, each bound to a guild.
@@ -78,23 +89,8 @@ use crate::reference::{INFLUENCE, N_GUILDS, Player};
 /// The full deck size (== total influence == the conservation constant).
 pub const DECK_SIZE: usize = 21;
 
-/// The fixed deck layout: card id `0..21` → the guild that card is a favor OF.
-/// Guild `g` contributes `INFLUENCE[g]` distinct copies, so the 21 cards partition
-/// exactly into the seven guilds (`2+2+2+3+3+4+5 = 21`). Distinct ids let two copies
-/// of the same guild live at distinct Merkle leaves (each with its own blinding nonce),
-/// so a hand holding two favors of one guild has two independent membership leaves.
-pub fn deck_guild(card_id: u64) -> u8 {
-    let mut id = card_id as usize;
-    for (g, &copies) in INFLUENCE.iter().enumerate() {
-        let n = copies as usize;
-        if id < n {
-            return g as u8;
-        }
-        id -= n;
-    }
-    // Out-of-range card ids have no guild (a fabricated card).
-    N_GUILDS as u8
-}
+// `deck_guild` is re-exported from the reference engine so the deal, strategy, surface, and
+// Merkle vocabulary share one card-id → guild projection.
 
 // ===========================================================================
 // Poseidon2 field encoding — the leaf commitment + the root ↔ 32-byte forms.
@@ -104,15 +100,34 @@ pub fn deck_guild(card_id: u64) -> u8 {
 /// hash-site). A fabricated "card" cannot masquerade as a pad leaf.
 const DOMAIN_LEAF: u32 = 0x6d746c66; // "mtlf"
 const DOMAIN_PAD: u32 = 0x70616421; // "pad!"
+const DOMAIN_CARD: u32 = 0x63617264; // "card"
+const DOMAIN_NONCE: u32 = 0x6e6f6e63; // "nonc"
+
+/// Commit a full `u64` into one field element without first squeezing it into a single
+/// BabyBear lane. Three 30/30/4-bit limbs are individually canonical, so changing any bit of
+/// the opening changes the Poseidon2 preimage (up to the hash's collision-resistance).
+fn u64_digest(domain: u32, value: u64) -> BabyBear {
+    let limb0 = (value & ((1u64 << 30) - 1)) as u32;
+    let limb1 = ((value >> 30) & ((1u64 << 30) - 1)) as u32;
+    let limb2 = (value >> 60) as u32;
+    hash_4_to_1(&[
+        BabyBear::new_canonical(domain),
+        BabyBear::new_canonical(limb0),
+        BabyBear::new_canonical(limb1),
+        BabyBear::new_canonical(limb2),
+    ])
+}
 
 /// The blinded Merkle **leaf** committing to one dealt card:
-/// `Poseidon2(DOMAIN_LEAF, card, nonce, 0)`. The per-card `nonce` blinds the small card
-/// space (identical guild-copies get distinct leaves; the leaf hides `card`).
+/// `Poseidon2(DOMAIN_LEAF, digest64(card), digest64(nonce), 0)`. The two staged digests
+/// faithfully carry all 64 bits rather than aliasing openings modulo the ~31-bit native field.
+/// The per-card `nonce` blinds the small card space (identical guild-copies get distinct leaves;
+/// the leaf hides `card`).
 pub fn card_leaf(card_id: u64, nonce: u64) -> BabyBear {
     hash_4_to_1(&[
         BabyBear::new_canonical(DOMAIN_LEAF),
-        BabyBear::new_canonical((card_id % (u32::MAX as u64)) as u32),
-        BabyBear::new_canonical((nonce % (u32::MAX as u64)) as u32),
+        u64_digest(DOMAIN_CARD, card_id),
+        u64_digest(DOMAIN_NONCE, nonce),
         BabyBear::ZERO,
     ])
 }
@@ -139,10 +154,14 @@ pub fn root_to_bytes(root: BabyBear) -> [u8; 32] {
 
 /// Decode a root felt from its 32-byte commitment form (the inverse of
 /// [`root_to_bytes`]).
-fn root_from_bytes(bytes: &[u8; 32]) -> BabyBear {
+fn root_from_bytes(bytes: &[u8; 32]) -> Option<BabyBear> {
+    if bytes[4..].iter().any(|&byte| byte != 0) {
+        return None;
+    }
     let mut b = [0u8; 4];
     b.copy_from_slice(&bytes[0..4]);
-    BabyBear::new_canonical(u32::from_le_bytes(b))
+    let raw = u32::from_le_bytes(b);
+    (raw < BABYBEAR_P).then(|| BabyBear::from_canonical(raw))
 }
 
 /// The `u64` register lane a root occupies inside the committed cell (its canonical
@@ -423,7 +442,11 @@ impl WitnessedPredicateVerifier for HandMembershipVerifier {
             }
             current = compute_parent_poseidon2(current, lvl.position, &lvl.siblings);
         }
-        let expected = root_from_bytes(commitment);
+        let expected =
+            root_from_bytes(commitment).ok_or_else(|| WitnessedPredicateError::Rejected {
+                kind_name: "MerkleMembership",
+                reason: "non-canonical hand-root commitment".into(),
+            })?;
         if current == expected {
             Ok(())
         } else {
@@ -651,12 +674,13 @@ impl BlindPick {
 }
 
 // ===========================================================================
-// HiddenHandLedger — the committed roots + the phase machine on a real WorldCell.
+// HiddenHandLedger — atomic rules + witnessed hidden state on one real executor.
 // ===========================================================================
 //
-// The crypto above is the acceptance gate; this binds its outputs into a real
-// `spween_dregg::WorldCell` receipt, so the committed hand root, the play generation,
-// and the phase are guarded by the EXECUTOR's own teeth: `WriteOnce` freezes the
+// The crypto above is the acceptance gate. The hidden cell and the Lean-authored game
+// cell share one embedded executor, so an Offering play is an atomic multi-action receipt.
+// The committed hand root, play generation, and phase are guarded by the executor's own
+// teeth: `WriteOnce` freezes the
 // committed hand root + each committed pick seal (a hand-swap / a post-reveal seal-swap
 // is a real refusal), `StrictMonotonic` advances the play generation, `Monotonic` keeps
 // the phase from rewinding. Each deal / play / pick is one cap-bounded turn the
@@ -672,6 +696,8 @@ pub const PLAY: &str = "play";
 pub const COMMIT_PICK: &str = "commit_pick";
 /// The blind-pick reveal method.
 pub const REVEAL_PICK: &str = "reveal_pick";
+/// The terminal ledger transition paired atomically with the game's scoring action.
+pub const SCORE: &str = "score";
 
 /// Phase codes written into the `phase` register (strictly ordered so `Monotonic`
 /// keeps the round from rewinding).
@@ -679,6 +705,15 @@ pub const PHASE_DEAL: u64 = 1;
 pub const PHASE_PLAY: u64 = 2;
 pub const PHASE_PICK: u64 = 3;
 pub const PHASE_SCORE: u64 = 4;
+
+const LEDGER_FEDERATION: [u8; 32] = [0xD6; 32];
+
+fn witnessed_play_method(player: Player, count: usize) -> String {
+    format!(
+        "{PLAY}:{}:{count}",
+        if player == Player::A { "a" } else { "b" }
+    )
+}
 
 /// The twelve register components, in allocation order.
 const LEDGER_REGISTERS: [&str; 12] = [
@@ -786,6 +821,13 @@ impl LedgerDeployment {
         let action_case = |dep: &LedgerDeployment, method: &str| {
             let mut constraints = dep.common_teeth();
             constraints.push(StateConstraint::StrictMonotonic { index: gen_slot });
+            // Non-play methods cannot smuggle a private-inventory consumption alongside a pick
+            // or score transition. Witnessed play cases below replace this base PLAY case.
+            for name in ["a_rem_root", "b_rem_root", "a_played", "b_played"] {
+                constraints.push(StateConstraint::Immutable {
+                    index: dep.reg(name),
+                });
+            }
             TransitionCase {
                 guard: TransitionGuard::MethodIs {
                     method: symbol(method),
@@ -803,10 +845,80 @@ impl LedgerDeployment {
                 },
                 constraints: genesis_oneshot_teeth(),
             },
-            action_case(self, PLAY),
             action_case(self, COMMIT_PICK),
             action_case(self, REVEAL_PICK),
+            action_case(self, SCORE),
         ];
+        CellProgram::Cases(cases)
+    }
+
+    /// The phase-machine program after DEAL pins each player's private full-round inventory root.
+    /// A witnessed play method carries exactly `count` opening/path pairs; every pair is an
+    /// executor-dispatched `MerkleMembership` predicate against that player's committed root.
+    fn program_with_inventory_roots(&self, roots: [[u8; 32]; 2]) -> CellProgram {
+        use dregg_app_framework::{TransitionCase, TransitionGuard, symbol};
+
+        let mut cases = match self.program() {
+            CellProgram::Cases(cases) => cases,
+            _ => unreachable!("ledger program is case-dispatched"),
+        };
+        // Remove the legacy proof-free PLAY case. `PLAY` itself becomes default-deny; only an
+        // arity- and player-specific method carrying every required proof can land.
+        cases.retain(|case| {
+            !matches!(
+                &case.guard,
+                TransitionGuard::MethodIs { method } if *method == symbol(PLAY)
+            )
+        });
+
+        for player in [Player::A, Player::B] {
+            for count in 1..=4usize {
+                let mut constraints = self.common_teeth();
+                constraints.push(StateConstraint::StrictMonotonic {
+                    index: self.reg("gen"),
+                });
+                // The committed per-seat played count must advance by the exact action arity.
+                constraints.push(StateConstraint::FieldDelta {
+                    index: self.reg(if player == Player::A {
+                        "a_played"
+                    } else {
+                        "b_played"
+                    }),
+                    delta: field_from_u64(count as u64),
+                });
+                constraints.push(StateConstraint::Immutable {
+                    index: self.reg(if player == Player::A {
+                        "b_played"
+                    } else {
+                        "a_played"
+                    }),
+                });
+                constraints.push(StateConstraint::Immutable {
+                    index: self.reg(if player == Player::A {
+                        "b_rem_root"
+                    } else {
+                        "a_rem_root"
+                    }),
+                });
+                for proof_index in 0..count {
+                    constraints.push(StateConstraint::Witnessed {
+                        wp: WitnessedPredicate::merkle_membership(
+                            roots[player.idx()],
+                            InputRef::Witness {
+                                index: proof_index * 2,
+                            },
+                            proof_index * 2 + 1,
+                        ),
+                    });
+                }
+                cases.push(TransitionCase {
+                    guard: TransitionGuard::MethodIs {
+                        method: symbol(&witnessed_play_method(player, count)),
+                    },
+                    constraints,
+                });
+            }
+        }
         CellProgram::Cases(cases)
     }
 
@@ -814,7 +926,7 @@ impl LedgerDeployment {
     pub fn story(&self) -> CompiledStory {
         let mut var_slots = std::collections::BTreeMap::new();
         for name in LEDGER_REGISTERS {
-            var_slots.insert(name.to_string(), self.reg(name) as usize);
+            var_slots.insert(name.to_string(), self.reg(name) as u64);
         }
         CompiledStory {
             scene_id: LEDGER_SCENE_ID.to_string(),
@@ -837,25 +949,89 @@ impl Default for LedgerDeployment {
 /// machine, each move a cap-bounded turn the executor admits IFF the teeth pass.
 pub struct HiddenHandLedger {
     dep: LedgerDeployment,
-    world: WorldCell,
+    game_dep: GameDeployment,
+    exec: EmbeddedExecutor,
+    cclerk: AppCipherclerk,
+    cell: CellId,
+    game_cell: CellId,
     state: LedgerState,
+    inventory_roots: Option<[[u8; 32]; 2]>,
+    played_cards: [std::collections::BTreeSet<u64>; 2],
+}
+
+struct PreparedPlay {
+    state: LedgerState,
+    method: String,
+    witnesses: Vec<WitnessBlob>,
 }
 
 impl HiddenHandLedger {
     /// Deploy the hidden-hand story on a real world-cell.
     pub fn deploy(seed: u8) -> Result<Self, WorldError> {
         let dep = LedgerDeployment::new();
-        let story = dep.story();
-        let world = WorldCell::deploy_compiled(Arc::new(story), seed)?;
+        let game_dep = GameDeployment::new();
+        let mut seed_material = [0u8; 64];
+        let mut h = blake3::Hasher::new_derive_key("dregg-multiway-tug hidden-ledger owner v2");
+        h.update(LEDGER_SCENE_ID.as_bytes());
+        h.update(&[seed]);
+        seed_material[..32].copy_from_slice(h.finalize().as_bytes());
+        let second = blake3::hash(&seed_material[..32]);
+        seed_material[32..].copy_from_slice(second.as_bytes());
+        let cclerk = AppCipherclerk::new(
+            AgentCipherclerk::from_seed(seed_material),
+            LEDGER_FEDERATION,
+        );
+        let exec = EmbeddedExecutor::new(&cclerk, "default");
+        exec.set_witnessed_registry(membership_registry());
+
+        let owner = cclerk.public_key().0;
+        let token = *blake3::hash(LEDGER_SCENE_ID.as_bytes()).as_bytes();
+        let cell = CellId::derive_raw(&owner, &token);
+        exec.ensure_cell(Cell::new(owner, token))
+            .map_err(WorldError::Refused)?;
+        let game_token = *blake3::hash(GAME_SCENE_ID.as_bytes()).as_bytes();
+        let game_cell = CellId::derive_raw(&owner, &game_token);
+        exec.ensure_cell(Cell::new(owner, game_token))
+            .map_err(WorldError::Refused)?;
+        let agent = cclerk.cell_id();
+        exec.with_ledger_mut(|ledger| {
+            if let Some(agent_cell) = ledger.get_mut(&agent) {
+                agent_cell.capabilities.grant(cell, AuthRequired::Signature);
+                agent_cell
+                    .capabilities
+                    .grant(game_cell, AuthRequired::Signature);
+            }
+            // Direct executor deployment has no WorldCell wrapper to birth the one-shot
+            // genesis sentinel. Both installed programs fail closed on an absent heap key, so
+            // birth it explicitly at zero; the first genesis action atomically writes it 0 → 1.
+            for target in [cell, game_cell] {
+                if let Some(target_cell) = ledger.get_mut(&target) {
+                    target_cell
+                        .state
+                        .set_field_ext(GENESIS_DONE_EXT_KEY, field_from_u64(0));
+                }
+            }
+        });
+        exec.install_program(cell, dep.program());
+        exec.install_program(game_cell, game_dep.program());
         Ok(HiddenHandLedger {
             dep,
-            world,
+            game_dep,
+            exec,
+            cclerk,
+            cell,
+            game_cell,
             state: LedgerState::default(),
+            inventory_roots: None,
+            played_cards: [
+                std::collections::BTreeSet::new(),
+                std::collections::BTreeSet::new(),
+            ],
         })
     }
 
     fn cell(&self) -> CellId {
-        self.world.cell_id()
+        self.cell
     }
 
     fn effects(&self, s: &LedgerState) -> Vec<Effect> {
@@ -883,49 +1059,266 @@ impl HiddenHandLedger {
         effects
     }
 
-    /// **The deal** — commit both players' hand roots under genesis (also seeding the
-    /// remaining roots = the hand roots, `phase = DEAL`, `gen = 0`).
-    pub fn deal(&mut self, a_root: BabyBear, b_root: BabyBear) -> Result<TurnReceipt, WorldError> {
+    /// Every effect that writes the Lean-authored Tug projection in full. This is the same
+    /// projection shape [`crate::game::MultiwayTug`] writes; it lives here as well so the game
+    /// action and its hidden-hand admission action can share one executor and one atomic turn.
+    fn game_effects(&self, proj: &Projection) -> Vec<Effect> {
+        let cell = self.game_cell;
+        let mut effects = Vec::with_capacity(16 + 8 + 2 * N_GUILDS);
+        let mut set = |name: &str, value: u64| {
+            effects.push(Effect::SetField {
+                cell,
+                index: self.game_dep.reg(name) as u64,
+                value: field_from_u64(value),
+            });
+        };
+        set("deck", proj.deck);
+        set("oop", proj.oop);
+        set("a_hand", proj.hand[0]);
+        set("b_hand", proj.hand[1]);
+        set("a_secret", proj.secret_count[0]);
+        set("b_secret", proj.secret_count[1]);
+        set("a_board", proj.board[0]);
+        set("b_board", proj.board[1]);
+        set("a_charm", proj.charm[0]);
+        set("b_charm", proj.charm[1]);
+        set("a_guilds", proj.guilds_controlled[0]);
+        set("b_guilds", proj.guilds_controlled[1]);
+        set("winner", proj.winner);
+        set("current", proj.current);
+        set("round_actions", proj.round_actions);
+        set("scored", proj.scored);
+        drop(set);
+        for player in [Player::A, Player::B] {
+            for action in [
+                ActionKind::Secret,
+                ActionKind::Discard,
+                ActionKind::Gift,
+                ActionKind::Competition,
+            ] {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.game_dep.flag_key(player, action) as u64,
+                    value: field_from_u64(proj.flag[player.idx()][action.idx()]),
+                });
+            }
+        }
+        for guild in 0..N_GUILDS {
+            for player in [Player::A, Player::B] {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.game_dep.score_key(guild, player) as u64,
+                    value: field_from_u64(proj.score[guild][player.idx()]),
+                });
+            }
+        }
+        effects
+    }
+
+    fn genesis_effects(&self, target: CellId, mut effects: Vec<Effect>) -> Vec<Effect> {
+        effects.push(Effect::SetField {
+            cell: target,
+            index: GENESIS_DONE_EXT_KEY as u64,
+            value: field_from_u64(1),
+        });
+        effects
+    }
+
+    fn deal_state(a_root: BabyBear, b_root: BabyBear) -> LedgerState {
         let ar = root_to_u64(a_root);
         let br = root_to_u64(b_root);
-        let s = LedgerState {
+        LedgerState {
             a_hand_root: ar,
             b_hand_root: br,
             a_rem_root: ar,
             b_rem_root: br,
             phase: PHASE_DEAL,
             ..LedgerState::default()
-        };
-        let receipt = self.world.apply_raw(GENESIS, self.effects(&s))?;
-        self.state = s;
+        }
+    }
+
+    fn finish_deal(&mut self, state: LedgerState, roots: [[u8; 32]; 2]) {
+        self.state = state;
+        self.inventory_roots = Some(roots);
+        self.exec
+            .install_program(self.cell, self.dep.program_with_inventory_roots(roots));
+    }
+
+    /// **The deal** — commit both players' hand roots under genesis (also seeding the
+    /// remaining roots = the hand roots, `phase = DEAL`, `gen = 0`).
+    pub fn deal(&mut self, a_root: BabyBear, b_root: BabyBear) -> Result<TurnReceipt, WorldError> {
+        let s = Self::deal_state(a_root, b_root);
+        let effects = self.genesis_effects(self.cell, self.effects(&s));
+        let receipt = self.commit(GENESIS, effects, Vec::new())?;
+        let roots = [root_to_bytes(a_root), root_to_bytes(b_root)];
+        self.finish_deal(s, roots);
         Ok(receipt)
     }
 
-    /// **A play** — commit the updated remaining-hand root for `player` (the played card
-    /// removed), advancing the play generation + the phase. The committed hand root is
-    /// unchanged (frozen by `WriteOnce`); a play that tried to rewrite it is refused.
+    /// Seed the Lean-authored game cell and DEAL-pin both private inventory roots in one atomic
+    /// genesis turn. Either both cells commit or neither does.
+    pub fn start_round(
+        &mut self,
+        projection: &Projection,
+        a_root: BabyBear,
+        b_root: BabyBear,
+    ) -> Result<TurnReceipt, WorldError> {
+        let state = Self::deal_state(a_root, b_root);
+        let game = self.action(
+            self.game_cell,
+            GENESIS,
+            self.genesis_effects(self.game_cell, self.game_effects(projection)),
+            Vec::new(),
+        );
+        let hidden = self.action(
+            self.cell,
+            GENESIS,
+            self.genesis_effects(self.cell, self.effects(&state)),
+            Vec::new(),
+        );
+        let receipt = self.commit_actions(vec![game, hidden])?;
+        self.finish_deal(state, [root_to_bytes(a_root), root_to_bytes(b_root)]);
+        Ok(receipt)
+    }
+
+    /// **A witnessed play admission** — every card consumed by one Tug action must carry its
+    /// opening + Poseidon authentication path. The signed action carries those witness blobs and
+    /// the executor dispatches every `MerkleMembership` tooth against the player's DEAL-pinned
+    /// private inventory root before the remaining root/count/generation can commit.
+    ///
+    /// The host-side exact-card and duplicate checks are defense in depth around the executor
+    /// witness gate: they bind the proofs to the reference move and keep a static inventory proof
+    /// from being replayed. The latter is not yet a circuit/nullifier tooth (see module scope).
     pub fn play(
         &mut self,
         player: Player,
+        proofs: &[PlayProof],
         new_remaining_root: BabyBear,
     ) -> Result<TurnReceipt, WorldError> {
+        let prepared = self.prepare_play(player, proofs, new_remaining_root)?;
+        let receipt = self.commit(
+            &prepared.method,
+            self.effects(&prepared.state),
+            prepared.witnesses,
+        )?;
+        self.finish_play(player, proofs, prepared.state);
+        Ok(receipt)
+    }
+
+    /// Commit one Tug projection and all exact-card membership admissions in one atomic turn.
+    /// The action targeting the game cell is checked by the Lean-authored rule program; the
+    /// action targeting the hidden cell is checked by the witnessed Merkle predicates. A
+    /// refusal in either action rolls the whole turn back.
+    pub(crate) fn play_projection(
+        &mut self,
+        player: Player,
+        expected_cards: &[u64],
+        proofs: &[PlayProof],
+        new_remaining_root: BabyBear,
+        action: ActionKind,
+        projection: &Projection,
+    ) -> Result<TurnReceipt, WorldError> {
+        if expected_cards.len() != action.card_count() {
+            return Err(WorldError::Refused(format!(
+                "action `{}` consumes exactly {} cards, got {}",
+                action.method(),
+                action.card_count(),
+                expected_cards.len()
+            )));
+        }
+        let proved_cards: Vec<u64> = proofs.iter().map(|proof| proof.card_id).collect();
+        if proved_cards != expected_cards {
+            return Err(WorldError::Refused(format!(
+                "membership openings do not match the exact cards consumed by `{}`",
+                action.method()
+            )));
+        }
+        let prepared = self.prepare_play(player, proofs, new_remaining_root)?;
+        let game = self.action(
+            self.game_cell,
+            action.method(),
+            self.game_effects(projection),
+            Vec::new(),
+        );
+        let hidden = self.action(
+            self.cell,
+            &prepared.method,
+            self.effects(&prepared.state),
+            prepared.witnesses,
+        );
+        let receipt = self.commit_actions(vec![game, hidden])?;
+        self.finish_play(player, proofs, prepared.state);
+        Ok(receipt)
+    }
+
+    fn prepare_play(
+        &self,
+        player: Player,
+        proofs: &[PlayProof],
+        new_remaining_root: BabyBear,
+    ) -> Result<PreparedPlay, WorldError> {
+        if proofs.is_empty() || proofs.len() > 4 {
+            return Err(WorldError::Refused(format!(
+                "a Tug action must carry 1..=4 card membership proofs, got {}",
+                proofs.len()
+            )));
+        }
+        let roots = self.inventory_roots.ok_or_else(|| {
+            WorldError::Refused("hidden-hand play before the committed deal".to_string())
+        })?;
+        let expected_root = roots[player.idx()];
+        let mut newly_played = std::collections::BTreeSet::new();
+        for proof in proofs {
+            if proof.root != expected_root {
+                return Err(WorldError::Refused(
+                    "membership proof is bound to the wrong private inventory root".to_string(),
+                ));
+            }
+            if self.played_cards[player.idx()].contains(&proof.card_id)
+                || !newly_played.insert(proof.card_id)
+            {
+                return Err(WorldError::Refused(format!(
+                    "card {} was already consumed from this private inventory",
+                    proof.card_id
+                )));
+            }
+        }
+
         let mut s = self.state;
         let r = root_to_u64(new_remaining_root);
         match player {
             Player::A => {
                 s.a_rem_root = r;
-                s.a_played += 1;
+                s.a_played += proofs.len() as u64;
             }
             Player::B => {
                 s.b_rem_root = r;
-                s.b_played += 1;
+                s.b_played += proofs.len() as u64;
             }
         }
         s.generation += 1;
         s.phase = s.phase.max(PHASE_PLAY);
-        let receipt = self.world.apply_raw(PLAY, self.effects(&s))?;
-        self.state = s;
-        Ok(receipt)
+        let mut witnesses = Vec::with_capacity(proofs.len() * 2);
+        for proof in proofs {
+            witnesses.push(WitnessBlob::new(
+                WitnessKind::Cleartext,
+                proof.opening_bytes(),
+            ));
+            witnesses.push(WitnessBlob::new(
+                WitnessKind::ProofBytes,
+                proof.path_bytes(),
+            ));
+        }
+        Ok(PreparedPlay {
+            state: s,
+            method: witnessed_play_method(player, proofs.len()),
+            witnesses,
+        })
+    }
+
+    fn finish_play(&mut self, player: Player, proofs: &[PlayProof], state: LedgerState) {
+        self.state = state;
+        self.played_cards[player.idx()].extend(proofs.iter().map(|proof| proof.card_id));
     }
 
     /// **Commit a blind pick / secret seal** — write `player`'s seal once (a later commit
@@ -947,7 +1340,7 @@ impl HiddenHandLedger {
         }
         s.generation += 1;
         s.phase = s.phase.max(PHASE_PICK);
-        let receipt = self.world.apply_raw(COMMIT_PICK, self.effects(&s))?;
+        let receipt = self.commit(COMMIT_PICK, self.effects(&s), Vec::new())?;
         self.state = s;
         Ok(receipt)
     }
@@ -958,15 +1351,58 @@ impl HiddenHandLedger {
     pub fn reveal_pick(&mut self, _player: Player) -> Result<TurnReceipt, WorldError> {
         let mut s = self.state;
         s.generation += 1;
-        let receipt = self.world.apply_raw(REVEAL_PICK, self.effects(&s))?;
+        let receipt = self.commit(REVEAL_PICK, self.effects(&s), Vec::new())?;
         self.state = s;
+        Ok(receipt)
+    }
+
+    /// Score the Lean-authored game cell and close the hidden ledger in one atomic turn.
+    pub fn score_projection(&mut self, projection: &Projection) -> Result<TurnReceipt, WorldError> {
+        let mut state = self.state;
+        state.generation += 1;
+        state.phase = PHASE_SCORE;
+        let game = self.action(
+            self.game_cell,
+            GAME_SCORE,
+            self.game_effects(projection),
+            Vec::new(),
+        );
+        let hidden = self.action(self.cell, SCORE, self.effects(&state), Vec::new());
+        let receipt = self.commit_actions(vec![game, hidden])?;
+        self.state = state;
         Ok(receipt)
     }
 
     /// Drive a RAW turn under `method` from an explicit next state — the refusal-test
     /// builder (a hand-root swap, a phase rewind, a stale generation).
     pub fn commit_raw(&self, method: &str, next: &LedgerState) -> Result<TurnReceipt, WorldError> {
-        self.world.apply_raw(method, self.effects(next))
+        self.commit(method, self.effects(next), Vec::new())
+    }
+
+    /// Executor-refusal test seam: submit an explicit witnessed-play post-state without running
+    /// the host preflight/mirror update. Production callers use [`Self::play`] or
+    /// [`Self::play_projection`].
+    #[cfg(test)]
+    fn commit_raw_play(
+        &self,
+        player: Player,
+        proofs: &[PlayProof],
+        next: &LedgerState,
+    ) -> Result<TurnReceipt, WorldError> {
+        let witnesses = proofs
+            .iter()
+            .flat_map(|proof| {
+                [
+                    WitnessBlob::new(WitnessKind::Cleartext, proof.opening_bytes()),
+                    WitnessBlob::new(WitnessKind::ProofBytes, proof.path_bytes()),
+                ]
+            })
+            .collect();
+        self.commit(
+            &witnessed_play_method(player, proofs.len()),
+            self.effects(next),
+            witnesses,
+        )
     }
 
     /// The current mirrored register state.
@@ -974,10 +1410,107 @@ impl HiddenHandLedger {
         self.state
     }
 
+    /// Reconstruct the projection committed by the Lean-authored Tug rules cell sharing this
+    /// executor. This is the Offering's public state, not a mirror maintained by the host.
+    pub fn read_projection(&self) -> Projection {
+        let mut score = [[0u64; 2]; N_GUILDS];
+        for (guild, row) in score.iter_mut().enumerate() {
+            for player in [Player::A, Player::B] {
+                row[player.idx()] = self.read_game_heap(self.game_dep.score_key(guild, player));
+            }
+        }
+        let mut flag = [[0u64; 4]; 2];
+        for player in [Player::A, Player::B] {
+            for action in [
+                ActionKind::Secret,
+                ActionKind::Discard,
+                ActionKind::Gift,
+                ActionKind::Competition,
+            ] {
+                flag[player.idx()][action.idx()] =
+                    self.read_game_heap(self.game_dep.flag_key(player, action));
+            }
+        }
+        Projection {
+            deck: self.read_game_reg("deck"),
+            oop: self.read_game_reg("oop"),
+            hand: [self.read_game_reg("a_hand"), self.read_game_reg("b_hand")],
+            secret_count: [
+                self.read_game_reg("a_secret"),
+                self.read_game_reg("b_secret"),
+            ],
+            board: [self.read_game_reg("a_board"), self.read_game_reg("b_board")],
+            charm: [self.read_game_reg("a_charm"), self.read_game_reg("b_charm")],
+            guilds_controlled: [
+                self.read_game_reg("a_guilds"),
+                self.read_game_reg("b_guilds"),
+            ],
+            winner: self.read_game_reg("winner"),
+            current: self.read_game_reg("current"),
+            round_actions: self.read_game_reg("round_actions"),
+            scored: self.read_game_reg("scored"),
+            score,
+            flag,
+        }
+    }
+
     /// Read a committed register off the cell.
     pub fn read(&self, name: &str) -> u64 {
-        self.world.snapshot()[self.dep.reg(name) as usize]
+        self.exec
+            .cell_state(self.cell)
+            .map(|state| {
+                let bytes = state.fields[self.dep.reg(name) as usize];
+                u64::from_be_bytes(bytes[24..32].try_into().expect("8-byte field lane"))
+            })
+            .unwrap_or(0)
     }
+
+    fn read_game_reg(&self, name: &str) -> u64 {
+        self.exec
+            .cell_state(self.game_cell)
+            .map(|state| field_lane(&state.fields[self.game_dep.reg(name) as usize]))
+            .unwrap_or(0)
+    }
+
+    fn read_game_heap(&self, key: u64) -> u64 {
+        self.exec
+            .cell_state(self.game_cell)
+            .and_then(|state| state.get_field_ext(key))
+            .map(|field| field_lane(&field))
+            .unwrap_or(0)
+    }
+
+    fn action(
+        &self,
+        target: CellId,
+        method: &str,
+        effects: Vec<Effect>,
+        witness_blobs: Vec<WitnessBlob>,
+    ) -> Action {
+        let mut action = self.cclerk.make_action(target, method, effects);
+        action.witness_blobs = witness_blobs;
+        self.cclerk.sign_action(action)
+    }
+
+    fn commit_actions(&self, actions: Vec<Action>) -> Result<TurnReceipt, WorldError> {
+        let turn = self.cclerk.make_turn_with_actions(actions);
+        self.exec
+            .submit_turn(&turn)
+            .map_err(|error| WorldError::Refused(error.to_string()))
+    }
+
+    fn commit(
+        &self,
+        method: &str,
+        effects: Vec<Effect>,
+        witness_blobs: Vec<WitnessBlob>,
+    ) -> Result<TurnReceipt, WorldError> {
+        self.commit_actions(vec![self.action(self.cell, method, effects, witness_blobs)])
+    }
+}
+
+fn field_lane(field: &[u8; 32]) -> u64 {
+    u64::from_be_bytes(field[24..32].try_into().expect("8-byte field lane"))
 }
 
 #[cfg(test)]

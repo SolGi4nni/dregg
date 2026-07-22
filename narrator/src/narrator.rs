@@ -16,6 +16,7 @@ use crate::bedrock::BedrockClient;
 use crate::ledger::BudgetLedger;
 use crate::models::{ModelRegistry, CLAUDE_HAIKU_4_5, NOVA_2_LITE};
 use crate::ollama::OllamaBackend;
+use crate::openai::OpenAiCompatClient;
 use crate::NarratorError;
 
 /// A produced narration + the honest kind of what produced it.
@@ -28,8 +29,10 @@ pub struct Narration {
 
 /// One backend in the fallback chain.
 enum Backend {
-    /// A hosted Bedrock model (shared client, per-backend model id).
-    Bedrock {
+    /// A hosted, metered model behind a [`ConverseBackend`] (shared client, per-backend model id).
+    /// Provider-agnostic: AWS Bedrock (Nova/Claude) or any OpenAI-compatible endpoint (Chutes /
+    /// Bittensor, vLLM, OpenRouter, a local proxy) — every call is priced and capped identically.
+    Hosted {
         client: Arc<dyn ConverseBackend + Send + Sync>,
         model: String,
     },
@@ -42,7 +45,7 @@ enum Backend {
 impl Backend {
     fn kind(&self) -> String {
         match self {
-            Backend::Bedrock { model, .. } => format!("model:{model}"),
+            Backend::Hosted { model, .. } => format!("model:{model}"),
             Backend::Ollama(o) => o.kind(),
             Backend::Scripted => "scripted".to_string(),
         }
@@ -57,12 +60,14 @@ pub struct Narrator {
 }
 
 impl Narrator {
-    /// The full auto chain: Bedrock(Haiku) → Bedrock(Nova) → Ollama → Scripted. Bedrock is
-    /// included when `DREGG_NARRATOR=bedrock` or AWS credentials appear present; `DREGG_NARRATOR`
-    /// can also force `ollama`/`scripted`. A single Bedrock model is used instead of the two
-    /// defaults when `DREGG_NARRATOR_MODEL` is set.
+    /// The full auto chain: hosted model(s) → Ollama → Scripted. The hosted tier is chosen by
+    /// `DREGG_NARRATOR`: `openai`/`chutes` uses the OpenAI-compatible endpoint
+    /// (`DREGG_NARRATOR_ENDPOINT` + `DREGG_NARRATOR_MODEL`); `bedrock` (or AWS creds present) uses
+    /// Bedrock(Haiku)→Bedrock(Nova), or a single model when `DREGG_NARRATOR_MODEL` is set;
+    /// `ollama`/`scripted`/`none` skip the hosted tier. When `DREGG_NARRATOR` is unset, an explicit
+    /// `DREGG_NARRATOR_ENDPOINT` selects the OpenAI path, else AWS creds select Bedrock.
     pub fn auto() -> Narrator {
-        let mut backends = bedrock_and_ollama();
+        let mut backends = hosted_and_ollama();
         backends.push(Backend::Scripted);
         Narrator {
             backends,
@@ -71,13 +76,13 @@ impl Narrator {
         }
     }
 
-    /// The MODEL tier only — Bedrock(Haiku) → Bedrock(Nova) → Ollama, with NO scripted backend.
-    /// A caller that owns its own deterministic fallback (like the dungeon-service) uses this so
+    /// The MODEL tier only — the hosted model(s) → Ollama, with NO scripted backend. A caller that
+    /// owns its own deterministic fallback (like the dungeon-service) uses this so
     /// [`Narrator::narrate`] returns `Err` when every hosted/local model is unavailable or the
     /// budget is exhausted, and the caller can drop to ITS scripted narration.
     pub fn models_from_env() -> Narrator {
         Narrator {
-            backends: bedrock_and_ollama(),
+            backends: hosted_and_ollama(),
             ledger: BudgetLedger::from_env(),
             registry: ModelRegistry::builtin(),
         }
@@ -87,13 +92,13 @@ impl Narrator {
     pub fn for_test(
         ledger: BudgetLedger,
         registry: ModelRegistry,
-        bedrock: Vec<(Arc<dyn ConverseBackend + Send + Sync>, String)>,
+        hosted: Vec<(Arc<dyn ConverseBackend + Send + Sync>, String)>,
         ollama: Option<OllamaBackend>,
         scripted: bool,
     ) -> Narrator {
-        let mut backends: Vec<Backend> = bedrock
+        let mut backends: Vec<Backend> = hosted
             .into_iter()
-            .map(|(client, model)| Backend::Bedrock { client, model })
+            .map(|(client, model)| Backend::Hosted { client, model })
             .collect();
         if let Some(o) = ollama {
             backends.push(Backend::Ollama(o));
@@ -134,7 +139,7 @@ impl Narrator {
 
         for b in &self.backends {
             match b {
-                Backend::Bedrock { client, model } => {
+                Backend::Hosted { client, model } => {
                     let req = ConverseRequest {
                         model: model.clone(),
                         system: system.to_string(),
@@ -200,7 +205,7 @@ impl Narrator {
     ) -> Result<(ConverseResponse, String), NarratorError> {
         let mut last_err: Option<NarratorError> = None;
         for b in &self.backends {
-            if let Backend::Bedrock { client, model } = b {
+            if let Backend::Hosted { client, model } = b {
                 let req = ConverseRequest {
                     model: model.clone(),
                     system: system.to_string(),
@@ -215,26 +220,43 @@ impl Narrator {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            NarratorError::AllBackendsFailed("no bedrock backend for tool-calling".into())
+            NarratorError::AllBackendsFailed("no hosted backend for tool-calling".into())
         }))
     }
 }
 
-/// Build the model tier — the Bedrock backends (Haiku then Nova, or a single env-forced model)
-/// followed by a reachable Ollama. Empty if none are available.
-fn bedrock_and_ollama() -> Vec<Backend> {
+/// Build the model tier — the hosted backend(s) for the resolved provider followed by a reachable
+/// Ollama. Empty if none are available.
+fn hosted_and_ollama() -> Vec<Backend> {
     let mut backends: Vec<Backend> = Vec::new();
 
-    if should_try_bedrock() {
-        if let Ok(client) = BedrockClient::from_env() {
-            let shared: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(client);
-            for model in bedrock_models() {
-                backends.push(Backend::Bedrock {
-                    client: shared.clone(),
-                    model,
-                });
+    match hosted_provider() {
+        HostedProvider::OpenAi => {
+            // The OpenAI-compatible path (Chutes / Bittensor, vLLM, OpenRouter, a local proxy).
+            // A missing endpoint or missing model yields no hosted backend — the chain falls
+            // through to Ollama/Scripted rather than failing.
+            if let Ok(client) = OpenAiCompatClient::from_env() {
+                let shared: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(client);
+                for model in openai_models() {
+                    backends.push(Backend::Hosted {
+                        client: shared.clone(),
+                        model,
+                    });
+                }
             }
         }
+        HostedProvider::Bedrock => {
+            if let Ok(client) = BedrockClient::from_env() {
+                let shared: Arc<dyn ConverseBackend + Send + Sync> = Arc::new(client);
+                for model in bedrock_models() {
+                    backends.push(Backend::Hosted {
+                        client: shared.clone(),
+                        model,
+                    });
+                }
+            }
+        }
+        HostedProvider::None => {}
     }
 
     if let Some(o) = OllamaBackend::probe_env() {
@@ -244,26 +266,56 @@ fn bedrock_and_ollama() -> Vec<Backend> {
     backends
 }
 
+/// Which hosted provider (if any) the environment selects.
+enum HostedProvider {
+    /// An OpenAI-compatible endpoint (Chutes / Bittensor, vLLM, OpenRouter, a local proxy).
+    OpenAi,
+    /// AWS Bedrock (Nova / Claude).
+    Bedrock,
+    /// No hosted tier — Ollama/Scripted only.
+    None,
+}
+
+/// Resolve the hosted provider: `DREGG_NARRATOR=openai`/`chutes` → OpenAI-compatible; `=bedrock` →
+/// Bedrock; `=ollama`/`scripted`/`none` → none. When unset, an explicit `DREGG_NARRATOR_ENDPOINT`
+/// selects the OpenAI path, else present AWS credentials select Bedrock, else none.
+fn hosted_provider() -> HostedProvider {
+    match std::env::var("DREGG_NARRATOR")
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("openai") | Some("chutes") => HostedProvider::OpenAi,
+        Some("bedrock") => HostedProvider::Bedrock,
+        Some("ollama") | Some("scripted") | Some("none") => HostedProvider::None,
+        _ => {
+            if std::env::var_os("DREGG_NARRATOR_ENDPOINT").is_some() {
+                HostedProvider::OpenAi
+            } else if aws_creds_present() {
+                HostedProvider::Bedrock
+            } else {
+                HostedProvider::None
+            }
+        }
+    }
+}
+
+/// The OpenAI-compatible model(s) to try: the `DREGG_NARRATOR_MODEL` id. Empty if unset — the
+/// OpenAI path has no universal default model id across proxies, so it must be named explicitly
+/// (e.g. a Chutes catalog id from `GET https://llm.chutes.ai/v1/models`).
+fn openai_models() -> Vec<String> {
+    match std::env::var("DREGG_NARRATOR_MODEL") {
+        Ok(m) if !m.trim().is_empty() => vec![m.trim().to_string()],
+        _ => Vec::new(),
+    }
+}
+
 /// The Bedrock models to try, in order: a single `DREGG_NARRATOR_MODEL` if set, else the two
 /// defaults (Haiku, then the cheap verified Nova Lite).
 fn bedrock_models() -> Vec<String> {
     match std::env::var("DREGG_NARRATOR_MODEL") {
         Ok(m) if !m.trim().is_empty() => vec![m.trim().to_string()],
         _ => vec![CLAUDE_HAIKU_4_5.to_string(), NOVA_2_LITE.to_string()],
-    }
-}
-
-/// Whether to include Bedrock: forced by `DREGG_NARRATOR=bedrock`, disabled by
-/// `ollama`/`scripted`/`none`, else on when AWS credentials appear present.
-fn should_try_bedrock() -> bool {
-    match std::env::var("DREGG_NARRATOR")
-        .ok()
-        .as_deref()
-        .map(str::trim)
-    {
-        Some("bedrock") => true,
-        Some("ollama") | Some("scripted") | Some("none") => false,
-        _ => aws_creds_present(),
     }
 }
 

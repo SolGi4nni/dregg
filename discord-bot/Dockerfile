@@ -47,6 +47,14 @@ ENV DATABASE_URL=sqlite:/data/bot.db?mode=rwc \
     HTTP_PORT=8080 \
     RUST_LOG=info
 
+# POST-QUANTUM POSTURE: the games bot signs custodial GAME turns but is NOT part of dregg's
+# proven TCB (the node installs the ~195 MB Lean-verified ML-DSA core; the bot does not). So it
+# runs the regular (unaudited) fips204/ml-kem crates. dregg-pq's no-silent-fallback gate
+# `process::abort()`s any turn-signing without this explicit opt-in — and prints a loud
+# "assurance VOID" warning at first use, so the posture is never silent. See
+# discord-bot/.cargo/config.toml for the same choice at build/test time.
+ENV DREGG_ALLOW_UNAUDITED_PQ=1
+
 WORKDIR /data
 EXPOSE 8080
 

@@ -9,7 +9,8 @@
 //! The bot is the offering core's **Discord `Frontend`** in the sense
 //! `dreggnet_offerings`'s doc names:
 //!
-//! * **present** — an offering's [`Offering::render`] returns a deos [`Surface`] (a
+//! * **present** — an offering's [`Offering::render`] returns a deos
+//!   [`Surface`](dreggnet_offerings::Surface) (a
 //!   `deos_view::ViewNode`). We paint it through the SAME `deos_view::discord` backend the
 //!   desktop/web/seL4 renderers are peers of ([`embed_of`]) — the card is authored once by the
 //!   offering and rendered by the platform. We keep only the *embed* from that render and mint
@@ -32,14 +33,16 @@
 //!
 //! ## The custom-id wire
 //!
-//! | id                                | meaning                                            |
-//! |-----------------------------------|----------------------------------------------------|
-//! | `offering:fire:<key>:<turn>:<arg>`| press → one `advance(Action{turn,arg}, actor)`      |
-//! | `offering:ask:<key>:<turn>`       | press → open a modal for the turn's typed value     |
-//! | `offering:submit:<key>:<turn>`    | the modal's submit → `advance` with the typed value |
+//! | id | meaning |
+//! |----|---------|
+//! | `offering:fire:<key>:<generation>:<head>:<turn>:<arg>` | exact-head press → one `advance` |
+//! | `offering:ask:<key>:<generation>:<head>:<turn>` | exact-head press → typed-value modal |
+//! | `offering:submit:<key>:<generation>:<head>:<turn>` | same-head modal submit → `advance` |
 //!
-//! `<key>` is [`DiscordOffering::KEY`] (`council`, `market`, …) — the router in `main.rs` sends
-//! every `offering:` press here, and [`route_component`] / [`route_modal`] dispatch on the key.
+//! `<key>` is [`DiscordOffering::KEY`] (`council`, `market`, …). The public generation/head stamp
+//! is freshness, not authority: Discord authenticates the interaction and the executor remains
+//! the referee. It prevents controls left on an old message from crossing a session replacement,
+//! landed direct turn, or closed collective round.
 //!
 //! ## What is logic-driven vs what needs a live Discord token
 //!
@@ -50,7 +53,9 @@
 //! only the HTTP round-trip to Discord is absent.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, sync_channel};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serenity::all::{
     ActionRowComponent, ButtonStyle, CommandInteraction, ComponentInteraction, Context,
@@ -60,8 +65,9 @@ use serenity::all::{
 };
 
 use dreggnet_offerings::{
-    Action, CollectiveDecision, DreggIdentity, Offering, Outcome, SessionConfig, Surface, Tally,
-    VerifyReport, VoteCount,
+    Action, Audience, AudienceProjection, CollectiveDecision, DreggIdentity, Offering, Outcome,
+    SessionConfig, SessionId, SessionMoveLog, SessionResumeStore, Tally, VerifyReport, VoteCount,
+    project_for_audience,
 };
 
 use crate::BotState;
@@ -72,6 +78,50 @@ use crate::commands::ack;
 pub const PREFIX: &str = "offering";
 /// The modal input field carrying an affordance's typed value (a reserve price, a sealed bid).
 pub const VALUE_FIELD: &str = "value";
+
+/// Public, unforgeable-by-accident identity of the exact surface that minted a
+/// Discord control. `generation` changes whenever a channel opens/replaces a
+/// session; `head` changes whenever a direct turn lands (or a collective round
+/// advances). Both ride every component and modal id and are compared inside
+/// the store-thread mutation job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlStamp {
+    pub generation: u64,
+    pub head: u64,
+}
+
+impl ControlStamp {
+    /// Unbound wire sentinel retained for parser/render fixtures. Production
+    /// routers must mint an exact live or persistent-world stamp instead.
+    pub const PERSISTENT: Self = Self {
+        generation: 0,
+        head: 0,
+    };
+}
+
+static OPEN_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn fresh_generation(channel: u64) -> u64 {
+    let counter = OPEN_GENERATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg.discord.offering-generation.v1\0");
+    h.update(&channel.to_le_bytes());
+    h.update(&counter.to_le_bytes());
+    h.update(&nanos.to_le_bytes());
+    h.update(&std::process::id().to_le_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&h.finalize().as_bytes()[..8]);
+    let generation = u64::from_le_bytes(bytes);
+    if generation == 0 {
+        counter.max(1)
+    } else {
+        generation
+    }
+}
 
 /// A **live offering in a channel** — the offering value itself (a council carries its
 /// electorate/catalog/quorum; a market its pricing) plus its open session. Both are needed to
@@ -86,6 +136,48 @@ pub struct Live<O: Offering> {
     /// plurality winner drives ONE [`Offering::advance_collective`]. `None` for a direct
     /// (1-press-1-turn) offering, whose presses resolve immediately through [`drive`].
     pub round: Option<CollectiveRound>,
+    /// Fresh for every open/replacement in this process, and time/counter-bound
+    /// so controls left in Discord across a restart do not alias a new session.
+    pub generation: u64,
+    /// Monotonic direct-state head. Collective surfaces use their round number
+    /// as the control head instead (votes must not stale one another).
+    pub control_head: u64,
+    /// OfferingHost-compatible replay journal for this exact live session.
+    /// Ordinary landed moves and safe opaque operations share one relative
+    /// timeline; a frontend restart replays this log rather than trusting a
+    /// serialized session blob.
+    pub journal: SessionMoveLog,
+    /// Optional write-through persistence for [`Self::journal`]. Constructed
+    /// on this store's owning thread because implementations may be `!Send`.
+    pub resume_store: Option<Box<dyn SessionResumeStore>>,
+}
+
+impl<O: Offering> Live<O> {
+    /// The exact incarnation/head a newly rendered control must carry.
+    pub fn control_stamp(&self) -> ControlStamp {
+        ControlStamp {
+            generation: self.generation,
+            head: self
+                .round
+                .as_ref()
+                .map_or(self.control_head, |round| round.round),
+        }
+    }
+
+    /// Record one ordinary or crowd turn iff the executor actually landed it.
+    /// This is the typed-store twin of `OfferingHost::record_landed`.
+    pub fn record_landed(&mut self, action: Action, actor: DreggIdentity, outcome: &Outcome)
+    where
+        O: DiscordOffering,
+    {
+        if !outcome.landed() {
+            return;
+        }
+        self.journal.record(action.clone(), actor.clone());
+        if let Some(store) = self.resume_store.as_deref() {
+            store.record_landed(O::KEY, &self.journal.id, &action, &actor);
+        }
+    }
 }
 
 /// A turn whose [`Action::arg`] is a **number the user supplies** rather than a fixed index —
@@ -184,7 +276,7 @@ pub trait DiscordOffering: Offering + Sized + 'static
 where
     Self::Session: 'static,
 {
-    /// The offering's key in the custom-id wire (`council`, `market`).
+    /// The offering's key in the generation/head-bound custom-id wire (`council`, `market`).
     const KEY: &'static str;
     /// The embed title.
     const TITLE: &'static str;
@@ -252,7 +344,7 @@ pub fn open_in<O: DiscordOffering>(
 ) -> Result<(), dreggnet_offerings::OfferingError> {
     O::store().run(move |sessions| {
         let offering = make();
-        let session = offering.open(cfg)?;
+        let session = offering.open(cfg.clone())?;
         // A collective offering opens with a live round over the session's first actions (an open
         // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
         let round = if O::collective() {
@@ -260,12 +352,57 @@ pub fn open_in<O: DiscordOffering>(
         } else {
             None
         };
+        let generation = fresh_generation(channel);
+        let journal_id = SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
         sessions.insert(
             channel,
             Live {
                 offering,
                 session,
                 round,
+                generation,
+                control_head: 0,
+                journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
+                resume_store: None,
+            },
+        );
+        Ok(())
+    })
+}
+
+/// Open a fresh live session with an OfferingHost-compatible durable replay
+/// store. Both the offering and store factories run on the owning thread, so
+/// neither the offering session nor a `!Send` store crosses thread boundaries.
+pub fn open_in_with_resume_store<O: DiscordOffering>(
+    channel: u64,
+    make: impl FnOnce() -> O + Send + 'static,
+    cfg: SessionConfig,
+    make_store: impl FnOnce() -> Result<Box<dyn SessionResumeStore>, String> + Send + 'static,
+) -> Result<(), String> {
+    O::store().run(move |sessions| {
+        let offering = make();
+        let session = offering
+            .open(cfg.clone())
+            .map_err(|error| error.to_string())?;
+        let round = if O::collective() {
+            Some(CollectiveRound::new(0, offering.actions(&session), None))
+        } else {
+            None
+        };
+        let generation = fresh_generation(channel);
+        let journal_id = SessionId::new(format!("discord:{}:{channel}:{generation:016x}", O::KEY));
+        let store = make_store()?;
+        store.record_open(O::KEY, &journal_id, &cfg);
+        sessions.insert(
+            channel,
+            Live {
+                offering,
+                session,
+                round,
+                generation,
+                control_head: 0,
+                journal: SessionMoveLog::new(O::KEY, journal_id, cfg),
+                resume_store: Some(store),
             },
         );
         Ok(())
@@ -284,6 +421,43 @@ pub fn with_live<O: DiscordOffering, R: Send + 'static>(
     f: impl FnOnce(&mut Live<O>) -> R + Send + 'static,
 ) -> Option<R> {
     O::store().run(move |sessions| sessions.get_mut(&channel).map(f))
+}
+
+/// Run one transaction against a live session and optionally quarantine it.
+/// The callback result and removal decision are made on the owning thread;
+/// removal happens before the caller can observe the result.
+pub(crate) fn with_live_transaction<O: DiscordOffering, R: Send + 'static>(
+    channel: u64,
+    f: impl FnOnce(&mut Live<O>) -> (R, bool) + Send + 'static,
+) -> Option<R> {
+    O::store().run(move |sessions| {
+        let (result, quarantine) = {
+            let live = sessions.get_mut(&channel)?;
+            f(live)
+        };
+        if quarantine {
+            sessions.remove(&channel);
+        }
+        Some(result)
+    })
+}
+
+/// Read the exact control incarnation/head of a live channel session.
+pub fn control_stamp_in<O: DiscordOffering>(channel: u64) -> Option<ControlStamp> {
+    with_live::<O, _>(channel, |live| live.control_stamp())
+}
+
+/// Mint a fixed-argument test/adapter control from the current live head.
+/// Production renders obtain the same stamp atomically in [`surface_of`].
+pub fn fire_id_in<O: DiscordOffering>(channel: u64, turn: &str, arg: i64) -> Option<String> {
+    let turn = turn.to_string();
+    control_stamp_in::<O>(channel).map(|stamp| fire_id_at(O::KEY, stamp, &turn, arg))
+}
+
+/// Mint a numeric-modal control from the current live head.
+pub fn ask_id_in<O: DiscordOffering>(channel: u64, turn: &str) -> Option<String> {
+    let turn = turn.to_string();
+    control_stamp_in::<O>(channel).map(|stamp| ask_id_at(O::KEY, stamp, &turn))
 }
 
 /// Drop the channel's session. Part of the adapter's session API (a `/<offering> close`
@@ -376,6 +550,8 @@ pub enum Cast {
     NoRound,
     /// No session of this offering is open in the channel.
     NoSession,
+    /// The control was minted by a replaced session or an earlier round.
+    StaleSurface,
 }
 
 /// **A live voting round** over an offering's cap-gated [`Action`]s. A ballot is keyed by the
@@ -537,7 +713,8 @@ pub fn open_round<O: DiscordOffering>(
     O::store().run(move |sessions| match sessions.get_mut(&channel) {
         Some(live) => {
             let options = live.offering.actions(&live.session);
-            live.round = Some(CollectiveRound::new(0, options, electorate));
+            live.control_head = live.control_head.saturating_add(1);
+            live.round = Some(CollectiveRound::new(live.control_head, options, electorate));
             true
         }
         None => false,
@@ -551,6 +728,25 @@ pub fn open_round<O: DiscordOffering>(
 pub fn cast_vote<O: DiscordOffering>(channel: u64, voter: DreggIdentity, arg: i64) -> Cast {
     O::store().run(move |sessions| match sessions.get_mut(&channel) {
         None => Cast::NoSession,
+        Some(live) => match live.round.as_mut() {
+            None => Cast::NoRound,
+            Some(round) => round.cast_arg(&voter, arg),
+        },
+    })
+}
+
+/// Cast a ballot only if the button belongs to this exact session generation
+/// and collective round. The comparison and write-once mutation share one
+/// store-thread job, so a close/reopen cannot race between them.
+pub fn cast_vote_at<O: DiscordOffering>(
+    channel: u64,
+    stamp: ControlStamp,
+    voter: DreggIdentity,
+    arg: i64,
+) -> Cast {
+    O::store().run(move |sessions| match sessions.get_mut(&channel) {
+        None => Cast::NoSession,
+        Some(live) if live.control_stamp() != stamp => Cast::StaleSurface,
         Some(live) => match live.round.as_mut() {
             None => Cast::NoRound,
             Some(round) => round.cast_arg(&voter, arg),
@@ -586,15 +782,17 @@ pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
 
         // THE CROWD DECIDES, THE WORLD DISPOSES — one real cap-bounded turn carrying the whole
         // decision (the substrate still admits exactly one typed Action; the tally is provenance).
-        let decision = CollectiveDecision::new(electorate.clone(), carrier, tally.clone());
+        let decision = CollectiveDecision::new(electorate.clone(), carrier.clone(), tally.clone());
         let outcome = live
             .offering
             .advance_collective(&mut live.session, winner.clone(), decision);
+        live.record_landed(winner.clone(), carrier, &outcome);
 
         // Open the next round over the new state, keeping any electorate restriction.
         let next_options = live.offering.actions(&live.session);
+        live.control_head = round_no.saturating_add(1);
         live.round = Some(CollectiveRound::with_electorate(
-            round_no + 1,
+            live.control_head,
             next_options,
             restrict,
         ));
@@ -633,6 +831,10 @@ fn cast_note(cast: Cast) -> String {
         Cast::BadOption => "That option is no longer on the ballot.".to_string(),
         Cast::NoRound => "No collective round is open here.".to_string(),
         Cast::NoSession => "No session is open in this channel.".to_string(),
+        Cast::StaleSurface => {
+            "That ballot belongs to a replaced session or closed round — nothing was recorded."
+                .to_string()
+        }
     }
 }
 
@@ -647,6 +849,8 @@ pub enum Press {
     Fire {
         /// The offering key ([`DiscordOffering::KEY`]).
         key: String,
+        /// Exact session incarnation and state/round head that minted the button.
+        stamp: ControlStamp,
         /// The affordance verb.
         turn: String,
         /// The affordance argument.
@@ -657,6 +861,8 @@ pub enum Press {
     Ask {
         /// The offering key.
         key: String,
+        /// Exact session incarnation and state head that minted the button.
+        stamp: ControlStamp,
         /// The affordance verb whose value the modal collects.
         turn: String,
     },
@@ -666,6 +872,8 @@ pub enum Press {
     AskText {
         /// The offering key.
         key: String,
+        /// Exact session incarnation and state head that minted the button.
+        stamp: ControlStamp,
         /// The affordance verb whose text the modal collects.
         turn: String,
         /// The affordance argument (the anchor/cell the text applies to).
@@ -673,46 +881,85 @@ pub enum Press {
     },
 }
 
-/// The custom-id of a fixed-arg affordance button.
+/// The exact-session/head custom-id of a fixed-arg affordance button.
+pub fn fire_id_at(key: &str, stamp: ControlStamp, turn: &str, arg: i64) -> String {
+    format!(
+        "{PREFIX}:fire:{key}:{:x}:{:x}:{turn}:{arg}",
+        stamp.generation, stamp.head
+    )
+}
+
+/// Unbound fixed-arg id retained for parser/render fixtures. Production live
+/// controls use [`fire_id_at`] or [`fire_id_in`].
 pub fn fire_id(key: &str, turn: &str, arg: i64) -> String {
-    format!("{PREFIX}:fire:{key}:{turn}:{arg}")
+    fire_id_at(key, ControlStamp::PERSISTENT, turn, arg)
 }
 
 /// The custom-id of a numeric-value-taking affordance button (opens the value modal).
+pub fn ask_id_at(key: &str, stamp: ControlStamp, turn: &str) -> String {
+    format!(
+        "{PREFIX}:ask:{key}:{:x}:{:x}:{turn}",
+        stamp.generation, stamp.head
+    )
+}
+
 pub fn ask_id(key: &str, turn: &str) -> String {
-    format!("{PREFIX}:ask:{key}:{turn}")
+    ask_id_at(key, ControlStamp::PERSISTENT, turn)
 }
 
 /// The custom-id of a text-taking affordance button carrying its `arg` (opens the text modal).
+pub fn askt_id_at(key: &str, stamp: ControlStamp, turn: &str, arg: i64) -> String {
+    format!(
+        "{PREFIX}:askt:{key}:{:x}:{:x}:{turn}:{arg}",
+        stamp.generation, stamp.head
+    )
+}
+
 pub fn askt_id(key: &str, turn: &str, arg: i64) -> String {
-    format!("{PREFIX}:askt:{key}:{turn}:{arg}")
+    askt_id_at(key, ControlStamp::PERSISTENT, turn, arg)
 }
 
 /// The custom-id of the modal that collects `turn`'s numeric value.
-pub fn submit_id(key: &str, turn: &str) -> String {
-    format!("{PREFIX}:submit:{key}:{turn}")
+pub fn submit_id(key: &str, stamp: ControlStamp, turn: &str) -> String {
+    format!(
+        "{PREFIX}:submit:{key}:{:x}:{:x}:{turn}",
+        stamp.generation, stamp.head
+    )
 }
 
 /// The custom-id of the modal that collects `turn`'s free text, carrying its `arg` back.
-pub fn subt_id(key: &str, turn: &str, arg: i64) -> String {
-    format!("{PREFIX}:subt:{key}:{turn}:{arg}")
+pub fn subt_id(key: &str, stamp: ControlStamp, turn: &str, arg: i64) -> String {
+    format!(
+        "{PREFIX}:subt:{key}:{:x}:{:x}:{turn}:{arg}",
+        stamp.generation, stamp.head
+    )
+}
+
+fn stamp(generation: &str, head: &str) -> Option<ControlStamp> {
+    Some(ControlStamp {
+        generation: u64::from_str_radix(generation, 16).ok()?,
+        head: u64::from_str_radix(head, 16).ok()?,
+    })
 }
 
 /// Decode a component press. `None` for any id that is not ours.
 pub fn parse_press(custom_id: &str) -> Option<Press> {
     let parts: Vec<&str> = custom_id.split(':').collect();
     match parts.as_slice() {
-        [PREFIX, "fire", key, turn, arg] => Some(Press::Fire {
+        [PREFIX, "fire", key, generation, head, turn, arg] => Some(Press::Fire {
             key: (*key).to_string(),
+            stamp: stamp(generation, head)?,
             turn: (*turn).to_string(),
             arg: arg.parse().ok()?,
         }),
-        [PREFIX, "ask", key, turn] => Some(Press::Ask {
+        [PREFIX, "ask", key, generation, head, turn] => Some(Press::Ask {
             key: (*key).to_string(),
+            stamp: stamp(generation, head)?,
             turn: (*turn).to_string(),
         }),
-        [PREFIX, "askt", key, turn, arg] => Some(Press::AskText {
+        [PREFIX, "askt", key, generation, head, turn, arg] => Some(Press::AskText {
             key: (*key).to_string(),
+            stamp: stamp(generation, head)?,
             turn: (*turn).to_string(),
             arg: arg.parse().ok()?,
         }),
@@ -721,21 +968,28 @@ pub fn parse_press(custom_id: &str) -> Option<Press> {
 }
 
 /// Decode a **numeric** modal submit id into `(key, turn)`. `None` for any id that is not ours.
-pub fn parse_submit(custom_id: &str) -> Option<(String, String)> {
+pub fn parse_submit(custom_id: &str) -> Option<(String, ControlStamp, String)> {
     let parts: Vec<&str> = custom_id.split(':').collect();
     match parts.as_slice() {
-        [PREFIX, "submit", key, turn] => Some(((*key).to_string(), (*turn).to_string())),
+        [PREFIX, "submit", key, generation, head, turn] => Some((
+            (*key).to_string(),
+            stamp(generation, head)?,
+            (*turn).to_string(),
+        )),
         _ => None,
     }
 }
 
 /// Decode a **text** modal submit id into `(key, turn, arg)`. `None` for any id that is not ours.
-pub fn parse_text_submit(custom_id: &str) -> Option<(String, String, i64)> {
+pub fn parse_text_submit(custom_id: &str) -> Option<(String, ControlStamp, String, i64)> {
     let parts: Vec<&str> = custom_id.split(':').collect();
     match parts.as_slice() {
-        [PREFIX, "subt", key, turn, arg] => {
-            Some(((*key).to_string(), (*turn).to_string(), arg.parse().ok()?))
-        }
+        [PREFIX, "subt", key, generation, head, turn, arg] => Some((
+            (*key).to_string(),
+            stamp(generation, head)?,
+            (*turn).to_string(),
+            arg.parse().ok()?,
+        )),
         _ => None,
     }
 }
@@ -747,8 +1001,8 @@ pub fn key_of(custom_id: &str) -> Option<String> {
         | Some(Press::Ask { key, .. })
         | Some(Press::AskText { key, .. }) => Some(key),
         None => parse_submit(custom_id)
-            .map(|(k, _)| k)
-            .or_else(|| parse_text_submit(custom_id).map(|(k, _, _)| k)),
+            .map(|(k, _, _)| k)
+            .or_else(|| parse_text_submit(custom_id).map(|(k, _, _, _)| k)),
     }
 }
 
@@ -756,14 +1010,17 @@ pub fn key_of(custom_id: &str) -> Option<String> {
 // Rendering — the offering's own deos Surface → a Discord embed + affordance buttons.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The offering's [`Surface`] (its deos `ViewNode`) rendered to a Discord embed through the
+/// The offering's [`Surface`](dreggnet_offerings::Surface) (its deos `ViewNode`) rendered to a
+/// Discord embed through the
 /// `deos_view::discord` backend — the SAME renderer the desktop/web/framebuffer backends are
 /// peers of. We take the embed only: the components come from [`action_rows`] (see the module
 /// doc — a Discord custom-id must carry the offering key and route a value-taking affordance to
 /// its modal, which the generic `deosturn:` card id cannot).
-pub fn embed_of<O: DiscordOffering>(live: &Live<O>) -> CreateEmbed {
-    let surface: Surface = live.offering.render(&live.session);
-    let card = deos_view::discord::render_card(O::TITLE, surface.view(), &[]);
+fn embed_projection<O: DiscordOffering>(
+    live: &Live<O>,
+    projection: &AudienceProjection,
+) -> CreateEmbed {
+    let card = deos_view::discord::render_card(O::TITLE, projection.surface.view(), &[]);
     card.embed
         .color(O::COLOR)
         .footer(CreateEmbedFooter::new(truncate(
@@ -776,6 +1033,11 @@ pub fn embed_of<O: DiscordOffering>(live: &Live<O>) -> CreateEmbed {
         )))
 }
 
+pub fn embed_of<O: DiscordOffering>(live: &Live<O>) -> CreateEmbed {
+    let projection = project_for_audience(&live.offering, &live.session, &Audience::Shared);
+    embed_projection(live, &projection)
+}
+
 /// The affordance buttons for the session's current [`Offering::actions`], chunked into Discord
 /// rows (≤5 × ≤5).
 ///
@@ -784,18 +1046,21 @@ pub fn embed_of<O: DiscordOffering>(live: &Live<O>) -> CreateEmbed {
 /// * an **ineligible** action → `🔒`, danger-styled, and **still pressable**: the cap tooth is
 ///   shown, not hidden, and the press surfaces the executor's own [`Outcome::Refused`] rather
 ///   than the frontend pretending to be the gate.
-pub fn action_rows<O: DiscordOffering>(actions: &[Action]) -> Vec<CreateActionRow> {
+pub fn action_rows_at<O: DiscordOffering>(
+    actions: &[Action],
+    stamp: ControlStamp,
+) -> Vec<CreateActionRow> {
     let mut rows: Vec<CreateActionRow> = Vec::new();
     for chunk in actions.chunks(5).take(5) {
         let mut buttons: Vec<CreateButton> = Vec::new();
         for a in chunk {
             let id = if O::text_prompt(&a.turn).is_some() {
                 // A text affordance carries its own arg (a doc insert's anchor) beside the text.
-                askt_id(O::KEY, &a.turn, a.arg)
+                askt_id_at(O::KEY, stamp, &a.turn, a.arg)
             } else if O::value_prompt(&a.turn).is_some() {
-                ask_id(O::KEY, &a.turn)
+                ask_id_at(O::KEY, stamp, &a.turn)
             } else {
-                fire_id(O::KEY, &a.turn, a.arg)
+                fire_id_at(O::KEY, stamp, &a.turn, a.arg)
             };
             let label = if a.enabled {
                 truncate(&a.label, 78)
@@ -821,10 +1086,20 @@ pub fn action_rows<O: DiscordOffering>(actions: &[Action]) -> Vec<CreateActionRo
     rows
 }
 
+/// Unbound rows retained for parser/render fixtures. Generic live surfaces and
+/// persistent-world surfaces must use [`action_rows_at`] with their exact stamp.
+pub fn action_rows<O: DiscordOffering>(actions: &[Action]) -> Vec<CreateActionRow> {
+    action_rows_at::<O>(actions, ControlStamp::PERSISTENT)
+}
+
 /// The full surface of a channel's live session: embed + affordance rows.
 pub fn surface_of<O: DiscordOffering>(live: &Live<O>) -> (CreateEmbed, Vec<CreateActionRow>) {
-    let actions = live.offering.actions(&live.session);
-    (embed_of(live), action_rows::<O>(&actions))
+    let projection = project_for_audience(&live.offering, &live.session, &Audience::Shared);
+    let embed = embed_projection(live, &projection);
+    (
+        embed,
+        action_rows_at::<O>(&projection.actions, live.control_stamp()),
+    )
 }
 
 /// The session's embed rendered **AS `viewer` sees it** — the viewer-aware
@@ -833,18 +1108,9 @@ pub fn surface_of<O: DiscordOffering>(live: &Live<O>) -> (CreateEmbed, Vec<Creat
 /// A full-information offering inherits `render_for`'s default (== `render`), so nothing changes for
 /// it; only an offering with genuinely per-viewer state paints differently here.
 pub fn embed_for<O: DiscordOffering>(live: &Live<O>, viewer: &DreggIdentity) -> CreateEmbed {
-    let surface: Surface = live.offering.render_for(&live.session, viewer);
-    let card = deos_view::discord::render_card(O::TITLE, surface.view(), &[]);
-    card.embed
-        .color(O::COLOR)
-        .footer(CreateEmbedFooter::new(truncate(
-            &format!(
-                "{} · {}",
-                live.offering.status_line(&live.session),
-                O::TAGLINE
-            ),
-            2040,
-        )))
+    let audience = Audience::private(viewer.clone());
+    let projection = project_for_audience(&live.offering, &live.session, &audience);
+    embed_projection(live, &projection)
 }
 
 /// The full surface of a channel's live session **AS `viewer` sees it** — the viewer-aware embed
@@ -855,13 +1121,47 @@ pub fn surface_for<O: DiscordOffering>(
     live: &Live<O>,
     viewer: &DreggIdentity,
 ) -> (CreateEmbed, Vec<CreateActionRow>) {
-    let actions = live.offering.actions_for(&live.session, viewer);
-    (embed_for(live, viewer), action_rows::<O>(&actions))
+    let audience = Audience::private(viewer.clone());
+    let projection = project_for_audience(&live.offering, &live.session, &audience);
+    let embed = embed_projection(live, &projection);
+    (
+        embed,
+        action_rows_at::<O>(&projection.actions, live.control_stamp()),
+    )
+}
+
+/// The pair a Discord **channel** is allowed to receive for one viewer.
+///
+/// The first surface is always safe to publish into the shared channel. For a
+/// hidden-information offering it is the viewer-blind fog and the second value
+/// is the viewer projection that must be sent ephemerally. The companion has
+/// no controls: all actions stay on the shared board, so pressing a private
+/// ephemeral can never leave the public board stale. For a public offering the
+/// existing viewer-aware surface remains the shared one and there is no
+/// companion. Keeping this decision pure lets hostile tests inspect the exact
+/// objects the async handlers publish without a live Discord token.
+pub fn channel_surfaces<O: DiscordOffering>(
+    live: &Live<O>,
+    viewer: &DreggIdentity,
+) -> (
+    (CreateEmbed, Vec<CreateActionRow>),
+    Option<(CreateEmbed, Vec<CreateActionRow>)>,
+) {
+    if live.offering.hidden_information() {
+        let (private_embed, _private_rows) = surface_for::<O>(live, viewer);
+        (surface_of::<O>(live), Some((private_embed, Vec::new())))
+    } else {
+        (surface_for::<O>(live, viewer), None)
+    }
 }
 
 /// The modal that collects a value-taking affordance's typed arg.
-pub fn value_modal<O: DiscordOffering>(turn: &str, prompt: ValuePrompt) -> CreateModal {
-    CreateModal::new(submit_id(O::KEY, turn), prompt.title).components(vec![
+pub fn value_modal<O: DiscordOffering>(
+    stamp: ControlStamp,
+    turn: &str,
+    prompt: ValuePrompt,
+) -> CreateModal {
+    CreateModal::new(submit_id(O::KEY, stamp, turn), prompt.title).components(vec![
         CreateActionRow::InputText(
             CreateInputText::new(InputTextStyle::Short, prompt.label, VALUE_FIELD)
                 .placeholder(prompt.placeholder)
@@ -874,13 +1174,18 @@ pub fn value_modal<O: DiscordOffering>(turn: &str, prompt: ValuePrompt) -> Creat
 /// The modal that collects a text-taking affordance's free-text [`Action::label`] (a Hermes
 /// prompt, a document paragraph), carrying its `arg` (the anchor) back on the submit id. A
 /// paragraph prompt uses a multi-line input.
-pub fn text_modal<O: DiscordOffering>(turn: &str, arg: i64, prompt: TextPrompt) -> CreateModal {
+pub fn text_modal<O: DiscordOffering>(
+    stamp: ControlStamp,
+    turn: &str,
+    arg: i64,
+    prompt: TextPrompt,
+) -> CreateModal {
     let style = if prompt.paragraph {
         InputTextStyle::Paragraph
     } else {
         InputTextStyle::Short
     };
-    CreateModal::new(subt_id(O::KEY, turn, arg), prompt.title).components(vec![
+    CreateModal::new(subt_id(O::KEY, stamp, turn, arg), prompt.title).components(vec![
         CreateActionRow::InputText(
             CreateInputText::new(style, prompt.label, VALUE_FIELD)
                 .placeholder(prompt.placeholder)
@@ -945,6 +1250,8 @@ pub enum Driven {
     Fired(Outcome),
     /// The affordance takes a typed value: the frontend must open this modal.
     NeedsValue {
+        /// Exact surface incarnation carried into the modal submit id.
+        stamp: ControlStamp,
         /// The affordance verb whose value the modal collects.
         turn: String,
         /// The prompt to render.
@@ -952,6 +1259,8 @@ pub enum Driven {
     },
     /// The affordance takes free text: the frontend must open this text modal (carrying `arg`).
     NeedsText {
+        /// Exact surface incarnation carried into the modal submit id.
+        stamp: ControlStamp,
         /// The affordance verb whose text the modal collects.
         turn: String,
         /// The affordance argument (the anchor/cell the text applies to).
@@ -961,6 +1270,8 @@ pub enum Driven {
     },
     /// No session of this offering is open in the channel.
     NoSession,
+    /// The control belongs to a replaced session or an earlier state/round.
+    StaleSurface,
     /// The custom-id is not this offering's.
     NotOurs,
 }
@@ -974,20 +1285,88 @@ pub fn drive<O: DiscordOffering>(channel: u64, custom_id: &str, actor: DreggIden
         None => return Driven::NotOurs,
     };
     match press {
-        Press::Ask { key, turn } if key == O::KEY => match O::value_prompt(&turn) {
-            Some(prompt) => Driven::NeedsValue { turn, prompt },
+        Press::Ask { key, stamp, turn } if key == O::KEY => match O::value_prompt(&turn) {
+            Some(prompt) if stamp_is_current::<O>(channel, stamp) => Driven::NeedsValue {
+                stamp,
+                turn,
+                prompt,
+            },
+            Some(_) => Driven::StaleSurface,
             // A value-less turn addressed as `ask` — fire it with arg 0 rather than dead-ending.
-            None => drive_value::<O>(channel, &turn, 0, actor),
+            None => drive_value_at::<O>(channel, stamp, &turn, 0, actor),
         },
-        Press::AskText { key, turn, arg } if key == O::KEY => match O::text_prompt(&turn) {
-            Some(prompt) => Driven::NeedsText { turn, arg, prompt },
+        Press::AskText {
+            key,
+            stamp,
+            turn,
+            arg,
+        } if key == O::KEY => match O::text_prompt(&turn) {
+            Some(prompt) if stamp_is_current::<O>(channel, stamp) => Driven::NeedsText {
+                stamp,
+                turn,
+                arg,
+                prompt,
+            },
+            Some(_) => Driven::StaleSurface,
             // A text-less turn addressed as `askt` — fire it with its arg rather than dead-ending.
-            None => drive_value::<O>(channel, &turn, arg, actor),
+            None => drive_value_at::<O>(channel, stamp, &turn, arg, actor),
         },
-        Press::Fire { key, turn, arg } if key == O::KEY => {
-            drive_value::<O>(channel, &turn, arg, actor)
-        }
+        Press::Fire {
+            key,
+            stamp,
+            turn,
+            arg,
+        } if key == O::KEY => drive_value_at::<O>(channel, stamp, &turn, arg, actor),
         _ => Driven::NotOurs,
+    }
+}
+
+fn stamp_is_current<O: DiscordOffering>(channel: u64, stamp: ControlStamp) -> bool {
+    O::store().run(move |sessions| {
+        sessions
+            .get(&channel)
+            .is_some_and(|live| live.control_stamp() == stamp)
+    })
+}
+
+enum MutationAttempt {
+    Fired(Outcome),
+    NoSession,
+    StaleSurface,
+}
+
+fn note_direct_landing<O: DiscordOffering>(live: &mut Live<O>, outcome: &Outcome) {
+    if !O::collective() && matches!(outcome, Outcome::Landed { .. }) {
+        live.control_head = live.control_head.saturating_add(1);
+    }
+}
+
+fn drive_value_at<O: DiscordOffering>(
+    channel: u64,
+    stamp: ControlStamp,
+    turn: &str,
+    arg: i64,
+    actor: DreggIdentity,
+) -> Driven {
+    let turn = turn.to_string();
+    match O::store().run(move |sessions| {
+        let Some(live) = sessions.get_mut(&channel) else {
+            return MutationAttempt::NoSession;
+        };
+        if live.control_stamp() != stamp {
+            return MutationAttempt::StaleSurface;
+        }
+        let action = Action::new(turn.clone(), turn, arg, true);
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        MutationAttempt::Fired(outcome)
+    }) {
+        MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
+        MutationAttempt::NoSession => Driven::NoSession,
+        MutationAttempt::StaleSurface => Driven::StaleSurface,
     }
 }
 
@@ -1007,11 +1386,47 @@ pub fn drive_value<O: DiscordOffering>(
         // is a decoration too (we pass `true`), because the substrate is the sole referee: a
         // move it does not admit comes back as a real `Refused`, not a frontend veto.
         let action = Action::new(turn.clone(), turn, arg, true);
-        live.offering.advance(&mut live.session, action, actor)
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        outcome
     });
     match outcome {
         Some(o) => Driven::Fired(o),
         None => Driven::NoSession,
+    }
+}
+
+fn drive_text_at<O: DiscordOffering>(
+    channel: u64,
+    stamp: ControlStamp,
+    turn: &str,
+    arg: i64,
+    text: &str,
+    actor: DreggIdentity,
+) -> Driven {
+    let turn = turn.to_string();
+    let text = text.to_string();
+    match O::store().run(move |sessions| {
+        let Some(live) = sessions.get_mut(&channel) else {
+            return MutationAttempt::NoSession;
+        };
+        if live.control_stamp() != stamp {
+            return MutationAttempt::StaleSurface;
+        }
+        let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        MutationAttempt::Fired(outcome)
+    }) {
+        MutationAttempt::Fired(outcome) => Driven::Fired(outcome),
+        MutationAttempt::NoSession => Driven::NoSession,
+        MutationAttempt::StaleSurface => Driven::StaleSurface,
     }
 }
 
@@ -1036,7 +1451,12 @@ pub fn drive_text<O: DiscordOffering>(
         // being silently propped up by this path. `arg` is the affordance's own (a doc insert's
         // anchor); `enabled` is decoration — the substrate is the sole referee of what lands.
         let action = Action::new(turn.clone(), turn, arg, true).with_text(text);
-        live.offering.advance(&mut live.session, action, actor)
+        let outcome = live
+            .offering
+            .advance(&mut live.session, action.clone(), actor.clone());
+        live.record_landed(action, actor, &outcome);
+        note_direct_landing::<O>(live, &outcome);
+        outcome
     });
     match outcome {
         Some(o) => Driven::Fired(o),
@@ -1064,12 +1484,22 @@ pub async fn handle_status<O: DiscordOffering>(
 ) {
     let channel = command.channel_id.get();
     let viewer = identity_of(state, command.user.id.get());
-    let rendered = with_live::<O, _>(channel, move |live| surface_for::<O>(live, &viewer));
+    let rendered = with_live::<O, _>(channel, move |live| {
+        (
+            surface_for::<O>(live, &viewer),
+            live.offering.hidden_information(),
+        )
+    });
     match rendered {
-        Some((embed, rows)) => {
+        Some(((embed, rows), hidden_information)) => {
+            let rows = if hidden_information { Vec::new() } else { rows };
             let msg = CreateInteractionResponseMessage::new()
                 .embed(embed)
-                .components(rows);
+                .components(rows)
+                // A viewer projection which may contain a hand / sealed move
+                // is never posted into the channel. Public offerings keep the
+                // familiar channel-visible status response.
+                .ephemeral(hidden_information);
             let _ = command
                 .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
                 .await;
@@ -1135,9 +1565,9 @@ pub async fn handle_component<O: DiscordOffering>(
     // 1-press-1-turn path.
     if O::collective() {
         match parse_press(&component.data.custom_id) {
-            Some(Press::Fire { arg, .. }) => {
+            Some(Press::Fire { stamp, arg, .. }) => {
                 ack::ack_component(ctx, component).await;
-                let cast = cast_vote::<O>(channel, actor.clone(), arg);
+                let cast = cast_vote_at::<O>(channel, stamp, actor.clone(), arg);
                 // AUDIT: a collective ballot is a decision too — record the cast verdict
                 // (the resolved crowd turn is enveloped by `handle_close`).
                 crate::audit::log().emit(
@@ -1167,6 +1597,7 @@ pub async fn handle_component<O: DiscordOffering>(
                             Cast::BadOption => "bad_option",
                             Cast::NoRound => "no_round",
                             Cast::NoSession => "no_session",
+                            Cast::StaleSurface => "stale_surface",
                         },
                     )
                     .with_session(channel.to_string())
@@ -1194,7 +1625,7 @@ pub async fn handle_component<O: DiscordOffering>(
     // that open one are decided here — mirroring `drive`'s own dispatch — and left un-ACKed.
     let will_commit = match parse_press(&component.data.custom_id) {
         Some(Press::Fire { key, .. }) => key == O::KEY,
-        Some(Press::Ask { key, turn }) => key == O::KEY && O::value_prompt(&turn).is_none(),
+        Some(Press::Ask { key, turn, .. }) => key == O::KEY && O::value_prompt(&turn).is_none(),
         Some(Press::AskText { key, turn, .. }) => key == O::KEY && O::text_prompt(&turn).is_none(),
         _ => false,
     };
@@ -1203,19 +1634,28 @@ pub async fn handle_component<O: DiscordOffering>(
     }
 
     match drive::<O>(channel, &component.data.custom_id, actor.clone()) {
-        Driven::NeedsValue { turn, prompt } => {
+        Driven::NeedsValue {
+            stamp,
+            turn,
+            prompt,
+        } => {
             let _ = component
                 .create_response(
                     &ctx.http,
-                    CreateInteractionResponse::Modal(value_modal::<O>(&turn, prompt)),
+                    CreateInteractionResponse::Modal(value_modal::<O>(stamp, &turn, prompt)),
                 )
                 .await;
         }
-        Driven::NeedsText { turn, arg, prompt } => {
+        Driven::NeedsText {
+            stamp,
+            turn,
+            arg,
+            prompt,
+        } => {
             let _ = component
                 .create_response(
                     &ctx.http,
-                    CreateInteractionResponse::Modal(text_modal::<O>(&turn, arg, prompt)),
+                    CreateInteractionResponse::Modal(text_modal::<O>(stamp, &turn, arg, prompt)),
                 )
                 .await;
         }
@@ -1296,6 +1736,37 @@ pub async fn handle_component<O: DiscordOffering>(
             )
             .await;
         }
+        Driven::StaleSurface => {
+            crate::audit::log().emit(
+                crate::audit::AuditEvent::new(
+                    "discord",
+                    crate::audit::actor_of(component.user.id.get(), &actor),
+                    crate::audit::Surface::Component,
+                    crate::audit::Input {
+                        kind: format!("offering:advance:{}", O::KEY),
+                        detail: serde_json::json!({ "custom_id": component.data.custom_id }),
+                    },
+                )
+                .decided("refused", "stale_surface")
+                .with_session(channel.to_string())
+                .with_offering(O::KEY),
+            );
+            if will_commit {
+                ack::followup_ephemeral(
+                    ctx,
+                    component,
+                    "That control belongs to a replaced session or earlier state — nothing was fired.",
+                )
+                .await;
+            } else {
+                component_ephemeral(
+                    ctx,
+                    component,
+                    "That control belongs to a replaced session or earlier state — nothing was fired.",
+                )
+                .await;
+            }
+        }
     }
 }
 
@@ -1313,17 +1784,17 @@ pub async fn handle_modal<O: DiscordOffering>(
     let raw = modal_value(modal, VALUE_FIELD);
 
     // A TEXT submit: (key, turn, arg) on the id, the free text on the label.
-    if let Some((key, turn, arg)) = parse_text_submit(&modal.data.custom_id) {
+    if let Some((key, stamp, turn, arg)) = parse_text_submit(&modal.data.custom_id) {
         if key != O::KEY {
             return;
         }
-        let driven = drive_text::<O>(channel, &turn, arg, raw.trim(), actor.clone());
+        let driven = drive_text_at::<O>(channel, stamp, &turn, arg, raw.trim(), actor.clone());
         finish_modal::<O>(ctx, modal, channel, &actor, driven).await;
         return;
     }
 
     // A NUMERIC submit: the typed value IS the arg.
-    let Some((key, turn)) = parse_submit(&modal.data.custom_id) else {
+    let Some((key, stamp, turn)) = parse_submit(&modal.data.custom_id) else {
         return;
     };
     if key != O::KEY {
@@ -1342,7 +1813,7 @@ pub async fn handle_modal<O: DiscordOffering>(
             .await;
         return;
     };
-    let driven = drive_value::<O>(channel, &turn, value, actor.clone());
+    let driven = drive_value_at::<O>(channel, stamp, &turn, value, actor.clone());
     finish_modal::<O>(ctx, modal, channel, &actor, driven).await;
 }
 
@@ -1375,12 +1846,21 @@ async fn finish_modal<O: DiscordOffering>(
             );
             let note = outcome_note(&outcome);
             let viewer = viewer.clone();
-            let rendered = with_live::<O, _>(channel, move |live| surface_for::<O>(live, &viewer));
+            let rendered = with_live::<O, _>(channel, move |live| {
+                (
+                    surface_for::<O>(live, &viewer),
+                    live.offering.hidden_information(),
+                )
+            });
             let msg = match rendered {
-                Some((embed, rows)) => CreateInteractionResponseMessage::new()
-                    .content(note)
-                    .embed(embed)
-                    .components(rows),
+                Some(((embed, rows), hidden_information)) => {
+                    let rows = if hidden_information { Vec::new() } else { rows };
+                    CreateInteractionResponseMessage::new()
+                        .content(note)
+                        .embed(embed)
+                        .components(rows)
+                        .ephemeral(hidden_information)
+                }
                 None => CreateInteractionResponseMessage::new().content(note),
             };
             let _ = modal
@@ -1394,7 +1874,7 @@ async fn finish_modal<O: DiscordOffering>(
                 crate::commands::crown::offer_fold(ctx, modal.channel_id, O::KEY).await;
             }
         }
-        _ => {
+        Driven::StaleSurface => {
             crate::audit::log().emit(
                 crate::audit::AuditEvent::new(
                     "discord",
@@ -1405,7 +1885,7 @@ async fn finish_modal<O: DiscordOffering>(
                         detail: serde_json::json!({ "custom_id": modal.data.custom_id }),
                     },
                 )
-                .decided("refused", "no_session")
+                .decided("refused", "stale_surface")
                 .with_session(channel.to_string())
                 .with_offering(O::KEY),
             );
@@ -1414,7 +1894,35 @@ async fn finish_modal<O: DiscordOffering>(
                     &ctx.http,
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
+                            .content(
+                                "That form belongs to a replaced session or earlier state — nothing was fired.",
+                            )
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+        }
+        Driven::NoSession | Driven::NotOurs => {
+            let _ = modal
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
                             .content(no_session_text::<O>())
+                            .ephemeral(true),
+                    ),
+                )
+                .await;
+        }
+        Driven::NeedsValue { .. } | Driven::NeedsText { .. } => {
+            let _ = modal
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(
+                                "That form did not resolve to a typed move — nothing was fired.",
+                            )
                             .ephemeral(true),
                     ),
                 )
@@ -1511,10 +2019,10 @@ pub async fn handle_close<O: DiscordOffering>(ctx: &Context, command: &CommandIn
     }
 }
 
-/// Re-render the channel's surface into the pressed message **AS the presser sees it**, with the
-/// move's honest outcome. The presser's derived identity (`viewer`) is threaded to
-/// [`surface_for`] so the re-render after a seat-claiming tug play shows the presser THEIR OWN hidden
-/// hand (and their own cap-gated affordances), not the viewer-blind public fog.
+/// Re-render the shared channel surface with the move's honest outcome. A
+/// public offering keeps its viewer-aware render. A hidden-information offering
+/// edits only its viewer-blind fog into the shared message and sends the
+/// presser's [`surface_for`] projection as an ephemeral companion.
 async fn update_surface<O: DiscordOffering>(
     ctx: &Context,
     component: &ComponentInteraction,
@@ -1524,8 +2032,8 @@ async fn update_surface<O: DiscordOffering>(
     acked: bool,
 ) {
     let viewer = viewer.clone();
-    let rendered = with_live::<O, _>(channel, move |live| surface_for::<O>(live, &viewer));
-    let Some((embed, rows)) = rendered else {
+    let rendered = with_live::<O, _>(channel, move |live| channel_surfaces::<O>(live, &viewer));
+    let Some(((embed, rows), private_surface)) = rendered else {
         if acked {
             ack::followup_ephemeral(ctx, component, &no_session_text::<O>()).await;
         } else {
@@ -1534,8 +2042,9 @@ async fn update_surface<O: DiscordOffering>(
         return;
     };
     if acked {
-        // The press was deferred inside the 3s window ([`ack_component`]); EDIT the pressed
-        // message into the post-turn render (carrying the honest outcome note).
+        // The press was deferred inside the 3s window ([`ack_component`]); EDIT
+        // the pressed message into the post-turn render. For a hidden game this
+        // is the viewer-blind public fog, never the presser's private projection.
         let _ = component
             .edit_response(
                 &ctx.http,
@@ -1545,6 +2054,16 @@ async fn update_surface<O: DiscordOffering>(
                     .components(rows),
             )
             .await;
+        if let Some((private_embed, _private_rows)) = private_surface {
+            ack::followup_ephemeral_surface(
+                ctx,
+                component,
+                "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+                private_embed,
+                vec![],
+            )
+            .await;
+        }
         return;
     }
     let _ = component
@@ -1558,6 +2077,16 @@ async fn update_surface<O: DiscordOffering>(
             ),
         )
         .await;
+    if let Some((private_embed, _private_rows)) = private_surface {
+        ack::followup_ephemeral_surface(
+            ctx,
+            component,
+            "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+            private_embed,
+            vec![],
+        )
+        .await;
+    }
 }
 
 fn no_session_text<O: DiscordOffering>() -> String {
@@ -1582,7 +2111,11 @@ async fn ephemeral(ctx: &Context, command: &CommandInteraction, text: &str) {
         .await;
 }
 
-async fn component_ephemeral(ctx: &Context, component: &ComponentInteraction, text: &str) {
+pub(crate) async fn component_ephemeral(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    text: &str,
+) {
     let _ = component
         .create_response(
             &ctx.http,
@@ -1629,7 +2162,7 @@ pub fn truncate(s: &str, max: usize) -> String {
 /// drift into three (the old shape: two hand-maintained 15-ish-arm matches plus a folklore
 /// count). The offering SET itself is pinned to the shared registrar: the parity test below
 /// checks this table (plus the rpg-world route and the bespoke `/dungeon` crowd surface)
-/// serves exactly the LIVE `dreggnet_catalog::full_catalog_host` — the same 22 web, Telegram,
+/// serves exactly the LIVE `dreggnet_catalog::full_catalog_host` — the same 23 web, Telegram,
 /// and WeChat register (docs/BOT-SHARED-BACKEND-DESIGN.md).
 ///
 /// Component presses for the eight identity-owned RPG feature-surface keys never reach this table's arms
@@ -1649,6 +2182,7 @@ macro_rules! for_each_generic_offering {
         $per!(dreggnet_offerings::campaign::DescentCampaignOffering);
         $per!(crate::commands::portfolio::SeatedTug);
         $per!(dregg_automatafl::AutomataflOffering);
+        $per!(dreggnet_surfaces::HostedProofAssignedRaidOffering);
         $per!(dreggnet_names::NamesOffering);
         $per!(dreggnet_compute::ComputeOffering);
         $per!(dreggnet_surfaces::TradeOffering);
@@ -1771,38 +2305,125 @@ mod tests {
 
     #[test]
     fn the_custom_id_wire_round_trips() {
-        let fire = fire_id("council", "approve", 2);
-        assert_eq!(fire, "offering:fire:council:approve:2");
+        let stamp = ControlStamp {
+            generation: 0xabc,
+            head: 3,
+        };
+        let fire = fire_id_at("council", stamp, "approve", 2);
+        assert_eq!(fire, "offering:fire:council:abc:3:approve:2");
         assert_eq!(
             parse_press(&fire),
             Some(Press::Fire {
                 key: "council".into(),
+                stamp,
                 turn: "approve".into(),
                 arg: 2
             })
         );
 
-        let ask = ask_id("market", "bid");
-        assert_eq!(ask, "offering:ask:market:bid");
+        let ask = ask_id_at("market", stamp, "bid");
+        assert_eq!(ask, "offering:ask:market:abc:3:bid");
         assert_eq!(
             parse_press(&ask),
             Some(Press::Ask {
                 key: "market".into(),
+                stamp,
                 turn: "bid".into()
             })
         );
 
         assert_eq!(
-            parse_submit(&submit_id("market", "list")),
-            Some(("market".into(), "list".into()))
+            parse_submit(&submit_id("market", stamp, "list")),
+            Some(("market".into(), stamp, "list".into()))
         );
 
         assert_eq!(key_of(&fire).as_deref(), Some("council"));
         assert_eq!(key_of(&ask).as_deref(), Some("market"));
         assert_eq!(
-            key_of(&submit_id("market", "list")).as_deref(),
+            key_of(&submit_id("market", stamp, "list")).as_deref(),
             Some("market")
         );
+    }
+
+    fn actor(tag: &str) -> DreggIdentity {
+        DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
+    }
+
+    #[test]
+    fn a_replaced_direct_session_refuses_its_old_control_without_mutation() {
+        use dreggnet_offerings::native_descent::NativeDescentOffering;
+
+        let channel = 99_201;
+        close_in::<NativeDescentOffering>(channel);
+        open_in(
+            channel,
+            NativeDescentOffering::new,
+            SessionConfig::with_seed(1),
+        )
+        .unwrap();
+        let action = with_live::<NativeDescentOffering, _>(channel, |live| {
+            live.offering.actions(&live.session)[0].clone()
+        })
+        .unwrap();
+        let old = fire_id_in::<NativeDescentOffering>(channel, &action.turn, action.arg).unwrap();
+
+        open_in(
+            channel,
+            NativeDescentOffering::new,
+            SessionConfig::with_seed(1),
+        )
+        .unwrap();
+        assert!(matches!(
+            drive::<NativeDescentOffering>(channel, &old, actor("old")),
+            Driven::StaleSurface
+        ));
+        assert_eq!(
+            with_live::<NativeDescentOffering, _>(channel, |live| live.session.revision()),
+            Some(0),
+            "an S1 button cannot mutate replacement S2"
+        );
+
+        let fresh = fire_id_in::<NativeDescentOffering>(channel, &action.turn, action.arg).unwrap();
+        assert!(matches!(
+            drive::<NativeDescentOffering>(channel, &fresh, actor("fresh")),
+            Driven::Fired(Outcome::Landed { .. })
+        ));
+        close_in::<NativeDescentOffering>(channel);
+    }
+
+    #[test]
+    fn a_modal_submit_is_bound_to_the_session_that_opened_it() {
+        use dreggnet_market::{DarkBazaarOffering, TURN_LIST};
+
+        let channel = 99_202;
+        close_in::<DarkBazaarOffering>(channel);
+        open_in(
+            channel,
+            DarkBazaarOffering::new,
+            SessionConfig::with_seed(2),
+        )
+        .unwrap();
+        let old_stamp = control_stamp_in::<DarkBazaarOffering>(channel).unwrap();
+        let old_submit = submit_id(DarkBazaarOffering::KEY, old_stamp, TURN_LIST);
+
+        open_in(
+            channel,
+            DarkBazaarOffering::new,
+            SessionConfig::with_seed(2),
+        )
+        .unwrap();
+        let (_, stamp, turn) = parse_submit(&old_submit).unwrap();
+        assert!(matches!(
+            drive_value_at::<DarkBazaarOffering>(channel, stamp, &turn, 100, actor("seller")),
+            Driven::StaleSurface
+        ));
+        assert_eq!(
+            with_live::<DarkBazaarOffering, _>(channel, |live| {
+                live.session.market().receipts_len()
+            }),
+            Some(0)
+        );
+        close_in::<DarkBazaarOffering>(channel);
     }
 
     /// A foreign custom-id (the `/dungeon` ballot, the ViewNode card route, the dashboard) is

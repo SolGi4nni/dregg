@@ -79,7 +79,8 @@ mod tests {
     use dungeon_on_dregg::KP_PRESS_ON;
 
     use crate::commands::offering::{
-        self, Cast, CollectiveClose, cast_vote, close_round, open_round, with_live, with_round,
+        self, Cast, CollectiveClose, cast_vote_at, close_round, control_stamp_in, open_round,
+        with_live, with_round,
     };
 
     fn member(tag: &str) -> DreggIdentity {
@@ -104,6 +105,7 @@ mod tests {
             channel,
             Some(members.clone())
         ));
+        let round_stamp = control_stamp_in::<DungeonOffering>(channel).unwrap();
 
         // The ballot offers the ungated press-on move (arg == KP_PRESS_ON).
         let has_press_on = with_round::<DungeonOffering, _>(channel, |r| {
@@ -114,23 +116,38 @@ mod tests {
 
         // Two members vote press-on; the first member's SECOND ballot is refused (write-once).
         assert_eq!(
-            cast_vote::<DungeonOffering>(channel, members[0].clone(), KP_PRESS_ON as i64),
+            cast_vote_at::<DungeonOffering>(
+                channel,
+                round_stamp,
+                members[0].clone(),
+                KP_PRESS_ON as i64,
+            ),
             Cast::Recorded
         );
         assert_eq!(
-            cast_vote::<DungeonOffering>(channel, members[0].clone(), KP_PRESS_ON as i64),
+            cast_vote_at::<DungeonOffering>(
+                channel,
+                round_stamp,
+                members[0].clone(),
+                KP_PRESS_ON as i64,
+            ),
             Cast::AlreadyVoted,
             "one write-once ballot per derived identity"
         );
         assert_eq!(
-            cast_vote::<DungeonOffering>(channel, members[1].clone(), KP_PRESS_ON as i64),
+            cast_vote_at::<DungeonOffering>(
+                channel,
+                round_stamp,
+                members[1].clone(),
+                KP_PRESS_ON as i64,
+            ),
             Cast::Recorded
         );
 
         // A voter OUTSIDE the electorate is refused — the crowd of record is cryptographic.
         let stranger = DreggIdentity("ff".repeat(32));
         assert_eq!(
-            cast_vote::<DungeonOffering>(channel, stranger, KP_PRESS_ON as i64),
+            cast_vote_at::<DungeonOffering>(channel, round_stamp, stranger, KP_PRESS_ON as i64,),
             Cast::NotEligible,
             "a non-member ballot is refused"
         );
@@ -138,7 +155,7 @@ mod tests {
         // Close the round → the plurality winner is driven as ONE real crowd turn.
         match close_round::<DungeonOffering>(channel) {
             CollectiveClose::Resolved(r) => {
-                assert_eq!(r.round, 0);
+                assert_eq!(r.round, 1);
                 assert_eq!(
                     r.tally.winner, KP_PRESS_ON as i64,
                     "press-on won the plurality"
@@ -148,7 +165,7 @@ mod tests {
                 // The `/… close` route posts exactly this note ([`offering::handle_close`]):
                 // the round, the winner, the ballot split, and the real landed receipt.
                 let note = offering::close_note(&r);
-                assert!(note.contains("Round 0 closed"), "{note}");
+                assert!(note.contains("Round 1 closed"), "{note}");
                 assert!(
                     note.contains("2/2 ballot(s) · 2 voter(s) of record"),
                     "{note}"
@@ -189,6 +206,35 @@ mod tests {
         );
         assert!(verified, "the honest playthrough re-verifies by replay");
         assert_eq!(receipts, 2, "genesis + the crowd's committed turn");
+
+        assert_eq!(
+            cast_vote_at::<DungeonOffering>(
+                channel,
+                round_stamp,
+                members[2].clone(),
+                KP_PRESS_ON as i64,
+            ),
+            Cast::StaleSurface,
+            "a closed-round button cannot cast into the next round"
+        );
+        assert_eq!(
+            with_round::<DungeonOffering, _>(channel, |round| round.ballots.len()),
+            Some(0),
+            "stale-round refusal is mutation-free"
+        );
+
+        offering::open_in(channel, DungeonOffering::new, SessionConfig::with_seed(7))
+            .expect("replacement Keep opens");
+        assert_eq!(
+            cast_vote_at::<DungeonOffering>(
+                channel,
+                round_stamp,
+                members[2].clone(),
+                KP_PRESS_ON as i64,
+            ),
+            Cast::StaleSurface,
+            "round numbers cannot make an old session's ballot valid in its replacement"
+        );
 
         offering::close_in::<DungeonOffering>(channel);
     }

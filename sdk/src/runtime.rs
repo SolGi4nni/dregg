@@ -17,6 +17,7 @@ use dregg_turn::{
     Effect, TokenKeyRef, Turn, TurnExecutor, TurnReceipt, TurnResult, action::symbol,
 };
 use dregg_types::PublicKey;
+use zeroize::Zeroizing;
 
 use crate::cipherclerk::{AgentCipherclerk, HeldToken};
 use crate::error::SdkError;
@@ -457,7 +458,29 @@ fn mint_subagent_cap_token(
     sub_cell: CellId,
     methods: &[&str],
 ) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
-    let kp = biscuit_auth::KeyPair::new();
+    mint_subagent_cap_token_with_keypair(sub_cell, methods, biscuit_auth::KeyPair::new())
+}
+
+fn mint_subagent_cap_token_seeded(
+    sub_cell: CellId,
+    methods: &[&str],
+    issuer_seed: &[u8; 32],
+) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
+    let private =
+        biscuit_auth::PrivateKey::from_bytes(issuer_seed, biscuit_auth::Algorithm::Ed25519)
+            .map_err(|error| {
+                SdkError::MissingKey(format!(
+                    "issuer seed is not a valid biscuit ed25519 private key: {error}"
+                ))
+            })?;
+    mint_subagent_cap_token_with_keypair(sub_cell, methods, biscuit_auth::KeyPair::from(&private))
+}
+
+fn mint_subagent_cap_token_with_keypair(
+    sub_cell: CellId,
+    methods: &[&str],
+    kp: biscuit_auth::KeyPair,
+) -> Result<(Vec<u8>, [u8; 32]), SdkError> {
     let issuer: [u8; 32] = kp
         .public()
         .to_bytes()
@@ -759,6 +782,11 @@ impl AgentRuntime {
         self.executor.set_local_federation_id(id);
     }
 
+    /// Federation id currently used to verify action signatures.
+    pub fn local_federation_id(&self) -> [u8; 32] {
+        self.executor.local_federation_id
+    }
+
     /// Set the block height the embedded executor evaluates time-gated
     /// program constraints against (`TemporalGate` and friends, via
     /// `EvalContext.block_height`).
@@ -866,27 +894,17 @@ impl AgentRuntime {
         TurnBuilder::new(self)
     }
 
-    /// Sign `unsigned` with this runtime's cipherclerk key over the
-    /// canonical federation-bound signing message. The authorization field
-    /// of the input is ignored (zeroed for the message) and replaced with a
-    /// real `Authorization::Signature` — this is the ONLY way an action
-    /// leaves the runtime.
-    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action) -> Action {
-        let unsigned = Action {
-            authorization: Authorization::Unchecked,
-            ..unsigned
-        };
-        let message =
-            TurnExecutor::compute_signing_message(&unsigned, &self.executor.local_federation_id);
-        let sig = self
-            .cipherclerk
+    /// Sign `unsigned` over the canonical federation- and turn-nonce-bound
+    /// message. `turn_nonce` must be the nonce the submitting turn carries.
+    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action, turn_nonce: u64) -> Action {
+        self.cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .sign_bytes(&message);
-        Action {
-            authorization: Authorization::from_sig_bytes(sig.0),
-            ..unsigned
-        }
+            .sign_action_hybrid(unsigned, &self.executor.local_federation_id, turn_nonce)
+    }
+
+    pub(crate) fn next_agent_turn_nonce(&self) -> u64 {
+        *self.nonce.lock().unwrap()
     }
 
     /// Submit a SIGNED root action as an ordinary agent turn: this agent
@@ -1031,11 +1049,10 @@ impl AgentRuntime {
     #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         // Sign before acquiring the ledger lock since signing is pure.
-        let action = self.sign_action_for_runtime(raw::unsigned_action_named(
-            self.cell_id,
-            "execute",
-            effects,
-        ));
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(self.cell_id, "execute", effects),
+            self.next_agent_turn_nonce(),
+        );
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -1064,8 +1081,20 @@ impl AgentRuntime {
         effects: Vec<Effect>,
         fee: u64,
     ) -> Result<TurnReceipt, SdkError> {
-        let action =
-            self.sign_action_for_runtime(raw::unsigned_action_named(cell, "execute", effects));
+        let turn_nonce = {
+            let ledger = self.ledger.lock().unwrap();
+            ledger
+                .get(&cell)
+                .ok_or(SdkError::Turn(dregg_turn::TurnError::CellNotFound {
+                    id: cell,
+                }))?
+                .state
+                .nonce()
+        };
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(cell, "execute", effects),
+            turn_nonce,
+        );
         self.submit_signed_action_as_cell(cell, action, fee)
     }
 
@@ -1086,8 +1115,10 @@ impl AgentRuntime {
         target: CellId,
         effects: Vec<Effect>,
     ) -> Result<TurnReceipt, SdkError> {
-        let action =
-            self.sign_action_for_runtime(raw::unsigned_action_named(target, "execute", effects));
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(target, "execute", effects),
+            self.next_agent_turn_nonce(),
+        );
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -1193,8 +1224,43 @@ impl AgentRuntime {
         token: &HeldToken,
         allowed_methods: &[&str],
     ) -> Result<SubAgent, SdkError> {
-        // Create a new cipherclerk for the sub-agent.
-        let mut sub_cclerk = AgentCipherclerk::new();
+        self.spawn_sub_agent_scoped_with(
+            restrictions,
+            token,
+            allowed_methods,
+            AgentCipherclerk::new(),
+            None,
+        )
+    }
+
+    /// Deterministic worker construction for restart-reconstructible authority.
+    pub fn spawn_sub_agent_scoped_seeded(
+        &self,
+        restrictions: &Attenuation,
+        token: &HeldToken,
+        allowed_methods: &[&str],
+        worker_seed: [u8; 32],
+        issuer_seed: [u8; 32],
+    ) -> Result<SubAgent, SdkError> {
+        let sub_cclerk = AgentCipherclerk::from_key_bytes(Zeroizing::new(worker_seed));
+        let issuer_seed = Zeroizing::new(issuer_seed);
+        self.spawn_sub_agent_scoped_with(
+            restrictions,
+            token,
+            allowed_methods,
+            sub_cclerk,
+            Some(&issuer_seed),
+        )
+    }
+
+    fn spawn_sub_agent_scoped_with(
+        &self,
+        restrictions: &Attenuation,
+        token: &HeldToken,
+        allowed_methods: &[&str],
+        mut sub_cclerk: AgentCipherclerk,
+        issuer_seed: Option<&[u8; 32]>,
+    ) -> Result<SubAgent, SdkError> {
         let sub_pk = sub_cclerk.public_key();
 
         // The delegated (narration) HeldToken must carry at least one caveat —
@@ -1284,7 +1350,10 @@ impl AgentRuntime {
         // `Authorization::Token`, so the EXECUTOR's `verify_token_authorization`
         // — not an out-of-band `cap.verify()` — is the real admission gate.
         let federation_id = self.executor.local_federation_id;
-        let (cap_token, cap_issuer) = mint_subagent_cap_token(sub_cell_id, allowed_methods)?;
+        let (cap_token, cap_issuer) = match issuer_seed {
+            None => mint_subagent_cap_token(sub_cell_id, allowed_methods)?,
+            Some(seed) => mint_subagent_cap_token_seeded(sub_cell_id, allowed_methods, seed)?,
+        };
         let cap_methods: Vec<String> = allowed_methods.iter().map(|m| m.to_string()).collect();
 
         // Create the sub-agent's cell in the ledger, recording the biscuit

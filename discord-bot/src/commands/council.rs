@@ -378,7 +378,7 @@ mod tests {
     use dreggnet_offerings::{DreggIdentity, Outcome};
 
     use crate::commands::offering::{
-        CollectiveClose, Driven, close_in, close_round, fire_id, with_live,
+        CollectiveClose, Driven, close_in, close_round, fire_id, fire_id_in, with_live,
     };
 
     /// A test electorate of three, and the derived identity of each (exactly what a Discord
@@ -407,7 +407,7 @@ mod tests {
     fn press(channel: u64, turn: &str, arg: i64, who: &DreggIdentity) -> Outcome {
         match offering::drive::<CouncilOffering>(
             channel,
-            &fire_id(CouncilOffering::KEY, turn, arg),
+            &fire_id_in::<CouncilOffering>(channel, turn, arg).unwrap(),
             who.clone(),
         ) {
             Driven::Fired(o) => o,
@@ -447,6 +447,7 @@ mod tests {
                 offering::parse_press(&id),
                 Some(offering::Press::Fire {
                     key: "council".into(),
+                    stamp: offering::ControlStamp::PERSISTENT,
                     turn: TURN_PROPOSE.into(),
                     arg: a.arg
                 })

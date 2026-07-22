@@ -216,7 +216,7 @@ pub struct NativeRunFacts {
     pub turns: usize,
     pub peak_depth: u64,
     pub final_depth: u64,
-    pub banked_relics: Vec<usize>,
+    pub banked_relics: Vec<u64>,
     pub crowned: bool,
 }
 
@@ -267,8 +267,9 @@ impl NativeDescentRun {
         if actor != self.completion.actor {
             return Err("the terminal completion substituted the run actor".to_string());
         }
-        let turns = replayed.revision() as usize;
-        if self.completion.revision as usize != turns {
+        let turns = usize::try_from(replayed.revision())
+            .map_err(|_| "the verified turn count exceeds this target".to_string())?;
+        if usize::try_from(self.completion.revision).ok() != Some(turns) {
             return Err("the terminal completion substituted the verified turn count".to_string());
         }
         let peak_depth = self
@@ -1010,7 +1011,7 @@ fn run_loot_draws(run: &NativeDescentRun) -> Result<Vec<LootDraw>, String> {
             roll_drop(
                 &seed,
                 &format!("native-descent:banked-relic-{relic}"),
-                *relic as u64,
+                *relic,
             )
         })
         .collect())
@@ -1092,7 +1093,7 @@ pub struct AdventureReport {
     pub run_won: bool,
     pub world_root: [u8; 32],
     pub completion_root: [u8; 32],
-    pub banked_relics: Vec<usize>,
+    pub banked_relics: Vec<u64>,
     pub turns_to_win: usize,
     pub cheevo_earned: bool,
     pub guild_clears: usize,

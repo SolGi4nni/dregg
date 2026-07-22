@@ -53,10 +53,11 @@
 //! all the logic actually is; what remains for a live guild is Discord's *response*
 //! (whether the bot holds `MANAGE_CHANNELS`, what id gets minted).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use serenity::all::Http;
+use serenity::all::{ChannelId, ChannelType, EditChannel, GuildChannel, GuildId, Http};
+use serenity::async_trait;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -562,13 +563,270 @@ impl From<DiscordCapError> for OrchestrationError {
     }
 }
 
+// =============================================================================
+// Durable category persistence + the reconciliation reaper
+// =============================================================================
+
+/// Durable backing for the per-(guild, offering) category id, and the set of
+/// channels the reconciliation reaper must NEVER touch.
+///
+/// The in-memory [`SessionOrchestrator`] cache is cold at every boot, and Discord
+/// fires `GUILD_CREATE` on every reconnect — so without a persisted id a restart
+/// re-minted the offering category, accreting empty duplicates. This trait is what
+/// makes the id survive a restart. Implemented by the bot's `Database`; a
+/// [`SessionOrchestrator`] with no store attached (`None`) keeps the previous
+/// in-memory-only behavior (used by unit tests).
+#[async_trait]
+pub trait CategoryStore: Send + Sync {
+    /// The persisted canonical category id for this offering, if one was recorded.
+    async fn get_category(&self, guild_id: u64, offering: &str) -> Option<u64>;
+    /// Record (idempotently) the canonical category id for this offering.
+    async fn put_category(&self, guild_id: u64, offering: &str, category_id: u64);
+    /// Channel ids the reaper must never move or delete — operator activity `feed`
+    /// channels and custodial per-user `dregg-<id>` channels — regardless of name.
+    /// A belt-and-braces companion to the reaper's strict name allow-list.
+    async fn protected_channel_ids(&self, guild_id: u64) -> HashSet<u64>;
+}
+
+#[async_trait]
+impl CategoryStore for crate::db::Database {
+    async fn get_category(&self, guild_id: u64, offering: &str) -> Option<u64> {
+        match self
+            .get_discord_category(&guild_id.to_string(), offering)
+            .await
+        {
+            Ok(Some(s)) => s.parse().ok(),
+            _ => None,
+        }
+    }
+
+    async fn put_category(&self, guild_id: u64, offering: &str, category_id: u64) {
+        if let Err(e) = self
+            .upsert_discord_category(
+                &guild_id.to_string(),
+                offering,
+                &category_id.to_string(),
+                now_secs(),
+            )
+            .await
+        {
+            warn!(guild_id, offering, error = %e, "Failed to persist offering category id");
+        }
+    }
+
+    async fn protected_channel_ids(&self, guild_id: u64) -> HashSet<u64> {
+        let mut ids = HashSet::new();
+        let gid = guild_id.to_string();
+        // Operator activity feed channels (one per guild).
+        if let Ok(feeds) = self.get_all_feed_channels().await {
+            for (g, cid) in feeds {
+                if g == gid {
+                    if let Ok(id) = cid.parse::<u64>() {
+                        ids.insert(id);
+                    }
+                }
+            }
+        }
+        // Custodial per-user `dregg-<id>` channels (bound to dregg cells + paid Hermes).
+        if let Ok(chans) = self.list_user_channels().await {
+            for uc in chans {
+                if uc.guild_id == gid {
+                    if let Ok(id) = uc.channel_id.parse::<u64>() {
+                        ids.insert(id);
+                    }
+                }
+            }
+        }
+        ids
+    }
+}
+
+/// A minimal, offline view of a guild channel the reaper reasons over — the pure
+/// projection of a serenity `GuildChannel` the [`plan_reconcile`] decision needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReapChannel {
+    pub id: u64,
+    pub name: String,
+    pub is_category: bool,
+    pub parent_id: Option<u64>,
+}
+
+/// Project a live guild channel map into the reaper's offline view.
+fn reap_channels(channels: &HashMap<ChannelId, GuildChannel>) -> Vec<ReapChannel> {
+    channels
+        .values()
+        .map(|c| ReapChannel {
+            id: c.id.get(),
+            name: c.name.clone(),
+            is_category: c.kind == ChannelType::Category,
+            parent_id: c.parent_id.map(|p| p.get()),
+        })
+        .collect()
+}
+
+/// The canonical (lowest-id = oldest) category named for `offering`, or `None`.
+/// Used both to ADOPT an existing category on a cold start and to pick the
+/// survivor when de-duplicating.
+pub fn find_offering_category(offering: &str, chans: &[ReapChannel]) -> Option<u64> {
+    let want = crate::channels::category_name_for(offering);
+    chans
+        .iter()
+        .filter(|c| c.is_category && c.name == want)
+        .map(|c| c.id)
+        .min()
+}
+
+/// A custodial per-user channel is `dregg-<digits>` (see
+/// [`crate::channels::channel_name_for`]). The reaper must NEVER touch these —
+/// they are bound to custodial dregg cells and paid Hermes. Note this does NOT
+/// match the offering category name `dreggnet-<offering>` (which is not
+/// `dregg-<digits>`), so the two never collide.
+fn is_custodial_channel_name(name: &str) -> bool {
+    match name.strip_prefix("dregg-") {
+        Some(rest) => !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// May the reaper MOVE this child of a *duplicate* category into the canonical
+/// one? A STRICT allow-list: only this offering's own session surfaces
+/// (`<offering>-…`, e.g. `dungeon-a1b2c3`) or their archived tombstones
+/// (`archived-<offering>-…`). Custodial `dregg-<id>` channels, operator feed
+/// channels (`protected`), and anything unrecognized are SKIPPED — never moved.
+/// Fail-safe by construction: when unsure, leave it alone (the money/auth guardrail).
+fn is_reapable_child(name: &str, offering: &str, child_id: u64, protected: &HashSet<u64>) -> bool {
+    if protected.contains(&child_id) {
+        return false;
+    }
+    if is_custodial_channel_name(name) {
+        return false;
+    }
+    let live = format!("{offering}-");
+    let dead = format!("archived-{offering}-");
+    name.starts_with(&dead) || name.starts_with(&live)
+}
+
+/// One child re-file the reaper will perform.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildMove {
+    pub child_id: u64,
+    pub from_category: u64,
+    pub to_category: u64,
+}
+
+/// The (pure) reconciliation decision for one offering in one guild.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReconcilePlan {
+    /// The category every run should file under (lowest id = oldest). `None` if
+    /// no `dreggnet-<offering>` category exists at all.
+    pub canonical_id: Option<u64>,
+    /// Children of duplicate categories to re-file under the canonical one.
+    pub moves: Vec<ChildMove>,
+    /// Emptied duplicate categories to delete (never the canonical, never a
+    /// category that still holds a protected/unrecognized child).
+    pub deletes: Vec<u64>,
+    /// How many duplicate categories were found (excludes the canonical).
+    pub duplicates: usize,
+}
+
+/// Decide the reconciliation for one offering, PURELY, from an offline channel
+/// view. The single source of truth for the reaper's safety:
+///
+/// * only categories named EXACTLY `dreggnet-<offering>` are ever considered;
+/// * the lowest-id one is the canonical survivor;
+/// * only [`is_reapable_child`] children of duplicates are moved;
+/// * a duplicate is deleted ONLY when it is empty after moves — a duplicate still
+///   holding any protected/unrecognized child is left untouched.
+///
+/// Consequently a custodial `dregg-<id>` channel or an operator feed channel can
+/// never be selected, moved, or deleted (proven by the tests).
+pub fn plan_reconcile(
+    offering: &str,
+    chans: &[ReapChannel],
+    protected: &HashSet<u64>,
+) -> ReconcilePlan {
+    let want = crate::channels::category_name_for(offering);
+    let mut cats: Vec<u64> = chans
+        .iter()
+        .filter(|c| c.is_category && c.name == want)
+        .map(|c| c.id)
+        .collect();
+    cats.sort_unstable();
+
+    let Some(canonical) = cats.first().copied() else {
+        return ReconcilePlan::default();
+    };
+    let dups: HashSet<u64> = cats.iter().skip(1).copied().collect();
+
+    let mut moves = Vec::new();
+    for c in chans {
+        if let Some(parent) = c.parent_id {
+            if dups.contains(&parent) && is_reapable_child(&c.name, offering, c.id, protected) {
+                moves.push(ChildMove {
+                    child_id: c.id,
+                    from_category: parent,
+                    to_category: canonical,
+                });
+            }
+        }
+    }
+
+    let moved: HashSet<u64> = moves.iter().map(|m| m.child_id).collect();
+    let mut deletes = Vec::new();
+    for dup in cats.iter().skip(1) {
+        let has_remaining = chans
+            .iter()
+            .any(|c| c.parent_id == Some(*dup) && !moved.contains(&c.id));
+        if !has_remaining {
+            deletes.push(*dup);
+        }
+    }
+
+    ReconcilePlan {
+        canonical_id: Some(canonical),
+        moves,
+        deletes,
+        duplicates: dups.len(),
+    }
+}
+
+/// The cell a reaper delete of an emptied duplicate category is driven under —
+/// deterministic + per-channel, so two concurrent reaps never collide.
+pub fn reap_delete_cell(guild_id: u64, offering: &str, channel_id: u64) -> String {
+    format!("discord/reap/{guild_id}/{offering}/{channel_id}")
+}
+
+/// The DELETE write for one emptied duplicate category.
+fn plan_delete_channel(guild_id: u64, offering: &str, channel_id: u64) -> PlannedCap {
+    PlannedCap {
+        cell_id: reap_delete_cell(guild_id, offering, channel_id),
+        capability: DiscordCapability::DeleteChannel { channel_id },
+    }
+}
+
+/// What a reconciliation pass did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReconcileReport {
+    pub offering: String,
+    pub guild_id: u64,
+    /// The surviving canonical category id (or `None` if none existed).
+    pub canonical_id: Option<u64>,
+    /// Duplicate categories found (excludes the canonical).
+    pub duplicates_found: usize,
+    /// Duplicates actually deleted (empty after moves; a non-empty one is skipped).
+    pub duplicates_deleted: usize,
+    /// Session channels re-filed from a duplicate into the canonical.
+    pub children_moved: usize,
+}
+
 /// The session→surface lifecycle, shared by every offering.
 ///
 /// Hold ONE of these on `BotState` (see the module docs for the wiring the main
 /// loop owns). It keeps the live session table and the per-offering category
 /// cache; the capability registry and the event bridge are passed in, because they
-/// already live on `BotState` too.
-#[derive(Debug, Default)]
+/// already live on `BotState` too. Attach durable persistence with
+/// [`SessionOrchestrator::with_persistence`] so category ids survive a restart.
+#[derive(Default)]
 pub struct SessionOrchestrator {
     /// `spec.key()` -> the live session.
     sessions: RwLock<HashMap<String, LiveSession>>,
@@ -576,11 +834,30 @@ pub struct SessionOrchestrator {
     /// filed under. Cached so the second run of an offering REUSES the first run's
     /// category instead of minting a duplicate.
     categories: RwLock<HashMap<(u64, String), u64>>,
+    /// Durable backing for the category cache + the reaper's protected set. `None`
+    /// = in-memory only (the pre-existing behavior; used by unit tests).
+    persistence: Option<Arc<dyn CategoryStore>>,
+}
+
+impl std::fmt::Debug for SessionOrchestrator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionOrchestrator")
+            .field("persistence", &self.persistence.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl SessionOrchestrator {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Attach durable persistence (the bot's `Database`) so per-offering category
+    /// ids survive a restart — the fix for the duplicate categories a reconnect
+    /// re-minted — and so the reaper can consult the protected channel set.
+    pub fn with_persistence(mut self, store: Arc<dyn CategoryStore>) -> Self {
+        self.persistence = Some(store);
+        self
     }
 
     /// Look up a live session.
@@ -816,7 +1093,17 @@ impl SessionOrchestrator {
     /// Resolve (mint-if-absent) the per-offering category and cache it. The single
     /// place a category is minted — shared by the open path and the guild_create
     /// bootstrap, so both consult and populate the SAME cache and neither mints a
-    /// duplicate. A cache hit returns without touching the guild at all.
+    /// duplicate.
+    ///
+    /// The resolution order is what closes the restart-duplicate bug: a create is
+    /// the LAST resort, reached only when the category genuinely does not exist.
+    ///
+    /// 1. **hot cache** — return without touching the guild;
+    /// 2. **durable db** — a persisted id (survives a restart): seed the cache, return;
+    /// 3. **live guild scan** — an existing `dreggnet-<offering>` category (e.g. from
+    ///    before we persisted, or minted by an older build): adopt it (persist + cache),
+    ///    NEVER create a second one;
+    /// 4. **create** — truly absent: mint it, then persist + cache.
     async fn ensure_offering_category(
         &self,
         guild_id: u64,
@@ -826,17 +1113,166 @@ impl SessionOrchestrator {
         registered_by: u64,
     ) -> Result<u64, OrchestrationError> {
         let cache_key = (guild_id, offering.to_string());
+        // 1. hot in-memory cache.
         if let Some(id) = self.categories.read().await.get(&cache_key) {
             return Ok(*id);
         }
-
+        // 2. durable db — a cold process reuses the persisted id instead of minting.
+        if let Some(store) = &self.persistence {
+            if let Some(id) = store.get_category(guild_id, offering).await {
+                self.categories.write().await.insert(cache_key, id);
+                return Ok(id);
+            }
+        }
+        // 3. live guild — adopt an existing category, never duplicate it.
+        if let Some(id) = self.find_live_category(guild_id, offering, http).await? {
+            self.remember_category(guild_id, offering, id).await;
+            return Ok(id);
+        }
+        // 4. truly absent — mint it, then persist + cache.
         let planned = plan_offering_category(guild_id, offering);
         let id = self
             .drive_cap(caps, http, &planned, guild_id, registered_by)
             .await?
             .ok_or_else(|| OrchestrationError::NoIdReturned("category".into()))?;
-        self.categories.write().await.insert(cache_key, id);
+        self.remember_category(guild_id, offering, id).await;
         Ok(id)
+    }
+
+    /// Cache AND persist a resolved category id (idempotent). One place, so the
+    /// hot cache and the durable row can never drift.
+    async fn remember_category(&self, guild_id: u64, offering: &str, id: u64) {
+        self.categories
+            .write()
+            .await
+            .insert((guild_id, offering.to_string()), id);
+        if let Some(store) = &self.persistence {
+            store.put_category(guild_id, offering, id).await;
+        }
+    }
+
+    /// Scan the LIVE guild for an existing category named for this offering; the
+    /// lowest-id match (the canonical one) or `None`. A guild READ, never a write.
+    async fn find_live_category(
+        &self,
+        guild_id: u64,
+        offering: &str,
+        http: &Arc<Http>,
+    ) -> Result<Option<u64>, OrchestrationError> {
+        let channels = GuildId::new(guild_id)
+            .channels(http)
+            .await
+            .map_err(|e| OrchestrationError::Discord(DiscordCapError::DiscordApi(e.to_string())))?;
+        let reap = reap_channels(&channels);
+        Ok(find_offering_category(offering, &reap))
+    }
+
+    /// RECONCILE one offering's categories in a guild: de-duplicate the
+    /// `dreggnet-<offering>` categories a restart accreted, re-filing the children
+    /// of duplicates under the canonical (oldest) one, deleting the emptied
+    /// duplicates, and persisting the canonical id. Idempotent and cheap when
+    /// already clean; the decision is the pure [`plan_reconcile`].
+    ///
+    /// `channels` lets the `guild_create` path pass the `Guild`'s already-loaded
+    /// channel map (no extra fetch); pass `None` to fetch (the admin cleanup path).
+    ///
+    /// SCOPE (the money/auth guardrail): only categories named EXACTLY
+    /// `dreggnet-<offering>` are considered, and only [`is_reapable_child`] children
+    /// are ever moved. Custodial `dregg-<id>` channels and operator feed channels
+    /// are never selected, moved, or deleted — a duplicate that still holds any such
+    /// child is left untouched. Every delete goes through the capability engine, so
+    /// the "one place a guild write happens" invariant holds.
+    pub async fn reconcile_guild(
+        &self,
+        guild_id: u64,
+        offering: &str,
+        channels: Option<&HashMap<ChannelId, GuildChannel>>,
+        caps: &DiscordCapRegistry,
+        http: &Arc<Http>,
+        registered_by: u64,
+    ) -> Result<ReconcileReport, OrchestrationError> {
+        let owned;
+        let map = match channels {
+            Some(m) => m,
+            None => {
+                owned = GuildId::new(guild_id).channels(http).await.map_err(|e| {
+                    OrchestrationError::Discord(DiscordCapError::DiscordApi(e.to_string()))
+                })?;
+                &owned
+            }
+        };
+        let reap = reap_channels(map);
+
+        // Belt-and-braces protected set from durable state (feed + custodial ids);
+        // the strict name allow-list in `is_reapable_child` protects these anyway.
+        let protected = match &self.persistence {
+            Some(store) => store.protected_channel_ids(guild_id).await,
+            None => HashSet::new(),
+        };
+
+        let plan = plan_reconcile(offering, &reap, &protected);
+
+        // 1. Re-file the children of duplicate categories under the canonical one.
+        let mut children_moved = 0usize;
+        for m in &plan.moves {
+            match ChannelId::new(m.child_id)
+                .edit(
+                    http,
+                    EditChannel::new().category(Some(ChannelId::new(m.to_category))),
+                )
+                .await
+            {
+                Ok(_) => children_moved += 1,
+                Err(e) => {
+                    warn!(child = m.child_id, error = %e, "reaper: failed to re-file child; skipping")
+                }
+            }
+        }
+
+        // 2. Delete the emptied duplicates — through the capability engine, so the
+        //    "one place a guild write happens" invariant holds. Best-effort: a
+        //    failure to delete one duplicate does not abort the pass.
+        let mut duplicates_deleted = 0usize;
+        for dup in &plan.deletes {
+            let planned = plan_delete_channel(guild_id, offering, *dup);
+            match self
+                .drive_cap(caps, http, &planned, guild_id, registered_by)
+                .await
+            {
+                Ok(_) => {
+                    duplicates_deleted += 1;
+                    // A one-shot delete: do not leave its cell as a live authority.
+                    caps.unregister(&planned.cell_id).await;
+                }
+                Err(e) => {
+                    warn!(category = dup, error = %e, "reaper: failed to delete duplicate category; skipping")
+                }
+            }
+        }
+
+        // 3. Persist + cache the canonical id so the next boot reuses it.
+        if let Some(canon) = plan.canonical_id {
+            self.remember_category(guild_id, offering, canon).await;
+        }
+
+        let report = ReconcileReport {
+            offering: offering.to_string(),
+            guild_id,
+            canonical_id: plan.canonical_id,
+            duplicates_found: plan.duplicates,
+            duplicates_deleted,
+            children_moved,
+        };
+        info!(
+            offering,
+            guild_id,
+            canonical = ?report.canonical_id,
+            duplicates_found = report.duplicates_found,
+            duplicates_deleted = report.duplicates_deleted,
+            children_moved = report.children_moved,
+            "Reconciled offering categories"
+        );
+        Ok(report)
     }
 
     /// Register a planned capability and exercise it, attributed to this session's
@@ -1484,5 +1920,232 @@ mod tests {
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].category_id, Some(CATEGORY));
         assert_eq!(reports[1].category_id, Some(4445));
+    }
+
+    // ─── the reconciliation reaper: dedupe + the money/auth guardrail ─────────
+
+    /// A tiny in-memory [`CategoryStore`] so the persistence path is testable
+    /// without a live db or a Discord token.
+    #[derive(Debug, Default)]
+    struct MockStore {
+        cats: std::sync::Mutex<HashMap<(u64, String), u64>>,
+        protected: HashSet<u64>,
+    }
+    impl MockStore {
+        fn with_category(guild_id: u64, offering: &str, id: u64) -> Self {
+            let s = Self::default();
+            s.cats
+                .lock()
+                .unwrap()
+                .insert((guild_id, offering.to_string()), id);
+            s
+        }
+    }
+    #[serenity::async_trait]
+    impl CategoryStore for MockStore {
+        async fn get_category(&self, guild_id: u64, offering: &str) -> Option<u64> {
+            self.cats
+                .lock()
+                .unwrap()
+                .get(&(guild_id, offering.to_string()))
+                .copied()
+        }
+        async fn put_category(&self, guild_id: u64, offering: &str, category_id: u64) {
+            self.cats
+                .lock()
+                .unwrap()
+                .insert((guild_id, offering.to_string()), category_id);
+        }
+        async fn protected_channel_ids(&self, _guild_id: u64) -> HashSet<u64> {
+            self.protected.clone()
+        }
+    }
+
+    fn cat(id: u64) -> ReapChannel {
+        ReapChannel {
+            id,
+            name: "dreggnet-dungeon".into(),
+            is_category: true,
+            parent_id: None,
+        }
+    }
+    fn child(id: u64, name: &str, parent: u64) -> ReapChannel {
+        ReapChannel {
+            id,
+            name: name.into(),
+            is_category: false,
+            parent_id: Some(parent),
+        }
+    }
+
+    #[test]
+    fn find_offering_category_picks_the_lowest_id() {
+        let chans = vec![
+            cat(300),
+            cat(100),
+            cat(200),
+            child(9, "dregg-42", 0), // a non-category with a dregg name: ignored
+        ];
+        assert_eq!(find_offering_category("dungeon", &chans), Some(100));
+        assert_eq!(find_offering_category("hosted-hermes", &chans), None);
+    }
+
+    #[test]
+    fn is_custodial_channel_name_matches_dregg_id_but_not_the_category() {
+        assert!(is_custodial_channel_name("dregg-42"));
+        assert!(is_custodial_channel_name("dregg-1234567890"));
+        assert!(
+            !is_custodial_channel_name("dregg-"),
+            "empty id is not custodial"
+        );
+        assert!(
+            !is_custodial_channel_name("dreggnet-dungeon"),
+            "the offering category must never read as a custodial channel"
+        );
+        assert!(!is_custodial_channel_name("dungeon-a1b2c3"));
+        assert!(!is_custodial_channel_name("dregg-abc"));
+    }
+
+    #[test]
+    fn plan_reconcile_dedupes_same_named_categories_to_the_oldest() {
+        // Three `dreggnet-dungeon` categories (the restart bug), all empty.
+        let chans = vec![cat(300), cat(100), cat(200)];
+        let plan = plan_reconcile("dungeon", &chans, &HashSet::new());
+
+        assert_eq!(
+            plan.canonical_id,
+            Some(100),
+            "the oldest (lowest id) survives"
+        );
+        assert_eq!(plan.duplicates, 2);
+        assert!(
+            plan.moves.is_empty(),
+            "empty duplicates have nothing to move"
+        );
+        let mut deletes = plan.deletes.clone();
+        deletes.sort_unstable();
+        assert_eq!(deletes, vec![200, 300], "both empty duplicates are deleted");
+        assert!(
+            !plan.deletes.contains(&100),
+            "the canonical is NEVER deleted"
+        );
+    }
+
+    #[test]
+    fn the_reaper_never_selects_moves_or_deletes_a_custodial_or_feed_channel() {
+        // A duplicate category holding: a dungeon session surface (reapable), a
+        // custodial `dregg-<id>` channel (NEVER touch), and an operator feed
+        // channel (NEVER touch — protected by id).
+        const CANON: u64 = 100;
+        const DUP: u64 = 200;
+        const SESSION: u64 = 10;
+        const CUSTODIAL: u64 = 20;
+        const FEED: u64 = 30;
+
+        let chans = vec![
+            cat(CANON),
+            cat(DUP),
+            child(SESSION, "dungeon-a1b2c3", DUP),
+            child(CUSTODIAL, "dregg-42", DUP),
+            child(FEED, "announcements", DUP),
+        ];
+        let protected: HashSet<u64> = [FEED].into_iter().collect();
+        let plan = plan_reconcile("dungeon", &chans, &protected);
+
+        assert_eq!(plan.canonical_id, Some(CANON));
+
+        // Only the dungeon session surface is moved.
+        assert_eq!(plan.moves.len(), 1);
+        assert_eq!(plan.moves[0].child_id, SESSION);
+        assert_eq!(plan.moves[0].to_category, CANON);
+
+        // The custodial and feed channels are NEVER moved...
+        let moved: Vec<u64> = plan.moves.iter().map(|m| m.child_id).collect();
+        assert!(
+            !moved.contains(&CUSTODIAL),
+            "a dregg-<id> channel is never moved"
+        );
+        assert!(!moved.contains(&FEED), "a feed channel is never moved");
+
+        // ...and because the duplicate STILL holds them, it is NOT deleted.
+        assert!(
+            plan.deletes.is_empty(),
+            "a duplicate still holding a protected child must be left intact"
+        );
+        // And the money/auth ids never appear anywhere in the delete set.
+        assert!(!plan.deletes.contains(&CUSTODIAL));
+        assert!(!plan.deletes.contains(&FEED));
+    }
+
+    #[test]
+    fn a_duplicate_is_deleted_once_its_only_children_are_reapable_and_moved() {
+        // Same as above but WITHOUT the protected children: the duplicate empties
+        // out after the move and is then deleted.
+        const CANON: u64 = 100;
+        const DUP: u64 = 200;
+        let chans = vec![cat(CANON), cat(DUP), child(10, "dungeon-a1b2c3", DUP)];
+        let plan = plan_reconcile("dungeon", &chans, &HashSet::new());
+        assert_eq!(plan.moves.len(), 1);
+        assert_eq!(plan.deletes, vec![DUP], "an emptied duplicate is deleted");
+    }
+
+    #[tokio::test]
+    async fn a_cold_orchestrator_reuses_a_persisted_category_rather_than_minting() {
+        // THE RESTART SCENARIO the bug shipped without: a fresh process (empty
+        // in-memory cache) with a category id persisted in the db must REUSE it and
+        // issue NO guild write — proven by driving the real bootstrap with an
+        // unusable Http and still getting the persisted id back.
+        let orch = SessionOrchestrator::new().with_persistence(Arc::new(MockStore::with_category(
+            GUILD, "dungeon", CATEGORY,
+        )));
+        let caps = DiscordCapRegistry::new();
+        let http = Arc::new(Http::new("Bot invalid"));
+
+        let report = orch
+            .bootstrap_offering(
+                &OfferingBootstrap::new("dungeon", GUILD, ADMIN),
+                &caps,
+                &http,
+            )
+            .await
+            .expect("a persisted category needs no guild write");
+        assert_eq!(
+            report.category_id,
+            Some(CATEGORY),
+            "a cold process reuses the persisted category instead of re-minting"
+        );
+        assert!(
+            caps.list_for_guild(GUILD).await.is_empty(),
+            "reusing a persisted category registers no capability (no create)"
+        );
+        // And it warmed the in-memory cache from the durable row.
+        assert_eq!(
+            orch.categories
+                .read()
+                .await
+                .get(&(GUILD, "dungeon".to_string())),
+            Some(&CATEGORY)
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_on_a_guild_with_no_offering_categories_is_a_clean_noop() {
+        // The cheap-when-clean path: no `dreggnet-dungeon` categories at all means
+        // no moves, no deletes, no guild writes — even though we pass an unusable
+        // Http (never touched, because the passed channel map is authoritative).
+        let orch = SessionOrchestrator::new().with_persistence(Arc::new(MockStore::default()));
+        let caps = DiscordCapRegistry::new();
+        let http = Arc::new(Http::new("Bot invalid"));
+        let empty: HashMap<ChannelId, GuildChannel> = HashMap::new();
+
+        let report = orch
+            .reconcile_guild(GUILD, "dungeon", Some(&empty), &caps, &http, ADMIN)
+            .await
+            .expect("an empty guild reconciles to a no-op");
+        assert_eq!(report.canonical_id, None);
+        assert_eq!(report.duplicates_found, 0);
+        assert_eq!(report.duplicates_deleted, 0);
+        assert_eq!(report.children_moved, 0);
+        assert!(caps.list_for_guild(GUILD).await.is_empty());
     }
 }

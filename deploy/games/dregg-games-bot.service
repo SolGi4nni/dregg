@@ -44,6 +44,13 @@ Type=simple
 # Placed by ember, chmod 600. Same file as the web unit; the web-only vars are ignored.
 EnvironmentFile=%h/.config/dregg/games.env
 Environment=RUST_LOG=info
+# POST-QUANTUM POSTURE: the games bot signs custodial GAME turns but is NOT part of dregg's
+# proven TCB, so it runs the regular (unaudited) fips204/ml-kem crates. Without this,
+# dregg-pq's no-silent-fallback gate `abort()`s the bot on its first turn-signing (the node
+# installs the ~195 MB Lean-verified core; the bot does not). It prints a loud "assurance
+# VOID" warning, so the posture is explicit, not hidden. Set on the unit (not just the .env)
+# because it is a REQUIRED posture, not an operator secret.
+Environment=DREGG_ALLOW_UNAUDITED_PQ=1
 # discord-bot is a STANDALONE cargo workspace (EXCLUDED from the root workspace —
 # sqlx/libsqlite3-sys links-conflict; see discord-bot/Cargo.toml + root Cargo.toml
 # exclude=). It therefore builds in its OWN target/ dir, NOT the root target/.

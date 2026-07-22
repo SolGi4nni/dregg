@@ -164,9 +164,14 @@ spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e10913849
 # ballot, advances the plurality winner as ONE real turn (`Outcome::Landed`/`Refused`),
 # and re-verifies by replay through the offering — the duplicated inline `RealSession`
 # is gone. Frontend-agnostic (NO serenity dep); the bot is its Discord `Frontend`. A
-# root workspace member; its deps (spween-dregg, dungeon-on-dregg, deos-view) are
-# already in this graph, so it adds nothing new to the closure.
-dreggnet-offerings = { path = "../dreggnet-offerings" }
+# root workspace member. The three explicit operation features are production
+# wiring: without them the ordinary Discord adapter is present but the live
+# dungeon advertises no preference, fair-shuffle, or semantic-quest decoders.
+dreggnet-offerings = { path = "../dreggnet-offerings", features = [
+    "private-preference-operation",
+    "private-fair-shuffle-operation",
+    "private-quest-operation",
+] }
 # THE INTERACTION-ENVELOPE AUDIT FACILITY (docs/BOT-AUDIT-LOGGING-DESIGN.md) — the shared
 # event shape + non-blocking JSONL writer all three frontends emit through; `src/audit.rs`
 # is this bot's log resolution + Discord-side redaction helpers over it.

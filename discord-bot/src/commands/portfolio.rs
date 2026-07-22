@@ -3,27 +3,30 @@
 //! [`crate::commands::offering`] adapter as `/council` / `/market` / `/doc`, so Discord reaches
 //! offering parity with the web catalog ([`dreggnet_web::demo_host`]).
 //!
-//! Before this module Discord served six of the nineteen portfolio offerings (dungeon, council,
-//! market, hermes, grain, doc). This adds the rest via one uniform `/play` command:
+//! Discord historically served only six of the catalog offerings (dungeon, council, market,
+//! hermes, grain, doc). The shared portfolio now has 23 entries; `/play` serves the seventeen
+//! without bespoke commands, plus three Discord-native surfaces:
 //!
-//! * **the two portfolio games** — `automatafl` (the simultaneous-move board) and `tug`
+//! * **six portfolio games** — native `descent`, its durable `descent-campaign`, the shielded
+//!   `bazaar`, the proof-assigned `private-raid`, `automatafl` (the simultaneous-move board), and `tug`
 //!   (multiway-tug, wrapped in the seat-claiming [`SeatedTug`] adapter — the ONE shared
 //!   `dreggnet_catalog::seated` copy every frontend uses — so a Discord user's derived identity
 //!   can claim a seat and see their OWN hidden hand through the viewer-aware render path);
 //! * **the two remaining non-game offerings** — `names` and `compute`;
-//! * **the eight do-once RPG feature surfaces** — `trade`, `inventory`, `cheevos`, `guild`, `craft`,
-//!   `companion`, `tavern`, `party` (`dreggnet-surfaces`).
+//! * **the nine do-once RPG feature surfaces** — `trade`, `inventory`, `cheevos`, `guild`, `craft`,
+//!   `companion`, `quest`, `tavern`, `party` (`dreggnet-surfaces`).
 //!
 //! Each `impl`s [`Offering`], so it becomes a Discord surface through the generic adapter with no
 //! per-offering rendering code: its deos `ViewNode` render is the embed, its cap-gated `Action`s are
-//! the buttons, a press is ONE real `advance` attributed to the presser's derived dregg identity, and
-//! the press re-render is projected FOR the presser ([`crate::commands::offering::surface_for`]).
+//! the buttons, and a press is ONE real `advance` attributed to the presser's derived dregg
+//! identity. Hidden games keep the channel card viewer-blind and deliver
+//! [`crate::commands::offering::surface_for`] only as an ephemeral companion.
 //!
-//! ROUTING: the seven identity-owned RPG feature-surface keys open in the invoker's **per-identity persistent
+//! ROUTING: the eight identity-owned RPG feature-surface keys open in the invoker's **per-identity persistent
 //! world** ([`crate::commands::rpg_world`]) — one `OfferingHost` per derived dregg identity,
 //! mounted via `dreggnet_surfaces::register_surfaces` (ONE shared world across craft/inventory/
 //! trade, so a forged item IS in your inventory IS tradeable), sqlite-persisted by replay, with
-//! the player's REAL earned cheevos. `party` joins the two games + names/compute on the shared
+//! the player's REAL earned cheevos. `party` joins the shared games + names/compute on the shared
 //! per-channel generic-adapter stores below. A board offering (automatafl, tug) is a
 //! `CoordGrid` that the Discord card renderer paints in full (the most complete renderer of the
 //! three chat surfaces).
@@ -40,16 +43,18 @@ use dregg_multiway_tug::Player;
 use dreggnet_compute::ComputeOffering;
 use dreggnet_market::DarkBazaarOffering;
 use dreggnet_names::NamesOffering;
+use dreggnet_offerings::campaign::DescentCampaignOffering;
 use dreggnet_offerings::native_descent::NativeDescentOffering;
 use dreggnet_offerings::{DreggIdentity, Offering, OfferingError, SessionConfig};
 use dreggnet_surfaces::{
-    CheevoShowcase, CompanionOffering, CraftOffering, GuildPage, InventoryOffering, PartyOffering,
-    TavernOffering, TradeOffering,
+    AshenmoorErrandOffering, CheevoShowcase, CompanionOffering, CraftOffering, GuildPage,
+    HostedProofAssignedRaidOffering, InventoryOffering, PartyOffering, TavernOffering,
+    TradeOffering,
 };
 
 use crate::BotState;
 use crate::commands::ack;
-use crate::commands::offering::{self, DiscordOffering, Store, identity_of};
+use crate::commands::offering::{self, DiscordOffering, Store, TextPrompt, identity_of};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SeatedTug — THE shared seat-claiming adapter (`dreggnet_catalog::seated`).
@@ -83,6 +88,31 @@ macro_rules! seat_of_store {
     }};
 }
 
+impl DiscordOffering for DescentCampaignOffering {
+    const KEY: &'static str = DescentCampaignOffering::KEY;
+    const TITLE: &'static str = "The Deepening Ways";
+    const COLOR: u32 = 0xB58B4A;
+    const TAGLINE: &'static str =
+        "player-driven native expeditions · replay-verified Crowns open real region roads";
+
+    fn store() -> &'static Store<Self> {
+        seat_of_store!(DescentCampaignOffering)
+    }
+
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
+
+    fn status_line(&self, session: &Self::Session) -> String {
+        format!(
+            "{} verified turns · {} locations crowned · campaign revision {}",
+            self.verify(session).turns,
+            session.cleared_count(),
+            session.revision()
+        )
+    }
+}
+
 impl DiscordOffering for SeatedTug {
     const KEY: &'static str = "tug";
     const TITLE: &'static str = "Multiway-Tug";
@@ -93,7 +123,7 @@ impl DiscordOffering for SeatedTug {
         seat_of_store!(SeatedTug)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -112,12 +142,52 @@ impl DiscordOffering for AutomataflOffering {
         seat_of_store!(AutomataflOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
     fn status_line(&self, session: &Self::Session) -> String {
         verified_turns(self, session)
+    }
+}
+
+impl DiscordOffering for HostedProofAssignedRaidOffering {
+    const KEY: &'static str = dreggnet_surfaces::private_raid::KEY;
+    const TITLE: &'static str = "The Ash Gate Raid";
+    const COLOR: u32 = 0x7A5AA6;
+    const TAGLINE: &'static str =
+        "four public identities · one shielded optimal role proof · real party capabilities";
+
+    fn store() -> &'static Store<Self> {
+        seat_of_store!(HostedProofAssignedRaidOffering)
+    }
+
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
+
+    fn text_prompt(turn: &str) -> Option<TextPrompt> {
+        (turn == dreggnet_surfaces::private_raid::TURN_STREAM_ASSIGNMENT).then_some(TextPrompt {
+            title: "Append raid proof chunk",
+            label: "Lowercase hex (up to 240 characters)",
+            placeholder: "00…",
+            paragraph: false,
+        })
+    }
+
+    fn status_line(&self, session: &Self::Session) -> String {
+        let proof = if session.assignment().is_some() {
+            "assignment verified"
+        } else if session.roster().len() == 4 {
+            "awaiting seat-0 proof upload"
+        } else {
+            "mustering"
+        };
+        format!(
+            "{} verified turns · {}/4 public seats · {proof}",
+            self.verify(session).turns,
+            session.roster().len(),
+        )
     }
 }
 
@@ -130,7 +200,7 @@ impl DiscordOffering for NamesOffering {
         seat_of_store!(NamesOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -148,7 +218,7 @@ impl DiscordOffering for ComputeOffering {
         seat_of_store!(ComputeOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -166,7 +236,7 @@ impl DiscordOffering for TradeOffering {
         seat_of_store!(TradeOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -184,7 +254,7 @@ impl DiscordOffering for InventoryOffering {
         seat_of_store!(InventoryOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -202,7 +272,7 @@ impl DiscordOffering for CheevoShowcase {
         seat_of_store!(CheevoShowcase)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -220,7 +290,7 @@ impl DiscordOffering for GuildPage {
         seat_of_store!(GuildPage)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -239,7 +309,7 @@ impl DiscordOffering for CraftOffering {
         seat_of_store!(CraftOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -257,7 +327,24 @@ impl DiscordOffering for CompanionOffering {
         seat_of_store!(CompanionOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
+    fn open_hint() -> String {
+        format!("/play offering:{}", Self::KEY)
+    }
+    fn status_line(&self, session: &Self::Session) -> String {
+        verified_turns(self, session)
+    }
+}
+
+impl DiscordOffering for AshenmoorErrandOffering {
+    const KEY: &'static str = dreggnet_surfaces::quest::KEY;
+    const TITLE: &'static str = "The Ashenmoor Errand";
+    const COLOR: u32 = 0xB06B3C;
+    const TAGLINE: &'static str =
+        "earn committed faction standing · unlock and complete an ordered quest";
+    fn store() -> &'static Store<Self> {
+        seat_of_store!(AshenmoorErrandOffering)
+    }
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -275,7 +362,7 @@ impl DiscordOffering for TavernOffering {
         seat_of_store!(TavernOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -293,7 +380,7 @@ impl DiscordOffering for PartyOffering {
         seat_of_store!(PartyOffering)
     }
     // The REAL invocation that opens this offering (backlog #29): the stale-session hint
-    // must be typeable — these twelve are mounted by `/play`, not a bespoke `/<key> open`.
+    // must be typeable — this offering is mounted by `/play`, not a bespoke `/<key> open`.
     fn open_hint() -> String {
         format!("/play offering:{}", Self::KEY)
     }
@@ -306,9 +393,10 @@ impl DiscordOffering for PartyOffering {
 // THE CROWN SEAM (`commands::crown`) — the played tug match as a fold job.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The channel's finished, WON tug match as the whole-match fold's job: the WINNER's dealt
-/// hidden hand (`(card_id, nonce)` pairs, exactly as committed at open), their ordered plays,
-/// and the terminal win facts — read through `TugSession`'s owner-facing match-record seam.
+/// The channel's finished, WON tug match as the whole-match fold's job: the WINNER's private
+/// full-round inventory (`(card_id, nonce)` pairs: opening hand + four draws), every exact card
+/// consumed by their four actions, and the terminal win facts — read through `TugSession`'s
+/// owner-facing match-record seam.
 /// Lives HERE because only this module can reach the seated session's inner round. `None`
 /// until the round has scored a winner.
 ///
@@ -319,10 +407,11 @@ pub fn played_tug_match(channel: u64) -> Option<dreggnet_prove_service::PlayedMa
         let s = live.session.inner();
         let (winner, charm) = s.win_facts()?;
         let seat = if winner == 1 { Player::A } else { Player::B };
+        let private = s.terminal_match_record(seat)?;
         Some(dreggnet_prove_service::PlayedMatch::Tug(
             dreggnet_prove_service::TugMatch {
-                hand: s.dealt_hand(seat),
-                plays: s.plays_of(seat),
+                hand: private.hand,
+                plays: private.plays,
                 win: Some(dreggnet_prove_service::TugWin { charm, winner }),
             },
         ))
@@ -361,7 +450,7 @@ pub fn play_keys() -> Vec<&'static str> {
         .collect()
 }
 
-/// Register `/play <offering>` — open any of the twelve full-portfolio offerings in this channel.
+/// Register `/play <offering>` — open any of its twenty derived choices in this channel.
 pub fn register() -> CreateCommand {
     let mut option = CreateCommandOption::new(
         CommandOptionType::String,
@@ -373,9 +462,7 @@ pub fn register() -> CreateCommand {
         option = option.add_string_choice(key, key);
     }
     CreateCommand::new("play")
-        .description(
-            "Open a Lab offering — an experimental engine surface (the featured game is /descent)",
-        )
+        .description("Open one receipted game, market, or engine offering in this channel")
         .add_option(option)
         // `/play <offering> action:verify` — re-verify the channel's live session chain (the
         // SAME `offering::handle_verify` `/council verify` runs; backlog Tier-2 #10 — the
@@ -384,9 +471,18 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "action",
-                "What to do (default: open) — verify re-checks the live session's chain",
+                "Open by default; verify a chain or submit the Ash Gate's proof receipt",
             )
             .add_string_choice("verify", "verify")
+            .add_string_choice("submit raid proof", "submit-raid-proof")
+            .required(false),
+        )
+        .add_option(
+            CreateCommandOption::new(
+                CommandOptionType::Attachment,
+                "proof",
+                "Canonical private-raid HidingFri receipt (for submit raid proof)",
+            )
             .required(false),
         )
 }
@@ -414,6 +510,10 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         handle_play_verify(ctx, command, state, &key).await;
         return;
     }
+    if string_opt("action").as_deref() == Some("submit-raid-proof") {
+        handle_raid_proof_upload(ctx, command, state, &key).await;
+        return;
+    }
 
     let channel = command.channel_id.get();
     let viewer = identity_of(state, command.user.id.get());
@@ -424,7 +524,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     // EDIT of this deferred response.
     ack::defer_slash(ctx, command, false).await;
 
-    // The seven identity-owned RPG feature surfaces open in the invoker's PER-IDENTITY PERSISTENT world
+    // The eight identity-owned RPG feature surfaces open in the invoker's PER-IDENTITY PERSISTENT world
     // (`commands::rpg_world`): ONE shared craft/inventory/trade ledger per player (the saga
     // composition), sqlite-persisted by replay, real earned cheevos — never a throwaway
     // per-channel demo world. `handle_play` edits the response this handler already deferred.
@@ -434,6 +534,16 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     }
 
     let opened: Result<(), OfferingError> = match key.as_str() {
+        DescentCampaignOffering::KEY => {
+            open_and_post::<DescentCampaignOffering>(
+                ctx,
+                command,
+                DescentCampaignOffering::new,
+                &viewer,
+                cfg,
+            )
+            .await
+        }
         "descent" => {
             open_and_post::<NativeDescentOffering>(
                 ctx,
@@ -452,6 +562,16 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "automatafl" => {
             open_and_post::<AutomataflOffering>(ctx, command, || AutomataflOffering, &viewer, cfg)
                 .await
+        }
+        dreggnet_surfaces::private_raid::KEY => {
+            open_and_post::<HostedProofAssignedRaidOffering>(
+                ctx,
+                command,
+                HostedProofAssignedRaidOffering::new,
+                &viewer,
+                cfg,
+            )
+            .await
         }
         "names" => {
             open_and_post::<NamesOffering>(ctx, command, NamesOffering::new, &viewer, cfg).await
@@ -515,7 +635,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
 
 /// `/play <offering> action:verify` — dispatch the chain re-verifier for the chosen offering
 /// key, so the portfolio offerings — the flagship games included — answer verify-don't-trust
-/// with a command, not a shrug (backlog Tier-2 #10). The seven identity-owned RPG keys verify the INVOKER's
+/// with a command, not a shrug (backlog Tier-2 #10). The eight identity-owned RPG keys verify the INVOKER's
 /// per-identity persistent world chain (`commands::rpg_world` — where their sessions actually
 /// live); the rest go through the generic per-channel verifier ([`offering::handle_verify`],
 /// the SAME one behind `/council verify` et al.).
@@ -530,10 +650,16 @@ async fn handle_play_verify(
         return;
     }
     match key {
+        DescentCampaignOffering::KEY => {
+            offering::handle_verify::<DescentCampaignOffering>(ctx, command).await
+        }
         "descent" => offering::handle_verify::<NativeDescentOffering>(ctx, command).await,
         "bazaar" => offering::handle_verify::<DarkBazaarOffering>(ctx, command).await,
         "tug" => offering::handle_verify::<SeatedTug>(ctx, command).await,
         "automatafl" => offering::handle_verify::<AutomataflOffering>(ctx, command).await,
+        dreggnet_surfaces::private_raid::KEY => {
+            offering::handle_verify::<HostedProofAssignedRaidOffering>(ctx, command).await
+        }
         "names" => offering::handle_verify::<NamesOffering>(ctx, command).await,
         "compute" => offering::handle_verify::<ComputeOffering>(ctx, command).await,
         "party" => offering::handle_verify::<PartyOffering>(ctx, command).await,
@@ -559,10 +685,182 @@ async fn handle_play_verify(
     }
 }
 
-/// Open the offering `make` builds in the channel and post its surface (projected FOR the
-/// opener). The factory runs on the offering store's own thread ([`offering::open_in`]), so a
-/// world-backed non-`Send` offering is born where it lives. Returns the open result so the caller
-/// reports a fail-closed refusal honestly.
+/// Upload the canonical HidingFri receipt into the exact live channel raid. The
+/// offering remains the only decoder/verifier and enforces that the submitter is
+/// public proof seat zero; Discord only bounds and transports the opaque bytes.
+async fn handle_raid_proof_upload(
+    ctx: &Context,
+    command: &CommandInteraction,
+    state: &BotState,
+    key: &str,
+) {
+    ack::defer_slash(ctx, command, false).await;
+    if key != dreggnet_surfaces::private_raid::KEY {
+        let embed = CreateEmbed::new()
+            .title("That proof does not belong to this offering")
+            .description("`submit raid proof` is only valid with `offering:private-raid`.")
+            .color(0xE63946);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    }
+    let channel = command.channel_id.get();
+    let actor = identity_of(state, command.user.id.get());
+    let preflight = offering::with_live::<HostedProofAssignedRaidOffering, _>(channel, {
+        let actor = actor.clone();
+        move |live| {
+            (
+                live.session.roster().len(),
+                live.session.roster().first() == Some(&actor.0),
+                live.session.assignment().is_some(),
+            )
+        }
+    });
+    let Some((seats, is_seat_zero, assigned)) = preflight else {
+        let embed = CreateEmbed::new()
+            .title("No Ash Gate raid is open in this channel")
+            .description(format!(
+                "Open one first with `/play offering:{}`.",
+                dreggnet_surfaces::private_raid::KEY
+            ))
+            .color(0xE39B32);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    };
+    if seats != 4 || !is_seat_zero || assigned {
+        let (title, description) = if seats != 4 {
+            (
+                "The public proof roster is not complete",
+                format!("{seats}/4 identities have joined; the upload opens after seat 3 lands."),
+            )
+        } else if !is_seat_zero {
+            (
+                "Only public proof seat zero may submit",
+                "The first identity that joined owns this roster-binding operation.".to_string(),
+            )
+        } else {
+            (
+                "This raid already has its verified assignment",
+                "Continue with the proof-assigned party capability claims.".to_string(),
+            )
+        };
+        let embed = CreateEmbed::new()
+            .title(title)
+            .description(description)
+            .color(0xE39B32);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    }
+    let attachment = command.data.options.iter().find_map(|option| {
+        if option.name != "proof" {
+            return None;
+        }
+        match &option.value {
+            CommandDataOptionValue::Attachment(id) => command.data.resolved.attachments.get(id),
+            _ => None,
+        }
+    });
+    let Some(attachment) = attachment else {
+        let embed = CreateEmbed::new()
+            .title("Attach the canonical raid receipt")
+            .description(
+                "Choose `action:submit raid proof` and attach the postcard HidingFri receipt. The upload is available only after four identities have joined.",
+            )
+            .color(0xE39B32);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    };
+    let max = dreggnet_surfaces::private_raid::MAX_ASSIGNMENT_BYTES;
+    if attachment.size as usize > max {
+        let embed = CreateEmbed::new()
+            .title("Raid proof is too large")
+            .description(format!(
+                "The attachment is {} bytes; this verifier accepts at most {max}.",
+                attachment.size
+            ))
+            .color(0xE63946);
+        ack::edit_slash(ctx, command, embed, vec![]).await;
+        return;
+    }
+    let downloaded = async {
+        let mut response = reqwest::Client::new()
+            .get(&attachment.url)
+            .send()
+            .await
+            .map_err(|error| format!("Discord CDN download failed: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Discord CDN refused the download: {error}"))?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > max as u64)
+        {
+            return Err("Discord CDN response exceeds the raid proof limit".to_string());
+        }
+        let mut bytes = Vec::with_capacity(attachment.size as usize);
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| format!("could not read the proof attachment: {error}"))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > max {
+                return Err("downloaded raid proof exceeds its verifier limit".to_string());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok::<Vec<u8>, String>(bytes)
+    }
+    .await;
+    let payload = match downloaded {
+        Ok(payload) => payload,
+        Err(reason) => {
+            let embed = CreateEmbed::new()
+                .title("Raid proof could not be transported")
+                .description(reason)
+                .color(0xE63946);
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+            return;
+        }
+    };
+    let result = offering::with_live::<HostedProofAssignedRaidOffering, _>(channel, move |live| {
+        live.offering
+            .invoke_binary_operation(
+                &mut live.session,
+                dreggnet_surfaces::private_raid::ASSIGN_OPERATION,
+                &payload,
+                actor.clone(),
+            )
+            .map(|receipt| {
+                let rendered =
+                    offering::surface_for::<HostedProofAssignedRaidOffering>(live, &actor);
+                (receipt, rendered)
+            })
+    });
+    match result {
+        None => {
+            let embed = CreateEmbed::new()
+                .title("The Ash Gate raid closed during upload")
+                .description("No proof was applied. Open or resume the raid, then submit again.")
+                .color(0xE39B32);
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+        }
+        Some(Err(error)) => {
+            let embed = CreateEmbed::new()
+                .title("The raid verifier refused the receipt")
+                .description(error.to_string())
+                .color(0xE63946);
+            ack::edit_slash(ctx, command, embed, vec![]).await;
+        }
+        Some(Ok((_receipt, (embed, rows)))) => {
+            ack::edit_slash(ctx, command, embed, rows).await;
+        }
+    }
+}
+
+/// Open the offering `make` builds in the channel and post its shared surface.
+/// A hidden-information offering posts only its viewer-blind fog into the
+/// channel and sends the opener's private projection as an ephemeral companion.
+/// The factory runs on the offering store's own thread
+/// ([`offering::open_in`]), so a world-backed non-`Send` offering is born where
+/// it lives. Returns the open result so the caller reports a refusal honestly.
 async fn open_and_post<O: DiscordOffering>(
     ctx: &Context,
     command: &CommandInteraction,
@@ -577,7 +875,6 @@ async fn open_and_post<O: DiscordOffering>(
         let channel = command.channel_id.get();
         let status =
             offering::with_live::<O, _>(channel, |live| live.offering.status_line(&live.session));
-        let viewer = viewer.clone();
         crate::commands::open_guard::refuse_with_confirm(
             ctx,
             command,
@@ -585,10 +882,11 @@ async fn open_and_post<O: DiscordOffering>(
             status,
             Box::new(move || {
                 offering::open_in(channel, make, cfg).map_err(|e| e.to_string())?;
-                offering::with_live::<O, _>(channel, move |live| {
-                    offering::surface_for::<O>(live, &viewer)
-                })
-                .ok_or_else(|| "the fresh session did not render".to_string())
+                // The confirm card is a shared channel message. Even though
+                // the pending closure knows who requested it, it must never
+                // publish that user's hidden projection.
+                offering::with_live::<O, _>(channel, |live| offering::surface_of::<O>(live))
+                    .ok_or_else(|| "the fresh session did not render".to_string())
             }),
         )
         .await;
@@ -598,10 +896,22 @@ async fn open_and_post<O: DiscordOffering>(
     let channel = command.channel_id.get();
     let viewer = viewer.clone();
     let rendered = offering::with_live::<O, _>(channel, move |live| {
-        offering::surface_for::<O>(live, &viewer)
+        offering::channel_surfaces::<O>(live, &viewer)
     });
     match rendered {
-        Some((embed, rows)) => ack::edit_slash(ctx, command, embed, rows).await,
+        Some(((embed, rows), private)) => {
+            ack::edit_slash(ctx, command, embed, rows).await;
+            if let Some((private_embed, _private_rows)) = private {
+                ack::followup_slash_ephemeral_surface(
+                    ctx,
+                    command,
+                    "**Your private view** — only you can read this hand / sealed move. Use the shared board's controls to act.",
+                    private_embed,
+                    vec![],
+                )
+                .await;
+            }
+        }
         // The session opened but vanished before the render read it (a concurrent close): say
         // so instead of leaving the deferred response spinning forever (no silent drop).
         None => {
@@ -627,10 +937,10 @@ async fn open_and_post<O: DiscordOffering>(
 mod tests {
     use super::*;
     use crate::commands::offering::{
-        Driven, close_in, drive, fire_id, is_open, surface_for, with_live,
+        Driven, channel_surfaces, close_in, drive, fire_id_in, is_open, surface_for, with_live,
     };
-    // The tests still drive the generic per-type adapter path for all twelve keys (the adapter
-    // mechanics); the LIVE `/play` route for the seven identity-owned RPG keys is the per-identity
+    // The tests still drive every generic per-type adapter path (the adapter
+    // mechanics); the LIVE `/play` route for the eight identity-owned RPG keys is the per-identity
     // persistent world (`commands::rpg_world`), while party stays on this shared channel path.
     use dreggnet_offerings::{Outcome, Surface};
     use dreggnet_surfaces::SharedWorld;
@@ -699,9 +1009,19 @@ mod tests {
             NativeDescentOffering::new(),
             "descent"
         );
+        check!(
+            DescentCampaignOffering,
+            DescentCampaignOffering::new(),
+            "descent-campaign"
+        );
         check!(SeatedTug, SeatedTug::new(), "tug");
         check!(DarkBazaarOffering, DarkBazaarOffering::new(), "bazaar");
         check!(AutomataflOffering, AutomataflOffering, "automatafl");
+        check!(
+            HostedProofAssignedRaidOffering,
+            HostedProofAssignedRaidOffering::new(),
+            "private-raid"
+        );
         check!(NamesOffering, NamesOffering::new(), "names");
         check!(ComputeOffering, ComputeOffering::new(), "compute");
         check!(
@@ -722,6 +1042,11 @@ mod tests {
             "craft"
         );
         check!(CompanionOffering, CompanionOffering::demo(), "companion");
+        check!(
+            AshenmoorErrandOffering,
+            AshenmoorErrandOffering::new(),
+            "quest"
+        );
         check!(
             TavernOffering,
             TavernOffering::demo("The Salted Tankard"),
@@ -771,7 +1096,9 @@ mod tests {
         // The former hand-maintained list, preserved by the derivation (the regression pin).
         for want in [
             "descent",
+            "descent-campaign",
             "automatafl",
+            "private-raid",
             "tug",
             "names",
             "compute",
@@ -781,6 +1108,7 @@ mod tests {
             "guild",
             "craft",
             "companion",
+            "quest",
             "tavern",
             "party",
             "gear",
@@ -852,6 +1180,43 @@ mod tests {
         assert!(text.contains("\"verify\""), "{text}");
     }
 
+    /// The catalog campaign is a real generic Discord offering, not just a slash-command choice:
+    /// a presented manual move reaches the native executor and the composed chain re-verifies.
+    #[test]
+    fn descent_campaign_drives_a_real_turn_on_discord() {
+        let channel = 771_073u64;
+        close_in::<DescentCampaignOffering>(channel);
+        offering::open_in(
+            channel,
+            DescentCampaignOffering::new,
+            SessionConfig::with_seed(channel),
+        )
+        .expect("the Descent campaign opens");
+        let me = actor("campaign");
+        let me_for_actions = me.clone();
+        let first = with_live::<DescentCampaignOffering, _>(channel, move |live| {
+            live.offering
+                .actions_for(&live.session, &me_for_actions)
+                .into_iter()
+                .find(|action| action.turn == "delve" && action.enabled)
+        })
+        .flatten()
+        .expect("the campaign offers a manual delve");
+        match drive::<DescentCampaignOffering>(
+            channel,
+            &fire_id_in::<DescentCampaignOffering>(channel, &first.turn, first.arg).unwrap(),
+            me,
+        ) {
+            Driven::Fired(Outcome::Landed { .. }) => {}
+            other => panic!("the Discord campaign move must land: {other:?}"),
+        }
+        let report = offering::verify_live::<DescentCampaignOffering>(channel)
+            .expect("the campaign remains live");
+        assert!(report.verified, "{}", report.detail);
+        assert_eq!(report.turns, 2, "genesis plus the submitted delve");
+        close_in::<DescentCampaignOffering>(channel);
+    }
+
     /// **automatafl is REACHABLE + DRIVABLE on Discord** — the board renders a non-empty surface and
     /// a real move drives one turn through the substrate (a landed receipt), re-rendering the board.
     #[test]
@@ -875,7 +1240,7 @@ mod tests {
 
         match drive::<AutomataflOffering>(
             channel,
-            &fire_id(AutomataflOffering::KEY, &first.turn, first.arg),
+            &fire_id_in::<AutomataflOffering>(channel, &first.turn, first.arg).unwrap(),
             me,
         ) {
             Driven::Fired(outcome) => {
@@ -910,13 +1275,21 @@ mod tests {
         let bob = actor("bo");
 
         // Alice claims seat A by playing the opening Competition — a real landed receipt.
-        match drive::<SeatedTug>(channel, &fire_id(SeatedTug::KEY, "comp", 3), alice.clone()) {
+        match drive::<SeatedTug>(
+            channel,
+            &fire_id_in::<SeatedTug>(channel, "comp", 3).unwrap(),
+            alice.clone(),
+        ) {
             Driven::Fired(o) => assert!(o.landed(), "alice's comp lands + claims seat A: {o:?}"),
             other => panic!("alice's play must drive a turn, got {other:?}"),
         }
         // Bob claims seat B only by LANDING the scheduled Competition. A refusal
         // must never ghost-reserve a seat.
-        match drive::<SeatedTug>(channel, &fire_id(SeatedTug::KEY, "comp", 3), bob.clone()) {
+        match drive::<SeatedTug>(
+            channel,
+            &fire_id_in::<SeatedTug>(channel, "comp", 3).unwrap(),
+            bob.clone(),
+        ) {
             Driven::Fired(o) => assert!(o.landed(), "bob's comp lands + claims seat B: {o:?}"),
             other => panic!("bob's play must drive a turn, got {other:?}"),
         }
@@ -934,6 +1307,51 @@ mod tests {
         assert!(
             alice_view.contains("Opponent (hidden hand)"),
             "the opponent's hand stays fog for the seated viewer: {alice_view}"
+        );
+
+        // The ACTUAL async-handler policy is represented by `channel_surfaces`:
+        // the first card is what Discord publishes to the whole channel; the
+        // second is sent ephemerally to Alice. This is the leak canary that the
+        // old handler failed — it edited Alice's `render_for` into the shared
+        // message even though the offering declared hidden information.
+        let (shared_card, private_card) = with_live::<SeatedTug, _>(channel, {
+            let alice = alice.clone();
+            move |live| channel_surfaces::<SeatedTug>(live, &alice)
+        })
+        .expect("live");
+        let shared_json = serde_json::to_string(&shared_card.0).expect("shared embed serializes");
+        let shared_controls_json =
+            serde_json::to_string(&shared_card.1).expect("shared controls serialize");
+        let private_json = serde_json::to_string(
+            &private_card
+                .as_ref()
+                .expect("hidden game receives an ephemeral companion")
+                .0,
+        )
+        .expect("private embed serializes");
+        assert!(
+            private_card
+                .as_ref()
+                .expect("private companion")
+                .1
+                .is_empty(),
+            "private companions are read-only; actions stay on the shared board"
+        );
+        assert!(
+            shared_json.contains("hidden hand"),
+            "the channel still receives useful public fog: {shared_json}"
+        );
+        assert!(
+            !shared_json.contains("card #"),
+            "no exact card identity may enter the shared Discord message: {shared_json}"
+        );
+        assert!(
+            !shared_controls_json.contains("card #"),
+            "no exact card identity may enter the shared Discord controls: {shared_controls_json}"
+        );
+        assert!(
+            private_json.contains("card #"),
+            "the seated player still receives their hand ephemerally: {private_json}"
         );
 
         // AS BOB (seat B): his own, DIFFERENT hand.

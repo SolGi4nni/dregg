@@ -503,11 +503,12 @@ impl<T: Transport> WeChatHost<T> {
 }
 
 /// **The default WeChat catalog host** — the FULL shared portfolio, from the ONE registrar
-/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the five games
-/// (dungeon · council · market · multiway-tug · automatafl, `tug` wrapped in the shared
-/// seat-claiming [`crate::seated::SeatedTug`] adapter), the eight do-once RPG feature surfaces
-/// (trade · inventory · cheevos · guild · craft · companion · tavern · party), and the five
-/// service offerings (doc · names · compute · grain · hermes) — the same 18 the web catalog
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the nine games
+/// (native Descent · Descent campaign · dungeon · council · market · Dark Bazaar · multiway-tug · automatafl · private raid,
+/// `tug` wrapped in the shared
+/// seat-claiming [`crate::seated::SeatedTug`] adapter), the nine do-once RPG feature surfaces
+/// (trade · inventory · cheevos · guild · craft · companion · quest · tavern · party), and the five
+/// service offerings (doc · names · compute · grain · hermes) — the same 23 the web catalog
 /// (`dreggnet_web::demo_host`) and the Telegram host serve, by construction rather than by a
 /// duplicated list (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread
 /// (inside [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay

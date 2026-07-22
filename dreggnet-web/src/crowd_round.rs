@@ -171,7 +171,7 @@ pub struct TallyPreview {
     /// as well as `total ≥ quorum` — so paid weight alone cannot carry it.
     pub min_distinct_voters: u64,
     /// The current leader's option index (max weight, `> 0`), or `None` if no votes yet.
-    pub leader: Option<usize>,
+    pub leader: Option<u64>,
 }
 
 impl TallyPreview {
@@ -426,7 +426,11 @@ impl CrowdRound {
             .iter()
             .enumerate()
             .max_by_key(|&(_, &v)| v)
-            .and_then(|(i, &v)| (v > 0).then_some(i));
+            .and_then(|(i, &v)| {
+                (v > 0).then(|| {
+                    u64::try_from(i).expect("the bounded crowd option list fits the stable wire")
+                })
+            });
         let options = self
             .proposals
             .iter()
@@ -440,7 +444,8 @@ impl CrowdRound {
             question: self.question.clone(),
             options,
             total,
-            voters: ballots.len() as u64,
+            voters: u64::try_from(ballots.len())
+                .expect("the bounded crowd ballot set fits the stable wire"),
             quorum: self.quorum,
             min_distinct_voters: self.min_distinct_voters,
             leader,
@@ -475,7 +480,8 @@ impl CrowdRound {
         // Gate 1 — the DISTINCT-VOTER FLOOR. `ballots` is one entry per distinct voter (humans,
         // not replicated seats), so its length is the distinct-voter count. Enforced HERE, before
         // any seat is minted or signed, so paid weight alone (one whale) never reaches the engine.
-        let distinct = ballots.len() as u64;
+        let distinct = u64::try_from(ballots.len())
+            .expect("the bounded crowd ballot set fits the stable wire");
         if distinct < self.min_distinct_voters {
             return Err(CrowdCloseError::DistinctFloor {
                 voters: distinct,
@@ -605,6 +611,25 @@ mod tests {
         assert_eq!(p.total, 8);
         assert_eq!(p.leader, Some(0), "trade blows leads");
         assert!(p.quorum_met(), "8 ≥ quorum 3");
+    }
+
+    #[test]
+    fn tally_preview_leader_round_trips_at_full_u64_wire_width() {
+        let preview = TallyPreview {
+            question: "wire boundary".to_string(),
+            options: Vec::new(),
+            total: 0,
+            voters: 0,
+            quorum: 1,
+            min_distinct_voters: 1,
+            leader: Some(u64::MAX),
+        };
+        let json = serde_json::to_string(&preview).expect("preview serializes");
+        assert_eq!(
+            serde_json::from_str::<TallyPreview>(&json).expect("preview decodes"),
+            preview
+        );
+        assert!(json.contains("18446744073709551615"));
     }
 
     #[test]

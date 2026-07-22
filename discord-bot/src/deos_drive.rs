@@ -323,9 +323,11 @@ pub fn decode_command(effects: &[Effect]) -> Option<(DriveRequest, u64)> {
                 continue;
             }
             match *index {
-                CMD_SEQ_SLOT => seq = Some(field_to_u64(value)),
-                CMD_LEN_SLOT => len = Some(field_to_u64(value) as usize),
-                i if i >= CMD_PAYLOAD_BASE => chunks.push((i - CMD_PAYLOAD_BASE, *value)),
+                i if i == CMD_SEQ_SLOT as u64 => seq = Some(field_to_u64(value)),
+                i if i == CMD_LEN_SLOT as u64 => len = Some(field_to_u64(value) as usize),
+                i if i >= CMD_PAYLOAD_BASE as u64 => {
+                    chunks.push(((i - CMD_PAYLOAD_BASE as u64) as usize, *value));
+                }
                 _ => {}
             }
         }
@@ -537,7 +539,7 @@ mod tests {
         match action.effects.as_slice() {
             [Effect::SetField { cell, index, .. }] => {
                 assert_eq!(*cell, CellId(cclerk.cell_id_bytes()));
-                assert_eq!(*index, PRESENCE_SLOT);
+                assert_eq!(*index, PRESENCE_SLOT as u64);
             }
             other => panic!("presence must be one SetField, got {other:?}"),
         }

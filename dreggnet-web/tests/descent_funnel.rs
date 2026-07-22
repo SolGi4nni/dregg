@@ -86,15 +86,19 @@ async fn the_play_page_is_linked_from_the_front_doors_and_serves() {
     let (status, play) = get(&app, DESCENT_PLAY_PATH).await;
     assert_eq!(status, StatusCode::OK, "the play page serves");
     assert!(
-        play.contains("<dregg-descent"),
-        "it mounts the real element"
+        play.contains("id=\"descent-play-root\"") && play.contains("/descent/play/static/app.js"),
+        "it mounts the native wasm controller"
+    );
+    assert!(
+        !play.contains("<dregg-descent"),
+        "the obsolete procgen custom element must not return"
     );
 }
 
-/// **JOINT 3 — `/descent/play` opens TODAY'S day, the one the board scores.** The page used to open
-/// a fixed demo addr whose epoch the client derived by hashing the addr tail — a world decoupled
-/// from the board's. Now the served descriptor carries the day the shared helper resolves, and its
-/// committed epoch re-derives that day's seed.
+/// **JOINT 3 — `/descent/play` opens TODAY'S committed descriptor.** Procgen play and the
+/// Lean-native browser are distinct rulesets, but both are deterministically bound to the shared
+/// day: the full epoch re-derives the procgen seed, while the native controller receives the exact
+/// little-endian prefix that `NativeDescentOffering::open` normalizes.
 #[tokio::test]
 async fn the_play_page_opens_todays_real_day() {
     let app = make_app();
@@ -110,17 +114,22 @@ async fn the_play_page_opens_todays_real_day() {
         "the page serves the cross-process day key"
     );
     assert_eq!(v["epochHex"], day.epoch_hex());
-    // THE WELD: the epoch handed to the in-tab wasm draws the world the board is scoring.
+    // Procgen provenance remains exact.
     assert_eq!(
         procgen_dregg::daily_seed(&day.epoch).as_bytes(),
         day.seed.as_bytes(),
         "the published epoch derives the day's seed"
     );
-    // The shell opens that same day (not the old `b3_de5ce0` fixture).
+    // The native shell receives the same committed day label plus the raw seed input its own
+    // Offering normalizes. It does not pretend to open the procgen URI/world.
+    let bytes = day.seed.as_bytes();
+    let native_seed = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    assert_eq!(v["nativeSeed"], native_seed);
     let (_, shell) = get(&app, DESCENT_PLAY_PATH).await;
     assert!(
-        shell.contains(&day.descent_uri()),
-        "the shell opens today's addr"
+        shell.contains(&format!("data-day-key=\"{}\"", day.key))
+            && shell.contains(&format!("data-native-seed=\"{native_seed}\"")),
+        "the shell opens today's native descriptor: {shell}"
     );
     assert!(
         !shell.contains("b3_de5ce0"),
@@ -206,6 +215,30 @@ async fn the_same_run_does_not_rank_in_a_different_days_world() {
     assert_eq!(
         v["ranked"], false,
         "a run cannot rank in a world it never played"
+    );
+}
+
+#[tokio::test]
+async fn target_wide_procgen_move_indices_are_anti_ghost() {
+    let app = make_app();
+    let day = dreggnet_web::descent::todays_day();
+    let (status, response) = post_json(
+        &app,
+        "/descent/submit",
+        serde_json::json!({
+            "day": day.key,
+            "player": "wide-index-hostile",
+            "moves": [u64::MAX],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_eq!(response["ranked"], false);
+
+    let (_, board) = get(&app, "/descent").await;
+    assert!(
+        !board.contains("wide-index-hostile"),
+        "a hostile stable move index must not create a board row"
     );
 }
 

@@ -16,11 +16,15 @@
 //! * [`reference`] — the deterministic oracle engine (a faithful model of the round with
 //!   the two rule gaps FIXED and the per-turn draw added). It is the mover.
 //! * [`state`] — the STATE as a [`dregg_schema`]-allocated Legal layout (16 register
-//!   counters/win-registers + 8 used-flags + 14 per-guild scores on the heap) and the
-//!   PLAY TEETH as a hand-rolled [`dregg_app_framework::CellProgram::Cases`].
+//!   counters/win-registers + 8 used-flags + 14 per-guild scores on the heap) and PLAY TEETH
+//!   authored in Lean, emitted as a pinned program artifact, and loaded by Rust.
 //! * [`game`] — [`game::MultiwayTug`], the game deployed and driven on a real world-cell.
 //! * [`packs`] — **Phase 1, the COLLECTIBLE layer**: a printed favor card is an owned
 //!   [`dreggnet_asset`] note, opening a pack is a provably-fair draw ([`packs::CardVault`]).
+//! * [`hidden_hand`] — exact-card Poseidon2 openings checked by the executor beside the rules
+//!   action in one atomic turn.
+//! * [`fold`] — the hidden membership and terminal win leaves on the recursive proof path.
+//! * [`surface`] — the playable Offering with public fog and owner-only hand views.
 //!
 //! ## What the teeth enforce (see [`state`])
 //!
@@ -43,16 +47,12 @@
 //!
 //! ## Honest scope (per `docs/VERIFIED-GAME-PORTFOLIO.md`)
 //!
-//! Phase 0 is rules-on-executor with the hand hidden only by NON-REVEAL on a trusted host
-//! (the counters are public; card identities live in the reference mover). **Phase 1** is
-//! BUILT ([`packs`]): the collectible layer — cards as owned `dreggnet-asset` notes +
-//! provably-fair packs. The named next phases: **2** the zk
-//! HIDDEN-HAND — `Witnessed{MerkleMembership}` proving a play is from the committed hand +
-//! the opponent pick as a sealed-auction commit-reveal (opponent-SIGNED); **3** the STARK
-//! fold (a Custom AIR leaf → `prove_turn_chain_recursive`, Lane-D-gated); **4** the Lean
-//! refinement (the AIR REFINES `applyTurn`); **5** the Offering + frontends. The schema
-//! carries the simple state-shape; these hand-rolled `Cases` carry the play validity that
-//! goes beyond the five archetypes.
+//! The playable slice includes the Lean-authored rules program, cards-as-assets and fair packs,
+//! exact-card witnessed hidden-hand admission, the recursive membership/win leaves, and the
+//! per-viewer Offering. The remaining assurance boundary is narrower but real: duplicate
+//! consumption is ratcheted by private host state plus fresh replay rather than a dynamic-root /
+//! nullifier tooth, witness paths are clear executor inputs rather than succinct per-action
+//! proofs, and the reverse `deployed admission -> Lean game move` refinement is not yet closed.
 
 pub mod fold;
 pub mod game;
@@ -75,4 +75,4 @@ pub use packs::{
 };
 pub use reference::{ActionKind, Engine, Player, Projection, ResolvedMove};
 pub use state::Deployment;
-pub use surface::{TugOffering, TugSession};
+pub use surface::{TugOffering, TugPrivateMatchRecord, TugSession};

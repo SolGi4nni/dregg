@@ -33,9 +33,8 @@ use serde_json::{Map, Value};
 use serenity::all::{
     ButtonStyle, CommandDataOption, CommandDataOptionValue, CommandInteraction,
     ComponentInteraction, ComponentInteractionDataKind, Context, CreateActionRow, CreateButton,
-    CreateEmbed, CreateInteractionResponse, CreateInteractionResponseFollowup,
-    CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
-    CreateSelectMenuOption, EditInteractionResponse,
+    CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption, EditInteractionResponse,
 };
 
 use crate::BotState;
@@ -50,6 +49,78 @@ const ID_GO_PREFIX: &str = "menu:go:";
 const ID_RUN_PREFIX: &str = "menu:run:";
 /// The `/play` arcade select — pick an offering to see how to open it.
 const ID_PICK_PLAY: &str = "menu:pick:play";
+/// The four game-shaped doors that best explain the shared session contract.
+const ID_PICK_GAME: &str = "menu:pick:game";
+
+/// One player-facing game door. This is Discord information architecture, not
+/// a second game registry: the `key` is checked against the real `/play` and
+/// `/adventure` routes below, while the game keeps its own verbs and rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GameDoor {
+    key: &'static str,
+    title: &'static str,
+    rhythm: &'static str,
+    open: &'static str,
+    verify: &'static str,
+    privacy: &'static str,
+    special: &'static str,
+}
+
+const GAME_DOORS: [GameDoor; 4] = [
+    GameDoor {
+        key: "dungeon",
+        title: "The Dungeon",
+        rhythm: "collective crawl · write-once ballots · one plurality-resolved turn",
+        open: "/adventure dungeon start",
+        verify: "/adventure dungeon verify",
+        privacy: "The party state is public. Private producer receipts stay opaque and can land only their verified public effects. Chutes receives only the current public room, after explicit `confirm:true` opt-in.",
+        special: "/adventure dungeon chutes-turn confirm:true · /adventure dungeon operation",
+    },
+    GameDoor {
+        key: "descent",
+        title: "The Descent — native",
+        rhythm: "solo custody crawl · the first landed move binds the actor",
+        open: "/play open offering:descent",
+        verify: "/play open offering:descent action:verify",
+        privacy: "The run is actor-bound, but its Discord board is public state. It is not a hidden-hand surface; another identity cannot move the bound run.",
+        special: "bank relics · descend with finite light · share the terminal proof record",
+    },
+    GameDoor {
+        key: "bazaar",
+        title: "The Dark Bazaar",
+        rhythm: "list · sealed bids · settle · conservation-checked clear",
+        open: "/play open offering:bazaar",
+        verify: "/play open offering:bazaar action:verify",
+        privacy: "Bid values are sealed during commit and operator-visible at settlement. This playable CRAWL is not house-blind Tier-0 privacy.",
+        special: "the seller settles; the executor chooses the real high bid and refuses below-reserve clears",
+    },
+    GameDoor {
+        key: "private-raid",
+        title: "The Ash Gate — private raid",
+        rhythm: "four public seats · proof-assigned roles · capability-gated raid",
+        open: "/play open offering:private-raid",
+        verify: "/play open offering:private-raid action:verify",
+        privacy: "The producer-private score/admissibility matrix stays hidden; the role assignment, verifier identity, and receipt are public. Discord accepts only the canonical proof attachment.",
+        special: "/play open offering:private-raid action:submit-raid-proof proof:<attachment>",
+    },
+];
+
+fn game_door(key: &str) -> Option<&'static GameDoor> {
+    GAME_DOORS.iter().find(|door| door.key == key)
+}
+
+fn game_door_card(door: &GameDoor) -> CreateEmbed {
+    embeds::dregg_embed(door.title)
+        .description(
+            "One Discord contract, game-specific verbs: open one scoped session, act through a \
+             typed affordance, receive a landed receipt or an anti-ghost refusal, then replay it.",
+        )
+        .field("How it moves", door.rhythm, false)
+        .field("Open", format!("`{}`", door.open), false)
+        .field("Replay / verify", format!("`{}`", door.verify), false)
+        .field("Privacy boundary", door.privacy, false)
+        .field("Distinctive affordance", door.special, false)
+}
 
 // ─── registration: fold existing builders into 13 menu commands ─────────────
 
@@ -132,10 +203,10 @@ pub fn global_commands() -> Vec<Value> {
         command_json(&commands::dashboard::register()),
         // 2. /descent — today's beacon-seeded daily roguelite world, unchanged.
         command_json(&commands::descent::register()),
-        // 3. /play — the Lab shelf: open any portfolio offering; /market folds in.
+        // 3. /play — the Arcade shelf: open any portfolio offering; /market folds in.
         top(
             "play",
-            "The Lab — poke an experimental engine offering (the featured game is /descent)",
+            "The Arcade — open a receipted game, market, or engine offering",
             vec![
                 menu_sub(),
                 fold(commands::portfolio::register(), Some("open")),
@@ -222,6 +293,14 @@ pub fn global_commands() -> Vec<Value> {
                 fold(commands::channel::register(), None),
                 fold(commands::presence::register(), None),
                 fold(commands::deos::register(), None),
+                // Admin-only maintenance: de-duplicate the `dreggnet-*` offering
+                // categories a restart accreted (gated in the handler on
+                // `config.admin_discord_id`; strictly scoped, never touches
+                // custodial `dregg-<id>` or feed channels).
+                sub(
+                    "cleanup",
+                    "Admin: de-duplicate dreggnet-* offering categories left by restarts",
+                ),
             ],
         ),
         // 12. /leaderboard — glory, unchanged.
@@ -582,8 +661,97 @@ pub async fn handle_federation(ctx: &Context, command: &CommandInteraction, stat
         Some(("deos", inner)) => {
             commands::deos::handle(ctx, &as_command(command, "deos", inner), state).await
         }
+        Some(("cleanup", _)) => handle_cleanup(ctx, command, state).await,
         _ => respond_menu(ctx, command, federation_view()).await,
     }
+}
+
+/// `/federation cleanup` — ADMIN-ONLY maintenance: de-duplicate this guild's
+/// `dreggnet-<offering>` offering categories (the restart-duplicate reaper) and
+/// report the counts.
+///
+/// Strictly scoped by [`crate::orchestration::SessionOrchestrator::reconcile_guild`]:
+/// only categories named exactly `dreggnet-<offering>` are touched, and custodial
+/// `dregg-<id>` channels and operator feed channels are never moved or deleted.
+///
+/// The abandoned-dungeon-THREAD sweep is deliberately NOT wired here: dungeon runs
+/// live in per-channel threads and the live-session index is in-memory only, so
+/// after a restart every thread looks "orphaned" — a blind archive would kill live
+/// runs. A safe thread sweep needs a durable session index (or a per-thread TTL) to
+/// tell abandoned from active; until then it stays a TODO rather than a hazard.
+async fn handle_cleanup(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    // Admin gate: an unset ADMIN_DISCORD_ID DENIES (never "everyone is admin").
+    if state.config.admin_discord_id != Some(command.user.id.get()) {
+        let msg = CreateInteractionResponseMessage::new()
+            .embed(embeds::warning_embed(
+                "Admin only",
+                "This maintenance action is limited to the pinned bot admin.",
+            ))
+            .ephemeral(true);
+        let _ = command
+            .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+            .await;
+        return;
+    }
+    let Some(guild_id) = command.guild_id.map(|g| g.get()) else {
+        let msg = CreateInteractionResponseMessage::new()
+            .embed(embeds::warning_embed(
+                "Run in a server",
+                "Category cleanup only applies inside a guild.",
+            ))
+            .ephemeral(true);
+        let _ = command
+            .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+            .await;
+        return;
+    };
+
+    // Defer (the reaper fetches channels and may issue edits/deletes).
+    let _ = command
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await;
+
+    let registered_by = state.config.admin_discord_id.unwrap_or(0);
+    let embed = match state
+        .orchestrator
+        .reconcile_guild(
+            guild_id,
+            "dungeon",
+            None, // fetch the live channel list ourselves
+            &state.discord_caps,
+            &ctx.http,
+            registered_by,
+        )
+        .await
+    {
+        Ok(r) => embeds::success_embed("Category cleanup complete").description(format!(
+            "Reconciled the `dreggnet-dungeon` categories in this server.\n\n\
+                 \u{2022} Canonical category: {}\n\
+                 \u{2022} Duplicates found: {}\n\
+                 \u{2022} Duplicates deleted: {}\n\
+                 \u{2022} Session channels re-filed: {}\n\n\
+                 Custodial `dregg-<id>` and feed channels were never touched. \
+                 (Abandoned dungeon *threads* are not swept — see the handler note.)",
+            r.canonical_id
+                .map(|c| format!("<#{c}>"))
+                .unwrap_or_else(|| "none".into()),
+            r.duplicates_found,
+            r.duplicates_deleted,
+            r.children_moved,
+        )),
+        Err(e) => embeds::error_embed(
+            "Cleanup failed",
+            &format!("Could not reconcile categories: {e}. The bot needs MANAGE_CHANNELS."),
+        ),
+    };
+    let _ = command
+        .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+        .await;
 }
 
 /// `/help` — the map of the 13 surfaces + the onboarding menu (the old
@@ -614,40 +782,34 @@ fn back_row() -> CreateActionRow {
     )])
 }
 
-/// The `/play` lab shelf: a select of every portfolio offering + the market. The Descent leads
-/// (the featured game — its own `/descent` command, NOT in this catalog), and the framing words
-/// are the shared `dreggnet_catalog::{flagship_pointer, lab_intro}`.
+/// The `/play` arcade: four legible game doors first, then the complete engine
+/// catalog. They share a session/receipt/replay contract without pretending
+/// their mechanics are interchangeable.
 fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
-    let embed = embeds::dregg_embed("🧪 The Lab")
+    let embed = embeds::dregg_embed("🎮 The Arcade")
         .description(format!(
-            "{lab}\n\nEvery move in every one of them is a real, receipted dregg turn. Open a \
-             world in this channel with **/play open** — or pick an offering below to see what \
-             it is.",
+            "{lab}\n\nThe common rhythm is **open → act → landed receipt or anti-ghost refusal \
+             → replay**. The Dungeon keeps its crowd ballot, Descent its custody crawl, the \
+             Bazaar its clearing, and the Ash Gate its private-proof assignment.",
             lab = dreggnet_catalog::lab_intro(),
         ))
         .field(
-            "The featured game",
-            format!(
-                "{flagship} Play it: `/descent play`.",
-                flagship = dreggnet_catalog::flagship_pointer(),
-            ),
+            "Four doors into one engine",
+            "**Dungeon** — collective + narrated · **Descent** — solo + actor-bound · \
+             **Dark Bazaar** — sealed market · **Ash Gate** — proof-assigned raid",
             false,
         )
         .field(
-            "Games",
-            "`/play open offering:tug` — the hidden-hand tug-of-war · \
-             `/play open offering:automatafl` — the board of automata",
+            "The wider shelf",
+            "`/play open offering:tug` — hidden hand · \
+             `/play open offering:automatafl` — simultaneous board · the complete selector \
+             below also carries campaigns, overworld, party, gear, craft, trade, and more",
             false,
         )
         .field(
-            "Market",
-            "`/play market open` — sealed-bid auctions (list, bid, verify, close)",
-            false,
-        )
-        .field(
-            "Verify-don't-trust",
+            "One replay gesture",
             "`/play open offering:<key> action:verify` re-checks the live session's \
-             receipt chain in front of you.",
+             receipt chain. Dungeon keeps its own equivalent: `/adventure dungeon verify`.",
             false,
         )
         .field(
@@ -656,39 +818,70 @@ fn play_view() -> (CreateEmbed, Vec<CreateActionRow>) {
              without revealing how.",
             false,
         );
-    let options: Vec<CreateSelectMenuOption> = commands::portfolio::play_keys()
+    let game_options: Vec<CreateSelectMenuOption> = GAME_DOORS
+        .iter()
+        .map(|door| CreateSelectMenuOption::new(door.title, door.key))
+        .collect();
+    let game_select = CreateActionRow::SelectMenu(
+        CreateSelectMenu::new(
+            ID_PICK_GAME,
+            CreateSelectMenuKind::String {
+                options: game_options,
+            },
+        )
+        .placeholder("Choose a game door…"),
+    );
+    let offering_options: Vec<CreateSelectMenuOption> = commands::portfolio::play_keys()
         .into_iter()
         .map(|k| CreateSelectMenuOption::new(k, k))
         .collect();
-    let select = CreateActionRow::SelectMenu(
-        CreateSelectMenu::new(ID_PICK_PLAY, CreateSelectMenuKind::String { options })
-            .placeholder("Browse the Lab…"),
+    let offering_select = CreateActionRow::SelectMenu(
+        CreateSelectMenu::new(
+            ID_PICK_PLAY,
+            CreateSelectMenuKind::String {
+                options: offering_options,
+            },
+        )
+        .placeholder("Browse every offering…"),
     );
-    (embed, vec![select, back_row()])
+    (embed, vec![game_select, offering_select, back_row()])
 }
 
 fn adventure_view() -> (CreateEmbed, Vec<CreateActionRow>) {
     let embed = embeds::dregg_embed("Narrative Worlds")
         .description(
             "The shared, AI-narrated, on-chain party dungeon: buttons are write-once ballots, \
-             the plurality choice lands as one real verified turn.",
+             the plurality choice lands as one real verified turn. Narration can describe that \
+             turn; it cannot invent one.",
         )
         .field(
             "The Warden's Keep",
             "`/adventure dungeon start` — open it in this channel · \
              `/adventure dungeon close` — apply the party's choice · \
              `/adventure dungeon verify` — re-verify the playthrough by replay · \
+             `/adventure dungeon operation` — attach a private producer receipt · \
              `/adventure dungeon list` — the world + its executor-enforced rules",
             false,
         )
         .field(
-            "The daily descent",
-            "`/descent play` — today's beacon-seeded permadeath roguelite (a separate world).",
+            "A narrated turn, deliberately narrow",
+            "`/adventure dungeon chutes-turn confirm:true` lets Chutes choose exactly one \
+             currently legal command. It sees only the current public room; free prose and \
+             extra effect fields are refused, and the native executor alone changes state.",
             false,
         )
         .field(
-            "Paid narration",
-            "A run-credit buys a real-AI narrated room; without one you get the free narrator.",
+            "Private operations",
+            "Preference aggregation, fair shuffle, and quest reduction arrive as canonical \
+             opaque receipts through `operation` — never as narrator prose. The card discloses \
+             the exact live operation name and what becomes public.",
+            false,
+        )
+        .field(
+            "Its neighboring worlds",
+            "The actor-bound native crawl is `/play open offering:descent`; today's \
+             beacon-seeded season remains `/descent play`; the sealed market is \
+             `/play open offering:bazaar`.",
             false,
         );
     let rows = vec![CreateActionRow::Buttons(vec![
@@ -1055,6 +1248,38 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         return;
     }
 
+    if custom_id == ID_PICK_GAME {
+        if let ComponentInteractionDataKind::StringSelect { values } = &component.data.kind {
+            if let Some(door) = values.first().and_then(|key| game_door(key)) {
+                let _ = component
+                    .create_response(
+                        &ctx.http,
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .embed(game_door_card(door))
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await;
+                return;
+            }
+        }
+        let _ = component
+            .create_response(
+                &ctx.http,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .embed(embeds::warning_embed(
+                            "Unknown game door",
+                            "That selector value is not one of this build's exact game routes.",
+                        ))
+                        .ephemeral(true),
+                ),
+            )
+            .await;
+        return;
+    }
+
     if custom_id == ID_PICK_PLAY {
         if let ComponentInteractionDataKind::StringSelect { values } = &component.data.kind {
             if let Some(key) = values.first() {
@@ -1346,6 +1571,91 @@ mod tests {
                 subcommand_names(name).iter().any(|s| s == "menu"),
                 "/{name} should carry the `menu` subcommand"
             );
+        }
+    }
+
+    /// The four different games share one *interaction* contract without
+    /// being flattened into one mechanics layer. Every card names an exact
+    /// open route and an exact replay route that the real 13-command registry
+    /// serves; selector values are a closed vocabulary.
+    #[test]
+    fn game_doors_are_exact_replayable_routes() {
+        let mut seen = BTreeSet::new();
+        for door in GAME_DOORS {
+            assert!(seen.insert(door.key), "duplicate game door `{}`", door.key);
+            assert!(door.open.starts_with('/'));
+            assert!(door.verify.starts_with('/'));
+            assert_ne!(door.open, door.verify);
+            assert!(door.verify.contains("verify"));
+            if door.key == "dungeon" {
+                assert!(
+                    subcommand_names("adventure")
+                        .iter()
+                        .any(|name| name == "dungeon"),
+                    "the Dungeon card must route to the registered folded command"
+                );
+            } else {
+                assert!(
+                    commands::portfolio::play_keys().contains(&door.key),
+                    "`{}` must be a real /play offering choice",
+                    door.key
+                );
+            }
+            let wire = serde_json::to_value(game_door_card(&door)).expect("game card serializes");
+            let text = wire.to_string();
+            assert!(text.contains(door.open), "{text}");
+            assert!(text.contains(door.verify), "{text}");
+        }
+        for substituted in [
+            "Bazaar",
+            "bazaar:verify",
+            "bazaar\0",
+            "please open the dungeon",
+            "private-raid/../../dungeon",
+        ] {
+            assert_eq!(
+                game_door(substituted),
+                None,
+                "game navigation accepts only an exact structured selector value"
+            );
+        }
+    }
+
+    /// Player-facing privacy text is part of the command UX. It must state
+    /// what becomes public and must not imply house-blindness or let hidden
+    /// inputs leak into a shared card.
+    #[test]
+    fn game_door_cards_state_the_real_privacy_boundary() {
+        let dungeon = serde_json::to_value(game_door("dungeon").map(game_door_card).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(dungeon.contains("current public room"), "{dungeon}");
+        assert!(dungeon.contains("verified public effects"), "{dungeon}");
+
+        let bazaar = serde_json::to_value(game_door("bazaar").map(game_door_card).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(bazaar.contains("operator-visible"), "{bazaar}");
+        assert!(bazaar.contains("not house-blind Tier-0"), "{bazaar}");
+
+        let raid = serde_json::to_value(game_door("private-raid").map(game_door_card).unwrap())
+            .unwrap()
+            .to_string();
+        assert!(raid.contains("matrix stays hidden"), "{raid}");
+        assert!(raid.contains("receipt are public"), "{raid}");
+
+        for secret in [
+            "sealed-card=ace",
+            "bid=987654321",
+            "private-score-matrix",
+            "player-credit-balance",
+        ] {
+            for door in GAME_DOORS {
+                let text = serde_json::to_value(game_door_card(&door))
+                    .unwrap()
+                    .to_string();
+                assert!(!text.contains(secret), "shared game card leaked `{secret}`");
+            }
         }
     }
 

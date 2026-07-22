@@ -379,6 +379,10 @@ fn ballot(run: &DailyRun) -> Vec<MoveOption> {
 enum NarratorKind {
     /// A real hosted model (AWS Bedrock) narrated it — a PAID run that spent one $DREGG credit.
     Bedrock,
+    /// A real hosted model through Chutes/Bittensor narrated it — a PAID run that spent one credit.
+    Chutes,
+    /// Another operator-configured OpenAI-compatible hosted model narrated it — a PAID run.
+    OpenAiCompatible,
     /// A real local `gemma2:2b` (ollama) narrated it (the free tier).
     Gemma,
     /// ollama was unreachable; the scene's own scripted prose stood in (the free tier).
@@ -386,9 +390,23 @@ enum NarratorKind {
 }
 
 impl NarratorKind {
+    fn from_paid(provider: crate::pay::PaidNarratorProvider) -> Self {
+        match provider {
+            crate::pay::PaidNarratorProvider::Bedrock => Self::Bedrock,
+            crate::pay::PaidNarratorProvider::Chutes => Self::Chutes,
+            crate::pay::PaidNarratorProvider::OpenAiCompatible => Self::OpenAiCompatible,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             NarratorKind::Bedrock => "narrator: bedrock (real AI · paid with a $DREGG credit)",
+            NarratorKind::Chutes => {
+                "narrator: chutes / bittensor (real AI · paid with a $DREGG credit)"
+            }
+            NarratorKind::OpenAiCompatible => {
+                "narrator: hosted OpenAI-compatible (real AI · paid with a $DREGG credit)"
+            }
             NarratorKind::Gemma => "narrator: gemma2:2b (free)",
             NarratorKind::Scripted => "narrator: scripted (free)",
         }
@@ -767,7 +785,11 @@ pub struct StoredDescentCompletion {
 impl StoredDescentCompletion {
     /// Build a persistable completion from a resolved (full-hex) universe id, the player, and the
     /// recorded move sequence. `claimed_turns` is bound to the true move count.
-    fn new(universe_id_hex: &str, player: &str, moves: &[usize]) -> StoredDescentCompletion {
+    pub(crate) fn new(
+        universe_id_hex: &str,
+        player: &str,
+        moves: &[u64],
+    ) -> StoredDescentCompletion {
         let moves_json = serde_json::to_string(moves).unwrap_or_else(|_| "[]".to_string());
         let mut h = blake3::Hasher::new();
         h.update(universe_id_hex.as_bytes());
@@ -780,7 +802,8 @@ impl StoredDescentCompletion {
             universe_id_hex: universe_id_hex.to_string(),
             player: player.to_string(),
             moves_json,
-            claimed_turns: moves.len() as i64,
+            claimed_turns: i64::try_from(moves.len())
+                .expect("an in-memory playthrough length fits the persisted i64 count"),
         }
     }
 
@@ -789,12 +812,12 @@ impl StoredDescentCompletion {
     fn of(run: &DailyRun, player: &str) -> Option<StoredDescentCompletion> {
         let universe = run.day().universe(BOARD_AUTHOR).ok()?;
         let universe_id_hex = id_hex(&universe.id());
-        let moves: Vec<usize> = run
+        let moves: Vec<u64> = run
             .playthrough()
             .steps
             .iter()
-            .map(|s| s.choice_index)
-            .collect();
+            .map(|s| u64::try_from(s.choice_index).ok())
+            .collect::<Option<Vec<_>>>()?;
         Some(StoredDescentCompletion::new(
             &universe_id_hex,
             player,
@@ -933,7 +956,26 @@ fn replay_completion(reg: &mut Registry, sc: &StoredDescentCompletion) {
     let Some(universe) = reg.universe(id).cloned() else {
         return;
     };
-    let Ok(moves) = serde_json::from_str::<Vec<usize>>(&sc.moves_json) else {
+    let Ok(stable_moves) = serde_json::from_str::<Vec<u64>>(&sc.moves_json) else {
+        return;
+    };
+    // The idempotency key is also the persisted row's content binding. Without this check, an
+    // otherwise-valid winning tape could be reassigned to a different player (or world) while
+    // retaining its old primary key and would resurrect under the forged identity on restart.
+    if StoredDescentCompletion::new(&sc.universe_id_hex, &sc.player, &stable_moves).key_hex
+        != sc.key_hex
+    {
+        return;
+    }
+    let Some(moves) = stable_moves
+        .iter()
+        .copied()
+        .map(|choice| usize::try_from(choice).ok())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return;
+    };
+    let Ok(claimed_turns) = usize::try_from(sc.claimed_turns) else {
         return;
     };
     // A tampered (illegal) move sequence is refused by the real executor here.
@@ -945,7 +987,7 @@ fn replay_completion(reg: &mut Registry, sc: &StoredDescentCompletion) {
         universe: id,
         player: sc.player.clone(),
         play,
-        claimed_turns: sc.claimed_turns as usize,
+        claimed_turns,
     });
 }
 
@@ -1393,9 +1435,13 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
         Ok(n) => n,
         Err(_) => return,
     };
-    let choice: usize = match parts[3].parse() {
-        Ok(n) => n,
-        Err(_) => return,
+    let choice: usize = match parts[3]
+        .parse::<u64>()
+        .ok()
+        .and_then(|choice| usize::try_from(choice).ok())
+    {
+        Some(n) => n,
+        None => return,
     };
     let presser = component.user.id.get();
 
@@ -1468,7 +1514,10 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                     .playthrough()
                     .steps
                     .iter()
-                    .map(|s| s.choice_index)
+                    .map(|s| {
+                        u64::try_from(s.choice_index)
+                            .expect("committed room choice index fits the stable u64 wire format")
+                    })
                     .collect(),
                 player: player.clone(),
                 level: slot.run.character().level(),
@@ -1876,7 +1925,7 @@ struct ShareInput {
     /// fetching + BLS-verifying the round for a live one) and re-executes in the SAME world.
     day: String,
     /// The move sequence (choice indices) the web re-executes.
-    moves: Vec<usize>,
+    moves: Vec<u64>,
     /// The player label the board is keyed by (the SAME short derived-identity the bot submits).
     player: String,
     /// The player's persistent character level (web display metadata).
@@ -2202,13 +2251,15 @@ fn footer_text(kind: NarratorKind, beacon: BeaconStatus) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The narrator — the SAME $DREGG credit gate `/dungeon` uses (real Bedrock paid,
+// The narrator — the SAME $DREGG credit gate `/dungeon` uses (real hosted-provider paid,
 // local gemma2:2b free, scripted fallback). The paid backend is never free-ridden:
 // a paid narration debits exactly one credit AFTER a successful hosted call.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Narrate a room, spending a `$DREGG` run-credit on real Bedrock when the player has one, else the
-/// FREE tier (ollama gemma / scripted). The narrator kind is reported honestly.
+/// Narrate a room, spending a `$DREGG` run-credit on an automatic-safe configured hosted provider
+/// when the player has one, else the FREE tier (ollama gemma / scripted). Chutes is deliberately
+/// excluded here: its typed game seam requires `/dungeon chutes-turn confirm:true`, so merely
+/// entering a Descent room can never opt a player into or charge them for Chutes.
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
@@ -2217,18 +2268,28 @@ async fn narrate_room_gated(
 ) -> (String, NarratorKind) {
     let discord = discord_user_id.to_string();
     if state.pay.can_run_paid(&discord) {
-        if let Some(paid) = state.pay.paid.clone() {
+        if let Some(paid) = state
+            .pay
+            .paid
+            .clone()
+            .filter(|paid| !paid.provider().requires_explicit_game_opt_in())
+        {
+            let Ok(hold) = state.pay.hold_paid_credit(&discord) else {
+                return narrate_room_free(room_name, room_desc).await;
+            };
             let system = narrator_system_prompt();
             let prompt = format!("Room: {room_name}. {room_desc}");
-            // The hosted Bedrock client drives its OWN runtime with `block_on`; run it off-worker.
+            // Hosted narrator clients are blocking (including Chutes' OpenAI-compatible client),
+            // so run this off-worker.
             let narration = tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt))
                 .await
                 .ok()
                 .and_then(|r| r.ok())
                 .filter(|n| !n.text.trim().is_empty());
             if let Some(n) = narration {
-                let _ = state.pay.debit_one(&discord);
-                return (sanitize(&n.text), NarratorKind::Bedrock);
+                if state.pay.commit_paid_credit(hold).is_ok() {
+                    return (sanitize(&n.text), NarratorKind::from_paid(n.provider()));
+                }
             }
         }
     }
@@ -2322,6 +2383,21 @@ mod tests {
 
     fn player(name: &str) -> DreggIdentity {
         DreggIdentity(name.to_string())
+    }
+
+    #[test]
+    fn paid_provider_labels_are_truthful_on_the_descent_surface() {
+        assert!(NarratorKind::Bedrock.label().contains("bedrock"));
+        assert!(NarratorKind::Chutes.label().contains("chutes / bittensor"));
+        assert!(
+            NarratorKind::OpenAiCompatible
+                .label()
+                .contains("OpenAI-compatible")
+        );
+        assert_eq!(
+            NarratorKind::from_paid(crate::pay::PaidNarratorProvider::Chutes),
+            NarratorKind::Chutes
+        );
     }
 
     /// **THE CROSS-PROCESS WELD.** The day key this bot stamps onto a shared run re-derives — by a
@@ -2753,9 +2829,11 @@ mod tests {
     }
 
     /// A TAMPERED board row is DROPPED on reload — a cheat cannot be resurrected by editing the DB.
-    /// Three tamperings, each starting from an honestly-ranked board, each dropped: (a) the moves
-    /// edited to an ineligible/losing line, (b) a lied `claimed_turns`, (c) a mismatched seed (the
-    /// day-world's content address no longer matches, so the universe — and its completion — drop).
+    /// Five tamperings, each starting from an honestly-ranked board, each dropped: (a) the moves
+    /// edited to a target-wide illegal index, (b) a negative `claimed_turns`, (c) the player changed
+    /// without changing the content key, (d) a validly-shaped but losing line, and (e) a mismatched
+    /// seed (the day-world's content address no longer matches, so the universe — and its completion
+    /// — drop).
     /// Non-vacuous: the untampered honest run ranks in every setup.
     #[test]
     fn a_tampered_board_row_is_dropped_on_reload() {
@@ -2776,44 +2854,78 @@ mod tests {
             "baseline honest win ranks"
         );
 
-        // (a) The moves edited to an ineligible line (GATE_FALL at full HP is refused on replay).
+        // (a) Even a maliciously re-keyed row containing the full u64 action index is refused by
+        // the real executor. This exercises the stable-width decode instead of failing at the key.
         let store_a = InMemoryDescentBoardStore::new();
         store_a.persist_universe(&su).unwrap();
         store_a.persist_completion(&sc).unwrap();
         store_a.tamper(|_us, cs| {
             for c in cs.iter_mut() {
-                c.moves_json = "[4]".to_string();
+                *c = StoredDescentCompletion::new(&c.universe_id_hex, &c.player, &[u64::MAX]);
             }
         });
         let reg_a = load_board(&store_a);
         let uid_a = find_board_universe(&reg_a, &su.id_hex).expect("day-world still reconstructs");
         assert!(
             reg_a.leaderboard(uid_a).is_empty(),
-            "an edited (losing/ineligible) move line does NOT rank — the cheat is dropped"
+            "a target-wide illegal move does NOT ghost into a ranked turn"
         );
 
-        // (b) A lied claimed_turns (≠ the verified move count) trips ResultMismatch on replay.
+        // (b) A negative persisted count fails closed before the signed value can become an index.
         let store_b = InMemoryDescentBoardStore::new();
         store_b.persist_universe(&su).unwrap();
         store_b.persist_completion(&sc).unwrap();
         store_b.tamper(|_us, cs| {
             for c in cs.iter_mut() {
-                c.claimed_turns = 1;
+                c.claimed_turns = -1;
             }
         });
         let reg_b = load_board(&store_b);
         let uid_b = find_board_universe(&reg_b, &su.id_hex).expect("day-world still reconstructs");
         assert!(
             reg_b.leaderboard(uid_b).is_empty(),
-            "a lied turn count does NOT rank — dropped as a result mismatch"
+            "a negative turn count does NOT wrap into a target-sized count"
         );
 
-        // (c) A mismatched seed: the recomputed content address no longer matches the stored id, so
-        // the day-world is dropped — and with no universe, its completion cannot land either.
+        // (c) The content-derived row key binds the player as well as the world and tape. Merely
+        // replacing the player on an otherwise-valid win cannot resurrect it under a forged name.
         let store_c = InMemoryDescentBoardStore::new();
         store_c.persist_universe(&su).unwrap();
         store_c.persist_completion(&sc).unwrap();
-        store_c.tamper(|us, _cs| {
+        store_c.tamper(|_us, cs| {
+            for c in cs.iter_mut() {
+                c.player = "forged-winner".to_string();
+            }
+        });
+        let reg_c = load_board(&store_c);
+        let uid_c = find_board_universe(&reg_c, &su.id_hex).expect("day-world still reconstructs");
+        assert!(
+            reg_c.leaderboard(uid_c).is_empty(),
+            "a player substitution with a stale content key does NOT rank"
+        );
+
+        // (d) A re-keyed but losing/ineligible line still reaches replay and is refused there.
+        let store_d = InMemoryDescentBoardStore::new();
+        store_d.persist_universe(&su).unwrap();
+        store_d.persist_completion(&sc).unwrap();
+        store_d.tamper(|_us, cs| {
+            for c in cs.iter_mut() {
+                *c = StoredDescentCompletion::new(&c.universe_id_hex, &c.player, &[4]);
+            }
+        });
+        let reg_d = load_board(&store_d);
+        let uid_d = find_board_universe(&reg_d, &su.id_hex).expect("day-world still reconstructs");
+        assert!(
+            reg_d.leaderboard(uid_d).is_empty(),
+            "a re-keyed losing/ineligible move line does NOT rank"
+        );
+
+        // (e) A mismatched seed: the recomputed content address no longer matches the stored id, so
+        // the day-world is dropped — and with no universe, its completion cannot land either.
+        let store_e = InMemoryDescentBoardStore::new();
+        store_e.persist_universe(&su).unwrap();
+        store_e.persist_completion(&sc).unwrap();
+        store_e.tamper(|us, _cs| {
             for u in us.iter_mut() {
                 // Flip the first seed nibble — a different world, a different content address.
                 let mut bytes = decode_hex32(&u.seed_hex).unwrap();
@@ -2821,13 +2933,13 @@ mod tests {
                 u.seed_hex = hex32(&bytes);
             }
         });
-        let reg_c = load_board(&store_c);
+        let reg_e = load_board(&store_e);
         assert!(
-            find_board_universe(&reg_c, &su.id_hex).is_none(),
+            find_board_universe(&reg_e, &su.id_hex).is_none(),
             "a tampered seed drops the day-world (content address mismatch)"
         );
         assert!(
-            reg_c.universes().next().is_none(),
+            reg_e.universes().next().is_none(),
             "nothing else lands from a tampered board"
         );
     }

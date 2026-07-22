@@ -12,10 +12,11 @@
 //! * [`ModelRegistry`] — the pinned price book. **The ledger refuses any model it has no price
 //!   for** ([`NarratorError::UnpricedModel`]): you cannot cap a cost you do not know. Unverified
 //!   rates are pinned as deliberate UPPER BOUNDS (see [`ledger::PriceSource`]).
-//! * [`Narrator`] — three backends (Bedrock/Nova+Claude, local Ollama, deterministic Scripted)
-//!   with honest fallback. [`Narrator::auto`] resolves Bedrock(Haiku) → Bedrock(Nova) → Ollama →
-//!   Scripted, and every result reports the [`Narration::kind`] that ACTUALLY produced the text —
-//!   never a model that did not narrate.
+//! * [`Narrator`] — a hosted-model tier (AWS Bedrock Nova/Claude, OR any OpenAI-compatible endpoint
+//!   via [`OpenAiCompatClient`] — Chutes / Bittensor, vLLM, OpenRouter, a local proxy), then local
+//!   Ollama, then deterministic Scripted, with honest fallback. [`Narrator::auto`] resolves the
+//!   hosted provider from `DREGG_NARRATOR`, and every result reports the [`Narration::kind`] that
+//!   ACTUALLY produced the text — never a model that did not narrate.
 
 mod backend;
 mod bedrock;
@@ -23,6 +24,7 @@ pub mod ledger;
 pub mod models;
 mod narrator;
 pub mod ollama;
+pub mod openai;
 
 pub use backend::{
     metered_converse, ConverseBackend, ConverseMessage, ConverseRequest, ConverseResponse, Role,
@@ -33,6 +35,7 @@ pub use ledger::{BudgetLedger, LedgerState, ModelSpend, PriceSource, Pricing, Re
 pub use models::{ModelRegistry, CLAUDE_HAIKU_4_5, DEFAULT_MODEL, NOVA_2_LITE, NOVA_PRO};
 pub use narrator::{Narration, Narrator};
 pub use ollama::OllamaBackend;
+pub use openai::OpenAiCompatClient;
 
 /// Everything that can go wrong at the narrator layer.
 #[derive(Debug, thiserror::Error)]

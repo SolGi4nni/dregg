@@ -179,7 +179,7 @@ mod tests {
     use dreggnet_grain::TURN_ACT;
     use dreggnet_offerings::{DreggIdentity, Outcome};
 
-    use crate::commands::offering::{Driven, close_in, fire_id, with_live};
+    use crate::commands::offering::{Driven, close_in, fire_id_in, with_live};
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -200,7 +200,7 @@ mod tests {
     fn act(channel: u64, who: &DreggIdentity) -> Outcome {
         match offering::drive::<GrainOffering>(
             channel,
-            &fire_id(GrainOffering::KEY, TURN_ACT, 1),
+            &fire_id_in::<GrainOffering>(channel, TURN_ACT, 1).unwrap(),
             who.clone(),
         ) {
             Driven::Fired(o) => o,
@@ -255,7 +255,7 @@ mod tests {
         open(channel, 4);
         match offering::drive::<GrainOffering>(
             channel,
-            &fire_id(GrainOffering::KEY, "bogus", 0),
+            &fire_id_in::<GrainOffering>(channel, "bogus", 0).unwrap(),
             actor("b0"),
         ) {
             Driven::Fired(Outcome::Refused(why)) => {

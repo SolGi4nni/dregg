@@ -6,7 +6,7 @@
 //! against a fresh identically-seeded world, and shows the verdict. The unfair growth mechanic is a
 //! proof, not a claim: a forged run shows **FAIL**, not a fake pass.
 //!
-//! Two server-rendered surfaces, additive to the [`catalog_router`](crate::catalog_router):
+//! Server-rendered surfaces, additive to the [`catalog_router`](crate::catalog_router):
 //! - `GET /descent/leaderboard[?day={key}]` — the day's **no-cheat leaderboard**: the ranked runs
 //!   that provably reached the hoard, each row **re-verified on render** ([`verify_completion`], the
 //!   same no-cheat verifier [`ugc_dregg::Registry::reverify_entry`]/`submit` run) against the day's
@@ -18,6 +18,11 @@
 //!   fresh, identically-seeded world) and shows **PASS/FAIL**. An honest run (won *or* lost) PASSES;
 //!   a tampered run FAILS. The `id` is the **shareable link shape** the bot's result embed points at
 //!   (see [`run_share_path`]).
+//! - `POST /descent/native/submit` + `GET /descent/native/run/{id}` — the browser-native
+//!   compatibility lane. The Lean-native game emits verbs plus an exact receipt/state/root record,
+//!   not the older procgen choice-index tape. The server replays that record through
+//!   `NativeDescentOffering`; exact records get a share card and crowned exits rank in a visibly
+//!   separate native table. No lossy cross-game translation is claimed.
 //!
 //! ## What is real vs. named
 //! REAL here: the **server-side independent re-verification** — every leaderboard row and every
@@ -35,15 +40,19 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::Html,
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use dregg_node_target::{Landed, NodeError, NodeTarget, SubmittedTurn};
 use dreggnet_offerings::daily_descent::{DAILY_DEPLOY_SEED, DailyDescent, HOARD_GOLD, daily_scene};
+use dreggnet_offerings::native_descent::{
+    MAX_NATIVE_DESCENT_EVENTS, NativeDescentMove, NativeDescentOffering, NativeDescentRecord,
+};
+use dreggnet_offerings::{Action, DreggIdentity, Offering, Outcome, SessionConfig};
 use procgen_dregg::CommittedSeed;
 use procgen_dregg::descent_day::{self, DescentDay};
 use spween_dregg::{
@@ -52,7 +61,7 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 use webauth_core::identity_resolve::RootResolver;
 
-use crate::descent_store::{DescentRunStore, StoredDay, StoredRun};
+use crate::descent_store::{DescentRunStore, StoredDay, StoredNativeRun, StoredRun};
 use crate::{document, esc};
 
 /// The author label the day's world is published under (a stable content-address input; the daily
@@ -64,8 +73,10 @@ const DAY_AUTHOR: &str = "the-descent";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// **Today's descent day** — [`procgen_dregg::descent_day`], the one seed selection this process and
-/// the Discord bot share. Every surface here (the board, `/descent/play`, the submit ingest) opens
-/// THIS world, so a run played in Discord re-executes here instead of failing against a fixture day.
+/// the Discord bot share. The procgen board + `/descent/submit` open THIS world, so a run played in
+/// Discord re-executes here instead of failing against a fixture day. `/descent/play` uses the same
+/// committed day descriptor to seed a distinct Lean-native world and publishes its records through
+/// the explicitly separate `/descent/native/submit` verifier.
 ///
 /// This process has no drand reveal cron, so it resolves the OFFLINE date-derived day — a real daily
 /// rotation, honestly not a fresh beacon reveal. When the bot's cron HAS a live round, the bot sends
@@ -94,10 +105,16 @@ struct Day {
     scene: Scene,
     /// The published, content-addressed universe (the no-cheat re-verification target).
     universe: Universe,
-    /// var→slot map, to read `depth`/`gold`/`downed` off a (verified) committed state vector.
+    /// var→snapshot-index map. A snapshot is the sixteen fixed registers followed
+    /// by compiled ext keys in ascending order; canonical u64 keys are never used
+    /// directly as platform-sized Vec indices.
     var_slots: BTreeMap<String, usize>,
     /// The run ids recorded for this day (candidates for the board — each re-verified on render).
     run_ids: Vec<String>,
+    /// Exact Lean-native browser records submitted for this day. These are a SEPARATE ruleset from
+    /// `run_ids`: native verb/argument events cannot honestly be translated into procgen passage
+    /// indices, so the page ranks crowned native records in their own replay-compatible lane.
+    native_run_ids: Vec<String>,
 }
 
 /// A **recorded run** — an UNTRUSTED record (a player name + the recorded [`Playthrough`] + display
@@ -117,6 +134,104 @@ struct Run {
     class: u64,
     /// The recorded receipt chain — the un-retconnable material the surface re-executes.
     play: Playthrough,
+}
+
+/// An untrusted browser-native record retained only so every read can replay it again. The wire is
+/// exactly the one emitted by wasm `NativeDescentWorld.recordJson()`; no state/receipt field is
+/// installed directly.
+struct NativeRun {
+    id: String,
+    day_key: String,
+    record: NativePortableRecord,
+}
+
+const NATIVE_PORTABLE_FORMAT: &str = "dregg.native-descent.record";
+const NATIVE_PORTABLE_VERSION: u32 = 1;
+const MAX_NATIVE_PORTABLE_BYTES: usize = 8 * 1024 * 1024;
+// HTTP wraps the portable object in `{day,record}`. Leave bounded room for that envelope while the
+// record itself remains pinned to wasm's 8 MiB import/export contract below.
+const MAX_NATIVE_SUBMIT_BODY_BYTES: usize = MAX_NATIVE_PORTABLE_BYTES + 64 * 1024;
+
+/// The exact public wire emitted by `wasm::NativeDescentWorld`. This deliberately lives at the
+/// compatibility boundary instead of being coerced into [`SubmitRun`]'s unrelated procgen tape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativePortableRecord {
+    format: String,
+    version: u32,
+    seed: u8,
+    actor: Option<String>,
+    events: Vec<NativePortableEvent>,
+    root_hex: String,
+    checkpoint: Option<NativeCheckpointWire>,
+    completion: Option<NativeCompletionWire>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativePortableEvent {
+    revision: u64,
+    actor: String,
+    turn: String,
+    arg: i64,
+    receipt: serde_json::Value,
+    post: NativeSimWire,
+    root_hex: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeSimWire {
+    depth: u64,
+    spent: u64,
+    wounds: u64,
+    fate: u64,
+    ways: [u64; 3],
+    custody: Vec<u64>,
+    pack: u64,
+    banked: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeCheckpointWire {
+    actor: String,
+    revision: u64,
+    root_hex: String,
+    state: NativeSimWire,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NativeCompletionWire {
+    actor: String,
+    revision: u64,
+    root_hex: String,
+    settlement_receipt_hash_hex: String,
+    /// Stable wire indices. Never expose Rust's platform-sized `usize` in a persisted/browser
+    /// artifact; upstream native state may use either `usize` or `u64` internally.
+    banked_relics: Vec<u64>,
+    crowned: bool,
+}
+
+#[derive(Clone, Debug)]
+struct VerifiedNativeRun {
+    actor: String,
+    turns: usize,
+    root_hex: String,
+    completion: Option<NativeCompletionWire>,
+}
+
+impl VerifiedNativeRun {
+    fn crowned(&self) -> bool {
+        self.completion.as_ref().is_some_and(|c| c.crowned)
+    }
+
+    fn banked_relics(&self) -> usize {
+        self.completion
+            .as_ref()
+            .map_or(0, |c| c.banked_relics.len())
+    }
 }
 
 /// **The spectator/provenance state** — published days + recorded (untrusted) runs, behind one
@@ -151,6 +266,7 @@ pub struct DescentState {
 struct Inner {
     days: HashMap<String, Day>,
     runs: HashMap<String, Run>,
+    native_runs: HashMap<String, NativeRun>,
     /// The day `GET /descent/leaderboard` shows when no `?day=` is given (the first opened day).
     today: Option<String>,
 }
@@ -213,7 +329,24 @@ impl DescentState {
             let day = daily_scene(&seed);
             let scene = parse(&day.source, "daily-descent.scene").expect("the day's scene parses");
             let var_slots = compile_scene(&scene)
-                .map(|c| c.var_slots)
+                .map(|c| {
+                    let ext_keys = c.ext_keys();
+                    c.var_slots
+                        .into_iter()
+                        .filter_map(|(name, key)| {
+                            let index = if key
+                                < u64::try_from(spween_dregg::STATE_SLOTS)
+                                    .expect("the fixed state-slot count fits u64")
+                            {
+                                usize::try_from(key)
+                                    .expect("a bounded state-slot key fits this target")
+                            } else {
+                                spween_dregg::STATE_SLOTS + ext_keys.binary_search(&key).ok()?
+                            };
+                            Some((name, index))
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let universe = day
                 .universe(DAY_AUTHOR)
@@ -228,6 +361,7 @@ impl DescentState {
                     universe,
                     var_slots,
                     run_ids: Vec::new(),
+                    native_run_ids: Vec::new(),
                 },
             );
             if inner.today.is_none() {
@@ -261,7 +395,15 @@ impl DescentState {
     ) -> Result<usize, String> {
         let turns = self.reverify_and_ingest(day_key, run_id, player, level, class, moves)?;
         if let Some(store) = &self.store {
-            let moves_json = serde_json::to_string(moves).unwrap_or_else(|_| "[]".to_string());
+            let stable_moves: Vec<u64> = moves
+                .iter()
+                .copied()
+                .map(|choice| {
+                    u64::try_from(choice).expect("an admitted move index fits the stable wire")
+                })
+                .collect();
+            let moves_json =
+                serde_json::to_string(&stable_moves).unwrap_or_else(|_| "[]".to_string());
             let _ = store.persist_run(&StoredRun {
                 run_id: run_id.to_string(),
                 day_key: day_key.to_string(),
@@ -272,6 +414,80 @@ impl DescentState {
             });
         }
         Ok(turns)
+    }
+
+    /// Verify and retain one browser-native record without pretending it is a procgen move tape.
+    /// The submitted receipt/state/root envelope is replayed from its native verbs through a fresh
+    /// [`NativeDescentOffering`] and must match byte-for-byte. The record's normalized native seed
+    /// must also be the one committed by `day_key`. Exact terminal records receive a share card;
+    /// only a crowned settlement ranks in the board's separate native lane.
+    fn submit_native_record(
+        &self,
+        day_key: &str,
+        record: NativePortableRecord,
+    ) -> Result<(String, VerifiedNativeRun, bool), String> {
+        let (expected_seed, stored_day) = {
+            let inner = self.inner.lock().unwrap();
+            let day = inner
+                .days
+                .get(day_key)
+                .ok_or_else(|| format!("no such day: {day_key}"))?;
+            (
+                native_seed_for_committed_day(&day.seed),
+                StoredDay {
+                    key: day_key.to_string(),
+                    seed_hex: hex32(day.seed.as_bytes()),
+                },
+            )
+        };
+        let verified = verify_native_record(expected_seed, &record)?;
+        if verified.completion.is_none() {
+            return Err(
+                "native record is an exact prefix but has no terminal flee settlement".to_string(),
+            );
+        }
+        let run_id = derive_native_run_id(day_key, &record);
+        let record_json = serde_json::to_string(&record)
+            .map_err(|error| format!("native record serialization: {error}"))?;
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let day = inner
+                .days
+                .get_mut(day_key)
+                .ok_or_else(|| format!("no such day: {day_key}"))?;
+            if !day.native_run_ids.iter().any(|id| id == &run_id) {
+                day.native_run_ids.push(run_id.clone());
+            }
+            inner
+                .native_runs
+                .entry(run_id.clone())
+                .or_insert(NativeRun {
+                    id: run_id.clone(),
+                    day_key: day_key.to_string(),
+                    record,
+                });
+        }
+        let durable = if let Some(store) = &self.store {
+            // `persist_day` is idempotent-by-key (`INSERT OR IGNORE` for sqlite). Confirm the row
+            // names THIS seed before claiming durability: a pre-existing conflicting key must not
+            // yield `durable:true` for a record that boot would later reject against the old seed.
+            let exact_day_persisted = store.persist_day(&stored_day).is_ok()
+                && store
+                    .list_days()
+                    .is_ok_and(|days| days.iter().any(|day| day == &stored_day));
+            exact_day_persisted
+                && store
+                    .persist_native_run(&StoredNativeRun {
+                        run_id: run_id.clone(),
+                        day_key: day_key.to_string(),
+                        record_json,
+                    })
+                    .is_ok()
+        } else {
+            false
+        };
+        Ok((run_id, verified, durable))
     }
 
     /// **Anchor a ranked run's winning turn on the devnet node** — the opt-in bridge from the
@@ -378,12 +594,29 @@ impl DescentState {
             }
         }
         for r in store.list_runs().unwrap_or_default() {
-            let Ok(moves) = serde_json::from_str::<Vec<usize>>(&r.moves_json) else {
+            let Ok(stable_moves) = serde_json::from_str::<Vec<u64>>(&r.moves_json) else {
+                continue;
+            };
+            let Ok(moves) = stable_move_indices(&stable_moves) else {
                 continue;
             };
             // A drop here is silent-and-correct: the row no longer re-verifies.
             let _ = self
                 .reverify_and_ingest(&r.day_key, &r.run_id, &r.player, r.level, r.class, &moves);
+        }
+        for r in store.list_native_runs().unwrap_or_default() {
+            if r.record_json.len() > MAX_NATIVE_PORTABLE_BYTES {
+                continue;
+            }
+            let Ok(record) = serde_json::from_str::<NativePortableRecord>(&r.record_json) else {
+                continue;
+            };
+            // The row key is content-derived. A DB edit cannot rename one authentic record into a
+            // different share artifact, and exact replay below drops any changed envelope.
+            if derive_native_run_id(&r.day_key, &record) != r.run_id {
+                continue;
+            }
+            let _ = self.submit_native_record(&r.day_key, record);
         }
     }
 
@@ -498,6 +731,174 @@ impl DescentState {
     }
 }
 
+/// The browser passes the committed seed's first little-endian word into
+/// `NativeDescentOffering::open`; the Offering alone owns normalization to `1..=251`.
+fn native_seed_for_committed_day(seed: &CommittedSeed) -> u8 {
+    let bytes = seed.as_bytes();
+    let input = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    ((u64::from(input) % 251) + 1) as u8
+}
+
+/// Replay the complete browser record and compare its receipt/state/root envelope exactly. This is
+/// intentionally native verification, not a lossy adapter into procgen choice indices.
+fn verify_native_record(
+    expected_seed: u8,
+    expected: &NativePortableRecord,
+) -> Result<VerifiedNativeRun, String> {
+    if expected.format != NATIVE_PORTABLE_FORMAT {
+        return Err(format!(
+            "unsupported native Descent record format {:?}",
+            expected.format
+        ));
+    }
+    if expected.version != NATIVE_PORTABLE_VERSION {
+        return Err(format!(
+            "unsupported native Descent record version {}",
+            expected.version
+        ));
+    }
+    if expected.seed == 0 || expected.seed > 251 {
+        return Err("native Descent seed is outside 1..=251".to_string());
+    }
+    if expected.seed != expected_seed {
+        return Err(format!(
+            "native record seed {} does not belong to this day (expected {expected_seed})",
+            expected.seed
+        ));
+    }
+    if expected.events.len() > MAX_NATIVE_DESCENT_EVENTS {
+        return Err(format!(
+            "{} events exceeds the native Descent bound",
+            expected.events.len()
+        ));
+    }
+
+    let offering = NativeDescentOffering::new();
+    let mut session = offering
+        .open(SessionConfig::with_seed(u64::from(expected.seed - 1)))
+        .map_err(|error| format!("native deployment failed: {error}"))?;
+    for event in &expected.events {
+        let action = Action::new(&event.turn, &event.turn, event.arg, true);
+        match offering.advance(&mut session, action, DreggIdentity(event.actor.clone())) {
+            Outcome::Landed { .. } => {}
+            Outcome::Refused(reason) => {
+                return Err(format!(
+                    "native event {} refused on replay: {reason}",
+                    event.revision
+                ));
+            }
+        }
+    }
+    let report = offering.verify(&session);
+    if !report.verified {
+        return Err(format!(
+            "native replay verification failed: {}",
+            report.detail
+        ));
+    }
+
+    let actual = native_portable_from_record(&session.export_record());
+    if &actual != expected {
+        return Err(
+            "native record differs from exact action/receipt/state/root replay".to_string(),
+        );
+    }
+    Ok(VerifiedNativeRun {
+        actor: actual
+            .actor
+            .clone()
+            .unwrap_or_else(|| "unclaimed".to_string()),
+        turns: actual.events.len(),
+        root_hex: actual.root_hex,
+        completion: actual.completion,
+    })
+}
+
+fn native_portable_from_record(record: &NativeDescentRecord) -> NativePortableRecord {
+    NativePortableRecord {
+        format: NATIVE_PORTABLE_FORMAT.to_string(),
+        version: NATIVE_PORTABLE_VERSION,
+        seed: record.seed,
+        actor: record
+            .actor
+            .as_ref()
+            .map(|actor| actor.as_str().to_string()),
+        events: record
+            .events
+            .iter()
+            .map(|event| {
+                let (turn, arg) = native_move_wire(event.command);
+                NativePortableEvent {
+                    revision: event.revision,
+                    actor: event.actor.as_str().to_string(),
+                    turn: turn.to_string(),
+                    arg,
+                    receipt: serde_json::to_value(&event.receipt)
+                        .expect("native receipt is serializable"),
+                    post: native_sim_wire(&event.post),
+                    root_hex: hex32(&event.root),
+                }
+            })
+            .collect(),
+        root_hex: hex32(&record.root),
+        checkpoint: record
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| NativeCheckpointWire {
+                actor: checkpoint.actor.as_str().to_string(),
+                revision: checkpoint.revision,
+                root_hex: hex32(&checkpoint.root),
+                state: native_sim_wire(&checkpoint.state),
+            }),
+        completion: record
+            .completion
+            .as_ref()
+            .map(|completion| NativeCompletionWire {
+                actor: completion.actor.as_str().to_string(),
+                revision: completion.revision,
+                root_hex: hex32(&completion.root),
+                settlement_receipt_hash_hex: hex32(&completion.settlement_receipt_hash),
+                banked_relics: completion
+                    .banked_relics
+                    .iter()
+                    .map(|&relic| {
+                        u64::try_from(relic).expect("native relic index fits the stable wire")
+                    })
+                    .collect(),
+                crowned: completion.crowned,
+            }),
+    }
+}
+
+fn native_sim_wire(sim: &dungeon_on_dregg::descent::Sim) -> NativeSimWire {
+    NativeSimWire {
+        depth: sim.depth,
+        spent: sim.spent,
+        wounds: sim.wounds,
+        fate: sim.fate,
+        ways: sim.ways,
+        custody: sim.custody.to_vec(),
+        pack: sim.pack(),
+        banked: sim.bank(),
+    }
+}
+
+fn native_move_wire(command: NativeDescentMove) -> (&'static str, i64) {
+    match command {
+        NativeDescentMove::Delve => ("delve", 0),
+        NativeDescentMove::Unlock { way } => (
+            "unlock",
+            i64::try_from(way).expect("native way index fits the action wire"),
+        ),
+        NativeDescentMove::Smite => ("smite", 0),
+        NativeDescentMove::Loot { relic } => (
+            "loot",
+            i64::try_from(relic).expect("native relic index fits the action wire"),
+        ),
+        NativeDescentMove::Flee => ("flee", 0),
+    }
+}
+
 impl Default for DescentState {
     fn default() -> Self {
         DescentState::new()
@@ -508,6 +909,10 @@ impl Default for DescentState {
 /// (`https://<host>/descent/run/{run_id}`). Opening it re-verifies the run and shows the proof.
 pub fn run_share_path(run_id: &str) -> String {
     format!("/descent/run/{run_id}")
+}
+
+fn native_run_share_path(run_id: &str) -> String {
+    format!("/descent/native/run/{run_id}")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -525,6 +930,9 @@ pub fn run_share_path(run_id: &str) -> String {
 /// - `POST /descent/submit` — the verify-gated HTTP run-ingest: a stranger submits a run's
 ///   reproducible input (day + player + move sequence) and it is re-executed + no-cheat-verified
 ///   before it can rank (an honest run ingested + persisted, a forged run rejected 4xx).
+/// - `POST /descent/native/submit` + `GET /descent/native/run/{id}` — the compatibility lane for
+///   the Lean-native browser's full portable record. It uses exact native replay, never procgen
+///   move-tape coercion; crowned records rank separately and every accepted record gets a card.
 pub fn descent_router(state: Arc<DescentState>) -> Router {
     Router::new()
         // The SHORT landing URL for the board — `GET /descent` renders the no-cheat leaderboard
@@ -536,6 +944,11 @@ pub fn descent_router(state: Arc<DescentState>) -> Router {
         .route("/descent/leaderboard", get(get_leaderboard))
         .route("/descent/run/{id}", get(get_run_card))
         .route("/descent/submit", post(post_submit))
+        .route(
+            "/descent/native/submit",
+            post(post_native_submit).layer(DefaultBodyLimit::max(MAX_NATIVE_SUBMIT_BODY_BYTES)),
+        )
+        .route("/descent/native/run/{id}", get(get_native_run_card))
         .with_state(state)
 }
 
@@ -556,7 +969,84 @@ pub struct SubmitRun {
     #[serde(default)]
     pub class: u64,
     /// The move sequence — the choice index at each passage, in order.
-    pub moves: Vec<usize>,
+    pub moves: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SubmitNativeRun {
+    #[serde(default)]
+    day: Option<String>,
+    record: serde_json::Value,
+}
+
+/// Receive the exact `NativeDescentWorld.recordJson()` envelope. This endpoint exists because its
+/// `{turn,arg}` verbs, native executor receipts, and custody semantics are not the older procgen
+/// board's `Vec<choice_index>` language. It replays through the actual native Offering, compares
+/// every portable field, binds the normalized seed to the requested day, and only then retains a
+/// shareable artifact. Exact prefixes remain local; exact non-crowned exits are shareable but do
+/// not rank.
+async fn post_native_submit(
+    State(state): State<Arc<DescentState>>,
+    Json(body): Json<SubmitNativeRun>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let encoded_len = serde_json::to_vec(&body.record)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX);
+    if encoded_len > MAX_NATIVE_PORTABLE_BYTES {
+        return native_submit_refused(format!(
+            "native Descent record exceeds the {MAX_NATIVE_PORTABLE_BYTES} byte bound"
+        ));
+    }
+    let record: NativePortableRecord = match serde_json::from_value(body.record) {
+        Ok(record) => record,
+        Err(error) => return native_submit_refused(format!("native record JSON: {error}")),
+    };
+    let day = match resolve_submitted_day(&state, body.day).await {
+        Ok(day) => day,
+        Err(error) => return native_submit_refused(error),
+    };
+    match state.submit_native_record(&day, record) {
+        Ok((run_id, verified, durable)) => {
+            let ranked = verified.crowned();
+            let banked_relics = verified.banked_relics();
+            let detail = if ranked {
+                "exact native replay accepted; crowned settlement ranks in the native lane"
+            } else {
+                "exact native replay accepted; shareable, but only a crowned settlement ranks"
+            };
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "verified": true,
+                    "ranked": ranked,
+                    "kind": "exact-native-replay",
+                    "run_id": run_id,
+                    "share": native_run_share_path(&run_id),
+                    "day": day,
+                    "actor": verified.actor,
+                    "turns": verified.turns,
+                    "root": verified.root_hex,
+                    "banked_relics": banked_relics,
+                    "durable": durable,
+                    "detail": detail,
+                })),
+            )
+        }
+        Err(error) => native_submit_refused(error),
+    }
+}
+
+fn native_submit_refused(error: String) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "verified": false,
+            "ranked": false,
+            "kind": "exact-native-replay",
+            "error": error,
+            "detail": "native re-execution rejected the record; nothing was retained",
+        })),
+    )
 }
 
 /// `POST /descent/submit` — **the HTTP run-ingest seam.** Reads a run's reproducible input (day +
@@ -584,15 +1074,21 @@ async fn post_submit(
             );
         }
     };
-    let run_id = derive_run_id(&day, &body.player, &body.moves);
-    match state.submit_run(
-        &day,
-        &run_id,
-        &body.player,
-        body.level,
-        body.class,
-        &body.moves,
-    ) {
+    let moves = match stable_move_indices(&body.moves) {
+        Ok(moves) => moves,
+        Err(why) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ranked": false,
+                    "error": why,
+                    "detail": "the stable move tape could not address this executor — nothing ingested",
+                })),
+            );
+        }
+    };
+    let run_id = derive_run_id(&day, &body.player, &moves);
+    match state.submit_run(&day, &run_id, &body.player, body.level, body.class, &moves) {
         Ok(turns) => {
             // The run ranks in-process. If a devnet is opted in (`DREGG_NODE_URL`), ALSO anchor its
             // winning turn on the running node's ledger — a real committed turn on-chain, confirmed
@@ -716,6 +1212,37 @@ fn derive_run_id(day: &str, player: &str, moves: &[usize]) -> String {
     format!("sub-{hex}")
 }
 
+fn stable_move_indices(moves: &[u64]) -> Result<Vec<usize>, String> {
+    moves
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(turn, choice)| {
+            usize::try_from(choice).map_err(|_| {
+                format!("move {turn} choice index {choice} exceeds this executor target")
+            })
+        })
+        .collect()
+}
+
+fn derive_native_run_id(day: &str, record: &NativePortableRecord) -> String {
+    let record_json = serde_json::to_vec(record).unwrap_or_default();
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg.native-descent.share.v1");
+    h.update(
+        &u64::try_from(day.len())
+            .expect("the bounded day key fits u64")
+            .to_be_bytes(),
+    );
+    h.update(day.as_bytes());
+    h.update(&record_json);
+    let hex: String = h.finalize().as_bytes()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("native-{hex}")
+}
+
 /// The `?day=` selector for the leaderboard (absent → the default "today").
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DayQuery {
@@ -784,7 +1311,32 @@ async fn get_leaderboard(
     rows.sort_by(|a, b| a.turns.cmp(&b.turns).then_with(|| a.player.cmp(&b.player)));
     merge_per_human(&mut rows);
 
-    Html(leaderboard_page(day, &rows))
+    // Native browser records speak a different game language. Re-verify their complete portable
+    // envelope on this render and rank only crowned settlements, in a visibly separate lane.
+    let native_seed = native_seed_for_committed_day(&day.seed);
+    let mut native_rows = Vec::new();
+    for rid in &day.native_run_ids {
+        let Some(run) = inner.native_runs.get(rid) else {
+            continue;
+        };
+        if run.day_key != day.key {
+            continue;
+        }
+        if let Ok(verified) = verify_native_record(native_seed, &run.record) {
+            if verified.crowned() {
+                let relics = verified.banked_relics();
+                native_rows.push(NativeRow {
+                    run_id: run.id.clone(),
+                    actor: verified.actor,
+                    turns: verified.turns,
+                    relics,
+                });
+            }
+        }
+    }
+    native_rows.sort_by(|a, b| a.turns.cmp(&b.turns).then_with(|| a.actor.cmp(&b.actor)));
+
+    Html(leaderboard_page(day, &rows, &native_rows))
 }
 
 /// **One row per HUMAN, their best verified run.** `rows` must already be ranked (best first), so
@@ -843,6 +1395,31 @@ async fn get_run_card(
     ))
 }
 
+/// `GET /descent/native/run/{id}` replays the browser's native record again. This is the shareable
+/// compatibility artifact; it does not rely on the verdict computed during submission.
+async fn get_native_run_card(
+    State(state): State<Arc<DescentState>>,
+    Path(id): Path<String>,
+) -> Html<String> {
+    let (record, day_key, title, expected_seed) = {
+        let inner = state.inner.lock().unwrap();
+        let Some(run) = inner.native_runs.get(&id) else {
+            return Html(run_missing(&id));
+        };
+        let Some(day) = inner.days.get(&run.day_key) else {
+            return Html(run_missing(&id));
+        };
+        (
+            run.record.clone(),
+            day.key.clone(),
+            day.day.title.clone(),
+            native_seed_for_committed_day(&day.seed),
+        )
+    };
+    let replay = verify_native_record(expected_seed, &record);
+    Html(native_run_card_page(&id, &day_key, &title, &record, replay))
+}
+
 /// Read a committed var off a playthrough's final recorded state via the day's var→slot map (`0` if
 /// absent). Sound to read only when the chain re-verifies (which guarantees the recorded state is the
 /// faithfully-reproduced one).
@@ -874,6 +1451,14 @@ struct Row {
     depth: u64,
 }
 
+/// One crowned browser-native run, verified under the Lean-native ruleset on this render.
+struct NativeRow {
+    run_id: String,
+    actor: String,
+    turns: usize,
+    relics: usize,
+}
+
 /// Hex-encode 32 bytes (a committed seed, for durable persistence — the full round-trip encoding).
 fn hex32(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -902,7 +1487,7 @@ fn seed_tag(seed: &CommittedSeed) -> String {
 
 /// The leaderboard page — a ranked table of provably-winning runs, each row re-verified on render
 /// and linking to its run-card.
-fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
+fn leaderboard_page(day: &Day, rows: &[Row], native_rows: &[NativeRow]) -> String {
     let mut table = String::new();
     if rows.is_empty() {
         // An empty board is a STATEMENT, not a blank: it is empty *because* nothing has proven
@@ -935,15 +1520,48 @@ fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
         }
         table.push_str("</tbody></table></div>");
     }
+    let mut native_table = String::new();
+    native_table.push_str(
+        "<section class=\"deos-section\"><p class=\"eyebrow\">Lean-native browser ruleset</p>\
+         <h2>Crowned native runs</h2><p class=\"prose\">These records are not converted into the \
+         procgen choice tape above. Each row replays its native <span class=\"mono\">delve / \
+         smite / loot / unlock / flee</span> events and exact receipt, state, and journal-root \
+         envelope. Only a crowned settlement ranks.</p>",
+    );
+    if native_rows.is_empty() {
+        native_table.push_str(
+            "<p class=\"tag-muted\">No crowned native browser run has re-verified for this day.</p>",
+        );
+    } else {
+        native_table.push_str(
+            "<div class=\"table-wrap\"><table class=\"board\"><thead><tr><th>#</th>\
+             <th>browser actor</th><th>landed turns</th><th>relics</th><th>proof</th></tr></thead><tbody>",
+        );
+        for (index, row) in native_rows.iter().enumerate() {
+            native_table.push_str(&format!(
+                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{actor}</td>\
+                 <td class=\"num\">{turns}</td><td class=\"num\">{relics}</td>\
+                 <td><a href=\"{href}\">verify native record \
+                 <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
+                rank = index + 1,
+                actor = esc(&row.actor),
+                turns = row.turns,
+                relics = row.relics,
+                href = esc(&native_run_share_path(&row.run_id)),
+            ));
+        }
+        native_table.push_str("</tbody></table></div>");
+    }
+    native_table.push_str("</section>");
     let body = format!(
         "<main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
          <p class=\"eyebrow\">Re-verified on this request</p>\
          <h1>The Descent — {title}</h1>\
-         <p class=\"deck\">The no-cheat leaderboard. Every row below was re-executed from its \
-         recorded moves against a fresh, identically-seeded world and required to reach the hoard. \
-         A forged or unfinished run does not appear — it is excluded by re-verification, not by \
-         trusting a stored flag.</p></div>\
+         <p class=\"deck\">The no-cheat leaderboard. Procgen rows are re-executed from passage \
+         choices and required to reach the hoard. Browser-native rows are replayed under their \
+         distinct Lean-native verb/receipt rules and required to crown. A forged or unfinished run \
+         appears in neither lane — exclusion comes from re-verification, not a stored flag.</p></div>\
          <div class=\"kv\">\
          <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
          <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
@@ -951,6 +1569,7 @@ fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
          <div><p class=\"k\">Depth</p><p class=\"v mono\">{rooms}</p></div>\
          </div>\
          {table}\
+         {native_table}\
          <div class=\"receipt ok\"><span class=\"dot\"></span>\
          <span class=\"label\">independent by construction</span>\
          <span class=\"detail\">open any run to re-verify it yourself</span></div>\
@@ -961,10 +1580,94 @@ fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
         whp = day.day.warden_hp,
         rooms = day.day.deepening_rooms,
         table = table,
+        native_table = native_table,
     );
     document(
         &format!("The Descent — {} · leaderboard", day.day.title),
         "descent-board",
+        &body,
+    )
+}
+
+fn native_run_card_page(
+    run_id: &str,
+    day_key: &str,
+    title: &str,
+    record: &NativePortableRecord,
+    replay: Result<VerifiedNativeRun, String>,
+) -> String {
+    let (verified, actor, turns, root, banked, crowned, detail) = match replay {
+        Ok(run) => {
+            let banked = run.banked_relics();
+            let crowned = run.crowned();
+            (
+                true,
+                run.actor,
+                run.turns,
+                run.root_hex,
+                banked,
+                crowned,
+                "The server deployed a fresh Lean-native world, replayed every verb through the native \
+                 Offering, and reproduced the complete receipt, post-state, checkpoint, completion, \
+                 and journal-root envelope byte-for-byte."
+                    .to_string(),
+            )
+        }
+        Err(error) => (
+            false,
+            record
+                .actor
+                .clone()
+                .unwrap_or_else(|| "unclaimed".to_string()),
+            record.events.len(),
+            record.root_hex.clone(),
+            0,
+            false,
+            format!("Exact native replay refused this record: {error}"),
+        ),
+    };
+    let verdict = if verified { "PASS" } else { "FAIL" };
+    let verdict_class = if verified { "pass" } else { "fail" };
+    let outcome = if !verified {
+        "unverifiable"
+    } else if crowned {
+        "CROWNED — Crown of the Deep banked in the terminal exit"
+    } else if record.completion.is_some() {
+        "SETTLED — exact exit, not crowned and not ranked"
+    } else {
+        "IN PROGRESS — exact prefix, not ranked"
+    };
+    let body = format!(
+        "<div class=\"crumb\"><a href=\"/descent/leaderboard?day={day}\">← leaderboard</a>\
+         <span class=\"sep\">·</span><strong>{actor}</strong><span class=\"sep\">·</span>\
+         <span class=\"sid\">native record {id}</span></div><main class=\"session\">\
+         <div class=\"page-head\" style=\"padding-top:var(--s4)\"><p class=\"eyebrow\">\
+         Lean-native compatibility artifact · {title}</p><h1>Exact native replay</h1>\
+         <p class=\"deck\">This is a native browser record. It is verified under the \
+         Lean-authored verb/receipt ruleset and is deliberately not represented as the older \
+         procgen leaderboard's passage-choice tape.</p></div>\
+         <section class=\"verdict {class}\"><h2><span class=\"stamp\">{verdict}</span>\
+         Independent verification — {verdict}</h2><p>{detail}</p></section>\
+         <div class=\"kv\"><div><p class=\"k\">Outcome</p><p class=\"v\">{outcome}</p></div>\
+         <div><p class=\"k\">Landed turns</p><p class=\"v mono\">{turns}</p></div>\
+         <div><p class=\"k\">Banked relics</p><p class=\"v mono\">{banked}</p></div>\
+         <div><p class=\"k\">Journal root</p><p class=\"v mono\">{root}</p></div></div>\
+         </main>",
+        day = esc(day_key),
+        actor = esc(&actor),
+        id = esc(run_id),
+        title = esc(title),
+        class = verdict_class,
+        verdict = verdict,
+        detail = esc(&detail),
+        outcome = outcome,
+        turns = turns,
+        banked = banked,
+        root = esc(&root),
+    );
+    document(
+        &format!("The Descent — {actor} · native proof"),
+        "descent-run",
         &body,
     )
 }

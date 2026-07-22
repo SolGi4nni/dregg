@@ -106,6 +106,44 @@ fn a_real_winning_playthrough_is_accepted_and_ranked() {
 }
 
 #[test]
+fn a_win_predicate_reads_a_spilled_var_from_the_dense_snapshot_tail() {
+    let mut source = String::from(
+        "---\nid: wide-win\ntitle: Wide Win\nweight: 1\n---\n\n=== start\n\n* [Commit the wide state]\n",
+    );
+    for i in 0..20u64 {
+        source.push_str(&format!("  ~ v{i:02} = {}\n", i + 1));
+    }
+    source.push_str("  -> END\n");
+
+    let universe = Universe::authored(
+        "Wide Win",
+        "snapshot-tail-test",
+        &source,
+        WinCondition::ended_with(&[("v19", 20)]),
+    )
+    .expect("a scene wider than the fixed register file publishes");
+    let play = record_playthrough(&universe, &[0]).expect("the wide move commits");
+
+    assert!(
+        play.steps[0].state.len() > spween_dregg::STATE_SLOTS,
+        "the playthrough fingerprint must carry its committed ext tail"
+    );
+    assert_eq!(
+        verify_completion(
+            &universe,
+            &Completion {
+                universe: universe.id(),
+                player: "wide-player".into(),
+                play,
+                claimed_turns: 1,
+            },
+        ),
+        Ok(1),
+        "the win checker must map the canonical u64 key to the dense snapshot tail, not use it as a Vec index"
+    );
+}
+
+#[test]
 fn a_forged_completion_is_rejected_on_replay() {
     let mut reg = Registry::new();
     let u = salt_shore();

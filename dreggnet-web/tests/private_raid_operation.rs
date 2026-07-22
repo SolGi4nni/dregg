@@ -175,8 +175,10 @@ async fn private_assignment_crosses_the_shared_transport_and_changes_the_live_ga
 
     assert_eq!(response(&app, upload(&route, honest)).await.0, 409);
 
-    // A different authenticated web actor cannot spend the proof submitter's
-    // capability.  The refusal does not consume the Mender recovery.
+    // A different asserted web actor cannot spend the proof submitter's
+    // capability. The cookie is not authentication; the operation binds the
+    // verified proof result to the exact actor label that submitted it. The
+    // refusal does not consume the Mender recovery.
     let (status, refused) = response(&app, act(&act_path, mender_choice, "raid-thief")).await;
     assert_eq!(status, 200);
     assert!(String::from_utf8(refused).unwrap().contains("Refused"));

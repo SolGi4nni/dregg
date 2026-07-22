@@ -32,12 +32,16 @@ use dregg_circuit::poseidon2;
 // `verify_anonymous_presentation` verifies the committed BLINDED ring-membership descriptor
 // (`dregg-blinded-membership-4ary-general-depth{N}`) via `descriptor_by_name` →
 // `verify_vm_descriptor2` — the Golden-Lift flip off the hand-written blinded-Merkle STARK.
+pub use dregg_circuit_prove::faithful_note_spend::{FaithfulNoteOpening, FaithfulNoteSpendPublic};
+use dregg_circuit_prove::faithful_note_spend::{FaithfulNoteSpendClaim, prove_zk};
 use dregg_circuit_prove::note_spend_leaf_adapter::{
     note_spend_leaf_public_inputs, note_spend_mint_hash_felt, note_spend_to_descriptor2,
 };
 use dregg_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
+pub use dregg_commit::poseidon2_tree::Poseidon2NoteProof16;
 use dregg_dsl_runtime::note_spending::generate_note_spending_trace;
 use dregg_token::AuthRequest;
+use dregg_turn::faithful_note_spend::FaithfulNoteSpendProofCarrier;
 
 // `discovery` is gated behind `network` (tokio-using); the lone method below
 // that needs it is gated the same way.
@@ -94,6 +98,40 @@ pub struct NoteTransferProof {
     pub recipient_secret: NoteSecret,
 }
 
+/// Exact faithful-v2 hidden-note spend artifact ready for `Effect::NoteSpend`.
+///
+/// The inner proof is always produced by the Lean-emitted FNO2/FNC2/FNF2
+/// relation under HidingFRI, then wrapped in the strict FNSP-v2 carrier.  The
+/// verifier learns the fields in [`FaithfulNoteSpendPublic`] (including value
+/// and asset type); the owner address, spending key, nonce, randomness,
+/// commitment, and membership path stay private.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FaithfulHiddenSpendProof {
+    /// Public statement reconstructed by the predicate-specific verifier.
+    pub public: FaithfulNoteSpendPublic,
+    /// Strict carrier for the existing `NoteSpend::spending_proof` byte field.
+    pub carrier: FaithfulNoteSpendProofCarrier,
+}
+
+impl FaithfulHiddenSpendProof {
+    /// Consume this proved artifact into the exact clear-value `NoteSpend`
+    /// effect accepted by the faithful-v2 executor path.
+    ///
+    /// FNSP-v2 publicly binds `value` and `asset_type`, so this constructor
+    /// always sets `value_commitment` to `None`.  Offering a committed-mode
+    /// switch here would create a value statement the v2 AIR does not prove.
+    pub fn into_note_spend_effect(self) -> dregg_turn::Effect {
+        dregg_turn::Effect::NoteSpend {
+            nullifier: Nullifier(self.public.nullifier),
+            note_tree_root: root8_to_bytes(self.public.historical_note_root),
+            value: self.public.value,
+            asset_type: self.public.asset_type,
+            spending_proof: self.carrier.encode(),
+            value_commitment: None,
+        }
+    }
+}
+
 /// A predicate proof generated with fresh blinding so it can't be correlated
 /// with other proofs from the same holder.
 #[derive(Clone, Debug)]
@@ -144,6 +182,62 @@ pub struct AccumulatorNonMembershipProof {
 // =============================================================================
 // Privacy API Implementation
 // =============================================================================
+
+/// Build the exact faithful-v2 hidden-note spend proof used by finalization.
+///
+/// `historical_note_root` is `(authenticated height, faithful root8)`.  The
+/// planned successor root must be computed from the durable nullifier frontier
+/// plus this spend before calling this function; the executor recomputes it and
+/// requires exact equality.  There is deliberately no legacy descriptor or
+/// non-hiding fallback.
+///
+/// This API proves consumption of one existing note.  It does **not** create an
+/// output note and does not attempt to derive a recipient secret from a public
+/// key.  Output-note ownership must be established by the recipient-owned
+/// shielded address/encryption flow.
+pub fn build_faithful_hidden_spend_proof(
+    opening: &FaithfulNoteOpening,
+    membership: &Poseidon2NoteProof16,
+    historical_note_root: (u64, [u32; 8]),
+    planned_successor_nullifier_root: [u32; 8],
+) -> Result<FaithfulHiddenSpendProof, SdkError> {
+    let claim = FaithfulNoteSpendClaim {
+        root_height: historical_note_root.0,
+        historical_note_root: historical_note_root.1,
+        successor_nullifier_root: planned_successor_nullifier_root,
+    };
+    let (proof, public) = prove_zk(opening, membership, claim)
+        .map_err(|error| SdkError::InvalidWitness(format!("faithful hidden spend: {error}")))?;
+    let inner_proof_bytes = proof.to_postcard().map_err(|error| {
+        SdkError::InvalidWitness(format!("faithful hidden spend proof encoding: {error}"))
+    })?;
+    package_faithful_hidden_spend_proof(public, inner_proof_bytes)
+}
+
+fn package_faithful_hidden_spend_proof(
+    public: FaithfulNoteSpendPublic,
+    inner_proof_bytes: Vec<u8>,
+) -> Result<FaithfulHiddenSpendProof, SdkError> {
+    public
+        .validate()
+        .map_err(|error| SdkError::InvalidWitness(format!("faithful hidden spend: {error}")))?;
+    let successor_nullifier_root = root8_to_bytes(public.successor_nullifier_root);
+    let carrier = FaithfulNoteSpendProofCarrier::new(
+        public.root_height,
+        successor_nullifier_root,
+        inner_proof_bytes,
+    )
+    .map_err(|error| SdkError::InvalidWitness(format!("faithful hidden spend carrier: {error}")))?;
+    Ok(FaithfulHiddenSpendProof { public, carrier })
+}
+
+fn root8_to_bytes(root: [u32; 8]) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    for (lane, value) in root.into_iter().enumerate() {
+        bytes[4 * lane..4 * lane + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
 
 impl AgentCipherclerk {
     /// Prove authorization without revealing which federation member you are.
@@ -768,6 +862,84 @@ pub fn verify_note_spending(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn faithful_hidden_spend_packages_exact_v2_carrier_without_a_second_proof() {
+        let public = FaithfulNoteSpendPublic {
+            root_height: 0x1122_3344_5566_7788,
+            historical_note_root: core::array::from_fn(|lane| 0x1000 + lane as u32),
+            nullifier: core::array::from_fn(|lane| 0x80u8.wrapping_add(lane as u8)),
+            value: 0x0123_4567_89ab_cdef,
+            asset_type: 0x8899_aabb_ccdd_eeff,
+            successor_nullifier_root: core::array::from_fn(|lane| 0x2000 + lane as u32),
+        };
+        let inner = vec![0xa5, 0x5a, 0x11];
+        let artifact = package_faithful_hidden_spend_proof(public, inner.clone())
+            .expect("canonical public statement packages");
+
+        assert_eq!(artifact.public, public);
+        assert_eq!(artifact.carrier.root_height(), public.root_height);
+        assert_eq!(
+            artifact.carrier.successor_nullifier_root(),
+            root8_to_bytes(public.successor_nullifier_root)
+        );
+        assert_eq!(artifact.carrier.inner_proof_bytes(), inner);
+        assert_eq!(
+            FaithfulNoteSpendProofCarrier::decode(&artifact.carrier.encode()),
+            Ok(artifact.carrier.clone())
+        );
+
+        let encoded_carrier = artifact.carrier.encode();
+        match artifact.into_note_spend_effect() {
+            dregg_turn::Effect::NoteSpend {
+                nullifier,
+                note_tree_root,
+                value,
+                asset_type,
+                spending_proof,
+                value_commitment,
+            } => {
+                assert_eq!(nullifier.0, public.nullifier);
+                assert_eq!(note_tree_root, root8_to_bytes(public.historical_note_root));
+                assert_eq!(value, public.value);
+                assert_eq!(asset_type, public.asset_type);
+                assert_eq!(spending_proof, encoded_carrier);
+                assert_eq!(value_commitment, None);
+            }
+            other => panic!("faithful spend lowered to the wrong effect: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn faithful_hidden_spend_refuses_hostile_statement_before_proving() {
+        let opening = FaithfulNoteOpening {
+            owner: [0; 32],
+            value: 7,
+            asset_type: 9,
+            creation_nonce: [0x44; 32],
+            randomness: [0x55; 32],
+            spending_key: [0x66; 32],
+        };
+        let membership = Poseidon2NoteProof16 {
+            leaf: [BabyBear::ZERO; 16],
+            siblings: vec![[[BabyBear::ZERO; 8]; 3]; 16],
+            positions: vec![0; 16],
+        };
+
+        // The native preflight derives FNO2 and refuses this mismatched owner
+        // before constructing the 1023-column trace or entering HidingFRI.
+        let error = build_faithful_hidden_spend_proof(&opening, &membership, (5, [0; 8]), [0; 8])
+            .expect_err("an address unrelated to the hidden key must refuse");
+        assert!(error.to_string().contains("owner is not the FNO2 address"));
+
+        // Root lanes are strict canonical BabyBear encodings, never reduced.
+        let mut noncanonical = [0; 8];
+        noncanonical[3] = BABYBEAR_P;
+        let error =
+            build_faithful_hidden_spend_proof(&opening, &membership, (5, noncanonical), [0; 8])
+                .expect_err("a noncanonical historical root must refuse");
+        assert!(error.to_string().contains("noncanonical for BabyBear"));
+    }
 
     #[test]
     fn test_create_private_note_produces_valid_commitment() {

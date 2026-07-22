@@ -8,20 +8,20 @@
 //! receipt, an out-of-turn / illegal one is a [`dreggnet_offerings::Outcome::Refused`] that
 //! commits nothing).
 //!
-//! **The differentiated bit — the per-player fog.** [`Offering::render`] paints ONE public
+//! **The differentiated bit — the per-player fog plus live admission.** [`Offering::render`] paints ONE public
 //! surface (both hands are FOG — a count + the committed hand root). [`Offering::render_for`]
 //! paints the surface *as a specific viewer sees it*: the viewer's OWN hand is revealed (the
-//! card ids they hold, sourced from the [`crate::hidden_hand`] committed [`HandTree`]), while
+//! exact distinct card ids held by the reference engine and committed by the
+//! [`crate::hidden_hand`] [`HandTree`]), while
 //! the opponent stays fog. So player A's card ids appear in A's view and NOT in B's view of
 //! the same table — the hidden-hand fog, in the UI.
 //!
-//! HONEST SCOPE: this is the hidden hand **in the UI** (what a frontend paints for a viewer) —
-//! DISTINCT from the hidden hand **in the proof** (the committed Merkle fold the executor gates
-//! on, [`crate::hidden_hand`]). The two agree (the surface reveals what the viewer legitimately
-//! holds under their committed root) but are separate seams. The guild-lane table + the
-//! coordinate-grid hand + the action menu are the deos affordance surface; the play wiring is a
-//! real [`crate::game::MultiwayTug`] turn. NAMED NEXT: an `AutomataflOffering` over the same
-//! coordinate-grid board node.
+//! The guild-lane table + coordinate-grid hand + action menu are the deos affordance surface.
+//! On advance, every exact 4/3/2/1-card consumption carries its private inventory membership
+//! witness into the executor. The Lean-authored rules action and the witnessed hidden action share
+//! one atomic turn, so either both cells land or neither does. HONEST RESIDUAL: duplicate-card
+//! consumption is an exact host ratchet checked again by fresh-seed replay; a protocol-native
+//! dynamic-root/nullifier tooth is not yet installed.
 
 use deos_view::{CoordCell, MenuItem, PillCase, ViewNode};
 use dreggnet_offerings::{
@@ -29,8 +29,7 @@ use dreggnet_offerings::{
     VerifyReport,
 };
 
-use crate::game::MultiwayTug;
-use crate::hidden_hand::{HandTree, deck_guild};
+use crate::hidden_hand::{HandTree, HiddenHandLedger, deck_guild};
 use crate::reference::{ActionKind, Engine, INFLUENCE, N_GUILDS, Player, Projection};
 
 /// The default round seed when a [`SessionConfig`] pins none.
@@ -74,28 +73,39 @@ pub struct TugSession {
     /// Deterministic deployment/deal seed. Replay verification opens a fresh
     /// confined game from this exact seed and re-drives every accepted input.
     seed: u64,
-    /// The deployed executor game — a play commits its projection as one real verified turn.
-    game: MultiwayTug,
+    /// One embedded executor containing both the Lean-authored rules cell and the witnessed
+    /// hidden-hand cell. Every Offering advance is an atomic multi-action turn over both.
+    runtime: HiddenHandLedger,
     /// The reference mover — card identities + the next projection each play commits.
     engine: Engine,
-    /// Each seat's committed hidden hand (the [`crate::hidden_hand`] Merkle-committed hand). The
-    /// viewer's own hand is read off theirs; the opponent's is fog (a count + the committed root).
+    /// Each seat's CURRENT committed hidden hand. It is rebuilt from the engine's exact distinct
+    /// card ids after every draw-and-play; there is no independently invented UI deal.
     hands: [HandTree; 2],
     /// Whether the round has ended (the round completed).
     ended: bool,
-    /// THE MATCH RECORD (the whole-match-fold seam): each seat's dealt hand exactly as committed
-    /// at open — the `(card_id, blinding nonce)` pairs under the root the opponent saw as fog.
-    /// Together with [`TugSession::plays_of`] and the terminal projection this IS the player's
-    /// private `TugMatch` record the Phase-3 fold consumes; it leaves the session only through
-    /// the explicit owner-facing accessors below (never a render).
-    dealt: [Vec<(u64, u64)>; 2],
-    /// The ordered card ids each seat has PLAYED (each was membership-proven under the
-    /// then-current remaining-hand root when it landed) — the other half of the match record.
+    /// THE PRIVATE FOLD RECORD: all ten distinct cards entrusted to each player during this
+    /// deterministic round (opening six + four draws), committed with stable per-card blinds.
+    /// This is deliberately separate from `hands`, whose root tracks only the CURRENT hand.
+    fold_inventory: [Vec<(u64, u64)>; 2],
+    /// Each seat's full-round inventory with already-consumed cards removed. Its root is the
+    /// hidden ledger's dynamic remaining-inventory commitment; unlike `hands`, it includes future
+    /// draws and is therefore never rendered or exposed while the round is live.
+    proof_hands: [HandTree; 2],
+    /// The ordered card ids each seat actually PLAYED (all cards consumed by an action, rather
+    /// than one arbitrary representative). Every id belongs to that seat's `fold_inventory`.
     plays: [Vec<u64>; 2],
     /// Accepted player inputs, in order. Refusals never enter this log. This is
     /// deliberately action-level rather than a trusted projection snapshot:
     /// [`Offering::verify`] replays it through a fresh engine and executor.
     history: Vec<LandedInput>,
+}
+
+/// The terminal owner-only material handed to the post-match fold. It is unavailable while a
+/// round is live, so the precomputed four future draws cannot leak through the public session API.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TugPrivateMatchRecord {
+    pub hand: Vec<(u64, u64)>,
+    pub plays: Vec<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,20 +132,18 @@ impl TugSession {
         self.ended || self.engine.projection().scored == 1
     }
 
-    /// THE MATCH-RECORD SEAM — the seat's dealt hidden hand, exactly as committed at open: the
-    /// `(card_id, blinding nonce)` pairs under the hand root the opponent only ever saw as fog.
-    /// This is the seat OWNER's private record (it is never rendered to any viewer); a frontend
-    /// reads it solely to hand the player's own whole-match fold its `TugMatch` — the fold whose
-    /// public inputs are `[blinded_leaf, hand_root]`, never the cards.
-    pub fn dealt_hand(&self, seat: Player) -> Vec<(u64, u64)> {
-        self.dealt[seat.idx()].clone()
-    }
-
-    /// The ordered card ids `seat` has played so far — each landed under the then-current
-    /// remaining-hand root, so replaying them through `TugMatch::leaves()` re-proves the same
-    /// membership chain. The other half of the seat's private match record.
-    pub fn plays_of(&self, seat: Player) -> Vec<u64> {
-        self.plays[seat.idx()].clone()
+    /// THE MATCH-RECORD SEAM — after SCORE only, return the seat's private full-round inventory
+    /// (opening hand + later draws) and actual played-card order. While the match is live this is
+    /// `None`: a frontend cannot use the fold accessor to peek at future draws. The fold's public
+    /// inputs never contain these card ids.
+    pub fn terminal_match_record(&self, seat: Player) -> Option<TugPrivateMatchRecord> {
+        if !self.ended() {
+            return None;
+        }
+        Some(TugPrivateMatchRecord {
+            hand: self.fold_inventory[seat.idx()].clone(),
+            plays: self.plays[seat.idx()].clone(),
+        })
     }
 
     /// The terminal WIN facts once the round has scored: `(winner, charm)` where `winner` is
@@ -153,7 +161,7 @@ impl TugSession {
 
     /// The committed public projection (both hands appear as counts here — the fog datum).
     fn projection(&self) -> Projection {
-        self.game.read_projection()
+        self.runtime.read_projection()
     }
 
     /// The guild-lane table: one row per guild — its influence WEIGHT as a [`ViewNode::Pill`],
@@ -214,12 +222,22 @@ impl TugSession {
         ViewNode::Menu { items }
     }
 
-    /// The viewer's OWN hand — the revealed cards (their ids + guild), as a text list AND a
+    /// The viewer's OWN CURRENT hand — the exact engine cards (their ids + guild), as a text list AND a
     /// [`ViewNode::CoordGrid`] board (the coordinate-grid node) with the whole hand highlighted
     /// (the viewer's active set). The card ids are read off the committed [`HandTree`] — the
     /// hidden-hand source, revealed only to its owner.
     fn own_hand(&self, seat: Player) -> ViewNode {
         let ids = self.hands[seat.idx()].card_ids();
+        debug_assert_eq!(
+            ids,
+            self.engine
+                .hand(seat)
+                .iter()
+                .copied()
+                .map(u64::from)
+                .collect::<Vec<_>>(),
+            "the rendered committed hand must be the engine hand"
+        );
         let mut lines = vec![ViewNode::Text(format!("Your hand ({} cards):", ids.len()))];
         let mut cells = Vec::with_capacity(ids.len());
         for id in &ids {
@@ -354,37 +372,44 @@ impl TugSession {
     }
 }
 
-/// The `(card_id, nonce)` openings a committed hand tree was built from — the dealt record the
-/// match fold replays (read back through the tree's own stored openings).
-fn hand_openings(tree: &HandTree) -> Vec<(u64, u64)> {
-    tree.card_ids()
+/// Stable per-card blind. A card keeps the same opening while it moves from deck to hand; only
+/// the set committed under the current-hand root changes.
+fn nonce_of(seed: u64, card: u64) -> u64 {
+    let mut z = seed
+        .wrapping_add(card.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_add(0xA5A5_5A5A_1234_9876);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z ^ (z >> 27)
+}
+
+fn openings_for(seed: u64, cards: impl IntoIterator<Item = u8>) -> Vec<(u64, u64)> {
+    cards
         .into_iter()
-        .filter_map(|id| tree.opening(id))
+        .map(|card| {
+            let card = u64::from(card);
+            (card, nonce_of(seed, card))
+        })
         .collect()
 }
 
-/// Deal the two committed hidden hands from `seed` — distinct card ids `0..12`, seat A the first
-/// six, seat B the next six, each blinded by a deterministic per-card nonce. The remaining ids
-/// fund the (out-of-scope-here) draw. The committed roots are the fog the opponent sees.
-fn deal_hidden_hands(seed: u64) -> [HandTree; 2] {
-    let nonce_of = |card: u64| -> u64 {
-        // A tiny deterministic blind per card (splitmix-flavored).
-        let mut z = seed
-            .wrapping_add(card.wrapping_mul(0x9E37_79B9_7F4A_7C15))
-            .wrapping_add(0xA5A5_5A5A_1234_9876);
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z ^ (z >> 27)
-    };
-    let hand_for = |base: u64| -> HandTree {
-        let cards: Vec<(u64, u64)> = (0..HAND_SIZE as u64)
-            .map(|i| {
-                let card = base + i;
-                (card, nonce_of(card))
-            })
-            .collect();
-        HandTree::commit(cards)
-    };
-    [hand_for(0), hand_for(HAND_SIZE as u64)]
+/// Commit the engine's ACTUAL current hands. Draws enter this root and every card consumed by
+/// an action leaves it; the UI and the mover therefore have one deal, not peer copies.
+fn commit_engine_hands(engine: &Engine, seed: u64) -> [HandTree; 2] {
+    [Player::A, Player::B]
+        .map(|seat| HandTree::commit(openings_for(seed, engine.hand(seat).iter().copied())))
+}
+
+/// Precompute each seat's private full-round inventory for the whole-match fold. The deterministic
+/// engine assigns every distinct card exactly once; this record contains all ten cards each seat
+/// consumes, while the live `hands` roots expose only current-hand commitments.
+fn fold_inventory(seed: u64) -> [Vec<(u64, u64)>; 2] {
+    let mut engine = Engine::new(seed);
+    let mut cards = [Vec::new(), Vec::new()];
+    while !engine.round_complete() {
+        let mv = engine.play_next();
+        cards[mv.player().idx()].extend(mv.played_cards());
+    }
+    cards.map(|cards| openings_for(seed, cards))
 }
 
 impl Offering for TugOffering {
@@ -393,23 +418,27 @@ impl Offering for TugOffering {
     fn open(&self, cfg: SessionConfig) -> Result<Self::Session, OfferingError> {
         let seed = cfg.seed.unwrap_or(DEFAULT_SEED);
         let engine = Engine::new(seed);
-        let game =
-            MultiwayTug::deploy(seed as u8).map_err(|e| OfferingError::Deploy(e.to_string()))?;
-        // Seed the executor genesis from the reference initial projection.
-        game.seed(&engine.projection())
+        let hands = commit_engine_hands(&engine, seed);
+        let fold_inventory = fold_inventory(seed);
+        let proof_hands = fold_inventory.clone().map(HandTree::commit);
+        let mut runtime = HiddenHandLedger::deploy(seed as u8)
             .map_err(|e| OfferingError::Deploy(e.to_string()))?;
-        let hands = deal_hidden_hands(seed);
-        // Record each seat's dealt openings NOW (the match-record seam): the committed trees
-        // themselves shed played cards as the round runs, but the fold replays from the FULL
-        // dealt hand, so the open-time record is what `TugMatch` consumes.
-        let dealt = [hand_openings(&hands[0]), hand_openings(&hands[1])];
+        // One genesis receipt seeds the Lean rules cell and pins both private inventory roots.
+        runtime
+            .start_round(
+                &engine.projection(),
+                proof_hands[Player::A.idx()].root(),
+                proof_hands[Player::B.idx()].root(),
+            )
+            .map_err(|e| OfferingError::Deploy(e.to_string()))?;
         Ok(TugSession {
             seed,
-            game,
+            runtime,
             engine,
             hands,
             ended: false,
-            dealt,
+            fold_inventory,
+            proof_hands,
             plays: [Vec::new(), Vec::new()],
             history: Vec::new(),
         })
@@ -457,7 +486,7 @@ impl Offering for TugOffering {
             }
             let mut scored = session.engine.clone();
             let _ = scored.score();
-            return match session.game.commit_score(&scored.projection()) {
+            return match session.runtime.score_projection(&scored.projection()) {
                 Ok(receipt) => {
                     session.engine = scored;
                     session.ended = true;
@@ -503,18 +532,43 @@ impl Offering for TugOffering {
         let mut next_engine = session.engine.clone();
         let mv = next_engine.play_next();
         let proj = next_engine.projection();
-        match session.game.commit_projection(mv.action().method(), &proj) {
+        let played_cards: Vec<u64> = mv.played_cards().into_iter().map(u64::from).collect();
+        // Every action card is opened against the DEAL-pinned full inventory root. A separate
+        // private remaining tree ratchets the committed remaining root and supplies the host-side
+        // no-replay check. Neither tree is exposed to the frontend before SCORE.
+        let full_inventory = HandTree::commit(session.fold_inventory[seat.idx()].clone());
+        let mut next_proof_hand = session.proof_hands[seat.idx()].clone();
+        let mut proofs = Vec::with_capacity(played_cards.len());
+        for &card in &played_cards {
+            if next_proof_hand.opening(card).is_none() {
+                return Outcome::Refused(format!(
+                    "card {card} is absent from the remaining private inventory"
+                ));
+            }
+            let Some(proof) = full_inventory.prove_play(card) else {
+                return Outcome::Refused(format!(
+                    "card {card} is absent from the DEAL-pinned private inventory"
+                ));
+            };
+            proofs.push(proof);
+            next_proof_hand = next_proof_hand.without(card);
+        }
+        match session.runtime.play_projection(
+            seat,
+            &played_cards,
+            &proofs,
+            next_proof_hand.root(),
+            mv.action(),
+            &proj,
+        ) {
             Ok(action_receipt) => {
-                // Advance the acting seat's hidden hand: remove a played card so the remaining-hand
-                // root moves (the hidden-hand fold update — a replay of that card now fails
-                // membership under the new root).
-                let ids = session.hands[seat.idx()].card_ids();
-                if let Some(&played) = ids.first() {
-                    session.hands[seat.idx()] = session.hands[seat.idx()].without(played);
-                    // The match record: this card landed under the pre-removal root, in order.
-                    session.plays[seat.idx()].push(played);
-                }
+                // Record every exact action card, then rebuild the UI commitment from the mover's
+                // exact post-draw/post-play hand. This handles the 4/3/2/1-card actions and later
+                // draws without inventing a "first surviving card" as the play.
+                session.plays[seat.idx()].extend(played_cards);
+                session.proof_hands[seat.idx()] = next_proof_hand;
                 session.engine = next_engine;
+                session.hands = commit_engine_hands(&session.engine, session.seed);
                 session.history.push(LandedInput::Play { seat, action });
 
                 // SCORE is deliberately a separate affordance/advance. The
@@ -575,10 +629,18 @@ impl Offering for TugOffering {
             replay.hands[seat.idx()].root_bytes() == session.hands[seat.idx()].root_bytes()
                 && replay.hands[seat.idx()].card_ids() == session.hands[seat.idx()].card_ids()
         });
+        let same_proof_hands = [Player::A, Player::B].into_iter().all(|seat| {
+            replay.proof_hands[seat.idx()].root_bytes()
+                == session.proof_hands[seat.idx()].root_bytes()
+                && replay.proof_hands[seat.idx()].card_ids()
+                    == session.proof_hands[seat.idx()].card_ids()
+        });
         if replay.projection() != proj
             || replay.engine.projection() != session.engine.projection()
             || !same_hands
-            || replay.dealt != session.dealt
+            || !same_proof_hands
+            || replay.runtime.state() != session.runtime.state()
+            || replay.fold_inventory != session.fold_inventory
             || replay.plays != session.plays
             || replay.ended != session.ended
             || replay.history != session.history
@@ -590,7 +652,7 @@ impl Offering for TugOffering {
         }
         let mut report = VerifyReport::ok(turns);
         report.detail = format!(
-            "replayed {} accepted player input(s) through a fresh executor; {} real turn(s) including genesis{}",
+            "replayed {} accepted player input(s) through a fresh executor; {} atomic rules+witness turn(s) including genesis{}",
             session.history.len(),
             turns,
             if proj.scored == 1 { " and scoring" } else { "" }

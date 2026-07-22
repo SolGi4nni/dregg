@@ -87,3 +87,50 @@ pub async fn followup_ephemeral(ctx: &Context, component: &ComponentInteraction,
         )
         .await;
 }
+
+/// Send a single-reader companion surface after a shared message was updated.
+///
+/// Hidden-information games keep the channel message viewer-blind, then hand
+/// the presser their own cards/sealed move here. Discord fixes followup
+/// visibility on creation, so this helper always sets `ephemeral(true)` and is
+/// the only generic path that accepts a viewer-projected embed.
+pub async fn followup_ephemeral_surface(
+    ctx: &Context,
+    component: &ComponentInteraction,
+    text: &str,
+    embed: CreateEmbed,
+    rows: Vec<CreateActionRow>,
+) {
+    let _ = component
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .content(text)
+                .embed(embed)
+                .components(rows)
+                .ephemeral(true),
+        )
+        .await;
+}
+
+/// The slash-command form of [`followup_ephemeral_surface`]. The command's
+/// original response remains the shared, viewer-blind board; this is the
+/// opener's private companion hand/sealed-move view.
+pub async fn followup_slash_ephemeral_surface(
+    ctx: &Context,
+    command: &CommandInteraction,
+    text: &str,
+    embed: CreateEmbed,
+    rows: Vec<CreateActionRow>,
+) {
+    let _ = command
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .content(text)
+                .embed(embed)
+                .components(rows)
+                .ephemeral(true),
+        )
+        .await;
+}

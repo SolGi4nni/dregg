@@ -103,6 +103,8 @@ pub mod market;
 //   `/hermes` — a hosted, confined agent (offering #1): prompt → one cap-bounded metered turn.
 //   `/grain`  — a confined grain (offering #2): each action one real cap-bounded grain turn.
 //   `/doc`    — a shared collaborative document: each edit one cap-gated finalized executor turn.
+/// Shared bounded attachment transport for offering `binary_operations`.
+pub mod binary_operation;
 pub mod doc;
 pub mod grain;
 pub mod hermes;

@@ -718,7 +718,9 @@ fn tally_widget_tree(preview: &TallyPreview) -> ViewNode {
         .iter()
         .enumerate()
         .map(|(i, o)| {
-            let marker = if preview.leader == Some(i) {
+            let marker = if preview.leader
+                == Some(u64::try_from(i).expect("the bounded overlay option list fits u64"))
+            {
                 "\u{25B6} "
             } else {
                 "\u{2003} "

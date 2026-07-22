@@ -151,6 +151,13 @@ pub enum DiscordCapability {
         /// Where completed runs are filed. `None` = leave it where it is.
         archive_category_id: Option<u64>,
     },
+    /// DELETE a channel outright — the reconciliation reaper's teardown of an
+    /// EMPTY duplicate offering category (the `dreggnet-<offering>` categories that
+    /// a restart re-minted). Kept here, behind [`DiscordCapRegistry::exercise`], so
+    /// the "ONE place a guild write happens" invariant holds: the reaper never
+    /// calls serenity's `delete` directly, and every delete lands one audit-logged,
+    /// revocable capability.
+    DeleteChannel { channel_id: u64 },
     /// Pin a message.
     PinMessage { channel_id: u64, message_id: u64 },
     /// React to a message.
@@ -523,6 +530,13 @@ impl DiscordCapRegistry {
                 );
                 ChannelId::new(*channel_id)
                     .edit(http, req)
+                    .await
+                    .map_err(api_err)?;
+                ExerciseOutcome::none()
+            }
+            DiscordCapability::DeleteChannel { channel_id } => {
+                ChannelId::new(*channel_id)
+                    .delete(http)
                     .await
                     .map_err(api_err)?;
                 ExerciseOutcome::none()
@@ -1045,5 +1059,30 @@ mod tests {
         assert!(reg.unregister("cell-1").await);
         assert!(reg.get("cell-1").await.is_none());
         assert!(!reg.unregister("cell-1").await, "revoking twice is a no-op");
+    }
+
+    #[tokio::test]
+    async fn a_delete_channel_cap_round_trips_and_is_revocable() {
+        // The reaper's delete is a first-class capability (register → exercise →
+        // revoke), so it travels the SAME audited/revocable path every other guild
+        // write does rather than a scattered raw serenity delete.
+        let reg = DiscordCapRegistry::new();
+        let cap = DiscordCapability::DeleteChannel { channel_id: 424242 };
+        reg.register(RegisteredDiscordCap {
+            cell_id: "discord/reap/1111/dungeon/424242".into(),
+            uri: None,
+            capability: cap.clone(),
+            guild_id: GUILD,
+            registered_by: ADMIN,
+        })
+        .await;
+        assert_eq!(
+            reg.get("discord/reap/1111/dungeon/424242")
+                .await
+                .unwrap()
+                .capability,
+            cap
+        );
+        assert!(reg.unregister("discord/reap/1111/dungeon/424242").await);
     }
 }

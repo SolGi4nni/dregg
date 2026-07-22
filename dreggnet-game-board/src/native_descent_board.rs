@@ -31,8 +31,8 @@ use dreggnet_offerings::native_descent::{
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, RecordVerify, SessionConfig};
 
 const SNAPSHOT_MAGIC: [u8; 8] = *b"DREGGNDB";
-const SNAPSHOT_VERSION: u8 = 1;
-const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v1";
+const SNAPSHOT_VERSION: u8 = 2;
+const SNAPSHOT_DIGEST_DOMAIN: &str = "dregg.native-descent-board.snapshot.v2";
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 10_000;
 const MAX_ACTOR_BYTES: usize = 512;
@@ -57,7 +57,7 @@ pub struct NativeDescentStanding {
     pub completion_root: [u8; 32],
     pub settlement_receipt_hash: [u8; 32],
     pub crowned: bool,
-    pub banked_relics: Vec<usize>,
+    pub banked_relics: Vec<u64>,
     pub peak_depth: u64,
     pub turns: usize,
 }
@@ -321,22 +321,33 @@ impl NativeDescentSeasonBoard {
         put_u64(&mut out, self.season.season_id);
         out.push(self.season.seed);
         out.extend_from_slice(&self.season.genesis_root);
-        put_u32(&mut out, self.entries.len() as u32);
+        put_u32(
+            &mut out,
+            u32::try_from(self.entries.len()).expect("the fixed board bound fits u32"),
+        );
 
         let mut entries: Vec<_> = self.entries.iter().collect();
         entries.sort_by_key(|entry| entry.standing.completion_root);
         for entry in entries {
             put_bytes_u16(&mut out, entry.standing.player.as_str().as_bytes());
-            put_u16(&mut out, entry.commands.len() as u16);
+            put_u16(
+                &mut out,
+                u16::try_from(entry.commands.len())
+                    .expect("the fixed native journal bound fits u16"),
+            );
             for command in &entry.commands {
                 encode_command(&mut out, *command);
             }
             put_u64(&mut out, entry.completion.revision);
             out.extend_from_slice(&entry.completion.root);
             out.extend_from_slice(&entry.completion.settlement_receipt_hash);
-            put_u16(&mut out, entry.completion.banked_relics.len() as u16);
+            put_u16(
+                &mut out,
+                u16::try_from(entry.completion.banked_relics.len())
+                    .expect("the fixed native relic set fits u16"),
+            );
             for relic in &entry.completion.banked_relics {
-                put_u16(&mut out, *relic as u16);
+                put_u64(&mut out, *relic);
             }
             out.push(u8::from(entry.completion.crowned));
         }
@@ -371,7 +382,8 @@ impl NativeDescentSeasonBoard {
         let season_id = cursor.u64()?;
         let seed = cursor.u8()?;
         let genesis_root = cursor.array::<32>()?;
-        let count = cursor.u32()? as usize;
+        let count = usize::try_from(cursor.u32()?)
+            .map_err(|_| malformed("entry count exceeds this target"))?;
         if count > MAX_ENTRIES {
             return Err(NativeBoardError::MalformedSnapshot(
                 "entry count exceeds the fixed bound".to_string(),
@@ -387,7 +399,7 @@ impl NativeDescentSeasonBoard {
                     .map_err(|_| malformed("actor is not UTF-8"))?
                     .to_string(),
             );
-            let command_count = cursor.u16()? as usize;
+            let command_count = usize::from(cursor.u16()?);
             if command_count > dreggnet_offerings::native_descent::MAX_NATIVE_DESCENT_EVENTS {
                 return Err(malformed("command count exceeds the native journal bound"));
             }
@@ -401,10 +413,10 @@ impl NativeDescentSeasonBoard {
                 root: cursor.array::<32>()?,
                 settlement_receipt_hash: cursor.array::<32>()?,
                 banked_relics: {
-                    let relics = cursor.u16()? as usize;
+                    let relics = usize::from(cursor.u16()?);
                     let mut values = Vec::with_capacity(relics);
                     for _ in 0..relics {
-                        values.push(cursor.u16()? as usize);
+                        values.push(cursor.u64()?);
                     }
                     values
                 },
@@ -491,7 +503,7 @@ fn encode_command(out: &mut Vec<u8>, command: NativeDescentMove) {
         NativeDescentMove::Delve => (0, 0),
         NativeDescentMove::Unlock { way } => (1, way),
         NativeDescentMove::Smite => (2, 0),
-        NativeDescentMove::Loot { relic } => (3, relic as u64),
+        NativeDescentMove::Loot { relic } => (3, relic),
         NativeDescentMove::Flee => (4, 0),
     };
     out.push(tag);
@@ -505,9 +517,7 @@ fn decode_command(cursor: &mut Cursor<'_>) -> Result<NativeDescentMove, NativeBo
         (0, 0) => Ok(NativeDescentMove::Delve),
         (1, way) => Ok(NativeDescentMove::Unlock { way }),
         (2, 0) => Ok(NativeDescentMove::Smite),
-        (3, relic) => usize::try_from(relic)
-            .map(|relic| NativeDescentMove::Loot { relic })
-            .map_err(|_| malformed("loot index exceeds this target")),
+        (3, relic) => Ok(NativeDescentMove::Loot { relic }),
         (4, 0) => Ok(NativeDescentMove::Flee),
         _ => Err(malformed("non-canonical native command")),
     }
@@ -532,7 +542,10 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
 }
 
 fn put_bytes_u16(out: &mut Vec<u8>, bytes: &[u8]) {
-    put_u16(out, bytes.len() as u16);
+    put_u16(
+        out,
+        u16::try_from(bytes.len()).expect("bounded native actor identity fits u16"),
+    );
     out.extend_from_slice(bytes);
 }
 
@@ -587,7 +600,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn bytes_u16(&mut self, max: usize) -> Result<&'a [u8], NativeBoardError> {
-        let len = self.u16()? as usize;
+        let len = usize::from(self.u16()?);
         if len > max {
             return Err(malformed("length-prefixed field exceeds its fixed bound"));
         }

@@ -480,6 +480,26 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // ─── DreggNet Cloud: per-offering Discord category ids ───────────────
+        // The category every session of an offering is filed under (e.g. the one
+        // `dreggnet-dungeon` category). Persisted so a process RESTART reuses the
+        // existing category instead of re-minting a duplicate — the in-memory
+        // `SessionOrchestrator` cache is cold at boot, so without this row a
+        // reconnect (GUILD_CREATE fires on every one) accreted empty duplicates.
+        // Keyed by (guild_id, offering); the reconcile reaper records the canonical
+        // (oldest) id here after de-duplicating.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS discord_categories (
+                guild_id TEXT NOT NULL,
+                offering TEXT NOT NULL,
+                category_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, offering)
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
         // ─── DreggNet Cloud: per-channel Hermes activity ─────────────────────
         // Every message that drives a user's Hermes leaves a record of the
         // cap-gated verdict: the tool/kind, whether the gateway admitted it, the
@@ -990,6 +1010,20 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Every discord user id that has been issued a deposit address (persisted in
+    /// `pay_deposit_index` when the user first ran `/buy-credits` / `/credits`). This
+    /// is the enumerable set the BACKGROUND PAYMENT POLL sweeps each tick: for each
+    /// user it re-polls the watcher and credits any payment that landed since, so a
+    /// real payment no longer sits uncredited until the user manually re-checks.
+    /// Crediting is idempotent by payment reference, so re-polling the whole set is
+    /// safe (never a double-credit).
+    pub async fn pay_all_deposit_users(&self) -> Result<Vec<String>, sqlx::Error> {
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT user FROM pay_deposit_index")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().map(|(u,)| u).collect())
     }
 
     // ─── UGC gallery (commands::gallery GalleryStore backing) ───────────────
@@ -2351,6 +2385,52 @@ impl Database {
         Ok(rows.into_iter().map(user_channel_from_row).collect())
     }
 
+    // ─── DreggNet Cloud: per-offering Discord category ids ──────────────────
+
+    /// Persist the per-(guild, offering) category id so it survives a restart —
+    /// the fix for the duplicate `dreggnet-<offering>` categories that were
+    /// re-minted on every boot. Upsert by (guild_id, offering): re-recording the
+    /// canonical id after a reconcile is idempotent.
+    pub async fn upsert_discord_category(
+        &self,
+        guild_id: &str,
+        offering: &str,
+        category_id: &str,
+        created_at: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO discord_categories (guild_id, offering, category_id, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(guild_id, offering) DO UPDATE SET
+                category_id = excluded.category_id",
+        )
+        .bind(guild_id)
+        .bind(offering)
+        .bind(category_id)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The persisted category id for an offering in a guild, if one was recorded.
+    /// Returned as the stored TEXT snowflake (the caller parses it), mirroring how
+    /// `user_channels` stores ids.
+    pub async fn get_discord_category(
+        &self,
+        guild_id: &str,
+        offering: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT category_id FROM discord_categories WHERE guild_id = ? AND offering = ?",
+        )
+        .bind(guild_id)
+        .bind(offering)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.get("category_id")))
+    }
+
     // ─── DreggNet Cloud: per-channel Hermes activity ────────────────────────
 
     /// Append a Hermes verdict to the per-channel agent ledger.
@@ -2894,6 +2974,47 @@ mod tests {
 
         assert!(db.get_user_channel("nope").await.unwrap().is_none());
         assert_eq!(db.list_user_channels().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn discord_category_roundtrips_and_upserts_the_canonical() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        // Absent before anything is recorded.
+        assert!(
+            db.get_discord_category("g1", "dungeon")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Recorded, then read back — the restart-survival row.
+        db.upsert_discord_category("g1", "dungeon", "555", 100)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_discord_category("g1", "dungeon")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("555")
+        );
+        // Upsert replaces (a reconcile records a new canonical id).
+        db.upsert_discord_category("g1", "dungeon", "777", 200)
+            .await
+            .unwrap();
+        assert_eq!(
+            db.get_discord_category("g1", "dungeon")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("777")
+        );
+        // Scoped per (guild, offering): another guild has no row.
+        assert!(
+            db.get_discord_category("g2", "dungeon")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

@@ -82,14 +82,14 @@ impl Offering for OverworldPlay {
                 out.push(Action::new(
                     format!("Clear {}", loc.id),
                     "clear",
-                    i as i64,
+                    i64::try_from(i).expect("the bounded region map fits the action wire"),
                     !s.is_cleared(&loc.id),
                 ));
             } else {
                 out.push(Action::new(
                     format!("Travel to {}", loc.id),
                     "travel",
-                    i as i64,
+                    i64::try_from(i).expect("the bounded region map fits the action wire"),
                     open.contains(&loc.id),
                 ));
             }
@@ -98,12 +98,10 @@ impl Offering for OverworldPlay {
     }
 
     fn advance(&self, s: &mut OverworldSession, input: Action, _actor: DreggIdentity) -> Outcome {
-        let Some(loc) = s
-            .map()
-            .locations
-            .get(input.arg as usize)
-            .map(|l| l.id.clone())
-        else {
+        let Ok(index) = usize::try_from(input.arg) else {
+            return Outcome::Refused(format!("no location #{} in this region", input.arg));
+        };
+        let Some(loc) = s.map().locations.get(index).map(|l| l.id.clone()) else {
             return Outcome::Refused(format!("no location #{} in this region", input.arg));
         };
         match input.turn.as_str() {
@@ -191,7 +189,7 @@ mod tests {
     use dreggnet_offerings::SessionConfig;
 
     use super::*;
-    use crate::commands::offering::{self, Driven, close_in, drive, fire_id, with_live};
+    use crate::commands::offering::{self, Driven, close_in, drive, fire_id_in, with_live};
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -207,11 +205,34 @@ mod tests {
                     .locations
                     .iter()
                     .position(|l| l.id == id)
-                    .map(|i| i as i64)
+                    .map(|i| i64::try_from(i).expect("the bounded region map fits the action wire"))
             }
         })
         .flatten()
         .expect("the location exists")
+    }
+
+    #[test]
+    fn target_wide_location_indices_are_anti_ghost() {
+        let play = OverworldPlay::new();
+        let mut session = play
+            .open(SessionConfig::with_seed(77))
+            .expect("the overworld opens");
+        let traveller = actor("wide");
+        let before = play.verify(&session).turns;
+
+        for arg in [-1, i64::MAX] {
+            assert!(matches!(
+                play.advance(
+                    &mut session,
+                    Action::new("hostile location", "travel", arg, true),
+                    traveller.clone(),
+                ),
+                Outcome::Refused(_)
+            ));
+            assert_eq!(play.verify(&session).turns, before);
+            assert_eq!(session.cleared_count(), 0);
+        }
     }
 
     /// **The 13th `/play` key is real teeth, not a picture**: a travel down a gated road is
@@ -249,7 +270,7 @@ mod tests {
             let arg = arg_of(channel, locked);
             match drive::<OverworldPlay>(
                 channel,
-                &fire_id(OverworldPlay::KEY, "travel", arg),
+                &fire_id_in::<OverworldPlay>(channel, "travel", arg).unwrap(),
                 me.clone(),
             ) {
                 Driven::Fired(Outcome::Refused(why)) => {
@@ -263,7 +284,7 @@ mod tests {
         let here_arg = arg_of(channel, &here);
         match drive::<OverworldPlay>(
             channel,
-            &fire_id(OverworldPlay::KEY, "clear", here_arg),
+            &fire_id_in::<OverworldPlay>(channel, "clear", here_arg).unwrap(),
             me.clone(),
         ) {
             Driven::Fired(outcome) => assert!(

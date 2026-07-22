@@ -1,0 +1,19 @@
+# Post-quantum crypto posture for the games Discord bot.
+#
+# This bot signs custodial GAME turns for UX convenience, but it is NOT part of dregg's
+# proven TCB — the post-quantum assurance claim lives in the node (which installs the
+# ~195 MB Lean-verified ML-DSA core), not here. So the bot deliberately runs the REGULAR
+# (unaudited) post-quantum crates (`fips204` / `ml-kem`).
+#
+# dregg-pq's no-silent-fallback gate (`dregg-pq/src/audit.rs`) `process::abort()`s any
+# turn-signing process that reaches an unaudited primitive WITHOUT this explicit opt-in —
+# precisely so nobody runs unaudited PQ by accident. Setting it here is the SANCTIONED,
+# deliberate choice for this non-TCB bot; dregg-pq still prints a loud "assurance VOID"
+# warning at first use, so the posture is never silent. This affects `cargo test`/`cargo run`
+# in this workspace; the deployed binary gets the same var from its systemd unit / Dockerfile.
+#
+# To instead run the bot with the VERIFIED core: remove this, add a `dregg-lean-ffi`
+# dependency, and call `dregg_pq::install_lean_sign_core(...)` at startup (see the node's
+# `install_mldsa_verified_sign_core` in `node/src/lib.rs`).
+[env]
+DREGG_ALLOW_UNAUDITED_PQ = "1"

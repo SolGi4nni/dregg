@@ -223,7 +223,7 @@ fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
     board
         .submit(alice.clone(), &record, &completion)
         .expect("authentic run accepts");
-    let mut snapshot = board.export_canonical();
+    let snapshot = board.export_canonical();
 
     // Header = magic/version/season/seed/genesis/count. The sole entry then
     // begins actor-len/actor/command-count; change its first command from
@@ -231,15 +231,36 @@ fn recomputing_the_snapshot_digest_does_not_bypass_native_replay() {
     let first_entry = 8 + 1 + 8 + 1 + 32 + 4;
     let command_tag = first_entry + 2 + alice.as_str().len() + 2;
     assert_eq!(snapshot[command_tag], 0, "first command is delve");
-    snapshot[command_tag] = 2;
+
+    let mut substituted = snapshot.clone();
+    substituted[command_tag] = 2;
+    refresh_snapshot_digest(&mut substituted);
+
+    assert!(matches!(
+        NativeDescentSeasonBoard::import_canonical(&substituted),
+        Err(NativeBoardError::ReplayRefused(_)) | Err(NativeBoardError::CompletionSubstitution)
+    ));
+
+    let mut target_wide_relic = snapshot;
+    target_wide_relic[command_tag] = 3;
+    target_wide_relic[command_tag + 1..command_tag + 9].fill(0xff);
+    refresh_snapshot_digest(&mut target_wide_relic);
+    match NativeDescentSeasonBoard::import_canonical(&target_wide_relic) {
+        Err(NativeBoardError::MalformedSnapshot(reason)) => {
+            assert!(
+                reason.contains("action wire"),
+                "unexpected refusal: {reason}"
+            )
+        }
+        Err(other) => panic!("target-wide relic id failed at the wrong boundary: {other}"),
+        Ok(_) => panic!("target-wide relic id was accepted from the stable action wire"),
+    }
+}
+
+fn refresh_snapshot_digest(snapshot: &mut [u8]) {
     let body_len = snapshot.len() - 32;
-    let mut hasher = blake3::Hasher::new_derive_key("dregg.native-descent-board.snapshot.v1");
+    let mut hasher = blake3::Hasher::new_derive_key("dregg.native-descent-board.snapshot.v2");
     hasher.update(&snapshot[..body_len]);
     let digest = *hasher.finalize().as_bytes();
     snapshot[body_len..].copy_from_slice(&digest);
-
-    assert!(matches!(
-        NativeDescentSeasonBoard::import_canonical(&snapshot),
-        Err(NativeBoardError::ReplayRefused(_)) | Err(NativeBoardError::CompletionSubstitution)
-    ));
 }

@@ -105,8 +105,15 @@ impl ModelRegistry {
         self.entries.get(model).cloned()
     }
 
-    /// If `DREGG_NARRATOR_PRICE_INPUT_PER_1K` / `_OUTPUT_PER_1K` are set, override the DEFAULT
-    /// model's rate with them, marked as an operator-set conservative upper bound.
+    /// If `DREGG_NARRATOR_PRICE_INPUT_PER_1K` / `_OUTPUT_PER_1K` are set, pin the rate for the
+    /// ACTIVE model — `DREGG_NARRATOR_MODEL` when set (e.g. a Chutes catalog id on the OpenAI
+    /// path), else [`DEFAULT_MODEL`] — marked as an operator-set rate.
+    ///
+    /// This is how an arbitrary hosted model (one the registry has no built-in price for) gets a
+    /// price so the metered layer will run it: name it in `DREGG_NARRATOR_MODEL` and pin both rates.
+    /// A missing rate falls back to the model's existing built-in entry; if the model has NO built-in
+    /// entry and either rate is left unset, the entry is NOT created — the model stays unpriced and
+    /// the metered layer refuses it fail-closed (never priced at a silent zero).
     fn apply_env_override(&mut self) {
         let (in_o, out_o) = (
             env_f64("DREGG_NARRATOR_PRICE_INPUT_PER_1K"),
@@ -115,12 +122,23 @@ impl ModelRegistry {
         if in_o.is_none() && out_o.is_none() {
             return;
         }
-        if let Some(base) = self.entries.get(DEFAULT_MODEL).cloned() {
+        let target = std::env::var("DREGG_NARRATOR_MODEL")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+
+        let base = self.entries.get(&target).cloned();
+        let input = in_o.or_else(|| base.as_ref().map(|b| b.input_per_1k));
+        let output = out_o.or_else(|| base.as_ref().map(|b| b.output_per_1k));
+        // Only pin when BOTH rates are known — a half-specified price on a new model would silently
+        // charge zero on one axis. Leave it unpriced (fail-closed) otherwise.
+        if let (Some(input_per_1k), Some(output_per_1k)) = (input, output) {
             self.entries.insert(
-                DEFAULT_MODEL.to_string(),
+                target,
                 Pricing {
-                    input_per_1k: in_o.unwrap_or(base.input_per_1k),
-                    output_per_1k: out_o.unwrap_or(base.output_per_1k),
+                    input_per_1k,
+                    output_per_1k,
                     // Honest provenance: an operator-set rate is trusted at their discretion and is
                     // NOT necessarily an upper bound — do not launder it as `ConservativeUpperBound`.
                     source: PriceSource::OperatorOverride,

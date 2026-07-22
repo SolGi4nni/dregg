@@ -199,7 +199,7 @@ mod tests {
     use dreggnet_hermes::{Confinement, ToolKind};
     use dreggnet_offerings::{DreggIdentity, Outcome};
 
-    use crate::commands::offering::{Driven, close_in, fire_id, with_live};
+    use crate::commands::offering::{Driven, close_in, fire_id_in, with_live};
 
     fn actor(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -281,7 +281,7 @@ mod tests {
         open(channel, 5);
         let driven = offering::drive::<HermesOffering>(
             channel,
-            &fire_id(HermesOffering::KEY, "bogus", 0),
+            &fire_id_in::<HermesOffering>(channel, "bogus", 0).unwrap(),
             actor("b0"),
         );
         match driven {

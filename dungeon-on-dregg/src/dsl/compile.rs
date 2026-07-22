@@ -578,12 +578,12 @@ fn build_scene(world: &GameWorld) -> Scene {
 }
 
 /// The freeze tooth for a compiled var key, on whichever plane it landed.
-fn freeze_tooth(key: usize) -> StateConstraint {
-    if key < STATE_SLOTS {
+fn freeze_tooth(key: u64) -> StateConstraint {
+    if key < STATE_SLOTS as u64 {
         StateConstraint::Immutable { index: key as u8 }
     } else {
         StateConstraint::HeapField {
-            key: key as u64,
+            key,
             atom: HeapAtom::Immutable,
         }
     }
@@ -592,16 +592,16 @@ fn freeze_tooth(key: usize) -> StateConstraint {
 /// The expected executor tooth of a `{ var >= min }` gate whose choice does not touch
 /// `var` (all this compiler's gates), on whichever plane the var landed. Thresholds
 /// floor at zero exactly as the v0 lowering's shifted threshold does.
-fn gate_tooth(key: usize, min: i64) -> StateConstraint {
+fn gate_tooth(key: u64, min: i64) -> StateConstraint {
     let value = field_from_u64(min.max(0) as u64);
-    if key < STATE_SLOTS {
+    if key < STATE_SLOTS as u64 {
         StateConstraint::FieldGte {
             index: key as u8,
             value,
         }
     } else {
         StateConstraint::HeapField {
-            key: key as u64,
+            key,
             atom: HeapAtom::Gte { value },
         }
     }
@@ -697,7 +697,7 @@ fn augment(world: &GameWorld, story: &mut CompiledStory) {
         }
     }
     let genesis = symbol(GENESIS_METHOD);
-    let all_vars: Vec<(String, usize)> = story
+    let all_vars: Vec<(String, u64)> = story
         .var_slots
         .iter()
         .map(|(name, &key)| (name.clone(), key))
@@ -764,7 +764,7 @@ pub fn check_lowering(world: &GameWorld, d: &CompiledDungeon) -> Result<(), Comp
 
     // Resolve a compiled var BY NAME — a gate over a var with no compiled key means
     // the lowering dropped state the source depends on.
-    let var_key = |var: &str| -> Result<usize, CompileError> {
+    let var_key = |var: &str| -> Result<u64, CompileError> {
         d.story
             .var_slots
             .get(var)
@@ -776,7 +776,7 @@ pub fn check_lowering(world: &GameWorld, d: &CompiledDungeon) -> Result<(), Comp
 
     // Expected case set, derived from the SOURCE (fresh enumeration — not d.choices).
     let mut expected: BTreeMap<[u8; 32], (String, Vec<StateConstraint>)> = BTreeMap::new();
-    let all_vars: Vec<(String, usize)> = d
+    let all_vars: Vec<(String, u64)> = d
         .story
         .var_slots
         .iter()

@@ -63,6 +63,10 @@ impl NodeHttpClient {
         &self.base_url
     }
 
+    pub(crate) fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     // ─────────────────────────── the crawl (read) ───────────────────────────
 
     /// Rebuild a SNAPSHOT [`Ledger`] from the node's explorer surface: `GET

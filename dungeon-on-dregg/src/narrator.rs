@@ -1023,6 +1023,7 @@ fn attest_bedrock_narration(
     let verified = verify_bedrock_presentation(
         &roundtrip.presentation_bytes,
         expected_host,
+        &roundtrip.model_id,
         &roundtrip.notary_pin.verifying_key,
     )
     .map_err(|e| NarrateError::Verification(ZkOracleError::NotAuthenticLive(e.to_string())))?;

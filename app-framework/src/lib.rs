@@ -204,8 +204,11 @@ pub use payable::{
 // [`AgentCipherclerk`].
 pub use dregg_sdk::AgentCipherclerk;
 pub use dregg_sdk::{
+    MlDsaKeygenCoreRealInstall, MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall,
     WITNESSED_RECEIPT_ARTIFACT_FORMAT, decode_witnessed_receipt_artifact,
     decode_witnessed_receipt_artifact_hex, encode_witnessed_receipt_artifact,
+    install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
+    install_verified_mldsa_verify_core,
 };
 
 // Legacy alias for `AgentCipherclerk`, re-exported from the SDK.

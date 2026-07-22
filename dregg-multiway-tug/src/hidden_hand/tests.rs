@@ -2,7 +2,7 @@
 //!
 //! The membership tooth runs through the REAL cell evaluator + registry
 //! ([`super::check_play`]); the committed roots + phase machine run on a real
-//! `spween_dregg::WorldCell` ([`super::HiddenHandLedger`]). Every assertion is
+//! embedded executor ([`super::HiddenHandLedger`]). Every assertion is
 //! non-vacuous: the legal play commits, the fabricated card is refused.
 
 use super::*;
@@ -145,6 +145,33 @@ fn fabricated_card_is_refused_but_legal_play_commits() {
         check_play(&wrong_root).is_err(),
         "a proof against a swapped root must be refused"
     );
+
+    // (e) The full u64 opening is bound. The old one-felt encoding aliased values that differed
+    // by the BabyBear modulus; the staged 30/30/4-bit encoding must refuse both aliases.
+    let card_alias = PlayProof {
+        card_id: legal.card_id + dregg_circuit::field::BABYBEAR_P as u64,
+        ..legal.clone()
+    };
+    assert!(
+        check_play(&card_alias).is_err(),
+        "a card id that aliases in one BabyBear lane must still be refused"
+    );
+    let nonce_alias = PlayProof {
+        nonce: legal.nonce + dregg_circuit::field::BABYBEAR_P as u64,
+        ..legal.clone()
+    };
+    assert!(
+        check_play(&nonce_alias).is_err(),
+        "a nonce that aliases in one BabyBear lane must still be refused"
+    );
+
+    // (f) The root's 32-byte wire form is canonical, not merely its low field lane.
+    let mut noncanonical_root = legal.clone();
+    noncanonical_root.root[31] = 1;
+    assert!(
+        check_play(&noncanonical_root).is_err(),
+        "non-zero high root bytes must not alias the canonical commitment"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -279,22 +306,31 @@ fn ledger_commits_the_deal_and_freezes_the_hand_root() {
     assert_eq!(ledger.read("a_hand_root"), a.root().as_u32() as u64);
     assert_eq!(ledger.read("phase"), PHASE_DEAL);
 
+    let proof = a.prove_play(3).expect("dealt card");
+    let remaining = a.without(3);
+    let mut legal_next = ledger.state();
+    legal_next.a_rem_root = root_to_u64(remaining.root());
+    legal_next.a_played += 1;
+    legal_next.generation += 1;
+    legal_next.phase = PHASE_PLAY;
+
     // A turn that tries to SWAP the committed hand root is refused (WriteOnce).
-    let mut swap = ledger.state();
+    let mut swap = legal_next;
     swap.a_hand_root ^= 0x1234; // change the frozen root
-    swap.generation += 1;
-    swap.phase = PHASE_PLAY;
     assert!(
-        ledger.commit_raw(PLAY, &swap).is_err(),
+        ledger
+            .commit_raw_play(Player::A, &[proof.clone()], &swap)
+            .is_err(),
         "swapping the committed hand root must be refused"
     );
 
     // A phase REWIND is refused (Monotonic).
-    let mut rewind = ledger.state();
-    rewind.generation += 1;
+    let mut rewind = legal_next;
     rewind.phase = 0; // below DEAL
     assert!(
-        ledger.commit_raw(PLAY, &rewind).is_err(),
+        ledger
+            .commit_raw_play(Player::A, &[proof], &rewind)
+            .is_err(),
         "rewinding the phase must be refused"
     );
 }
@@ -307,9 +343,10 @@ fn ledger_play_advances_generation_and_writes_remaining_root() {
     ledger.deal(a.root(), b.root()).expect("deal");
 
     let gen0 = ledger.read("gen");
+    let proof = a.prove_play(3).expect("dealt card");
     let remaining = a.without(3);
     ledger
-        .play(Player::A, remaining.root())
+        .play(Player::A, &[proof], remaining.root())
         .expect("play commits");
     assert_eq!(
         ledger.read("gen"),
@@ -327,11 +364,138 @@ fn ledger_play_advances_generation_and_writes_remaining_root() {
     // A stale generation under `play` is refused (StrictMonotonic).
     let mut stale = ledger.state();
     // do NOT advance gen
-    stale.a_rem_root ^= 0x1;
+    let proof2 = a.prove_play(7).expect("another pinned-inventory member");
+    stale.a_played += 1;
+    stale.a_rem_root = root_to_u64(a.without(3).without(7).root());
     assert!(
-        ledger.commit_raw(PLAY, &stale).is_err(),
+        ledger
+            .commit_raw_play(Player::A, &[proof2], &stale)
+            .is_err(),
         "a non-advancing generation must be refused"
     );
+}
+
+#[test]
+fn ledger_requires_witnesses_on_the_actual_executor_path() {
+    let a = HandTree::commit(sample_hand());
+    let b = HandTree::commit(sample_hand());
+    let mut ledger = HiddenHandLedger::deploy(10).expect("deploy");
+    ledger.deal(a.root(), b.root()).expect("deal");
+
+    let proof = a.prove_play(3).expect("dealt card");
+    let remaining = a.without(3);
+    let before = ledger.state();
+    let mut claimed = before;
+    claimed.a_rem_root = root_to_u64(remaining.root());
+    claimed.a_played += 1;
+    claimed.generation += 1;
+    claimed.phase = PHASE_PLAY;
+
+    assert!(
+        ledger
+            .commit_raw(&witnessed_play_method(Player::A, 1), &claimed)
+            .is_err(),
+        "the witnessed method without opening/path blobs must fail closed"
+    );
+    assert_eq!(
+        ledger.state(),
+        before,
+        "a refusal cannot advance the mirror"
+    );
+    assert_eq!(
+        ledger.read("gen"),
+        before.generation,
+        "a refusal cannot advance committed state"
+    );
+
+    // A real executor refusal burns a runtime nonce. The next honestly witnessed action must
+    // still be re-signed at the live nonce and land (anti-ghost + restart of the receipt chain).
+    ledger
+        .play(Player::A, &[proof], remaining.root())
+        .expect("the witnessed retry lands");
+    assert_eq!(ledger.read("a_played"), 1);
+}
+
+#[test]
+fn ledger_refuses_forged_tampered_and_wrong_root_proofs_without_a_ghost_step() {
+    let a = HandTree::commit(sample_hand());
+    let mut b_cards = sample_hand();
+    b_cards[0] = (2, 2001);
+    let b = HandTree::commit(b_cards);
+    let mut ledger = HiddenHandLedger::deploy(12).expect("deploy");
+    ledger.deal(a.root(), b.root()).expect("deal");
+    let legal = a.prove_play(7).expect("dealt card");
+    let remaining = a.without(7);
+    let before = ledger.state();
+
+    let mut wrong_root = legal.clone();
+    wrong_root.root = b.root_bytes();
+    assert!(
+        ledger
+            .play(Player::A, &[wrong_root], remaining.root())
+            .is_err(),
+        "a proof bound to the other inventory root is refused"
+    );
+
+    let fabricated = PlayProof {
+        card_id: 99,
+        ..legal.clone()
+    };
+    assert!(
+        ledger
+            .play(Player::A, &[fabricated], remaining.root())
+            .is_err(),
+        "a fabricated opening reaches the executor and fails Merkle membership"
+    );
+
+    let mut tampered = legal.clone();
+    let sibling = &mut tampered.path[0].siblings[0];
+    *sibling = if *sibling == BabyBear::ZERO {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
+    assert!(
+        ledger
+            .play(Player::A, &[tampered], remaining.root())
+            .is_err(),
+        "a tampered path reaches the executor and fails Merkle membership"
+    );
+
+    assert_eq!(ledger.state(), before);
+    assert_eq!(ledger.read("gen"), before.generation);
+    ledger
+        .play(Player::A, &[legal], remaining.root())
+        .expect("a legal proof still lands after hostile refusals");
+}
+
+#[test]
+fn ledger_rejects_duplicate_proofs_within_and_across_actions() {
+    let a = HandTree::commit(sample_hand());
+    let b = HandTree::commit(sample_hand());
+    let mut ledger = HiddenHandLedger::deploy(14).expect("deploy");
+    ledger.deal(a.root(), b.root()).expect("deal");
+    let proof = a.prove_play(12).expect("dealt card");
+    let remaining = a.without(12);
+
+    assert!(
+        ledger
+            .play(Player::A, &[proof.clone(), proof.clone()], remaining.root(),)
+            .is_err(),
+        "one action cannot count the same membership witness twice"
+    );
+    assert_eq!(ledger.read("a_played"), 0);
+
+    ledger
+        .play(Player::A, &[proof.clone()], remaining.root())
+        .expect("first consumption lands");
+    let after = ledger.state();
+    assert!(
+        ledger.play(Player::A, &[proof], remaining.root()).is_err(),
+        "a static-root membership proof cannot be replayed after consumption"
+    );
+    assert_eq!(ledger.state(), after);
+    assert_eq!(ledger.read("a_played"), 1);
 }
 
 #[test]
@@ -367,17 +531,22 @@ fn ledger_freezes_a_committed_pick_seal() {
 
 #[test]
 fn full_hidden_hand_round_drives_the_executor() {
-    let mut a = HandTree::commit(sample_hand());
+    let full_a = HandTree::commit(sample_hand());
+    let mut a = full_a.clone();
     let b = HandTree::commit(sample_hand());
     let mut ledger = HiddenHandLedger::deploy(13).expect("deploy");
     ledger.deal(a.root(), b.root()).expect("deal");
 
     // A plays two cards: each membership-proven, each committing the remaining root.
     for card in [0u64, 18u64] {
-        let proof = a.prove_play(card).expect("held");
+        let proof = full_a
+            .prove_play(card)
+            .expect("held in the pinned inventory");
         check_play(&proof).expect("the play is a legal member of the committed hand");
         a = a.without(card);
-        ledger.play(Player::A, a.root()).expect("the play commits");
+        ledger
+            .play(Player::A, &[proof], a.root())
+            .expect("the play commits");
     }
     assert_eq!(ledger.read("a_played"), 2);
 

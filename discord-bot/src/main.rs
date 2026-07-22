@@ -307,39 +307,81 @@ impl EventHandler for Handler {
     /// channel under a category that already exists rather than paying the mint on the
     /// user's critical path. An `Err` here means the bot lacks `MANAGE_CHANNELS` in this
     /// guild — logged as a warning, not fatal (the bot serves everything else fine).
-    async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: Option<bool>) {
+    async fn guild_create(&self, ctx: Context, guild: Guild, is_new: Option<bool>) {
         let guild_id = guild.id.get();
         // Attribute the bootstrap's guild-writes to the pinned admin in the audit log
         // (the bot/admin acting on guild_create, not any end user); `0` when unpinned.
         let registered_by = self.state.config.admin_discord_id.unwrap_or(0);
-        let bootstraps = [orchestration::OfferingBootstrap::new(
-            "dungeon",
-            guild_id,
-            registered_by,
-        )];
+
+        // SELF-HEAL, EVERY guild_create (new join AND reconnect): reconcile the
+        // `dreggnet-dungeon` categories from the Guild's ALREADY-LOADED channel map
+        // (no extra fetch, cheap when clean). This de-duplicates the empty categories
+        // a restart accreted before this fix, and persists the canonical id so future
+        // boots reuse it. `guild_create` fires on every reconnect — this is exactly
+        // where the duplicate leak happened, so this is where the healing runs.
         match self
             .state
             .orchestrator
-            .bootstrap_guild(&bootstraps, &self.state.discord_caps, &ctx.http)
+            .reconcile_guild(
+                guild_id,
+                "dungeon",
+                Some(&guild.channels),
+                &self.state.discord_caps,
+                &ctx.http,
+                registered_by,
+            )
             .await
         {
-            Ok(reports) => {
-                for report in reports {
-                    info!(
-                        offering = %report.offering,
-                        guild_id = report.guild_id,
-                        category_id = ?report.category_id,
-                        "Bootstrapped offering on guild_create"
+            Ok(r) => info!(
+                guild_id,
+                canonical = ?r.canonical_id,
+                duplicates_found = r.duplicates_found,
+                duplicates_deleted = r.duplicates_deleted,
+                children_moved = r.children_moved,
+                "Reconciled dungeon categories on guild_create"
+            ),
+            Err(e) => warn!(
+                guild_id,
+                error = %e,
+                "Category reconcile failed on guild_create (the bot likely lacks MANAGE_CHANNELS)"
+            ),
+        }
+
+        // Only a GENUINE first join re-runs the create-if-absent bootstrap. On a
+        // reconnect (`is_new` = Some(false)/None) the reconcile above already adopted
+        // + persisted the canonical id, and the idempotent ensure path (db → live
+        // scan → create) never mints a duplicate anyway — but skipping the bootstrap
+        // keeps reconnects cheap. This gate is the belt to the reconcile's braces.
+        if is_new == Some(true) {
+            let bootstraps = [orchestration::OfferingBootstrap::new(
+                "dungeon",
+                guild_id,
+                registered_by,
+            )];
+            match self
+                .state
+                .orchestrator
+                .bootstrap_guild(&bootstraps, &self.state.discord_caps, &ctx.http)
+                .await
+            {
+                Ok(reports) => {
+                    for report in reports {
+                        info!(
+                            offering = %report.offering,
+                            guild_id = report.guild_id,
+                            category_id = ?report.category_id,
+                            "Bootstrapped offering on first guild join"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        guild_id,
+                        error = %e,
+                        "Failed to bootstrap offerings on first guild join (the bot likely lacks \
+                         MANAGE_CHANNELS in this guild); sessions can still open once granted"
                     );
                 }
-            }
-            Err(e) => {
-                warn!(
-                    guild_id,
-                    error = %e,
-                    "Failed to bootstrap offerings on guild_create (the bot likely lacks \
-                     MANAGE_CHANNELS in this guild); sessions can still open once granted"
-                );
             }
         }
     }
@@ -561,6 +603,51 @@ fn check_solo_federation_id(node_pubkey: &[u8], federation_id: [u8; 32]) -> Resu
     ))
 }
 
+/// Spawn the BACKGROUND PAYMENT POLL — the task that turns the pay loop from
+/// poll-on-command into poll-on-a-cadence. Every `DREGG_PAY_POLL_SECS` (default 60;
+/// `0` disables) it sweeps every known deposit address ([`pay::PayState::poll_sweep_once`])
+/// and credits any payment that landed since, so a user who paid and walked away is
+/// still credited without re-running `/credits`.
+///
+/// Idempotent-by-reference, so re-polling the whole set never double-credits. Fail-safe:
+/// a per-user watcher error is counted and skipped inside the sweep, and a failure to
+/// enumerate the users is logged and retried next tick — the task never panics the bot.
+/// On a devnet/no-env bot the mock watcher returns nothing, so the sweep is a quiet
+/// no-op rather than a source of errors.
+fn spawn_payment_poll(state: Arc<BotState>) {
+    let secs = pay::poll_interval_secs();
+    if secs == 0 {
+        info!("Background payment poll DISABLED (DREGG_PAY_POLL_SECS=0)");
+        return;
+    }
+    info!(
+        "Background payment poll scheduled every {secs}s (credits payments that landed \
+         without a manual /credits; idempotent by reference)"
+    );
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(secs));
+        // Skip (don't burst-catch-up) if a tick is missed while a slow sweep runs.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            match state.pay.poll_sweep_once().await {
+                Ok(sweep) => {
+                    if sweep.new_runs_credited > 0 || sweep.watcher_errors > 0 {
+                        info!(
+                            "Payment poll: checked {} deposit address(es) → credited {} new \
+                             run(s), {} watcher error(s)",
+                            sweep.users_checked, sweep.new_runs_credited, sweep.watcher_errors
+                        );
+                    }
+                }
+                Err(e) => warn!(
+                    "Payment poll: could not enumerate deposit users ({e}); retrying next tick"
+                ),
+            }
+        }
+    });
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing.
@@ -746,16 +833,37 @@ async fn main() {
     let discord_caps = DiscordCapRegistry::new();
     let event_bridge = EventBridge::new(config.devnet_url.clone());
 
-    // Build the $DREGG earning state (devnet/mock by default; mainnet is an operator env flip via
-    // DREGG_PAY_*). The sqlite CreditStore drives on this multi-thread runtime. Built on a blocking
-    // thread because the hosted Bedrock client (when configured) constructs its OWN Tokio runtime,
-    // which must not happen on an async worker.
+    // Build the $DREGG earning state. CUSTODY SELECTION (docs/ops/PAYMENTS-GO-LIVE.md):
+    // when the sweeper has published a DepositAddressBook and named it in
+    // DREGG_PAY_ADDRESS_BOOK, this deployed bot runs WATCH-ONLY — it holds NO signing
+    // seed and serves addresses from that book (pay::PayState::watch_only_from_env). A
+    // set-but-incomplete watch-only config fails LOUD; it NEVER drops back to loading
+    // the seed on a declared watch-only host. Absent the address book we keep the
+    // current behavior: the seed-bearing operator config when DREGG_PAY_* is set, or
+    // the throwaway devnet/mock fallback for local dev (pay::PayState::from_env_or_devnet).
+    // The sqlite CreditStore drives on this multi-thread runtime. Built on a blocking
+    // thread because the hosted Bedrock client (when configured) constructs its OWN
+    // Tokio runtime, which must not happen on an async worker.
+    let pay_construction = pay::pay_construction_from_env(pay::address_book_present());
     let pay = {
         let db_for_pay = db.clone();
         let bot_secret = config.bot_secret;
         let handle = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || {
-            pay::PayState::from_env_or_devnet(db_for_pay, &bot_secret, handle)
+        tokio::task::spawn_blocking(move || match pay_construction {
+            pay::PayConstruction::WatchOnly => {
+                pay::PayState::watch_only_from_env(db_for_pay, handle).unwrap_or_else(|e| {
+                    panic!(
+                        "DREGG_PAY_ADDRESS_BOOK is set (a WATCH-ONLY deployment) but the \
+                         watch-only pay config is incomplete: {e}. Refusing to fall back \
+                         to the seed-bearing/custodial path on a declared watch-only host \
+                         — set the missing DREGG_PAY_* variable, or unset \
+                         DREGG_PAY_ADDRESS_BOOK to run custodial/devnet."
+                    )
+                })
+            }
+            pay::PayConstruction::CustodialOrDevnet => {
+                pay::PayState::from_env_or_devnet(db_for_pay, &bot_secret, handle)
+            }
         })
         .await
         .expect("build pay state")
@@ -769,15 +877,27 @@ async fn main() {
     info!("Character store ready (persistent leveling characters over sqlite; survive restart)");
 
     info!(
-        "Pay backend ready: network={:?} price_per_run={} paid_narrator={}",
+        "Pay backend ready: network={:?} price_per_run={} custody={} paid_narrator={}",
         pay.network(),
         pay.price_per_run(),
+        if pay.deposits.is_watch_only() {
+            "watch-only (no seed held)"
+        } else {
+            "custodial/devnet (seed in-process)"
+        },
         if pay.paid.is_some() {
             "bedrock"
         } else {
             "free-tier-only"
         },
     );
+
+    // The offering orchestrator, backed by the durable db so per-offering category
+    // ids SURVIVE A RESTART (the fix for the duplicate `dreggnet-dungeon` categories
+    // a reconnect re-minted; the in-memory cache is cold at boot). `db.clone()` here,
+    // before `db` is moved into the struct below.
+    let orchestrator =
+        orchestration::SessionOrchestrator::new().with_persistence(Arc::new(db.clone()));
 
     // Build shared state (now carries the real federation + HTTP config).
     let state = Arc::new(BotState {
@@ -788,7 +908,7 @@ async fn main() {
         captp,
         discord_caps,
         event_bridge,
-        orchestrator: orchestration::SessionOrchestrator::new(),
+        orchestrator,
         federation_id_bytes,
         nullifier_set: Mutex::new(Vec::new()), // §4.7 friend-clique soft-federation
         handoff_broker: Mutex::new(handoff_flow::HandoffBroker::new(dregg_captp::FederationId(
@@ -810,6 +930,12 @@ async fn main() {
         "HTTP read surface scheduled on {}:{} (see /api/cells, /api/cell/<id>, /observability/stream etc.)",
         state.config.http_host, state.config.http_port
     );
+
+    // Background payment poll: without it, a real $DREGG/USDC payment sits uncredited
+    // until the user manually re-runs /credits. This closes the loop — every
+    // DREGG_PAY_POLL_SECS the bot re-polls every known deposit address and credits any
+    // payment that landed (idempotent by reference, so never a double-credit).
+    spawn_payment_poll(state.clone());
 
     // Build Discord client. GUILD_PRESENCES + GUILD_MESSAGES for message bridging;
     // GUILDS delivers `guild_create` (the offering-bootstrap trigger) + guild/channel

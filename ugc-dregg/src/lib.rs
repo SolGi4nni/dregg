@@ -629,6 +629,22 @@ impl UniversePlan {
             &win,
             parent,
         );
+        // Playthrough snapshots are dense: sixteen fixed registers followed by
+        // compiled ext keys in ascending order. Preserve that projection here;
+        // a canonical u64 field key is not itself a platform-sized Vec index.
+        let ext_keys = compiled.ext_keys();
+        let var_slots = compiled
+            .var_slots
+            .into_iter()
+            .filter_map(|(name, key)| {
+                let index = if key < spween_dregg::STATE_SLOTS as u64 {
+                    key as usize
+                } else {
+                    spween_dregg::STATE_SLOTS + ext_keys.binary_search(&key).ok()?
+                };
+                Some((name, index))
+            })
+            .collect();
         Ok(UniversePlan {
             name: name.to_string(),
             author_label: author_label.to_string(),
@@ -638,7 +654,7 @@ impl UniversePlan {
             win,
             parent,
             scene,
-            var_slots: compiled.var_slots,
+            var_slots,
             commitment,
         })
     }
