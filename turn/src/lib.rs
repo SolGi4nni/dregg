@@ -108,6 +108,8 @@ pub mod faithful_note_spend_exact_v3;
 pub mod faithful_note_spend_exact_v3_acceptance;
 pub mod faithful_note_spend_exact_v3_anchor;
 #[cfg(feature = "prover")]
+pub mod faithful_note_spend_exact_v3_receipt_epoch;
+#[cfg(feature = "prover")]
 pub mod faithful_note_spend_exact_v3_verifier;
 #[cfg(feature = "prover")]
 pub mod faithful_note_spend_verifier;
@@ -190,6 +192,12 @@ pub use faithful_note_spend_exact_v3_acceptance::{
 pub use faithful_note_spend_exact_v3_anchor::{
     ExactFnspV3AnchorSide, ExactFnspV3DurableAnchor, ExactFnspV3DurableAnchorError,
     derive_exact_fnsp_v3_durable_anchor, derive_exact_fnsp_v3_durable_anchor_chain,
+};
+#[cfg(feature = "prover")]
+pub use faithful_note_spend_exact_v3_receipt_epoch::{
+    ExactFnspV3OuterCommit, ExactFnspV3ReceiptEpoch, ExactFnspV3ReceiptEpochError,
+    ExactFnspV3ReceiptEpochV1, ExactFnspV3ReceiptLinkV1, ExactFnspV3StatePoint,
+    PreparedExactFnspV3ReceiptFrameV1,
 };
 #[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;

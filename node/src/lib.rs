@@ -45,6 +45,10 @@ mod captp_handoff_e2e;
 mod epoch_transition_e2e;
 pub mod equivocation_court_service;
 pub mod events;
+#[cfg(feature = "prover")]
+mod exact_fnsp_v3_execution_authority;
+#[cfg(feature = "prover")]
+mod exact_fnsp_v3_finalization;
 pub mod execution_cursor;
 pub mod executor_setup;
 pub mod finalization_votes;
@@ -1038,6 +1042,26 @@ async fn run_node(
         ),
     }
 
+    // ── ML-DSA KEYGEN: install the REAL full-byte core behind identity-key derivation ──
+    // This is the same shared install seam used by SDK hosts. The extracted core deterministically expands
+    // the 32-byte identity seed into the FIPS 204 ML-DSA-65 keypair; it is KAT-anchored byte-exact against
+    // NIST ACVP vectors (the byte↔ring refinement forall remains open). Without this install, key generation
+    // now refuses unless the operator explicitly accepts the unaudited crate fallback.
+    match install_mldsa_verified_keygen_core_real() {
+        MlDsaKeygenCoreRealInstall::Installed => info!(
+            "ML-DSA keygen: verified Lean core installed — the extracted full-byte keygen is now the \
+             identity-key expander; the `fips204` crate is out of the node's keygen TCB"
+        ),
+        MlDsaKeygenCoreRealInstall::AlreadyInstalled => {
+            info!("ML-DSA keygen: a verified Lean core was already installed this process")
+        }
+        MlDsaKeygenCoreRealInstall::ExportAbsent => warn!(
+            "ML-DSA keygen: the linked Lean archive does NOT export `dregg_mldsa_keygen_real`; keygen \
+             will fail closed unless DREGG_ALLOW_UNAUDITED_PQ=1 is explicitly set. Rebuild against a \
+             HEAD-matching archive containing all six PQ exports."
+        ),
+    }
+
     // ── ML-KEM DECAPS: install the Lean-verified REAL core as `HybridResponder::finish`'s AUTHORITY ──
     // The hybrid session KEM (`dregg_pq::hybrid_kem`) recovers the ML-KEM-768 shared secret on the responder
     // side by calling the `ml-kem` crate's `.decapsulate`. With a REAL core installed it instead recovers the
@@ -1094,6 +1118,24 @@ async fn run_node(
              (`mlkem_encaps_real_core_available()` is false) — the node's ML-KEM encaps falls back to the \
              `ml-kem` crate primitive (a valid FIPS-203 encaps, but NOT the Lean-verified authority). \
              Rebuild against a HEAD-matching archive to route encaps through Lean."
+        ),
+    }
+
+    // ── ML-KEM KEYGEN: install the REAL full-byte core behind hybrid responder offers ──
+    // `responder_offer` now routes through the shared bare-keygen authority instead of minting a crate key
+    // directly. Installing here therefore covers the actual CaPTP/session handshake as well as bare KEM users.
+    match install_mlkem_verified_keygen_core() {
+        MlKemKeygenCoreInstall::Installed => info!(
+            "ML-KEM keygen: verified Lean core installed — hybrid responder keypairs now come from the \
+             extracted full-byte keygen; the `ml-kem` crate is out of the node's KEM-keygen TCB"
+        ),
+        MlKemKeygenCoreInstall::AlreadyInstalled => {
+            info!("ML-KEM keygen: a verified Lean core was already installed this process")
+        }
+        MlKemKeygenCoreInstall::ExportAbsent => warn!(
+            "ML-KEM keygen: the linked Lean archive does NOT export `dregg_mlkem_keygen_real`; hybrid \
+             responder offers will fail closed unless DREGG_ALLOW_UNAUDITED_PQ=1 is explicitly set. \
+             Rebuild against a HEAD-matching archive containing all six PQ exports."
         ),
     }
 
@@ -2621,6 +2663,18 @@ pub fn install_mldsa_verified_sign_core_real() -> MlDsaSignCoreRealInstall {
     )
 }
 
+/// Outcome of installing the Lean-verified REAL ML-DSA keygen core behind identity-key derivation.
+pub use dregg_pq::MlDsaKeygenCoreRealInstall;
+
+/// Install the extracted, KAT-anchored full-byte ML-DSA-65 keygen core as the authority behind
+/// `MlDsaKey::from_ed25519_seed`. The shared dregg-pq seam keeps archive linking out of the light leaf.
+pub fn install_mldsa_verified_keygen_core_real() -> MlDsaKeygenCoreRealInstall {
+    dregg_pq::install_verified_mldsa_keygen_core_real(
+        dregg_lean_ffi::mldsa_keygen_real_core_available,
+        |w| dregg_lean_ffi::shadow_mldsa_keygen_real(w).ok(),
+    )
+}
+
 /// Outcome of installing the Lean-verified REAL ML-KEM decaps core as `dregg_pq::HybridResponder::finish`'s
 /// authority. Re-exported from `dregg-pq` (the single shared install object); node keeps the name for the
 /// running-binary gate `tests/mlkem_live_decaps.rs`.
@@ -2658,6 +2712,18 @@ pub fn install_mlkem_verified_encaps_core() -> MlKemEncapsCoreInstall {
     dregg_pq::install_verified_mlkem_encaps_core(
         dregg_lean_ffi::mlkem_encaps_real_core_available,
         |w| dregg_lean_ffi::shadow_mlkem_encaps_real(w).ok(),
+    )
+}
+
+/// Outcome of installing the Lean-verified REAL ML-KEM keygen core behind responder/bare key generation.
+pub use dregg_pq::MlKemKeygenCoreInstall;
+
+/// Install the extracted, KAT-anchored full-byte ML-KEM-768 keygen core as the authority behind both
+/// `hybrid_kem::responder_offer` and `ml_kem768_keygen`.
+pub fn install_mlkem_verified_keygen_core() -> MlKemKeygenCoreInstall {
+    dregg_pq::install_verified_mlkem_keygen_core(
+        dregg_lean_ffi::mlkem_keygen_real_core_available,
+        |w| dregg_lean_ffi::shadow_mlkem_keygen_real(w).ok(),
     )
 }
 
