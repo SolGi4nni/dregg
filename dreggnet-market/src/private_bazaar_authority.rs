@@ -52,7 +52,14 @@ const OPERATION_RECORD_LEN: usize = 8 + 1 + (8 * 32);
 const MAX_METHOD_BYTES: usize = 256;
 const MAX_REWARD_KIND_BYTES: usize = 256;
 
-/// Exact engine effect selected by deployment policy before dispatch.
+/// Exact engine effect assembled by the trusted game adapter before dispatch.
+///
+/// Target, method, topic, reward kind, and amount are rechecked against the
+/// independently loaded deployment policy when authority is minted.
+/// `expected_before` is necessarily dynamic: the concrete adapter must derive
+/// it from the target engine's durable state, never from a public request. A
+/// stale value makes the executor refuse and leaves the already sealed outbox
+/// `Dispatching` (fail-closed); it is not a retry knob.
 ///
 /// `event_topic` is the executor event emitted in the same turn as the state
 /// mutation.  Its exact data schema is eight 32-bit lanes of `operation_id`,
