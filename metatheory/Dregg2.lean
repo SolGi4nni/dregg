@@ -1269,3 +1269,25 @@ import Dregg2.Circuit.ShieldedExactApexV4 -- one hidden opening feeds the full n
 import Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor -- explicitly NON-APEX fixed-100-PI barter substrate: one opening drives canonical full-nullifier packing, wide binding, whole-note swap, output root, and binary AAFI32/FNS4; FWS1 is schema-separated from semantic FXC4, whose 19 Dark-AMM + 27 ring lanes/rule are absent, alongside the four explicit witness welds
 import Dregg2.Circuit.ShieldedV4Finalization -- one atomic shielded-v4 finalization joins the shared-witness apex, signer-free receipt core, authenticated causal time, FNS4/output-note installation, and terminal ACK; local envelope/clock noninterference + rejection/retry/fatal no-install teeth; #assert_axioms-clean
 import Dregg2.Metatheory.DirectLogicArithmetization -- corrected Gabbay matrix compiler + field projection + private interpolation/public direct-table live instances; finite-signature FOL IR-v2 and four production DREGG public decision ledgers; live degree-2 BoolGraph optimizer certificates; four-mode indexed presentation compiler with explicit conversion/glue cost; finite HOL, family-polynomial Yoneda, the finite-set uniform-width no-go, fibred evidence CCC, and intensional strong-CCC compilation; stored-opening-bound proof/BFV plans with exact zero-observation accounting plus the B=8 symmetric-root/CSE schedule (11 rather than 15 ciphertext multiplications at unchanged depth); live public interaction-receipt IR through depth 14 with arbitrary-trace soundness and typed-syntax-erasure obstruction; categorical coverage/query factorization; robust transcript descent; and effective assembly covers/regular images. Boundaries remain explicit: finite grounding may expand exponentially; workload atoms remain outside their Boolean skeletons; Gabbay public direct tables reveal every cell and omit interpolation; family Yoneda is hom-set-indexed, not one uniform succinct backend; representation optimality is finite-list-relative and glue is not free; the B=8 specialization has exact plaintext semantics and real BFV execution on the depth-oriented parameter set, but no general BFV noise theorem or distributed-key execution; query crypto/FS/FRI reductions remain external; assembly coverage is not the exact completion or query soundness; no general FHE security/noise, runtime-decoder refinement, prover-throughput, or finality theorem.
+-- ─── Rooted orphans (built green but previously reachable from NO default lake target, so
+--      their #assert_axioms / #guard checks never ran in CI). Registered here so `lake build`
+--      compiles them and a downstream regression goes red instead of silently rotting. ───
+import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
+import Dregg2.Circuit.Emit.BlindedMembershipWideEmit
+import Dregg2.Circuit.Emit.BoundPresentationWideEmit
+import Dregg2.Circuit.Emit.HeapLeafWideEmit
+import Dregg2.Circuit.Emit.LexCompare8Emit
+import Dregg2.Circuit.Emit.ShieldedSpendDescriptor
+import Dregg2.Circuit.Emit.ShieldedValueLinkDescriptor
+import Dregg2.Circuit.Emit.PredicatesCompoundWeakCountermodel -- countermodel: CompoundClassified is strictly too weak to imply genuine AND (a Satisfied2-accepted trace refuting the AND functional law)
+import Dregg2.Circuit.FriArityForking
+import Dregg2.Circuit.FriDeployedRateInstance
+import Dregg2.Circuit.FriEpsFriComposedAdversary
+import Dregg2.Circuit.PassiveDescriptorOptimization
+import Dregg2.Metatheory.EffectVmDescriptor2PassiveOptimization
+import Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2
+import Dregg2.Metatheory.RealizabilityLocalRewriteOracle
+import Dregg2.Metatheory.DirectLogicDreggProductionPredicates
+import Dregg2.Calculus.IntensionalCCCInteractionMultiBlockDescriptorIR2
+import Dregg2.Verify.DirectLogicAdversarialFalsifierV2
+import Dregg2.Bridge.ConditionalInterchainAdapter

@@ -91,11 +91,10 @@ theorem weakAndWitness_satisfies :
 
 /-- Every value read by the refinement theorem is canonical in the BabyBear field window. -/
 theorem weakAndWitness_canon : CompCanon weakAndWitness := by
-  refine ⟨?_, ?_, ?_, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
-    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
-    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
-    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
-    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ?_⟩
+  refine ⟨?_, ?_, ?_, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ?_⟩
   · intro j hj; interval_cases j <;> exact ⟨by decide, by decide⟩
   · intro j hj; interval_cases j <;> exact ⟨by decide, by decide⟩
   · intro j hj; interval_cases j <;> exact ⟨by decide, by decide⟩
@@ -128,7 +127,7 @@ theorem weakAndWitness_not_genuineAnd :
     ¬ GenuineAndSound (envAt weakAndWitness 0) := by
   intro h
   have h0 := h (by decide) (by decide) 0 (by decide)
-  decide at h0
+  exact absurd h0 (by decide)
 
 /-- **Countermodel capstone.** `CompoundClassified` is strictly too weak to imply genuine AND
 semantics, and the countermodel is inhabited by a trace accepted by `Satisfied2`. -/
