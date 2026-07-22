@@ -129,7 +129,19 @@ impl std::error::Error for SignedTurnValidationError {}
 /// every caller on the exact bytes both signature halves authenticated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidatedSignedTurn {
-    pub turn_hash: [u8; 32],
+    turn_hash: [u8; 32],
+}
+
+impl ValidatedSignedTurn {
+    /// The exact turn hash whose classical/PQ perimeter passed validation.
+    pub const fn turn_hash(self) -> [u8; 32] {
+        self.turn_hash
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_turn_hash_for_test(turn_hash: [u8; 32]) -> Self {
+        Self { turn_hash }
+    }
 }
 
 /// Validate the complete outer `SignedTurn` perimeter.
