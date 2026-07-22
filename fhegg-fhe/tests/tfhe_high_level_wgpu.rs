@@ -182,3 +182,112 @@ fn deployed_fhe_uint32_scalar_gt_is_all_block_wgpu_and_drives_control_flow() {
         gpu_times.iter().sum::<std::time::Duration>().as_secs_f64() * 1_000.0,
     );
 }
+
+#[test]
+fn deployed_fhe_uint32_scalar_gt_resident_matches_roundtrip_baseline() {
+    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
+        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the resident scalar comparison GPU gate");
+        return;
+    }
+
+    let client = ClientKey::generate(ConfigBuilder::default());
+    let compressed = CompressedServerKey::new(&client);
+    let server = compressed.decompress();
+    let plan = prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(&compressed).unwrap();
+    set_server_key(server);
+
+    let clear = 0x9234_5678u32;
+    let scalar = clear - 1;
+    let input = FheUint32::encrypt(clear, &client);
+    let oracle = input.gt(scalar);
+
+    let roundtrip_started = Instant::now();
+    let (roundtrip, roundtrip_backends) = plan.greater_than_scalar(&input, scalar).unwrap();
+    let roundtrip_time = roundtrip_started.elapsed();
+    assert_eq!(roundtrip_backends.len(), 16);
+
+    let resident_started = Instant::now();
+    let (resident, resident_backend) = plan.greater_than_scalar_resident(&input, scalar).unwrap();
+    let resident_time = resident_started.elapsed();
+    assert!(matches!(
+        resident_backend,
+        TorusMacBackend::Wgpu {
+            algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            ..
+        }
+    ));
+    let oracle_clear: bool = oracle.decrypt(&client);
+    let roundtrip_clear: u32 = roundtrip.decrypt(&client);
+    let resident_clear: u32 = resident.decrypt(&client);
+    assert_eq!(roundtrip_clear, u32::from(oracle_clear));
+    assert_eq!(resident_clear, roundtrip_clear);
+    eprintln!(
+        "high-level scalar-gt resident: roundtrip={:.3}ms resident={:.3}ms speedup={:.3}x",
+        roundtrip_time.as_secs_f64() * 1_000.0,
+        resident_time.as_secs_f64() * 1_000.0,
+        roundtrip_time.as_secs_f64() / resident_time.as_secs_f64(),
+    );
+
+    // Cover the other lexicographic paths independently: complete equality,
+    // a more-significant less decision, and a more-significant greater
+    // decision. The timed case above is the late (least-significant) greater
+    // decision, so together these exercise state retention across the chain.
+    for scalar in [clear, 0xa234_5678, 0x8234_5678] {
+        let oracle = input.gt(scalar);
+        let (resident_case, backend) = plan.greater_than_scalar_resident(&input, scalar).unwrap();
+        assert!(matches!(
+            backend,
+            TorusMacBackend::Wgpu {
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+                ..
+            }
+        ));
+        let oracle_clear: bool = oracle.decrypt(&client);
+        let resident_clear: u32 = resident_case.decrypt(&client);
+        assert_eq!(resident_clear, u32::from(oracle_clear));
+    }
+
+    // The resident result is still an ordinary high-level ciphertext and can
+    // immediately govern encrypted control flow.
+    let condition = resident.gt(0u32);
+    let chosen = condition.if_then_else(
+        &FheUint32::encrypt(0xcafe_babeu32, &client),
+        &FheUint32::encrypt(0xdead_beefu32, &client),
+    );
+    let chosen_clear: u32 = chosen.decrypt(&client);
+    assert_eq!(chosen_clear, 0xcafe_babe);
+
+    // Dark-Bazaar-shaped producer: compare a computed encrypted aggregate,
+    // including a transition across the old u16 boundary, without any
+    // intermediate host ciphertext round trip.
+    let encrypted_quantities = [
+        FheUint32::encrypt(32_768u32, &client),
+        FheUint32::encrypt(32_768u32, &client),
+    ];
+    let quantity_refs = encrypted_quantities.iter().collect::<Vec<_>>();
+    let aggregate = FheUint32::sum(&quantity_refs);
+    let aggregate_oracle = aggregate.gt(65_535u32);
+    let (aggregate_resident, aggregate_backend) = plan
+        .greater_than_scalar_resident(&aggregate, 65_535)
+        .unwrap();
+    assert!(matches!(
+        aggregate_backend,
+        TorusMacBackend::Wgpu {
+            algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            ..
+        }
+    ));
+    let aggregate_clear: u32 = aggregate_resident.decrypt(&client);
+    let aggregate_oracle_clear: bool = aggregate_oracle.decrypt(&client);
+    assert_eq!(aggregate_clear, u32::from(aggregate_oracle_clear));
+    assert_eq!(aggregate_clear, 1);
+
+    let dirty = FheUint32::encrypt(7u32, &client);
+    let (mut dirty_radix, dirty_id, dirty_tag, dirty_rerandomization) = dirty.into_raw_parts();
+    dirty_radix.blocks_mut()[0].degree = tfhe::shortint::ciphertext::Degree::new(4);
+    let dirty = FheUint32::from_raw_parts(dirty_radix, dirty_id, dirty_tag, dirty_rerandomization);
+    assert!(matches!(
+        plan.greater_than_scalar_resident(&dirty, 6),
+        Err(FheUint32WgpuPbsError::NonEmptyCarries)
+    ));
+}

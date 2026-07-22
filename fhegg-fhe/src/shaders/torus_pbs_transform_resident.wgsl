@@ -38,6 +38,10 @@ struct Metadata {
 // Per row: psi^i followed by n^-1*psi^-i, all Montgomery encoded.
 @group(0) @binding(7) var<storage, read> twists: array<u32>;
 @group(0) @binding(8) var<storage, read> crt_data: array<u32>;
+// GPU-produced centered-modulus-switch rotations. Existing single-PBS entry
+// points continue to use params.rotation; only the resident-chain entry points
+// consume this schedule.
+@group(0) @binding(9) var<storage, read> scheduled_rotations: array<u32>;
 
 var<workgroup> ntt_row: array<u32, 4096>;
 
@@ -135,11 +139,11 @@ fn init_decomposer_state(input: vec2<u32>) -> vec2<u32> {
     return sub64(state, shl64(vec2<u32>(need_balance, 0u), represented_bits));
 }
 
-fn load_rotated64(output_coefficient: u32) -> vec2<u32> {
+fn load_rotated64_at(output_coefficient: u32, rotation: u32) -> vec2<u32> {
     let polynomial = output_coefficient / params.degree;
     let out_index = output_coefficient % params.degree;
-    let global_negative = params.rotation >= params.degree;
-    let shift = select(params.rotation, params.rotation - params.degree, global_negative);
+    let global_negative = rotation >= params.degree;
+    let shift = select(rotation, rotation - params.degree, global_negative);
     var source_index: u32;
     var wrap_negative: bool;
     if (out_index >= shift) {
@@ -151,6 +155,10 @@ fn load_rotated64(output_coefficient: u32) -> vec2<u32> {
     }
     let value = load_acc64(polynomial * params.degree + source_index, params.input_buffer);
     return select(value, neg64(value), global_negative != wrap_negative);
+}
+
+fn load_rotated64(output_coefficient: u32) -> vec2<u32> {
+    return load_rotated64_at(output_coefficient, params.rotation);
 }
 
 fn addmod(a: u32, b: u32, q: u32) -> u32 {
@@ -225,17 +233,23 @@ fn monomial_rotate(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 @compute @workgroup_size(64)
-fn decompose_difference_to_rns(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn monomial_rotate_scheduled(@builtin(global_invocation_id) gid: vec3<u32>) {
     let coefficient = gid.x;
-    let glwe_coefficients = params.glwe_size * params.degree;
-    if (coefficient >= glwe_coefficients) { return; }
+    if (coefficient >= params.glwe_size * params.degree) { return; }
+    let rotation = scheduled_rotations[params.key_step];
+    store_acc64(
+        coefficient,
+        1u - params.input_buffer,
+        load_rotated64_at(coefficient, rotation),
+    );
+}
+
+fn decompose_at_rotation(coefficient: u32, rotation: u32) {
     let difference = sub64(
-        load_rotated64(coefficient),
+        load_rotated64_at(coefficient, rotation),
         load_acc64(coefficient, params.input_buffer),
     );
     var state = init_decomposer_state(difference);
-    // The deployed shape has one level. Keep the exact tfhe-rs digit extraction
-    // general enough to reject accidental metadata drift at the host boundary.
     let digit_mask = (1u << params.base_log) - 1u;
     let raw_digit = state.x & digit_mask;
     state = arithmetic_shr64(state, params.base_log);
@@ -254,6 +268,24 @@ fn decompose_difference_to_rns(@builtin(global_invocation_id) gid: vec3<u32>) {
         let montgomery = mont_mul(canonical, row_r2(row), q, row_qinv(row));
         transform_scratch[digit_series_base(polynomial * params.n_rows + row) + local] = montgomery;
     }
+}
+
+@compute @workgroup_size(64)
+fn decompose_difference_to_rns(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let glwe_coefficients = params.glwe_size * params.degree;
+    if (coefficient >= glwe_coefficients) { return; }
+    // The deployed shape has one level. Keep the exact tfhe-rs digit extraction
+    // general enough to reject accidental metadata drift at the host boundary.
+    decompose_at_rotation(coefficient, params.rotation);
+}
+
+@compute @workgroup_size(64)
+fn decompose_difference_scheduled(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let coefficient = gid.x;
+    let glwe_coefficients = params.glwe_size * params.degree;
+    if (coefficient >= glwe_coefficients) { return; }
+    decompose_at_rotation(coefficient, scheduled_rotations[params.key_step]);
 }
 
 // Forward-transform every BSK polynomial once at plan construction.

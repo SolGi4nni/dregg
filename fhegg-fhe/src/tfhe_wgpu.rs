@@ -45,7 +45,8 @@ use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, 
 
 use crate::tfhe_blind_rotation_ntt_wgpu::{
     prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu,
-    run_bootstrap_only as transform_bootstrap_gpu, PreparedTransformPbsGpuKeys,
+    run_bootstrap_only as transform_bootstrap_gpu,
+    run_scalar_gt_chain as transform_scalar_gt_chain_gpu, PreparedTransformPbsGpuKeys,
     TransformPbsGpuError,
 };
 use crate::tfhe_blind_rotation_wgpu::{
@@ -1961,6 +1962,30 @@ pub fn torus_pbs_bootstrap_transform_prepared(
         });
     }
     match transform_bootstrap_gpu(accumulator, body_rotation, mask_rotations, &plan.prepared) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            },
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute a complete radix scalar-comparison PBS chain with the large-key
+/// state, pre-PBS key switches, centered modulus-switch schedules, and LUT
+/// accumulators resident on the selected wgpu device. Only the final large-key
+/// predicate LWE is read back.
+pub fn torus_pbs_scalar_gt_chain_transform_prepared(
+    plan: &TorusPbsTransformWgpuPlan,
+    digit_lwes: &[u64],
+    accumulators: &[u64],
+    blocks: usize,
+) -> Result<TorusMacResult, TorusMacError> {
+    match transform_scalar_gt_chain_gpu(digit_lwes, accumulators, blocks, &plan.prepared) {
         Ok(result) => Ok(TorusMacResult {
             coefficients: result.coefficients,
             backend: TorusMacBackend::Wgpu {
