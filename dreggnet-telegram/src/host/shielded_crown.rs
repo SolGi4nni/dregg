@@ -10,9 +10,10 @@ use std::collections::BTreeMap;
 
 use dregg_persist::{FinalizedFaithfulSpend, PersistentStore};
 use dreggnet_catalog::{
-    GameAffordance, GameAudience, PrivateFheggGameConsequenceReceipt, ShieldedCrownAction,
-    ShieldedCrownHand, ShieldedCrownOrchestrationError, ShieldedCrownPolicy,
-    execute_shielded_crown_action, inspect_bound_game_session,
+    GameActionRef, GameAffordance, GameAudience, GameHostIncarnation, GameSessionRef,
+    PrivateFheggGameConsequenceReceipt, ShieldedCrownAction, ShieldedCrownHand,
+    ShieldedCrownOrchestrationError, ShieldedCrownPolicy, SignedGameAction,
+    execute_shielded_crown_action, inspect_bound_game_session, verify_signed_game_action,
 };
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
 use dreggnet_offerings::{SignedAction, SignedError, verify_signed};
@@ -26,24 +27,31 @@ const COMMAND: &str = "/shielded-crown";
 
 /// The complete Telegram player wire for one crown attempt.
 ///
-/// `session` and the action are deliberately absent: the chat determines the
-/// former and the live common-spine affordance determines the latter.  The two
-/// 32-byte ids are public indices into trusted server custody, never portable
-/// authority objects.
+/// The human session id and executor action are deliberately absent: the chat
+/// determines the former and `hand` determines the one exact crown action.
+/// The client must nevertheless carry and sign the authority coordinates from
+/// the surface that offered that action. This prevents a valid old command
+/// from being moved across a host replacement, close/reopen generation, or
+/// intervening turn. The two custody ids remain public indices into trusted
+/// server custody, never portable authority objects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TelegramShieldedCrownRequest {
     pub apex_id: [u8; 32],
     pub finalized_spend_nullifier: [u8; 32],
     pub hand: ShieldedCrownHand,
+    pub game_host_incarnation: [u8; 32],
+    pub game_session_generation: u64,
+    pub game_observed_head: [u8; 32],
     pub actor_pubkey_hex: String,
     pub counter: u64,
     pub signature: [u8; 64],
+    pub authority_signature: [u8; 64],
 }
 
 impl TelegramShieldedCrownRequest {
     /// Parse the exact command:
     ///
-    /// `/shielded-crown red|blue APEX_ID NULLIFIER PUBKEY COUNTER SIGNATURE`
+    /// `/shielded-crown red|blue APEX_ID NULLIFIER HOST GENERATION HEAD PUBKEY COUNTER SIGNATURE AUTHORITY_SIGNATURE`
     ///
     /// Every byte-bearing field has a fixed public length and trailing fields
     /// refuse.  There is consequently no extension slot through which a client
@@ -63,6 +71,13 @@ impl TelegramShieldedCrownRequest {
         };
         let apex_id = decode_hex_array::<32>(fields.next())?;
         let finalized_spend_nullifier = decode_hex_array::<32>(fields.next())?;
+        let game_host_incarnation = decode_hex_array::<32>(fields.next())?;
+        let game_session_generation = fields
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|generation| *generation != 0)
+            .ok_or(TelegramShieldedCrownError::MalformedRequest)?;
+        let game_observed_head = decode_hex_array::<32>(fields.next())?;
         let actor_pubkey_hex = fields
             .next()
             .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -73,16 +88,26 @@ impl TelegramShieldedCrownRequest {
             .and_then(|value| value.parse::<u64>().ok())
             .ok_or(TelegramShieldedCrownError::MalformedRequest)?;
         let signature = decode_hex_array::<64>(fields.next())?;
-        if fields.next().is_some() || apex_id == [0; 32] || finalized_spend_nullifier == [0; 32] {
+        let authority_signature = decode_hex_array::<64>(fields.next())?;
+        if fields.next().is_some()
+            || apex_id == [0; 32]
+            || finalized_spend_nullifier == [0; 32]
+            || game_host_incarnation == [0; 32]
+            || game_observed_head == [0; 32]
+        {
             return Err(TelegramShieldedCrownError::MalformedRequest);
         }
         Ok(Self {
             apex_id,
             finalized_spend_nullifier,
             hand,
+            game_host_incarnation,
+            game_session_generation,
+            game_observed_head,
             actor_pubkey_hex,
             counter,
             signature,
+            authority_signature,
         })
     }
 }
@@ -178,6 +203,7 @@ pub enum TelegramShieldedCrownError {
     CrownUnavailable(ShieldedCrownHand),
     WrongGameSigner,
     Signature(SignedError),
+    StaleGameAuthority,
     Epoch(String),
     Spine(String),
     CustodyUnavailable,
@@ -195,6 +221,10 @@ impl std::fmt::Display for TelegramShieldedCrownError {
             Self::CrownUnavailable(hand) => write!(f, "the {hand:?} crown is not offered now"),
             Self::WrongGameSigner => write!(f, "the signature key is not the mapped winner"),
             Self::Signature(error) => write!(f, "winner signature refused: {error}"),
+            Self::StaleGameAuthority => write!(
+                f,
+                "the shielded-crown command targets a stale host, generation, or game head"
+            ),
             Self::Epoch(error) => write!(f, "dungeon epoch unavailable: {error}"),
             Self::Spine(error) => write!(f, "dungeon action unavailable: {error}"),
             Self::CustodyUnavailable => write!(f, "shielded authority custody is unavailable"),
@@ -255,9 +285,12 @@ impl<T: Transport> TelegramHost<T> {
             return Err(TelegramShieldedCrownError::DungeonNotActive);
         }
 
-        // Derive the executor action and verify the signature before touching
-        // either private authority store.  The catalog adapter repeats both
-        // checks immediately before reservation/dispatch.
+        // Derive the executor action and verify both client signatures before
+        // touching either private authority store. The outer signature is
+        // built from the authority coordinates carried by the client; never
+        // substitute the server's current coordinates before verifying it.
+        // The catalog adapter then repeats all checks immediately before
+        // reservation/dispatch.
         let epoch_ledger = self.game_epochs.clone();
         let signed_action = {
             let session_for_job = session.clone();
@@ -284,16 +317,17 @@ impl<T: Transport> TelegramHost<T> {
                     ShieldedCrownHand::Red => dungeon_on_dregg::KP_CLAIM_RED as i64,
                     ShieldedCrownHand::Blue => dungeon_on_dregg::KP_CLAIM_BLUE as i64,
                 };
-                let action = view
+                let (current_reference, action) = view
                     .affordances
                     .into_iter()
                     .find_map(|affordance| match affordance {
-                        GameAffordance::Turn { action, .. }
-                            if action.turn == dreggnet_offerings::dungeon::TURN_CHOOSE
-                                && action.arg == desired
-                                && action.text.is_none() =>
+                        GameAffordance::Turn {
+                            reference, action, ..
+                        } if action.turn == dreggnet_offerings::dungeon::TURN_CHOOSE
+                            && action.arg == desired
+                            && action.text.is_none() =>
                         {
-                            Some(action)
+                            Some((reference, action))
                         }
                         _ => None,
                     })
@@ -307,14 +341,41 @@ impl<T: Transport> TelegramHost<T> {
                             )
                         })
                     })?;
-                let signed = SignedAction {
+                let signed_action = SignedAction {
                     action,
                     actor_pubkey_hex: signer,
                     counter,
                     signature,
                 };
-                verify_signed(DUNGEON_KEY, &session_for_job, expected_counter, &signed)?;
-                Ok::<SignedAction, TelegramShieldedCrownError>(signed)
+                let presented_incarnation = GameHostIncarnation::new(request.game_host_incarnation)
+                    .map_err(|error| TelegramShieldedCrownError::Spine(error.to_string()))?;
+                let presented_session = GameSessionRef::bound(
+                    DUNGEON_KEY,
+                    session_for_job.clone(),
+                    presented_incarnation,
+                    request.game_session_generation,
+                )
+                .map_err(|error| TelegramShieldedCrownError::Spine(error.to_string()))?;
+                let command = SignedGameAction {
+                    reference: GameActionRef::new(
+                        presented_session,
+                        &signed_action.action,
+                        request.game_observed_head.to_vec(),
+                    ),
+                    signed_action,
+                    authority_signature: request.authority_signature,
+                };
+                verify_signed(
+                    DUNGEON_KEY,
+                    &session_for_job,
+                    expected_counter,
+                    &command.signed_action,
+                )?;
+                verify_signed_game_action(&command)?;
+                if command.reference != current_reference {
+                    return Err(TelegramShieldedCrownError::StaleGameAuthority);
+                }
+                Ok::<SignedGameAction, TelegramShieldedCrownError>(command)
             })?
         };
 
@@ -363,7 +424,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use deos_view::ViewNode;
-    use dreggnet_catalog::{PrivateFheggWinnerRoute, ShieldedCrownPolicy};
+    use dreggnet_catalog::{
+        GameSessionBinding, PrivateFheggWinnerRoute, ShieldedCrownPolicy, sign_game_action,
+    };
     use dreggnet_offerings::{
         Action, DreggIdentity, Offering, OfferingError, OfferingHost, Outcome, RunCost,
         SessionConfig, Surface, TurnSigner, VerifyReport,
@@ -515,6 +578,11 @@ mod tests {
             host.register(DUNGEON_KEY, "no-viewer crown", NoViewerCrown);
             host
         });
+        open_and_enter_hall(&mut telegram);
+        telegram
+    }
+
+    fn open_and_enter_hall(telegram: &mut TelegramHost<MockTransport>) {
         let session = TelegramFrontend::<MockTransport>::session_id(77, None);
         let newly_opened = telegram.host.run({
             let session = session.clone();
@@ -551,35 +619,72 @@ mod tests {
                 );
             }
         });
-        telegram
     }
 
-    fn crown_action(host: &TelegramHost<MockTransport>, hand: ShieldedCrownHand) -> Action {
+    fn crown_affordance(
+        host: &TelegramHost<MockTransport>,
+        hand: ShieldedCrownHand,
+    ) -> (GameActionRef, Action) {
         let session = TelegramFrontend::<MockTransport>::session_id(77, None);
         let desired = match hand {
             ShieldedCrownHand::Red => dungeon_on_dregg::KP_CLAIM_RED as i64,
             ShieldedCrownHand::Blue => dungeon_on_dregg::KP_CLAIM_BLUE as i64,
         };
+        let ledger = host.game_epochs.clone();
         host.host.run(move |offering| {
-            offering
-                .actions(DUNGEON_KEY, &session)
-                .unwrap()
-                .into_iter()
-                .find(|action| action.arg == desired)
-                .unwrap()
+            let bound = ledger.bound_session(DUNGEON_KEY, &session).unwrap();
+            let generation = ledger.current_generation(DUNGEON_KEY, &session).unwrap();
+            inspect_bound_game_session(
+                offering,
+                ledger.host_incarnation(),
+                generation,
+                bound,
+                &GameAudience::Shared,
+            )
+            .unwrap()
+            .affordances
+            .into_iter()
+            .find_map(|affordance| match affordance {
+                GameAffordance::Turn {
+                    reference, action, ..
+                } if action.arg == desired => Some((reference, action)),
+                _ => None,
+            })
+            .unwrap()
         })
     }
 
-    fn request(signer: &TurnSigner, action: Action, counter: u64) -> TelegramShieldedCrownRequest {
-        let session = TelegramFrontend::<MockTransport>::session_id(77, None);
-        let signed = signer.sign(DUNGEON_KEY, &session, counter, action);
+    fn request(
+        host: &TelegramHost<MockTransport>,
+        signer: &TurnSigner,
+        hand: ShieldedCrownHand,
+        counter: u64,
+    ) -> TelegramShieldedCrownRequest {
+        let (reference, action) = crown_affordance(host, hand);
+        let signed = sign_game_action(signer, reference, counter, action).unwrap();
+        let GameSessionBinding::Bound {
+            host_incarnation,
+            session_generation,
+        } = signed.reference.session.binding()
+        else {
+            panic!("crown fixture must publish bound authority")
+        };
         TelegramShieldedCrownRequest {
             apex_id: [0x51; 32],
             finalized_spend_nullifier: [0x52; 32],
-            hand: ShieldedCrownHand::Red,
-            actor_pubkey_hex: signed.actor_pubkey_hex,
-            counter: signed.counter,
-            signature: signed.signature,
+            hand,
+            game_host_incarnation: *host_incarnation.as_bytes(),
+            game_session_generation: *session_generation,
+            game_observed_head: signed
+                .reference
+                .expected_pre_head
+                .as_slice()
+                .try_into()
+                .unwrap(),
+            actor_pubkey_hex: signed.signed_action.actor_pubkey_hex,
+            counter: signed.signed_action.counter,
+            signature: signed.signed_action.signature,
+            authority_signature: signed.authority_signature,
         }
     }
 
@@ -587,22 +692,29 @@ mod tests {
     fn command_shape_accepts_only_public_fixed_fields() {
         let signer = TurnSigner::from_seed([0x61; 32]);
         let command = format!(
-            "{COMMAND} red {} {} {} 7 {}",
+            "{COMMAND} red {} {} {} 3 {} {} 7 {} {}",
             "51".repeat(32),
             "52".repeat(32),
+            "53".repeat(32),
+            "54".repeat(32),
             signer.pubkey_hex(),
             "63".repeat(64),
+            "64".repeat(64),
         );
         let parsed = TelegramShieldedCrownRequest::parse_command(&command).unwrap();
         assert_eq!(parsed.apex_id, [0x51; 32]);
         assert_eq!(parsed.finalized_spend_nullifier, [0x52; 32]);
         assert_eq!(parsed.hand, ShieldedCrownHand::Red);
+        assert_eq!(parsed.game_host_incarnation, [0x53; 32]);
+        assert_eq!(parsed.game_session_generation, 3);
+        assert_eq!(parsed.game_observed_head, [0x54; 32]);
         assert_eq!(parsed.counter, 7);
 
         for forged in [
             format!("{command} proof-bytes"),
             command.replace(" red ", " green "),
             command.replace(&"51".repeat(32), &"51".repeat(31)),
+            command.replace(" 3 ", " 0 "),
             command.replace(" 7 ", " -1 "),
         ] {
             assert!(matches!(
@@ -618,19 +730,10 @@ mod tests {
         let rival = TurnSigner::from_seed([0x72; 32]);
         let mut host = TelegramHost::with_host([0x73; 32], MockTransport::new(), OfferingHost::new);
         let custody = MissingCustody::default();
-        let action = Action::new(
-            "claim red",
-            dreggnet_offerings::dungeon::TURN_CHOOSE,
-            dungeon_on_dregg::KP_CLAIM_RED as i64,
-            true,
-        );
-        let result = host.execute_shielded_crown(
-            77,
-            None,
-            &policy(&signer),
-            &custody,
-            request(&rival, action, 0),
-        );
+        let signed = request(&host_in_hall(), &rival, ShieldedCrownHand::Red, 0);
+        // The host below is deliberately inactive. The signer-policy check
+        // must happen before either epoch/session or custody access.
+        let result = host.execute_shielded_crown(77, None, &policy(&signer), &custody, signed);
         assert!(matches!(
             result,
             Err(TelegramShieldedCrownError::WrongGameSigner)
@@ -645,20 +748,51 @@ mod tests {
         let signer = TurnSigner::from_seed([0x81; 32]);
         let mut host = host_in_hall();
         let custody = MissingCustody::default();
-        let action = crown_action(&host, ShieldedCrownHand::Red);
-        let result = host.execute_shielded_crown(
-            77,
-            None,
-            &policy(&signer),
-            &custody,
-            request(&signer, action, 0),
-        );
+        let request = request(&host, &signer, ShieldedCrownHand::Red, 0);
+        let result = host.execute_shielded_crown(77, None, &policy(&signer), &custody, request);
         assert!(matches!(
             result,
             Err(TelegramShieldedCrownError::ApexNotFound)
         ));
         assert_eq!(PRIVATE_RENDER_CALLS.load(Ordering::SeqCst), 0);
         assert_eq!(custody.apex_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(custody.spend_reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn tampered_outer_game_authority_refuses_before_private_custody() {
+        let signer = TurnSigner::from_seed([0x89; 32]);
+        let mut host = host_in_hall();
+        let custody = MissingCustody::default();
+        let mut request = request(&host, &signer, ShieldedCrownHand::Red, 0);
+        request.game_session_generation += 1;
+
+        let result = host.execute_shielded_crown(77, None, &policy(&signer), &custody, request);
+        assert!(matches!(
+            result,
+            Err(TelegramShieldedCrownError::Signature(
+                SignedError::BadSignature
+            ))
+        ));
+        assert_eq!(custody.apex_reads.load(Ordering::SeqCst), 0);
+        assert_eq!(custody.spend_reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn authentically_signed_old_generation_refuses_after_close_reopen_before_custody() {
+        let signer = TurnSigner::from_seed([0x8a; 32]);
+        let mut host = host_in_hall();
+        let stale = request(&host, &signer, ShieldedCrownHand::Red, 0);
+
+        assert!(host.close_game(DUNGEON_KEY, 77, None, 19).unwrap());
+        open_and_enter_hall(&mut host);
+        let custody = MissingCustody::default();
+        let result = host.execute_shielded_crown(77, None, &policy(&signer), &custody, stale);
+        assert!(matches!(
+            result,
+            Err(TelegramShieldedCrownError::StaleGameAuthority)
+        ));
+        assert_eq!(custody.apex_reads.load(Ordering::SeqCst), 0);
         assert_eq!(custody.spend_reads.load(Ordering::SeqCst), 0);
     }
 
@@ -690,14 +824,14 @@ mod tests {
             }
         });
         let custody = MissingCustody::default();
-        let action = crown_action(&host, ShieldedCrownHand::Red);
-        let result = host.execute_shielded_crown(
-            77,
-            None,
-            &policy(&signer),
-            &custody,
-            request(&signer, action, 4),
-        );
+        let mut request = request(&host, &signer, ShieldedCrownHand::Red, 4);
+        // Keep the outer envelope coherent with the stale inner counter; the
+        // replay counter refusal must still precede custody.
+        let (reference, action) = crown_affordance(&host, ShieldedCrownHand::Red);
+        let stale = sign_game_action(&signer, reference, 4, action).unwrap();
+        request.signature = stale.signed_action.signature;
+        request.authority_signature = stale.authority_signature;
+        let result = host.execute_shielded_crown(77, None, &policy(&signer), &custody, request);
         assert!(matches!(
             result,
             Err(TelegramShieldedCrownError::Signature(
