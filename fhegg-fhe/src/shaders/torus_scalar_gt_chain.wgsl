@@ -173,26 +173,6 @@ fn load_small(coefficient: u32) -> vec2<u32> {
     return vec2<u32>(small_lwe[limb], small_lwe[limb + 1u]);
 }
 
-// Add two large-key LWEs coefficient-wise.  The fused comparison/select path
-// evaluates the two mutually-exclusive masks
-//
-//   predicate * when + (1 - predicate) * otherwise
-//
-// with one PBS per mask.  Keeping this final addition on device means the
-// encrypted predicate never crosses the host boundary between comparison and
-// selection.  Binding 4 is deliberately reused as the output: it is sized for
-// a large LWE by that path, while the KS/MS entries only address its small-LWE
-// prefix.
-@compute @workgroup_size(64)
-fn add_large_lwes(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let coefficient = gid.x;
-    if (coefficient >= params.input_lwe_size) { return; }
-    let value = add64(load_state(coefficient), load_digit(coefficient));
-    let limb = coefficient * 2u;
-    small_lwe[limb] = value.x;
-    small_lwe[limb + 1u] = value.y;
-}
-
 // Batched form used after the resident comparison. Bindings 1 and 2 carry
 // contiguous true-mask and false-mask LWEs respectively; binding 4 receives
 // one contiguous selected radix ciphertext.

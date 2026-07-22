@@ -204,7 +204,6 @@ struct GpuContext {
     scalar_chain_bgl: wgpu::BindGroupLayout,
     keyswitch_packed_input: wgpu::ComputePipeline,
     centered_modulus_switch: wgpu::ComputePipeline,
-    add_large_lwes: wgpu::ComputePipeline,
     keyswitch_packed_inputs_batch: wgpu::ComputePipeline,
     centered_modulus_switch_batch: wgpu::ComputePipeline,
     add_large_lwe_pairs: wgpu::ComputePipeline,
@@ -419,7 +418,6 @@ impl GpuContext {
         };
         let keyswitch_packed_input = make_scalar_chain("keyswitch_packed_input");
         let centered_modulus_switch = make_scalar_chain("centered_modulus_switch");
-        let add_large_lwes = make_scalar_chain("add_large_lwes");
         let keyswitch_packed_inputs_batch = make_scalar_chain("keyswitch_packed_inputs_batch");
         let centered_modulus_switch_batch = make_scalar_chain("centered_modulus_switch_batch");
         let add_large_lwe_pairs = make_scalar_chain("add_large_lwe_pairs");
@@ -458,7 +456,6 @@ impl GpuContext {
             scalar_chain_bgl,
             keyswitch_packed_input,
             centered_modulus_switch,
-            add_large_lwes,
             keyswitch_packed_inputs_batch,
             centered_modulus_switch_batch,
             add_large_lwe_pairs,
