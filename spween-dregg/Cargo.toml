@@ -28,6 +28,8 @@ spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e10913849
 # (`wasm/src/bindings_story.rs`) crosses to the browser tab. Native builds are
 # unaffected (the executor path is identical with or without `server`).
 dregg-app-framework = { path = "../app-framework", default-features = false }
+dregg-sdk = { path = "../sdk", default-features = false }
+dregg-turn = { path = "../turn" }
 # The cell model itself (`Cell`, `Permissions`) for birthing the world-cell.
 dregg-cell = { path = "../cell" }
 # THE REAL voting engine — the canonical cap-bounded cell-backed `VoteEngine`
@@ -42,6 +44,15 @@ blake3 = "1"
 # Deterministic world identity (`AgentCipherclerk::from_key_bytes`) so a
 # playthrough re-verifies against a freshly re-deployed world-cell.
 zeroize = "1"
+serde = { workspace = true, features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+fs2 = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`, not
 # `default-members` — it is a heavy narrative demo). The root `[workspace]` +

@@ -38,6 +38,7 @@
 
 mod collective;
 mod compiler;
+mod durable;
 mod encoding;
 mod real_engine;
 mod verify;
@@ -52,6 +53,11 @@ pub use compiler::{
     CompileError, CompiledStory, GENESIS_DONE_EXT_KEY, GENESIS_METHOD, HEAP_HATCH_METHOD,
     PASSAGE_ENDED, PASSAGE_SLOT, SPILL_EXT_BASE, STATE_SLOTS, choice_method, compile_scene,
     value_to_field,
+};
+pub use durable::{
+    FileWorldCellCheckpointAnchor, OpenedDurableWorldCell, WorldCellCheckpoint,
+    WorldCellCheckpointAnchor, WorldCellSigningCustody, open_durable_world_cell,
+    provision_durable_world_cell, world_cell_signing_custody_pubkey,
 };
 pub use encoding::{field_to_u64, value_to_u64};
 pub use real_engine::CollectiveChoiceEngine;

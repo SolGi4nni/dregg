@@ -691,6 +691,49 @@ impl AgentRuntime {
         }
     }
 
+    /// Create a runtime over an authenticated durable ledger and receipt log.
+    ///
+    /// Unlike [`Self::with_ledger`], this restores the two pieces of execution
+    /// position that must agree with that image before another turn can run:
+    /// the next agent nonce (from the restored agent cell) and the executor's
+    /// causal receipt head (from the already-validated cipherclerk log). This
+    /// constructor does not deserialize or trust either artifact itself; the
+    /// caller must restore and authenticate both before invoking it.
+    pub fn with_restored_ledger(
+        cipherclerk: Arc<RwLock<AgentCipherclerk>>,
+        domain: &str,
+        ledger: Arc<Mutex<Ledger>>,
+    ) -> Result<Self, SdkError> {
+        let runtime = Self::with_ledger(cipherclerk, domain, ledger);
+        let next_nonce = runtime
+            .ledger
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&runtime.cell_id)
+            .ok_or_else(|| {
+                SdkError::Wire("restored ledger is missing the runtime agent cell".to_owned())
+            })?
+            .state
+            .nonce();
+        *runtime
+            .nonce
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = next_nonce;
+
+        let head = runtime
+            .cipherclerk
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .agent_receipt_head(&runtime.cell_id)
+            .map(|receipt| receipt.receipt_hash());
+        if let Some(head) = head {
+            runtime
+                .executor
+                .set_last_receipt_hash(runtime.cell_id, head);
+        }
+        Ok(runtime)
+    }
+
     /// ROUTE (ii) — install a HOST executor signing seed on this runtime (builder
     /// form), so every committed receipt — this runtime's own AND every worker
     /// [`SubAgent`] it spawns (the grain drive path) — is Ed25519-signed over

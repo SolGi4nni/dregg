@@ -397,6 +397,25 @@ impl EmbeddedExecutor {
         }
     }
 
+    /// Construct over a caller-authenticated durable ledger and receipt log.
+    ///
+    /// The supplied [`AppCipherclerk`] must already contain the strictly
+    /// validated receipt chain that corresponds to `ledger`. The SDK restores
+    /// the agent nonce and executor causal head from those two artifacts before
+    /// this handle becomes usable for another turn.
+    pub fn from_restored_ledger(
+        cipherclerk: &AppCipherclerk,
+        domain: &str,
+        ledger: dregg_cell::Ledger,
+    ) -> Result<Self, String> {
+        let shared = cipherclerk.shared_cipherclerk();
+        let mut runtime =
+            AgentRuntime::with_restored_ledger(shared, domain, Arc::new(Mutex::new(ledger)))
+                .map_err(|error| error.to_string())?;
+        runtime.set_local_federation_id(*cipherclerk.federation_id());
+        Ok(Self::from_runtime(runtime))
+    }
+
     /// The cell id of the agent the embedded runtime drives turns from.
     pub fn cell_id(&self) -> CellId {
         self.cell_id

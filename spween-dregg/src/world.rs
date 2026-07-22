@@ -23,8 +23,9 @@ use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect, EmbeddedExecutor, Event,
     ExecutorSubmitError, FieldElement, TurnReceipt, field_from_bytes, field_from_u64, symbol,
 };
-use dregg_cell::Cell;
+use dregg_cell::{Cell, Ledger};
 use dregg_node_target::{NodeTarget, SubmittedTurn};
+use serde::{Deserialize, Serialize};
 use spween::{Choice, EffectHandler, Runtime, RuntimeState, Scene, Value};
 use zeroize::Zeroizing;
 
@@ -105,6 +106,10 @@ pub enum WorldError {
     UngatedChoice(String),
     /// The scene could not be compiled to a world-cell.
     Compile(CompileError),
+    /// A durable world image or its write-ahead turn intent could not be
+    /// authenticated, restored, or committed. A turn never reports success
+    /// unless its post-state image is durable.
+    Durability(String),
     /// The choice-turn committed locally but a configured [`NodeTarget::Federation`]
     /// node refused it or could not confirm it landed (a rejected / unreachable /
     /// non-landing submit). Fail-closed: the caller learns the turn did not replicate.
@@ -122,9 +127,34 @@ impl std::fmt::Display for WorldError {
                  executor teeth (handler-only gate; drive it through the runtime path)"
             ),
             WorldError::Compile(c) => write!(f, "compile error: {c}"),
+            WorldError::Durability(message) => {
+                write!(f, "world-cell durability refused: {message}")
+            }
             WorldError::Federation(m) => write!(f, "federation routing failed: {m}"),
         }
     }
+}
+
+/// Canonical local executor image used by the file-backed durability layer.
+/// Runtime caches and locks are deliberately absent; restore reconstructs them
+/// from these cells plus the strictly linked receipt chain.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct WorldCellDurableState {
+    pub cells: Vec<Cell>,
+    pub receipts: Vec<TurnReceipt>,
+    pub ledger_root: [u8; 32],
+}
+
+pub(crate) trait WorldCellDurability: Send + Sync {
+    fn bind(&self, state: &WorldCellDurableState) -> Result<(), String>;
+    fn prepare(
+        &self,
+        state: &WorldCellDurableState,
+        method: &str,
+        effects: &[Effect],
+    ) -> Result<(), String>;
+    fn commit(&self, state: &WorldCellDurableState) -> Result<(), String>;
+    fn abort(&self, state: &WorldCellDurableState) -> Result<(), String>;
 }
 
 impl std::error::Error for WorldError {}
@@ -161,6 +191,9 @@ pub struct WorldCell {
     /// those worlds stay byte-identical to before. Computed once from the program, never
     /// from the method name (several consumers spell their own method `"genesis"` too).
     genesis_sentinel: bool,
+    /// Optional write-ahead + atomic-image durability. Kept behind a narrow
+    /// trait so ordinary browser/test worlds remain byte-for-byte in-memory.
+    durability: Option<Arc<dyn WorldCellDurability>>,
 }
 
 impl WorldCell {
@@ -253,7 +286,133 @@ impl WorldCell {
             seed_has: BTreeSet::new(),
             node_target: NodeTarget::Local,
             genesis_sentinel,
+            durability: None,
         })
+    }
+
+    pub(crate) fn restore_compiled(
+        story: Arc<CompiledStory>,
+        seed: u8,
+        executor_signing_seed: [u8; 32],
+        state: WorldCellDurableState,
+    ) -> Result<Self, WorldError> {
+        let mut material = story.scene_id.as_bytes().to_vec();
+        material.push(seed);
+        let key = blake3::derive_key("spween-dregg-world-owner-v1", &material);
+        let cclerk = AppCipherclerk::new(
+            AgentCipherclerk::from_key_bytes(Zeroizing::new(key)),
+            WORLD_FEDERATION,
+        );
+        let owner = cclerk.public_key().0;
+        let token = *blake3::hash(story.scene_id.as_bytes()).as_bytes();
+        let cell = CellId::derive_raw(&owner, &token);
+        let agent = cclerk.cell_id();
+
+        if state.cells.is_empty() {
+            return Err(WorldError::Durability(
+                "restored world image has no cells".to_owned(),
+            ));
+        }
+        let mut ledger = Ledger::new();
+        for restored in state.cells {
+            if !restored.verify_id_integrity() {
+                return Err(WorldError::Durability(
+                    "restored world image contains an invalid cell identity".to_owned(),
+                ));
+            }
+            ledger.insert_cell(restored).map_err(|error| {
+                WorldError::Durability(format!("restored world cell set is invalid: {error}"))
+            })?;
+        }
+        if ledger.get(&cell).is_none() || ledger.get(&agent).is_none() {
+            return Err(WorldError::Durability(
+                "restored world image is missing its target or agent cell".to_owned(),
+            ));
+        }
+        let installed_program = postcard::to_stdvec(&ledger.get(&cell).expect("checked").program)
+            .map_err(|error| WorldError::Durability(error.to_string()))?;
+        let expected_program = postcard::to_stdvec(&story.program)
+            .map_err(|error| WorldError::Durability(error.to_string()))?;
+        if installed_program != expected_program {
+            return Err(WorldError::Durability(
+                "restored target program differs from the compiled story".to_owned(),
+            ));
+        }
+        let found_root = ledger.root();
+        if found_root != state.ledger_root {
+            return Err(WorldError::Durability(
+                "restored world ledger root differs from its image commitment".to_owned(),
+            ));
+        }
+
+        let expected_executor = dregg_sdk::executor_pubkey_from_seed(&executor_signing_seed);
+        for receipt in &state.receipts {
+            if receipt.agent != agent
+                || receipt.federation_id != WORLD_FEDERATION
+                || receipt.finality != dregg_turn::Finality::Final
+                || dregg_turn::verify_receipt_signature_with_keys(receipt, &[expected_executor])
+                    .is_err()
+            {
+                return Err(WorldError::Durability(
+                    "restored world receipt failed its pinned authority checks".to_owned(),
+                ));
+            }
+        }
+        if let Some(head) = state.receipts.last()
+            && head.post_state_hash != found_root
+        {
+            return Err(WorldError::Durability(
+                "restored receipt head does not commit the restored ledger".to_owned(),
+            ));
+        }
+        cclerk
+            .shared_cipherclerk()
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .restore_receipt_chain(state.receipts)
+            .map_err(|error| WorldError::Durability(error.to_string()))?;
+        let exec = EmbeddedExecutor::from_restored_ledger(&cclerk, "default", ledger)
+            .map_err(WorldError::Durability)?;
+        exec.set_executor_signing_key(executor_signing_seed);
+        let genesis_sentinel = program_requires_genesis_sentinel(&story.program);
+        Ok(Self {
+            exec,
+            cclerk,
+            cell,
+            story,
+            seed_vars: BTreeMap::new(),
+            seed_has: BTreeSet::new(),
+            node_target: NodeTarget::Local,
+            genesis_sentinel,
+            durability: None,
+        })
+    }
+
+    pub(crate) fn durable_state(&self) -> WorldCellDurableState {
+        let (mut cells, ledger_root) = self.exec.with_ledger_mut(|ledger| {
+            let cells = ledger
+                .iter()
+                .map(|(_, cell)| cell.clone())
+                .collect::<Vec<_>>();
+            (cells, ledger.root())
+        });
+        cells.sort_by_key(Cell::id);
+        WorldCellDurableState {
+            cells,
+            receipts: self.receipt_chain_snapshot(),
+            ledger_root,
+        }
+    }
+
+    pub(crate) fn attach_durability(
+        mut self,
+        durability: Arc<dyn WorldCellDurability>,
+    ) -> Result<Self, WorldError> {
+        durability
+            .bind(&self.durable_state())
+            .map_err(WorldError::Durability)?;
+        self.durability = Some(durability);
+        Ok(self)
     }
 
     /// **Make this world federation-capable.** By default a world runs `Local` (every
@@ -269,6 +428,13 @@ impl WorldCell {
     /// The world-cell id.
     pub fn cell_id(&self) -> CellId {
         self.cell
+    }
+
+    /// The deterministic executor-agent cell whose nonce and receipt chain
+    /// authorize this world. Durable registries bind it without receiving any
+    /// signing material.
+    pub fn executor_agent_cell(&self) -> CellId {
+        self.cclerk.cell_id()
     }
 
     /// Install the deployment-owned signing key used for executor receipts.
@@ -606,6 +772,12 @@ impl WorldCell {
 
     /// Build, sign, and submit a turn on the world-cell under `method`.
     fn commit(&self, method: &str, mut effects: Vec<Effect>) -> Result<TurnReceipt, WorldError> {
+        if self.durability.is_some() && self.node_target.is_federation() {
+            return Err(WorldError::Durability(
+                "durable world cells currently require local routing; federation confirmation has no recoverable outbox"
+                    .to_owned(),
+            ));
+        }
         // The genesis turn WRITES the genesis-done sentinel `0 → 1` — the LEGIT
         // one-time deploy/seed the one-shot genesis case (`Equals{1} ∧ DeltaEquals{1}`
         // on `GENESIS_DONE_EXT_KEY`) admits. Injected at this single chokepoint so every
@@ -622,6 +794,11 @@ impl WorldCell {
                 GENESIS_DONE_EXT_KEY,
                 field_from_u64(1),
             ));
+        }
+        if let Some(durability) = &self.durability {
+            durability
+                .prepare(&self.durable_state(), method, &effects)
+                .map_err(WorldError::Durability)?;
         }
         // A browser cannot link the verified Lean ML-DSA core, so its in-tab executor uses the
         // framework's explicit local-only Ed25519 profile and publishes only replay material. It
@@ -640,16 +817,31 @@ impl WorldCell {
             .make_browser_local_action(self.cell, method, effects);
         #[cfg(not(target_arch = "wasm32"))]
         let action = self.cclerk.make_action(self.cell, method, effects);
-        let receipt = self.exec.submit_action(&self.cclerk, action)?;
+        let receipt = match self.exec.submit_action(&self.cclerk, action) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if let Some(durability) = &self.durability {
+                    durability
+                        .abort(&self.durable_state())
+                        .map_err(WorldError::Durability)?;
+                }
+                return Err(error.into());
+            }
+        };
         // FEDERATION SEAM: in `Local` mode this is a no-op; in `Federation` mode the
         // committed choice-turn is submitted to the real node + confirmed landed, and a
         // rejected / unreachable / non-landing submit fails the choice (fail-closed).
-        self.node_target
-            .route(&SubmittedTurn::new(
-                self.story.scene_id.clone(),
-                receipt.turn_hash,
-            ))
-            .map_err(|e| WorldError::Federation(e.to_string()))?;
+        if let Err(error) = self.node_target.route(&SubmittedTurn::new(
+            self.story.scene_id.clone(),
+            receipt.turn_hash,
+        )) {
+            return Err(WorldError::Federation(error.to_string()));
+        }
+        if let Some(durability) = &self.durability {
+            durability
+                .commit(&self.durable_state())
+                .map_err(WorldError::Durability)?;
+        }
         Ok(receipt)
     }
 }
