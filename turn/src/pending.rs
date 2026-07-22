@@ -781,6 +781,46 @@ impl PendingTurnRegistry {
     }
 }
 
+impl crate::executor::TurnExecutor {
+    /// Canonical pre-state digest for the durable pending-registry CAS.
+    ///
+    /// A node captures this before executing an isolated finalized-turn
+    /// candidate, then submits it beside the canonical successor bytes. The
+    /// store compares it with its latest durable snapshot before publishing
+    /// either the turn or the registry transition.
+    pub fn reactive_registry_commitment(&self) -> Result<[u8; 32], PendingRegistryCodecError> {
+        self.reactive_registry
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .commitment()
+    }
+
+    /// Canonical successor bytes for same-transaction durable publication.
+    pub fn reactive_registry_canonical_bytes(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
+        self.reactive_registry
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .to_canonical_bytes()
+    }
+
+    /// Resolve a finalized wake turn against this executor's candidate
+    /// registry before its successor snapshot is captured.
+    ///
+    /// This deliberately mutates the isolated executor, not a second node-RAM
+    /// registry. The returned cascade is observer work to publish only after
+    /// the carrying finalized transaction commits.
+    pub fn resolve_pending_receipt(
+        &self,
+        turn_hash: [u8; 32],
+        receipt: TurnReceipt,
+    ) -> Vec<ResolutionEvent> {
+        self.reactive_registry
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .resolve(turn_hash, ResolutionOutcome::Resolved(receipt))
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
