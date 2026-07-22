@@ -133,6 +133,8 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
     "private-shuffle-n8.json",
     "private-shuffle-fair-n8.json",
     "private-book-bfv-odd-ntt-butterfly-q0-n8.json",
+    "private-book-bfv-odd-ntt-butterfly-q0-n4096.json",
+    "private-book-bfv-odd-intt-butterfly-q0-n4096.json",
     "turn-chain-binding.json",
     "descent-custody-census-fixed8-v1.json",
     "shielded-whole-note-swap-substrate-v1.json",

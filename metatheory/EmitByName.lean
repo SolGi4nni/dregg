@@ -163,6 +163,10 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Market.PrivateBookBfvSliceDescriptor.privateBookBfvSliceDescriptor)
   , ("private-book-bfv-odd-ntt-butterfly-q0-n8.json",
       Market.PrivateBookBfvButterflyAir.butterflyDescriptor)
+  , ("private-book-bfv-odd-ntt-butterfly-q0-n4096.json",
+      Market.PrivateBookBfvButterflyAir.productionQ0N4096Descriptor)
+  , ("private-book-bfv-odd-intt-butterfly-q0-n4096.json",
+      Market.PrivateBookBfvButterflyAir.productionQ0N4096InverseDescriptor)
   , ("private-book-bfv-threshold-terminal-q0-b80.json",
       Market.PrivateBookBfvButterflyAir.thresholdTerminalQ0Descriptor)
   , ("dark-amm-private-v1.json",
@@ -193,7 +197,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 45
+#guard byNameDescriptors.length == 47
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
