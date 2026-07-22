@@ -69,6 +69,7 @@ pub mod private_shuffle;
 pub mod private_shuffle_fair;
 pub mod recursive_witness_bundle;
 pub mod shielded;
+pub mod shielded_exact_apex_v4;
 pub mod shielded_ring_clearing_air;
 pub mod shielded_ring_clearing_nleg_air;
 pub mod shielded_spend_leaf_adapter;
