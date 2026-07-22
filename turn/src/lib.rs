@@ -211,8 +211,9 @@ pub use fast_path::{
 };
 pub use forest::{CallForest, CallTree};
 pub use pending::{
-    BrokenReason, PendingEntry, PendingHandle, PendingStatus, PendingTurnRegistry,
-    ResolutionCondition, ResolutionEvent, ResolutionOutcome,
+    BrokenReason, PendingEntry, PendingHandle, PendingReactError, PendingRegistryCodecError,
+    PendingStatus, PendingSubmitError, PendingTurnRegistry, ResolutionCondition, ResolutionEvent,
+    ResolutionOutcome,
 };
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`
 // per PREDICATE-INVENTORY §4.3 case 1. Re-export from cell for any

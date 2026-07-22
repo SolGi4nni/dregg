@@ -630,6 +630,7 @@ impl TurnExecutor {
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
                 | JournalEntry::NoteCommitmentInserted { .. }
+                | JournalEntry::ReactiveRegistrySnapshot { .. }
                 // A revocation insert into `note_revoked` is rollback-only
                 // bookkeeping (undone by `LedgerJournal::rollback`); it commits
                 // via the rotated `revoked_root` group, not the LedgerDelta —

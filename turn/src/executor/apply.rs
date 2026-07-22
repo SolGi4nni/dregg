@@ -436,6 +436,7 @@ impl TurnExecutor {
                 timeout_height,
             } => self.apply_promise(
                 path,
+                journal,
                 actor,
                 cell,
                 resolution_condition,
@@ -450,6 +451,7 @@ impl TurnExecutor {
                 timeout_height,
             } => self.apply_notify(
                 path,
+                journal,
                 actor,
                 from,
                 to,
@@ -462,7 +464,15 @@ impl TurnExecutor {
                 condition,
                 resolution_proof,
                 wake,
-            } => self.apply_react(path, journal, pending_id, condition, resolution_proof, wake),
+            } => self.apply_react(
+                path,
+                journal,
+                actor,
+                pending_id,
+                condition,
+                resolution_proof,
+                wake,
+            ),
             Effect::ShieldedTransfer { payload } => {
                 self.apply_shielded_transfer(path, journal, payload)
             }
@@ -1843,6 +1853,7 @@ impl TurnExecutor {
     fn apply_promise(
         &self,
         path: &[usize],
+        journal: &mut LedgerJournal,
         actor: &CellId,
         cell: &CellId,
         resolution_condition: &crate::pending::ResolutionCondition,
@@ -1859,13 +1870,43 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
+        if wake.agent != *cell {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "Promise: the wake turn's agent must be the committing cell".into(),
+                },
+                path.to_vec(),
+            ));
+        }
+        if timeout_height < self.block_height {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "Promise: timeout height is already expired".into(),
+                },
+                path.to_vec(),
+            ));
+        }
         let mut reg = self.reactive_registry.lock().unwrap();
-        reg.submit_pending_at(
+        let previous = journal
+            .needs_reactive_registry_snapshot()
+            .then(|| reg.clone());
+        reg.try_submit_pending_at(
             wake.clone(),
             resolution_condition.clone(),
             timeout_height,
             self.block_height,
-        );
+        )
+        .map_err(|error| {
+            (
+                TurnError::InvalidEffect {
+                    reason: format!("Promise: {error}"),
+                },
+                path.to_vec(),
+            )
+        })?;
+        if let Some(previous) = previous {
+            journal.record_reactive_registry_snapshot(previous);
+        }
         Ok(())
     }
 
@@ -1877,6 +1918,7 @@ impl TurnExecutor {
     fn apply_notify(
         &self,
         path: &[usize],
+        journal: &mut LedgerJournal,
         actor: &CellId,
         from: &CellId,
         to: &CellId,
@@ -1904,13 +1946,35 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
+        if timeout_height < self.block_height {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: "Notify: timeout height is already expired".into(),
+                },
+                path.to_vec(),
+            ));
+        }
         let mut reg = self.reactive_registry.lock().unwrap();
-        reg.submit_pending_at(
+        let previous = journal
+            .needs_reactive_registry_snapshot()
+            .then(|| reg.clone());
+        reg.try_submit_pending_at(
             wake.clone(),
             resolution_condition.clone(),
             timeout_height,
             self.block_height,
-        );
+        )
+        .map_err(|error| {
+            (
+                TurnError::InvalidEffect {
+                    reason: format!("Notify: {error}"),
+                },
+                path.to_vec(),
+            )
+        })?;
+        if let Some(previous) = previous {
+            journal.record_reactive_registry_snapshot(previous);
+        }
         Ok(())
     }
 
@@ -1934,6 +1998,7 @@ impl TurnExecutor {
         &self,
         path: &[usize],
         journal: &mut LedgerJournal,
+        actor: &CellId,
         pending_id: &Nullifier,
         condition: &crate::conditional::ProofCondition,
         resolution_proof: &crate::conditional::ConditionProof,
@@ -1950,20 +2015,23 @@ impl TurnExecutor {
             ));
         }
 
-        // (1) NULLIFIER↔TURN BINDING: the spent hole id IS the resolved turn's
-        // hash. Without this, a react could spend an arbitrary nullifier while
-        // claiming to resolve an unrelated wake.
-        let wake_hash = wake.hash();
-        if wake_hash != pending_id.0 {
-            return Err((
-                TurnError::InvalidEffect {
-                    reason: "React: wake turn hash does not equal pending_id (nullifier↔turn \
-                             binding violated)"
-                        .into(),
-                },
-                path.to_vec(),
-            ));
-        }
+        // (1) REGISTRY AUTHORITY: bind the exact wake, its owning actor, the
+        // registered proof condition, and its durable deadline before spending
+        // anything. Missing holes fail closed; React has no self-authored
+        // out-of-band condition or infinite-timeout mode.
+        let timeout_height = self
+            .reactive_registry
+            .lock()
+            .unwrap()
+            .authorize_react(&pending_id.0, actor, condition, wake, self.block_height)
+            .map_err(|error| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: error.to_string(),
+                    },
+                    path.to_vec(),
+                )
+            })?;
 
         // (2) GENUINE RESOLUTION GATE: the proof must discharge the condition.
         // `resolve_condition` enforces the temporal bound (timeout) and proof
@@ -1972,15 +2040,6 @@ impl TurnExecutor {
         // stronger: it rejects the spend even if the same hole were re-presented
         // with a fresh proof.
         let mut transient_proof_ledger = std::collections::HashSet::new();
-        // The hole's timeout is carried by the registry entry when known;
-        // otherwise the condition is evaluated at the current height with no
-        // separate expiry (the timeout tooth lives in the registry/notify path).
-        let timeout_height = {
-            let reg = self.reactive_registry.lock().unwrap();
-            reg.get_pending(&pending_id.0)
-                .map(|e| e.timeout_height)
-                .unwrap_or(u64::MAX)
-        };
         let verdict = crate::conditional::resolve_condition(
             condition,
             resolution_proof,
@@ -2059,17 +2118,37 @@ impl TurnExecutor {
         // (4) RESOLVE the hole with a GENUINE receipt over the resolved turn.
         // The receipt is content-addressed to the wake turn we just verified
         // (its hash == pending_id), so the registry cascade has a real, bound
-        // provenance link. If no live hole exists (a bare react against a hole
-        // notified out-of-band), the nullifier spend above already enforced
-        // one-shotness — the registry removal is a redundant tooth, not a gate.
+        // provenance link. Reauthenticate under the mutation lock so a concurrent
+        // timeout/replacement cannot race the proof check.
         {
             let mut reg = self.reactive_registry.lock().unwrap();
-            if reg.get_pending(&pending_id.0).is_some() {
-                let receipt = genuine_resolution_receipt(wake);
-                let _events = reg.resolve(
-                    pending_id.0,
-                    crate::pending::ResolutionOutcome::Resolved(receipt),
-                );
+            reg.authorize_react(&pending_id.0, actor, condition, wake, self.block_height)
+                .map_err(|error| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: error.to_string(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+            let previous = journal
+                .needs_reactive_registry_snapshot()
+                .then(|| reg.clone());
+            let receipt = genuine_resolution_receipt(wake);
+            let events = reg.resolve(
+                pending_id.0,
+                crate::pending::ResolutionOutcome::Resolved(receipt),
+            );
+            if events.is_empty() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "React: registered pending entry disappeared before resolve".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            if let Some(previous) = previous {
+                journal.record_reactive_registry_snapshot(previous);
             }
         }
 
@@ -4207,10 +4286,9 @@ impl TurnExecutor {
 //
 // The Track-2 bar: a `React` effect driven through the executor's `apply_effect`
 // dispatch resolves ONCE and SPENDS `pending_id` into the production
-// `note_nullifiers` set; a SECOND react on the same hole id — or a replay of the
-// same `pending_id` — is REJECTED by that identical nullifier gate (the same gate
-// `NoteSpend` rides). Not a stub: the rejection is the genuine double-spend
-// refusal from `NullifierSet::insert`, observed at the executor entry point.
+// `note_nullifiers` set. A SECOND react is rejected by the missing live promise;
+// even if an attacker re-registers the same hole, the durable nullifier gate (the
+// same gate `NoteSpend` rides) rejects the replay as a double-spend.
 #[cfg(test)]
 mod react_executor_tests {
     use super::*;
@@ -4280,13 +4358,27 @@ mod react_executor_tests {
         }
     }
 
+    fn notify_effect(
+        from: CellId,
+        wake: &Turn,
+        condition: ProofCondition,
+        timeout_height: u64,
+    ) -> Effect {
+        Effect::Notify {
+            from,
+            to: wake.agent,
+            wake: Box::new(wake.clone()),
+            resolution_condition: ResolutionCondition::AwaitCondition(condition),
+            timeout_height,
+        }
+    }
+
     fn react_cell() -> CellId {
         CellId::from_bytes([0xB0; 32])
     }
 
     // ── THE END-TO-END FORGE-DETECTOR: react once spends the nullifier; a
-    //    SECOND react on the SAME hole id is REJECTED by the executor's
-    //    note_nullifiers gate (the same double-spend gate NoteSpend rides). ──
+    //    SECOND react on the SAME consumed hole is REJECTED before proof work. ──
     #[test]
     fn react_through_executor_spends_once_and_rejects_react_twice() {
         let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
@@ -4297,13 +4389,7 @@ mod react_executor_tests {
 
         // First, NOTIFY: deposit the hole in the executor's reactive registry
         // (the recipient's wake). This is the genuine standing commitment.
-        let notify = Effect::Notify {
-            from: cell,
-            to: cell,
-            wake: Box::new(wake.clone()),
-            resolution_condition: ResolutionCondition::AwaitCondition(condition.clone()),
-            timeout_height: 100,
-        };
+        let notify = notify_effect(cell, &wake, condition.clone(), 100);
         let mut ledger = Ledger::new();
         let mut journal = LedgerJournal::new();
         executor
@@ -4359,9 +4445,8 @@ mod react_executor_tests {
             "the hole is consumed (registry removal — the redundant second tooth)"
         );
 
-        // SECOND REACT on the SAME hole id: REJECTED by the nullifier gate.
-        // This is the genuine double-spend refusal — NOT an unconditional Err:
-        // the executor finds pending_id already in note_nullifiers and refuses.
+        // SECOND REACT on the SAME hole id: the registered authority has already
+        // been consumed, so fail closed before accepting another proof.
         let mut journal2 = LedgerJournal::new();
         let twice = executor.apply_effect(
             &react,
@@ -4372,13 +4457,13 @@ mod react_executor_tests {
             &mut journal2,
             [0u8; 32],
         );
-        let (err, _) = twice.expect_err("react-twice MUST be rejected by the nullifier gate");
+        let (err, _) = twice.expect_err("react-twice MUST be rejected");
         match err {
             TurnError::InvalidEffect { reason } => assert!(
-                reason.contains("double-spend") && reason.contains("one-shot"),
-                "rejection must be the double-spend one-shot refusal, got: {reason}"
+                reason.contains("not registered"),
+                "rejection must cite the consumed registered authority, got: {reason}"
             ),
-            other => panic!("expected InvalidEffect double-spend, got {other:?}"),
+            other => panic!("expected InvalidEffect, got {other:?}"),
         }
         // The nullifier set still holds exactly the one spend.
         assert!(
@@ -4402,11 +4487,24 @@ mod react_executor_tests {
         let (condition, proof) = preimage_pair();
         let mut ledger = Ledger::new();
 
-        // React #1 — spends pending_id.
+        // Register then React #1 — spends pending_id.
         let react = react_effect(&wake, condition.clone(), proof.clone());
+        let notify = notify_effect(cell, &wake, condition.clone(), 100);
+        let mut jn0 = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &cell,
+                &cell,
+                &mut jn0,
+                [0u8; 32],
+            )
+            .expect("initial notify registers the hole");
         let mut j1 = LedgerJournal::new();
         executor
-            .apply_effect(&react, &mut ledger, &[0], &cell, &cell, &mut j1, [0u8; 32])
+            .apply_effect(&react, &mut ledger, &[1], &cell, &cell, &mut j1, [0u8; 32])
             .expect("first react spends the hole id");
         assert!(
             executor
@@ -4420,22 +4518,16 @@ mod react_executor_tests {
         // then REACT again. The registry-removal tooth is bypassed (the hole is
         // live again), but the nullifier gate still refuses: the hole id was
         // already spent.
-        let notify = Effect::Notify {
-            from: cell,
-            to: cell,
-            wake: Box::new(wake.clone()),
-            resolution_condition: ResolutionCondition::AwaitCondition(condition.clone()),
-            timeout_height: 100,
-        };
+        let notify = notify_effect(cell, &wake, condition.clone(), 100);
         let mut jn = LedgerJournal::new();
         executor
-            .apply_effect(&notify, &mut ledger, &[1], &cell, &cell, &mut jn, [0u8; 32])
+            .apply_effect(&notify, &mut ledger, &[2], &cell, &cell, &mut jn, [0u8; 32])
             .expect("re-notify deposits a fresh live hole");
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
 
         let mut j2 = LedgerJournal::new();
         let replay =
-            executor.apply_effect(&react, &mut ledger, &[2], &cell, &cell, &mut j2, [0u8; 32]);
+            executor.apply_effect(&react, &mut ledger, &[3], &cell, &cell, &mut j2, [0u8; 32]);
         let (err, _) = replay.expect_err("a replayed pending_id MUST be refused");
         assert!(
             matches!(err, TurnError::InvalidEffect { reason } if reason.contains("double-spend")),
@@ -4453,6 +4545,20 @@ mod react_executor_tests {
         let wake = wake_turn(cell, 0);
         let other = wake_turn(cell, 999); // a DIFFERENT turn (different nonce)
         let (condition, proof) = preimage_pair();
+        let notify = notify_effect(cell, &wake, condition.clone(), 100);
+        let mut ledger = Ledger::new();
+        let mut notify_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &cell,
+                &cell,
+                &mut notify_journal,
+                [0u8; 32],
+            )
+            .expect("register the genuine wake before attempting substitution");
 
         // pending_id claims `wake`, but the carried resolved turn is `other`.
         let forged = Effect::React {
@@ -4461,12 +4567,11 @@ mod react_executor_tests {
             resolution_proof: proof,
             wake: Box::new(other),
         };
-        let mut ledger = Ledger::new();
         let mut journal = LedgerJournal::new();
         let r = executor.apply_effect(
             &forged,
             &mut ledger,
-            &[0],
+            &[1],
             &cell,
             &cell,
             &mut journal,
@@ -4474,7 +4579,7 @@ mod react_executor_tests {
         );
         let (err, _) = r.expect_err("a mismatched wake/pending_id MUST be refused");
         assert!(
-            matches!(err, TurnError::InvalidEffect { reason } if reason.contains("binding")),
+            matches!(err, TurnError::InvalidEffect { reason } if reason.contains("wake turn hash")),
             "refusal must cite the nullifier↔turn binding violation"
         );
         // Nothing was spent — a refused react burns no hole.
@@ -4501,11 +4606,24 @@ mod react_executor_tests {
 
         let react = react_effect(&wake, condition.clone(), wrong);
         let mut ledger = Ledger::new();
+        let notify = notify_effect(cell, &wake, condition.clone(), 100);
+        let mut notify_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &cell,
+                &cell,
+                &mut notify_journal,
+                [0u8; 32],
+            )
+            .expect("register the condition before testing its proof");
         let mut journal = LedgerJournal::new();
         let r = executor.apply_effect(
             &react,
             &mut ledger,
-            &[0],
+            &[1],
             &cell,
             &cell,
             &mut journal,
@@ -4533,7 +4651,7 @@ mod react_executor_tests {
             .apply_effect(
                 &good_react,
                 &mut ledger,
-                &[1],
+                &[2],
                 &cell,
                 &cell,
                 &mut journal2,
@@ -4547,6 +4665,183 @@ mod react_executor_tests {
                 .unwrap()
                 .contains(&pending_id)
         );
+    }
+
+    #[test]
+    fn react_rejects_cross_actor_and_preserves_live_promise() {
+        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let owner = react_cell();
+        let attacker = CellId::from_bytes([0xA7; 32]);
+        let wake = wake_turn(owner, 7);
+        let pending_id = Nullifier(wake.hash());
+        let (condition, proof) = preimage_pair();
+        let notify = notify_effect(owner, &wake, condition.clone(), 100);
+        let react = react_effect(&wake, condition, proof);
+        let mut ledger = Ledger::new();
+        let mut notify_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &owner,
+                &owner,
+                &mut notify_journal,
+                [0u8; 32],
+            )
+            .expect("owner registers promise");
+
+        let mut attack_journal = LedgerJournal::new();
+        let result = executor.apply_effect(
+            &react,
+            &mut ledger,
+            &[1],
+            &attacker,
+            &attacker,
+            &mut attack_journal,
+            [0u8; 32],
+        );
+        let (error, _) = result.expect_err("a different actor cannot discharge the promise");
+        assert!(
+            matches!(error, TurnError::InvalidEffect { reason } if reason.contains("does not own"))
+        );
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        assert!(
+            !executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&pending_id)
+        );
+    }
+
+    #[test]
+    fn react_rejects_condition_substitution_and_preserves_live_promise() {
+        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let owner = react_cell();
+        let wake = wake_turn(owner, 8);
+        let pending_id = Nullifier(wake.hash());
+        let (registered_condition, _) = preimage_pair();
+        let alternate_preimage = [0x33u8; 32];
+        let alternate_condition = ProofCondition::HashPreimage {
+            hash: *blake3::hash(&alternate_preimage).as_bytes(),
+        };
+        let notify = notify_effect(owner, &wake, registered_condition, 100);
+        let forged = react_effect(
+            &wake,
+            alternate_condition,
+            ConditionProof::Preimage(alternate_preimage),
+        );
+        let mut ledger = Ledger::new();
+        let mut notify_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &owner,
+                &owner,
+                &mut notify_journal,
+                [0u8; 32],
+            )
+            .expect("register original condition");
+
+        let mut attack_journal = LedgerJournal::new();
+        let result = executor.apply_effect(
+            &forged,
+            &mut ledger,
+            &[1],
+            &owner,
+            &owner,
+            &mut attack_journal,
+            [0u8; 32],
+        );
+        let (error, _) = result.expect_err("a proof for another condition cannot substitute");
+        assert!(
+            matches!(error, TurnError::InvalidEffect { reason } if reason.contains("differs from the registered"))
+        );
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        assert!(
+            !executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&pending_id)
+        );
+    }
+
+    #[test]
+    fn reactive_registry_and_nullifier_rollback_atomically() {
+        let executor = crate::executor::TurnExecutor::new(crate::executor::ComputronCosts::zero());
+        let owner = react_cell();
+        let wake = wake_turn(owner, 9);
+        let pending_id = Nullifier(wake.hash());
+        let (condition, proof) = preimage_pair();
+        let notify = notify_effect(owner, &wake, condition.clone(), 100);
+        let mut ledger = Ledger::new();
+
+        let mut notify_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &notify,
+                &mut ledger,
+                &[0],
+                &owner,
+                &owner,
+                &mut notify_journal,
+                [0u8; 32],
+            )
+            .expect("notify registers promise");
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+
+        let react = react_effect(&wake, condition, proof);
+        let mut react_journal = LedgerJournal::new();
+        executor
+            .apply_effect(
+                &react,
+                &mut ledger,
+                &[1],
+                &owner,
+                &owner,
+                &mut react_journal,
+                [0u8; 32],
+            )
+            .expect("react mutates both registry and nullifier state");
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 0);
+        assert!(
+            executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&pending_id)
+        );
+
+        react_journal.rollback(
+            &mut ledger,
+            &executor.bridged_nullifiers,
+            &executor.note_nullifiers,
+            &executor.note_commitments,
+            &executor.note_revoked,
+            &executor.reactive_registry,
+        );
+        assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
+        assert!(
+            !executor
+                .note_nullifiers
+                .lock()
+                .unwrap()
+                .contains(&pending_id)
+        );
+
+        notify_journal.rollback(
+            &mut ledger,
+            &executor.bridged_nullifiers,
+            &executor.note_nullifiers,
+            &executor.note_commitments,
+            &executor.note_revoked,
+            &executor.reactive_registry,
+        );
+        assert!(executor.reactive_registry.lock().unwrap().is_empty());
     }
 }
 

@@ -28,13 +28,152 @@
 //! └───────────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::conditional::ProofCondition;
 use crate::error::TurnError;
 use crate::turn::{Turn, TurnReceipt};
+
+/// Wire prefix for one canonically encoded pending-turn registry snapshot.
+///
+/// The registry is durable consensus-side state.  Keeping an explicit prefix
+/// outside postcard means a future schema change cannot be mistaken for this
+/// version merely because its first fields happen to decode.
+const PENDING_REGISTRY_MAGIC_V1: &[u8; 5] = b"DPRG1";
+
+/// Hard admission ceiling for unresolved promises.
+///
+/// Without a bound, valid signed Promise turns can grow the durable registry
+/// without limit.  The ceiling is deliberately generous for devnet while still
+/// making the memory/disk obligation explicit and deterministic on every node.
+pub const MAX_PENDING_TURNS: usize = 65_536;
+
+/// Maximum canonical snapshot size accepted from durable storage.
+pub const MAX_PENDING_REGISTRY_BYTES: usize = 64 * 1024 * 1024;
+
+/// A pending entry could not be admitted without changing existing authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PendingSubmitError {
+    /// The wake-turn hash already names a live promise.  Existing conditions,
+    /// deadlines, and dependency edges are immutable until resolution.
+    AlreadyPending { turn_hash: [u8; 32] },
+    /// The durable registry reached its protocol capacity.
+    RegistryFull { max: usize },
+}
+
+impl fmt::Display for PendingSubmitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyPending { turn_hash } => write!(
+                f,
+                "pending turn {} is already registered",
+                hex::encode(turn_hash)
+            ),
+            Self::RegistryFull { max } => {
+                write!(f, "pending-turn registry is full (maximum {max})")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PendingSubmitError {}
+
+/// A durable pending-registry snapshot failed canonical validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PendingRegistryCodecError {
+    TooLarge {
+        size: usize,
+        max: usize,
+    },
+    InvalidMagic,
+    Decode(String),
+    NonCanonical,
+    TooManyEntries {
+        count: usize,
+        max: usize,
+    },
+    TurnHashMismatch {
+        stored: [u8; 32],
+        canonical: [u8; 32],
+    },
+}
+
+impl fmt::Display for PendingRegistryCodecError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge { size, max } => {
+                write!(
+                    f,
+                    "pending registry snapshot is {size} bytes (maximum {max})"
+                )
+            }
+            Self::InvalidMagic => {
+                f.write_str("pending registry snapshot has invalid magic/version")
+            }
+            Self::Decode(error) => write!(f, "pending registry snapshot decode failed: {error}"),
+            Self::NonCanonical => f.write_str("pending registry snapshot is not canonical"),
+            Self::TooManyEntries { count, max } => {
+                write!(f, "pending registry has {count} entries (maximum {max})")
+            }
+            Self::TurnHashMismatch { stored, canonical } => write!(
+                f,
+                "pending registry key {} does not match canonical wake hash {}",
+                hex::encode(stored),
+                hex::encode(canonical)
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PendingRegistryCodecError {}
+
+/// A React effect did not match the live promise it attempted to discharge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PendingReactError {
+    WakeHashMismatch,
+    NotRegistered,
+    ReactorMismatch {
+        expected: dregg_cell::CellId,
+        actual: dregg_cell::CellId,
+    },
+    ConditionIsNotProofDriven,
+    ConditionMismatch,
+    Expired {
+        timeout_height: u64,
+        current_height: u64,
+    },
+}
+
+impl fmt::Display for PendingReactError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WakeHashMismatch => f.write_str("React wake turn hash does not equal pending_id"),
+            Self::NotRegistered => f.write_str("React pending_id is not registered"),
+            Self::ReactorMismatch { expected, actual } => write!(
+                f,
+                "React actor {actual:?} does not own pending wake agent {expected:?}"
+            ),
+            Self::ConditionIsNotProofDriven => {
+                f.write_str("React can discharge only a registered AwaitCondition promise")
+            }
+            Self::ConditionMismatch => {
+                f.write_str("React proof condition differs from the registered promise condition")
+            }
+            Self::Expired {
+                timeout_height,
+                current_height,
+            } => write!(
+                f,
+                "React promise expired at height {timeout_height} (current {current_height})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PendingReactError {}
 
 // ─── Core Types ─────────────────────────────────────────────────────────────
 
@@ -163,16 +302,179 @@ pub enum PendingStatus {
 /// - Timeout: check for expired pending turns and propagate broken promises
 #[derive(Clone, Debug, Default)]
 pub struct PendingTurnRegistry {
-    /// Map from turn hash to pending entry.
-    pending: HashMap<[u8; 32], PendingEntry>,
+    /// Map from turn hash to pending entry.  `BTreeMap` is intentional: postcard
+    /// serialization must be byte-identical regardless of insertion history so
+    /// nodes can CAS and replay this state without HashMap iteration entropy.
+    pending: BTreeMap<[u8; 32], PendingEntry>,
+}
+
+/// Private v1 wire. `Turn` contains a `HashMap` of sovereign witnesses, so
+/// serializing `PendingEntry` directly would reintroduce randomized iteration
+/// order inside an otherwise ordered registry. The base turn is serialized with
+/// that map empty and the witnesses ride this sorted vector instead.
+#[derive(Serialize, Deserialize)]
+struct PendingRegistryWireV1 {
+    entries: Vec<PendingEntryWireV1>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PendingEntryWireV1 {
+    turn_hash: [u8; 32],
+    turn_without_sovereign_witnesses: Turn,
+    sovereign_witnesses: Vec<(dregg_cell::CellId, crate::turn::SovereignCellWitness)>,
+    condition: ResolutionCondition,
+    dependents: Vec<[u8; 32]>,
+    submitted_at: u64,
+    timeout_height: u64,
 }
 
 impl PendingTurnRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
-            pending: HashMap::new(),
+            pending: BTreeMap::new(),
         }
+    }
+
+    /// Canonical, versioned durable representation.
+    pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, PendingRegistryCodecError> {
+        self.validate()?;
+        let entries = self
+            .pending
+            .iter()
+            .map(|(turn_hash, entry)| {
+                let mut turn_without_sovereign_witnesses = entry.turn.clone();
+                let mut sovereign_witnesses: Vec<_> = turn_without_sovereign_witnesses
+                    .sovereign_witnesses
+                    .drain()
+                    .collect();
+                sovereign_witnesses.sort_by_key(|(cell, _)| *cell.as_bytes());
+                let mut dependents = entry.dependents.clone();
+                dependents.sort_unstable();
+                dependents.dedup();
+                PendingEntryWireV1 {
+                    turn_hash: *turn_hash,
+                    turn_without_sovereign_witnesses,
+                    sovereign_witnesses,
+                    condition: entry.condition.clone(),
+                    dependents,
+                    submitted_at: entry.submitted_at,
+                    timeout_height: entry.timeout_height,
+                }
+            })
+            .collect();
+        let wire = PendingRegistryWireV1 { entries };
+        let payload = postcard::to_allocvec(&wire)
+            .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
+        let size = PENDING_REGISTRY_MAGIC_V1
+            .len()
+            .saturating_add(payload.len());
+        if size > MAX_PENDING_REGISTRY_BYTES {
+            return Err(PendingRegistryCodecError::TooLarge {
+                size,
+                max: MAX_PENDING_REGISTRY_BYTES,
+            });
+        }
+        let mut encoded = Vec::with_capacity(size);
+        encoded.extend_from_slice(PENDING_REGISTRY_MAGIC_V1);
+        encoded.extend_from_slice(&payload);
+        Ok(encoded)
+    }
+
+    /// Decode and revalidate one durable snapshot, rejecting alternate postcard
+    /// encodings and any key that does not equal the contained wake turn's hash.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, PendingRegistryCodecError> {
+        if bytes.len() > MAX_PENDING_REGISTRY_BYTES {
+            return Err(PendingRegistryCodecError::TooLarge {
+                size: bytes.len(),
+                max: MAX_PENDING_REGISTRY_BYTES,
+            });
+        }
+        let payload = bytes
+            .strip_prefix(PENDING_REGISTRY_MAGIC_V1)
+            .ok_or(PendingRegistryCodecError::InvalidMagic)?;
+        let wire: PendingRegistryWireV1 = postcard::from_bytes(payload)
+            .map_err(|error| PendingRegistryCodecError::Decode(error.to_string()))?;
+        if wire.entries.len() > MAX_PENDING_TURNS {
+            return Err(PendingRegistryCodecError::TooManyEntries {
+                count: wire.entries.len(),
+                max: MAX_PENDING_TURNS,
+            });
+        }
+        let mut pending = BTreeMap::new();
+        for wire_entry in wire.entries {
+            let PendingEntryWireV1 {
+                turn_hash,
+                mut turn_without_sovereign_witnesses,
+                sovereign_witnesses,
+                condition,
+                dependents,
+                submitted_at,
+                timeout_height,
+            } = wire_entry;
+            if !turn_without_sovereign_witnesses
+                .sovereign_witnesses
+                .is_empty()
+            {
+                return Err(PendingRegistryCodecError::NonCanonical);
+            }
+            let mut previous = None;
+            for (cell, witness) in sovereign_witnesses {
+                if previous.is_some_and(|prior| prior >= *cell.as_bytes()) {
+                    return Err(PendingRegistryCodecError::NonCanonical);
+                }
+                previous = Some(*cell.as_bytes());
+                turn_without_sovereign_witnesses
+                    .sovereign_witnesses
+                    .insert(cell, witness);
+            }
+            if dependents.windows(2).any(|pair| pair[0] >= pair[1]) {
+                return Err(PendingRegistryCodecError::NonCanonical);
+            }
+            let entry = PendingEntry {
+                turn: turn_without_sovereign_witnesses,
+                condition,
+                dependents,
+                submitted_at,
+                timeout_height,
+            };
+            if pending.insert(turn_hash, entry).is_some() {
+                return Err(PendingRegistryCodecError::NonCanonical);
+            }
+        }
+        let decoded = Self { pending };
+        decoded.validate()?;
+        if decoded.to_canonical_bytes()?.as_slice() != bytes {
+            return Err(PendingRegistryCodecError::NonCanonical);
+        }
+        Ok(decoded)
+    }
+
+    /// Domain-separated digest used by durable compare-and-swap records.
+    pub fn commitment(&self) -> Result<[u8; 32], PendingRegistryCodecError> {
+        let encoded = self.to_canonical_bytes()?;
+        let mut hasher = blake3::Hasher::new_derive_key("dregg-pending-registry-v1");
+        hasher.update(&encoded);
+        Ok(*hasher.finalize().as_bytes())
+    }
+
+    fn validate(&self) -> Result<(), PendingRegistryCodecError> {
+        if self.pending.len() > MAX_PENDING_TURNS {
+            return Err(PendingRegistryCodecError::TooManyEntries {
+                count: self.pending.len(),
+                max: MAX_PENDING_TURNS,
+            });
+        }
+        for (stored, entry) in &self.pending {
+            let canonical = entry.turn.hash();
+            if *stored != canonical {
+                return Err(PendingRegistryCodecError::TurnHashMismatch {
+                    stored: *stored,
+                    canonical,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Submit a new pending turn with a resolution condition and timeout.
@@ -184,16 +486,7 @@ impl PendingTurnRegistry {
         condition: ResolutionCondition,
         timeout_height: u64,
     ) -> [u8; 32] {
-        let turn_hash = turn.hash();
-        let entry = PendingEntry {
-            turn,
-            condition,
-            dependents: Vec::new(),
-            submitted_at: 0, // Caller should set via submit_pending_at
-            timeout_height,
-        };
-        self.pending.insert(turn_hash, entry);
-        turn_hash
+        self.submit_idempotent(turn, condition, timeout_height, 0)
     }
 
     /// Submit a new pending turn with a resolution condition, timeout, and submission height.
@@ -206,7 +499,29 @@ impl PendingTurnRegistry {
         timeout_height: u64,
         submitted_at: u64,
     ) -> [u8; 32] {
+        self.submit_idempotent(turn, condition, timeout_height, submitted_at)
+    }
+
+    /// Strict admission used by the executor.  Unlike the compatibility
+    /// `submit_pending*` helpers, a duplicate is an explicit refusal: a signed
+    /// Promise/Notify turn must never overwrite another promise's condition,
+    /// deadline, or dependency list under the same wake hash.
+    pub fn try_submit_pending_at(
+        &mut self,
+        turn: Turn,
+        condition: ResolutionCondition,
+        timeout_height: u64,
+        submitted_at: u64,
+    ) -> Result<[u8; 32], PendingSubmitError> {
         let turn_hash = turn.hash();
+        if self.pending.contains_key(&turn_hash) {
+            return Err(PendingSubmitError::AlreadyPending { turn_hash });
+        }
+        if self.pending.len() >= MAX_PENDING_TURNS {
+            return Err(PendingSubmitError::RegistryFull {
+                max: MAX_PENDING_TURNS,
+            });
+        }
         let entry = PendingEntry {
             turn,
             condition,
@@ -215,6 +530,24 @@ impl PendingTurnRegistry {
             timeout_height,
         };
         self.pending.insert(turn_hash, entry);
+        Ok(turn_hash)
+    }
+
+    fn submit_idempotent(
+        &mut self,
+        turn: Turn,
+        condition: ResolutionCondition,
+        timeout_height: u64,
+        submitted_at: u64,
+    ) -> [u8; 32] {
+        let turn_hash = turn.hash();
+        self.pending.entry(turn_hash).or_insert(PendingEntry {
+            turn,
+            condition,
+            dependents: Vec::new(),
+            submitted_at,
+            timeout_height,
+        });
         turn_hash
     }
 
@@ -326,6 +659,55 @@ impl PendingTurnRegistry {
     /// Look up a pending entry by its turn hash.
     pub fn get_pending(&self, hash: &[u8; 32]) -> Option<&PendingEntry> {
         self.pending.get(hash)
+    }
+
+    /// Bind a React attempt to the exact live promise authority before any
+    /// nullifier or registry mutation occurs.
+    ///
+    /// The wake hash binds the object, `wake.agent` binds the only cell allowed
+    /// to discharge it, and the stored `AwaitCondition` binds the exact proof
+    /// statement.  Missing entries fail closed: there is no "out-of-band" React
+    /// that can mint its own condition or infinite timeout.
+    pub fn authorize_react(
+        &self,
+        pending_id: &[u8; 32],
+        actor: &dregg_cell::CellId,
+        condition: &ProofCondition,
+        wake: &Turn,
+        current_height: u64,
+    ) -> Result<u64, PendingReactError> {
+        if wake.hash() != *pending_id {
+            return Err(PendingReactError::WakeHashMismatch);
+        }
+        let entry = self
+            .pending
+            .get(pending_id)
+            .ok_or(PendingReactError::NotRegistered)?;
+        // The key was validated on durable restore/submission, but repeat the
+        // binding here at the authority boundary rather than trusting map shape.
+        if entry.turn.hash() != *pending_id {
+            return Err(PendingReactError::WakeHashMismatch);
+        }
+        let expected = entry.turn.agent;
+        if wake.agent != expected || *actor != expected {
+            return Err(PendingReactError::ReactorMismatch {
+                expected,
+                actual: *actor,
+            });
+        }
+        let ResolutionCondition::AwaitCondition(expected_condition) = &entry.condition else {
+            return Err(PendingReactError::ConditionIsNotProofDriven);
+        };
+        if expected_condition != condition {
+            return Err(PendingReactError::ConditionMismatch);
+        }
+        if current_height > entry.timeout_height {
+            return Err(PendingReactError::Expired {
+                timeout_height: entry.timeout_height,
+                current_height,
+            });
+        }
+        Ok(entry.timeout_height)
     }
 
     /// Returns the number of currently pending turns.
@@ -897,5 +1279,117 @@ mod tests {
             assert!(matches!(event, ResolutionEvent::Broken { .. }));
         }
         assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn duplicate_wake_cannot_replace_condition_or_timeout() {
+        let mut registry = PendingTurnRegistry::new();
+        let wake = make_turn(7, 3);
+        let wake_hash = wake.hash();
+        let original =
+            ResolutionCondition::AwaitCondition(ProofCondition::HashPreimage { hash: [0x11; 32] });
+        registry
+            .try_submit_pending_at(wake.clone(), original.clone(), 500, 40)
+            .expect("first registration");
+
+        let replacement =
+            ResolutionCondition::AwaitCondition(ProofCondition::HashPreimage { hash: [0x22; 32] });
+        assert_eq!(
+            registry.try_submit_pending_at(wake, replacement, u64::MAX, 0),
+            Err(PendingSubmitError::AlreadyPending {
+                turn_hash: wake_hash
+            })
+        );
+        let retained = registry.get_pending(&wake_hash).expect("retained entry");
+        assert_eq!(retained.condition, original);
+        assert_eq!(retained.timeout_height, 500);
+        assert_eq!(retained.submitted_at, 40);
+    }
+
+    #[test]
+    fn react_authority_binds_registered_actor_condition_and_timeout() {
+        let mut registry = PendingTurnRegistry::new();
+        let wake = make_turn(9, 1);
+        let wake_hash = wake.hash();
+        let condition = ProofCondition::HashPreimage { hash: [0x33; 32] };
+        registry
+            .try_submit_pending_at(
+                wake.clone(),
+                ResolutionCondition::AwaitCondition(condition.clone()),
+                80,
+                10,
+            )
+            .expect("register");
+
+        assert_eq!(
+            registry.authorize_react(&wake_hash, &wake.agent, &condition, &wake, 80),
+            Ok(80)
+        );
+        let attacker = CellId::from_bytes([0xAA; 32]);
+        assert!(matches!(
+            registry.authorize_react(&wake_hash, &attacker, &condition, &wake, 80),
+            Err(PendingReactError::ReactorMismatch { .. })
+        ));
+        assert_eq!(
+            registry.authorize_react(
+                &wake_hash,
+                &wake.agent,
+                &ProofCondition::HashPreimage { hash: [0x44; 32] },
+                &wake,
+                80,
+            ),
+            Err(PendingReactError::ConditionMismatch)
+        );
+        assert_eq!(
+            registry.authorize_react(&wake_hash, &wake.agent, &condition, &wake, 81),
+            Err(PendingReactError::Expired {
+                timeout_height: 80,
+                current_height: 81,
+            })
+        );
+        assert_eq!(
+            PendingTurnRegistry::new().authorize_react(
+                &wake_hash,
+                &wake.agent,
+                &condition,
+                &wake,
+                10,
+            ),
+            Err(PendingReactError::NotRegistered)
+        );
+    }
+
+    #[test]
+    fn canonical_snapshot_is_insertion_order_independent_and_restart_safe() {
+        let a = make_turn(3, 1);
+        let b = make_turn(4, 2);
+        let condition_a =
+            ResolutionCondition::AwaitCondition(ProofCondition::HashPreimage { hash: [0xA1; 32] });
+        let condition_b =
+            ResolutionCondition::AwaitCondition(ProofCondition::HashPreimage { hash: [0xB2; 32] });
+        let mut left = PendingTurnRegistry::new();
+        left.try_submit_pending_at(a.clone(), condition_a.clone(), 100, 1)
+            .unwrap();
+        left.try_submit_pending_at(b.clone(), condition_b.clone(), 200, 2)
+            .unwrap();
+        let mut right = PendingTurnRegistry::new();
+        right
+            .try_submit_pending_at(b.clone(), condition_b, 200, 2)
+            .unwrap();
+        right
+            .try_submit_pending_at(a.clone(), condition_a, 100, 1)
+            .unwrap();
+
+        let encoded = left.to_canonical_bytes().expect("encode");
+        assert_eq!(encoded, right.to_canonical_bytes().expect("encode"));
+        assert_eq!(left.commitment().unwrap(), right.commitment().unwrap());
+        let restored = PendingTurnRegistry::from_canonical_bytes(&encoded).expect("restore");
+        assert_eq!(restored.to_canonical_bytes().unwrap(), encoded);
+        assert!(restored.get_pending(&a.hash()).is_some());
+        assert!(restored.get_pending(&b.hash()).is_some());
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(PendingTurnRegistry::from_canonical_bytes(&trailing).is_err());
     }
 }

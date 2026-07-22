@@ -1271,6 +1271,7 @@ impl TurnExecutor {
                         &self.note_nullifiers,
                         &self.note_commitments,
                         &self.note_revoked,
+                        &self.reactive_registry,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1295,6 +1296,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
@@ -1310,6 +1312,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
@@ -1400,6 +1403,7 @@ impl TurnExecutor {
                         &self.note_nullifiers,
                         &self.note_commitments,
                         &self.note_revoked,
+                        &self.reactive_registry,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1454,6 +1458,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.reactive_registry,
             );
             return Err(e);
         }
@@ -1476,6 +1481,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 return Err(AtomicTurnError::ProofFailed {
                     cell: mixed_turn.agent,

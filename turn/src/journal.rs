@@ -19,6 +19,8 @@ use dregg_cell::{
 use crate::action::Symbol;
 use dregg_cell_crypto::note_bridge::BridgedNullifierSet;
 
+use crate::pending::PendingTurnRegistry;
+
 /// A single undo entry in the journal.
 #[derive(Debug)]
 pub(crate) enum JournalEntry {
@@ -119,6 +121,12 @@ pub(crate) enum JournalEntry {
     /// turn that revoked it did not commit). The REVOCATION-side dual of
     /// `NoteNullifierInserted` / `NoteCommitmentInserted`.
     RevocationInserted { revocation_key: [u8; 32] },
+    /// Exact pre-turn image of the durable reactive promise registry.
+    ///
+    /// Only the first reactive mutation in a turn records this entry. Restoring
+    /// that one snapshot reverses Promise/Notify inserts, React removals, and all
+    /// dependency cascades as one atomic side-state operation.
+    ReactiveRegistrySnapshot { previous: Box<PendingTurnRegistry> },
     /// A cell's lifecycle state was changed (Seal, Unseal, Destroy, Archive).
     /// Records the old lifecycle so rollback can restore it.
     SetLifecycle {
@@ -162,6 +170,7 @@ pub(crate) enum JournalEntry {
 #[derive(Debug)]
 pub(crate) struct LedgerJournal {
     entries: Vec<JournalEntry>,
+    reactive_registry_snapshot_recorded: bool,
 }
 
 impl LedgerJournal {
@@ -170,6 +179,7 @@ impl LedgerJournal {
     pub fn new() -> Self {
         LedgerJournal {
             entries: Vec::new(),
+            reactive_registry_snapshot_recorded: false,
         }
     }
 
@@ -177,12 +187,27 @@ impl LedgerJournal {
     pub fn with_capacity(cap: usize) -> Self {
         LedgerJournal {
             entries: Vec::with_capacity(cap),
+            reactive_registry_snapshot_recorded: false,
         }
     }
 
     /// Get a reference to the journal entries for inspection.
     pub fn entries(&self) -> &[JournalEntry] {
         &self.entries
+    }
+
+    pub fn needs_reactive_registry_snapshot(&self) -> bool {
+        !self.reactive_registry_snapshot_recorded
+    }
+
+    pub fn record_reactive_registry_snapshot(&mut self, previous: PendingTurnRegistry) {
+        if self.reactive_registry_snapshot_recorded {
+            return;
+        }
+        self.entries.push(JournalEntry::ReactiveRegistrySnapshot {
+            previous: Box::new(previous),
+        });
+        self.reactive_registry_snapshot_recorded = true;
     }
 
     /// **The exact write-set** — every cell whose serialized state this turn
@@ -229,6 +254,7 @@ impl LedgerJournal {
                 JournalEntry::MakeSovereign { cell } => cell.id(),
                 JournalEntry::NoteSpend
                 | JournalEntry::NoteCreate
+                | JournalEntry::ReactiveRegistrySnapshot { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
                 | JournalEntry::NoteCommitmentInserted { .. }
@@ -450,6 +476,7 @@ impl LedgerJournal {
         note_nullifiers: &Mutex<NullifierSet>,
         note_commitments: &Mutex<CommitmentSet>,
         note_revoked: &Mutex<RevokedSet>,
+        reactive_registry: &Mutex<PendingTurnRegistry>,
     ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
@@ -563,6 +590,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::RevocationInserted { revocation_key } => {
                     note_revoked.lock().unwrap().remove(&revocation_key);
+                }
+                JournalEntry::ReactiveRegistrySnapshot { previous } => {
+                    *reactive_registry.lock().unwrap() = *previous;
                 }
                 JournalEntry::SetLifecycle {
                     cell,
