@@ -107,7 +107,7 @@ classical seams into a post-quantum composition.
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
 | Portable encrypted TFHE PBS | **TRANSFORM-RESIDENT DENSE ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs/nonzero rotations and all 919 tfhe-rs outputs; strict 1/1, 115.746ms warm transform GPU vs 422.847ms coefficient GPU / 1,380.391ms CPU; high-level integers/live clearing wiring remain |
-| Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
+| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE BFV SLICE LIVE; FULL FAMILY OPEN** | model checks all 98,304 equations; the first complete 4,096-term equation now has a real HidingFRI proof 1/1, while 98,303 slices remain; WideNativePqCommitment binds 16 canonical lanes |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; accumulator insertion is host-planned rather than recomputed in AIR |
 | Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
@@ -901,6 +901,19 @@ Two narrower-but-load-bearing replacements now exist:
   shielded statement through **16 canonical BabyBear lanes**, rather than one
   field that aliases `x` with `x + p`.
 
+The model boundary now has its first executable native-field member.
+`Market.PrivateBookBfvSliceDescriptor` proves one complete 4,096-term
+negacyclic equation—order 0, ciphertext polynomial 0, RNS modulus 0,
+coefficient 0—together with the same hidden Dark Bazaar order/root relation and
+an eight-lane commitment to all 4,096 ordered public-key coefficients. It is
+not a random scalar projection. The real `fhe.rs` message-table differential is
+**128/128 green**; the real HidingFRI proof/serialization/verification hostile
+gate is **1/1 green in 22.414s** and rejects wrong key, ciphertext, and private
+root. The checked 394,129-byte artifact has SHA-256
+`459fa946690540ef0142c5feba0f8d03c1ace116ec3e42bca3c9b6b6a7b8526f`.
+The remaining 98,303 exact equations are still open, so this first slice is not
+accepted as a complete BFV opening or a replacement for the classical apex.
+
 The Rust `ShieldedInputPayload` now carries a mandatory 16-lane wide value
 binding plus its hiding proof. The effect hash binds every lane, and executor
 admission verifies both the existing spend/conservation evidence and the wide
@@ -1132,6 +1145,9 @@ from first principles.
   GPU and **1,380.391ms CPU**. High-level integers/live clearing wiring remain.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
+- native exact-BFV HidingFRI slice — exact 4,096-term coefficient equation plus
+  the same hidden order/root relation **1/1 green in 22.414s**; real encoder
+  table **128/128**; 98,303 production equations remain.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
   **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
   history **6/6**; live finalized `NoteCreate` leaves, history edge, exact
@@ -1183,8 +1199,9 @@ These are the next truth-producing gates:
 2. Extend the committed-share backend beyond its opening PoKs, first linear
    constraints, owner ranges, finite semantic selectors, and bounded BFV
    shorts through exact fhe.rs polynomial opening/BFV, Poseidon/root, and
-   clearing, then make the apex consume it before revisiting any
-   no-single-viewer language.
+   clearing. Reuse the live exact native-field slice, materialize or prove the
+   other 98,303 equations, then make the apex consume the family before
+   revisiting any no-single-viewer language.
 3. Replace trusted-authority Beaver certification with malicious preprocessing
    and add private-input share-formation evidence; signed, encrypted routing
    alone cannot satisfy LiveMpcBackend.sound.

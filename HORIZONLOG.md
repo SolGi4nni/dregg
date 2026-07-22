@@ -10869,6 +10869,21 @@ requires an explicit external implementation-equality premise: the WGSL limb,
 buffer, and dispatch correspondence remains the next translation-validation
 proof rather than being smuggled into the arithmetic theorem.
 
+The BFV opening has crossed its first executable native-field slice
+(`81edd4a56`). `Market.PrivateBookBfvSliceDescriptor` emits the complete
+4,096-row negacyclic coefficient equation for order 0 / ciphertext polynomial
+0 / RNS modulus 0 / coefficient 0, fused with the existing hidden Dark Bazaar
+order/root relation and an eight-lane commitment to all 4,096 ordered public-key
+coefficients. It is not a random-linear projection. The real `fhe.rs` encoder
+differential matches all **128/128** private-order message entries, and the
+HidingFRI prove/serialize/verify hostile gate is **1/1 green in 22.414s** with
+wrong key, ciphertext, and private root rejected. The checked 394,129-byte
+artifact has SHA-256
+`459fa946690540ef0142c5feba0f8d03c1ace116ec3e42bca3c9b6b6a7b8526f`.
+This is the first of 98,304 exact production equations: the other 98,303 remain
+to be materialized or lowered through a proved NTT family before the native-PQ
+slice can replace the complete classical same-opening proof.
+
 The faithful note-tree substrate is now Lean-authored and banked. Exact 32-byte
 commitments map injectively to sixteen canonical `u16`/BabyBear lanes, while
 domain-separated leaf, empty, and internal hashing keeps an eight-felt
