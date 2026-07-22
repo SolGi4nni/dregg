@@ -459,6 +459,12 @@ pub enum BlockError {
 
     #[error("consensus-time-v1 policy is already configured with another genesis anchor")]
     ConsensusTimePolicyReplacement,
+
+    #[error("consensus-time-v1 flag day must be enabled before the first block")]
+    ConsensusTimeFlagDayRequiresEmptyLace,
+
+    #[error("consensus-time-v1 frontier missing for predecessor {predecessor:?}")]
+    ConsensusTimeFrontierMissing { predecessor: BlockId },
 }
 
 /// Errors during delta-merge.
@@ -872,6 +878,11 @@ pub struct Blocklace {
     /// `Some` after the deterministic-time flag day. Legacy turn payloads then fail closed at
     /// admission; non-turn DAG traffic remains compatible.
     consensus_time_v1: Option<ConsensusTimePolicyV1>,
+    /// Derived authenticated-time frontier for each post-flag-day block.
+    ///
+    /// Admission reads only the immediate predecessors' cached frontiers, so causal-time
+    /// validation is O(predecessor count) instead of repeatedly walking all ancestors.
+    consensus_time_frontier_v1: HashMap<BlockId, i64>,
 }
 
 impl Blocklace {
@@ -886,6 +897,7 @@ impl Blocklace {
             finality: FinalityTracker::new(quorum_threshold),
             pq_roster: HashMap::new(),
             consensus_time_v1: None,
+            consensus_time_frontier_v1: HashMap::new(),
         }
     }
 
@@ -922,6 +934,9 @@ impl Blocklace {
         match self.consensus_time_v1 {
             Some(existing) if existing == policy => Ok(()),
             Some(_) => Err(BlockError::ConsensusTimePolicyReplacement),
+            None if !self.blocks.is_empty() => {
+                Err(BlockError::ConsensusTimeFlagDayRequiresEmptyLace)
+            }
             None => {
                 self.consensus_time_v1 = Some(policy);
                 Ok(())
@@ -1005,13 +1020,37 @@ impl Blocklace {
     /// Create a new block with the given payload.
     /// Predecessors = all current tips (what we currently know about).
     pub fn add_block(&mut self, payload: Payload) -> Block {
-        self.self_seq += 1;
+        self.try_add_block(payload)
+            .expect("generic local block violates consensus-time-v1; use the fallible constructor")
+    }
+
+    /// Fallible local block creation, including deterministic-time admission when enabled.
+    ///
+    /// Failure is atomic: sequence, tips, frontier index, and block map remain unchanged.
+    pub fn try_add_block(&mut self, payload: Payload) -> Result<Block, BlockError> {
         let predecessors: Vec<BlockId> = self.tips.values().copied().collect();
-        let block = Block::new(&self.self_key, self.self_seq, payload, predecessors);
+        self.try_add_block_with_predecessors(payload, predecessors)
+    }
+
+    fn try_add_block_with_predecessors(
+        &mut self,
+        payload: Payload,
+        predecessors: Vec<BlockId>,
+    ) -> Result<Block, BlockError> {
+        let next_seq = self
+            .self_seq
+            .checked_add(1)
+            .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
+        let block = Block::new(&self.self_key, next_seq, payload, predecessors);
+        let frontier = self.validated_consensus_time_frontier_v1(&block)?;
+        self.self_seq = next_seq;
         let id = block.id();
         self.blocks.insert(id, block.clone());
+        if let Some(frontier) = frontier {
+            self.consensus_time_frontier_v1.insert(id, frontier);
+        }
         self.tips.insert(self.self_creator(), id);
-        block
+        Ok(block)
     }
 
     /// Create a new block with explicit predecessors (for advanced usage).
@@ -1020,12 +1059,8 @@ impl Blocklace {
         payload: Payload,
         predecessors: Vec<BlockId>,
     ) -> Block {
-        self.self_seq += 1;
-        let block = Block::new(&self.self_key, self.self_seq, payload, predecessors);
-        let id = block.id();
-        self.blocks.insert(id, block.clone());
-        self.tips.insert(self.self_creator(), id);
-        block
+        self.try_add_block_with_predecessors(payload, predecessors)
+            .expect("local block violates consensus-time-v1")
     }
 
     /// Produce a locally-authored consensus-timed turn through the strict v1 path.
@@ -1051,10 +1086,13 @@ impl Blocklace {
             Payload::ConsensusTimedTurnV1(payload),
             predecessors,
         );
-        self.validate_consensus_time_v1(&block)?;
+        let frontier = self.validated_consensus_time_frontier_v1(&block)?;
         self.self_seq = next_seq;
         let id = block.id();
         self.blocks.insert(id, block.clone());
+        if let Some(frontier) = frontier {
+            self.consensus_time_frontier_v1.insert(id, frontier);
+        }
         self.tips.insert(self.self_creator(), id);
         Ok(block)
     }
@@ -1064,6 +1102,13 @@ impl Blocklace {
     /// This function never reads wall time. With v1 disabled, a v1 payload fails closed. With v1
     /// enabled, legacy timestamp-less turns fail closed while non-turn DAG traffic remains valid.
     pub fn validate_consensus_time_v1(&self, block: &Block) -> Result<(), BlockError> {
+        self.validated_consensus_time_frontier_v1(block).map(drop)
+    }
+
+    fn validated_consensus_time_frontier_v1(
+        &self,
+        block: &Block,
+    ) -> Result<Option<i64>, BlockError> {
         let timed = match &block.payload {
             Payload::ConsensusTimedTurnV1(payload) => Some(payload),
             Payload::Turn(_) | Payload::TurnBundle(_) if self.consensus_time_v1.is_some() => {
@@ -1071,12 +1116,17 @@ impl Blocklace {
             }
             _ => None,
         };
-        let Some(payload) = timed else {
-            return Ok(());
+        let Some(policy) = self.consensus_time_v1 else {
+            if timed.is_some() {
+                return Err(BlockError::ConsensusTimePolicyMissing);
+            }
+            return Ok(None);
         };
-        let policy = self
-            .consensus_time_v1
-            .ok_or(BlockError::ConsensusTimePolicyMissing)?;
+        let inherited = self.predecessor_consensus_time_frontier_v1(block, policy)?;
+        let Some(payload) = timed else {
+            // Non-turn blocks carry the inherited frontier through the causal DAG.
+            return Ok(Some(inherited));
+        };
         payload.validate_shape()?;
         let actual = payload.consensus_time.unix_seconds;
         if block.predecessors.is_empty() {
@@ -1086,20 +1136,22 @@ impl Blocklace {
                     actual,
                 });
             }
-            return Ok(());
+            return Ok(Some(actual));
         }
 
-        let minimum = self.predecessor_consensus_time_frontier_v1(block, policy)?;
-        if actual < minimum {
-            return Err(BlockError::ConsensusTimeRegression { minimum, actual });
+        if actual < inherited {
+            return Err(BlockError::ConsensusTimeRegression {
+                minimum: inherited,
+                actual,
+            });
         }
-        let maximum = minimum
+        let maximum = inherited
             .checked_add(CONSENSUS_TIME_V1_MAX_FORWARD_SECONDS)
             .ok_or(BlockError::ConsensusTimeBoundOverflow)?;
         if actual > maximum {
             return Err(BlockError::ConsensusTimeForwardBound { maximum, actual });
         }
-        Ok(())
+        Ok(Some(actual))
     }
 
     fn predecessor_consensus_time_frontier_v1(
@@ -1107,22 +1159,24 @@ impl Blocklace {
         block: &Block,
         policy: ConsensusTimePolicyV1,
     ) -> Result<i64, BlockError> {
+        if block.predecessors.is_empty() {
+            return Ok(policy.genesis_unix_seconds);
+        }
         let mut maximum = policy.genesis_unix_seconds;
-        let mut seen = HashSet::new();
-        let mut pending = block.predecessors.clone();
-        while let Some(id) = pending.pop() {
-            if !seen.insert(id) {
-                continue;
+        for id in &block.predecessors {
+            if !self.blocks.contains_key(id) {
+                return Err(BlockError::MissingPredecessor {
+                    creator: block.creator,
+                    seq: block.seq,
+                    missing: *id,
+                });
             }
-            let predecessor = self.blocks.get(&id).ok_or(BlockError::MissingPredecessor {
-                creator: block.creator,
-                seq: block.seq,
-                missing: id,
-            })?;
-            if let Payload::ConsensusTimedTurnV1(payload) = &predecessor.payload {
-                maximum = maximum.max(payload.consensus_time.unix_seconds);
-            }
-            pending.extend(predecessor.predecessors.iter().copied());
+            let frontier = self
+                .consensus_time_frontier_v1
+                .get(id)
+                .copied()
+                .ok_or(BlockError::ConsensusTimeFrontierMissing { predecessor: *id })?;
+            maximum = maximum.max(frontier);
         }
         Ok(maximum)
     }
@@ -1200,7 +1254,7 @@ impl Blocklace {
                 });
             }
         }
-        self.validate_consensus_time_v1(&block)?;
+        let frontier = self.validated_consensus_time_frontier_v1(&block)?;
 
         // Check for equivocation.
         if let Some(proof) = self.detect_equivocation(&block) {
@@ -1208,6 +1262,9 @@ impl Blocklace {
             self.tips.remove(&block.creator);
             // Still insert the block (we keep evidence) but report the equivocation.
             self.blocks.insert(id, block);
+            if let Some(frontier) = frontier {
+                self.consensus_time_frontier_v1.insert(id, frontier);
+            }
             return Err(BlockError::Equivocation {
                 creator: proof.creator,
                 seq: proof.block_a.seq,
@@ -1238,6 +1295,9 @@ impl Blocklace {
         }
 
         self.blocks.insert(id, block);
+        if let Some(frontier) = frontier {
+            self.consensus_time_frontier_v1.insert(id, frontier);
+        }
         Ok(())
     }
 
@@ -1275,7 +1335,7 @@ impl Blocklace {
             // Verify signature.
             block.verify_signature()?;
 
-            self.validate_consensus_time_v1(&block)?;
+            let frontier = self.validated_consensus_time_frontier_v1(&block)?;
 
             // Check for equivocation.
             if let Some(proof) = self.detect_equivocation(&block) {
@@ -1289,6 +1349,9 @@ impl Blocklace {
                 self.equivocators.insert(block.creator);
                 self.tips.remove(&block.creator);
                 self.blocks.insert(id, block);
+                if let Some(frontier) = frontier {
+                    self.consensus_time_frontier_v1.insert(id, frontier);
+                }
                 let _ = proof;
                 continue;
             }
@@ -1309,6 +1372,9 @@ impl Blocklace {
             }
 
             self.blocks.insert(id, block);
+            if let Some(frontier) = frontier {
+                self.consensus_time_frontier_v1.insert(id, frontier);
+            }
         }
 
         Ok(())
