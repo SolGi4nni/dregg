@@ -13,7 +13,8 @@ use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use dregg_persist::{
     ClaimedPrivateDependentTurnV1, PersistentStore, PrivateDependentTurnFinishV1,
-    PrivateDependentTurnSnapshotV1, private_dependent_ready_digest_v1,
+    PrivateDependentTurnSnapshotV1, private_dependent_ingress_reservation_id_v1,
+    private_dependent_ready_digest_v1,
 };
 use dregg_sdk::SignedTurn;
 use serde::Deserialize;
@@ -499,19 +500,27 @@ async fn drain_private_dependent_turns(state: &NodeState) -> Result<(), PrivateD
                 {
                     let outcome = submit_claimed_turn(state, &blocklace, &store, &claim).await;
                     let finish = match outcome {
-                        Ok(ingress_id) => PrivateDependentTurnFinishV1::Submitted { ingress_id },
-                        Err(error) => PrivateDependentTurnFinishV1::Refused {
+                        Ok(Some(ingress_id)) => {
+                            Some(PrivateDependentTurnFinishV1::Submitted { ingress_id })
+                        }
+                        // Multi-party ingress is safely queued with the durable
+                        // reservation still Reserved. The round cadence owns the
+                        // atomic block+Submitted transition.
+                        Ok(None) => None,
+                        Err(error) => Some(PrivateDependentTurnFinishV1::Refused {
                             reason: error.to_string(),
-                        },
+                        }),
                     };
-                    store
-                        .finish_private_dependent_turn_v1(
-                            claim.promise_id,
-                            claim.ready_sequence,
-                            claim.event_id,
-                            finish,
-                        )
-                        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+                    if let Some(finish) = finish {
+                        store
+                            .finish_private_dependent_turn_v1(
+                                claim.promise_id,
+                                claim.ready_sequence,
+                                claim.event_id,
+                                finish,
+                            )
+                            .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+                    }
                 }
             }
             store
@@ -570,7 +579,7 @@ async fn submit_claimed_turn(
     blocklace: &crate::blocklace_sync::BlocklaceHandle,
     store: &PersistentStore,
     claim: &ClaimedPrivateDependentTurnV1,
-) -> Result<[u8; 32], PrivateDependentTurnError> {
+) -> Result<Option<[u8; 32]>, PrivateDependentTurnError> {
     let snapshot = store
         .private_dependent_turn_status_v1(claim.promise_id)
         .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?
@@ -618,8 +627,17 @@ async fn submit_claimed_turn(
     // This is the ordinary consensus ingress; finalization runs the same shared
     // SignedTurn predicate again under the authoritative state lock. No private
     // scheduler execution path or unsigned auto-submit exists.
-    let (block_id, _) = blocklace.submit_turn(state, plaintext).await;
-    Ok(block_id.0)
+    let reservation_id = private_dependent_ingress_reservation_id_v1(
+        claim.promise_id,
+        claim.signed_turn_hash,
+        claim.ready_sequence,
+        claim.event_id,
+    );
+    blocklace
+        .submit_private_dependent_turn(state, reservation_id, plaintext)
+        .await
+        .map(|block_id| block_id.map(|id| id.0))
+        .map_err(PrivateDependentTurnError::Store)
 }
 
 #[cfg(test)]

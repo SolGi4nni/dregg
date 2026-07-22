@@ -662,6 +662,125 @@ impl PersistentStore {
         Ok(())
     }
 
+    /// Atomically persist one already-admitted turn-bearing block and consume
+    /// its private ingress reservation.
+    ///
+    /// The blocklace producer must construct the block on an isolated clone,
+    /// call this method, and only then install/broadcast that clone. A crash
+    /// before this transaction leaves the reservation `Reserved`; a crash
+    /// after it leaves both the exact block bytes and `Submitted(block_id)`.
+    /// Exact retries are idempotent and a different block is refused.
+    ///
+    /// This persistence seam deliberately does not replace SignedTurn
+    /// admission: the caller must run the canonical node validator before
+    /// constructing `block`. It does, however, refuse non-turn carriers and
+    /// oversized/empty signed payloads before any durable mutation.
+    pub fn accept_private_dependent_ingress_block_v1(
+        &self,
+        reservation_id: [u8; 32],
+        block: &dregg_blocklace::finality::Block,
+    ) -> Result<[u8; 32]> {
+        use dregg_blocklace::finality::Payload;
+
+        let signed_turn = match &block.payload {
+            Payload::Turn(bytes) => bytes.as_slice(),
+            Payload::TurnBundle(bundle) => bundle.signed_turn.as_slice(),
+            Payload::ConsensusTimedTurnV1(timed) => timed.signed_turn(),
+            Payload::Ack
+            | Payload::Checkpoint { .. }
+            | Payload::MembershipVote { .. }
+            | Payload::Data(_) => {
+                return Err(StoreError::Integrity(
+                    "private dependent ingress block is not turn-bearing".to_string(),
+                ));
+            }
+        };
+        if signed_turn.is_empty() || signed_turn.len() > MAX_PRIVATE_DEPENDENT_SEAL_BYTES {
+            return Err(StoreError::Integrity(
+                "private dependent ingress block has an empty or oversized signed turn".to_string(),
+            ));
+        }
+
+        let ingress_id = block.id().0;
+        let block_bytes = block.to_bytes();
+        let write = self.db.begin_write()?;
+        {
+            let mut reservations =
+                write.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
+            let current = reservations.get(&reservation_id)?.ok_or_else(|| {
+                StoreError::Integrity(
+                    "private dependent ingress reservation is missing".to_string(),
+                )
+            })?;
+            let mut reservation = decode_ingress_reservation(current.value(), &reservation_id)?;
+            drop(current);
+
+            let mut turns = write.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
+            let current_turn = turns.get(&reservation.promise_id)?.ok_or_else(|| {
+                StoreError::Integrity(
+                    "private dependent ingress lost its primary custody row".to_string(),
+                )
+            })?;
+            let mut turn = decode_record(current_turn.value(), &reservation.promise_id)?;
+            drop(current_turn);
+            if turn.signed_turn_hash != reservation.signed_turn_hash {
+                return Err(StoreError::Integrity(
+                    "private dependent ingress signed-turn hash disagrees with custody".to_string(),
+                ));
+            }
+
+            let claimed = PrivateDependentTurnStatusV1::Claimed {
+                ready_sequence: reservation.ready_sequence,
+                event_id: reservation.event_id,
+            };
+            let submitted = PrivateDependentTurnStatusV1::Submitted {
+                ready_sequence: reservation.ready_sequence,
+                event_id: reservation.event_id,
+                ingress_id,
+            };
+            let accepted = PrivateDependentIngressReservationStatusV1::Accepted { ingress_id };
+
+            let exact_replay = reservation.status == accepted && turn.status == submitted;
+            if !exact_replay
+                && (reservation.status != PrivateDependentIngressReservationStatusV1::Reserved
+                    || turn.status != claimed)
+            {
+                return Err(StoreError::Integrity(
+                    "private dependent ingress block does not match a live reservation".to_string(),
+                ));
+            }
+
+            let mut blocks = write.open_table(tables::BLOCKLACE_BLOCKS)?;
+            if let Some(existing) = blocks.get(&ingress_id)? {
+                if existing.value() != block_bytes.as_slice() {
+                    return Err(StoreError::Integrity(
+                        "private dependent ingress block id has different durable bytes"
+                            .to_string(),
+                    ));
+                }
+            } else if exact_replay {
+                return Err(StoreError::Integrity(
+                    "accepted private dependent ingress is missing its durable block".to_string(),
+                ));
+            } else {
+                blocks.insert(&ingress_id, block_bytes.as_slice())?;
+            }
+
+            if !exact_replay {
+                turn.status = submitted;
+                reservation.status = accepted;
+                reservation.sealed_signed_turn.clear();
+                reservation.validate(&reservation_id)?;
+                let turn_bytes = canonical_bytes(&turn)?;
+                let reservation_bytes = canonical_bytes(&reservation)?;
+                turns.insert(&reservation.promise_id, turn_bytes.as_slice())?;
+                reservations.insert(&reservation_id, reservation_bytes.as_slice())?;
+            }
+        }
+        write.commit()?;
+        Ok(ingress_id)
+    }
+
     /// Cancel only an unclaimed custody item. Once claimed, at-most-once release
     /// has begun and cancellation cannot race it back to Armed.
     pub fn cancel_private_dependent_turn_v1(&self, promise_id: [u8; 32]) -> Result<bool> {
@@ -884,6 +1003,22 @@ mod tests {
         )
     }
 
+    fn block(payload: dregg_blocklace::finality::Payload) -> dregg_blocklace::finality::Block {
+        // Persistence validates the carrier shape and byte identity, while the
+        // node's canonical ingress validates hybrid signatures before calling
+        // it. A hand-built carrier keeps this persistence-only test from
+        // invoking unaudited fallback PQ key generation.
+        dregg_blocklace::finality::Block {
+            creator: [0x35; 32],
+            ed25519: [0x36; 32],
+            seq: 1,
+            payload,
+            predecessors: Vec::new(),
+            signature: [0; 64],
+            pq_signature: Vec::new(),
+        }
+    }
+
     #[test]
     fn durable_ready_destructively_claims_exactly_once() {
         let (_dir, store) = store();
@@ -1103,6 +1238,108 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn accepted_block_and_reservation_commit_atomically_and_replay_exactly() {
+        let (dir, store) = store();
+        let promise = [0x68; 32];
+        store
+            .arm_private_dependent_turn_v1(promise, promise, vec![0x91; 80], 10)
+            .unwrap();
+        commit_ready(&store, promise);
+        let claim = store
+            .claim_private_dependent_turn_v1(promise, 0)
+            .unwrap()
+            .unwrap();
+        let reservation_id = reservation_id(&claim);
+        let accepted_block = block(dregg_blocklace::finality::Payload::Turn(vec![0x92; 96]));
+        let ingress_id = accepted_block.id().0;
+        assert_eq!(
+            store
+                .accept_private_dependent_ingress_block_v1(reservation_id, &accepted_block)
+                .unwrap(),
+            ingress_id
+        );
+        // Exact replay, including after process death, is a no-op success.
+        assert_eq!(
+            store
+                .accept_private_dependent_ingress_block_v1(reservation_id, &accepted_block)
+                .unwrap(),
+            ingress_id
+        );
+        drop(store);
+        let reopened = PersistentStore::open(&dir.path().join("store.redb")).unwrap();
+        assert_eq!(
+            reopened
+                .accept_private_dependent_ingress_block_v1(reservation_id, &accepted_block)
+                .unwrap(),
+            ingress_id
+        );
+        let reservation = reopened
+            .private_dependent_ingress_reservation_v1(reservation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reservation.status,
+            PrivateDependentIngressReservationStatusV1::Accepted { ingress_id }
+        );
+        assert!(reservation.sealed_signed_turn.is_empty());
+        assert!(matches!(
+            reopened
+                .private_dependent_turn_status_v1(promise)
+                .unwrap()
+                .unwrap()
+                .status,
+            PrivateDependentTurnStatusV1::Submitted {
+                ingress_id: stored,
+                ..
+            } if stored == ingress_id
+        ));
+        assert!(
+            reopened
+                .load_all_blocks()
+                .unwrap()
+                .iter()
+                .any(|stored| stored.id().0 == ingress_id && stored == &accepted_block)
+        );
+
+        let substituted = block(dregg_blocklace::finality::Payload::Turn(vec![0x93; 96]));
+        assert!(
+            reopened
+                .accept_private_dependent_ingress_block_v1(reservation_id, &substituted)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn non_turn_block_cannot_consume_private_ingress_reservation() {
+        let (_dir, store) = store();
+        let promise = [0x69; 32];
+        store
+            .arm_private_dependent_turn_v1(promise, promise, vec![0x94; 80], 10)
+            .unwrap();
+        commit_ready(&store, promise);
+        let claim = store
+            .claim_private_dependent_turn_v1(promise, 0)
+            .unwrap()
+            .unwrap();
+        let reservation_id = reservation_id(&claim);
+        let inert = block(dregg_blocklace::finality::Payload::Ack);
+        assert!(
+            store
+                .accept_private_dependent_ingress_block_v1(reservation_id, &inert)
+                .is_err()
+        );
+        let reservation = store
+            .private_dependent_ingress_reservation_v1(reservation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reservation.status,
+            PrivateDependentIngressReservationStatusV1::Reserved
+        );
+        assert_eq!(reservation.sealed_signed_turn, vec![0x94; 80]);
     }
 
     #[test]

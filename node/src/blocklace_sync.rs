@@ -295,6 +295,31 @@ pub enum BlocklaceGossipMessage {
 
 // ─── Shared Blocklace State ─────────────────────────────────────────────────
 
+/// One local round-production queue item. Private dependent turns retain their
+/// durable reservation id until the cadence atomically persists the produced
+/// block and consumes that reservation; ordinary ingress carries no id.
+#[derive(Clone, Debug)]
+pub struct PendingBlocklacePayload {
+    payload: Payload,
+    private_reservation_id: Option<[u8; 32]>,
+}
+
+impl PendingBlocklacePayload {
+    fn ordinary(payload: Payload) -> Self {
+        Self {
+            payload,
+            private_reservation_id: None,
+        }
+    }
+
+    fn private(payload: Payload, reservation_id: [u8; 32]) -> Self {
+        Self {
+            payload,
+            private_reservation_id: Some(reservation_id),
+        }
+    }
+}
+
 /// Thread-safe handle to the blocklace consensus state.
 ///
 /// Shared between the gossip receiver task and the HTTP API (for turn submission).
@@ -407,7 +432,7 @@ pub struct BlocklaceHandle {
     /// carries it as the payload of its next round block, keeping the DAG
     /// round-synchronous so waves finalize cross-node. FIFO; drained one payload
     /// per round. (Solo n=1 bypasses this and produces the turn block directly.)
-    pub pending_payloads: Arc<RwLock<std::collections::VecDeque<Payload>>>,
+    pub pending_payloads: Arc<RwLock<std::collections::VecDeque<PendingBlocklacePayload>>>,
     /// CROSS-POLL VERIFIED-ORDER CACHE (fingerprint half). A cheap `u64` hashed
     /// over the SORTED block-id set of the lace at the last poll whose verified
     /// Lean tau-order FFI succeeded. Block ids are blake3 content hashes, so an
@@ -592,6 +617,64 @@ impl BlocklaceHandle {
             .await
     }
 
+    /// Submit an already-admitted private dependent turn under its durable
+    /// ingress reservation.
+    ///
+    /// Solo production constructs on an isolated lace clone, atomically stores
+    /// the exact block plus `Submitted(block_id)`, then installs/broadcasts the
+    /// clone. Multi-party production stages the reservation id beside the
+    /// payload; the round cadence performs that same atomic cut when a legal
+    /// round is available. `None` therefore means safely queued, not accepted.
+    /// A restart never calls this method for an old `Claimed` row: recovery
+    /// reconciles finalized identity only and does not blind-resend.
+    pub async fn submit_private_dependent_turn(
+        &self,
+        state: &NodeState,
+        reservation_id: [u8; 32],
+        turn_data: Vec<u8>,
+    ) -> Result<Option<BlockId>, String> {
+        let payload = Payload::Turn(turn_data);
+        let n_participants = {
+            let c = self.constitution.read().await;
+            c.current.participant_count()
+        };
+        if n_participants > 1 {
+            self.pending_payloads
+                .write()
+                .await
+                .push_back(PendingBlocklacePayload::private(payload, reservation_id));
+            self.finality_notify.notify_one();
+            return Ok(None);
+        }
+
+        let store = { state.read().await.store.clone() };
+        let block = {
+            let mut live = self.lace.write().await;
+            let mut candidate = live.clone();
+            let predecessors: Vec<BlockId> = candidate.tips().values().copied().collect();
+            let producer_wall = producer_wall_unix_seconds()?;
+            let block = produce_payload_with_consensus_time_v1(
+                &mut candidate,
+                payload,
+                predecessors,
+                producer_wall,
+            )
+            .map_err(|error| format!("private dependent block production failed: {error}"))?;
+            store
+                .accept_private_dependent_ingress_block_v1(reservation_id, &block)
+                .map_err(|error| {
+                    format!("private dependent ingress durable accept failed: {error}")
+                })?;
+            *live = candidate;
+            block
+        };
+        let block_id = block.id();
+        *self.last_produced.write().await = std::time::Instant::now();
+        self.finality_notify.notify_one();
+        self.push_new_blocks().await;
+        Ok(Some(block_id))
+    }
+
     /// Submit a signed turn plus committed receipt/witness artifacts to the
     /// blocklace. Peers that understand bundle payloads can materialize the
     /// full devnet artifact; older raw-turn blocks remain valid.
@@ -717,6 +800,64 @@ impl BlocklaceHandle {
         Some(block_id)
     }
 
+    /// Round-disciplined counterpart of [`Self::submit_private_dependent_turn`].
+    /// The live lace remains untouched unless the exact produced block and the
+    /// reservation's Submitted transition commit together.
+    async fn produce_private_dependent_round_block(
+        &self,
+        state: &NodeState,
+        payload: Payload,
+        reservation_id: [u8; 32],
+    ) -> Result<Option<BlockId>, String> {
+        let producer_wall = producer_wall_unix_seconds()?;
+        let supermajority = {
+            let c = self.constitution.read().await;
+            dregg_blocklace::ordering::supermajority_threshold(c.current.participant_count())
+        };
+        let store = { state.read().await.store.clone() };
+        let block = {
+            let mut live = self.lace.write().await;
+            let mut candidate = live.clone();
+            let plan = plan_round_block(&candidate, candidate.self_creator(), supermajority);
+            let produced = match plan {
+                RoundPlan::Wait => return Ok(None),
+                RoundPlan::Genesis => produce_payload_with_consensus_time_v1(
+                    &mut candidate,
+                    payload,
+                    Vec::new(),
+                    producer_wall,
+                ),
+                RoundPlan::Advance { predecessors, .. } => produce_payload_with_consensus_time_v1(
+                    &mut candidate,
+                    payload,
+                    predecessors,
+                    producer_wall,
+                ),
+            }
+            .map_err(|error| format!("private dependent round block production failed: {error}"))?;
+            store
+                .accept_private_dependent_ingress_block_v1(reservation_id, &produced)
+                .map_err(|error| {
+                    format!("private dependent round durable accept failed: {error}")
+                })?;
+            *live = candidate;
+            produced
+        };
+
+        let block_id = block.id();
+        *self.last_produced.write().await = std::time::Instant::now();
+        self.finality_notify.notify_one();
+        self.push_new_blocks().await;
+        debug!(
+            block_id = %block_id,
+            seq = block.seq,
+            npreds = block.predecessors.len(),
+            reservation_id = %dregg_types::hex_encode(&reservation_id),
+            "produced atomically reserved private dependent round block"
+        );
+        Ok(Some(block_id))
+    }
+
     async fn submit_turn_payload(
         &self,
         state: &NodeState,
@@ -739,7 +880,10 @@ impl BlocklaceHandle {
             // and `Local` finality (not yet ordered — it orders when its round
             // block is produced and a wave super-ratifies it cross-node).
             let receipt = Self::payload_receipt_id(&payload);
-            self.pending_payloads.write().await.push_back(payload);
+            self.pending_payloads
+                .write()
+                .await
+                .push_back(PendingBlocklacePayload::ordinary(payload));
             // Nudge the cadence/executor so the staged turn is picked up promptly.
             self.finality_notify.notify_one();
             return (receipt, FinalityLevel::Local);
@@ -4098,18 +4242,38 @@ async fn cadence_tick_round_driven(
     // `Payload::Ack` attestation (the wave-closing/wake step). One payload per
     // round keeps the DAG round-synchronous and drains the backlog at the round
     // cadence.
-    let (payload, carried_turn) = if action == CadenceAction::DrainTurns {
+    let (staged, carried_turn) = if action == CadenceAction::DrainTurns {
         match handle.pending_payloads.write().await.pop_front() {
             Some(p) => (p, true),
             // Raced empty (a concurrent drain): fall back to an attestation so
             // the wake/close still advances the round.
-            None => (Payload::Ack, false),
+            None => (PendingBlocklacePayload::ordinary(Payload::Ack), false),
         }
     } else {
-        (Payload::Ack, false)
+        (PendingBlocklacePayload::ordinary(Payload::Ack), false)
     };
 
-    let advanced = handle.produce_round_block(state, payload.clone()).await;
+    let advanced = match staged.private_reservation_id {
+        Some(reservation_id) => match handle
+            .produce_private_dependent_round_block(state, staged.payload.clone(), reservation_id)
+            .await
+        {
+            Ok(block_id) => block_id,
+            Err(error) => {
+                error!(
+                    %error,
+                    reservation_id = %dregg_types::hex_encode(&reservation_id),
+                    "private dependent round production refused before live-lace publication"
+                );
+                None
+            }
+        },
+        None => {
+            handle
+                .produce_round_block(state, staged.payload.clone())
+                .await
+        }
+    };
     match advanced {
         Some(_) => {
             // A peer's freshly-received non-Ack block has now been attested by our
@@ -4126,7 +4290,7 @@ async fn cadence_tick_round_driven(
             // creators at our current round). Re-stage any pulled payload so it is
             // carried by the next produced round block.
             if carried_turn {
-                handle.pending_payloads.write().await.push_front(payload);
+                handle.pending_payloads.write().await.push_front(staged);
             }
         }
     }
@@ -9076,6 +9240,279 @@ mod tests {
         .unwrap();
         assert_eq!(slow_block.id(), fast_block.id());
         assert_eq!(slow_block.payload, fast_block.payload);
+    }
+
+    /// Live-handle composition tooth for private dependent execution:
+    /// durable Ready claim/reservation → isolated CTM1 block production → one
+    /// atomic block+Submitted transaction → ordinary finalized execution → the
+    /// exact wake receipt removes the retained promise and appends Resolved.
+    #[test]
+    fn private_dependent_live_handle_atomically_submits_and_finalizes_exact_wake() {
+        // The extracted ML-DSA cores are intentionally allocation-free and use
+        // large fixed stack frames.  libtest/Tokio's default worker stack is too
+        // small for the verified keygen+sign crossing exercised below, so keep
+        // the requirement local to this live composition tooth rather than
+        // making the whole test process depend on RUST_MIN_STACK.
+        std::thread::Builder::new()
+            .name("private-dependent-live-tooth".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_stack_size(64 * 1024 * 1024)
+                    .enable_all()
+                    .build()
+                    .expect("private dependent test runtime")
+                    .block_on(private_dependent_live_handle_tooth_inner());
+            })
+            .expect("spawn private dependent live tooth")
+            .join()
+            .expect("private dependent live tooth thread");
+    }
+
+    async fn private_dependent_live_handle_tooth_inner() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::install_mldsa_verified_keygen_core_real();
+        let _ = crate::install_mldsa_verified_sign_core_real();
+        let _ = crate::install_mldsa_verified_verify_core();
+        assert!(
+            dregg_pq::lean_keygen_core_real_installed()
+                && dregg_pq::lean_sign_core_real_installed()
+                && dregg_pq::lean_verify_core_real_installed(),
+            "live private-ingress tooth requires the verified ML-DSA cores"
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = crate::state::NodeState::new(tmp.path(), Vec::new()).expect("node state");
+        let actor_seed = [0xA6; 32];
+        let actor_clerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(actor_seed));
+        let actor_pk = actor_clerk.public_key().0;
+        let token = *blake3::hash(b"default").as_bytes();
+        let actor_cell = dregg_cell::Cell::with_balance(actor_pk, token, 1_000_000);
+        let actor = actor_cell.id();
+        let destination = dregg_cell::CellId([0xA7; 32]);
+
+        let federation_id = {
+            let mut s = state.write().await;
+            s.lean_producer_enabled = false;
+            s.ledger.insert_cell(actor_cell).expect("fund wake actor");
+            let local_pk = s.cclerk.public_key();
+            let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&local_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("local PQ key");
+            let actor_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&actor_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("actor PQ key");
+            s.set_federation_keys_hybrid(
+                vec![local_pk, actor_clerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
+                    dregg_federation::frost::MlDsaPublicKey(actor_pq),
+                ],
+            );
+            crate::executor_setup::federation_id_for_executor(&s)
+        };
+        let signed =
+            signed_transfer_turn(&actor_clerk, actor, destination, 4_200, 0, &federation_id);
+        let wake = signed.turn.clone();
+        let wake_hash = wake.hash();
+        let payload = postcard::to_stdvec(&signed).expect("canonical signed wake");
+        {
+            let s = state.read().await;
+            let executor = crate::executor_setup::new_submit_executor(&s);
+            crate::signed_turn_validation::validate_signed_turn(
+                &signed,
+                &executor,
+                s.ledger.get(&actor),
+            )
+            .expect("wake passes canonical ingress before custody release");
+        }
+
+        // Build the exact durable Published predecessor and Ready observer row
+        // that a finalized React carrier would leave behind.
+        let condition = dregg_turn::ProofCondition::HashPreimage { hash: [0xA8; 32] };
+        let mut registry = dregg_turn::PendingTurnRegistry::new();
+        let empty = registry.to_canonical_bytes().expect("empty registry");
+        registry
+            .try_submit_pending_at(
+                wake.clone(),
+                dregg_turn::ResolutionCondition::AwaitCondition(condition.clone()),
+                100,
+                0,
+            )
+            .expect("register wake");
+        registry
+            .mark_react_ready(&wake_hash, &actor, &condition, &wake, 1)
+            .expect("release wake");
+        let carrier_receipt = sample_receipt(0xA9);
+        let ready_events = registry.resolve(
+            carrier_receipt.turn_hash,
+            dregg_turn::ResolutionOutcome::Resolved(carrier_receipt.clone()),
+        );
+        assert!(matches!(
+            ready_events.as_slice(),
+            [dregg_turn::ResolutionEvent::ReadyToExecute { turn_hash, turn }]
+                if *turn_hash == wake_hash && turn.hash() == wake_hash
+        ));
+        let published = registry.to_canonical_bytes().expect("published registry");
+        let ready_candidates = crate::promise_resolutions::resolution_candidates(
+            0,
+            carrier_receipt.receipt_hash(),
+            &ready_events,
+        )
+        .expect("Ready candidates");
+        let (store, ledger_root, local_creator) = {
+            let s = state.read().await;
+            (
+                s.store.clone(),
+                canonical_ledger_root(&s.ledger),
+                s.cclerk.public_key().0,
+            )
+        };
+        store
+            .commit_finalized_turn_with_executor_state(
+                0,
+                &dregg_persist::CommitRecord {
+                    ordinal: 0,
+                    height: 1,
+                    block_id: [0xAA; 32],
+                    block_executed_up_to: 0,
+                    turn_hash: carrier_receipt.turn_hash,
+                    creator: local_creator,
+                    receipt_hash: carrier_receipt.receipt_hash(),
+                    ledger_root,
+                    touched_cells: Vec::new(),
+                    removed: Vec::new(),
+                },
+                &[],
+                &dregg_persist::FinalizedExecutorConsensusState {
+                    reactive_registry: dregg_persist::ReactiveRegistryCasV1::new(
+                        dregg_persist::reactive_registry_commitment(&empty),
+                        published,
+                    ),
+                    promise_resolutions: ready_candidates,
+                    ..Default::default()
+                },
+            )
+            .expect("persist finalized Ready carrier");
+        store
+            .arm_private_dependent_turn_v1(wake_hash, wake_hash, vec![0xAB; 80], 100)
+            .expect("arm private wake");
+        let ready = store
+            .promise_resolution_batch_for_commit_v1(0)
+            .expect("read Ready batch")
+            .expect("Ready batch exists");
+        let claim = store
+            .claim_private_dependent_turn_v1(wake_hash, ready[0].sequence)
+            .expect("claim Ready")
+            .expect("unique claim");
+        let reservation_id = dregg_persist::private_dependent_ingress_reservation_id_v1(
+            claim.promise_id,
+            claim.signed_turn_hash,
+            claim.ready_sequence,
+            claim.event_id,
+        );
+
+        let self_key = local_creator;
+        let handle = test_handle_with_committee(self_key, vec![self_key]).await;
+        handle
+            .lace
+            .write()
+            .await
+            .enable_consensus_time_v1(ConsensusTimePolicyV1::new(1_700_000_000))
+            .expect("enable CTM1");
+        let block_id = handle
+            .submit_private_dependent_turn(&state, reservation_id, payload.clone())
+            .await
+            .expect("live private handle accepts")
+            .expect("solo handle produces immediately");
+
+        // The block and Submitted row are already one crash-consistent image,
+        // before ordinary finalization is invoked.
+        assert!(matches!(
+            store
+                .private_dependent_turn_status_v1(wake_hash)
+                .expect("custody status")
+                .expect("custody row")
+                .status,
+            dregg_persist::PrivateDependentTurnStatusV1::Submitted {
+                ingress_id,
+                ..
+            } if ingress_id == block_id.0
+        ));
+        let produced = handle
+            .lace
+            .read()
+            .await
+            .get(&block_id)
+            .expect("block installed only after durable accept")
+            .clone();
+        assert!(
+            store
+                .load_all_blocks()
+                .expect("durable blocks")
+                .iter()
+                .any(|stored| stored == &produced),
+            "the exact live block must be durable before publication"
+        );
+        let Payload::ConsensusTimedTurnV1(timed) = &produced.payload else {
+            panic!("private live handle must produce CTM1");
+        };
+        assert_eq!(timed.signed_turn(), payload);
+
+        let outcome = execute_finalized_turn(
+            &state,
+            &handle,
+            block_id,
+            timed.signed_turn(),
+            None,
+            Some(timed.consensus_time().unix_seconds()),
+            1,
+        )
+        .await;
+        assert!(matches!(
+            outcome,
+            FinalizedExecutionOutcome::Committed {
+                block_id: committed,
+                ..
+            } if committed == block_id
+        ));
+        assert!(
+            dregg_turn::PendingTurnRegistry::from_canonical_bytes(
+                &store
+                    .load_latest_reactive_registry_snapshot_bytes()
+                    .expect("terminal registry"),
+            )
+            .expect("decode terminal registry")
+            .is_empty(),
+            "only the exact finalized wake receipt removes the retained promise"
+        );
+        let rows = store
+            .promise_resolutions_after_v1(None, 10)
+            .expect("resolution history");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].outcome,
+            dregg_persist::PromiseResolutionKindV1::ReadyToExecute
+        );
+        assert!(matches!(
+            rows[1].outcome,
+            dregg_persist::PromiseResolutionKindV1::Resolved { .. }
+        ));
+        assert_eq!(
+            store
+                .lookup_turn(&wake_hash)
+                .expect("turn index")
+                .expect("wake finalized")
+                .block_id,
+            block_id.0
+        );
     }
 
     #[test]
