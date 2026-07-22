@@ -8,7 +8,8 @@
 
 use dregg_persist::{
     ExecutorAccumulatorSnapshot, ExecutorNoteCommitmentRecord, ExecutorRevocationRecord,
-    PersistentStore,
+    FinalizedExecutorConsensusState, PersistentStore, ReactiveNullifierCasV1,
+    ReactiveRegistryCasV1,
 };
 use dregg_turn::TurnExecutor;
 
@@ -24,6 +25,51 @@ pub(crate) struct ReactivePredecessors {
 pub(crate) struct ReactiveSuccessors {
     pub registry: Vec<u8>,
     pub nullifiers: Vec<[u8; 32]>,
+}
+
+/// Complete pre-execution image needed to make sparse snapshots and CAS
+/// predecessors explicit at the finalized transaction boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExecutorConsensusPredecessors {
+    rate_limits: Vec<u8>,
+    factory_registry: Vec<u8>,
+    pub reactive: ReactivePredecessors,
+}
+
+pub(crate) fn capture_executor_consensus_predecessors(
+    executor: &TurnExecutor,
+) -> Result<ExecutorConsensusPredecessors, String> {
+    Ok(ExecutorConsensusPredecessors {
+        rate_limits: capture_executor_rate_limits(executor)?,
+        factory_registry: capture_executor_factory_registry(executor)?,
+        reactive: capture_reactive_predecessors(executor)?,
+    })
+}
+
+/// Capture one complete post-execution side-state image for the redb commit.
+/// Policy snapshots stay sparse; the two reactive domains always carry exact
+/// predecessor/successor pairs.
+pub(crate) fn capture_finalized_executor_consensus_state(
+    executor: &TurnExecutor,
+    predecessor: &ExecutorConsensusPredecessors,
+) -> Result<FinalizedExecutorConsensusState, String> {
+    let rate_limits = capture_executor_rate_limits(executor)?;
+    let factory_registry = capture_executor_factory_registry(executor)?;
+    let reactive = capture_reactive_successors(executor)?;
+    Ok(FinalizedExecutorConsensusState {
+        accumulators: capture_executor_accumulators(executor)?,
+        rate_limit_snapshot: (rate_limits != predecessor.rate_limits).then_some(rate_limits),
+        factory_registry_snapshot: (factory_registry != predecessor.factory_registry)
+            .then_some(factory_registry),
+        reactive_registry: ReactiveRegistryCasV1::new(
+            predecessor.reactive.registry,
+            reactive.registry,
+        ),
+        reactive_nullifiers: ReactiveNullifierCasV1::new(
+            predecessor.reactive.nullifiers,
+            reactive.nullifiers,
+        ),
+    })
 }
 
 pub(crate) fn capture_reactive_predecessors(
@@ -252,10 +298,7 @@ pub(crate) fn restore_executor_accumulators(
 mod tests {
     use super::*;
     use dregg_cell::{CellMode, FactoryDescriptor, note::NoteCommitment};
-    use dregg_persist::{
-        CommitRecord, FinalizedExecutorConsensusState, ReactiveNullifierCasV1,
-        reactive_nullifier_commitment,
-    };
+    use dregg_persist::CommitRecord;
 
     fn record(root: [u8; 32]) -> CommitRecord {
         CommitRecord {
@@ -277,6 +320,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("executor-accumulators.redb");
         let source = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
+        let consensus_predecessor = capture_executor_consensus_predecessors(&source).unwrap();
         source
             .note_commitments
             .lock()
@@ -322,25 +366,14 @@ mod tests {
             factories.record_creation(&factory_vk).unwrap();
             factory_vk
         };
-        let snapshot = capture_executor_accumulators(&source).unwrap();
-        let rate_snapshot = capture_executor_rate_limits(&source).unwrap();
-        let factory_snapshot = capture_executor_factory_registry(&source).unwrap();
+        let state =
+            capture_finalized_executor_consensus_state(&source, &consensus_predecessor).unwrap();
         let reactive_successors = capture_reactive_successors(&source).unwrap();
         let source_commitment_root = source.note_commitments.lock().unwrap().root8();
         let source_revocation_root = source.note_revoked.lock().unwrap().root8();
 
         {
             let store = PersistentStore::open(&path).unwrap();
-            let state = FinalizedExecutorConsensusState {
-                accumulators: snapshot,
-                rate_limit_snapshot: Some(rate_snapshot),
-                factory_registry_snapshot: Some(factory_snapshot),
-                reactive_nullifiers: ReactiveNullifierCasV1::new(
-                    reactive_nullifier_commitment(&[]),
-                    reactive_successors.nullifiers.clone(),
-                ),
-                ..Default::default()
-            };
             store
                 .commit_finalized_turn_with_executor_state(
                     0,
