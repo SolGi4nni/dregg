@@ -1,15 +1,11 @@
 //! Protocol-identical WGPU implementation of Plonky3's BabyBear^4 FRI fold.
 //!
-//! The pinned `p3-fri` currently constructs its concrete CPU folding strategy
-//! inside `TwoAdicFriPcs::open`, so this backend cannot yet be selected by the
-//! production PCS without a tiny upstream seam.  Unlike a detached arithmetic
-//! sketch, this type implements the exact public `FriFoldingStrategy` contract:
-//! its row fold delegates to upstream and its matrix fold is computed by WGPU
-//! with an exact CPU fallback.  `tests/gpu_hidingfri_fold_differential.rs`
-//! compares every output against the pinned strategy for all deployed arities.
+//! Dregg's repo-vendored `p3-fri` exposes a narrow `TwoAdicFriFoldBackend`
+//! seam at the prover matrix fold.  Query-row folding and verification remain
+//! upstream CPU code, while this backend computes the protocol-identical matrix
+//! fold on WGPU with an exact CPU fallback.  The strict hbox gate requires a
+//! real dispatch and compares complete seeded HidingFRI proof bytes.
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
@@ -17,7 +13,7 @@ use std::time::{Duration, Instant};
 use p3_baby_bear::BabyBear;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{BasedVectorSpace, Field, PrimeCharacteristicRing, PrimeField32, TwoAdicField};
-use p3_fri::{FriFoldingStrategy, TwoAdicFriFolding};
+use p3_fri::{CpuTwoAdicFriFold, TwoAdicFriFoldBackend};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use wgpu::util::DeviceExt;
@@ -348,56 +344,23 @@ pub fn fold_hidingfri_matrix_wgpu_required(
         .run(beta, log_arity, values)
 }
 
-/// Strategy ready for the upstream `TwoAdicFriPcs` folding-backend hook.
+/// Exact matrix-fold backend injected into the production HidingFRI PCS.
 ///
 /// `require_gpu=true` is appropriate for the hbox qualification gate.  The
 /// production portable setting uses an exact CPU fallback if adapter selection
 /// or shader execution is unavailable.
-pub struct GpuTwoAdicFriFolding<InputProof, InputError> {
+#[derive(Clone, Copy, Debug)]
+pub struct GpuHidingFriFold {
     require_gpu: bool,
-    _marker: PhantomData<(InputProof, InputError)>,
 }
 
-impl<InputProof, InputError> GpuTwoAdicFriFolding<InputProof, InputError> {
+impl GpuHidingFriFold {
     pub const fn new(require_gpu: bool) -> Self {
-        Self {
-            require_gpu,
-            _marker: PhantomData,
-        }
+        Self { require_gpu }
     }
 }
 
-impl<InputProof: Sync, InputError: Debug + Sync> FriFoldingStrategy<BabyBear, HidingFriChallenge>
-    for GpuTwoAdicFriFolding<InputProof, InputError>
-{
-    type InputProof = InputProof;
-    type InputError = InputError;
-
-    fn extra_query_index_bits(&self) -> usize {
-        0
-    }
-
-    fn fold_row(
-        &self,
-        index: usize,
-        log_height: usize,
-        log_arity: usize,
-        beta: HidingFriChallenge,
-        evals: impl Iterator<Item = HidingFriChallenge>,
-    ) -> HidingFriChallenge {
-        <TwoAdicFriFolding<InputProof, InputError> as FriFoldingStrategy<
-            BabyBear,
-            HidingFriChallenge,
-        >>::fold_row(
-            &TwoAdicFriFolding(PhantomData),
-            index,
-            log_height,
-            log_arity,
-            beta,
-            evals,
-        )
-    }
-
+impl TwoAdicFriFoldBackend<BabyBear, HidingFriChallenge> for GpuHidingFriFold {
     fn fold_matrix<M: Matrix<HidingFriChallenge>>(
         &self,
         beta: HidingFriChallenge,
@@ -411,11 +374,11 @@ impl<InputProof: Sync, InputError: Debug + Sync> FriFoldingStrategy<BabyBear, Hi
             Err(error) if self.require_gpu => {
                 panic!("required HidingFRI WGPU fold failed: {error}")
             }
-            Err(_) => <TwoAdicFriFolding<InputProof, InputError> as FriFoldingStrategy<
+            Err(_) => <CpuTwoAdicFriFold as TwoAdicFriFoldBackend<
                 BabyBear,
                 HidingFriChallenge,
             >>::fold_matrix(
-                &TwoAdicFriFolding(PhantomData),
+                &CpuTwoAdicFriFold,
                 beta,
                 log_arity,
                 RowMajorMatrix::new(values, width),

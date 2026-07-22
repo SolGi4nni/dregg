@@ -1,0 +1,28 @@
+[package]
+name = "p3-fri"
+description = "An implementation of the FRI low-degree test (LDT) protocol used in zero-knowledge proof systems."
+version = "0.5.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Plonky3/Plonky3"
+homepage = "https://github.com/Plonky3/Plonky3"
+
+[package.metadata.dregg]
+upstream-revision = "82cfad73cd734d37a0d51953094f970c531817ec"
+local-delta = "Injectable, proof-wire-identical TwoAdic FRI matrix-fold backend"
+
+[dependencies]
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-commit = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-dft = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-matrix = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-maybe-rayon = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+
+itertools = { version = "0.14.0", default-features = false, features = ["use_alloc"] }
+rand = { version = "0.10.0", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+spin = "0.11.0"
+thiserror = { version = "2.0", default-features = false }
+tracing = { version = "0.1.44", default-features = false, features = ["attributes"] }

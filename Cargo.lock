@@ -15623,7 +15623,6 @@ dependencies = [
 [[package]]
 name = "p3-fri"
 version = "0.5.1"
-source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
 dependencies = [
  "itertools 0.14.0",
  "p3-challenger",

@@ -175,6 +175,12 @@ poly-commitment = { git = "https://github.com/emberian/proof-systems", rev = "c5
 mina-poseidon = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
 mina-curves = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
 # ─────────────────────────────────────────────────────────────────────────────
+[patch."https://github.com/Plonky3/Plonky3"]
+# Exact 82cfad73 `p3-fri` source with one additive backend-injection seam.  All
+# other p3 crates remain pinned to that same git revision; the local crate's
+# manifest repeats those pins so the field/MMCS types cannot split by source.
+p3-fri = { path = "vendor/plonky3-fri-82cfad73" }
+# ─────────────────────────────────────────────────────────────────────────────
 [patch.crates-io]
 # Exact curve25519-dalek 4.1.3 source with one additive, feature-gated
 # qualification API for canonical extended-coordinate GPU parity. All normal

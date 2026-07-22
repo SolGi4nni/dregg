@@ -2,12 +2,12 @@ use std::marker::PhantomData;
 use std::time::Instant;
 
 use dregg_circuit_prove::gpu_hidingfri_fold::{
-    GpuTwoAdicFriFolding, HidingFriChallenge, fold_hidingfri_matrix_wgpu_required,
+    GpuHidingFriFold, HidingFriChallenge, fold_hidingfri_matrix_wgpu_required,
     hidingfri_fold_counters,
 };
 use p3_baby_bear::BabyBear;
 use p3_field::PrimeCharacteristicRing;
-use p3_fri::{FriFoldingStrategy, TwoAdicFriFolding};
+use p3_fri::{FriFoldingStrategy, TwoAdicFriFoldBackend, TwoAdicFriFolding};
 use p3_matrix::dense::RowMajorMatrix;
 
 fn challenge(seed: u32) -> HidingFriChallenge {
@@ -73,14 +73,15 @@ fn deployed_arities_are_bit_exact_against_pinned_plonky3() {
             );
         }
     }
-    // This is the exact `FriFoldingStrategy` call shape consumed by
-    // `p3_fri::prover::prove_fri`; the upstream patch only makes the currently
-    // hard-coded strategy value injectable from `TwoAdicFriPcs::open`.
+    // This is the exact backend call shape consumed by `TwoAdicFriPcs::open`.
     let strategy_values = inputs(1 << 15);
     let strategy_beta = challenge(0x6a09_e667);
     let strategy_expected = cpu_fold(strategy_beta, 3, strategy_values.clone());
-    let strategy_actual = GpuTwoAdicFriFolding::<(), core::convert::Infallible>::new(true)
-        .fold_matrix(strategy_beta, 3, RowMajorMatrix::new(strategy_values, 8));
+    let strategy_actual = GpuHidingFriFold::new(true).fold_matrix(
+        strategy_beta,
+        3,
+        RowMajorMatrix::new(strategy_values, 8),
+    );
     assert_eq!(strategy_actual, strategy_expected);
 
     let after = hidingfri_fold_counters();

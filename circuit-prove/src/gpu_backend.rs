@@ -146,6 +146,7 @@ use crate::dregg_outer_config::{
     OuterChallenge, OuterChallenger, OuterCompress, OuterHash, OuterValMmcs, RC3_EXT_INITIAL,
     RC3_EXT_TERMINAL, RC3_INTERNAL, dregg_poseidon2_bn254,
 };
+use crate::gpu_hidingfri_fold::{GpuHidingFriFold, hidingfri_fold_counters};
 use crate::ivc_turn_chain::ir2_leaf_wrap_config;
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, create_recursion_backend, create_recursion_config,
@@ -368,6 +369,9 @@ pub fn lde_residency_counters() -> (u64, u64) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HidingGpuDispatchCounters {
     pub dft_dispatches: u64,
+    pub fri_matrix_folds: u64,
+    pub fri_fold_input_elements: u64,
+    pub fri_fold_output_elements: u64,
     pub babybear_merkle_commits: u64,
     pub babybear_merkle_readback_batches: u64,
     pub babybear_merkle_readback_layers: u64,
@@ -376,8 +380,12 @@ pub struct HidingGpuDispatchCounters {
 }
 
 pub fn hiding_gpu_dispatch_counters() -> HidingGpuDispatchCounters {
+    let folds = hidingfri_fold_counters();
     HidingGpuDispatchCounters {
         dft_dispatches: GPU_DFT_DISPATCHES.load(Ordering::Relaxed),
+        fri_matrix_folds: folds.gpu_folds,
+        fri_fold_input_elements: folds.gpu_input_elements,
+        fri_fold_output_elements: folds.gpu_output_elements,
         babybear_merkle_commits: GPU_BABYBEAR_MMCS_COMMITS.load(Ordering::Relaxed),
         babybear_merkle_readback_batches: GPU_BABYBEAR_MMCS_READBACK_BATCHES
             .load(Ordering::Relaxed),
@@ -4180,8 +4188,14 @@ impl Mmcs<BabyBear> for GpuHidingBabyBearMmcs {
 /// HidingFRI challenge MMCS: extension rows are flattened and then salted by
 /// the same GPU hiding MMCS.
 pub type GpuHidingChallengeMmcs = ExtensionMmcs<BabyBear, EF, GpuHidingBabyBearMmcs>;
-pub type GpuHidingPcs =
-    HidingFriPcs<BabyBear, GpuDft, GpuHidingBabyBearMmcs, GpuHidingChallengeMmcs, SmallRng>;
+pub type GpuHidingPcs = HidingFriPcs<
+    BabyBear,
+    GpuDft,
+    GpuHidingBabyBearMmcs,
+    GpuHidingChallengeMmcs,
+    SmallRng,
+    GpuHidingFriFold,
+>;
 pub type GpuHidingChallenger = DuplexChallenger<BabyBear, BbPerm, 16, 8>;
 pub type GpuDreggZkConfig = StarkConfig<GpuHidingPcs, EF, GpuHidingChallenger>;
 
@@ -4233,12 +4247,13 @@ pub fn create_gpu_zk_config_seeded(mmcs_seed: [u8; 32], pcs_seed: [u8; 32]) -> G
     let perm = default_babybear_poseidon2_16();
     let val_mmcs = GpuHidingBabyBearMmcs::new(0, seed_rng(mmcs_seed));
     let challenge_mmcs = GpuHidingChallengeMmcs::new(val_mmcs.clone());
-    let pcs = GpuHidingPcs::new(
+    let pcs = GpuHidingPcs::new_with_fold_backend(
         GpuDft::default(),
         val_mmcs,
         hiding_fri_params(challenge_mmcs),
         4,
         seed_rng(pcs_seed),
+        GpuHidingFriFold::new(wgpu_required()),
     );
     StarkConfig::new(pcs, GpuHidingChallenger::new(perm))
 }
@@ -4339,6 +4354,16 @@ pub fn require_hiding_gpu_dispatch_since(
         return Err("strict HidingFRI GPU audit requires DREGG_REQUIRE_WGPU=1".to_string());
     }
     let after = hiding_gpu_dispatch_counters();
+    if after.fri_matrix_folds <= before.fri_matrix_folds {
+        return Err("HidingFRI proof completed without a WGPU FRI matrix fold".to_string());
+    }
+    if after.fri_fold_input_elements <= before.fri_fold_input_elements
+        || after.fri_fold_output_elements <= before.fri_fold_output_elements
+    {
+        return Err(
+            "HidingFRI WGPU fold counters did not account for protocol elements".to_string(),
+        );
+    }
     if after.babybear_merkle_commits <= before.babybear_merkle_commits {
         return Err(
             "HidingFRI proof completed without a portable GPU Poseidon2 Merkle commit".to_string(),
