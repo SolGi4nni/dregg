@@ -62,7 +62,7 @@
 //! reconstruct the BFV secret; the public result is revealed only after an
 //! exact `t`-party opening.
 
-use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
+use bulletproofs_r1cs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::{
     ristretto::{CompressedRistretto, RistrettoPoint},
     scalar::Scalar,

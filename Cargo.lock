@@ -8928,7 +8928,6 @@ name = "fhegg-fhe"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "bulletproofs 5.0.0",
  "bulletproofs 5.0.1",
  "bytemuck",
  "chacha20poly1305",

@@ -50,7 +50,7 @@ wgpu-msm = ["std", "yoloproofs", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # Exact host-parallel scheduling for the independent R1CS commitment MSMs and
 # the per-round inner-product generator folds.  This does not change the proof
 # system or arithmetic backend; dalek remains the group-operation authority.
-parallel-prover = ["std", "yoloproofs", "dep:rayon"]
+parallel-prover = ["std", "dep:rayon"]
 std = ["rand", "rand/std", "rand/std_rng", "thiserror"]
 nightly = ["subtle/nightly", "clear_on_drop/nightly"]
 docs = ["nightly"]

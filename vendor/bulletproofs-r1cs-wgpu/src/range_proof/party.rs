@@ -70,6 +70,30 @@ pub struct PartyAwaitingPosition<'a> {
     V: CompressedRistretto,
 }
 
+/// Random tape consumed by one party's bit commitment.
+///
+/// Sampling is kept separate from group work so the local aggregate prover can
+/// consume its caller-supplied RNG in exactly the upstream serial order, then
+/// schedule the independent commitments across a bounded Rayon pool without
+/// changing proof bytes.
+pub(super) struct PositionRandomness {
+    a_blinding: Scalar,
+    s_blinding: Scalar,
+    s_L: Vec<Scalar>,
+    s_R: Vec<Scalar>,
+}
+
+impl PositionRandomness {
+    pub(super) fn sample<T: RngCore + CryptoRng>(n: usize, rng: &mut T) -> Self {
+        Self {
+            a_blinding: Scalar::random(&mut *rng),
+            s_blinding: Scalar::random(&mut *rng),
+            s_L: (0..n).map(|_| Scalar::random(&mut *rng)).collect(),
+            s_R: (0..n).map(|_| Scalar::random(&mut *rng)).collect(),
+        }
+    }
+}
+
 impl<'a> PartyAwaitingPosition<'a> {
     /// Assigns a position in the aggregated proof to this party,
     /// allowing the party to commit to the bits of their value.
@@ -92,9 +116,28 @@ impl<'a> PartyAwaitingPosition<'a> {
             return Err(MPCError::InvalidGeneratorsLength);
         }
 
+        let randomness = PositionRandomness::sample(self.n, rng);
+        self.assign_position_with_randomness(j, randomness)
+    }
+
+    pub(super) fn assign_position_with_randomness(
+        self,
+        j: usize,
+        randomness: PositionRandomness,
+    ) -> Result<(PartyAwaitingBitChallenge<'a>, BitCommitment), MPCError> {
+        if self.bp_gens.party_capacity <= j {
+            return Err(MPCError::InvalidGeneratorsLength);
+        }
+
+        let PositionRandomness {
+            a_blinding,
+            s_blinding,
+            s_L,
+            s_R,
+        } = randomness;
+
         let bp_share = self.bp_gens.share(j);
 
-        let a_blinding = Scalar::random(rng);
         // Compute A = <a_L, G> + <a_R, H> + a_blinding * B_blinding
         let mut A = self.pc_gens.B_blinding * a_blinding;
 
@@ -105,15 +148,11 @@ impl<'a> PartyAwaitingPosition<'a> {
             // If v_i = 0, we add a_L[i] * G[i] + a_R[i] * H[i] = - H[i]
             // If v_i = 1, we add a_L[i] * G[i] + a_R[i] * H[i] =   G[i]
             let v_i = Choice::from(((self.v >> i) & 1) as u8);
-            let mut point = -H_i;
+            let point = -H_i;
             let point = RistrettoPoint::conditional_select(&point, G_i, v_i);
             A += point;
             i += 1;
         }
-
-        let s_blinding = Scalar::random(rng);
-        let s_L: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
-        let s_R: Vec<Scalar> = (0..self.n).map(|_| Scalar::random(rng)).collect();
 
         // Compute S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
         use curve25519_dalek::traits::MultiscalarMul;
@@ -167,6 +206,22 @@ pub struct PartyAwaitingBitChallenge<'a> {
     s_R: Vec<Scalar>,
 }
 
+/// Random tape consumed by one party's polynomial commitment. See
+/// [`PositionRandomness`] for why sampling is separated from arithmetic.
+pub(super) struct PolyRandomness {
+    t_1_blinding: Scalar,
+    t_2_blinding: Scalar,
+}
+
+impl PolyRandomness {
+    pub(super) fn sample<T: RngCore + CryptoRng>(rng: &mut T) -> Self {
+        Self {
+            t_1_blinding: Scalar::random(&mut *rng),
+            t_2_blinding: Scalar::random(&mut *rng),
+        }
+    }
+}
+
 impl<'a> PartyAwaitingBitChallenge<'a> {
     /// Receive a [`BitChallenge`] from the dealer and use it to
     /// compute commitments to the party's polynomial coefficients.
@@ -184,6 +239,15 @@ impl<'a> PartyAwaitingBitChallenge<'a> {
         self,
         vc: &BitChallenge,
         rng: &mut T,
+    ) -> (PartyAwaitingPolyChallenge, PolyCommitment) {
+        let randomness = PolyRandomness::sample(rng);
+        self.apply_challenge_with_randomness(vc, randomness)
+    }
+
+    pub(super) fn apply_challenge_with_randomness(
+        self,
+        vc: &BitChallenge,
+        randomness: PolyRandomness,
     ) -> (PartyAwaitingPolyChallenge, PolyCommitment) {
         let n = self.n;
         let offset_y = util::scalar_exp_vartime(&vc.y, (self.j * n) as u64);
@@ -212,8 +276,10 @@ impl<'a> PartyAwaitingBitChallenge<'a> {
         let t_poly = l_poly.inner_product(&r_poly);
 
         // Generate x by committing to T_1, T_2 (line 49-54)
-        let t_1_blinding = Scalar::random(rng);
-        let t_2_blinding = Scalar::random(rng);
+        let PolyRandomness {
+            t_1_blinding,
+            t_2_blinding,
+        } = randomness;
         let T_1 = self.pc_gens.commit(t_poly.1, t_1_blinding);
         let T_2 = self.pc_gens.commit(t_poly.2, t_2_blinding);
 

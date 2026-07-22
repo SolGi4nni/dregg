@@ -20,9 +20,11 @@
 //! board no longer merely co-endorses ciphertexts: a configured ingress
 //! verifier reproduces each exact BFV encryption from the operator-visible
 //! order/randomness opening, signs a replayable certificate, and the real
-//! WriteOnce seal commits that certificate's source digest. This is sound under
-//! source-verifier honesty/key custody, but it is deliberately not called ZK;
-//! a house-blind lattice encryption/range proof remains open.
+//! WriteOnce seal commits that certificate's source digest. Every selected
+//! custodian now proves its exact committed `c1*s_i + smudge` relation and the
+//! in-range smudge/quotient witnesses in zero knowledge. The remaining lattice
+//! seam is setup shortness: the hidden DKG ternary/CBD coefficients are bound
+//! algebraically but do not yet carry their own range/sampler-image proof.
 
 #![cfg(feature = "fhegg-settlement")]
 
@@ -55,7 +57,7 @@ use fhegg_fhe::order_ingress::{
 use fhegg_fhe::threshold::quorum::{
     AuthenticatedOpeningAudit, AuthenticatedQuorumCombiner, AuthenticatedQuorumRoster,
     DealerVssCommitment, QuorumError, QuorumKeygenSession, QuorumOpeningSession, QuorumParty,
-    VerifiedDkgTranscript, deal, finish_verified_keygen,
+    VerifiedDkgTranscript, deal, finish_verified_keygen, partial_decrypt_quorum_parallel,
 };
 use fhegg_fhe::threshold::{BfvParams, CollectivePublicKey, MIN_SMUDGE_BITS};
 use fhegg_fhe::{Order, Side};
@@ -177,14 +179,14 @@ fn quorum_masked_curve(
     let opening =
         QuorumOpeningSession::new_verified(keygen.clone(), dkg_transcript, nonce, vec![0, 1, 2])
             .expect("canonical live custody roster");
-    let raw_shares = [0usize, 1, 2]
-        .into_iter()
-        .map(|party| {
-            key_parties[party]
-                .partial_decrypt(&opening, masked.ciphertext(), MIN_SMUDGE_BITS, params)
-                .expect("live custodian emits a smudged share")
-        })
-        .collect::<Vec<_>>();
+    let raw_shares = partial_decrypt_quorum_parallel(
+        key_parties,
+        &opening,
+        masked.ciphertext(),
+        MIN_SMUDGE_BITS,
+        params,
+    )
+    .expect("live custodians emit canonical smudged shares concurrently");
     if exercise_refusals {
         assert_eq!(
             combiner

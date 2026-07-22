@@ -51,8 +51,7 @@
 use std::fmt;
 use std::iter;
 
-use bulletproofs::{BulletproofGens, PedersenGens};
-use bulletproofs_r1cs::LinearProof;
+use bulletproofs_r1cs::{BulletproofGens, LinearProof, PedersenGens};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;

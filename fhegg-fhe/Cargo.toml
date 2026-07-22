@@ -14,7 +14,11 @@ tfhe-integer = ["dep:tfhe"]
 # Tier-1/operator-visible BFV↔HidingFri same-opening authority for the private
 # Dark AMM.  Keep the proof-production tower out of fhegg-fhe's default fast
 # surface; hosts opt into this producer/reference-verifier seam explicitly.
-amm-input-binding = ["dep:dregg-circuit-prove", "dep:bulletproofs-r1cs"]
+amm-input-binding = [
+    "dep:dregg-circuit-prove",
+    "bulletproofs-r1cs/yoloproofs",
+    "bulletproofs-r1cs/wgpu-msm",
+]
 # Explicit archive-linked hostile tests for the certified-preprocessing
 # authority. Kept out of the default fast test graph so ordinary fhegg-fhe
 # checks do not link the verified Lean runtime merely to compile.
@@ -77,14 +81,20 @@ dregg-circuit-prove = { path = "../circuit-prove", optional = true }
 # Bulletproof range proofs.  The VSS transcript commits every party's exact BFV
 # share, and the opening proof links that commitment to h=c1*s+smudge while
 # proving the (81-bit, signed) smudge bound without revealing the smudge.
-bulletproofs = { version = "5" }
+#
+# Use the same owned fork as the optional R1CS lane. Its `parallel-prover`
+# feature changes only exact host scheduling: the proof relation, transcript,
+# generators, and dalek group authority remain unchanged. This is important for
+# the degree-4096 custody proof, whose three inner-product arguments have
+# dimensions 2^19, 2^18, and 2^21 respectively.
+#
 # Owned fork of zkcrypto/bulletproofs@04bce4e.  Besides the upstream CtOption
 # parser repair, it replaces the six hard-coded prover MSM calls with one
 # fail-closed dispatch seam, portable prover scalar-window preparation, and a
 # bounded complete public-scalar verifier MSM. Dalek remains the exact group
 # oracle/output; witness-derived prover group MSM stays on CPU because the
 # verifier bit-bucket kernel is deliberately variable-time.
-bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["yoloproofs", "wgpu-msm", "parallel-prover"], optional = true }
+bulletproofs-r1cs = { package = "bulletproofs", path = "../vendor/bulletproofs-r1cs-wgpu", features = ["parallel-prover"] }
 curve25519-dalek = { version = "4", features = ["alloc", "rand_core", "dregg-wgpu-coordinates"] }
 merlin = "3"
 ethnum = "1.5"

@@ -22,8 +22,17 @@ use crate::transcript::TranscriptProtocol;
 use crate::util;
 
 use rand_core::{CryptoRng, RngCore};
-use serde::de::{Error, SeqAccess, Visitor};
+use serde::de::{SeqAccess, Visitor};
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+
+#[cfg(feature = "parallel-prover")]
+use rayon::prelude::*;
+
+/// Do not pay Rayon scheduling costs for ordinary one/few-value proofs. The
+/// custody workload has 8,192--32,768 values per aggregate, far above this
+/// boundary.
+#[cfg(feature = "parallel-prover")]
+const PARALLEL_RANGE_PARTIES_MIN: usize = 64;
 
 // Modules for MPC protocol
 
@@ -239,6 +248,21 @@ impl RangeProof {
         n: usize,
         rng: &mut T,
     ) -> Result<(RangeProof, Vec<CompressedRistretto>), ProofError> {
+        Self::prove_multiple_with_rng_mode(
+            bp_gens, pc_gens, transcript, values, blindings, n, rng, true,
+        )
+    }
+
+    fn prove_multiple_with_rng_mode<T: RngCore + CryptoRng>(
+        bp_gens: &BulletproofGens,
+        pc_gens: &PedersenGens,
+        transcript: &mut Transcript,
+        values: &[u64],
+        blindings: &[Scalar],
+        n: usize,
+        rng: &mut T,
+        use_parallel_prover: bool,
+    ) -> Result<(RangeProof, Vec<CompressedRistretto>), ProofError> {
         use self::dealer::*;
         use self::party::*;
 
@@ -248,13 +272,72 @@ impl RangeProof {
 
         let dealer = Dealer::new(bp_gens, pc_gens, transcript, n, values.len())?;
 
+        #[cfg(feature = "parallel-prover")]
+        let run_parallel = use_parallel_prover && values.len() >= PARALLEL_RANGE_PARTIES_MIN;
+        #[cfg(not(feature = "parallel-prover"))]
+        let _ = use_parallel_prover;
+
+        #[cfg(feature = "parallel-prover")]
+        let parties: Vec<_> = if run_parallel {
+            values
+                .par_iter()
+                .zip(blindings.par_iter())
+                .map(|(&v, &v_blinding)| Party::new(bp_gens, pc_gens, v, v_blinding, n))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            values
+                .iter()
+                .zip(blindings.iter())
+                .map(|(&v, &v_blinding)| Party::new(bp_gens, pc_gens, v, v_blinding, n))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        #[cfg(not(feature = "parallel-prover"))]
         let parties: Vec<_> = values
             .iter()
             .zip(blindings.iter())
             .map(|(&v, &v_blinding)| Party::new(bp_gens, pc_gens, v, v_blinding, n))
-            // Collect the iterator of Results into a Result<Vec>, then unwrap it
             .collect::<Result<Vec<_>, _>>()?;
 
+        // Preserve the exact caller-RNG consumption order before scheduling
+        // any independent group work. This keeps deterministic proof bytes
+        // identical to the serial implementation.
+        #[cfg(feature = "parallel-prover")]
+        let position_randomness = if run_parallel {
+            Some(
+                (0..parties.len())
+                    .map(|_| PositionRandomness::sample(n, &mut *rng))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+        #[cfg(feature = "parallel-prover")]
+        let (parties, bit_commitments): (Vec<_>, Vec<_>) =
+            if let Some(randomness) = position_randomness {
+                parties
+                    .into_par_iter()
+                    .zip(randomness.into_par_iter())
+                    .enumerate()
+                    .map(|(j, (party, randomness))| {
+                        party
+                            .assign_position_with_randomness(j, randomness)
+                            .expect("dealer already validated the generator capacity")
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .unzip()
+            } else {
+                parties
+                    .into_iter()
+                    .enumerate()
+                    .map(|(j, party)| {
+                        party
+                            .assign_position_with_rng(j, &mut *rng)
+                            .expect("dealer already validated the generator capacity")
+                    })
+                    .unzip()
+            };
+        #[cfg(not(feature = "parallel-prover"))]
         let (parties, bit_commitments): (Vec<_>, Vec<_>) = parties
             .into_iter()
             .enumerate()
@@ -268,6 +351,35 @@ impl RangeProof {
 
         let (dealer, bit_challenge) = dealer.receive_bit_commitments(bit_commitments)?;
 
+        #[cfg(feature = "parallel-prover")]
+        let poly_randomness = if run_parallel {
+            Some(
+                (0..parties.len())
+                    .map(|_| PolyRandomness::sample(&mut *rng))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+        #[cfg(feature = "parallel-prover")]
+        let (parties, poly_commitments): (Vec<_>, Vec<_>) =
+            if let Some(randomness) = poly_randomness {
+                parties
+                    .into_par_iter()
+                    .zip(randomness.into_par_iter())
+                    .map(|(party, randomness)| {
+                        party.apply_challenge_with_randomness(&bit_challenge, randomness)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .unzip()
+            } else {
+                parties
+                    .into_iter()
+                    .map(|party| party.apply_challenge_with_rng(&bit_challenge, &mut *rng))
+                    .unzip()
+            };
+        #[cfg(not(feature = "parallel-prover"))]
         let (parties, poly_commitments): (Vec<_>, Vec<_>) = parties
             .into_iter()
             .map(|p| p.apply_challenge_with_rng(&bit_challenge, rng))
@@ -275,6 +387,19 @@ impl RangeProof {
 
         let (dealer, poly_challenge) = dealer.receive_poly_commitments(poly_commitments)?;
 
+        #[cfg(feature = "parallel-prover")]
+        let proof_shares: Vec<_> = if run_parallel {
+            parties
+                .into_par_iter()
+                .map(|party| party.apply_challenge(&poly_challenge))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            parties
+                .into_iter()
+                .map(|party| party.apply_challenge(&poly_challenge))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        #[cfg(not(feature = "parallel-prover"))]
         let proof_shares: Vec<_> = parties
             .into_iter()
             .map(|p| p.apply_challenge(&poly_challenge))
@@ -616,6 +741,69 @@ mod tests {
     use super::*;
 
     use crate::generators::PedersenGens;
+
+    #[cfg(feature = "parallel-prover")]
+    use rand::SeedableRng;
+    #[cfg(feature = "parallel-prover")]
+    use rand_chacha::ChaCha20Rng;
+
+    #[cfg(feature = "parallel-prover")]
+    #[test]
+    fn parallel_range_prover_preserves_serial_proof_bytes() {
+        const N: usize = 64;
+        const M: usize = PARALLEL_RANGE_PARTIES_MIN;
+
+        let pc_gens = PedersenGens::default();
+        let bp_gens = BulletproofGens::new(N, M);
+        let values = (0..M)
+            .map(|index| (index as u64).wrapping_mul(0x9e37_79b9))
+            .collect::<Vec<_>>();
+        let blindings = (0..M)
+            .map(|index| Scalar::from(index as u64 + 1))
+            .collect::<Vec<_>>();
+
+        let mut serial_rng = ChaCha20Rng::from_seed([0x42; 32]);
+        let mut serial_transcript = Transcript::new(b"parallel-range-proof-byte-parity/v1");
+        let (serial_proof, serial_commitments) = RangeProof::prove_multiple_with_rng_mode(
+            &bp_gens,
+            &pc_gens,
+            &mut serial_transcript,
+            &values,
+            &blindings,
+            N,
+            &mut serial_rng,
+            false,
+        )
+        .expect("serial reference range proof");
+
+        let mut parallel_rng = ChaCha20Rng::from_seed([0x42; 32]);
+        let mut parallel_transcript = Transcript::new(b"parallel-range-proof-byte-parity/v1");
+        let (parallel_proof, parallel_commitments) = RangeProof::prove_multiple_with_rng_mode(
+            &bp_gens,
+            &pc_gens,
+            &mut parallel_transcript,
+            &values,
+            &blindings,
+            N,
+            &mut parallel_rng,
+            true,
+        )
+        .expect("parallel range proof");
+
+        assert_eq!(parallel_proof.to_bytes(), serial_proof.to_bytes());
+        assert_eq!(parallel_commitments, serial_commitments);
+
+        let mut verifier_transcript = Transcript::new(b"parallel-range-proof-byte-parity/v1");
+        parallel_proof
+            .verify_multiple(
+                &bp_gens,
+                &pc_gens,
+                &mut verifier_transcript,
+                &parallel_commitments,
+                N,
+            )
+            .expect("parallel-produced bytes verify through the ordinary verifier");
+    }
 
     #[test]
     fn test_delta() {

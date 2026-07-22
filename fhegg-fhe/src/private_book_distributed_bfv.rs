@@ -10,10 +10,10 @@ use std::sync::{Arc, LazyLock};
 #[cfg(test)]
 use std::cell::Cell;
 
-use bulletproofs::{BulletproofGens, PedersenGens};
 use bulletproofs_r1cs::r1cs::{ConstraintSystem, LinearCombination, R1CSProof};
 use bulletproofs_r1cs::{
-    BulletproofGens as R1csBulletproofGens, LinearProof, PedersenGens as R1csPedersenGens,
+    BulletproofGens, BulletproofGens as R1csBulletproofGens, LinearProof, PedersenGens,
+    PedersenGens as R1csPedersenGens,
 };
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
