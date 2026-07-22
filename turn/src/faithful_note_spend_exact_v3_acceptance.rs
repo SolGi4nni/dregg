@@ -39,6 +39,8 @@ const PI_POST_COUNT: usize = 56;
 const PI_BEFORE_COMMIT: usize = 60;
 const PI_AFTER_COMMIT: usize = 68;
 const PI_END: usize = 76;
+const ACCEPTED_SIGNED_PROOF_DIGEST_DOMAIN: &[u8] =
+    b"DREGG/FNSP-V3/ACCEPTED-SIGNED-SPENDING-PROOF/V1";
 
 /// Opaque evidence that the code-owned exact FNSP-v3 verifier accepted one canonical statement.
 ///
@@ -50,6 +52,7 @@ pub struct AcceptedFaithfulNoteSpendExactV3 {
     public: FaithfulNoteSpendExactV3PublicStatement,
     prior_fns3: [u32; 8],
     successor_fns3: [u32; 8],
+    signed_spending_proof_digest: [u8; 32],
 }
 
 impl AcceptedFaithfulNoteSpendExactV3 {
@@ -65,6 +68,27 @@ impl AcceptedFaithfulNoteSpendExactV3 {
     /// Canonical 76 BabyBear public lanes passed to the strict verifier.
     pub fn public_input_lanes(&self) -> &[u32; FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT] {
         self.public.as_u32_array()
+    }
+
+    /// Domain-separated BLAKE3 digest of the exact full carrier bytes embedded in the signed
+    /// `Effect::NoteSpend` which produced this accepted token.
+    ///
+    /// This binds bytes not represented in the 76 public lanes, while retaining no proof bytes in
+    /// the token itself.
+    pub fn signed_spending_proof_digest(&self) -> [u8; 32] {
+        self.signed_spending_proof_digest
+    }
+
+    /// Fail-closed equality check for the future node candidate's embedded signed proof carrier.
+    ///
+    /// Coordinate equality is not enough: two carriers with the same root height produce the same
+    /// public lanes even when their inner proof bytes differ.  The node must require this method to
+    /// return `true` for the authenticated `Effect` immediately before finalization.
+    pub fn matches_signed_effect(&self, signed_effect: &Effect) -> bool {
+        let Effect::NoteSpend { spending_proof, .. } = signed_effect else {
+            return false;
+        };
+        self.signed_spending_proof_digest == signed_spending_proof_digest(spending_proof)
     }
 }
 
@@ -251,7 +275,22 @@ fn verify_with_code_owned_identity(
             transition.successor_count(),
         )
         .map(|felt| felt.as_u32()),
+        // Compute this only after strict proof verification succeeds.  It binds the opaque token
+        // to the exact canonical carrier bytes recovered from the authenticated signed effect.
+        signed_spending_proof_digest: signed_spending_proof_digest(spending_proof),
     })
+}
+
+fn signed_spending_proof_digest(spending_proof: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(ACCEPTED_SIGNED_PROOF_DIGEST_DOMAIN);
+    hasher.update(
+        &u64::try_from(spending_proof.len())
+            .expect("exact FNSP-v3 carrier length fits u64")
+            .to_le_bytes(),
+    );
+    hasher.update(spending_proof);
+    *hasher.finalize().as_bytes()
 }
 
 fn read_u64_u16(lanes: &[u32]) -> u64 {
@@ -643,6 +682,60 @@ mod tests {
             )
         );
         assert!(verifier.calls().is_empty());
+    }
+
+    #[test]
+    fn accepted_token_refuses_same_coordinate_swapped_or_malformed_signed_proof() {
+        let (transition, anchor, effect) = fixture([0x5a; 32], 7);
+        let verifier = RecordingVerifier::accepting();
+        let accepted = verify_with_code_owned_identity(&verifier, &effect, &transition, &anchor)
+            .expect("fixture proof accepted by recording verifier");
+        assert!(accepted.matches_signed_effect(&effect));
+        let Effect::NoteSpend { spending_proof, .. } = &effect else {
+            unreachable!()
+        };
+        assert_eq!(
+            accepted.signed_spending_proof_digest(),
+            signed_spending_proof_digest(spending_proof)
+        );
+
+        // A different canonical carrier with the same height makes the exact same 76 public lanes:
+        // the proof payload is intentionally opaque to the statement.  The token digest is the
+        // independent join which prevents those signed bytes from being swapped at finalization.
+        let swapped_carrier = FaithfulNoteSpendExactV3ProofCarrier::new(
+            0x1122_3344_5566_7788,
+            vec![0xba, 0xad, 0xf0, 0x0d],
+        )
+        .expect("canonical swapped carrier");
+        let mut swapped = effect.clone();
+        if let Effect::NoteSpend { spending_proof, .. } = &mut swapped {
+            *spending_proof = swapped_carrier.encode();
+        }
+        let state =
+            FaithfulNoteSpendExactV3StateInputs::derive_from_durable_anchor(&transition, &anchor)
+                .expect("matching state producers");
+        let swapped_public =
+            FaithfulNoteSpendExactV3PublicStatement::from_signed_effect(&swapped, &state)
+                .expect("swapped carrier remains canonical");
+        assert_eq!(
+            accepted.public_input_lanes(),
+            swapped_public.as_u32_array(),
+            "proof payload is absent from the coordinate statement"
+        );
+        assert!(!accepted.matches_signed_effect(&swapped));
+
+        let mut malformed = effect;
+        if let Effect::NoteSpend { spending_proof, .. } = &mut malformed {
+            *spending_proof = b"malformed signed carrier".to_vec();
+        }
+        assert!(!accepted.matches_signed_effect(&malformed));
+        assert!(!accepted.matches_signed_effect(&Effect::EmitEvent {
+            cell: CellId::from_bytes([0; 32]),
+            event: Event {
+                topic: [0; 32],
+                data: vec![FIELD_ZERO],
+            },
+        }));
     }
 
     #[test]
