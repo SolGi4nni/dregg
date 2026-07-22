@@ -585,4 +585,18 @@ correlation custody. -/
 #assert_axioms Dregg2.Crypto.DealerlessPreprocessing.consume_success_preserves_context_registry
 #assert_axioms Dregg2.Crypto.DealerlessPreprocessing.consume_success_refuses_replay
 
+/-! ## §36 — FHTRI005 party-local formation composition. -/
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.accepted_complete_roster
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.accepted_parties_eq_ordered_roster
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.context_mismatch_refused
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.incomplete_roster_refused
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.reordered_roster_refused
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.accepted_public_binds_unique_candidate_vectors
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.reconstructTriple_valid
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.reconstructVector2_forall_valid
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.reconstruct_masked_eq_constructedTriple2
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.reconstruct_masked_valid
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.Demo.acceptsB_iff
+#assert_axioms Dregg2.Crypto.DealerlessPartyLocalComposition.Demo.diagonal_products_only_can_be_invalid
+
 end Dregg2.Claims
