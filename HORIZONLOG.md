@@ -11025,6 +11025,18 @@ challenge and 65,536-coordinate worker equation, canonical quotient wire,
 production relation-digest constructor, Poseidon/clearing, sampler image, and
 PQ replacement remain open.
 
+The public exact-BFV lowering is no longer duplicated between proof backends
+(`6b9691c83`). `private_book_bfv_exact` derives the public key, ciphertext,
+128-entry real encoder table, transcript signs, negacyclic correlations, and
+relation digest internally; neither a prover nor a worker may supply nearby
+public coefficients. The monolithic prover now consumes that API while retaining
+its full seeded 98,304-equation preflight. A real degree-4096 `fhe.rs`
+key/ciphertext/opening differential evaluated all **384** owner equations,
+proved every integer numerator exactly divisible by its RNS modulus and every
+quotient within 1,130,496, and rejected synthetic degree 16; focused release
+time was **1.051s**. The post-refactor encoder table stayed **128/128** and the
+native HidingFRI hostile fixture stayed green.
+
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame
 ML-DSA transport crossed the unchanged 1200s ceiling after 5,242 signs and 5,242

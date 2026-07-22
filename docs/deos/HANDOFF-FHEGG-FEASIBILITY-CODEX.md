@@ -505,10 +505,22 @@ shares. Production geometry is fixed at 16,384 coordinates per owner and
 65,536 for the final worker proof. Focused release gates are **2/2 in 12.620s**.
 
 This is custody/range/link, not yet the exact BFV proof. Quotients are currently
-caller-supplied bounded integers. The shared exact `fhe.rs` coefficient API,
-divisibility-derived quotient creation, second challenge, 65,536-coordinate
-worker equation, canonical quotient wire, production relation-digest
-constructor, Poseidon/root, clearing, sampler image, and PQ replacement remain.
+caller-supplied bounded integers. The canonical exact `fhe.rs` coefficient API
+now exists, but divisibility-derived quotient creation, second challenge,
+65,536-coordinate worker equation, canonical quotient wire, production
+relation-digest constructor, Poseidon/root, clearing, sampler image, and PQ
+replacement remain.
+
+`private_book_bfv_exact` is the one public lowering shared by monolithic and
+distributed backends. It internally derives the public key/ciphertext rows,
+real 128-entry message table, transcript signs, negacyclic correlations, and
+relation digest; no caller supplies public coefficient vectors. The monolithic
+proof still runs its complete seeded 98,304-equation preflight after the
+refactor. A real degree-4096 `fhe.rs` fixture evaluated all **384** owner-local
+compressed equations, proved exact divisibility by each RNS modulus and the
+1,130,496 quotient bound, and rejected degree 16. The focused release
+differential was **1.051s**; the encoder **128/128** and native HidingFRI hostile
+gates remained green.
 
 ### Exact test inventory
 
