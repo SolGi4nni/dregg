@@ -46,6 +46,7 @@ use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, 
 use crate::tfhe_blind_rotation_ntt_wgpu::{
     prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu,
     run_bootstrap_only as transform_bootstrap_gpu,
+    run_ciphertext_gt_chain as transform_ciphertext_gt_chain_gpu,
     run_scalar_gt_chain as transform_scalar_gt_chain_gpu, PreparedTransformPbsGpuKeys,
     TransformPbsGpuError,
 };
@@ -1986,6 +1987,31 @@ pub fn torus_pbs_scalar_gt_chain_transform_prepared(
     blocks: usize,
 ) -> Result<TorusMacResult, TorusMacError> {
     match transform_scalar_gt_chain_gpu(digit_lwes, accumulators, blocks, &plan.prepared) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            },
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute the two-stage-per-digit ciphertext-comparison PBS chain. Each
+/// uploaded radix block is `lhs_digit + 4 * rhs_digit`; encrypted local digit
+/// comparisons and the lexicographic state remain device-resident, and only
+/// the final large-key predicate LWE is read back.
+pub fn torus_pbs_ciphertext_gt_chain_transform_prepared(
+    plan: &TorusPbsTransformWgpuPlan,
+    packed_digit_lwes: &[u64],
+    accumulators: &[u64],
+    blocks: usize,
+) -> Result<TorusMacResult, TorusMacError> {
+    match transform_ciphertext_gt_chain_gpu(packed_digit_lwes, accumulators, blocks, &plan.prepared)
+    {
         Ok(result) => Ok(TorusMacResult {
             coefficients: result.coefficients,
             backend: TorusMacBackend::Wgpu {

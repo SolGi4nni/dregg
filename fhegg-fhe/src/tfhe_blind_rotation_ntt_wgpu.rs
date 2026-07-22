@@ -113,10 +113,43 @@ pub(crate) fn run_scalar_gt_chain(
     }
 }
 
+pub(crate) fn run_ciphertext_gt_chain(
+    packed_digit_lwes: &[u64],
+    accumulators: &[u64],
+    blocks: usize,
+    prepared: &PreparedTransformPbsGpuKeys,
+) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
+    match gpu_state() {
+        GpuState::Ready(gpu) => {
+            gpu.run_ciphertext_gt_chain(packed_digit_lwes, accumulators, blocks, prepared)
+        }
+        GpuState::Unavailable(reason) => Err(TransformPbsGpuError::Unavailable(reason.clone())),
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Finalization {
     ExtractKeyswitch,
     ExtractOnly,
+}
+
+#[derive(Clone, Copy)]
+enum ResidentDigitSource {
+    Uploaded(usize),
+    Local,
+}
+
+#[derive(Clone, Copy)]
+enum ResidentStageOutput {
+    State,
+    Local,
+}
+
+#[derive(Clone, Copy)]
+struct ResidentPbsStage {
+    digit_source: ResidentDigitSource,
+    include_state: bool,
+    output: ResidentStageOutput,
 }
 
 struct GpuContext {
@@ -741,9 +774,78 @@ impl GpuContext {
         blocks: usize,
         prepared: &PreparedTransformPbsGpuKeys,
     ) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
-        if blocks == 0 {
+        let stages = (0..blocks)
+            .map(|block| ResidentPbsStage {
+                digit_source: ResidentDigitSource::Uploaded(block),
+                include_state: block != 0,
+                output: ResidentStageOutput::State,
+            })
+            .collect::<Vec<_>>();
+        self.run_resident_gt_stages(digit_lwes, accumulators, blocks, &stages, prepared)
+    }
+
+    fn run_ciphertext_gt_chain(
+        &self,
+        packed_digit_lwes: &[u64],
+        accumulators: &[u64],
+        blocks: usize,
+        prepared: &PreparedTransformPbsGpuKeys,
+    ) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
+        let stage_count = blocks
+            .checked_mul(2)
+            .and_then(|count| count.checked_sub(1))
+            .ok_or_else(|| {
+                TransformPbsGpuError::Execution(
+                    "resident ciphertext comparison stage count overflow".into(),
+                )
+            })?;
+        let mut stages = Vec::with_capacity(stage_count);
+        if blocks != 0 {
+            stages.push(ResidentPbsStage {
+                digit_source: ResidentDigitSource::Uploaded(0),
+                include_state: false,
+                output: ResidentStageOutput::State,
+            });
+            for block in 1..blocks {
+                // The radix-4 lhs/rhs digit pair consumes all sixteen plaintext
+                // slots. First PBS it to a local 0/1/2 comparison, then fold
+                // that result into the predecessor state with a second PBS.
+                stages.push(ResidentPbsStage {
+                    digit_source: ResidentDigitSource::Uploaded(block),
+                    include_state: false,
+                    output: ResidentStageOutput::Local,
+                });
+                stages.push(ResidentPbsStage {
+                    digit_source: ResidentDigitSource::Local,
+                    include_state: true,
+                    output: ResidentStageOutput::State,
+                });
+            }
+        }
+        self.run_resident_gt_stages(packed_digit_lwes, accumulators, blocks, &stages, prepared)
+    }
+
+    fn run_resident_gt_stages(
+        &self,
+        digit_lwes: &[u64],
+        accumulators: &[u64],
+        uploaded_blocks: usize,
+        stages: &[ResidentPbsStage],
+        prepared: &PreparedTransformPbsGpuKeys,
+    ) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
+        if uploaded_blocks == 0 || stages.is_empty() {
             return Err(TransformPbsGpuError::Execution(
-                "resident scalar comparison has no radix blocks".into(),
+                "resident comparison has no radix blocks or PBS stages".into(),
+            ));
+        }
+        if stages.iter().any(|stage| {
+            matches!(
+                stage.digit_source,
+                ResidentDigitSource::Uploaded(block) if block >= uploaded_blocks
+            )
+        }) {
+            return Err(TransformPbsGpuError::Execution(
+                "resident comparison stage references a missing radix block".into(),
             ));
         }
         let p = prepared.params;
@@ -756,27 +858,28 @@ impl GpuContext {
             .glwe_size
             .checked_mul(p.degree)
             .ok_or_else(|| TransformPbsGpuError::Execution("accumulator size overflow".into()))?;
-        let expected_digits = blocks
+        let expected_digits = uploaded_blocks
             .checked_mul(large_lwe_size)
             .ok_or_else(|| TransformPbsGpuError::Execution("digit LWE size overflow".into()))?;
         if digit_lwes.len() != expected_digits {
             return Err(TransformPbsGpuError::Execution(format!(
-                "resident scalar comparison has {} digit coefficients; expected {expected_digits}",
+                "resident comparison has {} digit coefficients; expected {expected_digits}",
                 digit_lwes.len()
             )));
         }
-        let expected_accumulators = blocks
+        let expected_accumulators = stages
+            .len()
             .checked_mul(accumulator_coefficients)
             .ok_or_else(|| TransformPbsGpuError::Execution("LUT family size overflow".into()))?;
         if accumulators.len() != expected_accumulators {
             return Err(TransformPbsGpuError::Execution(format!(
-                "resident scalar comparison has {} LUT coefficients; expected {expected_accumulators}",
+                "resident comparison has {} LUT coefficients; expected {expected_accumulators}",
                 accumulators.len()
             )));
         }
         if prepared.output_lwe_size != prepared.blind_mask_dimension + 1 {
             return Err(TransformPbsGpuError::Execution(
-                "resident scalar comparison KSK output does not match BSK input".into(),
+                "resident comparison KSK output does not match BSK input".into(),
             ));
         }
 
@@ -851,6 +954,12 @@ impl GpuContext {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        let local = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TFHE resident comparison large-key local digit result"),
+            size: large_lwe_bytes,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
         let small = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("TFHE resident comparison small-key LWE"),
             size: small_lwe_bytes,
@@ -893,8 +1002,12 @@ impl GpuContext {
         let output_lwe_size_u32 = u32::try_from(prepared.output_lwe_size)
             .map_err(|_| TransformPbsGpuError::Execution("output LWE size overflow".into()))?;
         let log_modulus = (p.degree * 2).ilog2();
-        for block in 0..blocks {
-            let block_u32 = u32::try_from(block)
+        for (stage_index, stage) in stages.iter().copied().enumerate() {
+            let (digit_source, digit_block) = match stage.digit_source {
+                ResidentDigitSource::Uploaded(block) => (&digits, block),
+                ResidentDigitSource::Local => (&local, 0),
+            };
+            let block_u32 = u32::try_from(digit_block)
                 .map_err(|_| TransformPbsGpuError::Execution("block index overflow".into()))?;
             let chain_metadata = [
                 input_lwe_size_u32,
@@ -903,8 +1016,8 @@ impl GpuContext {
                 prepared.ks_level_count as u32,
                 log_modulus,
                 block_u32,
-                u32::from(block != 0),
-                2,
+                u32::from(stage.include_state),
+                u32::from(stage.include_state) * 2,
             ];
             let chain_metadata_buffer = uniform(
                 &self.device,
@@ -917,16 +1030,16 @@ impl GpuContext {
                 entries: &[
                     entry(0, &chain_metadata_buffer),
                     entry(1, &state),
-                    entry(2, &digits),
+                    entry(2, digit_source),
                     entry(3, &prepared.ksk),
                     entry(4, &small),
                     entry(5, &rotations),
                 ],
             });
-            let mut encoder = self.encoder("TFHE resident scalar comparison block");
+            let mut encoder = self.encoder("TFHE resident comparison PBS stage");
             encoder.copy_buffer_to_buffer(
                 &luts,
-                block as u64 * one_accumulator_bytes,
+                stage_index as u64 * one_accumulator_bytes,
                 &accumulator_a,
                 0,
                 one_accumulator_bytes,
@@ -1055,6 +1168,10 @@ impl GpuContext {
                 "TFHE resident comparison extract metadata",
                 &extract_metadata,
             );
+            let stage_output = match stage.output {
+                ResidentStageOutput::State => &state,
+                ResidentStageOutput::Local => &local,
+            };
             let extract_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("TFHE resident comparison extract bind group"),
                 layout: &self.keyswitch_bgl,
@@ -1063,7 +1180,7 @@ impl GpuContext {
                     entry(1, &accumulator_a),
                     entry(2, &accumulator_b),
                     entry(3, &prepared.ksk),
-                    entry(4, &state),
+                    entry(4, stage_output),
                 ],
             });
             self.dispatch_1d(
@@ -1074,7 +1191,12 @@ impl GpuContext {
                 1,
                 "TFHE resident comparison extract large-key state",
             );
-            if block + 1 == blocks {
+            if stage_index + 1 == stages.len() {
+                if !matches!(stage.output, ResidentStageOutput::State) {
+                    return Err(TransformPbsGpuError::Execution(
+                        "resident comparison final PBS stage does not produce state".into(),
+                    ));
+                }
                 encoder.copy_buffer_to_buffer(&state, 0, &readback, 0, large_lwe_bytes);
             }
             // A bounded number of submissions per radix block, but no host
@@ -1085,7 +1207,7 @@ impl GpuContext {
         self.device.poll(wgpu::Maintain::Wait);
         if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
             return Err(TransformPbsGpuError::Execution(format!(
-                "TFHE resident scalar comparison dispatch failed: {error}"
+                "TFHE resident comparison dispatch failed: {error}"
             )));
         }
         let coefficients = read_u64(&self.device, &readback, large_lwe_size)?;

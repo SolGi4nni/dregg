@@ -15,6 +15,7 @@ use std::fmt;
 
 use tfhe::core_crypto::prelude::*;
 use tfhe::integer::IntegerCiphertext;
+use tfhe::prelude::{FheOrd, IfThenElse};
 use tfhe::shortint::atomic_pattern::compressed::CompressedAtomicPatternServerKey;
 use tfhe::shortint::ciphertext::{Degree, NoiseLevel};
 use tfhe::shortint::server_key::{
@@ -25,8 +26,9 @@ use tfhe::{CompressedServerKey, FheUint32};
 
 use crate::tfhe_wgpu::{
     prepare_torus_pbs_transform_wgpu_plan, torus_pbs_bootstrap_transform_prepared,
-    torus_pbs_scalar_gt_chain_transform_prepared, TorusExternalProductParams, TorusKeyswitchParams,
-    TorusMacBackend, TorusMacError, TorusPbsTransformWgpuPlan,
+    torus_pbs_ciphertext_gt_chain_transform_prepared, torus_pbs_scalar_gt_chain_transform_prepared,
+    TorusExternalProductParams, TorusKeyswitchParams, TorusMacBackend, TorusMacError,
+    TorusPbsTransformWgpuPlan,
 };
 
 /// Refusals at the exact tfhe-rs/high-level adapter boundary.
@@ -122,12 +124,19 @@ pub struct FheUint32KsPbsTransformWgpuPlan {
     message_modulus: u64,
     carry_modulus: u64,
     scalar_gt_luts: Option<ScalarGreaterThanLuts>,
+    ciphertext_gt_luts: Option<CiphertextGreaterThanLuts>,
 }
 
 struct ScalarGreaterThanLuts {
     first: [LookupTableOwned; 4],
     middle: [LookupTableOwned; 4],
     last: [LookupTableOwned; 4],
+}
+
+struct CiphertextGreaterThanLuts {
+    digit: LookupTableOwned,
+    transition: LookupTableOwned,
+    last: LookupTableOwned,
 }
 
 impl fmt::Debug for FheUint32KsPbsTransformWgpuPlan {
@@ -190,7 +199,7 @@ pub fn prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(
     // Pre-build the twelve accumulators once; retaining the decompressed
     // Fourier server key beside the resident coefficient BSK would duplicate
     // the dominant evaluation-key allocation.
-    let scalar_gt_luts = if message_modulus.0 == 4 && carry_modulus.0 == 4 {
+    let (scalar_gt_luts, ciphertext_gt_luts) = if message_modulus.0 == 4 && carry_modulus.0 == 4 {
         let decompressed = compressed.decompress();
         let shortint_server: &tfhe::shortint::ServerKey = decompressed.as_ref().as_ref();
         let compare_digit = |digit: u64, expected: u64| {
@@ -229,13 +238,40 @@ pub fn prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(
                 u64::from(final_state == 2)
             })
         });
-        Some(ScalarGreaterThanLuts {
-            first,
-            middle,
-            last,
-        })
+        let digit = shortint_server.generate_lookup_table(|packed| {
+            let lhs = packed % 4;
+            let rhs = packed / 4;
+            compare_digit(lhs, rhs)
+        });
+        let transition = shortint_server.generate_lookup_table(|packed| {
+            let state = packed % 4;
+            let local = packed / 4;
+            if state == 1 {
+                local
+            } else {
+                state
+            }
+        });
+        let ciphertext_last = shortint_server.generate_lookup_table(|packed| {
+            let state = packed % 4;
+            let local = packed / 4;
+            let final_state = if state == 1 { local } else { state };
+            u64::from(final_state == 2)
+        });
+        (
+            Some(ScalarGreaterThanLuts {
+                first,
+                middle,
+                last,
+            }),
+            Some(CiphertextGreaterThanLuts {
+                digit,
+                transition,
+                last: ciphertext_last,
+            }),
+        )
     } else {
-        None
+        (None, None)
     };
     Ok(FheUint32KsPbsTransformWgpuPlan {
         transform,
@@ -245,6 +281,7 @@ pub fn prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(
         message_modulus: message_modulus.0,
         carry_modulus: carry_modulus.0,
         scalar_gt_luts,
+        ciphertext_gt_luts,
     })
 }
 
@@ -596,6 +633,175 @@ impl FheUint32KsPbsTransformWgpuPlan {
         Ok((
             FheUint32::from_raw_parts(radix, id, tag, rerandomization),
             result.backend,
+        ))
+    }
+
+    /// Compare two carry-clean encrypted `u32`s without revealing either
+    /// operand or any intermediate radix decision. A digit pair occupies the
+    /// full sixteen-element shortint plaintext domain as `lhs + 4 * rhs`, so
+    /// each block after the most significant one uses two resident PBS stages:
+    /// local digit comparison, then lexicographic state transition.
+    pub fn greater_than_ciphertext_resident(
+        &self,
+        lhs: &FheUint32,
+        rhs: &FheUint32,
+    ) -> Result<(FheUint32, TorusMacBackend), FheUint32WgpuPbsError> {
+        let Some(luts) = &self.ciphertext_gt_luts else {
+            return Err(FheUint32WgpuPbsError::UnsupportedComparisonModuli {
+                message: self.message_modulus,
+                carry: self.carry_modulus,
+            });
+        };
+        if !matches!(
+            &self.modulus_switch,
+            ModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        ) {
+            return Err(FheUint32WgpuPbsError::UnsupportedResidentModulusSwitch);
+        }
+
+        let (mut lhs_radix, id, tag, rerandomization) = lhs.clone().into_raw_parts();
+        let (rhs_radix, _, _, _) = rhs.clone().into_raw_parts();
+        if !lhs_radix.block_carries_are_empty() || !rhs_radix.block_carries_are_empty() {
+            return Err(FheUint32WgpuPbsError::NonEmptyCarries);
+        }
+        let expected_blocks = u32::BITS as usize / 2;
+        for actual in [lhs_radix.blocks().len(), rhs_radix.blocks().len()] {
+            if actual != expected_blocks {
+                return Err(FheUint32WgpuPbsError::UnexpectedRadixBlocks {
+                    expected: expected_blocks,
+                    actual,
+                });
+            }
+        }
+
+        let expected_large = self.key_switching_key.input_key_lwe_dimension().0;
+        let validate_block =
+            |block: &tfhe::shortint::Ciphertext| -> Result<(), FheUint32WgpuPbsError> {
+                if block.atomic_pattern != AtomicPatternKind::Standard(PBSOrder::KeyswitchBootstrap)
+                {
+                    return Err(FheUint32WgpuPbsError::BlockAtomicPattern(
+                        block.atomic_pattern,
+                    ));
+                }
+                if block.message_modulus.0 != self.message_modulus {
+                    return Err(FheUint32WgpuPbsError::BlockMessageModulus {
+                        expected: self.message_modulus,
+                        actual: block.message_modulus.0,
+                    });
+                }
+                if block.carry_modulus.0 != self.carry_modulus {
+                    return Err(FheUint32WgpuPbsError::BlockCarryModulus {
+                        expected: self.carry_modulus,
+                        actual: block.carry_modulus.0,
+                    });
+                }
+                let actual_large = block.ct.lwe_size().to_lwe_dimension().0;
+                if actual_large != expected_large {
+                    return Err(FheUint32WgpuPbsError::BlockLweDimension {
+                        expected: expected_large,
+                        actual: actual_large,
+                    });
+                }
+                Ok(())
+            };
+
+        let stage_count = expected_blocks * 2 - 1;
+        let accumulator_coefficients = self.external.glwe_size * self.external.degree;
+        let mut packed_digit_lwes =
+            Vec::with_capacity(expected_blocks.saturating_mul(expected_large.saturating_add(1)));
+        let mut accumulators =
+            Vec::with_capacity(stage_count.saturating_mul(accumulator_coefficients));
+        for (chain_index, block_index) in (0..expected_blocks).rev().enumerate() {
+            let lhs_block = &lhs_radix.blocks()[block_index];
+            let rhs_block = &rhs_radix.blocks()[block_index];
+            validate_block(lhs_block)?;
+            validate_block(rhs_block)?;
+            packed_digit_lwes.extend(lhs_block.ct.as_ref().iter().zip(rhs_block.ct.as_ref()).map(
+                |(&lhs_coefficient, &rhs_coefficient)| {
+                    lhs_coefficient.wrapping_add(rhs_coefficient.wrapping_mul(4))
+                },
+            ));
+
+            let mut append_lut = |lookup: &LookupTableOwned| {
+                if lookup.acc.as_ref().len() != accumulator_coefficients {
+                    return Err(FheUint32WgpuPbsError::LookupAccumulatorLength {
+                        expected: accumulator_coefficients,
+                        actual: lookup.acc.as_ref().len(),
+                    });
+                }
+                accumulators.extend_from_slice(lookup.acc.as_ref());
+                Ok(())
+            };
+            append_lut(&luts.digit)?;
+            if chain_index != 0 {
+                append_lut(if block_index == 0 {
+                    &luts.last
+                } else {
+                    &luts.transition
+                })?;
+            }
+        }
+
+        let result = torus_pbs_ciphertext_gt_chain_transform_prepared(
+            &self.transform,
+            &packed_digit_lwes,
+            &accumulators,
+            expected_blocks,
+        )?;
+        let state_lwe = LweCiphertext::from_container(
+            result.coefficients,
+            self.key_switching_key.ciphertext_modulus(),
+        );
+        let state = tfhe::shortint::Ciphertext::new(
+            state_lwe,
+            Degree::new(1),
+            NoiseLevel::NOMINAL,
+            tfhe::shortint::parameters::MessageModulus(self.message_modulus),
+            tfhe::shortint::parameters::CarryModulus(self.carry_modulus),
+            AtomicPatternKind::Standard(PBSOrder::KeyswitchBootstrap),
+        );
+        let zero_lwe = || {
+            LweCiphertext::new(
+                0u64,
+                self.key_switching_key
+                    .input_key_lwe_dimension()
+                    .to_lwe_size(),
+                self.key_switching_key.ciphertext_modulus(),
+            )
+        };
+        for block in lhs_radix.blocks_mut() {
+            *block = tfhe::shortint::Ciphertext::new(
+                zero_lwe(),
+                Degree::new(0),
+                NoiseLevel::ZERO,
+                block.message_modulus,
+                block.carry_modulus,
+                block.atomic_pattern,
+            );
+        }
+        lhs_radix.blocks_mut()[0] = state;
+        Ok((
+            FheUint32::from_raw_parts(lhs_radix, id, tag, rerandomization),
+            result.backend,
+        ))
+    }
+
+    /// Encrypted comparison-and-selection primitive: choose
+    /// `when_lhs_is_greater` iff `lhs > rhs`, otherwise choose `otherwise`.
+    /// The current thread must have the matching tfhe-rs
+    /// server key installed, as for every high-level `if_then_else` operation.
+    pub fn select_by_greater_than_resident(
+        &self,
+        lhs: &FheUint32,
+        rhs: &FheUint32,
+        when_lhs_is_greater: &FheUint32,
+        otherwise: &FheUint32,
+    ) -> Result<(FheUint32, TorusMacBackend), FheUint32WgpuPbsError> {
+        let (predicate, backend) = self.greater_than_ciphertext_resident(lhs, rhs)?;
+        let condition = predicate.gt(0u32);
+        Ok((
+            condition.if_then_else(when_lhs_is_greater, otherwise),
+            backend,
         ))
     }
 }

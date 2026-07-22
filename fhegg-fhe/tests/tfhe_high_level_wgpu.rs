@@ -291,3 +291,95 @@ fn deployed_fhe_uint32_scalar_gt_resident_matches_roundtrip_baseline() {
         Err(FheUint32WgpuPbsError::NonEmptyCarries)
     ));
 }
+
+#[test]
+fn deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately() {
+    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
+        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the resident ciphertext comparison GPU gate");
+        return;
+    }
+
+    let client = ClientKey::generate(ConfigBuilder::default());
+    let compressed = CompressedServerKey::new(&client);
+    let server = compressed.decompress();
+    let plan = prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(&compressed).unwrap();
+    set_server_key(server);
+
+    // Equality, a least-significant greater decision, and both directions of
+    // an early most-significant decision cover the complete lexicographic
+    // state machine. The oracle is tfhe-rs's independent ciphertext-to-
+    // ciphertext comparison; neither operand nor predicate is decrypted until
+    // both encrypted computations finish.
+    let cases = [
+        (0x9234_5678u32, 0x9234_5678u32),
+        (0x9234_5678u32, 0x9234_5677u32),
+        (0x9234_5678u32, 0xa234_5678u32),
+        (0xa234_5678u32, 0x9234_5678u32),
+    ];
+    let mut resident_times = Vec::with_capacity(cases.len());
+    for (lhs_clear, rhs_clear) in cases {
+        let lhs = FheUint32::encrypt(lhs_clear, &client);
+        let rhs = FheUint32::encrypt(rhs_clear, &client);
+        let oracle = lhs.gt(&rhs);
+        let started = Instant::now();
+        let (resident, backend) = plan.greater_than_ciphertext_resident(&lhs, &rhs).unwrap();
+        let elapsed = started.elapsed();
+        resident_times.push(elapsed);
+        assert!(matches!(
+            backend,
+            TorusMacBackend::Wgpu {
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+                ..
+            }
+        ));
+        let oracle_clear: bool = oracle.decrypt(&client);
+        let resident_clear: u32 = resident.decrypt(&client);
+        assert_eq!(resident_clear, u32::from(oracle_clear));
+        eprintln!(
+            "high-level ciphertext-gt resident: lhs={lhs_clear:#010x} rhs={rhs_clear:#010x} result={resident_clear} 31-PBS-WGPU={:.3}ms",
+            elapsed.as_secs_f64() * 1_000.0,
+        );
+    }
+
+    // Bazaar-shaped private winner selection. The encrypted bid comparison
+    // directly selects the corresponding encrypted lot identifier; the
+    // comparison bit is never decrypted or made public.
+    let left_bid = FheUint32::encrypt(91_000u32, &client);
+    let right_bid = FheUint32::encrypt(87_500u32, &client);
+    let left_lot = FheUint32::encrypt(0x1111_1111u32, &client);
+    let right_lot = FheUint32::encrypt(0x2222_2222u32, &client);
+    let select_started = Instant::now();
+    let (selected_lot, select_backend) = plan
+        .select_by_greater_than_resident(&left_bid, &right_bid, &left_lot, &right_lot)
+        .unwrap();
+    let select_time = select_started.elapsed();
+    assert!(matches!(
+        select_backend,
+        TorusMacBackend::Wgpu {
+            algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            ..
+        }
+    ));
+    let selected_lot_clear: u32 = selected_lot.decrypt(&client);
+    assert_eq!(selected_lot_clear, 0x1111_1111);
+
+    let clean = FheUint32::encrypt(7u32, &client);
+    let dirty = FheUint32::encrypt(6u32, &client);
+    let (mut dirty_radix, dirty_id, dirty_tag, dirty_rerandomization) = dirty.into_raw_parts();
+    dirty_radix.blocks_mut()[0].degree = tfhe::shortint::ciphertext::Degree::new(4);
+    let dirty = FheUint32::from_raw_parts(dirty_radix, dirty_id, dirty_tag, dirty_rerandomization);
+    assert!(matches!(
+        plan.greater_than_ciphertext_resident(&clean, &dirty),
+        Err(FheUint32WgpuPbsError::NonEmptyCarries)
+    ));
+
+    eprintln!(
+        "high-level ciphertext-gt resident: four-comparison-total={:.3}ms encrypted-select={:.3}ms",
+        resident_times
+            .iter()
+            .sum::<std::time::Duration>()
+            .as_secs_f64()
+            * 1_000.0,
+        select_time.as_secs_f64() * 1_000.0,
+    );
+}
