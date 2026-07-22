@@ -333,7 +333,7 @@ fn set_bits(row: &mut [BabyBear], value: u32, bits: usize, col: impl Fn(usize) -
     }
 }
 
-fn build_row(
+pub(crate) fn build_row(
     session: u32,
     witness: &PrivateBookWitness,
 ) -> Result<(Vec<BabyBear>, PublicStatement), String> {

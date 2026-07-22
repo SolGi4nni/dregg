@@ -7,7 +7,9 @@
 use dregg_circuit_prove::dark_bazaar_private::{statement, PrivateBookWitness, PrivateOrder};
 use fhegg_fhe::bfv_lean::FOLD_MODULI;
 use fhegg_fhe::private_book_bfv_zk::{
-    prove_private_book_bfv_zk, verify_private_book_bfv_zk, PrivateBookBfvZkProof,
+    prove_private_book_bfv_native_slice_zk, prove_private_book_bfv_zk,
+    verify_private_book_bfv_native_slice_zk, verify_private_book_bfv_zk,
+    PrivateBookBfvNativeSliceProof, PrivateBookBfvZkProof,
 };
 use fhegg_fhe::private_book_relation::{
     encrypt_private_book, PrivateBookCiphertexts, PrivateBookEncryptionOpening,
@@ -135,6 +137,70 @@ fn exact_pk_bfv_and_poseidon_relation_refuses_every_public_substitution() {
         &proof,
         public,
         &PrivateBookCiphertexts::from_rows(wrong_layout),
+        &params,
+        &public_key,
+    )
+    .is_err());
+}
+
+/// The native-PQ cut proves one full 4,096-term equation and the complete
+/// private-book/root relation through the Lean descriptor.  This is a heavy
+/// production-backend test, intentionally sharing this binary's release-only
+/// nextest routing.
+#[test]
+fn native_pq_exact_slice_proves_real_fixture_and_refuses_public_substitution() {
+    let params = BfvParams::fold_set();
+    let key_session = KeygenSession::from_seed(2, [0x61; 32]).expect("key session");
+    let (_parties, public_key) = collective_keygen(&key_session, &params);
+    let (witness, opening) = fixture();
+    let public = statement(0xDBA2, &witness).expect("private statement");
+    let ciphertexts =
+        encrypt_private_book(&witness, &opening, &params, &public_key).expect("BFV book");
+
+    let proof = prove_private_book_bfv_native_slice_zk(
+        public,
+        &witness,
+        &ciphertexts,
+        &opening,
+        &params,
+        &public_key,
+    )
+    .expect("native exact-slice proof");
+    let proof =
+        PrivateBookBfvNativeSliceProof::from_postcard(&proof.to_postcard().expect("proof encode"))
+            .expect("proof decode");
+    verify_private_book_bfv_native_slice_zk(&proof, public, &ciphertexts, &params, &public_key)
+        .expect("honest native exact slice");
+
+    let other_session = KeygenSession::from_seed(2, [0x62; 32]).expect("other key session");
+    let (_other_parties, other_key) = collective_keygen(&other_session, &params);
+    assert!(verify_private_book_bfv_native_slice_zk(
+        &proof,
+        public,
+        &ciphertexts,
+        &params,
+        &other_key,
+    )
+    .is_err());
+
+    let mut wrong_ciphertexts = ciphertexts.rows().clone();
+    wrong_ciphertexts[0].polys[0].rows[0][0] =
+        (wrong_ciphertexts[0].polys[0].rows[0][0] + 1) % FOLD_MODULI[0];
+    assert!(verify_private_book_bfv_native_slice_zk(
+        &proof,
+        public,
+        &PrivateBookCiphertexts::from_rows(wrong_ciphertexts),
+        &params,
+        &public_key,
+    )
+    .is_err());
+
+    let mut wrong_root = public;
+    wrong_root.order_root[7] ^= 1;
+    assert!(verify_private_book_bfv_native_slice_zk(
+        &proof,
+        wrong_root,
+        &ciphertexts,
         &params,
         &public_key,
     )

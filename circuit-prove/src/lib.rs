@@ -51,6 +51,7 @@ pub mod mpt_holding_leaf;
 pub mod note_spend_leaf_adapter;
 pub mod plonky3_recursion_impl;
 pub mod presentation_leaf_adapter;
+pub mod private_book_bfv_slice;
 pub mod private_graph_rewrite;
 pub mod private_graph_rewrite_cell;
 pub mod private_preference;

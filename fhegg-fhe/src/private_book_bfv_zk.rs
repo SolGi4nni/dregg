@@ -40,6 +40,14 @@
 //! clearing semantics and `(p*,V*)`; this proof supplies the missing encrypted
 //! input/root join.
 //!
+//! [`prove_private_book_bfv_native_slice_zk`] is the migration off this
+//! classical relation.  Its Lean-emitted HidingFRI AIR fuses the Dark Bazaar
+//! statement with one *complete* 4,096-term production BFV equation and a
+//! faithful eight-lane commitment to the public-key row.  It is native-PQ and
+//! uncompressed, but remains one of 98,304 exact equations; callers must not
+//! treat that first slice as the complete BFV opening until the indexed family
+//! is materialized.
+//!
 //! # Exact residual
 //!
 //! Verification proves existence of bounded-short encryption witnesses, not
@@ -68,6 +76,7 @@ use dregg_circuit_prove::dark_bazaar_private::{
     self, PrivateBookWitness, PublicStatement, DIGEST_WIDTH, ORDER_COUNT, PRICE_COUNT,
     ROOT_DOMAIN_TAG, RULE_ID,
 };
+use dregg_circuit_prove::private_book_bfv_slice as native_slice;
 use fhe::bfv::{Ciphertext, Encoding, Plaintext};
 use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
 use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
@@ -268,6 +277,28 @@ pub struct PrivateBookBfvZkProof {
     proof: Vec<u8>,
 }
 
+/// HidingFRI proof of one complete, exact native-field BFV equation: order 0,
+/// ciphertext polynomial 0, modulus 0, coefficient 0.  This is the executable
+/// first member of the mechanically extensible 98,304-equation family.  It is
+/// post-quantum at the proof-system layer and has no Ristretto relation.
+pub struct PrivateBookBfvNativeSliceProof {
+    proof: native_slice::PrivateBookBfvSliceProof,
+}
+
+impl PrivateBookBfvNativeSliceProof {
+    pub fn to_postcard(&self) -> Result<Vec<u8>> {
+        self.proof
+            .to_postcard()
+            .map_err(PrivateBookBfvZkError::ProofSystem)
+    }
+
+    pub fn from_postcard(bytes: &[u8]) -> Result<Self> {
+        let proof = native_slice::PrivateBookBfvSliceProof::from_postcard(bytes)
+            .map_err(|_| PrivateBookBfvZkError::ProofWire)?;
+        Ok(Self { proof })
+    }
+}
+
 impl PrivateBookBfvZkProof {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(8 + 2 + 4 + self.proof.len());
@@ -363,6 +394,87 @@ pub fn verify_private_book_bfv_zk(
     verifier.verify(&r1cs, &PedersenGens::default(), &BP_GENS)?;
     timing.finish();
     Ok(())
+}
+
+/// Prove the first exact native-PQ member of the private-book/BFV same-opening
+/// family through the Lean-emitted descriptor and HidingFRI backend.
+///
+/// Unlike the legacy Bulletproof relation, this slice uses no transcript-
+/// randomized compression: all 4,096 `u` coefficients occur in the exact
+/// coefficient-zero negacyclic equation.  The host still validates every
+/// production BFV equation before entering the prover, so the slice cannot be
+/// used to bless a malformed ciphertext outside its presently materialized
+/// geometry.
+pub fn prove_private_book_bfv_native_slice_zk(
+    statement: PublicStatement,
+    witness: &PrivateBookWitness,
+    ciphertexts: &PrivateBookCiphertexts,
+    opening: &PrivateBookEncryptionOpening,
+    params: &BfvParams,
+    public_key: &CollectivePublicKey,
+) -> Result<PrivateBookBfvNativeSliceProof> {
+    validate_public(statement, ciphertexts, params)?;
+    verify_private_book_opening(statement, witness, ciphertexts, opening, params, public_key)
+        .map_err(|error| PrivateBookBfvZkError::InvalidOpening(error.to_string()))?;
+
+    let mut timing = PhaseTimings::new("native-slice-prove", "public-relation");
+    let public = PublicRelation::derive(statement, ciphertexts, params, public_key, &mut timing)?;
+    let secret = SecretRelation::extract(witness, opening)?;
+    secret.validate_seeded_equations(&public)?;
+
+    let message = message_coefficient(secret.witness.orders[0], &public.message_table, 0, 0);
+    let slice_opening = native_slice::PrivateBookBfvSliceOpening {
+        public_key_coefficients: public.pk.polys[0].rows[0].clone(),
+        u_coefficients: secret.randomness[0].u.clone(),
+        error_coefficient: secret.randomness[0].e1[0],
+        message_coefficient: message,
+        ciphertext_coefficient: public.ciphertexts[0].polys[0].rows[0][0],
+    };
+    native_slice::audit_row_local_constraints(statement.session, witness, &slice_opening)
+        .map_err(PrivateBookBfvZkError::ProofSystem)?;
+    let (proof, native_public) = native_slice::prove_zk(statement.session, witness, &slice_opening)
+        .map_err(PrivateBookBfvZkError::ProofSystem)?;
+    if native_public.book != statement {
+        return Err(PrivateBookBfvZkError::Arithmetic(
+            "Lean-emitted slice statement disagreed with the supplied Dark Bazaar statement"
+                .to_owned(),
+        ));
+    }
+    timing.finish();
+    Ok(PrivateBookBfvNativeSliceProof { proof })
+}
+
+/// Verify the exact native-PQ slice against independently supplied public key,
+/// ciphertext, parameters, and Dark Bazaar statement.  The public-key root is
+/// recomputed from all 4,096 coefficients; no prover-carried key identity is
+/// trusted.
+pub fn verify_private_book_bfv_native_slice_zk(
+    proof: &PrivateBookBfvNativeSliceProof,
+    statement: PublicStatement,
+    ciphertexts: &PrivateBookCiphertexts,
+    params: &BfvParams,
+    public_key: &CollectivePublicKey,
+) -> Result<()> {
+    validate_public(statement, ciphertexts, params)?;
+    let parsed_key = parse_public_key(public_key, params)?;
+    let pk_row = &parsed_key.polys[0].rows[0];
+    let key_root =
+        native_slice::public_key_root(pk_row).map_err(PrivateBookBfvZkError::Arithmetic)?;
+    let ciphertext = ciphertexts.rows()[0].polys[0].rows[0][0];
+    let native_public = native_slice::PrivateBookBfvSlicePublic {
+        book: statement,
+        public_key_root: key_root,
+        ciphertext_limbs: split_native_slice_residue(ciphertext),
+    };
+    native_slice::verify_zk(&proof.proof, native_public).map_err(PrivateBookBfvZkError::ProofSystem)
+}
+
+fn split_native_slice_residue(mut value: u64) -> [u32; 3] {
+    core::array::from_fn(|_| {
+        let limb = (value & 0x7fff) as u32;
+        value >>= 15;
+        limb
+    })
 }
 
 fn validate_public(
@@ -1439,3 +1551,157 @@ const INTERNAL_DIAG: [u32; 16] = [
     2013265920, 2, 3, 1006632962, 4, 5, 1006632961, 2013265919, 2013265918, 2005401602, 1509949442,
     1761607682, 2013265907, 7864321, 125829121, 16,
 ];
+
+#[cfg(test)]
+mod slice_message_table_differential {
+    use super::*;
+    use crate::threshold::{KeygenCoordinator, KeygenSession, ThresholdParty};
+
+    #[test]
+    fn exact_modulus0_coefficient0_message_table_matches_lean_descriptor() {
+        let params = BfvParams::fold_set();
+        let session = KeygenSession::from_seed(2, [0x91; 32]).expect("key session");
+        let mut coordinator = KeygenCoordinator::new(session.clone(), params.clone());
+        for party in 0..session.n_parties() {
+            let (_state, contribution) =
+                ThresholdParty::join(&session, party, &params).expect("party keygen");
+            coordinator
+                .accept(contribution)
+                .expect("ordered contribution");
+        }
+        let public_key = coordinator.finish().expect("collective key");
+        let table = derive_exact_message_table(&params, &public_key).expect("exact table");
+        let values = table.iter().map(|option| option[0][0]).collect::<Vec<_>>();
+        const LEAN_MESSAGE_COEFF0: [u64; PRIVATE_BOOK_OPTION_COUNT] = [
+            0,
+            64737485388,
+            60755567768,
+            56773650148,
+            52791732528,
+            48809814908,
+            44827897288,
+            40845979668,
+            36864062048,
+            32882144428,
+            28900226808,
+            24918309188,
+            20936391568,
+            16954473948,
+            12972556328,
+            8990638708,
+            37735010824,
+            2768701020,
+            36521794225,
+            1555484421,
+            35308577626,
+            342267822,
+            34095361027,
+            67848454232,
+            32882144428,
+            66635237633,
+            31668927829,
+            65422021034,
+            30455711230,
+            64208804435,
+            29242494631,
+            62995587836,
+            6750618640,
+            9519319661,
+            12288020682,
+            15056721703,
+            17825422724,
+            20594123745,
+            23362824766,
+            26131525787,
+            28900226808,
+            31668927829,
+            34437628850,
+            37206329871,
+            39975030892,
+            42743731913,
+            45512432934,
+            48281133955,
+            44485629465,
+            16269938302,
+            56773650148,
+            28557958985,
+            342267822,
+            40845979668,
+            12630288505,
+            53134000351,
+            24918309188,
+            65422021034,
+            37206329871,
+            8990638708,
+            49494350554,
+            21278659391,
+            61782371237,
+            33566680074,
+            13501237281,
+            54004949127,
+            25789257964,
+            66292969810,
+            38077278647,
+            9861587484,
+            50365299330,
+            22149608167,
+            62653320013,
+            34437628850,
+            6221937687,
+            46725649533,
+            18509958370,
+            59013670216,
+            30797979053,
+            2582287890,
+            51236248106,
+            54004949127,
+            56773650148,
+            59542351169,
+            62311052190,
+            65079753211,
+            67848454232,
+            1897752244,
+            4666453265,
+            7435154286,
+            10203855307,
+            12972556328,
+            15741257349,
+            18509958370,
+            21278659391,
+            24047360412,
+            20251855922,
+            54004949127,
+            19038639323,
+            52791732528,
+            17825422724,
+            51578515929,
+            16612206125,
+            50365299330,
+            15398989526,
+            49152082731,
+            14185772927,
+            47938866132,
+            12972556328,
+            46725649533,
+            11759339729,
+            45512432934,
+            57986866747,
+            54004949127,
+            50023031507,
+            46041113887,
+            42059196267,
+            38077278647,
+            34095361027,
+            30113443407,
+            26131525787,
+            22149608167,
+            18167690547,
+            14185772927,
+            10203855307,
+            6221937687,
+            2240020067,
+            66977505456,
+        ];
+        assert_eq!(values.as_slice(), LEAN_MESSAGE_COEFF0.as_slice());
+    }
+}

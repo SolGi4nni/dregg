@@ -67,6 +67,7 @@ import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
 import Market.DarkBazaarPrivateDescriptor
 import Market.DarkAmmPrivateDescriptor
+import Market.PrivateBookBfvSliceDescriptor
 
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 emitVmJson2)
 
@@ -152,6 +153,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding.turnChainBindingDescriptor)
   , ("dark-bazaar-private-n4k4.json",
       Market.DarkBazaarPrivateDescriptor.darkBazaarPrivateN4K4Descriptor)
+  , ("private-book-bfv-slice-o0-c0-q0-k0.json",
+      Market.PrivateBookBfvSliceDescriptor.privateBookBfvSliceDescriptor)
   , ("dark-amm-private-v1.json",
       Market.DarkAmmPrivateDescriptor.darkAmmPrivateDescriptor)
   , ("private-preference-n4k4.json",
@@ -172,7 +175,7 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Games.PrivateQuestGraphDescriptor.privateQuestGraphDescriptor)
   ]
 
-/- The routing table covers the checked-in directory exactly (39 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly (40 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
