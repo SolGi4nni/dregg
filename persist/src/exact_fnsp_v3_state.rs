@@ -888,6 +888,16 @@ pub(crate) fn load_state_head_from_read(
     load_snapshot_from_read(read).map(|snapshot| snapshot.map(|snapshot| snapshot.head))
 }
 
+/// Load the exact head through the boot-rebuilt incremental boundary index.
+///
+/// Online admission/finalization may use this after `PersistentStore::open` has completed the
+/// canonical full replay.  Boot and offline audit retain [`load_state_head_from_read`].
+pub(crate) fn load_live_state_head_from_read(
+    read: &ReadTransaction,
+) -> StoreResult<Option<ExactFnspV3StateHeadV1>> {
+    load_online_head_from_read(read)
+}
+
 fn load_snapshot_from_write(write: &WriteTransaction) -> StoreResult<Option<ValidatedSnapshot>> {
     let (head_rows, record_rows) = {
         let heads = write.open_table(EXACT_FNSP_V3_STATE_HEAD)?;
