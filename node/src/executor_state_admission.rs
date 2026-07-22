@@ -5,12 +5,16 @@
 //! explicitly before `execute`: an empty executor side table is not a valid
 //! synonym for an empty consensus history.
 //!
-//! This module owns the two fail-closed pieces that do not require changing the
+//! This module owns the fail-closed pieces that do not require changing the
 //! executor's storage representation:
 //!
 //! - restore every agent-scoped receipt head from the already verified durable
 //!   receipt log, rather than relying on individual ingress handlers to seed the
 //!   one agent they happen to know about; and
+//! - specify the exact reconstruction of per-cell provenance heads from a
+//!   compacted-prefix baseline plus the dense live commit-log suffix.  The durable
+//!   two-map index and constructor wiring are deliberately separate: this fold is
+//!   the executable correctness oracle they must reproduce; and
 //! - keep the staged exact FNSP-v3 route single-effect until the remaining
 //!   executor side tables have one durable, shared owner.  In particular, an
 //!   exact spend cannot currently be composed in the same turn with a second
@@ -27,6 +31,8 @@ use dregg_turn::faithful_note_spend_exact_v3::{
     FaithfulNoteSpendExactV3ProofCarrier,
 };
 use dregg_turn::{Effect, Turn, TurnExecutor, TurnReceipt};
+
+use dregg_persist::CommitRecord;
 
 /// A durable receipt log failed its per-agent causal-chain invariant.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +85,207 @@ pub(crate) fn restore_executor_receipt_heads(
         executor.set_last_receipt_hash(agent, head);
     }
     Ok(restored)
+}
+
+/// One per-cell provenance head together with the commit ordinal that wrote it.
+///
+/// Persisting the ordinal is load-bearing: after a divergent live suffix is
+/// truncated, the index must be rolled back to the last surviving writer rather
+/// than retaining a receipt hash from the discarded tail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PerCellReceiptHead {
+    pub(crate) writer_ordinal: u64,
+    pub(crate) receipt_hash: [u8; 32],
+}
+
+/// A compacted-prefix baseline or live suffix violates the reconstruction law.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PerCellReceiptHeadReconstructionError {
+    CursorBehindFloor {
+        floor: u64,
+        cursor: u64,
+    },
+    BaselineWriterOutsidePrefix {
+        cell: CellId,
+        writer_ordinal: u64,
+        floor: u64,
+    },
+    LiveRecordCountOverflow {
+        floor: u64,
+        cursor: u64,
+    },
+    LiveRecordCountMismatch {
+        floor: u64,
+        cursor: u64,
+        expected: usize,
+        got: usize,
+    },
+    LiveRecordOrdinalMismatch {
+        index: usize,
+        expected: u64,
+        got: u64,
+    },
+    DuplicateCellInRecord {
+        ordinal: u64,
+        cell: CellId,
+    },
+}
+
+impl fmt::Display for PerCellReceiptHeadReconstructionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CursorBehindFloor { floor, cursor } => write!(
+                f,
+                "per-cell receipt-head cursor {cursor} is behind compaction floor {floor}"
+            ),
+            Self::BaselineWriterOutsidePrefix {
+                cell,
+                writer_ordinal,
+                floor,
+            } => write!(
+                f,
+                "per-cell receipt-head baseline for {cell:?} names writer ordinal \
+                 {writer_ordinal}, which is not below compaction floor {floor}"
+            ),
+            Self::LiveRecordCountOverflow { floor, cursor } => write!(
+                f,
+                "live per-cell receipt-head suffix length cursor({cursor}) - floor({floor}) \
+                 does not fit this platform"
+            ),
+            Self::LiveRecordCountMismatch {
+                floor,
+                cursor,
+                expected,
+                got,
+            } => write!(
+                f,
+                "per-cell receipt-head live suffix [{floor}, {cursor}) must contain {expected} \
+                 records, got {got}"
+            ),
+            Self::LiveRecordOrdinalMismatch {
+                index,
+                expected,
+                got,
+            } => write!(
+                f,
+                "per-cell receipt-head live record {index} names ordinal {got}, expected \
+                 dense ordinal {expected}"
+            ),
+            Self::DuplicateCellInRecord { ordinal, cell } => write!(
+                f,
+                "commit record {ordinal} names cell {cell:?} more than once across touched/removed"
+            ),
+        }
+    }
+}
+
+impl Error for PerCellReceiptHeadReconstructionError {}
+
+/// Reconstruct every per-cell provenance head from the durable two-map model.
+///
+/// `baseline` is the last-writer-wins image of the compacted prefix
+/// `[0, compacted_floor)`. `live_records` must be the complete dense suffix
+/// `[compacted_floor, cursor)`. Every committing record advances the provenance
+/// head of the union of its post-state `touched_cells` and its `removed`
+/// tombstones to the record's receipt hash.  A removed cell deliberately keeps a
+/// head: recreating an id must not make its provenance appear to begin at genesis.
+///
+/// Validation completes before the returned map can be installed in an executor,
+/// so a malformed suffix never partially seeds authority/provenance state.
+pub(crate) fn reconstruct_per_cell_receipt_heads(
+    compacted_floor: u64,
+    cursor: u64,
+    baseline: &HashMap<CellId, PerCellReceiptHead>,
+    live_records: &[CommitRecord],
+) -> Result<HashMap<CellId, PerCellReceiptHead>, PerCellReceiptHeadReconstructionError> {
+    if cursor < compacted_floor {
+        return Err(PerCellReceiptHeadReconstructionError::CursorBehindFloor {
+            floor: compacted_floor,
+            cursor,
+        });
+    }
+
+    for (cell, head) in baseline {
+        if head.writer_ordinal >= compacted_floor {
+            return Err(
+                PerCellReceiptHeadReconstructionError::BaselineWriterOutsidePrefix {
+                    cell: *cell,
+                    writer_ordinal: head.writer_ordinal,
+                    floor: compacted_floor,
+                },
+            );
+        }
+    }
+
+    let expected_u64 = cursor - compacted_floor;
+    let expected = usize::try_from(expected_u64).map_err(|_| {
+        PerCellReceiptHeadReconstructionError::LiveRecordCountOverflow {
+            floor: compacted_floor,
+            cursor,
+        }
+    })?;
+    if live_records.len() != expected {
+        return Err(
+            PerCellReceiptHeadReconstructionError::LiveRecordCountMismatch {
+                floor: compacted_floor,
+                cursor,
+                expected,
+                got: live_records.len(),
+            },
+        );
+    }
+
+    let mut heads = baseline.clone();
+    for (index, record) in live_records.iter().enumerate() {
+        let expected_ordinal = compacted_floor + index as u64;
+        if record.ordinal != expected_ordinal {
+            return Err(
+                PerCellReceiptHeadReconstructionError::LiveRecordOrdinalMismatch {
+                    index,
+                    expected: expected_ordinal,
+                    got: record.ordinal,
+                },
+            );
+        }
+
+        let mut participants = HashSet::with_capacity(
+            record
+                .touched_cells
+                .len()
+                .saturating_add(record.removed.len()),
+        );
+        for cell in &record.touched_cells {
+            if !participants.insert(cell.id()) {
+                return Err(
+                    PerCellReceiptHeadReconstructionError::DuplicateCellInRecord {
+                        ordinal: record.ordinal,
+                        cell: cell.id(),
+                    },
+                );
+            }
+        }
+        for removed in &record.removed {
+            let cell = CellId(*removed);
+            if !participants.insert(cell) {
+                return Err(
+                    PerCellReceiptHeadReconstructionError::DuplicateCellInRecord {
+                        ordinal: record.ordinal,
+                        cell,
+                    },
+                );
+            }
+        }
+
+        let head = PerCellReceiptHead {
+            writer_ordinal: record.ordinal,
+            receipt_hash: record.receipt_hash,
+        };
+        for cell in participants {
+            heads.insert(cell, head);
+        }
+    }
+
+    Ok(heads)
 }
 
 /// Why an exact FNSP-v3 route was refused before execution.
@@ -263,7 +470,7 @@ pub(crate) fn validate_exact_fnsp_v3_route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_cell::{AuthRequired, Preconditions};
+    use dregg_cell::{AuthRequired, Cell, Preconditions};
     use dregg_turn::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier;
     use dregg_turn::{
         Action, Authorization, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Finality,
@@ -292,6 +499,154 @@ mod tests {
             was_burn: false,
             consumed_capabilities: Vec::new(),
         }
+    }
+
+    fn provenance_cell(marker: u8) -> Cell {
+        Cell::with_balance(
+            [marker; 32],
+            [marker.wrapping_add(1); 32],
+            i64::from(marker),
+        )
+    }
+
+    fn commit_record(
+        ordinal: u64,
+        marker: u8,
+        touched_cells: Vec<Cell>,
+        removed: Vec<CellId>,
+    ) -> CommitRecord {
+        CommitRecord {
+            ordinal,
+            height: ordinal + 1,
+            block_id: [marker.wrapping_add(1); 32],
+            block_executed_up_to: ordinal + 1,
+            turn_hash: [marker.wrapping_add(2); 32],
+            creator: [marker.wrapping_add(3); 32],
+            receipt_hash: [marker; 32],
+            ledger_root: [marker.wrapping_add(4); 32],
+            touched_cells,
+            removed: removed.into_iter().map(|cell| cell.0).collect(),
+        }
+    }
+
+    #[test]
+    fn per_cell_heads_fold_dense_suffix_and_preserve_removed_provenance() {
+        let a = provenance_cell(0xA1);
+        let b = provenance_cell(0xB1);
+        let a_id = a.id();
+        let b_id = b.id();
+        let records = vec![
+            commit_record(0, 0x11, vec![a, b], vec![]),
+            commit_record(1, 0x22, vec![], vec![a_id]),
+        ];
+
+        let heads = reconstruct_per_cell_receipt_heads(0, 2, &HashMap::new(), &records).unwrap();
+        assert_eq!(
+            heads.get(&a_id),
+            Some(&PerCellReceiptHead {
+                writer_ordinal: 1,
+                receipt_hash: [0x22; 32],
+            }),
+            "a removed id keeps the removing receipt as its provenance head"
+        );
+        assert_eq!(
+            heads.get(&b_id),
+            Some(&PerCellReceiptHead {
+                writer_ordinal: 0,
+                receipt_hash: [0x11; 32],
+            })
+        );
+    }
+
+    #[test]
+    fn per_cell_heads_replay_live_suffix_over_compacted_baseline() {
+        let a = provenance_cell(0xA2);
+        let b = provenance_cell(0xB2);
+        let a_id = a.id();
+        let b_id = b.id();
+        let baseline = HashMap::from([(
+            a_id,
+            PerCellReceiptHead {
+                writer_ordinal: 1,
+                receipt_hash: [0x10; 32],
+            },
+        )]);
+        let records = vec![
+            commit_record(2, 0x20, vec![b], vec![]),
+            commit_record(3, 0x30, vec![a], vec![]),
+        ];
+
+        let heads = reconstruct_per_cell_receipt_heads(2, 4, &baseline, &records).unwrap();
+        assert_eq!(heads[&a_id].writer_ordinal, 3);
+        assert_eq!(heads[&a_id].receipt_hash, [0x30; 32]);
+        assert_eq!(heads[&b_id].writer_ordinal, 2);
+        assert_eq!(heads[&b_id].receipt_hash, [0x20; 32]);
+    }
+
+    #[test]
+    fn per_cell_heads_fail_closed_on_floor_gap_or_ambiguous_participant() {
+        let a = provenance_cell(0xA3);
+        let a_id = a.id();
+        let out_of_prefix = HashMap::from([(
+            a_id,
+            PerCellReceiptHead {
+                writer_ordinal: 2,
+                receipt_hash: [0x40; 32],
+            },
+        )]);
+        assert!(matches!(
+            reconstruct_per_cell_receipt_heads(2, 2, &out_of_prefix, &[]),
+            Err(
+                PerCellReceiptHeadReconstructionError::BaselineWriterOutsidePrefix {
+                    writer_ordinal: 2,
+                    floor: 2,
+                    ..
+                }
+            )
+        ));
+        assert!(matches!(
+            reconstruct_per_cell_receipt_heads(3, 2, &HashMap::new(), &[]),
+            Err(PerCellReceiptHeadReconstructionError::CursorBehindFloor {
+                floor: 3,
+                cursor: 2
+            })
+        ));
+        assert!(matches!(
+            reconstruct_per_cell_receipt_heads(
+                0,
+                2,
+                &HashMap::new(),
+                &[commit_record(0, 0x41, vec![a.clone()], vec![])]
+            ),
+            Err(PerCellReceiptHeadReconstructionError::LiveRecordCountMismatch { .. })
+        ));
+        assert!(matches!(
+            reconstruct_per_cell_receipt_heads(
+                0,
+                1,
+                &HashMap::new(),
+                &[commit_record(7, 0x42, vec![a.clone()], vec![])]
+            ),
+            Err(
+                PerCellReceiptHeadReconstructionError::LiveRecordOrdinalMismatch {
+                    expected: 0,
+                    got: 7,
+                    ..
+                }
+            )
+        ));
+        assert!(matches!(
+            reconstruct_per_cell_receipt_heads(
+                0,
+                1,
+                &HashMap::new(),
+                &[commit_record(0, 0x43, vec![a], vec![a_id])]
+            ),
+            Err(PerCellReceiptHeadReconstructionError::DuplicateCellInRecord {
+                ordinal: 0,
+                cell,
+            }) if cell == a_id
+        ));
     }
 
     fn action(effects: Vec<Effect>) -> Action {
