@@ -1422,7 +1422,7 @@ mod tests {
         );
         drop(factories);
         drop(read);
-        assert_eq!(store.load_reactive_nullifier_keys().unwrap(), Vec::new());
+        assert!(store.load_reactive_nullifier_keys().unwrap().is_empty());
         assert_eq!(
             store
                 .load_latest_reactive_registry_snapshot_bytes()
