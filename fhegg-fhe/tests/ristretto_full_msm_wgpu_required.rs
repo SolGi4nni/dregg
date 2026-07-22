@@ -1,9 +1,10 @@
 //! Hard-hardware tooth for the bounded complete public-scalar Ristretto MSM.
 //!
-//! On hbox's RX 6750 XT the exact warm 17/256/1024/4096 matrix remained much
-//! slower than dalek (about 1.40/1.82/2.90/7.51 seconds versus
-//! 0.21/1.04/2.97/9.92 milliseconds). This is a required-mode qualification
-//! tooth, not evidence for enabling the default-disabled verifier backend.
+//! On hbox's RX 6750 XT the adaptive radix-16/radix-128 exact warm
+//! 17/256/1024/4096 matrix remained much slower than dalek (about
+//! 0.97/1.29/2.33/4.64 seconds versus 0.22/1.03/2.99/9.83 milliseconds).
+//! This is a required-mode qualification tooth, not evidence for enabling the
+//! default-disabled verifier backend.
 
 use std::time::Instant;
 
@@ -82,10 +83,15 @@ fn required_complete_msm_matches_dalek_and_verifier_refuses_bad_boundaries() {
         assert!(result.is_hardware);
         assert_eq!(result.term_count, terms);
         assert_eq!(result.compressed_result, expected);
-        assert_eq!(result.window_bits, 4);
-        assert_eq!(result.window_count, 64);
-        assert_eq!(result.bucket_count, 15);
-        assert_eq!(result.chunk_count, (terms as u32).div_ceil(64));
+        let (window_bits, chunk_terms) = if terms < 2_048 {
+            (4_u32, 64_u32)
+        } else {
+            (7_u32, 256_u32)
+        };
+        assert_eq!(result.window_bits, window_bits);
+        assert_eq!(result.window_count, 256_u32.div_ceil(window_bits));
+        assert_eq!(result.bucket_count, (1_u32 << window_bits) - 1);
+        assert_eq!(result.chunk_count, (terms as u32).div_ceil(chunk_terms));
         assert_eq!(
             result.partial_bucket_count,
             result.window_count * result.chunk_count * result.bucket_count

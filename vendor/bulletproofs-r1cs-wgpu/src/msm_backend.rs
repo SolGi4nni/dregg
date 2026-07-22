@@ -9,7 +9,8 @@
 //! GPU window preparation, but deliberately keeps group MSM in dalek: the
 //! branch-bearing public-scalar kernel is not an acceptable secret-scalar
 //! replacement. The verifier seam owns a complete bounded GPU MSM: a
-//! device-resident radix-16 Pippenger reduction with chunk-local buckets.
+//! device-resident adaptive-window Pippenger reduction with chunk-local
+//! buckets.
 //! Dalek still computes the result independently and is the canonical
 //! acceptance oracle.
 //!
@@ -699,10 +700,12 @@ pub fn prepare_scalar_windows_wgpu(
 
 /// Execute a complete, bounded MSM on wgpu for public verifier inputs.
 ///
-/// The device builds radix-16 public-scalar buckets in bounded 64-term chunks,
-/// reduces those chunks, collapses the weighted buckets per window, and then
-/// performs a short high-to-low radix-16 combination. All four ordered stages
-/// stay device-resident and only the final extended point is read back.
+/// The device builds public-scalar buckets in bounded chunks, reduces those
+/// chunks, collapses the weighted buckets per window, and then performs a short
+/// high-to-low radix combination. The measured geometry is radix 16 / 64-term
+/// chunks below 2,048 terms and radix 128 / 256-term chunks at or above it.
+/// All four ordered stages stay device-resident and only the final extended
+/// point is read back.
 /// The returned encoding remains CPU-authoritative: dalek independently
 /// computes the same MSM, then validates the GPU coordinates and requires the
 /// canonical compressed bytes to agree exactly. This variable-time kernel is
@@ -736,22 +739,25 @@ pub fn vartime_multiscalar_mul_wgpu(
     let expected = RistrettoPoint::vartime_multiscalar_mul(&scalars, &points);
     let expected_compressed = expected.compress();
 
-    const WINDOW_BITS: u32 = 4;
-    const WINDOW_COUNT: u32 = 256 / WINDOW_BITS;
-    const BUCKET_COUNT: u32 = (1 << WINDOW_BITS) - 1;
-    const CHUNK_TERMS: u32 = 64;
     const WORKGROUP_SIZE: u32 = 64;
     const ONE_POINT_BYTES: u64 = (4 * 32 * core::mem::size_of::<u32>()) as u64;
 
     let term_count =
         u32::try_from(scalar_bytes.len()).map_err(|_| MsmBackendError::DimensionOverflow)?;
-    let chunk_count = term_count.div_ceil(CHUNK_TERMS);
-    let partial_bucket_count = WINDOW_COUNT
+    let (window_bits, chunk_terms) = if term_count < 2_048 {
+        (4_u32, 64_u32)
+    } else {
+        (7_u32, 256_u32)
+    };
+    let window_count = 256_u32.div_ceil(window_bits);
+    let bucket_count = (1_u32 << window_bits) - 1;
+    let chunk_count = term_count.div_ceil(chunk_terms);
+    let partial_bucket_count = window_count
         .checked_mul(chunk_count)
-        .and_then(|count| count.checked_mul(BUCKET_COUNT))
+        .and_then(|count| count.checked_mul(bucket_count))
         .ok_or(MsmBackendError::DimensionOverflow)?;
-    let reduced_bucket_count = WINDOW_COUNT
-        .checked_mul(BUCKET_COUNT)
+    let reduced_bucket_count = window_count
+        .checked_mul(bucket_count)
         .ok_or(MsmBackendError::DimensionOverflow)?;
     let partial_bucket_bytes = u64::from(partial_bucket_count)
         .checked_mul(ONE_POINT_BYTES)
@@ -759,7 +765,7 @@ pub fn vartime_multiscalar_mul_wgpu(
     let reduced_bucket_bytes = u64::from(reduced_bucket_count)
         .checked_mul(ONE_POINT_BYTES)
         .ok_or(MsmBackendError::DimensionOverflow)?;
-    let window_sum_bytes = u64::from(WINDOW_COUNT)
+    let window_sum_bytes = u64::from(window_count)
         .checked_mul(ONE_POINT_BYTES)
         .ok_or(MsmBackendError::DimensionOverflow)?;
     let partial_workgroups = partial_bucket_count.div_ceil(WORKGROUP_SIZE);
@@ -878,13 +884,13 @@ pub fn vartime_multiscalar_mul_wgpu(
             label: Some(label),
             contents: bytemuck::cast_slice(&[
                 term_count,
-                WINDOW_COUNT,
-                BUCKET_COUNT,
+                window_count,
+                bucket_count,
                 chunk_count,
                 stage,
                 32,
-                0,
-                0,
+                window_bits,
+                chunk_terms,
             ]),
             usage: wgpu::BufferUsages::UNIFORM,
         })
@@ -1108,17 +1114,29 @@ pub fn vartime_multiscalar_mul_wgpu(
 
     let nonzero_digits = scalar_bytes
         .iter()
-        .flat_map(|scalar| scalar.iter())
-        .map(|byte| u64::from(byte & 15 != 0) + u64::from(byte >> 4 != 0))
+        .map(|scalar| {
+            (0..window_count)
+                .filter(|&window| {
+                    let bit_index = window * window_bits;
+                    let byte_index = (bit_index >> 3) as usize;
+                    let shift = bit_index & 7;
+                    let mut digit = u16::from(scalar[byte_index]) >> shift;
+                    if shift + window_bits > 8 && byte_index + 1 < scalar.len() {
+                        digit |= u16::from(scalar[byte_index + 1]) << (8 - shift);
+                    }
+                    digit & ((1_u16 << window_bits) - 1) != 0
+                })
+                .count() as u64
+        })
         .sum();
     let bucket_term_tests = u64::from(term_count)
-        .checked_mul(u64::from(WINDOW_COUNT))
-        .and_then(|count| count.checked_mul(u64::from(BUCKET_COUNT)))
+        .checked_mul(u64::from(window_count))
+        .and_then(|count| count.checked_mul(u64::from(bucket_count)))
         .ok_or(MsmBackendError::DimensionOverflow)?;
     let post_bucket_addition_upper_bound = u64::from(reduced_bucket_count)
         .checked_mul(u64::from(chunk_count))
-        .and_then(|count| count.checked_add(u64::from(WINDOW_COUNT) * u64::from(BUCKET_COUNT) * 2))
-        .and_then(|count| count.checked_add(u64::from(WINDOW_COUNT) * u64::from(WINDOW_BITS + 1)))
+        .and_then(|count| count.checked_add(u64::from(window_count) * u64::from(bucket_count) * 2))
+        .and_then(|count| count.checked_add(u64::from(window_count) * u64::from(window_bits + 1)))
         .ok_or(MsmBackendError::DimensionOverflow)?;
 
     Ok(WgpuMsmResult {
@@ -1127,9 +1145,9 @@ pub fn vartime_multiscalar_mul_wgpu(
         term_count: scalar_bytes.len(),
         compressed_result: expected_compressed.to_bytes(),
         gpu_elapsed_micros,
-        window_bits: WINDOW_BITS,
-        window_count: WINDOW_COUNT,
-        bucket_count: BUCKET_COUNT,
+        window_bits,
+        window_count,
+        bucket_count,
         chunk_count,
         partial_bucket_count,
         bucket_term_tests,

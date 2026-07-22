@@ -14,8 +14,8 @@ struct Params {
     chunk_count: u32,
     stage: u32,
     limb_count: u32,
-    _pad1: u32,
-    _pad2: u32,
+    window_bits: u32,
+    chunk_terms: u32,
 };
 
 struct Fe {
@@ -115,45 +115,65 @@ fn fe_canonical(input: Fe) -> Fe {
 
 fn fe_add(a: Fe, b: Fe) -> Fe {
     var out: Fe;
+    var carry = 0u;
     for (var i = 0u; i < params.limb_count; i = i + 1u) {
-        out.limb[i] = a.limb[i] + b.limb[i];
+        let sum = a.limb[i] + b.limb[i] + carry;
+        out.limb[i] = sum & 255u;
+        carry = sum >> 8u;
     }
-    return fe_canonical(out);
-}
-
-fn fe_is_zero(a: Fe) -> bool {
-    let reduced = fe_canonical(a);
-    var any = 0u;
-    for (var i = 0u; i < params.limb_count; i = i + 1u) {
-        any = any | reduced.limb[i];
-    }
-    return any == 0u;
-}
-
-fn fe_neg(a: Fe) -> Fe {
-    let reduced = fe_canonical(a);
-    if (fe_is_zero(reduced)) {
-        var zero: Fe;
-        return zero;
-    }
-    var out: Fe;
-    var borrow = 0u;
-    for (var i = 0u; i < params.limb_count; i = i + 1u) {
-        let subtrahend = reduced.limb[i] + borrow;
-        let p = p_digit(i);
-        if (p < subtrahend) {
-            out.limb[i] = p + 256u - subtrahend;
-            borrow = 1u;
-        } else {
-            out.limb[i] = p - subtrahend;
-            borrow = 0u;
-        }
+    // Canonical inputs are both below p, hence a+b < 2p < 2^256: the final
+    // carry is zero and one conditional subtraction is sufficient.
+    if (fe_ge_p(out)) {
+        out = fe_sub_p(out);
     }
     return out;
 }
 
+fn fe_is_zero(a: Fe) -> bool {
+    var any = 0u;
+    for (var i = 0u; i < params.limb_count; i = i + 1u) {
+        any = any | a.limb[i];
+    }
+    return any == 0u;
+}
+
+fn fe_equal(a: Fe, b: Fe) -> bool {
+    var different = 0u;
+    for (var i = 0u; i < params.limb_count; i = i + 1u) {
+        different = different | (a.limb[i] ^ b.limb[i]);
+    }
+    return different == 0u;
+}
+
 fn fe_sub(a: Fe, b: Fe) -> Fe {
-    return fe_add(a, fe_neg(b));
+    // Form canonical base-256 digits of a+p first. Since a<p, a+p<2^256.
+    // Subtracting b cannot underflow, and the result is below 2p, so one
+    // conditional p subtraction gives the canonical field difference. This
+    // avoids the old negate+add path's repeated five-lap canonicalizations.
+    var augmented: Fe;
+    var carry = 0u;
+    for (var i = 0u; i < params.limb_count; i = i + 1u) {
+        let sum = a.limb[i] + p_digit(i) + carry;
+        augmented.limb[i] = sum & 255u;
+        carry = sum >> 8u;
+    }
+
+    var out: Fe;
+    var borrow = 0u;
+    for (var i = 0u; i < params.limb_count; i = i + 1u) {
+        let subtrahend = b.limb[i] + borrow;
+        if (augmented.limb[i] < subtrahend) {
+            out.limb[i] = augmented.limb[i] + 256u - subtrahend;
+            borrow = 1u;
+        } else {
+            out.limb[i] = augmented.limb[i] - subtrahend;
+            borrow = 0u;
+        }
+    }
+    if (fe_ge_p(out)) {
+        out = fe_sub_p(out);
+    }
+    return out;
 }
 
 fn fe_mul(a: Fe, b: Fe) -> Fe {
@@ -205,9 +225,8 @@ fn point_from_constants(base: u32) -> ExtPoint {
 }
 
 fn fe_to_sums(value: Fe, base: u32) {
-    let reduced = fe_canonical(value);
     for (var i = 0u; i < params.limb_count; i = i + 1u) {
-        sums[base + i] = reduced.limb[i];
+        sums[base + i] = value.limb[i];
     }
 }
 
@@ -232,7 +251,8 @@ fn add_points(left: ExtPoint, right: ExtPoint, d2: Fe) -> ExtPoint {
     let a = fe_mul(fe_sub(left.y, left.x), fe_sub(right.y, right.x));
     let b = fe_mul(fe_add(left.y, left.x), fe_add(right.y, right.x));
     let c = fe_mul(fe_mul(left.t, right.t), d2);
-    let d = fe_add(fe_mul(left.z, right.z), fe_mul(left.z, right.z));
+    let zz = fe_mul(left.z, right.z);
+    let d = fe_add(zz, zz);
     let e = fe_sub(b, a);
     let f = fe_sub(d, c);
     let g = fe_add(d, c);
@@ -246,7 +266,7 @@ fn add_points(left: ExtPoint, right: ExtPoint, d2: Fe) -> ExtPoint {
 }
 
 fn point_is_identity(point: ExtPoint) -> bool {
-    return fe_is_zero(point.x) && fe_is_zero(point.t) && fe_is_zero(fe_sub(point.y, point.z));
+    return fe_is_zero(point.x) && fe_is_zero(point.t) && fe_equal(point.y, point.z);
 }
 
 @compute @workgroup_size(64)
@@ -264,13 +284,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 
 fn scalar_window(term: u32, window: u32) -> u32 {
-    let bit_index = window * 4u;
+    let bit_index = window * params.window_bits;
     let byte_index = bit_index >> 3u;
     let shift = bit_index & 7u;
-    return (scalar_bytes[term * 32u + byte_index] >> shift) & 15u;
+    var digit = scalar_bytes[term * 32u + byte_index] >> shift;
+    if (shift + params.window_bits > 8u && byte_index + 1u < 32u) {
+        digit = digit | (scalar_bytes[term * 32u + byte_index + 1u] << (8u - shift));
+    }
+    let mask = (1u << params.window_bits) - 1u;
+    return digit & mask;
 }
 
-// Stage 1: one invocation per `[window][64-term chunk][nonzero bucket]`.
+// Stage 1: one invocation per `[window][bounded-term chunk][nonzero bucket]`.
 // Every invocation owns its accumulator, so no coordinate atomics or host
 // synchronization are needed. Scalar-dependent control flow is permitted only
 // because verifier scalars are public.
@@ -283,8 +308,8 @@ fn run_partial_buckets(flat: u32) {
     let quotient = flat / params.bucket_count;
     let chunk = quotient % params.chunk_count;
     let window = quotient / params.chunk_count;
-    let first_term = chunk * 64u;
-    let end_term = min(first_term + 64u, params.item_count);
+    let first_term = chunk * params.chunk_terms;
+    let end_term = min(first_term + params.chunk_terms, params.item_count);
     let d2 = fe_from_constants(0u);
     var accumulator = point_from_constants(32u);
     var has_value = false;
@@ -293,7 +318,6 @@ fn run_partial_buckets(flat: u32) {
             let point = load_point(term * 128u);
             if (has_value) {
                 accumulator = add_points(accumulator, point, d2);
-                has_value = !point_is_identity(accumulator);
             } else {
                 accumulator = point;
                 has_value = true;
@@ -320,7 +344,6 @@ fn run_reduce_buckets(flat: u32) {
         if (!point_is_identity(point)) {
             if (has_value) {
                 accumulator = add_points(accumulator, point, d2);
-                has_value = !point_is_identity(accumulator);
             } else {
                 accumulator = point;
                 has_value = true;
@@ -331,7 +354,7 @@ fn run_reduce_buckets(flat: u32) {
 }
 
 // Stage 3: Pippenger's descending running-sum identity converts the nonzero
-// buckets into one weighted point per radix-16 window.
+// buckets into one weighted point per window.
 fn run_collapse_windows(window: u32) {
     if (window >= params.window_count) {
         return;
@@ -339,6 +362,8 @@ fn run_collapse_windows(window: u32) {
     let d2 = fe_from_constants(0u);
     var running = point_from_constants(32u);
     var weighted = point_from_constants(32u);
+    var running_has_value = false;
+    var weighted_has_value = false;
     var cursor = params.bucket_count;
     loop {
         if (cursor == 0u) {
@@ -347,17 +372,27 @@ fn run_collapse_windows(window: u32) {
         cursor = cursor - 1u;
         let bucket = load_point((window * params.bucket_count + cursor) * 128u);
         if (!point_is_identity(bucket)) {
-            running = add_points(running, bucket, d2);
+            if (running_has_value) {
+                running = add_points(running, bucket, d2);
+            } else {
+                running = bucket;
+                running_has_value = true;
+            }
         }
-        if (!point_is_identity(running)) {
-            weighted = add_points(weighted, running, d2);
+        if (running_has_value) {
+            if (weighted_has_value) {
+                weighted = add_points(weighted, running, d2);
+            } else {
+                weighted = running;
+                weighted_has_value = true;
+            }
         }
     }
     store_point(weighted, window * 128u);
 }
 
-// Stage 4: only the 64 radix-16 window sums remain. This dependent chain is
-// bounded at 256 doublings + 64 additions and stays device-resident.
+// Stage 4: only the bounded window sums remain. This dependent chain is at
+// most 256 doublings plus one addition per window and stays device-resident.
 fn run_combine_windows(invocation: u32) {
     if (invocation != 0u) {
         return;
@@ -373,7 +408,7 @@ fn run_combine_windows(invocation: u32) {
         cursor = cursor - 1u;
         let window_sum = load_point(cursor * 128u);
         if (has_value) {
-            for (var bit = 0u; bit < 4u; bit = bit + 1u) {
+            for (var bit = 0u; bit < params.window_bits; bit = bit + 1u) {
                 accumulator = add_points(accumulator, accumulator, d2);
             }
             if (!point_is_identity(window_sum)) {

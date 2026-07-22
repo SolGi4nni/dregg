@@ -56,26 +56,8 @@ nightly = ["subtle/nightly", "clear_on_drop/nightly"]
 docs = ["nightly"]
 
 
-[[test]]
-name = "range_proof"
-
-[[test]]
-name = "r1cs"
-required-features = ["yoloproofs"]
-
-[[bench]]
-name = "range_proof"
-harness = false
-
-[[bench]]
-name = "generators"
-harness = false
-
-[[bench]]
-name = "r1cs"
-harness = false
-required-features = ["yoloproofs"]
-
-[[bench]]
-name = "linear_proof"
-harness = false
+# Keep this fork independently testable even though the workspace root also
+# patches the same exact dalek fork. Cargo ignores nested patches when this
+# package is consumed by the root workspace and honors it for `--manifest-path`.
+[patch.crates-io]
+curve25519-dalek = { path = "../curve25519-dalek-dregg" }
