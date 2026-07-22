@@ -35,24 +35,26 @@ use fhegg_fhe::attestation::{
     InputDigest, InputDigestKind, PartyIdentity, ReplayGuard,
 };
 use fhegg_fhe::mpc::Crossing;
-use fhegg_fhe::mpc_party::{DistributedTranscript, MaskedOpening, PartyMpcError, PartyMpcSession};
+use fhegg_fhe::mpc_party::{
+    DistributedTranscript, MaskedOpening, PartyMpcError, PartyMpcSession,
+    TripleFormationCertificate,
+};
 
 use crate::fhegg_settlement::{FheggSettlementError, FheggSettlementReceipt};
 use crate::{DarkBazaarOffering, DarkBazaarSession};
 
-const WIRE_MAGIC: &[u8; 8] = b"FHDBv001";
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const WIRE_MAGIC: &[u8; 8] = b"FHDBv002";
 
 /// Stable operation name for HTTP routes, bot command adapters, queues, and
 /// native dispatchers. The operation body is [`FheggSettlementBundle::to_wire_bytes`].
-pub const FHEGG_SETTLEMENT_OPERATION: &str = "dark-bazaar.settle-fhegg.v1";
+pub const FHEGG_SETTLEMENT_OPERATION: &str = "dark-bazaar.settle-fhegg.v2";
 
 /// Exact content type accepted by HTTP and message-adapter upload boundaries.
-pub const FHEGG_SETTLEMENT_MEDIA_TYPE: &str = "application/vnd.dregg.fhegg-settlement.v1";
+pub const FHEGG_SETTLEMENT_MEDIA_TYPE: &str = "application/vnd.dregg.fhegg-settlement.v2";
 
 /// Text a host can expose beside an upload/submit affordance without overstating
 /// the current privacy or computation-integrity boundary.
-pub const FHEGG_SETTLEMENT_DISCLOSURE: &str = "Authenticated fhEgg result: trader plaintext is absent from this request. The exact encrypted seller ask and concrete asset are frozen into a reserved WriteOnce listing-source slot before bids; every accepted bid seal likewise includes an exact signed-message/ciphertext binding certified after the configured ingress verifier reproduced that operator-visible BFV encryption. Substituting the asset, ask, bid, ciphertext, actor, certificate, BFV domain, or seal fails. This is a source-verifier trust boundary, not a house-blind lattice ZK proof. Current fhEgg execution is semi-honest with trusted Beaver preprocessing and threshold-opening assumptions. A durable host retains this canonical public bundle for restart verification: ciphertext/source digests, masked openings, computation-integrity evidence, and public result. The fhEgg replay sidecar never stores order plaintext, an FHE secret key, encryption randomness, a decryption share, a Beaver triple, or a party input share. The current CRAWL move log separately replays its operator-visible order values and public source certificates; this does not make CRAWL Tier0 house-blind.";
+pub const FHEGG_SETTLEMENT_DISCLOSURE: &str = "Authenticated fhEgg result: trader plaintext is absent from this request. The exact encrypted seller ask and concrete asset are frozen into a reserved WriteOnce listing-source slot before bids; every accepted bid seal likewise includes an exact signed-message/ciphertext binding certified after the configured ingress verifier reproduced that operator-visible BFV encryption. Substituting the asset, ask, bid, ciphertext, actor, certificate, BFV domain, or seal fails. This is a source-verifier trust boundary, not a house-blind lattice ZK proof. FHTRI004 adds roster/session-bound binary sacrifice and two-lane authenticated openings, while its setup authority still sees the candidate bits and MAC keys; it is not dealer-free malicious MPC or a PQ-completeness claim. A durable host retains this canonical public bundle for restart verification: the full hybrid-signed preprocessing certificate, exact timeout, ciphertext/source digests, masked openings, computation-integrity evidence, and public result. The fhEgg replay sidecar never stores order plaintext, an FHE secret key, encryption randomness, a decryption share, a MAC key share, a Beaver triple, or a party input share. The current CRAWL move log separately replays its operator-visible order values and public source certificates; this does not make CRAWL Tier0 house-blind.";
 
 /// Hard transport limits are deliberately below `usize` and independent of
 /// attacker-controlled declared lengths. The current N=2,K=4 demo is tiny.
@@ -61,6 +63,7 @@ const MAX_PARTIES: usize = 4_096;
 const MAX_INPUTS: usize = 262_144;
 const MAX_MASKED_OPENINGS: usize = 4_000_000;
 const MAX_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PREPROCESSING_CERTIFICATE_BYTES: usize = 1024 * 1024;
 const MAX_BIT_BYTES: usize = 64;
 
 #[derive(Clone, Debug)]
@@ -82,6 +85,9 @@ impl FheggSettlementBundle {
         expected: &ExpectedClearingContext<'_>,
         receipt: &AttestedClearingReceipt,
     ) -> Result<Self, FheggTransportError> {
+        if expected.session.preprocessing_binding().is_some() {
+            expected.session.require_certified_preprocessing()?;
+        }
         check_limits(
             expected.ordered_roster.len(),
             expected.ordered_inputs.len(),
@@ -137,6 +143,15 @@ impl FheggSettlementBundle {
         out.usize(self.session.buckets());
         out.usize(self.session.value_bits());
         out.u64(self.session.plaintext_modulus());
+        out.u64(self.session.quorum_timeout().as_secs());
+        out.u32(self.session.quorum_timeout().subsec_nanos());
+        match self.session.preprocessing_certificate() {
+            None => out.u8(0),
+            Some(certificate) => {
+                out.u8(1);
+                out.bytes(&certificate.canonical_bytes());
+            }
+        }
 
         out.usize(self.ordered_roster.len());
         for party in &self.ordered_roster {
@@ -217,17 +232,38 @@ impl FheggSettlementBundle {
         let buckets = input.usize()?;
         let value_bits = input.usize()?;
         let plaintext_modulus = input.u64()?;
+        let timeout_secs = input.u64()?;
+        let timeout_nanos = input.u32()?;
+        if timeout_nanos >= 1_000_000_000 {
+            return Err(FheggTransportError::Malformed(
+                "invalid session timeout nanoseconds",
+            ));
+        }
+        let preprocessing_certificate = match input.u8()? {
+            0 => None,
+            1 => Some(TripleFormationCertificate::from_canonical_bytes(
+                &input.bounded_bytes(MAX_PREPROCESSING_CERTIFICATE_BYTES)?,
+            )?),
+            _ => {
+                return Err(FheggTransportError::Malformed(
+                    "invalid preprocessing binding tag",
+                ));
+            }
+        };
         if n_parties > MAX_PARTIES || value_bits > 63 {
             return Err(FheggTransportError::DeclaredLimitExceeded);
         }
-        let session = PartyMpcSession::new(
+        let mut session = PartyMpcSession::new(
             nonce,
             n_parties,
             buckets,
             value_bits,
             plaintext_modulus,
-            VERIFY_TIMEOUT,
+            Duration::new(timeout_secs, timeout_nanos),
         )?;
+        if let Some(certificate) = preprocessing_certificate {
+            session = session.with_public_preprocessing_certificate(certificate)?;
+        }
 
         let roster_len = input.bounded_len(MAX_PARTIES)?;
         let mut ordered_roster = Vec::with_capacity(roster_len);
@@ -464,6 +500,10 @@ impl Encoder {
         self.raw(&value.to_be_bytes());
     }
 
+    fn u32(&mut self, value: u32) {
+        self.raw(&value.to_be_bytes());
+    }
+
     fn usize(&mut self, value: usize) {
         self.u64(value as u64);
     }
@@ -509,6 +549,10 @@ impl<'a> Decoder<'a> {
 
     fn u64(&mut self) -> Result<u64, FheggTransportError> {
         Ok(u64::from_be_bytes(self.raw::<8>()?))
+    }
+
+    fn u32(&mut self) -> Result<u32, FheggTransportError> {
+        Ok(u32::from_be_bytes(self.raw::<4>()?))
     }
 
     fn usize(&mut self) -> Result<usize, FheggTransportError> {

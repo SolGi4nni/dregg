@@ -23,7 +23,8 @@
 //! beacon unpredictable before value-opening commitments are fixed. This
 //! module supplies those commit/reveal typestates but not a network, signatures,
 //! rollback resistance, or a proof that remote code followed the local API.
-//! It remains additive beside `FHTRI003` and binary sacrifice.
+//! `FHTRI004` composes this layer with binary sacrifice; the trusted setup and
+//! missing quantified reduction remain explicit in that live binding.
 
 use std::fmt;
 
@@ -165,6 +166,25 @@ impl AuthenticatedBitManifest {
 
     pub fn mac_lanes(&self) -> usize {
         AUTHENTICATED_BIT_MAC_LANES
+    }
+
+    /// Reuse one authenticated setup for a shorter row obtained exclusively
+    /// through public linear operations on its source shares.
+    ///
+    /// The hidden MAC keys and setup root stay unchanged.  Opening transcripts
+    /// still bind the exact derived length, so a mask row and a check row cannot
+    /// be substituted for one another.  This does not authenticate a fresh
+    /// arbitrary row: [`AuthenticatedBitRow::from_linear_shares`] remains the
+    /// only constructor for the corresponding custody value.
+    pub fn linear_view(&self, values: usize) -> Result<Self> {
+        if values == 0 || values > self.values || values > MAX_AUTHENTICATED_BITS {
+            return Err(AuthenticatedBitError::InvalidParameters(
+                "derived authenticated view has an invalid length",
+            ));
+        }
+        let mut view = self.clone();
+        view.values = values;
+        Ok(view)
     }
 }
 

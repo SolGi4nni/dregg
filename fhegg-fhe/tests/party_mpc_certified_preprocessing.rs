@@ -24,17 +24,20 @@ use fhegg_fhe::attestation::{
 };
 use fhegg_fhe::mpc::Crossing;
 use fhegg_fhe::mpc_party::transport::{
-    EqualityPartyMachine, EqualityTransportError, EqualityTransportRoster,
+    EqualityCoordinatorMachine, EqualityPartyMachine, EqualityTransportError,
+    EqualityTransportRoster,
 };
 use fhegg_fhe::mpc_party::{
     certified_dealer_triples, local_channels, run_party_equality, simulate_public_transcript,
-    PartyEqualityInput, PartyMpcError, PartyMpcSession, PreprocessingPqOperation, TripleMaterial,
+    trusted_dealer_triples, PartyEqualityInput, PartyMpcError, PartyMpcSession,
+    PreprocessingPqOperation, TripleFormationCertificate, TripleMaterial,
 };
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 const N: usize = 3;
 const MODULUS: u64 = 257;
+const TEST_ROSTER_DIGEST: [u8; 64] = [0x5a; 64];
 
 struct AcceptExactEvidence([u8; 32]);
 
@@ -95,10 +98,19 @@ fn certified_batch(
     base: &PartyMpcSession,
     seed: u64,
 ) -> fhegg_fhe::mpc_party::CertifiedTripleBatch {
+    certified_batch_for_roster(base, seed, TEST_ROSTER_DIGEST)
+}
+
+fn certified_batch_for_roster(
+    base: &PartyMpcSession,
+    seed: u64,
+    roster_digest: [u8; 64],
+) -> fhegg_fhe::mpc_party::CertifiedTripleBatch {
     let authority = SigningKey::from_bytes(&[0x41; 32]);
     let ml_dsa_authority = MlDsaKey::from_ed25519_seed(&authority.to_bytes());
     certified_dealer_triples(
         base,
+        roster_digest,
         &mut StdRng::seed_from_u64(seed),
         &authority,
         &ml_dsa_authority,
@@ -127,6 +139,48 @@ fn certified_rows_complete_honest_equality_and_bind_the_exact_batch_body() {
         session.preprocessing_binding().unwrap().batch_digest(),
         certificate.digest()
     );
+    let certificate_bytes = certificate.canonical_bytes();
+    let decoded_certificate =
+        TripleFormationCertificate::from_canonical_bytes(&certificate_bytes).unwrap();
+    assert_eq!(
+        &decoded_certificate,
+        session.preprocessing_certificate().unwrap()
+    );
+    assert_eq!(
+        base.clone()
+            .with_public_preprocessing_certificate(decoded_certificate)
+            .unwrap(),
+        session,
+        "restart reconstruction must preserve the exact FHTRI004 session domain",
+    );
+    let mut mutated_certificate = certificate_bytes;
+    *mutated_certificate.last_mut().unwrap() ^= 1;
+    assert!(TripleFormationCertificate::from_canonical_bytes(&mutated_certificate).is_err());
+
+    let certificate_bytes = certificate.canonical_bytes();
+    let mut downgraded_certificate = certificate_bytes.clone();
+    downgraded_certificate[..8].copy_from_slice(b"FHTFC003");
+    assert!(TripleFormationCertificate::from_canonical_bytes(&downgraded_certificate).is_err());
+    assert!(TripleFormationCertificate::from_canonical_bytes(
+        &certificate_bytes[..certificate_bytes.len() - 1]
+    )
+    .is_err());
+    let mut trailing_certificate = certificate_bytes.clone();
+    trailing_certificate.push(0);
+    assert!(TripleFormationCertificate::from_canonical_bytes(&trailing_certificate).is_err());
+    let n_parties_offset = 8 + 32 + 64 + 32 + ML_DSA_PK_LEN;
+    let mut hostile_count = certificate_bytes.clone();
+    hostile_count[n_parties_offset..n_parties_offset + 8].copy_from_slice(&u64::MAX.to_be_bytes());
+    assert!(TripleFormationCertificate::from_canonical_bytes(&hostile_count).is_err());
+    let receipt_offset = n_parties_offset + 8 + 8;
+    let mut crossed_receipt_roster = certificate_bytes;
+    crossed_receipt_roster[receipt_offset + 9 + 32] ^= 1;
+    assert!(TripleFormationCertificate::from_canonical_bytes(&crossed_receipt_roster).is_err());
+
+    assert!(matches!(
+        trusted_dealer_triples(&session, &mut StdRng::seed_from_u64(0x7173)),
+        Err(PartyMpcError::MissingCertifiedPreprocessing)
+    ));
 
     // Exercise the protected-custody parser, not only in-memory dealer output.
     let wires = materials
@@ -201,8 +255,17 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body(
     ));
 
     // Both authority signatures are mandatory and checked independently of
-    // the row hash. There is no Ed-only downgrade for a v3 custody wire.
-    let ed25519_signature_offset = 8 + 32 + 32 + ML_DSA_PK_LEN + 8 + 8 + N * 32 + 32;
+    // the row hash. There is no Ed-only downgrade for a v4 custody wire.
+    let ed25519_signature_offset = 8
+        + 32
+        + 64
+        + 32
+        + ML_DSA_PK_LEN
+        + 8
+        + 8
+        + fhegg_fhe::mpc_party::authenticated_preprocessing::AUTHENTICATED_SACRIFICE_RECEIPT_BYTES
+        + N * 32
+        + 32;
     let mut forged_certificate = wires_a[0].clone();
     forged_certificate[ed25519_signature_offset] ^= 1;
     assert!(matches!(
@@ -215,12 +278,24 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body(
         TripleMaterial::from_wire_bytes(&session_a, 0, &missing_pq_half),
         Err(PartyMpcError::InvalidTripleFormationCertificate)
     ));
-    let mut downgraded_v2 = wires_a[0].clone();
-    downgraded_v2[..8].copy_from_slice(b"FHTRI002");
+    let mut tampered_roster = wires_a[0].clone();
+    tampered_roster[8 + 32] ^= 1;
     assert!(matches!(
-        TripleMaterial::from_wire_bytes(&session_a, 0, &downgraded_v2),
-        Err(PartyMpcError::MissingCertifiedPreprocessing)
-            | Err(PartyMpcError::MalformedTripleMaterialWire)
+        TripleMaterial::from_wire_bytes(&session_a, 0, &tampered_roster),
+        Err(PartyMpcError::SessionMismatch)
+    ));
+    let receipt_offset = 8 + 32 + 64 + 32 + ML_DSA_PK_LEN + 8 + 8;
+    let mut tampered_transcript = wires_a[0].clone();
+    tampered_transcript[receipt_offset + 200] ^= 1;
+    assert!(matches!(
+        TripleMaterial::from_wire_bytes(&session_a, 0, &tampered_transcript),
+        Err(PartyMpcError::InvalidAuthenticatedPreprocessing) | Err(PartyMpcError::SessionMismatch)
+    ));
+    let mut downgraded_v3 = wires_a[0].clone();
+    downgraded_v3[..8].copy_from_slice(b"FHTRI003");
+    assert!(matches!(
+        TripleMaterial::from_wire_bytes(&session_a, 0, &downgraded_v3),
+        Err(PartyMpcError::InvalidTripleFormationCertificate)
     ));
 
     assert!(matches!(
@@ -254,6 +329,7 @@ fn malformed_relabelled_replayed_and_equivocated_rows_refuse_before_a_gate_body(
     let attacker_ml_dsa = MlDsaKey::from_ed25519_seed(&attacker_ed25519.to_bytes());
     let attacker_batch = certified_dealer_triples(
         &base_a,
+        TEST_ROSTER_DIGEST,
         &mut StdRng::seed_from_u64(0x8182),
         &attacker_ed25519,
         &attacker_ml_dsa,
@@ -297,13 +373,6 @@ fn authenticated_peer_frames_cannot_cross_certified_batch_domains() {
 
 fn authenticated_peer_frames_cannot_cross_certified_batch_domains_body() {
     let base = base_session(0x91);
-    let (session_a, _, mut materials_a) = certified_batch(&base, 0x9192).into_parts();
-    let (session_b, _, mut materials_b) = certified_batch(&base, 0x9293).into_parts();
-    assert_ne!(
-        session_a.preprocessing_binding(),
-        session_b.preprocessing_binding()
-    );
-
     let keys = [
         SigningKey::from_bytes(&[0x51; 32]),
         SigningKey::from_bytes(&[0x52; 32]),
@@ -317,6 +386,31 @@ fn authenticated_peer_frames_cannot_cross_certified_batch_domains_body() {
         coordinator.verifying_key().to_bytes(),
     )
     .unwrap();
+    let roster_digest = roster.preprocessing_roster_digest();
+    let (session_a, _, mut materials_a) =
+        certified_batch_for_roster(&base, 0x9192, roster_digest).into_parts();
+    let (session_b, _, mut materials_b) =
+        certified_batch_for_roster(&base, 0x9293, roster_digest).into_parts();
+    assert_ne!(
+        session_a.preprocessing_binding(),
+        session_b.preprocessing_binding()
+    );
+    let substituted_coordinator = SigningKey::from_bytes(&[0x55; 32]);
+    let substituted_roster = EqualityTransportRoster::new(
+        keys.iter()
+            .map(|key| key.verifying_key().to_bytes())
+            .collect(),
+        substituted_coordinator.verifying_key().to_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(
+        EqualityCoordinatorMachine::new(
+            session_a.clone(),
+            substituted_roster,
+            substituted_coordinator,
+        ),
+        Err(EqualityTransportError::InvalidConfiguration(_))
+    ));
     let input_a =
         PartyEqualityInput::new(&session_a, 0, 20, 10, &mut StdRng::seed_from_u64(0x9394)).unwrap();
     let input_b =
@@ -434,6 +528,7 @@ fn receipt_claim_refuses_authority_or_batch_substitution_and_replay_body() {
     let attacker_ml_dsa = MlDsaKey::from_ed25519_seed(&attacker_ed25519.to_bytes());
     let (attacker_session, _, _) = certified_dealer_triples(
         &base,
+        TEST_ROSTER_DIGEST,
         &mut StdRng::seed_from_u64(0xb2b3),
         &attacker_ed25519,
         &attacker_ml_dsa,
@@ -482,7 +577,13 @@ fn certified_generator_refuses_the_explicit_unaudited_pq_escape_hatch() {
         // key, but the protocol authority must still refuse before signing.
         let ml_dsa = MlDsaKey::from_ed25519_seed(&ed25519.to_bytes());
         assert!(matches!(
-            certified_dealer_triples(&base, &mut StdRng::seed_from_u64(0xa3a4), &ed25519, &ml_dsa,),
+            certified_dealer_triples(
+                &base,
+                TEST_ROSTER_DIGEST,
+                &mut StdRng::seed_from_u64(0xa3a4),
+                &ed25519,
+                &ml_dsa,
+            ),
             Err(PartyMpcError::VerifiedPostQuantumRuntimeUnavailable {
                 operation: PreprocessingPqOperation::Keygen,
             })

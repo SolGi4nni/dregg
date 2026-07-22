@@ -1,9 +1,10 @@
 //! Committed-candidate sacrifice for binary Beaver triples.
 //!
-//! This module is additive beside the live `FHTRI003` certified trusted-dealer
-//! path. It does not change that custody wire or make a new deployment claim.
-//! It supplies the next algebraic preprocessing rung as an explicit two-round
-//! protocol:
+//! The bare protocol remains available as an algebraic reference.  The live
+//! `FHTRI004` custody path composes it with [`super::authenticated_bits`] before
+//! releasing a kept row.  The two layers intentionally remain separate so the
+//! unauthenticated failure mode stays executable rather than disappearing
+//! behind the hardened adapter.
 //!
 //! 1. commit every party's kept and sacrificial GF(2) share row;
 //! 2. derive 128 challenge bits per kept gate from a beacon supplied only after
@@ -34,6 +35,8 @@ use std::fmt;
 
 use sha2::{Digest, Sha512};
 
+use super::authenticated_bits::VerifiedAuthenticatedOpening;
+
 /// Statistical soundness target for binary sacrifice. Each round contributes
 /// one bit under an unpredictable post-commit challenge.
 pub const BINARY_SACRIFICE_SECURITY_BITS: usize = 128;
@@ -55,6 +58,7 @@ pub enum BinarySacrificeError {
     CommitmentMismatch { party: usize },
     ManifestMismatch,
     ChallengeMismatch,
+    AuthenticationMismatch,
     CheckRejected { gate: usize, round: usize },
     ArithmeticOverflow,
 }
@@ -240,6 +244,19 @@ impl SacrificeChallenge {
 
     pub fn soundness_bits(&self) -> usize {
         BINARY_SACRIFICE_SECURITY_BITS
+    }
+
+    /// Public challenge bit used by the authenticated-response adapter.  The
+    /// manifest dimensions remain part of validation; callers cannot index a
+    /// challenge under another batch shape.
+    pub fn bit_at(
+        &self,
+        manifest: &CommittedSacrificeBatch,
+        gate: usize,
+        round: usize,
+    ) -> Result<u8> {
+        validate_challenge(manifest, self)?;
+        self.bit(gate, round, manifest.gates)
     }
 
     fn bit(&self, gate: usize, round: usize, gates: usize) -> Result<u8> {
@@ -561,6 +578,54 @@ pub fn verify_check_shares(
             let index = flat_index(gate, round)?;
             let reconstructed = tau[index] ^ (opened.rho[index] & opened.sigma[index]);
             if reconstructed != 0 {
+                return Err(BinarySacrificeError::CheckRejected { gate, round });
+            }
+        }
+    }
+    Ok(VerifiedSacrificeBatch {
+        manifest_root: manifest.root,
+        context: manifest.context,
+        n_parties: manifest.n_parties,
+        gates: manifest.gates,
+    })
+}
+
+/// Verify the sacrifice equations from two already-MAC-verified public
+/// openings.  `masks` is exactly `rho || sigma`; `checks` is exactly `tau`.
+/// Both must descend from the same authenticated candidate setup.
+///
+/// This closes the executable lying-check-share hole in the live adapter under
+/// the authenticated-opening module's explicit trusted-setup and one-honest-
+/// party premises.  It does not turn the bare [`SacrificeCheckShare`] API into
+/// a malicious-secure protocol and does not claim dealer-free preprocessing.
+pub fn verify_authenticated_openings(
+    manifest: &CommittedSacrificeBatch,
+    challenge: &SacrificeChallenge,
+    masks: &VerifiedAuthenticatedOpening,
+    checks: &VerifiedAuthenticatedOpening,
+) -> Result<VerifiedSacrificeBatch> {
+    validate_challenge(manifest, challenge)?;
+    if masks.setup_root() != checks.setup_root() {
+        return Err(BinarySacrificeError::AuthenticationMismatch);
+    }
+    let entries = manifest
+        .gates
+        .checked_mul(BINARY_SACRIFICE_SECURITY_BITS)
+        .ok_or(BinarySacrificeError::ArithmeticOverflow)?;
+    let mask_values = masks.values();
+    if mask_values.len()
+        != entries
+            .checked_mul(2)
+            .ok_or(BinarySacrificeError::ArithmeticOverflow)?
+        || checks.values().len() != entries
+    {
+        return Err(BinarySacrificeError::ShapeMismatch);
+    }
+    let (rho, sigma) = mask_values.split_at(entries);
+    for gate in 0..manifest.gates {
+        for round in 0..BINARY_SACRIFICE_SECURITY_BITS {
+            let index = flat_index(gate, round)?;
+            if checks.values()[index] ^ (rho[index] & sigma[index]) != 0 {
                 return Err(BinarySacrificeError::CheckRejected { gate, round });
             }
         }

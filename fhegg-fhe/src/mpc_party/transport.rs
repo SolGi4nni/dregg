@@ -64,6 +64,7 @@ const FRAME_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-signature/v4";
 const FRAME_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/frame/v4";
 const FRAME_CHECKSUM_DOMAIN: &[u8] = b"fhegg/party-mpc-frame-checksum/v4";
 const SESSION_DOMAIN: &[u8] = b"fhegg/party-mpc-transport-session/v4";
+const PREPROCESSING_ROSTER_DOMAIN: &[u8] = b"fhegg/party-mpc-preprocessing-roster/v1";
 const V5_LINK_HELLO_SIGNATURE_DOMAIN: &[u8] = b"fhegg/party-mpc/link-hello-signature/v5";
 const V5_LINK_HELLO_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/link-hello/v5";
 const V5_LINK_KEM_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/party-mpc/link-kem-transcript/v5";
@@ -458,6 +459,36 @@ impl EqualityTransportRoster {
 
     pub fn security_profile(&self) -> TransportSecurityProfile {
         self.profile
+    }
+
+    /// Canonical ordered identity of the exact preprocessing/runtime roster.
+    /// FHTRI004 binds this digest before candidate generation, then the final
+    /// transport session independently binds the completed batch.
+    pub fn preprocessing_roster_digest(&self) -> [u8; 64] {
+        let mut hash = Sha512::new();
+        hash.update((PREPROCESSING_ROSTER_DOMAIN.len() as u64).to_be_bytes());
+        hash.update(PREPROCESSING_ROSTER_DOMAIN);
+        hash.update([self.profile.wire_tag()]);
+        hash.update((self.party_keys.len() as u64).to_be_bytes());
+        for key in &self.party_keys {
+            hash.update(key);
+        }
+        hash.update(self.coordinator_key);
+        if self.profile != TransportSecurityProfile::ClassicalCompatibility {
+            for key in &self.native_party_keys {
+                hash.update((key.ml_dsa.len() as u64).to_be_bytes());
+                hash.update(&key.ml_dsa);
+                hash.update((key.ml_kem_ek.len() as u64).to_be_bytes());
+                hash.update(&key.ml_kem_ek);
+            }
+            if let Some(coordinator) = &self.native_coordinator_key {
+                hash.update((coordinator.ml_dsa.len() as u64).to_be_bytes());
+                hash.update(&coordinator.ml_dsa);
+                hash.update((coordinator.ml_kem_ek.len() as u64).to_be_bytes());
+                hash.update(&coordinator.ml_kem_ek);
+            }
+        }
+        hash.finalize().into()
     }
 
     fn key(&self, sender: usize) -> Option<[u8; 32]> {
@@ -1691,6 +1722,7 @@ impl EqualityPartyMachine {
         input: PartyEqualityInput,
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
+        preprocessing.validate_runtime_binding()?;
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
         let (peer_in_tx, peer_in_rx) = mpsc::channel();
@@ -2010,6 +2042,7 @@ impl CrossingPartyMachine {
         input: PartyArithmeticInput,
         preprocessing: TripleMaterial,
     ) -> Result<Self> {
+        preprocessing.validate_runtime_binding()?;
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
         let (peer_in_tx, peer_in_rx) = mpsc::channel();
@@ -2694,6 +2727,7 @@ fn validate_equality_transport_session(
             "session and transport roster sizes differ",
         ));
     }
+    validate_preprocessing_roster(session, roster)?;
     Ok(())
 }
 
@@ -2706,6 +2740,21 @@ fn validate_crossing_transport_session(
         return Err(EqualityTransportError::InvalidConfiguration(
             "session and transport roster sizes differ",
         ));
+    }
+    validate_preprocessing_roster(session, roster)?;
+    Ok(())
+}
+
+fn validate_preprocessing_roster(
+    session: &PartyMpcSession,
+    roster: &EqualityTransportRoster,
+) -> Result<()> {
+    if let Some(binding) = session.preprocessing_binding() {
+        if binding.roster_digest() != roster.preprocessing_roster_digest() {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "certified preprocessing is bound to a different transport roster",
+            ));
+        }
     }
     Ok(())
 }
@@ -3587,7 +3636,7 @@ fn transport_session_digest(
         hash.update(key);
     }
     hash.update(roster.coordinator_key);
-    if roster.profile == TransportSecurityProfile::NativePostQuantum {
+    if roster.profile != TransportSecurityProfile::ClassicalCompatibility {
         for key in &roster.native_party_keys {
             hash.update((key.ml_dsa.len() as u64).to_be_bytes());
             hash.update(&key.ml_dsa);
@@ -4723,6 +4772,65 @@ mod tests {
                 "sealed endpoint keys must have distinct nonzero Montgomery identities"
             ))
         ));
+    }
+
+    #[test]
+    fn sealed_session_and_preprocessing_digests_bind_every_pq_roster_key() {
+        let party_zero = SigningKey::from_bytes(&[0x65; 32]);
+        let party_one = SigningKey::from_bytes(&[0x66; 32]);
+        let coordinator = SigningKey::from_bytes(&[0x67; 32]);
+        let public = |ed25519, dsa, kem| {
+            NativePqTransportPublicIdentity::from_parts(
+                ed25519,
+                vec![dsa; super::ML_DSA_PK_LEN],
+                vec![kem; super::ML_KEM_768_EK_BYTES],
+            )
+            .unwrap()
+        };
+        let roster = EqualityTransportRoster::new_native_post_quantum_sealed_crossing(
+            vec![
+                public(party_zero.verifying_key().to_bytes(), 1, 2),
+                public(party_one.verifying_key().to_bytes(), 3, 4),
+            ],
+            public(coordinator.verifying_key().to_bytes(), 5, 6),
+        )
+        .unwrap();
+        let changed_party_dsa = EqualityTransportRoster::new_native_post_quantum_sealed_crossing(
+            vec![
+                public(party_zero.verifying_key().to_bytes(), 7, 2),
+                public(party_one.verifying_key().to_bytes(), 3, 4),
+            ],
+            public(coordinator.verifying_key().to_bytes(), 5, 6),
+        )
+        .unwrap();
+        let changed_coordinator_kem =
+            EqualityTransportRoster::new_native_post_quantum_sealed_crossing(
+                vec![
+                    public(party_zero.verifying_key().to_bytes(), 1, 2),
+                    public(party_one.verifying_key().to_bytes(), 3, 4),
+                ],
+                public(coordinator.verifying_key().to_bytes(), 5, 8),
+            )
+            .unwrap();
+        let session =
+            PartyMpcSession::new([0x68; 32], 2, 1, 8, 257, Duration::from_secs(1)).unwrap();
+        let session_digest = super::transport_session_digest(&session, &roster).unwrap();
+        assert_ne!(
+            session_digest,
+            super::transport_session_digest(&session, &changed_party_dsa).unwrap()
+        );
+        assert_ne!(
+            session_digest,
+            super::transport_session_digest(&session, &changed_coordinator_kem).unwrap()
+        );
+        assert_ne!(
+            roster.preprocessing_roster_digest(),
+            changed_party_dsa.preprocessing_roster_digest()
+        );
+        assert_ne!(
+            roster.preprocessing_roster_digest(),
+            changed_coordinator_kem.preprocessing_roster_digest()
+        );
     }
 
     #[test]

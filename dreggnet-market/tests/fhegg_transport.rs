@@ -224,6 +224,11 @@ fn owning_bundle_roundtrips_and_frontend_neutral_operation_fails_closed() {
     let decoded = FheggSettlementBundle::from_wire_bytes(&wire).expect("strict roundtrip");
     assert_eq!(decoded.to_wire_bytes(), wire, "wire encoding is canonical");
     assert_eq!(decoded.claim_digest(), claim_digest);
+    assert_eq!(
+        decoded.expected_context().session.quorum_timeout(),
+        Duration::from_secs(1),
+        "restart wire preserves the exact session domain rather than substituting a verifier timeout",
+    );
     assert_eq!(decoded.crossing(), &crossing);
     assert_eq!(decoded.source_inputs(), inputs);
     assert_eq!(FheggSettlementOperation::NAME, FHEGG_SETTLEMENT_OPERATION);
@@ -237,6 +242,24 @@ fn owning_bundle_roundtrips_and_frontend_neutral_operation_fails_closed() {
     wrong_magic[0] ^= 1;
     assert!(matches!(
         FheggSettlementBundle::from_wire_bytes(&wrong_magic),
+        Err(FheggTransportError::Malformed(_))
+    ));
+    let mut legacy_v1 = wire.clone();
+    legacy_v1[..8].copy_from_slice(b"FHDBv001");
+    assert!(matches!(
+        FheggSettlementBundle::from_wire_bytes(&legacy_v1),
+        Err(FheggTransportError::Malformed(_))
+    ));
+    let mut invalid_timeout = wire.clone();
+    invalid_timeout[80..84].copy_from_slice(&1_000_000_000u32.to_be_bytes());
+    assert!(matches!(
+        FheggSettlementBundle::from_wire_bytes(&invalid_timeout),
+        Err(FheggTransportError::Malformed(_))
+    ));
+    let mut invalid_preprocessing_tag = wire.clone();
+    invalid_preprocessing_tag[84] = 2;
+    assert!(matches!(
+        FheggSettlementBundle::from_wire_bytes(&invalid_preprocessing_tag),
         Err(FheggTransportError::Malformed(_))
     ));
     assert!(matches!(

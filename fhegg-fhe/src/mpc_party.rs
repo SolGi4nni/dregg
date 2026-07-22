@@ -28,13 +28,17 @@
 //!
 //! This is a process-shaped semi-honest runtime, not a malicious-secure network
 //! protocol. [`trusted_dealer_triples`] is the legacy trusted-preprocessing
-//! profile. [`certified_dealer_triples`] additionally checks every global GF(2)
-//! Beaver relation, signs the ordered row commitments, and binds that exact
-//! batch into the MPC session.  Its protected custody parser therefore rejects
-//! a row mutation, relabel, cross-context replay, or batch equivocation before
-//! a gate runs.  The authority still sees all preprocessing and can sign a bad
-//! batch if it is malicious: this is authenticated trusted preprocessing, not
-//! dealer-free generation or full malicious MPC. Input sharing is performed
+//! profile. [`certified_dealer_triples`] is the incompatible `FHTRI004` path:
+//! it commits one kept and 128 sacrificial candidates per gate, authenticates
+//! their response shares in two independent `GF(2^128)` MAC lanes, releases a
+//! kept row only after both opening checks and every sacrifice equation pass,
+//! and hybrid-signs the exact roster/session/transcript/row binding.  Its
+//! protected custody parser rejects `FHTRI003`, row mutation, relabel,
+//! cross-context replay, roster substitution, or batch equivocation before a
+//! gate runs.  The authority still sees all candidates and both global MAC keys
+//! and presently supplies the post-commit beacon from its RNG: this is
+//! authenticated trusted preprocessing, not dealer-free generation, full
+//! malicious MPC, or a quantified PQ-completeness claim. Input sharing is performed
 //! independently by each party over direct peer channels. The bare
 //! [`local_channels`] harness is unauthenticated; [`transport`] supplies bounded
 //! signed frames, encrypted peer ingress, and strict session/sequence binding
@@ -56,14 +60,17 @@ use dregg_pq::{
     lean_verify_core_real_installed, ml_dsa_verify, MlDsaKey, ML_DSA_PK_LEN, ML_DSA_SIG_LEN,
 };
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use rand::Rng;
+use rand::{CryptoRng, Rng};
 use sha2::{Digest, Sha256};
 
 use crate::mpc::{crossing_rounds, index_bits, Crossing};
 
 /// Additive SPDZ-style authentication for binary response shares.  Trusted MAC
-/// setup remains explicit and this is not yet wired into live preprocessing.
+/// setup remains explicit.
 pub mod authenticated_bits;
+/// Roster/session-bound authenticated sacrifice that releases the live
+/// FHTRI004 kept rows.  The trusted dealer remains an explicit security floor.
+pub mod authenticated_preprocessing;
 /// Additive committed-candidate GF(2) sacrifice protocol.  This is a staged
 /// preprocessing primitive, not yet the live PartyMPC triple source.
 pub mod sacrifice;
@@ -83,11 +90,13 @@ const MASKED_OPENING_WIRE_BYTES: usize = 8 + 1 + 1;
 /// boundary. This is secret preprocessing, never a coordinator artifact.
 pub const MAX_TRIPLE_MATERIAL_BYTES: usize = 16 * 1024 * 1024;
 const TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI001";
-const CERTIFIED_TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI003";
+const LEGACY_CERTIFIED_TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI003";
+const CERTIFIED_TRIPLE_MATERIAL_MAGIC: &[u8; 8] = b"FHTRI004";
+const TRIPLE_FORMATION_CERTIFICATE_MAGIC: &[u8; 8] = b"FHTFC004";
 const TRIPLE_MATERIAL_FIXED_BYTES: usize = 8 + 32 + 8 * 7 + 4 + 1;
-const TRIPLE_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-row/v2";
-const TRIPLE_BATCH_CERTIFICATE_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-batch/v3";
-const TRIPLE_BATCH_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/triple-batch/ml-dsa/v3";
+const TRIPLE_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-row/v4";
+const TRIPLE_BATCH_CERTIFICATE_DOMAIN: &[u8] = b"fhegg/party-mpc/triple-batch/v4";
+const TRIPLE_BATCH_ML_DSA_CONTEXT: &[u8] = b"fhegg/party-mpc/triple-batch/ml-dsa/v4";
 const BASE_SESSION_BINDING_DOMAIN: &[u8] = b"fhegg/party-mpc/base-session/v2";
 
 /// Public circuit/session parameters. The nonce is a routing/replay-domain tag,
@@ -106,6 +115,7 @@ pub struct PartyMpcSession {
     quorum_timeout: Duration,
     circuit: CircuitKind,
     preprocessing: Option<CertifiedPreprocessingBinding>,
+    preprocessing_certificate: Option<TripleFormationCertificate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,9 +148,11 @@ struct SessionBinding {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CertifiedPreprocessingBinding {
     base_session_digest: [u8; 32],
+    roster_digest: [u8; 64],
     ed25519_authority_key: [u8; 32],
     ml_dsa_authority_key: Vec<u8>,
     batch_digest: [u8; 32],
+    authenticated_sacrifice: authenticated_preprocessing::AuthenticatedSacrificeReceipt,
 }
 
 impl CertifiedPreprocessingBinding {
@@ -152,6 +164,10 @@ impl CertifiedPreprocessingBinding {
         self.ed25519_authority_key
     }
 
+    pub fn roster_digest(&self) -> [u8; 64] {
+        self.roster_digest
+    }
+
     pub fn ml_dsa_authority_key(&self) -> &[u8] {
         &self.ml_dsa_authority_key
     }
@@ -160,18 +176,31 @@ impl CertifiedPreprocessingBinding {
         self.batch_digest
     }
 
+    pub fn authenticated_sacrifice(
+        &self,
+    ) -> &authenticated_preprocessing::AuthenticatedSacrificeReceipt {
+        &self.authenticated_sacrifice
+    }
+
     /// Canonical public identity used by transport, receipts, and hosted
     /// verifier configuration.  Version 0 is reserved for the one-byte legacy
-    /// encoding emitted by an uncertified session; version 3 is mandatory
-    /// Ed25519 + ML-DSA-65 certified preprocessing.
+    /// encoding emitted by an uncertified session; version 4 is mandatory
+    /// Ed25519 + ML-DSA-65 authenticated-sacrifice preprocessing.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(1 + 32 + 32 + 8 + ML_DSA_PK_LEN + 32);
-        encoded.push(3);
+        let receipt = self
+            .authenticated_sacrifice
+            .to_canonical_bytes()
+            .expect("validated authenticated-sacrifice receipt");
+        let mut encoded =
+            Vec::with_capacity(1 + 32 + 64 + 32 + 8 + ML_DSA_PK_LEN + 32 + receipt.len());
+        encoded.push(4);
         encoded.extend_from_slice(&self.base_session_digest);
+        encoded.extend_from_slice(&self.roster_digest);
         encoded.extend_from_slice(&self.ed25519_authority_key);
         encoded.extend_from_slice(&(self.ml_dsa_authority_key.len() as u64).to_be_bytes());
         encoded.extend_from_slice(&self.ml_dsa_authority_key);
         encoded.extend_from_slice(&self.batch_digest);
+        encoded.extend_from_slice(&receipt);
         encoded
     }
 }
@@ -288,6 +317,7 @@ impl PartyMpcSession {
             quorum_timeout,
             circuit,
             preprocessing: None,
+            preprocessing_certificate: None,
         };
         exact_and_gates(&session)?;
         Ok(session)
@@ -313,6 +343,10 @@ impl PartyMpcSession {
         self.plaintext_modulus
     }
 
+    pub fn quorum_timeout(&self) -> Duration {
+        self.quorum_timeout
+    }
+
     pub fn ingress_bits(&self) -> usize {
         sum_width(self.n_parties, self.plaintext_modulus)
             .expect("validated arithmetic ingress shape")
@@ -330,9 +364,17 @@ impl PartyMpcSession {
         self.preprocessing.as_ref()
     }
 
+    /// Full public FHTRI004 formation certificate. Unlike the compact binding,
+    /// this object carries both authority signatures and every committed party
+    /// row, and is therefore sufficient to authenticate a restart/session
+    /// attachment without relying on an external pin.
+    pub fn preprocessing_certificate(&self) -> Option<&TripleFormationCertificate> {
+        self.preprocessing_certificate.as_ref()
+    }
+
     /// Injective canonical encoding for transport/KDF and clearing claims.
     /// The one-byte `0` encoding is the legacy uncertified profile; certified
-    /// sessions carry the complete v3 hybrid authority, exact batch identity,
+    /// sessions carry the FHTRI004/v4 hybrid authority, exact batch identity,
     /// and base circuit/session digest.
     pub fn preprocessing_binding_bytes(&self) -> Vec<u8> {
         self.preprocessing
@@ -343,11 +385,40 @@ impl PartyMpcSession {
 
     /// Fail closed when a host policy requires relation-audited preprocessing.
     pub fn require_certified_preprocessing(&self) -> Result<()> {
-        if self.preprocessing.is_some() {
-            Ok(())
-        } else {
-            Err(PartyMpcError::MissingCertifiedPreprocessing)
+        match (&self.preprocessing, &self.preprocessing_certificate) {
+            (Some(binding), Some(certificate)) => {
+                verify_triple_certificate(certificate)?;
+                if certificate.binding() == *binding {
+                    Ok(())
+                } else {
+                    Err(PartyMpcError::InvalidTripleFormationCertificate)
+                }
+            }
+            _ => Err(PartyMpcError::MissingCertifiedPreprocessing),
         }
+    }
+
+    /// Verify and attach a complete public FHTRI004 formation certificate while
+    /// restoring a settlement/restart bundle. This cannot create secret triple
+    /// custody, but it does authenticate the public session identity rather
+    /// than promoting attacker-supplied binding bytes to a certified object.
+    pub fn with_public_preprocessing_certificate(
+        mut self,
+        certificate: TripleFormationCertificate,
+    ) -> Result<Self> {
+        if self.preprocessing.is_some()
+            || self.preprocessing_certificate.is_some()
+            || certificate.base_session_digest != self.base_binding_digest()
+            || certificate.n_parties != self.n_parties
+            || certificate.gates != self.exact_and_gates()
+        {
+            return Err(PartyMpcError::SessionMismatch);
+        }
+        verify_triple_certificate(&certificate)?;
+        let binding = certificate.binding();
+        self.preprocessing = Some(binding);
+        self.preprocessing_certificate = Some(certificate);
+        Ok(self)
     }
 
     fn binding(&self) -> SessionBinding {
@@ -441,6 +512,7 @@ pub enum PartyMpcError {
     MalformedTripleMaterialWire,
     MissingCertifiedPreprocessing,
     InvalidTripleFormationCertificate,
+    InvalidAuthenticatedPreprocessing,
     VerifiedPostQuantumRuntimeUnavailable {
         operation: PreprocessingPqOperation,
     },
@@ -510,6 +582,7 @@ struct TripleMaterialCertification {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TripleFormationCertificate {
     base_session_digest: [u8; 32],
+    roster_digest: [u8; 64],
     ed25519_authority_key: [u8; 32],
     ml_dsa_authority_key: Vec<u8>,
     n_parties: usize,
@@ -518,6 +591,7 @@ pub struct TripleFormationCertificate {
     digest: [u8; 32],
     ed25519_signature: [u8; 64],
     ml_dsa_signature: Vec<u8>,
+    authenticated_sacrifice: authenticated_preprocessing::AuthenticatedSacrificeReceipt,
 }
 
 impl TripleFormationCertificate {
@@ -527,6 +601,10 @@ impl TripleFormationCertificate {
 
     pub fn authority_key(&self) -> [u8; 32] {
         self.ed25519_authority_key
+    }
+
+    pub fn roster_digest(&self) -> [u8; 64] {
+        self.roster_digest
     }
 
     pub fn ml_dsa_authority_key(&self) -> &[u8] {
@@ -543,6 +621,141 @@ impl TripleFormationCertificate {
 
     pub fn row_commitments(&self) -> &[[u8; 32]] {
         &self.row_commitments
+    }
+
+    pub fn authenticated_sacrifice(
+        &self,
+    ) -> &authenticated_preprocessing::AuthenticatedSacrificeReceipt {
+        &self.authenticated_sacrifice
+    }
+
+    fn binding(&self) -> CertifiedPreprocessingBinding {
+        CertifiedPreprocessingBinding {
+            base_session_digest: self.base_session_digest,
+            roster_digest: self.roster_digest,
+            ed25519_authority_key: self.ed25519_authority_key,
+            ml_dsa_authority_key: self.ml_dsa_authority_key.clone(),
+            batch_digest: self.digest,
+            authenticated_sacrifice: self.authenticated_sacrifice.clone(),
+        }
+    }
+
+    /// Canonical public FHTRI004 certificate. It contains commitments and
+    /// authority signatures, but no row salts, secret shares, MAC keys, or
+    /// candidate material.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let receipt = self
+            .authenticated_sacrifice
+            .to_canonical_bytes()
+            .expect("validated authenticated-sacrifice receipt");
+        let capacity = 8usize
+            .checked_add(32 + 64 + 32 + ML_DSA_PK_LEN + 8 + 8 + receipt.len())
+            .and_then(|len| {
+                self.row_commitments
+                    .len()
+                    .checked_mul(32)
+                    .and_then(|rows| len.checked_add(rows))
+            })
+            .and_then(|len| len.checked_add(32 + 64 + ML_DSA_SIG_LEN))
+            .expect("validated public formation-certificate size");
+        let mut out = Vec::with_capacity(capacity);
+        out.extend_from_slice(TRIPLE_FORMATION_CERTIFICATE_MAGIC);
+        out.extend_from_slice(&self.base_session_digest);
+        out.extend_from_slice(&self.roster_digest);
+        out.extend_from_slice(&self.ed25519_authority_key);
+        out.extend_from_slice(&self.ml_dsa_authority_key);
+        out.extend_from_slice(&(self.n_parties as u64).to_be_bytes());
+        out.extend_from_slice(&(self.gates as u64).to_be_bytes());
+        out.extend_from_slice(&receipt);
+        for commitment in &self.row_commitments {
+            out.extend_from_slice(commitment);
+        }
+        out.extend_from_slice(&self.digest);
+        out.extend_from_slice(&self.ed25519_signature);
+        out.extend_from_slice(&self.ml_dsa_signature);
+        debug_assert_eq!(out.len(), capacity);
+        out
+    }
+
+    /// Strict public parser and hybrid verifier used by settlement restart.
+    /// Unlike [`CertifiedPreprocessingBinding`]'s compact identity bytes, this
+    /// establishes certification before any session can attach the result.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self> {
+        let fixed = 8usize
+            .checked_add(
+                32 + 64
+                    + 32
+                    + ML_DSA_PK_LEN
+                    + 8
+                    + 8
+                    + authenticated_preprocessing::AUTHENTICATED_SACRIFICE_RECEIPT_BYTES
+                    + 32
+                    + 64
+                    + ML_DSA_SIG_LEN,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if bytes.len() < fixed + 2 * 32 || bytes.len() > MAX_TRIPLE_MATERIAL_BYTES {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
+        }
+        let mut input = TripleWireReader::new(bytes);
+        if input.take(8)? != TRIPLE_FORMATION_CERTIFICATE_MAGIC {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
+        }
+        let base_session_digest = input.array::<32>()?;
+        let roster_digest = input.array::<64>()?;
+        let ed25519_authority_key = input.array::<32>()?;
+        let ml_dsa_authority_key = input.take(ML_DSA_PK_LEN)?.to_vec();
+        let n_parties = input.usize()?;
+        let gates = input.usize()?;
+        if n_parties < 2 || gates == 0 {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
+        }
+        let expected_len = fixed
+            .checked_add(
+                n_parties
+                    .checked_mul(32)
+                    .ok_or(PartyMpcError::ArithmeticOverflow)?,
+            )
+            .ok_or(PartyMpcError::ArithmeticOverflow)?;
+        if bytes.len() != expected_len {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
+        }
+        let authenticated_sacrifice =
+            authenticated_preprocessing::AuthenticatedSacrificeReceipt::from_canonical_bytes(
+                input.take(authenticated_preprocessing::AUTHENTICATED_SACRIFICE_RECEIPT_BYTES)?,
+            )?;
+        authenticated_sacrifice.validate_binding(
+            base_session_digest,
+            roster_digest,
+            n_parties,
+            gates,
+        )?;
+        let mut row_commitments = Vec::new();
+        row_commitments
+            .try_reserve_exact(n_parties)
+            .map_err(|_| PartyMpcError::InvalidTripleFormationCertificate)?;
+        for _ in 0..n_parties {
+            row_commitments.push(input.array::<32>()?);
+        }
+        let certificate = Self {
+            base_session_digest,
+            roster_digest,
+            ed25519_authority_key,
+            ml_dsa_authority_key,
+            n_parties,
+            gates,
+            row_commitments,
+            digest: input.array::<32>()?,
+            ed25519_signature: input.array::<64>()?,
+            ml_dsa_signature: input.take(ML_DSA_SIG_LEN)?.to_vec(),
+            authenticated_sacrifice,
+        };
+        input.finish()?;
+        verify_triple_certificate(&certificate)?;
+        if certificate.canonical_bytes() != bytes {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
+        }
+        Ok(certificate)
     }
 }
 
@@ -576,6 +789,14 @@ impl CertifiedTripleBatch {
 }
 
 impl TripleMaterial {
+    /// Validate the exact session/certificate/row tuple before input ingress or
+    /// gate zero. This deliberately rechecks in-memory dealer output as well as
+    /// decoded custody, so a certified session can never execute legacy or
+    /// differently certified material through a non-wire path.
+    fn validate_runtime_binding(&self) -> Result<()> {
+        self.to_wire_bytes().map(|_| ())
+    }
+
     /// Canonical protected custody for one party's trusted-dealer Beaver row.
     ///
     /// The wire binds the complete MPC session, party index, and exact gate
@@ -585,7 +806,8 @@ impl TripleMaterial {
         if let Some(certification) = &self.certification {
             return self.to_certified_wire_bytes(certification);
         }
-        if self.session.preprocessing.is_some() {
+        if self.session.preprocessing.is_some() || self.session.preprocessing_certificate.is_some()
+        {
             return Err(PartyMpcError::MissingCertifiedPreprocessing);
         }
         let encoded_len = TRIPLE_MATERIAL_FIXED_BYTES
@@ -641,6 +863,9 @@ impl TripleMaterial {
         }
         if bytes.get(..8) == Some(CERTIFIED_TRIPLE_MATERIAL_MAGIC) {
             return Self::from_certified_wire_bytes(expected_session, expected_party, bytes);
+        }
+        if bytes.get(..8) == Some(LEGACY_CERTIFIED_TRIPLE_MATERIAL_MAGIC) {
+            return Err(PartyMpcError::InvalidTripleFormationCertificate);
         }
         if expected_session.preprocessing.is_some() {
             return Err(PartyMpcError::MissingCertifiedPreprocessing);
@@ -725,10 +950,16 @@ impl TripleMaterial {
         let Some(binding) = self.session.preprocessing.as_ref() else {
             return Err(PartyMpcError::MissingCertifiedPreprocessing);
         };
+        let Some(session_certificate) = self.session.preprocessing_certificate.as_ref() else {
+            return Err(PartyMpcError::MissingCertifiedPreprocessing);
+        };
         if binding.ed25519_authority_key != certificate.ed25519_authority_key
+            || binding.roster_digest != certificate.roster_digest
             || binding.ml_dsa_authority_key != certificate.ml_dsa_authority_key
             || binding.batch_digest != certificate.digest
             || binding.base_session_digest != certificate.base_session_digest
+            || binding.authenticated_sacrifice != certificate.authenticated_sacrifice
+            || session_certificate != certificate
             || certificate.base_session_digest != self.session.base_binding_digest()
             || certificate.n_parties != self.session.n_parties
             || certificate.gates != self.session.exact_and_gates()
@@ -739,6 +970,7 @@ impl TripleMaterial {
                 .triples
                 .iter()
                 .any(|triple| triple.a > 1 || triple.b > 1 || triple.c > 1)
+            || certification.row_salt == [0; 32]
         {
             return Err(PartyMpcError::InvalidTripleFormationCertificate);
         }
@@ -746,6 +978,7 @@ impl TripleMaterial {
         let triple_bytes = encode_local_triples(&self.triples);
         if triple_row_commitment(
             certificate.base_session_digest,
+            certificate.authenticated_sacrifice.transcript_digest(),
             self.party,
             certificate.gates,
             certification.row_salt,
@@ -754,8 +987,9 @@ impl TripleMaterial {
         {
             return Err(PartyMpcError::InvalidTripleFormationCertificate);
         }
+        let receipt = certificate.authenticated_sacrifice.to_canonical_bytes()?;
         let encoded_len = 8usize
-            .checked_add(32 + 32 + ML_DSA_PK_LEN + 8 + 8)
+            .checked_add(32 + 64 + 32 + ML_DSA_PK_LEN + 8 + 8 + receipt.len())
             .and_then(|len| {
                 certificate
                     .row_commitments
@@ -772,10 +1006,12 @@ impl TripleMaterial {
         let mut out = Vec::with_capacity(encoded_len);
         out.extend_from_slice(CERTIFIED_TRIPLE_MATERIAL_MAGIC);
         out.extend_from_slice(&certificate.base_session_digest);
+        out.extend_from_slice(&certificate.roster_digest);
         out.extend_from_slice(&certificate.ed25519_authority_key);
         out.extend_from_slice(&certificate.ml_dsa_authority_key);
         put_triple_usize(&mut out, certificate.n_parties)?;
         put_triple_usize(&mut out, certificate.gates)?;
+        out.extend_from_slice(&receipt);
         for commitment in &certificate.row_commitments {
             out.extend_from_slice(commitment);
         }
@@ -797,21 +1033,31 @@ impl TripleMaterial {
         let Some(expected_binding) = expected_session.preprocessing.as_ref() else {
             return Err(PartyMpcError::SessionMismatch);
         };
+        let Some(expected_certificate) = expected_session.preprocessing_certificate.as_ref() else {
+            return Err(PartyMpcError::MissingCertifiedPreprocessing);
+        };
         let mut input = TripleWireReader::new(bytes);
         if input.take(8)? != CERTIFIED_TRIPLE_MATERIAL_MAGIC {
             return Err(PartyMpcError::MalformedTripleMaterialWire);
         }
         let base_session_digest = input.array::<32>()?;
+        let roster_digest = input.array::<64>()?;
         let ed25519_authority_key = input.array::<32>()?;
         let ml_dsa_authority_key = input.take(ML_DSA_PK_LEN)?.to_vec();
         let n_parties = input.usize()?;
         let gates = input.usize()?;
+        let authenticated_sacrifice =
+            authenticated_preprocessing::AuthenticatedSacrificeReceipt::from_canonical_bytes(
+                input.take(authenticated_preprocessing::AUTHENTICATED_SACRIFICE_RECEIPT_BYTES)?,
+            )?;
         if n_parties != expected_session.n_parties
             || gates != expected_session.exact_and_gates()
             || base_session_digest != expected_session.base_binding_digest()
             || base_session_digest != expected_binding.base_session_digest
+            || roster_digest != expected_binding.roster_digest
             || ed25519_authority_key != expected_binding.ed25519_authority_key
             || ml_dsa_authority_key != expected_binding.ml_dsa_authority_key
+            || authenticated_sacrifice != expected_binding.authenticated_sacrifice
         {
             return Err(PartyMpcError::SessionMismatch);
         }
@@ -843,6 +1089,7 @@ impl TripleMaterial {
         let triples = decode_local_triples(triple_bytes)?;
         let certificate = TripleFormationCertificate {
             base_session_digest,
+            roster_digest,
             ed25519_authority_key,
             ml_dsa_authority_key,
             n_parties,
@@ -851,10 +1098,19 @@ impl TripleMaterial {
             digest,
             ed25519_signature,
             ml_dsa_signature,
+            authenticated_sacrifice,
         };
         verify_triple_certificate(&certificate)?;
-        if triple_row_commitment(base_session_digest, party, gates, row_salt, triple_bytes)
-            != certificate.row_commitments[party]
+        if &certificate != expected_certificate
+            || row_salt == [0; 32]
+            || triple_row_commitment(
+                base_session_digest,
+                certificate.authenticated_sacrifice.transcript_digest(),
+                party,
+                gates,
+                row_salt,
+                triple_bytes,
+            ) != certificate.row_commitments[party]
         {
             return Err(PartyMpcError::InvalidTripleFormationCertificate);
         }
@@ -1488,6 +1744,9 @@ pub fn trusted_dealer_triples<R: Rng>(
     session: &PartyMpcSession,
     rng: &mut R,
 ) -> Result<Vec<TripleMaterial>> {
+    if session.preprocessing.is_some() || session.preprocessing_certificate.is_some() {
+        return Err(PartyMpcError::MissingCertifiedPreprocessing);
+    }
     let n = session.n_parties;
     let gates = session.exact_and_gates();
     let mut triples = (0..n)
@@ -1526,8 +1785,9 @@ pub fn trusted_dealer_triples<R: Rng>(
 /// trusted preprocessing boundary and learns every triple while constructing
 /// the batch; this function is not dealer-free preprocessing or a malicious
 /// security proof.
-pub fn certified_dealer_triples<R: Rng>(
+pub fn certified_dealer_triples<R: Rng + CryptoRng>(
     base_session: &PartyMpcSession,
+    roster_digest: [u8; 64],
     rng: &mut R,
     ed25519_authority: &SigningKey,
     ml_dsa_authority: &MlDsaKey,
@@ -1535,17 +1795,36 @@ pub fn certified_dealer_triples<R: Rng>(
     require_preprocessing_pq_runtime(PreprocessingPqOperation::Keygen)?;
     require_preprocessing_pq_runtime(PreprocessingPqOperation::Sign)?;
     require_preprocessing_pq_runtime(PreprocessingPqOperation::Verify)?;
-    if base_session.preprocessing.is_some() {
+    if base_session.preprocessing.is_some() || base_session.preprocessing_certificate.is_some() {
         return Err(PartyMpcError::InvalidParameters(
             "cannot certify an already-certified preprocessing session",
         ));
     }
-    let mut materials = trusted_dealer_triples(base_session, rng)?;
     let n_parties = base_session.n_parties;
     let gates = base_session.exact_and_gates();
+    let base_session_digest = base_session.base_binding_digest();
+    let generated = authenticated_preprocessing::generate_authenticated_sacrificed_rows(
+        base_session_digest,
+        roster_digest,
+        n_parties,
+        gates,
+        rng,
+    )?;
+    let authenticated_sacrifice = generated.receipt;
+    let mut materials = generated
+        .kept_rows
+        .into_iter()
+        .enumerate()
+        .map(|(party, triples)| TripleMaterial {
+            session: base_session.clone(),
+            party,
+            triples,
+            certification: None,
+        })
+        .collect::<Vec<_>>();
 
-    // The authority checks the relation over the exact rows it will commit.
-    // Do this before constructing any certified typestate or signature.
+    // Retain the direct relation audit as a defense-in-depth implementation
+    // check after the authenticated sacrifice capability releases kept rows.
     for gate in 0..gates {
         let mut a = 0u8;
         let mut b = 0u8;
@@ -1560,7 +1839,6 @@ pub fn certified_dealer_triples<R: Rng>(
         }
     }
 
-    let base_session_digest = base_session.base_binding_digest();
     let ed25519_authority_key = ed25519_authority.verifying_key().to_bytes();
     let ml_dsa_authority_key = ml_dsa_authority.public_bytes();
     if ml_dsa_authority_key.len() != ML_DSA_PK_LEN {
@@ -1570,10 +1848,13 @@ pub fn certified_dealer_triples<R: Rng>(
     let mut row_commitments = Vec::with_capacity(n_parties);
     for material in &materials {
         let mut salt = [0u8; 32];
-        rng.fill(&mut salt);
+        while salt == [0; 32] {
+            rng.fill(&mut salt);
+        }
         let row = encode_local_triples(&material.triples);
         row_commitments.push(triple_row_commitment(
             base_session_digest,
+            authenticated_sacrifice.transcript_digest(),
             material.party,
             gates,
             salt,
@@ -1583,19 +1864,23 @@ pub fn certified_dealer_triples<R: Rng>(
     }
     let digest = triple_batch_digest(
         base_session_digest,
+        roster_digest,
         ed25519_authority_key,
         &ml_dsa_authority_key,
         n_parties,
         gates,
         &row_commitments,
+        &authenticated_sacrifice,
     );
     let authority_message = triple_batch_authority_message(
         base_session_digest,
+        roster_digest,
         ed25519_authority_key,
         &ml_dsa_authority_key,
         n_parties,
         gates,
         &row_commitments,
+        &authenticated_sacrifice,
     );
     let ed25519_signature = ed25519_authority.sign(&authority_message).to_bytes();
     let ml_dsa_signature = ml_dsa_authority
@@ -1603,6 +1888,7 @@ pub fn certified_dealer_triples<R: Rng>(
         .ok_or(PartyMpcError::InvalidTripleFormationCertificate)?;
     let certificate = TripleFormationCertificate {
         base_session_digest,
+        roster_digest,
         ed25519_authority_key,
         ml_dsa_authority_key: ml_dsa_authority_key.clone(),
         n_parties,
@@ -1611,16 +1897,13 @@ pub fn certified_dealer_triples<R: Rng>(
         digest,
         ed25519_signature,
         ml_dsa_signature,
+        authenticated_sacrifice: authenticated_sacrifice.clone(),
     };
     verify_triple_certificate(&certificate)?;
 
     let mut session = base_session.clone();
-    session.preprocessing = Some(CertifiedPreprocessingBinding {
-        base_session_digest,
-        ed25519_authority_key,
-        ml_dsa_authority_key,
-        batch_digest: digest,
-    });
+    session.preprocessing = Some(certificate.binding());
+    session.preprocessing_certificate = Some(certificate.clone());
     for (material, row_salt) in materials.iter_mut().zip(salts) {
         material.session = session.clone();
         material.certification = Some(TripleMaterialCertification {
@@ -1664,6 +1947,7 @@ fn decode_local_triples(bytes: &[u8]) -> Result<Vec<LocalTriple>> {
 
 fn triple_row_commitment(
     base_session_digest: [u8; 32],
+    authenticated_sacrifice_digest: [u8; 64],
     party: usize,
     gates: usize,
     salt: [u8; 32],
@@ -1673,6 +1957,7 @@ fn triple_row_commitment(
     hash.update((TRIPLE_ROW_COMMITMENT_DOMAIN.len() as u64).to_be_bytes());
     hash.update(TRIPLE_ROW_COMMITMENT_DOMAIN);
     hash.update(base_session_digest);
+    hash.update(authenticated_sacrifice_digest);
     hash.update((party as u64).to_be_bytes());
     hash.update((gates as u64).to_be_bytes());
     hash.update(salt);
@@ -1683,45 +1968,57 @@ fn triple_row_commitment(
 
 fn triple_batch_digest(
     base_session_digest: [u8; 32],
+    roster_digest: [u8; 64],
     ed25519_authority_key: [u8; 32],
     ml_dsa_authority_key: &[u8],
     n_parties: usize,
     gates: usize,
     row_commitments: &[[u8; 32]],
+    authenticated_sacrifice: &authenticated_preprocessing::AuthenticatedSacrificeReceipt,
 ) -> [u8; 32] {
     Sha256::digest(triple_batch_authority_message(
         base_session_digest,
+        roster_digest,
         ed25519_authority_key,
         ml_dsa_authority_key,
         n_parties,
         gates,
         row_commitments,
+        authenticated_sacrifice,
     ))
     .into()
 }
 
 fn triple_batch_authority_message(
     base_session_digest: [u8; 32],
+    roster_digest: [u8; 64],
     ed25519_authority_key: [u8; 32],
     ml_dsa_authority_key: &[u8],
     n_parties: usize,
     gates: usize,
     row_commitments: &[[u8; 32]],
+    authenticated_sacrifice: &authenticated_preprocessing::AuthenticatedSacrificeReceipt,
 ) -> Vec<u8> {
+    let receipt = authenticated_sacrifice
+        .to_canonical_bytes()
+        .expect("validated authenticated-sacrifice receipt");
     let mut out = Vec::with_capacity(
         8 + TRIPLE_BATCH_CERTIFICATE_DOMAIN.len()
             + 32
+            + 64
             + 32
             + 8
             + ml_dsa_authority_key.len()
             + 8
             + 8
             + 8
-            + row_commitments.len() * 32,
+            + row_commitments.len() * 32
+            + receipt.len(),
     );
     out.extend_from_slice(&(TRIPLE_BATCH_CERTIFICATE_DOMAIN.len() as u64).to_be_bytes());
     out.extend_from_slice(TRIPLE_BATCH_CERTIFICATE_DOMAIN);
     out.extend_from_slice(&base_session_digest);
+    out.extend_from_slice(&roster_digest);
     out.extend_from_slice(&ed25519_authority_key);
     out.extend_from_slice(&(ml_dsa_authority_key.len() as u64).to_be_bytes());
     out.extend_from_slice(ml_dsa_authority_key);
@@ -1731,11 +2028,18 @@ fn triple_batch_authority_message(
     for commitment in row_commitments {
         out.extend_from_slice(commitment);
     }
+    out.extend_from_slice(&receipt);
     out
 }
 
 fn verify_triple_certificate(certificate: &TripleFormationCertificate) -> Result<()> {
     require_preprocessing_pq_runtime(PreprocessingPqOperation::Verify)?;
+    certificate.authenticated_sacrifice.validate_binding(
+        certificate.base_session_digest,
+        certificate.roster_digest,
+        certificate.n_parties,
+        certificate.gates,
+    )?;
     if certificate.n_parties < 2
         || certificate.gates == 0
         || certificate.ml_dsa_authority_key.len() != ML_DSA_PK_LEN
@@ -1743,22 +2047,26 @@ fn verify_triple_certificate(certificate: &TripleFormationCertificate) -> Result
         || certificate.row_commitments.len() != certificate.n_parties
         || triple_batch_digest(
             certificate.base_session_digest,
+            certificate.roster_digest,
             certificate.ed25519_authority_key,
             &certificate.ml_dsa_authority_key,
             certificate.n_parties,
             certificate.gates,
             &certificate.row_commitments,
+            &certificate.authenticated_sacrifice,
         ) != certificate.digest
     {
         return Err(PartyMpcError::InvalidTripleFormationCertificate);
     }
     let authority_message = triple_batch_authority_message(
         certificate.base_session_digest,
+        certificate.roster_digest,
         certificate.ed25519_authority_key,
         &certificate.ml_dsa_authority_key,
         certificate.n_parties,
         certificate.gates,
         &certificate.row_commitments,
+        &certificate.authenticated_sacrifice,
     );
     let authority = VerifyingKey::from_bytes(&certificate.ed25519_authority_key)
         .map_err(|_| PartyMpcError::InvalidTripleFormationCertificate)?;
@@ -1805,6 +2113,7 @@ pub fn run_party(
     if input.session != preprocessing.session {
         return Err(PartyMpcError::SessionMismatch);
     }
+    preprocessing.validate_runtime_binding()?;
     if input.party != preprocessing.party {
         return Err(PartyMpcError::PartyMismatch {
             material: input.party,
@@ -1906,6 +2215,7 @@ pub fn run_party_equality(
     if input.session != preprocessing.session {
         return Err(PartyMpcError::SessionMismatch);
     }
+    preprocessing.validate_runtime_binding()?;
     if input.party != preprocessing.party {
         return Err(PartyMpcError::PartyMismatch {
             material: input.party,
@@ -1983,6 +2293,7 @@ pub fn run_party_comparison(
     if input.session != preprocessing.session {
         return Err(PartyMpcError::SessionMismatch);
     }
+    preprocessing.validate_runtime_binding()?;
     if input.party != preprocessing.party {
         return Err(PartyMpcError::PartyMismatch {
             material: input.party,

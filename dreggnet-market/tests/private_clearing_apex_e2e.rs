@@ -858,6 +858,12 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     let transport_coordinator_key = SigningKey::from_bytes(&[0x63; 32]);
     let transport_coordinator_identity =
         NativePqTransportIdentity::generate(transport_coordinator_key.clone());
+    let transport_roster = CrossingTransportRoster::new_native_post_quantum_sealed_crossing(
+        committee_public_identities.clone(),
+        transport_coordinator_identity.public_identity(),
+    )
+    .expect("computation committee is the native-PQ authenticated crossing roster");
+    let preprocessing_roster_digest = transport_roster.preprocessing_roster_digest();
     let packed_source_digest = InputDigest::ciphertext(packed_fold.ciphertext()).digest;
     let preprocessing_seed = fresh_crossing_preprocessing_seed(
         &base_mpc_session,
@@ -871,6 +877,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         NativePqTransportIdentity::generate(preprocessing_authority.clone());
     let certified_batch = certified_dealer_triples(
         &base_mpc_session,
+        preprocessing_roster_digest,
         &mut StdRng::from_seed(preprocessing_seed),
         &preprocessing_authority,
         preprocessing_authority_identity.ml_dsa_signing_key(),
@@ -902,11 +909,6 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             .expect("live board commitment"),
     ];
     ordered_inputs.extend(required_tail_inputs.iter().copied());
-    let transport_roster = CrossingTransportRoster::new_native_post_quantum_sealed_crossing(
-        committee_public_identities.clone(),
-        transport_coordinator_identity.public_identity(),
-    )
-    .expect("computation committee is the native-PQ authenticated crossing roster");
     assert_eq!(
         transport_roster.security_profile(),
         TransportSecurityProfile::NativePostQuantumSealedCrossing
@@ -1051,6 +1053,7 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     substituted_preprocessing_seed[0] ^= 1;
     let substituted_preprocessing_batch = certified_dealer_triples(
         &base_mpc_session,
+        preprocessing_roster_digest,
         &mut StdRng::from_seed(substituted_preprocessing_seed),
         &preprocessing_authority,
         preprocessing_authority_identity.ml_dsa_signing_key(),
@@ -1507,13 +1510,16 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     assert!(raid_host.verify("dungeon", &raid_id).unwrap().verified);
     assert!(format!("{:?}", raid_host.render("dungeon", &raid_id).unwrap().0).contains("HP 50"));
 
-    let replay = game_gate
+    let game_replay_error = game_gate
         .execute_signed(
             &mut raid_host,
             winner_signer.sign("dungeon", &raid_id, 1, mender_action.clone()),
         )
         .expect_err("the exact private authorization is consumed before a second dispatch");
-    assert_eq!(replay, PrivateFheggGameConsequenceError::AlreadyConsumed);
+    assert_eq!(
+        game_replay_error,
+        PrivateFheggGameConsequenceError::AlreadyConsumed
+    );
 
     // The public consequence itself is hostile-substitution detecting, and a
     // restarted gate can restore the exact authorization id before inspecting
