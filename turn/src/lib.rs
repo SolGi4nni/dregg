@@ -116,6 +116,7 @@ pub mod faithful_note_spend_exact_v3_verifier;
 #[cfg(feature = "prover")]
 pub mod faithful_note_spend_verifier;
 pub mod fast_path;
+pub mod finalized_receipt_core_v1;
 pub mod forest;
 pub(crate) mod journal;
 pub mod pending;
@@ -219,6 +220,10 @@ pub use fast_path::{
     CellLockEntry, CellLockTable, FastPathConfig, FastPathError, TurnCertificate, TurnSign,
     assemble_certificate, clear_all_locks, execute_certified_turn, expire_stale_locks,
     is_fast_path_eligible, process_fast_path_lock, verify_turn_sign,
+};
+pub use finalized_receipt_core_v1::{
+    FINALIZED_EXECUTION_CONTEXT_V1_LEN, FINALIZED_RECEIPT_CORE_V1_LEN, FinalizedExecutionContextV1,
+    FinalizedReceiptCoreV1, FinalizedReceiptCoreV1Error, FinalizedReceiptIdV1,
 };
 pub use forest::{CallForest, CallTree};
 pub use pending::{
