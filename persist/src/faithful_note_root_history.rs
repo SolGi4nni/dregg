@@ -462,6 +462,40 @@ pub struct FaithfulNoteRootExpectationV1 {
     pub root: CanonicalFaithfulRoot,
 }
 
+/// Store-minted evidence that one exact historical faithful root is covered by
+/// the currently authenticated dense history index.
+///
+/// This is deliberately an opaque, non-`Clone`, non-serializable capability.
+/// A caller can obtain it only from
+/// [`PersistentStore::store_authenticated_historical_root_hybrid`], which
+/// authenticates the requested row directly and authenticates the current
+/// tail named by the atomically maintained head/index seal.  The finalizer
+/// retains this value until its consuming store transaction, rather than
+/// reducing the check to a caller-replayable `(height, root)` boolean.
+///
+/// This remains a trusted-store capability, not a portable proof.  The full
+/// [`PersistentStore::load_faithful_note_root_history_hybrid`] replay remains
+/// the boot/offline audit gate for the complete predecessor chain.
+#[derive(Debug)]
+pub struct StoreAuthenticatedHistoricalRoot {
+    height: u64,
+    root: CanonicalFaithfulRoot,
+    _private: (),
+}
+
+impl StoreAuthenticatedHistoricalRoot {
+    /// The exact authenticated height.  Exposed only for diagnostics; callers
+    /// cannot construct or alter the capability.
+    pub fn height(&self) -> u64 {
+        self.height
+    }
+
+    /// The exact authenticated faithful-eight root.
+    pub fn root(&self) -> CanonicalFaithfulRoot {
+        self.root
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FaithfulNoteRootHistoryV1 {
     anchor: FaithfulNoteRootAnchorV1,
@@ -666,6 +700,145 @@ impl PersistentStore {
                 "partial anchor/head",
             ))),
         }
+    }
+
+    /// Mint O(1) store authority for one authenticated historical root.
+    ///
+    /// The direct row is hybrid-authenticated under the supplied enrolled
+    /// roster.  Independently, the current tail row is hybrid-authenticated and
+    /// required to equal the atomically maintained head seal.  Exact table
+    /// cardinality plus the anchor/head height span and first/last keys prove
+    /// that the redb index is dense, so a deleted/rekeyed row or stale head seal
+    /// cannot be read as membership.  The anchor itself is the externally
+    /// installed start authority and is admitted through the same sealed
+    /// boundary.
+    ///
+    /// Unlike full replay, this does not reconstruct every predecessor edge.
+    /// Full replay remains mandatory at boot/pre-activation and for offline
+    /// audit; the online finalizer needs only authenticated membership of the
+    /// exact `(height, root)` it consumes.
+    pub fn store_authenticated_historical_root_hybrid(
+        &self,
+        committee: &[PublicKey],
+        ml_dsa_committee: &[MlDsaPublicKey],
+        threshold: usize,
+        height: u64,
+        root: [u8; 32],
+    ) -> StoreResult<Option<StoreAuthenticatedHistoricalRoot>> {
+        self.store_authenticated_historical_root_with(height, root, |envelope| {
+            envelope.verify_hybrid(committee, ml_dsa_committee, threshold)
+        })
+    }
+
+    fn store_authenticated_historical_root_with(
+        &self,
+        height: u64,
+        root: [u8; 32],
+        authenticate: impl Fn(&FaithfulNoteRootEnvelopeV1) -> bool,
+    ) -> StoreResult<Option<StoreAuthenticatedHistoricalRoot>> {
+        let Ok(root) = CanonicalFaithfulRoot::from_bytes(root) else {
+            return Ok(None);
+        };
+        let read = self.db.begin_read()?;
+        let table = read.open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)?;
+        let metadata = read.open_table(tables::METADATA_BYTES)?;
+        let anchor_guard = metadata
+            .get(tables::META_FAITHFUL_NOTE_ROOT_ANCHOR)?
+            .ok_or_else(|| integrity(FaithfulNoteRootHistoryError::Malformed("missing anchor")))?;
+        let anchor =
+            FaithfulNoteRootAnchorV1::from_bytes(anchor_guard.value()).map_err(integrity)?;
+        let head_guard = metadata
+            .get(tables::META_FAITHFUL_NOTE_ROOT_HEAD)?
+            .ok_or_else(|| {
+                integrity(FaithfulNoteRootHistoryError::Malformed("missing head seal"))
+            })?;
+        let seal = HeadSealV1::from_bytes(head_guard.value()).map_err(integrity)?;
+        if table.len()? != seal.records {
+            return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "persisted record count",
+            )));
+        }
+        if seal.head.session_id != anchor.session_id
+            || seal.head.federation_id != anchor.federation_id
+            || seal.head.committee_epoch != anchor.committee_epoch
+        {
+            return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "head context",
+            )));
+        }
+        let height_span = seal.head.height.checked_sub(anchor.height).ok_or_else(|| {
+            integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "head height",
+            ))
+        })?;
+        if height_span != seal.records {
+            return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                "dense height span",
+            )));
+        }
+
+        if seal.records == 0 {
+            if !table.is_empty()? || seal.head != anchor {
+                return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "empty sealed boundary",
+                )));
+            }
+        } else {
+            let expected_first = anchor
+                .height
+                .checked_add(1)
+                .ok_or_else(|| integrity(FaithfulNoteRootHistoryError::NonConsecutiveHeight))?;
+            let (first_key, _) = table.first()?.ok_or_else(|| {
+                integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "missing first row",
+                ))
+            })?;
+            let (last_key, last_bytes) = table.last()?.ok_or_else(|| {
+                integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "missing tail row",
+                ))
+            })?;
+            if first_key.value() != expected_first || last_key.value() != seal.head.height {
+                return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "dense height boundary",
+                )));
+            }
+            let tail = FaithfulNoteRootEnvelopeV1::from_bytes(last_bytes.value())?;
+            if tail.to_bytes()?.as_slice() != last_bytes.value()
+                || tail.record.height != last_key.value()
+                || tail.record.to_anchor() != seal.head
+                || !authenticate(&tail)
+            {
+                return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "authenticated head seal",
+                )));
+            }
+        }
+
+        let authenticated = if height == anchor.height {
+            root == anchor.root
+        } else if height > anchor.height && height <= seal.head.height {
+            let Some(row_bytes) = table.get(height)? else {
+                return Err(integrity(FaithfulNoteRootHistoryError::SnapshotMismatch(
+                    "missing dense row",
+                )));
+            };
+            let envelope = FaithfulNoteRootEnvelopeV1::from_bytes(row_bytes.value())?;
+            envelope.to_bytes()?.as_slice() == row_bytes.value()
+                && envelope.record.height == height
+                && envelope.record.session_id == anchor.session_id
+                && envelope.record.federation_id == anchor.federation_id
+                && envelope.record.committee_epoch == anchor.committee_epoch
+                && envelope.record.successor == root
+                && authenticate(&envelope)
+        } else {
+            false
+        };
+        Ok(authenticated.then_some(StoreAuthenticatedHistoricalRoot {
+            height,
+            root,
+            _private: (),
+        }))
     }
 
     /// Install the external genesis/current anchor for the dedicated v1 table.
@@ -1023,6 +1196,41 @@ pub fn plan_faithful_note_root_transition_v1(
 mod tests {
     use super::*;
 
+    struct HybridSigner {
+        ed: dregg_types::SigningKey,
+        ed_pk: PublicKey,
+        pq_pk: MlDsaPublicKey,
+        pq: dregg_federation::frost::MlDsaSigningKey,
+    }
+
+    impl HybridSigner {
+        fn new(seed: u8) -> Self {
+            let bytes = [seed; 32];
+            let ed = dregg_types::SigningKey::from_bytes(&bytes);
+            let ed_pk = ed.public_key();
+            let (pq_pk, pq) = dregg_federation::frost::MlDsaSigningKey::from_seed(&bytes);
+            Self {
+                ed,
+                ed_pk,
+                pq_pk,
+                pq,
+            }
+        }
+
+        fn sign(&self, record: FaithfulNoteRootRecordV1) -> FaithfulNoteRootEnvelopeV1 {
+            let message = record.signing_message();
+            FaithfulNoteRootEnvelopeV1 {
+                record,
+                hybrid_quorum: vec![HybridQuorumSig {
+                    pubkey: self.ed_pk,
+                    signature: dregg_types::sign(&self.ed, &message),
+                    ml_dsa_pubkey: self.pq_pk.0.to_vec(),
+                    pq_signature: self.pq.sign(&message).expect("ML-DSA signs"),
+                }],
+            }
+        }
+    }
+
     fn tag(byte: u8) -> [u8; 32] {
         let mut out = [0u8; 32];
         out[0] = byte;
@@ -1047,6 +1255,18 @@ mod tests {
                 .unwrap(),
             hybrid_quorum: Vec::new(),
         }
+    }
+
+    fn signed_planned(
+        signer: &HybridSigner,
+        tree: &crate::Poseidon2NoteTree,
+        anchor: &FaithfulNoteRootAnchorV1,
+        block: u8,
+        commitments: &[[u8; 32]],
+    ) -> FaithfulNoteRootEnvelopeV1 {
+        signer.sign(
+            plan_faithful_note_root_transition_v1(tree, anchor, tag(block), commitments).unwrap(),
+        )
     }
 
     #[test]
@@ -1240,6 +1460,166 @@ mod tests {
             Err(StoreError::Integrity(ref message)) if message.contains("persisted head seal")
         ));
         write.abort().unwrap();
+    }
+
+    #[test]
+    fn direct_historical_authority_authenticates_requested_row_and_sealed_tail() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = HybridSigner::new(0x71);
+        let (mut tree, anchor) = empty_anchor();
+        store
+            .initialize_faithful_note_root_history(&anchor)
+            .unwrap();
+
+        let first_commitments = [[0x91; 32]];
+        let first = signed_planned(&signer, &tree, &anchor, 9, &first_commitments);
+        for commitment in &first_commitments {
+            tree.append_blake3_commitment(commitment);
+        }
+        let second = signed_planned(&signer, &tree, &first.record.to_anchor(), 10, &[[0x92; 32]]);
+        store.append_faithful_note_root_verified(&first).unwrap();
+        store.append_faithful_note_root_verified(&second).unwrap();
+
+        let committee = [signer.ed_pk];
+        let pq_committee = [signer.pq_pk.clone()];
+        let authority = store
+            .store_authenticated_historical_root_hybrid(
+                &committee,
+                &pq_committee,
+                1,
+                first.record.height,
+                first.record.successor.to_bytes(),
+            )
+            .unwrap()
+            .expect("direct signed historical row");
+        assert_eq!(authority.height(), first.record.height);
+        assert_eq!(authority.root(), first.record.successor);
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    first.record.height,
+                    anchor.root.to_bytes(),
+                )
+                .unwrap()
+                .is_none(),
+            "the right height with a substituted root is not authority"
+        );
+    }
+
+    #[test]
+    fn direct_historical_authority_rejects_forged_row_and_stale_head_seal() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let signer = HybridSigner::new(0x72);
+        let (mut tree, anchor) = empty_anchor();
+        store
+            .initialize_faithful_note_root_history(&anchor)
+            .unwrap();
+
+        let first_commitments = [[0xa1; 32]];
+        let first = signed_planned(&signer, &tree, &anchor, 11, &first_commitments);
+        for commitment in &first_commitments {
+            tree.append_blake3_commitment(commitment);
+        }
+        let second = signed_planned(&signer, &tree, &first.record.to_anchor(), 12, &[[0xa2; 32]]);
+        store.append_faithful_note_root_verified(&first).unwrap();
+        store.append_faithful_note_root_verified(&second).unwrap();
+
+        let committee = [signer.ed_pk];
+        let pq_committee = [signer.pq_pk.clone()];
+        let mut forged = first.clone();
+        forged.hybrid_quorum[0].pq_signature[0] ^= 1;
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut table = write
+                .open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)
+                .unwrap();
+            let bytes = forged.to_bytes().unwrap();
+            table.insert(first.record.height, bytes.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    first.record.height,
+                    first.record.successor.to_bytes(),
+                )
+                .unwrap()
+                .is_none(),
+            "a forged direct row cannot mint store authority"
+        );
+
+        // Restore the signed row, then leave the two-row table beside a head
+        // seal rolled back to the first edge.  Exact count/span/head-to-tail
+        // agreement must reject the stale seal without replaying the history.
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut table = write
+                .open_table(tables::FAITHFUL_NOTE_ROOT_HISTORY)
+                .unwrap();
+            let first_bytes = first.to_bytes().unwrap();
+            table
+                .insert(first.record.height, first_bytes.as_slice())
+                .unwrap();
+            let stale = HeadSealV1 {
+                records: 2,
+                head: first.record.to_anchor(),
+            }
+            .to_bytes();
+            let mut metadata = write.open_table(tables::METADATA_BYTES).unwrap();
+            metadata
+                .insert(tables::META_FAITHFUL_NOTE_ROOT_HEAD, stale.as_slice())
+                .unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            store
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    first.record.height,
+                    first.record.successor.to_bytes(),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn direct_historical_authority_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.redb");
+        let signer = HybridSigner::new(0x73);
+        let (tree, anchor) = empty_anchor();
+        let first = signed_planned(&signer, &tree, &anchor, 13, &[[0xb1; 32]]);
+        {
+            let store = PersistentStore::open(&path).unwrap();
+            store
+                .initialize_faithful_note_root_history(&anchor)
+                .unwrap();
+            store.append_faithful_note_root_verified(&first).unwrap();
+        }
+
+        let reopened = PersistentStore::open(&path).unwrap();
+        let committee = [signer.ed_pk];
+        let pq_committee = [signer.pq_pk.clone()];
+        assert!(
+            reopened
+                .store_authenticated_historical_root_hybrid(
+                    &committee,
+                    &pq_committee,
+                    1,
+                    first.record.height,
+                    first.record.successor.to_bytes(),
+                )
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
