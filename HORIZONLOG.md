@@ -11457,11 +11457,13 @@ The exact receipt-epoch/executor work is deliberately committed as **WIP** in
 architectural correction: the proof-local exact `FNS3` transition and the real
 full-turn receipt are two different commitments.  A genuine turn advances
 nonce and may change fees/other state, so its full `post_state_hash` must never
-be equated with the exact descriptor's stable-frame AFTER anchor.  Promotion
-still requires an opaque executor-produced full-turn authority, an owned exact
-subreceipt joined to it, an authorized receipt-epoch activation, frame signing,
-durable head CAS, and block-finalizer revalidation.  Until those land, the old
-raw/synthetic candidate is non-live repair scaffolding, not accepted authority.
+be equated with the exact descriptor's stable-frame AFTER anchor.  The design
+no longer retains the earlier caller-assembled raw/synthetic constructor: that
+compatibility prototype has been deleted.  Its committed WIP replacement is the
+opaque executor-produced full-turn authority joined to an owned exact
+subreceipt.  The active whole-file work completes the authorized receipt epoch,
+frame signature, durable head CAS, and block-finalizer revalidation; committing
+that work in progress does not imply that a rejected second path should remain.
 
 The payload-free private Bazaar journey is likewise banked as honest WIP in
 `24fcd81bf`, with the broader shared game/frontend snapshot in `5c80e447d`.
