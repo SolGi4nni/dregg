@@ -139,6 +139,28 @@ fn extracted_mask_coefficient(index: u32) -> vec2<u32> {
     return neg64(load_acc64(polynomial * params.degree + params.degree - local));
 }
 
+// Degree-zero GLWE sample extraction without the following key switch.  This
+// is the terminal step for tfhe-rs's KS->PBS order: the caller has already
+// switched the input from the large LWE key to the BSK input key, and the PBS
+// output must remain under the large (GLWE-equivalent) key.
+@compute @workgroup_size(64)
+fn extract_only(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let output_index = gid.x;
+    let input_dimension = (params.glwe_size - 1u) * params.degree;
+    if (output_index > input_dimension) { return; }
+
+    var value = vec2<u32>(0u, 0u);
+    if (output_index == input_dimension) {
+        value = load_acc64((params.glwe_size - 1u) * params.degree);
+    } else {
+        value = extracted_mask_coefficient(output_index);
+    }
+
+    let limb = output_index * 2u;
+    output_lwe[limb] = value.x;
+    output_lwe[limb + 1u] = value.y;
+}
+
 @compute @workgroup_size(64)
 fn extract_and_keyswitch(@builtin(global_invocation_id) gid: vec3<u32>) {
     let output_index = gid.x;

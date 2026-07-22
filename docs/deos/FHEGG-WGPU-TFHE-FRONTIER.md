@@ -262,18 +262,51 @@ CMUX steps, 99.029 ms CPU / 43.780 ms coefficient GPU / 11.622 ms transform GPU;
 256 steps, 389.560 / 132.751 / 28.049 ms; 512 steps, 774.481 / 245.173 / 52.973
 ms; and 918 steps, 1,380.391 / 422.847 / 115.746 ms.
 
-This is still not a complete high-level `FheUint32` backend. The dense coefficient
-and transform routes are exact measured backends, but their qualified envelope
-is PBS→KS while the default `EncryptionKeyChoice::Big` shortint path is KS→PBS.
-The correct integration must first key-switch a 2048-dimensional high-level block
-to the 918-dimensional small key, then run the transform-resident PBS and return
-the extracted 2048-dimensional big-key block. The transform plan is deliberately
-restricted to `N=2048`, GLWE-two, PBS-23x1, and KS-4x4; its spectrum memory and
-per-PBS latency are real costs. Those are named implementation boundaries.
+## Deployed high-level key-order weld
+
+`fhegg-fhe/src/tfhe_high_level_wgpu.rs` now closes the typed one-block seam for
+tfhe-rs 1.6's actual default `FheUint32` order. The adapter expands a retained
+`CompressedServerKey` into its exact coefficient-domain BSK and KSK, uploads the
+BSK through `TorusPbsTransformWgpuPlan`, and retains the KSK for the required
+2048-to-918 pre-PBS key switch. This requires no tfhe-rs fork. A decompressed
+`ServerKey` alone is insufficient because it retains only the Fourier BSK; key
+setup must keep the compressed form from which both the ordinary server key and
+the portable plan can be derived.
+
+For each selected radix block the path is:
+
+```text
+ordinary big-key FheUint32 block
+    -> exact tfhe-rs 2048-to-918 key switch
+    -> the key's selected centered-mean modulus switch
+    -> transform-resident 918-CMUX PBS
+    -> degree-zero extraction without a trailing key switch
+    -> ordinary big-key FheUint32 block
+```
+
+The new `extract_only` GPU terminal writes all 2,049 large-key LWE coefficients.
+The adapter restores tfhe-rs degree/noise/modulus/atomic-pattern metadata and the
+original high-level id, tag, rerandomization metadata, and untouched radix blocks.
+`tests/tfhe_high_level_wgpu.rs` compares its decrypted result to tfhe-rs's own
+`apply_lookup_table` and then feeds the GPU-produced value into a subsequent
+normal high-level homomorphic addition. The fail-closed hbox RX 6750 XT release
+gate passed 1/1 on 2026-07-21: exact compressed-key expansion, transform, and
+upload took 317.965 ms; the first typed pre-key-switch + centered-mean transform
+PBS + large-key reconstruction against that prepared plan took 143.891 ms. This
+is a one-call qualification result, not a repeated-call median. The reverse-order dense qualification
+also remained green after the shader extension.
+
+This is a real typed high-level PBS/LUT primitive, not yet an automatic backend
+for every overloaded integer operator. Comparisons still need their shortint
+control flow wired to repeated plan calls, and the transform plan remains
+restricted to `N=2048`, GLWE-two, PBS-23x1, and KS-4x4. Its spectrum memory and
+per-PBS latency are real costs. Those are now dispatch/coverage boundaries rather
+than a ciphertext/key-format blocker.
 
 Consequently GPU output is still an accelerator result, never independent
 protocol authority.  The bit-exact CPU/tfhe-rs definitions remain the acceptance
 oracle, and the live fhEgg clearing path remains BFV aggregation plus PartyMPC as
-described above. The next hard cut is to wire this exact primitive below the
-default shortint/integer key order and qualify a real comparison—not infer
-high-level `FheUint32` throughput from the reverse-order dense PBS benchmark.
+described above. The next hard cut is to wire the typed plan into a real
+comparison/control-flow operator and measure repeated calls—not infer full
+`FheUint32` comparison throughput from one block LUT or the reverse-order dense
+PBS benchmark.

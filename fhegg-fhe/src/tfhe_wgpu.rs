@@ -44,7 +44,8 @@ use tfhe::core_crypto::entities::Polynomial;
 use tfhe::core_crypto::prelude::{DecompositionBaseLog, DecompositionLevelCount, SignedDecomposer};
 
 use crate::tfhe_blind_rotation_ntt_wgpu::{
-    prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu, PreparedTransformPbsGpuKeys,
+    prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu,
+    run_bootstrap_only as transform_bootstrap_gpu, PreparedTransformPbsGpuKeys,
     TransformPbsGpuError,
 };
 use crate::tfhe_blind_rotation_wgpu::{
@@ -1907,6 +1908,59 @@ pub fn torus_pbs_extract_keyswitch_transform_prepared(
     let (body_rotation, mask_rotations) =
         blind_rotation_schedule(lwe_mask, lwe_body, plan.external_params.degree)?;
     match transform_pbs_gpu(accumulator, body_rotation, &mask_rotations, &plan.prepared) {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            },
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute the transform-resident blind rotation and degree-zero sample
+/// extraction without a trailing key switch.
+///
+/// This is the terminal half of tfhe-rs's deployed `KeyswitchBootstrap`
+/// order. `mask_rotations` and `body_rotation` are already modulus-switched in
+/// `[0, 2N)`, which lets a caller preserve tfhe-rs's selected centered-mean or
+/// drift noise-reduction policy exactly instead of silently applying the
+/// standard modulus switch a second time.
+pub fn torus_pbs_bootstrap_transform_prepared(
+    plan: &TorusPbsTransformWgpuPlan,
+    accumulator: &[u64],
+    mask_rotations: &[usize],
+    body_rotation: usize,
+) -> Result<TorusMacResult, TorusMacError> {
+    if mask_rotations.len() != plan.prepared.blind_mask_dimension {
+        return Err(TorusMacError::BlindRotationMaskLength {
+            expected: plan.prepared.blind_mask_dimension,
+            actual: mask_rotations.len(),
+        });
+    }
+    let twice_degree = plan
+        .external_params
+        .degree
+        .checked_mul(2)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if body_rotation >= twice_degree || mask_rotations.iter().any(|&r| r >= twice_degree) {
+        return Err(TorusMacError::AddressSpaceOverflow);
+    }
+    let expected_accumulator = plan
+        .external_params
+        .glwe_size
+        .checked_mul(plan.external_params.degree)
+        .ok_or(TorusMacError::AddressSpaceOverflow)?;
+    if accumulator.len() != expected_accumulator {
+        return Err(TorusMacError::GlweLength {
+            expected: expected_accumulator,
+            actual: accumulator.len(),
+        });
+    }
+    match transform_bootstrap_gpu(accumulator, body_rotation, mask_rotations, &plan.prepared) {
         Ok(result) => Ok(TorusMacResult {
             coefficients: result.coefficients,
             backend: TorusMacBackend::Wgpu {

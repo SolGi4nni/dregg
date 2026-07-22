@@ -83,6 +83,30 @@ pub(crate) fn run(
     }
 }
 
+pub(crate) fn run_bootstrap_only(
+    accumulator: &[u64],
+    body_rotation: usize,
+    mask_rotations: &[usize],
+    prepared: &PreparedTransformPbsGpuKeys,
+) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
+    match gpu_state() {
+        GpuState::Ready(gpu) => gpu.run_with_finalization(
+            accumulator,
+            body_rotation,
+            mask_rotations,
+            prepared,
+            Finalization::ExtractOnly,
+        ),
+        GpuState::Unavailable(reason) => Err(TransformPbsGpuError::Unavailable(reason.clone())),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Finalization {
+    ExtractKeyswitch,
+    ExtractOnly,
+}
+
 struct GpuContext {
     _instance: wgpu::Instance,
     device: wgpu::Device,
@@ -100,6 +124,7 @@ struct GpuContext {
     crt_add: wgpu::ComputePipeline,
     keyswitch_bgl: wgpu::BindGroupLayout,
     extract_keyswitch: wgpu::ComputePipeline,
+    extract_only: wgpu::ComputePipeline,
 }
 
 impl GpuContext {
@@ -212,6 +237,14 @@ impl GpuContext {
             compilation_options: Default::default(),
             cache: None,
         });
+        let extract_only = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("extract_only"),
+            layout: Some(&keyswitch_layout),
+            module: &keyswitch_shader,
+            entry_point: Some("extract_only"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let context = Self {
             _instance: instance,
             device,
@@ -229,6 +262,7 @@ impl GpuContext {
             crt_add,
             keyswitch_bgl,
             extract_keyswitch,
+            extract_only,
         };
         if let Some(error) = pollster::block_on(context.device.pop_error_scope()) {
             return GpuState::Unavailable(TorusCpuFallbackReason::PipelineUnavailable(format!(
@@ -390,6 +424,23 @@ impl GpuContext {
         mask_rotations: &[usize],
         prepared: &PreparedTransformPbsGpuKeys,
     ) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
+        self.run_with_finalization(
+            accumulator,
+            body_rotation,
+            mask_rotations,
+            prepared,
+            Finalization::ExtractKeyswitch,
+        )
+    }
+
+    fn run_with_finalization(
+        &self,
+        accumulator: &[u64],
+        body_rotation: usize,
+        mask_rotations: &[usize],
+        prepared: &PreparedTransformPbsGpuKeys,
+        finalization: Finalization,
+    ) -> Result<TransformPbsGpuResult, TransformPbsGpuError> {
         let p = prepared.params;
         let rows = TORUS_NTT_MODULI.len();
         let accumulator_limbs = to_limbs(accumulator);
@@ -401,8 +452,16 @@ impl GpuContext {
             .and_then(|n| n.checked_mul(2))
             .ok_or_else(|| TransformPbsGpuError::Execution("transform scratch overflow".into()))?;
         let scratch_bytes = word_bytes(scratch_words)?;
-        let output_bytes = prepared
-            .output_lwe_size
+        let output_lwe_size = match finalization {
+            Finalization::ExtractKeyswitch => prepared.output_lwe_size,
+            Finalization::ExtractOnly => (p.glwe_size - 1)
+                .checked_mul(p.degree)
+                .and_then(|dimension| dimension.checked_add(1))
+                .ok_or_else(|| {
+                    TransformPbsGpuError::Execution("extracted LWE size overflow".into())
+                })?,
+        };
+        let output_bytes = output_lwe_size
             .checked_mul(8)
             .and_then(|n| u64::try_from(n).ok())
             .ok_or_else(|| TransformPbsGpuError::Execution("output size overflow".into()))?;
@@ -534,7 +593,7 @@ impl GpuContext {
         let keyswitch_metadata = [
             p.degree as u32,
             p.glwe_size as u32,
-            prepared.output_lwe_size as u32,
+            output_lwe_size as u32,
             prepared.ks_base_log as u32,
             prepared.ks_level_count as u32,
             current,
@@ -562,10 +621,13 @@ impl GpuContext {
                 label: Some("TFHE transform sample extract/key switch"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.extract_keyswitch);
+            pass.set_pipeline(match finalization {
+                Finalization::ExtractKeyswitch => &self.extract_keyswitch,
+                Finalization::ExtractOnly => &self.extract_only,
+            });
             pass.set_bind_group(0, &keyswitch_bind_group, &[]);
             pass.dispatch_workgroups(
-                prepared.output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
+                output_lwe_size.div_ceil(WORKGROUP_SIZE as usize) as u32,
                 1,
                 1,
             );
@@ -578,7 +640,7 @@ impl GpuContext {
                 "TFHE transform-resident PBS dispatch failed: {error}"
             )));
         }
-        let coefficients = read_u64(&self.device, &readback, prepared.output_lwe_size)?;
+        let coefficients = read_u64(&self.device, &readback, output_lwe_size)?;
         Ok(TransformPbsGpuResult {
             coefficients,
             adapter: self.adapter.clone(),

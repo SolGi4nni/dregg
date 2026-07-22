@@ -5,6 +5,13 @@ set -euo pipefail
 
 export DREGG_REQUIRE_WGPU=1
 
+# Actual tfhe-rs default order and type boundary: KS -> transform PBS -> a
+# reconstructed big-key FheUint32 that survives a subsequent high-level op.
+cargo nextest run --release \
+  -p fhegg-fhe \
+  --test tfhe_high_level_wgpu \
+  --no-capture
+
 cargo nextest run --release \
   -p fhegg-fhe \
   --test wgpu_correctness_matrix \
