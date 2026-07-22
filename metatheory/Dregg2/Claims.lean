@@ -610,4 +610,16 @@ correlation custody. -/
 #assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.Demo.omitted_pair_can_break_global_authentication
 #assert_axioms Dregg2.Crypto.DealerlessChosenVoleMac.Demo.diagonal_only_can_break_global_authentication
 
+/-! ## §38 — Collaborative tensor-code algebra and finite-view privacy boundary. -/
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.tensor_encode_order_independent
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.foldRows_encodeCols
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.foldRows_encodeRows
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.fold_tensorEncode
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.fold_tensorEncode_of_induces
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.exists_sharing_fitting_observed_rows
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.below_threshold_support_privacy
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.threshold_rows_pin_secret
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.below_threshold_privacy_fires
+#assert_axioms Dregg2.Circuit.CollaborativeTensorCode.fold_tensorEncode_fires
+
 end Dregg2.Claims
