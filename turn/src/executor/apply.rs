@@ -1839,13 +1839,12 @@ impl TurnExecutor {
 
     // ─── Reactive effects (Track 2): Promise / Notify / React ────────────────
     //
-    // The keystone (REACTIVE-EFFECTS.md §6): a promise-hole IS a nullifier. To
-    // `React` is to SPEND the hole. The executor enforces one-shotness with the
-    // SAME production `note_nullifiers` set that gates `NoteSpend`: the hole's
-    // 32-byte id is the nullifier, so a second react (or a replayed hole-id) is
-    // rejected by the identical double-spend gate. The in-circuit witness (the
-    // React descriptor mirroring `noteSpendV3`'s grow-gate) reads exactly this
-    // nullifier — see the report.
+    // The keystone (REACTIVE-EFFECTS.md §6): a promise-hole is a one-shot
+    // capability. `React` consumes the hole and records its 32-byte id in the
+    // dedicated `reactive_nullifiers` domain. This is intentionally disjoint
+    // from the faithful `note_nullifiers` append history: React carries no
+    // NoteSpend statement, while its own canonical CAS is persisted and
+    // replayed with the pending registry.
 
     /// Deposit a STANDING COMMITMENT (a promise-hole) in the reactive registry.
     /// `cell` commits to run `wake` once `resolution_condition` holds. The hole's
@@ -4270,10 +4269,10 @@ impl TurnExecutor {
 // ─── End-to-end React-through-the-executor forge-detector ────────────────────
 //
 // The Track-2 bar: a `React` effect driven through the executor's `apply_effect`
-// dispatch resolves ONCE and SPENDS `pending_id` into the production
-// `note_nullifiers` set. A SECOND react is rejected by the missing live promise;
-// even if an attacker re-registers the same hole, the durable nullifier gate (the
-// same gate `NoteSpend` rides) rejects the replay as a double-spend.
+// dispatch resolves ONCE and SPENDS `pending_id` into the dedicated
+// `reactive_nullifiers` set. A SECOND react is rejected by the missing live
+// promise; even if an attacker re-registers the same hole, the durable React
+// replay gate rejects it without polluting the faithful NoteSpend history.
 #[cfg(test)]
 mod react_executor_tests {
     use super::*;
