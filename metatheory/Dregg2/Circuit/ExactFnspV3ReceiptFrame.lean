@@ -2,17 +2,21 @@
 # Exact FNSP-v3 receipt frames — two linked chains, one typed frame
 
 The exact note-spend descriptor opens a proof-local rotated state whose changing component is
-`FNS3(root8,count)`.  A real turn receipt commits the complete actor transition: nonce, fees, and
-every effect.  These are deliberately different state machines.  In particular, a genuine turn
-can advance the full actor state while the exact descriptor keeps every non-FNS3 lane stable.
+`FNS3(root8,count)`.  A real turn receipt commits the complete execution transition: nonce, fees,
+global ledger context, and every effect.  These are deliberately different state machines.  In
+particular, a genuine turn can advance full state while the exact descriptor keeps every non-FNS3
+lane stable.
 
 This module makes the architectural boundary a Lean type/law rather than a byte-array convention:
 
 * `FullStateCommit` and `ProofOuterCommit` are different types;
 * `ReceiptHash`, `ActivationHash`, and `FrameHash` are different link types;
 * an exact frame contains an ordinary full-turn receipt and an exact proof-local subreceipt;
-* `WellFormedStep` requires full-state continuity, exact-state continuity, and the outer frame link
-  independently — it never compares the full receipt's post-state with the proof-local successor;
+* every frame authenticates its own agent's latest durable receipt predecessor and the global
+  commit boundary at its receipt-log index;
+* `WellFormedStep` requires exact-state continuity and the outer frame link, but does **not** make
+  one exact frame's full receipt the next exact frame's full-receipt predecessor — other agents and
+  ordinary turns may interleave;
 * the exact points are canonical heads from `ExactFnspV3DurableAuthority`, so their FNS3 values are
   recomputed from their own root and count;
 * the durable consequence transition consumes `(epoch activation, frame hash)` once.  A second
@@ -29,7 +33,7 @@ namespace Dregg2.Circuit.ExactFnspV3ReceiptFrame
 
 /-! ## 1. Distinct commitment and link domains -/
 
-/-- Complete actor-state commitment carried by the ordinary turn receipt. -/
+/-- Complete execution-state commitment carried by the ordinary turn receipt. -/
 structure FullStateCommit where
   bytes : List UInt8
 deriving DecidableEq, Repr
@@ -72,14 +76,14 @@ inductive LinkEnvelope where
   | frame (hash : FrameHash)
 deriving DecidableEq, Repr
 
-/-- Full actor-state and proof-local outer commitments remain distinct even when their raw bytes
+/-- Full execution-state and proof-local outer commitments remain distinct even when their raw bytes
 are identical. -/
 theorem fullState_ne_proofOuter (full : FullStateCommit) (proof : ProofOuterCommit) :
     CommitmentEnvelope.fullState full ≠ CommitmentEnvelope.proofOuter proof := by
   intro h
   cases h
 
-/-- A full actor-state commitment cannot be reinterpreted as an FNS3 checkpoint. -/
+/-- A full execution-state commitment cannot be reinterpreted as an FNS3 checkpoint. -/
 theorem fullState_ne_fns3 (full : FullStateCommit) (exact : Fns3Commit) :
     CommitmentEnvelope.fullState full ≠ CommitmentEnvelope.fns3 exact := by
   intro h
@@ -124,7 +128,8 @@ theorem exactStateCommit_recomputed (point : ExactStatePoint) :
 /-- The ordinary executor receipt.  Its hash is supplied by the deployed receipt encoder/hash
 function; it is not a caller-selected field of this semantic record. -/
 structure FullTurnReceipt where
-  previous : ReceiptHash
+  agent : List UInt8
+  previous : Option ReceiptHash
   preState : FullStateCommit
   postState : FullStateCommit
   effectsCommit : List UInt8
@@ -153,11 +158,14 @@ inductive ExactPredecessor where
   | frame (hash : FrameHash)
 deriving DecidableEq, Repr
 
-/-- Flag-day record.  Both state families are intentionally adjacent but not equated. -/
+/-- Flag-day record.  Activation is global to the federation/executor cutover, not pinned to one
+agent's receipt chain.  The receipt cursor/tip name the global durable cutover boundary only. -/
 structure Activation where
   epoch : Nat
-  legacyTip : ReceiptHash
-  legacyTipPostState : FullStateCommit
+  federation : List UInt8
+  executor : List UInt8
+  receiptCutoverCursor : Nat
+  receiptCutoverTip : Option ReceiptHash
   exactInitial : ExactStatePoint
 
 /-- One versioned frame binds a genuine full-turn receipt to its exact proof-local subreceipt. -/
@@ -165,6 +173,8 @@ structure ExactFrame where
   epoch : Nat
   activation : ActivationHash
   predecessor : ExactPredecessor
+  receiptIndex : Nat
+  fullPredecessorIndex : Option Nat
   full : FullTurnReceipt
   exact : ExactSubreceipt
 
@@ -176,13 +186,44 @@ abbrev FrameHasher := ExactFrame → FrameHash
 
 /-! ## 3. Independent linkage relations -/
 
-/-- Ordinary full-turn continuity.  This is the only relation that compares complete actor-state
-commitments. -/
-structure FullReceiptLinked (receiptHash : ReceiptHasher)
-    (previous next : FullTurnReceipt) : Prop where
-  predecessor : next.previous = receiptHash previous
-  state : next.preState = previous.postState
-  nonce : next.nonceAfter = next.nonceBefore + 1
+/-- Authenticated lookup in the immutable receipt log. -/
+abbrev DurableReceiptAt := Nat → ReceiptHash → FullTurnReceipt → Prop
+
+/-- The latest durable receipt for an agent strictly before a proposed append index.  Keeping this
+as a store-supplied relation makes the security boundary explicit: a caller-provided predecessor
+tuple is not authority. -/
+abbrev LatestAgentReceiptBefore :=
+  Nat → List UInt8 → Option (Nat × ReceiptHash × FullTurnReceipt) → Prop
+
+/-- The global commit log authorizes the full pre/post state pair at one exact receipt index.
+Per-agent receipts do not impose `previous.postState = next.preState`: ordinary turns by other
+agents may have changed the global state between them. -/
+abbrev GlobalCommitBoundary := Nat → FullStateCommit → FullStateCommit → Prop
+
+/-- One frame's ordinary receipt is independently authorized at the durable global log boundary.
+Its predecessor is the latest receipt of the **same agent**, if one exists.  This relation never
+mentions the previous exact frame. -/
+structure FullReceiptAuthorized
+    (receiptHash : ReceiptHasher)
+    (durableAt : DurableReceiptAt)
+    (latestBefore : LatestAgentReceiptBefore)
+    (globalBoundary : GlobalCommitBoundary)
+    (frame : ExactFrame) : Prop where
+  nonce : frame.full.nonceAfter = frame.full.nonceBefore + 1
+  globalState : globalBoundary frame.receiptIndex frame.full.preState frame.full.postState
+  predecessor :
+    match frame.full.previous, frame.fullPredecessorIndex with
+    | none, none =>
+        latestBefore frame.receiptIndex frame.full.agent none ∧ frame.full.nonceBefore = 0
+    | some claimed, some index =>
+        ∃ previous,
+          index < frame.receiptIndex ∧
+          durableAt index claimed previous ∧
+          claimed = receiptHash previous ∧
+          latestBefore frame.receiptIndex frame.full.agent (some (index, claimed, previous)) ∧
+          previous.agent = frame.full.agent ∧
+          frame.full.nonceBefore = previous.nonceAfter
+    | _, _ => False
 
 /-- Exact proof-local continuity.  This relation sees neither full receipt commitment. -/
 structure ExactStateLinked (previous next : ExactSubreceipt) : Prop where
@@ -196,82 +237,115 @@ def FrameLinked (frameHash : FrameHasher) (previous next : ExactFrame) : Prop :=
   next.activation = previous.activation ∧
   next.epoch = previous.epoch
 
-/-- The first exact frame links the ordinary receipt chain to the terminal legacy receipt and the
-exact state chain to the independently reconstructed exact activation point. -/
-structure WellFormedFirst (activationHash : ActivationHasher)
+/-- The first exact frame begins the global exact chain at the independently reconstructed exact
+activation point.  Its full receipt is authorized independently; activation does not select an
+agent or synthesize that agent's predecessor. -/
+structure WellFormedFirst
+    (receiptHash : ReceiptHasher)
+    (activationHash : ActivationHasher)
+    (durableAt : DurableReceiptAt)
+    (latestBefore : LatestAgentReceiptBefore)
+    (globalBoundary : GlobalCommitBoundary)
     (activation : Activation) (frame : ExactFrame) : Prop where
   nonzeroEpoch : activation.epoch ≠ 0
   epoch : frame.epoch = activation.epoch
   activationMatches : frame.activation = activationHash activation
   framePredecessor : frame.predecessor = .activation (activationHash activation)
-  fullPredecessor : frame.full.previous = activation.legacyTip
-  fullPreState : frame.full.preState = activation.legacyTipPostState
-  fullNonce : frame.full.nonceAfter = frame.full.nonceBefore + 1
+  afterCutover : activation.receiptCutoverCursor ≤ frame.receiptIndex
+  full : FullReceiptAuthorized receiptHash durableAt latestBefore globalBoundary frame
   exactPreState : frame.exact.before = activation.exactInitial
   exactValid : frame.exact.Valid
 
-/-- A later frame advances all three links independently.  Notice there is no field of the shape
-`next.full.postState = next.exact.outerAfter`; the comparison is absent by construction. -/
-structure WellFormedStep (receiptHash : ReceiptHasher) (frameHash : FrameHasher)
+/-- A later frame advances the global exact/frame chains while authenticating its own full receipt
+from the durable per-agent/global receipt-log views.  Notice both absent equations:
+`next.full.postState = next.exact.outerAfter` (full/proof type confusion) and
+`next.full.previous = receiptHash previous.full` (single-agent/no-interleaving bug). -/
+structure WellFormedStep
+    (receiptHash : ReceiptHasher)
+    (frameHash : FrameHasher)
+    (durableAt : DurableReceiptAt)
+    (latestBefore : LatestAgentReceiptBefore)
+    (globalBoundary : GlobalCommitBoundary)
     (previous next : ExactFrame) : Prop where
-  full : FullReceiptLinked receiptHash previous.full next.full
+  receiptOrder : previous.receiptIndex < next.receiptIndex
+  full : FullReceiptAuthorized receiptHash durableAt latestBefore globalBoundary next
   exact : ExactStateLinked previous.exact next.exact
   frame : FrameLinked frameHash previous next
 
 /-- The first frame begins at the activated exact accumulator point. -/
 theorem first_exact_begins_at_activation
-    {activationHash : ActivationHasher} {activation : Activation} {frame : ExactFrame}
-    (h : WellFormedFirst activationHash activation frame) :
+    {receiptHash : ReceiptHasher} {activationHash : ActivationHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {activation : Activation} {frame : ExactFrame}
+    (h : WellFormedFirst receiptHash activationHash durableAt latestBefore globalBoundary
+      activation frame) :
     frame.exact.before = activation.exactInitial :=
   h.exactPreState
 
 /-- The first exact frame advances the physical count exactly once. -/
 theorem first_exact_count_increments
-    {activationHash : ActivationHasher} {activation : Activation} {frame : ExactFrame}
-    (h : WellFormedFirst activationHash activation frame) :
+    {receiptHash : ReceiptHasher} {activationHash : ActivationHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {activation : Activation} {frame : ExactFrame}
+    (h : WellFormedFirst receiptHash activationHash durableAt latestBefore globalBoundary
+      activation frame) :
     frame.exact.after.1.count = activation.exactInitial.1.count + 1 := by
   rw [h.exactValid, h.exactPreState]
 
-/-- A well-formed continuation extends the genuine full-turn receipt hash chain. -/
-theorem step_full_receipt_link
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
-    next.full.previous = receiptHash previous.full :=
-  h.full.predecessor
+/-- A well-formed continuation authenticates the next frame's receipt at its own durable boundary;
+it does not claim that the previous exact frame is this agent's receipt predecessor. -/
+theorem step_full_receipt_authorized
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
+    FullReceiptAuthorized receiptHash durableAt latestBefore globalBoundary next :=
+  h.full
 
-/-- A well-formed continuation extends the genuine full actor-state chain. -/
-theorem step_full_state_link
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
-    next.full.preState = previous.full.postState :=
-  h.full.state
+/-- The next full receipt's pre/post pair comes from the global commit boundary at its own index,
+not from the previous exact frame's post-state. -/
+theorem step_global_state_authorized
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
+    globalBoundary next.receiptIndex next.full.preState next.full.postState :=
+  h.full.globalState
 
 /-- A well-formed continuation separately extends the exact root/count/FNS3 chain. -/
 theorem step_exact_state_link
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
     next.exact.before = previous.exact.after :=
   h.exact.state
 
 /-- A well-formed continuation advances the exact physical count exactly once. -/
 theorem step_exact_count_increments
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
     next.exact.after.1.count = previous.exact.after.1.count + 1 := by
   rw [h.exact.valid, h.exact.state]
 
 /-- A well-formed continuation advances the ordinary executor nonce exactly once as well.  The
 two increments coexist, but their commitment objects remain unrelated. -/
 theorem step_full_nonce_increments
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
     next.full.nonceAfter = next.full.nonceBefore + 1 :=
   h.full.nonce
 
 /-- The outer exact-frame chain links to the prior frame hash, never the full receipt hash. -/
 theorem step_frame_link
-    {receiptHash : ReceiptHasher} {frameHash : FrameHasher} {previous next : ExactFrame}
-    (h : WellFormedStep receiptHash frameHash previous next) :
+    {receiptHash : ReceiptHasher} {frameHash : FrameHasher}
+    {durableAt : DurableReceiptAt} {latestBefore : LatestAgentReceiptBefore}
+    {globalBoundary : GlobalCommitBoundary} {previous next : ExactFrame}
+    (h : WellFormedStep receiptHash frameHash durableAt latestBefore globalBoundary previous next) :
     next.predecessor = .frame (frameHash previous) :=
   h.frame.1
 
@@ -361,8 +435,8 @@ theorem exactFrame_finalizes_at_most_once
 #assert_axioms exactStateCommit_recomputed
 #assert_axioms first_exact_begins_at_activation
 #assert_axioms first_exact_count_increments
-#assert_axioms step_full_receipt_link
-#assert_axioms step_full_state_link
+#assert_axioms step_full_receipt_authorized
+#assert_axioms step_global_state_authorized
 #assert_axioms step_exact_state_link
 #assert_axioms step_exact_count_increments
 #assert_axioms step_full_nonce_increments
