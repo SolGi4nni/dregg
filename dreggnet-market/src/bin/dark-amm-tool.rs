@@ -41,7 +41,7 @@ use fhegg_fhe::boundary::{
 use fhegg_fhe::dark_amm::{DarkPoolPublicHostMaterial, MAX_DARK_AMM_PUBLIC_HOST_MATERIAL_BYTES};
 use fhegg_fhe::mpc_party::transport::{
     AuthenticatedEqualityFrame, EqualityCoordinatorMachine, EqualityPartyMachine,
-    EqualityTransportRoster,
+    EqualityTransportRoster, fresh_preprocessing_seed, verify_public_decision_transcript,
 };
 use fhegg_fhe::mpc_party::{
     DecisionTranscript, PartyEqualityInput, PartyMpcSession, TripleMaterial, trusted_dealer_triples,
@@ -928,8 +928,20 @@ fn collective_process_preprocess_internal(args: &[String]) -> Result<(), String>
     if preprocessing_seed == [0; 32] {
         return Err("combined split preprocessing seed must be nonzero".to_string());
     }
-    let mut rng = StdRng::from_seed(preprocessing_seed);
+    let task_digest = public
+        .task
+        .attestation_nonce()
+        .map_err(|error| error.to_string())?;
+    let mut fresh_seed = fresh_preprocessing_seed(
+        &public.session,
+        task_digest,
+        &preprocessing_seed,
+        &mut OsRng,
+    )
+    .map_err(|error| error.to_string())?;
     preprocessing_seed.fill(0);
+    let mut rng = StdRng::from_seed(fresh_seed);
+    fresh_seed.fill(0);
     let triples =
         trusted_dealer_triples(&public.session, &mut rng).map_err(|error| error.to_string())?;
     let output_dir = Path::new(&args[4]);
@@ -1458,7 +1470,7 @@ fn collective_process_party_internal(args: &[String]) -> Result<(), String> {
     let signing_key = custody.decision_signer.clone();
     let mut machine = EqualityPartyMachine::new(
         public.session.clone(),
-        roster,
+        roster.clone(),
         party,
         signing_key.clone(),
         equality_input,
@@ -1480,11 +1492,26 @@ fn collective_process_party_internal(args: &[String]) -> Result<(), String> {
             break;
         }
     }
-    let sign_request = read_collective_process_record(&mut input, "party claim-sign request")?;
-    if sign_request.len() != 33 || sign_request[0] != COLLECTIVE_PROCESS_SIGN {
+    let mut sign_request = read_collective_process_record(&mut input, "party claim-sign request")?;
+    if sign_request.first().copied() != Some(COLLECTIVE_PROCESS_SIGN) {
         return Err("party received a malformed claim-sign request".to_string());
     }
-    let claim_digest: [u8; 32] = sign_request[1..].try_into().unwrap();
+    let evidence = decode_process_vectors(&sign_request[1..])?;
+    let (transcript_wire, authenticated_frames) = evidence
+        .split_first()
+        .ok_or_else(|| "party claim-sign request has no public transcript".to_string())?;
+    let transcript = DecisionTranscript::from_wire_bytes(transcript_wire)
+        .map_err(|error| format!("party claim transcript refused: {error}"))?;
+    verify_public_decision_transcript(&public.session, &roster, authenticated_frames, &transcript)
+        .map_err(|error| format!("party claim transport evidence refused: {error}"))?;
+    let decision =
+        MaskedCollectiveDecision::from_external_transcript(public.session.clone(), transcript)
+            .map_err(|error| error.to_string())?;
+    let claim_digest = decision
+        .draft_receipt(&public.config.decision_verifier)
+        .map_err(|error| error.to_string())?
+        .claim_digest();
+    sign_request.fill(0);
     let signature = public
         .config
         .decision_verifier
@@ -1733,6 +1760,10 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
 
         let mut party_queues = vec![Vec::<Vec<u8>>::new(); n];
         let mut coordinator_queue = Vec::<Vec<u8>>::new();
+        // Retain only the already-public, signed gate/decision frames addressed
+        // to the coordinator. Every party later reconstructs the reveal-only
+        // transcript from this exact evidence before signing its receipt claim.
+        let mut authenticated_transcript_frames = Vec::<Vec<u8>>::new();
         let mut party_complete = vec![false; n];
         let mut coordinator_complete = false;
         let mut transcript = None;
@@ -1758,6 +1789,7 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
                     }
                     let _sequence = frame.sequence;
                     if frame.recipient == n {
+                        authenticated_transcript_frames.push(frame.wire.clone());
                         coordinator_queue.push(frame.wire);
                     } else {
                         party_queues[frame.recipient].push(frame.wire);
@@ -1798,12 +1830,17 @@ fn collective_decide_split(args: &[String]) -> Result<(), String> {
         let decision =
             MaskedCollectiveDecision::from_external_transcript(public.session.clone(), transcript)
                 .map_err(|error| error.to_string())?;
-        let draft = decision
-            .draft_receipt(&public.config.decision_verifier)
+        let transcript_wire = decision
+            .transcript()
+            .to_wire_bytes()
             .map_err(|error| error.to_string())?;
-        let mut sign_request = Vec::with_capacity(33);
+        let mut signing_evidence = Vec::with_capacity(authenticated_transcript_frames.len() + 1);
+        signing_evidence.push(transcript_wire);
+        signing_evidence.extend(authenticated_transcript_frames);
+        let evidence_packet = encode_process_vectors(&signing_evidence)?;
+        let mut sign_request = Vec::with_capacity(1 + evidence_packet.len());
         sign_request.push(COLLECTIVE_PROCESS_SIGN);
-        sign_request.extend_from_slice(&draft.claim_digest());
+        sign_request.extend_from_slice(&evidence_packet);
         let mut signatures = Vec::with_capacity(n);
         for (party_index, party) in parties.iter_mut().enumerate() {
             party.send(&sign_request)?;
@@ -2298,25 +2335,48 @@ fn read_bounded_regular(
     max_bytes: u64,
     owner_only: bool,
 ) -> Result<Vec<u8>, String> {
-    let metadata = fs::symlink_metadata(path)
+    let path_metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("cannot inspect {label} {}: {error}", path.display()))?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+    if path_metadata.file_type().is_symlink() || !path_metadata.file_type().is_file() {
         return Err(format!(
             "{label} {} must be a regular, non-symlinked file",
             path.display()
         ));
     }
-    if metadata.len() > max_bytes {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot open {label} {}: {error}", path.display()))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect open {label} {}: {error}", path.display()))?;
+    if !opened_metadata.file_type().is_file() {
+        return Err(format!(
+            "{label} {} must open as a regular file",
+            path.display()
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if path_metadata.dev() != opened_metadata.dev()
+            || path_metadata.ino() != opened_metadata.ino()
+        {
+            return Err(format!(
+                "{label} {} changed while it was being opened",
+                path.display()
+            ));
+        }
+    }
+    if opened_metadata.len() > max_bytes {
         return Err(format!(
             "{label} {} is {} bytes; maximum is {max_bytes}",
             path.display(),
-            metadata.len()
+            opened_metadata.len()
         ));
     }
     #[cfg(unix)]
     if owner_only {
         use std::os::unix::fs::MetadataExt;
-        let mode = metadata.mode() & 0o777;
+        let mode = opened_metadata.mode() & 0o777;
         if mode & 0o077 != 0 {
             return Err(format!(
                 "{label} {} has mode {mode:03o}; remove all group/other permissions",
@@ -2324,7 +2384,18 @@ fn read_bounded_regular(
             ));
         }
     }
-    fs::read(path).map_err(|error| format!("cannot read {label} {}: {error}", path.display()))
+    let mut bytes = Vec::with_capacity(opened_metadata.len() as usize);
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    if bytes.len() as u64 > max_bytes {
+        bytes.fill(0);
+        return Err(format!(
+            "{label} {} grew beyond its {max_bytes}-byte bound while being read",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 fn read_proved_request(path: &Path) -> Result<ProvedEncryptedSwapRequest, String> {
