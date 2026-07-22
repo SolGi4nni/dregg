@@ -137,9 +137,12 @@ mod zk_plonky3 {
             log_blowup: ZK_FRI_LOG_BLOWUP,
             log_final_poly_len: ZK_FRI_LOG_FINAL_POLY_LEN,
             max_log_arity: ZK_FRI_MAX_LOG_ARITY,
-            // q = 38 (THE ROTATION's ride-along, matching `create_config`):
-            // 38 * 3 + 16 PoW ~= 130 bits conjectured -- the declared 128-bit
-            // capacity-bound target. See plonky3_prover.rs::create_config.
+            // q = 38 (THE ROTATION's ride-along, matching `create_config`).
+            // The old `38 * 3 + 16 ~= 130` capacity-radius estimate is only a
+            // conjectural comparison column, not an accepted 128-bit soundness
+            // budget; deployment claims use the proven/Johnson ledger. See
+            // `docs/reference/FRI-BOTH-WIN-LEVERS.md` and the matching non-ZK
+            // configuration in `plonky3_prover.rs`.
             num_queries: ZK_FRI_NUM_QUERIES,
             commit_proof_of_work_bits: 0,
             query_proof_of_work_bits: ZK_FRI_QUERY_POW_BITS,
