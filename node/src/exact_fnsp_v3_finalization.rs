@@ -34,7 +34,7 @@ use dregg_persist::commit_log::{CommitOutcome, FinalizedFaithfulRootWeld};
 use dregg_persist::{
     CommittedExactFnspV3FrameHeadV1, ExactFnspV3DurableReceiptLinkV1, ExactFnspV3StateCasV1,
     FaithfulNoteRootHistoryV1, PersistentStore, PreparedExactFnspV3StateTransitionV1, StoreError,
-    UntrustedExactFnspV3FrameV1,
+    UntrustedExactFnspV3ActivationV1, UntrustedExactFnspV3FrameV1,
 };
 use dregg_sdk::AgentCipherclerk;
 use dregg_turn::{
@@ -161,8 +161,10 @@ impl PreparedExactFnspV3Finalization {
             receipt,
             record,
             executor_public_key,
+            executor_consensus_predecessors,
             frame_signature,
             frame,
+            first_frame_activation,
         ) = authority.into_commit_components();
         let expected_ordinal = record.ordinal;
         let receipt_index = frame.receipt_log_index();
@@ -206,6 +208,17 @@ impl PreparedExactFnspV3Finalization {
         )
         .map_err(ExactFnspV3FinalizationError::Store)?;
 
+        // The short-lived executor owns consensus/admission state beyond the ledger.  Snapshot its
+        // complete successor and weld both React CAS predecessors into this exact-frame writer;
+        // otherwise a committed exact receipt could resolve a promise whose replay/nullifier gate
+        // disappeared on restart.
+        let executor_state =
+            crate::executor_side_state_persistence::capture_finalized_executor_consensus_state(
+                &post_executor,
+                &executor_consensus_predecessors,
+            )
+            .map_err(ExactFnspV3FinalizationError::ExecutorState)?;
+
         // Keep every non-Clone authority alive across the atomic call.  Only the store-returned
         // committed head below becomes recovery authority.
         let frame_hash = frame.frame_hash();
@@ -219,6 +232,8 @@ impl PreparedExactFnspV3Finalization {
                 faithful,
                 self.cas,
                 durable_frame,
+                first_frame_activation,
+                &executor_state,
             )
         } else {
             store.commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
@@ -229,6 +244,8 @@ impl PreparedExactFnspV3Finalization {
                 faithful,
                 self.cas,
                 durable_frame,
+                first_frame_activation,
+                &executor_state,
             )
         };
 
@@ -303,11 +320,20 @@ fn validate_persisted_frame_predecessor(
     authority: &ExecutorProducedExactFnspV3FinalizedTurn,
     cas: ExactFnspV3StateCasV1,
 ) -> Result<(), ExactFnspV3FinalizationError> {
-    let activation = store
-        .exact_fnsp_v3_activation()
-        .map_err(ExactFnspV3FinalizationError::Store)?
-        .ok_or(ExactFnspV3FinalizationError::PersistedActivationMissing)?;
+    // Store opening already performs the full canonical receipt/frame replay.  Finalization needs
+    // only the signed live boundary, loaded from one snapshot so activation, current frame, and
+    // exact head cannot be mixed across concurrent writers.
+    let live = store
+        .exact_fnsp_v3_live_authority()
+        .map_err(ExactFnspV3FinalizationError::Store)?;
     let frame = authority.frame();
+    let candidate = authority.first_frame_activation();
+    let Some((activation, committed)) = live else {
+        let candidate =
+            candidate.ok_or(ExactFnspV3FinalizationError::PersistedActivationMissing)?;
+        validate_first_frame_activation_candidate(candidate, frame, cas)?;
+        return Ok(());
+    };
     if frame.epoch().get() != activation.epoch()
         || frame.activation_hash() != activation.activation_hash()
         || frame.federation_id() != activation.federation_id()
@@ -318,13 +344,10 @@ fn validate_persisted_frame_predecessor(
         ));
     }
 
-    let current_exact = store
-        .exact_fnsp_v3_state_head()
-        .map_err(ExactFnspV3FinalizationError::Store)?
-        .ok_or(ExactFnspV3FinalizationError::ExactAuthorityUninitialized)?;
-    let committed = store
-        .exact_fnsp_v3_committed_frame_head()
-        .map_err(ExactFnspV3FinalizationError::Store)?;
+    let current_exact = committed
+        .as_ref()
+        .map(CommittedExactFnspV3FrameHeadV1::exact_after)
+        .unwrap_or_else(|| activation.exact_initial());
     let sequence = cas.expected().generation();
     if sequence == activation.exact_initial().generation() && current_exact == cas.expected() {
         if committed.is_some()
@@ -362,6 +385,27 @@ fn validate_persisted_frame_predecessor(
     } else {
         return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
             "future exact sequence",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_first_frame_activation_candidate(
+    activation: &UntrustedExactFnspV3ActivationV1,
+    frame: &dregg_turn::UntrustedExactFnspV3ReceiptFrameJoinV1,
+    cas: ExactFnspV3StateCasV1,
+) -> Result<(), ExactFnspV3FinalizationError> {
+    if frame.epoch().get() != activation.epoch()
+        || frame.activation_hash() != activation.activation_hash()
+        || frame.federation_id() != activation.federation_id()
+        || frame.receipt_log_index() != activation.receipt_cutover_next_index()
+        || frame.predecessor()
+            != ExactFnspV3ReceiptLinkV1::EpochActivation(activation.activation_hash())
+        || cas.expected() != activation.exact_initial()
+        || cas.expected().generation() != activation.exact_initial().generation()
+    {
+        return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+            "prepared first-frame activation",
         ));
     }
     Ok(())
@@ -630,6 +674,7 @@ pub(crate) enum ExactFnspV3FinalizationError {
     CoordinateMismatch(ExactFnspV3Coordinate),
     Anchor(String),
     ReceiptEncoding(String),
+    ExecutorState(String),
     ReceiptHeadInstall(String),
     Store(StoreError),
 }
@@ -679,6 +724,9 @@ impl fmt::Display for ExactFnspV3FinalizationError {
             Self::Anchor(error) => write!(f, "exact FNSP-v3 durable anchor refused: {error}"),
             Self::ReceiptEncoding(error) => {
                 write!(f, "exact FNSP-v3 receipt encoding failed: {error}")
+            }
+            Self::ExecutorState(error) => {
+                write!(f, "exact FNSP-v3 executor-state snapshot failed: {error}")
             }
             Self::ReceiptHeadInstall(error) => {
                 write!(

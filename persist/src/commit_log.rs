@@ -138,6 +138,7 @@ enum ExactFnspV3Weld {
     AccumulatorOnly(crate::ExactFnspV3StateCasV1),
     Frame {
         exact: crate::ExactFnspV3StateCasV1,
+        activation: Option<crate::UntrustedExactFnspV3ActivationV1>,
         frame: crate::UntrustedExactFnspV3FrameV1,
     },
 }
@@ -1134,6 +1135,8 @@ impl PersistentStore {
         faithful: FinalizedFaithfulRootWeld<'_>,
         exact: crate::ExactFnspV3StateCasV1,
         frame: crate::UntrustedExactFnspV3FrameV1,
+        activation: Option<crate::UntrustedExactFnspV3ActivationV1>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
     ) -> Result<ExactFnspV3FrameCommitOutcome> {
         self.commit_finalized_turn_with_exact_fnsp_v3_frame_receipt_mode(
             expected_ordinal,
@@ -1145,6 +1148,8 @@ impl PersistentStore {
             faithful,
             exact,
             frame,
+            activation,
+            executor_state,
         )
     }
 
@@ -1249,6 +1254,8 @@ impl PersistentStore {
         faithful: FinalizedFaithfulRootWeld<'_>,
         exact: crate::ExactFnspV3StateCasV1,
         frame: crate::UntrustedExactFnspV3FrameV1,
+        activation: Option<crate::UntrustedExactFnspV3ActivationV1>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
     ) -> Result<ExactFnspV3FrameCommitOutcome> {
         self.commit_finalized_turn_with_exact_fnsp_v3_frame_receipt_mode(
             expected_ordinal,
@@ -1260,6 +1267,8 @@ impl PersistentStore {
             faithful,
             exact,
             frame,
+            activation,
+            executor_state,
         )
     }
 
@@ -1272,6 +1281,8 @@ impl PersistentStore {
         faithful: FinalizedFaithfulRootWeld<'_>,
         exact: crate::ExactFnspV3StateCasV1,
         frame: crate::UntrustedExactFnspV3FrameV1,
+        activation: Option<crate::UntrustedExactFnspV3ActivationV1>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
     ) -> Result<ExactFnspV3FrameCommitOutcome> {
         if !faithful.envelope.verify_hybrid(
             faithful.author_committee,
@@ -1299,8 +1310,12 @@ impl PersistentStore {
             &[],
             Some(receipt_entry),
             Some(faithful),
-            Some(ExactFnspV3Weld::Frame { exact, frame }),
-            None,
+            Some(ExactFnspV3Weld::Frame {
+                exact,
+                activation,
+                frame,
+            }),
+            Some(executor_state),
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1515,14 +1530,19 @@ impl PersistentStore {
                                         )?;
                                         None
                                     }
-                                    Some(ExactFnspV3Weld::Frame { exact, frame }) => {
+                                    Some(ExactFnspV3Weld::Frame {
+                                        exact,
+                                        activation,
+                                        frame,
+                                    }) => {
                                         crate::exact_fnsp_v3_state::verify_replayed_exact_fnsp_v3_append_in(
                                             &write_txn,
                                             *exact,
                                         )?;
-                                        crate::exact_fnsp_v3_frame_head::verify_replayed_exact_fnsp_v3_frame_in(
+                                        crate::exact_fnsp_v3_frame_head::verify_replayed_exact_fnsp_v3_frame_with_activation_in(
                                             &write_txn,
                                             *exact,
+                                            activation.as_ref(),
                                             frame,
                                         )?;
                                         Some(crate::CommittedExactFnspV3FrameHeadV1::from_verified_durable(
@@ -1560,6 +1580,24 @@ impl PersistentStore {
                     "commit_finalized_turn: expected ordinal {expected_ordinal} but durable cursor \
                      is {cursor}; refusing to write a gap (torn-state guard)"
                 )));
+            }
+
+            // Once the exact epoch is installed it is the required shadow authority for every
+            // faithful nullifier append.  A fresh faithful-only commit would advance the public
+            // spend history while leaving the exact accumulator/frame chain behind.  Historical
+            // idempotent replay is handled above and remains valid without inventing a new weld.
+            if faithful
+                .as_ref()
+                .is_some_and(|faithful| !faithful.spent_nullifiers.is_empty())
+                && exact_fnsp_v3.is_none()
+                && crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_activation_installed_in(
+                    &write_txn,
+                )?
+            {
+                return Err(StoreError::Integrity(
+                    "faithful nullifier growth after exact FNSP-v3 activation requires the exact frame/CAS weld"
+                        .to_string(),
+                ));
             }
 
             // Validate the complete durable predecessor and compute the exact
@@ -1761,10 +1799,14 @@ impl PersistentStore {
                     )?;
                 (write, None)
             }
-            Some(ExactFnspV3Weld::Frame { exact, frame }) => {
+            Some(ExactFnspV3Weld::Frame {
+                exact,
+                activation,
+                frame,
+            }) => {
                 let (write, staged) =
-                    crate::exact_fnsp_v3_frame_head::stage_exact_fnsp_v3_frame_in(
-                        write_txn, exact, frame,
+                    crate::exact_fnsp_v3_frame_head::stage_exact_fnsp_v3_frame_with_activation_in(
+                        write_txn, exact, activation, frame,
                     )?;
                 (write, Some(staged))
             }
@@ -3056,6 +3098,45 @@ mod tests {
         out.receipt_hash = [0x80 + ordinal as u8; 32];
         out.ledger_root = [0x90 + ordinal as u8; 32];
         out
+    }
+
+    fn install_test_exact_activation(
+        store: &PersistentStore,
+    ) -> crate::UntrustedExactFnspV3ActivationV1 {
+        let initial = store
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+            .expect("exact prefix");
+        let signing_key = dregg_types::SigningKey::from_bytes(&[0xe7; 32]);
+        let public_key = signing_key.public_key();
+        let epoch = dregg_turn::ExactFnspV3ReceiptEpochV1::prepare(
+            dregg_turn::ExactFnspV3ReceiptEpoch::new(7).expect("nonzero epoch"),
+            [0xe8; 32],
+            public_key.0,
+            0,
+            None,
+            dregg_turn::ExactFnspV3StatePoint::new(initial.root(), initial.count())
+                .expect("exact point"),
+        )
+        .expect("activation epoch");
+        let signature = dregg_types::sign(
+            &signing_key,
+            &crate::UntrustedExactFnspV3ActivationV1::signature_message(epoch.activation_hash()),
+        );
+        let activation = crate::UntrustedExactFnspV3ActivationV1::authenticate_devnet_executor(
+            epoch.epoch().get(),
+            initial,
+            epoch.federation_id(),
+            epoch.receipt_cutover_next_index(),
+            epoch.receipt_cutover_tail_hash(),
+            epoch.activation_hash(),
+            public_key.0,
+            signature,
+        )
+        .expect("signed activation");
+        store
+            .install_exact_fnsp_v3_activation(activation.clone())
+            .expect("test activation");
+        activation
     }
 
     /// Build a deterministic commit record for ordinal `n`, touching `cells`.
@@ -4747,6 +4828,333 @@ mod tests {
         let write = reopened.db.begin_write().unwrap();
         validate_exact_fnsp_v3_faithful_prefix_in(&write).unwrap();
         write.abort().unwrap();
+    }
+
+    #[test]
+    fn activated_exact_epoch_allows_nonspend_but_refuses_faithful_only_spend_growth() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        install_test_exact_activation(&store);
+        let signer = FaithfulSigner::new(0x38);
+
+        // Advancing the faithful height without a spend remains legal: exact-v3 shadows the
+        // ordered nullifier history, not unrelated note/root-only turns.
+        let first_block = [0x39; 32];
+        let first_commit = faithful_commit_record(0, first_block);
+        let (first_anchor, first_edge) = plan_test_edge(&store, 1, first_block, &[]);
+        let first_envelope = signer.sign_edge(first_edge.clone());
+        let first_attested = test_attested(&signer, &first_commit, &first_edge);
+        let first = store
+            .commit_finalized_turn_with_faithful_root(
+                0,
+                &first_commit,
+                &[],
+                0,
+                b"post-activation-nonspend",
+                FinalizedFaithfulRootWeld {
+                    initial_anchor: Some(&first_anchor),
+                    envelope: &first_envelope,
+                    author_committee: std::slice::from_ref(&signer.ed_pk),
+                    author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                    attested_root: &first_attested,
+                    spent_nullifiers: &[],
+                    finalized_spends: &[],
+                },
+            )
+            .expect("nonspend height may advance");
+        assert!(first.freshly_committed);
+
+        // The same generic path may no longer grow the nullifier history after activation.  It
+        // must use the exact frame/CAS writer, and refusal leaves every would-be row absent.
+        let spend = FinalizedNullifierRecord {
+            nullifier: [0x3a; 32],
+            value: 0x3a,
+        };
+        let second_block = [0x3b; 32];
+        let second_commit = faithful_commit_record(1, second_block);
+        let (second_anchor, second_edge) = plan_test_edge(&store, 2, second_block, &[]);
+        let second_envelope = signer.sign_edge(second_edge.clone());
+        let successor = store
+            .plan_faithful_nullifier_successor(std::slice::from_ref(&spend))
+            .unwrap();
+        let second_attested =
+            test_attested_with_nullifier_root(&signer, &second_commit, &second_edge, successor);
+        let statements =
+            test_finalized_spend_inputs(&store, &second_anchor, std::slice::from_ref(&spend));
+        assert!(matches!(
+            store.commit_finalized_turn_with_faithful_root(
+                1,
+                &second_commit,
+                &[],
+                1,
+                b"must-not-land",
+                FinalizedFaithfulRootWeld {
+                    initial_anchor: None,
+                    envelope: &second_envelope,
+                    author_committee: std::slice::from_ref(&signer.ed_pk),
+                    author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+                    attested_root: &second_attested,
+                    spent_nullifiers: std::slice::from_ref(&spend),
+                    finalized_spends: &statements,
+                },
+            ),
+            Err(StoreError::Integrity(ref message)) if message.contains("requires the exact frame/CAS weld")
+        ));
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert!(store.commit_record_at(1).unwrap().is_none());
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert!(store.load_faithful_nullifier_records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn first_exact_frame_atomically_installs_full_weld_over_nonempty_prefix() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let prefix = FinalizedNullifierRecord {
+            nullifier: [0x81; 32],
+            value: 81,
+        };
+        let write = store.db.begin_write().unwrap();
+        append_fresh_nullifiers_in(&write, std::slice::from_ref(&prefix), 0).unwrap();
+        write.commit().unwrap();
+        let initial = store
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+            .unwrap();
+        assert_eq!(initial.generation(), 1);
+
+        let spend = FinalizedNullifierRecord {
+            nullifier: [0x82; 32],
+            value: 82,
+        };
+        let exact = store
+            .prepare_exact_fnsp_v3_append(spend.nullifier, spend.value)
+            .unwrap();
+        let unrelated = store.prepare_exact_fnsp_v3_append([0x83; 32], 83).unwrap();
+        let key = dregg_types::SigningKey::from_bytes(&[0x84; 32]);
+        let block_id = [0x85; 32];
+        let mut commit = faithful_commit_record(0, block_id);
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: commit.turn_hash,
+            forest_hash: [0x86; 32],
+            pre_state_hash: [0x87; 32],
+            post_state_hash: [0x88; 32],
+            agent: dregg_cell::CellId(commit.creator),
+            federation_id: [0x89; 32],
+            finality: dregg_turn::Finality::Final,
+            ..Default::default()
+        };
+        let (activation, frame, encoded_receipt) =
+            crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_test_first_frame_bundle(
+                &store,
+                exact,
+                &key,
+                receipt.clone(),
+            );
+        let (_, mismatched_frame, _) =
+            crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_test_first_frame_bundle(
+                &store, &unrelated, &key, receipt,
+            );
+        commit.receipt_hash = frame.full_receipt_hash();
+
+        let signer = FaithfulSigner::new(0x8a);
+        let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[]);
+        let envelope = signer.sign_edge(edge.clone());
+        let successor = store
+            .plan_faithful_nullifier_successor(std::slice::from_ref(&spend))
+            .unwrap();
+        let attested = test_attested_with_nullifier_root(&signer, &commit, &edge, successor);
+        let statements = test_finalized_spend_inputs(&store, &anchor, std::slice::from_ref(&spend));
+        let weld = || FinalizedFaithfulRootWeld {
+            initial_anchor: Some(&anchor),
+            envelope: &envelope,
+            author_committee: std::slice::from_ref(&signer.ed_pk),
+            author_ml_dsa_committee: std::slice::from_ref(&signer.pq_pk),
+            attested_root: &attested,
+            spent_nullifiers: std::slice::from_ref(&spend),
+            finalized_spends: &statements,
+        };
+        let rate_bytes = dregg_turn::executor::RateLimitStateSnapshot {
+            counts: vec![dregg_turn::executor::RateLimitCountEntry {
+                cell: dregg_cell::CellId([0x91; 32]),
+                sender: [0x92; 32],
+                epoch: 3,
+                count: 4,
+            }],
+            sums: Vec::new(),
+        }
+        .to_canonical_bytes()
+        .unwrap();
+        let descriptor = dregg_cell::FactoryDescriptor {
+            factory_vk: [0x93; 32],
+            child_program_vk: None,
+            child_vk_strategy: None,
+            allowed_cap_templates: Vec::new(),
+            field_constraints: Vec::new(),
+            state_constraints: Vec::new(),
+            default_mode: dregg_cell::CellMode::Hosted,
+            creation_budget: None,
+        };
+        let factory_bytes = dregg_cell::factory::FactoryRegistrySnapshot {
+            current_epoch: 3,
+            descriptors: vec![dregg_cell::factory::FactoryDescriptorEntry {
+                factory_vk: descriptor.factory_vk,
+                descriptor,
+            }],
+            creation_counts: Vec::new(),
+        }
+        .to_canonical_bytes()
+        .unwrap();
+        let executor_state = crate::FinalizedExecutorConsensusState {
+            accumulators: crate::ExecutorAccumulatorSnapshot {
+                bridged_nullifiers: vec![[0x94; 32]],
+                ..Default::default()
+            },
+            rate_limit_snapshot: Some(rate_bytes.clone()),
+            factory_registry_snapshot: Some(factory_bytes.clone()),
+            reactive_nullifiers: crate::ReactiveNullifierCasV1::new(
+                crate::reactive_nullifier_commitment(&[]),
+                vec![[0x95; 32]],
+            ),
+            ..Default::default()
+        };
+
+        // The activation is staged inside the final exact helper.  A later frame/exact mismatch
+        // drops the sole writer, so even the activation row and earlier commit/receipt writes are
+        // unobservable.
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                    0,
+                    &commit,
+                    0,
+                    &encoded_receipt,
+                    weld(),
+                    exact,
+                    mismatched_frame,
+                    Some(activation.clone()),
+                    &executor_state,
+                )
+                .is_err()
+        );
+        assert!(store.exact_fnsp_v3_activation().unwrap().is_none());
+        assert_eq!(store.commit_cursor().unwrap(), 0);
+        assert!(store.commit_record_at(0).unwrap().is_none());
+        assert_eq!(store.receipt_chain_len().unwrap(), 0);
+        assert!(store.faithful_note_root_head().unwrap().is_none());
+        assert!(store.latest_attested_root().unwrap().is_none());
+        assert_eq!(store.exact_fnsp_v3_state_head().unwrap(), Some(initial));
+        assert_eq!(
+            store.load_executor_accumulator_snapshot().unwrap(),
+            crate::ExecutorAccumulatorSnapshot::default()
+        );
+        assert!(
+            store
+                .load_latest_rate_limit_snapshot_bytes()
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .load_latest_factory_registry_snapshot_bytes()
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.load_reactive_nullifier_keys().unwrap().is_empty());
+        assert_eq!(
+            store.load_faithful_nullifier_records().unwrap(),
+            vec![(
+                dregg_cell::note::Nullifier(prefix.nullifier),
+                prefix.value,
+                0
+            )]
+        );
+
+        let fresh = store
+            .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                0,
+                &commit,
+                0,
+                &encoded_receipt,
+                weld(),
+                exact,
+                frame.clone(),
+                Some(activation.clone()),
+                &executor_state,
+            )
+            .expect("full atomic first frame");
+        assert!(fresh.outcome.freshly_committed);
+        assert_eq!(fresh.committed_head.sequence(), initial.generation());
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert_eq!(
+            store.exact_fnsp_v3_state_head().unwrap(),
+            Some(exact.successor())
+        );
+        assert_eq!(
+            store
+                .exact_fnsp_v3_activation()
+                .unwrap()
+                .unwrap()
+                .activation_hash(),
+            activation.activation_hash()
+        );
+        assert_eq!(store.load_faithful_nullifier_records().unwrap().len(), 2);
+        assert!(store.faithful_note_root_head().unwrap().is_some());
+        assert!(store.latest_attested_root().unwrap().is_some());
+        assert_eq!(
+            store.load_executor_accumulator_snapshot().unwrap(),
+            executor_state.accumulators
+        );
+        assert_eq!(
+            store.load_latest_rate_limit_snapshot_bytes().unwrap(),
+            Some(rate_bytes)
+        );
+        assert_eq!(
+            store.load_latest_factory_registry_snapshot_bytes().unwrap(),
+            Some(factory_bytes)
+        );
+        assert_eq!(
+            store.load_reactive_nullifier_keys().unwrap(),
+            vec![[0x95; 32]]
+        );
+
+        let mut altered_executor_state = executor_state.clone();
+        altered_executor_state
+            .accumulators
+            .bridged_nullifiers
+            .push([0x96; 32]);
+        assert!(
+            store
+                .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                    0,
+                    &commit,
+                    0,
+                    &encoded_receipt,
+                    weld(),
+                    exact,
+                    frame.clone(),
+                    Some(activation.clone()),
+                    &altered_executor_state,
+                )
+                .is_err(),
+            "replay may not alter executor side state"
+        );
+
+        let replay = store
+            .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                0,
+                &commit,
+                0,
+                &encoded_receipt,
+                weld(),
+                exact,
+                frame,
+                Some(activation),
+                &executor_state,
+            )
+            .expect("byte-identical first-frame replay");
+        assert!(!replay.outcome.freshly_committed);
+        assert_eq!(store.commit_cursor().unwrap(), 1);
+        assert_eq!(store.receipt_chain_len().unwrap(), 1);
+        assert_eq!(store.load_faithful_nullifier_records().unwrap().len(), 2);
     }
 
     #[test]

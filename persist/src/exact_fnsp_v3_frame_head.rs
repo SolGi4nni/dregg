@@ -1028,7 +1028,7 @@ impl PersistentStore {
         )>,
     > {
         let read = self.db.begin_read()?;
-        let exact_head = match crate::exact_fnsp_v3_state::load_state_head_from_read(&read)? {
+        let exact_head = match crate::exact_fnsp_v3_state::load_live_state_head_from_read(&read)? {
             Some(head) => head,
             None => {
                 ensure_frame_authority_absent(&read)?;
@@ -1212,6 +1212,14 @@ pub(crate) fn verify_replayed_exact_fnsp_v3_frame_in(
     frame: &UntrustedExactFnspV3FrameV1,
 ) -> StoreResult<()> {
     verify_replayed_exact_fnsp_v3_frame_with_activation_in(write, exact, None, frame)
+}
+
+/// Whether the persist-once exact epoch is already live in this writer snapshot.
+///
+/// The commit log uses this only after resolving idempotent replay, to refuse a fresh faithful
+/// nullifier mutation which omits the exact frame/CAS weld after the flag day.
+pub(crate) fn exact_fnsp_v3_activation_installed_in(write: &WriteTransaction) -> StoreResult<bool> {
+    Ok(write.open_table(EXACT_FNSP_V3_ACTIVATION)?.len()? != 0)
 }
 
 /// Validate and stage the persist-once activation carried by the first accepted exact frame.
@@ -2074,6 +2082,106 @@ fn take64(bytes: &[u8], offset: usize) -> [u8; 64] {
 
 fn integrity(error: ExactFnspV3FrameStoreError) -> StoreError {
     StoreError::Integrity(error.to_string())
+}
+
+/// Build a canonical empty-cutover first-frame bundle for atomic commit-log tests.
+///
+/// This lives beside the private wire/hash implementation so higher-level tests do not duplicate
+/// consensus encoding merely to exercise the full writer transaction.
+#[cfg(test)]
+pub(crate) fn exact_fnsp_v3_test_first_frame_bundle(
+    store: &PersistentStore,
+    exact: ExactFnspV3StateCasV1,
+    key: &dregg_types::SigningKey,
+    mut receipt: TurnReceipt,
+) -> (
+    UntrustedExactFnspV3ActivationV1,
+    UntrustedExactFnspV3FrameV1,
+    Vec<u8>,
+) {
+    assert_eq!(store.receipt_chain_len().expect("receipt len"), 0);
+    assert!(receipt.previous_receipt_hash.is_none());
+    let public = key.public_key();
+    let epoch = 7;
+    let federation = receipt.federation_id;
+    let hash = activation_hash(epoch, federation, public.0, 0, None, exact.expected());
+    let activation_signature = dregg_types::sign(
+        key,
+        &UntrustedExactFnspV3ActivationV1::signature_message(hash),
+    );
+    let activation = UntrustedExactFnspV3ActivationV1::authenticate_devnet_executor(
+        epoch,
+        exact.expected(),
+        federation,
+        0,
+        None,
+        hash,
+        public.0,
+        activation_signature,
+    )
+    .expect("test activation");
+
+    receipt.executor_signature = Some(
+        dregg_types::sign(key, &receipt.canonical_executor_signed_message())
+            .0
+            .to_vec(),
+    );
+    let encoded_receipt = postcard::to_stdvec(&receipt).expect("test receipt encoding");
+    let predecessor = ExactFnspV3DurableReceiptLinkV1::EpochActivation(hash);
+    let unsigned = UntrustedExactFnspV3FrameV1 {
+        sequence: exact.expected().generation(),
+        epoch,
+        receipt_log_index: 0,
+        predecessor,
+        activation_hash: hash,
+        frame_hash: [0; 32],
+        predecessor_receipt_index: None,
+        predecessor_receipt_hash: None,
+        agent: receipt.agent.0,
+        federation_id: federation,
+        turn_hash: receipt.turn_hash,
+        forest_hash: receipt.forest_hash,
+        full_receipt_hash: receipt.receipt_hash(),
+        full_pre_state_hash: receipt.pre_state_hash,
+        full_post_state_hash: receipt.post_state_hash,
+        exact_before: exact.expected(),
+        exact_after: exact.successor(),
+        proof_outer_before: [0; 32],
+        proof_outer_after: [0; 32],
+        accepted_statement_digest: [0xa3; 32],
+        signed_spending_proof_digest: [0xa4; 32],
+        executor_public_key: public.0,
+        executor_signature: Signature([0; 64]),
+    };
+    let frame_hash = unsigned.compute_frame_hash();
+    let mut message = Vec::from(FRAME_SIGNATURE_DOMAIN);
+    message.extend_from_slice(&frame_hash);
+    let frame = UntrustedExactFnspV3FrameV1::authenticate_devnet_executor(
+        epoch,
+        0,
+        predecessor,
+        hash,
+        frame_hash,
+        None,
+        None,
+        receipt.agent.0,
+        federation,
+        receipt.turn_hash,
+        receipt.forest_hash,
+        receipt.receipt_hash(),
+        receipt.pre_state_hash,
+        receipt.post_state_hash,
+        exact.expected(),
+        exact.successor(),
+        [0; 32],
+        [0; 32],
+        [0xa3; 32],
+        [0xa4; 32],
+        public.0,
+        dregg_types::sign(key, &message),
+    )
+    .expect("test frame");
+    (activation, frame, encoded_receipt)
 }
 
 #[cfg(test)]

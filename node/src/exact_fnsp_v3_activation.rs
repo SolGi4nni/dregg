@@ -55,19 +55,67 @@ impl ExactFnspV3ExecutorSignerAuthority {
     }
 }
 
-/// Opaque proof that the runtime epoch is byte-identical to the sole authenticated store row.
-pub(crate) struct StoreAuthorizedExactFnspV3Activation {
+/// Opaque activation authority selected from one store snapshot.
+///
+/// An installed epoch carries store-authenticated authority.  The flag-day path instead carries a
+/// signed candidate which remains untrusted and uninstalled until the first frame's sole writer
+/// transaction checks and stages it with the receipt, exact append, and frame.
+pub(crate) struct PreparedExactFnspV3Activation {
     epoch: ExactFnspV3ReceiptEpochV1,
-    stored: StoreAuthenticatedExactFnspV3ActivationV1,
+    authority: ExactFnspV3ActivationAuthority,
 }
 
-impl StoreAuthorizedExactFnspV3Activation {
+enum ExactFnspV3ActivationAuthority {
+    Installed(StoreAuthenticatedExactFnspV3ActivationV1),
+    FirstFrameCandidate(UntrustedExactFnspV3ActivationV1),
+}
+
+impl PreparedExactFnspV3Activation {
     pub(crate) const fn epoch(&self) -> &ExactFnspV3ReceiptEpochV1 {
         &self.epoch
     }
 
-    pub(crate) const fn stored(&self) -> &StoreAuthenticatedExactFnspV3ActivationV1 {
-        &self.stored
+    pub(crate) const fn executor_public_key(&self) -> [u8; 32] {
+        match &self.authority {
+            ExactFnspV3ActivationAuthority::Installed(stored) => stored.executor_public_key(),
+            ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate) => {
+                candidate.executor_public_key()
+            }
+        }
+    }
+
+    const fn exact_initial(&self) -> ExactFnspV3StateHeadV1 {
+        match &self.authority {
+            ExactFnspV3ActivationAuthority::Installed(stored) => stored.exact_initial(),
+            ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate) => {
+                candidate.exact_initial()
+            }
+        }
+    }
+
+    const fn activation_hash(&self) -> [u8; 32] {
+        match &self.authority {
+            ExactFnspV3ActivationAuthority::Installed(stored) => stored.activation_hash(),
+            ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate) => {
+                candidate.activation_hash()
+            }
+        }
+    }
+
+    const fn federation_id(&self) -> [u8; 32] {
+        match &self.authority {
+            ExactFnspV3ActivationAuthority::Installed(stored) => stored.federation_id(),
+            ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate) => {
+                candidate.federation_id()
+            }
+        }
+    }
+
+    fn into_first_frame_candidate(self) -> Option<UntrustedExactFnspV3ActivationV1> {
+        match self.authority {
+            ExactFnspV3ActivationAuthority::Installed(_) => None,
+            ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate) => Some(candidate),
+        }
     }
 }
 
@@ -75,8 +123,8 @@ impl StoreAuthorizedExactFnspV3Activation {
 ///
 /// `committed_head == None` is possible only before the first exact frame.  The player receipt
 /// predecessor may be absent for a new actor even when many exact frames already exist.
-pub(crate) struct StoreAuthorizedExactFnspV3Predecessor {
-    activation: StoreAuthorizedExactFnspV3Activation,
+pub(crate) struct PreparedExactFnspV3Predecessor {
+    activation: PreparedExactFnspV3Activation,
     committed_head: Option<CommittedExactFnspV3FrameHeadV1>,
     receipt_log_index: u64,
     player_predecessor_receipt_index: Option<u64>,
@@ -84,8 +132,8 @@ pub(crate) struct StoreAuthorizedExactFnspV3Predecessor {
     actor: CellId,
 }
 
-impl StoreAuthorizedExactFnspV3Predecessor {
-    pub(crate) const fn activation(&self) -> &StoreAuthorizedExactFnspV3Activation {
+impl PreparedExactFnspV3Predecessor {
+    pub(crate) const fn activation(&self) -> &PreparedExactFnspV3Activation {
         &self.activation
     }
 
@@ -108,6 +156,15 @@ impl StoreAuthorizedExactFnspV3Predecessor {
     pub(crate) const fn actor(&self) -> CellId {
         self.actor
     }
+
+    /// Consume the pre-execution staleness key into the optional flag-day candidate.
+    ///
+    /// Continuing epochs yield `None`.  A candidate can only leave this opaque predecessor while
+    /// it is being joined to the executor-produced first frame, so it cannot be detached and used
+    /// to choose a cutover independently of an accepted turn.
+    pub(crate) fn into_first_frame_activation(self) -> Option<UntrustedExactFnspV3ActivationV1> {
+        self.activation.into_first_frame_candidate()
+    }
 }
 
 /// Load the global exact predecessor and the selected actor's current full-receipt predecessor.
@@ -120,41 +177,82 @@ pub(crate) fn exact_fnsp_v3_current_predecessor(
     cclerk: &AgentCipherclerk,
     epoch: ExactFnspV3ReceiptEpochV1,
     actor: CellId,
-) -> Result<StoreAuthorizedExactFnspV3Predecessor, ExactFnspV3ActivationError> {
+) -> Result<PreparedExactFnspV3Predecessor, ExactFnspV3ActivationError> {
     let signer = ExactFnspV3ExecutorSignerAuthority::capture(cclerk);
-    let activation = authorize_exact_fnsp_v3_activation(store, &signer, epoch)?;
-    let current_exact = store
-        .exact_fnsp_v3_state_head()
-        .map_err(ExactFnspV3ActivationError::Store)?
-        .ok_or(ExactFnspV3ActivationError::ExactStateUninitialized)?;
-    let committed_head = store
-        .exact_fnsp_v3_committed_frame_head()
+    if epoch.executor_public_key() != signer.public_key().0 {
+        return Err(ExactFnspV3ActivationError::ExecutorKeyMismatch);
+    }
+    // Store opening performs the full receipt/frame replay.  The live getter revalidates the
+    // signed activation, dense frame boundary, immediate predecessor, and exact head in one read
+    // snapshot, avoiding three independently moving reads and an O(receipts + frames) replay on
+    // every finalized turn.  The absent-activation case prepares a signed candidate only; the
+    // first accepted frame's writer remains the sole place which may install the flag day.
+    let live = store
+        .exact_fnsp_v3_live_authority()
         .map_err(ExactFnspV3ActivationError::Store)?;
+    let (activation, committed_head) = match live {
+        Some((stored, committed_head)) => {
+            validate_stored(&stored, &signer, &epoch)?;
+            (
+                PreparedExactFnspV3Activation {
+                    epoch,
+                    authority: ExactFnspV3ActivationAuthority::Installed(stored),
+                },
+                committed_head,
+            )
+        }
+        None => {
+            let activation = prepare_exact_fnsp_v3_activation(store, &signer, epoch)?;
+            (activation, None)
+        }
+    };
+    let current_exact = committed_head
+        .as_ref()
+        .map(CommittedExactFnspV3FrameHeadV1::exact_after)
+        .unwrap_or_else(|| activation.exact_initial());
     if let Some(head) = committed_head.as_ref()
-        && (head.epoch() != activation.stored().epoch()
-            || head.activation_hash() != activation.stored().activation_hash()
-            || head.federation_id() != activation.stored().federation_id())
+        && (head.epoch() != activation.epoch().epoch().get()
+            || head.activation_hash() != activation.activation_hash()
+            || head.federation_id() != activation.federation_id())
     {
         return Err(ExactFnspV3ActivationError::StoredHeadMismatch);
     }
     validate_current_exact_predecessor(
         current_exact,
-        activation.stored().exact_initial(),
+        activation.exact_initial(),
         committed_head.as_ref().map(|head| head.exact_after()),
     )?;
 
-    let (receipt_log_index, _) = store
+    let (receipt_log_index, durable_tail) = store
         .receipt_chain_head()
         .map_err(ExactFnspV3ActivationError::Store)?;
+    let durable_tail_hash = durable_tail
+        .as_deref()
+        .map(|encoded| {
+            postcard::from_bytes::<dregg_turn::TurnReceipt>(encoded)
+                .map(|receipt| receipt.receipt_hash())
+                .map_err(|error| {
+                    ExactFnspV3ActivationError::Store(StoreError::Integrity(format!(
+                        "durable receipt tail is not a canonical TurnReceipt: {error}"
+                    )))
+                })
+        })
+        .transpose()?;
+    let live_receipt_log_index = u64::try_from(cclerk.receipt_log_length()).ok();
+    let live_tail_hash = cclerk
+        .receipt_head()
+        .map(dregg_turn::TurnReceipt::receipt_hash);
     let player_predecessor_receipt_index = cclerk.agent_receipt_head_log_index(&actor);
     let player_predecessor_receipt_hash = cclerk.agent_receipt_head_hash(&actor);
-    if player_predecessor_receipt_index.is_some() != player_predecessor_receipt_hash.is_some()
+    if live_receipt_log_index != Some(receipt_log_index)
+        || live_tail_hash != durable_tail_hash
+        || player_predecessor_receipt_index.is_some() != player_predecessor_receipt_hash.is_some()
         || player_predecessor_receipt_index.is_some_and(|index| index >= receipt_log_index)
     {
         return Err(ExactFnspV3ActivationError::PlayerReceiptCoordinateMismatch);
     }
 
-    Ok(StoreAuthorizedExactFnspV3Predecessor {
+    Ok(PreparedExactFnspV3Predecessor {
         activation,
         committed_head,
         receipt_log_index,
@@ -175,12 +273,14 @@ fn validate_current_exact_predecessor(
     Ok(())
 }
 
-/// Authenticate and persist-once the federation-global exact receipt flag day.
-fn authorize_exact_fnsp_v3_activation(
+/// Authenticate, but do not persist, the federation-global exact receipt flag day.
+///
+/// Persistence belongs exclusively to the first accepted frame's finalized-turn transaction.
+fn prepare_exact_fnsp_v3_activation(
     store: &PersistentStore,
     signer: &ExactFnspV3ExecutorSignerAuthority,
     epoch: ExactFnspV3ReceiptEpochV1,
-) -> Result<StoreAuthorizedExactFnspV3Activation, ExactFnspV3ActivationError> {
+) -> Result<PreparedExactFnspV3Activation, ExactFnspV3ActivationError> {
     if epoch.executor_public_key() != signer.public_key().0 {
         return Err(ExactFnspV3ActivationError::ExecutorKeyMismatch);
     }
@@ -189,13 +289,6 @@ fn authorize_exact_fnsp_v3_activation(
         .map_err(ExactFnspV3ActivationError::Store)?
         .ok_or(ExactFnspV3ActivationError::ExactStateUninitialized)?;
 
-    if let Some(stored) = store
-        .exact_fnsp_v3_activation()
-        .map_err(ExactFnspV3ActivationError::Store)?
-    {
-        validate_stored(&stored, signer, &epoch)?;
-        return Ok(StoreAuthorizedExactFnspV3Activation { epoch, stored });
-    }
     if !same_exact_state(current_exact, epoch.exact_initial()) {
         return Err(ExactFnspV3ActivationError::ExactInitialMismatch);
     }
@@ -212,11 +305,10 @@ fn authorize_exact_fnsp_v3_activation(
         signature,
     )
     .map_err(ExactFnspV3ActivationError::Store)?;
-    let stored = store
-        .install_exact_fnsp_v3_activation(candidate)
-        .map_err(ExactFnspV3ActivationError::Store)?;
-    validate_stored(&stored, signer, &epoch)?;
-    Ok(StoreAuthorizedExactFnspV3Activation { epoch, stored })
+    Ok(PreparedExactFnspV3Activation {
+        epoch,
+        authority: ExactFnspV3ActivationAuthority::FirstFrameCandidate(candidate),
+    })
 }
 
 fn same_exact_state(
@@ -308,7 +400,7 @@ mod tests {
     fn post_frame_restart_uses_committed_after_not_activation_initial() {
         let store = PersistentStore::open_in_memory().expect("store");
         let initial = store
-            .initialize_exact_fnsp_v3_state(std::iter::empty())
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
             .expect("initial");
         let after = store
             .prepare_exact_fnsp_v3_append([0xA1; 32], 1)
