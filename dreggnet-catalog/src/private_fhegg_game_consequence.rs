@@ -35,11 +35,17 @@
 //! spend, Bazaar asset settlement, and this game turn are not one distributed
 //! transaction.  FNSP-v2 establishes a durable one-shot note redemption, not a
 //! recipient output; the apex's atomic asset/value cross remains the Bazaar
-//! payment. A deployment must persist
-//! [`PrivateFheggGameConsequenceGate::authorization_id`]
-//! after success (and restore it on restart); the Keep's Mender field and the
-//! host's signed-counter journal independently make the concrete mechanic
-//! one-shot across the post-turn persistence window.
+//! payment. Direct gate callers must durably seal
+//! [`PrivateFheggGameConsequenceGate::authorization_id`] across dispatch and
+//! restore it on restart. The production shielded-crown path does this through
+//! [`crate::execute_shielded_crown_action`]: it records `Reserved` before the
+//! game call and promotes to `Consumed` afterward, while either phase blocks a
+//! replay. The Keep's WriteOnce crown and the host's signed-counter journal are
+//! independent executor-side defenses, not substitutes for that journal.
+//! The composed id deliberately excludes the chosen game target and signer
+//! mapping. The live adapter atomically reserves it together with independent
+//! apex-use and tender-use keys, so neither credential can be recombined with a
+//! different counterpart or mint fresh Red/Blue/session authorizations.
 
 use dregg_persist::FinalizedFaithfulSpend;
 use dreggnet_market::private_bfv_attested_clearing::PrivateBfvQuorumSecurity;
@@ -52,7 +58,9 @@ use crate::game_spine::{
 };
 use crate::{GameEpochError, GameEpochLedger};
 
-const AUTHORIZATION_DOMAIN: &str = "dregg.private-fhegg-game-authorization.v1";
+const AUTHORIZATION_DOMAIN: &str = "dregg.private-fhegg-game-authorization.v2";
+const APEX_USE_DOMAIN: &str = "dregg.private-fhegg-game-apex-use.v1";
+const FAITHFUL_SPEND_USE_DOMAIN: &str = "dregg.faithful-spend-game-source-use.v1";
 const CONSEQUENCE_DOMAIN: &str = "dregg.private-fhegg-game-consequence.v1";
 const WINNER_ROUTE_DOMAIN: &str = "dregg.private-fhegg-winner-route.v1";
 const FAITHFUL_AUTHORITY_DOMAIN: &str = "dregg.finalized-faithful-spend-game-authority.v1";
@@ -425,6 +433,8 @@ pub struct PrivateFheggGameConsequenceGate {
     host_incarnation: GameHostIncarnation,
     session_generation: u64,
     authorization_id: [u8; 32],
+    apex_use_id: [u8; 32],
+    faithful_spend_use_id: Option<[u8; 32]>,
     consumed: bool,
 }
 
@@ -459,7 +469,7 @@ impl PrivateFheggGameConsequenceGate {
     /// public finalized-turn submitter and does not reveal or assert the hidden
     /// note owner.
     #[allow(clippy::too_many_arguments)]
-    pub fn new_shielded_crown(
+    pub(crate) fn new_shielded_crown(
         apex: &PrivateBfvLiveApexReceipt,
         required_market_asset_id: [u8; 32],
         required_tender_asset_type: u64,
@@ -482,6 +492,56 @@ impl PrivateFheggGameConsequenceGate {
             Some(faithful_spend),
             required_market_asset_id,
             Some(required_tender_asset_type),
+            winner_route,
+            PrivateFheggGameMechanic::DungeonShieldedCrown,
+            epoch_ledger,
+            target_reference,
+            target_action,
+        )
+    }
+
+    /// Cheap authority fixture for the orchestration module's restart tests.
+    /// Production code has no path to this constructor: the live constructor
+    /// above still requires both verifier-minted authority types.
+    #[cfg(test)]
+    pub(crate) fn fixture_shielded_crown(
+        winner_route: PrivateFheggWinnerRoute,
+        epoch_ledger: &GameEpochLedger,
+        target_reference: GameActionRef,
+        target_action: Action,
+    ) -> Result<Self, PrivateFheggGameConsequenceError> {
+        Self::fixture_shielded_crown_sources(
+            winner_route,
+            epoch_ledger,
+            target_reference,
+            target_action,
+            0,
+            0,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_shielded_crown_sources(
+        winner_route: PrivateFheggWinnerRoute,
+        epoch_ledger: &GameEpochLedger,
+        target_reference: GameActionRef,
+        target_action: Action,
+        apex_variant: u8,
+        spend_variant: u8,
+    ) -> Result<Self, PrivateFheggGameConsequenceError> {
+        let mut authority = PrivateFheggGameAuthority::fixture(winner_route.market_winner.clone());
+        authority.authority_digest[0] ^= apex_variant;
+        authority.apex_consequence_digest[0] ^= apex_variant;
+        let mut faithful_spend = FinalizedFaithfulSpendAuthority::fixture(3, 9, [0x79; 32]);
+        faithful_spend.public.persisted_authority_digest[0] ^= spend_variant;
+        faithful_spend.public.nullifier[0] ^= spend_variant;
+        faithful_spend.public.authority_digest =
+            faithful_spend_authority_digest(&faithful_spend.public);
+        Self::from_authorities(
+            authority,
+            Some(faithful_spend),
+            [0x18; 32],
+            Some(9),
             winner_route,
             PrivateFheggGameMechanic::DungeonShieldedCrown,
             epoch_ledger,
@@ -570,13 +630,11 @@ impl PrivateFheggGameConsequenceGate {
         if live_session != target_reference.session {
             return Err(PrivateFheggGameConsequenceError::AuthorityEpochMismatch);
         }
-        let authorization_id = authorization_id(
-            &authority,
-            faithful_spend.as_ref(),
-            &winner_route,
-            mechanic,
-            &target_reference,
-        );
+        let apex_use_id = apex_use_id(&authority, mechanic);
+        let faithful_spend_use_id = faithful_spend
+            .as_ref()
+            .map(|spend| faithful_spend_use_id(spend, mechanic));
+        let authorization_id = authorization_id(apex_use_id, faithful_spend_use_id, mechanic);
         Ok(Self {
             authority,
             faithful_spend,
@@ -588,12 +646,31 @@ impl PrivateFheggGameConsequenceGate {
             host_incarnation,
             session_generation,
             authorization_id,
+            apex_use_id,
+            faithful_spend_use_id,
             consumed: false,
         })
     }
 
+    /// Composed one-shot authorization key. The target remains bound separately
+    /// in the consequence receipt, but changing target or signer policy cannot
+    /// create a fresh key for the same apex/tender pair.
     pub const fn authorization_id(&self) -> [u8; 32] {
         self.authorization_id
+    }
+
+    /// One-shot keys which must be reserved atomically. The first burns the
+    /// private apex; a shielded mechanic adds one which burns the finalized
+    /// faithful tender; the final key burns their composed authorization. This
+    /// prevents either credential from being recombined with a different
+    /// counterpart while retaining a pair-level audit key.
+    pub fn source_use_ids(&self) -> Vec<[u8; 32]> {
+        let mut ids = vec![self.apex_use_id];
+        if let Some(spend_id) = self.faithful_spend_use_id {
+            ids.push(spend_id);
+        }
+        ids.push(self.authorization_id);
+        ids
     }
 
     pub fn target_session(&self) -> &GameSessionRef {
@@ -929,14 +1006,11 @@ fn winner_route_digest(winner: &DreggIdentity, signer: &str) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-fn authorization_id(
+fn apex_use_id(
     authority: &PrivateFheggGameAuthority,
-    faithful_spend: Option<&FinalizedFaithfulSpendAuthority>,
-    winner_route: &PrivateFheggWinnerRoute,
     mechanic: PrivateFheggGameMechanic,
-    target: &GameActionRef,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(AUTHORIZATION_DOMAIN);
+    let mut hasher = blake3::Hasher::new_derive_key(APEX_USE_DOMAIN);
     for digest in [
         authority.verifier_id,
         authority.claim_digest,
@@ -946,8 +1020,6 @@ fn authorization_id(
         authority.roster_commitment,
         authority.settlement_turn_hash,
         authority.market_asset_id,
-        winner_route.digest,
-        target.routing_preimage_id(),
     ] {
         hash_field(&mut hasher, &digest);
     }
@@ -958,13 +1030,36 @@ fn authorization_id(
     }
     hash_field(&mut hasher, &authority.price.to_be_bytes());
     hash_field(&mut hasher, &authority.volume.to_be_bytes());
-    match faithful_spend {
-        Some(spend) => {
+    hash_field(&mut hasher, mechanic.tag());
+    *hasher.finalize().as_bytes()
+}
+
+fn authorization_id(
+    apex_use_id: [u8; 32],
+    faithful_spend_use_id: Option<[u8; 32]>,
+    mechanic: PrivateFheggGameMechanic,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(AUTHORIZATION_DOMAIN);
+    hash_field(&mut hasher, &apex_use_id);
+    match faithful_spend_use_id {
+        Some(spend_use_id) => {
             hash_field(&mut hasher, &[1]);
-            hash_field(&mut hasher, &spend.public.authority_digest);
+            hash_field(&mut hasher, &spend_use_id);
         }
         None => hash_field(&mut hasher, &[0]),
     }
+    hash_field(&mut hasher, mechanic.tag());
+    *hasher.finalize().as_bytes()
+}
+
+fn faithful_spend_use_id(
+    spend: &FinalizedFaithfulSpendAuthority,
+    mechanic: PrivateFheggGameMechanic,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(FAITHFUL_SPEND_USE_DOMAIN);
+    hash_field(&mut hasher, &spend.public.authority_digest);
+    hash_field(&mut hasher, &spend.public.persisted_authority_digest);
+    hash_field(&mut hasher, &spend.public.nullifier);
     hash_field(&mut hasher, mechanic.tag());
     *hasher.finalize().as_bytes()
 }

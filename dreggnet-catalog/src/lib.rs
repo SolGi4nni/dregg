@@ -52,8 +52,10 @@ pub mod player_worlds;
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub mod private_fhegg_game_consequence;
 pub mod seated;
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub mod shielded_crown_orchestration;
 
-pub use game_epoch::{GameEpochError, GameEpochLedger};
+pub use game_epoch::{GameAuthorizationPhase, GameEpochError, GameEpochLedger};
 pub use game_spine::{
     BoundGameTurnExecution, GameActionRef, GameAffordance, GameArtifact, GameArtifactRef,
     GameAudience, GameCommand, GameHostIncarnation, GameKind, GameOperationRef, GameReceipt,
@@ -68,6 +70,11 @@ pub use private_fhegg_game_consequence::{
     FaithfulSpendGameAuthorityReceipt, PrivateFheggGameConsequenceError,
     PrivateFheggGameConsequenceGate, PrivateFheggGameConsequenceReceipt, PrivateFheggGameMechanic,
     PrivateFheggWinnerRoute,
+};
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub use shielded_crown_orchestration::{
+    ShieldedCrownAction, ShieldedCrownHand, ShieldedCrownOrchestrationError, ShieldedCrownPolicy,
+    execute_shielded_crown_action,
 };
 
 /// **The platform-independent inputs a catalog registration needs** — everything a frontend

@@ -2,21 +2,26 @@
 //!
 //! [`OfferingHost`] deliberately owns game state, not deployment identity. A
 //! frontend that exposes a durable `(offering, session)` route therefore needs
-//! two additional pieces of routing custody:
+//! three additional pieces of routing custody:
 //!
 //! - one random [`GameHostIncarnation`] retained across ordinary process
 //!   restarts; and
 //! - one monotone generation for every game address, retained while the
 //!   session is resumed and incremented whenever that address is closed and
-//!   opened as a fresh world.
+//!   opened as a fresh world; and
+//! - a fail-closed one-shot authorization journal for private consequences
+//!   whose witnesses must never be replayed after a process restart.
 //!
 //! This ledger is the small shared implementation of that custody. It is not a
 //! lock service and does not make two processes safe to run against the same
 //! session store concurrently. A deployment still has one writer. Every
 //! mutation is, however, written to a temporary file, synced, atomically
-//! renamed, and directory-synced before it becomes visible in memory.
+//! renamed, and directory-synced before it becomes visible in memory. The
+//! authorization snapshot is checksummed against accidental corruption. It is
+//! presently a full-map snapshot: mutation cost grows with retained source-use
+//! count, and compaction/append-log work remains a scaling follow-up.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,12 +34,19 @@ use crate::{GameHostIncarnation, GameSessionRef};
 const INCARNATION_FILE: &str = "host-incarnation.v1";
 const SESSIONS_FILE: &str = "session-generations.v1";
 const SESSIONS_MAGIC: &[u8; 8] = b"DREGGE01";
+const AUTHORIZATIONS_FILE: &str = "private-authorizations.v1";
+const AUTHORIZATIONS_MAGIC: &[u8; 8] = b"DREGGA01";
+const AUTHORIZATIONS_CHECKSUM_DOMAIN: &str = "dregg.game-authorizations.checksum.v1";
 
 /// A durable game-epoch custody failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameEpochError {
     Io {
         operation: &'static str,
+        path: PathBuf,
+        detail: String,
+    },
+    ReplaceNotDurablySynced {
         path: PathBuf,
         detail: String,
     },
@@ -48,6 +60,8 @@ pub enum GameEpochError {
         offering: String,
         session: String,
     },
+    InvalidAuthorization(String),
+    MissingAuthorization([u8; 32]),
     Poisoned,
 }
 
@@ -59,6 +73,10 @@ impl GameEpochError {
             detail: error.to_string(),
         }
     }
+
+    fn replace_is_visible(&self) -> bool {
+        matches!(self, Self::ReplaceNotDurablySynced { .. })
+    }
 }
 
 impl std::fmt::Display for GameEpochError {
@@ -69,6 +87,11 @@ impl std::fmt::Display for GameEpochError {
                 path,
                 detail,
             } => write!(f, "could not {operation} {}: {detail}", path.display()),
+            Self::ReplaceNotDurablySynced { path, detail } => write!(
+                f,
+                "replacement of {} became visible but its directory sync failed: {detail}",
+                path.display()
+            ),
             Self::Corrupt(detail) => write!(f, "corrupt game epoch ledger: {detail}"),
             Self::InvalidAddress(detail) => write!(f, "invalid game epoch address: {detail}"),
             Self::MissingActiveGeneration { offering, session } => write!(
@@ -79,6 +102,12 @@ impl std::fmt::Display for GameEpochError {
                 f,
                 "game session generation exhausted for {offering}/{session}"
             ),
+            Self::InvalidAuthorization(detail) => {
+                write!(f, "invalid game authorization: {detail}")
+            }
+            Self::MissingAuthorization(_) => {
+                write!(f, "private authorization was not reserved")
+            }
             Self::Poisoned => write!(f, "game epoch ledger lock was poisoned"),
         }
     }
@@ -97,6 +126,23 @@ struct EpochState {
     records: BTreeMap<(String, String), EpochRecord>,
 }
 
+/// Durable state of a one-shot private game authorization.
+///
+/// `Reserved` is deliberately replay-blocking. It means the authorization was
+/// sealed before dispatch, but the process did not durably record completion.
+/// A deployment must reconcile that state rather than guessing that the game
+/// action did not land.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameAuthorizationPhase {
+    Reserved,
+    Consumed,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct AuthorizationState {
+    records: BTreeMap<[u8; 32], GameAuthorizationPhase>,
+}
+
 #[derive(Debug)]
 enum Backing {
     Memory,
@@ -108,6 +154,7 @@ struct LedgerInner {
     incarnation: GameHostIncarnation,
     backing: Backing,
     state: Mutex<EpochState>,
+    authorizations: Mutex<AuthorizationState>,
 }
 
 /// Cloneable custody handle for one host incarnation and its game generations.
@@ -122,6 +169,7 @@ impl GameEpochLedger {
             incarnation,
             backing: Backing::Memory,
             state: Mutex::new(EpochState::default()),
+            authorizations: Mutex::new(AuthorizationState::default()),
         }))
     }
 
@@ -139,6 +187,36 @@ impl GameEpochLedger {
         let directory = directory.as_ref().to_path_buf();
         fs::create_dir_all(&directory)
             .map_err(|error| GameEpochError::io("create epoch directory", &directory, error))?;
+        let incarnation_preexisting = path_exists(&directory.join(INCARNATION_FILE))?;
+        let authorizations_path = directory.join(AUTHORIZATIONS_FILE);
+        let authorizations = match fs::read(&authorizations_path) {
+            Ok(bytes) => decode_authorizations(&bytes)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !incarnation_preexisting => {
+                // Initialize the replay ledger *before* minting the durable host
+                // incarnation. Once an incarnation exists, absence is loss and
+                // must never be reinterpreted as an empty authorization set.
+                let state = AuthorizationState::default();
+                atomic_replace(
+                    &directory,
+                    AUTHORIZATIONS_FILE,
+                    &encode_authorizations(&state)?,
+                )?;
+                state
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(GameEpochError::Corrupt(format!(
+                    "{} is missing for an initialized host incarnation",
+                    authorizations_path.display()
+                )));
+            }
+            Err(error) => {
+                return Err(GameEpochError::io(
+                    "read private authorizations",
+                    authorizations_path,
+                    error,
+                ));
+            }
+        };
         let incarnation = open_incarnation(&directory)?;
         let sessions_path = directory.join(SESSIONS_FILE);
         let state = match fs::read(&sessions_path) {
@@ -156,6 +234,7 @@ impl GameEpochLedger {
             incarnation,
             backing: Backing::Durable(directory),
             state: Mutex::new(state),
+            authorizations: Mutex::new(authorizations),
         })))
     }
 
@@ -215,7 +294,12 @@ impl GameEpochLedger {
                 active: true,
             },
         );
-        self.persist(&candidate)?;
+        if let Err(error) = self.persist(&candidate) {
+            if error.replace_is_visible() {
+                *state = candidate;
+            }
+            return Err(error);
+        }
         *state = candidate;
         Ok(generation)
     }
@@ -273,9 +357,125 @@ impl GameEpochLedger {
             .get_mut(&address)
             .expect("record was observed above")
             .active = false;
-        self.persist(&candidate)?;
+        if let Err(error) = self.persist(&candidate) {
+            if error.replace_is_visible() {
+                *state = candidate;
+            }
+            return Err(error);
+        }
         *state = candidate;
         Ok(true)
+    }
+
+    /// Return the durable phase of a private authorization, if it has ever
+    /// been sealed by this ledger.
+    pub fn authorization_phase(
+        &self,
+        authorization_id: [u8; 32],
+    ) -> Result<Option<GameAuthorizationPhase>, GameEpochError> {
+        validate_authorization_id(authorization_id)?;
+        let state = self
+            .0
+            .authorizations
+            .lock()
+            .map_err(|_| GameEpochError::Poisoned)?;
+        Ok(state.records.get(&authorization_id).copied())
+    }
+
+    /// Seal a one-shot private authorization before dispatch.
+    ///
+    /// Returns `true` only for the first reservation. Both `Reserved` and
+    /// `Consumed` are replay-blocking, so a crash between dispatch and the
+    /// final `Consumed` write fails closed instead of reopening the witness.
+    pub fn reserve_authorization(
+        &self,
+        authorization_id: [u8; 32],
+    ) -> Result<bool, GameEpochError> {
+        self.reserve_authorizations(std::slice::from_ref(&authorization_id))
+    }
+
+    /// Atomically reserve every independent source-use key, or none of them.
+    /// If any key was previously reserved/consumed, returns `false` without
+    /// changing the other keys. Duplicate or empty batches are refused.
+    pub fn reserve_authorizations(
+        &self,
+        authorization_ids: &[[u8; 32]],
+    ) -> Result<bool, GameEpochError> {
+        validate_authorization_batch(authorization_ids)?;
+        let mut state = self
+            .0
+            .authorizations
+            .lock()
+            .map_err(|_| GameEpochError::Poisoned)?;
+        if authorization_ids
+            .iter()
+            .any(|id| state.records.contains_key(id))
+        {
+            return Ok(false);
+        }
+        let mut candidate = state.clone();
+        for authorization_id in authorization_ids {
+            candidate
+                .records
+                .insert(*authorization_id, GameAuthorizationPhase::Reserved);
+        }
+        if let Err(error) = self.persist_authorizations(&candidate) {
+            if error.replace_is_visible() {
+                *state = candidate;
+            }
+            return Err(error);
+        }
+        *state = candidate;
+        Ok(true)
+    }
+
+    /// Promote a previously reserved authorization to durably consumed.
+    ///
+    /// Repeating the exact promotion is idempotent. A missing reservation is
+    /// an error: creating `Consumed` from nothing would conceal a caller that
+    /// skipped the crash-closing pre-dispatch write.
+    pub fn consume_authorization(&self, authorization_id: [u8; 32]) -> Result<(), GameEpochError> {
+        self.consume_authorizations(std::slice::from_ref(&authorization_id))
+    }
+
+    /// Atomically promote a batch of source-use keys from `Reserved` to
+    /// `Consumed`. Every key must already exist; an all-consumed retry is
+    /// idempotent.
+    pub fn consume_authorizations(
+        &self,
+        authorization_ids: &[[u8; 32]],
+    ) -> Result<(), GameEpochError> {
+        validate_authorization_batch(authorization_ids)?;
+        let mut state = self
+            .0
+            .authorizations
+            .lock()
+            .map_err(|_| GameEpochError::Poisoned)?;
+        let mut any_reserved = false;
+        for authorization_id in authorization_ids {
+            match state.records.get(authorization_id) {
+                Some(GameAuthorizationPhase::Consumed) => {}
+                Some(GameAuthorizationPhase::Reserved) => any_reserved = true,
+                None => return Err(GameEpochError::MissingAuthorization(*authorization_id)),
+            }
+        }
+        if !any_reserved {
+            return Ok(());
+        }
+        let mut candidate = state.clone();
+        for authorization_id in authorization_ids {
+            candidate
+                .records
+                .insert(*authorization_id, GameAuthorizationPhase::Consumed);
+        }
+        if let Err(error) = self.persist_authorizations(&candidate) {
+            if error.replace_is_visible() {
+                *state = candidate;
+            }
+            return Err(error);
+        }
+        *state = candidate;
+        Ok(())
     }
 
     fn persist(&self, state: &EpochState) -> Result<(), GameEpochError> {
@@ -285,6 +485,49 @@ impl GameEpochLedger {
         let bytes = encode_state(state)?;
         atomic_replace(directory, SESSIONS_FILE, &bytes)
     }
+
+    fn persist_authorizations(&self, state: &AuthorizationState) -> Result<(), GameEpochError> {
+        let Backing::Durable(directory) = &self.0.backing else {
+            return Ok(());
+        };
+        let bytes = encode_authorizations(state)?;
+        atomic_replace(directory, AUTHORIZATIONS_FILE, &bytes)
+    }
+}
+
+fn path_exists(path: &Path) -> Result<bool, GameEpochError> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(GameEpochError::io("inspect epoch path", path, error)),
+    }
+}
+
+fn validate_authorization_id(authorization_id: [u8; 32]) -> Result<(), GameEpochError> {
+    if authorization_id == [0; 32] {
+        return Err(GameEpochError::InvalidAuthorization(
+            "the all-zero authorization id is reserved".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_authorization_batch(authorization_ids: &[[u8; 32]]) -> Result<(), GameEpochError> {
+    if authorization_ids.is_empty() {
+        return Err(GameEpochError::InvalidAuthorization(
+            "source-use batch is empty".to_string(),
+        ));
+    }
+    let mut unique = BTreeSet::new();
+    for authorization_id in authorization_ids {
+        validate_authorization_id(*authorization_id)?;
+        if !unique.insert(*authorization_id) {
+            return Err(GameEpochError::InvalidAuthorization(
+                "source-use batch contains a duplicate id".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_address(offering: &str, session: &SessionId) -> Result<(), GameEpochError> {
@@ -433,10 +676,76 @@ fn decode_state(bytes: &[u8]) -> Result<EpochState, GameEpochError> {
     Ok(EpochState { records })
 }
 
+fn encode_authorizations(state: &AuthorizationState) -> Result<Vec<u8>, GameEpochError> {
+    let count = u32::try_from(state.records.len())
+        .map_err(|_| GameEpochError::Corrupt("too many authorization records".to_string()))?;
+    let mut out = Vec::with_capacity(12 + state.records.len() * 33);
+    out.extend_from_slice(AUTHORIZATIONS_MAGIC);
+    out.extend_from_slice(&count.to_be_bytes());
+    for (authorization_id, phase) in &state.records {
+        validate_authorization_id(*authorization_id)?;
+        out.extend_from_slice(authorization_id);
+        out.push(match phase {
+            GameAuthorizationPhase::Reserved => 0,
+            GameAuthorizationPhase::Consumed => 1,
+        });
+    }
+    let checksum = blake3::derive_key(AUTHORIZATIONS_CHECKSUM_DOMAIN, &out);
+    out.extend_from_slice(&checksum);
+    Ok(out)
+}
+
+fn decode_authorizations(bytes: &[u8]) -> Result<AuthorizationState, GameEpochError> {
+    let checksum_at = bytes.len().checked_sub(32).ok_or_else(|| {
+        GameEpochError::Corrupt("authorization journal is missing its checksum".to_string())
+    })?;
+    let (payload, presented_checksum) = bytes.split_at(checksum_at);
+    let expected_checksum = blake3::derive_key(AUTHORIZATIONS_CHECKSUM_DOMAIN, payload);
+    if presented_checksum != expected_checksum {
+        return Err(GameEpochError::Corrupt(
+            "authorization journal checksum mismatch".to_string(),
+        ));
+    }
+    let mut input = payload;
+    if take(&mut input, AUTHORIZATIONS_MAGIC.len())? != AUTHORIZATIONS_MAGIC {
+        return Err(GameEpochError::Corrupt(
+            "authorization magic/version mismatch".to_string(),
+        ));
+    }
+    let count = u32::from_be_bytes(take_array(&mut input)?) as usize;
+    let mut records = BTreeMap::new();
+    for _ in 0..count {
+        let authorization_id = take_array(&mut input)?;
+        validate_authorization_id(authorization_id)
+            .map_err(|error| GameEpochError::Corrupt(error.to_string()))?;
+        let phase = match take(&mut input, 1)?[0] {
+            0 => GameAuthorizationPhase::Reserved,
+            1 => GameAuthorizationPhase::Consumed,
+            other => {
+                return Err(GameEpochError::Corrupt(format!(
+                    "invalid authorization phase {other}"
+                )));
+            }
+        };
+        if records.insert(authorization_id, phase).is_some() {
+            return Err(GameEpochError::Corrupt(
+                "duplicate private authorization record".to_string(),
+            ));
+        }
+    }
+    if !input.is_empty() {
+        return Err(GameEpochError::Corrupt(format!(
+            "{} trailing bytes after authorization records",
+            input.len()
+        )));
+    }
+    Ok(AuthorizationState { records })
+}
+
 fn take<'a>(input: &mut &'a [u8], len: usize) -> Result<&'a [u8], GameEpochError> {
     if input.len() < len {
         return Err(GameEpochError::Corrupt(format!(
-            "truncated session-generation record: needed {len} bytes, found {}",
+            "truncated ledger record: needed {len} bytes, found {}",
             input.len()
         )));
     }
@@ -475,7 +784,10 @@ fn atomic_replace(directory: &Path, file_name: &str, bytes: &[u8]) -> Result<(),
             .map_err(|error| GameEpochError::io("sync epoch temporary file", &temporary, error))?;
         fs::rename(&temporary, &target)
             .map_err(|error| GameEpochError::io("replace epoch ledger", &target, error))?;
-        sync_directory(directory)
+        sync_directory(directory).map_err(|error| GameEpochError::ReplaceNotDurablySynced {
+            path: target.clone(),
+            detail: error.to_string(),
+        })
     })();
     if write_result.is_err() {
         let _ = fs::remove_file(&temporary);
