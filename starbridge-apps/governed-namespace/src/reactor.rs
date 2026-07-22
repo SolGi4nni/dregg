@@ -84,7 +84,7 @@ impl Reactor for GovernanceCommitReactor {
         for effect in &observed.effects {
             match effect {
                 Effect::SetField { index, value, .. }
-                    if *index == PENDING_PROPOSAL_ROOT_SLOT as usize =>
+                    if *index == PENDING_PROPOSAL_ROOT_SLOT as u64 =>
                 {
                     tally = Some(field_to_u64(value));
                 }

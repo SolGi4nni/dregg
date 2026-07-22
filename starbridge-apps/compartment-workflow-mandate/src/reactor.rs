@@ -68,7 +68,7 @@ impl Reactor for WorkflowAdvanceReactor {
         let mut new_cursor: Option<u64> = None;
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect
-                && *index == STEP_CURSOR_SLOT as usize
+                && *index == STEP_CURSOR_SLOT as u64
             {
                 new_cursor = Some(field_to_u64(value));
             }

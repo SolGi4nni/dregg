@@ -95,9 +95,9 @@ impl Reactor for CoordinatorReactor {
         let mut prev_spent: u64 = 0;
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect {
-                if *index == EPOCH_SLOT as usize {
+                if *index == EPOCH_SLOT as u64 {
                     cur_epoch = Some(field_to_u64(value));
-                } else if *index == self.worker.spend_slot() as usize {
+                } else if *index == self.worker.spend_slot() as u64 {
                     prev_spent = field_to_u64(value);
                 }
             }

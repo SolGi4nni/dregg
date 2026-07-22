@@ -66,9 +66,9 @@ impl Reactor for SubscriptionConsumerReactor {
         let mut consumed: FieldElement = [0u8; 32];
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect {
-                if *index == SEQ_HEAD_SLOT as usize {
+                if *index == SEQ_HEAD_SLOT as u64 {
                     new_head = Some(field_to_u64(value));
-                } else if *index == LATEST_PAYLOAD_SLOT as usize {
+                } else if *index == LATEST_PAYLOAD_SLOT as u64 {
                     consumed = *value;
                 }
             }

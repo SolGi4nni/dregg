@@ -248,7 +248,7 @@ fn the_executor_re_enforces_a_non_advancing_state_is_refused_strictmonotonic() {
     let mut effects = settle_effects(cell, 800, 200);
     for e in effects.iter_mut() {
         if let dregg_app_framework::Effect::SetField { index, value, .. } = e {
-            if *index == STATE_SLOT as usize {
+            if *index == STATE_SLOT as u64 {
                 *value = field_from_u64(STATE_BID);
             }
         }

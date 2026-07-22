@@ -78,7 +78,7 @@ impl Reactor for VotingTallyReactor {
         let mut choice: Option<FieldElement> = None;
         for effect in &observed.effects {
             if let Effect::SetField { index, value, .. } = effect
-                && *index == VOTE_SLOT
+                && *index == VOTE_SLOT as u64
             {
                 choice = Some(*value);
             }
