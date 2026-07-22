@@ -212,6 +212,47 @@ banks its own coherent checkpoint.
   remain separate during dual-chain cutover. The strict no-default-feature turn
   check and focused 5/5 pass; live persistence/consumer migration remains.
 
+### 0.8.2. Subsequent banked closures through `a283c3423`
+
+- `d7ea8b9c5` emits the domain-separated ShieldedExactApexV4 descriptor as the
+  registered JSON artifact. This closes the Lean-to-descriptor emission step,
+  not the live v4 selector/persistence/output-note/committee-authority cut.
+- `6ed2ca903` makes the unsound q0 terminal composite fail closed in code: the
+  public producer and verifier cannot mint authority while product/carrier
+  linkage is absent. `8ba2b7ae1` repairs the quarantine test's compile path.
+  The internal arithmetic prototype remains useful for repair work, but its
+  proof and timing are not release authority.
+- `6ed2ca903` also banks the first FRC1 persistence substrate;
+  `8c9e30016` pins restart reauthentication to the exact activation executor
+  rather than accepting an attacker-selected self-signed row. FRC1 now shares
+  the atomic finalized transaction and has byte-exact replay/restart teeth; the
+  focused set is 5/5. Public query and production consumer migration are still
+  active and must not be reported as complete.
+- `1d5d27818` replaces the private Bazaar's restart-unstable envelope identity
+  with a fixed-width v2 spool and a restart-stable semantic settlement core.
+  A fresh proof/local receipt envelope may revise the same logical cursor
+  append-only, while semantic forks, cross-deployment replay, corrupt cores,
+  and stale pre-restart envelopes fail closed after live-market revalidation.
+- `7e2030739` adds a bounded bearer-gated private dependent-turn scheduler.
+  Ready turns remain XChaCha-sealed in custody; the public API exposes only
+  arm/status/cancel; a destructive pre-submit claim feeds ordinary validated
+  blocklace ingress and restart scan. The prover-feature node library check is
+  green. A crash-uncertain `Claimed` item is reconciled through finalized lookup
+  and never blindly resent, so at-most-once currently may sacrifice liveness
+  until ingress reservation/idempotency is complete.
+- `2593ebfaa` binds `VerifiedDkgTranscript` to a domain-separated digest of the
+  exact serialized collective BFV public key and includes it in the v2 setup
+  transcript digest. `fd86eb091` preserves serial Fiat-Shamir derivation but
+  evaluates the public decrypt relation with one dalek Pippenger MSM instead of
+  tens of thousands of individual scalar multiplications; its complete legacy
+  equation-fold differential and the earlier parallel-order canaries are
+  green. `a283c3423` adds a dependency-isolated heavy proof tooth. On hbox in
+  release it completed verified 2-of-3 DKG, two concurrent full ZK decrypt-share
+  proofs, verification, plaintext combine, and forged-response refusal in
+  201.983 seconds. This is a baseline for that exact two-custodian crypto tooth,
+  not an apples-to-apples replacement for the older three-custodian persvati
+  game measurement.
+
 ## 0.5. July 22 superseding checkpoint
 
 This section supersedes older residual sentences below where they disagree. It

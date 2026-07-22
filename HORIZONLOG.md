@@ -30,8 +30,9 @@ handoff prose:
   hybrid Ed25519+ML-DSA `EXE4` local envelope. `d3b895d84` adds the fixed 100-PI
   Lean-authored descriptor over one shared opening; `e7aeec218` proves its atomic
   composition with FNS4/output notes, signer-independent receipt, causal time,
-  and terminal ACK. Emitted bytes and the real HidingFRI producer/verifier are
-  active; persistent v4 writer, live selector, output-note install, and
+  and terminal ACK. `d7ea8b9c5` emits the domain-separated registered JSON
+  descriptor. The real HidingFRI producer/verifier remains active work;
+  persistent v4 writer, live selector, output-note install, and
   committee/threshold finality authority remain.
 - **CONSENSUS TIME:** `1df9bb868` authenticates a strict timed-turn payload in
   BlockId and both signatures; `54407562c` replaces ancestor scans with an
@@ -41,7 +42,10 @@ handoff prose:
   signer-free receipt core over BlockId + deterministic DAG round + authenticated
   time, with explicit Genesis/LegacyCutover/Core predecessor provenance. It
   deliberately excludes the validator-local execution ordinal discovered to be
-  divergent under tau mid-prefix catchup. Persistent core consumption remains.
+  divergent under tau mid-prefix catchup. `6ed2ca903`/`8c9e30016` persist FRC1
+  atomically, replay it byte-exactly, and pin restart reauthentication to the
+  activation executor; the focused set is 5/5. Public query and production
+  consumer migration remain active.
 - **FINALIZED ACK — CLOSED FOR TURNS:** `386b3a1b5` adds typed
   `Committed|DeterministicallyRejected|RetryableOperational|FatalIntegrity`,
   durable rejection recovery, and prefix stopping. `a58038562` reauthenticates
@@ -53,8 +57,11 @@ handoff prose:
   viewer-blind game consequence. The concrete append-only spool was swept into
   `386b3a1b5`; `1c0799467` pins one open inode, uses O_NOFOLLOW, enforces
   owner/mode/regular/nlink=1, revalidates dev+ino around I/O, and serializes
-  writers. Its focused hostile set is 6/6. A stable Bazaar semantic clearing
-  core/reissued local envelope and automatic production supervisor/source remain.
+  writers. Its focused hostile set is 6/6. `1d5d27818` adds the fixed-width v2
+  spool and restart-stable semantic settlement core: fresh local envelopes may
+  revise the same cursor append-only, while semantic forks/cross-deployment
+  replay/stale envelopes fail closed after live-market revalidation. Automatic
+  production supervisor/source wiring remains.
 - **SIDE-STATE CRASH LAW — CLOSED:** `a0199c1e0` writes the immutable typed
   PromiseResolution batch and manifest in the source turn's finalized redb
   transaction, with byte-exact replay and restart recovery; `397ccb234` bounds
@@ -63,10 +70,27 @@ handoff prose:
   `b8ba574c4`/`a58038562` attach and Fresh-only publish the batch from both exact
   and generic live finalizers. A crash after commit but before broadcast loses
   no event: clients resume through `GET /api/promise-resolutions?after=…`.
+- **PRIVATE DEPENDENT SCHEDULER:** `7e2030739` adds bounded bearer-gated
+  arm/status/cancel, XChaCha-sealed turn custody, exact Ready digests, restart
+  scan, destructive pre-submit claim, and ordinary validated blocklace ingress.
+  The node library is green. Crash-uncertain `Claimed` is reconciled by finalized
+  lookup and never blindly resent, preserving at-most-once at a possible
+  liveness cost until ingress reservation/idempotency is complete.
 - **PERF REALITY:** the captured strict Descent/Bazaar custody release run fell
   from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
+  `fd86eb091` replaces the public decrypt-relation's individual scalar
+  multiplications with one CPU dalek Pippenger MSM while preserving serial
+  transcript order; its full legacy-fold differential is green. The isolated
+  `a283c3423` hbox release tooth completed verified 2-of-3 DKG, two concurrent
+  full proofs, both verifications, combine, and forged-response refusal in
+  201.983s. That is a distinct two-custodian crypto baseline, not a direct
+  before/after comparison with the three-custodian persvati game run.
   WGPU BFV/TFHE kernels are real; live `fhe_clear`, Dark AMM multiplication, and
   classical Bulletproof/Ristretto custody remain separate integration work.
+- **BFV TERMINAL AUTHORITY — QUARANTINED:** `6ed2ca903` makes the unlinked q0
+  composite producer/verifier fail closed. Product-to-carrier linkage,
+  butterfly arithmetic, and exact geometry must be repaired before all-RNS
+  widening; the old prototype proof/timing is not authority.
 - **DESCENT OBJECT TRUTH:** `fdb63254a` adds the Lean-authored fixed-eight
   `countFieldsEq` tooth: every verb's exact relic census must equal the
   pack/bank/hoard projection. Counter-only loot and two-relic/one-delta attacks
