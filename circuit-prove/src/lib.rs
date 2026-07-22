@@ -26,6 +26,7 @@ pub mod carrier_pin_twin;
 pub mod caveat_admission_leaf_adapter;
 pub mod cert_f_air;
 pub mod cert_qp_air;
+pub mod collaborative_basefold;
 pub mod custom_leaf_adapter;
 pub mod custom_proof_bind;
 pub mod dark_amm_private;
