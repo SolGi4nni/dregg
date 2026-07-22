@@ -143,6 +143,7 @@ fn append_preserves_signed_bytes_hash_and_executor_signature() {
     clerk.append_receipt(alice_1).unwrap();
 
     let stored_alice_1 = clerk.agent_receipt_head(&alice).unwrap();
+    assert_eq!(clerk.agent_receipt_head_log_index(&alice), Some(0));
     assert_eq!(postcard::to_allocvec(stored_alice_1).unwrap(), alice_1_wire);
     assert_eq!(stored_alice_1.receipt_hash(), alice_1_hash);
     assert_eq!(stored_alice_1.executor_signature, alice_1_signature);
@@ -159,6 +160,7 @@ fn append_preserves_signed_bytes_hash_and_executor_signature() {
     clerk
         .append_receipt(common::mock_receipt(bob, [0x20; 32], [0x21; 32]))
         .unwrap();
+    assert_eq!(clerk.agent_receipt_head_log_index(&bob), Some(1));
     let alice_2 = signed(
         common::mock_receipt_with_prev(alice, [0x11; 32], [0x12; 32], Some(alice_1_hash)),
         &executor_seed,
@@ -168,6 +170,11 @@ fn append_preserves_signed_bytes_hash_and_executor_signature() {
     clerk.append_receipt(alice_2).unwrap();
 
     let stored_alice_2 = clerk.agent_receipt_head(&alice).unwrap();
+    assert_eq!(
+        clerk.agent_receipt_head_log_index(&alice),
+        Some(2),
+        "Alice's causal head keeps the global append position across Bob's interleaving"
+    );
     assert_eq!(postcard::to_allocvec(stored_alice_2).unwrap(), alice_2_wire);
     assert_eq!(stored_alice_2.receipt_hash(), alice_2_hash);
     assert_eq!(stored_alice_2.previous_receipt_hash, Some(alice_1_hash));

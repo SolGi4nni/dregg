@@ -2372,6 +2372,18 @@ impl AgentCipherclerk {
         self.agent_receipt_head(agent).map(|r| r.receipt_hash())
     }
 
+    /// Return the node-wide immutable-log index of `agent`'s causal head.
+    ///
+    /// Exact receipt frames bind both the predecessor hash and its global log
+    /// position.  Exposing the already-maintained head index keeps that lookup
+    /// O(1), even when many other agents' receipts are interleaved, instead of
+    /// rescanning the complete observation log for every exact turn.
+    pub fn agent_receipt_head_log_index(&self, agent: &CellId) -> Option<u64> {
+        self.receipt_heads_by_agent
+            .get(agent)
+            .and_then(|&index| u64::try_from(index).ok())
+    }
+
     /// Return the number of immutable receipts in `agent`'s causal chain.
     pub fn agent_receipt_count(&self, agent: &CellId) -> usize {
         self.receipt_indices_by_agent.get(agent).map_or(0, Vec::len)
