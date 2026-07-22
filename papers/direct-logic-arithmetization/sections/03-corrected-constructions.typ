@@ -51,13 +51,19 @@ checked optimization and certified representation search.
   [canonical trace accepts iff the finite model satisfies the sentence],
   [#raw("FiniteSignatureFOL")#linebreak()#raw("DescriptorIR2")],
   [Optimization],
-  [checked local identities, factoring, sharing, and nonempty-fold elimination],
-  [source meaning and field-graph acceptance preserved; symbolic cost cannot increase],
-  [#raw("DirectLogicOptimizer")#linebreak()#raw("Certificate")],
+  [checked identities, factoring and sharing, followed by explicit materialized BoolGraph emission],
+  [source meaning, public arbitrary-trace soundness and exact resource reductions are preserved],
+  [#raw("DirectLogicOptimizer")#linebreak()#raw("Certificate")#linebreak()
+   #raw("DirectLogicBoolGraph")#linebreak()#raw("DescriptorIR2")],
+  [DREGG workloads],
+  [admission, upgrade, credential clearance, and strand-admission Boolean skeletons],
+  [public live soundness against named production decisions; exact before/after ledgers],
+  [#raw("DirectLogicDregg")#linebreak()#raw("Workloads")],
   [Representation search],
-  [finite graph of exact presentation changes and per-formula plan enumeration],
-  [selected composite remains exact; winner is minimal in the explicit candidate list],
-  [#raw("CertifiedRepresentation")#linebreak()#raw("Search")],
+  [finite exact-change graph plus an indexed per-subterm compiler with explicit conversion and glue costs],
+  [selected composite remains exact; materialized ledger has no untracked remainder],
+  [#raw("CertifiedRepresentation")#linebreak()#raw("Search")#linebreak()
+   #raw("CertifiedIndexed")#linebreak()#raw("PresentationCompiler")],
 )]
 
 == Exact matrix semantics and its compiler
@@ -327,24 +333,90 @@ For every accepted certificate, the formal results are simultaneous:
 - `optimize_accepts_iff` and `optimize_cost_nonincrease` expose the end-to-end
   semantic and cost contracts.
 
-#text(size: 7.25pt)[#table(
-  columns: (1.55fr, 0.78fr, 0.92fr, 0.78fr, 1.42fr),
-  align: (left, center, center, center, left),
-  table.header([*Checked specimen*], [*Equations*], [*Multiplications*],
-    [*Witnesses*], [*What changed*]),
-  [shared common factor], [42 -> 30], [40 -> 29], [25 -> 18],
-    [one duplicated two-gate factor compiled once],
-  [recursive certified optimizer], [30 -> 13], [26 -> 13], [17 -> 8],
-    [identities removed, then common factor shared],
+`DirectLogicBoolGraphDescriptorIR2` realizes that ledger in the live backend.
+Every atomic zero test and Boolean connective receives explicit auxiliary
+columns and a flat list of `windowGate` constraints. Its standalone public
+variant additionally binds residual input $a$ to public input $a$ on the first
+row. `public_descriptor_exact_overhead` proves that statement binding adds
+exactly $n$ linear equations and $n$ public inputs, but no nonlinear
+multiplication or auxiliary witness.
+
+For the four-input factor specimen, `public_factor_emitted_exact` proves the
+public statement ledger. The underlying graph equations are $30 -> 13$; the
+internal accepting descriptor is $31 -> 14$; after four public bindings the
+standalone public totals are:
+
+#text(size: 7.5pt)[#table(
+  columns: (1.55fr, 0.62fr, 0.62fr, 2.05fr),
+  align: (left, center, center, left),
+  table.header([*Live resource*], [*Before*], [*After*], [*Exact account*]),
+  [public constraints], [35], [18], [four PI bindings, graph, and output-equals-one],
+  [nonlinear multiplications], [26], [13], [exact emitted node ledger],
+  [auxiliary witness columns], [17], [8], [postorder zero-test and connective witnesses],
+  [total trace width], [21], [12], [four input residual columns plus auxiliaries],
 )]
 
-Both targets retain local degree two. The optimizer's hostile specimens reject
-a tampered target, an empty-fanout application, and a broken certificate
-boundary. These are counts in the abstract materialized `BoolGraph` ledger.
-The current live DescriptorIR2 compiler instead uses atom Booleanity gates and
-nested `WindowExpr` syntax without the same intermediate columns, so these
-figures do not establish a saving in the current live prover. They are neither
-prover-time measurements nor an end-to-end benchmark.
+`descriptor_constraint_degree` proves that every emitted constraint has degree
+at most two. `public_statement_sound` proves arbitrary-trace soundness: any
+nonempty satisfying trace implies `Formula.Holds` under the verifier's public
+zero-residual vector. `public_canonical_trace_complete` constructs the public
+trace for every true Boolean assignment, and `public_canonical_trace_iff`
+packages canonical exactness. `checked_public_statement_sound` transports any
+accepted optimized public certificate back to its original source formula.
+
+`checkPublicLive` reconstructs the optimizer proof, source and target
+endpoints, PI layout, complete resource ledger, and exact emitted descriptor
+JSON. The factor guards reject changed PI order, layout, or bytes.
+
+=== Production-shaped DREGG decisions
+
+`DirectLogicDreggWorkloads` instantiates the public compiler on four decisions
+already consumed by DREGG: turn admission including receipt-head binding,
+authorized program upgrade, structured credential clearance, and the
+stake/vouch strand gate before finality. Each namespace proves an exact source
+equivalence, an optimized equivalence, and arbitrary-trace public-descriptor
+soundness: for example `AdmissionWorkload.source_iff_admissible`,
+`AdmissionWorkload.optimized_iff_admissible`, and
+`AdmissionWorkload.public_descriptor_sound`.
+
+#text(size: 7.25pt)[#table(
+  columns: (1.3fr, 1.1fr, 1.1fr, 1fr, 1.45fr),
+  align: (left, center, center, center, left),
+  table.header([*Named workload*], [*Public constraints*],
+    [*Multiplications*], [*Trace width*], [*Exact theorem*]),
+  [Turn admission], [121 -> 71], [108 -> 58], [77 -> 47],
+    [#raw("admission_exact_")#linebreak()#raw("live_ledger")],
+  [Program upgrade], [33 -> 23], [28 -> 18], [21 -> 15],
+    [#raw("upgrade_exact_")#linebreak()#raw("live_ledger")],
+  [Credential clearance], [33 -> 23], [28 -> 18], [21 -> 15],
+    [#raw("clearance_exact_")#linebreak()#raw("live_ledger")],
+  [Strand admission], [17 = 17], [13 = 13], [11 = 11],
+    [#raw("strand_exact_")#linebreak()#raw("live_ledger")],
+)]
+
+The first three sources expose genuine duplicated branch prefixes; the
+optimizer shares each prefix. `strand_already_normal_shape` is the negative
+control: the already minimal three-way disjunction is unchanged. All four
+public certificates pass their byte/layout gates, while independent guards
+reject modified bytes, layout, endpoint, and version.
+
+#boundary([
+  The workload theorem is exact at the *atom boundary*. Arithmetic, hashes,
+  membership, lifecycle, capability lookup, and receipt comparison remain the
+  production predicates named by the atoms; this Boolean-skeleton module does
+  not arithmetize their implementations. `public_certificate_sound_of_atoms`
+  therefore requires the caller to prove that each public zero residual is
+  equivalent to its named atom. Under that hypothesis, any nonempty satisfying
+  trace proves the production decision. The tables count the public Boolean
+  relation around those atoms, not the uncharged cost of implementing them.
+])
+
+#boundary([
+  These are exact live DescriptorIR2 resource reductions: constraints,
+  nonlinear multiplication nodes, auxiliary columns, width, and degree. They
+  are not timings. Prover time, verifier time, proof size, memory traffic, and
+  backend scheduling still require a controlled before/after benchmark.
+])
 
 == Exact presentations and finite search
 
@@ -354,7 +426,7 @@ semantic directions and carries a compositional resource bound. Identity and
 composition form a genuine category, so a compiler can change representation
 without dissolving its proof obligation.
 
-The concrete nodes are:
+The original concrete nodes are:
 
 - proof-carrying natural no-wrap residuals;
 - exact finite-field Boolean graphs; and
@@ -370,29 +442,45 @@ has minimum scalar score among the caller-supplied candidates;
 `shortestEnumerated_composite_exact` proves that selection cannot change
 acceptance.
 
-The static specimen makes the selection logic concrete. In $ZZ/5ZZ$, two true
-atoms have actual residual zero but public upper bound three. The whole
-conjunction has static upper bound six and is therefore refused as one no-wrap
-node; each atom remains locally safe. The selected plan splits at the root and
-uses no-wrap leaves. It is proved accepting and minimal in the enumeration,
-with symbolic score $0$ versus $23$ for the all-Boolean graph.
+`CertifiedIndexedPresentationCompiler` closes the accounting gap left by
+meta-level split acceptance. A `Fragment` is indexed by its source formula,
+truth interpretation, and one of four distinct modes: dense polynomial,
+materialized Boolean graph, interaction net, or natural residual. It carries
+an acceptance proposition, `BackendCost`, and an exact semantic certificate.
+A `Conversion` combines an exact presentation change with a separately
+inspectable `ResourceMorphism`; sequential and tensor composition accumulate
+conversion overhead explicitly.
+
+An indexed `Plan` may choose one mode for a whole subformula or compile its
+children independently. Every conjunction or disjunction node carries an
+explicit `glueCost`. `Plan.accepts_iff` proves global semantic preservation,
+while `Plan.materialization_overhead_eq_resources` proves that the recursive
+materialization derivation exposes the entire ledger with no remainder.
+`Boundary.fourWayPlan_modes` exhibits all four modes in one genuine per-subterm
+plan.
+
+The teeth are negative as well as positive.
+`Boundary.free_glue_claim_is_false` proves that a materialized one-equation
+conjunction is not bounded by the zero-cost meta-level estimate.
+`Boundary.exact_semantics_but_no_free_conversion` gives two semantically exact
+fragments for which no zero-overhead resource morphism can materialize the
+target equation. Thus semantic equivalence cannot manufacture a performance
+claim. `Search.choose_minimal_relative` still proves optimality only within the
+caller-supplied finite candidates and transparent scalar score, never among an
+unstated universe of compilers.
 
 #boundary([
-  Search minimality is relative to an explicit finite candidate list and to
-  the transparent score
-  $E+M+W+D+T$; it is not global compiler optimality or a latency model. In the
-  static specimen, score zero means that atomic no-wrap skeletons cost zero in
-  this ledger and split acceptance is represented by meta-level conjunction.
-  A concrete backend must materialize and charge any glue gates it needs. The
-  theorem proves exact plan selection; it does not turn uncharged glue into
-  free computation.
+  The indexed calculus certifies accounting structure; backend adapters must
+  still construct the dense-polynomial, BoolGraph, interaction-net, or residual
+  fragments they advertise. Only the residual and Boolean adapters are
+  instantiated here. Representation names alone do not emit code.
 ])
 
 #callout([WHAT HAS BEEN RECOVERED], [
   The defensible performance thesis is local and certified: exploit a compact
   residual exactly where a range proof makes it sound; use Boolean zero tests
   where it does not; share repeated structure; and search only among
-  meaning-preserving changes of presentation. The checked specimens show
-  substantial symbolic reductions, but no theorem here implies a universal
+  meaning-preserving changes of presentation. The checked specimens now show
+  substantial live relation-size reductions, but no theorem here implies a universal
   10-100x end-to-end speedup or chain finality.
 ])
