@@ -19,13 +19,133 @@ use crate::ProofVerifier;
 use crate::action::Effect;
 use crate::faithful_note_spend_exact_v3::{
     FAITHFUL_NOTE_SPEND_EXACT_V3_ACTION, FAITHFUL_NOTE_SPEND_EXACT_V3_PREDICATE,
-    FAITHFUL_NOTE_SPEND_EXACT_V3_RESOURCE, FaithfulNoteSpendExactV3Error,
-    FaithfulNoteSpendExactV3ProofCarrier, FaithfulNoteSpendExactV3PublicStatement,
-    FaithfulNoteSpendExactV3StateInputs,
+    FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT, FAITHFUL_NOTE_SPEND_EXACT_V3_RESOURCE,
+    FaithfulNoteSpendExactV3Error, FaithfulNoteSpendExactV3ProofCarrier,
+    FaithfulNoteSpendExactV3PublicStatement, FaithfulNoteSpendExactV3StateInputs,
 };
 use crate::faithful_note_spend_exact_v3_anchor::ExactFnspV3DurableAnchor;
 use crate::faithful_note_spend_exact_v3_verifier::FaithfulNoteSpendExactV3Verifier;
-use dregg_circuit::exact_nullifier_aafi::ValidatedExactAafiTransition;
+use dregg_circuit::exact_nullifier_aafi::{ValidatedExactAafiTransition, exact_state_commit};
+
+const PI_HEIGHT: usize = 0;
+const PI_HISTORICAL_ROOT: usize = 4;
+const PI_NULLIFIER: usize = 12;
+const PI_VALUE: usize = 28;
+const PI_ASSET_TYPE: usize = 32;
+const PI_SUCCESSOR_ROOT: usize = 36;
+const PI_PRIOR_ROOT: usize = 44;
+const PI_PRE_COUNT: usize = 52;
+const PI_POST_COUNT: usize = 56;
+const PI_BEFORE_COMMIT: usize = 60;
+const PI_AFTER_COMMIT: usize = 68;
+const PI_END: usize = 76;
+
+/// Opaque evidence that the code-owned exact FNSP-v3 verifier accepted one canonical statement.
+///
+/// Fields and construction are private.  The token contains no proof bytes and cannot be minted by
+/// a caller from an arbitrary statement.  A future persisted compare-and-swap can consume this
+/// token and inspect [`Self::binding`] before advancing durable exact state.
+#[derive(Debug, PartialEq, Eq)]
+pub struct AcceptedFaithfulNoteSpendExactV3 {
+    public: FaithfulNoteSpendExactV3PublicStatement,
+    prior_fns3: [u32; 8],
+    successor_fns3: [u32; 8],
+}
+
+impl AcceptedFaithfulNoteSpendExactV3 {
+    /// Read-only, typed view of the exact statement which passed proof verification.
+    pub fn binding(&self) -> FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
+        FaithfulNoteSpendExactV3AcceptanceBinding {
+            public: &self.public,
+            prior_fns3: &self.prior_fns3,
+            successor_fns3: &self.successor_fns3,
+        }
+    }
+
+    /// Canonical 76 BabyBear public lanes passed to the strict verifier.
+    pub fn public_input_lanes(&self) -> &[u32; FAITHFUL_NOTE_SPEND_EXACT_V3_PUBLIC_INPUT_COUNT] {
+        self.public.as_u32_array()
+    }
+}
+
+/// Borrowed typed view of an accepted statement's future durable-CAS binding.
+///
+/// This is deliberately not constructible outside this module.  Every accessor decodes the
+/// canonical lanes retained in the accepted token; the view cannot drift from what the proof
+/// verifier checked.  FNS3 is retained separately because it is the exact `(root8, count64)` state
+/// commitment embedded in the durable rotated frame, not an additional public lane.
+#[derive(Clone, Copy, Debug)]
+pub struct FaithfulNoteSpendExactV3AcceptanceBinding<'a> {
+    public: &'a FaithfulNoteSpendExactV3PublicStatement,
+    prior_fns3: &'a [u32; 8],
+    successor_fns3: &'a [u32; 8],
+}
+
+impl FaithfulNoteSpendExactV3AcceptanceBinding<'_> {
+    fn lanes(&self) -> &[u32; PI_END] {
+        self.public.as_u32_array()
+    }
+
+    pub fn historical_root_height(&self) -> u64 {
+        read_u64_u16(&self.lanes()[PI_HEIGHT..PI_HISTORICAL_ROOT])
+    }
+
+    pub fn historical_note_root(&self) -> [u8; 32] {
+        read_root8_bytes(&self.lanes()[PI_HISTORICAL_ROOT..PI_NULLIFIER])
+    }
+
+    pub fn nullifier(&self) -> [u8; 32] {
+        read_bytes32_u16(&self.lanes()[PI_NULLIFIER..PI_VALUE])
+    }
+
+    pub fn value(&self) -> u64 {
+        read_u64_u16(&self.lanes()[PI_VALUE..PI_ASSET_TYPE])
+    }
+
+    pub fn asset_type(&self) -> u64 {
+        read_u64_u16(&self.lanes()[PI_ASSET_TYPE..PI_SUCCESSOR_ROOT])
+    }
+
+    pub fn successor_root(&self) -> [u32; 8] {
+        self.lanes()[PI_SUCCESSOR_ROOT..PI_PRIOR_ROOT]
+            .try_into()
+            .expect("fixed exact FNSP-v3 successor root")
+    }
+
+    pub fn prior_root(&self) -> [u32; 8] {
+        self.lanes()[PI_PRIOR_ROOT..PI_PRE_COUNT]
+            .try_into()
+            .expect("fixed exact FNSP-v3 prior root")
+    }
+
+    pub fn prior_count(&self) -> u64 {
+        read_u64_u16(&self.lanes()[PI_PRE_COUNT..PI_POST_COUNT])
+    }
+
+    pub fn successor_count(&self) -> u64 {
+        read_u64_u16(&self.lanes()[PI_POST_COUNT..PI_BEFORE_COMMIT])
+    }
+
+    pub fn prior_fns3(&self) -> [u32; 8] {
+        *self.prior_fns3
+    }
+
+    pub fn successor_fns3(&self) -> [u32; 8] {
+        *self.successor_fns3
+    }
+
+    pub fn before_outer_commit(&self) -> [u32; 8] {
+        self.lanes()[PI_BEFORE_COMMIT..PI_AFTER_COMMIT]
+            .try_into()
+            .expect("fixed exact FNSP-v3 BEFORE commitment")
+    }
+
+    pub fn after_outer_commit(&self) -> [u32; 8] {
+        self.lanes()[PI_AFTER_COMMIT..PI_END]
+            .try_into()
+            .expect("fixed exact FNSP-v3 AFTER commitment")
+    }
+}
 
 /// Verify one exact FNSP-v3 note spend against independently validated transition and durable
 /// state.
@@ -36,11 +156,27 @@ use dregg_circuit::exact_nullifier_aafi::ValidatedExactAafiTransition;
 ///
 /// This function is additive and non-live: it does not mutate the exact accumulator, install a
 /// verifier, or alter the v2 route.
+///
+/// # Fail-closed live-orchestration preconditions
+///
+/// The future node caller must additionally establish facts which are deliberately outside this
+/// narrow proof seam:
+///
+/// - `signed_effect` came from the authenticated `SignedTurn` being finalized;
+/// - the binding's `(historical_root_height, historical_note_root)` names an accepted durable
+///   history entry;
+/// - `durable_anchor` was rebuilt from the finalized turn agent's actual `Cell` and current durable
+///   rotation context, not merely from an arbitrary same-shaped actor; and
+/// - under the persistence lock, the current exact root/count/FNS3 and outer BEFORE commitment
+///   equal the accepted binding before atomically committing its successor/AFTER values.
+///
+/// Until those comparisons and the CAS are wired, possession of the returned token is not by
+/// itself authorization to mutate durable state.
 pub fn verify_faithful_note_spend_exact_v3_acceptance(
     signed_effect: &Effect,
     transition: &ValidatedExactAafiTransition,
     durable_anchor: &ExactFnspV3DurableAnchor,
-) -> Result<(), FaithfulNoteSpendExactV3AcceptanceError> {
+) -> Result<AcceptedFaithfulNoteSpendExactV3, FaithfulNoteSpendExactV3AcceptanceError> {
     verify_with_code_owned_identity(
         &FaithfulNoteSpendExactV3Verifier::new(),
         signed_effect,
@@ -57,7 +193,7 @@ fn verify_with_code_owned_identity(
     signed_effect: &Effect,
     transition: &ValidatedExactAafiTransition,
     durable_anchor: &ExactFnspV3DurableAnchor,
-) -> Result<(), FaithfulNoteSpendExactV3AcceptanceError> {
+) -> Result<AcceptedFaithfulNoteSpendExactV3, FaithfulNoteSpendExactV3AcceptanceError> {
     let Effect::NoteSpend {
         nullifier,
         value,
@@ -106,7 +242,46 @@ fn verify_with_code_owned_identity(
     ) {
         return Err(FaithfulNoteSpendExactV3AcceptanceError::ProofRejected);
     }
-    Ok(())
+    Ok(AcceptedFaithfulNoteSpendExactV3 {
+        public,
+        prior_fns3: exact_state_commit(transition.prior_root(), transition.prior_count())
+            .map(|felt| felt.as_u32()),
+        successor_fns3: exact_state_commit(
+            transition.successor_root(),
+            transition.successor_count(),
+        )
+        .map(|felt| felt.as_u32()),
+    })
+}
+
+fn read_u64_u16(lanes: &[u32]) -> u64 {
+    debug_assert_eq!(lanes.len(), 4);
+    lanes
+        .iter()
+        .copied()
+        .enumerate()
+        .fold(0, |value, (lane, limb)| {
+            value | u64::from(limb) << (16 * lane)
+        })
+}
+
+fn read_root8_bytes(lanes: &[u32]) -> [u8; 32] {
+    debug_assert_eq!(lanes.len(), 8);
+    let mut out = [0u8; 32];
+    for (lane, value) in lanes.iter().copied().enumerate() {
+        out[lane * 4..lane * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+fn read_bytes32_u16(lanes: &[u32]) -> [u8; 32] {
+    debug_assert_eq!(lanes.len(), 16);
+    let mut out = [0u8; 32];
+    for (lane, value) in lanes.iter().copied().enumerate() {
+        let value = u16::try_from(value).expect("canonical exact FNSP-v3 u16 lane");
+        out[lane * 2..lane * 2 + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -299,10 +474,8 @@ mod tests {
         let (transition, anchor, effect) = fixture([0x5a; 32], 0x8877_6655_4433_2211);
         let verifier = RecordingVerifier::accepting();
 
-        assert_eq!(
-            verify_with_code_owned_identity(&verifier, &effect, &transition, &anchor),
-            Ok(())
-        );
+        let accepted = verify_with_code_owned_identity(&verifier, &effect, &transition, &anchor)
+            .expect("capturing strict verifier accepts fixture");
         let calls = verifier.calls();
         assert_eq!(calls.len(), 1);
         let call = &calls[0];
@@ -336,6 +509,54 @@ mod tests {
         assert_eq!(
             &lanes[44..52],
             &transition.prior_root().map(|felt| felt.as_u32())
+        );
+
+        // The opaque token retains exactly the statement which reached verification and augments
+        // it only with the independently recomputed FNS3 pair needed by the future durable CAS.
+        assert_eq!(accepted.public_input_lanes().as_slice(), lanes.as_slice());
+        let binding = accepted.binding();
+        assert_eq!(binding.historical_root_height(), 0x1122_3344_5566_7788);
+        let Effect::NoteSpend {
+            nullifier,
+            note_tree_root,
+            value,
+            asset_type,
+            ..
+        } = &effect
+        else {
+            unreachable!()
+        };
+        assert_eq!(binding.historical_note_root(), *note_tree_root);
+        assert_eq!(binding.nullifier(), nullifier.0);
+        assert_eq!(binding.value(), *value);
+        assert_eq!(binding.asset_type(), *asset_type);
+        assert_eq!(
+            binding.prior_root(),
+            transition.prior_root().map(|felt| felt.as_u32())
+        );
+        assert_eq!(
+            binding.successor_root(),
+            transition.successor_root().map(|felt| felt.as_u32())
+        );
+        assert_eq!(binding.prior_count(), transition.prior_count());
+        assert_eq!(binding.successor_count(), transition.successor_count());
+        assert_eq!(
+            binding.prior_fns3(),
+            exact_state_commit(transition.prior_root(), transition.prior_count())
+                .map(|felt| felt.as_u32())
+        );
+        assert_eq!(
+            binding.successor_fns3(),
+            exact_state_commit(transition.successor_root(), transition.successor_count())
+                .map(|felt| felt.as_u32())
+        );
+        assert_eq!(
+            binding.before_outer_commit(),
+            anchor.before_commit().map(|felt| felt.as_u32())
+        );
+        assert_eq!(
+            binding.after_outer_commit(),
+            anchor.after_commit().map(|felt| felt.as_u32())
         );
     }
 
@@ -430,8 +651,10 @@ mod tests {
         let (_, anchor_b, _) = fixture([0x32; 32], 32);
         let verifier = RecordingVerifier::accepting();
 
+        let no_token =
+            verify_with_code_owned_identity(&verifier, &effect, &transition_a, &anchor_b);
         assert!(matches!(
-            verify_with_code_owned_identity(&verifier, &effect, &transition_a, &anchor_b),
+            no_token,
             Err(FaithfulNoteSpendExactV3AcceptanceError::Statement(
                 FaithfulNoteSpendExactV3Error::StateProducerMismatch { .. }
             ))

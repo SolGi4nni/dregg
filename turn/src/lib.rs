@@ -184,6 +184,7 @@ pub use executor::{
 };
 #[cfg(feature = "prover")]
 pub use faithful_note_spend_exact_v3_acceptance::{
+    AcceptedFaithfulNoteSpendExactV3, FaithfulNoteSpendExactV3AcceptanceBinding,
     FaithfulNoteSpendExactV3AcceptanceError, verify_faithful_note_spend_exact_v3_acceptance,
 };
 pub use faithful_note_spend_exact_v3_anchor::{
