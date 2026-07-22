@@ -10767,15 +10767,17 @@ batched readbacks for 77 materialized layers, 30 DFT dispatches, and six retaine
 LDE blits. CPU verification remains authoritative; query/fold work is still
 host-side.
 
-PartyMPC now accepts authority-certified Beaver batches rather than trusting an
-unbound stream of triples. The certificate commits to the exact salted rows,
-batch, circuit context, roster, gate count, party slot, and authority; malformed
-share relations, forged certificates, relabeling, wrong context, and cross-batch
-frames refuse before gate evaluation. The new hostile target passed **3/3** and
-legacy falsifier/audit compatibility **2/2**. This is an honest intermediate:
-the authority is trusted, the batch certificate is presently Ed25519/classical,
-malicious input provenance is not proved, and durable exact-session rollback
-tombstones are still required.
+PartyMPC certified preprocessing has hard-swapped to `FHTRI003`: verified-core
+ML-DSA-65 and Ed25519 both sign the same complete raw statement over paired
+authority keys, exact salted rows/batch, and base session/circuit/roster/gate
+context. Keygen/sign/verify refuse without the installed Lean authority even if
+the unaudited escape variable is set. The binding enters transport/KDF and the
+canonical clearing claim; the hosted verifier independently pins it across
+restart. The archive-linked hostile target is **5/5 green in 14.43s** across
+row/signature/downgrade/relabel/context/batch/authority/frame/receipt/replay
+substitutions and explicit unaudited-runtime refusal. The dealer still sees and
+chooses every triple; this is hybrid authentication, not sacrifice/VSS/OT/VOLE/
+PCG or malicious-input proof, and SHA-256 plus durable tombstone residuals remain.
 
 The portable Ristretto verifier MSM is qualified for correctness, not
 performance. hbox passed the strict group-add and full MSM/R1CS gates with dalek
@@ -10860,11 +10862,19 @@ live finalization path now reconstructs the note leaves from every nested
 and commits the finalized record, receipt, leaves, authenticated history edge,
 eight-felt `StoredAttestedRoot`, and cursors in one redb transaction. Node
 publication occurs only after that transaction succeeds; restart reconstructs
-the depth-16 tree and replays the authenticated history. The remaining
-load-bearing cut is historical faithful-root membership for `NoteSpend` plus an
-atomic nullifier/root transition; the classical conservation proof, solo-mode
-bypass, committee rollover, and O(all-leaves) recovery are also still outside
-this live-root result.
+the depth-16 tree and replays the authenticated history. Spend custody now has a
+strict versioned `FNSP` carrier, exact historical `(u64 height, root8)` admission
+against that authenticated history, and one redb transaction for finalized
+commit, note leaves, exact `(nullifier,value,sequence)` records, receipt,
+successor faithful root/history/attestation, and cursors. Replay reconstructs
+the exact nullifier suffix and seeds fresh executors; duplicates and wrong roots
+fail before mutation. Lean proves refusal is state identity and success
+publishes exactly the persisted successor. This is not yet a live faithful ZK
+spend: the production predicate-less verifier intentionally refuses and the
+existing circuit proves the legacy scalar/hash-4 tree, not the sixteen-lane/
+eight-felt relation. The deployed nullifier root still folds to one felt;
+classical conservation, solo already-applied finalization, committee rollover,
+and O(all-leaves) recovery remain outside this cut.
 
 Active next cuts at this checkpoint are deliberately named rather than implied:
 the full private-clearing apex is being recaptured with native ML-DSA quorum,
@@ -10915,17 +10925,19 @@ CSPRNG nonces enter before challenge derivation. Canonical and generic release
 targets are **5/5 in 0.359s** and **3/3 in 0.236s**, including cross-request,
 cross-certificate, cross-worker, owner-order, scalar-corruption, source-viewer,
 and appended-plaintext refusals. This proves distributed custody and the first
-linear relation without reconstructing shares. The owner boundary now also
-proves its first genuinely nonlinear layer: one four-value Bulletproof over
-`[kind, 7-kind, quantity, 15-quantity]` plus two logarithmic representation
-proofs links the hidden range-checked values to coordinates 0/1 of that same
-distributed vector commitment. The versioned certificate is owner-signed over
-the proof digest; a checksum-repaired and re-signed response mutation still
-fails cryptographically. The combined release targets are **12/12 in 1.930s**;
-the production artifact is 2,754 bytes per owner. Selector/message-table
-linkage, Poseidon/root opening, BFV equations, and clearing are not yet proved
-over shares, so the live apex still uses the monolithic classical Bulletproof
-backend for those constraints.
+linear relation without reconstructing shares. The owner boundary now proves
+its first genuinely nonlinear layers: the four-value range proof plus a 128-
+boolean one-hot R1CS selector establishes `index=16*kind+quantity`, derives the
+exact eight unary demand/supply slots and `kind+8*quantity` root code, and batch-
+links all 139 scalar commitments to the share-held vector prefix. Canonical
+rejection sampling includes coefficient zero; the compression error is exactly
+`1/|Scalar|`. Signature verification is before the expensive Bulletproof/16k
+link work, with an instrumented invalid-signature tooth proving zero proof-
+verifier entries. The combined release gate is **12/12 in 7.370s**; width
+12,435, owner artifact 7,013 bytes, three-worker certificate 30,286 bytes.
+Exact fhe.rs polynomial-table/BFV equations, Poseidon/root, and clearing are not
+yet proved over shares; the production relation-digest constructor also lacks
+its live call site. This remains classical Ristretto/Ed25519.
 
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame

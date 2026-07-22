@@ -85,7 +85,7 @@ classical seams into a post-quantum composition.
 | Public-only hosted verifier registry | **GATED** | two hostile registry tests: 2/2 green |
 | Authenticated live PartyMPC crossing | **GATED; NATIVE PQ PROFILE SEPARATELY GATED** | original crossing 2/2 release; native ML-DSA + ML-KEM/X25519 integration 5/5 and transport units 5/5 |
 | Sealed native-PQ PartyMPC crossing | **GATED IN STRICT FULL APEX** | protocol teeth above plus strict full apex 1/1; 7.956s crossing vs v4 1,202.240s timeout, exactly six transport signs + six verifies independent of 1,302 gates |
-| Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | authority-certified exact Beaver rows 3/3 hostile; legacy falsifier/audit compatibility 2/2 |
+| Certified PartyMPC preprocessing | **GATED, TRUSTED AUTHORITY** | mandatory hybrid `FHTRI003` binds exact Beaver rows/base session/batch under verified-core ML-DSA-65 + Ed25519 and the hosted verifier independently pins it; hostile 5/5 in 14.43s; generation remains trusted-dealer |
 | Native clearing quorum | **GATED** | full canonical ClearingClaim under roster-pinned ML-DSA + Ed25519: 1/1 hostile native gate; classical compatibility 6/6 |
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
@@ -104,10 +104,10 @@ classical seams into a post-quantum composition.
 | Collective GPU additive fold | **GATED** | 1/1 on real RX 6750 XT; GpuResident via wgpu/Vulkan, not HIP |
 | Portable HidingFRI GPU path | **GATED** | exact CPU proof parity 2/2; retained LDE buffers through salted leaves; five Merkle commits materialize 77 layers in five whole-tree batches; 6 resident blits; GPU 0.717s vs CPU 3.081s at depth 2048 |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact radix-16 Pippenger required-mode matrix 1/1 through 4096 terms; 4096 was 9.918ms CPU vs 7.508s GPU, so disabled by default |
-| Portable encrypted TFHE PBS | **DENSE DEPLOYED ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs and nonzero rotations, full 57.38 MiB BSK + 57.44 MiB KSK, and all 919 outputs; strict 1/1, 421.617ms warm GPU vs 1,493.795ms CPU; transform-form residency and high-level integers remain |
+| Portable encrypted TFHE PBS | **TRANSFORM-RESIDENT DENSE ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs/nonzero rotations and all 919 tfhe-rs outputs; strict 1/1, 115.746ms warm transform GPU vs 422.847ms coefficient GPU / 1,380.391ms CPU; high-level integers/live clearing wiring remain |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree and history | **LIVE FINALIZED/ATTESTED CREATE AUTHORITY** | finalized record, receipt, nested NoteCreate leaves, authenticated root edge, exact eight-felt attestation, and cursors commit atomically; restart reconstructs/replays; NoteSpend membership + nullifier/root atomicity remain active |
+| Faithful wide note tree and history | **LIVE CREATE + ATOMIC SPEND CUSTODY, ZK SPEND FAILS CLOSED** | finalized create/history plus exact `(height, root8)` spend admission, durable exact nullifier records, successor root, receipt, and cursors share one transaction/replay; production faithful-membership IR2 proof is not yet composed |
 | Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
@@ -285,22 +285,23 @@ protocol and still has no proof of honest private-input share formation.
 
 ### Certified preprocessing boundary
 
-**fhegg-fhe/src/mpc_party.rs** now defines authority-certified Beaver batches.
+**fhegg-fhe/src/mpc_party.rs** now hard-swaps certified custody to `FHTRI003`.
 Before any multiplication gate consumes a row, the authority checks the exact
-GF(2) Beaver relation and signs an ordered salted-row commitment binding the
-authority, batch digest, circuit context, roster size, gate count, and party
-slot. The batch identity is inherited by preprocessing KDF and transport
-domains. Hostile tests reject a malformed `c` share that previously flipped an
-equality result, forged signatures, relabeling, wrong circuit context, and
-cross-batch authenticated-frame reuse.
+GF(2) Beaver relation and both ML-DSA-65 and Ed25519 sign the same canonical raw
+statement: paired authority keys, exact salted row commitments/batch, base
+session/circuit digest, roster size, and gate count. Keygen, sign, and verify
+require the installed verified Lean cores even if `DREGG_ALLOW_UNAUDITED_PQ=1`
+is set. The full canonical binding enters transport/KDF domains and the clearing
+claim; the hosted verifier independently pins it across restart rather than
+trusting a self-carried authority.
 
-The exact new target is **3/3 green**; the legacy falsifier/audit compatibility
-target is **2/2 green**. The later apex wiring also binds preprocessing
-authority, batch, and source board into its hosted receipt/verifier identity.
-That final composition is not promoted until its current strict full-apex run
-finishes. The authority is trusted and signs with Ed25519, malicious input
-provenance remains open, and exact-session rollback still requires durable
-replay/tombstone storage.
+The archive-linked hostile target is **5/5 green in 14.43s**. It rejects row,
+Ed-signature, ML-DSA-signature, v2 downgrade, relabel, context, batch, authority,
+authenticated-frame, receipt, and replay substitutions, including explicit
+unaudited-runtime refusal. This is mandatory hybrid authentication of audited
+material, not malicious preprocessing: one trusted dealer still sees and
+chooses every triple; input provenance, sacrifice/VSS/OT/VOLE/PCG, durable
+rollback tombstones, and the SHA-256 commitment floor remain named.
 
 **fhegg-fhe/tests/party_mpc_crossing_transport.rs** starts with the exact four BFV
 proof rows, folds them, masks and threshold-opens only a one-time-padded
@@ -879,11 +880,22 @@ edge, exact eight-felt `StoredAttestedRoot`, and cursors in one redb
 transaction. The node signs/publishes only after that transaction succeeds;
 restart rebuilds the depth-16 tree and replays the authenticated history.
 Forks, truncations, mismatched roots, unauthenticated records, and legacy scalar
-aliases fail closed.
+aliases fail closed. The spend-side custody cut now adds a strict versioned
+`FNSP` carrier for a bounded proof and historical `u64` height, replays the
+hybrid-authenticated root history, and requires the exact `(height, root8)`
+pair. Finalized commit, note leaves, exact `(nullifier, value, sequence)`
+records, receipt, faithful history, attested roots, and cursors share one redb
+transaction; duplicate/replayed nullifiers and wrong successor roots fail
+before mutation, and restart seeds the executor from the durable records. Lean
+proves refusal is state identity and success publishes exactly the persisted
+successor root.
 
-This is still not the final PQ no-mint theorem. `NoteSpend` does not yet carry a
-versioned historical membership opening against this root, and nullifier
-consumption is not yet in the same root-attestation transaction. The
+This is still not the final PQ no-mint theorem. Live faithful `NoteSpend` fails
+closed because the production verifier's predicate-less entry intentionally
+rejects, while the existing spend circuit proves the legacy scalar/hash-4 tree
+rather than the new sixteen-lane/eight-felt membership relation. The deployed
+nullifier root also still folds the nullifier to one felt and the solo already-
+applied finalization path is outside this atomic weld. The
 authoritative conservation proof remains Ristretto/Pedersen/Bulletproof-based;
 solo-mode bypass, committee rollover, and O(all-leaves) recovery also remain.
 
@@ -1058,15 +1070,17 @@ from first principles.
   four-selector device-resident blind rotation combined strict GPU **4/4**,
   exact extraction/key-switch combined strict GPU **5/5**, and the genuine
   dense 918-CMUX deployed envelope **1/1**; all 919 outputs match tfhe-rs and
-  warm GPU was **421.617ms** versus **1,493.795ms CPU**. Transform-form residency
-  and high-level integers remain.
+  transform-resident warm GPU was **115.746ms** versus **422.847ms** coefficient
+  GPU and **1,380.391ms CPU**. High-level integers/live clearing wiring remain.
 - wide shielded binding — **7/7 Turn + 4/4 circuit wire/alias green**; the old
   note/root and classical conservation leg remain.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
   **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
   history **6/6**; live finalized `NoteCreate` leaves, history edge, exact
   eight-felt attestation, receipt, and cursors now commit atomically. Historical
-  `NoteSpend` membership and nullifier/root atomicity remain.
+  `(height,root8)` spend admission and exact nullifier/value/sequence plus
+  successor-root persistence are atomic; faithful-membership ZK still fails
+  closed pending the new IR2 descriptor/verifier cut.
 - cell-owned PQ identity — create/rotate/rollback **1/1**, restart **1/1**,
   enrollment/substitution **3/3**, SignedTurn hostile **4/4**, cell wire/
   commitment **3/3**, EffectVM fail-closed refusal **3/3**; Lean-authored
