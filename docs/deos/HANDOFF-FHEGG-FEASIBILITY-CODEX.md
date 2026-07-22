@@ -168,6 +168,13 @@ the amount of code landed.
   concurrent online receipt-head hook now rejects the stale predecessor at
   generic append time (the stronger production behavior is being moved into
   that hook's own test).
+- `aeab921eb` replaces the live receipt-predecessor scan with a maintained
+  per-agent receipt-head index. Full open still validates the hostile durable
+  prefix before deriving the index; online append then checks and advances the
+  authenticated head incrementally. `4e932492a` additionally authenticates the
+  active suffix boundary rather than trusting a derived cache across recovery.
+  The exact accumulator's analogous sparse O(log N) witness/cache cut is still
+  active and is not implied by these receipt-index commits.
 - `b530a5239` adds an opaque, non-`Clone` durable actor authority reconstructed
   from full checkpoint + tombstones, with locked revalidation and hybrid-
   attested compacted-root authority. Restart/drift/tombstone/compaction and
@@ -182,6 +189,16 @@ the amount of code landed.
   The intended branch must preserve the validated-signed-turn token, divert v3
   before the v2 decoder and every RAM overlay/event/proving side effect, commit
   the exact durable CAS last, and install RAM only after fresh durable success.
+- A federation audit found a second architectural boundary: v3 activation and
+  frame identities transitively commit the local executor public key. Distinct
+  honest validators therefore derive distinct v3 frame chains. `e0eb1aea9`
+  records the corrective protocol in
+  `docs/deos/EXACT-FRAME-CONSENSUS-IDENTITY.md`: v3 is explicit solo/devnet-local
+  only and must refuse committee mode; v4 uses signer-independent activation
+  and frame core IDs, with each validator's hybrid signature in a separate
+  local envelope and finality/attested-root (or an optional threshold
+  certificate over the fixed core ID) as federation authority. No threshold
+  frame signer is claimed to exist today.
 - Honest cryptographic scope: current v3 proves exact anti-double-spend/receipt
   continuity and hides its witness, but its 76 public inputs expose historical
   height/root, nullifier, value, asset, exact roots/counts, and outer anchors.
@@ -238,7 +255,13 @@ the amount of code landed.
   makes the reactive registry canonical, and journals rollback. `d502ecfd2`
   adds candidate resolve/commitment/snapshot APIs so blocklace can mutate the
   isolated candidate executor rather than a disconnected NodeState registry.
-  The redb CAS/reseed and single-owner NodeState cutover remain active.
+  `64477cd9c` separates React replay nullifiers from note-spend nullifiers.
+  `9af0f439b` now joins the canonical pending registry and that dedicated React
+  nullifier set to the durable executor-state stage/replay/truncate path, with
+  domain-separated predecessor CAS, exact successor checks, restart loaders,
+  and divergent-tail rollback. The final nonempty-registry focused replay tooth
+  remains pending a shared remote cargo lock; do not promote the prior
+  compile-green checkpoint into a completed full-suite claim.
 - `5d0c79da5` adds a bounded canonical factory restart image, rolls back factory
   quota after late rejection, and extends the producer-reference checkpoint
   across factory/budget/rate/reactive/migration/accumulator/receipt scratch.
@@ -295,13 +318,18 @@ the amount of code landed.
   uses CPU fhe.rs because the complete BFV extended-basis/tensor/relinearization
   GPU seam is absent. The exact WGPU Ristretto verifier is intentionally disabled
   for performance (about 4.643s versus 9.827ms dalek at 4096 terms).
-- The largest measured current gameplay blocker is threshold-custody range
-  proving: the six-share heavy Descent settlement took about 1086s because each
-  share serially constructs three large Bulletproof inner-product proofs. The
-  active safe optimization is the owned exact host-parallel Bulletproof prover
-  plus the already-existing parallel quorum helper with bounded nested
-  parallelism, followed by cross-verification and end-to-end release timing on
-  hbox/persvati. It does not pretend that the slower Ristretto GPU path helps.
+- `e46ff8450` installs the owned exact host-parallel Bulletproof prover and
+  canonical bounded-nesting quorum scheduler without changing proof bytes.
+  The real six-share Descent/Dark-Bazaar custody settlement is green in release
+  on persvati's 24-core CPU in 514.36s (nextest 514.612s), versus the historical
+  1086.009s: 2.111x end-to-end and 52.6% less wall time. The embedded signer,
+  quorum, order, nonce, and replay refusal teeth also pass. This run used
+  `DREGG_REQUIRE_LEAN=0 DREGG_ALLOW_UNAUDITED_PQ=1` only because the remote
+  fixture lacks the verified ML-DSA bootstrap; exact BFV/VSS/Bulletproof custody
+  remained enabled. It is still about 8.6 minutes and runs on Rayon CPU, not
+  GPU, so it is not gameplay-ready. The next hard cut is a native-PQ
+  HidingFRI/AIR range/conservation relation over the existing odd-NTT/table
+  substrate, not the slower WGPU Ristretto verifier.
 
 ## 1. The honest current sentence
 
