@@ -562,4 +562,27 @@ exactly as the §8-resting keystones are (correctly) omitted from this ledger. -
 #assert_axioms Dregg2.Verify.revokedPersists
 #assert_axioms Dregg2.Verify.identity_revoked_forever_via_catalog
 
+/-! ## §35 — Dealerless preprocessing's algebraic/state-machine core.
+
+These pins deliberately stop before network/adversary/computational claims.  They cover the
+information-theoretic GF(2) missing-share bijection, exact session/manifest/complete-roster
+commit/reveal binding under an explicit injectivity hypothesis, and context-preserving one-time
+correlation custody. -/
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.globalAlpha_eq_hidden_add_visible
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.missingShareEquiv
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.existsUnique_missing_share_for_global
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.globalAlpha_update_hidden
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.xorZ_bitIn_eq_bitIn_xor
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.mul_bitIn_eq_bitIn_and
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.masked_two_party_product_shares_reconstruct
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.masked_two_party_product_shares_reconstruct_xorZ
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.ordinary_addition_is_not_xor_mod_five
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.SacrificeBridge.constructedTriple2_valid
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.SacrificeBridge.constructedTriple2_passes_sacrifice
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.accepted_complete_roster_reveals_unique
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.accepted_same_commitments_same_output
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.consume_success_context_pinned
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.consume_success_preserves_context_registry
+#assert_axioms Dregg2.Crypto.DealerlessPreprocessing.consume_success_refuses_replay
+
 end Dregg2.Claims
