@@ -94,11 +94,40 @@ scripts/hbuild gpu-e2e env DREGG_REQUIRE_WGPU=1 \
   --test wgpu_compact_edwards_parity --run-ignored all --no-capture
 ```
 
-After group-add parity, a separate fixed-public-scalar stone can add a
-constant-address scalar-multiplication schedule and a predetermined-challenge
-residency tooth: upload once, perform K public folds, read back only the final
-vector, and compare it with K dalek folds.  That proves shader arithmetic and
-residency, not transcript integration.
+## Predetermined-public residency stone
+
+The second qualification stone implements the fixed-public-scalar pointwise
+fold without exposing a scalar input.  Round `r` uses a source-domain-derived,
+nonzero public `u_r` and the pair `(u_r^-1, u_r)`.  The shader runs one uniform
+256-bit simultaneous double-and-add schedule per pair; point addresses and the
+schedule are fixed, while the remaining bit branches are public and uniform
+across each dispatch.
+
+One canonical public point vector, the complete challenge table, and a padded
+public per-round control table are each uploaded once.  K ordered dependent
+dispatches alternate two compact point buffers.  Only the final vector is
+copied back, checked as canonical extended Edwards coordinates, and accepted
+against an independently computed dalek fold.
+
+The hardware tooth is green on the `hbox` RX 6750 XT for both odd and even
+ping-pong endings.  Starting from 64 public points, K=5 returned two exact
+points and K=6 returned one exact point.  Each run reported one point upload,
+one complete challenge upload, one control-table upload, K dispatches, and one
+readback.  Malformed compressed input and a non-halvable fold shape were
+refused.  The combined release tooth took 2.36 seconds:
+
+```sh
+scripts/hbuild gpu-e2e env DREGG_REQUIRE_WGPU=1 \
+  cargo nextest run --release \
+  --manifest-path vendor/bulletproofs-r1cs-wgpu/Cargo.toml \
+  --features yoloproofs,wgpu-msm \
+  --test wgpu_public_fold_residency --run-ignored all --no-capture
+```
+
+This proves compact fixed-public-scalar arithmetic and intermediate device
+residency.  The challenges are deliberately predetermined rather than drawn
+from a live proof transcript, so it does **not** prove transcript integration
+or make the kernel production prover authority.
 
 ## Production resident engine required
 
