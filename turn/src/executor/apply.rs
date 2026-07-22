@@ -1979,18 +1979,18 @@ impl TurnExecutor {
     }
 
     /// REACT: discharge a promise-hole by presenting a proof of `condition`. THE
-    /// ONE-SHOT SPEND. The hole `pending_id` is spent into the production
-    /// `note_nullifiers` set EXACTLY as a [`Effect::NoteSpend`] nullifier:
+    /// ONE-SHOT SPEND. The hole `pending_id` is spent into the dedicated
+    /// React replay domain (never the faithful FNSP note-spend sequence):
     ///
     ///  1. Bind the spent nullifier to the resolved turn: `wake.hash()` MUST
     ///     equal `pending_id` (a react cannot spend one hole while resolving
     ///     another — the nullifier-to-turn binding the circuit witnesses).
     ///  2. Verify the proof discharges the condition (the genuine resolution
     ///     gate — wrong/expired proofs are refused and spend nothing).
-    ///  3. SPEND `pending_id` into `note_nullifiers` with double-spend
-    ///     rejection (journaled). A second react — or a replay of the same
-    ///     `pending_id` — hits the identical gate `NoteSpend` rides and is
-    ///     REJECTED. THIS is the one-shot tooth the light client witnesses.
+    ///  3. SPEND `pending_id` into `reactive_nullifiers` with replay rejection
+    ///     (journaled). A second react — or a replay of the same `pending_id` —
+    ///     is rejected, while an equal raw value in the NoteSpend domain grants
+    ///     no React authority and vice versa.
     ///  4. If a matching hole is live in the reactive registry, RESOLVE it with
     ///     a genuine receipt over the resolved turn (the registry-removal is a
     ///     redundant second tooth; the nullifier gate is load-bearing).
@@ -2078,42 +2078,27 @@ impl TurnExecutor {
             }
         }
 
-        // (3) THE ONE-SHOT SPEND — insert the hole id into the production
-        // nullifier set with double-spend rejection. This is the SAME gate
-        // `apply_note_spend` uses; react-twice (or a replayed pending_id) is a
-        // double-spend and is rejected here. Journaled so a turn that fails
+        // (3) THE ONE-SHOT SPEND — insert the hole id into the dedicated React
+        // replay set. This MUST NOT ride the faithful NoteSpend accumulator:
+        // exact FNSP proves that ordered append history, while React carries no
+        // note-spend statement. Journaled so a turn that fails
         // AFTER this point unwinds the insert (no permanent hole-burn on a
         // deliberate-failure attack).
         {
-            let mut set = self.note_nullifiers.lock().unwrap();
-            if set.contains(pending_id) {
-                return Err((
-                    TurnError::InvalidEffect {
-                        reason: "React: double-spend — pending_id already reacted (one-shot)"
-                            .into(),
-                    },
-                    path.to_vec(),
-                ));
-            }
-            // STAGE-B RESIDUAL (reported): a promise-hole (`pending_id`) carries
-            // no monetary note value — the React one-shot spend is a reactive
-            // gate, not a fungible transfer — so `0` is the correct "no value"
-            // record for the Rust dedup. If the React descriptor's in-circuit
-            // grow-gate ever commits this hole into the SAME limb-26 accumulator,
-            // its `NOTE_VALUE` column must be confirmed `0` (Stage-B live-root
-            // threading) for continuity to hold.
-            set.insert(*pending_id, 0).map_err(|e| {
-                let reason = match e {
-                    NoteError::DoubleSpend { .. } => {
-                        "React: double-spend — race on pending_id insert".to_string()
-                    }
-                    other => format!("React: pending_id insert failed: {other:?}"),
-                };
-                (TurnError::InvalidEffect { reason }, path.to_vec())
-            })?;
+            self.reactive_nullifiers
+                .lock()
+                .unwrap()
+                .insert(*pending_id)
+                .map_err(|error| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: format!("React: replay refused: {error}"),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
         }
-        journal.record_note_nullifier_inserted(*pending_id);
-        journal.record_note_spend(*pending_id);
+        journal.record_reactive_nullifier_inserted(*pending_id);
 
         // (4) RESOLVE the hole with a GENUINE receipt over the resolved turn.
         // The receipt is content-addressed to the wake turn we just verified
@@ -4410,7 +4395,7 @@ mod react_executor_tests {
         );
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id),
@@ -4433,11 +4418,11 @@ mod react_executor_tests {
             .expect("a genuine react resolves once");
         assert!(
             executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id),
-            "the hole id is now SPENT in the production nullifier set (the grow-gate step)"
+            "the hole id is now spent in the dedicated React replay domain"
         );
         assert_eq!(
             executor.reactive_registry.lock().unwrap().len(),
@@ -4465,10 +4450,10 @@ mod react_executor_tests {
             ),
             other => panic!("expected InvalidEffect, got {other:?}"),
         }
-        // The nullifier set still holds exactly the one spend.
+        // The React replay set still holds exactly the one spend.
         assert!(
             executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4508,7 +4493,7 @@ mod react_executor_tests {
             .expect("first react spends the hole id");
         assert!(
             executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4530,8 +4515,8 @@ mod react_executor_tests {
             executor.apply_effect(&react, &mut ledger, &[3], &cell, &cell, &mut j2, [0u8; 32]);
         let (err, _) = replay.expect_err("a replayed pending_id MUST be refused");
         assert!(
-            matches!(err, TurnError::InvalidEffect { reason } if reason.contains("double-spend")),
-            "the replay is refused by the production nullifier gate (the hole id is spent)"
+            matches!(err, TurnError::InvalidEffect { reason } if reason.contains("replay refused")),
+            "the replay is refused by the dedicated React gate"
         );
     }
 
@@ -4585,7 +4570,7 @@ mod react_executor_tests {
         // Nothing was spent — a refused react burns no hole.
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&Nullifier(wake.hash())),
@@ -4635,7 +4620,7 @@ mod react_executor_tests {
         );
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id),
@@ -4660,7 +4645,7 @@ mod react_executor_tests {
             .expect("the genuine proof discharges the hole");
         assert!(
             executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4708,7 +4693,7 @@ mod react_executor_tests {
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4763,7 +4748,7 @@ mod react_executor_tests {
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4810,7 +4795,7 @@ mod react_executor_tests {
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 0);
         assert!(
             executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4823,11 +4808,12 @@ mod react_executor_tests {
             &executor.note_commitments,
             &executor.note_revoked,
             &executor.reactive_registry,
+            &executor.reactive_nullifiers,
         );
         assert_eq!(executor.reactive_registry.lock().unwrap().len(), 1);
         assert!(
             !executor
-                .note_nullifiers
+                .reactive_nullifiers
                 .lock()
                 .unwrap()
                 .contains(&pending_id)
@@ -4840,6 +4826,7 @@ mod react_executor_tests {
             &executor.note_commitments,
             &executor.note_revoked,
             &executor.reactive_registry,
+            &executor.reactive_nullifiers,
         );
         assert!(executor.reactive_registry.lock().unwrap().is_empty());
     }

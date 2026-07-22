@@ -1272,6 +1272,7 @@ impl TurnExecutor {
                         &self.note_commitments,
                         &self.note_revoked,
                         &self.reactive_registry,
+                        &self.reactive_nullifiers,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1297,6 +1298,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
@@ -1313,6 +1315,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
@@ -1404,6 +1407,7 @@ impl TurnExecutor {
                         &self.note_commitments,
                         &self.note_revoked,
                         &self.reactive_registry,
+                        &self.reactive_nullifiers,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1459,6 +1463,7 @@ impl TurnExecutor {
                 &self.note_commitments,
                 &self.note_revoked,
                 &self.reactive_registry,
+                &self.reactive_nullifiers,
             );
             return Err(e);
         }
@@ -1482,6 +1487,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 return Err(AtomicTurnError::ProofFailed {
                     cell: mixed_turn.agent,

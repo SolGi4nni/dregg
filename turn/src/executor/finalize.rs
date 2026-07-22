@@ -629,6 +629,7 @@ impl TurnExecutor {
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
+                | JournalEntry::ReactiveNullifierInserted { .. }
                 | JournalEntry::NoteCommitmentInserted { .. }
                 | JournalEntry::ReactiveRegistrySnapshot { .. }
                 // A revocation insert into `note_revoked` is rollback-only

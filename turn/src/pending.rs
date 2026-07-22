@@ -28,7 +28,7 @@
 //! └───────────────────────────────────────────────────────────────────┘
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::conditional::ProofCondition;
 use crate::error::TurnError;
 use crate::turn::{Turn, TurnReceipt};
+use dregg_cell::Nullifier;
 
 /// Wire prefix for one canonically encoded pending-turn registry snapshot.
 ///
@@ -174,6 +175,97 @@ impl fmt::Display for PendingReactError {
 }
 
 impl std::error::Error for PendingReactError {}
+
+/// Domain tag for the React replay gate.
+///
+/// React promise ids are not note spends and must never enter the faithful
+/// FNSP nullifier sequence. This independent tag prevents a raw 32-byte value
+/// from being silently substituted across those two semantic domains.
+pub const REACTIVE_NULLIFIER_DOMAIN_V1: &str = "dregg-reactive-nullifiers-v1";
+
+/// A canonical React-only one-shot set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReactiveNullifierSet {
+    spent: BTreeSet<Nullifier>,
+}
+
+/// A React replay-set image or insertion was invalid.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReactiveNullifierError {
+    AlreadyReacted { pending_id: Nullifier },
+    NonCanonical,
+}
+
+impl fmt::Display for ReactiveNullifierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyReacted { pending_id } => write!(
+                f,
+                "React pending_id {} was already consumed",
+                hex::encode(pending_id.0)
+            ),
+            Self::NonCanonical => {
+                f.write_str("reactive nullifier keys are not strictly sorted and unique")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReactiveNullifierError {}
+
+impl ReactiveNullifierSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restore a strictly sorted, duplicate-free durable image.
+    pub fn from_canonical_keys(keys: &[[u8; 32]]) -> Result<Self, ReactiveNullifierError> {
+        if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(ReactiveNullifierError::NonCanonical);
+        }
+        Ok(Self {
+            spent: keys.iter().copied().map(Nullifier).collect(),
+        })
+    }
+
+    pub fn canonical_keys(&self) -> Vec<[u8; 32]> {
+        self.spent.iter().map(|nullifier| nullifier.0).collect()
+    }
+
+    pub fn contains(&self, pending_id: &Nullifier) -> bool {
+        self.spent.contains(pending_id)
+    }
+
+    pub fn insert(&mut self, pending_id: Nullifier) -> Result<(), ReactiveNullifierError> {
+        if self.spent.insert(pending_id) {
+            Ok(())
+        } else {
+            Err(ReactiveNullifierError::AlreadyReacted { pending_id })
+        }
+    }
+
+    pub fn remove(&mut self, pending_id: &Nullifier) -> bool {
+        self.spent.remove(pending_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.spent.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.spent.is_empty()
+    }
+
+    /// Domain-separated CAS digest over the canonical key image.
+    pub fn commitment(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key(REACTIVE_NULLIFIER_DOMAIN_V1);
+        hasher.update(&(self.spent.len() as u64).to_le_bytes());
+        for nullifier in &self.spent {
+            hasher.update(&nullifier.0);
+        }
+        *hasher.finalize().as_bytes()
+    }
+}
 
 // ─── Core Types ─────────────────────────────────────────────────────────────
 
@@ -782,6 +874,30 @@ impl PendingTurnRegistry {
 }
 
 impl crate::executor::TurnExecutor {
+    /// Restore the dedicated React replay gate from a canonical durable image.
+    pub fn set_reactive_nullifiers(&self, nullifiers: ReactiveNullifierSet) {
+        *self
+            .reactive_nullifiers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = nullifiers;
+    }
+
+    /// Canonical React replay-gate image for same-transaction persistence.
+    pub fn reactive_nullifier_keys(&self) -> Vec<[u8; 32]> {
+        self.reactive_nullifiers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .canonical_keys()
+    }
+
+    /// Domain-separated pre-state digest for the React replay-gate CAS.
+    pub fn reactive_nullifier_commitment(&self) -> [u8; 32] {
+        self.reactive_nullifiers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .commitment()
+    }
+
     /// Canonical pre-state digest for the durable pending-registry CAS.
     ///
     /// A node captures this before executing an isolated finalized-turn

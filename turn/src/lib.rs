@@ -212,7 +212,8 @@ pub use fast_path::{
 pub use forest::{CallForest, CallTree};
 pub use pending::{
     BrokenReason, PendingEntry, PendingHandle, PendingReactError, PendingRegistryCodecError,
-    PendingStatus, PendingSubmitError, PendingTurnRegistry, ResolutionCondition, ResolutionEvent,
+    PendingStatus, PendingSubmitError, PendingTurnRegistry, REACTIVE_NULLIFIER_DOMAIN_V1,
+    ReactiveNullifierError, ReactiveNullifierSet, ResolutionCondition, ResolutionEvent,
     ResolutionOutcome,
 };
 // `Precondition` and friends collapsed into `dregg_cell::preconditions`

@@ -1677,6 +1677,7 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
         | JournalEntry::NoteCreate
         | JournalEntry::NoteCommitmentInserted { .. }
         | JournalEntry::ReactiveRegistrySnapshot { .. }
+        | JournalEntry::ReactiveNullifierInserted { .. }
         | JournalEntry::RevocationInserted { .. } => vec![],
         JournalEntry::EventEmitted { .. } => vec![],
         // NAMED SEAM: a MakeSovereign REMOVES a hosted cell (lifts its whole state

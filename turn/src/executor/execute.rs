@@ -1139,6 +1139,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 // Remove temporarily-injected sovereign cells on rollback.
                 for cell_id in &sovereign_cell_ids {
@@ -1171,6 +1172,7 @@ impl TurnExecutor {
                 &self.note_commitments,
                 &self.note_revoked,
                 &self.reactive_registry,
+                &self.reactive_nullifiers,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1200,6 +1202,7 @@ impl TurnExecutor {
                 &self.note_commitments,
                 &self.note_revoked,
                 &self.reactive_registry,
+                &self.reactive_nullifiers,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1228,6 +1231,7 @@ impl TurnExecutor {
                 &self.note_commitments,
                 &self.note_revoked,
                 &self.reactive_registry,
+                &self.reactive_nullifiers,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1257,6 +1261,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
@@ -1289,6 +1294,7 @@ impl TurnExecutor {
                     &self.note_commitments,
                     &self.note_revoked,
                     &self.reactive_registry,
+                    &self.reactive_nullifiers,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);

@@ -884,6 +884,12 @@ pub struct TurnExecutor {
     /// and binds its wake agent + exact stored condition before consuming both the
     /// entry and its durable nullifier.
     pub reactive_registry: Mutex<crate::pending::PendingTurnRegistry>,
+    /// React-only replay gate. Promise ids are a distinct semantic domain from
+    /// note-spend nullifiers: inserting them into `note_nullifiers` would pollute
+    /// the faithful/exact-FNSP append sequence with an unproved non-note event.
+    /// Nodes persist and reseed this canonical set atomically beside the pending
+    /// registry successor.
+    pub reactive_nullifiers: Mutex<crate::pending::ReactiveNullifierSet>,
     /// Trusted Ed25519 public keys for destination federation receipt verification.
     /// Used during BridgeFinalize to validate that the receipt was signed by a
     /// legitimate destination federation.
@@ -1188,6 +1194,7 @@ impl TurnExecutor {
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
+            reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             fee_well_cell: None,
@@ -1269,6 +1276,7 @@ impl TurnExecutor {
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
+            reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             fee_well_cell: None,
@@ -1320,6 +1328,7 @@ impl TurnExecutor {
             note_commitments: Mutex::new(CommitmentSet::new()),
             note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
+            reactive_nullifiers: Mutex::new(crate::pending::ReactiveNullifierSet::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             fee_well_cell: None,

@@ -19,7 +19,7 @@ use dregg_cell::{
 use crate::action::Symbol;
 use dregg_cell_crypto::note_bridge::BridgedNullifierSet;
 
-use crate::pending::PendingTurnRegistry;
+use crate::pending::{PendingTurnRegistry, ReactiveNullifierSet};
 
 /// A single undo entry in the journal.
 #[derive(Debug)]
@@ -106,6 +106,10 @@ pub(crate) enum JournalEntry {
     /// `note_nullifiers` set. On rollback this nullifier must be REMOVED so
     /// a failed turn doesn't permanently burn the note.
     NoteNullifierInserted { nullifier: Nullifier },
+    /// A promise id was consumed in the dedicated React replay domain. This is
+    /// intentionally separate from `NoteNullifierInserted`: React is not an
+    /// FNSP note-spend statement and must not alter that proven accumulator.
+    ReactiveNullifierInserted { pending_id: Nullifier },
     /// A note-create commitment was inserted into the executor's production
     /// `note_commitments` set. On rollback this commitment must be REMOVED so a
     /// failed turn does not leave a phantom commitment in the accumulator (which
@@ -257,6 +261,7 @@ impl LedgerJournal {
                 | JournalEntry::ReactiveRegistrySnapshot { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
+                | JournalEntry::ReactiveNullifierInserted { .. }
                 | JournalEntry::NoteCommitmentInserted { .. }
                 | JournalEntry::RevocationInserted { .. } => continue,
             };
@@ -419,6 +424,11 @@ impl LedgerJournal {
             .push(JournalEntry::NoteNullifierInserted { nullifier });
     }
 
+    pub fn record_reactive_nullifier_inserted(&mut self, pending_id: Nullifier) {
+        self.entries
+            .push(JournalEntry::ReactiveNullifierInserted { pending_id });
+    }
+
     /// Record that a note-create commitment was inserted into the executor's
     /// production `note_commitments` set. On rollback, this commitment will be
     /// removed so a failed turn doesn't leave a phantom commitment in the
@@ -477,6 +487,7 @@ impl LedgerJournal {
         note_commitments: &Mutex<CommitmentSet>,
         note_revoked: &Mutex<RevokedSet>,
         reactive_registry: &Mutex<PendingTurnRegistry>,
+        reactive_nullifiers: &Mutex<ReactiveNullifierSet>,
     ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
@@ -584,6 +595,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::NoteNullifierInserted { nullifier } => {
                     note_nullifiers.lock().unwrap().remove(&nullifier);
+                }
+                JournalEntry::ReactiveNullifierInserted { pending_id } => {
+                    reactive_nullifiers.lock().unwrap().remove(&pending_id);
                 }
                 JournalEntry::NoteCommitmentInserted { commitment } => {
                     note_commitments.lock().unwrap().remove(&commitment);
