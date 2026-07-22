@@ -872,6 +872,8 @@ pub(crate) struct ExactFnspV3FrameReceiptCoordinates {
     pub(crate) agent: [u8; 32],
     pub(crate) turn_hash: [u8; 32],
     pub(crate) receipt_hash: [u8; 32],
+    /// Equal to the externally authenticated activation executor key after the frame open gate.
+    pub(crate) executor_public_key: [u8; 32],
 }
 
 pub(crate) fn exact_fnsp_v3_frame_receipt_coordinates_from_read(
@@ -892,6 +894,7 @@ pub(crate) fn exact_fnsp_v3_frame_receipt_coordinates_from_read(
             agent: frame.agent,
             turn_hash: frame.turn_hash,
             receipt_hash: frame.full_receipt_hash,
+            executor_public_key: frame.executor_public_key,
         });
     }
     Ok(out)

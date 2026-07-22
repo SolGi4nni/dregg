@@ -5109,7 +5109,9 @@ mod tests {
             );
         commit.receipt_hash = frame.full_receipt_hash();
 
-        let signer = FaithfulSigner::new(0x8a);
+        // Current exact-v3 is a solo epoch: the activation executor is also the independently
+        // pinned hybrid author whose evidence reauthenticates FRC1 at restart.
+        let signer = FaithfulSigner::new(0x84);
         let (anchor, edge) = plan_test_edge(&store, 1, block_id, &[]);
         let envelope = signer.sign_edge(edge.clone());
         let successor = store

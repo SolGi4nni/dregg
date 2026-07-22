@@ -338,31 +338,41 @@ fn audit_loaded_core(
 }
 
 fn reauthenticate_local_consensus_evidence(
+    externally_authenticated_executor: [u8; 32],
     faithful: &FaithfulNoteRootEnvelopeV1,
     attested: &StoredAttestedRoot,
 ) -> Result<()> {
-    let mut committee = Vec::with_capacity(faithful.hybrid_quorum.len());
-    let mut pq_committee = Vec::with_capacity(faithful.hybrid_quorum.len());
-    for signer in &faithful.hybrid_quorum {
-        if committee.contains(&signer.pubkey) {
-            return Err(integrity("faithful author roster contains a duplicate"));
-        }
-        let pq = MlDsaPublicKey(
-            signer
-                .ml_dsa_pubkey
-                .as_slice()
-                .try_into()
-                .map_err(|_| integrity("faithful author ML-DSA key has the wrong length"))?,
-        );
-        committee.push(PublicKey(signer.pubkey.0));
-        pq_committee.push(pq);
+    let [signer] = faithful.hybrid_quorum.as_slice() else {
+        return Err(integrity(
+            "solo exact epoch requires exactly one faithful hybrid author",
+        ));
+    };
+    let externally_authenticated_executor = PublicKey(externally_authenticated_executor);
+    if signer.pubkey != externally_authenticated_executor {
+        return Err(integrity(
+            "faithful author is not the exact activation executor",
+        ));
     }
-    if !faithful.verify_hybrid(&committee, &pq_committee, 1) {
+    let pq = MlDsaPublicKey(
+        signer
+            .ml_dsa_pubkey
+            .as_slice()
+            .try_into()
+            .map_err(|_| integrity("faithful author ML-DSA key has the wrong length"))?,
+    );
+    if !faithful.verify_hybrid(
+        std::slice::from_ref(&externally_authenticated_executor),
+        std::slice::from_ref(&pq),
+        1,
+    ) {
         return Err(integrity(
             "faithful hybrid edge failed local restart authentication",
         ));
     }
-    if !attested.has_any_valid_committee_signature(&committee, &pq_committee) {
+    if !attested.has_any_valid_committee_signature(
+        std::slice::from_ref(&externally_authenticated_executor),
+        std::slice::from_ref(&pq),
+    ) {
         return Err(integrity(
             "attested consensus root failed local restart authentication",
         ));
@@ -484,7 +494,11 @@ impl PersistentStore {
                 .get(faithful.height)?
                 .ok_or_else(|| integrity("semantic core has no attested root"))?;
             let attested_root: StoredAttestedRoot = postcard::from_bytes(attested_bytes.value())?;
-            reauthenticate_local_consensus_evidence(faithful_envelope, &attested_root)?;
+            reauthenticate_local_consensus_evidence(
+                frame.executor_public_key,
+                faithful_envelope,
+                &attested_root,
+            )?;
 
             let record = if let Some(ordinal) = idx_turn.get(&core.turn_hash())? {
                 let bytes = log
@@ -676,6 +690,70 @@ mod tests {
     #[test]
     fn core_width_is_the_pinned_wire_width() {
         assert_eq!(dregg_turn::FINALIZED_RECEIPT_CORE_V1_LEN, 592);
+    }
+
+    #[test]
+    fn arbitrary_self_signed_restart_rows_do_not_replace_activation_authority() {
+        let federation = [0x33; 32];
+        let block = [0x61; 32];
+        let root = crate::CanonicalFaithfulRoot::from_bytes([0; 32]).unwrap();
+        let record =
+            FaithfulNoteRootRecordV1::new([0x11; 32], federation, 7, 0, 1, 0, 0, root, root, block)
+                .unwrap();
+        let attacker_seed = [0xA1; 32];
+        let attacker = dregg_types::SigningKey::from_bytes(&attacker_seed);
+        let attacker_public = attacker.public_key();
+        let (attacker_pq_public, attacker_pq) =
+            dregg_federation::frost::MlDsaSigningKey::from_seed(&attacker_seed);
+        let message = record.signing_message();
+        let mut envelope = FaithfulNoteRootEnvelopeV1 {
+            record,
+            hybrid_quorum: vec![dregg_types::HybridQuorumSig {
+                pubkey: attacker_public,
+                signature: dregg_types::sign(&attacker, &message),
+                ml_dsa_pubkey: attacker_pq_public.0.to_vec(),
+                pq_signature: attacker_pq.sign(&message).unwrap(),
+            }],
+        };
+        let mut attested = StoredAttestedRoot {
+            merkle_root: [0x55; 32],
+            note_tree_root: Some(root.to_bytes()),
+            nullifier_set_root: None,
+            height: 1,
+            timestamp: 1_700_000_001,
+            blocklace_block_id: Some(block),
+            finality_round: Some(101),
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 1,
+            federation_id: dregg_types::FederationId(federation),
+            receipt_stream_root: None,
+            finalization_quorum: Vec::new(),
+        };
+        attested.quorum_signatures = vec![(
+            attacker_public,
+            dregg_types::sign(&attacker, &attested.signing_message()),
+        )];
+
+        assert!(
+            reauthenticate_local_consensus_evidence(attacker_public.0, &envelope, &attested)
+                .is_ok(),
+            "the actual activation key may reauthenticate its own separate evidence"
+        );
+        let real_activation = dregg_types::SigningKey::from_bytes(&[0xB2; 32]).public_key();
+        assert!(
+            reauthenticate_local_consensus_evidence(real_activation.0, &envelope, &attested)
+                .is_err(),
+            "valid signatures under attacker-selected replacement keys are not authority"
+        );
+
+        // Keep the mutable binding load-bearing: a replacement row cannot become acceptable by
+        // rewriting the self-carried public key alone because its signatures cease to verify.
+        envelope.hybrid_quorum[0].pubkey = real_activation;
+        assert!(
+            reauthenticate_local_consensus_evidence(real_activation.0, &envelope, &attested)
+                .is_err()
+        );
     }
 
     #[test]
