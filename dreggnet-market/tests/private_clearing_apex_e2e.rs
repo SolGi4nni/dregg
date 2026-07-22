@@ -57,7 +57,8 @@ use dregg_sdk::{
 use dreggnet_catalog::{
     GameActionRef, GameAffordance, GameAudience, GameCommand, GameEpochLedger, GameHostIncarnation,
     GameResult, GameSessionRef, PrivateFheggGameConsequenceError, PrivateFheggGameConsequenceGate,
-    PrivateFheggGameMechanic, PrivateFheggWinnerRoute, execute_bound_asserted_game_command,
+    PrivateFheggGameMechanic, PrivateFheggWinnerRoute, ShieldedDungeonPublicCard,
+    ShieldedDungeonPublicationError, execute_bound_asserted_game_command,
     inspect_bound_game_session,
 };
 use dreggnet_market::fhegg_settlement::FheggSettlementError;
@@ -1489,13 +1490,16 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         PrivateFheggGameConsequenceError::AuthorityEpochMismatch
     );
 
-    let game_consequence = game_gate
-        .execute_signed(
+    let (game_consequence, public_game_receipt) = game_gate
+        .execute_signed_public(
             &mut raid_host,
             winner_signer.sign("dungeon", &raid_id, 0, mender_action.clone()),
         )
-        .expect("the exact Bazaar winner spends the proof-assigned Mender once");
+        .expect("the exact Bazaar winner spends the proof-assigned Mender once and publishes it");
     assert!(game_consequence.binding_verifies());
+    public_game_receipt
+        .validate()
+        .expect("the viewer-blind game publication is self-authenticating");
     assert_eq!(game_consequence.market_winner, actor(WINNER));
     assert_eq!(game_consequence.market_asset_id, loot.asset_id.0);
     assert_eq!(
@@ -1509,6 +1513,74 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
     );
     assert!(raid_host.verify("dungeon", &raid_id).unwrap().verified);
     assert!(format!("{:?}", raid_host.render("dungeon", &raid_id).unwrap().0).contains("HP 50"));
+
+    // This is the object Discord, Telegram, web, and the cross-game activity
+    // rail may share. It binds the one-shot FHTRI004/Bazaar authorization to
+    // both the common-spine router receipt and the concrete executor receipt,
+    // but its type has no winner, key, private root, certificate, asset, raw
+    // session, action, payload, or state-head slot.
+    let public_raid_card = ShieldedDungeonPublicCard::from_exact_receipts(
+        &authorized,
+        &game_consequence,
+        &public_game_receipt,
+    )
+    .expect("the public card joins the exact private authority to its real Dungeon turn");
+    assert_eq!(
+        public_raid_card.authorization_id,
+        game_consequence.authorization_id
+    );
+    assert_eq!(
+        public_raid_card.consequence_id,
+        game_consequence.consequence_digest
+    );
+    assert_eq!(
+        public_raid_card.router_receipt_id,
+        game_consequence.game_receipt_id
+    );
+    assert_eq!(
+        public_raid_card.executor_receipt_id,
+        game_consequence.inner_game_receipt_id
+    );
+    assert_eq!(
+        public_raid_card.publication_id,
+        public_game_receipt.publication_id
+    );
+    assert!(!public_raid_card.ended);
+    public_raid_card
+        .validate()
+        .expect("the shipped public card is self-authenticating after transport");
+
+    let public_render = public_raid_card
+        .render_shared()
+        .expect("the exact card is safe to render on a shared surface");
+    assert!(public_render.starts_with("Dungeon · shielded consequence landed"));
+    assert!(public_render.contains("router receipt "));
+    assert!(public_render.contains("executor receipt "));
+    assert!(!public_render.contains(WINNER));
+    assert!(!public_render.contains(&raid_id.0));
+    assert!(!public_render.contains(&game_consequence.game_signer_pubkey_hex));
+    assert!(!public_render.contains("Mender"));
+
+    let mut forged_stored_card = public_raid_card.clone();
+    forged_stored_card.executor_receipt_id[0] ^= 1;
+    assert_eq!(
+        forged_stored_card
+            .render_shared()
+            .expect_err("a substituted stored public card cannot reach a shared surface"),
+        ShieldedDungeonPublicationError::InvalidCardBinding
+    );
+
+    let mut forged_public_game_receipt = public_game_receipt.clone();
+    forged_public_game_receipt.session_route_id[0] ^= 1;
+    assert_eq!(
+        ShieldedDungeonPublicCard::from_exact_receipts(
+            &authorized,
+            &game_consequence,
+            &forged_public_game_receipt,
+        )
+        .expect_err("a substituted public route cannot be rendered"),
+        ShieldedDungeonPublicationError::InvalidPublicationBinding
+    );
 
     let game_replay_error = game_gate
         .execute_signed(

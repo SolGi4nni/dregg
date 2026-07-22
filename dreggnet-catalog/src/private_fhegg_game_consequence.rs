@@ -52,6 +52,9 @@ use dreggnet_market::private_bfv_attested_clearing::PrivateBfvQuorumSecurity;
 use dreggnet_market::private_bfv_live_apex::PrivateBfvLiveApexReceipt;
 use dreggnet_offerings::{Action, Attribution, DreggIdentity, OfferingHost, SignedAction};
 
+use crate::game_publication::{
+    GamePublicationError, PublicGameReceipt, project_public_game_receipt,
+};
 use crate::game_spine::{
     GameActionRef, GameHostIncarnation, GameKind, GameReceipt, GameResult, GameSessionBinding,
     GameSessionRef, GameSpineError, execute_bound_signed_game_turn,
@@ -705,6 +708,39 @@ impl PrivateFheggGameConsequenceGate {
         host: &mut OfferingHost,
         signed_action: SignedAction,
     ) -> Result<PrivateFheggGameConsequenceReceipt, PrivateFheggGameConsequenceError> {
+        self.execute_signed_public(host, signed_action)
+            .map(|(receipt, _public)| receipt)
+    }
+
+    /// Execute the exact private-authorized game turn and atomically derive its
+    /// viewer-blind common publication card.
+    ///
+    /// The raw [`GameReceipt`] never crosses this seam: the public card retains
+    /// only the game family, opaque authority-bound session route, receipt
+    /// commitment, identity-free signed provenance, and terminal bit. Once the
+    /// real executor reports `Landed`, the private authorization is
+    /// burned before any remaining receipt/publication invariant check; a
+    /// malformed landed result is never retryable against already-mutated game
+    /// state. Executor refusals remain unconsumed.
+    pub fn execute_signed_public(
+        &mut self,
+        host: &mut OfferingHost,
+        signed_action: SignedAction,
+    ) -> Result<
+        (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
+        PrivateFheggGameConsequenceError,
+    > {
+        self.execute_signed_outputs(host, signed_action)
+    }
+
+    fn execute_signed_outputs(
+        &mut self,
+        host: &mut OfferingHost,
+        signed_action: SignedAction,
+    ) -> Result<
+        (PrivateFheggGameConsequenceReceipt, PublicGameReceipt),
+        PrivateFheggGameConsequenceError,
+    > {
         if self.consumed {
             return Err(PrivateFheggGameConsequenceError::AlreadyConsumed);
         }
@@ -743,7 +779,15 @@ impl PrivateFheggGameConsequenceGate {
             GameResult::Refused { reason, .. } => {
                 return Err(PrivateFheggGameConsequenceError::GameRefused(reason));
             }
-            GameResult::Landed(receipt) => receipt,
+            GameResult::Landed(receipt) => {
+                // The executor has committed its state transition. From this
+                // point onward every error is an internal receipt/publication
+                // invariant failure, not a retryable refusal. Burn the private
+                // authority before those fallible checks so a malformed landed
+                // result can never authorize a second game mutation.
+                self.consumed = true;
+                receipt
+            }
         };
         let (action, attribution, inner_receipt_id, ended) = match &receipt {
             GameReceipt::Turn {
@@ -793,8 +837,7 @@ impl PrivateFheggGameConsequenceGate {
             inner_receipt_id,
             ended,
         );
-        self.consumed = true;
-        Ok(PrivateFheggGameConsequenceReceipt {
+        let consequence = PrivateFheggGameConsequenceReceipt {
             authorization_id: self.authorization_id,
             consequence_digest,
             mechanic: self.mechanic,
@@ -815,7 +858,10 @@ impl PrivateFheggGameConsequenceGate {
             game_receipt_id,
             inner_game_receipt_id: inner_receipt_id,
             ended,
-        })
+        };
+        let public = project_public_game_receipt(&receipt)?;
+        debug_assert!(public.binding_verifies());
+        Ok((consequence, public))
     }
 }
 
@@ -935,6 +981,7 @@ pub enum PrivateFheggGameConsequenceError {
     InvalidGameReceipt(&'static str),
     EpochCustody(String),
     GameSpine(String),
+    GamePublication(String),
 }
 
 impl From<GameEpochError> for PrivateFheggGameConsequenceError {
@@ -946,6 +993,12 @@ impl From<GameEpochError> for PrivateFheggGameConsequenceError {
 impl From<GameSpineError> for PrivateFheggGameConsequenceError {
     fn from(error: GameSpineError) -> Self {
         Self::GameSpine(error.to_string())
+    }
+}
+
+impl From<GamePublicationError> for PrivateFheggGameConsequenceError {
+    fn from(error: GamePublicationError) -> Self {
+        Self::GamePublication(error.to_string())
     }
 }
 
@@ -1331,13 +1384,35 @@ mod tests {
         )
         .expect("current epoch can bind the still-live exact action");
 
-        let landed = gate
-            .execute_signed(
+        let (landed, public) = gate
+            .execute_signed_public(
                 &mut host,
                 winner_signer.sign("dungeon", &id, 0, action.clone()),
             )
             .expect("winner's exact signed Mender turn lands");
         assert!(landed.binding_verifies());
+        assert!(public.binding_verifies());
+        assert_eq!(public.validate(), Ok(()));
+        assert_eq!(public.receipt_id, landed.game_receipt_id);
+        assert_eq!(public.kind, GameKind::Dungeon);
+        assert_eq!(public.attribution, crate::PublicGameAttribution::Signed);
+        assert!(matches!(
+            public.result,
+            crate::PublicGameReceiptResult::Turn { ended: false }
+        ));
+        let public_debug = format!("{public:?}");
+        for private in [
+            "bazaar:winner",
+            "private-fhegg-mender",
+            "winner",
+            "mender",
+            "raid",
+        ] {
+            assert!(
+                !public_debug.to_ascii_lowercase().contains(private),
+                "private route/outcome carrier {private:?} leaked in {public_debug}"
+            );
+        }
         assert_eq!(landed.target_session, current_session);
         assert_eq!(
             landed.action_preimage_id,

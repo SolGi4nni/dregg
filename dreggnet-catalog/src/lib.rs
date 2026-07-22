@@ -47,6 +47,7 @@ use dreggnet_market::{DarkBazaarOffering, MarketOffering};
 use dreggnet_surfaces::private_raid::HostedProofAssignedRaidOffering;
 
 pub mod game_epoch;
+pub mod game_publication;
 pub mod game_spine;
 pub mod player_worlds;
 #[cfg(feature = "private-fhegg-game-consequence")]
@@ -54,8 +55,15 @@ pub mod private_fhegg_game_consequence;
 pub mod seated;
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub mod shielded_crown_orchestration;
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub mod shielded_dungeon_publication;
 
 pub use game_epoch::{GameAuthorizationPhase, GameEpochError, GameEpochLedger};
+pub use game_publication::{
+    GamePublicationError, MAX_PUBLIC_GAME_FIELD_VALUE_BYTES, MAX_PUBLIC_GAME_FIELDS,
+    PublicGameAttribution, PublicGameField, PublicGameFieldValue, PublicGameReceipt,
+    PublicGameReceiptResult, project_public_game_receipt,
+};
 pub use game_spine::{
     BoundGameTurnExecution, GameActionRef, GameAffordance, GameArtifact, GameArtifactRef,
     GameAudience, GameCommand, GameHostIncarnation, GameKind, GameOperationRef, GameReceipt,
@@ -75,6 +83,10 @@ pub use private_fhegg_game_consequence::{
 pub use shielded_crown_orchestration::{
     ShieldedCrownAction, ShieldedCrownHand, ShieldedCrownOrchestrationError, ShieldedCrownPolicy,
     execute_shielded_crown_action,
+};
+#[cfg(feature = "private-fhegg-game-consequence")]
+pub use shielded_dungeon_publication::{
+    ShieldedDungeonPublicCard, ShieldedDungeonPublicationError,
 };
 
 /// **The platform-independent inputs a catalog registration needs** — everything a frontend
