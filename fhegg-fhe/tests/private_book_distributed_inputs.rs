@@ -608,7 +608,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
 
     let owner_keys = keys::<ORDER_COUNT>(0x13);
     let worker_keys = keys::<3>(0x33);
-    let production = DistributedWitnessSession::new(
+    let production = DistributedWitnessSession::new_for_test(
         [0x91; 32],
         [0x92; 32],
         owner_keys
@@ -618,6 +618,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
             .iter()
             .map(|key| key.verifying_key().to_bytes())
             .collect(),
+        BFV_DEGREE,
     )
     .unwrap();
     assert_eq!(production.degree(), BFV_DEGREE);
@@ -648,7 +649,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
     );
 
     assert_eq!(
-        DistributedWitnessSession::new(
+        DistributedWitnessSession::new_for_test(
             [0x91; 32],
             [0; 32],
             owner_keys
@@ -658,13 +659,14 @@ fn exact_production_layout_and_session_separation_are_pinned() {
                 .iter()
                 .map(|key| key.verifying_key().to_bytes())
                 .collect(),
+            BFV_DEGREE,
         ),
         Err(DistributedInputError::InvalidSession(
             "ceremony nonce must be fresh and nonzero"
         ))
     );
 
-    let other = DistributedWitnessSession::new(
+    let other = DistributedWitnessSession::new_for_test(
         [0x93; 32],
         [0x92; 32],
         owner_keys
@@ -674,6 +676,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
             .iter()
             .map(|key| key.verifying_key().to_bytes())
             .collect(),
+        BFV_DEGREE,
     )
     .unwrap();
     assert_ne!(production.digest(), other.digest());

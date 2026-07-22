@@ -104,6 +104,13 @@ use rand::{CryptoRng, RngCore};
 use rand_09::rngs::StdRng as StdRng09;
 use rand_09::{RngCore as RngCore09, SeedableRng as SeedableRng09};
 
+#[cfg(not(test))]
+use crate::private_book_relation::{private_book_relation_digest, PrivateBookCiphertexts};
+#[cfg(not(test))]
+use crate::threshold::{BfvParams, CollectivePublicKey};
+#[cfg(not(test))]
+use dregg_circuit_prove::dark_bazaar_private::PublicStatement;
+
 /// Fixed order count of the deployed private N4K4 relation.
 pub const ORDER_COUNT: usize = 4;
 /// Fixed price count; order kinds are bid-0..3 followed by ask-0..3.
@@ -269,15 +276,26 @@ pub struct DistributedWitnessSession {
 }
 
 impl DistributedWitnessSession {
-    /// Construct the exact production N4K4/degree-4096 ceremony.
+    /// Construct the exact production N4K4/degree-4096 ceremony. The complete
+    /// public BFV relation is accepted here so its transcript digest cannot be
+    /// chosen independently of the ciphertexts, parameters, key, or statement.
+    #[cfg(not(test))]
     pub fn new(
-        relation_digest: [u8; 32],
+        statement: PublicStatement,
+        ciphertexts: &PrivateBookCiphertexts,
+        params: &BfvParams,
+        public_key: &CollectivePublicKey,
         ceremony_nonce: [u8; 32],
         owner_keys: [[u8; 32]; ORDER_COUNT],
         worker_keys: Vec<[u8; 32]>,
     ) -> Result<Self> {
+        if params.degree() != BFV_DEGREE {
+            return Err(DistributedInputError::InvalidSession(
+                "production distributed BFV requires degree 4096",
+            ));
+        }
         Self::new_inner(
-            relation_digest,
+            private_book_relation_digest(statement, ciphertexts, params, public_key),
             ceremony_nonce,
             owner_keys,
             worker_keys,
@@ -626,9 +644,15 @@ impl LocalOrderWitness {
                 blinding,
             })
             .collect();
+        let continuation = OwnerWitnessContinuation {
+            session_digest: session.digest,
+            owner: self.owner,
+            values: self.values,
+        };
         Ok(DealerOutput {
             contribution,
             private_packets,
+            continuation,
         })
     }
 }
@@ -1865,6 +1889,34 @@ impl DealerContribution {
 pub struct DealerOutput {
     pub contribution: DealerContribution,
     pub private_packets: Vec<PrivateWitnessShare>,
+    /// Owner-local continuation consumed only after the base certificate fixes
+    /// the exact-BFV coefficient challenge. It never enters the coordinator or
+    /// worker packet surface.
+    pub continuation: OwnerWitnessContinuation,
+}
+
+/// Owner-retained committed witness used to derive post-challenge BFV integer
+/// quotients without reconstructing any other owner's order or randomness.
+///
+/// This capability intentionally has no `Clone`, `Debug`, or wire codec.
+pub struct OwnerWitnessContinuation {
+    session_digest: [u8; 32],
+    owner: usize,
+    values: Vec<Scalar>,
+}
+
+impl OwnerWitnessContinuation {
+    pub const fn owner(&self) -> usize {
+        self.owner
+    }
+
+    pub(crate) const fn session_digest(&self) -> [u8; 32] {
+        self.session_digest
+    }
+
+    pub(crate) fn values(&self) -> &[Scalar] {
+        &self.values
+    }
 }
 
 /// One worker's private additive share of one owner's local witness.

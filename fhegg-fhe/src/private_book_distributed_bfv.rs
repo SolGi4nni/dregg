@@ -22,23 +22,28 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use merlin::Transcript;
 use rand::{CryptoRng, RngCore};
 
+use crate::private_book_bfv_exact::{self, ExactBfvBatchEquation, ExactBfvPublicRelation};
 use crate::private_book_distributed_inputs::{
-    DistributedInputCertificate, DistributedWitnessSession, DERIVED_ORDER_WIDTH, ORDER_COUNT,
-    ROOT_BLINDING_WIDTH,
+    DistributedInputCertificate, DistributedWitnessSession, OwnerWitnessContinuation,
+    DERIVED_ORDER_WIDTH, ORDER_COUNT, ROOT_BLINDING_WIDTH,
 };
+use crate::private_book_relation::PrivateBookCiphertexts;
+use crate::threshold::{BfvParams, CollectivePublicKey};
+use dregg_circuit_prove::dark_bazaar_private::PublicStatement;
 
 /// Number of independent Rademacher compressions for each RNS modulus.
-pub const BFV_COMPRESSION_ROUNDS: usize = 128;
+pub const BFV_COMPRESSION_ROUNDS: usize = private_book_bfv_exact::COMPRESSION_ROUNDS;
 /// Number of RNS moduli in the deployed BFV fold set.
-pub const BFV_RNS_MODULI: usize = 3;
+pub const BFV_RNS_MODULI: usize =
+    private_book_bfv_exact::OWNER_BATCH_EQUATION_COUNT / BFV_COMPRESSION_ROUNDS;
 /// Number of signed integer quotient witnesses supplied by each owner.
-pub const OWNER_BFV_QUOTIENT_COUNT: usize = BFV_RNS_MODULI * BFV_COMPRESSION_ROUNDS;
+pub const OWNER_BFV_QUOTIENT_COUNT: usize = private_book_bfv_exact::OWNER_BATCH_EQUATION_COUNT;
 /// Bit width used by the monolithic exact relation for shifted signed quotients.
-pub const BFV_QUOTIENT_BITS: usize = 24;
+pub const BFV_QUOTIENT_BITS: usize = private_book_bfv_exact::QUOTIENT_BITS;
 /// Signed interval represented by the 24-bit shifted range gadget.
 pub const BFV_QUOTIENT_SHIFT: i64 = 1 << (BFV_QUOTIENT_BITS - 1);
 /// Existing conservative exact-integer bound retained from the monolithic proof.
-pub const MAX_ABS_BFV_BATCH_QUOTIENT: i64 = 1_130_496;
+pub const MAX_ABS_BFV_BATCH_QUOTIENT: i64 = private_book_bfv_exact::MAX_ABS_BATCH_QUOTIENT;
 
 const ROUND_DOMAIN: &str = "fhegg/private-book-distributed-bfv/round/v1";
 const FIRST_CHALLENGE_DOMAIN: &str = "fhegg/private-book-distributed-bfv/coefficient-challenge/v1";
@@ -97,6 +102,9 @@ pub enum DistributedBfvError {
     MissingAcknowledgements,
     RecipientMismatch,
     CertificateMismatch,
+    ExactPublicRelation,
+    ExactRelationMismatch,
+    IntegerOverflow,
 }
 
 impl fmt::Display for DistributedBfvError {
@@ -121,6 +129,11 @@ impl fmt::Display for DistributedBfvError {
             }
             Self::RecipientMismatch => "distributed BFV private packet has the wrong recipient",
             Self::CertificateMismatch => "distributed BFV certificate transcript mismatch",
+            Self::ExactPublicRelation => "exact deployed BFV public relation was rejected",
+            Self::ExactRelationMismatch => {
+                "owner witness does not satisfy an exact compressed BFV equation"
+            }
+            Self::IntegerOverflow => "exact distributed BFV integer evaluation overflowed",
         };
         f.write_str(message)
     }
@@ -139,8 +152,53 @@ pub struct DistributedBfvRound {
     coefficient_challenge: [u8; 32],
 }
 
+/// Independently derived deployed BFV public relation shared by all four
+/// owners and every proof worker. Its coefficient table is never accepted
+/// from a prover.
+#[derive(Clone)]
+pub struct DistributedBfvPublicRelation {
+    exact: ExactBfvPublicRelation,
+}
+
+impl DistributedBfvPublicRelation {
+    pub fn derive(
+        statement: PublicStatement,
+        ciphertexts: &PrivateBookCiphertexts,
+        params: &BfvParams,
+        public_key: &CollectivePublicKey,
+    ) -> Result<Self> {
+        Ok(Self {
+            exact: ExactBfvPublicRelation::derive(statement, ciphertexts, params, public_key)
+                .map_err(|_| DistributedBfvError::ExactPublicRelation)?,
+        })
+    }
+
+    pub const fn relation_digest(&self) -> [u8; 32] {
+        self.exact.relation_digest()
+    }
+}
+
 impl DistributedBfvRound {
     pub fn new(
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+        public_relation: &DistributedBfvPublicRelation,
+    ) -> Result<Self> {
+        if session.relation_digest() != public_relation.relation_digest() {
+            return Err(DistributedBfvError::ExactPublicRelation);
+        }
+        Self::new_inner(session, input_certificate)
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        session: &DistributedWitnessSession,
+        input_certificate: &DistributedInputCertificate,
+    ) -> Result<Self> {
+        Self::new_inner(session, input_certificate)
+    }
+
+    fn new_inner(
         session: &DistributedWitnessSession,
         input_certificate: &DistributedInputCertificate,
     ) -> Result<Self> {
@@ -219,7 +277,7 @@ pub struct OwnerBfvQuotients {
 }
 
 impl OwnerBfvQuotients {
-    pub fn new(round: &DistributedBfvRound, owner: usize, values: Vec<i64>) -> Result<Self> {
+    fn from_values(round: &DistributedBfvRound, owner: usize, values: Vec<i64>) -> Result<Self> {
         if owner >= ORDER_COUNT {
             return Err(DistributedBfvError::PartyOutOfRange);
         }
@@ -237,6 +295,33 @@ impl OwnerBfvQuotients {
             owner,
             values,
         })
+    }
+
+    /// Derive the only production quotient witness from the owner-retained
+    /// base opening and independently supplied deployed BFV public relation.
+    /// Every one of the 384 integer numerators must divide its pinned RNS
+    /// modulus exactly before any quotient is shared.
+    pub fn derive_exact(
+        round: &DistributedBfvRound,
+        continuation: OwnerWitnessContinuation,
+        public: &DistributedBfvPublicRelation,
+    ) -> Result<Self> {
+        if continuation.session_digest() != round.session.digest()
+            || continuation.owner() >= ORDER_COUNT
+            || continuation.values().len() != base_witness_width(round.degree())?
+        {
+            return Err(DistributedBfvError::SessionMismatch);
+        }
+        if public.relation_digest() != round.session.relation_digest() {
+            return Err(DistributedBfvError::ExactPublicRelation);
+        }
+        let owner = continuation.owner();
+        let equations = public
+            .exact
+            .owner_batch_equations(&round.coefficient_challenge, owner, round.degree())
+            .map_err(|_| DistributedBfvError::ExactPublicRelation)?;
+        let values = evaluate_exact_quotients(continuation.values(), round.degree(), &equations)?;
+        Self::from_values(round, owner, values)
     }
 
     pub const fn owner(&self) -> usize {
@@ -361,6 +446,69 @@ impl OwnerBfvQuotients {
             private_packets,
         })
     }
+}
+
+fn evaluate_exact_quotients(
+    witness: &[Scalar],
+    degree: usize,
+    equations: &[ExactBfvBatchEquation],
+) -> Result<Vec<i64>> {
+    if witness.len() != base_witness_width(degree)? || equations.len() != OWNER_BFV_QUOTIENT_COUNT {
+        return Err(DistributedBfvError::ExactRelationMismatch);
+    }
+    equations
+        .iter()
+        .map(|equation| {
+            if equation.base_coefficients.len() != witness.len() || equation.modulus == 0 {
+                return Err(DistributedBfvError::ExactRelationMismatch);
+            }
+            let mut numerator = equation.public_constant;
+            for (coordinate, (&coefficient, value)) in
+                equation.base_coefficients.iter().zip(witness).enumerate()
+            {
+                if coefficient == 0 {
+                    continue;
+                }
+                let integer = witness_integer(value, coordinate, degree)?;
+                numerator = numerator
+                    .checked_add(
+                        coefficient
+                            .checked_mul(integer)
+                            .ok_or(DistributedBfvError::IntegerOverflow)?,
+                    )
+                    .ok_or(DistributedBfvError::IntegerOverflow)?;
+            }
+            let modulus = i128::from(equation.modulus);
+            if numerator % modulus != 0 {
+                return Err(DistributedBfvError::ExactRelationMismatch);
+            }
+            let quotient = numerator / modulus;
+            if quotient.unsigned_abs() > MAX_ABS_BFV_BATCH_QUOTIENT as u128 {
+                return Err(DistributedBfvError::QuotientOutOfRange);
+            }
+            i64::try_from(quotient).map_err(|_| DistributedBfvError::IntegerOverflow)
+        })
+        .collect()
+}
+
+fn witness_integer(value: &Scalar, coordinate: usize, degree: usize) -> Result<i128> {
+    let short_start = DERIVED_ORDER_WIDTH;
+    let short_end = short_start + 3 * degree;
+    if (short_start..short_end).contains(&coordinate) {
+        return (-32i64..=31)
+            .find(|candidate| signed_scalar(*candidate) == *value)
+            .map(i128::from)
+            .ok_or(DistributedBfvError::ExactRelationMismatch);
+    }
+    let bytes = value.to_bytes();
+    if bytes[8..].iter().any(|byte| *byte != 0) {
+        return Err(DistributedBfvError::ExactRelationMismatch);
+    }
+    Ok(i128::from(u64::from_le_bytes(
+        bytes[..8]
+            .try_into()
+            .map_err(|_| DistributedBfvError::ExactRelationMismatch)?,
+    )))
 }
 
 /// Owner output split into one public contribution and private worker packets.
@@ -1408,7 +1556,8 @@ mod tests {
         let owner_keys = keys::<ORDER_COUNT>(0x10);
         let worker_keys = keys::<3>(0x30);
         let (session, base_certificate) = base_ceremony(&owner_keys, &worker_keys, [0x42; 32]);
-        let round = DistributedBfvRound::new(&session, &base_certificate).expect("BFV round");
+        let round =
+            DistributedBfvRound::new_for_test(&session, &base_certificate).expect("BFV round");
         assert_ne!(round.coefficient_challenge(), [0; 32]);
         assert_eq!(owner_bfv_block_width(16).unwrap(), 1024);
         assert_eq!(owner_bfv_block_width(BFV_DEGREE).unwrap(), 16_384);
@@ -1438,7 +1587,7 @@ mod tests {
                     .map(signed_scalar)
                     .collect::<Vec<_>>(),
             );
-            let witness = OwnerBfvQuotients::new(&round, owner, values).expect("quotients");
+            let witness = OwnerBfvQuotients::from_values(&round, owner, values).expect("quotients");
             let mut rng = StdRng::from_seed([0x80 + owner as u8; 32]);
             let output = witness
                 .deal(&round, &owner_keys[owner], &mut rng)
@@ -1486,15 +1635,16 @@ mod tests {
         let owner_keys = keys::<ORDER_COUNT>(0x11);
         let worker_keys = keys::<3>(0x31);
         let (session, base_certificate) = base_ceremony(&owner_keys, &worker_keys, [0x43; 32]);
-        let round = DistributedBfvRound::new(&session, &base_certificate).expect("BFV round");
+        let round =
+            DistributedBfvRound::new_for_test(&session, &base_certificate).expect("BFV round");
         let mut outside = vec![0i64; OWNER_BFV_QUOTIENT_COUNT];
         outside[0] = MAX_ABS_BFV_BATCH_QUOTIENT + 1;
         assert!(matches!(
-            OwnerBfvQuotients::new(&round, 0, outside),
+            OwnerBfvQuotients::from_values(&round, 0, outside),
             Err(DistributedBfvError::QuotientOutOfRange)
         ));
 
-        let witness = OwnerBfvQuotients::new(
+        let witness = OwnerBfvQuotients::from_values(
             &round,
             0,
             vec![MAX_ABS_BFV_BATCH_QUOTIENT; OWNER_BFV_QUOTIENT_COUNT],
@@ -1512,7 +1662,7 @@ mod tests {
         );
         assert_eq!(quotient_proof_verification_count(), 0);
 
-        let witness = OwnerBfvQuotients::new(
+        let witness = OwnerBfvQuotients::from_values(
             &round,
             0,
             vec![-MAX_ABS_BFV_BATCH_QUOTIENT; OWNER_BFV_QUOTIENT_COUNT],
@@ -1530,8 +1680,9 @@ mod tests {
 
         let (other_session, other_base) = base_ceremony(&owner_keys, &worker_keys, [0x44; 32]);
         let other_round =
-            DistributedBfvRound::new(&other_session, &other_base).expect("other round");
-        let witness = OwnerBfvQuotients::new(&round, 0, vec![0; OWNER_BFV_QUOTIENT_COUNT]).unwrap();
+            DistributedBfvRound::new_for_test(&other_session, &other_base).expect("other round");
+        let witness =
+            OwnerBfvQuotients::from_values(&round, 0, vec![0; OWNER_BFV_QUOTIENT_COUNT]).unwrap();
         let mut rng = StdRng::from_seed([0x92; 32]);
         let output = witness.deal(&round, &owner_keys[0], &mut rng).unwrap();
         assert_eq!(

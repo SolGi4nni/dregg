@@ -146,6 +146,11 @@ path = "tests/private_book_distributed_inputs.rs"
 required-features = ["amm-input-binding"]
 
 [[test]]
+name = "private_book_distributed_bfv_exact"
+path = "tests/private_book_distributed_bfv_exact.rs"
+required-features = ["amm-input-binding"]
+
+[[test]]
 name = "private_book_distributed_prover"
 path = "tests/private_book_distributed_prover.rs"
 required-features = ["amm-input-binding"]
