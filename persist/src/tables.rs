@@ -101,6 +101,21 @@ pub const EXECUTOR_FACTORY_REGISTRY_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
 pub const EXECUTOR_REACTIVE_REGISTRY_SNAPSHOTS_V1: TableDefinition<u64, &[u8]> =
     TableDefinition::new("executor_reactive_registry_snapshots_v1");
 
+/// Post-finalization promise-resolution notifications.
+///
+/// This is an observer journal, not consensus authority: rows are appended in
+/// the source finalized-turn transaction. The dense sequence is the resume
+/// cursor served to game/bot clients.
+pub const PROMISE_RESOLUTION_RECORDS_V1: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("promise_resolution_records_v1");
+
+/// One canonical notification batch per source commit ordinal.
+///
+/// The manifest makes a replay byte-exact and prevents an interrupted caller
+/// from extending or changing the event set for an already-published commit.
+pub const PROMISE_RESOLUTION_BATCHES_V1: TableDefinition<u64, &[u8]> =
+    TableDefinition::new("promise_resolution_batches_v1");
+
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
 pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =

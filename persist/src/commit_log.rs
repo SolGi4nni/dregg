@@ -1463,6 +1463,11 @@ impl PersistentStore {
                                             note_commitments,
                                             state,
                                         )?;
+                                        crate::promise_resolutions::verify_replayed_promise_resolution_batch_in(
+                                            &write_txn,
+                                            &existing,
+                                            &state.promise_resolutions,
+                                        )?;
                                     }
                                     (None, false) => {}
                                     _ => {
@@ -1700,6 +1705,14 @@ impl PersistentStore {
                     )
                 })
                 .transpose()?;
+
+            if let Some(state) = executor_state {
+                crate::promise_resolutions::stage_fresh_promise_resolution_batch_in(
+                    &write_txn,
+                    &stored_record,
+                    &state.promise_resolutions,
+                )?;
+            }
 
             // 3b. Append note-tree leaves in the SAME transaction (the
             //     same-transaction NOTE weld, bug #58): the record and every

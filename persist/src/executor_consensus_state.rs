@@ -126,6 +126,10 @@ pub struct FinalizedExecutorConsensusState {
     pub factory_registry_snapshot: Option<Vec<u8>>,
     pub reactive_registry: ReactiveRegistryCasV1,
     pub reactive_nullifiers: ReactiveNullifierCasV1,
+    /// Typed observer outcomes produced while resolving the carrying receipt.
+    /// These rows are not execution authority, but they must share the source
+    /// commit's transaction or a crash can erase a game-visible resolution.
+    pub promise_resolutions: Vec<crate::PromiseResolutionCandidateV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1263,6 +1267,7 @@ mod tests {
             factory_registry_snapshot: Some(factory_bytes(7)),
             reactive_registry: ReactiveRegistryCasV1::default(),
             reactive_nullifiers: ReactiveNullifierCasV1::default(),
+            promise_resolutions: Vec::new(),
         }
     }
 

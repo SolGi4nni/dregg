@@ -43,6 +43,7 @@ pub mod ledger_store;
 pub mod note_tree;
 pub mod per_cell_receipt_heads;
 pub mod poseidon2_note_tree;
+pub mod promise_resolutions;
 pub mod snapshot;
 pub mod tables;
 
@@ -92,6 +93,10 @@ pub use per_cell_receipt_heads::{
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
+pub use promise_resolutions::{
+    DurablePromiseResolutionV1, PromiseBrokenReasonV1, PromiseResolutionCandidateV1,
+    PromiseResolutionKindV1,
+};
 pub use snapshot::{Snapshot, SnapshotHead};
 
 /// THE canonical ledger root — the byte-pinned full-ledger commitment both the
@@ -316,6 +321,8 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
             let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_BASELINE_V1)?;
             let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_CURRENT_V1)?;
+            let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_RECORDS_V1)?;
+            let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_BATCHES_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for
             // commit-log compaction: ids of applied turns whose records were
             // compacted under a covering checkpoint — `compact_below`).
