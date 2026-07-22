@@ -154,7 +154,7 @@ reactive.rs, promise-hole-is-a-nullifier); GrantCapability/SpawnWithDelegation =
 (possibly compositions). The finite-map refinement covers the Argus-modeled kernel (30 programs); these 6 are a
 named scope boundary. DEBT-B carrier result (RestHashIffFrame→Poseidon2SpongeCR) unaffected.
 
-## measured (2026-07-10): the reactive trio SPLITS — Promise/Notify are OFF-KERNEL, React is a nullifier-spend
+## historical measurement (2026-07-10): SUPERSEDED by the dedicated React replay domain
 Read at HEAD (turn/src/executor/apply.rs):
 - **Promise (apply_promise:1315), Notify (apply_notify:1349)** mutate `self.reactive_registry.lock()` — an
   EXECUTOR-side structure. `reactive_registry is NOT kernel state`: RecordKernelState (Lean) has no such field.
@@ -168,6 +168,18 @@ Read at HEAD (turn/src/executor/apply.rs):
   soundness is DEBT-A.
 So the finite-map effect ceiling: React closable (nullifier); Promise/Notify off-kernel (no square exists);
 ShieldedTransfer kernel-part reducible but STARK = DEBT-A. Nothing faked; each boundary is measured.
+
+### correction (2026-07-22, commit `64477cd9c`): React is NOT a faithful note spend
+
+The paragraph above records the pre-`64477cd9c` implementation and is no longer the deployed truth.
+`apply_react` now inserts `pending_id` into the dedicated, domain-separated
+`ReactiveNullifierSet` (`dregg-reactive-nullifiers-v1`). It does **not** mutate
+`note_nullifiers`, because that would contaminate the exact FNSP note-spend history with an event
+carrying no note-spend statement. Consequently `FinReactSquare.lean` is an internally valid
+historical shared-nullifier model, not a deployed commuting square. The current
+`Exec/ReactiveRegistry.lean` proves one-shotness over a separate React set and proves the faithful
+kernel/nullifier image unchanged. A future light-client React witness must bind the dedicated React
+state commitment; it must not reuse `noteSpendV3`'s faithful-nullifier grow gate.
 
 ## ⚠ AUDIT FINDING (2026-07-10, DEBT-A brick-4 scout): Satisfied2Faithful's "realizations" are at a TOY permutation
 The census recorded `Satisfied2Faithful` as assumed=32 / realized=0. BOTH numbers need correcting, in opposite

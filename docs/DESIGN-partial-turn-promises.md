@@ -96,9 +96,9 @@ The kernel weld is `turn/src/reactive.rs` (the `ReactiveEffect` ADT +
 `ReactiveCoordinator`, `reactive.rs:83`). Its design keystone — the reason this is
 sound by construction — is stated at `reactive.rs:31`:
 
-> **A promise-hole IS a nullifier. To react is to spend the hole.** One-shot
-> linearity — react exactly once — is the SAME double-spend non-membership the
-> circuit already enforces on `NoteSpend`.
+> **A promise-hole is a React-domain nullifier. To react is to spend the hole.** One-shot
+> linearity uses the same abstract fresh-insert discipline as a note spend, but a dedicated
+> `ReactiveNullifierSet` and domain-separated commitment keep it out of faithful FNSP note history.
 
 `VerbRegistry.lean` ratifies this classification: `Promise`/`Notify` classify to
 the `shieldUnshield` verb (shield direction / hole-mint), `React` to
@@ -291,16 +291,17 @@ Lean for the metatheory correspondence):
 
 **PROPOSED (the NEW theorem, not yet discharged for this exact ADT).** The Lean
 `holeFill_binds_in_circuit` is about an abstract `stateStep`; the deployed `React`
-binds via the `note_nullifiers` set in the *executor*, not yet in the *circuit*.
+binds via the dedicated `ReactiveNullifierSet` in the *executor*, not yet in the *circuit*.
 The proposed keystone would state that a light client folding a batch bearing a
-`React` sees the promise-hole nullifier grow exactly as a `NoteSpend` does:
+`React` sees the dedicated React replay commitment grow without changing the faithful note root:
 
 ```lean
 -- PROPOSED — the React circuit-witness lift (VK-affecting; see §8)
-theorem react_grows_nullifier_like_noteSpend
+theorem react_grows_dedicated_replay_state
     (b : FullForestA) (e : React …) (he : e ∈ effectsOf b) :
-    nullifierRoot (execFullTurnA … b).after
-      = nullifierInsert (nullifierRoot before) e.pendingId
+    reactiveNullifierRoot (execFullTurnA … b).after
+      = reactiveNullifierInsert (reactiveNullifierRoot before) e.pendingId
+    ∧ noteNullifierRoot (execFullTurnA … b).after = noteNullifierRoot before
     ∧ e.wake.hash = e.pendingId          -- the executor's binding, now in-circuit
 ```
 
@@ -324,14 +325,14 @@ explicitly, and it is the only VK-affecting work here:
 
 > Lean obligation named (NOT yet discharged for this exact ADT): the circuit
 > witness for a `React` effect — that a light client verifying a batch bearing a
-> `React` sees the promise-hole nullifier grow exactly as a `noteSpend` does.
+> `React` grows the dedicated React replay commitment and leaves the faithful note root unchanged.
 
-Today the one-shot property is enforced **executor-side** (the `note_nullifiers`
+Today the one-shot property is enforced **executor-side** (the `reactive_nullifiers`
 insert in `apply_react`). A pure light client — one that folds receipts without
 re-executing — does not yet witness the hole-spend in-circuit. The first slice:
 
-1. Give `React` a descriptor rung that mirrors `noteSpendV3`'s nullifier-grow gate,
-   reading `pending_id` as the spent nullifier and asserting the
+1. Give `React` its own domain-separated replay-state descriptor rung,
+   reading `pending_id` as the spent React id and asserting the
    `wake.hash == pending_id` binding in-circuit.
 2. Route it through `convert_turn_effects_to_vm` so the committed React count is
    non-zero and the per-turn fold binds the nullifier growth (the same shape the

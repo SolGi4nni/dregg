@@ -847,8 +847,8 @@ import Dregg2.Circuit.FinAllocCell
 import Dregg2.Circuit.FinProgramSquares
 import Dregg2.Circuit.FinCreateCellSquares
 import Dregg2.Circuit.FinGrantSpawnSquares
-import Dregg2.Circuit.FinReactSquare
-import Dregg2.Exec.ReactiveRegistry
+import Dregg2.Circuit.FinReactSquare -- HISTORICAL pre-64477 shared-note-nullifier model ONLY; not deployed refinement (kept imported so the historical artifact remains build-checked)
+import Dregg2.Exec.ReactiveRegistry -- CURRENT: dedicated ReactiveNullifierSet; React leaves faithful note/FNSP nullifiers unchanged
 import Dregg2.Circuit.BabyBearFriField
 import Dregg2.Circuit.BabyBearFriSetup
 import Dregg2.Circuit.BabyBearFriDeployed

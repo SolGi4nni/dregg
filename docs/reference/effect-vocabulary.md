@@ -107,9 +107,9 @@ faceted capability checks under `ExerciseViaCapability`.
 - **`React` sits under the `Annihilative` comment block but is `Terminal`.** In the match,
   `React`'s arm (`action.rs:1918`) follows `Burn`/`Mint` yet is colored `Terminal`: it spends
   a promise-hole nullifier once with no inverse and no monetary delta, so it is a one-way
-  transition, *not* a disclosed non-conservation (`action.rs:1912-1917`). The promise-hole IS
-  a nullifier — `React` spends it into the same production `note_nullifiers` set that gates
-  `NoteSpend` double-spends (`action.rs:1430-1435`).
+  transition, *not* a disclosed non-conservation (`action.rs:1912-1917`). The promise-hole is a
+  React-domain nullifier: `React` spends it into the dedicated `ReactiveNullifierSet`, domain-separated
+  from faithful `note_nullifiers`. Equal raw bytes across the two domains grant no authority.
 
 - **Reactive verbs (`Promise`/`Notify`/`React`) are the async-coordination track.** They are
   a distinct family (`action.rs:1425`) whose kernel weld lives in `crate::reactive`; a

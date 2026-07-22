@@ -1,5 +1,17 @@
 /-
-# Dregg2.Circuit.FinReactSquare — DEBT-B effect-coverage: `React` closed as a nullifier spend.
+# Dregg2.Circuit.FinReactSquare — HISTORICAL pre-`64477cd9c` shared-nullifier model.
+
+**This file is not a refinement of the deployed React executor.** Commit `64477cd9c` separated
+React replay protection from faithful note spends: deployed `apply_react` inserts `pending_id` into
+the dedicated, domain-separated `ReactiveNullifierSet`, while `RecordKernelState.nullifiers` remains
+the exact note-spend/FNSP sequence. The terms and theorems below are internally valid for the older
+design in which React reused `noteSpendStmt`; they are retained only as a historical model and must
+not be cited as effect coverage or imported as a current deployed-semantics theorem.
+
+The current combined-state model is `Dregg2.Exec.ReactiveRegistry`, where the kernel is unchanged by
+React and one-shotness is proved over a separate `ReactiveNullifierSet`.
+
+## Historical design (superseded)
 
 `turn/src/executor/apply.rs :: apply_react` (Effect::React) discharges a promise-hole `pending_id` by
 presenting a proof of its resolution condition. Its ONLY `RecordKernelState` mutation is a NULLIFIER

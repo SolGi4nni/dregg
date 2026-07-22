@@ -1,6 +1,5 @@
 /-
-# Dregg2.Exec.ReactiveRegistry — the reactive subsystem MODELED, so `Promise`/`Notify` stop being an
-unmodeled boundary and the React one-shot becomes an end-to-end THEOREM on the combined state.
+# Dregg2.Exec.ReactiveRegistry — the reactive subsystem with a dedicated React replay domain.
 
 DEBT-B classified the 33 deployed effects. `Promise`/`Notify` (`turn/src/executor/apply.rs`
 `apply_promise :1315`, `apply_notify :1349`) mutate `self.reactive_registry.lock()` — an EXECUTOR-side
@@ -16,18 +15,16 @@ boundary becomes a PROVED subsystem:
     deposit, with the kernel component passed through VERBATIM. `promise_kernel_unchanged` /
     `notify_kernel_unchanged` turn the OFF-KERNEL claim into a THEOREM (the committed `RecordKernelState`
     is literally `= k`).
-  * `reactStep` mirrors `apply_react` (`apply.rs:1405`): its kernel leg IS the committed
-    `FinReactSquare.reactStmt`/`reactKStep` (a `noteSpend` nullifier advance under the wake-hash binding;
-    `reactStep_kernel_is_reactStmt` proves it, so the nullifier gate is RIDDEN, not re-modeled), and its
-    registry leg is the `resolve` removal. THE KEYSTONE `react_one_shot`/`no_double_react` proves no two
-    `React`s on the same hole id both succeed — the hole is spent into the SAME `note_nullifiers` set that
-    gates `NoteSpend`, so a repeat fail-closes (`apply.rs:1502`).
+  * `reactStep` mirrors deployed `apply_react` after commit `64477cd9c`: its kernel leg is unchanged;
+    its registry leg removes the resolved hole; and its one-shot leg inserts `pending_id` into a
+    DEDICATED `ReactiveNullifierSet`. THE KEYSTONE `react_one_shot`/`no_double_react` proves no two
+    `React`s on the same hole id both succeed without contaminating the faithful note-spend/FNSP
+    nullifier sequence.
 
 ## HONEST SCOPE — deployed behaviour left off-kernel (named, not faked)
-  * The proof/temporal gate `resolve_condition` (`apply.rs:1456`: proof validity + timeout via a TRANSIENT
-    proof ledger and `self.block_height`) is EXECUTOR-side — NOT `RecordKernelState`. It is abstracted by
-    the Pure binding guard `φ` (the wake-hash↔pending_id binding, `apply.rs:1429`), exactly as the
-    committed `FinReactSquare` does; the proof-validity/expiry check is not re-modeled here.
+  * The proof/temporal gate `resolve_condition` (proof validity + timeout via a TRANSIENT proof ledger
+    and `self.block_height`) is EXECUTOR-side — NOT `RecordKernelState`. It is abstracted by the Pure
+    binding guard `φ`; the proof-validity/expiry check is not re-modeled here.
   * `expire` (`pending.rs::check_timeouts`) removes past-timeout holes; its `currentHeight` is an OFF-KERNEL
     block-height input, and a timed-out hole is DROPPED from the registry WITHOUT any nullifier spend — so
     it is correctly registry-only (kernel-neutral). Modeled structurally, height named off-kernel.
@@ -35,16 +32,14 @@ boundary becomes a PROVED subsystem:
     synthetic receipts) are registry EVENT / receipt-log machinery with no kernel effect; `resolve` models
     only the entry REMOVAL (the one-shot registry tooth). The event/cascade emission is not modeled.
 
-Builds ON committed `FinReactSquare` (hence `RecordKernel` + Argus `noteSpend`) verbatim; edits NOTHING
-committed. Sorry-free. `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}.
+`FinReactSquare` is intentionally NOT consumed here: it models the superseded shared-note-nullifier
+design. Sorry-free. `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}.
 -/
-import Dregg2.Circuit.FinReactSquare
+import Dregg2.Exec.RecordKernel
 
 namespace Dregg2.Exec.Reactive
 
 open Dregg2.Exec
-open Dregg2.Circuit.Argus (interp)
-open Dregg2.Circuit.FinReactSquare (reactStmt reactKStep interp_reactStmt_eq_reactKStep)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -150,84 +145,90 @@ theorem notify_kernel_unchanged {k k' : RecordKernelState} {reg reg' : ReactiveR
   · rw [if_pos hc] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h; exact h.1.symm
   · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-! ## §3 — `reactStep`: the combined React step, whose kernel leg IS the committed `reactStmt`. -/
+/-! ## §3 — `reactStep`: separate registry, React replay set, and faithful note kernel. -/
 
-/-- **`reactStep`** — `apply_react` (`apply.rs:1405`) on the combined `(RecordKernelState ×
-ReactiveRegistry)`: the kernel leg is the committed `FinReactSquare.reactKStep` (= `interp (reactStmt
-pendingId φ)`, the `noteSpend` nullifier advance under the wake-hash binding `φ`), and — on commit — the
-registry `resolve`s (removes) the hole. Fail-closed exactly as the kernel leg (a bad binding OR a
-double-spend ⇒ `none`; the registry is then untouched). -/
-def reactStep (k : RecordKernelState) (reg : ReactiveRegistry) (pendingId : Nat)
-    (φ : RecordKernelState → Bool) : Option (RecordKernelState × ReactiveRegistry) :=
-  match reactKStep k pendingId φ with
-  | some k' => some (k', reg.resolve pendingId)
-  | none    => none
+/-- The abstract set image of Rust's canonical `pending::ReactiveNullifierSet`. Rust persists a sorted
+`BTreeSet<Nullifier>` and domain-separates its CAS digest under `dregg-reactive-nullifiers-v1`; this
+model keeps precisely the set semantics needed for insertion and replay rejection. -/
+abbrev ReactiveNullifierSet := Finset Nat
 
-/-- **`reactStep_kernel_is_reactStmt` — the kernel leg is RIDDEN, not re-modeled.** The kernel projection
-of `reactStep` IS the committed `interp (reactStmt pendingId φ)` — the SAME `noteSpend` nullifier gate
-`NoteSpend` rides, guarded by the wake-hash binding. We do not re-implement the double-spend gate. -/
-theorem reactStep_kernel_is_reactStmt (k : RecordKernelState) (reg : ReactiveRegistry) (pendingId : Nat)
-    (φ : RecordKernelState → Bool) :
-    (reactStep k reg pendingId φ).map Prod.fst = interp (reactStmt pendingId φ) k := by
-  rw [interp_reactStmt_eq_reactKStep]
-  unfold reactStep
-  cases reactKStep k pendingId φ <;> simp
+/-- **`reactStep`** — the deployed combined transition after `64477cd9c`. A valid binding/proof guard
+spends `pendingId` in the dedicated React replay set and resolves the registry entry. The faithful
+`RecordKernelState` is threaded unchanged. A bad guard or repeated React fails closed. -/
+def reactStep (k : RecordKernelState) (reg : ReactiveRegistry) (spent : ReactiveNullifierSet)
+    (pendingId : Nat) (φ : RecordKernelState → Bool) :
+    Option (RecordKernelState × ReactiveRegistry × ReactiveNullifierSet) :=
+  if φ k then
+    if pendingId ∈ spent then none
+    else some (k, reg.resolve pendingId, insert pendingId spent)
+  else none
 
-/-- **`reactStep_inserts`.** A committed React SPENDS the hole: `pendingId ∈ k1.nullifiers`. The React's
-kernel leg is `noteSpendNullifier` under the binding guard, so a commit inserts the hole id into the SAME
-spent-note set that gates `NoteSpend` (`note_spend_inserts`). -/
-theorem reactStep_inserts {k k1 : RecordKernelState} {reg reg1 : ReactiveRegistry}
-    {id : Nat} {φ : RecordKernelState → Bool}
-    (h : reactStep k reg id φ = some (k1, reg1)) : id ∈ k1.nullifiers := by
+/-- **`reactStep_kernel_unchanged`.** A committed React does not mutate the faithful note kernel. -/
+theorem reactStep_kernel_unchanged {k k1 : RecordKernelState} {reg reg1 : ReactiveRegistry}
+    {spent spent1 : ReactiveNullifierSet} {id : Nat} {φ : RecordKernelState → Bool}
+    (h : reactStep k reg spent id φ = some (k1, reg1, spent1)) : k1 = k := by
   unfold reactStep at h
-  cases hk : reactKStep k id φ with
-  | none => rw [hk] at h; exact absurd h (by simp)
-  | some k'' =>
-      rw [hk] at h
+  by_cases hφ : φ k = true
+  · rw [if_pos hφ] at h
+    by_cases hmem : id ∈ spent
+    · rw [if_pos hmem] at h; simp at h
+    · rw [if_neg hmem] at h
       simp only [Option.some.injEq, Prod.mk.injEq] at h
-      obtain ⟨hk1, _⟩ := h
-      subst hk1
-      unfold reactKStep at hk
-      by_cases hφ : φ k = true
-      · rw [if_pos hφ] at hk; exact note_spend_inserts hk
-      · rw [if_neg (by simpa using hφ)] at hk; exact absurd hk (by simp)
+      exact h.1.symm
+  · rw [if_neg hφ] at h; simp at h
 
-/-- **`reactStep_rejects_spent` (the one-shot gate BITES).** A React on a hole id ALREADY in the
-nullifier set fail-closes (`= none`) for ANY binding guard `φ`: the `noteSpend` double-spend gate
-(`note_no_double_spend`) refuses it. The kernel-side one-shot tooth (`apply.rs:1502`). -/
+/-- In particular, React cannot append to or otherwise change the faithful FNSP note-nullifier image. -/
+theorem reactStep_note_nullifiers_unchanged {k k1 : RecordKernelState}
+    {reg reg1 : ReactiveRegistry} {spent spent1 : ReactiveNullifierSet}
+    {id : Nat} {φ : RecordKernelState → Bool}
+    (h : reactStep k reg spent id φ = some (k1, reg1, spent1)) :
+    k1.nullifiers = k.nullifiers := by
+  rw [reactStep_kernel_unchanged h]
+
+/-- **`reactStep_inserts`.** A committed React records the hole id in the dedicated React replay set. -/
+theorem reactStep_inserts {k k1 : RecordKernelState} {reg reg1 : ReactiveRegistry}
+    {spent spent1 : ReactiveNullifierSet} {id : Nat} {φ : RecordKernelState → Bool}
+    (h : reactStep k reg spent id φ = some (k1, reg1, spent1)) : id ∈ spent1 := by
+  unfold reactStep at h
+  by_cases hφ : φ k = true
+  · rw [if_pos hφ] at h
+    by_cases hmem : id ∈ spent
+    · rw [if_pos hmem] at h; simp at h
+    · rw [if_neg hmem] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨_, _, hspent⟩ := h
+      rw [← hspent]
+      simp
+  · rw [if_neg hφ] at h; simp at h
+
+/-- **`reactStep_rejects_spent` (the one-shot gate BITES).** A repeated React fails closed because the
+id is already in the dedicated replay set. Membership in the note-spend set is irrelevant. -/
 theorem reactStep_rejects_spent {k : RecordKernelState} {reg : ReactiveRegistry}
-    {id : Nat} {φ : RecordKernelState → Bool} (hmem : id ∈ k.nullifiers) :
-    reactStep k reg id φ = none := by
-  have hnone : reactKStep k id φ = none := by
-    unfold reactKStep
-    by_cases hφ : φ k = true
-    · rw [if_pos hφ]; exact note_no_double_spend k id hmem
-    · rw [if_neg (by simpa using hφ)]
-  unfold reactStep; rw [hnone]
+    {spent : ReactiveNullifierSet} {id : Nat} {φ : RecordKernelState → Bool}
+    (hmem : id ∈ spent) : reactStep k reg spent id φ = none := by
+  simp [reactStep, hmem]
 
-/-- **THE KEYSTONE — `react_one_shot` (no double-react, end-to-end on the combined state).** Once a
-`React` on hole `id` SUCCEEDS (producing `k1`), EVERY subsequent `React` on the SAME `id` — under ANY
-binding/proof guard `φ'` — fail-closes (`= none`). The first react spent the hole into the nullifier set
-(`reactStep_inserts`); the gate then refuses the repeat (`reactStep_rejects_spent`). This is the
-promise-hole-as-nullifier one-shot linearity: a promise deposited by `Promise`/`Notify` is spent by
-`React` at most once, riding the deployed `note_nullifiers` double-spend gate. -/
+/-- **THE KEYSTONE — `react_one_shot`.** Once a React succeeds, every later React on the same id
+fails, using only the dedicated replay domain. -/
 theorem react_one_shot {k k1 : RecordKernelState} {reg reg1 : ReactiveRegistry}
-    {id : Nat} {φ φ' : RecordKernelState → Bool}
-    (h1 : reactStep k reg id φ = some (k1, reg1)) :
-    reactStep k1 reg1 id φ' = none :=
+    {spent spent1 : ReactiveNullifierSet} {id : Nat}
+    {φ φ' : RecordKernelState → Bool}
+    (h1 : reactStep k reg spent id φ = some (k1, reg1, spent1)) :
+    reactStep k1 reg1 spent1 id φ' = none :=
   reactStep_rejects_spent (reactStep_inserts h1)
 
-/-- **`no_double_react` — the keystone as an impossibility.** No two `React`s on the same hole id both
-succeed: given a first success on `id`, a second `React` on `id` CANNOT produce `some`. -/
+/-- **`no_double_react` — the keystone as an impossibility.** No two Reacts on one hole both succeed. -/
 theorem no_double_react {k k1 k2 : RecordKernelState} {reg reg1 reg2 : ReactiveRegistry}
-    {id : Nat} {φ φ' : RecordKernelState → Bool}
-    (h1 : reactStep k reg id φ = some (k1, reg1)) :
-    reactStep k1 reg1 id φ' ≠ some (k2, reg2) := by
+    {spent spent1 spent2 : ReactiveNullifierSet} {id : Nat}
+    {φ φ' : RecordKernelState → Bool}
+    (h1 : reactStep k reg spent id φ = some (k1, reg1, spent1)) :
+    reactStep k1 reg1 spent1 id φ' ≠ some (k2, reg2, spent2) := by
   rw [react_one_shot h1]; simp
 
 #assert_axioms promise_kernel_unchanged
 #assert_axioms notify_kernel_unchanged
-#assert_axioms reactStep_kernel_is_reactStmt
+#assert_axioms reactStep_kernel_unchanged
+#assert_axioms reactStep_note_nullifiers_unchanged
 #assert_axioms react_one_shot
 #assert_axioms no_double_react
 
@@ -240,8 +241,12 @@ section Teeth
 def k0 : RecordKernelState :=
   { accounts := {0}, cell := fun _ => .record [], caps := fun _ => [], nullifiers := [] }
 
-/-- The same kernel with hole `7` ALREADY reacted (nullifier set `[7]`) — the double-spend fixture. -/
-def k7 : RecordKernelState := { k0 with nullifiers := [7] }
+/-- A kernel whose faithful NOTE-SPEND domain already contains raw id `7`. This must not block React. -/
+def kNote7 : RecordKernelState := { k0 with nullifiers := [7] }
+
+/-- Empty and already-spent fixtures for the dedicated React replay domain. -/
+def spent0 : ReactiveNullifierSet := ∅
+def spent7 : ReactiveNullifierSet := {7}
 
 /-- The empty registry. -/
 def reg0 : ReactiveRegistry := []
@@ -257,34 +262,42 @@ def hole7 : HoleEntry :=
 #guard (((reg0.deposit hole7).expire 50).lookup 7).isSome           -- expire before timeout ⇒ survives
 
 -- React teeth on the combined state:
-#guard (reactStep k0 reg0 7 (fun _ => true)).isSome                 -- fresh hole + valid binding ⇒ FIRES
-#guard ((reactStep k0 reg0 7 (fun _ => true)).map (fun p => p.1.nullifiers)) == some [7]  -- advances [] → [7]
-#guard (reactStep k0 reg0 7 (fun _ => false)).isNone               -- bad binding (wake-hash ≠ id) ⇒ REJECT
-#guard (reactStep k7 reg0 7 (fun _ => true)).isNone                -- stale hole (already reacted) ⇒ REJECT
+#guard (reactStep k0 reg0 spent0 7 (fun _ => true)).isSome          -- fresh + valid binding ⇒ FIRES
+#guard ((reactStep k0 reg0 spent0 7 (fun _ => true)).map (fun p => p.1.nullifiers)) == some []
+#guard ((reactStep k0 reg0 spent0 7 (fun _ => true)).map (fun p => decide (7 ∈ p.2.2))) == some true
+#guard (reactStep k0 reg0 spent0 7 (fun _ => false)).isNone         -- bad binding ⇒ REJECT
+#guard (reactStep k0 reg0 spent7 7 (fun _ => true)).isNone          -- React replay ⇒ REJECT
+#guard (reactStep kNote7 reg0 spent0 7 (fun _ => true)).isSome      -- same raw NOTE id grants no block
 
-/-- **POSITIVE tooth — a first React on a fresh hole FIRES and spends `id`.** The combined step commits,
-and the resulting kernel's nullifier set advances `[] → [7]` (the hole is spent, one-shot armed). -/
+/-- **POSITIVE tooth — a first React FIRES in the dedicated domain while note nullifiers stay empty.** -/
 theorem react_first_fires :
-    (reactStep k0 reg0 7 (fun _ => true)).map (fun p => p.1.nullifiers) = some [7] := by
+    (reactStep k0 reg0 spent0 7 (fun _ => true)).map
+      (fun p => (p.1.nullifiers, decide (7 ∈ p.2.2))) = some ([], true) := by
   rfl
+
+/-- **DOMAIN-SEPARATION tooth.** An equal raw id in the faithful note-spend set neither spends nor
+blocks the React id; only `spent7` has React authority. -/
+theorem note_spend_id_does_not_block_react :
+    (reactStep kNote7 reg0 spent0 7 (fun _ => true)).isSome := by
+  decide
 
 /-- **NEGATIVE tooth (bad binding) — the wake-hash guard BITES.** A React whose binding guard is false
 (`wake.hash() ≠ pending_id`) fail-closes; the registry is untouched. -/
-theorem react_rejects_bad_binding : reactStep k0 reg0 7 (fun _ => false) = none := by
+theorem react_rejects_bad_binding : reactStep k0 reg0 spent0 7 (fun _ => false) = none := by
   rfl
 
 /-- **NEGATIVE tooth (double-react) — the one-shot gate BITES.** A second React on an ALREADY-reacted
-hole (`7 ∈ k7.nullifiers`) fail-closes even with a VALID binding: the `note_nullifiers` double-spend
-gate refuses it (`apply.rs:1502`). The keystone, exercised on a concrete fixture. -/
-theorem react_second_rejected : reactStep k7 reg0 7 (fun _ => true) = none :=
+hole (`7 ∈ spent7`) fail-closes even with a valid binding. -/
+theorem react_second_rejected : reactStep k0 reg0 spent7 7 (fun _ => true) = none :=
   reactStep_rejects_spent (by decide)
 
 /-- **The keystone FIRES end-to-end on the fixtures.** The first React on `7` succeeds, and THEN a second
 React on `7` (any guard) is refused — no two Reacts on the same hole both succeed. -/
 theorem react_one_shot_fires :
-    ∀ k1 reg1, reactStep k0 reg0 7 (fun _ => true) = some (k1, reg1) →
-      reactStep k1 reg1 7 (fun _ => true) = none :=
-  fun _ _ h => react_one_shot h
+    ∀ k1 reg1 spent1,
+      reactStep k0 reg0 spent0 7 (fun _ => true) = some (k1, reg1, spent1) →
+      reactStep k1 reg1 spent1 7 (fun _ => true) = none :=
+  fun _ _ _ h => react_one_shot h
 
 end Teeth
 

@@ -8,8 +8,8 @@ handed — all async, all leaving a verifiable receipt, all one-shot.
 This is Track 2 (capacity) of *safely live within dregg*. It is a **weld**: both
 halves already exist in the tree, sound but disconnected. The reactive effect is
 the first-class vocabulary that joins them, and it is **sound by construction**
-because a promise-hole *is* a nullifier — to react is to spend, and the circuit
-already refuses a double-spend.
+because a promise-hole is a React-domain nullifier — to react is to spend. The deployed executor
+uses a dedicated replay set, separate from faithful note-spend/FNSP nullifiers.
 
 ---
 
@@ -115,10 +115,9 @@ Each maps onto the proven kernel:
 
 ## 4. The soundness argument — a promise-hole IS a nullifier
 
-To **react** is to **spend** the hole. One-shot linearity — react exactly once — is
-the SAME double-spend non-membership the circuit already enforces on `noteSpend`
-(just proven light-client-sound). So **react-twice = double-spend = already
-rejected**, by construction. We do not re-implement the gate; we ride it.
+To **react** is to **spend** the hole. One-shot linearity — react exactly once — uses the same
+fresh-insert pattern as `noteSpend`, but in the dedicated `ReactiveNullifierSet`. Thus
+**react-twice = replay = rejected** without inserting a non-note event into faithful FNSP history.
 
 `ReactiveCoordinator::react` (`reactive.rs`) enforces one-shotness at **two
 independent teeth**, so neither alone is load-bearing:
@@ -214,10 +213,10 @@ This design delivered the **executor-side** one-shot enforcement (the
 
 2. **The circuit witness for `React`.** The Lean obligation **named but not yet
    discharged** for this exact ADT: that a light client verifying a batch bearing a
-   `React` sees the promise-hole nullifier grow **exactly as a `noteSpend` does** —
-   i.e. `React` refines a `noteSpend` grow-gate step. The shape is already proven
+   `React` grows the dedicated React replay commitment while leaving the faithful note root
+   unchanged. The fresh-insert shape is already proven
    for guarded holes (`holeFill_binds_in_circuit`, `GuardedHole.lean:59`) and for the
    batch executor (`forward_is_handler_commit`, `ConditionalTurn.lean:602`); the lift
-   is to expose `React`'s `pending_id` *as* the nullifier in the effect's circuit
+   is to expose `React`'s `pending_id` in its own domain-separated circuit/state
    descriptor so the in-circuit witness binds it. Until then, the Rust gate here is
    the enforcement and the Lean theorems are the spec it answers to.
