@@ -713,6 +713,15 @@ fn validate_state(
         }
         previous = Some(receipt.receipt_hash());
     }
+    if state
+        .receipts
+        .windows(2)
+        .any(|pair| pair[0].post_state_hash != pair[1].pre_state_hash)
+    {
+        return Err(WorldError::Durability(
+            "durable world receipt chain has a discontinuous authority root".to_owned(),
+        ));
+    }
     if state.receipts.last().expect("non-empty").post_state_hash != state.ledger_root {
         return Err(WorldError::Durability(
             "durable world receipt head does not bind its ledger root".to_owned(),
