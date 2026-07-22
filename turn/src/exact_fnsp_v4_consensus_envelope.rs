@@ -6,8 +6,8 @@
 //!
 //! * fixed-width [`ExactFnspV4ActivationCore`] and [`ExactFnspV4FrameCore`] records, whose IDs contain
 //!   no local signer identity, signature, receipt encoding, or wall-clock field; and
-//! * [`LocalExactFnspV4Envelope`], a classical Ed25519 observation of one already-fixed frame ID at
-//!   one federation/committee epoch/commit ordinal.
+//! * [`HybridLocalExactFnspV4Envelope`], an Ed25519 AND ML-DSA-65 observation of one already-fixed
+//!   frame ID at one federation/committee epoch/commit ordinal.
 //!
 //! This module is additive substrate.  It does **not** implement committee collection, threshold
 //! signing, finality selection, persistence, or the v3-to-v4 cutover.  In particular, a valid local
@@ -22,18 +22,23 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use crate::ExactFnspV3StatePoint;
 
 const ACTIVATION_MAGIC: [u8; 4] = *b"EXA4";
+const RECEIPT_MAGIC: [u8; 4] = *b"EXR4";
 const FRAME_MAGIC: [u8; 4] = *b"EXF4";
 const ENVELOPE_MAGIC: [u8; 4] = *b"EXE4";
 const WIRE_VERSION: u16 = 1;
 
 const ACTIVATION_ID_DOMAIN: &str = "dregg-exact-fnsp-v4-activation-core-v1";
+const RECEIPT_ID_DOMAIN: &str = "dregg-exact-fnsp-v4-consensus-receipt-core-v1";
 const FRAME_ID_DOMAIN: &str = "dregg-exact-fnsp-v4-frame-core-v1";
 const LOCAL_ENVELOPE_SIGNATURE_DOMAIN: &[u8] = b"dregg-exact-fnsp-v4-local-envelope-signature-v1:";
+const LOCAL_ENVELOPE_PQ_CONTEXT: &[u8] = b"dregg-exact-fnsp-v4-local-envelope-pq-v1";
 
 const PREFIX_LEN: usize = 8;
 pub const EXACT_FNSP_V4_ACTIVATION_CORE_LEN: usize = 233;
-pub const EXACT_FNSP_V4_FRAME_CORE_LEN: usize = 666;
-pub const LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN: usize = 184;
+pub const EXACT_RECEIPT_CORE_V4_LEN: usize = 304;
+pub const EXACT_FNSP_V4_FRAME_CORE_LEN: usize = 642;
+pub const HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN: usize =
+    184 + dregg_pq::ML_DSA_PK_LEN + dregg_pq::ML_DSA_SIG_LEN;
 const LOCAL_ENVELOPE_MESSAGE_LEN: usize = LOCAL_ENVELOPE_SIGNATURE_DOMAIN.len() + 80;
 
 /// Typed signer-independent activation ID.
@@ -51,6 +56,16 @@ impl ExactFnspV4ActivationId {
 pub struct ExactFnspV4FrameId([u8; 32]);
 
 impl ExactFnspV4FrameId {
+    pub const fn bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+/// Typed ID of a deterministic, signature-free exact receipt projection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExactReceiptIdV4([u8; 32]);
+
+impl ExactReceiptIdV4 {
     pub const fn bytes(self) -> [u8; 32] {
         self.0
     }
@@ -83,6 +98,15 @@ impl ExactFnspV4ActivationCore {
     ) -> Result<Self, ExactFnspV4ConsensusError> {
         if protocol_epoch == 0 {
             return Err(ExactFnspV4ConsensusError::ZeroProtocolEpoch);
+        }
+        if federation_id == [0; 32] {
+            return Err(ExactFnspV4ConsensusError::ZeroFederationId);
+        }
+        if verifier_program_id == [0; 32] {
+            return Err(ExactFnspV4ConsensusError::ZeroVerifierProgramId);
+        }
+        if transition_program_id == [0; 32] {
+            return Err(ExactFnspV4ConsensusError::ZeroTransitionProgramId);
         }
         if (receipt_cutover_next_index == 0) != receipt_cutover_tail_hash.is_none() {
             return Err(ExactFnspV4ConsensusError::CutoverCoordinateMismatch);
@@ -179,6 +203,123 @@ impl ExactFnspV4ActivationCore {
     }
 }
 
+/// Deterministic receipt projection embedded in every exact-v4 frame.
+///
+/// The old [`crate::TurnReceipt::receipt_hash`] includes `TurnReceipt::timestamp`, which production
+/// executors currently seed from their local wall clock.  It therefore cannot be promoted to a
+/// federation consensus coordinate.  This fixed record has no timestamp, signature, signer key, or
+/// local receipt bytes.  If a future protocol needs time, it must add an explicitly finalized
+/// consensus block time in a new wire version.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExactReceiptCoreV4 {
+    block_id: [u8; 32],
+    commit_ordinal: u64,
+    turn_hash: [u8; 32],
+    forest_hash: [u8; 32],
+    actor: [u8; 32],
+    federation_id: [u8; 32],
+    full_pre_state: [u8; 32],
+    full_post_state: [u8; 32],
+    semantic_outcome_commitment: [u8; 32],
+    output_notes_commitment: [u8; 32],
+}
+
+impl ExactReceiptCoreV4 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        block_id: [u8; 32],
+        commit_ordinal: u64,
+        turn_hash: [u8; 32],
+        forest_hash: [u8; 32],
+        actor: [u8; 32],
+        federation_id: [u8; 32],
+        full_pre_state: [u8; 32],
+        full_post_state: [u8; 32],
+        semantic_outcome_commitment: [u8; 32],
+        output_notes_commitment: [u8; 32],
+    ) -> Result<Self, ExactFnspV4ConsensusError> {
+        if federation_id == [0; 32] {
+            return Err(ExactFnspV4ConsensusError::ZeroFederationId);
+        }
+        Ok(Self {
+            block_id,
+            commit_ordinal,
+            turn_hash,
+            forest_hash,
+            actor,
+            federation_id,
+            full_pre_state,
+            full_post_state,
+            semantic_outcome_commitment,
+            output_notes_commitment,
+        })
+    }
+
+    pub const fn block_id(&self) -> [u8; 32] {
+        self.block_id
+    }
+
+    pub const fn commit_ordinal(&self) -> u64 {
+        self.commit_ordinal
+    }
+
+    pub const fn federation_id(&self) -> [u8; 32] {
+        self.federation_id
+    }
+
+    pub fn id(&self) -> ExactReceiptIdV4 {
+        let mut hasher = blake3::Hasher::new_derive_key(RECEIPT_ID_DOMAIN);
+        hasher.update(&self.to_canonical_bytes());
+        ExactReceiptIdV4(*hasher.finalize().as_bytes())
+    }
+
+    pub fn to_canonical_bytes(&self) -> [u8; EXACT_RECEIPT_CORE_V4_LEN] {
+        let mut out = [0u8; EXACT_RECEIPT_CORE_V4_LEN];
+        write_prefix(&mut out, RECEIPT_MAGIC);
+        let mut cursor = PREFIX_LEN;
+        write_32(&mut out, &mut cursor, self.block_id);
+        write_u64(&mut out, &mut cursor, self.commit_ordinal);
+        write_32(&mut out, &mut cursor, self.turn_hash);
+        write_32(&mut out, &mut cursor, self.forest_hash);
+        write_32(&mut out, &mut cursor, self.actor);
+        write_32(&mut out, &mut cursor, self.federation_id);
+        write_32(&mut out, &mut cursor, self.full_pre_state);
+        write_32(&mut out, &mut cursor, self.full_post_state);
+        write_32(&mut out, &mut cursor, self.semantic_outcome_commitment);
+        write_32(&mut out, &mut cursor, self.output_notes_commitment);
+        debug_assert_eq!(cursor, EXACT_RECEIPT_CORE_V4_LEN);
+        out
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ExactFnspV4ConsensusError> {
+        require_wire(bytes, EXACT_RECEIPT_CORE_V4_LEN, RECEIPT_MAGIC)?;
+        let mut cursor = PREFIX_LEN;
+        let block_id = read_32(bytes, &mut cursor);
+        let commit_ordinal = read_u64(bytes, &mut cursor);
+        let turn_hash = read_32(bytes, &mut cursor);
+        let forest_hash = read_32(bytes, &mut cursor);
+        let actor = read_32(bytes, &mut cursor);
+        let federation_id = read_32(bytes, &mut cursor);
+        let full_pre_state = read_32(bytes, &mut cursor);
+        let full_post_state = read_32(bytes, &mut cursor);
+        let semantic_outcome_commitment = read_32(bytes, &mut cursor);
+        let output_notes_commitment = read_32(bytes, &mut cursor);
+        debug_assert_eq!(cursor, EXACT_RECEIPT_CORE_V4_LEN);
+        Self::new(
+            block_id,
+            commit_ordinal,
+            turn_hash,
+            forest_hash,
+            actor,
+            federation_id,
+            full_pre_state,
+            full_post_state,
+            semantic_outcome_commitment,
+            output_notes_commitment,
+        )
+    }
+}
+
 /// Typed predecessor.  An activation ID cannot be reinterpreted as a frame ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactFnspV4FramePredecessor {
@@ -206,7 +347,7 @@ impl ExactFnspV4FramePredecessor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExactFnspV4ReceiptPredecessor {
     pub index: u64,
-    pub hash: [u8; 32],
+    pub id: ExactReceiptIdV4,
 }
 
 /// Caller-carried fields used to construct a validated fixed-width frame core.
@@ -216,22 +357,12 @@ pub struct ExactFnspV4FrameCoreFields {
     pub sequence: u64,
     pub predecessor: ExactFnspV4FramePredecessor,
     pub receipt_index: u64,
-    pub receipt_hash: [u8; 32],
+    pub receipt: ExactReceiptCoreV4,
     pub full_predecessor: Option<ExactFnspV4ReceiptPredecessor>,
-    pub block_id: [u8; 32],
-    pub commit_ordinal: u64,
-    pub turn_hash: [u8; 32],
-    pub forest_hash: [u8; 32],
-    pub actor: [u8; 32],
-    pub federation_id: [u8; 32],
-    pub full_pre_state: [u8; 32],
-    pub full_post_state: [u8; 32],
     pub exact_before: ExactFnspV3StatePoint,
     pub exact_after: ExactFnspV3StatePoint,
     pub accepted_statement_digest: [u8; 32],
     pub accepted_proof_digest: [u8; 32],
-    pub consequence_commitment: [u8; 32],
-    pub output_notes_commitment: [u8; 32],
 }
 
 /// Signer-independent exact-v4 frame core.
@@ -246,14 +377,23 @@ impl ExactFnspV4FrameCore {
         if fields.activation_id != activation.id() {
             return Err(ExactFnspV4ConsensusError::ActivationIdentityMismatch);
         }
-        if fields.federation_id != activation.federation_id {
+        if fields.receipt.federation_id() != activation.federation_id {
             return Err(ExactFnspV4ConsensusError::FederationMismatch);
         }
         if fields.sequence == 0 {
             return Err(ExactFnspV4ConsensusError::ZeroFrameSequence);
         }
+        if fields.receipt_index < activation.receipt_cutover_next_index {
+            return Err(ExactFnspV4ConsensusError::ReceiptBeforeCutover);
+        }
         match (fields.sequence, fields.predecessor) {
             (1, ExactFnspV4FramePredecessor::Activation(id)) if id == activation.id() => {
+                // `sequence` is the epoch-relative frame number, independent of the physical exact
+                // accumulator generation/count inherited at activation.  Its first receipt is
+                // exactly the activated durable receipt cutover coordinate.
+                if fields.receipt_index != activation.receipt_cutover_next_index {
+                    return Err(ExactFnspV4ConsensusError::FirstReceiptIndexMismatch);
+                }
                 if fields.exact_before != activation.exact_initial {
                     return Err(ExactFnspV4ConsensusError::ActivationStateMismatch);
                 }
@@ -304,22 +444,14 @@ impl ExactFnspV4FrameCore {
         cursor += 1;
         write_32(&mut out, &mut cursor, fields.predecessor.bytes());
         write_u64(&mut out, &mut cursor, fields.receipt_index);
-        write_32(&mut out, &mut cursor, fields.receipt_hash);
+        let receipt = fields.receipt.to_canonical_bytes();
+        out[cursor..cursor + EXACT_RECEIPT_CORE_V4_LEN].copy_from_slice(&receipt);
+        cursor += EXACT_RECEIPT_CORE_V4_LEN;
         write_optional_receipt_predecessor(&mut out, &mut cursor, fields.full_predecessor);
-        write_32(&mut out, &mut cursor, fields.block_id);
-        write_u64(&mut out, &mut cursor, fields.commit_ordinal);
-        write_32(&mut out, &mut cursor, fields.turn_hash);
-        write_32(&mut out, &mut cursor, fields.forest_hash);
-        write_32(&mut out, &mut cursor, fields.actor);
-        write_32(&mut out, &mut cursor, fields.federation_id);
-        write_32(&mut out, &mut cursor, fields.full_pre_state);
-        write_32(&mut out, &mut cursor, fields.full_post_state);
         write_state_point(&mut out, &mut cursor, fields.exact_before);
         write_state_point(&mut out, &mut cursor, fields.exact_after);
         write_32(&mut out, &mut cursor, fields.accepted_statement_digest);
         write_32(&mut out, &mut cursor, fields.accepted_proof_digest);
-        write_32(&mut out, &mut cursor, fields.consequence_commitment);
-        write_32(&mut out, &mut cursor, fields.output_notes_commitment);
         debug_assert_eq!(cursor, EXACT_FNSP_V4_FRAME_CORE_LEN);
         out
     }
@@ -343,22 +475,15 @@ impl ExactFnspV4FrameCore {
             tag => return Err(ExactFnspV4ConsensusError::BadPredecessorTag(tag)),
         };
         let receipt_index = read_u64(bytes, &mut cursor);
-        let receipt_hash = read_32(bytes, &mut cursor);
+        let receipt = ExactReceiptCoreV4::decode_canonical(
+            &bytes[cursor..cursor + EXACT_RECEIPT_CORE_V4_LEN],
+        )?;
+        cursor += EXACT_RECEIPT_CORE_V4_LEN;
         let full_predecessor = read_optional_receipt_predecessor(bytes, &mut cursor)?;
-        let block_id = read_32(bytes, &mut cursor);
-        let commit_ordinal = read_u64(bytes, &mut cursor);
-        let turn_hash = read_32(bytes, &mut cursor);
-        let forest_hash = read_32(bytes, &mut cursor);
-        let actor = read_32(bytes, &mut cursor);
-        let federation_id = read_32(bytes, &mut cursor);
-        let full_pre_state = read_32(bytes, &mut cursor);
-        let full_post_state = read_32(bytes, &mut cursor);
         let exact_before = read_state_point(bytes, &mut cursor)?;
         let exact_after = read_state_point(bytes, &mut cursor)?;
         let accepted_statement_digest = read_32(bytes, &mut cursor);
         let accepted_proof_digest = read_32(bytes, &mut cursor);
-        let consequence_commitment = read_32(bytes, &mut cursor);
-        let output_notes_commitment = read_32(bytes, &mut cursor);
         debug_assert_eq!(cursor, EXACT_FNSP_V4_FRAME_CORE_LEN);
         Self::new(
             activation,
@@ -367,22 +492,12 @@ impl ExactFnspV4FrameCore {
                 sequence,
                 predecessor,
                 receipt_index,
-                receipt_hash,
+                receipt,
                 full_predecessor,
-                block_id,
-                commit_ordinal,
-                turn_hash,
-                forest_hash,
-                actor,
-                federation_id,
-                full_pre_state,
-                full_post_state,
                 exact_before,
                 exact_after,
                 accepted_statement_digest,
                 accepted_proof_digest,
-                consequence_commitment,
-                output_notes_commitment,
             },
         )
     }
@@ -394,78 +509,123 @@ impl ExactFnspV4FrameCore {
         if self.0.activation_id != activation.id() {
             return Err(ExactFnspV4ConsensusError::ActivationIdentityMismatch);
         }
-        if self.0.federation_id != activation.federation_id {
+        if self.0.receipt.federation_id() != activation.federation_id {
             return Err(ExactFnspV4ConsensusError::FederationMismatch);
         }
         Ok(())
     }
 }
 
-/// One validator's classical observation of a fixed common frame ID.
+/// Independently enrolled hybrid identity expected for one validator.
 ///
-/// The validator key/signature are outside both common core encodings.  This is not a committee or
-/// threshold certificate.
+/// Verification takes this value from federation policy; the public keys carried in an envelope
+/// never authorize themselves.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LocalExactFnspV4Envelope {
+pub struct HybridExactFnspV4ValidatorIdentity {
+    pub ed25519: [u8; 32],
+    pub ml_dsa_65: [u8; dregg_pq::ML_DSA_PK_LEN],
+}
+
+/// One validator's hybrid observation of a fixed common frame ID.
+///
+/// Both signatures cover the same message.  The validator keys/signatures are outside both common
+/// core encodings.  This is not a committee or threshold certificate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HybridLocalExactFnspV4Envelope {
     federation_id: [u8; 32],
     committee_epoch: u64,
     commit_ordinal: u64,
     frame_id: ExactFnspV4FrameId,
-    validator_public_key: [u8; 32],
-    signature: [u8; 64],
+    validator_ed25519_public_key: [u8; 32],
+    validator_ml_dsa_public_key: [u8; dregg_pq::ML_DSA_PK_LEN],
+    ed25519_signature: [u8; 64],
+    ml_dsa_signature: [u8; dregg_pq::ML_DSA_SIG_LEN],
 }
 
-impl LocalExactFnspV4Envelope {
-    pub fn sign(
+impl HybridLocalExactFnspV4Envelope {
+    /// Derive both validator keys from the same seed and sign both halves.
+    pub fn sign_from_seed(
         activation: &ExactFnspV4ActivationCore,
         frame: &ExactFnspV4FrameCore,
-        signing_key: &SigningKey,
+        seed: &[u8; 32],
     ) -> Result<Self, ExactFnspV4ConsensusError> {
         frame.validate_scope(activation)?;
         let frame_id = frame.id();
         let message = local_envelope_signature_message(
             activation.federation_id,
             activation.committee_epoch,
-            frame.0.commit_ordinal,
+            frame.0.receipt.commit_ordinal(),
             frame_id,
         );
-        let signature = signing_key.sign(&message).to_bytes();
+        let classical = SigningKey::from_bytes(seed);
+        let pq = dregg_pq::MlDsaKey::from_ed25519_seed(seed);
+        let validator_ml_dsa_public_key = pq
+            .public_bytes()
+            .try_into()
+            .map_err(|_| ExactFnspV4ConsensusError::PqPrimitiveLengthMismatch)?;
+        let ml_dsa_signature = pq
+            .try_sign_deterministic(LOCAL_ENVELOPE_PQ_CONTEXT, &message)
+            .ok_or(ExactFnspV4ConsensusError::PqSigningFailed)?
+            .try_into()
+            .map_err(|_| ExactFnspV4ConsensusError::PqPrimitiveLengthMismatch)?;
         Ok(Self {
             federation_id: activation.federation_id,
             committee_epoch: activation.committee_epoch,
-            commit_ordinal: frame.0.commit_ordinal,
+            commit_ordinal: frame.0.receipt.commit_ordinal(),
             frame_id,
-            validator_public_key: signing_key.verifying_key().to_bytes(),
-            signature,
+            validator_ed25519_public_key: classical.verifying_key().to_bytes(),
+            validator_ml_dsa_public_key,
+            ed25519_signature: classical.sign(&message).to_bytes(),
+            ml_dsa_signature,
         })
     }
 
-    pub fn verify(
+    /// Verify BOTH signature halves against independently expected keys.
+    pub fn verify_against(
         &self,
         activation: &ExactFnspV4ActivationCore,
         frame: &ExactFnspV4FrameCore,
+        expected: &HybridExactFnspV4ValidatorIdentity,
     ) -> Result<(), ExactFnspV4ConsensusError> {
         frame.validate_scope(activation)?;
         if self.federation_id != activation.federation_id
             || self.committee_epoch != activation.committee_epoch
-            || self.commit_ordinal != frame.0.commit_ordinal
+            || self.commit_ordinal != frame.0.receipt.commit_ordinal()
             || self.frame_id != frame.id()
         {
             return Err(ExactFnspV4ConsensusError::EnvelopeCoreMismatch);
         }
-        let key = VerifyingKey::from_bytes(&self.validator_public_key)
+        if self.validator_ed25519_public_key != expected.ed25519
+            || self.validator_ml_dsa_public_key != expected.ml_dsa_65
+        {
+            return Err(ExactFnspV4ConsensusError::UnexpectedValidatorIdentity);
+        }
+        let message = self.signature_message();
+        let key = VerifyingKey::from_bytes(&expected.ed25519)
             .map_err(|_| ExactFnspV4ConsensusError::InvalidValidatorKey)?;
-        let signature = ed25519_dalek::Signature::from_bytes(&self.signature);
-        key.verify_strict(&self.signature_message(), &signature)
-            .map_err(|_| ExactFnspV4ConsensusError::InvalidEnvelopeSignature)
+        let signature = ed25519_dalek::Signature::from_bytes(&self.ed25519_signature);
+        key.verify_strict(&message, &signature)
+            .map_err(|_| ExactFnspV4ConsensusError::InvalidEnvelopeClassicalSignature)?;
+        if !dregg_pq::ml_dsa_verify(
+            &expected.ml_dsa_65,
+            LOCAL_ENVELOPE_PQ_CONTEXT,
+            &message,
+            &self.ml_dsa_signature,
+        ) {
+            return Err(ExactFnspV4ConsensusError::InvalidEnvelopePqSignature);
+        }
+        Ok(())
     }
 
     pub const fn frame_id(&self) -> ExactFnspV4FrameId {
         self.frame_id
     }
 
-    pub const fn validator_public_key(&self) -> [u8; 32] {
-        self.validator_public_key
+    pub fn validator_identity(&self) -> HybridExactFnspV4ValidatorIdentity {
+        HybridExactFnspV4ValidatorIdentity {
+            ed25519: self.validator_ed25519_public_key,
+            ml_dsa_65: self.validator_ml_dsa_public_key,
+        }
     }
 
     pub fn signature_message(&self) -> [u8; LOCAL_ENVELOPE_MESSAGE_LEN] {
@@ -477,40 +637,58 @@ impl LocalExactFnspV4Envelope {
         )
     }
 
-    pub fn to_canonical_bytes(&self) -> [u8; LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN] {
-        let mut out = [0u8; LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN];
+    pub fn to_canonical_bytes(&self) -> [u8; HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN] {
+        let mut out = [0u8; HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN];
         write_prefix(&mut out, ENVELOPE_MAGIC);
         let mut cursor = PREFIX_LEN;
         write_32(&mut out, &mut cursor, self.federation_id);
         write_u64(&mut out, &mut cursor, self.committee_epoch);
         write_u64(&mut out, &mut cursor, self.commit_ordinal);
         write_32(&mut out, &mut cursor, self.frame_id.bytes());
-        write_32(&mut out, &mut cursor, self.validator_public_key);
-        out[cursor..cursor + 64].copy_from_slice(&self.signature);
+        write_32(&mut out, &mut cursor, self.validator_ed25519_public_key);
+        out[cursor..cursor + dregg_pq::ML_DSA_PK_LEN]
+            .copy_from_slice(&self.validator_ml_dsa_public_key);
+        cursor += dregg_pq::ML_DSA_PK_LEN;
+        out[cursor..cursor + 64].copy_from_slice(&self.ed25519_signature);
         cursor += 64;
-        debug_assert_eq!(cursor, LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN);
+        out[cursor..cursor + dregg_pq::ML_DSA_SIG_LEN].copy_from_slice(&self.ml_dsa_signature);
+        cursor += dregg_pq::ML_DSA_SIG_LEN;
+        debug_assert_eq!(cursor, HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN);
         out
     }
 
     pub fn decode_canonical(bytes: &[u8]) -> Result<Self, ExactFnspV4ConsensusError> {
-        require_wire(bytes, LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN, ENVELOPE_MAGIC)?;
+        require_wire(
+            bytes,
+            HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN,
+            ENVELOPE_MAGIC,
+        )?;
         let mut cursor = PREFIX_LEN;
         let federation_id = read_32(bytes, &mut cursor);
         let committee_epoch = read_u64(bytes, &mut cursor);
         let commit_ordinal = read_u64(bytes, &mut cursor);
         let frame_id = ExactFnspV4FrameId(read_32(bytes, &mut cursor));
-        let validator_public_key = read_32(bytes, &mut cursor);
-        let mut signature = [0u8; 64];
-        signature.copy_from_slice(&bytes[cursor..cursor + 64]);
+        let validator_ed25519_public_key = read_32(bytes, &mut cursor);
+        let mut validator_ml_dsa_public_key = [0u8; dregg_pq::ML_DSA_PK_LEN];
+        validator_ml_dsa_public_key
+            .copy_from_slice(&bytes[cursor..cursor + dregg_pq::ML_DSA_PK_LEN]);
+        cursor += dregg_pq::ML_DSA_PK_LEN;
+        let mut ed25519_signature = [0u8; 64];
+        ed25519_signature.copy_from_slice(&bytes[cursor..cursor + 64]);
         cursor += 64;
-        debug_assert_eq!(cursor, LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN);
+        let mut ml_dsa_signature = [0u8; dregg_pq::ML_DSA_SIG_LEN];
+        ml_dsa_signature.copy_from_slice(&bytes[cursor..cursor + dregg_pq::ML_DSA_SIG_LEN]);
+        cursor += dregg_pq::ML_DSA_SIG_LEN;
+        debug_assert_eq!(cursor, HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN);
         Ok(Self {
             federation_id,
             committee_epoch,
             commit_ordinal,
             frame_id,
-            validator_public_key,
-            signature,
+            validator_ed25519_public_key,
+            validator_ml_dsa_public_key,
+            ed25519_signature,
+            ml_dsa_signature,
         })
     }
 }
@@ -549,10 +727,15 @@ pub enum ExactFnspV4ConsensusError {
     ExactStateCommitMismatch,
     ExactStatePointInvalid,
     ZeroProtocolEpoch,
+    ZeroFederationId,
+    ZeroVerifierProgramId,
+    ZeroTransitionProgramId,
     CutoverCoordinateMismatch,
     ActivationIdentityMismatch,
     FederationMismatch,
     ZeroFrameSequence,
+    ReceiptBeforeCutover,
+    FirstReceiptIndexMismatch,
     FirstFramePredecessorMismatch,
     ContinuationPredecessorMismatch,
     ActivationStateMismatch,
@@ -560,8 +743,12 @@ pub enum ExactFnspV4ConsensusError {
     ExactCountOverflow,
     ExactCountStepMismatch,
     EnvelopeCoreMismatch,
+    UnexpectedValidatorIdentity,
     InvalidValidatorKey,
-    InvalidEnvelopeSignature,
+    InvalidEnvelopeClassicalSignature,
+    InvalidEnvelopePqSignature,
+    PqSigningFailed,
+    PqPrimitiveLengthMismatch,
 }
 
 impl fmt::Display for ExactFnspV4ConsensusError {
@@ -589,6 +776,13 @@ impl fmt::Display for ExactFnspV4ConsensusError {
             Self::ExactStateCommitMismatch => f.write_str("exact-v4 FNS3 state commit mismatch"),
             Self::ExactStatePointInvalid => f.write_str("invalid exact-v4 exact state point"),
             Self::ZeroProtocolEpoch => f.write_str("exact-v4 protocol epoch zero is reserved"),
+            Self::ZeroFederationId => f.write_str("exact-v4 federation ID cannot be zero"),
+            Self::ZeroVerifierProgramId => {
+                f.write_str("exact-v4 verifier program ID cannot be zero")
+            }
+            Self::ZeroTransitionProgramId => {
+                f.write_str("exact-v4 transition program ID cannot be zero")
+            }
             Self::CutoverCoordinateMismatch => {
                 f.write_str("exact-v4 cutover index/tail shape mismatch")
             }
@@ -597,6 +791,12 @@ impl fmt::Display for ExactFnspV4ConsensusError {
             }
             Self::FederationMismatch => f.write_str("exact-v4 federation mismatch"),
             Self::ZeroFrameSequence => f.write_str("exact-v4 frame sequence zero is reserved"),
+            Self::ReceiptBeforeCutover => {
+                f.write_str("exact-v4 frame receipt precedes activation cutover")
+            }
+            Self::FirstReceiptIndexMismatch => {
+                f.write_str("exact-v4 first frame receipt is not the activation cutover index")
+            }
             Self::FirstFramePredecessorMismatch => {
                 f.write_str("exact-v4 first frame does not link its activation")
             }
@@ -614,9 +814,19 @@ impl fmt::Display for ExactFnspV4ConsensusError {
             Self::EnvelopeCoreMismatch => {
                 f.write_str("local exact-v4 envelope does not match recomputed common core")
             }
+            Self::UnexpectedValidatorIdentity => {
+                f.write_str("local exact-v4 envelope keys do not match enrolled validator identity")
+            }
             Self::InvalidValidatorKey => f.write_str("invalid local validator public key"),
-            Self::InvalidEnvelopeSignature => {
-                f.write_str("invalid local exact-v4 envelope signature")
+            Self::InvalidEnvelopeClassicalSignature => {
+                f.write_str("invalid local exact-v4 Ed25519 envelope signature")
+            }
+            Self::InvalidEnvelopePqSignature => {
+                f.write_str("invalid local exact-v4 ML-DSA-65 envelope signature")
+            }
+            Self::PqSigningFailed => f.write_str("local exact-v4 ML-DSA-65 signing failed closed"),
+            Self::PqPrimitiveLengthMismatch => {
+                f.write_str("local exact-v4 ML-DSA primitive returned a wrong-length object")
             }
         }
     }
@@ -721,7 +931,7 @@ fn write_optional_receipt_predecessor(
             out[*cursor] = 1;
             *cursor += 1;
             write_u64(out, cursor, value.index);
-            write_32(out, cursor, value.hash);
+            write_32(out, cursor, value.id.bytes());
         }
     }
 }
@@ -737,7 +947,10 @@ fn read_optional_receipt_predecessor(
     match tag {
         0 if index == 0 && hash == [0; 32] => Ok(None),
         0 => Err(ExactFnspV4ConsensusError::NonCanonicalAbsentPayload),
-        1 => Ok(Some(ExactFnspV4ReceiptPredecessor { index, hash })),
+        1 => Ok(Some(ExactFnspV4ReceiptPredecessor {
+            index,
+            id: ExactReceiptIdV4(hash),
+        })),
         tag => Err(ExactFnspV4ConsensusError::BadOptionalTag(tag)),
     }
 }
@@ -819,6 +1032,22 @@ mod tests {
         .expect("activation")
     }
 
+    fn receipt(activation: &ExactFnspV4ActivationCore) -> ExactReceiptCoreV4 {
+        ExactReceiptCoreV4::new(
+            [0xb1; 32],
+            17,
+            [0x31; 32],
+            [0x32; 32],
+            [0xa1; 32],
+            activation.federation_id(),
+            [0x41; 32],
+            [0x42; 32],
+            [0x53; 32],
+            [0x54; 32],
+        )
+        .expect("receipt")
+    }
+
     fn frame(activation: &ExactFnspV4ActivationCore) -> ExactFnspV4FrameCore {
         let before = activation.exact_initial();
         ExactFnspV4FrameCore::new(
@@ -828,25 +1057,15 @@ mod tests {
                 sequence: 1,
                 predecessor: ExactFnspV4FramePredecessor::Activation(activation.id()),
                 receipt_index: 9,
-                receipt_hash: [0x21; 32],
+                receipt: receipt(activation),
                 full_predecessor: Some(ExactFnspV4ReceiptPredecessor {
                     index: 7,
-                    hash: [0x20; 32],
+                    id: ExactReceiptIdV4([0x20; 32]),
                 }),
-                block_id: [0xb1; 32],
-                commit_ordinal: 17,
-                turn_hash: [0x31; 32],
-                forest_hash: [0x32; 32],
-                actor: [0xa1; 32],
-                federation_id: activation.federation_id(),
-                full_pre_state: [0x41; 32],
-                full_post_state: [0x42; 32],
                 exact_before: before,
                 exact_after: next_point(before, 13),
                 accepted_statement_digest: [0x51; 32],
                 accepted_proof_digest: [0x52; 32],
-                consequence_commitment: [0x53; 32],
-                output_notes_commitment: [0x54; 32],
             },
         )
         .expect("frame")
@@ -858,70 +1077,82 @@ mod tests {
         let frame = frame(&activation);
         let activation_id = activation.id();
         let frame_id = frame.id();
-        let left = LocalExactFnspV4Envelope::sign(
-            &activation,
-            &frame,
-            &SigningKey::from_bytes(&[0x11; 32]),
-        )
-        .expect("left envelope");
-        let right = LocalExactFnspV4Envelope::sign(
-            &activation,
-            &frame,
-            &SigningKey::from_bytes(&[0x22; 32]),
-        )
-        .expect("right envelope");
+        let left = HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &[0x11; 32])
+            .expect("left envelope");
+        let right =
+            HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &[0x22; 32])
+                .expect("right envelope");
+        let left_identity = left.validator_identity();
+        let right_identity = right.validator_identity();
 
         assert_eq!(activation.id(), activation_id);
         assert_eq!(frame.id(), frame_id);
         assert_eq!(left.frame_id(), right.frame_id());
         assert_eq!(left.signature_message(), right.signature_message());
-        assert_ne!(left.validator_public_key(), right.validator_public_key());
+        assert_ne!(left_identity, right_identity);
         assert_ne!(left.to_canonical_bytes(), right.to_canonical_bytes());
-        left.verify(&activation, &frame).expect("left verifies");
-        right.verify(&activation, &frame).expect("right verifies");
+        left.verify_against(&activation, &frame, &left_identity)
+            .expect("left verifies");
+        right
+            .verify_against(&activation, &frame, &right_identity)
+            .expect("right verifies");
     }
 
     #[test]
     fn mutating_common_core_changes_id_and_invalidates_old_envelope() {
         let activation = activation();
         let frame = frame(&activation);
-        let envelope = LocalExactFnspV4Envelope::sign(
-            &activation,
-            &frame,
-            &SigningKey::from_bytes(&[0x33; 32]),
-        )
-        .expect("envelope");
+        let envelope =
+            HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &[0x33; 32])
+                .expect("envelope");
+        let identity = envelope.validator_identity();
         let mut fields = frame.fields().clone();
-        fields.output_notes_commitment[0] ^= 1;
+        fields.receipt.output_notes_commitment[0] ^= 1;
         let mutated = ExactFnspV4FrameCore::new(&activation, fields).expect("mutated core");
         assert_ne!(frame.id(), mutated.id());
         assert_eq!(
-            envelope.verify(&activation, &mutated),
+            envelope.verify_against(&activation, &mutated, &identity),
             Err(ExactFnspV4ConsensusError::EnvelopeCoreMismatch)
         );
     }
 
     #[test]
-    fn mutating_only_envelope_signature_never_changes_core_id() {
+    fn both_signature_halves_are_required_and_neither_changes_core_id() {
         let activation = activation();
         let frame = frame(&activation);
         let frame_id = frame.id();
-        let envelope = LocalExactFnspV4Envelope::sign(
-            &activation,
-            &frame,
-            &SigningKey::from_bytes(&[0x44; 32]),
-        )
-        .expect("envelope");
-        let mut bytes = envelope.to_canonical_bytes();
-        bytes[LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN - 1] ^= 1;
-        let forged =
-            LocalExactFnspV4Envelope::decode_canonical(&bytes).expect("structural envelope");
+        let envelope =
+            HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &[0x44; 32])
+                .expect("envelope");
+        let identity = envelope.validator_identity();
+        let mut pq_forged_bytes = envelope.to_canonical_bytes();
+        pq_forged_bytes[HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN - 1] ^= 1;
+        let pq_forged = HybridLocalExactFnspV4Envelope::decode_canonical(&pq_forged_bytes)
+            .expect("structural envelope");
         assert_eq!(frame.id(), frame_id);
-        assert_eq!(forged.frame_id(), frame_id);
+        assert_eq!(pq_forged.frame_id(), frame_id);
         assert_eq!(
-            forged.verify(&activation, &frame),
-            Err(ExactFnspV4ConsensusError::InvalidEnvelopeSignature)
+            pq_forged.verify_against(&activation, &frame, &identity),
+            Err(ExactFnspV4ConsensusError::InvalidEnvelopePqSignature)
         );
+
+        let mut classical_forged_bytes = envelope.to_canonical_bytes();
+        let classical_signature_offset =
+            PREFIX_LEN + 32 + 8 + 8 + 32 + 32 + dregg_pq::ML_DSA_PK_LEN;
+        classical_forged_bytes[classical_signature_offset] ^= 1;
+        let classical_forged =
+            HybridLocalExactFnspV4Envelope::decode_canonical(&classical_forged_bytes).unwrap();
+        assert_eq!(
+            classical_forged.verify_against(&activation, &frame, &identity),
+            Err(ExactFnspV4ConsensusError::InvalidEnvelopeClassicalSignature)
+        );
+
+        assert!(matches!(
+            HybridLocalExactFnspV4Envelope::decode_canonical(
+                &envelope.to_canonical_bytes()[..HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN - 1]
+            ),
+            Err(ExactFnspV4ConsensusError::WrongWireLength { .. })
+        ));
     }
 
     #[test]
@@ -931,6 +1162,11 @@ mod tests {
         assert_eq!(
             ExactFnspV4ActivationCore::decode_canonical(&activation.to_canonical_bytes()).unwrap(),
             activation
+        );
+        assert_eq!(
+            ExactReceiptCoreV4::decode_canonical(&frame.fields().receipt.to_canonical_bytes())
+                .unwrap(),
+            frame.fields().receipt
         );
         assert_eq!(
             ExactFnspV4FrameCore::decode_canonical(&frame.to_canonical_bytes(), &activation)
@@ -972,6 +1208,61 @@ mod tests {
     }
 
     #[test]
+    fn local_wall_clock_and_signature_bytes_cannot_enter_consensus_receipt_id() {
+        let activation = activation();
+        let core = receipt(&activation);
+        let mut left = crate::TurnReceipt {
+            timestamp: 10,
+            ..crate::TurnReceipt::default()
+        };
+        let mut right = left.clone();
+        right.timestamp = 99;
+        left.executor_signature = Some(vec![1; 64]);
+        right.executor_signature = Some(vec![2; 64]);
+        assert_ne!(left.receipt_hash(), right.receipt_hash());
+        assert_eq!(core.id(), receipt(&activation).id());
+    }
+
+    #[test]
+    fn zero_identity_pins_and_pre_cutover_frames_refuse() {
+        let exact = point();
+        assert_eq!(
+            ExactFnspV4ActivationCore::new(4, [0xf4; 32], 11, 0, None, exact, [0; 32], [0x72; 32]),
+            Err(ExactFnspV4ConsensusError::ZeroVerifierProgramId)
+        );
+        assert_eq!(
+            ExactFnspV4ActivationCore::new(4, [0xf4; 32], 11, 0, None, exact, [0x71; 32], [0; 32]),
+            Err(ExactFnspV4ConsensusError::ZeroTransitionProgramId)
+        );
+        let activation = activation();
+        let mut fields = frame(&activation).fields().clone();
+        fields.receipt_index = activation.receipt_cutover_next_index() - 1;
+        assert_eq!(
+            ExactFnspV4FrameCore::new(&activation, fields),
+            Err(ExactFnspV4ConsensusError::ReceiptBeforeCutover)
+        );
+    }
+
+    #[test]
+    fn epoch_relative_sequence_one_is_independent_of_nonempty_exact_generation() {
+        let inherited = ExactFnspV3StatePoint::new([BabyBear::new_canonical(19); 8], 41).unwrap();
+        let activation = ExactFnspV4ActivationCore::new(
+            4,
+            [0xf4; 32],
+            11,
+            9,
+            Some([0x99; 32]),
+            inherited,
+            [0x71; 32],
+            [0x72; 32],
+        )
+        .unwrap();
+        let built = frame(&activation);
+        assert_eq!(built.fields().sequence, 1);
+        assert_eq!(built.fields().exact_before.count(), 41);
+    }
+
+    #[test]
     fn cross_federation_or_activation_substitution_refuses() {
         let activation = activation();
         let frame = frame(&activation);
@@ -986,14 +1277,12 @@ mod tests {
             activation.transition_program_id(),
         )
         .unwrap();
-        let envelope = LocalExactFnspV4Envelope::sign(
-            &activation,
-            &frame,
-            &SigningKey::from_bytes(&[0x55; 32]),
-        )
-        .unwrap();
+        let envelope =
+            HybridLocalExactFnspV4Envelope::sign_from_seed(&activation, &frame, &[0x55; 32])
+                .unwrap();
+        let identity = envelope.validator_identity();
         assert_eq!(
-            envelope.verify(&other, &frame),
+            envelope.verify_against(&other, &frame, &identity),
             Err(ExactFnspV4ConsensusError::ActivationIdentityMismatch)
         );
     }

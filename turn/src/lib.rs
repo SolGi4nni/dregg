@@ -179,10 +179,12 @@ pub use eventual::{
 };
 #[cfg(feature = "prover")]
 pub use exact_fnsp_v4_consensus_envelope::{
-    EXACT_FNSP_V4_ACTIVATION_CORE_LEN, EXACT_FNSP_V4_FRAME_CORE_LEN, ExactFnspV4ActivationCore,
-    ExactFnspV4ActivationId, ExactFnspV4ConsensusError, ExactFnspV4FrameCore,
-    ExactFnspV4FrameCoreFields, ExactFnspV4FrameId, ExactFnspV4FramePredecessor,
-    ExactFnspV4ReceiptPredecessor, LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN, LocalExactFnspV4Envelope,
+    EXACT_FNSP_V4_ACTIVATION_CORE_LEN, EXACT_FNSP_V4_FRAME_CORE_LEN, EXACT_RECEIPT_CORE_V4_LEN,
+    ExactFnspV4ActivationCore, ExactFnspV4ActivationId, ExactFnspV4ConsensusError,
+    ExactFnspV4FrameCore, ExactFnspV4FrameCoreFields, ExactFnspV4FrameId,
+    ExactFnspV4FramePredecessor, ExactFnspV4ReceiptPredecessor, ExactReceiptCoreV4,
+    ExactReceiptIdV4, HYBRID_LOCAL_EXACT_FNSP_V4_ENVELOPE_LEN, HybridExactFnspV4ValidatorIdentity,
+    HybridLocalExactFnspV4Envelope,
 };
 pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use executor::{
