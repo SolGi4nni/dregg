@@ -35,6 +35,7 @@ use dregg_persist::BlocklaceMeta;
 use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
+use crate::execution_cursor::FinalizedExecutionOutcome;
 use crate::state::{NodeEvent, NodeState};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -351,6 +352,7 @@ impl BlocklaceHandle {
                 let kind = match &block.payload {
                     Payload::Turn(_) => "turn",
                     Payload::TurnBundle(_) => "turn_bundle",
+                    Payload::ConsensusTimedTurnV1(_) => "consensus_timed_turn_v1",
                     Payload::Ack => "heartbeat",
                     Payload::Checkpoint { .. } => "checkpoint",
                     Payload::MembershipVote { .. } => "membership",
@@ -404,6 +406,17 @@ impl BlocklaceHandle {
     }
 }
 
+impl FinalizedBlock {
+    const fn block_id(&self) -> BlockId {
+        match self {
+            Self::Turn { block_id, .. }
+            | Self::Membership { block_id, .. }
+            | Self::Checkpoint { block_id, .. }
+            | Self::Inert { block_id } => *block_id,
+        }
+    }
+}
+
 /// A finalized block's payload, ready for execution by the finality executor.
 ///
 /// The executor dispatches on this enum to process turns (state transitions),
@@ -415,6 +428,7 @@ pub enum FinalizedBlock {
         block_id: BlockId,
         data: Vec<u8>,
         artifacts: Option<TurnArtifactBundle>,
+        consensus_time: Option<i64>,
     },
     /// A membership vote/proposal ready for constitution processing.
     Membership {
@@ -428,6 +442,9 @@ pub enum FinalizedBlock {
         root: [u8; 32],
         height: u64,
     },
+    /// Consensus-inert payload. It has no application-side durable outcome and
+    /// may be acknowledged immediately after planning.
+    Inert { block_id: BlockId },
 }
 
 impl BlocklaceHandle {
@@ -1093,6 +1110,7 @@ impl BlocklaceHandle {
                 .filter_map(|(id, block)| match &block.payload {
                     Payload::Turn(_)
                     | Payload::TurnBundle(_)
+                    | Payload::ConsensusTimedTurnV1(_)
                     | Payload::MembershipVote { .. }
                     | Payload::Checkpoint { .. } => Some((block.seq, *id)),
                     _ => None,
@@ -1437,6 +1455,7 @@ impl BlocklaceHandle {
         }
 
         let pending = cursor.pending(&ordered);
+        drop(cursor);
         if pending.is_empty() {
             return vec![];
         }
@@ -1446,13 +1465,12 @@ impl BlocklaceHandle {
         for block_id in pending {
             let Some(block) = lace.get(&block_id) else {
                 // A finalized id missing from the lace is an invariant breach (tau orders only
-                // lace members); mark it so it cannot wedge the cursor in a hot retry loop.
-                warn!(
+                // lace members). Do not acknowledge an impossible local observation.
+                error!(
                     block_id = %block_id,
-                    "finalized block id not present in the lace — marking served and skipping"
+                    "finalized block id not present in the lace — stopping planned prefix"
                 );
-                cursor.mark_executed(block_id);
-                continue;
+                break;
             };
             // GATE: REFUSE any actionable block the verified rule did not finalize. Ack/Data are
             // not consensus-actionable (skipped below regardless), so a heartbeat the rule does
@@ -1464,6 +1482,7 @@ impl BlocklaceHandle {
                     &block.payload,
                     Payload::Turn(_)
                         | Payload::TurnBundle(_)
+                        | Payload::ConsensusTimedTurnV1(_)
                         | Payload::MembershipVote { .. }
                         | Payload::Checkpoint { .. }
                 );
@@ -1484,6 +1503,7 @@ impl BlocklaceHandle {
                         block_id,
                         data: data.clone(),
                         artifacts: None,
+                        consensus_time: None,
                     });
                 }
                 Payload::TurnBundle(bundle) => {
@@ -1491,6 +1511,19 @@ impl BlocklaceHandle {
                         block_id,
                         data: bundle.signed_turn.clone(),
                         artifacts: Some(bundle.clone()),
+                        consensus_time: None,
+                    });
+                }
+                Payload::ConsensusTimedTurnV1(timed) => {
+                    finalized.push(FinalizedBlock::Turn {
+                        block_id,
+                        data: timed.signed_turn().to_vec(),
+                        artifacts: Some(TurnArtifactBundle {
+                            signed_turn: timed.signed_turn().to_vec(),
+                            receipt: timed.receipt().map(ToOwned::to_owned),
+                            witnessed_receipts: timed.witnessed_receipts().to_vec(),
+                        }),
+                        consensus_time: Some(timed.consensus_time().unix_seconds()),
                     });
                 }
                 Payload::MembershipVote { action } => {
@@ -1508,10 +1541,10 @@ impl BlocklaceHandle {
                     });
                 }
                 // Ack and Data payloads need no consensus-level processing.
-                Payload::Ack | Payload::Data(_) => {}
+                Payload::Ack | Payload::Data(_) => {
+                    finalized.push(FinalizedBlock::Inert { block_id });
+                }
             }
-            // Served (or consensus-inert): never serve this identity again.
-            cursor.mark_executed(block_id);
         }
 
         finalized
@@ -1864,6 +1897,11 @@ pub(crate) fn build_ordering_blocklace(
         let payload = match &block.payload {
             Payload::Turn(data) => data.clone(),
             Payload::TurnBundle(bundle) => bundle.signed_turn.clone(),
+            Payload::ConsensusTimedTurnV1(bundle) => {
+                let mut data = bundle.consensus_time().encode().to_vec();
+                data.extend_from_slice(bundle.signed_turn());
+                data
+            }
             Payload::Ack => vec![],
             Payload::Checkpoint { root, height } => {
                 let mut buf = Vec::with_capacity(40);
@@ -2103,13 +2141,41 @@ pub async fn run_blocklace_sync(
                 // The legacy index count is logged for visibility only — an
                 // INDEX cannot be trusted as a resume point, because the order it
                 // indexes into can shift under honest catch-up growth.
-                let durable_turn_ids: std::collections::HashSet<BlockId> = s
+                let durable_committed_turn_ids: std::collections::HashSet<BlockId> = s
                     .store
                     .commit_log_block_ids()
                     .unwrap_or_default()
                     .into_iter()
                     .map(BlockId)
                     .collect();
+                // A deterministic rejection is the other durable terminal turn
+                // outcome.  Re-derive its ids from the restored immutable lace
+                // and authenticate every row against the carried payload.  This
+                // closes the crash window where the row committed but RAM ACK
+                // (and the best-effort served-id projection) did not.
+                let mut durable_rejected_turn_ids = std::collections::HashSet::new();
+                for (id, block) in restored_lace.iter() {
+                    let Some(payload) = finalized_turn_bytes(&block.payload) else {
+                        continue;
+                    };
+                    let key =
+                        crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                            &id.0,
+                        );
+                    match s.store.get_config(&key) {
+                        Ok(Some(bytes)) => match crate::signed_turn_validation::FinalizedPayloadRejectionRecord::decode_authenticated(&bytes, id.0, payload) {
+                            Ok(_) => { durable_rejected_turn_ids.insert(*id); }
+                            Err(reason) => error!(block_id = %id, reason, "malformed durable finalized-rejection authority; identity remains pending"),
+                        },
+                        Ok(None) => {}
+                        Err(error) => error!(block_id = %id, error = %error, "could not read durable finalized-rejection authority; identity remains pending"),
+                    }
+                }
+                let durable_turn_ids: std::collections::HashSet<BlockId> =
+                    durable_committed_turn_ids
+                        .union(&durable_rejected_turn_ids)
+                        .copied()
+                        .collect();
                 let persisted_ids = s.store.load_executed_block_ids().unwrap_or_default();
                 let persisted_count = persisted_ids.len();
                 let mut executed_ids: Vec<BlockId> = Vec::new();
@@ -2138,6 +2204,7 @@ pub async fn run_blocklace_sync(
                     executed_restored = executed_ids.len(),
                     persisted_ids = persisted_count,
                     durable_turns = durable_turn_ids.len(),
+                    durable_rejections = durable_rejected_turn_ids.len(),
                     legacy_executed_up_to,
                     "restored blocklace from persistent storage (crash-consistent \
                      identity-cursor resume)"
@@ -4093,30 +4160,33 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                 );
             }
 
-            // Block-level executed COUNT for the durable commit record. Recovery
-            // resumes BY IDENTITY (the commit log's `block_id`s ∪ the persisted
-            // executed-id set), not from this count — it is carried in each
-            // turn's atomic commit as a diagnostic/compat field only (an index
-            // into the tau order cannot be a sound resume point: the order can
-            // shift under honest catch-up growth, see TauPrefixMonotone).
-            let block_executed_up_to = { handle.cursor.read().await.executed_count() as u64 };
-
+            let mut acknowledged_blocks = Vec::new();
+            let mut retry_prefix = false;
             for block in &finalized_blocks {
-                match block {
+                let block_id = block.block_id();
+                let outcome = match block {
                     FinalizedBlock::Turn {
                         block_id,
                         data,
                         artifacts,
+                        consensus_time,
                     } => {
-                        execute_finalized_turn(
-                            &state,
-                            &handle,
-                            *block_id,
-                            data,
-                            artifacts.as_ref(),
-                            block_executed_up_to,
+                        // Diagnostic compatibility coordinate only. Recovery is
+                        // by terminal identity, never this count.
+                        let block_executed_up_to =
+                            handle.cursor.read().await.executed_count() as u64 + 1;
+                        Some(
+                            execute_finalized_turn(
+                                &state,
+                                &handle,
+                                *block_id,
+                                data,
+                                artifacts.as_ref(),
+                                *consensus_time,
+                                block_executed_up_to,
+                            )
+                            .await,
                         )
-                        .await;
                     }
                     FinalizedBlock::Membership {
                         block_id,
@@ -4125,6 +4195,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                     } => {
                         execute_finalized_membership(&state, &handle, *block_id, *creator, action)
                             .await;
+                        None
                     }
                     FinalizedBlock::Checkpoint {
                         block_id,
@@ -4145,8 +4216,38 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                             "finalized checkpoint block observed (NOT stored — checkpoint pipeline is unwired)"
                         );
                         let _ = (root, height);
+                        None
                     }
+                    FinalizedBlock::Inert { .. } => None,
+                };
+
+                if let Some(outcome) = outcome.as_ref() {
+                    match outcome {
+                        FinalizedExecutionOutcome::Committed { .. }
+                        | FinalizedExecutionOutcome::DeterministicallyRejected { .. } => {
+                            let advanced =
+                                handle.cursor.write().await.acknowledge_terminal(outcome);
+                            debug_assert!(
+                                advanced || handle.cursor.read().await.is_executed(&block_id)
+                            );
+                        }
+                        FinalizedExecutionOutcome::RetryableOperational { error, .. } => {
+                            warn!(block_id = %block_id, error, "finalized execution hit a retryable operational failure; stopping tau prefix before successor");
+                            retry_prefix = true;
+                            break;
+                        }
+                        FinalizedExecutionOutcome::FatalIntegrity { error, .. } => {
+                            error!(block_id = %block_id, error, "finalized execution hit a fatal integrity failure; stopping tau prefix without acknowledgement");
+                            break;
+                        }
+                    }
+                } else {
+                    // Membership/checkpoint/data remain consensus-inert or
+                    // idempotent in this turn-focused cut. They do not authorize
+                    // an actionable turn ACK.
+                    handle.cursor.write().await.mark_executed(block_id);
                 }
+                acknowledged_blocks.push(block.clone());
 
                 // ── QUORUM AGREEMENT: emit our signed finalization vote ──────
                 // This block is now in our local `tau` order (Ordered, which
@@ -4157,11 +4258,6 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                 // Solo (n=1) is a committee of one: quorum=1, so a single self
                 // vote is already consensus-attested — correct and inert.
                 {
-                    let block_id = match block {
-                        FinalizedBlock::Turn { block_id, .. }
-                        | FinalizedBlock::Membership { block_id, .. }
-                        | FinalizedBlock::Checkpoint { block_id, .. } => *block_id,
-                    };
                     let already = {
                         let col = handle.votes.read().await;
                         col.has_voted(&block_id, &handle.self_key)
@@ -4189,6 +4285,14 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                 }
             }
 
+            if acknowledged_blocks.is_empty() {
+                if retry_prefix {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    handle.finality_notify.notify_one();
+                }
+                continue;
+            }
+
             // ── Record Participant Activity ──────────────────────────────────
             // Track which participants produced blocks in this batch so that
             // the timeout mechanism knows they are still alive.
@@ -4196,7 +4300,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                 // Collect all block creators from this batch.
                 let lace = handle.lace.read().await;
                 let mut active_creators: Vec<[u8; 32]> = Vec::new();
-                for block in &finalized_blocks {
+                for block in &acknowledged_blocks {
                     match block {
                         FinalizedBlock::Membership { creator, .. } => {
                             active_creators.push(*creator);
@@ -4211,6 +4315,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                                 active_creators.push(b.creator);
                             }
                         }
+                        FinalizedBlock::Inert { .. } => {}
                     }
                 }
                 drop(lace);
@@ -4253,6 +4358,10 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             // quorum trails the finalized head by the gossip round(s) it takes
             // the votes to converge — the deliberate liveness cost of Fix B.
             backfill_finalization_quorums(&state, &handle).await;
+            if retry_prefix {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                handle.finality_notify.notify_one();
+            }
         }
     });
 }
@@ -4540,13 +4649,28 @@ fn faithful_history_contains_pair(
             .any(|envelope| envelope.record.height == height && envelope.record.successor == root)
 }
 
+fn finalized_turn_bytes(payload: &Payload) -> Option<&[u8]> {
+    match payload {
+        Payload::Turn(bytes) => Some(bytes),
+        Payload::TurnBundle(bundle) => Some(&bundle.signed_turn),
+        Payload::ConsensusTimedTurnV1(bundle) => Some(bundle.signed_turn()),
+        Payload::Ack
+        | Payload::Checkpoint { .. }
+        | Payload::MembershipVote { .. }
+        | Payload::Data(_) => None,
+    }
+}
+
 fn persist_finalized_payload_rejection(
     s: &crate::state::NodeStateInner,
     block_id: BlockId,
     payload: &[u8],
     turn_hash: Option<[u8; 32]>,
     reason_code: &str,
-) {
+) -> FinalizedExecutionOutcome {
+    let retryable =
+        |error: String| FinalizedExecutionOutcome::RetryableOperational { block_id, error };
+    let fatal = |error: String| FinalizedExecutionOutcome::FatalIntegrity { block_id, error };
     let record = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::new(
         block_id.0,
         payload,
@@ -4564,11 +4688,18 @@ fn persist_finalized_payload_rejection(
                 error = %error,
                 "failed to encode deterministic finalized-payload rejection record"
             );
-            return;
+            return fatal(format!(
+                "failed to encode deterministic rejection row: {error}"
+            ));
         }
     };
     match s.store.get_config(&key) {
-        Ok(Some(existing)) if existing == encoded => return,
+        Ok(Some(existing)) if existing == encoded => {
+            return FinalizedExecutionOutcome::DeterministicallyRejected {
+                block_id,
+                reason_code: reason_code.to_owned(),
+            };
+        }
         Ok(Some(_)) => {
             // A block id names one immutable consensus payload.  Never replace
             // an existing outcome with a contradictory local observation.
@@ -4577,7 +4708,7 @@ fn persist_finalized_payload_rejection(
                 reason_code,
                 "refusing to overwrite a conflicting finalized-payload rejection record"
             );
-            return;
+            return fatal("conflicting durable rejection row for immutable block id".into());
         }
         Ok(None) => {}
         Err(error) => {
@@ -4587,16 +4718,23 @@ fn persist_finalized_payload_rejection(
                 error = %error,
                 "failed to read finalized-payload rejection record before idempotent write"
             );
-            return;
+            return retryable(format!("failed to read durable rejection row: {error}"));
         }
     }
-    if let Err(error) = s.store.set_config(&key, &encoded) {
-        error!(
-            block_id = %block_id,
-            reason_code,
-            error = %error,
-            "failed to persist deterministic finalized-payload rejection record"
-        );
+    match s.store.set_config(&key, &encoded) {
+        Ok(()) => FinalizedExecutionOutcome::DeterministicallyRejected {
+            block_id,
+            reason_code: reason_code.to_owned(),
+        },
+        Err(error) => {
+            error!(
+                block_id = %block_id,
+                reason_code,
+                error = %error,
+                "failed to persist deterministic finalized-payload rejection record; identity remains pending"
+            );
+            retryable(format!("failed to persist durable rejection row: {error}"))
+        }
     }
 }
 
@@ -4786,7 +4924,7 @@ async fn execute_live_exact_fnsp_v3(
     handle: &BlocklaceHandle,
     preparation: LiveExactFnspV3Preparation,
     finality_round: Option<u64>,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     let LiveExactFnspV3Preparation {
         signed_turn,
         validated_signed_turn,
@@ -5107,7 +5245,7 @@ async fn execute_live_exact_fnsp_v3(
             ordinal = outcome.ordinal,
             "exact FNSP-v3 commit was already durable; suppressing RAM/event replay"
         );
-        return Ok(());
+        return Ok(outcome.ordinal);
     }
     let locked_inner = &mut *locked;
     durable
@@ -5181,7 +5319,7 @@ async fn execute_live_exact_fnsp_v3(
         block_executed_up_to,
         "exact FNSP-v3 finalized turn durably committed and published"
     );
-    Ok(())
+    Ok(outcome.ordinal)
 }
 
 async fn execute_finalized_turn(
@@ -5190,8 +5328,9 @@ async fn execute_finalized_turn(
     block_id: BlockId,
     turn_data: &[u8],
     artifacts: Option<&TurnArtifactBundle>,
+    consensus_time: Option<i64>,
     block_executed_up_to: u64,
-) {
+) -> FinalizedExecutionOutcome {
     // Deserialize the signed turn.
     let signed_turn: dregg_sdk::SignedTurn = match crate::signed_turn_validation::decode_signed_turn(
         turn_data,
@@ -5199,14 +5338,15 @@ async fn execute_finalized_turn(
         Ok(st) => st,
         Err(e) => {
             let s = state.read().await;
-            persist_finalized_payload_rejection(&s, block_id, turn_data, None, e.code());
+            let outcome =
+                persist_finalized_payload_rejection(&s, block_id, turn_data, None, e.code());
             warn!(
                 block_id = %block_id,
                 error = %e,
                 reason_code = e.code(),
                 "failed to strictly decode turn from finalized block (deterministic rejection recorded)"
             );
-            return;
+            return outcome;
         }
     };
 
@@ -5229,6 +5369,9 @@ async fn execute_finalized_turn(
         &s,
         crate::executor_setup::BlockHeightMode::Next,
     );
+    if let Some(consensus_time) = consensus_time {
+        executor.current_timestamp = consensus_time;
+    }
     // HYBRID PERIMETER — DEPLOYED POSTURE (require_pq = ON) at the finalized-turn
     // admission boundary: a classical-only authorization is rejected on the
     // authoritative cross-node commit path, matching the HTTP submit ingress.
@@ -5247,7 +5390,7 @@ async fn execute_finalized_turn(
     ) {
         Ok(validated) => validated,
         Err(validation_error) => {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5261,7 +5404,7 @@ async fn execute_finalized_turn(
                 reason = %validation_error,
                 "finalized SignedTurn failed application authorization before mutation (deterministic rejection recorded)"
             );
-            return;
+            return outcome;
         }
     };
 
@@ -5283,43 +5426,32 @@ async fn execute_finalized_turn(
             ) {
                 Ok(preparation) => preparation,
                 Err(error) => {
-                    persist_finalized_payload_rejection(
-                        &s,
-                        block_id,
-                        turn_data,
-                        Some(computed_hash),
-                        "exact-fnsp-v3-preparation-refused",
-                    );
                     warn!(
                         block_id = %block_id,
                         turn_hash = %turn_hash_hex,
                         error = %error,
                         "exact FNSP-v3 finalized turn refused during locked snapshot preparation"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::RetryableOperational {
+                        block_id,
+                        error: format!("exact FNSP-v3 preparation failed: {error}"),
+                    };
                 }
             };
             drop(s);
-            if let Err(error) =
-                execute_live_exact_fnsp_v3(state, handle, preparation, finality_round).await
+            return match execute_live_exact_fnsp_v3(state, handle, preparation, finality_round)
+                .await
             {
-                let locked = state.read().await;
-                persist_finalized_payload_rejection(
-                    &locked,
+                Ok(durable_ordinal) => FinalizedExecutionOutcome::Committed {
                     block_id,
-                    turn_data,
-                    Some(computed_hash),
-                    "exact-fnsp-v3-finalization-refused",
-                );
-                drop(locked);
-                warn!(
-                    block_id = %block_id,
-                    turn_hash = %turn_hash_hex,
-                    error = %error,
-                    "exact FNSP-v3 finalized turn did not publish"
-                );
-            }
-            return;
+                    durable_ordinal,
+                },
+                Err(error) => {
+                    warn!(block_id = %block_id, turn_hash = %turn_hash_hex, error = %error,
+                        "exact FNSP-v3 finalized turn hit an operational/freshness failure; identity remains pending");
+                    FinalizedExecutionOutcome::RetryableOperational { block_id, error }
+                }
+            };
         }
         Ok(None) => {
             // Exact activation is a one-way flag day for NoteSpend state.  A v2 spend after it
@@ -5328,7 +5460,7 @@ async fn execute_finalized_turn(
             if !finalized_note_spends(&signed_turn.turn.call_forest).is_empty() {
                 match s.store.exact_fnsp_v3_live_authority() {
                     Ok(Some(_)) => {
-                        persist_finalized_payload_rejection(
+                        let outcome = persist_finalized_payload_rejection(
                             &s,
                             block_id,
                             turn_data,
@@ -5340,30 +5472,26 @@ async fn execute_finalized_turn(
                             turn_hash = %turn_hash_hex,
                             "legacy/v2 NoteSpend refused after exact FNSP-v3 activation"
                         );
-                        return;
+                        return outcome;
                     }
                     Ok(None) => {}
                     Err(error) => {
-                        persist_finalized_payload_rejection(
-                            &s,
-                            block_id,
-                            turn_data,
-                            Some(computed_hash),
-                            "exact-cutover-authority-malformed",
-                        );
                         error!(
                             block_id = %block_id,
                             turn_hash = %turn_hash_hex,
                             error = %error,
                             "could not authenticate exact cutover before legacy NoteSpend dispatch"
                         );
-                        return;
+                        return FinalizedExecutionOutcome::FatalIntegrity {
+                            block_id,
+                            error: format!("exact cutover authority malformed: {error}"),
+                        };
                     }
                 }
             }
         }
         Err(error) => {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5376,7 +5504,7 @@ async fn execute_finalized_turn(
                 error = %error,
                 "malformed exact FNSP-v3 finalized carrier refused before legacy dispatch"
             );
-            return;
+            return outcome;
         }
     }
 
@@ -5390,7 +5518,7 @@ async fn execute_finalized_turn(
     {
         Ok(claims) => claims,
         Err(()) => {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5402,14 +5530,14 @@ async fn execute_finalized_turn(
                 turn_hash = %turn_hash_hex,
                 "finalized NoteSpend lacks a canonical FNSP height carrier or faithful-eight root"
             );
-            return;
+            return outcome;
         }
     };
     if !faithful_spend_claims.is_empty() {
         let expected = match s.store.faithful_note_root_expectation() {
             Ok(Some(expected)) => expected,
             Ok(None) => {
-                persist_finalized_payload_rejection(
+                let outcome = persist_finalized_payload_rejection(
                     &s,
                     block_id,
                     turn_data,
@@ -5421,23 +5549,19 @@ async fn execute_finalized_turn(
                     turn_hash = %turn_hash_hex,
                     "finalized NoteSpend names a root before an authenticated faithful history exists"
                 );
-                return;
+                return outcome;
             }
             Err(e) => {
-                persist_finalized_payload_rejection(
-                    &s,
-                    block_id,
-                    turn_data,
-                    Some(computed_hash),
-                    "faithful-note-root-history-malformed",
-                );
                 error!(
                     block_id = %block_id,
                     turn_hash = %turn_hash_hex,
                     error = %e,
                     "faithful note-root history seal is malformed; finalized NoteSpend refused"
                 );
-                return;
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("faithful note-root history malformed: {e}"),
+                };
             }
         };
         let local_pk = s.cclerk.public_key();
@@ -5451,20 +5575,16 @@ async fn execute_finalized_turn(
         ) {
             Ok(history) => history,
             Err(e) => {
-                persist_finalized_payload_rejection(
-                    &s,
-                    block_id,
-                    turn_data,
-                    Some(computed_hash),
-                    "faithful-note-root-history-malformed",
-                );
                 error!(
                     block_id = %block_id,
                     turn_hash = %turn_hash_hex,
                     error = %e,
                     "faithful note-root history failed exact hybrid replay; finalized NoteSpend refused"
                 );
-                return;
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("faithful note-root history replay failed: {e}"),
+                };
             }
         };
         if let Some((height, root, _, _)) = faithful_spend_claims
@@ -5472,7 +5592,7 @@ async fn execute_finalized_turn(
             .copied()
             .find(|(height, root, _, _)| !faithful_history_contains_pair(&history, *height, *root))
         {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5486,7 +5606,7 @@ async fn execute_finalized_turn(
                 root = %dregg_types::hex_encode(root.as_bytes()),
                 "finalized NoteSpend names a height/root pair absent from the authenticated faithful history"
             );
-            return;
+            return outcome;
         }
     }
 
@@ -5499,20 +5619,16 @@ async fn execute_finalized_turn(
     let durable_nullifier_records = match s.store.load_faithful_nullifier_records() {
         Ok(records) => records,
         Err(e) => {
-            persist_finalized_payload_rejection(
-                &s,
-                block_id,
-                turn_data,
-                Some(computed_hash),
-                "faithful-nullifier-state-malformed",
-            );
             error!(
                 block_id = %block_id,
                 turn_hash = %turn_hash_hex,
                 error = %e,
                 "durable faithful nullifier accumulator is malformed; finalized turn refused before mutation"
             );
-            return;
+            return FinalizedExecutionOutcome::FatalIntegrity {
+                block_id,
+                error: format!("durable faithful nullifier state malformed: {e}"),
+            };
         }
     };
     let durable_nullifier_set = match dregg_cell::nullifier_set::NullifierSet::from_records(
@@ -5520,44 +5636,36 @@ async fn execute_finalized_turn(
     ) {
         Ok(set) => set,
         Err(e) => {
-            persist_finalized_payload_rejection(
-                &s,
-                block_id,
-                turn_data,
-                Some(computed_hash),
-                "faithful-nullifier-state-malformed",
-            );
             error!(
                 block_id = %block_id,
                 turn_hash = %turn_hash_hex,
                 error = %e,
                 "durable faithful nullifier accumulator reconstruction failed; finalized turn refused"
             );
-            return;
+            return FinalizedExecutionOutcome::FatalIntegrity {
+                block_id,
+                error: format!("faithful nullifier reconstruction failed: {e}"),
+            };
         }
     };
     let durable_nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
     let durable_commit_cursor = match s.store.commit_cursor() {
         Ok(cursor) => cursor,
         Err(e) => {
-            persist_finalized_payload_rejection(
-                &s,
-                block_id,
-                turn_data,
-                Some(computed_hash),
-                "faithful-finalization-snapshot-malformed",
-            );
             error!(
                 block_id = %block_id,
                 turn_hash = %turn_hash_hex,
                 error = %e,
                 "could not capture the durable commit cursor before off-lock execution"
             );
-            return;
+            return FinalizedExecutionOutcome::RetryableOperational {
+                block_id,
+                error: format!("could not capture durable commit cursor: {e}"),
+            };
         }
     };
     if faithful_spend_claims.len() != finalized_nullifier_spends.len() {
-        persist_finalized_payload_rejection(
+        let outcome = persist_finalized_payload_rejection(
             &s,
             block_id,
             turn_data,
@@ -5571,7 +5679,7 @@ async fn execute_finalized_turn(
             spends = finalized_nullifier_spends.len(),
             "faithful NoteSpend carrier/effect traversal produced different ordered lengths"
         );
-        return;
+        return outcome;
     }
 
     // Each carrier names the successor immediately after ITS spend in DFS/effect
@@ -5585,7 +5693,7 @@ async fn execute_finalized_turn(
     ) {
         Ok(plan) => plan,
         Err(nullifier) => {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5598,7 +5706,7 @@ async fn execute_finalized_turn(
                 nullifier = %dregg_types::hex_encode(&nullifier),
                 "finalized NoteSpend duplicates a durable or within-turn nullifier; refused before mutation"
             );
-            return;
+            return outcome;
         }
     };
     for ((spend, (height, _, claimed_successor, _)), step_successor) in finalized_nullifier_spends
@@ -5607,7 +5715,7 @@ async fn execute_finalized_turn(
         .zip(ordered_successors.iter())
     {
         if claimed_successor.to_bytes() != *step_successor {
-            persist_finalized_payload_rejection(
+            let outcome = persist_finalized_payload_rejection(
                 &s,
                 block_id,
                 turn_data,
@@ -5623,7 +5731,7 @@ async fn execute_finalized_turn(
                 planned_successor = %dregg_types::hex_encode(step_successor),
                 "faithful NoteSpend proof does not bind its exact ordered nullifier successor"
             );
-            return;
+            return outcome;
         }
     }
     let finalized_faithful_spends: Vec<dregg_persist::FinalizedFaithfulSpendInput> =
@@ -5677,7 +5785,7 @@ async fn execute_finalized_turn(
         .map(|(_, receipt)| receipt.previous_receipt_hash)
         .unwrap_or_else(|| s.cclerk.agent_receipt_head_hash(&agent));
     if signed_turn.turn.previous_receipt_hash != expected_prev {
-        persist_finalized_payload_rejection(
+        let outcome = persist_finalized_payload_rejection(
             &s,
             block_id,
             turn_data,
@@ -5691,7 +5799,7 @@ async fn execute_finalized_turn(
             got = ?signed_turn.turn.previous_receipt_hash,
             "finalized SignedTurn failed agent-scoped receipt continuity before mutation (deterministic rejection recorded)"
         );
-        return;
+        return outcome;
     }
 
     // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
@@ -5936,7 +6044,10 @@ async fn execute_finalized_turn(
                 error = %e,
                 "finalized-turn EXECUTION task panicked/cancelled; turn NOT applied"
             );
-            return;
+            return FinalizedExecutionOutcome::FatalIntegrity {
+                block_id,
+                error: format!("durable nullifier reconstruction failed: {e}"),
+            };
         }
     };
 
@@ -5969,7 +6080,10 @@ async fn execute_finalized_turn(
                 error = %e,
                 "could not revalidate the durable commit cursor after off-lock execution"
             );
-            return;
+            return FinalizedExecutionOutcome::RetryableOperational {
+                block_id,
+                error: format!("durable commit cursor read failed: {e}"),
+            };
         }
     };
     let current_nullifier_root = match s
@@ -5988,7 +6102,10 @@ async fn execute_finalized_turn(
                 error = %e,
                 "could not reconstruct the durable exact nullifier root after off-lock execution"
             );
-            return;
+            return FinalizedExecutionOutcome::FatalIntegrity {
+                block_id,
+                error: format!("durable nullifier reconstruction failed: {e}"),
+            };
         }
     };
     if !finalized_global_snapshot_matches(
@@ -6006,7 +6123,10 @@ async fn execute_finalized_turn(
             current_nullifier_root = %dregg_types::hex_encode(&current_nullifier_root),
             "global finalized frontier changed during off-lock execution; stale result refused before RAM overlay"
         );
-        return;
+        return FinalizedExecutionOutcome::RetryableOperational {
+            block_id,
+            error: "global finalized frontier moved during off-lock execution".into(),
+        };
     }
 
     // CONCURRENCY GUARD (validate-or-reject, never overwrite). The FFI executed
@@ -6031,7 +6151,10 @@ async fn execute_finalized_turn(
              snapshot is STALE. DECLINING to install (validate-or-reject); the turn \
              re-applies from the durable cursor on restart"
         );
-        return;
+        return FinalizedExecutionOutcome::RetryableOperational {
+            block_id,
+            error: "ledger snapshot moved during off-lock execution".into(),
+        };
     }
 
     match exec_result {
@@ -6058,7 +6181,10 @@ async fn execute_finalized_turn(
                         receipt_index = *index,
                         "durable staged solo receipt does not describe the exact re-executed transition; refusing finalization"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::FatalIntegrity {
+                        block_id,
+                        error: "durable staged receipt disagrees with re-execution".into(),
+                    };
                 }
                 if let Err(error) = dregg_turn::verify_receipt_signature_with_keys(
                     staged,
@@ -6071,7 +6197,10 @@ async fn execute_finalized_turn(
                         error = ?error,
                         "durable staged solo receipt has no valid local executor signature; refusing finalization"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::FatalIntegrity {
+                        block_id,
+                        error: format!("durable staged receipt signature invalid: {error:?}"),
+                    };
                 }
                 (staged.clone(), *index, true)
             } else {
@@ -6607,7 +6736,10 @@ async fn execute_finalized_turn(
                         error = %e,
                         "faithful note-root history is malformed; refusing durable finalized commit"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::FatalIntegrity {
+                        block_id,
+                        error: format!("faithful note-root history malformed: {e}"),
+                    };
                 }
             };
             if existing_faithful_head.as_ref().is_some_and(|head| {
@@ -6621,7 +6753,10 @@ async fn execute_finalized_turn(
                     "faithful note-root segment belongs to an earlier committee context; refusing \
                      to extend it until an authenticated segment-rollover certificate is installed"
                 );
-                return;
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: "faithful note-root committee context mismatch".into(),
+                };
             }
             let initial_faithful_anchor = if existing_faithful_head.is_none() {
                 let Some(previous_height) = new_height.checked_sub(1) else {
@@ -6629,7 +6764,10 @@ async fn execute_finalized_turn(
                         block_id = %block_id,
                         "finalized height zero has no faithful predecessor; refusing durable commit"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::FatalIntegrity {
+                        block_id,
+                        error: "finalized height zero has no faithful predecessor".into(),
+                    };
                 };
                 let note_count = match u64::try_from(s.note_tree.size()) {
                     Ok(count) => count,
@@ -6638,7 +6776,10 @@ async fn execute_finalized_turn(
                             block_id = %block_id,
                             "faithful note count does not fit u64; refusing durable finalized commit"
                         );
-                        return;
+                        return FinalizedExecutionOutcome::FatalIntegrity {
+                            block_id,
+                            error: "faithful note count does not fit u64".into(),
+                        };
                     }
                 };
                 match dregg_persist::FaithfulNoteRootAnchorV1::new(
@@ -6658,7 +6799,10 @@ async fn execute_finalized_turn(
                             error = %e,
                             "could not create faithful note-root segment anchor"
                         );
-                        return;
+                        return FinalizedExecutionOutcome::FatalIntegrity {
+                            block_id,
+                            error: format!("faithful note-root anchor construction failed: {e}"),
+                        };
                     }
                 }
             } else {
@@ -6681,7 +6825,10 @@ async fn execute_finalized_turn(
                         error = %e,
                         "live note tree does not extend the authenticated faithful head; refusing durable commit"
                     );
-                    return;
+                    return FinalizedExecutionOutcome::FatalIntegrity {
+                        block_id,
+                        error: format!("faithful note-root transition invalid: {e}"),
+                    };
                 }
             };
             let faithful_message = faithful_record.signing_message();
@@ -6695,7 +6842,10 @@ async fn execute_finalized_turn(
                     block_id = %block_id,
                     "ML-DSA faithful-root signing failed; refusing half-authenticated durable commit"
                 );
-                return;
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: "ML-DSA faithful-root signing failed".into(),
+                };
             };
             let faithful_envelope = dregg_persist::FaithfulNoteRootEnvelopeV1 {
                 record: faithful_record.clone(),
@@ -6839,7 +6989,7 @@ async fn execute_finalized_turn(
             // last-writer-wins overlay on top of the periodic full ledger
             // checkpoint, and recovery reconstructs the finalized ledger from
             // (checkpoint ⊕ overlay) without re-executing.
-            {
+            let durable_ordinal = {
                 // Persist the same COMPLETE whole-cell diff that will be
                 // installed after durability. `LedgerDelta` intentionally does
                 // not cover every cell dimension (heap/program/lifecycle/etc.),
@@ -6962,7 +7112,10 @@ async fn execute_finalized_turn(
                                 ordinal = assigned,
                                 "finalized commit was already durable; suppressing duplicate RAM/event publication"
                             );
-                            return;
+                            return FinalizedExecutionOutcome::Committed {
+                                block_id,
+                                durable_ordinal: assigned,
+                            };
                         }
 
                         // COMMIT POINT CROSSED. Install the complete candidate
@@ -7017,6 +7170,7 @@ async fn execute_finalized_turn(
                             ..commit_record.clone()
                         };
                         s.mirror_committed_record(&mirrored);
+                        assigned
                     }
                     Err(e) => {
                         // The candidate was never published, so the durable
@@ -7029,10 +7183,13 @@ async fn execute_finalized_turn(
                             error = %e,
                             "DURABLE commit-log write FAILED; isolated candidate discarded with no RAM/event publication"
                         );
-                        return;
+                        return FinalizedExecutionOutcome::RetryableOperational {
+                            block_id,
+                            error: format!("durable finalized commit failed: {e}"),
+                        };
                     }
                 }
-            }
+            };
 
             // Everything below is post-commit publication. None of these RAM,
             // auxiliary-store, or observer-visible effects can run for a failed
@@ -7135,6 +7292,10 @@ async fn execute_finalized_turn(
                 full_turn_proven = full_turn_proof_artifacts.is_some(),
                 "finalized turn executed (blocklace consensus)"
             );
+            return FinalizedExecutionOutcome::Committed {
+                block_id,
+                durable_ordinal,
+            };
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
             // Write-ahead-before-live: the executor's candidate can contain a
@@ -7151,6 +7312,13 @@ async fn execute_finalized_turn(
                 reason = %reason,
                 "finalized turn rejected; isolated phase1/body candidate discarded (no typed durable attempt receipt)"
             );
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "executor-rejected",
+            )
         }
         dregg_turn::TurnResult::Expired => {
             warn!(
@@ -7158,6 +7326,13 @@ async fn execute_finalized_turn(
                 block_id = %block_id,
                 "finalized turn expired; isolated candidate discarded without publication"
             );
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "turn-expired",
+            )
         }
         dregg_turn::TurnResult::Pending => {
             debug!(
@@ -7165,6 +7340,10 @@ async fn execute_finalized_turn(
                 block_id = %block_id,
                 "finalized turn pending; isolated candidate discarded without publication"
             );
+            FinalizedExecutionOutcome::RetryableOperational {
+                block_id,
+                error: "finalized turn remained pending".into(),
+            }
         }
     }
 }
@@ -8560,7 +8739,7 @@ mod tests {
         let self_key = [0xB7; 32];
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
         let block_id = BlockId([0xD3; 32]);
-        execute_finalized_turn(&state, &handle, block_id, &payload, None, 0).await;
+        execute_finalized_turn(&state, &handle, block_id, &payload, None, None, 0).await;
 
         let s = state.read().await;
         let after = s.ledger.get(&victim).expect("victim remains present");
@@ -8671,7 +8850,7 @@ mod tests {
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
         for (hostile, block_id, expected_code) in cases {
             let payload = postcard::to_stdvec(&hostile).expect("encode hostile SignedTurn");
-            execute_finalized_turn(&state, &handle, block_id, &payload, None, 0).await;
+            execute_finalized_turn(&state, &handle, block_id, &payload, None, None, 0).await;
             let s = state.read().await;
             let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
                 &block_id.0,
@@ -8693,7 +8872,16 @@ mod tests {
         let mut trailing_payload =
             postcard::to_stdvec(&honest).expect("encode canonical SignedTurn");
         trailing_payload.extend_from_slice(&[0x00, 0x7F]);
-        execute_finalized_turn(&state, &handle, trailing_block, &trailing_payload, None, 0).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            trailing_block,
+            &trailing_payload,
+            None,
+            None,
+            0,
+        )
+        .await;
         let s = state.read().await;
         let key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
             &trailing_block.0,
@@ -8833,7 +9021,16 @@ mod tests {
         };
         let signed_a1 = signed_noop(&clerk_a, agent_a, 0, None, &federation_id);
         let payload_a1 = postcard::to_stdvec(&signed_a1).expect("encode A1");
-        execute_finalized_turn(&state, &handle, BlockId([0xA1; 32]), &payload_a1, None, 0).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            BlockId([0xA1; 32]),
+            &payload_a1,
+            None,
+            None,
+            0,
+        )
+        .await;
         let head_a1 = state
             .read()
             .await
@@ -8843,11 +9040,29 @@ mod tests {
 
         let signed_b1 = signed_noop(&clerk_b, agent_b, 0, None, &federation_id);
         let payload_b1 = postcard::to_stdvec(&signed_b1).expect("encode B1");
-        execute_finalized_turn(&state, &handle, BlockId([0xB1; 32]), &payload_b1, None, 1).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            BlockId([0xB1; 32]),
+            &payload_b1,
+            None,
+            None,
+            1,
+        )
+        .await;
 
         let signed_a2 = signed_noop(&clerk_a, agent_a, 1, Some(head_a1), &federation_id);
         let payload_a2 = postcard::to_stdvec(&signed_a2).expect("encode A2");
-        execute_finalized_turn(&state, &handle, BlockId([0xA2; 32]), &payload_a2, None, 2).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            BlockId([0xA2; 32]),
+            &payload_a2,
+            None,
+            None,
+            2,
+        )
+        .await;
 
         let before_omitted = state
             .read()
@@ -8861,7 +9076,16 @@ mod tests {
         let omitted = signed_noop(&clerk_a, agent_a, before_omitted, None, &federation_id);
         let omitted_payload = postcard::to_stdvec(&omitted).expect("encode omitted-link A3");
         let omitted_block = BlockId([0xA3; 32]);
-        execute_finalized_turn(&state, &handle, omitted_block, &omitted_payload, None, 3).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            omitted_block,
+            &omitted_payload,
+            None,
+            None,
+            3,
+        )
+        .await;
 
         let s = state.read().await;
         assert_eq!(s.cclerk.receipt_log_length(), 3);
@@ -8983,7 +9207,7 @@ mod tests {
 
         // With A1 the execution FFI runs off the worker + off the lock, so this
         // COMPLETES (does not wedge) and promotes.
-        execute_finalized_turn(&state, &handle, block_id, &turn_data, None, 0).await;
+        execute_finalized_turn(&state, &handle, block_id, &turn_data, None, None, 0).await;
 
         let height_after = {
             let s = state.read().await;
@@ -9142,7 +9366,16 @@ mod tests {
             .expect("failure hook mutex") = Some(failed_block.0);
         let self_key = [0xE5; 32];
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
-        execute_finalized_turn(&state, &handle, failed_block, &payload, Some(&bundle), 0).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            failed_block,
+            &payload,
+            Some(&bundle),
+            None,
+            0,
+        )
+        .await;
         assert!(
             FAIL_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
                 .lock()
@@ -9180,7 +9413,16 @@ mod tests {
         *REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
             .lock()
             .expect("replay hook mutex") = Some(replay_block.0);
-        execute_finalized_turn(&state, &handle, replay_block, &payload, Some(&bundle), 0).await;
+        execute_finalized_turn(
+            &state,
+            &handle,
+            replay_block,
+            &payload,
+            Some(&bundle),
+            None,
+            0,
+        )
+        .await;
         assert!(
             REPLAY_GENERIC_FINALIZED_COMMIT_FOR_BLOCK
                 .lock()
@@ -9222,6 +9464,7 @@ mod tests {
             &handle,
             BlockId([0xE9; 32]),
             &rejected_payload,
+            None,
             None,
             0,
         )
@@ -9378,7 +9621,7 @@ mod tests {
         let self_key = [0x9Au8; 32];
         let handle = test_handle_with_committee(self_key, vec![self_key]).await;
         let block_id = BlockId([0x22u8; 32]);
-        execute_finalized_turn(&state, &handle, block_id, &turn_data, None, 0).await;
+        execute_finalized_turn(&state, &handle, block_id, &turn_data, None, None, 0).await;
 
         // (a) THE FIX: the turn genuinely finalizes — attested height advances 0 -> 1.
         let height_after = {
@@ -9485,7 +9728,7 @@ mod tests {
             }
         }
         let block_id2 = BlockId([0x23u8; 32]);
-        execute_finalized_turn(&state, &handle, block_id2, &turn_data2, None, 0).await;
+        execute_finalized_turn(&state, &handle, block_id2, &turn_data2, None, None, 0).await;
         let height_after_2 = {
             let s = state.read().await;
             s.store

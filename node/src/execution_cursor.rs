@@ -53,6 +53,50 @@ use std::collections::HashSet;
 
 use dregg_blocklace::finality::BlockId;
 
+/// Typed result of applying one consensus-finalized actionable block.
+///
+/// Only the first two variants carry durable terminal authority and may move
+/// [`ExecutionCursor`].  Operational failure and integrity failure deliberately
+/// retain the identity as pending; the finality executor stops the current tau
+/// prefix at that identity instead of applying a successor through a hole.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FinalizedExecutionOutcome {
+    Committed {
+        block_id: BlockId,
+        durable_ordinal: u64,
+    },
+    DeterministicallyRejected {
+        block_id: BlockId,
+        reason_code: String,
+    },
+    RetryableOperational {
+        block_id: BlockId,
+        error: String,
+    },
+    FatalIntegrity {
+        block_id: BlockId,
+        error: String,
+    },
+}
+
+impl FinalizedExecutionOutcome {
+    pub const fn block_id(&self) -> BlockId {
+        match self {
+            Self::Committed { block_id, .. }
+            | Self::DeterministicallyRejected { block_id, .. }
+            | Self::RetryableOperational { block_id, .. }
+            | Self::FatalIntegrity { block_id, .. } => *block_id,
+        }
+    }
+
+    pub const fn is_durable_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Committed { .. } | Self::DeterministicallyRejected { .. }
+        )
+    }
+}
+
 /// Identity-tracking cursor: which finalized blocks has this node already
 /// served to the executor, by block id (NOT by position in the tau order).
 #[derive(Debug, Default)]
@@ -104,6 +148,17 @@ impl ExecutionCursor {
         if self.executed.insert(id) {
             self.served.push(id);
             true
+        } else {
+            false
+        }
+    }
+
+    /// Acknowledge an actionable identity only after its executor returned a
+    /// durable terminal fact.  Returning `false` for retry/fatal outcomes makes
+    /// premature acknowledgement structurally explicit at the caller.
+    pub fn acknowledge_terminal(&mut self, outcome: &FinalizedExecutionOutcome) -> bool {
+        if outcome.is_durable_terminal() {
+            self.mark_executed(outcome.block_id())
         } else {
             false
         }
@@ -394,5 +449,41 @@ mod tests {
         assert_eq!(cursor.executed_count(), 1);
         assert_eq!(cursor.executed_ids(), &[id]);
         assert!(cursor.is_executed(&id));
+    }
+
+    #[test]
+    fn only_durable_terminal_outcomes_advance_the_cursor() {
+        let committed = FinalizedExecutionOutcome::Committed {
+            block_id: BlockId([1; 32]),
+            durable_ordinal: 7,
+        };
+        let rejected = FinalizedExecutionOutcome::DeterministicallyRejected {
+            block_id: BlockId([2; 32]),
+            reason_code: "bad-signature".into(),
+        };
+        let retry = FinalizedExecutionOutcome::RetryableOperational {
+            block_id: BlockId([3; 32]),
+            error: "store unavailable".into(),
+        };
+        let fatal = FinalizedExecutionOutcome::FatalIntegrity {
+            block_id: BlockId([4; 32]),
+            error: "conflicting durable row".into(),
+        };
+
+        let mut cursor = ExecutionCursor::new();
+        assert!(cursor.acknowledge_terminal(&committed));
+        assert!(cursor.acknowledge_terminal(&rejected));
+        assert!(!cursor.acknowledge_terminal(&retry));
+        assert!(!cursor.acknowledge_terminal(&fatal));
+        assert_eq!(cursor.executed_ids(), &[BlockId([1; 32]), BlockId([2; 32])]);
+        assert_eq!(
+            cursor.pending(&[
+                BlockId([1; 32]),
+                BlockId([2; 32]),
+                BlockId([3; 32]),
+                BlockId([4; 32])
+            ]),
+            vec![BlockId([3; 32]), BlockId([4; 32])]
+        );
     }
 }

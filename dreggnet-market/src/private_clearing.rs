@@ -313,6 +313,65 @@ impl PrivateClearingCommitmentStore {
 }
 
 impl PrivateClearingReceipt {
+    /// Reconstruct the narrow canonical receipt shape carried by the private
+    /// Bazaar worker spool.  The spool owns the byte schema; this constructor
+    /// exists here because [`PublicStatement`] deliberately belongs to the
+    /// proving crate and is not re-exported as an ambient wire type.
+    ///
+    /// This is not a verifier or a public ingestion surface.  It performs the
+    /// statement/finality shape checks that can be made without the live market;
+    /// the worker still rejoins the result to the exact hosted market receipt
+    /// before it can mint any consequence authority.
+    #[doc(hidden)]
+    pub fn from_worker_spool_v1_parts(
+        session: u32,
+        rule: u32,
+        order_root: [u32; dark_bazaar_private::DIGEST_WIDTH],
+        price: u32,
+        volume: u32,
+        winner: DreggIdentity,
+        settlement_turn: dregg_app_framework::TurnReceipt,
+    ) -> Result<Self, PrivateClearingError> {
+        let statement = PublicStatement {
+            session,
+            rule,
+            order_root,
+            p_star: price,
+            v_star: volume,
+        };
+        if u64::from(statement.session) >= BABYBEAR_P
+            || statement.rule != dark_bazaar_private::RULE_ID
+            || statement.p_star as usize >= dark_bazaar_private::PRICE_COUNT
+            || statement.v_star != 1
+            || statement
+                .order_root
+                .iter()
+                .any(|lane| u64::from(*lane) >= BABYBEAR_P)
+        {
+            return Err(PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "public statement is outside the fixed Dark Bazaar field/rule/shape".to_owned(),
+            ));
+        }
+        if winner.0.is_empty() {
+            return Err(PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "winner is empty".to_owned(),
+            ));
+        }
+        if settlement_turn.finality != dregg_turn::Finality::Final
+            || settlement_turn.turn_hash == [0; 32]
+            || settlement_turn.receipt_hash() == [0; 32]
+        {
+            return Err(PrivateClearingError::InvalidWorkerSpoolReceipt(
+                "settlement turn is not final canonical evidence".to_owned(),
+            ));
+        }
+        Ok(Self {
+            statement,
+            winner,
+            settlement_turn,
+        })
+    }
+
     /// The verified first-price clearing value.
     pub const fn price(&self) -> u32 {
         self.statement.p_star
@@ -369,6 +428,9 @@ pub enum PrivateClearingError {
     CommitmentBlindAlreadyUsed,
     /// No durable binding exists and the caller did not supply a new blind.
     CommitmentBindingNotFound,
+    /// The deployment-owned fixed worker-spool codec supplied a noncanonical
+    /// public statement or non-final settlement envelope.
+    InvalidWorkerSpoolReceipt(String),
     /// Durable worker-private commitment storage failed.
     CommitmentIo {
         operation: &'static str,
@@ -460,6 +522,9 @@ impl std::fmt::Display for PrivateClearingError {
                 f,
                 "private commitment binding does not exist and no new blind was supplied"
             ),
+            Self::InvalidWorkerSpoolReceipt(why) => {
+                write!(f, "private worker spool receipt refused: {why}")
+            }
             Self::CommitmentIo { operation, detail } => {
                 write!(
                     f,

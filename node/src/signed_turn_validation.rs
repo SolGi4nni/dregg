@@ -274,6 +274,38 @@ impl FinalizedPayloadRejectionRecord {
     pub fn encode(&self) -> Result<Vec<u8>, postcard::Error> {
         postcard::to_stdvec(self)
     }
+
+    /// Decode and authenticate one restart authority row against the immutable
+    /// finalized block coordinate.  A config value under the right key is not
+    /// sufficient: the version, embedded id, payload digest, and stable reason
+    /// must all agree before recovery may suppress execution.
+    pub fn decode_authenticated(
+        bytes: &[u8],
+        block_id: [u8; 32],
+        payload: &[u8],
+    ) -> Result<Self, &'static str> {
+        let record: Self = postcard::from_bytes(bytes).map_err(|_| "malformed rejection row")?;
+        if record.version != Self::VERSION {
+            return Err("unsupported rejection row version");
+        }
+        if record.block_id != block_id {
+            return Err("rejection row block id mismatch");
+        }
+        if record.payload_hash != *blake3::hash(payload).as_bytes() {
+            return Err("rejection row payload digest mismatch");
+        }
+        if record.reason_code.is_empty() || record.reason_code.len() > 128 {
+            return Err("rejection row reason code is not canonical");
+        }
+        if !record
+            .reason_code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err("rejection row reason code is not canonical");
+        }
+        Ok(record)
+    }
 }
 
 #[cfg(test)]

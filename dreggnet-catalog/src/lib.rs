@@ -84,8 +84,9 @@ pub use private_bazaar_live::{
 };
 #[cfg(feature = "private-bazaar-live")]
 pub use private_bazaar_worker::{
-    FinalizedPrivateBazaarReceipt, FinalizedPrivateBazaarReceiptSource, PrivateBazaarWorkerError,
-    PrivateBazaarWorkerListener, PrivateBazaarWorkerPoll, PrivateBazaarWorkerTargets,
+    FinalizedPrivateBazaarReceipt, FinalizedPrivateBazaarReceiptSource, PrivateBazaarFileWorker,
+    PrivateBazaarReceiptSpool, PrivateBazaarWorkerError, PrivateBazaarWorkerListener,
+    PrivateBazaarWorkerPoll, PrivateBazaarWorkerRun, PrivateBazaarWorkerTargets,
 };
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub use private_fhegg_game_consequence::{

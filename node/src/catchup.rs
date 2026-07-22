@@ -324,13 +324,27 @@ pub fn apply_with_buffering(
             Err(BlockError::InvalidSignature { .. })
             | Err(BlockError::UnsignedPq { .. })
             | Err(BlockError::BadPqSignature { .. })
-            | Err(BlockError::UnenrolledCreator { .. }) => {
+            | Err(BlockError::UnenrolledCreator { .. })
+            | Err(BlockError::ConsensusTimePolicyMissing)
+            | Err(BlockError::LegacyTurnAfterConsensusTimeCutover)
+            | Err(BlockError::ConsensusTimedTurnOversize)
+            | Err(BlockError::ConsensusGenesisTimeMismatch { .. })
+            | Err(BlockError::ConsensusTimeRegression { .. })
+            | Err(BlockError::ConsensusTimeForwardBound { .. })
+            | Err(BlockError::ConsensusTimeBoundOverflow)
+            | Err(BlockError::ConsensusTimePolicyReplacement)
+            | Err(BlockError::ConsensusTimeFlagDayRequiresEmptyLace)
+            | Err(BlockError::ConsensusTimeFrontierMissing { .. }) => {
                 // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
                 // halves are the gate). A bad ed25519 half, a missing/forged
                 // post-quantum half, or a creator with no enrolled ML-DSA key
                 // fails CLOSED here — never inserted, never buffered, never
                 // pulled. A quantum adversary who forges only the classical half
                 // cannot inject a block under an enrolled member's identity.
+                // Consensus-time failures are likewise deterministic invalid
+                // payload/policy observations, never missing-history retries;
+                // buffering or pulling them would turn a stable refusal into a
+                // hot operational loop.
             }
         }
     }

@@ -33,7 +33,8 @@ use dreggnet_offerings::{DreggIdentity, OfferingHost};
 use dungeon_on_dregg::progression::DungeonWorldCell;
 
 use crate::private_bazaar_worker::{
-    PrivateBazaarWorkerError, PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
+    PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarWorkerError,
+    PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
 };
 use crate::{CatalogConfig, build_full_catalog};
 
@@ -170,6 +171,27 @@ impl PrivateBazaarLiveDeployment {
             targets,
             self.authority_dir.join("private-worker"),
         )
+    }
+
+    /// Open the deployment-custodied append-only finalized-receipt producer.
+    /// Its fixed-schema file is colocated with the listener cursor/claims but
+    /// remains wholly outside every frontend host and status projection.
+    pub fn private_receipt_spool(
+        &self,
+    ) -> Result<PrivateBazaarReceiptSpool, PrivateBazaarWorkerError> {
+        PrivateBazaarReceiptSpool::open(self.authority_dir.join("private-worker"))
+    }
+
+    /// Open the production file transport and listener as one bounded runner.
+    /// Process/thread spawning remains an embedding concern; callers invoke
+    /// `tick` or `run_until_idle` from their supervised worker context.
+    pub fn private_file_worker(
+        &self,
+        targets: PrivateBazaarWorkerTargets,
+    ) -> Result<PrivateBazaarFileWorker, PrivateBazaarWorkerError> {
+        let listener = self.private_worker(targets)?;
+        let source = self.private_receipt_spool()?;
+        Ok(PrivateBazaarFileWorker::new(listener, source))
     }
 
     /// Consume one verified private clearing already installed in the exact
@@ -384,7 +406,11 @@ pub fn full_catalog_host_with_private_bazaar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_app_framework::{CellId, symbol};
+    use dregg_app_framework::{
+        CellId, MlDsaKeygenCoreRealInstall, MlDsaSignCoreRealInstall, MlDsaVerifyCoreInstall,
+        install_verified_mldsa_keygen_core_real, install_verified_mldsa_sign_core_real,
+        install_verified_mldsa_verify_core, symbol,
+    };
     use dreggnet_market::private_bazaar_journey::{
         PrivateBazaarDeploymentPin, PrivateBazaarRaidPolicy,
     };
@@ -461,6 +487,22 @@ mod tests {
             root,
         )
         .unwrap()
+    }
+
+    fn install_verified_test_pq_runtime() {
+        assert!(std::env::var_os("DREGG_ALLOW_UNAUDITED_PQ").is_none());
+        assert!(matches!(
+            install_verified_mldsa_keygen_core_real(),
+            MlDsaKeygenCoreRealInstall::Installed | MlDsaKeygenCoreRealInstall::AlreadyInstalled
+        ));
+        assert!(matches!(
+            install_verified_mldsa_sign_core_real(),
+            MlDsaSignCoreRealInstall::Installed | MlDsaSignCoreRealInstall::AlreadyInstalled
+        ));
+        assert!(matches!(
+            install_verified_mldsa_verify_core(),
+            MlDsaVerifyCoreInstall::Installed | MlDsaVerifyCoreInstall::AlreadyInstalled
+        ));
     }
 
     fn playable_policy(hero: &DungeonWorldCell) -> PrivateBazaarRaidPolicy {
@@ -604,6 +646,7 @@ mod tests {
 
     #[test]
     fn hosted_private_worker_settles_viewer_blind_and_xp_is_exactly_once_across_restart() {
+        install_verified_test_pq_runtime();
         let temp = tempfile::tempdir().unwrap();
         let authority_dir = temp.path().join("authority");
         let sessions_dir = temp.path().join("sessions");
@@ -716,6 +759,7 @@ mod tests {
 
     #[test]
     fn finalized_receipt_listener_recovers_dispatching_without_redispatch_after_restart() {
+        install_verified_test_pq_runtime();
         let temp = tempfile::tempdir().unwrap();
         let authority_dir = temp.path().join("authority");
         let sessions_dir = temp.path().join("sessions");
@@ -793,6 +837,66 @@ mod tests {
         );
         assert_eq!(worker.poll_once(&mut source).unwrap().processed, 0);
 
+        let rendered = format!(
+            "{:?}",
+            host.render(PRIVATE_BAZAAR_RAID_KEY, &id).unwrap().view()
+        );
+        assert!(rendered.contains("Settled"), "{rendered}");
+        assert!(!rendered.contains("catalog-private-winner"), "{rendered}");
+        assert!(!rendered.contains("order_root"), "{rendered}");
+    }
+
+    #[test]
+    fn deployment_file_spool_replays_unacked_dispatch_and_runs_until_idle() {
+        install_verified_test_pq_runtime();
+        let temp = tempfile::tempdir().unwrap();
+        let authority_dir = temp.path().join("authority");
+        let hero = Arc::new(deploy_hero(0x95));
+        hero.set_executor_signing_key([0xA9; 32]);
+        let deployment =
+            PrivateBazaarLiveDeployment::open(playable_policy(&hero), 1, &authority_dir).unwrap();
+        let targets = PrivateBazaarWorkerTargets::default();
+        targets.install(Arc::clone(&hero)).unwrap();
+        let mut host =
+            full_catalog_host_with_private_bazaar(&CatalogConfig::default(), &deployment);
+        let id = SessionId::new("catalog-private-bazaar-file-worker");
+        let seed = 0xB5_2A_B5;
+        enter_hosted_raid(&mut host, &id, seed);
+        let receipt = settle_worker_market(&deployment, seed, Some([0x0011_57EA; 8]));
+
+        let mut producer = deployment.private_receipt_spool().unwrap();
+        producer.append(1, seed, receipt).unwrap();
+        let worker = deployment.private_worker(targets.clone()).unwrap();
+        let mut source = deployment.private_receipt_spool().unwrap();
+        assert!(matches!(
+            worker.poll_once_with_after_dispatch_crash(&mut source),
+            Err(PrivateBazaarWorkerError::InjectedAfterTargetDispatch)
+        ));
+        assert_eq!(hero.read_var("xp"), 144);
+        let target_receipts_after_uncertain_dispatch = hero.receipt_chain_snapshot().len();
+
+        // Reopening both halves models worker-process loss before cursor ack:
+        // cursor 1 is replayed from the fsynced spool, while the dispatching
+        // authority recovers the already-landed target receipt exactly once.
+        let mut restarted_worker = deployment.private_file_worker(targets).unwrap();
+        assert!(matches!(
+            restarted_worker.run_until_idle(0),
+            Err(PrivateBazaarWorkerError::InvalidRunBound { .. })
+        ));
+        let run = restarted_worker.run_until_idle(2).unwrap();
+        assert_eq!(run.cursor, 1);
+        assert_eq!(run.processed, 1);
+        assert_eq!(run.ticks, 2);
+        assert!(run.idle);
+        assert_eq!(hero.read_var("xp"), 144);
+        assert_eq!(
+            hero.receipt_chain_snapshot().len(),
+            target_receipts_after_uncertain_dispatch,
+            "spool replay must recover, never redispatch"
+        );
+        let operational = format!("{run:?}");
+        assert!(!operational.contains("winner"), "{operational}");
+        assert!(!operational.contains("order_root"), "{operational}");
         let rendered = format!(
             "{:?}",
             host.render(PRIVATE_BAZAAR_RAID_KEY, &id).unwrap().view()
