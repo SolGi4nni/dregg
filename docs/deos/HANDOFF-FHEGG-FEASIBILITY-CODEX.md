@@ -92,7 +92,7 @@ classical seams into a post-quantum composition.
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody/semantic/shortness private_book_distributed_inputs: 5/5 release green |
-| Distributed private-order proof | **GATED THROUGH BOUNDED SHORTS + QUOTIENT CUSTODY** | base proof establishes share openings/root zero/order selectors/all 12,288 bounded BFV shorts; post-certificate phase commits, range-proves, shares, links, signs, and acknowledges 384 bounded RNS quotients per owner, 2/2 in 12.620s; exact quotient derivation and final worker equation remain |
+| Distributed private-order proof | **GATED THROUGH EXACT QUOTIENT DERIVATION/CUSTODY** | base proof establishes share openings/root zero/order selectors/all 12,288 bounded BFV shorts; post-certificate phase derives, range-proves, shares, links, signs, and acknowledges 384 exact RNS quotients per owner; real 4×384 production gate 1/1 in 173.204s; final alpha worker equation remains |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
@@ -504,12 +504,18 @@ must acknowledge the private packet, and the public certificate contains no
 shares. Production geometry is fixed at 16,384 coordinates per owner and
 65,536 for the final worker proof. Focused release gates are **2/2 in 12.620s**.
 
-This is custody/range/link, not yet the exact BFV proof. Quotients are currently
-caller-supplied bounded integers. The canonical exact `fhe.rs` coefficient API
-now exists, but divisibility-derived quotient creation, second challenge,
-65,536-coordinate worker equation, canonical quotient wire, production
-relation-digest constructor, Poseidon/root, clearing, sampler image, and PQ
-replacement remain.
+This is not yet the final distributed BFV proof, but quotient construction is
+now exact rather than caller-supplied. Each owner retains a non-cloneable
+continuation of its committed local witness. After the base certificate fixes
+the challenge, it evaluates the canonical equations, requires exact divisibility
+by every RNS modulus, and constructs its 384 bounded quotients. The real
+production gate derived and completed custody for **4 owners × 384 equations**
+from actual degree-4096 `fhe.rs` key/ciphertexts/openings in **173.204s**; a
+mutated ciphertext failed through the internally derived relation digest. The
+production session constructor no longer accepts an arbitrary digest, and its
+focused target is **5/5 in 6.507s**. The second challenge,
+65,536-coordinate worker equation, canonical quotient wire, Poseidon/root,
+clearing, sampler image, and PQ replacement remain.
 
 `private_book_bfv_exact` is the one public lowering shared by monolithic and
 distributed backends. It internally derives the public key/ciphertext rows,

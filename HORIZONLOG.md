@@ -11019,11 +11019,20 @@ those exact coordinates. Owner signatures are checked before proof work (the
 hostile counter remains zero), all worker acknowledgements are required, and
 the public certificate carries no shares. Production geometry is pinned at
 16,384 coordinates per owner / 65,536 for the final worker relation. Focused
-release gates are **2/2 in 12.620s**. The quotients are still caller-supplied
-bounded integers: exact coefficient derivation/divisibility, the second
-challenge and 65,536-coordinate worker equation, canonical quotient wire,
-production relation-digest constructor, Poseidon/clearing, sampler image, and
-PQ replacement remain open.
+release gates are **2/2 in 12.620s**.
+
+The quotient values are no longer caller fiction (`a31218e84`). Every owner
+retains a non-cloneable continuation of its exact committed local witness; only
+after the base certificate fixes the coefficient challenge does it evaluate the
+shared exact-BFV equations, require exact integer divisibility by each RNS
+modulus, and construct the 384 bounded quotients. A real production gate derived
+and completed custody for **4 owners × 384 equations** from actual degree-4096
+`fhe.rs` key/ciphertexts/openings in **173.204s**, and a mutated ciphertext was
+rejected through the internally derived session relation digest. The production
+session API no longer accepts an arbitrary digest; focused constructor teeth are
+**5/5 in 6.507s**. The second challenge and 65,536-coordinate worker equation,
+canonical quotient wire, Poseidon/clearing, sampler image, and PQ replacement
+remain open.
 
 The public exact-BFV lowering is no longer duplicated between proof backends
 (`6b9691c83`). `private_book_bfv_exact` derives the public key, ciphertext,
