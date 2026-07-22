@@ -260,6 +260,90 @@ pub struct CipherclerkResponse {
     pub receipt_chain_length: usize,
 }
 
+/// Exactly one stable coordinate for the authenticated finalized-receipt query.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FinalizedReceiptCoreQuery {
+    pub receipt_index: Option<u64>,
+    pub core_id: Option<String>,
+}
+
+/// Provenance-preserving predecessor projected from the canonical FRC1 core.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FinalizedReceiptPredecessorResponse {
+    Genesis,
+    LegacyCutover {
+        legacy_receipt_index: u64,
+        legacy_receipt_hash: String,
+    },
+    Core {
+        core_id: String,
+        legacy_receipt_index: u64,
+        legacy_receipt_hash: String,
+    },
+}
+
+/// Signer-independent exact finalization object served with its two durable coordinates.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct FinalizedReceiptCoreResponse {
+    pub protocol: &'static str,
+    pub receipt_index: u64,
+    pub core_id: String,
+    /// Canonical fixed-width FRC1 bytes.  Clients rehash these under the FRC1 domain and compare
+    /// the result with `core_id`; no local FRE1 signature is required or returned.
+    pub canonical_core: String,
+    pub block_id: String,
+    pub tau_round: u64,
+    pub consensus_unix_seconds: i64,
+    pub committee_epoch: u64,
+    pub predecessor: FinalizedReceiptPredecessorResponse,
+    pub turn_hash: String,
+    pub agent: String,
+    pub federation_id: String,
+}
+
+impl FinalizedReceiptCoreResponse {
+    fn from_core(receipt_index: u64, core: dregg_turn::FinalizedReceiptCoreV1) -> Self {
+        let context = core.context();
+        let predecessor = match core.predecessor() {
+            dregg_turn::FinalizedReceiptPredecessorV1::Genesis => {
+                FinalizedReceiptPredecessorResponse::Genesis
+            }
+            dregg_turn::FinalizedReceiptPredecessorV1::LegacyCutover {
+                legacy_receipt_index,
+                legacy_receipt_hash,
+            } => FinalizedReceiptPredecessorResponse::LegacyCutover {
+                legacy_receipt_index,
+                legacy_receipt_hash: hex_encode(&legacy_receipt_hash),
+            },
+            dregg_turn::FinalizedReceiptPredecessorV1::Core {
+                core_id,
+                legacy_receipt_index,
+                legacy_receipt_hash,
+            } => FinalizedReceiptPredecessorResponse::Core {
+                core_id: hex_encode(&core_id.bytes()),
+                legacy_receipt_index,
+                legacy_receipt_hash: hex_encode(&legacy_receipt_hash),
+            },
+        };
+        Self {
+            protocol: "FRC1",
+            receipt_index,
+            core_id: hex_encode(&core.id().bytes()),
+            canonical_core: hex_encode(&core.to_canonical_bytes()),
+            block_id: hex_encode(&context.block_id()),
+            tau_round: context.tau_round(),
+            consensus_unix_seconds: context.consensus_unix_seconds(),
+            committee_epoch: core.committee_epoch(),
+            predecessor,
+            turn_hash: hex_encode(&core.turn_hash()),
+            agent: hex_encode(&core.agent()),
+            federation_id: hex_encode(&core.federation_id()),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct AuthorizeRequest {
     pub token_id: String,
@@ -1945,6 +2029,13 @@ pub fn router_with_cors(
         .route("/cipherclerk/attenuate", post(post_attenuate))
         .route("/cipherclerk/tokens", get(get_tokens))
         .route("/cipherclerk/receipts", get(get_receipts))
+        // Authenticated, bounded lookup of the signer-independent consensus receipt object.
+        // The canonical FRC1 bytes are self-verifying under the returned typed id; local FRE1
+        // envelopes are deliberately not read or returned.
+        .route(
+            "/api/receipts/finalized-core",
+            get(get_finalized_receipt_core),
+        )
         .route("/intents", get(get_intents).post(post_intent))
         .route("/intents/encrypted", post(post_encrypted_intent))
         .route("/intents/encrypted/search", post(post_sse_search))
@@ -2712,6 +2803,39 @@ async fn get_receipt_index_range(
 async fn get_receipts(State(state): State<NodeState>) -> Json<Vec<ReceiptInfo>> {
     let s = state.read().await;
     Json(receipt_infos_from_chain(&s, 50))
+}
+
+/// `GET /api/receipts/finalized-core?receipt_index=N|core_id=<64 hex>`.
+///
+/// Exactly one coordinate is accepted.  Both store lookups cross-check the canonical core and
+/// reciprocal durable indexes in bounded B-tree reads.  Unknown coordinates are `404`; malformed
+/// or ambiguous queries are `400`; any reciprocal/index/core corruption fails closed as `500`.
+async fn get_finalized_receipt_core(
+    State(state): State<NodeState>,
+    Query(query): Query<FinalizedReceiptCoreQuery>,
+) -> Result<Json<FinalizedReceiptCoreResponse>, StatusCode> {
+    let s = state.read().await;
+    let found = match (query.receipt_index, query.core_id) {
+        (Some(receipt_index), None) => s
+            .store
+            .finalized_receipt_core_v1(receipt_index)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map(|(_, core)| (receipt_index, core)),
+        (None, Some(core_id)) => {
+            let bytes: [u8; 32] = hex_decode(&core_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+            let id = dregg_turn::FinalizedReceiptIdV1::from_bytes(bytes)
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            s.store
+                .finalized_receipt_core_v1_by_id(id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        }
+        (None, None) | (Some(_), Some(_)) => return Err(StatusCode::BAD_REQUEST),
+    };
+    let (receipt_index, core) = found.ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(FinalizedReceiptCoreResponse::from_core(
+        receipt_index,
+        core,
+    )))
 }
 
 async fn get_receipt_witnesses(
@@ -9226,6 +9350,114 @@ mod tests {
         let decoded = dregg_turn::WitnessedReceipt::from_artifact_bytes(&artifact_bytes)
             .expect("DWR1 witness artifact decodes");
         assert_eq!(decoded.proof_bytes, vec![0x41, 0x42]);
+    }
+
+    #[tokio::test]
+    async fn finalized_core_query_is_bearer_gated_and_rejects_bad_coordinates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        let bearer_seed = [0xB7; 32];
+        state.write().await.bearer_seed = Some(bearer_seed);
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+        let unknown_id = hex_encode(&[0x44; 32]);
+
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/receipts/finalized-core?core_id={unknown_id}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+        let token = api_bearer_token(bearer_seed);
+        let authenticated = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request")
+        };
+        let unknown = app
+            .clone()
+            .oneshot(authenticated(&format!(
+                "/api/receipts/finalized-core?core_id={unknown_id}"
+            )))
+            .await
+            .expect("response");
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        for uri in [
+            "/api/receipts/finalized-core",
+            "/api/receipts/finalized-core?core_id=not-hex",
+            "/api/receipts/finalized-core?core_id=0000000000000000000000000000000000000000000000000000000000000000",
+            "/api/receipts/finalized-core?receipt_index=0&core_id=4444444444444444444444444444444444444444444444444444444444444444",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(authenticated(uri))
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        }
+    }
+
+    #[test]
+    fn finalized_core_response_projects_canonical_consensus_object_only() {
+        let legacy_hash = [0x51; 32];
+        let predecessor_id = dregg_turn::FinalizedReceiptIdV1::from_bytes([0x52; 32]).unwrap();
+        let receipt = dregg_turn::TurnReceipt {
+            turn_hash: [0x53; 32],
+            timestamp: 1_700_000_053,
+            finality: dregg_turn::Finality::Final,
+            agent: CellId([0x54; 32]),
+            federation_id: [0x55; 32],
+            previous_receipt_hash: Some(legacy_hash),
+            ..Default::default()
+        };
+        let core = dregg_turn::FinalizedReceiptCoreV1::from_receipt(
+            dregg_turn::FinalizedExecutionContextV1::new([0x56; 32], 57, receipt.timestamp),
+            58,
+            dregg_turn::FinalizedReceiptPredecessorV1::Core {
+                core_id: predecessor_id,
+                legacy_receipt_index: 59,
+                legacy_receipt_hash: legacy_hash,
+            },
+            &receipt,
+        )
+        .unwrap();
+        let expected_id = hex_encode(&core.id().bytes());
+        let response = FinalizedReceiptCoreResponse::from_core(60, core);
+
+        assert_eq!(response.protocol, "FRC1");
+        assert_eq!(response.receipt_index, 60);
+        assert_eq!(response.core_id, expected_id);
+        assert_eq!(
+            response.canonical_core.len(),
+            dregg_turn::FINALIZED_RECEIPT_CORE_V1_LEN * 2
+        );
+        assert_eq!(response.block_id, hex_encode(&[0x56; 32]));
+        assert_eq!(response.tau_round, 57);
+        assert_eq!(response.consensus_unix_seconds, receipt.timestamp);
+        assert_eq!(response.committee_epoch, 58);
+        assert_eq!(response.turn_hash, hex_encode(&receipt.turn_hash));
+        assert_eq!(response.agent, hex_encode(&receipt.agent.0));
+        assert_eq!(response.federation_id, hex_encode(&receipt.federation_id));
+        assert_eq!(
+            response.predecessor,
+            FinalizedReceiptPredecessorResponse::Core {
+                core_id: hex_encode(&predecessor_id.bytes()),
+                legacy_receipt_index: 59,
+                legacy_receipt_hash: hex_encode(&legacy_hash),
+            }
+        );
+        let json = serde_json::to_value(response).unwrap();
+        assert!(json.get("executor_signature").is_none());
+        assert!(json.get("fre1").is_none());
     }
 
     /// The enrichment: a committed turn's decoded Transfer effect + the
