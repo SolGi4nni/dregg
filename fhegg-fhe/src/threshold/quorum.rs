@@ -87,7 +87,7 @@ use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use merlin::Transcript;
 use rand::{rngs::OsRng, CryptoRng, RngCore};
@@ -2699,13 +2699,30 @@ fn multiply_rns(
         .collect())
 }
 
-fn decrypt_range_gens() -> &'static BulletproofGens {
-    // The deployed fold set has degree 4096 and two RNS moduli.  Both the
-    // smudge/complement vector (4N) and quotient vector (2LN) therefore contain
-    // 16384 values.  The parameter gate below refuses larger/non-power-of-two
-    // shapes instead of silently constructing a weaker proof.
-    static GENS: OnceLock<BulletproofGens> = OnceLock::new();
-    GENS.get_or_init(|| BulletproofGens::new(64, 32_768))
+fn decrypt_range_gens(required_parties: usize) -> Result<Arc<BulletproofGens>> {
+    // Generator labels are indexed by party rather than by the configured
+    // capacity, so an exactly-sized set has the identical protocol namespace
+    // as the former always-32768 set.  Retain the largest set requested by this
+    // process and replace it only when a later admitted shape genuinely grows.
+    // In-flight proofs keep their Arc, avoiding either a global proof lock or a
+    // use-after-replacement race.
+    let required_parties = range_padded_len(required_parties)?;
+    static GENS: OnceLock<Mutex<Option<Arc<BulletproofGens>>>> = OnceLock::new();
+    let mut cached = GENS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cached
+        .as_ref()
+        .is_none_or(|generators| generators.party_capacity < required_parties)
+    {
+        *cached = Some(Arc::new(BulletproofGens::new(64, required_parties)));
+    }
+    Ok(Arc::clone(
+        cached
+            .as_ref()
+            .expect("generator cache initialized before cloning"),
+    ))
 }
 
 fn range_padded_len(values: usize) -> Result<usize> {
@@ -2783,6 +2800,8 @@ fn prove_decrypt_share_relation(
     }
 
     let mut transcript = decrypt_share_proof_transcript(share, secret_commitments, params)?;
+    let quotient_padded = range_padded_len(2 * params.moduli().len() * params.degree())?;
+    let range_gens = decrypt_range_gens(quotient_padded)?;
     let mut rng = OsRng;
     let bound = 1u128 << share.smudge_bits;
     let twice_bound = bound << 1;
@@ -2810,7 +2829,7 @@ fn prove_decrypt_share_relation(
         smudge_high_blindings.extend((0..2).map(|_| Scalar::random(&mut rng)));
     }
     let (smudge_low_range_proof, smudge_low_points) = RangeProof::prove_multiple(
-        decrypt_range_gens(),
+        &range_gens,
         &pc_gens,
         &mut transcript,
         &smudge_low_values,
@@ -2819,7 +2838,7 @@ fn prove_decrypt_share_relation(
     )
     .map_err(|_| QuorumError::InvalidDecryptShareProof { party: share.party })?;
     let (smudge_high_range_proof, smudge_high_points) = RangeProof::prove_multiple(
-        decrypt_range_gens(),
+        &range_gens,
         &pc_gens,
         &mut transcript,
         &smudge_high_values,
@@ -2883,13 +2902,13 @@ fn prove_decrypt_share_relation(
             }
         }
     }
-    let quotient_padded = range_padded_len(quotient_values.len())?;
+    debug_assert_eq!(quotient_padded, range_padded_len(quotient_values.len())?);
     while quotient_values.len() < quotient_padded {
         quotient_values.push(0);
         quotient_blindings.push(Scalar::random(&mut rng));
     }
     let (quotient_range_proof, quotient_points) = RangeProof::prove_multiple(
-        decrypt_range_gens(),
+        &range_gens,
         &pc_gens,
         &mut transcript,
         &quotient_values,
@@ -3004,10 +3023,11 @@ fn verify_decrypt_share_relation(
     let quotient_proof = RangeProof::from_bytes(&proof.quotient_range_proof)
         .map_err(|_| QuorumError::InvalidDecryptShareProof { party: share.party })?;
     let pc_gens = PedersenGens::default();
+    let range_gens = decrypt_range_gens(quotient_commitment_count)?;
     let mut transcript = decrypt_share_proof_transcript(share, secret_commitments, params)?;
     smudge_low_proof
         .verify_multiple(
-            decrypt_range_gens(),
+            &range_gens,
             &pc_gens,
             &mut transcript,
             &proof.smudge_commitments[..2 * params.degree()]
@@ -3019,7 +3039,7 @@ fn verify_decrypt_share_relation(
         .map_err(|_| QuorumError::InvalidDecryptShareProof { party: share.party })?;
     smudge_high_proof
         .verify_multiple(
-            decrypt_range_gens(),
+            &range_gens,
             &pc_gens,
             &mut transcript,
             &proof.smudge_commitments[2 * params.degree()..]
@@ -3031,7 +3051,7 @@ fn verify_decrypt_share_relation(
         .map_err(|_| QuorumError::InvalidDecryptShareProof { party: share.party })?;
     quotient_proof
         .verify_multiple(
-            decrypt_range_gens(),
+            &range_gens,
             &pc_gens,
             &mut transcript,
             &proof
@@ -3618,6 +3638,40 @@ impl<'a> WireCursor<'a> {
 #[cfg(test)]
 mod vss_tests {
     use super::*;
+
+    #[test]
+    fn right_sized_range_generators_interoperate_with_larger_capacity_namespace() {
+        let cached = decrypt_range_gens(4).unwrap();
+        let larger = BulletproofGens::new(64, 8);
+        let pedersen = PedersenGens::default();
+        let values = [1u64, 2, 3, 4];
+        let blindings = [
+            Scalar::from(11u64),
+            Scalar::from(12u64),
+            Scalar::from(13u64),
+            Scalar::from(14u64),
+        ];
+        let mut prover_transcript = Transcript::new(b"fhegg/range-generator-cache-test/v1");
+        let (proof, commitments) = RangeProof::prove_multiple(
+            &cached,
+            &pedersen,
+            &mut prover_transcript,
+            &values,
+            &blindings,
+            8,
+        )
+        .unwrap();
+        let mut verifier_transcript = Transcript::new(b"fhegg/range-generator-cache-test/v1");
+        proof
+            .verify_multiple(
+                &larger,
+                &pedersen,
+                &mut verifier_transcript,
+                &commitments,
+                8,
+            )
+            .unwrap();
+    }
 
     #[test]
     fn parallel_exact_convolution_preserves_canonical_row_order() {
