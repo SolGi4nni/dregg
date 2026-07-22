@@ -495,29 +495,33 @@ impl LiveCloseLoop {
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            let overlay = Arc::clone(&self.overlay);
-            let world = Arc::clone(&self.world);
-            let scene = Arc::clone(&self.scene);
-            match tokio::task::spawn_blocking(move || overlay.drive_close(&world, &scene)).await {
-                Ok(CloseTick::Landed(cert)) => tracing::info!(
+            // Run the close INLINE on this runtime-worker thread, NOT tokio::task::spawn_blocking.
+            // The close resolves a quorum-certified turn through the executor, whose admission (under
+            // full-Lean, `dregg_constraint_admits_present`) routes through the reality-gate's Lean
+            // constraint eval. Lean's runtime only serves threads it has registered; a spawn_blocking
+            // BLOCKING-pool thread is not one, so the eval fails there and the turn is SILENTLY REFUSED
+            // (the world never moves). Full-Lean verification caught exactly this — the timer-driven
+            // close landed nothing while the on-reactor `drive_once` (a registered worker) did. The
+            // close is a short CPU-bound fold on a dedicated close-loop task, so holding this worker
+            // for it is fine. PRODUCTION FOLLOW-UP: a dedicated Lean-registered close thread if a very
+            // large window's sign+verify would ever stall request handling.
+            match self.overlay.drive_close(&self.world, &self.scene) {
+                CloseTick::Landed(cert) => tracing::info!(
                     winner = cert.decision.winner,
                     winner_tally = cert.decision.winner_tally,
                     total = cert.decision.total,
                     "overlay close-loop: quorum-certified winner landed ONE real world turn \
                      (certified = quorum-certified + executor-admitted, NOT FRI-sound-on-chain)"
                 ),
-                Ok(CloseTick::Retained(why)) => tracing::debug!(
+                CloseTick::Retained(why) => tracing::debug!(
                     reason = %why,
                     "overlay close-loop: window below quorum/floor — retained for retry"
                 ),
-                Ok(CloseTick::Skipped(why)) => tracing::warn!(
+                CloseTick::Skipped(why) => tracing::warn!(
                     reason = %why,
                     "overlay close-loop: quorum-certified command refused by the executor — \
                      window dropped to unstick the round"
                 ),
-                Err(e) => {
-                    tracing::error!(error = %e, "overlay close-loop: close task panicked/cancelled")
-                }
             }
         }
     }
@@ -1429,8 +1433,14 @@ mod tests {
         live.spawn(); // starts the `tokio::time::interval` close-loop on this runtime.
 
         // The first interval tick is immediate (consumed); the first REAL close is ~one window in.
-        // Give the timer + off-reactor close ample slack.
-        tokio::time::sleep(Duration::from_millis(600)).await;
+        // POLL until the turn lands rather than a fixed sleep: the off-reactor close SIGNS the
+        // electorate's ballots, and the real Lean-verified PQ core is meaningfully slower than the
+        // `fips204` fallback — a fixed wait that suffices under `no-lean-link` is too short under
+        // full-Lean (this test caught exactly that). Wait up to 10s (vs the 60ms window) for the move.
+        let start = std::time::Instant::now();
+        while world.read_var("hp") != 30 && start.elapsed() < std::time::Duration::from_secs(10) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
 
         assert_eq!(
             world.read_var("hp"),
