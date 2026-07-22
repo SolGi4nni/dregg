@@ -49,6 +49,10 @@ use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
 use sha2::{Digest, Sha256, Sha512};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::preprocessing_use::{
+    run_party_with_durable_preprocessing, PreprocessingUseError, ReservedTripleMaterial,
+};
 use super::{
     run_party, run_party_equality, CircuitKind, CoordinatorChannels, CoordinatorMessage, CurveKind,
     DecisionTranscript, DistributedDecisionRun, DistributedRun, DistributedTranscript,
@@ -110,13 +114,20 @@ pub enum EqualityTransportError {
     SessionMismatch,
     SenderMismatch,
     RecipientMismatch,
-    SequenceMismatch { sender: usize, have: u64, need: u64 },
+    SequenceMismatch {
+        sender: usize,
+        have: u64,
+        need: u64,
+    },
     AuthenticationFailed,
     ConfidentialityFailed,
     EntropyUnavailable,
     ChannelClosed,
     WorkerPanicked,
     Mpc(PartyMpcError),
+    /// A certified row reached the transport only through a durable reservation,
+    /// but its monotone custody transition or reserved execution failed.
+    DurablePreprocessingCustody(String),
 }
 
 impl fmt::Display for EqualityTransportError {
@@ -145,6 +156,9 @@ impl fmt::Display for EqualityTransportError {
             Self::ChannelClosed => write!(f, "PartyMPC transport channel closed"),
             Self::WorkerPanicked => write!(f, "PartyMPC transport worker panicked"),
             Self::Mpc(error) => write!(f, "PartyMPC runtime refused: {error}"),
+            Self::DurablePreprocessingCustody(error) => {
+                write!(f, "durable PartyMPC preprocessing custody refused: {error}")
+            }
         }
     }
 }
@@ -1871,7 +1885,7 @@ pub struct CrossingPartyMachine {
     outbound: Receiver<RawOutbound>,
     peer_in: Sender<PeerInputMessage>,
     coordinator_in: Sender<CoordinatorMessage>,
-    result: Receiver<std::result::Result<PartyReport, PartyMpcError>>,
+    result: Receiver<std::result::Result<PartyReport, EqualityTransportError>>,
     outbound_sequences: Vec<u64>,
     inbound_sequences: Vec<u64>,
     sealed_endpoint: Option<SealedCrossingEndpoint>,
@@ -2036,6 +2050,58 @@ impl CrossingPartyMachine {
         Ok(machine)
     }
 
+    /// Construct the v5 crossing endpoint from an already-durable FHTRI004
+    /// reservation.
+    ///
+    /// The ordinary constructors intentionally refuse certified material. This
+    /// is the sole transport adapter for it: the opaque reservation is consumed
+    /// by [`run_party_with_durable_preprocessing`], whose private authorization
+    /// token reaches the arithmetic core only after the compare-and-set record
+    /// has been flushed. A failed/stalled worker leaves the row permanently
+    /// reserved; a completed worker must durably append `Consumed` before this
+    /// machine reports success or permits a terminal endpoint seal.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn new_native_post_quantum_sealed_with_durable_preprocessing(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        identity: NativePqTransportIdentity,
+        input: PartyArithmeticInput,
+        preprocessing: ReservedTripleMaterial,
+    ) -> Result<Self> {
+        validate_crossing_transport_session(&session, &roster)?;
+        if roster.profile != TransportSecurityProfile::NativePostQuantumSealedCrossing {
+            return Err(EqualityTransportError::InvalidConfiguration(
+                "sealed native-PQ endpoint requires the v5 sealed crossing profile",
+            ));
+        }
+        roster.validate_native_identity(party, &identity)?;
+        preprocessing.validate_transport_binding(&session, party)?;
+        let session_digest = transport_session_digest(&session, &roster)?;
+        let sealed_endpoint =
+            SealedCrossingEndpoint::new(party, session_digest, &roster, &identity)?;
+        let NativePqTransportIdentity {
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            ..
+        } = identity;
+        let mut machine = Self::new_with_crypto_worker(
+            session,
+            roster,
+            party,
+            signing_key,
+            Some(ml_dsa),
+            Some(ml_kem_dk),
+            move |channels| {
+                run_party_with_durable_preprocessing(input, preprocessing, channels)
+                    .map_err(map_preprocessing_use_error)
+            },
+        )?;
+        machine.sealed_endpoint = Some(sealed_endpoint);
+        Ok(machine)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new_with_crypto(
         session: PartyMpcSession,
@@ -2053,6 +2119,33 @@ impl CrossingPartyMachine {
             ));
         }
         preprocessing.validate_runtime_binding()?;
+        Self::new_with_crypto_worker(
+            session,
+            roster,
+            party,
+            signing_key,
+            ml_dsa,
+            ml_kem_dk,
+            move |channels| run_party(input, preprocessing, channels).map_err(Into::into),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_crypto_worker<F>(
+        session: PartyMpcSession,
+        roster: EqualityTransportRoster,
+        party: usize,
+        signing_key: SigningKey,
+        ml_dsa: Option<MlDsaKey>,
+        ml_kem_dk: Option<Vec<u8>>,
+        worker: F,
+    ) -> Result<Self>
+    where
+        F: FnOnce(PartyChannels) -> std::result::Result<PartyReport, EqualityTransportError>
+            + Send
+            + 'static,
+    {
+        let session_digest = transport_session_digest(&session, &roster)?;
         let (party_out_tx, party_out_rx) = mpsc::channel();
         let (peer_out_tx, peer_out_rx) = mpsc::channel();
         let (peer_in_tx, peer_in_rx) = mpsc::channel();
@@ -2083,11 +2176,11 @@ impl CrossingPartyMachine {
         }));
         let (result_tx, result_rx) = mpsc::channel();
         drop(thread::spawn(move || {
-            let _ = result_tx.send(run_party(input, preprocessing, channels));
+            let _ = result_tx.send(worker(channels));
         }));
 
         Ok(Self {
-            session_digest: transport_session_digest(&session, &roster)?,
+            session_digest,
             session,
             roster: roster.clone(),
             party,
@@ -2246,7 +2339,7 @@ impl CrossingPartyMachine {
     pub fn try_result(&mut self) -> Result<Option<PartyReport>> {
         match self.result.try_recv() {
             Ok(result) => {
-                let report = result.map_err(EqualityTransportError::from)?;
+                let report = result?;
                 self.result_completed = true;
                 Ok(Some(report))
             }
@@ -2277,6 +2370,14 @@ impl CrossingPartyMachine {
                     "sealed crossing party is missing ML-DSA material",
                 ))?,
         )
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn map_preprocessing_use_error(error: PreprocessingUseError) -> EqualityTransportError {
+    match error {
+        PreprocessingUseError::Runtime(error) => EqualityTransportError::Mpc(error),
+        error => EqualityTransportError::DurablePreprocessingCustody(error.to_string()),
     }
 }
 

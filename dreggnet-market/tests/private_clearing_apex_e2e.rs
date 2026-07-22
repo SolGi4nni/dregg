@@ -40,8 +40,10 @@
 //! even though its transport and quorum authority are native-PQ.
 
 #![cfg(all(feature = "private-attested-clearing", feature = "fhegg-settlement"))]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -91,6 +93,9 @@ use fhegg_fhe::attestation::{
     InMemoryReplayGuard, InputDigest, NativePqAuthenticatedQuorumVerifier, NativePqPartyPublicKey,
 };
 use fhegg_fhe::boundary::{MaskedBoundaryParty, MaskedDecryptCoordinator, MaskedDecryptSession};
+use fhegg_fhe::mpc_party::preprocessing_use::{
+    PreprocessingUseError, PreprocessingUseLedger, PreprocessingUseState, ReservedTripleMaterial,
+};
 use fhegg_fhe::mpc_party::transport::{
     CrossingCoordinatorMachine, CrossingPartyMachine, CrossingTransportRoster,
     NativePqCrossingEndpointSeal, NativePqTransportIdentity, TransportSecurityProfile,
@@ -394,7 +399,7 @@ fn run_authenticated_crossing(
     party_identities: &[NativePqTransportIdentity; 2],
     coordinator_identity: &NativePqTransportIdentity,
     packed_shares: [[u64; PRIVATE_BOOK_LIVE_SLOTS]; 2],
-    triples: Vec<TripleMaterial>,
+    triples: Vec<ReservedTripleMaterial>,
 ) -> (
     DistributedRun,
     Vec<Vec<u8>>,
@@ -415,7 +420,7 @@ fn run_authenticated_crossing(
     let mut triples = triples.into_iter();
     let mut parties = (0..session.n_parties())
         .map(|party| {
-            CrossingPartyMachine::new_native_post_quantum_sealed(
+            CrossingPartyMachine::new_native_post_quantum_sealed_with_durable_preprocessing(
                 session.clone(),
                 roster.clone(),
                 party,
@@ -722,6 +727,7 @@ impl Drop for ScratchDir {
 fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequence() {
     let mut timing = ApexPhaseTimings::new("verified-pq-runtime-install");
     install_verified_turn_pq_runtime();
+    let scratch = ScratchDir::new();
     timing.next("fixture-world-and-collective-keygen");
 
     // The listed good is a genuine fair-drawn Descent note, not a market remint.
@@ -923,14 +929,95 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         .is_err(),
         "native-PQ transport roster must refuse the classical constructor"
     );
+    let certified_triple_wires = certified_triples
+        .iter()
+        .map(|material| {
+            material
+                .to_wire_bytes()
+                .expect("retain an exact replay falsifier for durable custody")
+        })
+        .collect::<Vec<_>>();
+    let direct_input = prepare_private_book_crossing_input(
+        &mpc_session,
+        0,
+        &packed_shares[0],
+        &mut StdRng::seed_from_u64(0xD4BA_D001),
+    )
+    .expect("construct a raw-certified transport refusal input");
+    let direct_material =
+        TripleMaterial::from_wire_bytes(&mpc_session, 0, &certified_triple_wires[0])
+            .expect("the refusal row is otherwise a valid certified row");
+    assert!(
+        CrossingPartyMachine::new_native_post_quantum_sealed(
+            mpc_session.clone(),
+            transport_roster.clone(),
+            0,
+            committee_identities[0].clone(),
+            direct_input,
+            direct_material,
+        )
+        .is_err(),
+        "a valid FHTRI004 row must never regain direct transport execution",
+    );
+    let preprocessing_ledger_roots = (0..mpc_session.n_parties())
+        .map(|party| {
+            let root = scratch.0.join(format!("preprocessing-party-{party}"));
+            fs::create_dir(&root).expect("create one preprocessing ledger per party authority");
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+                .expect("restrict the party preprocessing ledger");
+            root
+        })
+        .collect::<Vec<_>>();
+    let preprocessing_ledgers = preprocessing_ledger_roots
+        .iter()
+        .map(|root| PreprocessingUseLedger::open(root).expect("pin party preprocessing ledger"))
+        .collect::<Vec<_>>();
+    let reserved_triples = certified_triples
+        .into_iter()
+        .zip(&preprocessing_ledgers)
+        .map(|(material, ledger)| {
+            ledger
+                .reserve(material)
+                .expect("reserve certified row before transport worker construction")
+        })
+        .collect::<Vec<_>>();
+    let preprocessing_use_keys = reserved_triples
+        .iter()
+        .map(|reserved| reserved.key().clone())
+        .collect::<Vec<_>>();
+    for (ledger, key) in preprocessing_ledgers.iter().zip(&preprocessing_use_keys) {
+        assert_eq!(
+            ledger
+                .state(key)
+                .expect("read flushed preprocessing reservation"),
+            Some(PreprocessingUseState::Reserved)
+        );
+    }
     let (distributed, authenticated_public_frames, endpoint_seals) = run_authenticated_crossing(
         &mpc_session,
         &transport_roster,
         &committee_identities,
         &transport_coordinator_identity,
         packed_shares,
-        certified_triples,
+        reserved_triples,
     );
+    for party in 0..mpc_session.n_parties() {
+        let restarted = PreprocessingUseLedger::open(&preprocessing_ledger_roots[party])
+            .expect("restart the exact party preprocessing ledger");
+        assert_eq!(
+            restarted
+                .state(&preprocessing_use_keys[party])
+                .expect("completed crossing has a durable consumption tombstone"),
+            Some(PreprocessingUseState::Consumed)
+        );
+        let replay =
+            TripleMaterial::from_wire_bytes(&mpc_session, party, &certified_triple_wires[party])
+                .expect("byte-identical certified row still verifies cryptographically");
+        assert!(matches!(
+            restarted.reserve(replay),
+            Err(PreprocessingUseError::AlreadyConsumed { .. })
+        ));
+    }
     assert_eq!(
         distributed.crossing.p_star,
         Some(statement.p_star as usize),
@@ -1145,7 +1232,6 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
 
     // Persist the player-facing board with the real shared host before the
     // settlement worker arrives. Only landed public actions enter this log.
-    let scratch = ScratchDir::new();
     let store = FileResumeStore::open(&scratch.0).expect("durable move store");
     let id = SessionId::new("private-clearing-apex");
     let mut host = OfferingHost::new().with_resume_store(Box::new(store.clone()));

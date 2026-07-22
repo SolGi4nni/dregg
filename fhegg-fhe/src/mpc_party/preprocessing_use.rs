@@ -54,7 +54,8 @@ use sha2::{Digest, Sha256};
 use super::{
     run_party_comparison_custody_authorized, run_party_custody_authorized,
     run_party_equality_custody_authorized, PartyArithmeticInput, PartyChannels,
-    PartyComparisonInput, PartyEqualityInput, PartyMpcError, PartyReport, TripleMaterial,
+    PartyComparisonInput, PartyEqualityInput, PartyMpcError, PartyMpcSession, PartyReport,
+    TripleMaterial,
 };
 
 const RECORD_MAGIC: &[u8; 8] = b"FHTUSE02";
@@ -661,6 +662,30 @@ pub struct ReservedTripleMaterial {
 impl ReservedTripleMaterial {
     pub fn key(&self) -> &PreprocessingUseKey {
         self.reservation.key()
+    }
+
+    /// Recheck the transport endpoint that is about to own this reservation.
+    ///
+    /// This exposes no Beaver bit or recoverable material. It lets an
+    /// authenticated transport reject a session/party wiring mistake before it
+    /// starts any worker thread, while the only execution authority remains the
+    /// private token minted by [`Self::into_parts`].
+    pub(crate) fn validate_transport_binding(
+        &self,
+        session: &PartyMpcSession,
+        party: usize,
+    ) -> Result<(), PartyMpcError> {
+        self.material.validate_runtime_binding()?;
+        if self.material.session != *session {
+            return Err(PartyMpcError::SessionMismatch);
+        }
+        if self.material.party != party {
+            return Err(PartyMpcError::PartyMismatch {
+                material: self.material.party,
+                channel: party,
+            });
+        }
+        Ok(())
     }
 
     fn into_parts(
