@@ -1,15 +1,62 @@
-//! Capture and fail-closed reconstruction of executor-owned accumulators.
+//! Capture and fail-closed reconstruction of executor-owned consensus state.
 //!
 //! Production executors are intentionally short-lived. These helpers keep the
-//! note-create, revocation, and inbound-bridge frontiers continuous across that
-//! constructor boundary and process restart. They build the complete successor
-//! off to the side and publish only after every durable record has validated.
+//! note-create, revocation, inbound-bridge, rate-limit, and factory-registry
+//! frontiers continuous across that constructor boundary and process restart.
+//! They build each complete successor off to the side and publish only after
+//! every durable record has validated.
 
 use dregg_persist::{
     ExecutorAccumulatorSnapshot, ExecutorNoteCommitmentRecord, ExecutorRevocationRecord,
     PersistentStore,
 };
 use dregg_turn::TurnExecutor;
+
+/// Capture the exact canonical factory descriptor/quota frontier.
+pub(crate) fn capture_executor_factory_registry(
+    executor: &TurnExecutor,
+) -> Result<Vec<u8>, String> {
+    let registry = executor
+        .factory_registry
+        .try_borrow()
+        .map_err(|_| "executor factory registry is already mutably borrowed".to_string())?;
+    registry
+        .snapshot()
+        .to_canonical_bytes()
+        .map_err(|error| format!("executor factory-registry snapshot is malformed: {error}"))
+}
+
+fn restore_executor_factory_registry_bytes(
+    executor: &TurnExecutor,
+    bytes: Option<&[u8]>,
+) -> Result<(), String> {
+    let snapshot = match bytes {
+        Some(bytes) => dregg_cell::factory::FactoryRegistrySnapshot::from_canonical_bytes(bytes)
+            .map_err(|error| format!("durable factory-registry state is malformed: {error}"))?,
+        None => dregg_cell::factory::FactoryRegistrySnapshot::default(),
+    };
+    executor
+        .factory_registry
+        .try_borrow_mut()
+        .map_err(|_| "executor factory registry is already borrowed".to_string())?
+        .restore_snapshot(&snapshot)
+        .map_err(|error| format!("could not seed durable factory-registry state: {error}"))
+}
+
+/// Restore the latest durable factory registry into a fresh executor.
+///
+/// Absence is the canonical empty registry. Present bytes must survive the
+/// strict cell-layer codec before the live `RefCell` is borrowed mutably, so a
+/// corrupt image cannot partially replace descriptors or quota counters.
+pub(crate) fn restore_executor_factory_registry(
+    executor: &TurnExecutor,
+    store: &PersistentStore,
+) -> Result<(), String> {
+    let bytes = store
+        .load_latest_factory_registry_snapshot_bytes()
+        .map_err(|error| format!("could not load durable factory-registry state: {error}"))?;
+    restore_executor_factory_registry_bytes(executor, bytes.as_deref())
+}
 
 /// Capture the strict, versioned post-execution rate frontier.
 ///
@@ -147,7 +194,7 @@ pub(crate) fn restore_executor_accumulators(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_cell::note::NoteCommitment;
+    use dregg_cell::{CellMode, FactoryDescriptor, note::NoteCommitment};
     use dregg_persist::{CommitRecord, FinalizedExecutorConsensusState};
 
     fn record(root: [u8; 32]) -> CommitRecord {
@@ -197,8 +244,24 @@ mod tests {
             (dregg_cell::CellId([8; 32]), 9, 10),
             u64::from(u32::MAX) + 11,
         );
+        let factory_vk = {
+            let mut factories = source.factory_registry.borrow_mut();
+            let factory_vk = factories.deploy(FactoryDescriptor {
+                factory_vk: [0xf1; 32],
+                child_program_vk: Some([0xc1; 32]),
+                child_vk_strategy: None,
+                allowed_cap_templates: Vec::new(),
+                field_constraints: Vec::new(),
+                state_constraints: Vec::new(),
+                default_mode: CellMode::Hosted,
+                creation_budget: Some(2),
+            });
+            factories.record_creation(&factory_vk).unwrap();
+            factory_vk
+        };
         let snapshot = capture_executor_accumulators(&source).unwrap();
         let rate_snapshot = capture_executor_rate_limits(&source).unwrap();
+        let factory_snapshot = capture_executor_factory_registry(&source).unwrap();
         let source_commitment_root = source.note_commitments.lock().unwrap().root8();
         let source_revocation_root = source.note_revoked.lock().unwrap().root8();
 
@@ -207,6 +270,7 @@ mod tests {
             let state = FinalizedExecutorConsensusState {
                 accumulators: snapshot,
                 rate_limit_snapshot: Some(rate_snapshot),
+                factory_registry_snapshot: Some(factory_snapshot),
                 ..Default::default()
             };
             store
@@ -225,6 +289,7 @@ mod tests {
         let restored = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
         restore_executor_accumulators(&restored, &store).unwrap();
         restore_executor_rate_limits(&restored, &store).unwrap();
+        restore_executor_factory_registry(&restored, &store).unwrap();
         assert_eq!(
             restored.note_commitments.lock().unwrap().root8(),
             source_commitment_root
@@ -261,6 +326,16 @@ mod tests {
             restored.rate_limit_state_snapshot(),
             source.rate_limit_state_snapshot()
         );
+        assert_eq!(
+            restored.factory_registry.borrow().snapshot(),
+            source.factory_registry.borrow().snapshot()
+        );
+        {
+            let mut factories = restored.factory_registry.borrow_mut();
+            assert_eq!(factories.get(&factory_vk).unwrap().creation_budget, Some(2));
+            factories.record_creation(&factory_vk).unwrap();
+            assert!(factories.record_creation(&factory_vk).is_err());
+        }
         let next = NoteCommitment([9; 32]);
         restored
             .note_commitments
@@ -359,5 +434,33 @@ mod tests {
 
         assert!(restore_executor_rate_limits(&executor, &store).is_err());
         assert_eq!(executor.rate_limit_state_snapshot(), before);
+    }
+
+    #[test]
+    fn malformed_factory_snapshot_refuses_without_partial_seed() {
+        let executor = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
+        executor
+            .factory_registry
+            .borrow_mut()
+            .deploy(FactoryDescriptor {
+                factory_vk: [0xaa; 32],
+                child_program_vk: None,
+                child_vk_strategy: None,
+                allowed_cap_templates: Vec::new(),
+                field_constraints: Vec::new(),
+                state_constraints: Vec::new(),
+                default_mode: CellMode::Sovereign,
+                creation_budget: Some(9),
+            });
+        let before = executor.factory_registry.borrow().snapshot();
+
+        assert!(
+            restore_executor_factory_registry_bytes(
+                &executor,
+                Some(b"not-a-canonical-factory-registry")
+            )
+            .is_err()
+        );
+        assert_eq!(executor.factory_registry.borrow().snapshot(), before);
     }
 }
