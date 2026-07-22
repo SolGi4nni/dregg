@@ -1,324 +1,503 @@
-//! Non-live node authority for one exact FNSP-v3 finalized spend.
+//! Durable join for one executor-produced exact FNSP-v3 spend.
 //!
-//! This module deliberately stops short of `blocklace_sync` registration.  It exists to make the
-//! cutover boundary a type instead of a pile of adjacent `if`s: the prepared value owns a
-//! store-prepared CAS and an opaque proof-acceptance token,
-//! after joining both of them to the authenticated turn coordinates, caller-supplied receipt,
-//! current durable actor snapshot, and authenticated historical note root.
+//! There is deliberately no compatibility constructor here.  Preparation consumes the opaque
+//! [`ExecutorProducedExactFnspV3FinalizedTurn`] minted by the executor-authority lane after it has
+//! joined all of the following:
 //!
-//! This still is not the live authority.  The V9 context and receipt are caller-supplied values;
-//! the executor does not yet return an opaque token that proves they were derived together from
-//! its durable pre-state snapshot and execution result.  Durable actor equality plus receipt
-//! outer-commit equality are necessary checks, but they cannot substitute for that missing typed
-//! executor snapshot/receipt seam.  In fact, exact equality below is presently a deliberately
-//! unmintable synthetic gate: the exact anchor changes only FNS3, whereas a real full-turn receipt
-//! also commits nonce advancement and may commit fees and other effects.  The live design needs a
-//! typed exact-FNS3 subreceipt/frame bound into the full receipt (or a full-turn exact descriptor),
-//! not a reinterpretation of the full executor post-state hash.  Keep this candidate unregistered
-//! until that seam exists.
+//! * one authenticated `SignedTurn` with exactly one recursively nested `NoteSpend`;
+//! * the real executor-produced full receipt and internally derived `CommitRecord`;
+//! * an accepted exact-v3 proof carrier and its proof-local FNS3 receipt frame;
+//! * an authorized receipt epoch; and
+//! * an executor signature over the exact frame domain.
 //!
-//! Two nullifier commitments coexist during migration and must never be compared as though they
-//! were the same tree:
+//! This module adds the durable exact-state and history joins.  It prepares the CAS from the
+//! accepted nullifier/value, compares every root/count/FNS3 coordinate, rebuilds the proof-local
+//! outer anchors from the executor's durable actor pre-state and captured pre-context, authenticates
+//! `(historical height, note root)`, and retains the whole opaque authority until a consuming atomic
+//! store call.  The commit record is never caller-supplied.
 //!
-//! * `StoredAttestedRoot::nullifier_set_root` is the deployed sorted-dense `FNL8/FNN8` root;
-//! * the v3 receipt frame carries `FNS3(root8, count)` for the linked append-order `FNI2/FNN2`
-//!   accumulator.
+//! The real full receipt and proof-local exact anchors are intentionally distinct.  A real turn
+//! advances nonce and may change fees/other state, while the exact descriptor changes only FNS3 in
+//! its stable proof frame.  No full-receipt/anchor equality appears here.
 //!
-//! They are joined by exact equality of their complete `(sequence, nullifier, value)` durable
-//! prefix.  Persistence repeats that equality check under its writer transaction.  Receipt
-//! BEFORE/AFTER hashes, on the other hand, must equal the v3 outer commitments exactly.  The
-//! current executor therefore cannot mint this candidate for any real turn; a versioned/epoch
-//! typed subreceipt/frame migration is a prerequisite for making the route live.
+//! The authorized epoch, every signed frame, and the current global exact head share the
+//! finalized-turn transaction.  Ordinary receipts may interleave: every frame names its exact
+//! global log row and separately proves the latest predecessor row for that frame's actor.
 
 use core::fmt;
 use std::error::Error;
 
-use dregg_cell::commitment::{V9RotationContext, digest8_to_bytes32};
-use dregg_cell::{Cell, Nullifier};
-use dregg_circuit::exact_nullifier_aafi::{ExactAppendRecord, ValidatedExactAafiTransition};
+use dregg_cell::Ledger;
+use dregg_circuit::exact_nullifier_aafi::ExactAppendRecord;
 use dregg_federation::frost::MlDsaPublicKey;
 use dregg_persist::commit_log::{CommitOutcome, FinalizedFaithfulRootWeld};
 use dregg_persist::{
-    CommitRecord, ExactFnspV3StateCasV1, FaithfulNoteRootHistoryV1, PersistentStore, StoreError,
+    CommittedExactFnspV3FrameHeadV1, ExactFnspV3DurableReceiptLinkV1, ExactFnspV3StateCasV1,
+    FaithfulNoteRootHistoryV1, PersistentStore, PreparedExactFnspV3StateTransitionV1, StoreError,
+    UntrustedExactFnspV3FrameV1,
 };
-use dregg_sdk::SignedTurn;
-use dregg_turn::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier;
+use dregg_sdk::AgentCipherclerk;
 use dregg_turn::{
-    AcceptedFaithfulNoteSpendExactV3, Effect, ExactFnspV3DurableAnchor,
-    FaithfulNoteSpendExactV3AcceptanceBinding, TurnReceipt, derive_exact_fnsp_v3_durable_anchor,
+    ExactFnspV3DurableAnchor, ExactFnspV3OuterCommit, ExactFnspV3ReceiptLinkV1,
+    ExactFnspV3StatePoint, FaithfulNoteSpendExactV3AcceptanceBinding, TurnReceipt,
+    derive_exact_fnsp_v3_durable_anchor,
 };
 use dregg_types::PublicKey;
 
-use crate::signed_turn_validation::ValidatedSignedTurn;
+use crate::exact_fnsp_v3_execution_authority::ExecutorProducedExactFnspV3FinalizedTurn;
 
 /// Authenticated inputs needed to replay the faithful note-root history.
 ///
-/// A bare `FaithfulNoteRootHistoryV1::new` value is only structurally valid, not authenticated.
-/// The orchestrator therefore loads the history itself through the hybrid-verifying store API.
+/// A bare `FaithfulNoteRootHistoryV1` is structural data, not authority.  Preparation loads the
+/// history itself through the hybrid-verifying store API and requires a real nonzero threshold.
 pub(crate) struct ExactFnspV3HistoryAuthority<'a> {
     pub(crate) ed25519_committee: &'a [PublicKey],
     pub(crate) ml_dsa_committee: &'a [MlDsaPublicKey],
     pub(crate) threshold: usize,
 }
 
-/// Opaque, non-live candidate for one exact-v3 durable finalization call.
+/// Opaque candidate retaining executor, proof, frame, CAS, and history joins until commit.
 ///
-/// There is no CAS getter and both commit methods consume `self`.  An accepted proof cannot be
-/// detached from its exact transition and reused beside another finalized turn.  This type does
-/// not prove that the caller-supplied V9 context and receipt came from one executor run.
+/// There is no CAS, record, receipt, frame, or acceptance getter.  Both store methods consume
+/// `self`, so none of those authorities can be detached and recombined with another turn.
 pub(crate) struct PreparedExactFnspV3Finalization {
     cas: ExactFnspV3StateCasV1,
-    accepted: AcceptedFaithfulNoteSpendExactV3,
-    receipt: TurnReceipt,
+    authority: ExecutorProducedExactFnspV3FinalizedTurn,
     encoded_receipt: Vec<u8>,
-    turn_hash: [u8; 32],
-    actor: [u8; 32],
+}
+
+/// Opaque proof that the executor post-image may be released after durable success.
+///
+/// A fresh commit retains the complete post-ledger and the same consumed executor which produced
+/// it.  An idempotent replay deliberately retains neither: the persistence contract says replay
+/// must not re-apply purely in-memory state already rebuilt from durable storage.
+pub(crate) struct DurablyCommittedExactFnspV3Turn {
+    outcome: CommitOutcome,
+    committed_head: CommittedExactFnspV3FrameHeadV1,
+    fresh_post_execution: Option<FreshExactFnspV3PostExecution>,
+}
+
+struct FreshExactFnspV3PostExecution {
+    ledger: Ledger,
+    receipt: TurnReceipt,
+    receipt_index: u64,
+    install_receipt_head: bool,
+}
+
+impl DurablyCommittedExactFnspV3Turn {
+    pub(crate) const fn outcome(&self) -> CommitOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn committed_head(&self) -> &CommittedExactFnspV3FrameHeadV1 {
+        &self.committed_head
+    }
+
+    /// Install the two real in-memory owners only after a fresh durable transaction.
+    ///
+    /// Short-lived executor nullifiers are intentionally not installed: every future production
+    /// executor is reseeded from the faithful nullifier records committed in the same transaction.
+    pub(crate) fn install_fresh_post_execution(
+        self,
+        live_ledger: &mut Ledger,
+        cclerk: &mut AgentCipherclerk,
+    ) -> Result<CommitOutcome, ExactFnspV3FinalizationError> {
+        if let Some(fresh) = self.fresh_post_execution {
+            if fresh.install_receipt_head {
+                cclerk
+                    .append_receipt_already_durable(fresh.receipt_index, fresh.receipt)
+                    .map_err(|error| {
+                        ExactFnspV3FinalizationError::ReceiptHeadInstall(error.to_string())
+                    })?;
+            }
+            *live_ledger = fresh.ledger;
+        }
+        Ok(self.outcome)
+    }
 }
 
 impl PreparedExactFnspV3Finalization {
-    /// Append (or byte-exactly replay) the presently synthetic receipt in the carrying transaction.
-    #[allow(clippy::too_many_arguments)]
+    /// Atomically append (or byte-exactly replay) the executor-produced full receipt.
     pub(crate) fn commit_appending_receipt(
         self,
         store: &PersistentStore,
-        expected_ordinal: u64,
-        record: &CommitRecord,
-        note_commitments: &[[u8; 32]],
-        receipt_index: u64,
         faithful: FinalizedFaithfulRootWeld<'_>,
-    ) -> Result<CommitOutcome, ExactFnspV3FinalizationError> {
-        self.validate_commit_coordinates(record, &faithful)?;
-        store
-            .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3(
-                expected_ordinal,
-                record,
-                note_commitments,
-                receipt_index,
-                &self.encoded_receipt,
-                faithful,
-                self.cas,
-            )
-            .map_err(ExactFnspV3FinalizationError::Store)
+    ) -> Result<DurablyCommittedExactFnspV3Turn, ExactFnspV3FinalizationError> {
+        self.commit(store, faithful, false)
     }
 
-    /// Require a presently synthetic receipt that already exists byte-for-byte (crash recovery).
-    #[allow(clippy::too_many_arguments)]
+    /// Require the executor-produced full receipt to exist byte-for-byte during crash recovery.
     pub(crate) fn commit_existing_receipt(
         self,
         store: &PersistentStore,
-        expected_ordinal: u64,
-        record: &CommitRecord,
-        note_commitments: &[[u8; 32]],
-        receipt_index: u64,
         faithful: FinalizedFaithfulRootWeld<'_>,
-    ) -> Result<CommitOutcome, ExactFnspV3FinalizationError> {
-        self.validate_commit_coordinates(record, &faithful)?;
-        store
-            .commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_existing_receipt(
+    ) -> Result<DurablyCommittedExactFnspV3Turn, ExactFnspV3FinalizationError> {
+        self.commit(store, faithful, true)
+    }
+
+    fn commit(
+        self,
+        store: &PersistentStore,
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        require_existing_receipt: bool,
+    ) -> Result<DurablyCommittedExactFnspV3Turn, ExactFnspV3FinalizationError> {
+        validate_faithful_coordinates(self.authority.frame().accepted_binding(), &faithful)?;
+
+        // Reverify the executor's frame-domain signature at the durable boundary, after all
+        // caller-provided commit coordinates have been checked and immediately before consuming
+        // the opaque authority into the atomic store operation.
+        let authority = self.authority.into_finalization_parts();
+        if !authority.verify_frame_signature() {
+            return Err(ExactFnspV3FinalizationError::FrameSignatureInvalid);
+        }
+        let (
+            durable_actor_pre,
+            actor_coordinates,
+            post_ledger,
+            post_executor,
+            context_before,
+            context_after,
+            proof_context_before,
+            receipt,
+            record,
+            executor_public_key,
+            frame_signature,
+            frame,
+        ) = authority.into_commit_components();
+        let expected_ordinal = record.ordinal;
+        let receipt_index = frame.receipt_log_index();
+        if receipt_index != actor_coordinates.receipt_log_next_index() {
+            return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+                "captured receipt cursor",
+            ));
+        }
+
+        let predecessor = match frame.predecessor() {
+            ExactFnspV3ReceiptLinkV1::EpochActivation(hash) => {
+                ExactFnspV3DurableReceiptLinkV1::EpochActivation(hash)
+            }
+            ExactFnspV3ReceiptLinkV1::ExactFrame(hash) => {
+                ExactFnspV3DurableReceiptLinkV1::ExactFrame(hash)
+            }
+        };
+        let durable_frame = UntrustedExactFnspV3FrameV1::authenticate_devnet_executor(
+            frame.epoch().get(),
+            frame.receipt_log_index(),
+            predecessor,
+            frame.activation_hash(),
+            frame.frame_hash(),
+            frame.full_predecessor_receipt_index(),
+            frame.full_predecessor_receipt_hash(),
+            frame.agent().0,
+            frame.federation_id(),
+            frame.turn_hash(),
+            frame.forest_hash(),
+            frame.full_receipt_hash(),
+            frame.full_pre_state_hash(),
+            frame.full_post_state_hash(),
+            self.cas.expected(),
+            self.cas.successor(),
+            frame.proof_outer_before().to_bytes(),
+            frame.proof_outer_after().to_bytes(),
+            frame.accepted_statement_digest(),
+            frame.signed_spending_proof_digest(),
+            executor_public_key,
+            frame_signature,
+        )
+        .map_err(ExactFnspV3FinalizationError::Store)?;
+
+        // Keep every non-Clone authority alive across the atomic call.  Only the store-returned
+        // committed head below becomes recovery authority.
+        let frame_hash = frame.frame_hash();
+        let frame_epoch = frame.epoch();
+        let result = if require_existing_receipt {
+            store.commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame_existing_receipt(
                 expected_ordinal,
-                record,
-                note_commitments,
+                &record,
                 receipt_index,
                 &self.encoded_receipt,
                 faithful,
                 self.cas,
+                durable_frame,
             )
-            .map_err(ExactFnspV3FinalizationError::Store)
-    }
-
-    fn validate_commit_coordinates(
-        &self,
-        record: &CommitRecord,
-        faithful: &FinalizedFaithfulRootWeld<'_>,
-    ) -> Result<(), ExactFnspV3FinalizationError> {
-        if record.turn_hash != self.turn_hash {
-            return Err(ExactFnspV3FinalizationError::CommitRecordTurnMismatch);
-        }
-        if record.creator != self.actor {
-            return Err(ExactFnspV3FinalizationError::CommitRecordActorMismatch);
-        }
-        if record.receipt_hash != self.receipt.receipt_hash() {
-            return Err(ExactFnspV3FinalizationError::CommitRecordReceiptMismatch);
-        }
-
-        // Join the legacy finalized-spend authority to the same signed public spend.  Its
-        // successor_nullifier_root intentionally remains the legacy FNL8/FNN8 root; the exact AAFI
-        // successor is bound by `accepted` + `cas` and is persisted beside it atomically.
-        let [spent] = faithful.spent_nullifiers else {
-            return Err(ExactFnspV3FinalizationError::FaithfulSpendCardinality {
-                actual: faithful.spent_nullifiers.len(),
-            });
+        } else {
+            store.commit_finalized_turn_with_faithful_root_and_exact_fnsp_v3_frame(
+                expected_ordinal,
+                &record,
+                receipt_index,
+                &self.encoded_receipt,
+                faithful,
+                self.cas,
+                durable_frame,
+            )
         };
-        let [statement] = faithful.finalized_spends else {
-            return Err(ExactFnspV3FinalizationError::FaithfulStatementCardinality {
-                actual: faithful.finalized_spends.len(),
-            });
-        };
-        let binding = self.accepted.binding();
-        if spent.nullifier != binding.nullifier()
-            || spent.value != binding.value()
-            || statement.nullifier != binding.nullifier()
-            || statement.value != binding.value()
-            || statement.asset_type != binding.asset_type()
-            || statement.root_height != binding.historical_root_height()
-            || statement.historical_note_root.to_bytes() != binding.historical_note_root()
-        {
-            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(
-                ExactFnspV3Coordinate::FaithfulSpend,
-            ));
-        }
-        Ok(())
+
+        // Explicitly retain the authority locals until the store call has returned.
+        drop((
+            durable_actor_pre,
+            actor_coordinates,
+            context_before,
+            context_after,
+            proof_context_before,
+            frame,
+            frame_hash,
+            frame_epoch,
+            post_executor,
+        ));
+        let durable = result.map_err(ExactFnspV3FinalizationError::Store)?;
+        let fresh_post_execution =
+            durable
+                .outcome
+                .freshly_committed
+                .then_some(FreshExactFnspV3PostExecution {
+                    ledger: post_ledger,
+                    receipt,
+                    receipt_index,
+                    install_receipt_head: !require_existing_receipt,
+                });
+        Ok(DurablyCommittedExactFnspV3Turn {
+            outcome: durable.outcome,
+            committed_head: durable.committed_head,
+            fresh_post_execution,
+        })
     }
 }
 
-/// Prepare a non-live exact-v3 finalized-store candidate.
+/// Prepare the sole exact-v3 node finalization candidate.
 ///
-/// This remains crate-private and is not called by `blocklace_sync`.  The caller must first run
-/// the normal SignedTurn perimeter and exact proof acceptance, then supply their opaque results.
-/// Promotion also requires a future opaque executor-produced token joining its durable input
-/// snapshot, V9 context, receipt, and commit record; this function deliberately does not mint it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_exact_fnsp_v3_candidate(
+/// The input is already executor/frame-bound and non-Clone.  No raw `SignedTurn`, validation token,
+/// actor, V9 context, receipt, frame, transition, acceptance, or commit record is accepted here.
+pub(crate) fn prepare_exact_fnsp_v3_finalization(
     store: &PersistentStore,
-    signed: &SignedTurn,
-    validated_signed: ValidatedSignedTurn,
-    receipt: &TurnReceipt,
-    actor: &Cell,
-    v9_context: &V9RotationContext,
-    transition: &ValidatedExactAafiTransition,
-    accepted: AcceptedFaithfulNoteSpendExactV3,
+    authority: ExecutorProducedExactFnspV3FinalizedTurn,
+    prepared_transition: PreparedExactFnspV3StateTransitionV1,
     history_authority: ExactFnspV3HistoryAuthority<'_>,
 ) -> Result<PreparedExactFnspV3Finalization, ExactFnspV3FinalizationError> {
-    let turn_hash = signed.turn.hash();
-    if turn_hash != validated_signed.turn_hash() {
-        return Err(ExactFnspV3FinalizationError::ValidatedTurnHashMismatch);
+    if !authority.verify_frame_signature() {
+        return Err(ExactFnspV3FinalizationError::FrameSignatureInvalid);
     }
-    if actor.id() != signed.turn.agent {
-        return Err(ExactFnspV3FinalizationError::ActorCellMismatch);
-    }
-    validate_durable_actor(store, actor)?;
-
-    let spends = exact_note_spends(&signed.turn.call_forest);
-    let [signed_effect] = spends.as_slice() else {
-        return Err(ExactFnspV3FinalizationError::SignedSpendCardinality {
-            actual: spends.len(),
-        });
-    };
-    let Effect::NoteSpend {
-        nullifier,
-        value,
-        note_tree_root,
-        asset_type,
-        spending_proof,
-        ..
-    } = signed_effect
-    else {
-        unreachable!("exact_note_spends returns only NoteSpend")
-    };
-    // The 76 public lanes do not identify every byte of the carrier.  Require the opaque token's
-    // post-verification, domain-separated digest to name the exact proof bytes embedded in this
-    // authenticated signed effect before joining any durable state or receipt coordinates.
-    if !accepted.matches_signed_effect(signed_effect) {
-        return Err(ExactFnspV3FinalizationError::AcceptedProofCarrierMismatch);
-    }
-
-    validate_receipt_identity(signed, validated_signed, receipt)?;
     validate_legacy_exact_prefix(store)?;
 
-    // Preparation is read-only.  Persistence replays the complete exact prefix and repeats the
-    // legacy/exact prefix equality check under the final writer transaction.
-    let cas = store
-        .prepare_exact_fnsp_v3_append_or_replay(nullifier.0, *value)
-        .map_err(ExactFnspV3FinalizationError::Store)?;
-    validate_cas_transition(cas, transition)?;
-
-    let anchor = derive_exact_fnsp_v3_durable_anchor(
-        actor,
-        v9_context,
-        cas.expected().fns3(),
-        cas.successor().fns3(),
-    )
-    .map_err(|error| ExactFnspV3FinalizationError::Anchor(error.to_string()))?;
-    validate_accepted_binding(
-        accepted.binding(),
-        transition,
-        cas,
-        &anchor,
-        *nullifier,
-        *value,
-        *note_tree_root,
-        *asset_type,
-        spending_proof,
-    )?;
-    validate_receipt_anchor(receipt, &anchor)?;
+    let binding = authority.frame().accepted_binding();
+    let cas = prepared_transition.cas();
+    validate_persisted_frame_predecessor(store, &authority, cas)?;
+    validate_bound_authority_cas(&authority, cas)?;
     validate_authenticated_history(
         store,
         history_authority,
-        accepted.binding().historical_root_height(),
-        accepted.binding().historical_note_root(),
+        binding.historical_root_height(),
+        binding.historical_note_root(),
     )?;
 
-    let encoded_receipt = postcard::to_stdvec(receipt)
+    let encoded_receipt = postcard::to_stdvec(authority.receipt())
         .map_err(|error| ExactFnspV3FinalizationError::ReceiptEncoding(error.to_string()))?;
     Ok(PreparedExactFnspV3Finalization {
         cas,
-        accepted,
-        receipt: receipt.clone(),
+        authority,
         encoded_receipt,
-        turn_hash,
-        actor: actor.id().0,
     })
 }
 
-fn validate_durable_actor(
+fn validate_persisted_frame_predecessor(
     store: &PersistentStore,
-    actor: &Cell,
+    authority: &ExecutorProducedExactFnspV3FinalizedTurn,
+    cas: ExactFnspV3StateCasV1,
 ) -> Result<(), ExactFnspV3FinalizationError> {
-    let durable = store
-        .lookup_cell(&actor.id())
+    let activation = store
+        .exact_fnsp_v3_activation()
         .map_err(ExactFnspV3FinalizationError::Store)?
-        .ok_or(ExactFnspV3FinalizationError::DurableActorMissing)?;
-    // `Cell` equality covers every serialized identity/state/policy field.  Its skipped leaf-cache
-    // is intentionally not semantic state and is reconstructed dirty after durable decode.
-    if durable != *actor {
-        return Err(ExactFnspV3FinalizationError::DurableActorMismatch);
+        .ok_or(ExactFnspV3FinalizationError::PersistedActivationMissing)?;
+    let frame = authority.frame();
+    if frame.epoch().get() != activation.epoch()
+        || frame.activation_hash() != activation.activation_hash()
+        || frame.federation_id() != activation.federation_id()
+        || frame.receipt_log_index() < activation.receipt_cutover_next_index()
+    {
+        return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+            "activation scope",
+        ));
+    }
+
+    let current_exact = store
+        .exact_fnsp_v3_state_head()
+        .map_err(ExactFnspV3FinalizationError::Store)?
+        .ok_or(ExactFnspV3FinalizationError::ExactAuthorityUninitialized)?;
+    let committed = store
+        .exact_fnsp_v3_committed_frame_head()
+        .map_err(ExactFnspV3FinalizationError::Store)?;
+    let sequence = cas.expected().generation();
+    if sequence == activation.exact_initial().generation() && current_exact == cas.expected() {
+        if committed.is_some()
+            || frame.predecessor()
+                != ExactFnspV3ReceiptLinkV1::EpochActivation(activation.activation_hash())
+            || cas.expected() != activation.exact_initial()
+        {
+            return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+                "first frame",
+            ));
+        }
+    } else if sequence == current_exact.generation() {
+        let head = committed.ok_or(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+            "missing current frame head",
+        ))?;
+        if frame.predecessor() != ExactFnspV3ReceiptLinkV1::ExactFrame(head.frame_hash())
+            || frame.receipt_log_index() <= head.receipt_log_index()
+            || frame.before().root() != head.exact_after().root()
+            || frame.before().count() != head.exact_after().count()
+            || frame.before().fns3() != head.exact_after().fns3()
+            || frame.federation_id() != head.federation_id()
+        {
+            return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+                "current predecessor",
+            ));
+        }
+    } else if sequence < current_exact.generation() {
+        // Historical replay is verified against its immutable dense frame row inside the same
+        // writer transaction.  The current tip may legitimately be several frames later.
+        if committed.is_none() {
+            return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+                "historical replay without head",
+            ));
+        }
+    } else {
+        return Err(ExactFnspV3FinalizationError::PersistedHeadMismatch(
+            "future exact sequence",
+        ));
     }
     Ok(())
 }
 
-fn exact_note_spends(forest: &dregg_turn::CallForest) -> Vec<&Effect> {
-    fn collect<'a>(effect: &'a Effect, out: &mut Vec<&'a Effect>) {
-        match effect {
-            Effect::NoteSpend { .. } => out.push(effect),
-            Effect::ExerciseViaCapability { inner_effects, .. } => {
-                for inner in inner_effects {
-                    collect(inner, out);
-                }
-            }
-            _ => {}
+fn validate_bound_authority_cas(
+    authority: &ExecutorProducedExactFnspV3FinalizedTurn,
+    cas: ExactFnspV3StateCasV1,
+) -> Result<(), ExactFnspV3FinalizationError> {
+    let binding = authority.frame().accepted_binding();
+    validate_frame_points_against_cas(authority.frame().before(), authority.frame().after(), cas)?;
+
+    let expected = cas.expected();
+    let successor = cas.successor();
+    let append = cas.append_record();
+    let comparisons = [
+        (
+            append.raw == binding.nullifier()
+                && append.value == binding.value()
+                && append.seq == expected.generation(),
+            ExactFnspV3Coordinate::AppendRecord,
+        ),
+        (
+            binding.prior_root() == expected.root().map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::PriorRoot,
+        ),
+        (
+            binding.prior_count() == expected.count(),
+            ExactFnspV3Coordinate::PriorCount,
+        ),
+        (
+            binding.prior_fns3() == expected.fns3().map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::PriorFns3,
+        ),
+        (
+            binding.successor_root() == successor.root().map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::SuccessorRoot,
+        ),
+        (
+            binding.successor_count() == successor.count(),
+            ExactFnspV3Coordinate::SuccessorCount,
+        ),
+        (
+            binding.successor_fns3() == successor.fns3().map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::SuccessorFns3,
+        ),
+    ];
+    for (matches, coordinate) in comparisons {
+        if !matches {
+            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(coordinate));
         }
     }
 
-    let mut out = Vec::new();
-    for effect in forest.total_effects() {
-        collect(effect, &mut out);
-    }
-    out
+    // Rebuild proof-local anchors only from the executor's durable pre-state and captured real
+    // pre-context.  The real post-context is intentionally not substituted: it also contains the
+    // nonce/effects of the whole turn, while this descriptor's stable frame changes only FNS3.
+    let anchor = derive_exact_fnsp_v3_durable_anchor(
+        authority.durable_actor_pre(),
+        &authority.proof_context_before(),
+        expected.fns3(),
+        successor.fns3(),
+    )
+    .map_err(|error| ExactFnspV3FinalizationError::Anchor(error.to_string()))?;
+    validate_proof_outer_commits(
+        &anchor,
+        authority.frame().proof_outer_before(),
+        authority.frame().proof_outer_after(),
+        binding,
+    )
 }
 
-fn validate_receipt_identity(
-    signed: &SignedTurn,
-    validated: ValidatedSignedTurn,
-    receipt: &TurnReceipt,
+fn validate_frame_points_against_cas(
+    before: ExactFnspV3StatePoint,
+    after: ExactFnspV3StatePoint,
+    cas: ExactFnspV3StateCasV1,
 ) -> Result<(), ExactFnspV3FinalizationError> {
-    if receipt.turn_hash != validated.turn_hash() {
-        return Err(ExactFnspV3FinalizationError::ReceiptTurnMismatch);
+    let expected = cas.expected();
+    let successor = cas.successor();
+    let comparisons = [
+        (
+            before.root() == expected.root(),
+            ExactFnspV3Coordinate::FramePriorRoot,
+        ),
+        (
+            before.count() == expected.count(),
+            ExactFnspV3Coordinate::FramePriorCount,
+        ),
+        (
+            before.fns3() == expected.fns3(),
+            ExactFnspV3Coordinate::FramePriorFns3,
+        ),
+        (
+            after.root() == successor.root(),
+            ExactFnspV3Coordinate::FrameSuccessorRoot,
+        ),
+        (
+            after.count() == successor.count(),
+            ExactFnspV3Coordinate::FrameSuccessorCount,
+        ),
+        (
+            after.fns3() == successor.fns3(),
+            ExactFnspV3Coordinate::FrameSuccessorFns3,
+        ),
+    ];
+    for (matches, coordinate) in comparisons {
+        if !matches {
+            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(coordinate));
+        }
     }
-    if receipt.agent != signed.turn.agent {
-        return Err(ExactFnspV3FinalizationError::ReceiptActorMismatch);
-    }
-    if receipt.forest_hash != signed.turn.call_forest.compute_hash() {
-        return Err(ExactFnspV3FinalizationError::ReceiptForestMismatch);
+    Ok(())
+}
+
+fn validate_proof_outer_commits(
+    anchor: &ExactFnspV3DurableAnchor,
+    frame_before: ExactFnspV3OuterCommit,
+    frame_after: ExactFnspV3OuterCommit,
+    binding: FaithfulNoteSpendExactV3AcceptanceBinding<'_>,
+) -> Result<(), ExactFnspV3FinalizationError> {
+    let expected_before = anchor.before_commit();
+    let expected_after = anchor.after_commit();
+    let comparisons = [
+        (
+            frame_before.lanes() == expected_before
+                && binding.before_outer_commit() == expected_before.map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::BeforeOuterCommit,
+        ),
+        (
+            frame_after.lanes() == expected_after
+                && binding.after_outer_commit() == expected_after.map(|felt| felt.as_u32()),
+            ExactFnspV3Coordinate::AfterOuterCommit,
+        ),
+    ];
+    for (matches, coordinate) in comparisons {
+        if !matches {
+            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(coordinate));
+        }
     }
     Ok(())
 }
@@ -346,141 +525,6 @@ fn validate_legacy_exact_prefix(
             legacy: legacy.len(),
             exact: exact.len(),
         });
-    }
-    Ok(())
-}
-
-fn validate_cas_transition(
-    cas: ExactFnspV3StateCasV1,
-    transition: &ValidatedExactAafiTransition,
-) -> Result<(), ExactFnspV3FinalizationError> {
-    let expected = cas.expected();
-    let successor = cas.successor();
-    let append = cas.append_record();
-    let comparisons = [
-        (
-            append.raw == transition.inserted_raw()
-                && append.value == transition.inserted_value()
-                && append.seq == expected.generation(),
-            ExactFnspV3Coordinate::AppendRecord,
-        ),
-        (
-            expected.root() == transition.prior_root(),
-            ExactFnspV3Coordinate::PriorRoot,
-        ),
-        (
-            expected.count() == transition.prior_count(),
-            ExactFnspV3Coordinate::PriorCount,
-        ),
-        (
-            successor.root() == transition.successor_root(),
-            ExactFnspV3Coordinate::SuccessorRoot,
-        ),
-        (
-            successor.count() == transition.successor_count(),
-            ExactFnspV3Coordinate::SuccessorCount,
-        ),
-    ];
-    for (matches, coordinate) in comparisons {
-        if !matches {
-            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(coordinate));
-        }
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_accepted_binding(
-    accepted: FaithfulNoteSpendExactV3AcceptanceBinding<'_>,
-    transition: &ValidatedExactAafiTransition,
-    cas: ExactFnspV3StateCasV1,
-    anchor: &ExactFnspV3DurableAnchor,
-    nullifier: Nullifier,
-    value: u64,
-    note_tree_root: [u8; 32],
-    asset_type: u64,
-    spending_proof: &[u8],
-) -> Result<(), ExactFnspV3FinalizationError> {
-    let carrier = FaithfulNoteSpendExactV3ProofCarrier::decode(spending_proof)
-        .map_err(|error| ExactFnspV3FinalizationError::Carrier(error.to_string()))?;
-    let expected = cas.expected();
-    let successor = cas.successor();
-    let comparisons = [
-        (
-            accepted.nullifier() == nullifier.0,
-            ExactFnspV3Coordinate::SignedNullifier,
-        ),
-        (
-            accepted.value() == value,
-            ExactFnspV3Coordinate::SignedValue,
-        ),
-        (
-            accepted.asset_type() == asset_type,
-            ExactFnspV3Coordinate::SignedAsset,
-        ),
-        (
-            accepted.historical_root_height() == carrier.root_height(),
-            ExactFnspV3Coordinate::HistoricalHeight,
-        ),
-        (
-            accepted.historical_note_root() == note_tree_root,
-            ExactFnspV3Coordinate::HistoricalRoot,
-        ),
-        (
-            accepted.prior_root() == expected.root().map(|felt| felt.as_u32())
-                && accepted.prior_root() == transition.prior_root().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::PriorRoot,
-        ),
-        (
-            accepted.prior_count() == expected.count()
-                && accepted.prior_count() == transition.prior_count(),
-            ExactFnspV3Coordinate::PriorCount,
-        ),
-        (
-            accepted.prior_fns3() == expected.fns3().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::PriorFns3,
-        ),
-        (
-            accepted.successor_root() == successor.root().map(|felt| felt.as_u32())
-                && accepted.successor_root()
-                    == transition.successor_root().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::SuccessorRoot,
-        ),
-        (
-            accepted.successor_count() == successor.count()
-                && accepted.successor_count() == transition.successor_count(),
-            ExactFnspV3Coordinate::SuccessorCount,
-        ),
-        (
-            accepted.successor_fns3() == successor.fns3().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::SuccessorFns3,
-        ),
-        (
-            accepted.before_outer_commit() == anchor.before_commit().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::BeforeOuterCommit,
-        ),
-        (
-            accepted.after_outer_commit() == anchor.after_commit().map(|felt| felt.as_u32()),
-            ExactFnspV3Coordinate::AfterOuterCommit,
-        ),
-    ];
-    for (matches, coordinate) in comparisons {
-        if !matches {
-            return Err(ExactFnspV3FinalizationError::CoordinateMismatch(coordinate));
-        }
-    }
-    Ok(())
-}
-
-fn validate_receipt_anchor(
-    receipt: &TurnReceipt,
-    anchor: &ExactFnspV3DurableAnchor,
-) -> Result<(), ExactFnspV3FinalizationError> {
-    if receipt.pre_state_hash != digest8_to_bytes32(anchor.before_commit()) {
-        return Err(ExactFnspV3FinalizationError::ReceiptBeforeAnchorMismatch);
-    }
-    if receipt.post_state_hash != digest8_to_bytes32(anchor.after_commit()) {
-        return Err(ExactFnspV3FinalizationError::ReceiptAfterAnchorMismatch);
     }
     Ok(())
 }
@@ -522,13 +566,37 @@ fn history_contains_pair(history: &FaithfulNoteRootHistoryV1, height: u64, root:
         })
 }
 
+fn validate_faithful_coordinates(
+    binding: FaithfulNoteSpendExactV3AcceptanceBinding<'_>,
+    faithful: &FinalizedFaithfulRootWeld<'_>,
+) -> Result<(), ExactFnspV3FinalizationError> {
+    let [spent] = faithful.spent_nullifiers else {
+        return Err(ExactFnspV3FinalizationError::FaithfulSpendCardinality {
+            actual: faithful.spent_nullifiers.len(),
+        });
+    };
+    let [statement] = faithful.finalized_spends else {
+        return Err(ExactFnspV3FinalizationError::FaithfulStatementCardinality {
+            actual: faithful.finalized_spends.len(),
+        });
+    };
+    if spent.nullifier != binding.nullifier()
+        || spent.value != binding.value()
+        || statement.nullifier != binding.nullifier()
+        || statement.value != binding.value()
+        || statement.asset_type != binding.asset_type()
+        || statement.root_height != binding.historical_root_height()
+        || statement.historical_note_root.to_bytes() != binding.historical_note_root()
+    {
+        return Err(ExactFnspV3FinalizationError::CoordinateMismatch(
+            ExactFnspV3Coordinate::FaithfulSpend,
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExactFnspV3Coordinate {
-    SignedNullifier,
-    SignedValue,
-    SignedAsset,
-    HistoricalHeight,
-    HistoricalRoot,
     AppendRecord,
     PriorRoot,
     PriorCount,
@@ -536,6 +604,12 @@ pub(crate) enum ExactFnspV3Coordinate {
     SuccessorRoot,
     SuccessorCount,
     SuccessorFns3,
+    FramePriorRoot,
+    FramePriorCount,
+    FramePriorFns3,
+    FrameSuccessorRoot,
+    FrameSuccessorCount,
+    FrameSuccessorFns3,
     BeforeOuterCommit,
     AfterOuterCommit,
     FaithfulSpend,
@@ -543,67 +617,38 @@ pub(crate) enum ExactFnspV3Coordinate {
 
 #[derive(Debug)]
 pub(crate) enum ExactFnspV3FinalizationError {
-    ValidatedTurnHashMismatch,
-    ActorCellMismatch,
-    DurableActorMissing,
-    DurableActorMismatch,
-    AcceptedProofCarrierMismatch,
-    SignedSpendCardinality { actual: usize },
-    ReceiptTurnMismatch,
-    ReceiptActorMismatch,
-    ReceiptForestMismatch,
-    ReceiptBeforeAnchorMismatch,
-    ReceiptAfterAnchorMismatch,
+    FrameSignatureInvalid,
+    PersistedActivationMissing,
+    PersistedHeadMismatch(&'static str),
     ExactAuthorityUninitialized,
     LegacyExactPrefixMismatch { legacy: usize, exact: usize },
     InvalidHistoryAuthority,
     FaithfulHistoryUninitialized,
     HistoricalRootUnauthenticated,
-    CommitRecordTurnMismatch,
-    CommitRecordActorMismatch,
-    CommitRecordReceiptMismatch,
     FaithfulSpendCardinality { actual: usize },
     FaithfulStatementCardinality { actual: usize },
     CoordinateMismatch(ExactFnspV3Coordinate),
     Anchor(String),
-    Carrier(String),
     ReceiptEncoding(String),
+    ReceiptHeadInstall(String),
     Store(StoreError),
 }
 
 impl fmt::Display for ExactFnspV3FinalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ValidatedTurnHashMismatch => f.write_str("validated SignedTurn hash mismatch"),
-            Self::ActorCellMismatch => {
-                f.write_str("durable actor cell is not the signed turn agent")
+            Self::FrameSignatureInvalid => {
+                f.write_str("exact FNSP-v3 executor frame signature is invalid")
             }
-            Self::DurableActorMissing => {
-                f.write_str("signed actor has no current durable cell snapshot")
+            Self::PersistedActivationMissing => {
+                f.write_str("exact FNSP-v3 store-authenticated activation is missing")
             }
-            Self::DurableActorMismatch => {
-                f.write_str("supplied actor pre-state differs from its durable snapshot")
-            }
-            Self::AcceptedProofCarrierMismatch => f.write_str(
-                "accepted exact-v3 token does not name the signed NoteSpend proof carrier bytes",
-            ),
-            Self::SignedSpendCardinality { actual } => {
+            Self::PersistedHeadMismatch(coordinate) => {
                 write!(
                     f,
-                    "exact FNSP-v3 finalization requires one signed NoteSpend, got {actual}"
+                    "exact FNSP-v3 persisted frame-head mismatch at {coordinate}"
                 )
             }
-            Self::ReceiptTurnMismatch => f.write_str("receipt does not name the validated turn"),
-            Self::ReceiptActorMismatch => f.write_str("receipt does not name the signed actor"),
-            Self::ReceiptForestMismatch => {
-                f.write_str("receipt forest hash does not name the signed forest")
-            }
-            Self::ReceiptBeforeAnchorMismatch => f.write_str(
-                "full receipt BEFORE hash is not the synthetic exact-FNSP-v3-only actor anchor",
-            ),
-            Self::ReceiptAfterAnchorMismatch => f.write_str(
-                "full receipt AFTER hash is not the synthetic exact-FNSP-v3-only actor anchor",
-            ),
             Self::ExactAuthorityUninitialized => {
                 f.write_str("exact FNSP-v3 durable authority is uninitialized")
             }
@@ -620,15 +665,6 @@ impl fmt::Display for ExactFnspV3FinalizationError {
             Self::HistoricalRootUnauthenticated => f.write_str(
                 "exact FNSP-v3 historical note root is absent from authenticated history",
             ),
-            Self::CommitRecordTurnMismatch => {
-                f.write_str("commit record does not name the accepted turn")
-            }
-            Self::CommitRecordActorMismatch => {
-                f.write_str("commit record does not name the accepted actor")
-            }
-            Self::CommitRecordReceiptMismatch => {
-                f.write_str("commit record does not name the accepted receipt")
-            }
             Self::FaithfulSpendCardinality { actual } => write!(
                 f,
                 "faithful weld carries {actual} spends; exact v3 requires one"
@@ -641,9 +677,14 @@ impl fmt::Display for ExactFnspV3FinalizationError {
                 write!(f, "exact FNSP-v3 coordinate mismatch at {coordinate:?}")
             }
             Self::Anchor(error) => write!(f, "exact FNSP-v3 durable anchor refused: {error}"),
-            Self::Carrier(error) => write!(f, "exact FNSP-v3 carrier refused: {error}"),
             Self::ReceiptEncoding(error) => {
                 write!(f, "exact FNSP-v3 receipt encoding failed: {error}")
+            }
+            Self::ReceiptHeadInstall(error) => {
+                write!(
+                    f,
+                    "exact FNSP-v3 durable receipt-head install failed: {error}"
+                )
             }
             Self::Store(error) => write!(f, "exact FNSP-v3 durable store refused: {error}"),
         }
@@ -663,30 +704,11 @@ impl Error for ExactFnspV3FinalizationError {
 mod tests {
     use super::*;
 
-    use dregg_cell::commitment::RotationCarrierMaterial;
-    use dregg_circuit::Faithful8;
-    use dregg_circuit::exact_nullifier_aafi::{
-        Digest8, ExactNullifierAafi, validate_exact_aafi_witness,
-    };
-    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi;
     use dregg_persist::{CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1};
 
-    fn actor() -> Cell {
-        let mut actor = Cell::new([7; 32], [9; 32]);
-        assert!(actor.state.credit_balance(17));
-        actor.state.set_nonce(3);
-        actor
-    }
-
-    fn context(prior_fns3: Digest8) -> V9RotationContext {
-        V9RotationContext {
-            cells_root: BabyBear::new(101),
-            nullifier_root: Faithful8::from_bytes32(&digest8_to_bytes32(prior_fns3)),
-            commitments_root: Faithful8::ZERO,
-            revoked_root: Faithful8::ZERO,
-            iroot: BabyBear::new(202),
-            material: RotationCarrierMaterial::default(),
-        }
+    fn point(head: dregg_persist::ExactFnspV3StateHeadV1) -> ExactFnspV3StatePoint {
+        ExactFnspV3StatePoint::new(head.root(), head.count()).expect("canonical exact state point")
     }
 
     #[test]
@@ -699,182 +721,70 @@ mod tests {
     }
 
     #[test]
-    fn same_id_mutated_actor_cannot_supply_the_v9_anchor_prestate() {
-        let store = PersistentStore::open_in_memory().expect("store");
-        let actor = actor();
-        let record = CommitRecord {
-            ordinal: 0,
-            height: 1,
-            block_id: [0x11; 32],
-            block_executed_up_to: 1,
-            turn_hash: [0x12; 32],
-            creator: actor.id().0,
-            receipt_hash: [0x13; 32],
-            ledger_root: [0x14; 32],
-            touched_cells: vec![actor.clone()],
-            removed: vec![],
-        };
-        store
-            .commit_finalized_turn(0, &record)
-            .expect("durable actor snapshot");
-        validate_durable_actor(&store, &actor).expect("byte-exact durable actor");
-
-        // Mutable state is not part of CellId derivation.  Merely naming the same actor therefore
-        // cannot authorize a context/anchor derived from a stale or invented pre-state.
-        let mut same_id_mutated = actor.clone();
-        same_id_mutated.state.set_nonce(4);
-        assert_eq!(same_id_mutated.id(), actor.id());
-        assert!(matches!(
-            validate_durable_actor(&store, &same_id_mutated),
-            Err(ExactFnspV3FinalizationError::DurableActorMismatch)
-        ));
-    }
-
-    #[test]
-    fn stale_transition_refuses_against_current_store_prepared_cas() {
+    fn hostile_mixed_cas_and_frame_points_are_refused() {
         let store = PersistentStore::open_in_memory().expect("store");
         store
             .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
             .expect("empty exact authority");
-
-        // Build N from a different frontier (after unrelated M), while the durable store still
-        // prepares N from genesis.  Equal spend coordinates do not rescue a stale root/count pair.
-        let mut stale_accumulator = ExactNullifierAafi::new();
-        let unrelated = stale_accumulator
-            .prepare_insert([0x32; 32], 32)
-            .expect("unrelated witness");
-        stale_accumulator
-            .apply_witness(&unrelated)
-            .expect("advance stale frontier");
-        let stale_witness = stale_accumulator
-            .prepare_insert([0x31; 32], 31)
-            .expect("stale witness");
-        let stale = validate_exact_aafi_witness(&stale_witness).expect("stale transition");
-
-        let current = store
+        let honest = store
             .prepare_exact_fnsp_v3_append_or_replay([0x31; 32], 31)
-            .expect("current candidate");
+            .expect("honest CAS");
+        validate_frame_points_against_cas(
+            point(honest.expected()),
+            point(honest.successor()),
+            honest,
+        )
+        .expect("matching frame/CAS");
+
+        // Same predecessor, different append/successor: a frame from another accepted spend cannot
+        // be paired with this store-prepared candidate.
+        let other = store
+            .prepare_exact_fnsp_v3_append_or_replay([0x32; 32], 32)
+            .expect("other CAS");
         assert!(matches!(
-            validate_cas_transition(current, &stale),
+            validate_frame_points_against_cas(
+                point(honest.expected()),
+                point(other.successor()),
+                honest,
+            ),
             Err(ExactFnspV3FinalizationError::CoordinateMismatch(
-                ExactFnspV3Coordinate::PriorRoot
-                    | ExactFnspV3Coordinate::PriorCount
-                    | ExactFnspV3Coordinate::SuccessorRoot
-                    | ExactFnspV3Coordinate::SuccessorCount
+                ExactFnspV3Coordinate::FrameSuccessorRoot
+                    | ExactFnspV3Coordinate::FrameSuccessorFns3
             ))
         ));
     }
 
     #[test]
-    fn repeated_preparation_is_read_only_and_coordinate_stable() {
+    fn hostile_stale_frame_predecessor_is_refused() {
         let store = PersistentStore::open_in_memory().expect("store");
         store
             .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
             .expect("empty exact authority");
+        let current = store
+            .prepare_exact_fnsp_v3_append_or_replay([0x41; 32], 41)
+            .expect("current CAS");
 
-        let raw = [0x41; 32];
-        let value = 410;
-        let witness = ExactNullifierAafi::new()
-            .prepare_insert(raw, value)
-            .expect("witness");
-        let transition = validate_exact_aafi_witness(&witness).expect("transition");
+        let mut stale = ExactNullifierAafi::new();
+        let first = stale.prepare_insert([0x40; 32], 40).expect("first");
+        stale.apply_witness(&first).expect("advance stale state");
+        let second = stale.prepare_insert([0x41; 32], 41).expect("second");
+        let stale_before = ExactFnspV3StatePoint::new(second.prior_root, second.prior_count)
+            .expect("stale before");
+        let stale_after = ExactFnspV3StatePoint::new(second.successor_root, second.successor_count)
+            .expect("stale after");
 
-        let first = store
-            .prepare_exact_fnsp_v3_append_or_replay(raw, value)
-            .expect("fresh candidate");
-        validate_cas_transition(first, &transition).expect("fresh coordinates");
-        let second = store
-            .prepare_exact_fnsp_v3_append_or_replay(raw, value)
-            .expect("second read-only preparation");
-        validate_cas_transition(second, &transition).expect("repeated coordinates");
-        assert_eq!(second, first);
-    }
-
-    #[test]
-    fn synthetic_receipt_gate_refuses_legacy_nullifier_semantics() {
-        let witness = ExactNullifierAafi::new()
-            .prepare_insert([0x55; 32], 55)
-            .expect("witness");
-        let transition = validate_exact_aafi_witness(&witness).expect("transition");
-        let actor = actor();
-        let anchor = derive_exact_fnsp_v3_durable_anchor(
-            &actor,
-            &context(witness.prior_state_commit),
-            witness.prior_state_commit,
-            witness.successor_state_commit,
-        )
-        .expect("anchor");
-        let mut receipt = TurnReceipt {
-            pre_state_hash: digest8_to_bytes32(anchor.before_commit()),
-            post_state_hash: digest8_to_bytes32(anchor.after_commit()),
-            ..TurnReceipt::default()
-        };
-        assert!(validate_receipt_anchor(&receipt, &anchor).is_ok());
-
-        // The deployed root is a different construction even for the same append prefix.  A
-        // receipt carrying it must not be silently reinterpreted as FNS3.  Nor does the positive
-        // fixture claim executor mintability: real full-turn post-state also includes nonce and
-        // any other effects, hence requires a typed exact-FNS3 subreceipt/frame.
-        let mut legacy = dregg_cell::nullifier_set::NullifierSet::new();
-        legacy
-            .insert(
-                Nullifier(transition.inserted_raw()),
-                transition.inserted_value(),
-            )
-            .expect("legacy append");
-        receipt.post_state_hash = legacy.faithful_root8_exact().to_bytes32();
         assert!(matches!(
-            validate_receipt_anchor(&receipt, &anchor),
-            Err(ExactFnspV3FinalizationError::ReceiptAfterAnchorMismatch)
+            validate_frame_points_against_cas(stale_before, stale_after, current),
+            Err(ExactFnspV3FinalizationError::CoordinateMismatch(
+                ExactFnspV3Coordinate::FramePriorRoot
+                    | ExactFnspV3Coordinate::FramePriorCount
+                    | ExactFnspV3Coordinate::FramePriorFns3
+            ))
         ));
     }
 
     #[test]
-    fn receipt_identity_joins_validated_turn_actor_and_forest() {
-        let actor = actor();
-        let turn = dregg_turn::Turn {
-            agent: actor.id(),
-            nonce: 0,
-            call_forest: dregg_turn::CallForest::new(),
-            fee: 0,
-            memo: None,
-            valid_until: None,
-            previous_receipt_hash: None,
-            depends_on: vec![],
-            conservation_proof: None,
-            sovereign_witnesses: Default::default(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-            effect_binding_proofs: vec![],
-            cross_effect_dependencies: vec![],
-            effect_witness_index_map: vec![],
-        };
-        let signed = SignedTurn {
-            turn,
-            signature: dregg_types::Signature([0; 64]),
-            signer: PublicKey([0; 32]),
-            pq_signature: vec![],
-            pq_signer: vec![],
-        };
-        let validated = ValidatedSignedTurn::from_turn_hash_for_test(signed.turn.hash());
-        let mut receipt = TurnReceipt {
-            turn_hash: validated.turn_hash(),
-            forest_hash: signed.turn.call_forest.compute_hash(),
-            agent: actor.id(),
-            ..TurnReceipt::default()
-        };
-        assert!(validate_receipt_identity(&signed, validated, &receipt).is_ok());
-        receipt.forest_hash[0] ^= 1;
-        assert!(matches!(
-            validate_receipt_identity(&signed, validated, &receipt),
-            Err(ExactFnspV3FinalizationError::ReceiptForestMismatch)
-        ));
-    }
-
-    #[test]
-    fn historical_pair_must_be_present_in_the_replayed_history() {
+    fn hostile_mixed_history_height_or_root_is_refused() {
         let root = CanonicalFaithfulRoot::from_bytes([0; 32]).expect("canonical root");
         let history = FaithfulNoteRootHistoryV1::new(
             FaithfulNoteRootAnchorV1::new([1; 32], [2; 32], 0, 7, 0, root).expect("anchor"),

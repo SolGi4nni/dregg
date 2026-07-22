@@ -17,9 +17,11 @@
 //!    cipherclerk's executor signature; and
 //! 5. derives the complete commit record from the full pre/post `Cell` diff.
 //!
-//! Any failed post-execution check restores the caller's ledger snapshot and drops the consumed
-//! per-turn executor, including its mutated side tables.  The type is non-`Clone`, its fields are
-//! private, and no function accepts a caller-authored receipt or commit record.
+//! Execution occurs against an owned ledger candidate.  Neither that candidate nor the consumed
+//! executor (including all of its mutated side tables) is released before the later durable CAS.
+//! The caller's live ledger therefore remains untouched on every preparation/join failure.  The
+//! type is non-`Clone`, its fields are private, and no function accepts a caller-authored receipt
+//! or commit record.
 //!
 //! ## Why this is not the live exact-v3 cutover
 //!
@@ -36,11 +38,25 @@ use core::fmt;
 use std::error::Error;
 
 use dregg_cell::commitment::V9RotationContext;
-use dregg_cell::{Cell, CellId, Ledger};
-use dregg_persist::{CommitRecord, PersistentStore, StoreError};
-use dregg_sdk::{AgentCipherclerk, SignedTurn};
-use dregg_turn::{TurnExecutor, TurnReceipt, TurnResult};
+use dregg_cell::{Cell, Ledger};
+use dregg_persist::CommitRecord;
+use dregg_sdk::SignedTurn;
+use dregg_turn::executor::ExactFnspV3AdmissionError;
+use dregg_turn::faithful_note_spend_exact_v3::FaithfulNoteSpendExactV3ProofCarrier;
+use dregg_turn::{
+    AcceptedFaithfulNoteSpendExactV3, Effect, ExactFnspV3ReceiptEpoch,
+    ExactFnspV3ReceiptEpochError, ExactFnspV3ReceiptEpochV1, ExactFnspV3StatePoint,
+    PreparedExactFnspV3ReceiptFrameV1, TurnExecutor, TurnReceipt, TurnResult,
+    UntrustedExactFnspV3CommittedFrameHeadBindingV1, UntrustedExactFnspV3ReceiptFrameJoinV1,
+};
+use dregg_types::{Signature, verify};
 
+use crate::exact_fnsp_v3_activation::{
+    ExactFnspV3ExecutorSignerAuthority, StoreAuthorizedExactFnspV3Predecessor,
+};
+use crate::exact_fnsp_v3_actor_authority::{
+    DurableExactFnspV3ActorAuthority, DurableExactFnspV3ActorCoordinates,
+};
 use crate::signed_turn_validation::ValidatedSignedTurn;
 
 /// Consensus-owned coordinates which do not come from turn execution.
@@ -78,16 +94,317 @@ impl FinalizedRecordCoordinates {
 /// its subframe; consuming accessors prevent the receipt/record from being detached and recombined
 /// with a second authority.
 pub(crate) struct ExecutorProducedFinalizedTurn {
+    core: ExecutorProducedFinalizedTurnCore,
+    accepted: AcceptedFaithfulNoteSpendExactV3,
+}
+
+struct ExecutorProducedFinalizedTurnCore {
     durable_actor_pre: Cell,
+    actor_coordinates: DurableExactFnspV3ActorCoordinates,
+    post_ledger: Ledger,
+    post_executor: TurnExecutor,
+    context_before: V9RotationContext,
+    context_after: V9RotationContext,
+    proof_context_before: V9RotationContext,
+    receipt: TurnReceipt,
+    record: CommitRecord,
+    executor_public_key: [u8; 32],
+    authenticated_exact_spend: AuthenticatedExactFnspV3Spend,
+}
+
+/// Values which have passed every receipt/ledger/store consistency check, but are deliberately
+/// not yet executor authority.  Only the one live producer wrapper below can combine this seal
+/// with the consumed post-execution [`TurnExecutor`].  In particular, private falsifier tests can
+/// exercise the consistency checks without gaining a synthetic authority constructor.
+struct ValidatedExecutionSeal {
+    durable_actor_pre: Cell,
+    actor_coordinates: DurableExactFnspV3ActorCoordinates,
+    post_ledger: Ledger,
     context_before: V9RotationContext,
     context_after: V9RotationContext,
     receipt: TurnReceipt,
     record: CommitRecord,
+    executor_public_key: [u8; 32],
+    authenticated_exact_spend: AuthenticatedExactFnspV3Spend,
 }
 
 impl ExecutorProducedFinalizedTurn {
+    #[cfg(test)]
+    pub(crate) fn durable_actor_pre(&self) -> &Cell {
+        &self.core.durable_actor_pre
+    }
+
+    #[cfg(test)]
+    pub(crate) fn receipt(&self) -> &TurnReceipt {
+        &self.core.receipt
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record(&self) -> &CommitRecord {
+        &self.core.record
+    }
+
+    /// Consume executor authority together with the proof-bound exact subreceipt.
+    ///
+    /// The frame is still explicitly untrusted until every full-turn coordinate is welded to the
+    /// receipt minted above, its retained acceptance is welded to the exactly-one admitted signed
+    /// `NoteSpend`, and the same executor key signs the frame domain.
+    pub(crate) fn bind_exact_frame(
+        self,
+        signer: &ExactFnspV3ExecutorSignerAuthority,
+        predecessor: &StoreAuthorizedExactFnspV3Predecessor,
+    ) -> Result<ExecutorProducedExactFnspV3FinalizedTurn, ExecutorProducedFinalizationError> {
+        let activation = predecessor.activation();
+        if activation.stored().executor_public_key() != self.core.executor_public_key
+            || signer.public_key().0 != self.core.executor_public_key
+            || predecessor.actor() != self.core.receipt.agent
+            || predecessor.player_predecessor_receipt_hash()
+                != self.core.receipt.previous_receipt_hash
+        {
+            return Err(ExecutorProducedFinalizationError::ExecutorKeyChangedAtFrameJoin);
+        }
+        let Self { core, accepted } = self;
+        let frame = if let Some(head) = predecessor.committed_head() {
+            let epoch = ExactFnspV3ReceiptEpoch::new(head.epoch())
+                .map_err(ExecutorProducedFinalizationError::ReceiptEpoch)?;
+            let exact_after =
+                ExactFnspV3StatePoint::new(head.exact_after().root(), head.exact_after().count())
+                    .map_err(ExecutorProducedFinalizationError::ReceiptEpoch)?;
+            let binding =
+                UntrustedExactFnspV3CommittedFrameHeadBindingV1::from_untrusted_coordinates(
+                    epoch,
+                    head.activation_hash(),
+                    head.frame_hash(),
+                    head.receipt_log_index(),
+                    exact_after,
+                    head.federation_id(),
+                );
+            PreparedExactFnspV3ReceiptFrameV1::extend_from_head_binding(
+                binding,
+                predecessor.receipt_log_index(),
+                predecessor.player_predecessor_receipt_index(),
+                core.receipt.clone(),
+                accepted,
+            )
+        } else {
+            PreparedExactFnspV3ReceiptFrameV1::begin(
+                activation.epoch(),
+                predecessor.receipt_log_index(),
+                predecessor.player_predecessor_receipt_index(),
+                core.receipt.clone(),
+                accepted,
+            )
+        }
+        .map_err(ExecutorProducedFinalizationError::ReceiptEpoch)?;
+        core.bind_prepared_frame(signer, activation.epoch(), frame)
+    }
+}
+
+impl ExecutorProducedFinalizedTurnCore {
+    fn bind_prepared_frame(
+        self,
+        signer: &ExactFnspV3ExecutorSignerAuthority,
+        authorized_epoch: &ExactFnspV3ReceiptEpochV1,
+        frame: PreparedExactFnspV3ReceiptFrameV1,
+    ) -> Result<ExecutorProducedExactFnspV3FinalizedTurn, ExecutorProducedFinalizationError> {
+        if signer.public_key().0 != self.executor_public_key {
+            return Err(ExecutorProducedFinalizationError::ExecutorKeyChangedAtFrameJoin);
+        }
+        let frame = frame
+            .into_join_parts_for_epoch(authorized_epoch)
+            .map_err(ExecutorProducedFinalizationError::ReceiptEpoch)?;
+        if frame.full_receipt_hash() != self.receipt.receipt_hash()
+            || frame.turn_hash() != self.receipt.turn_hash
+            || frame.forest_hash() != self.receipt.forest_hash
+            || frame.agent() != self.receipt.agent
+            || frame.federation_id() != self.receipt.federation_id
+            || frame.full_pre_state_hash() != self.receipt.pre_state_hash
+            || frame.full_post_state_hash() != self.receipt.post_state_hash
+        {
+            return Err(ExecutorProducedFinalizationError::ExactFrameReceiptMismatch);
+        }
+        self.authenticated_exact_spend.matches_frame(&frame)?;
+
+        let frame_signature = signer.sign(&frame.executor_signature_message_v1());
+        if !verify(
+            &signer.public_key(),
+            &frame.executor_signature_message_v1(),
+            &frame_signature,
+        ) {
+            return Err(ExecutorProducedFinalizationError::ExactFrameSignatureInvalid);
+        }
+
+        Ok(ExecutorProducedExactFnspV3FinalizedTurn {
+            durable_actor_pre: self.durable_actor_pre,
+            actor_coordinates: self.actor_coordinates,
+            post_ledger: self.post_ledger,
+            post_executor: self.post_executor,
+            context_before: self.context_before,
+            context_after: self.context_after,
+            proof_context_before: self.proof_context_before,
+            receipt: self.receipt,
+            record: self.record,
+            executor_public_key: self.executor_public_key,
+            frame_signature,
+            frame,
+        })
+    }
+}
+
+/// Signed-turn coordinates for the one exact spend executed by this receipt.
+///
+/// Retaining the original typed effect avoids a second, subtly divergent encoding of the full
+/// proof carrier.  The strict decoded root height is retained separately because it is a semantic
+/// coordinate of the accepted statement.
+struct AuthenticatedExactFnspV3Spend {
+    effect: Effect,
+    root_height: u64,
+}
+
+impl AuthenticatedExactFnspV3Spend {
+    fn from_signed_turn(signed: &SignedTurn) -> Result<Self, ExecutorProducedFinalizationError> {
+        let spends = exact_note_spends(&signed.turn.call_forest);
+        if spends.len() != 1 {
+            return Err(
+                ExecutorProducedFinalizationError::ExactNoteSpendCardinality {
+                    found: spends.len(),
+                },
+            );
+        }
+        // Minimal durably reconstructible slice.  A recursive spend is discovered above so it is
+        // rejected explicitly rather than missed, but capability wrappers, siblings, children,
+        // and extra actions can mutate executor-only state which the atomic store does not yet
+        // persist/reseed. Widen this only alongside an executable persistence characterization.
+        let [root] = signed.turn.call_forest.roots.as_slice() else {
+            return Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported);
+        };
+        if root.action.target != signed.turn.agent
+            || !matches!(
+                root.action.authorization,
+                dregg_turn::Authorization::Unchecked
+            )
+            || root.action.preconditions != Default::default()
+            || root.action.may_delegate != dregg_turn::DelegationMode::None
+            || root.action.commitment_mode != dregg_turn::CommitmentMode::Full
+            || root.action.balance_change.is_some()
+            || !root.action.witness_blobs.is_empty()
+            || !signed.turn.sovereign_witnesses.is_empty()
+            || signed.turn.execution_proof.is_some()
+            || signed.turn.execution_proof_cell.is_some()
+            || signed.turn.execution_proof_new_commitment.is_some()
+            || signed.turn.custom_program_proofs.is_some()
+            || !signed.turn.effect_binding_proofs.is_empty()
+            || !signed.turn.cross_effect_dependencies.is_empty()
+            || !signed.turn.effect_witness_index_map.is_empty()
+            || signed.turn.conservation_proof.is_some()
+        {
+            return Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported);
+        }
+        let [effect] = root.action.effects.as_slice() else {
+            return Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported);
+        };
+        if !root.children.is_empty() || !matches!(effect, Effect::NoteSpend { .. }) {
+            return Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported);
+        }
+        let effect = effect.clone();
+        let Effect::NoteSpend {
+            spending_proof,
+            value,
+            value_commitment,
+            ..
+        } = &effect
+        else {
+            unreachable!("exact_note_spends returns only NoteSpend effects")
+        };
+        // Until direct NoteCreate is admitted into the same exact frame, a single spent note can
+        // satisfy the executor's note-conservation gate only at value zero.  Enforce that before
+        // phase-1 charging so the characterized route is total after proof acceptance.
+        if *value != 0 || value_commitment.is_some() {
+            return Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported);
+        }
+        let carrier =
+            FaithfulNoteSpendExactV3ProofCarrier::decode(spending_proof).map_err(|error| {
+                ExecutorProducedFinalizationError::ExactProofCarrierInvalid(error.to_string())
+            })?;
+        Ok(Self {
+            effect,
+            root_height: carrier.root_height(),
+        })
+    }
+
+    fn matches_frame(
+        &self,
+        frame: &UntrustedExactFnspV3ReceiptFrameJoinV1,
+    ) -> Result<(), ExecutorProducedFinalizationError> {
+        if !frame.matches_signed_effect(&self.effect) {
+            return Err(ExecutorProducedFinalizationError::ExactFrameCarrierMismatch);
+        }
+        let binding = frame.accepted_binding();
+        let Effect::NoteSpend {
+            nullifier,
+            note_tree_root,
+            value,
+            asset_type,
+            value_commitment,
+            ..
+        } = &self.effect
+        else {
+            unreachable!("authenticated exact spend is a NoteSpend")
+        };
+        if binding.historical_root_height() != self.root_height
+            || binding.historical_note_root() != *note_tree_root
+            || binding.nullifier() != nullifier.0
+            || binding.value() != *value
+            || binding.asset_type() != *asset_type
+            || binding.value_commitment() != *value_commitment
+        {
+            return Err(ExecutorProducedFinalizationError::ExactFrameStatementMismatch);
+        }
+        Ok(())
+    }
+}
+
+/// Final non-`Clone` authority joining real execution, exact proof acceptance, epoch continuity,
+/// and an executor signature over the exact frame domain.
+pub(crate) struct ExecutorProducedExactFnspV3FinalizedTurn {
+    durable_actor_pre: Cell,
+    actor_coordinates: DurableExactFnspV3ActorCoordinates,
+    post_ledger: Ledger,
+    post_executor: TurnExecutor,
+    context_before: V9RotationContext,
+    context_after: V9RotationContext,
+    proof_context_before: V9RotationContext,
+    receipt: TurnReceipt,
+    record: CommitRecord,
+    executor_public_key: [u8; 32],
+    frame_signature: Signature,
+    frame: UntrustedExactFnspV3ReceiptFrameJoinV1,
+}
+
+/// Consuming view used only by the node's exact finalizer.  There is no constructor and the
+/// accepted token remains owned by `frame` until the finalizer consumes it into the durable CAS.
+pub(crate) struct ExactFnspV3ExecutorFinalizationParts {
+    durable_actor_pre: Cell,
+    actor_coordinates: DurableExactFnspV3ActorCoordinates,
+    post_ledger: Ledger,
+    post_executor: TurnExecutor,
+    context_before: V9RotationContext,
+    context_after: V9RotationContext,
+    proof_context_before: V9RotationContext,
+    receipt: TurnReceipt,
+    record: CommitRecord,
+    executor_public_key: [u8; 32],
+    frame_signature: Signature,
+    frame: UntrustedExactFnspV3ReceiptFrameJoinV1,
+}
+
+impl ExecutorProducedExactFnspV3FinalizedTurn {
     pub(crate) fn durable_actor_pre(&self) -> &Cell {
         &self.durable_actor_pre
+    }
+
+    pub(crate) fn post_ledger(&self) -> &Ledger {
+        &self.post_ledger
     }
 
     pub(crate) const fn context_before(&self) -> V9RotationContext {
@@ -98,6 +415,10 @@ impl ExecutorProducedFinalizedTurn {
         self.context_after
     }
 
+    pub(crate) const fn proof_context_before(&self) -> V9RotationContext {
+        self.proof_context_before
+    }
+
     pub(crate) fn receipt(&self) -> &TurnReceipt {
         &self.receipt
     }
@@ -106,8 +427,76 @@ impl ExecutorProducedFinalizedTurn {
         &self.record
     }
 
-    pub(crate) fn into_receipt_and_record(self) -> (TurnReceipt, CommitRecord) {
-        (self.receipt, self.record)
+    pub(crate) fn frame(&self) -> &UntrustedExactFnspV3ReceiptFrameJoinV1 {
+        &self.frame
+    }
+
+    /// Reverify immediately before the durable CAS, not just at join time.
+    pub(crate) fn verify_frame_signature(&self) -> bool {
+        verify(
+            &dregg_types::PublicKey(self.executor_public_key),
+            &self.frame.executor_signature_message_v1(),
+            &self.frame_signature,
+        )
+    }
+
+    pub(crate) fn into_finalization_parts(self) -> ExactFnspV3ExecutorFinalizationParts {
+        ExactFnspV3ExecutorFinalizationParts {
+            durable_actor_pre: self.durable_actor_pre,
+            actor_coordinates: self.actor_coordinates,
+            post_ledger: self.post_ledger,
+            post_executor: self.post_executor,
+            context_before: self.context_before,
+            context_after: self.context_after,
+            proof_context_before: self.proof_context_before,
+            receipt: self.receipt,
+            record: self.record,
+            executor_public_key: self.executor_public_key,
+            frame_signature: self.frame_signature,
+            frame: self.frame,
+        }
+    }
+}
+
+impl ExactFnspV3ExecutorFinalizationParts {
+    pub(crate) fn verify_frame_signature(&self) -> bool {
+        verify(
+            &dregg_types::PublicKey(self.executor_public_key),
+            &self.frame.executor_signature_message_v1(),
+            &self.frame_signature,
+        )
+    }
+
+    pub(crate) fn into_commit_components(
+        self,
+    ) -> (
+        Cell,
+        DurableExactFnspV3ActorCoordinates,
+        Ledger,
+        TurnExecutor,
+        V9RotationContext,
+        V9RotationContext,
+        V9RotationContext,
+        TurnReceipt,
+        CommitRecord,
+        [u8; 32],
+        Signature,
+        UntrustedExactFnspV3ReceiptFrameJoinV1,
+    ) {
+        (
+            self.durable_actor_pre,
+            self.actor_coordinates,
+            self.post_ledger,
+            self.post_executor,
+            self.context_before,
+            self.context_after,
+            self.proof_context_before,
+            self.receipt,
+            self.record,
+            self.executor_public_key,
+            self.frame_signature,
+            self.frame,
+        )
     }
 }
 
@@ -115,7 +504,6 @@ impl ExecutorProducedFinalizedTurn {
 #[derive(Debug)]
 pub(crate) enum ExecutorProducedFinalizationError {
     ValidatedTurnHashMismatch,
-    DurableActorMissing,
     DurableActorMismatch,
     ProducerDidNotCommit(String),
     ProducerRejectedAfterMutation,
@@ -125,7 +513,20 @@ pub(crate) enum ExecutorProducedFinalizationError {
     ReceiptBeforeContextMismatch,
     ReceiptAfterContextMismatch,
     ExecutorSignatureInvalid,
-    Store(StoreError),
+    ExactNoteSpendCardinality { found: usize },
+    ExactProofCarrierInvalid(String),
+    ExactTurnShapeUnsupported,
+    ExactChargedRoutePreflight(String),
+    ExactExecutorHasBudgetGate,
+    NonDurableExecutorSideStateMutation,
+    ExactAdmission(ExactFnspV3AdmissionError),
+    ExactAdmissionMissingAfterCommit,
+    ExecutorKeyChangedAtFrameJoin,
+    ExactFrameReceiptMismatch,
+    ExactFrameCarrierMismatch,
+    ExactFrameStatementMismatch,
+    ExactFrameSignatureInvalid,
+    ReceiptEpoch(ExactFnspV3ReceiptEpochError),
 }
 
 impl fmt::Display for ExecutorProducedFinalizationError {
@@ -134,9 +535,6 @@ impl fmt::Display for ExecutorProducedFinalizationError {
             Self::ValidatedTurnHashMismatch => {
                 f.write_str("executor authority turn differs from the validated SignedTurn")
             }
-            Self::DurableActorMissing => {
-                f.write_str("executor authority actor is absent from durable storage")
-            }
             Self::DurableActorMismatch => f.write_str(
                 "executor authority pre-state actor differs from the durable actor snapshot",
             ),
@@ -144,7 +542,7 @@ impl fmt::Display for ExecutorProducedFinalizationError {
                 write!(f, "executor did not commit the finalized turn: {reason}")
             }
             Self::ProducerRejectedAfterMutation => f.write_str(
-                "executor returned a non-commit result after mutating its ledger; snapshot restored",
+                "executor returned a non-commit result after mutating its isolated ledger candidate",
             ),
             Self::ReceiptTurnMismatch => {
                 f.write_str("executor receipt does not name the validated turn")
@@ -164,7 +562,48 @@ impl fmt::Display for ExecutorProducedFinalizationError {
             Self::ExecutorSignatureInvalid => f.write_str(
                 "executor receipt is not signed by the independently held node cipherclerk",
             ),
-            Self::Store(error) => write!(f, "durable actor lookup failed: {error}"),
+            Self::ExactNoteSpendCardinality { found } => write!(
+                f,
+                "exact executor authority requires exactly one recursively nested NoteSpend, found {found}",
+            ),
+            Self::ExactProofCarrierInvalid(error) => {
+                write!(f, "signed exact FNSP-v3 proof carrier is invalid: {error}")
+            }
+            Self::ExactTurnShapeUnsupported => f.write_str(
+                "exact FNSP-v3 staged slice requires a zero-value/no-value-commitment, self-targeted, unchecked, one-action/one-NoteSpend envelope with no sidecars",
+            ),
+            Self::ExactChargedRoutePreflight(reason) => write!(
+                f,
+                "exact FNSP-v3 route is not total after fee/nonce charging: {reason}"
+            ),
+            Self::ExactExecutorHasBudgetGate => f.write_str(
+                "exact FNSP-v3 live slice refuses an executor with a non-durable budget gate",
+            ),
+            Self::NonDurableExecutorSideStateMutation => f.write_str(
+                "exact FNSP-v3 execution changed a non-durable executor side-state map",
+            ),
+            Self::ExactAdmission(error) => {
+                write!(f, "exact FNSP-v3 executor admission refused linear handoff: {error}")
+            }
+            Self::ExactAdmissionMissingAfterCommit => f.write_str(
+                "committed exact FNSP-v3 turn did not yield its verifier-accepted admission token",
+            ),
+            Self::ExecutorKeyChangedAtFrameJoin => f.write_str(
+                "cipherclerk at exact-frame join differs from the executor receipt signer",
+            ),
+            Self::ExactFrameReceiptMismatch => f.write_str(
+                "proof-bound exact frame does not name the executor-produced full-turn receipt",
+            ),
+            Self::ExactFrameCarrierMismatch => f.write_str(
+                "exact frame acceptance does not bind the authenticated signed proof carrier",
+            ),
+            Self::ExactFrameStatementMismatch => f.write_str(
+                "exact frame statement does not bind every authenticated signed NoteSpend coordinate",
+            ),
+            Self::ExactFrameSignatureInvalid => {
+                f.write_str("executor-produced exact frame signature failed self-verification")
+            }
+            Self::ReceiptEpoch(error) => write!(f, "exact receipt epoch refused frame: {error}"),
         }
     }
 }
@@ -172,7 +611,8 @@ impl fmt::Display for ExecutorProducedFinalizationError {
 impl Error for ExecutorProducedFinalizationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Store(error) => Some(error),
+            Self::ReceiptEpoch(error) => Some(error),
+            Self::ExactAdmission(error) => Some(error),
             _ => None,
         }
     }
@@ -180,19 +620,18 @@ impl Error for ExecutorProducedFinalizationError {
 
 /// Execute through the node's one producer gate and seal the exact values it produced.
 ///
-/// `executor` is consumed.  This matters on refusal: a committed Rust/Lean execution mutates
-/// executor-owned note/revocation side tables in addition to `ledger`.  If receipt or durable
-/// provenance validation later fails, restoring only the ledger would leave those side tables
-/// advanced.  Consuming and dropping the executor makes rollback complete for this additive,
-/// currently non-live route.
+/// `executor` is consumed and retained with the isolated post-ledger candidate.  A committed
+/// Rust/Lean execution mutates many executor-owned side tables in addition to the ledger, so
+/// retaining only three accumulator roots would not be a complete post-image.  The later durable
+/// finalizer must consume both candidates and may release an install token only after its CAS.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_and_authenticate_finalized_turn(
-    store: &PersistentStore,
-    node_cipherclerk: &AgentCipherclerk,
     executor: TurnExecutor,
+    accepted: AcceptedFaithfulNoteSpendExactV3,
     signed: &SignedTurn,
     validated: ValidatedSignedTurn,
-    ledger: &mut Ledger,
+    actor_authority: DurableExactFnspV3ActorAuthority,
+    signer: &ExactFnspV3ExecutorSignerAuthority,
     lean_producer_enabled: bool,
     coordinates: FinalizedRecordCoordinates,
 ) -> Result<ExecutorProducedFinalizedTurn, ExecutorProducedFinalizationError> {
@@ -201,29 +640,90 @@ pub(crate) fn execute_and_authenticate_finalized_turn(
         return Err(ExecutorProducedFinalizationError::ValidatedTurnHashMismatch);
     }
 
-    let durable_actor = store
-        .lookup_cell(&signed.turn.agent)
-        .map_err(ExecutorProducedFinalizationError::Store)?
-        .ok_or(ExecutorProducedFinalizationError::DurableActorMissing)?;
-    if ledger.get(&signed.turn.agent) != Some(&durable_actor) {
+    let (durable_actor, ledger, actor_coordinates) = actor_authority.into_execution_parts();
+    if actor_coordinates.actor_id() != signed.turn.agent
+        || ledger.get(&signed.turn.agent) != Some(&durable_actor)
+    {
         return Err(ExecutorProducedFinalizationError::DurableActorMismatch);
     }
+    // Fail before executing: budget slices are executor-local today and cannot be reconstructed
+    // from the atomic finalized-turn record.
+    if executor.budget_gate.is_some() {
+        return Err(ExecutorProducedFinalizationError::ExactExecutorHasBudgetGate);
+    }
+    // Validate and bind the characterized exact route before installing the linear token or
+    // allowing phase-1 fee/nonce charging. A caller cannot preinstall authority for a different
+    // genuine proof and make the executor discover that mismatch only after mutation.
+    let authenticated_exact_spend = AuthenticatedExactFnspV3Spend::from_signed_turn(signed)?;
+    if !durable_actor.program.is_none() {
+        return Err(
+            ExecutorProducedFinalizationError::ExactChargedRoutePreflight(
+                "actor/target cell has a post-effect program gate".into(),
+            ),
+        );
+    }
+    if durable_actor.state.nonce() == u64::MAX {
+        return Err(
+            ExecutorProducedFinalizationError::ExactChargedRoutePreflight(
+                "actor nonce is exhausted".into(),
+            ),
+        );
+    }
+    executor
+        .validate_without_apply(&signed.turn, &ledger)
+        .map_err(|error| {
+            ExecutorProducedFinalizationError::ExactChargedRoutePreflight(error.to_string())
+        })?;
+    let Effect::NoteSpend { nullifier, .. } = &authenticated_exact_spend.effect else {
+        unreachable!("authenticated exact spend is a NoteSpend")
+    };
+    if executor.note_nullifiers.lock().unwrap().contains(nullifier) {
+        return Err(
+            ExecutorProducedFinalizationError::ExactChargedRoutePreflight(
+                "legacy nullifier accumulator already contains the exact nullifier".into(),
+            ),
+        );
+    }
+    if !accepted.matches_signed_effect(&authenticated_exact_spend.effect) {
+        return Err(ExecutorProducedFinalizationError::ExactFrameCarrierMismatch);
+    }
+    executor
+        .install_exact_fnsp_v3_admission(accepted)
+        .map_err(ExecutorProducedFinalizationError::ExactAdmission)?;
 
-    let pre = ledger.clone();
+    let pre = ledger;
+    let mut post = pre.clone();
     let roots_before = executor_roots(&executor);
+    let rate_limits_before = executor.rate_limit_counters.lock().unwrap().clone();
+    let rate_limit_sums_before = executor.rate_limit_sum_counters.lock().unwrap().clone();
     let result = super::executor_setup::execute_via_producer(
         &executor,
         &signed.turn,
-        ledger,
+        &mut post,
         lean_producer_enabled,
     );
     let roots_after = executor_roots(&executor);
+    if *executor.rate_limit_counters.lock().unwrap() != rate_limits_before
+        || *executor.rate_limit_sum_counters.lock().unwrap() != rate_limit_sums_before
+    {
+        return Err(ExecutorProducedFinalizationError::NonDurableExecutorSideStateMutation);
+    }
 
-    let receipt = match result {
-        TurnResult::Committed { receipt, .. } => receipt,
+    let (receipt, accepted) = match result {
+        TurnResult::Committed { receipt, .. } => {
+            executor
+                .promote_applied_exact_fnsp_v3_admission_after_commit()
+                .map_err(ExecutorProducedFinalizationError::ExactAdmission)?;
+            let accepted = executor
+                .take_consumed_exact_fnsp_v3_admission()
+                .map_err(ExecutorProducedFinalizationError::ExactAdmission)?
+                .ok_or(ExecutorProducedFinalizationError::ExactAdmissionMissingAfterCommit)?;
+            (receipt, accepted)
+        }
         other => {
-            if *ledger != pre {
-                *ledger = pre;
+            if dregg_persist::canonical_ledger_root(&post)
+                != dregg_persist::canonical_ledger_root(&pre)
+            {
                 return Err(ExecutorProducedFinalizationError::ProducerRejectedAfterMutation);
             }
             return Err(ExecutorProducedFinalizationError::ProducerDidNotCommit(
@@ -232,24 +732,46 @@ pub(crate) fn execute_and_authenticate_finalized_turn(
         }
     };
 
-    match seal_execution(
-        store,
-        node_cipherclerk,
+    let seal = seal_execution(
+        durable_actor,
+        actor_coordinates,
+        signer.public_key(),
         signed,
         validated,
         &pre,
-        ledger,
+        &post,
         roots_before,
         roots_after,
         receipt,
         coordinates,
-    ) {
-        Ok(authority) => Ok(authority),
-        Err(error) => {
-            *ledger = pre;
-            Err(error)
-        }
-    }
+    )?;
+
+    // The whole-turn receipt still uses the deployed legacy nullifier-set root.  The proof-local
+    // exact descriptor instead starts from FNS3(root,count); this context is constructible only
+    // with the mandatory verifier-accepted token recovered from the committed execution.
+    let mut proof_context_before = seal.context_before;
+    proof_context_before.nullifier_root = dregg_circuit::Faithful8::from_bytes32(
+        &u32_lanes_to_bytes(accepted.binding().prior_fns3()),
+    );
+
+    // This is the sole authority mint.  `seal_execution` cannot construct this type, and the
+    // consumed executor is the exact instance whose side tables were mutated by the producer.
+    Ok(ExecutorProducedFinalizedTurn {
+        core: ExecutorProducedFinalizedTurnCore {
+            durable_actor_pre: seal.durable_actor_pre,
+            actor_coordinates: seal.actor_coordinates,
+            post_ledger: seal.post_ledger,
+            post_executor: executor,
+            context_before: seal.context_before,
+            context_after: seal.context_after,
+            proof_context_before,
+            receipt: seal.receipt,
+            record: seal.record,
+            executor_public_key: seal.executor_public_key,
+            authenticated_exact_spend: seal.authenticated_exact_spend,
+        },
+        accepted,
+    })
 }
 
 type ExecutorRoots = (
@@ -268,8 +790,9 @@ fn executor_roots(executor: &TurnExecutor) -> ExecutorRoots {
 
 #[allow(clippy::too_many_arguments)]
 fn seal_execution(
-    store: &PersistentStore,
-    node_cipherclerk: &AgentCipherclerk,
+    durable_actor: Cell,
+    actor_coordinates: DurableExactFnspV3ActorCoordinates,
+    executor_public_key: dregg_types::PublicKey,
     signed: &SignedTurn,
     validated: ValidatedSignedTurn,
     pre: &Ledger,
@@ -278,16 +801,15 @@ fn seal_execution(
     roots_after: ExecutorRoots,
     receipt: TurnReceipt,
     coordinates: FinalizedRecordCoordinates,
-) -> Result<ExecutorProducedFinalizedTurn, ExecutorProducedFinalizationError> {
+) -> Result<ValidatedExecutionSeal, ExecutorProducedFinalizationError> {
     let turn_hash = signed.turn.hash();
     if turn_hash != validated.turn_hash() {
         return Err(ExecutorProducedFinalizationError::ValidatedTurnHashMismatch);
     }
-    let durable_actor = store
-        .lookup_cell(&signed.turn.agent)
-        .map_err(ExecutorProducedFinalizationError::Store)?
-        .ok_or(ExecutorProducedFinalizationError::DurableActorMissing)?;
-    if pre.get(&signed.turn.agent) != Some(&durable_actor) {
+    let authenticated_exact_spend = AuthenticatedExactFnspV3Spend::from_signed_turn(signed)?;
+    if actor_coordinates.actor_id() != signed.turn.agent
+        || pre.get(&signed.turn.agent) != Some(&durable_actor)
+    {
         return Err(ExecutorProducedFinalizationError::DurableActorMismatch);
     }
     if receipt.turn_hash != turn_hash {
@@ -332,7 +854,7 @@ fn seal_execution(
         return Err(ExecutorProducedFinalizationError::ReceiptAfterContextMismatch);
     }
 
-    dregg_turn::verify_receipt_signature_with_keys(&receipt, &[node_cipherclerk.public_key().0])
+    dregg_turn::verify_receipt_signature_with_keys(&receipt, &[executor_public_key.0])
         .map_err(|_| ExecutorProducedFinalizationError::ExecutorSignatureInvalid)?;
 
     let (touched_cells, removed) = complete_post_image(pre, post);
@@ -349,13 +871,45 @@ fn seal_execution(
         removed,
     };
 
-    Ok(ExecutorProducedFinalizedTurn {
+    Ok(ValidatedExecutionSeal {
         durable_actor_pre: durable_actor,
+        actor_coordinates,
+        post_ledger: post.clone(),
         context_before,
         context_after,
         receipt,
         record,
+        executor_public_key: executor_public_key.0,
+        authenticated_exact_spend,
     })
+}
+
+fn u32_lanes_to_bytes(lanes: [u32; 8]) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    for (lane, value) in lanes.into_iter().enumerate() {
+        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn exact_note_spends(forest: &dregg_turn::CallForest) -> Vec<&Effect> {
+    fn collect<'a>(effect: &'a Effect, out: &mut Vec<&'a Effect>) {
+        match effect {
+            Effect::NoteSpend { .. } => out.push(effect),
+            Effect::ExerciseViaCapability { inner_effects, .. } => {
+                for inner in inner_effects {
+                    collect(inner, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut spends = Vec::new();
+    for effect in forest.total_effects() {
+        collect(effect, &mut spends);
+    }
+    spends
 }
 
 /// Derive the authoritative durable overlay from the complete `Cell` diff, never the lossy
@@ -373,24 +927,59 @@ fn complete_post_image(pre: &Ledger, post: &Ledger) -> (Vec<Cell>, Vec<[u8; 32]>
             removed.push(id.0);
         }
     }
+    // `Ledger` is backed by a `HashMap`.  Its process-random iteration order must not leak into
+    // the durable record: the same state transition has one canonical post-image regardless of
+    // insertion order or hash seed.
+    touched_cells.sort_unstable_by_key(|cell| cell.id().0);
+    removed.sort_unstable();
     (touched_cells, removed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dregg_cell::CellId;
     use dregg_cell::commitment_set::CommitmentSet;
     use dregg_cell::nullifier_set::NullifierSet;
     use dregg_cell::revoked_set::RevokedSet;
     use dregg_persist::CommitRecord;
-    use dregg_turn::{CallForest, Turn};
-    use dregg_types::{PublicKey, Signature, sign};
+    use dregg_turn::{Action, Authorization, CallForest, CommitmentMode, DelegationMode, Turn};
+    use dregg_types::{Signature, sign};
+
+    fn exact_spend(tag: u8) -> Effect {
+        Effect::NoteSpend {
+            nullifier: dregg_cell::Nullifier([tag; 32]),
+            note_tree_root: [tag.wrapping_add(1); 32],
+            value: 0,
+            asset_type: 23,
+            spending_proof: FaithfulNoteSpendExactV3ProofCarrier::new(
+                u64::from(tag),
+                vec![tag.wrapping_add(2)],
+            )
+            .expect("bounded proof carrier")
+            .encode(),
+            value_commitment: None,
+        }
+    }
 
     fn signed_turn(cclerk: &AgentCipherclerk, actor: CellId) -> SignedTurn {
+        let mut call_forest = CallForest::new();
+        call_forest.add_root(Action {
+            target: actor,
+            method: [0x61; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects: vec![exact_spend(0x31)],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        });
         let turn = Turn {
             agent: actor,
             nonce: 0,
-            call_forest: CallForest::new(),
+            call_forest,
             fee: 0,
             memo: None,
             valid_until: None,
@@ -518,6 +1107,340 @@ mod tests {
     }
 
     #[test]
+    fn exact_spend_projection_refuses_zero_two_nested_and_mixed_version_carriers() {
+        let (_, cclerk, signed, _, _, _) = fixture();
+
+        let mut zero = signed.clone();
+        zero.turn.call_forest.roots[0].action.effects.clear();
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&zero),
+            Err(ExecutorProducedFinalizationError::ExactNoteSpendCardinality { found: 0 })
+        ));
+
+        let mut two = signed.clone();
+        two.turn.call_forest.roots[0]
+            .action
+            .effects
+            .push(exact_spend(0x41));
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&two),
+            Err(ExecutorProducedFinalizationError::ExactNoteSpendCardinality { found: 2 })
+        ));
+
+        let mut nested = signed_turn(&cclerk, signed.turn.agent);
+        nested.turn.call_forest.roots[0].action.effects = vec![Effect::ExerciseViaCapability {
+            cap_slot: 7,
+            inner_effects: vec![exact_spend(0x51)],
+        }];
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&nested),
+            Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported)
+        ));
+
+        let mut malformed = signed;
+        let Effect::NoteSpend { spending_proof, .. } =
+            &mut malformed.turn.call_forest.roots[0].action.effects[0]
+        else {
+            unreachable!()
+        };
+        spending_proof[4] = 2; // exact route is version 3; v2 must not be mixed in.
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&malformed),
+            Err(ExecutorProducedFinalizationError::ExactProofCarrierInvalid(
+                _
+            ))
+        ));
+
+        let mut nonconserving = signed.clone();
+        let Effect::NoteSpend { value, .. } =
+            &mut nonconserving.turn.call_forest.roots[0].action.effects[0]
+        else {
+            unreachable!()
+        };
+        *value = 1;
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&nonconserving),
+            Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported)
+        ));
+
+        let mut committed_value = signed.clone();
+        let Effect::NoteSpend {
+            value_commitment, ..
+        } = &mut committed_value.turn.call_forest.roots[0].action.effects[0]
+        else {
+            unreachable!()
+        };
+        *value_commitment = Some([0x91; 32]);
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&committed_value),
+            Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported)
+        ));
+
+        let mut charged_sidecar = signed;
+        charged_sidecar.turn.call_forest.roots[0]
+            .action
+            .witness_blobs
+            .push(dregg_turn::action::WitnessBlob {
+                kind: dregg_turn::action::WitnessKind::Cleartext,
+                bytes: vec![1],
+            });
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&charged_sidecar),
+            Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported)
+        ));
+
+        let mut different_target = signed_turn(&cclerk, charged_sidecar.turn.agent);
+        different_target.turn.call_forest.roots[0].action.target = dregg_cell::CellId([0xee; 32]);
+        assert!(matches!(
+            AuthenticatedExactFnspV3Spend::from_signed_turn(&different_target),
+            Err(ExecutorProducedFinalizationError::ExactTurnShapeUnsupported)
+        ));
+    }
+
+    /// Full 3,760-column HidingFRI proof -> verifier-minted admission -> ONE producer gate ->
+    /// executor-signed full receipt -> proof-bound exact frame.  Heavy by construction; keep it
+    /// out of the default loop and run focused under release on the proof/GPU build node.
+    #[test]
+    #[ignore = "real exact-v3 HidingFRI proof and node producer/frame weld; run focused --release"]
+    fn genuine_exact_proof_crosses_one_producer_gate_and_binds_distinct_full_receipt() {
+        use dregg_cell::commitment::digest8_to_bytes32;
+        use dregg_cell::note::Note;
+        use dregg_cell::{AuthRequired, Permissions};
+        use dregg_circuit::exact_nullifier_aafi::{
+            ExactNullifierAafi, validate_exact_aafi_witness,
+        };
+        use dregg_circuit_prove::faithful_note_spend::FaithfulNoteOpening;
+        use dregg_circuit_prove::faithful_note_spend_exact_v3::{
+            FaithfulNoteSpendExactV3Claim, compose_staged_exact_v3_witness,
+            prove_staged_exact_v3_zk,
+        };
+        use dregg_commit::poseidon2_tree::Poseidon2NoteTree16;
+        use dregg_turn::{ExactFnspV3ReceiptEpoch, ExactFnspV3StatePoint, Finality};
+
+        let cclerk = AgentCipherclerk::from_seed([0x71; 64]);
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let mut actor = Cell::with_balance(cclerk.public_key().0, token_id, 1_000);
+        actor.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        let actor_id = actor.id();
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(actor.clone()).expect("actor ledger");
+
+        // A zero-value note keeps the deliberately narrow one-effect live slice conserving.  The
+        // future characterized widening carries direct NoteCreate outputs in the same authority.
+        let spending_key = core::array::from_fn(|index| 0xc0u8.wrapping_add(index as u8));
+        let note = Note::with_nonce(
+            Note::faithful_owner_v2(&spending_key),
+            [0x0123_4567_89ab_cdef, 0, 0, 0, 0, 0, 0, 0],
+            core::array::from_fn(|index| 0x40u8.wrapping_add(index as u8)),
+            core::array::from_fn(|index| 0x80u8.wrapping_add(index as u8)),
+        );
+        let mut note_tree = Poseidon2NoteTree16::new();
+        note_tree.append_commitment(&note.faithful_commitment_v2().0);
+        let note_path = note_tree.prove_membership(0).expect("note membership");
+        let opening = FaithfulNoteOpening {
+            owner: note.owner,
+            value: 0,
+            asset_type: note.fields[0],
+            creation_nonce: note.creation_nonce,
+            randomness: note.randomness,
+            spending_key,
+        };
+        let nullifier = note.faithful_nullifier_v2(&spending_key).0;
+        let exact = ExactNullifierAafi::new()
+            .prepare_insert(nullifier, 0)
+            .expect("fresh exact transition");
+
+        let mut executor = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
+        executor.set_executor_signing_key(cclerk.gossip_signing_key().to_bytes());
+        let federation_id = [0x72; 32];
+        executor.set_local_federation_id(federation_id);
+        let real_context_before = dregg_turn::state_commit::consensus_ctx(
+            &ledger,
+            executor.note_nullifiers.lock().unwrap().root8(),
+            executor.note_commitments.lock().unwrap().root8(),
+            executor.note_revoked.lock().unwrap().root8(),
+        );
+        let mut proof_context_before = real_context_before;
+        proof_context_before.nullifier_root =
+            dregg_circuit::Faithful8::from_bytes32(&digest8_to_bytes32(exact.prior_state_commit));
+        let anchor = dregg_turn::derive_exact_fnsp_v3_durable_anchor(
+            &actor,
+            &proof_context_before,
+            exact.prior_state_commit,
+            exact.successor_state_commit,
+        )
+        .expect("proof-local durable anchor");
+
+        let root_height = 7;
+        let historical_lanes = note_tree.root().limbs().map(|felt| felt.as_u32());
+        let witness = compose_staged_exact_v3_witness(
+            &opening,
+            &note_path,
+            FaithfulNoteSpendExactV3Claim {
+                root_height,
+                historical_note_root: historical_lanes,
+            },
+            &exact,
+            *anchor.before_payload(),
+        )
+        .expect("exact witness composition");
+        let proof_bytes = prove_staged_exact_v3_zk(&witness)
+            .expect("real hiding proof")
+            .to_postcard()
+            .expect("canonical proof transport");
+        let carrier = FaithfulNoteSpendExactV3ProofCarrier::new(root_height, proof_bytes)
+            .expect("strict exact carrier")
+            .encode();
+        let historical_note_root = u32_lanes_to_bytes(historical_lanes);
+        let effect = Effect::NoteSpend {
+            nullifier: dregg_cell::Nullifier(nullifier),
+            note_tree_root: historical_note_root,
+            value: 0,
+            asset_type: opening.asset_type,
+            spending_proof: carrier,
+            value_commitment: None,
+        };
+        let transition = validate_exact_aafi_witness(&exact).expect("validated exact AAFI");
+        let accepted = dregg_turn::verify_faithful_note_spend_exact_v3_acceptance(
+            &effect,
+            &transition,
+            &anchor,
+        )
+        .expect("code-owned real verifier acceptance");
+        let mut legacy_tip = TurnReceipt {
+            agent: actor_id,
+            federation_id,
+            post_state_hash: dregg_turn::state_commit::consensus_state_commitment(
+                &ledger,
+                &actor_id,
+                &real_context_before,
+            ),
+            finality: Finality::Final,
+            ..TurnReceipt::default()
+        };
+        legacy_tip.executor_signature = Some(
+            sign(
+                &cclerk.gossip_signing_key(),
+                &legacy_tip.canonical_executor_signed_message(),
+            )
+            .0
+            .to_vec(),
+        );
+        let legacy_hash = legacy_tip.receipt_hash();
+        executor.set_last_receipt_hash(actor_id, legacy_hash);
+
+        let mut forest = CallForest::new();
+        forest.add_root(Action {
+            target: actor_id,
+            method: [0x73; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects: vec![effect],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        });
+        let turn = Turn {
+            agent: actor_id,
+            nonce: 0,
+            call_forest: forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: Some(legacy_hash),
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: vec![],
+            cross_effect_dependencies: vec![],
+            effect_witness_index_map: vec![],
+        };
+        let signed = SignedTurn {
+            signature: Signature([0; 64]),
+            signer: cclerk.public_key(),
+            pq_signature: vec![],
+            pq_signer: vec![],
+            turn,
+        };
+        let validated = ValidatedSignedTurn::from_turn_hash_for_test(signed.turn.hash());
+        let store = durable_store(&actor);
+        let authority = execute_and_authenticate_finalized_turn(
+            &store,
+            &cclerk,
+            executor,
+            accepted,
+            &signed,
+            validated,
+            &ledger,
+            false,
+            coordinates(),
+        )
+        .expect("one real producer gate mints authority");
+        assert_eq!(ledger.get(&actor_id).unwrap().state.nonce(), 0);
+        assert_eq!(
+            authority
+                .core
+                .post_ledger
+                .get(&actor_id)
+                .unwrap()
+                .state
+                .nonce(),
+            1
+        );
+
+        let exact_initial = ExactFnspV3StatePoint::new(exact.prior_root, exact.prior_count)
+            .expect("exact initial point");
+        let activation = ExactFnspV3ReceiptEpochV1::prepare(
+            ExactFnspV3ReceiptEpoch::new(1).expect("exact epoch"),
+            &legacy_tip,
+            exact_initial,
+        )
+        .expect("epoch activation");
+        store
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+            .expect("durable exact initial prefix");
+        let encoded_legacy_tip = postcard::to_stdvec(&legacy_tip).expect("legacy tip wire");
+        store
+            .append_receipt_chain_entry(0, &encoded_legacy_tip)
+            .expect("durable legacy tip");
+        let predecessor = crate::exact_fnsp_v3_activation::exact_fnsp_v3_current_predecessor(
+            &store,
+            &cclerk,
+            activation,
+            &legacy_tip,
+        )
+        .expect("store-authorized frame predecessor");
+        let joined = authority
+            .bind_exact_frame(&cclerk, &predecessor)
+            .expect("executor/proof/frame join");
+        assert!(joined.verify_frame_signature());
+        assert_eq!(
+            joined.post_ledger().get(&actor_id).unwrap().state.nonce(),
+            1
+        );
+        assert_ne!(
+            joined.receipt().post_state_hash,
+            joined.frame().proof_outer_after().to_bytes(),
+            "whole-turn nonce transition is not the proof-local exact AFTER anchor",
+        );
+    }
+
+    #[test]
     fn opaque_authority_derives_receipt_and_commit_record_from_one_execution_image() {
         let (store, cclerk, signed, validated, pre, mut post) = fixture();
         let roots_before = roots();
@@ -528,7 +1451,7 @@ mod tests {
         let extra = Cell::with_balance([0x22; 32], [0x23; 32], 5);
         post.insert_cell(extra.clone()).expect("extra post cell");
         let receipt = signed_receipt(&cclerk, &signed, &pre, &post, roots_before, roots_after);
-        let authority = seal_execution(
+        let seal = seal_execution(
             &store,
             &cclerk,
             &signed,
@@ -543,27 +1466,18 @@ mod tests {
         .expect("sealed executor authority");
 
         assert_eq!(
-            authority.durable_actor_pre(),
-            pre.get(&signed.turn.agent).unwrap()
+            seal.durable_actor_pre,
+            *pre.get(&signed.turn.agent).unwrap()
         );
-        assert_eq!(authority.receipt().turn_hash, signed.turn.hash());
-        assert_eq!(authority.record().turn_hash, signed.turn.hash());
-        assert_eq!(authority.record().creator, signed.turn.agent.0);
+        assert_eq!(seal.receipt.turn_hash, signed.turn.hash());
+        assert_eq!(seal.record.turn_hash, signed.turn.hash());
+        assert_eq!(seal.record.creator, signed.turn.agent.0);
+        assert_eq!(seal.record.receipt_hash, seal.receipt.receipt_hash());
         assert_eq!(
-            authority.record().receipt_hash,
-            authority.receipt().receipt_hash()
-        );
-        assert_eq!(
-            authority.record().ledger_root,
+            seal.record.ledger_root,
             dregg_persist::canonical_ledger_root(&post)
         );
-        assert!(
-            authority
-                .record()
-                .touched_cells
-                .iter()
-                .any(|cell| cell == &extra)
-        );
+        assert!(seal.record.touched_cells.iter().any(|cell| cell == &extra));
     }
 
     #[test]
@@ -670,5 +1584,62 @@ mod tests {
             ),
             Err(ExecutorProducedFinalizationError::ExecutorSignatureInvalid)
         ));
+    }
+
+    #[test]
+    fn complete_post_image_is_canonical_across_ledger_insertion_orders() {
+        let token = [0x55; 32];
+        let actor = Cell::with_balance([0x10; 32], token, 1);
+        let changed_low = Cell::with_balance([0x20; 32], token, 2);
+        let changed_high = Cell::with_balance([0xf0; 32], token, 3);
+        let removed_low = Cell::with_balance([0x30; 32], token, 4);
+        let removed_high = Cell::with_balance([0xe0; 32], token, 5);
+
+        let mut pre_forward = Ledger::new();
+        for cell in [
+            &actor,
+            &changed_low,
+            &changed_high,
+            &removed_low,
+            &removed_high,
+        ] {
+            pre_forward.insert_cell(cell.clone()).expect("pre cell");
+        }
+        let mut pre_reverse = Ledger::new();
+        for cell in [
+            &removed_high,
+            &removed_low,
+            &changed_high,
+            &changed_low,
+            &actor,
+        ] {
+            pre_reverse.insert_cell(cell.clone()).expect("pre cell");
+        }
+
+        let mut changed_low_post = changed_low.clone();
+        changed_low_post.state.set_nonce(7);
+        let mut changed_high_post = changed_high.clone();
+        changed_high_post.state.set_nonce(8);
+        let added = Cell::with_balance([0x80; 32], token, 6);
+
+        let mut post_forward = Ledger::new();
+        for cell in [&actor, &changed_low_post, &added, &changed_high_post] {
+            post_forward.insert_cell(cell.clone()).expect("post cell");
+        }
+        let mut post_reverse = Ledger::new();
+        for cell in [&changed_high_post, &added, &changed_low_post, &actor] {
+            post_reverse.insert_cell(cell.clone()).expect("post cell");
+        }
+
+        let forward = complete_post_image(&pre_forward, &post_forward);
+        let reverse = complete_post_image(&pre_reverse, &post_reverse);
+        assert_eq!(forward, reverse);
+        assert!(
+            forward
+                .0
+                .windows(2)
+                .all(|pair| pair[0].id().0 < pair[1].id().0)
+        );
+        assert!(forward.1.windows(2).all(|pair| pair[0] < pair[1]));
     }
 }

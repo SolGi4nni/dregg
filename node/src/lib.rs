@@ -48,6 +48,8 @@ pub mod events;
 #[cfg(feature = "prover")]
 mod exact_fnsp_v3_activation;
 #[cfg(feature = "prover")]
+mod exact_fnsp_v3_actor_authority;
+#[cfg(feature = "prover")]
 mod exact_fnsp_v3_execution_authority;
 #[cfg(feature = "prover")]
 mod exact_fnsp_v3_finalization;
