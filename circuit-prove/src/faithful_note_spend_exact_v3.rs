@@ -63,6 +63,8 @@ const EXPECTED_DESCRIPTOR_TABLES: usize = 5;
 const EXPECTED_PROOF_INSTANCES: usize = 4;
 const EXPECTED_HIDING_DEGREE_BITS: [usize; EXPECTED_PROOF_INSTANCES] = [5, 8, 11, 5];
 pub const STAGED_PUBLIC_WIRE_BYTES: usize = STAGED_PUBLIC_INPUT_COUNT * 4;
+/// Hard transport limit enforced before postcard is allowed to allocate proof-owned buffers.
+pub const MAX_STAGED_EXACT_V3_PROOF_BYTES: usize = 4 * 1024 * 1024;
 
 const PI_PRIOR_ROOT_BASE: usize = 44;
 const PI_PRE_COUNT_BASE: usize = 52;
@@ -200,8 +202,12 @@ impl StagedFaithfulNoteSpendExactV3Proof {
     }
 
     /// Strict transport decode: consume the complete byte string and require the exact four
-    /// committed HidingFRI instances produced by the five-table staged descriptor.
+    /// committed HidingFRI instances produced by the five-table staged descriptor.  The wire
+    /// representation itself must also be postcard's unique canonical encoding; accepting a
+    /// non-minimal varint alias would otherwise make proof identity depend on the decoder rather
+    /// than the authenticated bytes.
     pub fn from_postcard(bytes: &[u8]) -> Result<Self, String> {
+        validate_staged_exact_v3_proof_wire_len(bytes)?;
         let (proof, trailing) =
             postcard::take_from_bytes::<Ir2BatchProof<DreggZkStarkConfig>>(bytes)
                 .map_err(|error| format!("staged exact FNSP-v3 proof decode failed: {error}"))?;
@@ -212,8 +218,29 @@ impl StagedFaithfulNoteSpendExactV3Proof {
             ));
         }
         validate_proof_shape(&proof)?;
+        require_canonical_postcard(&proof, bytes)?;
         Ok(Self { proof })
     }
+}
+
+fn validate_staged_exact_v3_proof_wire_len(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() > MAX_STAGED_EXACT_V3_PROOF_BYTES {
+        return Err(format!(
+            "staged exact FNSP-v3 proof is {} bytes; maximum is {MAX_STAGED_EXACT_V3_PROOF_BYTES}",
+            bytes.len()
+        ));
+    }
+    Ok(())
+}
+
+fn require_canonical_postcard<T: serde::Serialize>(value: &T, bytes: &[u8]) -> Result<(), String> {
+    let canonical = postcard::to_allocvec(value).map_err(|error| {
+        format!("staged exact FNSP-v3 canonical proof re-encode failed: {error}")
+    })?;
+    if canonical.as_slice() != bytes {
+        return Err("staged exact FNSP-v3 proof uses a non-canonical postcard encoding".to_owned());
+    }
+    Ok(())
 }
 
 fn validate_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(), String> {
@@ -241,9 +268,9 @@ fn validate_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(),
     Ok(())
 }
 
-/// Parse and pin the exact unregistered Lean emission used by this composition lane.
-fn parse_and_pin_staged_descriptor() -> Result<PinnedStagedDescriptor, String> {
-    let descriptor = parse_vm_descriptor2(STAGED_DESCRIPTOR_JSON)?;
+fn validate_exact_v3_descriptor_shape(
+    descriptor: &EffectVmDescriptor2,
+) -> Result<[(VmRow, usize); STAGED_PUBLIC_INPUT_COUNT], String> {
     if descriptor.name != STAGED_PREDICATE_NAME
         || descriptor.trace_width != STAGED_TRACE_WIDTH
         || descriptor.public_input_count != STAGED_PUBLIC_INPUT_COUNT
@@ -313,6 +340,13 @@ fn parse_and_pin_staged_descriptor() -> Result<PinnedStagedDescriptor, String> {
         let (row, col, _) = pins[index];
         (row, col)
     });
+    Ok(public_pins)
+}
+
+/// Parse and pin the exact unregistered Lean emission used by this composition lane.
+fn parse_and_pin_staged_descriptor() -> Result<PinnedStagedDescriptor, String> {
+    let descriptor = parse_vm_descriptor2(STAGED_DESCRIPTOR_JSON)?;
+    let public_pins = validate_exact_v3_descriptor_shape(&descriptor)?;
     Ok(PinnedStagedDescriptor {
         descriptor,
         public_pins,
@@ -489,9 +523,32 @@ pub fn verify_staged_exact_v3_postcard(
     proof_bytes: &[u8],
     public_values: &[u32],
 ) -> Result<(), String> {
+    verify_exact_v3_postcard_with_descriptor(staged_descriptor()?, proof_bytes, public_values)
+}
+
+/// Strict transport verifier for a recoverable typed exact-v3 program.
+///
+/// This is the re-execution boundary used after identity code decodes the authenticated
+/// `VkComponents.program_bytes`.  It does not consult the built-in staged JSON.  The supplied
+/// program must independently satisfy the exact-v3 descriptor/table/lookup/public ABI, and the
+/// proof is then verified against that supplied constraint system under the fixed HidingFRI
+/// configuration.
+pub fn verify_exact_v3_postcard_with_descriptor(
+    descriptor: &EffectVmDescriptor2,
+    proof_bytes: &[u8],
+    public_values: &[u32],
+) -> Result<(), String> {
+    // Preserve the transport DoS boundary even when the supplied descriptor is malformed.
+    validate_staged_exact_v3_proof_wire_len(proof_bytes)?;
+    validate_exact_v3_descriptor_shape(descriptor)?;
     let proof = StagedFaithfulNoteSpendExactV3Proof::from_postcard(proof_bytes)?;
     let public = StagedFaithfulNoteSpendExactV3Public::try_from_u32s(public_values)?;
-    verify_staged_exact_v3_zk(&proof, public.as_felts())
+    verify_vm_descriptor2_with_config(
+        descriptor,
+        &proof.proof,
+        public.as_felts(),
+        &create_zk_config(),
+    )
 }
 
 #[cfg(test)]
@@ -644,6 +701,45 @@ mod tests {
         let mut noncanonical_wire = wire;
         noncanonical_wire[0..4].copy_from_slice(&BABYBEAR_P.to_le_bytes());
         assert!(StagedFaithfulNoteSpendExactV3Public::from_le_bytes(&noncanonical_wire).is_err());
+    }
+
+    #[test]
+    fn postcard_canonicality_rejects_overlong_varint_alias() {
+        let value = vec![0u32];
+        let canonical = postcard::to_allocvec(&value).expect("small canonical fixture encodes");
+        let overlong = [0x81, 0x00, 0x00];
+        let (decoded, trailing) = postcard::take_from_bytes::<Vec<u32>>(&overlong)
+            .expect("postcard accepts the non-minimal varint alias");
+        assert!(trailing.is_empty());
+        assert_eq!(decoded, value);
+
+        require_canonical_postcard(&decoded, &canonical)
+            .expect("postcard's own encoding is canonical");
+        let error = require_canonical_postcard(&decoded, &overlong)
+            .expect_err("the same value under an overlong varint must refuse");
+        assert!(error.contains("non-canonical postcard encoding"));
+    }
+
+    #[test]
+    fn exact_v3_proof_wire_size_refuses_before_decode() {
+        let oversized = vec![0u8; MAX_STAGED_EXACT_V3_PROOF_BYTES + 1];
+        let error = verify_staged_exact_v3_postcard(&oversized, &[])
+            .expect_err("oversized proof transport must refuse before proof/public decoding");
+        assert!(error.contains("maximum"));
+        assert!(error.contains(&(MAX_STAGED_EXACT_V3_PROOF_BYTES + 1).to_string()));
+    }
+
+    #[test]
+    fn supplied_exact_v3_descriptor_shape_refuses_before_proof_decode() {
+        let mut wrong_shape = staged_descriptor()
+            .expect("built-in exact descriptor is valid")
+            .clone();
+        wrong_shape.trace_width -= 1;
+
+        let error = verify_exact_v3_postcard_with_descriptor(&wrong_shape, &[], &[])
+            .expect_err("wrong-shape recoverable program must refuse without a proof");
+        assert!(error.contains("descriptor shape drifted"));
+        assert!(!error.contains("proof decode failed"));
     }
 
     #[test]
