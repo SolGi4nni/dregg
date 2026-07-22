@@ -1226,7 +1226,9 @@ fn stage_first_frame_activation_in(
     frame: &UntrustedExactFnspV3FrameV1,
     activation: &UntrustedExactFnspV3ActivationV1,
 ) -> StoreResult<()> {
-    if frame.sequence != 0
+    // A flag day may shadow a nonempty faithful/exact prefix. Frame numbering continues at that
+    // prefix generation; zero is correct only for a genesis activation.
+    if frame.sequence != activation.exact_initial.generation()
         || frame.receipt_log_index != activation.receipt_cutover_next_index
         || activation.exact_initial != exact_head
     {
@@ -2238,6 +2240,93 @@ mod tests {
             )
             .expect("append ordinary receipt");
         (index, hash)
+    }
+
+    #[test]
+    fn first_frame_activation_continues_nonempty_exact_prefix_atomically() {
+        let store = PersistentStore::open_in_memory().expect("store");
+        let initial = store
+            .initialize_exact_fnsp_v3_state([
+                dregg_circuit::exact_nullifier_aafi::ExactAppendRecord {
+                    seq: 0,
+                    raw: [0x11; 32],
+                    value: 11,
+                },
+                dregg_circuit::exact_nullifier_aafi::ExactAppendRecord {
+                    seq: 1,
+                    raw: [0x22; 32],
+                    value: 22,
+                },
+            ])
+            .expect("nonempty exact prefix");
+        assert_eq!(initial.generation(), 2);
+        let (key, public) = generate_keypair();
+        let activation = activation_candidate(initial, &key, public);
+        let exact = store
+            .prepare_exact_fnsp_v3_append([0x33; 32], 33)
+            .expect("next exact append");
+        let frame = frame_candidate(
+            &store,
+            &activation,
+            exact,
+            &key,
+            [0xA1; 32],
+            None,
+            None,
+            0x33,
+        );
+        assert_eq!(frame.sequence(), initial.generation());
+
+        // A correctly signed frame which rewinds sequence to zero is still inadmissible. Dropping
+        // the consumed writer leaves activation and exact authority unchanged.
+        let mut rewind = frame.clone();
+        rewind.sequence = 0;
+        rewind.frame_hash = rewind.compute_frame_hash();
+        let mut message = Vec::from(FRAME_SIGNATURE_DOMAIN);
+        message.extend_from_slice(&rewind.frame_hash);
+        rewind.executor_signature = sign(&key, &message);
+        let before = store.exact_fnsp_v3_state_head().expect("head before");
+        let write = store.db.begin_write().expect("rewind writer");
+        assert!(
+            stage_exact_fnsp_v3_frame_with_activation_in(
+                write,
+                exact,
+                Some(activation.clone()),
+                rewind,
+            )
+            .is_err()
+        );
+        assert!(
+            store
+                .exact_fnsp_v3_activation()
+                .expect("activation read")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .exact_fnsp_v3_state_head()
+                .expect("head after refusal"),
+            before
+        );
+
+        let write = store.db.begin_write().expect("first-frame writer");
+        let (write, staged) = stage_exact_fnsp_v3_frame_with_activation_in(
+            write,
+            exact,
+            Some(activation.clone()),
+            frame,
+        )
+        .expect("atomic activation and first frame");
+        write.commit().expect("commit first frame");
+        assert_eq!(staged.sequence(), initial.generation());
+        assert_eq!(
+            store
+                .exact_fnsp_v3_activation()
+                .expect("activation audit")
+                .expect("installed activation")
+                .activation_hash(),
+            activation.activation_hash()
+        );
     }
 
     #[test]
