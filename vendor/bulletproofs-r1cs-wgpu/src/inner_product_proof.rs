@@ -22,35 +22,41 @@ use rayon::prelude::*;
 const PARALLEL_IPP_MSM_CHUNK_TERMS: usize = 32_768;
 
 #[cfg(feature = "parallel-prover")]
-fn prover_vartime_multiscalar_mul<I, J>(scalars: I, points: J) -> RistrettoPoint
+fn prover_vartime_multiscalar_mul<'a, I, J>(scalars: I, points: J) -> RistrettoPoint
 where
     I: IntoIterator,
     I::Item: Borrow<Scalar>,
-    J: IntoIterator,
-    J::Item: Borrow<RistrettoPoint>,
+    J: IntoIterator<Item = &'a RistrettoPoint>,
 {
     let scalar_values: Vec<Scalar> = scalars.into_iter().map(|s| *s.borrow()).collect();
-    let point_values: Vec<RistrettoPoint> = points.into_iter().map(|p| *p.borrow()).collect();
+    // The IPP owns and mutates its generator vectors for the duration of the
+    // proof.  Chunk borrowed references into those vectors rather than copying
+    // every extended point into another temporary allocation for each L/R MSM.
+    // This is only a scheduling representation: dalek receives the same points
+    // in the same order and remains the arithmetic authority.
+    let point_values: Vec<&RistrettoPoint> = points.into_iter().collect();
     assert_eq!(scalar_values.len(), point_values.len());
     if scalar_values.len() < PARALLEL_IPP_MSM_CHUNK_TERMS {
-        return RistrettoPoint::vartime_multiscalar_mul(&scalar_values, &point_values);
+        return RistrettoPoint::vartime_multiscalar_mul(
+            &scalar_values,
+            point_values.iter().copied(),
+        );
     }
     scalar_values
         .par_chunks(PARALLEL_IPP_MSM_CHUNK_TERMS)
         .zip(point_values.par_chunks(PARALLEL_IPP_MSM_CHUNK_TERMS))
         .map(|(scalar_chunk, point_chunk)| {
-            RistrettoPoint::vartime_multiscalar_mul(scalar_chunk, point_chunk)
+            RistrettoPoint::vartime_multiscalar_mul(scalar_chunk, point_chunk.iter().copied())
         })
         .reduce(RistrettoPoint::identity, |left, right| left + right)
 }
 
 #[cfg(not(feature = "parallel-prover"))]
-fn prover_vartime_multiscalar_mul<I, J>(scalars: I, points: J) -> RistrettoPoint
+fn prover_vartime_multiscalar_mul<'a, I, J>(scalars: I, points: J) -> RistrettoPoint
 where
     I: IntoIterator,
     I::Item: Borrow<Scalar>,
-    J: IntoIterator,
-    J::Item: Borrow<RistrettoPoint>,
+    J: IntoIterator<Item = &'a RistrettoPoint>,
 {
     RistrettoPoint::vartime_multiscalar_mul(scalars, points)
 }
@@ -683,6 +689,22 @@ mod tests {
                 &H
             )
             .is_ok());
+
+        let mut forged = proof;
+        forged.a += Scalar::ONE;
+        let mut verifier = Transcript::new(b"innerproducttest");
+        assert!(forged
+            .verify(
+                n,
+                &mut verifier,
+                iter::repeat(Scalar::ONE).take(n),
+                util::exp_iter(y_inv).take(n),
+                &P,
+                &Q,
+                &G,
+                &H
+            )
+            .is_err());
     }
 
     #[test]
