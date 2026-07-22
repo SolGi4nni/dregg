@@ -201,12 +201,11 @@ pub struct VerifiedBfvFaithfulTables {
 /// Authority returned after the strict table carrier has additionally been
 /// joined to the transform's real ingress and egress.
 ///
-/// This is deliberately *not* an arithmetic-proof authority by itself: the
-/// 48-column butterfly equations still have to be accepted by the matching
-/// IR2 proof.  It closes the separate substitution seam in which a valid
-/// internal stage permutation could otherwise start from, or finish at, a
-/// different polynomial.  In inverse mode the final comparison includes the
-/// exact `psi^-i / N` normalization omitted from the butterfly rows.
+/// The strict carrier replays every 48-column integer butterfly equation as
+/// well as the exact schedule/bus and ingress/egress.  This is public native
+/// verification, not zero knowledge and not an IR2/FRI proof, but forged
+/// arithmetic rows do not acquire authority.  In inverse mode the final
+/// comparison includes exact `psi^-i / N` normalization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedBfvTransformBoundaries {
     tables: VerifiedBfvFaithfulTables,
@@ -773,6 +772,86 @@ fn validate_main_rows(
             return Err(BfvTableError::MainTrace(format!(
                 "row {row_index} schedule tuple differs from the canonical family"
             )));
+        }
+        validate_butterfly_arithmetic(geometry, row_index, row)?;
+    }
+    Ok(())
+}
+
+/// Native replay of the exact radix-2^14 equations authored in
+/// `Market.PrivateBookBfvButterflyAir`.  This closes the previous seam where a
+/// schedule- and bus-consistent row could carry arbitrary arithmetic values.
+fn validate_butterfly_arithmetic(
+    geometry: BfvButterflyGeometry,
+    row_index: usize,
+    row: &BfvButterflyRow,
+) -> Result<(), BfvTableError> {
+    let decode = |base: usize, label: &'static str| -> Result<u64, BfvTableError> {
+        let value = decode_limbs3([row[base], row[base + 1], row[base + 2]]).map_err(|_| {
+            BfvTableError::MainTrace(format!(
+                "row {row_index} {label} has a noncanonical radix-2^14 limb"
+            ))
+        })?;
+        if value >= geometry.modulus {
+            return Err(BfvTableError::MainTrace(format!(
+                "row {row_index} {label}={value} is not canonical modulo {}",
+                geometry.modulus
+            )));
+        }
+        Ok(value)
+    };
+    let left = decode(LEFT_INPUT, "left input")?;
+    let right = decode(RIGHT_INPUT, "right input")?;
+    let twiddle = decode(TWIDDLE, "twiddle")?;
+    let product = decode(TWIDDLED_RIGHT, "twiddled right")?;
+    let left_output = decode(LEFT_OUTPUT, "left output")?;
+    let right_output = decode(RIGHT_OUTPUT, "right output")?;
+    let quotient = decode(PRODUCT_QUOTIENT, "product quotient")?;
+    let add_reduce = row[ADD_REDUCE];
+    let sub_reduce = row[SUB_REDUCE];
+    if add_reduce > 1 || sub_reduce > 1 {
+        return Err(BfvTableError::MainTrace(format!(
+            "row {row_index} reduction selectors are not boolean"
+        )));
+    }
+
+    let q = u128::from(geometry.modulus);
+    if u128::from(right) * u128::from(twiddle) != u128::from(product) + q * u128::from(quotient) {
+        return Err(BfvTableError::MainTrace(format!(
+            "row {row_index} product/quotient equation failed"
+        )));
+    }
+    if u128::from(left) + u128::from(product)
+        != u128::from(left_output) + q * u128::from(add_reduce)
+    {
+        return Err(BfvTableError::MainTrace(format!(
+            "row {row_index} modular-add equation failed"
+        )));
+    }
+    if u128::from(left) + q * u128::from(sub_reduce)
+        != u128::from(product) + u128::from(right_output)
+    {
+        return Err(BfvTableError::MainTrace(format!(
+            "row {row_index} modular-subtract equation failed"
+        )));
+    }
+
+    let expected_product = product_carries(right, twiddle, product, quotient, geometry.modulus);
+    let expected_add = add_carries(left, product, left_output, add_reduce, geometry.modulus);
+    let expected_sub = sub_carries(left, product, right_output, sub_reduce, geometry.modulus);
+    for (base, label, expected) in [
+        (PRODUCT_CARRY, "product", expected_product.as_slice()),
+        (ADD_CARRY, "add", expected_add.as_slice()),
+        (SUB_CARRY, "subtract", expected_sub.as_slice()),
+    ] {
+        for (offset, carry) in expected.iter().copied().enumerate() {
+            if !(-CARRY_SHIFT..CARRY_SHIFT).contains(&carry)
+                || row[base + offset] != (carry + CARRY_SHIFT) as u32
+            {
+                return Err(BfvTableError::MainTrace(format!(
+                    "row {row_index} {label} carry {offset} is not the exact signed carry"
+                )));
+            }
         }
     }
     Ok(())
@@ -1645,6 +1724,23 @@ mod tests {
         assert!(matches!(
             BfvFaithfulTableClaim::from_bytes(&trailing),
             Err(BfvTableError::Wire(_))
+        ));
+    }
+
+    #[test]
+    fn arithmetic_forgery_refuses_before_it_can_acquire_table_authority() {
+        let mut forged_rows = q0_n8_lean_rows();
+        // TWIDDLED_RIGHT is deliberately absent from the schedule and bus
+        // tuples.  Before native arithmetic replay this mutation therefore
+        // survived every carrier check after the claim was recomputed.
+        forged_rows[0][TWIDDLED_RIGHT] ^= 1;
+        assert!(matches!(
+            BfvFaithfulTableClaim::prove_public_trace(
+                descriptor_commitment(),
+                BfvButterflyGeometry::Q0_N8,
+                &forged_rows,
+            ),
+            Err(BfvTableError::MainTrace(_))
         ));
     }
 
