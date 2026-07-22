@@ -152,6 +152,58 @@ banks its own coherent checkpoint.
   classical Bulletproof/Ristretto custody path are not thereby GPU-resident or
   post-quantum.
 
+### 0.8.1. Subsequent banked closures through `f23393aed`
+
+- `386b3a1b5` and `a58038562` close the turn-finalization ACK cut described
+  above. Only a durable commit or authenticated durable rejection advances the
+  identity cursor; retry stops without consumption; fatal persists the earlier
+  terminal prefix and terminates the task. Timed-turn restart rows are checked
+  as turn authority rather than trusted as inert served IDs. The latter commit
+  also joins generic executor consensus state, React state, and promise outbox
+  to the same finalized writer. Prover-feature node library checks passed on
+  both hbox and persvati. Membership/checkpoint durability is still separate.
+- `29a2528a1` and `05ea68be2` are the registered Lean causal-time and durable
+  outcome-prefix laws. Commit/reject are terminal; retry/fatal do not install or
+  ACK; the recovered cursor is derived from the durable ordered terminal prefix
+  and stops at the first hole.
+- `74e0e61d2`/`d47e2df4c` install and enforce the rolling faithful↔exact
+  induction boundary. `cbdccedd6`/`cc3c74e56` add the non-Clone authenticated
+  historical-root token and stale/tamper falsifiers. `0625c82f4` consumes that
+  token through exact commit, and `a58038562` deletes the remaining duplicate
+  per-active-exact full-history load. Full replay remains intentionally at open
+  and first activation; the steady-state path is O(1) in history length.
+- `a0199c1e0`/`397ccb234` persist a bounded typed PromiseResolution batch and
+  manifest atomically with the source turn. `74e0e61d2` exposes cursor-based
+  HTTP/WS observation; `b8ba574c4`/`a58038562` attach and publish exact/generic
+  batches only after Fresh durable success. Ready-to-execute observation never
+  carries or auto-submits a Turn; the private dependent-turn scheduler is a
+  separate active feature.
+- The concrete Bazaar file spool was accidentally co-banked with the ACK files
+  in `386b3a1b5`; this mixed provenance is preserved rather than rewritten.
+  `1c0799467` adds O_NOFOLLOW, pinned file identity, dev/inode checks,
+  regular/nlink/owner/mode enforcement, an exclusive writer lock, and hostile
+  symlink/hardlink/replacement tests. Focused spool tests are 6/6. Restart-stable
+  semantic clearing identity and an auto-spawned production source remain.
+- `fdb63254a` makes Descent's eight relic objects authoritative over its
+  counters. Six Lean-authored exact-census teeth cover every verb; Lean/Rust
+  mutation canaries reopen the attacks when those teeth are deleted; generated
+  JSON drift passes; the real executor integration is 17/17. The current tooth
+  is fixed-eight executor admission, not yet a heap-aggregate AIR/custom-VK.
+- `d3b895d84` is the Lean-authored fixed-100-PI ShieldedExactApexV4 descriptor
+  over one shared opening. `e7aeec218` composes shared-witness acceptance,
+  FNS4/output notes, activation/frame, causal time, signer-independent receipt,
+  and terminal ACK, with failure nonmutation and local envelope/clock
+  noninterference. The descriptor is Lean-green; emitted bytes and the real
+  HidingFRI producer/verifier are still being gated.
+- `b28e9a181` must not be consumed as the finalized receipt identity in its
+  original form: review found a validator-local execution ordinal and an
+  unproved legacy-hash-to-core-id reinterpretation. `f23393aed` is the repaired
+  substrate. Its context contains only signed BlockId, deterministic DAG round,
+  and authenticated time. Its predecessor is explicitly `Genesis`,
+  `LegacyCutover`, or `Core`, and the new core ID and legacy receipt index/hash
+  remain separate during dual-chain cutover. The strict no-default-feature turn
+  check and focused 5/5 pass; live persistence/consumer migration remains.
+
 ## 0.5. July 22 superseding checkpoint
 
 This section supersedes older residual sentences below where they disagree. It

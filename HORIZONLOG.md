@@ -14,31 +14,47 @@ handoff prose:
   over a nonempty prefix. Fresh-only RAM/event publication is retained.
 - **ONLINE exact state:** `8a052f3af` supplies sparse authenticated state nodes,
   ordered leaf/position indices, and head history; `aeab921eb`/`4e932492a`
-  maintain and authenticate per-agent receipt predecessor heads. Remaining hot
-  cost is the full faithful↔exact historical equality audit in the live envelope;
-  the active repair is a domain-separated rolling bridge plus an opaque
-  authenticated historical-root token. Full replay stays a boot/audit gate.
+  maintain and authenticate per-agent receipt predecessor heads. `74e0e61d2`
+  installs a domain-separated rolling faithful↔exact seal and atomic paired
+  append; `d47e2df4c` refuses faithful-only growth as soon as that induction
+  boundary exists. `cbdccedd6`/`cc3c74e56` mint and falsify an opaque O(1)
+  authenticated historical-root token; `0625c82f4` retains it through the exact
+  commit; `a58038562` removes the duplicate live full-history load. Full replay
+  is now boot/first-activation work rather than a per-spend cost.
 - **HONEST v3 boundary:** solo-only, because frame identity binds the local
   executor key; public value/asset/nullifier; characterized value-zero execution
   slice. It is exact anti-replay/continuity, not the shielded private-value apex.
 - **SHIELDED v4 substrate:** `d3560fa1e` defines the no-clear-value/asset 100-lane
   ABI; `bce9d2b63`/`f29768fd5` register the one-opening Lean relation; `0ea02a76a`
   splits deterministic signer-independent `EXA4`/`EXR4`/`EXF4` cores from a
-  hybrid Ed25519+ML-DSA `EXE4` local envelope. Still missing: emitted/pinned
-  shared-witness verifier/VK, persistent v4 writer, live selector, atomic output
-  notes, and committee/threshold finality authority.
+  hybrid Ed25519+ML-DSA `EXE4` local envelope. `d3b895d84` adds the fixed 100-PI
+  Lean-authored descriptor over one shared opening; `e7aeec218` proves its atomic
+  composition with FNS4/output notes, signer-independent receipt, causal time,
+  and terminal ACK. Emitted bytes and the real HidingFRI producer/verifier are
+  active; persistent v4 writer, live selector, output-note install, and
+  committee/threshold finality authority remain.
 - **CONSENSUS TIME:** `1df9bb868` authenticates a strict timed-turn payload in
   BlockId and both signatures; `54407562c` replaces ancestor scans with an
-  authenticated immediate-frontier cache and closes generic local bypass.
-  Remaining live cut: typed execution context must drive receipts/expiry/rates;
-  no local wall clock may enter deterministic receipt identity.
-- **FINALIZED ACK IS P0:** `3b2cbef99` names the typed outcome contract. Only
-  durable `Committed`/`DeterministicallyRejected` may advance the executed-block
-  cursor. Retry/fatal stop the prefix. The node splice is active and unbanked.
+  authenticated immediate-frontier cache and closes generic local bypass;
+  `b0d1e90de` supplies the hostile causal-time teeth. `386b3a1b5` carries the
+  authenticated time into finalized execution. `f23393aed` defines the strict
+  signer-free receipt core over BlockId + deterministic DAG round + authenticated
+  time, with explicit Genesis/LegacyCutover/Core predecessor provenance. It
+  deliberately excludes the validator-local execution ordinal discovered to be
+  divergent under tau mid-prefix catchup. Persistent core consumption remains.
+- **FINALIZED ACK — CLOSED FOR TURNS:** `386b3a1b5` adds typed
+  `Committed|DeterministicallyRejected|RetryableOperational|FatalIntegrity`,
+  durable rejection recovery, and prefix stopping. `a58038562` reauthenticates
+  timed-turn terminal state on restart, persists the acknowledged prefix before
+  fatal termination, and never consumes retry/fatal. `29a2528a1`/`05ea68be2`
+  prove the causal-time/terminal-prefix/recovered-cursor laws. Membership and
+  checkpoint outcome durability remain a separate non-turn cut.
 - **BAZAAR WORKER:** `d13b2e0de` adds the durable private worker and exactly-once
-  viewer-blind game consequence. The active append-only 0600/fsync spool has 4/4
-  transport units; verified full integration and restart-stable exact receipt
-  identity remain before it is banked or auto-spawned.
+  viewer-blind game consequence. The concrete append-only spool was swept into
+  `386b3a1b5`; `1c0799467` pins one open inode, uses O_NOFOLLOW, enforces
+  owner/mode/regular/nlink=1, revalidates dev+ino around I/O, and serializes
+  writers. Its focused hostile set is 6/6. A stable Bazaar semantic clearing
+  core/reissued local envelope and automatic production supervisor/source remain.
 - **SIDE-STATE CRASH LAW — CLOSED:** `a0199c1e0` writes the immutable typed
   PromiseResolution batch and manifest in the source turn's finalized redb
   transaction, with byte-exact replay and restart recovery; `397ccb234` bounds
@@ -51,6 +67,12 @@ handoff prose:
   from 1086.0s to about 514.6s on persvati, still CPU-bound and noninteractive.
   WGPU BFV/TFHE kernels are real; live `fhe_clear`, Dark AMM multiplication, and
   classical Bulletproof/Ristretto custody remain separate integration work.
+- **DESCENT OBJECT TRUTH:** `fdb63254a` adds the Lean-authored fixed-eight
+  `countFieldsEq` tooth: every verb's exact relic census must equal the
+  pack/bank/hoard projection. Counter-only loot and two-relic/one-delta attacks
+  fail in the real executor; mutation canaries reopen them when only the new
+  teeth are deleted; the current integration is 17/17. AIR/SlotCaveat/custom-VK
+  coverage for the heap aggregate is the next proof/fold cut.
 
 ## ⚑⚑⚑ E1 — DEAD v1-FACE COLUMN COMPACTION (the allocator's SECOND flag-day): PROOF HALF LANDED (2026-07-18)
 `docs/EFFICIENCY-BACKLOG-circuit-minimality.md` item E1. On every wide registry member (already
