@@ -285,6 +285,14 @@ pub fn configure_turn_executor(
             )
         });
 
+    crate::executor_side_state_persistence::restore_executor_rate_limits(executor, &s.store)
+        .unwrap_or_else(|error| {
+            panic!(
+                "STORE INTEGRITY EVENT: durable rate-limit state cannot seed a turn executor; \
+                 refusing construction: {error}"
+            )
+        });
+
     // Receipt-chain continuity is consensus state too. Node executors are
     // short-lived, so restoring only the one agent an ingress happens to name
     // leaves every other author at a false genesis head. Rebuild all per-agent

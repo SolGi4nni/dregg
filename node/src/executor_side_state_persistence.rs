@@ -11,6 +11,42 @@ use dregg_persist::{
 };
 use dregg_turn::TurnExecutor;
 
+/// Capture the strict, versioned post-execution rate frontier.
+///
+/// Persistence treats these bytes opaquely to avoid a `persist -> turn` crate
+/// cycle.  Encoding at the node boundary ensures only the canonical form can be
+/// welded into a finalized transaction.
+pub(crate) fn capture_executor_rate_limits(executor: &TurnExecutor) -> Result<Vec<u8>, String> {
+    executor
+        .rate_limit_state_snapshot()
+        .to_canonical_bytes()
+        .map_err(|error| format!("executor rate-limit snapshot is malformed: {error}"))
+}
+
+/// Restore the latest durable rate frontier into a fresh executor.
+///
+/// A missing sparse replacement is the canonical empty state.  Present bytes
+/// must decode canonically before either map is replaced; corrupt/unknown data
+/// is a store-integrity failure, never an empty fallback.
+pub(crate) fn restore_executor_rate_limits(
+    executor: &TurnExecutor,
+    store: &PersistentStore,
+) -> Result<(), String> {
+    let snapshot = match store
+        .load_latest_rate_limit_snapshot_bytes()
+        .map_err(|error| format!("could not load durable rate-limit state: {error}"))?
+    {
+        Some(bytes) => {
+            dregg_turn::executor::RateLimitStateSnapshot::from_canonical_bytes(&bytes)
+                .map_err(|error| format!("durable rate-limit state is malformed: {error}"))?
+        }
+        None => dregg_turn::executor::RateLimitStateSnapshot::default(),
+    };
+    executor
+        .restore_rate_limit_state(&snapshot)
+        .map_err(|error| format!("could not seed durable rate-limit state: {error}"))
+}
+
 pub(crate) fn capture_executor_accumulators(
     executor: &TurnExecutor,
 ) -> Result<ExecutorAccumulatorSnapshot, String> {
@@ -152,7 +188,17 @@ mod tests {
             .unwrap()
             .insert([3; 32])
             .unwrap();
+        source
+            .rate_limit_counters
+            .lock()
+            .unwrap()
+            .insert((dregg_cell::CellId([4; 32]), [5; 32], 6), 7);
+        source.rate_limit_sum_counters.lock().unwrap().insert(
+            (dregg_cell::CellId([8; 32]), 9, 10),
+            u64::from(u32::MAX) + 11,
+        );
         let snapshot = capture_executor_accumulators(&source).unwrap();
+        let rate_snapshot = capture_executor_rate_limits(&source).unwrap();
         let source_commitment_root = source.note_commitments.lock().unwrap().root8();
         let source_revocation_root = source.note_revoked.lock().unwrap().root8();
 
@@ -160,7 +206,8 @@ mod tests {
             let store = PersistentStore::open(&path).unwrap();
             let state = FinalizedExecutorConsensusState {
                 accumulators: snapshot,
-                rate_limit_snapshot: None,
+                rate_limit_snapshot: Some(rate_snapshot),
+                ..Default::default()
             };
             store
                 .commit_finalized_turn_with_executor_state(
@@ -177,6 +224,7 @@ mod tests {
         let store = PersistentStore::open(&path).unwrap();
         let restored = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
         restore_executor_accumulators(&restored, &store).unwrap();
+        restore_executor_rate_limits(&restored, &store).unwrap();
         assert_eq!(
             restored.note_commitments.lock().unwrap().root8(),
             source_commitment_root
@@ -208,6 +256,10 @@ mod tests {
                 .unwrap()
                 .insert([3; 32])
                 .is_err()
+        );
+        assert_eq!(
+            restored.rate_limit_state_snapshot(),
+            source.rate_limit_state_snapshot()
         );
         let next = NoteCommitment([9; 32]);
         restored
@@ -276,5 +328,36 @@ mod tests {
                 .unwrap()
                 .contains(&[97; 32])
         );
+    }
+
+    #[test]
+    fn malformed_rate_snapshot_refuses_without_partial_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PersistentStore::open(&dir.path().join("bad-rate.redb")).unwrap();
+        let state = FinalizedExecutorConsensusState {
+            rate_limit_snapshot: Some(b"not-a-canonical-rate-snapshot".to_vec()),
+            ..Default::default()
+        };
+        store
+            .commit_finalized_turn_with_executor_state(
+                0,
+                &record(dregg_persist::canonical_ledger_root(
+                    &dregg_cell::Ledger::new(),
+                )),
+                &[],
+                &state,
+            )
+            .unwrap();
+
+        let executor = TurnExecutor::new(dregg_turn::ComputronCosts::zero());
+        executor
+            .rate_limit_counters
+            .lock()
+            .unwrap()
+            .insert((dregg_cell::CellId([21; 32]), [22; 32], 23), 24);
+        let before = executor.rate_limit_state_snapshot();
+
+        assert!(restore_executor_rate_limits(&executor, &store).is_err());
+        assert_eq!(executor.rate_limit_state_snapshot(), before);
     }
 }
