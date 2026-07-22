@@ -8,7 +8,7 @@ The imported modules establish seven deliberately separated layers:
 * a constructive matrix-language front end for the positive Gabbay fragment,
   with exact rational semantics, certified prime-field projection, a coherent
   adapter between the two formal matrix presentations, and one exact
-  three-entry successor instance in live descriptor IR v2;
+  three-entry private-witness successor instance in live descriptor IR v2;
 * executable countermodels for finite-field cancellation, connective reversal,
   and the published BitLogic swap relation, together with no-wrap and exact
   Boolean repairs;
@@ -26,23 +26,26 @@ The imported modules establish seven deliberately separated layers:
   representations; the global presentation category is proved not cartesian,
   while evidence families over one fixed meaning form a genuine CCC;
 * one-opening proof/FHE coherence: a versioned fail-closed descriptor/BFV
-  bundle and a certified hybrid plan whose regions may choose bounded residual
-  or Boolean evaluation, with exact symbolic cost ledgers; and
+  bundle, an exact theorem binding both backends to the concrete openings stored
+  in that bundle, and a certified hybrid plan whose regions may choose bounded
+  residual or Boolean evaluation, with exact symbolic cost ledgers; and
 * proof-object semantics that do not privilege polynomials: commit-before-seed
   robust descent with explicit OOD, folding, query-miss, and modular-bias terms,
   checked interaction receipts, and realizability/tripos/assembly models.
 
 Scope is load-bearing.  The live Gabbay descriptor is a proved fixed-size
-instance, not yet an arbitrary-matrix emitter.  Finite-signature quantifiers
-are exhaustive and may expand exponentially; public function tables are not a
-private RAM lowering.  Finite HOL is exact but dense.  The intensional strong
-CCC theorem covers the represented STLC fragment, while Yoneda is a semantic
-presheaf embedding, not a finite-field arithmetization.  Presentation-search
-optimality is relative to an explicit finite candidate list and symbolic cost,
-not wall-clock latency.  The interaction bridge validates receipts but does not
-yet emit descriptor IR.  Robust descent gives a probabilistic finite-game
-bound, not deterministic total-column extraction.  The assembly category is
-not claimed to be the exact completion or associated topos, and no theorem here
+existential private-witness relation, not yet an arbitrary-matrix emitter or an
+attestation of an externally named table: its present public-input, hash-site,
+and range-site surfaces are empty.  Finite-signature quantifiers are exhaustive
+and may expand exponentially; public function tables are not a private RAM
+lowering.  Finite HOL is exact but dense.  The intensional strong CCC theorem
+covers the represented STLC fragment, while Yoneda is a semantic presheaf
+embedding, not a finite-field arithmetization.  Presentation-search optimality
+is relative to an explicit finite candidate list and symbolic cost, not
+wall-clock latency.  The interaction bridge validates receipts but does not yet
+emit descriptor IR.  Robust descent gives a probabilistic finite-game bound,
+not deterministic total-column extraction.  The assembly category is not
+claimed to be the exact completion or associated topos, and no theorem here
 proves Rust/CakeML decoder refinement, FHE security/noise, prover throughput,
 or chain finality.
 -/
@@ -52,7 +55,7 @@ import Dregg2.Metatheory.FiniteHOLFormulaArithmetization
 import Dregg2.Metatheory.FinitePolynomialCCC
 import Dregg2.Metatheory.FinitePolynomialCategoryClassification
 import Dregg2.Metatheory.GabbayMatrixBridge
-import Dregg2.Metatheory.GabbayDescriptorIR2
+import Dregg2.Metatheory.GabbayDescriptorIR2PublicBoundary
 import Dregg2.Metatheory.FinitePatchCodeDescent
 import Dregg2.Metatheory.RobustDescentTranscriptGame
 import Dregg2.Metatheory.DirectLogicOptimizerCertificate
@@ -64,7 +67,7 @@ import Dregg2.Logic.FiniteLogicPlan
 import Dregg2.Logic.CompilationCertificateBundle
 import Dregg2.Logic.FheLogicSchedule
 import Dregg2.Logic.FiniteSignatureFOLDescriptorIR2
-import Dregg2.Logic.CertifiedHybridProofFhe
+import Dregg2.Logic.CertifiedHybridProofFheBoundOpening
 import Dregg2.Calculus.LinearInteractionTrace
 import Dregg2.Calculus.IntensionalCCCCategory
 import Dregg2.Calculus.IntensionalCCCInteractionBridge

@@ -15,7 +15,8 @@ checked optimization and certified representation search.
   logic is automatically a finite-field circuit." The invariant is: exact
   nonnegative rational semantics first; a proved prime and no-wrap boundary or
   an exact Boolean repair second; and a checked live relation last. Every
-  transition now has a theorem, a refusal case, and a stated cost boundary.
+  transition now has a theorem, a refusal case, and a stated cost and
+  public-binding boundary.
 ])
 
 == Construction map
@@ -39,7 +40,7 @@ checked optimization and certified representation search.
   [#raw("GabbayFiniteField")#linebreak()#raw("Projection")],
   [Live Gabbay instance],
   [two-row, three-column successor table in DescriptorIR2],
-  [17-column constructive trace; 12 live constraints; exact acceptance under its certificate],
+  [17-column constructive private trace; 12 constraints; exact for the table carried by that trace, but not externally bound],
   [#raw("GabbayDescriptorIR2")],
   [General finite FOL],
   [public total functions, witness relation tables, equality, all Boolean connectives and bounded quantifiers],
@@ -161,7 +162,7 @@ after reduction.
 
 == Two routes into the live DREGG relation
 
-=== The faithful fixed-schema matrix route
+=== A fixed-shape private witness/semantics bridge
 
 `GabbayDescriptorIR2` lowers a nontrivial matrix instance into the actual
 `EffectVmDescriptor2` grammar used by DREGG. Its source is a two-row,
@@ -178,20 +179,34 @@ $
    y_1-2y_2+y_3).
 $
 
-This avoids witness-authored division. Six interpolation identities, three
-squared-residual identities, one numerator identity, one denominator identity,
-and one acceptance identity give exactly 12 live constraints. Under
-`LiveProjectionCertificate`, `trace_satisfied_iff_holds` proves that the
-constructed trace satisfies the emitted BabyBear relation exactly when the
-ordinary bounded matrix formula holds. The canonical successor trace is
-constructed, a one-cell output tamper is refused, and the known modulus-five
+This avoids witness-authored division inside the interpolation checks. Six
+interpolation identities, three squared-residual identities, one numerator
+identity, one denominator identity, and one acceptance identity give exactly
+12 live constraints. The coefficient columns are nevertheless redundant for
+the current acceptance path: the residual and acceptance gates read the raw
+input and output entry columns directly. This instance therefore demonstrates
+a faithful fixed-shape witness/semantics bridge, not a performance advantage
+from interpolation. Under `LiveProjectionCertificate`,
+`trace_satisfied_iff_holds` proves a table-indexed equivalence: `traceOf table`
+satisfies the emitted BabyBear relation exactly when the source formula holds
+of that same `table`. The canonical successor trace is constructed, the
+constructed trace of a one-cell tamper is refused, and the known modulus-five
 projection cannot enter the compiler.
 
 #boundary([
-  This is a faithful live compiler for the fixed two-by-three schema, not yet a
-  generator for arbitrary matrix dimensions. Generalizing it requires emitted
-  interpolation, denominator management, range certificates, and cost
-  accounting. IR-v2 fixes BabyBear; the witness does not choose its own field.
+  The current descriptor is an existential private-witness statement, not an
+  attestation of an externally named table. `descriptor_public_surface_empty`
+  proves `piCount = 0`, `hashSites = []`, and `ranges = []`.
+  `constructed_traces_publicly_indistinguishable` proves that every constructed
+  table trace exposes the same empty public assignment. Most sharply,
+  `accepting_trace_does_not_attest_external_table` constructs an accepting
+  successor witness while a separately named tampered table is false; there is
+  no contradiction because that external table is absent from `Satisfied2`.
+  A public input or binding commitment is required before this relation can
+  attest a claimed model. It is also not yet a generator for arbitrary matrix
+  dimensions: that requires emitted interpolation, denominator management,
+  range certificates, and cost accounting. IR-v2 fixes BabyBear; the witness
+  does not choose its own field.
 ])
 
 === General finite-signature FOL
