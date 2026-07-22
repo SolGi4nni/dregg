@@ -109,7 +109,7 @@ classical seams into a post-quantum composition.
 | Portable encrypted TFHE PBS | **TRANSFORM-RESIDENT DENSE ENVELOPE GATED** | real encrypted 918-bit input, all 918 noisy GGSWs/nonzero rotations and all 919 tfhe-rs outputs; strict 1/1, 115.746ms warm transform GPU vs 422.847ms coefficient GPU / 1,380.391ms CPU; high-level integers/live clearing wiring remain |
 | Exact BFV + wide PQ Lean boundaries | **GATED AT THE MODEL BOUNDARY** | PrivateBookBfvBindingAir checks 98,304 exact equations; WideNativePqCommitment binds 16 canonical lanes; neither alone is a deployed prover cutover |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree and history | **LIVE CREATE + ATOMIC SPEND CUSTODY, ZK SPEND FAILS CLOSED** | finalized create/history plus exact `(height, root8)` spend admission, durable exact nullifier records, successor root, receipt, and cursors share one transaction/replay; production faithful-membership IR2 proof is not yet composed |
+| Faithful wide note tree and history | **LIVE CREATE + LIVE HIDING SPEND + ATOMIC CUSTODY** | finalized create/history plus exact `(height, root8)` spend admission, real HidingFRI FNO2/FNC2/FNF2 membership/nullifier proof, durable exact nullifier records, successor root, receipt, and cursors; accumulator insertion is host-planned rather than recomputed in AIR |
 | Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
@@ -936,14 +936,23 @@ before mutation, and restart seeds the executor from the durable records. Lean
 proves refusal is state identity and success publishes exactly the persisted
 successor root.
 
-This is still not the final PQ no-mint theorem. Live faithful `NoteSpend` fails
-closed because the production verifier's predicate-less entry intentionally
-rejects, while the existing spend circuit proves the legacy scalar/hash-4 tree
-rather than the new sixteen-lane/eight-felt membership relation. The deployed
-nullifier root also still folds the nullifier to one felt and the solo already-
-applied finalization path is outside this atomic weld. The
-authoritative conservation proof remains Ristretto/Pedersen/Bulletproof-based;
-solo-mode bypass, committee rollover, and O(all-leaves) recovery also remain.
+The faithful `NoteSpend` proof is now composed and live (`6cd2ddca2`). The
+Lean-authored `faithful-note-spend-v2` relation uses the complete 16-lane
+Poseidon2 bus and checks exact FNO2 spending-key-to-owner-address, FNC2 note
+commitment, faithful depth-16 membership, and FNF2 nullifier derivation. Owner
+address, spending key, nonce, randomness, leaf, position, and Merkle path remain
+hidden; height, historical root8, nullifier, value, asset, and successor root8
+are public. The 96,535-byte checked artifact has 1,623 main columns, 44 public
+inputs, 393 constraints, and four tables. Its real HidingFRI hostile gate is
+**1/1 green** (0.76s after build), and the production executor installs the
+strict verifier without a legacy/non-hiding fallback.
+
+This is still not the final PQ no-mint theorem. The circuit binds the planned
+successor root but does not recompute accumulator insertion in AIR; the
+deployed nullifier root still folds the nullifier to one felt, and value/asset
+are public. The authoritative conservation proof remains
+Ristretto/Pedersen/Bulletproof-based. Solo-mode already-applied finalization,
+committee rollover, and O(all-leaves) recovery also remain.
 
 ### Cell-owned PQ identity and rotation
 
@@ -1126,10 +1135,12 @@ from first principles.
 - faithful wide note tree/history — Lean authority green, Rust correspondence
   **8/8**, dregg-commit **141/141**, tree persistence **6/6**, authenticated
   history **6/6**; live finalized `NoteCreate` leaves, history edge, exact
-  eight-felt attestation, receipt, and cursors now commit atomically. Historical
-  `(height,root8)` spend admission and exact nullifier/value/sequence plus
-  successor-root persistence are atomic; faithful-membership ZK still fails
-  closed pending the new IR2 descriptor/verifier cut.
+  eight-felt attestation, receipt, and cursors commit atomically. Historical
+  `(height,root8)` admission and exact nullifier/value/sequence plus successor
+  persistence are atomic. The new faithful IR2 relation and strict production
+  verifier produce/verify a real HidingFRI proof **1/1** while hiding owner,
+  key, nonce, randomness, leaf, position, and path; accumulator insertion is
+  still host-computed and public value/asset are an explicit boundary.
 - cell-owned PQ identity — create/rotate/rollback **1/1**, restart **1/1**,
   enrollment/substitution **3/3**, SignedTurn hostile **4/4**, cell wire/
   commitment **3/3**, EffectVM fail-closed refusal **3/3**; Lean-authored
@@ -1177,11 +1188,10 @@ These are the next truth-producing gates:
 3. Replace trusted-authority Beaver certification with malicious preprocessing
    and add private-input share-formation evidence; signed, encrypted routing
    alone cannot satisfy LiveMpcBackend.sound.
-4. Add historical faithful-root membership to `NoteSpend` and atomically commit
-   nullifier consumption with the successor root/attestation; then move
-   conservation authority to that carrier. Separately compose the landed PQ-
-   identity AIR row with both outer ML-DSA predicates before removing either
-   proof-path refusal.
+4. Move successor-nullifier accumulator insertion and conservation authority
+   into the now-live faithful hidden-spend relation, then widen the deployed
+   one-felt nullifier root. Separately compose the landed PQ-identity AIR row
+   with both outer ML-DSA predicates before removing either proof-path refusal.
 
 Heavy Rust proof gates belong in the release-only nextest heavy profile and on
 the build node. Lean stays local with the warm metatheory/.lake cache.

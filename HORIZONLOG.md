@@ -10892,12 +10892,25 @@ commit, note leaves, exact `(nullifier,value,sequence)` records, receipt,
 successor faithful root/history/attestation, and cursors. Replay reconstructs
 the exact nullifier suffix and seeds fresh executors; duplicates and wrong roots
 fail before mutation. Lean proves refusal is state identity and success
-publishes exactly the persisted successor. This is not yet a live faithful ZK
-spend: the production predicate-less verifier intentionally refuses and the
-existing circuit proves the legacy scalar/hash-4 tree, not the sixteen-lane/
-eight-felt relation. The deployed nullifier root still folds to one felt;
-classical conservation, solo already-applied finalization, committee rollover,
-and O(all-leaves) recovery remain outside this cut.
+publishes exactly the persisted successor.
+
+The faithful hidden-spend proof itself is now live (`6cd2ddca2`). The
+Lean-authored `faithful-note-spend-v2` descriptor uses the complete 16-lane
+Poseidon2 state bus and proves exact FNO2 spending-key-to-owner-address, FNC2
+note commitment, depth-16 faithful-root membership, and FNF2 public nullifier.
+Owner address, spending key, nonce, randomness, leaf, position, and all Merkle
+siblings remain private; height, historical root8, nullifier, value, asset, and
+planned successor root8 are public. The checked artifact is 96,535 bytes
+(`sha256 113f8be9d1eb5804754756773e5b3a6c6dc1af2384d56fff3102f635096f1f3b`),
+with 1,623 main columns, 44 public inputs, 393 constraints, and four tables.
+The real HidingFRI prove/verify hostile gate is **1/1 green** (0.76s after build),
+including mutations of height/root/nullifier/value/asset/successor. The strict
+verifier is installed in the production executor; there is no legacy or
+non-hiding fallback. The circuit intentionally binds, but does not itself
+compute, successor accumulator insertion; value and asset remain public, and
+the deployed nullifier root still folds to one felt. Classical conservation,
+solo already-applied finalization, committee rollover, and O(all-leaves)
+recovery remain outside this cut.
 
 Active next cuts at this checkpoint are deliberately named rather than implied:
 the full private-clearing apex is being recaptured with native ML-DSA quorum,
