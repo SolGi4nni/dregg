@@ -30,9 +30,10 @@ use std::error::Error;
 use dregg_cell::Ledger;
 use dregg_federation::frost::MlDsaPublicKey;
 use dregg_persist::commit_log::{CommitOutcome, FinalizedFaithfulRootWeld};
+use dregg_persist::faithful_note_root_history::StoreAuthenticatedHistoricalRoot;
 use dregg_persist::{
     CommittedExactFnspV3FrameHeadV1, ExactFnspV3DurableReceiptLinkV1, ExactFnspV3StateCasV1,
-    FaithfulNoteRootHistoryV1, PersistentStore, PreparedExactFnspV3StateTransitionV1, StoreError,
+    PersistentStore, PreparedExactFnspV3StateTransitionV1, StoreError,
     UntrustedExactFnspV3ActivationV1, UntrustedExactFnspV3FrameV1,
 };
 use dregg_sdk::AgentCipherclerk;
@@ -63,6 +64,7 @@ pub(crate) struct PreparedExactFnspV3Finalization {
     cas: ExactFnspV3StateCasV1,
     authority: ExecutorProducedExactFnspV3FinalizedTurn,
     encoded_receipt: Vec<u8>,
+    _historical_root_authority: StoreAuthenticatedHistoricalRoot,
 }
 
 /// Opaque proof that the executor post-image may be released after durable success.
@@ -322,7 +324,7 @@ pub(crate) fn prepare_exact_fnsp_v3_finalization(
     let cas = prepared_transition.cas();
     validate_persisted_frame_predecessor(store, &authority, cas)?;
     validate_bound_authority_cas(&authority, cas)?;
-    validate_authenticated_history(
+    let historical_root_authority = validate_authenticated_history(
         store,
         history_authority,
         binding.historical_root_height(),
@@ -335,6 +337,7 @@ pub(crate) fn prepare_exact_fnsp_v3_finalization(
         cas,
         authority,
         encoded_receipt,
+        _historical_root_authority: historical_root_authority,
     })
 }
 
@@ -574,7 +577,7 @@ fn validate_authenticated_history(
     authority: ExactFnspV3HistoryAuthority<'_>,
     height: u64,
     root: [u8; 32],
-) -> Result<(), ExactFnspV3FinalizationError> {
+) -> Result<StoreAuthenticatedHistoricalRoot, ExactFnspV3FinalizationError> {
     if authority.threshold == 0
         || authority.ed25519_committee.len() < authority.threshold
         || authority.ml_dsa_committee.len() < authority.threshold
@@ -585,25 +588,35 @@ fn validate_authenticated_history(
         .faithful_note_root_expectation()
         .map_err(ExactFnspV3FinalizationError::Store)?
         .ok_or(ExactFnspV3FinalizationError::FaithfulHistoryUninitialized)?;
-    let history = store
-        .load_faithful_note_root_history_hybrid(
+
+    // A first-frame activation is the one deliberate full-chain audit point.  Once activated,
+    // every append preserves the dense sealed history in the finalized transaction, and online
+    // finalization consumes only the direct signed row plus signed current tail/index seal.
+    if store
+        .exact_fnsp_v3_live_authority()
+        .map_err(ExactFnspV3FinalizationError::Store)?
+        .is_none()
+    {
+        store
+            .load_faithful_note_root_history_hybrid(
+                authority.ed25519_committee,
+                authority.ml_dsa_committee,
+                authority.threshold,
+                expected,
+            )
+            .map_err(ExactFnspV3FinalizationError::Store)?;
+    }
+
+    store
+        .store_authenticated_historical_root_hybrid(
             authority.ed25519_committee,
             authority.ml_dsa_committee,
             authority.threshold,
-            expected,
+            height,
+            root,
         )
-        .map_err(ExactFnspV3FinalizationError::Store)?;
-    if !history_contains_pair(&history, height, root) {
-        return Err(ExactFnspV3FinalizationError::HistoricalRootUnauthenticated);
-    }
-    Ok(())
-}
-
-fn history_contains_pair(history: &FaithfulNoteRootHistoryV1, height: u64, root: [u8; 32]) -> bool {
-    (history.anchor().height == height && history.anchor().root.to_bytes() == root)
-        || history.envelopes().iter().any(|envelope| {
-            envelope.record.height == height && envelope.record.successor.to_bytes() == root
-        })
+        .map_err(ExactFnspV3FinalizationError::Store)?
+        .ok_or(ExactFnspV3FinalizationError::HistoricalRootUnauthenticated)
 }
 
 fn validate_faithful_coordinates(
@@ -740,7 +753,6 @@ mod tests {
     use super::*;
 
     use dregg_circuit::exact_nullifier_aafi::ExactNullifierAafi;
-    use dregg_persist::{CanonicalFaithfulRoot, FaithfulNoteRootAnchorV1};
 
     fn point(head: dregg_persist::ExactFnspV3StateHeadV1) -> ExactFnspV3StatePoint {
         ExactFnspV3StatePoint::new(head.root(), head.count()).expect("canonical exact state point")
@@ -818,16 +830,5 @@ mod tests {
                     | ExactFnspV3Coordinate::FramePriorFns3
             ))
         ));
-    }
-
-    #[test]
-    fn hostile_mixed_history_height_or_root_is_refused() {
-        let root = CanonicalFaithfulRoot::from_bytes([0; 32]).expect("canonical root");
-        let history = FaithfulNoteRootHistoryV1::new(
-            FaithfulNoteRootAnchorV1::new([1; 32], [2; 32], 0, 7, 0, root).expect("anchor"),
-        );
-        assert!(history_contains_pair(&history, 7, [0; 32]));
-        assert!(!history_contains_pair(&history, 8, [0; 32]));
-        assert!(!history_contains_pair(&history, 7, [1; 32]));
     }
 }
