@@ -73,6 +73,7 @@ mod node_integrator_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+pub mod private_dependent_turns;
 mod program_registry_persistence;
 pub mod promise_resolutions;
 pub mod prove_pool;
@@ -1812,6 +1813,10 @@ async fn run_node(
             .await;
             if let Some(handle) = blocklace_handle {
                 node_state.set_blocklace(handle).await;
+                // Resume any private dependent turn whose durable Ready event
+                // preceded this process. The scheduler's destructive redb
+                // claim is the at-most-once authority across restart.
+                private_dependent_turns::spawn_private_dependent_turn_drain(node_state.clone());
             }
         }
         _ => {

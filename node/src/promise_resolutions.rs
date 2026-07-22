@@ -180,6 +180,12 @@ pub(crate) fn publish_durable_resolution_events(
             resolution: record.into(),
         });
     }
+    if durable
+        .iter()
+        .any(|record| record.outcome == PromiseResolutionKindV1::ReadyToExecute)
+    {
+        crate::private_dependent_turns::spawn_private_dependent_turn_drain(state.clone());
+    }
     Ok(durable)
 }
 

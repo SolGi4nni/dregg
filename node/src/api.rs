@@ -2040,6 +2040,9 @@ pub fn router_with_cors(
         // round roots pinned per phase) / complain (witness-first response) /
         // finalize (|QUAL| >= t -> output commitment pinned) / status.
         .merge(crate::dkg_service::routes())
+        // Private dependent-turn custody: bearer-gated, bounded octet-stream
+        // arm plus cancel/status. Signed/sealed bytes are never returned.
+        .merge(crate::private_dependent_turns::routes())
         // Queue operations
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 

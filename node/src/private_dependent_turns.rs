@@ -1,0 +1,723 @@
+//! Private, restart-durable dependent-turn scheduler.
+//!
+//! The public PromiseResolution API never carries a `Turn`.  Instead, a client
+//! may pre-arm this node with one already-signed envelope.  It is strictly
+//! decoded and admission-validated, AEAD-sealed under a node-local custody key,
+//! and stored in the private redb table. A durable `ReadyToExecute` row performs
+//! an atomic destructive claim; only then is the envelope decrypted and handed
+//! to the ordinary blocklace SignedTurn ingress. Claim-before-submit gives
+//! crash/restart at-most-once semantics: a crash may strand one claimed item,
+//! but it can never submit the private turn twice.
+
+use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use dregg_persist::{
+    ClaimedPrivateDependentTurnV1, PersistentStore, PrivateDependentTurnFinishV1,
+    PrivateDependentTurnSnapshotV1, private_dependent_ready_digest_v1,
+};
+use dregg_sdk::SignedTurn;
+use serde::Deserialize;
+
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
+
+use crate::state::NodeState;
+
+const CUSTODY_KEY_DOMAIN_V1: &str = "dregg-private-dependent-custody-key-v1";
+const CUSTODY_AAD_DOMAIN_V1: &[u8] = b"dregg-private-dependent-custody-aad-v1";
+const DRAIN_PAGE: usize = 200;
+pub const MAX_PRIVATE_DEPENDENT_SIGNED_TURN_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct PrivateDependentTurnHandle {
+    pub promise_id: String,
+    pub expected_resolution_digest: String,
+    pub expires_at_sequence_exclusive: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct PrivateDependentTurnStatusResponse {
+    promise_id: String,
+    signed_turn_hash: String,
+    expected_resolution_digest: String,
+    expires_at_sequence_exclusive: u64,
+    status: PrivateDependentTurnStatusWire,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PrivateDependentTurnStatusWire {
+    Armed,
+    Claimed {
+        ready_sequence: u64,
+        event_id: String,
+    },
+    Submitted {
+        ready_sequence: u64,
+        event_id: String,
+        ingress_id: String,
+    },
+    Refused {
+        ready_sequence: u64,
+        event_id: String,
+        reason: String,
+    },
+    Cancelled,
+    Expired {
+        ready_sequence: u64,
+    },
+}
+
+impl From<PrivateDependentTurnSnapshotV1> for PrivateDependentTurnStatusResponse {
+    fn from(snapshot: PrivateDependentTurnSnapshotV1) -> Self {
+        let status = match snapshot.status {
+            dregg_persist::PrivateDependentTurnStatusV1::Armed => {
+                PrivateDependentTurnStatusWire::Armed
+            }
+            dregg_persist::PrivateDependentTurnStatusV1::Claimed {
+                ready_sequence,
+                event_id,
+            } => PrivateDependentTurnStatusWire::Claimed {
+                ready_sequence,
+                event_id: dregg_types::hex_encode(&event_id),
+            },
+            dregg_persist::PrivateDependentTurnStatusV1::Submitted {
+                ready_sequence,
+                event_id,
+                ingress_id,
+            } => PrivateDependentTurnStatusWire::Submitted {
+                ready_sequence,
+                event_id: dregg_types::hex_encode(&event_id),
+                ingress_id: dregg_types::hex_encode(&ingress_id),
+            },
+            dregg_persist::PrivateDependentTurnStatusV1::Refused {
+                ready_sequence,
+                event_id,
+                reason,
+            } => PrivateDependentTurnStatusWire::Refused {
+                ready_sequence,
+                event_id: dregg_types::hex_encode(&event_id),
+                reason,
+            },
+            dregg_persist::PrivateDependentTurnStatusV1::Cancelled => {
+                PrivateDependentTurnStatusWire::Cancelled
+            }
+            dregg_persist::PrivateDependentTurnStatusV1::Expired { ready_sequence } => {
+                PrivateDependentTurnStatusWire::Expired { ready_sequence }
+            }
+        };
+        Self {
+            promise_id: dregg_types::hex_encode(&snapshot.promise_id),
+            signed_turn_hash: dregg_types::hex_encode(&snapshot.signed_turn_hash),
+            expected_resolution_digest: dregg_types::hex_encode(
+                &snapshot.expected_resolution_digest,
+            ),
+            expires_at_sequence_exclusive: snapshot.expires_at_sequence_exclusive,
+            status,
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PrivateDependentErrorResponse {
+    error: String,
+}
+
+type PrivateApiError = (StatusCode, Json<PrivateDependentErrorResponse>);
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+struct ArmQuery {
+    expires_at_sequence_exclusive: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CancelResponse {
+    promise_id: String,
+    cancelled: bool,
+}
+
+fn api_error(status: StatusCode, error: impl ToString) -> PrivateApiError {
+    (
+        status,
+        Json(PrivateDependentErrorResponse {
+            error: error.to_string(),
+        }),
+    )
+}
+
+fn parse_promise_id(encoded: &str) -> Result<[u8; 32], PrivateApiError> {
+    crate::trustline_service::hex_decode_32(encoded)
+        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "promise id must be 32-byte hex"))
+}
+
+/// Bearer-gated, private API. The arm body is canonical postcard `SignedTurn`
+/// bytes; no handler response contains plaintext or ciphertext.
+pub fn routes() -> Router<NodeState> {
+    Router::new()
+        .route("/private-dependent-turns", post(post_arm))
+        .route("/private-dependent-turns/{promise_id}", get(get_status))
+        .route(
+            "/private-dependent-turns/{promise_id}/cancel",
+            post(post_cancel),
+        )
+        .route("/api/private-dependent-turns", post(post_arm))
+        .route("/api/private-dependent-turns/{promise_id}", get(get_status))
+        .route(
+            "/api/private-dependent-turns/{promise_id}/cancel",
+            post(post_cancel),
+        )
+        .layer(DefaultBodyLimit::max(
+            MAX_PRIVATE_DEPENDENT_SIGNED_TURN_BYTES,
+        ))
+}
+
+async fn post_arm(
+    Query(query): Query<ArmQuery>,
+    State(state): State<NodeState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<PrivateDependentTurnHandle>, PrivateApiError> {
+    if headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/octet-stream")
+    {
+        return Err(api_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "private dependent-turn arm requires application/octet-stream",
+        ));
+    }
+    if body.len() > MAX_PRIVATE_DEPENDENT_SIGNED_TURN_BYTES {
+        return Err(api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "signed dependent turn exceeds 262144-byte bound",
+        ));
+    }
+    arm_private_dependent_turn(&state, &body, query.expires_at_sequence_exclusive)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            let status = match error {
+                PrivateDependentTurnError::NodeLocked => StatusCode::FORBIDDEN,
+                PrivateDependentTurnError::AlreadyExpired => StatusCode::CONFLICT,
+                PrivateDependentTurnError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                PrivateDependentTurnError::IngressUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+                _ => StatusCode::BAD_REQUEST,
+            };
+            api_error(status, error)
+        })
+}
+
+async fn get_status(
+    Path(promise_id): Path<String>,
+    State(state): State<NodeState>,
+) -> Result<Json<PrivateDependentTurnStatusResponse>, PrivateApiError> {
+    let promise_id = parse_promise_id(&promise_id)?;
+    private_dependent_turn_status(&state, promise_id)
+        .await
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?
+        .map(PrivateDependentTurnStatusResponse::from)
+        .map(Json)
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "private dependent turn not found"))
+}
+
+async fn post_cancel(
+    Path(promise_id): Path<String>,
+    State(state): State<NodeState>,
+) -> Result<Json<CancelResponse>, PrivateApiError> {
+    let promise_id = parse_promise_id(&promise_id)?;
+    let cancelled = cancel_private_dependent_turn(&state, promise_id)
+        .await
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(CancelResponse {
+        promise_id: dregg_types::hex_encode(&promise_id),
+        cancelled,
+    }))
+}
+
+#[derive(Debug)]
+pub enum PrivateDependentTurnError {
+    NodeLocked,
+    Decode(String),
+    Validation(String),
+    ReceiptChainMismatch,
+    PromiseHashMismatch,
+    AlreadyExpired,
+    Seal(String),
+    Store(String),
+    IngressUnavailable,
+}
+
+impl core::fmt::Display for PrivateDependentTurnError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NodeLocked => f.write_str("node cipherclerk is locked"),
+            Self::Decode(error) => write!(f, "signed dependent turn decode failed: {error}"),
+            Self::Validation(error) => {
+                write!(f, "signed dependent turn admission refused: {error}")
+            }
+            Self::ReceiptChainMismatch => {
+                f.write_str("signed dependent turn receipt chain does not match current agent head")
+            }
+            Self::PromiseHashMismatch => {
+                f.write_str("signed dependent turn hash does not equal its promise id")
+            }
+            Self::AlreadyExpired => {
+                f.write_str("private dependent-turn expiry is not ahead of the scheduler cursor")
+            }
+            Self::Seal(error) => write!(f, "private dependent-turn custody seal failed: {error}"),
+            Self::Store(error) => write!(f, "private dependent-turn store refused: {error}"),
+            Self::IngressUnavailable => f.write_str("validated blocklace ingress is unavailable"),
+        }
+    }
+}
+
+impl std::error::Error for PrivateDependentTurnError {}
+
+fn custody_key(secret: [u8; 32]) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(CUSTODY_KEY_DOMAIN_V1)
+        .update(&secret)
+        .finalize()
+        .as_bytes()
+}
+
+fn custody_aad(
+    promise_id: [u8; 32],
+    expected_resolution_digest: [u8; 32],
+    expires_at_sequence_exclusive: u64,
+) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(CUSTODY_AAD_DOMAIN_V1.len() + 72);
+    aad.extend_from_slice(CUSTODY_AAD_DOMAIN_V1);
+    aad.extend_from_slice(&promise_id);
+    aad.extend_from_slice(&expected_resolution_digest);
+    aad.extend_from_slice(&expires_at_sequence_exclusive.to_le_bytes());
+    aad
+}
+
+fn seal_signed_turn(
+    secret: [u8; 32],
+    promise_id: [u8; 32],
+    expected_resolution_digest: [u8; 32],
+    expires_at_sequence_exclusive: u64,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, PrivateDependentTurnError> {
+    let key = custody_key(secret);
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let aad = custody_aad(
+        promise_id,
+        expected_resolution_digest,
+        expires_at_sequence_exclusive,
+    );
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad: &aad,
+            },
+        )
+        .map_err(|error| PrivateDependentTurnError::Seal(error.to_string()))?;
+    let mut sealed = Vec::with_capacity(nonce.len() + ciphertext.len());
+    sealed.extend_from_slice(&nonce);
+    sealed.extend_from_slice(&ciphertext);
+    Ok(sealed)
+}
+
+fn open_signed_turn(
+    secret: [u8; 32],
+    claim: &ClaimedPrivateDependentTurnV1,
+    expires_at_sequence_exclusive: u64,
+) -> Result<Vec<u8>, PrivateDependentTurnError> {
+    if claim.sealed_signed_turn.len() < 24 + 16 {
+        return Err(PrivateDependentTurnError::Seal(
+            "sealed envelope is truncated".to_string(),
+        ));
+    }
+    let (nonce, ciphertext) = claim.sealed_signed_turn.split_at(24);
+    let key = custody_key(secret);
+    let cipher = XChaCha20Poly1305::new((&key).into());
+    let aad = custody_aad(
+        claim.promise_id,
+        claim.expected_resolution_digest,
+        expires_at_sequence_exclusive,
+    );
+    cipher
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad: &aad,
+            },
+        )
+        .map_err(|_| PrivateDependentTurnError::Seal("AEAD authentication failed".to_string()))
+}
+
+fn strict_signed_turn(bytes: &[u8]) -> Result<SignedTurn, PrivateDependentTurnError> {
+    let signed = crate::signed_turn_validation::decode_signed_turn(bytes)
+        .map_err(|error| PrivateDependentTurnError::Decode(error.to_string()))?;
+    let canonical = postcard::to_stdvec(&signed)
+        .map_err(|error| PrivateDependentTurnError::Decode(error.to_string()))?;
+    if canonical != bytes {
+        return Err(PrivateDependentTurnError::Decode(
+            "signed dependent turn is not canonical".to_string(),
+        ));
+    }
+    Ok(signed)
+}
+
+/// Privately arm one dependent turn before its promise becomes ready.
+///
+/// The envelope is already signed; this node never manufactures authority for
+/// it. The shared outer SignedTurn predicate and current receipt-chain link are
+/// checked before any private bytes reach durable custody.
+pub async fn arm_private_dependent_turn(
+    state: &NodeState,
+    signed_turn_bytes: &[u8],
+    expires_at_sequence_exclusive: u64,
+) -> Result<PrivateDependentTurnHandle, PrivateDependentTurnError> {
+    let signed = strict_signed_turn(signed_turn_bytes)?;
+    let promise_id = signed.turn.hash();
+    let (store, secret) = {
+        let state = state.read().await;
+        if !state.unlocked {
+            return Err(PrivateDependentTurnError::NodeLocked);
+        }
+        let executor = crate::executor_setup::new_submit_executor(&state);
+        crate::signed_turn_validation::validate_signed_turn(
+            &signed,
+            &executor,
+            state.ledger.get(&signed.turn.agent),
+        )
+        .map_err(|error| PrivateDependentTurnError::Validation(error.to_string()))?;
+        if signed.turn.previous_receipt_hash
+            != state.cclerk.agent_receipt_head_hash(&signed.turn.agent)
+        {
+            return Err(PrivateDependentTurnError::ReceiptChainMismatch);
+        }
+        (
+            state.store.clone(),
+            state.cclerk.gossip_signing_key().to_bytes(),
+        )
+    };
+    if store
+        .private_dependent_scheduler_cursor_v1()
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?
+        .is_some_and(|cursor| expires_at_sequence_exclusive <= cursor)
+    {
+        return Err(PrivateDependentTurnError::AlreadyExpired);
+    }
+    let expected_resolution_digest = private_dependent_ready_digest_v1(promise_id, promise_id);
+    let sealed = seal_signed_turn(
+        secret,
+        promise_id,
+        expected_resolution_digest,
+        expires_at_sequence_exclusive,
+        signed_turn_bytes,
+    )?;
+    store
+        .arm_private_dependent_turn_v1(
+            promise_id,
+            promise_id,
+            sealed,
+            expires_at_sequence_exclusive,
+        )
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+    Ok(PrivateDependentTurnHandle {
+        promise_id: dregg_types::hex_encode(&promise_id),
+        expected_resolution_digest: dregg_types::hex_encode(&expected_resolution_digest),
+        expires_at_sequence_exclusive,
+    })
+}
+
+pub async fn cancel_private_dependent_turn(
+    state: &NodeState,
+    promise_id: [u8; 32],
+) -> Result<bool, PrivateDependentTurnError> {
+    let store = { state.read().await.store.clone() };
+    store
+        .cancel_private_dependent_turn_v1(promise_id)
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))
+}
+
+pub async fn private_dependent_turn_status(
+    state: &NodeState,
+    promise_id: [u8; 32],
+) -> Result<Option<PrivateDependentTurnSnapshotV1>, PrivateDependentTurnError> {
+    let store = { state.read().await.store.clone() };
+    store
+        .private_dependent_turn_status_v1(promise_id)
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))
+}
+
+/// Nudge the scheduler after Fresh publication or after startup installs the
+/// consensus handle. Concurrent nudges are safe: redb's destructive claim is
+/// the unique release authority.
+pub(crate) fn spawn_private_dependent_turn_drain(state: NodeState) {
+    tokio::spawn(async move {
+        if let Err(error) = drain_private_dependent_turns(&state).await {
+            tracing::error!(error = %error, "private dependent-turn scheduler stopped");
+        }
+    });
+}
+
+async fn drain_private_dependent_turns(state: &NodeState) -> Result<(), PrivateDependentTurnError> {
+    let blocklace = state
+        .blocklace()
+        .await
+        .ok_or(PrivateDependentTurnError::IngressUnavailable)?;
+    let store = { state.read().await.store.clone() };
+    reconcile_claimed_turns(&store)?;
+    let mut cursor = store
+        .private_dependent_scheduler_cursor_v1()
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+
+    loop {
+        let rows = store
+            .promise_resolutions_after_v1(cursor, DRAIN_PAGE)
+            .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let page_len = rows.len();
+        for row in rows {
+            if row.outcome == dregg_persist::PromiseResolutionKindV1::ReadyToExecute {
+                // Do not consume custody while the node cannot submit. Once the
+                // destructive claim commits, at-most-once deliberately wins
+                // over retry-on-crash liveness.
+                if !state.read().await.unlocked {
+                    return Err(PrivateDependentTurnError::NodeLocked);
+                }
+                if let Some(claim) = store
+                    .claim_private_dependent_turn_v1(row.pending_id, row.sequence)
+                    .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?
+                {
+                    let outcome = submit_claimed_turn(state, &blocklace, &store, &claim).await;
+                    let finish = match outcome {
+                        Ok(ingress_id) => PrivateDependentTurnFinishV1::Submitted { ingress_id },
+                        Err(error) => PrivateDependentTurnFinishV1::Refused {
+                            reason: error.to_string(),
+                        },
+                    };
+                    store
+                        .finish_private_dependent_turn_v1(
+                            claim.promise_id,
+                            claim.ready_sequence,
+                            claim.event_id,
+                            finish,
+                        )
+                        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+                }
+            }
+            store
+                .advance_private_dependent_scheduler_cursor_v1(row.sequence)
+                .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+            cursor = Some(row.sequence);
+        }
+        if page_len < DRAIN_PAGE {
+            return Ok(());
+        }
+    }
+}
+
+fn reconcile_claimed_turns(store: &PersistentStore) -> Result<(), PrivateDependentTurnError> {
+    let claimed = store
+        .claimed_private_dependent_turns_v1()
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+    for snapshot in claimed {
+        let dregg_persist::PrivateDependentTurnStatusV1::Claimed {
+            ready_sequence,
+            event_id,
+        } = snapshot.status
+        else {
+            continue;
+        };
+        let Some(finalized) = store
+            .lookup_turn(&snapshot.signed_turn_hash)
+            .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?
+        else {
+            // Crash uncertainty is intentionally not a retry authority. The
+            // byte-identical payload may already be queued but not finalized;
+            // remain Claimed until a later wake/restart can reconcile it.
+            continue;
+        };
+        store
+            .finish_private_dependent_turn_v1(
+                snapshot.promise_id,
+                ready_sequence,
+                event_id,
+                PrivateDependentTurnFinishV1::Submitted {
+                    ingress_id: finalized.block_id,
+                },
+            )
+            .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?;
+        tracing::info!(
+            promise_id = %dregg_types::hex_encode(&snapshot.promise_id),
+            ready_sequence,
+            "reconciled crash-uncertain private dependent turn from finalized turn index"
+        );
+    }
+    Ok(())
+}
+
+async fn submit_claimed_turn(
+    state: &NodeState,
+    blocklace: &crate::blocklace_sync::BlocklaceHandle,
+    store: &PersistentStore,
+    claim: &ClaimedPrivateDependentTurnV1,
+) -> Result<[u8; 32], PrivateDependentTurnError> {
+    let snapshot = store
+        .private_dependent_turn_status_v1(claim.promise_id)
+        .map_err(|error| PrivateDependentTurnError::Store(error.to_string()))?
+        .ok_or_else(|| {
+            PrivateDependentTurnError::Store("claimed custody row disappeared".to_string())
+        })?;
+    let (secret, plaintext) = {
+        let state = state.read().await;
+        if !state.unlocked {
+            return Err(PrivateDependentTurnError::NodeLocked);
+        }
+        let secret = state.cclerk.gossip_signing_key().to_bytes();
+        let plaintext = open_signed_turn(secret, claim, snapshot.expires_at_sequence_exclusive)?;
+        (secret, plaintext)
+    };
+    // Drop the derived secret from the logical flow before admission. (The
+    // stack copy is overwritten here; AEAD key material is never persisted.)
+    let mut secret = secret;
+    secret.fill(0);
+
+    let signed = strict_signed_turn(&plaintext)?;
+    if signed.turn.hash() != claim.promise_id
+        || claim.signed_turn_hash != claim.promise_id
+        || private_dependent_ready_digest_v1(claim.promise_id, signed.turn.hash())
+            != claim.expected_resolution_digest
+    {
+        return Err(PrivateDependentTurnError::PromiseHashMismatch);
+    }
+    {
+        let state = state.read().await;
+        let executor = crate::executor_setup::new_submit_executor(&state);
+        crate::signed_turn_validation::validate_signed_turn(
+            &signed,
+            &executor,
+            state.ledger.get(&signed.turn.agent),
+        )
+        .map_err(|error| PrivateDependentTurnError::Validation(error.to_string()))?;
+        if signed.turn.previous_receipt_hash
+            != state.cclerk.agent_receipt_head_hash(&signed.turn.agent)
+        {
+            return Err(PrivateDependentTurnError::ReceiptChainMismatch);
+        }
+    }
+
+    // This is the ordinary consensus ingress; finalization runs the same shared
+    // SignedTurn predicate again under the authoritative state lock. No private
+    // scheduler execution path or unsigned auto-submit exists.
+    let (block_id, _) = blocklace.submit_turn(state, plaintext).await;
+    Ok(block_id.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custody_aead_binds_promise_digest_and_expiry() {
+        let secret = [7; 32];
+        let promise = [3; 32];
+        let digest = private_dependent_ready_digest_v1(promise, promise);
+        let sealed = seal_signed_turn(secret, promise, digest, 99, b"signed-turn").unwrap();
+        let claim = ClaimedPrivateDependentTurnV1 {
+            promise_id: promise,
+            signed_turn_hash: promise,
+            expected_resolution_digest: digest,
+            ready_sequence: 2,
+            event_id: [4; 32],
+            sealed_signed_turn: sealed,
+        };
+        assert_eq!(
+            open_signed_turn(secret, &claim, 99).unwrap(),
+            b"signed-turn"
+        );
+        assert!(open_signed_turn(secret, &claim, 100).is_err());
+        let mut substituted = claim.clone();
+        substituted.promise_id[0] ^= 1;
+        assert!(open_signed_turn(secret, &substituted, 99).is_err());
+        let mut corrupted = claim;
+        corrupted.sealed_signed_turn[30] ^= 1;
+        assert!(open_signed_turn(secret, &corrupted, 99).is_err());
+    }
+
+    #[test]
+    fn promise_id_parser_rejects_malformed_and_overlong_hex() {
+        assert_eq!(parse_promise_id(&"00".repeat(32)).unwrap(), [0; 32]);
+        assert!(parse_promise_id(&"00".repeat(33)).is_err());
+        assert!(parse_promise_id(&"0g".repeat(32)).is_err());
+        assert!(parse_promise_id("é").is_err());
+    }
+
+    #[tokio::test]
+    async fn arm_uses_shared_signed_ingress_and_public_handle_has_no_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = NodeState::new(dir.path(), vec![]).unwrap();
+        let signed = {
+            let mut inner = state.write().await;
+            inner.unlocked = true;
+            let operator = crate::executor_setup::local_agent_cell(&inner);
+            if inner.ledger.get(&operator).is_none() {
+                let token = *blake3::hash(b"default").as_bytes();
+                let public_key = inner.cclerk.public_key().0;
+                inner
+                    .ledger
+                    .insert_cell(dregg_cell::Cell::with_balance(public_key, token, 1_000_000))
+                    .unwrap();
+            }
+            let turn = dregg_turn::Turn {
+                agent: operator,
+                nonce: inner.ledger.get(&operator).unwrap().state.nonce(),
+                fee: 0,
+                memo: None,
+                valid_until: Some(i64::MAX / 2),
+                call_forest: dregg_turn::CallForest::new(),
+                depends_on: vec![],
+                previous_receipt_hash: inner.cclerk.agent_receipt_head_hash(&operator),
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
+            };
+            inner.cclerk.sign_turn(&turn)
+        };
+        let bytes = postcard::to_stdvec(&signed).unwrap();
+        let handle = arm_private_dependent_turn(&state, &bytes, 100)
+            .await
+            .unwrap();
+        let public = serde_json::to_value(&handle).unwrap();
+        assert!(public.get("signed_turn").is_none());
+        assert!(public.get("sealed_signed_turn").is_none());
+        let promise_id = signed.turn.hash();
+        assert_eq!(handle.promise_id, dregg_types::hex_encode(&promise_id));
+        assert!(
+            cancel_private_dependent_turn(&state, promise_id)
+                .await
+                .unwrap()
+        );
+
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(matches!(
+            arm_private_dependent_turn(&state, &trailing, 100).await,
+            Err(PrivateDependentTurnError::Decode(_))
+        ));
+    }
+}
