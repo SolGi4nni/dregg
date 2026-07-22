@@ -10951,16 +10951,18 @@ and appended-plaintext refusals. This proves distributed custody and the first
 linear relation without reconstructing shares. The owner boundary now proves
 its first genuinely nonlinear layers: the four-value range proof plus a 128-
 boolean one-hot R1CS selector establishes `index=16*kind+quantity`, derives the
-exact eight unary demand/supply slots and `kind+8*quantity` root code, and batch-
-links all 139 scalar commitments to the share-held vector prefix. Canonical
-rejection sampling includes coefficient zero; the compression error is exactly
-`1/|Scalar|`. Signature verification is before the expensive Bulletproof/16k
-link work, with an instrumented invalid-signature tooth proving zero proof-
-verifier entries. The combined release gate is **12/12 in 7.370s**; width
-12,435, owner artifact 7,013 bytes, three-worker certificate 30,286 bytes.
-Exact fhe.rs polynomial-table/BFV equations, Poseidon/root, and clearing are not
-yet proved over shares; the production relation-digest constructor also lacks
-its live call site. This remains classical Ristretto/Ed25519.
+exact eight unary demand/supply slots and `kind+8*quantity` root code, and now
+also range-proves every one of the 12,288 BFV `u/e1/e2` coefficients in
+`[-32,31]`. One random-linear proof links all 12,427 non-root scalar commitments
+to the share-held vector prefix. Canonical rejection sampling includes zero;
+the compression error is exactly `1/|Scalar|`. Signature verification is before
+the expensive proof work, with an instrumented invalid-signature tooth proving
+zero verifier entries. The combined release gate is **13/13 in 8.952s** and
+executes the production-width 73,856-multiplier R1CS; owner artifact 400,869
+bytes, four-owner/three-worker certificate 1,605,710 bytes. Exact fhe.rs
+polynomial-table/BFV equations, Poseidon/root, sampler-image, DKG, and clearing
+are not yet proved over shares; the production relation-digest constructor also
+lacks its live call site. This remains classical Ristretto/Ed25519.
 
 The first native-PQ full-apex recapture exposed a performance defect rather than
 a protocol red: proof creation completed in 55.777s, then the old per-frame
