@@ -28,7 +28,6 @@ use core::fmt;
 use std::error::Error;
 
 use dregg_cell::Ledger;
-use dregg_circuit::exact_nullifier_aafi::ExactAppendRecord;
 use dregg_federation::frost::MlDsaPublicKey;
 use dregg_persist::commit_log::{CommitOutcome, FinalizedFaithfulRootWeld};
 use dregg_persist::{
@@ -315,7 +314,9 @@ pub(crate) fn prepare_exact_fnsp_v3_finalization(
     if !authority.verify_frame_signature() {
         return Err(ExactFnspV3FinalizationError::FrameSignatureInvalid);
     }
-    validate_legacy_exact_prefix(store)?;
+    store
+        .validate_live_exact_fnsp_v3_faithful_bridge()
+        .map_err(ExactFnspV3FinalizationError::Store)?;
 
     let binding = authority.frame().accepted_binding();
     let cas = prepared_transition.cas();
@@ -568,33 +569,6 @@ fn validate_proof_outer_commits(
     Ok(())
 }
 
-fn validate_legacy_exact_prefix(
-    store: &PersistentStore,
-) -> Result<(), ExactFnspV3FinalizationError> {
-    let legacy = store
-        .load_faithful_nullifier_records()
-        .map_err(ExactFnspV3FinalizationError::Store)?;
-    let exact = store
-        .exact_fnsp_v3_append_records()
-        .map_err(ExactFnspV3FinalizationError::Store)?
-        .ok_or(ExactFnspV3FinalizationError::ExactAuthorityUninitialized)?;
-    let legacy: Vec<_> = legacy
-        .into_iter()
-        .map(|(nullifier, value, seq)| ExactAppendRecord {
-            seq,
-            raw: nullifier.0,
-            value,
-        })
-        .collect();
-    if legacy != exact {
-        return Err(ExactFnspV3FinalizationError::LegacyExactPrefixMismatch {
-            legacy: legacy.len(),
-            exact: exact.len(),
-        });
-    }
-    Ok(())
-}
-
 fn validate_authenticated_history(
     store: &PersistentStore,
     authority: ExactFnspV3HistoryAuthority<'_>,
@@ -686,8 +660,6 @@ pub(crate) enum ExactFnspV3FinalizationError {
     FrameSignatureInvalid,
     PersistedActivationMissing,
     PersistedHeadMismatch(&'static str),
-    ExactAuthorityUninitialized,
-    LegacyExactPrefixMismatch { legacy: usize, exact: usize },
     InvalidHistoryAuthority,
     FaithfulHistoryUninitialized,
     HistoricalRootUnauthenticated,
@@ -716,13 +688,6 @@ impl fmt::Display for ExactFnspV3FinalizationError {
                     "exact FNSP-v3 persisted frame-head mismatch at {coordinate}"
                 )
             }
-            Self::ExactAuthorityUninitialized => {
-                f.write_str("exact FNSP-v3 durable authority is uninitialized")
-            }
-            Self::LegacyExactPrefixMismatch { legacy, exact } => write!(
-                f,
-                "legacy/exact nullifier append prefixes differ ({legacy} != {exact})"
-            ),
             Self::InvalidHistoryAuthority => {
                 f.write_str("faithful note-root history authority has no real hybrid threshold")
             }
@@ -787,7 +752,9 @@ mod tests {
         store
             .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
             .expect("bootstrap from durable faithful prefix");
-        validate_legacy_exact_prefix(&store).expect("byte-identical empty prefix");
+        store
+            .validate_live_exact_fnsp_v3_faithful_bridge()
+            .expect("sealed empty prefix");
     }
 
     #[test]

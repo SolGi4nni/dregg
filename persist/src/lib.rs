@@ -31,6 +31,7 @@ pub mod blocklace_store;
 pub mod channel_rosters;
 pub mod checkpoint;
 pub mod commit_log;
+mod exact_fnsp_v3_faithful_bridge;
 pub mod exact_fnsp_v3_frame_head;
 pub mod exact_fnsp_v3_state;
 pub mod executor_consensus_state;
@@ -244,6 +245,7 @@ impl PersistentStore {
         // (height, creator, ordinal) key (no-op on fresh/migrated stores).
         store.migrate_height_creator_index()?;
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
+        store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
@@ -260,6 +262,7 @@ impl PersistentStore {
         store.initialize_tables()?;
         store.migrate_per_cell_receipt_head_index_v1()?;
         store.rebuild_exact_fnsp_v3_online_index_on_open()?;
+        store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
@@ -298,6 +301,10 @@ impl PersistentStore {
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_LINKED_LEAVES)?;
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_SPARSE_NODES)?;
             let _ = write_txn.open_table(exact_fnsp_v3_state::EXACT_FNSP_V3_HEAD_HISTORY)?;
+            // Full-history equality is audited at open/bootstrap. This singleton is the rolling
+            // induction boundary that lets live faithful/exact admission stay O(1).
+            let _ = write_txn
+                .open_table(exact_fnsp_v3_faithful_bridge::EXACT_FNSP_V3_FAITHFUL_BRIDGE)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_ACTIVATION)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_HEAD)?;
             let _ = write_txn.open_table(exact_fnsp_v3_frame_head::EXACT_FNSP_V3_FRAME_RECORDS)?;

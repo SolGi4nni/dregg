@@ -68,6 +68,7 @@ enum Topic {
     Receipts,
     InvalidBlocklaceBundles,
     Intents,
+    PromiseResolutions,
     /// Catch-all for unrecognized topics. Prevents deserialization failures
     /// when clients send topics this node version doesn't know about.
     #[serde(other)]
@@ -100,6 +101,10 @@ enum ServerMessage {
     InvalidBlocklaceBundle { block_id: String, reason: String },
     /// An intent broadcast to subscribers.
     Intent { intent: serde_json::Value },
+    /// A typed, restart-durable promise outcome.
+    PromiseResolution {
+        resolution: crate::promise_resolutions::PromiseResolutionRecord,
+    },
     /// Response to an authorize request.
     AuthorizeResult {
         authorized: bool,
@@ -156,7 +161,12 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
 
     // Track which topics this client is subscribed to.
     // Default: subscribe to everything.
-    let mut subscribed_topics: Vec<Topic> = vec![Topic::Roots, Topic::Revocations, Topic::Receipts];
+    let mut subscribed_topics: Vec<Topic> = vec![
+        Topic::Roots,
+        Topic::Revocations,
+        Topic::Receipts,
+        Topic::PromiseResolutions,
+    ];
 
     // Per-connection rate limiter for unlock attempts (brute-force protection).
     let mut unlock_attempts: u32 = 0;
@@ -435,6 +445,7 @@ fn should_forward(event: &NodeEvent, topics: &[Topic]) -> bool {
             topics.contains(&Topic::InvalidBlocklaceBundles)
         }
         NodeEvent::Intent { .. } => topics.contains(&Topic::Intents),
+        NodeEvent::PromiseResolution { .. } => topics.contains(&Topic::PromiseResolutions),
     }
 }
 
@@ -462,6 +473,9 @@ fn node_event_to_server_message(event: &NodeEvent) -> ServerMessage {
         }
         NodeEvent::Intent { intent } => ServerMessage::Intent {
             intent: intent.clone(),
+        },
+        NodeEvent::PromiseResolution { resolution } => ServerMessage::PromiseResolution {
+            resolution: resolution.clone(),
         },
     }
 }

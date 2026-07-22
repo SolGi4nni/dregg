@@ -1853,6 +1853,10 @@ pub fn router_with_cors(
         })
         .route("/api/events", get(get_events))
         .route("/api/events/stream", get(crate::events::events_stream))
+        .route(
+            "/api/promise-resolutions",
+            get(crate::promise_resolutions::get_promise_resolutions),
+        )
         // Public, target-independent faithful-note synchronization.  Both
         // cursors are append-only prefix lengths and page sizes are fixed;
         // the SDK consumes every continuation from zero.  FNMS includes a

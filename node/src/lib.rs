@@ -74,6 +74,7 @@ mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
 mod program_registry_persistence;
+pub mod promise_resolutions;
 pub mod prove_pool;
 pub mod relay_dispute;
 pub mod relay_service;

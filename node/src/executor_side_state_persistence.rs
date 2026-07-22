@@ -69,6 +69,7 @@ pub(crate) fn capture_finalized_executor_consensus_state(
             predecessor.reactive.nullifiers,
             reactive.nullifiers,
         ),
+        promise_resolutions: Vec::new(),
     })
 }
 

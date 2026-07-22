@@ -449,7 +449,8 @@ fn durable_faithful_exact_append_records_in(
 }
 
 /// Require the exact-v3 and legacy faithful authorities to describe the same complete append
-/// history before a dual-write finalized turn begins.
+/// history during bootstrap/open/test-only activation, then pin that equality as the rolling live
+/// induction boundary. This is deliberately O(N); live finalized turns use the O(1) bridge gate.
 pub(crate) fn validate_exact_fnsp_v3_faithful_prefix_in(
     write: &redb::WriteTransaction,
 ) -> Result<()> {
@@ -462,7 +463,7 @@ pub(crate) fn validate_exact_fnsp_v3_faithful_prefix_in(
             legacy.len()
         )));
     }
-    Ok(())
+    crate::exact_fnsp_v3_faithful_bridge::install_after_full_audit_in(write, &legacy)
 }
 
 fn require_attested_nullifier_root(
@@ -881,6 +882,31 @@ impl PersistentStore {
     // The atomic commit (single transaction = one fsync boundary)
     // =========================================================================
 
+    /// O(1) live check that the fully audited faithful/exact append-prefix induction still holds.
+    ///
+    /// Store-open and bootstrap compare both complete histories. Every later production append
+    /// advances their shared rolling seal inside the same finalized-turn writer.
+    pub fn validate_live_exact_fnsp_v3_faithful_bridge(&self) -> Result<()> {
+        let read = self.db.begin_read()?;
+        crate::exact_fnsp_v3_faithful_bridge::validate_live_from_read(&read)
+    }
+
+    /// Full boot audit (and one-time migration) for the O(1) live bridge.
+    pub(crate) fn audit_exact_fnsp_v3_faithful_bridge_on_open(&self) -> Result<()> {
+        let write = self.db.begin_write()?;
+        let exact_initialized = {
+            let heads = write.open_table(crate::exact_fnsp_v3_state::EXACT_FNSP_V3_STATE_HEAD)?;
+            heads.len()? != 0
+        };
+        if exact_initialized {
+            validate_exact_fnsp_v3_faithful_prefix_in(&write)?;
+        } else {
+            crate::exact_fnsp_v3_faithful_bridge::require_absent_in(&write)?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
     /// Bootstrap the exact FNSP-v3 authority from the complete validated faithful-nullifier image.
     ///
     /// This is the only production seeding path.  Callers supply no records: the store validates
@@ -892,8 +918,11 @@ impl PersistentStore {
     ) -> Result<crate::ExactFnspV3StateHeadV1> {
         let write = self.db.begin_write()?;
         let records = durable_faithful_exact_append_records_in(&write)?;
-        let (write, head) =
-            crate::exact_fnsp_v3_state::initialize_exact_fnsp_v3_state_in(write, records)?;
+        let (write, head) = crate::exact_fnsp_v3_state::initialize_exact_fnsp_v3_state_in(
+            write,
+            records.iter().copied(),
+        )?;
+        crate::exact_fnsp_v3_faithful_bridge::install_after_full_audit_in(&write, &records)?;
         write.commit()?;
         Ok(head)
     }
@@ -1421,13 +1450,16 @@ impl PersistentStore {
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
     ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
-        // Exact-v3 is a shadow/cutover authority over the SAME ordered public spend history, not
-        // a second namespace.  Validate equality before the first finalized-turn write.  Since the
-        // candidate is already joined to this turn's one `(nullifier, value)` and both mutations
-        // share this writer, equality is preserved inductively on success and unchanged on abort.
+        // Store-open/bootstrap established full faithful/exact history equality. The rolling
+        // bridge is its durable induction hypothesis, so live admission checks only sealed count +
+        // exact head instead of replaying both O(N) histories on every turn.
         if exact_fnsp_v3.is_some() {
-            validate_exact_fnsp_v3_faithful_prefix_in(&write_txn)?;
+            crate::exact_fnsp_v3_faithful_bridge::validate_live_from_write(&write_txn)?;
         }
+        let exact_bridge_append = exact_fnsp_v3
+            .as_ref()
+            .map(|weld| weld.exact().append_record());
+        let mut faithful_bridge_append = None;
         let assigned;
         {
             let mut meta = write_txn.open_table(tables::METADATA)?;
@@ -1749,6 +1781,20 @@ impl PersistentStore {
             // boundary; duplicate/replayed nullifiers cannot be warned away.
             if let (Some(faithful), Some(first_seq)) = (faithful.as_ref(), fresh_nullifier_seq) {
                 append_fresh_nullifiers_in(&write_txn, faithful.spent_nullifiers, first_seq)?;
+                if exact_bridge_append.is_some() {
+                    let [spend] = faithful.spent_nullifiers else {
+                        return Err(StoreError::Integrity(
+                            "exact faithful bridge requires exactly one independently derived faithful append"
+                                .to_string(),
+                        ));
+                    };
+                    faithful_bridge_append =
+                        Some(dregg_circuit::exact_nullifier_aafi::ExactAppendRecord {
+                            seq: first_seq,
+                            raw: spend.nullifier,
+                            value: spend.value,
+                        });
+                }
             }
 
             // `store_attested_root_in` also updates the latest-root coordinate
@@ -1825,6 +1871,20 @@ impl PersistentStore {
             }
             None => (write_txn, None),
         };
+        match (faithful_bridge_append, exact_bridge_append) {
+            (Some(faithful), Some(exact)) => {
+                crate::exact_fnsp_v3_faithful_bridge::stage_matching_append_in(
+                    &write_txn, faithful, exact,
+                )?;
+            }
+            (None, None) => {}
+            _ => {
+                return Err(StoreError::Integrity(
+                    "exact finalized turn did not stage both faithful/exact bridge projections"
+                        .to_string(),
+                ));
+            }
+        }
         write_txn.commit()?;
         Ok(WeldedCommitOutcome {
             outcome: CommitOutcome {

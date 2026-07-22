@@ -183,6 +183,10 @@ pub enum NodeEvent {
     InvalidBlocklaceBundle { block_id: String, reason: String },
     /// An intent was received (from WS or HTTP) and added to the pool.
     Intent { intent: serde_json::Value },
+    /// A promise outcome derived from an already-durable finalized commit.
+    PromiseResolution {
+        resolution: crate::promise_resolutions::PromiseResolutionRecord,
+    },
 }
 
 /// Shared node state accessible from all async tasks.
