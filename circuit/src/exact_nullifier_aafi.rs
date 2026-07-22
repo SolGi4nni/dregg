@@ -672,6 +672,46 @@ impl SparseArity4Tree {
         self.node(TREE_DEPTH, 0)
     }
 
+    /// Build the complete sparse-node cache from a dense occupied physical prefix in one
+    /// bottom-up pass.  The append-order accumulator always occupies exactly `0..count`; hashing
+    /// every historical intermediate root during restart is unnecessary.
+    fn from_dense_leaf_digests(leaves: &[Digest8]) -> Self {
+        assert!(
+            !leaves.is_empty(),
+            "the permanent BOT leaf is always present"
+        );
+        let mut tree = Self::new();
+        let mut current = leaves.to_vec();
+        for (index, digest) in current.iter().copied().enumerate() {
+            if digest != tree.empty[0] {
+                tree.nodes.insert((0, index as u32), digest);
+            }
+        }
+
+        for level in 1..=TREE_DEPTH {
+            let parent_count = current.len().div_ceil(TREE_ARITY);
+            let mut parents = Vec::with_capacity(parent_count);
+            for parent in 0..parent_count {
+                let mut children = [tree.empty[level - 1]; TREE_ARITY];
+                let first = parent * TREE_ARITY;
+                for (slot, child) in children.iter_mut().enumerate() {
+                    if let Some(digest) = current.get(first + slot) {
+                        *child = *digest;
+                    }
+                }
+                let digest = exact_node_digest(children);
+                if digest != tree.empty[level] {
+                    tree.nodes.insert((level as u8, parent as u32), digest);
+                }
+                parents.push(digest);
+            }
+            current = parents;
+        }
+        debug_assert_eq!(current.len(), 1);
+        debug_assert_eq!(tree.root(), current[0]);
+        tree
+    }
+
     fn replacement_overlay(
         &self,
         index: u32,
@@ -815,7 +855,9 @@ impl ExactNullifierAafi {
             }
         }
 
-        let mut state = Self::new();
+        let mut append_order = Vec::with_capacity(ordered.len());
+        let mut ordered_positions = BTreeMap::new();
+        ordered_positions.insert(ExactTaggedKey::Bot, 0u32);
         for (expected, (seq, record)) in (0u64..).zip(ordered) {
             if seq != expected {
                 return Err(ExactAafiError::ReplaySeqGap {
@@ -823,10 +865,55 @@ impl ExactNullifierAafi {
                     found: seq,
                 });
             }
-            debug_assert_eq!(state.count(), seq + 1);
-            state.insert(record.raw, record.value)?;
+            let key = ExactTaggedKey::from_raw(record.raw);
+            if ordered_positions.insert(key, (seq + 1) as u32).is_some() {
+                return Err(ExactAafiError::Duplicate);
+            }
+            append_order.push(record);
         }
-        Ok(state)
+
+        // Recover final pointer order and physical append positions without hashing every
+        // historical state.  The loop above deliberately interleaves dense-sequence and duplicate
+        // checks exactly as sequential replay did, preserving refusal precedence as well as type.
+        let sorted_keys: Vec<_> = ordered_positions
+            .iter()
+            .map(|(key, position)| (*key, *position))
+            .collect();
+        let mut dense_leaves = vec![ExactLinkedLeaf::genesis(); append_order.len() + 1];
+        for (index, (key, position)) in sorted_keys.iter().copied().enumerate() {
+            let next_addr = sorted_keys
+                .get(index + 1)
+                .map(|(next, _)| *next)
+                .unwrap_or(ExactTaggedKey::Top);
+            let value_u16_le = if position == 0 {
+                [0; VALUE_LIMBS]
+            } else {
+                u64_to_u16_le(append_order[position as usize - 1].value)
+            };
+            dense_leaves[position as usize] = ExactLinkedLeaf {
+                addr: key,
+                value_u16_le,
+                next_addr,
+            };
+        }
+        let leaf_digests: Vec<_> = dense_leaves
+            .iter()
+            .copied()
+            .map(exact_leaf_digest)
+            .collect();
+        let tree = SparseArity4Tree::from_dense_leaf_digests(&leaf_digests);
+        let leaves = dense_leaves
+            .into_iter()
+            .enumerate()
+            .map(|(position, leaf)| (position as u32, leaf))
+            .collect();
+
+        Ok(Self {
+            tree,
+            leaves,
+            ordered_positions,
+            count: append_order.len() as u64 + 1,
+        })
     }
 
     /// Construct, but do not apply, the complete two-path witness.
@@ -998,8 +1085,77 @@ impl ExactNullifierAafi {
         raw: [u8; 32],
         value: u64,
     ) -> Result<ValidatedExactAafiTransition, ExactAafiError> {
-        let witness = self.prepare_insert(raw, value)?;
-        self.apply_witness(&witness)
+        // This input originates locally.  Building a witness and immediately treating that same
+        // witness as hostile repeated every leaf/node/state hash in `prepare_insert`,
+        // `validate_exact_aafi_witness`, and `apply_witness`.  Construct both candidate overlays
+        // against the unchanged tree, then commit only after every local invariant has passed.
+        if self.count >= TREE_CAPACITY {
+            return Err(ExactAafiError::TreeFull);
+        }
+        let inserted_key = ExactTaggedKey::from_raw(raw);
+        if self.ordered_positions.contains_key(&inserted_key) {
+            return Err(ExactAafiError::Duplicate);
+        }
+        let (&predecessor_key, &predecessor_position) = self
+            .ordered_positions
+            .range(..inserted_key)
+            .next_back()
+            .ok_or(ExactAafiError::RuntimeChainInvariant)?;
+        let predecessor = *self
+            .leaves
+            .get(&predecessor_position)
+            .ok_or(ExactAafiError::RuntimeChainInvariant)?;
+        if predecessor.addr != predecessor_key
+            || !(predecessor.addr < inserted_key && inserted_key < predecessor.next_addr)
+        {
+            return Err(ExactAafiError::RuntimeChainInvariant);
+        }
+
+        let prior_root = self.root();
+        let prior_count = self.count;
+        let predecessor_after = predecessor.with_next(inserted_key);
+        let predecessor_overlay = self.tree.replacement_overlay(
+            predecessor_position,
+            exact_leaf_digest(predecessor_after),
+            &BTreeMap::new(),
+        );
+        let cursor = self.count as u32;
+        if self.tree.node(0, cursor) != exact_empty_leaf_digest() {
+            return Err(ExactAafiError::RuntimeChainInvariant);
+        }
+        let appended = ExactLinkedLeaf {
+            addr: inserted_key,
+            value_u16_le: u64_to_u16_le(value),
+            next_addr: predecessor.next_addr,
+        };
+        let append_overlay = self.tree.replacement_overlay(
+            cursor,
+            exact_leaf_digest(appended),
+            &predecessor_overlay,
+        );
+        let successor_root = append_overlay
+            .get(&(TREE_DEPTH as u8, 0))
+            .copied()
+            .ok_or(ExactAafiError::RuntimeChainInvariant)?;
+
+        // No mutation occurs above this line; the two prepared O(depth) overlays now commit as one
+        // local transition.  Untrusted witnesses still use `apply_witness` and retain every tooth.
+        self.tree.apply_overlay(predecessor_overlay);
+        self.tree.apply_overlay(append_overlay);
+        self.leaves.insert(predecessor_position, predecessor_after);
+        self.leaves.insert(cursor, appended);
+        self.ordered_positions.insert(inserted_key, cursor);
+        self.count += 1;
+
+        Ok(ValidatedExactAafiTransition {
+            inserted_key,
+            inserted_value: value,
+            predecessor_position,
+            prior_root,
+            successor_root,
+            prior_count,
+            successor_count: self.count,
+        })
     }
 }
 
@@ -1325,6 +1481,32 @@ mod tests {
             }]),
             Err(ExactAafiError::ReplaySeqOutOfRange(u64::MAX))
         );
+
+        // Refusal ordering remains byte-for-byte compatible with sequential replay: a duplicate
+        // at the next dense sequence is observed before a later gap, while a gap at the duplicate
+        // record itself is observed first.
+        let duplicate = ExactAppendRecord {
+            seq: 1,
+            raw: records[0].raw,
+            value: 999,
+        };
+        assert_eq!(
+            ExactNullifierAafi::from_append_records([records[0], duplicate, records[2]]),
+            Err(ExactAafiError::Duplicate)
+        );
+        assert_eq!(
+            ExactNullifierAafi::from_append_records([
+                records[0],
+                ExactAppendRecord {
+                    seq: 2,
+                    ..duplicate
+                }
+            ]),
+            Err(ExactAafiError::ReplaySeqGap {
+                expected: 1,
+                found: 2
+            })
+        );
     }
 
     #[test]
@@ -1365,5 +1547,92 @@ mod tests {
         let replay = ExactNullifierAafi::from_append_records(records).unwrap();
         assert_eq!(replay, live);
         assert_eq!(replay.count(), 66);
+    }
+
+    #[test]
+    fn local_fast_path_matches_full_hostile_witness_path() {
+        let mut fast = ExactNullifierAafi::new();
+        let mut witnessed = ExactNullifierAafi::new();
+        let mut records = Vec::new();
+        for seq in 0u64..129 {
+            let key = ((seq * 37) % 129) as u16;
+            let raw = raw_with_first_u16(key);
+            let value = seq.wrapping_mul(0x9e37_79b9);
+            let witness = witnessed.prepare_insert(raw, value).unwrap();
+            let expected = witnessed.apply_witness(&witness).unwrap();
+            let actual = fast.insert(raw, value).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(fast, witnessed);
+            assert_eq!(fast.state_commit(), witnessed.state_commit());
+            records.push(ExactAppendRecord { seq, raw, value });
+        }
+
+        // The restart builder receives hostile storage order and hashes only the final dense
+        // physical tree.  It must still be identical to all 129 full two-path transitions,
+        // including the 4/16/64 radix boundaries and nonmonotone logical predecessor rewrites.
+        records.reverse();
+        let rebuilt = ExactNullifierAafi::from_append_records(records).unwrap();
+        assert_eq!(rebuilt, witnessed);
+        assert_eq!(rebuilt.state_commit(), witnessed.state_commit());
+    }
+
+    /// Manual release-only scaling probe.  Kept ignored because 16k exact Poseidon/tree updates
+    /// are intentionally outside the default test economy.
+    #[test]
+    #[ignore = "manual release scaling probe; run explicitly on a build host"]
+    fn benchmark_exact_aafi_replay_scaling() {
+        use std::time::Instant;
+
+        for count in [1_000u64, 16_000] {
+            let append_order: Vec<_> = (0..count)
+                .map(|seq| {
+                    let mut raw = [0u8; 32];
+                    let key = seq.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+                    raw[..8].copy_from_slice(&key.to_le_bytes());
+                    ExactAppendRecord {
+                        seq,
+                        raw,
+                        value: seq.wrapping_mul(0x1_0001_0001),
+                    }
+                })
+                .collect();
+            let mut storage_order = append_order.clone();
+            let mut shuffle = 0xd1b5_4a32_d192_ed03u64;
+            for i in (1..storage_order.len()).rev() {
+                shuffle ^= shuffle << 7;
+                shuffle ^= shuffle >> 9;
+                shuffle ^= shuffle << 8;
+                storage_order.swap(i, shuffle as usize % (i + 1));
+            }
+
+            let ordering_start = Instant::now();
+            let mut ordered = BTreeMap::new();
+            for record in storage_order.iter().copied() {
+                assert!(ordered.insert(record.seq, record).is_none());
+            }
+            for (expected, seq) in (0u64..).zip(ordered.keys().copied()) {
+                assert_eq!(seq, expected);
+            }
+            let ordering = ordering_start.elapsed();
+
+            let insert_start = Instant::now();
+            let mut incremental = ExactNullifierAafi::new();
+            for record in append_order.iter().copied() {
+                incremental.insert(record.raw, record.value).unwrap();
+            }
+            let insert = insert_start.elapsed();
+
+            let replay_start = Instant::now();
+            let replay =
+                ExactNullifierAafi::from_append_records(storage_order.iter().copied()).unwrap();
+            let replay_time = replay_start.elapsed();
+            assert_eq!(replay, incremental);
+            eprintln!(
+                "exact-aafi-bench n={count} ordering_ms={:.3} insert_ms={:.3} replay_ms={:.3}",
+                ordering.as_secs_f64() * 1_000.0,
+                insert.as_secs_f64() * 1_000.0,
+                replay_time.as_secs_f64() * 1_000.0,
+            );
+        }
     }
 }
