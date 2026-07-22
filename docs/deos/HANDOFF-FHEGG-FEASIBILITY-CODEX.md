@@ -137,14 +137,19 @@ banks its own coherent checkpoint.
 - `9af0f439b`, `4fd4ad745`, `174f9a46c`, and `96288b41b` persist and restore
   reactive registry/nullifiers, the complete finalized executor state, and
   per-cell receipt provenance across compaction. `fc8704c86` makes the separate
-  React replay domain explicit in Lean. `c6fc06cbb` publishes promise-resolution
-  events only after durability; it does not make the current separate
-  post-commit resolution journal crash-complete. The replacement must persist
-  or derive the immutable event batch in the same finalized transaction.
+  React replay domain explicit in Lean. The old post-commit resolution journal
+  has been replaced: `a0199c1e0` atomically writes the canonical typed outbox
+  with its source commit, `397ccb234` bounds hostile rows/batches before decode,
+  `74e0e61d2` exposes resumable HTTP/WebSocket cursors, and
+  `b8ba574c4`/`a58038562` attach and Fresh-only publish it from exact and generic
+  finalization. The second `NodeState` pending-registry owner is deleted.
 - `51030b01b` binds the real q0 N=8/N=4096 BFV forward/inverse table carrier and
-  threshold-decrypt terminal relation to transform boundaries. It is public
-  carrier substrate, not IR2/HidingFRI/ZK authority, covers q0 rather than the
-  full active RNS set, and carries no DKG/parameter-domain root.
+  threshold-decrypt terminal relation to transform boundaries. `92c881a0a`
+  promotes the fixed q0/±2^80 terminal into a Lean-authored IR2 relation and a
+  real N=4096 composite HidingFRI proof (captured at about 72ms prove, 54ms
+  verify, 285.5KB), with strict wire and carrier/context-substitution refusal.
+  It still covers q0 rather than the full active RNS set, and the external
+  transform/LogUp carrier plus DKG/parameter-domain root remain named joins.
 - The measured strict Descent/Bazaar custody proof remains CPU-bound: the
   latest captured release run was about 514.6 seconds on persvati, down from
   1086.0 seconds but still far from an interactive game loop. Portable WGPU
@@ -591,7 +596,7 @@ classical seams into a post-quantum composition.
 | Portable HidingFRI GPU path | **TRANSCRIPT + EXACT EXT4 COMMIT PATH GATED; DISTRIBUTED FOLD/QUERY OPEN** | byte-identical full proof 2/2 with five mapped transcript buffers; standalone BabyBear^4 fold matches pinned Plonky3 at arities 2/4/8 through 2^20 and is up to 3.55× faster; the full PCS commitment hook is banked, while distributed fold/orchestration and query privacy remain new work |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact adaptive radix-16/radix-128 required mode through 4096 terms; fixed radix-128 4096 was 4.722s GPU vs 9.563ms dalek and standalone adaptive was 4.643s vs 9.827ms, so disabled by default |
 | Portable encrypted TFHE PBS | **GPU-RESIDENT FULL-RADIX PUBLIC COMPARISON GATED** | all 16 carry-clean radix blocks stay resident through one final readback; strict 3/3, same late comparison 1.891881s→0.741850s (2.55×), encrypted predicate drives `if_then_else`; ciphertext-to-ciphertext/min/select and broader shapes remain |
-| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY + WGPU + FIRST BUTTERFLY AIR GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact q0/q1/q2 WGPU transforms, reusable 2^18 key certificate, and concrete q0/N8 48-column butterfly AIR/permutation teeth; four deployed N4K4 polynomials now batch into one WGPU submission/readback at 3.303–3.732× the sequential throughput; production faithful tables/full witness/terminal quotient/recursive join remain |
+| Exact BFV + wide PQ Lean boundaries | **NATIVE SLICE + q0 THRESHOLD TERMINAL LIVE; NTT FAMILY/WGPU GATED** | the first complete 4,096-term equation and the Lean-authored q0/±2^80 threshold terminal have real HidingFRI proofs; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact q0/q1/q2 WGPU transforms, reusable 2^18 key certificate, and concrete q0/N8 48-column butterfly AIR/permutation teeth; four deployed N4K4 polynomials batch into one WGPU submission/readback at 3.303–3.732× sequential throughput; all-RNS terminal coverage, faithful transform/LogUp join, DKG domain root, and recursive join remain |
 | Additive PQ share commitment | **EXPERIMENTAL ALGEBRA/KAT; PRODUCTION REFUSED** | context-bound BabyBear/SIS-style additive commitments, exact links, randomized hiding coordinates, and short-kernel extraction are Rust/Lean green; dimensions are not estimator-approved and live wide Ristretto shares are not bounded coordinates, so `productionPqReady = false` |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
 | Faithful wide note tree and history | **LIVE V2 SPEND; V3 EXACT PROOF, OPAQUE ACCEPTANCE, AND HISTORICAL REPLAY GATED; NON-LIVE** | live FNO2/FNC2/FNF2 proof/custody remains; v3 composes all exact bands, strictly transports 76 lanes, and proves/verifies under HidingFRI; successful verification yields a privately constructed accepted-statement/FNS3 token bound to the signed proof-carrier bytes, while durable replay reconstructs exact historical prefixes without rewinding the head; receipt/state migration, executor-produced finalization authority, CAS-last dual-write, and live selector/registry wiring remain |
