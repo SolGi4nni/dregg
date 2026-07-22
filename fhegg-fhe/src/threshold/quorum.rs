@@ -3662,4 +3662,72 @@ mod vss_tests {
         .unwrap();
         assert_ne!(verified_roster.digest(), legacy_roster.digest());
     }
+
+    #[test]
+    fn authenticated_encrypted_orders_gate_real_game_asset_settlement_crypto_tooth() {
+        use fhe::bfv::Plaintext;
+        use fhe_traits::{FheEncoder, FheEncrypter};
+
+        let params = BfvParams::fold_set();
+        let session = QuorumKeygenSession::from_seed(3, 2, [0xb3; 32]).unwrap();
+        let verified_dealers = (0..3)
+            .map(|dealer| {
+                deal(&session, dealer, &params)
+                    .unwrap()
+                    .verify(&params)
+                    .unwrap()
+            })
+            .collect();
+        let (collective, transcript, assemblies) =
+            finish_verified_keygen(&session, verified_dealers, &params)
+                .unwrap()
+                .into_parts();
+        let mut parties = assemblies
+            .into_iter()
+            .enumerate()
+            .map(|(party, assembly)| {
+                QuorumParty::assemble_verified(&session, party, assembly, &transcript, &params)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let mut slots = vec![0u64; params.degree()];
+        slots[..4].copy_from_slice(&[7, 19, 31, 43]);
+        let plaintext = Plaintext::try_encode(&slots, Encoding::simd(), params.arc()).unwrap();
+        let mut rng = rand_09::rng();
+        let ciphertext = collective.pk.try_encrypt(&plaintext, &mut rng).unwrap();
+        let ciphertext = LeanCiphertext::from_fhe_bytes(
+            &ciphertext.to_bytes(),
+            params.moduli(),
+            params.degree(),
+            43,
+        )
+        .unwrap();
+        let opening =
+            QuorumOpeningSession::new_verified(session, &transcript, [0xb4; 32], vec![0, 1])
+                .unwrap();
+        let shares = partial_decrypt_quorum_parallel(
+            &mut parties,
+            &opening,
+            &ciphertext,
+            MIN_SMUDGE_BITS,
+            &params,
+        )
+        .unwrap();
+        assert!(shares.iter().all(|share| share.proof.is_some()));
+        for share in &shares {
+            verify_decrypt_share_relation(share, &transcript, &params).unwrap();
+        }
+        assert_eq!(
+            &combine_quorum(&shares, &opening, &params).unwrap()[..4],
+            &[7, 19, 31, 43]
+        );
+
+        let mut forged = shares[0].clone();
+        forged.proof.as_mut().unwrap().relation_response[0] ^= 1;
+        assert!(matches!(
+            verify_decrypt_share_relation(&forged, &transcript, &params),
+            Err(QuorumError::InvalidDecryptShareProof { .. })
+        ));
+    }
 }

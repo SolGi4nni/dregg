@@ -33,6 +33,9 @@
 #   test   foreign_circuit_root_is_refused_by_vk_pin        circuit (lib, >60s; shares the fold setup)
 #   test   authenticated_encrypted_orders_gate_real_game_asset_settlement
 #                                                            dreggnet-market (>1080s release)
+#          The same name prefix also routes fhegg-fhe's isolated verified-share
+#          prove/verify crypto tooth, so engine performance can be measured
+#          without compiling the market/persistence integration graph.
 #   test   private_bazaar_winner_spends_the_proof_assigned_mender_through_signed_spine_once
 #                                                            dreggnet-catalog (~76s release)
 #   test   production_bfv_book_a_and_valid_hidingfri_book_b_cannot_cross_pair
