@@ -53,6 +53,8 @@ pub mod player_worlds;
 #[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_live;
 #[cfg(feature = "private-bazaar-live")]
+pub mod private_bazaar_service;
+#[cfg(feature = "private-bazaar-live")]
 pub mod private_bazaar_worker;
 #[cfg(feature = "private-fhegg-game-consequence")]
 pub mod private_fhegg_game_consequence;
@@ -81,6 +83,14 @@ pub use player_worlds::{PlayerWorlds, RPG_KEYS, build_player_host, is_rpg_key};
 pub use private_bazaar_live::{
     PRIVATE_BAZAAR_RAID_TITLE, PrivateBazaarLiveDeployment, build_full_catalog_with_private_bazaar,
     full_catalog_host_with_private_bazaar,
+};
+#[cfg(feature = "private-bazaar-live")]
+pub use private_bazaar_service::{
+    PRIVATE_BAZAAR_WORKER_INITIAL_BACKOFF_MS_ENV, PRIVATE_BAZAAR_WORKER_MAX_BACKOFF_MS_ENV,
+    PRIVATE_BAZAAR_WORKER_POLL_MS_ENV, PrivateBazaarAuthenticatedReceiptSource,
+    PrivateBazaarLiveRuntime, PrivateBazaarSourceCapture, PrivateBazaarWorkerFaultClass,
+    PrivateBazaarWorkerHealth, PrivateBazaarWorkerServiceConfig, PrivateBazaarWorkerServiceError,
+    PrivateBazaarWorkerServicePhase, PrivateBazaarWorkerSupervisor,
 };
 #[cfg(feature = "private-bazaar-live")]
 pub use private_bazaar_worker::{

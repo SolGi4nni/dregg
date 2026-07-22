@@ -9,7 +9,7 @@
 //! actions.  Once entered, the hosted action set is empty; refresh is a read and
 //! must use `render`, never a fake journaled move.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, Bound};
 use std::sync::{Arc, Mutex, Weak};
 
 use deos_view::ViewNode;
@@ -21,6 +21,7 @@ use dreggnet_offerings::{
 use crate::private_bazaar_journey::{
     PrivateBazaarPublicAction, PrivateBazaarRaidJourney, PrivateBazaarRaidPolicy,
 };
+use crate::private_clearing::PrivateClearingReceipt;
 use crate::{DarkBazaarOffering, DarkBazaarSession, TURN_LIST};
 
 pub const PRIVATE_BAZAAR_RAID_KEY: &str = "private-bazaar-raid";
@@ -121,6 +122,51 @@ impl PrivateBazaarLiveRegistry {
             .ok()
             .and_then(|sessions| sessions.get(&seed).and_then(Weak::upgrade))
             .is_some()
+    }
+
+    /// Snapshot every proof-verified terminal receipt currently retained by a
+    /// live hosted market. This is the authenticated production source for the
+    /// private worker: entries can appear only after
+    /// `settle_private_verified` has verified the hiding proof and landed the
+    /// real executor settlement. The BTreeMap order makes first-time cursor
+    /// assignment deterministic without exposing this method to a frontend
+    /// rendering path.
+    #[doc(hidden)]
+    pub fn finalized_private_receipts_for_worker(
+        &self,
+        after_seed: Option<u64>,
+        limit: usize,
+    ) -> Result<(Vec<(u64, PrivateClearingReceipt)>, Option<u64>, bool), PrivateBazaarLiveHostError>
+    {
+        let sessions = {
+            let mut registry = self
+                .sessions
+                .lock()
+                .map_err(|_| PrivateBazaarLiveHostError::Poisoned)?;
+            registry.retain(|_, session| session.strong_count() != 0);
+            let lower = after_seed.map_or(Bound::Unbounded, Bound::Excluded);
+            registry
+                .range((lower, Bound::Unbounded))
+                .filter_map(|(seed, session)| session.upgrade().map(|session| (*seed, session)))
+                .take(limit)
+                .collect::<Vec<_>>()
+        };
+
+        let last_scanned_seed = sessions.last().map(|(seed, _)| *seed);
+        let exhausted = sessions.len() < limit;
+        let mut finalized = Vec::new();
+        for (seed, backend) in sessions {
+            let backend = backend
+                .lock()
+                .map_err(|_| PrivateBazaarLiveHostError::Poisoned)?;
+            if backend.terminal_fault.is_some() || backend.journey.is_none() {
+                continue;
+            }
+            if let Some(receipt) = &backend.market.verified_private_clearing_receipt {
+                finalized.push((seed, receipt.clone()));
+            }
+        }
+        Ok((finalized, last_scanned_seed, exhausted))
     }
 }
 

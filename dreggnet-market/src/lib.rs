@@ -1234,7 +1234,7 @@ pub struct DarkBazaarSession {
     /// market. A fresh local receipt envelope may be rejoined to this claim
     /// after restart, but can never redefine it.
     #[cfg(feature = "private-clearing")]
-    verified_private_clearing: Option<private_clearing::VerifiedPrivateClearingSemanticRecord>,
+    verified_private_clearing_receipt: Option<private_clearing::PrivateClearingReceipt>,
 }
 
 impl DarkBazaarSession {
@@ -1291,7 +1291,7 @@ impl Offering for DarkBazaarOffering {
         self.market.open(cfg).map(|market| DarkBazaarSession {
             market,
             #[cfg(feature = "private-clearing")]
-            verified_private_clearing: None,
+            verified_private_clearing_receipt: None,
         })
     }
 

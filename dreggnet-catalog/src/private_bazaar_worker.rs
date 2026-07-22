@@ -147,7 +147,7 @@ pub trait FinalizedPrivateBazaarReceiptSource {
         &mut self,
         after: u64,
         limit: usize,
-    ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, String>;
+    ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, PrivateBazaarWorkerError>;
 }
 
 /// Deployment-custodied append-only source for finalized private receipts.
@@ -166,8 +166,15 @@ pub struct PrivateBazaarReceiptSpool {
     binding: PrivateBazaarSpoolBinding,
     latest_positions: Vec<u64>,
     latest_core_ids: Vec<[u8; 32]>,
+    latest_session_seeds: Vec<u64>,
     scanned_records: u64,
     tail_checksum: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrivateBazaarSpoolAppend {
+    Unchanged,
+    Appended,
 }
 
 impl std::fmt::Debug for PrivateBazaarReceiptSpool {
@@ -241,6 +248,7 @@ impl PrivateBazaarReceiptSpool {
             binding,
             latest_positions: Vec::new(),
             latest_core_ids: Vec::new(),
+            latest_session_seeds: Vec::new(),
             scanned_records: 0,
             tail_checksum: [0; 32],
         };
@@ -263,15 +271,26 @@ impl PrivateBazaarReceiptSpool {
     }
 
     /// Append and fsync one finalized semantic receipt. Logical cursors remain
-    /// contiguous. Retrying the exact tail is idempotent; a fresh local envelope
-    /// for the identical live-validated semantic core is appended as a new
-    /// physical revision. Any semantic change at that cursor is a fork.
+    /// contiguous. Retrying an exact envelope is idempotent; a fresh local
+    /// envelope for the identical live-validated semantic core is appended as a
+    /// new physical revision, including for an older logical cursor after later
+    /// markets have finalized. Any semantic change at that cursor is a fork.
     pub fn append(
         &mut self,
         cursor: u64,
         session_seed: u64,
         receipt: PrivateClearingReceipt,
     ) -> Result<(), PrivateBazaarWorkerError> {
+        self.append_with_outcome(cursor, session_seed, receipt)
+            .map(|_| ())
+    }
+
+    fn append_with_outcome(
+        &mut self,
+        cursor: u64,
+        session_seed: u64,
+        receipt: PrivateClearingReceipt,
+    ) -> Result<PrivateBazaarSpoolAppend, PrivateBazaarWorkerError> {
         self.revalidate_path_identity()?;
         self.file
             .lock()
@@ -282,9 +301,51 @@ impl PrivateBazaarReceiptSpool {
             .unlock()
             .map_err(|error| PrivateBazaarWorkerError::io("unlock receipt spool writer", error));
         match (result, unlock) {
-            (Ok(()), Ok(())) => Ok(()),
+            (Ok(outcome), Ok(())) => Ok(outcome),
             (Err(error), _) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Capture a receipt discovered directly in the live hosted registry. A
+    /// deterministic seed receives one durable logical cursor; replay of that
+    /// seed after restart revises the same semantic cursor rather than minting
+    /// a second consequence.
+    pub(crate) fn append_discovered_live(
+        &mut self,
+        session_seed: u64,
+        receipt: PrivateClearingReceipt,
+    ) -> Result<PrivateBazaarSpoolAppend, PrivateBazaarWorkerError> {
+        self.revalidate_path_identity()?;
+        self.file
+            .lock()
+            .map_err(|error| PrivateBazaarWorkerError::io("lock receipt spool writer", error))?;
+        let result = (|| {
+            self.refresh_index()?;
+            let cursor = match self
+                .latest_session_seeds
+                .iter()
+                .position(|seed| *seed == session_seed)
+            {
+                Some(index) => u64::try_from(index)
+                    .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
+                    .checked_add(1)
+                    .ok_or(PrivateBazaarWorkerError::CursorOverflow)?,
+                None => u64::try_from(self.latest_positions.len())
+                    .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?
+                    .checked_add(1)
+                    .ok_or(PrivateBazaarWorkerError::CursorOverflow)?,
+            };
+            self.append_locked(cursor, session_seed, receipt)
+        })();
+        let unlock = self
+            .file
+            .unlock()
+            .map_err(|error| PrivateBazaarWorkerError::io("unlock receipt spool writer", error));
+        match (result, unlock) {
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
         }
     }
 
@@ -293,7 +354,7 @@ impl PrivateBazaarReceiptSpool {
         cursor: u64,
         session_seed: u64,
         receipt: PrivateClearingReceipt,
-    ) -> Result<(), PrivateBazaarWorkerError> {
+    ) -> Result<PrivateBazaarSpoolAppend, PrivateBazaarWorkerError> {
         self.revalidate_path_identity()?;
         let event = FinalizedPrivateBazaarReceipt::new(cursor, session_seed, receipt);
         validate_event(&event, cursor)?;
@@ -306,7 +367,7 @@ impl PrivateBazaarReceiptSpool {
             .ok_or(PrivateBazaarWorkerError::CursorOverflow)?;
         let core_id = semantic_core_id(self.scope, market_instance_id, &event)?;
 
-        if cursor == logical_tail && logical_tail != 0 {
+        if cursor != 0 && cursor <= logical_tail {
             let index = usize::try_from(cursor - 1)
                 .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
             let position = self.latest_positions[index];
@@ -324,20 +385,19 @@ impl PrivateBazaarReceiptSpool {
                 found.previous_checksum,
             )?;
             if found_bytes == expected_bytes {
-                return Ok(());
+                return Ok(PrivateBazaarSpoolAppend::Unchanged);
             }
         }
-        if cursor != expected && cursor != logical_tail {
-            return Err(if cursor < expected {
-                PrivateBazaarWorkerError::SpoolFork {
-                    expected,
-                    found: cursor,
-                }
-            } else {
-                PrivateBazaarWorkerError::SpoolGap {
-                    expected,
-                    found: cursor,
-                }
+        if cursor == 0 {
+            return Err(PrivateBazaarWorkerError::SpoolFork {
+                expected,
+                found: cursor,
+            });
+        }
+        if cursor > expected {
+            return Err(PrivateBazaarWorkerError::SpoolGap {
+                expected,
+                found: cursor,
             });
         }
 
@@ -359,7 +419,7 @@ impl PrivateBazaarReceiptSpool {
         )?;
         self.revalidate_path_identity()?;
         self.refresh_index()?;
-        Ok(())
+        Ok(PrivateBazaarSpoolAppend::Appended)
     }
 
     fn poll_bounded(
@@ -448,16 +508,19 @@ impl PrivateBazaarReceiptSpool {
             if record.event.cursor == expected {
                 self.latest_positions.push(position);
                 self.latest_core_ids.push(record.semantic_core_id);
-            } else if record.event.cursor == expected.saturating_sub(1) && record.event.cursor != 0
-            {
-                let last = self.latest_positions.len() - 1;
-                if self.latest_core_ids[last] != record.semantic_core_id {
+                self.latest_session_seeds.push(record.event.session_seed);
+            } else if record.event.cursor != 0 && record.event.cursor < expected {
+                let index = usize::try_from(record.event.cursor - 1)
+                    .map_err(|_| PrivateBazaarWorkerError::CursorOverflow)?;
+                if self.latest_core_ids[index] != record.semantic_core_id
+                    || self.latest_session_seeds[index] != record.event.session_seed
+                {
                     return Err(PrivateBazaarWorkerError::SpoolFork {
                         expected,
                         found: record.event.cursor,
                     });
                 }
-                self.latest_positions[last] = position;
+                self.latest_positions[index] = position;
             } else {
                 return Err(cursor_order_error(expected, record.event.cursor));
             }
@@ -567,9 +630,8 @@ impl FinalizedPrivateBazaarReceiptSource for PrivateBazaarReceiptSpool {
         &mut self,
         after: u64,
         limit: usize,
-    ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, String> {
+    ) -> Result<Vec<FinalizedPrivateBazaarReceipt>, PrivateBazaarWorkerError> {
         self.poll_bounded(after, limit)
-            .map_err(|error| error.to_string())
     }
 }
 
@@ -653,6 +715,17 @@ pub struct PrivateBazaarWorkerTargets {
 }
 
 impl PrivateBazaarWorkerTargets {
+    /// Whether this registry can resolve any policy-selected consequence
+    /// target. Production runtime startup uses this to fail closed instead of
+    /// launching a worker that can only back off forever.
+    pub fn is_empty(&self) -> Result<bool, PrivateBazaarWorkerError> {
+        Ok(self
+            .inner
+            .read()
+            .map_err(|_| PrivateBazaarWorkerError::TargetRegistryPoisoned)?
+            .is_empty())
+    }
+
     pub fn install(&self, target: Arc<DungeonWorldCell>) -> Result<(), PrivateBazaarWorkerError> {
         let cell = target.cell_id();
         let mut entries = self
@@ -734,9 +807,7 @@ impl PrivateBazaarWorkerListener {
         fault: WorkerFault,
     ) -> Result<PrivateBazaarWorkerPoll, PrivateBazaarWorkerError> {
         let after = self.journal.cursor()?;
-        let events = source
-            .poll_finalized_after(after, self.batch_limit)
-            .map_err(PrivateBazaarWorkerError::Source)?;
+        let events = source.poll_finalized_after(after, self.batch_limit)?;
         if events.len() > self.batch_limit {
             return Err(PrivateBazaarWorkerError::SourceExceededBound {
                 found: events.len(),
@@ -1545,6 +1616,38 @@ fn ensure_private_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError>
     Ok(())
 }
 
+/// Hold one process-wide supervisor lease for the deployment worker root. The
+/// append spool remains multi-handle by design, but two listeners must never
+/// race the same cursor/claim journal.
+pub(crate) fn acquire_private_worker_lease(root: &Path) -> Result<File, PrivateBazaarWorkerError> {
+    let path = root.join("supervisor.lock");
+    let created = !path.exists();
+    let mut options = private_options();
+    options.read(true).create(true);
+    let file = options
+        .open(&path)
+        .map_err(|error| PrivateBazaarWorkerError::io("open worker supervisor lease", error))?;
+    secure_private_file_handle(&file, root)?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => {
+            return Err(PrivateBazaarWorkerError::SupervisorAlreadyRunning);
+        }
+        Err(fs::TryLockError::Error(error)) => {
+            return Err(PrivateBazaarWorkerError::io(
+                "lock worker supervisor lease",
+                error,
+            ));
+        }
+    }
+    file.sync_all()
+        .map_err(|error| PrivateBazaarWorkerError::io("sync worker supervisor lease", error))?;
+    if created {
+        sync_directory(root)?;
+    }
+    Ok(file)
+}
+
 fn secure_private_file_handle(file: &File, parent: &Path) -> Result<(), PrivateBazaarWorkerError> {
     #[cfg(unix)]
     {
@@ -1662,7 +1765,6 @@ fn sync_directory(path: &Path) -> Result<(), PrivateBazaarWorkerError> {
 
 #[derive(Debug)]
 pub enum PrivateBazaarWorkerError {
-    Source(String),
     SourceExceededBound {
         found: usize,
         limit: usize,
@@ -1699,6 +1801,7 @@ pub enum PrivateBazaarWorkerError {
     LegacySpoolRequiresMigration,
     SpoolScopeMismatch,
     StaleLiveMarket,
+    SupervisorAlreadyRunning,
     CursorOverflow,
     UnfinalizedEvidence,
     UnsupportedReceiptField(&'static str),
@@ -1897,6 +2000,52 @@ mod tests {
             reopened.append(1, 0xBEEF, changed_winner),
             Err(PrivateBazaarWorkerError::SpoolFork { .. })
         ));
+    }
+
+    #[test]
+    fn semantic_non_tail_reissue_preserves_cursor_and_updates_only_its_envelope() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("worker");
+        let mut spool = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        let first = receipt(0x2A);
+        let second = receipt(0x2B);
+        spool.append(1, 0xA1, first.clone()).unwrap();
+        spool.append(2, 0xA2, second.clone()).unwrap();
+
+        let mut reissued = first;
+        reissued.settlement_turn.turn_hash = [0xC1; 32];
+        reissued.settlement_turn.forest_hash = [0xC2; 32];
+        reissued.settlement_turn.pre_state_hash = [0xC3; 32];
+        reissued.settlement_turn.post_state_hash = [0xC4; 32];
+        reissued.settlement_turn.timestamp = 0xC5;
+        reissued.settlement_turn.effects_hash = [0xC6; 32];
+        reissued.settlement_turn.previous_receipt_hash = Some([0xC7; 32]);
+        reissued.settlement_turn.executor_signature = Some(vec![0xC8; 64]);
+        spool.append(1, 0xA1, reissued.clone()).unwrap();
+        assert_eq!(
+            fs::metadata(root.join(SPOOL_FILE_NAME)).unwrap().len(),
+            (3 * SPOOL_RECORD_LEN) as u64
+        );
+        drop(spool);
+
+        let mut reopened = PrivateBazaarReceiptSpool::open_test(&root).unwrap();
+        let events = reopened.poll_bounded(0, 2).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].cursor, 1);
+        assert_eq!(events[0].receipt.settlement_turn.turn_hash, [0xC1; 32]);
+        assert_eq!(events[1].cursor, 2);
+        assert_eq!(
+            events[1].receipt.settlement_turn.receipt_hash(),
+            second.settlement_turn.receipt_hash()
+        );
+        assert_eq!(
+            reopened.append_discovered_live(0xA1, reissued).unwrap(),
+            PrivateBazaarSpoolAppend::Unchanged
+        );
+        assert_eq!(
+            fs::metadata(root.join(SPOOL_FILE_NAME)).unwrap().len(),
+            (3 * SPOOL_RECORD_LEN) as u64
+        );
     }
 
     #[test]

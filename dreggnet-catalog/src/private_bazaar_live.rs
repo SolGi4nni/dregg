@@ -13,6 +13,7 @@
 //! UI can open a pretty card but no worker can reach the exact hosted market or
 //! its prepare-before-dispatch journal.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use dregg_types::CellId;
@@ -32,6 +33,12 @@ use dreggnet_market::private_clearing_guild_allocation::{GuildMember, GuildRewar
 use dreggnet_offerings::{DreggIdentity, OfferingHost};
 use dungeon_on_dregg::progression::DungeonWorldCell;
 
+use crate::private_bazaar_service::{
+    PRIVATE_BAZAAR_WORKER_INITIAL_BACKOFF_MS_ENV, PRIVATE_BAZAAR_WORKER_MAX_BACKOFF_MS_ENV,
+    PRIVATE_BAZAAR_WORKER_POLL_MS_ENV, PrivateBazaarAuthenticatedReceiptSource,
+    PrivateBazaarLiveRuntime, PrivateBazaarWorkerServiceConfig, PrivateBazaarWorkerServiceError,
+    PrivateBazaarWorkerSupervisor,
+};
 use crate::private_bazaar_worker::{
     PrivateBazaarFileWorker, PrivateBazaarReceiptSpool, PrivateBazaarSpoolScope,
     PrivateBazaarWorkerError, PrivateBazaarWorkerListener, PrivateBazaarWorkerTargets,
@@ -115,6 +122,11 @@ impl PrivateBazaarLiveDeployment {
         let xp_adapter = PrivateBazaarXpAdapter::open(&authority_dir)?;
         let commitment_store =
             PrivateClearingCommitmentStore::open(authority_dir.join("private-commitments"))?;
+        let authority_dir = fs::canonicalize(&authority_dir).map_err(|error| {
+            PrivateBazaarLiveDeploymentError::Config(format!(
+                "private Bazaar authority directory could not be pinned: {error}"
+            ))
+        })?;
         Ok(Self {
             offering,
             policy,
@@ -168,11 +180,7 @@ impl PrivateBazaarLiveDeployment {
         &self,
         targets: PrivateBazaarWorkerTargets,
     ) -> Result<PrivateBazaarWorkerListener, PrivateBazaarWorkerError> {
-        PrivateBazaarWorkerListener::open(
-            self.clone(),
-            targets,
-            self.authority_dir.join("private-worker"),
-        )
+        PrivateBazaarWorkerListener::open(self.clone(), targets, self.private_worker_root())
     }
 
     /// Open the deployment-custodied append-only finalized-receipt producer.
@@ -181,7 +189,41 @@ impl PrivateBazaarLiveDeployment {
     pub fn private_receipt_spool(
         &self,
     ) -> Result<PrivateBazaarReceiptSpool, PrivateBazaarWorkerError> {
-        PrivateBazaarReceiptSpool::open(self.clone(), self.authority_dir.join("private-worker"))
+        PrivateBazaarReceiptSpool::open(self.clone(), self.private_worker_root())
+    }
+
+    /// Open the concrete authenticated source used by the production
+    /// supervisor. It discovers only receipts retained by proof-verified live
+    /// markets; callers cannot submit a lookalike through this handle.
+    pub fn private_authenticated_receipt_source(
+        &self,
+    ) -> Result<PrivateBazaarAuthenticatedReceiptSource, PrivateBazaarWorkerError> {
+        PrivateBazaarAuthenticatedReceiptSource::open(self.clone())
+    }
+
+    /// Start the bounded restartable production loop using deployment-pinned
+    /// source configuration and strict environment timing knobs.
+    pub fn start_private_worker_service(
+        &self,
+        targets: PrivateBazaarWorkerTargets,
+    ) -> Result<PrivateBazaarWorkerSupervisor, PrivateBazaarWorkerServiceError> {
+        let config = PrivateBazaarWorkerServiceConfig::from_env(self)?;
+        PrivateBazaarWorkerSupervisor::start(self.clone(), targets, config)
+    }
+
+    /// Start the production-owned runtime over an already populated durable
+    /// target registry. Unlike the lower-level supervisor seam, this refuses an
+    /// empty registry and retains deployment, targets, and clean shutdown as
+    /// one owned value suitable for a catalog process.
+    pub fn start_private_runtime(
+        &self,
+        targets: PrivateBazaarWorkerTargets,
+    ) -> Result<PrivateBazaarLiveRuntime, PrivateBazaarWorkerServiceError> {
+        PrivateBazaarLiveRuntime::start(self.clone(), targets)
+    }
+
+    pub(crate) fn private_worker_root(&self) -> PathBuf {
+        self.authority_dir.join("private-worker")
     }
 
     pub(crate) fn private_spool_scope(&self) -> PrivateBazaarSpoolScope {
@@ -190,6 +232,17 @@ impl PrivateBazaarLiveDeployment {
             self.policy.pin().executor_federation(),
             self.policy.policy_id(),
         )
+    }
+
+    pub(crate) fn finalized_private_receipts(
+        &self,
+        after_seed: Option<u64>,
+        limit: usize,
+    ) -> Result<(Vec<(u64, PrivateClearingReceipt)>, Option<u64>, bool), PrivateBazaarWorkerError>
+    {
+        self.registry
+            .finalized_private_receipts_for_worker(after_seed, limit)
+            .map_err(PrivateBazaarWorkerError::from)
     }
 
     /// Bind a producer receipt to the exact live proof-verified market before
@@ -315,6 +368,9 @@ impl PrivateBazaarLiveDeployment {
             PRIVATE_BAZAAR_EXECUTOR_FEDERATION_ENV,
             PRIVATE_BAZAAR_RESERVE_ENV,
             PRIVATE_BAZAAR_AUTHORITY_DIR_ENV,
+            PRIVATE_BAZAAR_WORKER_POLL_MS_ENV,
+            PRIVATE_BAZAAR_WORKER_INITIAL_BACKOFF_MS_ENV,
+            PRIVATE_BAZAAR_WORKER_MAX_BACKOFF_MS_ENV,
         ];
         let Some(deployment_text) = get(PRIVATE_BAZAAR_DEPLOYMENT_ID_ENV) else {
             if let Some(stray) = all.into_iter().skip(1).find(|name| get(name).is_some()) {
@@ -478,8 +534,16 @@ mod tests {
         DungeonWorldCell, PRIVATE_BAZAAR_XP_EVENT, PRIVATE_BAZAAR_XP_METHOD, deploy_hero,
     };
     use std::collections::BTreeMap;
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
+    use crate::private_bazaar_service::{
+        PrivateBazaarWorkerServiceConfig, PrivateBazaarWorkerServiceError,
+        PrivateBazaarWorkerServicePhase, PrivateBazaarWorkerSupervisor,
+    };
     use crate::private_bazaar_worker::{
         FinalizedPrivateBazaarReceiptSource, PrivateBazaarWorkerError, PrivateBazaarWorkerTargets,
     };
@@ -695,6 +759,89 @@ mod tests {
     }
 
     #[test]
+    fn production_runtime_requires_targets_and_owns_clean_shutdown() {
+        let temp = tempfile::tempdir().unwrap();
+        let deployment = deployment(temp.path());
+        assert!(matches!(
+            deployment.start_private_runtime(PrivateBazaarWorkerTargets::default()),
+            Err(PrivateBazaarWorkerServiceError::NoTargets)
+        ));
+
+        let targets = PrivateBazaarWorkerTargets::default();
+        targets
+            .install(Arc::new(deploy_hero(0x95)))
+            .expect("install authenticated target cell");
+        let runtime = deployment
+            .start_private_runtime(targets)
+            .expect("start deployment-owned private Bazaar runtime");
+        assert_eq!(runtime.targets().is_empty().unwrap(), false);
+        assert_eq!(
+            runtime.shutdown().unwrap().phase,
+            PrivateBazaarWorkerServicePhase::Stopped
+        );
+    }
+
+    #[test]
+    fn production_supervisor_faults_once_on_spool_corruption() {
+        let temp = tempfile::tempdir().unwrap();
+        let deployment = deployment(temp.path());
+        let config = PrivateBazaarWorkerServiceConfig::for_deployment_with_timing(
+            &deployment,
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        let supervisor = PrivateBazaarWorkerSupervisor::start(
+            deployment,
+            PrivateBazaarWorkerTargets::default(),
+            config,
+        )
+        .unwrap();
+        let healthy_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let health = supervisor.health();
+            if health.phase == PrivateBazaarWorkerServicePhase::Healthy {
+                break;
+            }
+            assert!(
+                Instant::now() < healthy_deadline,
+                "worker health: {health:?}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let spool_path = temp
+            .path()
+            .join("private-worker")
+            .join("finalized-private-bazaar-v2.spool");
+        let mut spool = OpenOptions::new().append(true).open(spool_path).unwrap();
+        spool.write_all(&[0xFF]).unwrap();
+        spool.sync_all().unwrap();
+        drop(spool);
+
+        let fault_deadline = Instant::now() + Duration::from_secs(2);
+        let faulted = loop {
+            let health = supervisor.health();
+            if health.phase == PrivateBazaarWorkerServicePhase::Faulted {
+                break health;
+            }
+            assert!(Instant::now() < fault_deadline, "worker health: {health:?}");
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(
+            faulted.last_failure,
+            Some(crate::private_bazaar_service::PrivateBazaarWorkerFaultClass::Integrity)
+        );
+        thread::sleep(Duration::from_millis(30));
+        assert_eq!(supervisor.health().ticks, faulted.ticks);
+        assert_eq!(
+            supervisor.shutdown().unwrap().phase,
+            PrivateBazaarWorkerServicePhase::Faulted
+        );
+    }
+
+    #[test]
     fn hosted_private_worker_settles_viewer_blind_and_xp_is_exactly_once_across_restart() {
         install_verified_test_pq_runtime();
         let temp = tempfile::tempdir().unwrap();
@@ -808,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn file_spool_reissues_same_semantic_cursor_and_recovers_after_full_restart() {
+    fn production_source_supervisor_reissues_and_recovers_after_full_restart() {
         install_verified_test_pq_runtime();
         let temp = tempfile::tempdir().unwrap();
         let authority_dir = temp.path().join("authority");
@@ -832,9 +979,14 @@ mod tests {
             enter_hosted_raid(&mut host, &id, seed);
             let private_receipt =
                 settle_worker_market(&deployment, seed, Some(commitment_blinding));
+            let mut authenticated_source =
+                deployment.private_authenticated_receipt_source().unwrap();
+            let capture = authenticated_source.capture_once().unwrap();
+            assert_eq!(capture.observed, 1);
+            assert_eq!(capture.appended, 1);
+            drop(authenticated_source);
             let worker = deployment.private_worker(targets.clone()).unwrap();
             let mut source = deployment.private_receipt_spool().unwrap();
-            source.append(1, seed, private_receipt.clone()).unwrap();
 
             let injected = worker.poll_once_with_after_dispatch_crash(&mut source);
             assert!(matches!(
@@ -872,29 +1024,57 @@ mod tests {
         );
         assert_eq!(reissued.winner, first_receipt.winner);
 
-        let mut producer = restarted.private_receipt_spool().unwrap();
-        let stale = producer
+        let mut stale_source = restarted.private_receipt_spool().unwrap();
+        let stale = stale_source
             .poll_finalized_after(0, 1)
             .expect_err("the pre-restart envelope must not poll against the replayed market");
-        assert!(stale.contains("StaleLiveMarket"), "{stale}");
-        producer.append(1, seed, reissued).unwrap();
-        drop(producer);
-        let mut worker = restarted.private_file_worker(targets).unwrap();
-        assert_eq!(
-            worker.tick().unwrap(),
-            crate::private_bazaar_worker::PrivateBazaarWorkerPoll {
-                cursor: 1,
-                processed: 1,
+        assert!(matches!(stale, PrivateBazaarWorkerError::StaleLiveMarket));
+        drop(stale_source);
+
+        let config = PrivateBazaarWorkerServiceConfig::for_deployment_with_timing(
+            &restarted,
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        let supervisor = PrivateBazaarWorkerSupervisor::start(
+            restarted.clone(),
+            targets.clone(),
+            config.clone(),
+        )
+        .unwrap();
+        assert!(matches!(
+            PrivateBazaarWorkerSupervisor::start(restarted.clone(), targets, config),
+            Err(PrivateBazaarWorkerServiceError::Worker(
+                PrivateBazaarWorkerError::SupervisorAlreadyRunning
+            ))
+        ));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let health = loop {
+            let health = supervisor.health();
+            if health.cursor == 1 && health.processed == 1 {
+                break health;
             }
+            assert!(Instant::now() < deadline, "worker health: {health:?}");
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(health.phase, PrivateBazaarWorkerServicePhase::Healthy);
+        assert_eq!(
+            health.source_appends, 1,
+            "the reissued envelope is appended once"
         );
+        let operational = format!("{health:?}");
+        assert!(!operational.contains("winner"), "{operational}");
+        assert!(!operational.contains("order_root"), "{operational}");
+        let stopped = supervisor.shutdown().unwrap();
+        assert_eq!(stopped.phase, PrivateBazaarWorkerServicePhase::Stopped);
         assert_eq!(hero.read_var("xp"), 144);
         assert_eq!(
             hero.receipt_chain_snapshot().len(),
             target_receipts_after_uncertain_dispatch,
             "Dispatching recovery must not call the target executor again"
         );
-        assert_eq!(worker.tick().unwrap().processed, 0);
-
         let rendered = format!(
             "{:?}",
             host.render(PRIVATE_BAZAAR_RAID_KEY, &id).unwrap().view()
@@ -978,6 +1158,32 @@ mod tests {
             partial,
             Err(PrivateBazaarLiveDeploymentError::Config(_))
         ));
+        let stray_worker = PrivateBazaarLiveDeployment::from_config_source(|name| {
+            (name == PRIVATE_BAZAAR_WORKER_POLL_MS_ENV).then(|| "10".to_owned())
+        });
+        assert!(matches!(
+            stray_worker,
+            Err(PrivateBazaarLiveDeploymentError::Config(_))
+        ));
+
+        let temp = tempfile::tempdir().unwrap();
+        let deployment = deployment(temp.path());
+        assert!(matches!(
+            PrivateBazaarWorkerServiceConfig::from_config_source(&deployment, |name| {
+                (name == PRIVATE_BAZAAR_WORKER_POLL_MS_ENV).then(|| "0".to_owned())
+            }),
+            Err(PrivateBazaarWorkerServiceError::InvalidMillis(
+                PRIVATE_BAZAAR_WORKER_POLL_MS_ENV
+            ))
+        ));
+        let config =
+            PrivateBazaarWorkerServiceConfig::from_config_source(&deployment, |_| None).unwrap();
+        let rendered = format!("{config:?}");
+        assert!(
+            !rendered.contains(temp.path().to_str().unwrap()),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("winner"), "{rendered}");
     }
 
     #[test]

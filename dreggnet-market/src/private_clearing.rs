@@ -124,15 +124,6 @@ pub struct PrivateClearingReceipt {
     pub settlement_turn: dregg_app_framework::TurnReceipt,
 }
 
-/// Live-session custody of the proof-verified semantic settlement. This is not
-/// a wire type: only the private settlement and worker rejoin paths can inspect
-/// it, and frontends cannot deserialize or render it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct VerifiedPrivateClearingSemanticRecord {
-    statement: PublicStatement,
-    winner: DreggIdentity,
-}
-
 /// Worker-private durable binding between one commitment blind and one exact
 /// canonical private book. Fields have no public accessors: frontends never
 /// receive the blind or private-input digest.
@@ -390,11 +381,14 @@ impl PrivateClearingReceipt {
         &self,
         session: &DarkBazaarSession,
     ) -> Result<(), PrivateClearingError> {
-        let semantic = session.verified_private_clearing.as_ref().ok_or_else(|| {
-            PrivateClearingError::InvalidWorkerSpoolReceipt(
-                "live market has no proof-verified private settlement".to_owned(),
-            )
-        })?;
+        let semantic = session
+            .verified_private_clearing_receipt
+            .as_ref()
+            .ok_or_else(|| {
+                PrivateClearingError::InvalidWorkerSpoolReceipt(
+                    "live market has no proof-verified private settlement".to_owned(),
+                )
+            })?;
         let clearing = session.clearing().ok_or_else(|| {
             PrivateClearingError::InvalidWorkerSpoolReceipt("live market is not settled".to_owned())
         })?;
@@ -873,10 +867,7 @@ impl DarkBazaarOffering {
             winner,
             settlement_turn,
         };
-        session.verified_private_clearing = Some(VerifiedPrivateClearingSemanticRecord {
-            statement: receipt.statement,
-            winner: receipt.winner.clone(),
-        });
+        session.verified_private_clearing_receipt = Some(receipt.clone());
         Ok(receipt)
     }
 }
