@@ -614,7 +614,7 @@ mod tests {
     use dregg_persist::CommitRecord;
     use tempfile::tempdir;
 
-    fn actor(seed: u8, balance: u64) -> Cell {
+    fn actor(seed: u8, balance: i64) -> Cell {
         let mut cell = Cell::new([seed; 32], [seed.wrapping_add(1); 32]);
         cell.state.set_balance(balance);
         cell
