@@ -47,6 +47,7 @@ use crate::tfhe_blind_rotation_ntt_wgpu::{
     prepare as prepare_transform_pbs_gpu, run as transform_pbs_gpu,
     run_bootstrap_only as transform_bootstrap_gpu,
     run_ciphertext_gt_chain as transform_ciphertext_gt_chain_gpu,
+    run_ciphertext_gt_select as transform_ciphertext_gt_select_gpu,
     run_scalar_gt_chain as transform_scalar_gt_chain_gpu, PreparedTransformPbsGpuKeys,
     TransformPbsGpuError,
 };
@@ -2012,6 +2013,30 @@ pub fn torus_pbs_ciphertext_gt_chain_transform_prepared(
 ) -> Result<TorusMacResult, TorusMacError> {
     match transform_ciphertext_gt_chain_gpu(packed_digit_lwes, accumulators, blocks, &plan.prepared)
     {
+        Ok(result) => Ok(TorusMacResult {
+            coefficients: result.coefficients,
+            backend: TorusMacBackend::Wgpu {
+                adapter_name: result.adapter,
+                backend: result.backend,
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            },
+        }),
+        Err(TransformPbsGpuError::Unavailable(reason)) => Err(TorusMacError::WgpuRequired(reason)),
+        Err(TransformPbsGpuError::Execution(error)) => Err(TorusMacError::GpuExecution(error)),
+    }
+}
+
+/// Execute ciphertext comparison and encrypted radix selection in one
+/// transform-resident program. Uploaded LWEs contain comparison pairs followed
+/// by both selection branches; the encrypted predicate never crosses the host
+/// boundary, and only the selected radix LWEs are read back.
+pub fn torus_pbs_ciphertext_gt_select_transform_prepared(
+    plan: &TorusPbsTransformWgpuPlan,
+    uploaded_lwes: &[u64],
+    accumulators: &[u64],
+    blocks: usize,
+) -> Result<TorusMacResult, TorusMacError> {
+    match transform_ciphertext_gt_select_gpu(uploaded_lwes, accumulators, blocks, &plan.prepared) {
         Ok(result) => Ok(TorusMacResult {
             coefficients: result.coefficients,
             backend: TorusMacBackend::Wgpu {

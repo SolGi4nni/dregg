@@ -15,7 +15,6 @@ use std::fmt;
 
 use tfhe::core_crypto::prelude::*;
 use tfhe::integer::IntegerCiphertext;
-use tfhe::prelude::{FheOrd, IfThenElse};
 use tfhe::shortint::atomic_pattern::compressed::CompressedAtomicPatternServerKey;
 use tfhe::shortint::ciphertext::{Degree, NoiseLevel};
 use tfhe::shortint::server_key::{
@@ -26,9 +25,10 @@ use tfhe::{CompressedServerKey, FheUint32};
 
 use crate::tfhe_wgpu::{
     prepare_torus_pbs_transform_wgpu_plan, torus_pbs_bootstrap_transform_prepared,
-    torus_pbs_ciphertext_gt_chain_transform_prepared, torus_pbs_scalar_gt_chain_transform_prepared,
-    TorusExternalProductParams, TorusKeyswitchParams, TorusMacBackend, TorusMacError,
-    TorusPbsTransformWgpuPlan,
+    torus_pbs_ciphertext_gt_chain_transform_prepared,
+    torus_pbs_ciphertext_gt_select_transform_prepared,
+    torus_pbs_scalar_gt_chain_transform_prepared, TorusExternalProductParams, TorusKeyswitchParams,
+    TorusMacBackend, TorusMacError, TorusPbsTransformWgpuPlan,
 };
 
 /// Refusals at the exact tfhe-rs/high-level adapter boundary.
@@ -125,6 +125,7 @@ pub struct FheUint32KsPbsTransformWgpuPlan {
     carry_modulus: u64,
     scalar_gt_luts: Option<ScalarGreaterThanLuts>,
     ciphertext_gt_luts: Option<CiphertextGreaterThanLuts>,
+    selection_luts: Option<SelectionLuts>,
 }
 
 struct ScalarGreaterThanLuts {
@@ -137,6 +138,11 @@ struct CiphertextGreaterThanLuts {
     digit: LookupTableOwned,
     transition: LookupTableOwned,
     last: LookupTableOwned,
+}
+
+struct SelectionLuts {
+    when_true: LookupTableOwned,
+    when_false: LookupTableOwned,
 }
 
 impl fmt::Debug for FheUint32KsPbsTransformWgpuPlan {
@@ -199,80 +205,107 @@ pub fn prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(
     // Pre-build the twelve accumulators once; retaining the decompressed
     // Fourier server key beside the resident coefficient BSK would duplicate
     // the dominant evaluation-key allocation.
-    let (scalar_gt_luts, ciphertext_gt_luts) = if message_modulus.0 == 4 && carry_modulus.0 == 4 {
-        let decompressed = compressed.decompress();
-        let shortint_server: &tfhe::shortint::ServerKey = decompressed.as_ref().as_ref();
-        let compare_digit = |digit: u64, expected: u64| {
-            if digit < expected {
-                0
-            } else if digit == expected {
-                1
-            } else {
-                2
-            }
-        };
-        let first = std::array::from_fn(|expected| {
-            shortint_server
-                .generate_lookup_table(move |value| compare_digit(value % 4, expected as u64))
-        });
-        let middle = std::array::from_fn(|expected| {
-            shortint_server.generate_lookup_table(move |packed| {
+    let (scalar_gt_luts, ciphertext_gt_luts, selection_luts) =
+        if message_modulus.0 == 4 && carry_modulus.0 == 4 {
+            let decompressed = compressed.decompress();
+            let shortint_server: &tfhe::shortint::ServerKey = decompressed.as_ref().as_ref();
+            let compare_digit = |digit: u64, expected: u64| {
+                if digit < expected {
+                    0
+                } else if digit == expected {
+                    1
+                } else {
+                    2
+                }
+            };
+            let first = std::array::from_fn(|expected| {
+                shortint_server
+                    .generate_lookup_table(move |value| compare_digit(value % 4, expected as u64))
+            });
+            let middle = std::array::from_fn(|expected| {
+                shortint_server.generate_lookup_table(move |packed| {
+                    let state = packed % 4;
+                    let digit = packed / 4;
+                    if state == 1 {
+                        compare_digit(digit, expected as u64)
+                    } else {
+                        state
+                    }
+                })
+            });
+            let last = std::array::from_fn(|expected| {
+                shortint_server.generate_lookup_table(move |packed| {
+                    let state = packed % 4;
+                    let digit = packed / 4;
+                    let final_state = if state == 1 {
+                        compare_digit(digit, expected as u64)
+                    } else {
+                        state
+                    };
+                    u64::from(final_state == 2)
+                })
+            });
+            let digit = shortint_server.generate_lookup_table(|packed| {
+                let lhs = packed % 4;
+                let rhs = packed / 4;
+                compare_digit(lhs, rhs)
+            });
+            let transition = shortint_server.generate_lookup_table(|packed| {
                 let state = packed % 4;
-                let digit = packed / 4;
+                let local = packed / 4;
                 if state == 1 {
-                    compare_digit(digit, expected as u64)
+                    local
                 } else {
                     state
                 }
-            })
-        });
-        let last = std::array::from_fn(|expected| {
-            shortint_server.generate_lookup_table(move |packed| {
+            });
+            let ciphertext_last = shortint_server.generate_lookup_table(|packed| {
                 let state = packed % 4;
-                let digit = packed / 4;
-                let final_state = if state == 1 {
-                    compare_digit(digit, expected as u64)
-                } else {
-                    state
-                };
+                let local = packed / 4;
+                let final_state = if state == 1 { local } else { state };
                 u64::from(final_state == 2)
-            })
-        });
-        let digit = shortint_server.generate_lookup_table(|packed| {
-            let lhs = packed % 4;
-            let rhs = packed / 4;
-            compare_digit(lhs, rhs)
-        });
-        let transition = shortint_server.generate_lookup_table(|packed| {
-            let state = packed % 4;
-            let local = packed / 4;
-            if state == 1 {
-                local
-            } else {
-                state
-            }
-        });
-        let ciphertext_last = shortint_server.generate_lookup_table(|packed| {
-            let state = packed % 4;
-            let local = packed / 4;
-            let final_state = if state == 1 { local } else { state };
-            u64::from(final_state == 2)
-        });
-        (
-            Some(ScalarGreaterThanLuts {
-                first,
-                middle,
-                last,
-            }),
-            Some(CiphertextGreaterThanLuts {
-                digit,
-                transition,
-                last: ciphertext_last,
-            }),
-        )
-    } else {
-        (None, None)
-    };
+            });
+            // A selection digit is masked in two independently bootstrapped
+            // branches. `predicate + 2 * digit` occupies only 0..7 of the 16-slot
+            // plaintext domain. The masks are mutually exclusive, so their
+            // coefficient-wise sum is exactly one original radix digit.
+            let when_true = shortint_server.generate_lookup_table(|packed| {
+                let predicate = packed % 2;
+                let digit = (packed / 2) % 4;
+                if predicate == 1 {
+                    digit
+                } else {
+                    0
+                }
+            });
+            let when_false = shortint_server.generate_lookup_table(|packed| {
+                let predicate = packed % 2;
+                let digit = (packed / 2) % 4;
+                if predicate == 0 {
+                    digit
+                } else {
+                    0
+                }
+            });
+            (
+                Some(ScalarGreaterThanLuts {
+                    first,
+                    middle,
+                    last,
+                }),
+                Some(CiphertextGreaterThanLuts {
+                    digit,
+                    transition,
+                    last: ciphertext_last,
+                }),
+                Some(SelectionLuts {
+                    when_true,
+                    when_false,
+                }),
+            )
+        } else {
+            (None, None, None)
+        };
     Ok(FheUint32KsPbsTransformWgpuPlan {
         transform,
         key_switching_key,
@@ -282,6 +315,7 @@ pub fn prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(
         carry_modulus: carry_modulus.0,
         scalar_gt_luts,
         ciphertext_gt_luts,
+        selection_luts,
     })
 }
 
@@ -786,10 +820,13 @@ impl FheUint32KsPbsTransformWgpuPlan {
         ))
     }
 
-    /// Encrypted comparison-and-selection primitive: choose
+    /// Fused encrypted comparison-and-selection primitive: choose
     /// `when_lhs_is_greater` iff `lhs > rhs`, otherwise choose `otherwise`.
-    /// The current thread must have the matching tfhe-rs
-    /// server key installed, as for every high-level `if_then_else` operation.
+    ///
+    /// The 31-stage ciphertext comparison and all 32 masked-radix selection
+    /// PBSes share one device-resident predicate. The predicate is never mapped
+    /// or converted to a CPU `FheBool`; one final readback returns only the 16
+    /// selected large-key radix LWEs.
     pub fn select_by_greater_than_resident(
         &self,
         lhs: &FheUint32,
@@ -797,11 +834,172 @@ impl FheUint32KsPbsTransformWgpuPlan {
         when_lhs_is_greater: &FheUint32,
         otherwise: &FheUint32,
     ) -> Result<(FheUint32, TorusMacBackend), FheUint32WgpuPbsError> {
-        let (predicate, backend) = self.greater_than_ciphertext_resident(lhs, rhs)?;
-        let condition = predicate.gt(0u32);
+        let Some(compare_luts) = &self.ciphertext_gt_luts else {
+            return Err(FheUint32WgpuPbsError::UnsupportedComparisonModuli {
+                message: self.message_modulus,
+                carry: self.carry_modulus,
+            });
+        };
+        let Some(selection_luts) = &self.selection_luts else {
+            return Err(FheUint32WgpuPbsError::UnsupportedComparisonModuli {
+                message: self.message_modulus,
+                carry: self.carry_modulus,
+            });
+        };
+        if !matches!(
+            &self.modulus_switch,
+            ModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        ) {
+            return Err(FheUint32WgpuPbsError::UnsupportedResidentModulusSwitch);
+        }
+
+        let (lhs_radix, _, _, _) = lhs.clone().into_raw_parts();
+        let (rhs_radix, _, _, _) = rhs.clone().into_raw_parts();
+        let (mut selected_radix, id, tag, rerandomization) =
+            when_lhs_is_greater.clone().into_raw_parts();
+        let (otherwise_radix, _, _, _) = otherwise.clone().into_raw_parts();
+        let expected_blocks = u32::BITS as usize / 2;
+        for radix in [&lhs_radix, &rhs_radix, &selected_radix, &otherwise_radix] {
+            if !radix.block_carries_are_empty() {
+                return Err(FheUint32WgpuPbsError::NonEmptyCarries);
+            }
+            if radix.blocks().len() != expected_blocks {
+                return Err(FheUint32WgpuPbsError::UnexpectedRadixBlocks {
+                    expected: expected_blocks,
+                    actual: radix.blocks().len(),
+                });
+            }
+        }
+
+        let expected_large = self.key_switching_key.input_key_lwe_dimension().0;
+        let validate_block =
+            |block: &tfhe::shortint::Ciphertext| -> Result<(), FheUint32WgpuPbsError> {
+                if block.atomic_pattern != AtomicPatternKind::Standard(PBSOrder::KeyswitchBootstrap)
+                {
+                    return Err(FheUint32WgpuPbsError::BlockAtomicPattern(
+                        block.atomic_pattern,
+                    ));
+                }
+                if block.message_modulus.0 != self.message_modulus {
+                    return Err(FheUint32WgpuPbsError::BlockMessageModulus {
+                        expected: self.message_modulus,
+                        actual: block.message_modulus.0,
+                    });
+                }
+                if block.carry_modulus.0 != self.carry_modulus {
+                    return Err(FheUint32WgpuPbsError::BlockCarryModulus {
+                        expected: self.carry_modulus,
+                        actual: block.carry_modulus.0,
+                    });
+                }
+                let actual_large = block.ct.lwe_size().to_lwe_dimension().0;
+                if actual_large != expected_large {
+                    return Err(FheUint32WgpuPbsError::BlockLweDimension {
+                        expected: expected_large,
+                        actual: actual_large,
+                    });
+                }
+                Ok(())
+            };
+        for radix in [&lhs_radix, &rhs_radix, &selected_radix, &otherwise_radix] {
+            for block in radix.blocks() {
+                validate_block(block)?;
+            }
+        }
+
+        let comparison_stages = expected_blocks * 2 - 1;
+        let selection_stages = expected_blocks * 2;
+        let accumulator_coefficients = self.external.glwe_size * self.external.degree;
+        let mut uploaded_lwes = Vec::with_capacity(
+            expected_blocks
+                .saturating_mul(3)
+                .saturating_mul(expected_large.saturating_add(1)),
+        );
+        let mut accumulators = Vec::with_capacity(
+            comparison_stages
+                .saturating_add(selection_stages)
+                .saturating_mul(accumulator_coefficients),
+        );
+        let mut append_lut = |lookup: &LookupTableOwned| {
+            if lookup.acc.as_ref().len() != accumulator_coefficients {
+                return Err(FheUint32WgpuPbsError::LookupAccumulatorLength {
+                    expected: accumulator_coefficients,
+                    actual: lookup.acc.as_ref().len(),
+                });
+            }
+            accumulators.extend_from_slice(lookup.acc.as_ref());
+            Ok(())
+        };
+
+        // Comparison inputs and LUTs follow most-significant-to-least order.
+        for (chain_index, block_index) in (0..expected_blocks).rev().enumerate() {
+            let lhs_block = &lhs_radix.blocks()[block_index];
+            let rhs_block = &rhs_radix.blocks()[block_index];
+            uploaded_lwes.extend(lhs_block.ct.as_ref().iter().zip(rhs_block.ct.as_ref()).map(
+                |(&lhs_coefficient, &rhs_coefficient)| {
+                    lhs_coefficient.wrapping_add(rhs_coefficient.wrapping_mul(4))
+                },
+            ));
+            append_lut(&compare_luts.digit)?;
+            if chain_index != 0 {
+                append_lut(if block_index == 0 {
+                    &compare_luts.last
+                } else {
+                    &compare_luts.transition
+                })?;
+            }
+        }
+        // Selection branches remain in ordinary least-significant-first radix
+        // order so the concatenated output can reconstruct `FheUint32` without
+        // a host-side permutation.
+        for block in selected_radix.blocks() {
+            uploaded_lwes.extend_from_slice(block.ct.as_ref());
+        }
+        for block in otherwise_radix.blocks() {
+            uploaded_lwes.extend_from_slice(block.ct.as_ref());
+        }
+        for _ in 0..expected_blocks {
+            append_lut(&selection_luts.when_true)?;
+            append_lut(&selection_luts.when_false)?;
+        }
+
+        let result = torus_pbs_ciphertext_gt_select_transform_prepared(
+            &self.transform,
+            &uploaded_lwes,
+            &accumulators,
+            expected_blocks,
+        )?;
+        let large_lwe_size = expected_large + 1;
+        if result.coefficients.len() != expected_blocks * large_lwe_size {
+            return Err(FheUint32WgpuPbsError::Torus(TorusMacError::GpuExecution(
+                format!(
+                    "fused selection returned {} coefficients; expected {}",
+                    result.coefficients.len(),
+                    expected_blocks * large_lwe_size
+                ),
+            )));
+        }
+        for (block, coefficients) in selected_radix
+            .blocks_mut()
+            .iter_mut()
+            .zip(result.coefficients.chunks_exact(large_lwe_size))
+        {
+            let output = LweCiphertext::from_container(
+                coefficients.to_vec(),
+                self.key_switching_key.ciphertext_modulus(),
+            );
+            *block = tfhe::shortint::Ciphertext::new(
+                output,
+                Degree::new(self.message_modulus - 1),
+                NoiseLevel::NOMINAL * 2,
+                tfhe::shortint::parameters::MessageModulus(self.message_modulus),
+                tfhe::shortint::parameters::CarryModulus(self.carry_modulus),
+                AtomicPatternKind::Standard(PBSOrder::KeyswitchBootstrap),
+            );
+        }
         Ok((
-            condition.if_then_else(when_lhs_is_greater, otherwise),
-            backend,
+            FheUint32::from_raw_parts(selected_radix, id, tag, rerandomization),
+            result.backend,
         ))
     }
 }

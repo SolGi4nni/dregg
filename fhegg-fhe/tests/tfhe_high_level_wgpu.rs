@@ -341,27 +341,51 @@ fn deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately
         );
     }
 
-    // Bazaar-shaped private winner selection. The encrypted bid comparison
-    // directly selects the corresponding encrypted lot identifier; the
-    // comparison bit is never decrypted or made public.
-    let left_bid = FheUint32::encrypt(91_000u32, &client);
-    let right_bid = FheUint32::encrypt(87_500u32, &client);
-    let left_lot = FheUint32::encrypt(0x1111_1111u32, &client);
-    let right_lot = FheUint32::encrypt(0x2222_2222u32, &client);
-    let select_started = Instant::now();
-    let (selected_lot, select_backend) = plan
-        .select_by_greater_than_resident(&left_bid, &right_bid, &left_lot, &right_lot)
-        .unwrap();
-    let select_time = select_started.elapsed();
-    assert!(matches!(
-        select_backend,
-        TorusMacBackend::Wgpu {
-            algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
-            ..
-        }
-    ));
-    let selected_lot_clear: u32 = selected_lot.decrypt(&client);
-    assert_eq!(selected_lot_clear, 0x1111_1111);
+    // Bazaar-shaped private winner selection. Comparison and all 16 selected
+    // lot blocks execute as one resident WGPU program: no predicate ciphertext
+    // is returned to the host or converted through tfhe-rs's CPU CMUX path.
+    // The independent oracle is tfhe-rs comparison + `if_then_else` and covers
+    // true, false, and equal (false-branch) decisions.
+    let select_cases = [
+        (91_000u32, 87_500u32),
+        (82_000u32, 93_000u32),
+        (77_777u32, 77_777u32),
+    ];
+    let mut select_times = Vec::with_capacity(select_cases.len());
+    for (left_clear, right_clear) in select_cases {
+        let left_bid = FheUint32::encrypt(left_clear, &client);
+        let right_bid = FheUint32::encrypt(right_clear, &client);
+        let left_lot = FheUint32::encrypt(0x1111_1111u32, &client);
+        let right_lot = FheUint32::encrypt(0x2222_2222u32, &client);
+        let oracle_condition = left_bid.gt(&right_bid);
+        let oracle_lot = oracle_condition.if_then_else(&left_lot, &right_lot);
+        let select_started = Instant::now();
+        let (selected_lot, select_backend) = plan
+            .select_by_greater_than_resident(&left_bid, &right_bid, &left_lot, &right_lot)
+            .unwrap();
+        let select_time = select_started.elapsed();
+        select_times.push(select_time);
+        assert!(matches!(
+            select_backend,
+            TorusMacBackend::Wgpu {
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+                ..
+            }
+        ));
+        let selected_lot_clear: u32 = selected_lot.decrypt(&client);
+        let oracle_lot_clear: u32 = oracle_lot.decrypt(&client);
+        assert_eq!(selected_lot_clear, oracle_lot_clear);
+
+        // Metadata/noise reconstruction is production-shaped: the selected
+        // result survives a subsequent ordinary high-level operation.
+        let incremented = &selected_lot + FheUint32::encrypt(1u32, &client);
+        let incremented_clear: u32 = incremented.decrypt(&client);
+        assert_eq!(incremented_clear, selected_lot_clear.wrapping_add(1));
+        eprintln!(
+            "high-level fused ciphertext-gt/select: lhs={left_clear} rhs={right_clear} selected={selected_lot_clear:#010x} 63-PBS-WGPU={:.3}ms",
+            select_time.as_secs_f64() * 1_000.0,
+        );
+    }
 
     let clean = FheUint32::encrypt(7u32, &client);
     let dirty = FheUint32::encrypt(6u32, &client);
@@ -372,6 +396,11 @@ fn deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately
         plan.greater_than_ciphertext_resident(&clean, &dirty),
         Err(FheUint32WgpuPbsError::NonEmptyCarries)
     ));
+    let clean_lot = FheUint32::encrypt(11u32, &client);
+    assert!(matches!(
+        plan.select_by_greater_than_resident(&clean, &clean, &dirty, &clean_lot),
+        Err(FheUint32WgpuPbsError::NonEmptyCarries)
+    ));
 
     eprintln!(
         "high-level ciphertext-gt resident: four-comparison-total={:.3}ms encrypted-select={:.3}ms",
@@ -380,6 +409,10 @@ fn deployed_fhe_uint32_ciphertext_gt_resident_matches_tfhe_and_selects_privately
             .sum::<std::time::Duration>()
             .as_secs_f64()
             * 1_000.0,
-        select_time.as_secs_f64() * 1_000.0,
+        select_times
+            .iter()
+            .sum::<std::time::Duration>()
+            .as_secs_f64()
+            * 1_000.0,
     );
 }
