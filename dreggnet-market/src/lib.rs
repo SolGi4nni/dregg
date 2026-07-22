@@ -63,6 +63,12 @@ pub mod private_clearing_consequence;
 #[cfg(feature = "private-clearing")]
 pub mod private_clearing_guild_allocation;
 
+/// Frontend-neutral player journey around a private Bazaar raid allocation.
+/// Browser and chat adapters receive only ordinary [`Action`]s, a viewer-blind
+/// public receipt, and a [`Surface`]; the private book, proof, winner, and target
+/// character remain on the verifier/engine side of this boundary.
+pub mod private_bazaar_journey;
+
 /// Composite integrity verifier: the same canonical fhEgg receipt must carry
 /// both an authenticated roster quorum and the fixed private-book HidingFRI
 /// proof. The BFV-ciphertext/private-root same-opening relation remains named.

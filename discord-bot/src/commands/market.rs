@@ -274,7 +274,9 @@ mod tests {
     use dreggnet_offerings::Offering;
     use dreggnet_offerings::{DreggIdentity, Outcome};
 
-    use crate::commands::offering::{Driven, ask_id, close_in, fire_id, with_live};
+    use crate::commands::offering::{
+        Driven, ask_id_in, close_in, control_stamp_in, fire_id_at, fire_id_in, with_live,
+    };
 
     fn who(tag: &str) -> DreggIdentity {
         DreggIdentity(format!("{tag}{}", "0".repeat(64 - tag.len())))
@@ -291,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn dark_bazaar_mount_is_catalog_play_with_honest_crawl_prompts() {
+    fn dark_bazaar_command_flow_is_sealed_substitution_safe_and_replayable() {
         let channel = 91_050;
         close_in::<DarkBazaarOffering>(channel);
         offering::open_in(
@@ -322,17 +324,97 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].turn, TURN_LIST);
         assert_eq!(
-            offering::parse_press(&ask_id(DarkBazaarOffering::KEY, TURN_LIST)),
+            offering::parse_press(&ask_id_in::<DarkBazaarOffering>(channel, TURN_LIST).unwrap(),),
             Some(offering::Press::Ask {
                 key: "bazaar".into(),
+                stamp: control_stamp_in::<DarkBazaarOffering>(channel).unwrap(),
                 turn: TURN_LIST.into(),
             })
         );
 
-        match offering::drive_value::<DarkBazaarOffering>(channel, TURN_LIST, 100, who("db")) {
+        let seller = who("seller");
+        let alice = who("alice");
+        let bob = who("bob");
+        match offering::drive_value::<DarkBazaarOffering>(channel, TURN_LIST, 100, seller.clone()) {
             Driven::Fired(Outcome::Landed { .. }) => {}
             other => panic!("the generic modal path must land the real LIST turn, got {other:?}"),
         }
+
+        // A component copied from the ordinary market is not a Bazaar command,
+        // even though the two games deliberately share LIST/BID/SETTLE verbs.
+        let before_substitution = with_live::<DarkBazaarOffering, _>(channel, |live| {
+            live.session.market().receipts_len()
+        });
+        assert!(matches!(
+            offering::drive::<DarkBazaarOffering>(
+                channel,
+                &fire_id_at(
+                    MarketOffering::KEY,
+                    control_stamp_in::<DarkBazaarOffering>(channel).unwrap(),
+                    TURN_SETTLE,
+                    0,
+                ),
+                seller.clone(),
+            ),
+            Driven::NotOurs
+        ));
+        assert_eq!(
+            with_live::<DarkBazaarOffering, _>(channel, |live| {
+                live.session.market().receipts_len()
+            }),
+            before_substitution,
+            "cross-game custom-id substitution cannot mutate the Bazaar"
+        );
+
+        let alice_bid = 731_557;
+        let bob_bid = 982_451;
+        for (bidder, amount) in [(alice.clone(), alice_bid), (bob.clone(), bob_bid)] {
+            assert!(matches!(
+                offering::drive_value::<DarkBazaarOffering>(channel, TURN_BID, amount, bidder,),
+                Driven::Fired(Outcome::Landed { .. })
+            ));
+        }
+
+        // The shared Discord projection can announce the number of commitments,
+        // never their values or bidder identities while the commit phase is open.
+        let public_before_settle = with_live::<DarkBazaarOffering, _>(channel, |live| {
+            format!("{:?}", live.offering.render(&live.session).view())
+        })
+        .expect("the crawl remains live");
+        for secret in [
+            alice_bid.to_string(),
+            bob_bid.to_string(),
+            alice.0.clone(),
+            bob.0.clone(),
+        ] {
+            assert!(
+                !public_before_settle.contains(&secret),
+                "the shared pre-settle surface leaked `{secret}`: {public_before_settle}"
+            );
+        }
+
+        match offering::drive::<DarkBazaarOffering>(
+            channel,
+            &fire_id_in::<DarkBazaarOffering>(channel, TURN_SETTLE, 0).unwrap(),
+            seller,
+        ) {
+            Driven::Fired(Outcome::Landed { ended: true, .. }) => {}
+            other => panic!("the exact Bazaar SETTLE command must clear, got {other:?}"),
+        }
+        let report = offering::verify_live::<DarkBazaarOffering>(channel)
+            .expect("the settled Bazaar remains available for replay");
+        assert!(report.verified, "{}", report.detail);
+        assert!(
+            report.detail.contains("CRAWL check-level replay"),
+            "the replay result keeps the actual privacy/proof grade visible: {}",
+            report.detail
+        );
+        let clearing_price = with_live::<DarkBazaarOffering, _>(channel, |live| {
+            live.session.clearing().expect("settled clear").price()
+        })
+        .unwrap();
+        assert_eq!(clearing_price, i128::from(bob_bid));
+
         let status = with_live::<DarkBazaarOffering, _>(channel, |live| {
             live.offering.status_line(&live.session)
         })
@@ -354,7 +436,7 @@ mod tests {
     fn press(channel: u64, turn: &str, arg: i64, actor: &DreggIdentity) -> Outcome {
         match offering::drive::<MarketOffering>(
             channel,
-            &fire_id(MarketOffering::KEY, turn, arg),
+            &fire_id_in::<MarketOffering>(channel, turn, arg).unwrap(),
             actor.clone(),
         ) {
             Driven::Fired(o) => o,
@@ -388,9 +470,10 @@ mod tests {
         assert_eq!(actions[0].turn, TURN_LIST);
         // The rendered button is the ASK id (the modal), not a fire id.
         assert_eq!(
-            offering::parse_press(&ask_id(MarketOffering::KEY, TURN_LIST)),
+            offering::parse_press(&ask_id_in::<MarketOffering>(channel, TURN_LIST).unwrap()),
             Some(offering::Press::Ask {
                 key: "market".into(),
+                stamp: control_stamp_in::<MarketOffering>(channel).unwrap(),
                 turn: TURN_LIST.into()
             })
         );
@@ -399,10 +482,10 @@ mod tests {
 
         match offering::drive::<MarketOffering>(
             channel,
-            &ask_id(MarketOffering::KEY, TURN_LIST),
+            &ask_id_in::<MarketOffering>(channel, TURN_LIST).unwrap(),
             who("aa"),
         ) {
-            Driven::NeedsValue { turn, prompt } => {
+            Driven::NeedsValue { turn, prompt, .. } => {
                 assert_eq!(turn, TURN_LIST);
                 assert_eq!(prompt.title, "Open a listing");
             }
@@ -556,5 +639,69 @@ mod tests {
         let note = offering::outcome_note(&Outcome::Refused("nothing is listed yet".into()));
         assert!(note.contains("no receipt"), "{note}");
         close_in::<MarketOffering>(channel);
+    }
+
+    /// Discord consumes the same payload-free semantic action and viewer-blind
+    /// public receipt as the browser adapter; there is no bot-local Bazaar DTO.
+    #[test]
+    fn discord_renders_the_shared_private_bazaar_journey_contract() {
+        use dreggnet_market::private_bazaar_journey::{
+            PrivateBazaarPublicAction, PrivateBazaarPublicPhase, PrivateBazaarPublicReceipt,
+            TURN_ENTER_PRIVATE_BAZAAR,
+        };
+
+        let receipt = PrivateBazaarPublicReceipt::pending([0x11; 32], 4, [0x22; 32], [0x33; 32]);
+        let surface = receipt.surface();
+        let action = PrivateBazaarPublicAction::Enter.offering_action();
+
+        let card = deos_view::discord::render_card(
+            <DarkBazaarOffering as DiscordOffering>::TITLE,
+            surface.view(),
+            &[],
+        );
+        let embed = serde_json::to_string(&card.embed).expect("Discord embed JSON");
+        let rows = offering::action_rows::<DarkBazaarOffering>(std::slice::from_ref(&action));
+        let controls = serde_json::to_string(&rows).expect("Discord component JSON");
+        assert!(embed.contains("Dark Bazaar raid"), "{embed}");
+        assert!(controls.contains(TURN_ENTER_PRIVATE_BAZAAR), "{controls}");
+        for forbidden in ["winner", "reserve", "private bid", "proof bytes", "witness"] {
+            assert!(
+                !embed.contains(forbidden),
+                "shared Discord receipt leaked {forbidden}: {embed}"
+            );
+        }
+        assert_eq!(
+            PrivateBazaarPublicAction::from_offering_action(&action),
+            Ok(PrivateBazaarPublicAction::Enter)
+        );
+        assert_eq!(action.arg, 0);
+        assert!(action.text.is_none());
+
+        let mut settled = receipt;
+        settled.phase = PrivateBazaarPublicPhase::Settled;
+        settled.proof_session = Some(17);
+        settled.input_root = Some([7; 8]);
+        settled.consequence_id = Some([0x44; 32]);
+        settled.settlement_turn_hash = Some([0x55; 32]);
+        settled.game_turn_hash = Some([0x66; 32]);
+        settled.game_state_root = Some([0x77; 32]);
+        let settled_card = deos_view::discord::render_card(
+            <DarkBazaarOffering as DiscordOffering>::TITLE,
+            settled.surface().view(),
+            &[],
+        );
+        let settled_embed =
+            serde_json::to_string(&settled_card.embed).expect("settled Discord embed JSON");
+        assert!(settled_embed.contains("settled"), "{settled_embed}");
+        assert!(
+            settled_embed.contains("real game-engine turn"),
+            "{settled_embed}"
+        );
+        for forbidden in ["winner", "reserve", "private bid", "proof bytes", "witness"] {
+            assert!(
+                !settled_embed.contains(forbidden),
+                "settled Discord receipt leaked {forbidden}: {settled_embed}"
+            );
+        }
     }
 }

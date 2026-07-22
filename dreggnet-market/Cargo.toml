@@ -72,6 +72,11 @@ name = "private_clearing_guild_allocation"
 path = "tests/private_clearing_guild_allocation.rs"
 required-features = ["private-clearing"]
 
+[[test]]
+name = "private_bazaar_playable_journey"
+path = "tests/private_bazaar_playable_journey.rs"
+required-features = ["private-clearing"]
+
 [dependencies]
 # THE OFFERING CORE — the frontend-agnostic `Offering` trait (open/actions/advance/
 # verify/render/price), `Action`/`Outcome`/`Surface`/`DreggIdentity`/`TurnReceipt`.
