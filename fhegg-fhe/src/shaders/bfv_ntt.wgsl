@@ -12,7 +12,7 @@ struct Meta {
     step        : u32,
     roots_offset: u32,
     n_rows      : u32,
-    _pad0       : u32,
+    modulus_rows: u32,
     _pad1       : u32,
 };
 
@@ -70,11 +70,16 @@ fn mulmod(a: vec2<u32>, b: vec2<u32>, q: vec2<u32>, qbits: u32) -> vec2<u32> {
     return acc;
 }
 
-fn row_q(row: u32) -> vec2<u32> {
-    return vec2<u32>(qdata[row * 4u], qdata[row * 4u + 1u]);
+fn table_row(row: u32) -> u32 {
+    return row % params.modulus_rows;
 }
 
-fn row_qbits(row: u32) -> u32 { return qdata[row * 4u + 2u]; }
+fn row_q(row: u32) -> vec2<u32> {
+    let source = table_row(row);
+    return vec2<u32>(qdata[source * 4u], qdata[source * 4u + 1u]);
+}
+
+fn row_qbits(row: u32) -> u32 { return qdata[table_row(row) * 4u + 2u]; }
 
 fn load_coeff(buf: u32, index: u32) -> vec2<u32> {
     if (buf == 0u) { return vec2<u32>(lhs[index * 2u], lhs[index * 2u + 1u]); }
@@ -92,7 +97,7 @@ fn store_coeff(buf: u32, index: u32, value: vec2<u32>) {
 }
 
 fn load_table(table: u32, row: u32, offset: u32) -> vec2<u32> {
-    let index = (row * (2u * params.degree) + offset) * 2u;
+    let index = (table_row(row) * (2u * params.degree) + offset) * 2u;
     if (table == 0u) { return vec2<u32>(roots[index], roots[index + 1u]); }
     return vec2<u32>(twists[index], twists[index + 1u]);
 }

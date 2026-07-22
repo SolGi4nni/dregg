@@ -44,6 +44,10 @@ pub enum BfvNttError {
         value: u64,
         modulus: u64,
     },
+    /// A fail-closed caller requested actual portable-wgpu execution, but the
+    /// adapter/device or its advertised limits could not run the validated
+    /// shape. This is distinct from a shader/queue failure after dispatch.
+    WgpuRequired(String),
     GpuExecution(String),
     OutputMismatch {
         row: usize,
@@ -72,6 +76,7 @@ impl fmt::Display for BfvNttError {
                 "non-canonical {operand} residue at row {row}, coefficient {coefficient}: \
                  {value} >= q = {modulus}"
             ),
+            Self::WgpuRequired(what) => write!(f, "portable wgpu RNS NTT required: {what}"),
             Self::GpuExecution(what) => write!(f, "wgpu RNS NTT failed: {what}"),
             Self::OutputMismatch {
                 row,
@@ -222,6 +227,34 @@ pub struct OddNttExecution {
     pub backend: RnsNttBackend,
 }
 
+/// Auditable execution shape for one same-parameter batch of independent
+/// odd-domain transforms. The GPU counts describe actual queue/buffer traffic;
+/// they are zero on a labelled CPU policy/capability path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OddNttBatchPlan {
+    pub input_polynomials: usize,
+    pub rns_rows_per_polynomial: usize,
+    pub total_rns_rows: usize,
+    pub degree: usize,
+    pub gpu_dispatches: usize,
+    pub gpu_input_uploads: usize,
+    pub gpu_static_table_uploads: usize,
+    pub gpu_queue_submissions: usize,
+    pub gpu_readbacks: usize,
+}
+
+/// One batched transform result. Every polynomial follows the same canonical
+/// [`OddNttSchedule`]; the backend and plan make a one-submission batch
+/// distinguishable from four sequential calls that happened to return the
+/// same residues.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OddNttBatchExecution {
+    pub polynomials: Vec<RnsPoly>,
+    pub schedule: OddNttSchedule,
+    pub backend: RnsNttBackend,
+    pub plan: OddNttBatchPlan,
+}
+
 /// One exact butterfly row suitable for streaming into the six-residue portion
 /// of the planned 48-column AIR. The host does not have to allocate a giant
 /// transcript: [`visit_odd_ntt_cpu`] emits rows in canonical
@@ -370,25 +403,52 @@ pub fn private_book_ntt_family_row(row: usize) -> Result<PrivateBookNttFamilyRow
     })
 }
 
+/// Backend policy for exact RNS transforms. `RequireWgpu` is the fail-closed
+/// qualification/deployment setting: capability absence is an error rather
+/// than a CPU result carrying an optimistic GPU label.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RnsNttPolicy {
+    #[default]
+    Auto,
+    CpuOnly,
+    RequireWgpu,
+}
+
 /// Reusable dispatch policy. GPU initialization is process-wide and lazy.
 pub struct RnsNttEngine {
-    cpu_only: bool,
+    policy: RnsNttPolicy,
 }
 
 impl RnsNttEngine {
     pub fn new() -> Self {
-        Self { cpu_only: false }
+        Self {
+            policy: RnsNttPolicy::Auto,
+        }
     }
 
     /// Force the exact CPU reference and label it as policy-selected. This is
     /// useful both for deployments that forbid accelerators and for a
     /// deterministic fallback/parity gate.
     pub fn cpu_only() -> Self {
-        Self { cpu_only: true }
+        Self {
+            policy: RnsNttPolicy::CpuOnly,
+        }
+    }
+
+    /// Require one real portable-wgpu execution. This constructor never
+    /// permits an unavailable/adapter-limits result to become a CPU green.
+    pub fn require_wgpu() -> Self {
+        Self {
+            policy: RnsNttPolicy::RequireWgpu,
+        }
+    }
+
+    pub const fn policy(&self) -> RnsNttPolicy {
+        self.policy
     }
 
     pub fn has_gpu(&self) -> bool {
-        !self.cpu_only && matches!(gpu_state(), GpuState::Ready(_))
+        self.policy != RnsNttPolicy::CpuOnly && matches!(gpu_state(), GpuState::Ready(_))
     }
 
     pub fn multiply(
@@ -398,13 +458,16 @@ impl RnsNttEngine {
         moduli: &[u64],
     ) -> Result<RnsNttExecution> {
         let plan = NttPlan::new(lhs, rhs, moduli)?;
-        if self.cpu_only {
+        if self.policy == RnsNttPolicy::CpuOnly {
             return Ok(RnsNttExecution {
                 polynomial: multiply_cpu_with_plan(lhs, rhs, &plan),
                 backend: RnsNttBackend::CpuPolicy,
             });
         }
         match gpu_state() {
+            GpuState::Unavailable(reason) if self.policy == RnsNttPolicy::RequireWgpu => {
+                Err(BfvNttError::WgpuRequired(reason.clone()))
+            }
             GpuState::Unavailable(reason) => Ok(RnsNttExecution {
                 polynomial: multiply_cpu_with_plan(lhs, rhs, &plan),
                 backend: RnsNttBackend::CpuUnavailable {
@@ -413,7 +476,10 @@ impl RnsNttEngine {
             }),
             GpuState::Broken(reason) => Err(BfvNttError::GpuExecution(reason.clone())),
             GpuState::Ready(gpu) => {
-                if let Err(reason) = gpu.supports(&plan) {
+                if let Err(reason) = gpu.supports(&plan, 1) {
+                    if self.policy == RnsNttPolicy::RequireWgpu {
+                        return Err(BfvNttError::WgpuRequired(reason));
+                    }
                     return Ok(RnsNttExecution {
                         polynomial: multiply_cpu_with_plan(lhs, rhs, &plan),
                         backend: RnsNttBackend::CpuAdapterLimits { reason },
@@ -443,44 +509,117 @@ impl RnsNttEngine {
         self.transform_odd(input, moduli, OddNttDirection::Inverse)
     }
 
+    /// Batch the four owner-local `u` spectra of the N4K4 private book (or any
+    /// nonempty same-parameter family) into one coefficient upload, one queue
+    /// submission, and one readback. RNS rows are flattened as
+    /// `[polynomial][modulus][coefficient]`; the shader reuses the exact same
+    /// pinned modulus/root/twist tables for every polynomial.
+    pub fn forward_odd_batch(
+        &self,
+        inputs: &[RnsPoly],
+        moduli: &[u64],
+    ) -> Result<OddNttBatchExecution> {
+        self.transform_odd_batch(inputs, moduli, OddNttDirection::Forward)
+    }
+
+    /// Batched exact inverse transform, including inverse twist and `n^-1`
+    /// normalization independently for every polynomial.
+    pub fn inverse_odd_batch(
+        &self,
+        inputs: &[RnsPoly],
+        moduli: &[u64],
+    ) -> Result<OddNttBatchExecution> {
+        self.transform_odd_batch(inputs, moduli, OddNttDirection::Inverse)
+    }
+
     fn transform_odd(
         &self,
         input: &RnsPoly,
         moduli: &[u64],
         direction: OddNttDirection,
     ) -> Result<OddNttExecution> {
-        let plan = NttPlan::for_poly(input, moduli, "input")?;
+        let mut batch = self.transform_odd_batch(std::slice::from_ref(input), moduli, direction)?;
+        Ok(OddNttExecution {
+            polynomial: batch
+                .polynomials
+                .pop()
+                .expect("one-input transform batch returns one polynomial"),
+            schedule: batch.schedule,
+            backend: batch.backend,
+        })
+    }
+
+    fn transform_odd_batch(
+        &self,
+        inputs: &[RnsPoly],
+        moduli: &[u64],
+        direction: OddNttDirection,
+    ) -> Result<OddNttBatchExecution> {
+        let first = inputs
+            .first()
+            .ok_or(BfvNttError::InvalidShape("odd-NTT batch is empty"))?;
+        let plan = NttPlan::for_poly(first, moduli, "input")?;
+        for input in &inputs[1..] {
+            let degree = validate_poly(input, moduli, "input")?;
+            if degree != plan.degree {
+                return Err(BfvNttError::InvalidShape(
+                    "odd-NTT batch polynomials have different degrees",
+                ));
+            }
+        }
+        let total_rns_rows =
+            inputs
+                .len()
+                .checked_mul(plan.moduli.len())
+                .ok_or(BfvNttError::InvalidShape(
+                    "odd-NTT batch row count overflows usize",
+                ))?;
         let schedule = OddNttSchedule::from_plan(&plan, direction);
-        if self.cpu_only {
-            return Ok(OddNttExecution {
-                polynomial: transform_cpu_with_plan(input, &plan, direction),
-                schedule,
-                backend: RnsNttBackend::CpuPolicy,
-            });
+        let report = |gpu: bool| OddNttBatchPlan {
+            input_polynomials: inputs.len(),
+            rns_rows_per_polynomial: plan.moduli.len(),
+            total_rns_rows,
+            degree: plan.degree,
+            gpu_dispatches: if gpu { plan.log_degree as usize + 2 } else { 0 },
+            gpu_input_uploads: usize::from(gpu),
+            gpu_static_table_uploads: if gpu { 3 } else { 0 },
+            gpu_queue_submissions: usize::from(gpu),
+            gpu_readbacks: usize::from(gpu),
+        };
+        let cpu = |backend| OddNttBatchExecution {
+            polynomials: inputs
+                .iter()
+                .map(|input| transform_cpu_with_plan(input, &plan, direction))
+                .collect(),
+            schedule: schedule.clone(),
+            backend,
+            plan: report(false),
+        };
+        if self.policy == RnsNttPolicy::CpuOnly {
+            return Ok(cpu(RnsNttBackend::CpuPolicy));
         }
         match gpu_state() {
-            GpuState::Unavailable(reason) => Ok(OddNttExecution {
-                polynomial: transform_cpu_with_plan(input, &plan, direction),
-                schedule,
-                backend: RnsNttBackend::CpuUnavailable {
-                    reason: reason.clone(),
-                },
-            }),
+            GpuState::Unavailable(reason) if self.policy == RnsNttPolicy::RequireWgpu => {
+                Err(BfvNttError::WgpuRequired(reason.clone()))
+            }
+            GpuState::Unavailable(reason) => Ok(cpu(RnsNttBackend::CpuUnavailable {
+                reason: reason.clone(),
+            })),
             GpuState::Broken(reason) => Err(BfvNttError::GpuExecution(reason.clone())),
             GpuState::Ready(gpu) => {
-                if let Err(reason) = gpu.supports(&plan) {
-                    return Ok(OddNttExecution {
-                        polynomial: transform_cpu_with_plan(input, &plan, direction),
-                        schedule,
-                        backend: RnsNttBackend::CpuAdapterLimits { reason },
-                    });
+                if let Err(reason) = gpu.supports(&plan, inputs.len()) {
+                    if self.policy == RnsNttPolicy::RequireWgpu {
+                        return Err(BfvNttError::WgpuRequired(reason));
+                    }
+                    return Ok(cpu(RnsNttBackend::CpuAdapterLimits { reason }));
                 }
-                Ok(OddNttExecution {
-                    polynomial: gpu.transform_odd(input, &plan, direction)?,
+                Ok(OddNttBatchExecution {
+                    polynomials: gpu.transform_odd_batch(inputs, &plan, direction)?,
                     schedule,
                     backend: RnsNttBackend::Wgpu {
                         adapter: gpu.adapter.clone(),
                     },
+                    plan: report(true),
                 })
             }
         }
@@ -978,6 +1117,7 @@ fn dispatch_stages<F>(
     degree: u32,
     log_degree: u32,
     rows: u32,
+    modulus_rows: u32,
     roots_offset: u32,
 ) where
     F: FnMut(&wgpu::ComputePipeline, [u32; 8], u32),
@@ -988,7 +1128,16 @@ fn dispatch_stages<F>(
         let step = degree / len;
         dispatch(
             pipeline,
-            [degree, log_degree, half, step, roots_offset, rows, 0, 0],
+            [
+                degree,
+                log_degree,
+                half,
+                step,
+                roots_offset,
+                rows,
+                modulus_rows,
+                0,
+            ],
             degree / 2,
         );
         len *= 2;
@@ -1105,7 +1254,10 @@ impl GpuCtx {
         })
     }
 
-    fn supports(&self, plan: &NttPlan) -> std::result::Result<(), String> {
+    fn supports(&self, plan: &NttPlan, batch_size: usize) -> std::result::Result<(), String> {
+        if batch_size == 0 {
+            return Err("odd-NTT GPU batch is empty".to_owned());
+        }
         if self.limits.max_storage_buffers_per_shader_stage < 5 {
             return Err(format!(
                 "adapter exposes {} storage buffers per compute stage; 5 required",
@@ -1114,11 +1266,14 @@ impl GpuCtx {
         }
         let rows = plan.moduli.len() as u64;
         let degree = plan.degree as u64;
-        let coefficient_bytes = rows
+        let coefficient_bytes_per_polynomial = rows
             .checked_mul(degree)
             .and_then(|count| count.checked_mul(8))
             .ok_or_else(|| "coefficient buffer size overflow".to_owned())?;
-        let table_bytes = coefficient_bytes
+        let coefficient_bytes = coefficient_bytes_per_polynomial
+            .checked_mul(batch_size as u64)
+            .ok_or_else(|| "batched coefficient buffer size overflow".to_owned())?;
+        let table_bytes = coefficient_bytes_per_polynomial
             .checked_mul(2)
             .ok_or_else(|| "root/twist table size overflow".to_owned())?;
         let max_storage = self
@@ -1132,8 +1287,14 @@ impl GpuCtx {
             ));
         }
         let workgroups_x = (plan.degree as u32).div_ceil(WORKGROUP_SIZE);
+        let total_rows = plan
+            .moduli
+            .len()
+            .checked_mul(batch_size)
+            .and_then(|rows| u32::try_from(rows).ok())
+            .ok_or_else(|| "batched RNS row count exceeds u32".to_owned())?;
         if workgroups_x > self.limits.max_compute_workgroups_per_dimension
-            || plan.moduli.len() as u32 > self.limits.max_compute_workgroups_per_dimension
+            || total_rows > self.limits.max_compute_workgroups_per_dimension
         {
             return Err("dispatch dimensions exceed adapter limits".to_owned());
         }
@@ -1141,38 +1302,55 @@ impl GpuCtx {
     }
 
     fn multiply(&self, lhs: &RnsPoly, rhs: &RnsPoly, plan: &NttPlan) -> Result<RnsPoly> {
-        self.execute(lhs, Some(rhs), plan, GpuNttOperation::Multiply)
+        let mut outputs = self.execute_batch(
+            std::slice::from_ref(lhs),
+            Some(std::slice::from_ref(rhs)),
+            plan,
+            GpuNttOperation::Multiply,
+        )?;
+        Ok(outputs
+            .pop()
+            .expect("one-pair multiply batch returns one polynomial"))
     }
 
-    fn transform_odd(
+    fn transform_odd_batch(
         &self,
-        input: &RnsPoly,
+        inputs: &[RnsPoly],
         plan: &NttPlan,
         direction: OddNttDirection,
-    ) -> Result<RnsPoly> {
-        self.execute(input, None, plan, GpuNttOperation::Transform(direction))
+    ) -> Result<Vec<RnsPoly>> {
+        self.execute_batch(inputs, None, plan, GpuNttOperation::Transform(direction))
     }
 
-    fn execute(
+    fn execute_batch(
         &self,
-        lhs: &RnsPoly,
-        rhs: Option<&RnsPoly>,
+        lhs: &[RnsPoly],
+        rhs: Option<&[RnsPoly]>,
         plan: &NttPlan,
         operation: GpuNttOperation,
-    ) -> Result<RnsPoly> {
+    ) -> Result<Vec<RnsPoly>> {
         use wgpu::util::DeviceExt;
+
+        if lhs.is_empty() || rhs.is_some_and(|rhs| rhs.len() != lhs.len()) {
+            return Err(BfvNttError::InvalidShape(
+                "GPU NTT batch is empty or operand batch lengths differ",
+            ));
+        }
 
         // Any buffer/bind/dispatch validation failure is a kernel error. It
         // must not escape as an uncaptured panic or be converted into a CPU
         // capability fallback.
         self.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
-        let pack = |poly: &RnsPoly| -> Vec<u32> {
-            let mut words = Vec::with_capacity(plan.moduli.len() * plan.degree * 2);
-            for row in &poly.rows {
-                for &value in row {
-                    words.push(value as u32);
-                    words.push((value >> 32) as u32);
+        let pack = |polynomials: &[RnsPoly]| -> Vec<u32> {
+            let mut words =
+                Vec::with_capacity(polynomials.len() * plan.moduli.len() * plan.degree * 2);
+            for polynomial in polynomials {
+                for row in &polynomial.rows {
+                    for &value in row {
+                        words.push(value as u32);
+                        words.push((value >> 32) as u32);
+                    }
                 }
             }
             words
@@ -1246,7 +1424,9 @@ impl GpuCtx {
             });
         let mut metadata_buffers = Vec::new();
         let mut bind_groups = Vec::new();
-        let rows = plan.moduli.len() as u32;
+        let modulus_rows = plan.moduli.len() as u32;
+        let rows = u32::try_from(plan.moduli.len() * lhs.len())
+            .expect("GpuCtx::supports bounded the batched RNS row count");
         let degree = plan.degree as u32;
         let log_degree = plan.log_degree;
         let mut dispatch =
@@ -1301,12 +1481,20 @@ impl GpuCtx {
                 bind_groups.push(bind);
             };
 
-        let base_meta = [degree, log_degree, 0, 0, 0, rows, 0, 0];
+        let base_meta = [degree, log_degree, 0, 0, 0, rows, modulus_rows, 0];
         match operation {
             GpuNttOperation::Multiply => {
                 dispatch(&self.twist_both, base_meta, degree);
                 dispatch(&self.bit_reverse_both, base_meta, degree);
-                dispatch_stages(&mut dispatch, &self.stage_both, degree, log_degree, rows, 0);
+                dispatch_stages(
+                    &mut dispatch,
+                    &self.stage_both,
+                    degree,
+                    log_degree,
+                    rows,
+                    modulus_rows,
+                    0,
+                );
                 dispatch(&self.pointwise, base_meta, degree);
                 dispatch(&self.bit_reverse_lhs, base_meta, degree);
                 dispatch_stages(
@@ -1315,6 +1503,7 @@ impl GpuCtx {
                     degree,
                     log_degree,
                     rows,
+                    modulus_rows,
                     degree,
                 );
                 dispatch(&self.finalize_lhs, base_meta, degree);
@@ -1322,7 +1511,15 @@ impl GpuCtx {
             GpuNttOperation::Transform(OddNttDirection::Forward) => {
                 dispatch(&self.twist_lhs, base_meta, degree);
                 dispatch(&self.bit_reverse_lhs, base_meta, degree);
-                dispatch_stages(&mut dispatch, &self.stage_lhs, degree, log_degree, rows, 0);
+                dispatch_stages(
+                    &mut dispatch,
+                    &self.stage_lhs,
+                    degree,
+                    log_degree,
+                    rows,
+                    modulus_rows,
+                    0,
+                );
             }
             GpuNttOperation::Transform(OddNttDirection::Inverse) => {
                 dispatch(&self.bit_reverse_lhs, base_meta, degree);
@@ -1332,6 +1529,7 @@ impl GpuCtx {
                     degree,
                     log_degree,
                     rows,
+                    modulus_rows,
                     degree,
                 );
                 dispatch(&self.finalize_lhs, base_meta, degree);
@@ -1360,40 +1558,46 @@ impl GpuCtx {
         let mapped = slice.get_mapped_range();
         let words: &[u32] = bytemuck::cast_slice(&mapped);
         let output = if words.len() == lhs_words.len() {
-            let mut output_rows = Vec::with_capacity(plan.moduli.len());
+            let mut output_polynomials = Vec::with_capacity(lhs.len());
             let mut cursor = 0usize;
-            for _ in &plan.moduli {
-                let mut row = Vec::with_capacity(plan.degree);
-                for _ in 0..plan.degree {
-                    row.push(u64::from(words[cursor]) | (u64::from(words[cursor + 1]) << 32));
-                    cursor += 2;
+            for _ in lhs {
+                let mut output_rows = Vec::with_capacity(plan.moduli.len());
+                for _ in &plan.moduli {
+                    let mut row = Vec::with_capacity(plan.degree);
+                    for _ in 0..plan.degree {
+                        row.push(u64::from(words[cursor]) | (u64::from(words[cursor + 1]) << 32));
+                        cursor += 2;
+                    }
+                    output_rows.push(row);
                 }
-                output_rows.push(row);
+                output_polynomials.push(RnsPoly { rows: output_rows });
             }
-            Some(output_rows)
+            Some(output_polynomials)
         } else {
             None
         };
         drop(mapped);
         read_buf.unmap();
-        let output_rows = output.ok_or_else(|| {
+        let output_polynomials = output.ok_or_else(|| {
             BfvNttError::GpuExecution(
                 "readback word count differs from the preflighted shape".to_owned(),
             )
         })?;
-        for (row, (&q, coefficients)) in plan.moduli.iter().zip(&output_rows).enumerate() {
-            if let Some((coefficient, &value)) = coefficients
-                .iter()
-                .enumerate()
-                .find(|(_, value)| **value >= q)
-            {
-                return Err(BfvNttError::GpuExecution(format!(
-                    "shader emitted non-canonical residue at row {row}, coefficient {coefficient}: \
-                     {value} >= {q}"
-                )));
+        for (polynomial, output) in output_polynomials.iter().enumerate() {
+            for (row, (&q, coefficients)) in plan.moduli.iter().zip(&output.rows).enumerate() {
+                if let Some((coefficient, &value)) = coefficients
+                    .iter()
+                    .enumerate()
+                    .find(|(_, value)| **value >= q)
+                {
+                    return Err(BfvNttError::GpuExecution(format!(
+                        "shader emitted non-canonical residue at polynomial {polynomial}, row {row}, \
+                         coefficient {coefficient}: {value} >= {q}"
+                    )));
+                }
             }
         }
-        Ok(RnsPoly { rows: output_rows })
+        Ok(output_polynomials)
     }
 }
 
@@ -1415,6 +1619,7 @@ mod tests {
     use super::*;
     use crate::bfv_lean::{FOLD_DEGREE, FOLD_MODULI};
     use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
+    use std::time::Instant;
 
     fn schoolbook(lhs: &[u64], rhs: &[u64], q: u64) -> Vec<u64> {
         let degree = lhs.len();
@@ -1561,7 +1766,12 @@ mod tests {
             "CPU reference diverged from fhe-math"
         );
 
-        let engine = RnsNttEngine::new();
+        let require_wgpu = std::env::var_os("DREGG_REQUIRE_WGPU").is_some();
+        let engine = if require_wgpu {
+            RnsNttEngine::require_wgpu()
+        } else {
+            RnsNttEngine::new()
+        };
         let execution = engine
             .multiply(&lhs, &rhs, &FOLD_MODULI)
             .expect("GPU or explicit capability fallback");
@@ -1975,5 +2185,126 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn deployed_private_book_four_order_forward_batch_is_exact_and_profiled() {
+        let inputs = [
+            deployed_poly(0x6750_4e54_54b0),
+            deployed_poly(0x6750_4e54_54b1),
+            deployed_poly(0x6750_4e54_54b2),
+            deployed_poly(0x6750_4e54_54b3),
+        ];
+        let expected = inputs
+            .iter()
+            .map(|input| {
+                transform_odd_rns_cpu(input, &FOLD_MODULI, OddNttDirection::Forward)
+                    .expect("CPU private-book forward oracle")
+            })
+            .collect::<Vec<_>>();
+        let require_wgpu = std::env::var_os("DREGG_REQUIRE_WGPU").is_some();
+        let engine = if require_wgpu {
+            RnsNttEngine::require_wgpu()
+        } else {
+            RnsNttEngine::new()
+        };
+
+        // Warm adapter/pipeline initialization outside the deployed four-order timing.
+        let warm = engine
+            .forward_odd(&inputs[0], &FOLD_MODULI)
+            .expect("warm exact odd NTT");
+        assert_eq!(warm.polynomial, expected[0]);
+
+        let sequential_started = Instant::now();
+        let executions = inputs
+            .iter()
+            .map(|input| {
+                engine
+                    .forward_odd(input, &FOLD_MODULI)
+                    .expect("private-book exact odd NTT")
+            })
+            .collect::<Vec<_>>();
+        let sequential_elapsed = sequential_started.elapsed();
+        for (execution, expected) in executions.iter().zip(&expected) {
+            assert_eq!(&execution.polynomial, expected);
+        }
+
+        let batch_started = Instant::now();
+        let batch = engine
+            .forward_odd_batch(&inputs, &FOLD_MODULI)
+            .expect("one-submission private-book odd-NTT batch");
+        let batch_elapsed = batch_started.elapsed();
+        assert_eq!(batch.polynomials, expected);
+        assert_eq!(batch.schedule.psi, DEPLOYED_ODD_NTT_PSI);
+        assert_eq!(batch.plan.input_polynomials, 4);
+        assert_eq!(batch.plan.rns_rows_per_polynomial, 3);
+        assert_eq!(batch.plan.total_rns_rows, 12);
+        assert_eq!(batch.plan.degree, FOLD_DEGREE);
+
+        let inverse_batch = engine
+            .inverse_odd_batch(&batch.polynomials, &FOLD_MODULI)
+            .expect("one-submission private-book inverse odd-NTT batch");
+        assert_eq!(inverse_batch.polynomials, inputs);
+        assert_eq!(inverse_batch.plan.input_polynomials, 4);
+        assert_eq!(inverse_batch.plan.total_rns_rows, 12);
+        assert_eq!(
+            inverse_batch.plan.gpu_queue_submissions,
+            batch.plan.gpu_queue_submissions
+        );
+        assert_eq!(inverse_batch.plan.gpu_readbacks, batch.plan.gpu_readbacks);
+
+        match (&executions[0].backend, &batch.backend) {
+            (
+                RnsNttBackend::Wgpu { adapter },
+                RnsNttBackend::Wgpu {
+                    adapter: batch_adapter,
+                },
+            ) => {
+                assert_eq!(batch_adapter, adapter);
+                assert!(matches!(
+                    &inverse_batch.backend,
+                    RnsNttBackend::Wgpu { adapter: inverse_adapter } if inverse_adapter == adapter
+                ));
+                assert_eq!(batch.plan.gpu_dispatches, PRIVATE_BOOK_LOG_DEGREE + 2);
+                assert_eq!(batch.plan.gpu_input_uploads, 1);
+                assert_eq!(batch.plan.gpu_static_table_uploads, 3);
+                assert_eq!(batch.plan.gpu_queue_submissions, 1);
+                assert_eq!(batch.plan.gpu_readbacks, 1);
+                assert!(executions.iter().all(
+                    |execution| matches!(&execution.backend, RnsNttBackend::Wgpu { adapter: actual } if actual == adapter)
+                ));
+                eprintln!(
+                    "private-book odd-NTT four-order batch GREEN on {adapter}: sequential={:.3}ms, batched={:.3}ms, ratio={:.3}x; metadata=1 upload/1 submission/1 readback",
+                    sequential_elapsed.as_secs_f64() * 1e3,
+                    batch_elapsed.as_secs_f64() * 1e3,
+                    sequential_elapsed.as_secs_f64() / batch_elapsed.as_secs_f64(),
+                );
+            }
+            (fallback, batch_fallback) => {
+                assert!(
+                    !require_wgpu,
+                    "RequireWgpu accepted non-GPU private-book batch {fallback:?}/{batch_fallback:?}"
+                );
+                assert_eq!(batch.plan.gpu_dispatches, 0);
+                assert_eq!(batch.plan.gpu_input_uploads, 0);
+                assert_eq!(batch.plan.gpu_static_table_uploads, 0);
+                assert_eq!(batch.plan.gpu_queue_submissions, 0);
+                assert_eq!(batch.plan.gpu_readbacks, 0);
+                eprintln!(
+                    "private-book odd-NTT four-order GPU profile SKIPPED explicitly: {fallback:?}/{batch_fallback:?}"
+                );
+            }
+        }
+
+        assert!(matches!(
+            engine.forward_odd_batch(&[], &FOLD_MODULI),
+            Err(BfvNttError::InvalidShape("odd-NTT batch is empty"))
+        ));
+        let mut wrong_shape = inputs[0].clone();
+        wrong_shape.rows.pop();
+        assert!(matches!(
+            engine.forward_odd_batch(&[inputs[0].clone(), wrong_shape], &FOLD_MODULI),
+            Err(BfvNttError::InvalidShape(_))
+        ));
     }
 }
