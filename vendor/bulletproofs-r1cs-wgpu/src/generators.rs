@@ -13,6 +13,8 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
 use digest::{ExtendableOutput, Update, XofReader};
+#[cfg(feature = "parallel-prover")]
+use rayon::prelude::*;
 use sha3::{Sha3_512, Shake256, Shake256Reader};
 
 /// Represents a pair of base points for Pedersen commitments.
@@ -177,28 +179,22 @@ impl BulletproofGens {
     /// Increases the generators' capacity to the amount specified.
     /// If less than or equal to the current capacity, does nothing.
     pub fn increase_capacity(&mut self, new_capacity: usize) {
-        use byteorder::{ByteOrder, LittleEndian};
-
         if self.gens_capacity >= new_capacity {
             return;
         }
 
-        for i in 0..self.party_capacity {
-            let party_index = i as u32;
-            let mut label = [b'G', 0, 0, 0, 0];
-            LittleEndian::write_u32(&mut label[1..5], party_index);
-            self.G_vec[i].extend(
-                &mut GeneratorsChain::new(&label)
-                    .fast_forward(self.gens_capacity)
-                    .take(new_capacity - self.gens_capacity),
-            );
-
-            label[0] = b'H';
-            self.H_vec[i].extend(
-                &mut GeneratorsChain::new(&label)
-                    .fast_forward(self.gens_capacity)
-                    .take(new_capacity - self.gens_capacity),
-            );
+        let old_capacity = self.gens_capacity;
+        #[cfg(feature = "parallel-prover")]
+        self.G_vec
+            .par_iter_mut()
+            .zip(self.H_vec.par_iter_mut())
+            .enumerate()
+            .for_each(|(party, (g_vec, h_vec))| {
+                extend_party_generators(party, old_capacity, new_capacity, g_vec, h_vec);
+            });
+        #[cfg(not(feature = "parallel-prover"))]
+        for (party, (g_vec, h_vec)) in self.G_vec.iter_mut().zip(&mut self.H_vec).enumerate() {
+            extend_party_generators(party, old_capacity, new_capacity, g_vec, h_vec);
         }
         self.gens_capacity = new_capacity;
     }
@@ -224,6 +220,32 @@ impl BulletproofGens {
             gen_idx: 0,
         }
     }
+}
+
+fn extend_party_generators(
+    party: usize,
+    old_capacity: usize,
+    new_capacity: usize,
+    g_vec: &mut Vec<RistrettoPoint>,
+    h_vec: &mut Vec<RistrettoPoint>,
+) {
+    use byteorder::{ByteOrder, LittleEndian};
+
+    let party_index = party as u32;
+    let mut label = [b'G', 0, 0, 0, 0];
+    LittleEndian::write_u32(&mut label[1..5], party_index);
+    g_vec.extend(
+        &mut GeneratorsChain::new(&label)
+            .fast_forward(old_capacity)
+            .take(new_capacity - old_capacity),
+    );
+
+    label[0] = b'H';
+    h_vec.extend(
+        &mut GeneratorsChain::new(&label)
+            .fast_forward(old_capacity)
+            .take(new_capacity - old_capacity),
+    );
 }
 
 struct AggregatedGensIter<'a> {
@@ -352,5 +374,25 @@ mod tests {
         helper(64, 8);
         helper(32, 8);
         helper(16, 8);
+    }
+
+    #[test]
+    fn generated_points_match_serial_namespace_derivation() {
+        use byteorder::{ByteOrder, LittleEndian};
+
+        let gens_capacity = 17;
+        let party_capacity = 8;
+        let gens = BulletproofGens::new(gens_capacity, party_capacity);
+
+        for party in 0..party_capacity {
+            let mut label = [b'G', 0, 0, 0, 0];
+            LittleEndian::write_u32(&mut label[1..], party as u32);
+            let serial_g = GeneratorsChain::new(&label).take(gens_capacity);
+            assert!(gens.share(party).G(gens_capacity).cloned().eq(serial_g));
+
+            label[0] = b'H';
+            let serial_h = GeneratorsChain::new(&label).take(gens_capacity);
+            assert!(gens.share(party).H(gens_capacity).cloned().eq(serial_h));
+        }
     }
 }
