@@ -98,8 +98,10 @@ pub use per_cell_receipt_heads::{
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use private_dependent_turns::{
-    ClaimedPrivateDependentTurnV1, PrivateDependentTurnFinishV1, PrivateDependentTurnSnapshotV1,
-    PrivateDependentTurnStatusV1, private_dependent_ready_digest_v1,
+    ClaimedPrivateDependentTurnV1, PrivateDependentIngressReservationSnapshotV1,
+    PrivateDependentIngressReservationStatusV1, PrivateDependentTurnFinishV1,
+    PrivateDependentTurnSnapshotV1, PrivateDependentTurnStatusV1,
+    private_dependent_ingress_reservation_id_v1, private_dependent_ready_digest_v1,
 };
 pub use promise_resolutions::{
     DurablePromiseResolutionV1, PromiseBrokenReasonV1, PromiseResolutionCandidateV1,
@@ -346,6 +348,7 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_BATCHES_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
+            let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for
             // commit-log compaction: ids of applied turns whose records were
             // compacted under a covering checkpoint — `compact_below`).

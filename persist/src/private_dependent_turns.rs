@@ -16,6 +16,7 @@ use crate::{
 };
 
 const READY_DIGEST_DOMAIN_V1: &str = "dregg-private-dependent-ready-v1";
+const INGRESS_RESERVATION_DOMAIN_V1: &str = "dregg-private-dependent-ingress-reservation-v1";
 const CURSOR_META_KEY_V1: &str = "private_dependent_scheduler_cursor_v1";
 
 pub const MAX_PRIVATE_DEPENDENT_TURNS: usize = 4_096;
@@ -23,6 +24,26 @@ pub const MAX_PRIVATE_DEPENDENT_SEAL_BYTES: usize = 256 * 1024 + 64;
 pub const MAX_PRIVATE_DEPENDENT_ROW_BYTES: usize = MAX_PRIVATE_DEPENDENT_SEAL_BYTES + 4 * 1024;
 pub const MAX_PRIVATE_DEPENDENT_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_PRIVATE_DEPENDENT_REFUSAL_BYTES: usize = 4 * 1024;
+
+/// Stable idempotency key for the consensus-ingress handoff created by one
+/// exact Ready event.  It is intentionally signer/payload-byte independent:
+/// the signed-turn hash already commits to the canonical signed transition,
+/// while the Ready event identity prevents a different observer row from
+/// claiming the same custody.
+pub fn private_dependent_ingress_reservation_id_v1(
+    promise_id: [u8; 32],
+    signed_turn_hash: [u8; 32],
+    ready_sequence: u64,
+    event_id: [u8; 32],
+) -> [u8; 32] {
+    *blake3::Hasher::new_derive_key(INGRESS_RESERVATION_DOMAIN_V1)
+        .update(&promise_id)
+        .update(&signed_turn_hash)
+        .update(&ready_sequence.to_le_bytes())
+        .update(&event_id)
+        .finalize()
+        .as_bytes()
+}
 
 /// Stable expectation committed before the promise becomes ready.
 pub fn private_dependent_ready_digest_v1(
@@ -92,6 +113,112 @@ pub struct ClaimedPrivateDependentTurnV1 {
 pub enum PrivateDependentTurnFinishV1 {
     Submitted { ingress_id: [u8; 32] },
     Refused { reason: String },
+}
+
+/// Durable state of the private handoff to consensus ingress. `Reserved`
+/// retains the opaque AEAD seal, so the claim transaction cannot lose custody.
+/// Moving to a terminal state destroys that seal in the same transaction that
+/// marks the dependent turn Submitted/Refused.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PrivateDependentIngressReservationStatusV1 {
+    Reserved,
+    Accepted { ingress_id: [u8; 32] },
+    Refused { reason: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrivateDependentIngressReservationSnapshotV1 {
+    pub reservation_id: [u8; 32],
+    pub promise_id: [u8; 32],
+    pub signed_turn_hash: [u8; 32],
+    pub ready_sequence: u64,
+    pub event_id: [u8; 32],
+    pub status: PrivateDependentIngressReservationStatusV1,
+    /// Opaque node-encrypted bytes. Present only while `Reserved`; this API is
+    /// an internal persistence seam and is never wired to a public route.
+    pub sealed_signed_turn: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PrivateDependentIngressReservationRecordV1 {
+    reservation_id: [u8; 32],
+    promise_id: [u8; 32],
+    signed_turn_hash: [u8; 32],
+    ready_sequence: u64,
+    event_id: [u8; 32],
+    status: PrivateDependentIngressReservationStatusV1,
+    sealed_signed_turn: Vec<u8>,
+}
+
+impl PrivateDependentIngressReservationRecordV1 {
+    fn validate(&self, key: &[u8]) -> Result<()> {
+        if key != self.reservation_id {
+            return Err(StoreError::Integrity(
+                "private dependent ingress key disagrees with reservation id".to_string(),
+            ));
+        }
+        if self.promise_id != self.signed_turn_hash {
+            return Err(StoreError::Integrity(
+                "private dependent ingress is not bound to its promise id".to_string(),
+            ));
+        }
+        if self.reservation_id
+            != private_dependent_ingress_reservation_id_v1(
+                self.promise_id,
+                self.signed_turn_hash,
+                self.ready_sequence,
+                self.event_id,
+            )
+        {
+            return Err(StoreError::Integrity(
+                "private dependent ingress reservation id is not canonical".to_string(),
+            ));
+        }
+        match &self.status {
+            PrivateDependentIngressReservationStatusV1::Reserved => {
+                if self.sealed_signed_turn.is_empty()
+                    || self.sealed_signed_turn.len() > MAX_PRIVATE_DEPENDENT_SEAL_BYTES
+                {
+                    return Err(StoreError::Integrity(
+                        "reserved private dependent ingress seal is empty or oversized".to_string(),
+                    ));
+                }
+            }
+            PrivateDependentIngressReservationStatusV1::Refused { reason } => {
+                if reason.len() > MAX_PRIVATE_DEPENDENT_REFUSAL_BYTES {
+                    return Err(StoreError::Integrity(
+                        "private dependent ingress refusal text is oversized".to_string(),
+                    ));
+                }
+                if !self.sealed_signed_turn.is_empty() {
+                    return Err(StoreError::Integrity(
+                        "terminal private dependent ingress retained its private seal".to_string(),
+                    ));
+                }
+            }
+            PrivateDependentIngressReservationStatusV1::Accepted { .. }
+                if !self.sealed_signed_turn.is_empty() =>
+            {
+                return Err(StoreError::Integrity(
+                    "accepted private dependent ingress retained its private seal".to_string(),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn snapshot(&self) -> PrivateDependentIngressReservationSnapshotV1 {
+        PrivateDependentIngressReservationSnapshotV1 {
+            reservation_id: self.reservation_id,
+            promise_id: self.promise_id,
+            signed_turn_hash: self.signed_turn_hash,
+            ready_sequence: self.ready_sequence,
+            event_id: self.event_id,
+            status: self.status.clone(),
+            sealed_signed_turn: self.sealed_signed_turn.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +314,32 @@ fn decode_record(bytes: &[u8], key: &[u8]) -> Result<PrivateDependentTurnRecordV
     if canonical_bytes(&record)?.as_slice() != bytes {
         return Err(StoreError::Integrity(
             "private dependent-turn row is non-canonical".to_string(),
+        ));
+    }
+    Ok(record)
+}
+
+fn decode_ingress_reservation(
+    bytes: &[u8],
+    key: &[u8],
+) -> Result<PrivateDependentIngressReservationRecordV1> {
+    if bytes.len() > MAX_PRIVATE_DEPENDENT_ROW_BYTES {
+        return Err(StoreError::Integrity(format!(
+            "private dependent ingress row is {} bytes (maximum {})",
+            bytes.len(),
+            MAX_PRIVATE_DEPENDENT_ROW_BYTES
+        )));
+    }
+    let record: PrivateDependentIngressReservationRecordV1 =
+        postcard::from_bytes(bytes).map_err(|error| {
+            StoreError::Integrity(format!(
+                "private dependent ingress row decode failed: {error}"
+            ))
+        })?;
+    record.validate(key)?;
+    if canonical_bytes(&record)?.as_slice() != bytes {
+        return Err(StoreError::Integrity(
+            "private dependent ingress row is non-canonical".to_string(),
         ));
     }
     Ok(record)
@@ -343,6 +496,45 @@ impl PersistentStore {
                     ));
                 }
                 let seal = core::mem::take(&mut record.sealed_signed_turn);
+                let reservation_id = private_dependent_ingress_reservation_id_v1(
+                    promise_id,
+                    record.signed_turn_hash,
+                    ready_sequence,
+                    resolution.event_id,
+                );
+                let reservation = PrivateDependentIngressReservationRecordV1 {
+                    reservation_id,
+                    promise_id,
+                    signed_turn_hash: record.signed_turn_hash,
+                    ready_sequence,
+                    event_id: resolution.event_id,
+                    status: PrivateDependentIngressReservationStatusV1::Reserved,
+                    sealed_signed_turn: seal.clone(),
+                };
+                reservation.validate(&reservation_id)?;
+                let reservation_bytes = canonical_bytes(&reservation)?;
+                if reservation_bytes.len() > MAX_PRIVATE_DEPENDENT_ROW_BYTES {
+                    return Err(StoreError::Integrity(
+                        "private dependent ingress reservation exceeds its durable bound"
+                            .to_string(),
+                    ));
+                }
+                {
+                    let mut reservations =
+                        write.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
+                    if reservations.get(&reservation_id)?.is_some() {
+                        return Err(StoreError::Integrity(
+                            "private dependent Ready claim found a pre-existing ingress reservation"
+                                .to_string(),
+                        ));
+                    }
+                    if reservations.len()? as usize >= MAX_PRIVATE_DEPENDENT_TURNS {
+                        return Err(StoreError::Integrity(format!(
+                            "private dependent ingress reservation table is full (maximum {MAX_PRIVATE_DEPENDENT_TURNS})"
+                        )));
+                    }
+                    reservations.insert(&reservation_id, reservation_bytes.as_slice())?;
+                }
                 record.status = PrivateDependentTurnStatusV1::Claimed {
                     ready_sequence,
                     event_id: resolution.event_id,
@@ -370,6 +562,37 @@ impl PersistentStore {
         event_id: [u8; 32],
         outcome: PrivateDependentTurnFinishV1,
     ) -> Result<()> {
+        let (turn_status, reservation_status) = match outcome {
+            PrivateDependentTurnFinishV1::Submitted { ingress_id } => (
+                PrivateDependentTurnStatusV1::Submitted {
+                    ready_sequence,
+                    event_id,
+                    ingress_id,
+                },
+                PrivateDependentIngressReservationStatusV1::Accepted { ingress_id },
+            ),
+            PrivateDependentTurnFinishV1::Refused { reason } => {
+                if reason.len() > MAX_PRIVATE_DEPENDENT_REFUSAL_BYTES {
+                    return Err(StoreError::Integrity(
+                        "private dependent-turn refusal text exceeds bound".to_string(),
+                    ));
+                }
+                (
+                    PrivateDependentTurnStatusV1::Refused {
+                        ready_sequence,
+                        event_id,
+                        reason: reason.clone(),
+                    },
+                    PrivateDependentIngressReservationStatusV1::Refused { reason },
+                )
+            }
+        };
+        let reservation_id = private_dependent_ingress_reservation_id_v1(
+            promise_id,
+            promise_id,
+            ready_sequence,
+            event_id,
+        );
         let write = self.db.begin_write()?;
         {
             let mut table = write.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
@@ -378,39 +601,62 @@ impl PersistentStore {
             })?;
             let mut record = decode_record(current.value(), &promise_id)?;
             drop(current);
-            if record.status
-                != (PrivateDependentTurnStatusV1::Claimed {
-                    ready_sequence,
-                    event_id,
-                })
+            let exact_replay = record.status == turn_status;
+            if !exact_replay
+                && record.status
+                    != (PrivateDependentTurnStatusV1::Claimed {
+                        ready_sequence,
+                        event_id,
+                    })
             {
                 return Err(StoreError::Integrity(
                     "private dependent-turn finish does not match its durable claim".to_string(),
                 ));
             }
-            record.status = match outcome {
-                PrivateDependentTurnFinishV1::Submitted { ingress_id } => {
-                    PrivateDependentTurnStatusV1::Submitted {
-                        ready_sequence,
-                        event_id,
-                        ingress_id,
-                    }
+            let mut reservations =
+                write.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
+            let current_reservation = reservations.get(&reservation_id)?.ok_or_else(|| {
+                StoreError::Integrity(
+                    "claimed private dependent turn is missing its ingress reservation".to_string(),
+                )
+            })?;
+            let mut reservation =
+                decode_ingress_reservation(current_reservation.value(), &reservation_id)?;
+            drop(current_reservation);
+            if reservation.promise_id != promise_id
+                || reservation.signed_turn_hash != record.signed_turn_hash
+                || reservation.ready_sequence != ready_sequence
+                || reservation.event_id != event_id
+            {
+                return Err(StoreError::Integrity(
+                    "private dependent ingress reservation disagrees with its claim".to_string(),
+                ));
+            }
+            if exact_replay {
+                if reservation.status != reservation_status
+                    || !reservation.sealed_signed_turn.is_empty()
+                {
+                    return Err(StoreError::Integrity(
+                        "private dependent finish replay disagrees with ingress reservation"
+                            .to_string(),
+                    ));
                 }
-                PrivateDependentTurnFinishV1::Refused { reason } => {
-                    if reason.len() > MAX_PRIVATE_DEPENDENT_REFUSAL_BYTES {
-                        return Err(StoreError::Integrity(
-                            "private dependent-turn refusal text exceeds bound".to_string(),
-                        ));
-                    }
-                    PrivateDependentTurnStatusV1::Refused {
-                        ready_sequence,
-                        event_id,
-                        reason,
-                    }
-                }
-            };
+                return Ok(());
+            }
+            if reservation.status != PrivateDependentIngressReservationStatusV1::Reserved {
+                return Err(StoreError::Integrity(
+                    "private dependent ingress reservation was already consumed differently"
+                        .to_string(),
+                ));
+            }
+            record.status = turn_status;
+            reservation.status = reservation_status;
+            reservation.sealed_signed_turn.clear();
+            reservation.validate(&reservation_id)?;
             let bytes = canonical_bytes(&record)?;
+            let reservation_bytes = canonical_bytes(&reservation)?;
             table.insert(&promise_id, bytes.as_slice())?;
+            reservations.insert(&reservation_id, reservation_bytes.as_slice())?;
         }
         write.commit()?;
         Ok(())
@@ -470,6 +716,23 @@ impl PersistentStore {
         Ok(claimed)
     }
 
+    /// Read one private ingress reservation by its stable idempotency key.
+    /// This is an internal custody surface: it returns the opaque AEAD seal
+    /// while Reserved and must never be connected to a public observer API.
+    pub fn private_dependent_ingress_reservation_v1(
+        &self,
+        reservation_id: [u8; 32],
+    ) -> Result<Option<PrivateDependentIngressReservationSnapshotV1>> {
+        let read = self.db.begin_read()?;
+        let table = read.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
+        let Some(value) = table.get(&reservation_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            decode_ingress_reservation(value.value(), &reservation_id)?.snapshot(),
+        ))
+    }
+
     /// Explicit bounded-storage cleanup. Armed/Claimed records can never be
     /// forgotten through this API.
     pub fn forget_terminal_private_dependent_turn_v1(&self, promise_id: [u8; 32]) -> Result<bool> {
@@ -484,6 +747,63 @@ impl PersistentStore {
             if !record.status.is_terminal() {
                 false
             } else {
+                let reservation_terminal = match &record.status {
+                    PrivateDependentTurnStatusV1::Submitted {
+                        ready_sequence,
+                        event_id,
+                        ingress_id,
+                    } => Some((
+                        *ready_sequence,
+                        *event_id,
+                        PrivateDependentIngressReservationStatusV1::Accepted {
+                            ingress_id: *ingress_id,
+                        },
+                    )),
+                    PrivateDependentTurnStatusV1::Refused {
+                        ready_sequence,
+                        event_id,
+                        reason,
+                    } => Some((
+                        *ready_sequence,
+                        *event_id,
+                        PrivateDependentIngressReservationStatusV1::Refused {
+                            reason: reason.clone(),
+                        },
+                    )),
+                    PrivateDependentTurnStatusV1::Cancelled
+                    | PrivateDependentTurnStatusV1::Expired { .. } => None,
+                    PrivateDependentTurnStatusV1::Armed
+                    | PrivateDependentTurnStatusV1::Claimed { .. } => unreachable!(),
+                };
+                if let Some((ready_sequence, event_id, expected_status)) = reservation_terminal {
+                    let reservation_id = private_dependent_ingress_reservation_id_v1(
+                        promise_id,
+                        record.signed_turn_hash,
+                        ready_sequence,
+                        event_id,
+                    );
+                    let mut reservations =
+                        write.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
+                    let reservation_value =
+                        reservations.get(&reservation_id)?.ok_or_else(|| {
+                            StoreError::Integrity(
+                                "terminal private dependent turn is missing its ingress reservation"
+                                    .to_string(),
+                            )
+                        })?;
+                    let reservation =
+                        decode_ingress_reservation(reservation_value.value(), &reservation_id)?;
+                    drop(reservation_value);
+                    if reservation.status != expected_status
+                        || !reservation.sealed_signed_turn.is_empty()
+                    {
+                        return Err(StoreError::Integrity(
+                            "terminal private dependent turn disagrees with its ingress reservation"
+                                .to_string(),
+                        ));
+                    }
+                    reservations.remove(&reservation_id)?;
+                }
                 table.remove(&promise_id)?.is_some()
             }
         };
@@ -555,6 +875,15 @@ mod tests {
             .unwrap();
     }
 
+    fn reservation_id(claim: &ClaimedPrivateDependentTurnV1) -> [u8; 32] {
+        private_dependent_ingress_reservation_id_v1(
+            claim.promise_id,
+            claim.signed_turn_hash,
+            claim.ready_sequence,
+            claim.event_id,
+        )
+    }
+
     #[test]
     fn durable_ready_destructively_claims_exactly_once() {
         let (_dir, store) = store();
@@ -568,6 +897,15 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(first.sealed_signed_turn, vec![9; 80]);
+        let reservation = store
+            .private_dependent_ingress_reservation_v1(reservation_id(&first))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reservation.status,
+            PrivateDependentIngressReservationStatusV1::Reserved
+        );
+        assert_eq!(reservation.sealed_signed_turn, vec![9; 80]);
         assert!(
             store
                 .claim_private_dependent_turn_v1(promise, 0)
@@ -584,10 +922,11 @@ mod tests {
             .arm_private_dependent_turn_v1(promise, promise, vec![3; 80], 10)
             .unwrap();
         commit_ready(&store, promise);
-        store
+        let claim = store
             .claim_private_dependent_turn_v1(promise, 0)
             .unwrap()
             .unwrap();
+        let reservation_id = reservation_id(&claim);
         drop(store);
         let reopened = PersistentStore::open(&dir.path().join("store.redb")).unwrap();
         assert!(
@@ -604,6 +943,15 @@ mod tests {
                 .status,
             PrivateDependentTurnStatusV1::Claimed { .. }
         ));
+        let reservation = reopened
+            .private_dependent_ingress_reservation_v1(reservation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reservation.status,
+            PrivateDependentIngressReservationStatusV1::Reserved
+        );
+        assert_eq!(reservation.sealed_signed_turn, vec![3; 80]);
     }
 
     #[test]
@@ -667,7 +1015,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_seal_and_mismatched_finish_are_refused() {
+    fn finish_is_atomic_exact_idempotent_and_destroys_reserved_seal() {
         let (_dir, store) = store();
         let promise = [6; 32];
         assert!(
@@ -699,6 +1047,61 @@ mod tests {
                     },
                 )
                 .is_err()
+        );
+        let reservation_id = reservation_id(&claim);
+        let accepted = PrivateDependentTurnFinishV1::Submitted {
+            ingress_id: [1; 32],
+        };
+        store
+            .finish_private_dependent_turn_v1(
+                promise,
+                claim.ready_sequence,
+                claim.event_id,
+                accepted.clone(),
+            )
+            .unwrap();
+        // A crash after commit but before return may replay the exact finish.
+        store
+            .finish_private_dependent_turn_v1(
+                promise,
+                claim.ready_sequence,
+                claim.event_id,
+                accepted,
+            )
+            .unwrap();
+        assert!(
+            store
+                .finish_private_dependent_turn_v1(
+                    promise,
+                    claim.ready_sequence,
+                    claim.event_id,
+                    PrivateDependentTurnFinishV1::Submitted {
+                        ingress_id: [2; 32],
+                    },
+                )
+                .is_err()
+        );
+        let reservation = store
+            .private_dependent_ingress_reservation_v1(reservation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            reservation.status,
+            PrivateDependentIngressReservationStatusV1::Accepted {
+                ingress_id: [1; 32]
+            }
+        );
+        assert!(reservation.sealed_signed_turn.is_empty());
+        assert!(
+            store
+                .forget_terminal_private_dependent_turn_v1(promise)
+                .unwrap()
+        );
+        assert!(
+            store
+                .private_dependent_ingress_reservation_v1(reservation_id)
+                .unwrap()
+                .is_none()
         );
     }
 
@@ -737,6 +1140,25 @@ mod tests {
         }
         write.commit().unwrap();
         let error = store.private_dependent_turn_status_v1(promise).unwrap_err();
+        assert!(error.to_string().contains("maximum"));
+    }
+
+    #[test]
+    fn oversized_ingress_reservation_is_rejected_before_decode() {
+        let (_dir, store) = store();
+        let reservation_id = [0x74; 32];
+        let oversized = vec![0u8; MAX_PRIVATE_DEPENDENT_ROW_BYTES + 1];
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut table = write
+                .open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)
+                .unwrap();
+            table.insert(&reservation_id, oversized.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        let error = store
+            .private_dependent_ingress_reservation_v1(reservation_id)
+            .unwrap_err();
         assert!(error.to_string().contains("maximum"));
     }
 }

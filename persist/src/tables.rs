@@ -121,6 +121,13 @@ pub const PROMISE_RESOLUTION_BATCHES_V1: TableDefinition<u64, &[u8]> =
 pub const PRIVATE_DEPENDENT_TURNS_V1: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("private_dependent_turns_v1");
 
+/// Private, opaque ingress reservations created atomically with a dependent
+/// turn's destructive Ready claim.  The key is a domain-separated digest of
+/// the promise, Ready event, and signed-turn hash; values are never exposed by
+/// the public PromiseResolution observer API.
+pub const PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("private_dependent_ingress_reservations_v1");
+
 /// Versioned, hybrid-authenticated faithful-eight note-root transitions.
 /// Key: finalized height. Value: strict `FaithfulNoteRootEnvelopeV1` bytes.
 pub const FAITHFUL_NOTE_ROOT_HISTORY: TableDefinition<u64, &[u8]> =
