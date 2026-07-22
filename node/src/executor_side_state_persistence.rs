@@ -12,6 +12,63 @@ use dregg_persist::{
 };
 use dregg_turn::TurnExecutor;
 
+/// Domain-separated predecessor commitments captured before isolated execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReactivePredecessors {
+    pub registry: [u8; 32],
+    pub nullifiers: [u8; 32],
+}
+
+/// Canonical successor images captured after isolated execution and resolution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReactiveSuccessors {
+    pub registry: Vec<u8>,
+    pub nullifiers: Vec<[u8; 32]>,
+}
+
+pub(crate) fn capture_reactive_predecessors(
+    executor: &TurnExecutor,
+) -> Result<ReactivePredecessors, String> {
+    Ok(ReactivePredecessors {
+        registry: executor
+            .reactive_registry_commitment()
+            .map_err(|error| format!("executor pending registry is malformed: {error}"))?,
+        nullifiers: executor.reactive_nullifier_commitment(),
+    })
+}
+
+pub(crate) fn capture_reactive_successors(
+    executor: &TurnExecutor,
+) -> Result<ReactiveSuccessors, String> {
+    Ok(ReactiveSuccessors {
+        registry: executor
+            .reactive_registry_canonical_bytes()
+            .map_err(|error| format!("executor pending registry is malformed: {error}"))?,
+        nullifiers: executor.reactive_nullifier_keys(),
+    })
+}
+
+/// Restore both React authority images only after each has decoded completely.
+pub(crate) fn restore_executor_reactive_state(
+    executor: &TurnExecutor,
+    store: &PersistentStore,
+) -> Result<(), String> {
+    let registry_bytes = store
+        .load_latest_reactive_registry_snapshot_bytes()
+        .map_err(|error| format!("could not load durable pending registry: {error}"))?;
+    let registry = dregg_turn::PendingTurnRegistry::from_canonical_bytes(&registry_bytes)
+        .map_err(|error| format!("durable pending registry is malformed: {error}"))?;
+    let nullifier_keys = store
+        .load_reactive_nullifier_keys()
+        .map_err(|error| format!("could not load durable React replay gate: {error}"))?;
+    let nullifiers = dregg_turn::ReactiveNullifierSet::from_canonical_keys(&nullifier_keys)
+        .map_err(|error| format!("durable React replay gate is malformed: {error}"))?;
+
+    executor.set_reactive_registry(registry);
+    executor.set_reactive_nullifiers(nullifiers);
+    Ok(())
+}
+
 /// Capture the exact canonical factory descriptor/quota frontier.
 pub(crate) fn capture_executor_factory_registry(
     executor: &TurnExecutor,
@@ -195,7 +252,10 @@ pub(crate) fn restore_executor_accumulators(
 mod tests {
     use super::*;
     use dregg_cell::{CellMode, FactoryDescriptor, note::NoteCommitment};
-    use dregg_persist::{CommitRecord, FinalizedExecutorConsensusState};
+    use dregg_persist::{
+        CommitRecord, FinalizedExecutorConsensusState, ReactiveNullifierCasV1,
+        reactive_nullifier_commitment,
+    };
 
     fn record(root: [u8; 32]) -> CommitRecord {
         CommitRecord {
@@ -244,6 +304,9 @@ mod tests {
             (dregg_cell::CellId([8; 32]), 9, 10),
             u64::from(u32::MAX) + 11,
         );
+        source.set_reactive_nullifiers(
+            dregg_turn::ReactiveNullifierSet::from_canonical_keys(&[[0x71; 32]]).unwrap(),
+        );
         let factory_vk = {
             let mut factories = source.factory_registry.borrow_mut();
             let factory_vk = factories.deploy(FactoryDescriptor {
@@ -262,6 +325,7 @@ mod tests {
         let snapshot = capture_executor_accumulators(&source).unwrap();
         let rate_snapshot = capture_executor_rate_limits(&source).unwrap();
         let factory_snapshot = capture_executor_factory_registry(&source).unwrap();
+        let reactive_successors = capture_reactive_successors(&source).unwrap();
         let source_commitment_root = source.note_commitments.lock().unwrap().root8();
         let source_revocation_root = source.note_revoked.lock().unwrap().root8();
 
@@ -271,6 +335,10 @@ mod tests {
                 accumulators: snapshot,
                 rate_limit_snapshot: Some(rate_snapshot),
                 factory_registry_snapshot: Some(factory_snapshot),
+                reactive_nullifiers: ReactiveNullifierCasV1::new(
+                    reactive_nullifier_commitment(&[]),
+                    reactive_successors.nullifiers.clone(),
+                ),
                 ..Default::default()
             };
             store
@@ -290,6 +358,7 @@ mod tests {
         restore_executor_accumulators(&restored, &store).unwrap();
         restore_executor_rate_limits(&restored, &store).unwrap();
         restore_executor_factory_registry(&restored, &store).unwrap();
+        restore_executor_reactive_state(&restored, &store).unwrap();
         assert_eq!(
             restored.note_commitments.lock().unwrap().root8(),
             source_commitment_root
@@ -329,6 +398,10 @@ mod tests {
         assert_eq!(
             restored.factory_registry.borrow().snapshot(),
             source.factory_registry.borrow().snapshot()
+        );
+        assert_eq!(
+            capture_reactive_successors(&restored).unwrap(),
+            reactive_successors
         );
         {
             let mut factories = restored.factory_registry.borrow_mut();
