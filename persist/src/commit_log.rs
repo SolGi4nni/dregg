@@ -1619,20 +1619,19 @@ impl PersistentStore {
                 )));
             }
 
-            // Once the exact epoch is installed it is the required shadow authority for every
-            // faithful nullifier append.  A fresh faithful-only commit would advance the public
-            // spend history while leaving the exact accumulator/frame chain behind.  Historical
-            // idempotent replay is handled above and remains valid without inventing a new weld.
+            // Once the fully audited faithful/exact bridge is installed it is the required shadow
+            // authority for every faithful nullifier append, even in the interval between exact
+            // bootstrap and first-frame activation. A fresh faithful-only commit would advance the
+            // public spend history while leaving the rolling induction boundary and exact
+            // accumulator behind. Historical idempotent replay is handled above.
             if faithful
                 .as_ref()
                 .is_some_and(|faithful| !faithful.spent_nullifiers.is_empty())
                 && exact_fnsp_v3.is_none()
-                && crate::exact_fnsp_v3_frame_head::exact_fnsp_v3_activation_installed_in(
-                    &write_txn,
-                )?
+                && crate::exact_fnsp_v3_faithful_bridge::installed_in(&write_txn)?
             {
                 return Err(StoreError::Integrity(
-                    "faithful nullifier growth after exact FNSP-v3 activation requires the exact frame/CAS weld"
+                    "faithful nullifier growth after exact FNSP-v3 bootstrap requires the exact frame/CAS weld"
                         .to_string(),
                 ));
             }

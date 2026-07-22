@@ -242,6 +242,11 @@ pub(crate) fn require_absent_in(write: &WriteTransaction) -> Result<()> {
     Ok(())
 }
 
+/// Whether the full-audit induction boundary has been installed in this writer snapshot.
+pub(crate) fn installed_in(write: &WriteTransaction) -> Result<bool> {
+    Ok(load_head(&write.open_table(EXACT_FNSP_V3_FAITHFUL_BRIDGE)?)?.is_some())
+}
+
 /// Advance the induction boundary after both matching history rows were staged.
 ///
 /// The caller passes the independently derived faithful row and exact CAS row.  Equality, prior
@@ -346,6 +351,19 @@ mod tests {
         let mut corrupt = genesis.encode();
         corrupt[ROLLING_SEAL_OFFSET] ^= 1;
         assert!(BridgeHeadV1::decode(&corrupt).is_err());
+    }
+
+    #[test]
+    fn production_bootstrap_installs_live_boundary_before_activation() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        store
+            .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+            .unwrap();
+        assert!(store.exact_fnsp_v3_activation().unwrap().is_none());
+        let write = store.db.begin_write().unwrap();
+        assert!(installed_in(&write).unwrap());
+        write.abort().unwrap();
+        store.validate_live_exact_fnsp_v3_faithful_bridge().unwrap();
     }
 
     #[test]
