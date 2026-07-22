@@ -504,18 +504,30 @@ must acknowledge the private packet, and the public certificate contains no
 shares. Production geometry is fixed at 16,384 coordinates per owner and
 65,536 for the final worker proof. Focused release gates are **2/2 in 12.620s**.
 
-This is not yet the final distributed BFV proof, but quotient construction is
-now exact rather than caller-supplied. Each owner retains a non-cloneable
+Quotient construction is now exact rather than caller-supplied. Each owner retains a non-cloneable
 continuation of its committed local witness. After the base certificate fixes
 the challenge, it evaluates the canonical equations, requires exact divisibility
 by every RNS modulus, and constructs its 384 bounded quotients. The real
 production gate derived and completed custody for **4 owners × 384 equations**
-from actual degree-4096 `fhe.rs` key/ciphertexts/openings in **173.204s**; a
+from actual degree-4096 `fhe.rs` key/ciphertexts/openings; a
 mutated ciphertext failed through the internally derived relation digest. The
 production session constructor no longer accepts an arbitrary digest, and its
-focused target is **5/5 in 6.507s**. The second challenge,
-65,536-coordinate worker equation, canonical quotient wire, Poseidon/root,
-clearing, sampler image, and PQ replacement remain.
+focused target is **5/5 in 6.507s**.
+
+The final distributed BFV linear relation is now proved. A second challenge is
+derived only after the complete quotient certificate. It collapses all **1,536**
+exact rows; each worker proves one masked image of its committed base and
+quotient shares in a four-owner, **65,536-coordinate** `LinearProof`. No worker
+or coordinator reconstructs an order, encryption opening, or quotient vector.
+The public coordinator requires all roster-signed proofs and checks that the
+masked images plus the independently derived public constant sum to zero. The
+real degree-4096 all-owner gate, including quotient custody, all three worker
+proofs, and the final public certificate, is **1/1 in 91.204s**. A shared lazy
+production generator table made this faster than the prior quotient-only
+173.204s gate; the reduced success/adversarial relation tooth is **1/1 in
+14.063s** and rejects bad signatures and a wrong public constant. Canonical
+quotient/final-certificate wire, Poseidon/root, clearing, exact sampler image,
+and PQ replacement remain.
 
 `private_book_bfv_exact` is the one public lowering shared by monolithic and
 distributed backends. It internally derives the public key/ciphertext rows,

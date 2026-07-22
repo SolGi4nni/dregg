@@ -11030,9 +11030,21 @@ and completed custody for **4 owners × 384 equations** from actual degree-4096
 `fhe.rs` key/ciphertexts/openings in **173.204s**, and a mutated ciphertext was
 rejected through the internally derived session relation digest. The production
 session API no longer accepts an arbitrary digest; focused constructor teeth are
-**5/5 in 6.507s**. The second challenge and 65,536-coordinate worker equation,
-canonical quotient wire, Poseidon/clearing, sampler image, and PQ replacement
-remain open.
+**5/5 in 6.507s**. The post-custody relation is now closed as well. Only after
+the complete quotient certificate is fixed, a second Fiat--Shamir challenge
+collapses all **4 × 384** exact integer equations into one public coefficient
+vector. Each worker emits one signed `LinearProof` over four disjoint 16,384-
+coordinate owner namespaces—**65,536 coordinates total**—binding its base and
+quotient shares to both certificates while publishing only one uniformly masked
+scalar image. The coordinator requires every worker and accepts only when those
+images plus the canonical public constant sum to zero. Wrong signatures and a
+wrong public constant fail closed. The real degree-4096 `fhe.rs` all-owner gate,
+now including the three worker proofs and final public certificate, is **1/1 in
+91.204s**. Reusing one lazily generated production generator table cut this from
+the prior quotient-only gate's 173.204s despite adding the final proofs; the
+reduced relation/state-machine tooth is **1/1 in 14.063s**. Canonical quotient
+and final-certificate wire, Poseidon/clearing, exact sampler image, and PQ
+replacement remain open.
 
 The public exact-BFV lowering is no longer duplicated between proof backends
 (`6b9691c83`). `private_book_bfv_exact` derives the public key, ciphertext,
