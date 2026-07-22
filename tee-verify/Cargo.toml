@@ -11,21 +11,44 @@ edition = "2021"
 # produce→verify loop — so it resolves under the ONE root lock those members use.
 # (The stale local Cargo.lock from the detached era is ignored by cargo.)
 
+[features]
+# The zkTLS GradedMark producer. OFF by default: the zkTLS lane is a TRUSTING carrier
+# (its price authenticity is verified UPSTREAM in `dregg-zkoracle-prove`, which this crate
+# cannot see), so its constructor is NOT part of the default public surface — with the
+# feature off there is genuinely NO bare-price constructor. Only the upstream producer
+# (which actually verified the session) enables it. See `oracle_mark::GradedMark`.
+zktls-producer = []
+# Optional DCAP collateral HTTP client (Intel PCS / Phala PCCS) for the real-quote TDX
+# integration test and tooling. OFF by default so the default build and the verify TCB stay
+# network-free — production supplies a pre-fetched `QuoteCollateralV3`. Enables dcap-qvl's
+# `report` (reqwest) feature + a Tokio runtime to block on the async fetch.
+collateral-fetch = ["dcap-qvl/report", "dep:tokio"]
+
 [dependencies]
 dregg-cell = { path = "../cell" }
 ciborium = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
+serde_json = "1"
 x509-parser = { version = "0.16", features = ["verify"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
 sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
 # The AMD ARK/ASK roots sign RSA-4096 **PSS** (MGF1-SHA-384). x509-parser's `verify`
 # feature covers only PKCS#1 v1.5 / ECDSA / Ed25519 (see snp::verify_cert_link), so the
 # SNP chain routes id-RSASSA-PSS links to this maintained RSA impl for the real AMD path.
 rsa = "0.9"
+# Intel TDX (DCAP) quote verification — the audited pure-Rust DCAP quote-verification
+# library. `verify()` runs PCK chain → Intel SGX Root CA, QE sig, attestation-key binding,
+# quote sig, TCB status + QE identity. Default features off: the lean verify path needs only
+# `std` + `ring` (crypto) + `default-x509` (parser/DefaultConfig); the collateral HTTP client
+# (reqwest) rides the optional `collateral-fetch` feature. See src/tdx.rs.
+dcap-qvl = { version = "0.5", default-features = false, features = ["std", "ring", "default-x509"] }
+# Optional: drives dcap-qvl's async collateral client for the `collateral-fetch` test.
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
 
 [dev-dependencies]
-hex = "0.4"
 # Self-signed test PKI (ARK->ASK->VCEK) for the SNP cert-chain test. Default features
 # (crypto/pem/ring) supply ECDSA P-384 keygen + PEM export; the p384 `pem` default feature
 # (already enabled) supplies PKCS#8 decode so the VCEK signer can be reconstructed from the

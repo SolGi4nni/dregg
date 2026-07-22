@@ -35,7 +35,7 @@ fn commit_bytes(att: &ZkOracleAttestation) -> Vec<u8> {
 /// of `amount`/`origin` was established by `verify_coinbase_spot` (a full `verify_zkoracle`) that
 /// produced `attested`; this only binds that verified amount into the mark.
 fn graded_mark_from_verified_price(attested: &AttestedPrice) -> Result<GradedMark, MarkError> {
-    GradedMark::from_zktls_price(
+    GradedMark::from_verified_zktls_session(
         COINBASE_SERVER_NAME,
         &attested.amount,
         commit_bytes(&attested.attestation),

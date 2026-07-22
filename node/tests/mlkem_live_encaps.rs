@@ -33,8 +33,9 @@
 //! blocker rather than passing vacuously.
 
 use dregg_node::{
-    MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, install_mlkem_verified_decaps_core,
-    install_mlkem_verified_encaps_core,
+    MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, MlKemKeygenCoreInstall,
+    install_mlkem_verified_decaps_core, install_mlkem_verified_encaps_core,
+    install_mlkem_verified_keygen_core,
 };
 use ml_kem::kem::Decapsulate as _;
 use ml_kem::{Ciphertext, EncodedSizeUser as _, KemCore, MlKem768};
@@ -86,6 +87,13 @@ fn lean_shadow_encaps(wire: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 #[test]
 fn deployed_ml_kem_encaps_routes_through_lean_core() {
+    assert!(
+        matches!(
+            install_mlkem_verified_keygen_core(),
+            MlKemKeygenCoreInstall::Installed | MlKemKeygenCoreInstall::AlreadyInstalled
+        ),
+        "the deployed hybrid path requires the verified ML-KEM keygen authority"
+    );
     // ── DRIVE THE NODE'S STARTUP INSTALL (the exact production function) ────────────────────────
     let outcome = install_mlkem_verified_encaps_core();
     match outcome {

@@ -33,7 +33,7 @@ use dregg_cell::tee_attest::{
     TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims, TeeWitnessedPredicateVerifier,
     tee_predicate_vk,
 };
-use dregg_tee_verify::{NitroVerifier, SnpVerifier};
+use dregg_tee_verify::{NitroVerifier, SnpVerifier, TdxVerifier};
 
 /// The genuine host-side TEE-fact verifier: one installed object that dispatches
 /// on the quote's kind byte to the real vendor verifier. Both arms are REAL and
@@ -44,6 +44,12 @@ pub struct TeeFactVerifier {
     /// AMD SEV-SNP path: `SnpVerifier::new()` has NO pinned AMD roots and rejects
     /// every report; upgrade with [`TeeFactVerifier::with_snp`].
     snp: SnpVerifier,
+    /// Intel TDX (DCAP) path. `None` = fail-closed (no verifier installed). Unlike Nitro
+    /// (static AWS root) and SNP (static AMD roots), a TDX verifier needs Intel-signed
+    /// **collateral** that is per-platform (FMSPC-specific) and time-sensitive, so it
+    /// cannot be constructed statically here — install one built over pre-fetched
+    /// collateral via [`TeeFactVerifier::with_tdx`]. Until then the IntelTdx arm refuses.
+    tdx: Option<TdxVerifier>,
 }
 
 impl TeeFactVerifier {
@@ -53,6 +59,7 @@ impl TeeFactVerifier {
         TeeFactVerifier {
             nitro: NitroVerifier::new(),
             snp: SnpVerifier::new(),
+            tdx: None,
         }
     }
 
@@ -64,6 +71,7 @@ impl TeeFactVerifier {
         TeeFactVerifier {
             nitro: NitroVerifier::without_freshness(),
             snp: SnpVerifier::new(),
+            tdx: None,
         }
     }
 
@@ -72,6 +80,14 @@ impl TeeFactVerifier {
     /// SEV-SNP dispatch arm.
     pub fn with_snp(mut self, snp: SnpVerifier) -> TeeFactVerifier {
         self.snp = snp;
+        self
+    }
+
+    /// Install a TDX (DCAP) verifier built over pre-fetched Intel collateral (e.g.
+    /// `TdxVerifier::new(collateral)` or `TdxVerifier::from_collateral_json(json)?`) for
+    /// the IntelTdx dispatch arm. Without this the arm is fail-closed.
+    pub fn with_tdx(mut self, tdx: TdxVerifier) -> TeeFactVerifier {
+        self.tdx = Some(tdx);
         self
     }
 }
@@ -91,6 +107,13 @@ impl TeeAttestationVerifier for TeeFactVerifier {
         match kind {
             TeeQuoteKind::AwsNitro => self.nitro.verify_report(kind, report_bytes),
             TeeQuoteKind::SevSnp => self.snp.verify_report(kind, report_bytes),
+            TeeQuoteKind::IntelTdx => match &self.tdx {
+                Some(tdx) => tdx.verify_report(kind, report_bytes),
+                None => Err(
+                    "no TDX verifier installed (fail-closed): call TeeFactVerifier::with_tdx with a verifier over pre-fetched Intel collateral"
+                        .to_string(),
+                ),
+            },
             other => Err(format!(
                 "no verifier wired for TEE quote kind {other:?} (fail-closed)"
             )),

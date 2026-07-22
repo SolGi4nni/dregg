@@ -79,7 +79,7 @@ bincode = "1.3"
 # (`tee-verify/src/oracle_mark.rs`, `metatheory/Market/OracleWeld.lean`). Dev-only: the graded-mark
 # TYPE lives in tee-verify; this crate is the zkTLS PRODUCER, tied end-to-end in
 # `tests/oracle_mark_zktls.rs`. No runtime dependency, no cycle (tee-verify does not depend here).
-dregg-tee-verify = { path = "../tee-verify" }
+dregg-tee-verify = { path = "../tee-verify", features = ["zktls-producer"] }
 
 # The live coinbase demo needs the heavy tlsn-live backend; gate it so `cargo build` without
 # the feature does not try to compile it.

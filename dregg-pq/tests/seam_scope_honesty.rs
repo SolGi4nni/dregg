@@ -5,12 +5,13 @@
 //!
 //! This test used to assert something broader and now FALSE: that "the deployed sign/KEM paths are
 //! crate-authoritative". That was true when the only Lean seams for sign/KEM were TOY-scoped. It is
-//! no longer true. `dregg-pq` now carries REAL, full-byte cores for three of the four operations,
+//! no longer true. `dregg-pq` now carries REAL, full-byte cores for all six PQ operations,
 //! and every archive-linked host installs them at startup:
 //!
 //!   * ML-DSA-65 VERIFY  — `install_verified_mldsa_verify_core`   (node, SDK, starbridge-v2, drorb)
 //!   * ML-DSA-65 SIGN    — `install_verified_mldsa_sign_core_real` (node, SDK, starbridge-v2, drorb)
-//!   * ML-KEM-768 KEM    — `install_verified_mlkem_{encaps,decaps}_core` (node, drorb)
+//!   * ML-DSA-65 KEYGEN  — `install_verified_mldsa_keygen_core_real` (node, SDK)
+//!   * ML-KEM-768 KEM    — `install_verified_mlkem_{keygen,encaps,decaps}_core` (node, SDK)
 //!
 //! On an installed host `MlDsaKey::try_sign` PRODUCES its bytes from the extracted Lean
 //! `MlDsaSignReal.signCore` and never calls `fips204` at all — observed under gdb in the drorb
@@ -25,16 +26,11 @@
 //! the toy seams with a POISON payload and drive the real deployed fns: if any deployed path ever
 //! got wired to a toy seam, this test breaks loudly.
 //!
-//! # What remains CRATE-AUTHORITATIVE (the honest residual)
+//! # What remains outside these verified cores (the honest residual)
 //!
-//! 1. **KEYGEN, both algorithms.** `MlDsaKey::from_ed25519_seed` calls `fips204`'s
-//!    `ml_dsa_65::KG::keygen_from_seed`, and `ml_kem768_keygen` calls `ml-kem`'s
-//!    `MlKem768::generate`. There is no verified keygen core and — note this — NO audit-gate guard
-//!    on either, so keygen does not abort and does not announce itself. This is the largest
-//!    remaining unaudited surface in this crate.
-//! 2. **The classical halves.** Ed25519 (`ed25519-dalek`) and X25519 (`x25519-dalek`).
-//! 3. **The combiner.** The X-Wing concat-KDF is Rust `hkdf`/`sha2`, not a verified object.
-//! 4. **Any host that never installs.** A process that skips the installs still has `fips204` /
+//! 1. **The classical halves.** Ed25519 (`ed25519-dalek`) and X25519 (`x25519-dalek`).
+//! 2. **The combiner.** The X-Wing concat-KDF is Rust `hkdf`/`sha2`, not a verified object.
+//! 3. **Any host that never installs.** A process that skips the installs still has `fips204` /
 //!    `ml-kem` behind sign/verify/KEM — but since the audit gate landed it ABORTS on first use
 //!    rather than substituting silently. That is the gate's whole job.
 //!
@@ -207,21 +203,27 @@ fn a_toy_seam_install_never_reports_the_real_core_as_installed() {
         "installing the TOY decaps seam must NOT make the REAL decaps core report as installed"
     );
 
-    // KEYGEN: the honest residual, stated in code. There is no verified keygen core to install and
-    // no audit-gate guard on the keygen path, so BOTH keygens are answered by the unaudited crates
-    // here and in every deployed process. If a verified keygen core is ever added, this assertion
-    // is where the scope statement must be updated in the same breath.
+    // The toy seams likewise cannot masquerade as either REAL keygen core. This test binary deliberately
+    // opts into crate fallbacks because it does not link the Lean archive; archive-linked hosts install the
+    // two real cores and do not take these fallback branches.
+    assert!(
+        !dregg_pq::lean_keygen_core_real_installed(),
+        "toy sign install must not report the REAL ML-DSA keygen core as installed"
+    );
+    assert!(
+        !dregg_pq::mlkem_keygen_real_core_installed(),
+        "toy KEM installs must not report the REAL ML-KEM keygen core as installed"
+    );
     let key = MlDsaKey::from_ed25519_seed(&SEED);
     assert_eq!(
         key.public_bytes().len(),
         dregg_pq::ML_DSA_PK_LEN,
-        "ML-DSA keygen is `fips204`'s KG::keygen_from_seed — CRATE-AUTHORITATIVE, ungated, and the \
-         largest unaudited surface left in this crate"
+        "the explicit test-only fallback still produces a full ML-DSA-65 public key"
     );
     let (ek, dk) = dregg_pq::ml_kem768_keygen();
     assert_eq!(
         (ek.len(), dk.len()),
         (1184, 2400),
-        "ML-KEM keygen is `ml-kem`'s MlKem768::generate — likewise CRATE-AUTHORITATIVE and ungated"
+        "the explicit test-only fallback still produces a full ML-KEM-768 keypair"
     );
 }

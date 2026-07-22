@@ -141,7 +141,7 @@ pub fn check_escrow_conservation(
         ("released", schema.released_slot),
         ("refunded", schema.refunded_slot),
     ] {
-        if let Some((path, raw)) = writes.get(&slot)
+        if let Some((path, raw)) = writes.get(&(slot as u64))
             && decode_u64_field(raw).is_none()
         {
             findings.push(Finding {
@@ -290,7 +290,7 @@ pub fn check_exposure_bound(
 
     // A non-decodable reserve write is its own finding (a hash in an amount slot
     // is a construction bug the ceiling arithmetic cannot compare against).
-    if let Some((path, raw)) = writes.get(&schema.reserve_slot)
+    if let Some((path, raw)) = writes.get(&(schema.reserve_slot as u64))
         && decode_u64_field(raw).is_none()
     {
         findings.push(Finding {
@@ -556,7 +556,7 @@ pub fn check_provenance_chain_in_forest(
     // Append contiguous entries starting at prior_committed.len().
     let mut i = prior_committed.len();
     loop {
-        let slot = schema.entry_base + i;
+        let slot = (schema.entry_base + i) as u64;
         match writes.get(&slot) {
             Some((_, raw)) => {
                 committed.push(*raw);
@@ -569,11 +569,11 @@ pub fn check_provenance_chain_in_forest(
     // A gap (an entry written past a hole) is itself a malformed log.
     let highest_written = writes
         .keys()
-        .filter(|&&s| s >= schema.entry_base)
-        .map(|&s| s - schema.entry_base)
+        .filter(|&&s| s >= schema.entry_base as u64)
+        .map(|&s| s - schema.entry_base as u64)
         .max();
     if let Some(hi) = highest_written {
-        let contiguous_top = committed.len(); // exclusive
+        let contiguous_top = committed.len() as u64; // exclusive
         if hi + 1 > contiguous_top {
             findings.push(Finding {
                 guarantee: "provenance (chain)".to_string(),
@@ -651,7 +651,7 @@ pub fn check_writeonce_slots(
     let mut findings = Vec::new();
     let writes = last_field_writes(forest, cell);
     for &slot in writeonce_slots {
-        if let (Some((path, new)), Some(old)) = (writes.get(&slot), prior.get(&slot))
+        if let (Some((path, new)), Some(old)) = (writes.get(&(slot as u64)), prior.get(&slot))
             && new != old
         {
             findings.push(Finding {
@@ -675,8 +675,8 @@ pub fn check_writeonce_slots(
 /// The last `SetField` write to each slot of `cell` in the forest (execution
 /// order — a later write wins, as it does in the executor), with the node path
 /// of that write.
-fn last_field_writes(forest: &CallForest, cell: CellId) -> BTreeMap<usize, (Vec<usize>, [u8; 32])> {
-    let mut out: BTreeMap<usize, (Vec<usize>, [u8; 32])> = BTreeMap::new();
+fn last_field_writes(forest: &CallForest, cell: CellId) -> BTreeMap<u64, (Vec<usize>, [u8; 32])> {
+    let mut out: BTreeMap<u64, (Vec<usize>, [u8; 32])> = BTreeMap::new();
     walk(forest, |path, node| {
         for eff in &node.action.effects {
             if let Effect::SetField {
@@ -709,7 +709,7 @@ fn ordered_field_writes(
                 value,
             } = eff
                 && *c == cell
-                && *index == slot
+                && *index == slot as u64
             {
                 out.push((path.to_vec(), decode_u64_field(value), *value));
             }
@@ -721,11 +721,11 @@ fn ordered_field_writes(
 /// Resolve an amount slot: the in-forest decoded write, else the supplied
 /// fallback (prior-committed value, or a default).
 fn resolve_amount(
-    writes: &BTreeMap<usize, (Vec<usize>, [u8; 32])>,
+    writes: &BTreeMap<u64, (Vec<usize>, [u8; 32])>,
     slot: usize,
     fallback: Option<u64>,
 ) -> Option<u64> {
-    match writes.get(&slot) {
+    match writes.get(&(slot as u64)) {
         Some((_, raw)) => decode_u64_field(raw),
         None => fallback,
     }

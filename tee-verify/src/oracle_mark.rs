@@ -14,15 +14,26 @@
 //! - **TEE-attested** ([`GradedMark::from_tee_attested`]) — an [`crate::AttestedFact`] over a price
 //!   payload, verified by the pinned vendor root (`attest_data`): the price came from a named
 //!   enclave (code identity `measurement`). Grade **ATTESTED**.
-//! - **zkTLS-provenance** ([`GradedMark::from_zktls_price`]) — a price extracted from a named
-//!   origin's authenticated response body, whose zkTLS/MPC-TLS session is verified UPSTREAM by
+//! - **zkTLS-provenance** ([`GradedMark::from_verified_zktls_session`]) — a price extracted from a
+//!   named origin's authenticated response body, whose zkTLS/MPC-TLS session is verified UPSTREAM by
 //!   `dregg-zkoracle-prove` (`verify_coinbase_spot` → `AttestedPrice`). Grade **ATTESTED**
 //!   (provenance).
 //!
-//! There is **no bare-price constructor**: you cannot build a `GradedMark` from an unattested
-//! price. That is the operational half of the closure the Lean tie (`Market/OracleWeld.lean`)
-//! mirrors — the lending consumer takes a `GradedMark`, never a free `Mark`, so it can never be
-//! fed an unattested price.
+//! ## Which lane verifies WHERE (the honest trust boundary)
+//!
+//! The **TEE lane is verified in this crate**: [`GradedMark::from_tee_attested`] runs
+//! [`attest_data`], which checks the vendor cert chain, the pinned enclave measurement, and the
+//! payload↔`report_data` binding before a mark exists. A forged/wrong/tampered attestation yields
+//! no mark, right here.
+//!
+//! The **zkTLS lane cannot be verified in this crate** — the MPC-TLS/zkTLS session authenticity is
+//! established in `dregg-zkoracle-prove` (which depends on this crate, so this crate cannot see its
+//! `AttestedPrice`). Its constructor is therefore a **trusting carrier**, gated behind the
+//! off-by-default `zktls-producer` cargo feature and named [`GradedMark::from_verified_zktls_session`]
+//! to state its precondition: the caller MUST have verified the session upstream. **In the default
+//! build the feature is off, so there is genuinely no bare-price constructor** — the only way to a
+//! `GradedMark` is the in-crate-verified TEE lane. The lending consumer takes a `GradedMark`, never
+//! a free `Mark`, so it can never be fed an unattested price.
 //!
 //! ## The honest grade — ATTESTED, not PROVED (the whole point)
 //!
@@ -185,9 +196,10 @@ impl Grade {
 }
 
 /// **A GRADED MARK** — a price bound to its provenance and grade. The lending/solvency consumer
-/// takes THIS, never a bare price: an unattested mark is unconstructable (there is no public
-/// bare-price constructor — only [`GradedMark::from_tee_attested`] /
-/// [`GradedMark::from_zktls_price`], each of which composes a verified integrity lane).
+/// takes THIS, never a bare price. In the default build the only constructor is the in-crate-verified
+/// [`GradedMark::from_tee_attested`]; the trusting zkTLS carrier
+/// [`GradedMark::from_verified_zktls_session`] exists only under the off-by-default `zktls-producer`
+/// feature (enabled solely by the upstream producer that actually verified the session).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GradedMark {
     price: MarkPrice,
@@ -246,28 +258,34 @@ impl GradedMark {
         })
     }
 
-    /// **THE zkTLS LANE.** Bind a price extracted from a named origin's *already-verified* zkTLS
-    /// session into a `GradedMark`. The AUTHENTICITY of `amount` + `origin` is verified UPSTREAM by
-    /// `dregg-zkoracle-prove` (`endpoints::price::verify_coinbase_spot` → `AttestedPrice`, a full
-    /// 3-leg `verify_zkoracle`); this constructor binds that verified amount + its
-    /// `content_commitment` into the mark. `content_commit` is the zkoracle content commitment
-    /// (the in-circuit connect target). Do NOT feed this an unverified amount — the sanctioned
-    /// caller is the zkoracle price lane, exercised end-to-end by
-    /// `zkoracle-prove/tests/oracle_mark_zktls.rs`.
+    /// **THE zkTLS LANE — a TRUSTING carrier (feature `zktls-producer`).** Bind a price extracted
+    /// from a named origin's *already-verified* zkTLS session into a `GradedMark`. This crate CANNOT
+    /// verify the session (the MPC-TLS/zkTLS authenticity of `amount` + `origin` is established
+    /// UPSTREAM by `dregg-zkoracle-prove`: `endpoints::price::verify_coinbase_spot` → `AttestedPrice`,
+    /// a full 3-leg `verify_zkoracle`). The constructor's NAME is its contract: the caller MUST have
+    /// verified the session and holds its `content_commitment` (the in-circuit connect target); this
+    /// only binds that verified amount + commitment into the mark. The sanctioned caller is the
+    /// zkoracle price lane, exercised end-to-end by `zkoracle-prove/tests/oracle_mark_zktls.rs`.
     ///
-    /// Refuses a `content_commit` shorter than a real commitment or an `amount` that is not a clean
-    /// price ([`MarkError::PriceDecode`]).
-    pub fn from_zktls_price(
+    /// Gated behind the off-by-default `zktls-producer` feature so it is NOT in the default public
+    /// surface — with the feature off there is no bare-price constructor at all (only the in-crate
+    /// verified [`GradedMark::from_tee_attested`]).
+    ///
+    /// Refuses a `content_commit` shorter than a real 32-byte commitment or an `amount` that is not
+    /// a clean price ([`MarkError::PriceDecode`]).
+    #[cfg(feature = "zktls-producer")]
+    pub fn from_verified_zktls_session(
         origin: &str,
         amount: &str,
         content_commit: Vec<u8>,
     ) -> Result<GradedMark, MarkError> {
-        if content_commit.is_empty() {
-            return Err(MarkError::PriceDecode(
-                "zktls provenance requires a non-empty content commitment (the zkoracle connect \
-                 target)"
-                    .to_string(),
-            ));
+        // A real zkoracle content commitment is a 32-byte digest; anything shorter is not one.
+        if content_commit.len() < 32 {
+            return Err(MarkError::PriceDecode(format!(
+                "zktls provenance requires a >=32-byte content commitment (the zkoracle connect \
+                 target); got {} bytes",
+                content_commit.len()
+            )));
         }
         let price = MarkPrice::parse(amount).map_err(MarkError::PriceDecode)?;
         Ok(GradedMark {
@@ -446,15 +464,13 @@ mod tests {
         assert!(matches!(err, MarkError::PriceDecode(_)));
     }
 
+    #[cfg(feature = "zktls-producer")]
     #[test]
     fn zktls_lane_binds_a_verified_amount() {
-        // POSITIVE POLE (zkTLS): a verified amount + origin + content commitment → a graded mark.
-        let mark = GradedMark::from_zktls_price(
-            "api.coinbase.com",
-            "64250.37",
-            vec![0xAB, 0xCD, 0xEF, 0x01],
-        )
-        .expect("a verified zktls amount binds");
+        // POSITIVE POLE (zkTLS): a verified amount + origin + a real 32-byte content commitment.
+        let mark =
+            GradedMark::from_verified_zktls_session("api.coinbase.com", "64250.37", vec![0xAB; 32])
+                .expect("a verified zktls amount binds");
         assert_eq!(
             mark.price(),
             MarkPrice {
@@ -467,14 +483,24 @@ mod tests {
         assert_eq!(mark.lending_composite_grade(), Grade::Attested);
     }
 
+    #[cfg(feature = "zktls-producer")]
     #[test]
-    fn zktls_lane_refuses_a_bad_amount_or_empty_commit() {
+    fn zktls_lane_refuses_a_bad_amount_or_short_commit() {
+        // A bad amount (with a valid 32-byte commit) is refused.
         assert!(matches!(
-            GradedMark::from_zktls_price("api.coinbase.com", "n/a", vec![1]).unwrap_err(),
+            GradedMark::from_verified_zktls_session("api.coinbase.com", "n/a", vec![0xAB; 32])
+                .unwrap_err(),
+            MarkError::PriceDecode(_)
+        ));
+        // A too-short commitment (not a real 32-byte connect target) is refused.
+        assert!(matches!(
+            GradedMark::from_verified_zktls_session("api.coinbase.com", "64250.37", vec![1])
+                .unwrap_err(),
             MarkError::PriceDecode(_)
         ));
         assert!(matches!(
-            GradedMark::from_zktls_price("api.coinbase.com", "64250.37", vec![]).unwrap_err(),
+            GradedMark::from_verified_zktls_session("api.coinbase.com", "64250.37", vec![])
+                .unwrap_err(),
             MarkError::PriceDecode(_)
         ));
     }

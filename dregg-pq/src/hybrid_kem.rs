@@ -629,26 +629,20 @@ fn shared_to_array(ss: ml_kem::SharedKey<MlKem768>) -> [u8; 32] {
 /// state. The returned [`HybridOffer`] is sent to the initiator; the
 /// [`HybridResponder`] is retained for [`finish`](HybridResponder::finish).
 pub fn responder_offer() -> (HybridOffer, HybridResponder) {
-    // NO VERIFIED PATH EXISTS FOR THE PQ HALF OF THIS OFFER. The hybrid's decaps
-    // routes to the Lean-verified `MlKemDecaps` core when installed, but the
-    // KEYPAIR that decaps consumes is minted here by the unaudited `ml-kem` crate
-    // -- there is no verified ML-KEM keygen core in the metatheory and none
-    // exported from `libdregg_lean.a`. Refuses (aborts) unless
-    // DREGG_ALLOW_UNAUDITED_PQ=1 -- see `crate::audit`.
-    crate::audit::guard_no_verified_core(
-        "ML-KEM-768 KeyGen (hybrid responder offer, from OS entropy)",
-        "ml-kem 0.2.3",
-        "the ML-KEM-768 decapsulation key backing this hybrid session's shared secret",
-    );
     let mut rng = OsCsprng;
 
     // Classical half: fresh X25519 ephemeral keypair.
     let x25519_sk = StaticSecret::random_from_rng(&mut rng);
     let x25519_pk = PublicKey::from(&x25519_sk).to_bytes();
 
-    // Post-quantum half: fresh ML-KEM-768 keypair.
-    let (mlkem_dk, mlkem_ek) = MlKem768::generate(&mut rng);
-    let mlkem_ek_bytes = mlkem_ek.as_bytes().to_vec();
+    // Post-quantum half: fresh ML-KEM-768 keypair through the SAME authority seam as the bare API. When the
+    // Lean core is installed, this is the extracted KAT-anchored keygen; when it is absent the shared helper
+    // refuses unless the operator explicitly opted into the unaudited crate fallback. Decode the fixed-size
+    // secret here only because `HybridResponder` retains the typed key for the crate decaps fallback.
+    let (mlkem_ek_bytes, mlkem_dk_bytes) = ml_kem768_keygen();
+    let mlkem_dk_encoded = Encoded::<Dk>::try_from(mlkem_dk_bytes.as_slice())
+        .expect("ML-KEM-768 keygen returned a wrong-length decapsulation key");
+    let mlkem_dk = Dk::from_bytes(&mlkem_dk_encoded);
 
     let offer = HybridOffer {
         x25519_pk,
@@ -789,8 +783,8 @@ impl HybridResponder {
 /// X-Wing hybrids that combine it with a SEPARATELY-run X25519 (e.g. the orb TLS 1.3 `X25519MLKEM768`
 /// key exchange, whose classical half is its own EverCrypt X25519 and whose combiner is its own concat-KDF).
 /// Returns `(ek, dk)` — the 1184-byte encapsulation key and the 2400-byte decapsulation key at their
-/// FIPS-203 ML-KEM-768 sizes. The SAME `ml-kem` v0.2.3 primitive [`responder_offer`] mints its post-quantum
-/// half from; dregg `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
+/// FIPS-203 ML-KEM-768 sizes. The SAME authority seam mints [`responder_offer`]'s post-quantum half; dregg
+/// `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
 pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
     let mut rng = OsCsprng;
     if let Some(core) = LEAN_KEM_KEYGEN_CORE_REAL.get() {
@@ -813,14 +807,13 @@ pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
         );
         return (ek, dk);
     }
-    // FALLBACK (no verified core installed): keep the loud keygen warning + the `ml-kem` crate primitive.
-    // Unlike encaps/decaps (which ABORT via `guard_unaudited_fallback`), keygen WARNS and proceeds -- the
-    // deployed, archive-linked processes install the verified core above (assert-fatal), so this branch is
-    // only reached by a process that cannot link the archive.
-    crate::audit::guard_no_verified_core(
+    // FALLBACK (no verified core installed): refuse unless the operator explicitly accepts the unaudited
+    // crate primitive. Key generation creates long-lived secret authority and therefore follows the same
+    // fail-closed rule as sign/verify/encaps/decaps now that an installable verified core exists.
+    crate::audit::guard_unaudited_fallback(
         "ML-KEM-768 KeyGen (bare, from OS entropy)",
         "ml-kem 0.2.3",
-        "an ML-KEM-768 decapsulation key (2400 B) guarding every session secret it opens",
+        "install_verified_mlkem_keygen_core",
     );
     let (dk, ek) = MlKem768::generate(&mut rng);
     (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())

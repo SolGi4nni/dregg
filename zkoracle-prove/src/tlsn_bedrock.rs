@@ -126,6 +126,9 @@ pub struct BedrockRoundtrip {
     pub verified: VerifiedResponse,
     pub presentation_bytes: Vec<u8>,
     pub pinned_server: String,
+    /// The model id the attested session targeted — the pin a re-verifier binds so the
+    /// attestation names WHICH model produced the body (see [`verify_bedrock_presentation`]).
+    pub model_id: String,
     /// The separate hosted notary's pin (socket + pinned public key) this attestation binds to.
     pub notary_pin: NotaryPin,
     /// Architectural marker: the notary ran as a SEPARATE party over a socket (never in-process).
@@ -308,6 +311,7 @@ async fn prove_bedrock_presentation(
 pub fn verify_bedrock_presentation(
     presentation_bytes: &[u8],
     expected_host: &str,
+    expected_model_id: &str,
     expected_notary_key: &VerifyingKey,
 ) -> Result<VerifiedResponse> {
     let presentation: Presentation =
@@ -361,6 +365,24 @@ pub fn verify_bedrock_presentation(
     let sent_redacted = partial.sent_unsafe().to_vec();
     let recv_redacted = partial.received_unsafe().to_vec();
 
+    // MODEL PIN: the attested session must have targeted the EXPECTED model, not a different one
+    // on the same host. The wire request target is `/model/{model_id}/converse` (raw `:`, per
+    // `BedrockExchange::wire_uri`) and is REVEALED in the transcript (only the SigV4 authorization
+    // VALUE and the request body are redacted). Without this, a session to
+    // `/model/amazon.nova-.../converse` on the same Bedrock host would verify identically — the
+    // "authentic" guarantee would silently not name which model produced the body. Fail-closed: if
+    // the target is absent (not revealed, or a different model), refuse.
+    let want_target = format!("/model/{expected_model_id}/converse");
+    if !sent_redacted
+        .windows(want_target.len())
+        .any(|w| w == want_target.as_bytes())
+    {
+        return Err(anyhow!(
+            "model pin: the attested request target does not contain {want_target:?} \
+             (a session to a different model on the same host would otherwise verify identically)"
+        ));
+    }
+
     let body_start = recv_redacted
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -391,13 +413,19 @@ async fn run_bedrock_roundtrip_inner(
     let presentation_bytes = prove_bedrock_presentation(ex, pin.addr).await?;
     notary.join().await?;
 
-    // Verify under the PINNED notary key (a wrong key would be rejected).
-    let verified = verify_bedrock_presentation(&presentation_bytes, &ex.host, &pin.verifying_key)?;
+    // Verify under the PINNED notary key (a wrong key would be rejected) AND the pinned model.
+    let verified = verify_bedrock_presentation(
+        &presentation_bytes,
+        &ex.host,
+        &ex.model_id,
+        &pin.verifying_key,
+    )?;
 
     Ok(BedrockRoundtrip {
         verified,
         presentation_bytes,
         pinned_server: ex.host.clone(),
+        model_id: ex.model_id.clone(),
         notary_pin: pin,
         separate_notary: true,
     })

@@ -157,8 +157,12 @@ fn bedrock_attested_by_separate_pinned_notary() {
     assert!(rt.separate_notary, "notary must be a separate hosted party");
 
     // 2. The presentation verifies under the PINNED notary key.
-    let ok =
-        verify_bedrock_presentation(&rt.presentation_bytes, &host, &rt.notary_pin.verifying_key);
+    let ok = verify_bedrock_presentation(
+        &rt.presentation_bytes,
+        &host,
+        &rt.model_id,
+        &rt.notary_pin.verifying_key,
+    );
     assert!(
         ok.is_ok(),
         "presentation must verify under the PINNED notary key: {ok:?}"
@@ -171,7 +175,8 @@ fn bedrock_attested_by_separate_pinned_notary() {
         wrong_key, rt.notary_pin.verifying_key,
         "the wrong key must differ from the pin"
     );
-    let rejected = verify_bedrock_presentation(&rt.presentation_bytes, &host, &wrong_key);
+    let rejected =
+        verify_bedrock_presentation(&rt.presentation_bytes, &host, &rt.model_id, &wrong_key);
     assert!(
         rejected.is_err(),
         "a presentation signed by the trusted notary must be REJECTED under a wrong/unpinned key"
@@ -268,7 +273,8 @@ fn bedrock_attested_under_durable_pinned_notary() {
         known_durable, durable_pin,
         "reloaded key matches the anchor"
     );
-    let accepted = verify_bedrock_presentation(&rt.presentation_bytes, &host, &known_durable);
+    let accepted =
+        verify_bedrock_presentation(&rt.presentation_bytes, &host, &rt.model_id, &known_durable);
     assert!(
         accepted.is_ok(),
         "a verifier holding the loaded DURABLE pin must ACCEPT: {accepted:?}"
@@ -280,7 +286,7 @@ fn bedrock_attested_under_durable_pinned_notary() {
         wrong, durable_pin,
         "the wrong key must differ from the durable pin"
     );
-    let rejected = verify_bedrock_presentation(&rt.presentation_bytes, &host, &wrong);
+    let rejected = verify_bedrock_presentation(&rt.presentation_bytes, &host, &rt.model_id, &wrong);
     assert!(
         rejected.is_err(),
         "an attestation under the durable notary must be REJECTED under a wrong key"

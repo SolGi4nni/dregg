@@ -36,7 +36,10 @@
 //! crate fallback (a valid FIPS-203 decaps, just not Lean-authoritative). In that build the routing cannot be
 //! demonstrated; the test then FAILS LOUDLY with the exact blocker rather than passing vacuously.
 
-use dregg_node::{MlKemDecapsCoreInstall, install_mlkem_verified_decaps_core};
+use dregg_node::{
+    MlKemDecapsCoreInstall, MlKemKeygenCoreInstall, install_mlkem_verified_decaps_core,
+    install_mlkem_verified_keygen_core,
+};
 use ml_kem::kem::Encapsulate as _;
 use ml_kem::{EncodedSizeUser as _, KemCore, MlKem768};
 use rand_core::OsRng;
@@ -84,6 +87,13 @@ fn lean_shadow_secret(wire: &str) -> Option<Vec<u8>> {
 
 #[test]
 fn deployed_ml_kem_decaps_routes_through_lean_core() {
+    assert!(
+        matches!(
+            install_mlkem_verified_keygen_core(),
+            MlKemKeygenCoreInstall::Installed | MlKemKeygenCoreInstall::AlreadyInstalled
+        ),
+        "the deployed hybrid path requires the verified ML-KEM keygen authority"
+    );
     // ── DRIVE THE NODE'S STARTUP INSTALL (the exact production function) ────────────────────────
     let outcome = install_mlkem_verified_decaps_core();
     match outcome {

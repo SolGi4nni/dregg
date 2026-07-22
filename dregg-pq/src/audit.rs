@@ -15,8 +15,8 @@
 //! authority in the deployed binary is code nobody audited. It is reached by
 //! ordinary accidents, not by sabotage:
 //!
-//!   * the git-tracked `dregg-lean-ffi/libdregg_lean.a` seed exports ZERO of the
-//!     three PQ cores (`nm`-established), so a FRESH CLONE takes this path;
+//!   * a stale or incomplete `dregg-lean-ffi/libdregg_lean.a` seed can omit one
+//!     or more of the six PQ cores, so a FRESH CLONE takes this path;
 //!   * `dregg-lean-ffi`'s build script degrades to that seed on a `lake build`
 //!     failure, a `leanc` failure, or a splice failure — each reported only as a
 //!     `cargo:warning=`, which cargo hides for dependency build scripts;
@@ -33,7 +33,7 @@
 //!   does not link the archive; whether a host will install verified cores is
 //!   unknowable at this crate's compile time. The build-time half of this gate
 //!   therefore lives where the archive IS linked — `dregg-lean-ffi`'s build
-//!   script, which nm-probes the final archive for the three core exports and
+//!   script, which nm-probes the final archive for the six core exports and
 //!   fails the build when they are missing. The two halves are complementary:
 //!   that one catches a bad ARTIFACT, this one catches a host that never
 //!   installed (or a call that beat the install).
@@ -96,10 +96,10 @@ fn refuse_unaudited(op: &str, unaudited_crate: &str, install_fn: &str) -> ! {
          Rather than substitute it silently, the process is aborting.\n\
          \n\
          LIKELY CAUSE (in descending order of how often it is the real one):\n\
-           1. The linked libdregg_lean.a does not EXPORT the verified PQ cores. The\n\
-              git-tracked dregg-lean-ffi/libdregg_lean.a seed exports ZERO of them;\n\
+           1. The linked libdregg_lean.a does not EXPORT all six verified PQ cores;\n\
               a correct archive is produced by dregg-lean-ffi's build script. Check:\n\
-                nm -g --defined-only <archive> | grep dregg_fips204_verify_real\n\
+                nm -g --defined-only <archive> | grep -E \
+                  'dregg_(fips204_(verify|sign)_real|mldsa_keygen_real|mlkem_(keygen|encaps|decaps)_real)'\n\
            2. dregg-lean-ffi's build script degraded to that seed (a `lake build`,\n\
               `leanc`, or archive-splice failure). Cargo HIDES dependency build-script\n\
               warnings; re-run with `cargo build -vv` to see them.\n\
@@ -176,115 +176,6 @@ fn warn_once_permitted() {
              operations with UNAUDITED crate primitives (fips204 / ml-kem). The Lean-verified \
              cores are NOT the authority in this process. Any assurance claim that depends on \
              them is VOID for this run."
-        );
-    }
-}
-
-/// Refuse an operation for which NO verified core EXISTS AT ALL.
-///
-/// Distinct from [`refuse_unaudited`] on purpose. That one says "a verified core
-/// exists; this process did not install it" and names the install call. Saying
-/// that about KEY GENERATION would be a LIE: as of this writing the project has
-/// no Lean-verified ML-DSA / ML-KEM keygen core, exported or otherwise --
-/// `nm -g --defined-only libdregg_lean.a | grep dregg_` yields verify / sign /
-/// encaps / decaps and NOTHING for keygen, and `metatheory/Dregg2/Crypto/`
-/// contains no keygen `@[export]` (the only `keygen` in the Lean tree is
-/// `ThresholdSignerRefinement.ThresholdSignerApi.keygen`, an ABSTRACT TS-UF-0
-/// game field -- public matrix, group key, threshold -- not an executable
-/// FIPS 203/204 key generator).
-///
-/// So there is no install call to point at, and no amount of correct deployment
-/// makes this path go away. The message must say that plainly rather than imply
-/// a fixable misconfiguration.
-///
-/// Never returns. Not a panic -- see the module docs.
-#[cold]
-#[inline(never)]
-fn warn_once_no_verified_core(op: &str, unaudited_crate: &str, consumes: &str) {
-    // Fire exactly once per process. A per-callsite `static` is not possible (this is a
-    // shared fn), so one process-global gate covers all keygen sites -- the fact ("this
-    // process's keys are crate-generated") is a per-process property, not a per-call one.
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.set(()).is_err() {
-        return;
-    }
-    eprintln!(
-        "\n\
-         ================================================================================\n\
-         WARNING: dregg-pq is GENERATING KEYS with an UNAUDITED primitive.\n\
-         ================================================================================\n\
-         operation              : {op}\n\
-         run by                 : the UNAUDITED `{unaudited_crate}` crate\n\
-         verified core available: NONE. This project has NO Lean-verified keygen core.\n\
-         \n\
-         This is NOT a misconfiguration and NOT a missing install call. Unlike verify /\n\
-         sign / encaps / decaps -- each of which HAS an extracted, proved Lean core that a\n\
-         host installs -- key generation has no verified implementation in this project at\n\
-         all. Nothing you can link or install routes this operation to a proven object.\n\
-         \n\
-         WHY THIS IS A WARNING, NOT AN ABORT: the only refuse-escape is the GLOBAL\n\
-         {ALLOW_UNAUDITED_PQ_ENV}=1 opt-in, which ALSO disables the sign/verify/encaps/\n\
-         decaps refuse-gates. Aborting keygen -- which no install could ever satisfy --\n\
-         would force EVERY deployment to set that flag and thereby disarm ALL gates. That\n\
-         is strictly worse than proceeding here behind this loud, un-hideable, greppable\n\
-         warning while the other gates stay armed. (Decision recorded in\n\
-         DEPLOYED-WEAKNESSES.md; reversible to a keygen-specific opt-in if fail-closed\n\
-         keygen is wanted before a verified core exists.)\n\
-         \n\
-         WHAT THIS MEANS: the output is SECRET KEY MATERIAL ({consumes}). A verified\n\
-         sign/verify path over keys minted by an unaudited generator is a PARTIAL assurance\n\
-         story: the proofs cover the transform, not the secret it operates on. Key quality\n\
-         (seed expansion, rejection sampling, the CSPRNG draw) is exactly where a defect is\n\
-         silent and unrecoverable -- a signature made under a weak key verifies perfectly\n\
-         through the verified core. This holds for EVERY key dregg-pq has ever minted, on\n\
-         every host, and is closed only by a Lean-verified ML-DSA/ML-KEM KeyGen core.\n\
-         ================================================================================\n"
-    );
-}
-
-/// Gate an operation whose ONLY implementation is an unaudited crate primitive,
-/// because no verified core for it exists in the project.
-///
-/// Unlike [`guard_unaudited_fallback`] (which ABORTS when an *installable* verified
-/// core is absent), this gap is STRUCTURAL: no verified keygen core exists to install,
-/// so aborting could only be escaped via the global opt-out that disarms every other
-/// gate too. This therefore always RETURNS, emitting a loud once-per-process warning
-/// (see [`warn_once_no_verified_core`]); keygen proceeds on the crate, loudly and
-/// greppably, while the sign/verify/encaps/decaps refuse-gates stay armed.
-///
-/// `consumes` names what the unaudited output becomes (e.g. `"an ML-DSA-65
-/// secret key"`), so the warning states the exposure and not just the call site.
-#[inline]
-pub(crate) fn guard_no_verified_core(op: &str, unaudited_crate: &str, consumes: &str) {
-    if unaudited_fallback_permitted() {
-        warn_once_permitted();
-        warn_once_keygen_unverified();
-        return;
-    }
-    #[cfg(test)]
-    if test_override_active() {
-        return;
-    }
-    warn_once_no_verified_core(op, unaudited_crate, consumes)
-}
-
-/// Announce, once per process, that the PQ KEYS this process is using were
-/// generated by an unaudited crate -- a claim SEPARATE from and not covered by
-/// [`warn_once_permitted`], which is about operations.
-///
-/// An operator who set the opt-in for a legitimate reason (a fallback KAT, a
-/// non-PQ build) still needs to see that KEY MATERIAL specifically left the
-/// verified TCB, because that is the fact which outlives the process: keys
-/// persist, get enrolled, get pinned.
-fn warn_once_keygen_unverified() {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.set(()).is_ok() {
-        eprintln!(
-            "WARNING: dregg-pq generated POST-QUANTUM KEY MATERIAL with an UNAUDITED crate \
-             (fips204 / ml-kem). There is NO Lean-verified keygen core in this project, so \
-             this is true of EVERY key dregg-pq has ever minted, on every host. The verified \
-             sign/verify/encaps/decaps cores operate on keys they did not produce and do not \
-             attest; any assurance claim about this process's KEYS is VOID."
         );
     }
 }
