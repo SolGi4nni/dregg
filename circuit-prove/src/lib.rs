@@ -36,6 +36,7 @@ pub mod dsl_leaf_adapter;
 pub mod effect_vm_p3_air;
 pub mod factory_leaf_adapter;
 pub mod faithful_note_spend;
+pub mod faithful_note_spend_exact_v3;
 pub mod field_delta_range_air;
 pub mod gnark_witness_export;
 pub use gnark_witness_export::export_gnark_witness_json;

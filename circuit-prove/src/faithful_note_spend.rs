@@ -335,7 +335,7 @@ fn validate_proof_shape(proof: &Ir2BatchProof<DreggZkStarkConfig>) -> Result<(),
     Ok(())
 }
 
-fn trace_and_public(
+pub(crate) fn trace_and_public(
     opening: &FaithfulNoteOpening,
     path: &Poseidon2NoteProof16,
     claim: FaithfulNoteSpendClaim,
