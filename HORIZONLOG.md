@@ -11382,3 +11382,60 @@ bilinear accumulation direction and exhibit a nonzero-weight cancellation
 counterexample to the converse. Neither module claims collaborative ZK,
 malicious soundness, Fiat–Shamir compilation, or PCD; those remain explicit
 protocol obligations rather than clean algebra silently promoted into crypto.
+
+## 2026-07-22 — canonical relation bytes, exact acceptance custody, and replay repair
+
+The latest banked wave tightens several distinct boundaries; none of them by
+itself promotes exact FNSP-v3 into live block finalization.
+
+- `b1bbe1e47` batches the four deployed N4K4 private-book odd-NTT polynomials
+  across all three RNS moduli on WGPU. The exact forward/inverse differential
+  runs with `RequireWgpu` and records one input upload, fourteen dispatches, one
+  queue submission, and one readback for the batch. On the hbox RX 6750 XT the
+  four sequential transforms measured 8.912–9.315ms and the batch
+  2.496–2.746ms, a **3.303–3.732×** improvement. This is exact BFV witness
+  generation acceleration, not a change to the proof statement or verifier.
+- `4272ac0e8` makes successful exact FNSP-v3 verification return a privately
+  constructible, non-`Clone` acceptance token containing the exact accepted
+  76-lane statement plus independently recomputed prior/successor `FNS3`
+  anchors. `c4d11dc89` further binds that token to a domain-separated digest of
+  the complete proof carrier embedded in the authenticated `SignedTurn`; a
+  different or malformed carrier with the same public coordinates cannot be
+  substituted during finalization. This is accepted-proof custody, not yet a
+  live executor/finalizer registration.
+- `534396df6` adds the strict `FHUAC001` uniform-allocation certificate and its
+  fhIR worker request/replay binding. The verifier independently recomputes the
+  caller-selected price grid's volume-maximizing price, lowest-index tie,
+  cleared volume, inactive zero fills, and exact largest-remainder/index-order
+  fills; the certificate cannot choose its own grid. The corresponding
+  `Market.UniformAllocationCertificate` Lean model proves the exact allocation
+  certificate laws rather than inheriting the older permissive validation
+  predicate.
+- `f545810e1` gives the closed typed `EffectVmDescriptor2` algebra a versioned
+  canonical fixed-record codec: explicit tags, fixed-order little-endian
+  fields, length-prefixed sequences/strings, strict full consumption, a 64MiB
+  record ceiling, checked host-size conversions, fallible bounded allocation,
+  and a depth-1,024 expression limit. All variants and the production exact
+  FNSP-v3 descriptor round-trip, hostile records refuse, and JSON whitespace or
+  key order cannot change the typed fingerprint. Raw Lean-emitted JSON is now
+  build/parser provenance only; protocol relation identity must be derived
+  from the validated canonical typed object.
+- `98a66d1d3` repairs exact historical replay after later appends. A replay
+  reconstructs the immutable before/after accumulator coordinates from the
+  complete durable prefix, validates the original append and faithful-root
+  history membership, and performs no write or head rewind. Wrong values,
+  missing records, corrupt later chains, forged successors, and partial
+  snapshots fail closed.
+
+The following lanes are active working-tree work and therefore carry **no
+banked or green claim in this checkpoint**: the canonical executable FNSP
+relation/VK envelope and verifier cut-in; the CAS-last dual-write transaction;
+the node finalization candidate; the collaborative Shamir-row handoff; and the
+payload-free Dark Bazaar enter/refresh journey. Promote each only after its own
+commit and focused gate are captured.
+
+Named closure residuals remain: an explicit receipt/state version migration
+from the legacy nullifier-root commitment to `FNS3(root8,count)`; an opaque
+executor-produced finalization authority and live selector/registry wiring;
+the house-blind BFV apex installed in the player-facing host; and actual
+web/Discord/Telegram deployment of the shared game journey.

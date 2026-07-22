@@ -79,6 +79,56 @@ records banked artifacts, not active working-tree intention.
   FRIttata and distributed PIPFRI do not supply coalition privacy; UltraFold
   supplies distribution/layout rather than no-viewer security.
 
+## 0.6. July 22 typed-boundary checkpoint
+
+This section supersedes section 0.5 and older exact-FNSP residual sentences only
+where they disagree. Every item below is banked; the active lanes listed after
+them are not.
+
+- `b1bbe1e47` batches the four deployed N4K4 BFV odd-NTT polynomials across all
+  three RNS moduli with `RequireWgpu`: one input upload, fourteen dispatches,
+  one queue submission, and one readback. Exact CPU differential and inverse
+  recovery are retained. The hbox RX 6750 XT measured 8.912–9.315ms sequential
+  versus 2.496–2.746ms batched, a **3.303–3.732×** improvement.
+- `4272ac0e8` makes exact FNSP-v3 verification yield a privately constructible,
+  non-`Clone` acceptance token carrying the exact accepted 76 lanes and
+  independently recomputed prior/successor `FNS3` anchors. `c4d11dc89` binds
+  that token to the complete proof-carrier bytes in the authenticated signed
+  effect, refusing same-coordinate proof swaps and malformed carriers. This is
+  an acceptance boundary, not live finalization authority.
+- `534396df6` adds strict `FHUAC001` exact uniform-allocation certificates,
+  fhIR worker request/session/replay binding, and the corresponding Lean exact
+  certificate laws. The checker independently selects the volume-maximizing
+  price under the lowest-index tie rule, recomputes exact volume, and verifies
+  inactive-zero and deterministic largest-remainder/index-order fills against
+  a caller-supplied grid; the worker cannot select its own grid.
+- `f545810e1` adds the exhaustive versioned canonical fixed-record codec for the
+  typed `EffectVmDescriptor2` algebra. Explicit tags, fixed field order,
+  fixed-width little-endian integers, length-prefixed strings/vectors, full
+  consumption, bounded/fallible allocation, a 64MiB cap, and a depth limit make
+  the typed object recoverable and hashable without JSON spelling ambiguity.
+  Raw Lean-emitted JSON is parser/build provenance only, not protocol relation
+  identity.
+- `98a66d1d3` repairs idempotent exact historical replay: the store reconstructs
+  and validates the original before/after accumulator coordinates from the
+  complete durable prefix even after later appends, checks exact faithful-root
+  history membership, and neither writes nor rewinds the current head. Wrong
+  values, forged successors, missing records, and corrupt/partial snapshots
+  refuse.
+
+Active but **not banked or gated at this checkpoint**: the canonical executable
+FNSP relation/VK envelope and verifier cut-in; the CAS-last exact/legacy
+transaction; the node finalization candidate; the collaborative Shamir-row
+handoff; and the payload-free Dark Bazaar enter/refresh journey. Do not copy
+their working-tree state forward as implementation authority.
+
+The remaining live cut is architectural, not merely codec work: explicitly
+migrate receipt/state identity from the legacy nullifier-root commitment to
+`FNS3(root8,count)`; mint finalization authority only inside the executor and
+carry it opaquely into the live selector/registry; install the house-blind BFV
+apex in the player-facing host; and deploy the common journey through the real
+web, Discord, and Telegram surfaces.
+
 ## 1. The honest current sentence
 
 The repository has a transferable, source-row-bound BFV/Poseidon same-opening
@@ -161,11 +211,12 @@ classical seams into a post-quantum composition.
 | Portable HidingFRI GPU path | **TRANSCRIPT + EXACT EXT4 COMMIT PATH GATED; DISTRIBUTED FOLD/QUERY OPEN** | byte-identical full proof 2/2 with five mapped transcript buffers; standalone BabyBear^4 fold matches pinned Plonky3 at arities 2/4/8 through 2^20 and is up to 3.55× faster; the full PCS commitment hook is banked, while distributed fold/orchestration and query privacy remain new work |
 | Portable Ristretto verifier MSM | **GATED FOR CORRECTNESS, PERFORMANCE RED** | exact adaptive radix-16/radix-128 required mode through 4096 terms; fixed radix-128 4096 was 4.722s GPU vs 9.563ms dalek and standalone adaptive was 4.643s vs 9.827ms, so disabled by default |
 | Portable encrypted TFHE PBS | **GPU-RESIDENT FULL-RADIX PUBLIC COMPARISON GATED** | all 16 carry-clean radix blocks stay resident through one final readback; strict 3/3, same late comparison 1.891881s→0.741850s (2.55×), encrypted predicate drives `if_then_else`; ciphertext-to-ciphertext/min/select and broader shapes remain |
-| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY + WGPU + FIRST BUTTERFLY AIR GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact q0/q1/q2 WGPU transforms, reusable 2^18 key certificate, and concrete q0/N8 48-column butterfly AIR/permutation teeth; production faithful tables/full witness/terminal quotient/recursive join remain |
+| Exact BFV + wide PQ Lean boundaries | **FIRST NATIVE SLICE LIVE; NTT FAMILY + WGPU + FIRST BUTTERFLY AIR GATED** | the first complete 4,096-term equation has a real HidingFRI proof; the 98,304-equation family has a proved 2^20×48 odd-NTT schedule (1,032,192 live rows), exact q0/q1/q2 WGPU transforms, reusable 2^18 key certificate, and concrete q0/N8 48-column butterfly AIR/permutation teeth; four deployed N4K4 polynomials now batch into one WGPU submission/readback at 3.303–3.732× the sequential throughput; production faithful tables/full witness/terminal quotient/recursive join remain |
 | Additive PQ share commitment | **EXPERIMENTAL ALGEBRA/KAT; PRODUCTION REFUSED** | context-bound BabyBear/SIS-style additive commitments, exact links, randomized hiding coordinates, and short-kernel extraction are Rust/Lean green; dimensions are not estimator-approved and live wide Ristretto shares are not bounded coordinates, so `productionPqReady = false` |
 | Wide shielded value binding | **GATED, TRANSITIONAL** | Turn shielded 7/7 and circuit wire/alias 4/4; live no-mint still retains the classical conservation proof and old note/root seam |
-| Faithful wide note tree and history | **LIVE V2 SPEND; V3 EXACT PROOF + STRICT TRANSPORT + BY-NAME DESCRIPTOR GATED, NON-LIVE** | live FNO2/FNC2/FNF2 proof/custody remains; v3 composes all exact bands, proves/verifies under HidingFRI, strictly transports 76 canonical lanes and the exact hiding-proof shape, and has a generated SHA-pinned width-3760/PI76 by-name descriptor; live selector/executor state/finalization cutover has not occurred |
-| Hostile external fhIR optimizer protocol | **GATED** | fhir 69/69 and fhegg-solver 118/118; problem/session/nonce/manifest/certificate/checksum/replay bound; exact problem/KKT streams and typed zero-KKT authority borrows the single owned certificate without a dense clone |
+| Faithful wide note tree and history | **LIVE V2 SPEND; V3 EXACT PROOF, OPAQUE ACCEPTANCE, AND HISTORICAL REPLAY GATED; NON-LIVE** | live FNO2/FNC2/FNF2 proof/custody remains; v3 composes all exact bands, strictly transports 76 lanes, and proves/verifies under HidingFRI; successful verification yields a privately constructed accepted-statement/FNS3 token bound to the signed proof-carrier bytes, while durable replay reconstructs exact historical prefixes without rewinding the head; receipt/state migration, executor-produced finalization authority, CAS-last dual-write, and live selector/registry wiring remain |
+| Canonical typed relation encoding | **GATED AS A CODEC; FNSP VK/VERIFIER CUT-IN PENDING** | exhaustive fixed-record `EffectVmDescriptor2` encode/decode and semantic fingerprint are strict, bounded, full-consuming, and JSON-spelling invariant; JSON is provenance only. The active FNSP relation envelope must still be banked and the verifier must execute the recovered canonical program bytes before this becomes live verifier identity |
+| Hostile external fhIR optimizer protocol | **GATED, INCLUDING EXACT UNIFORM ALLOCATION** | existing problem/session/nonce/manifest/certificate/checksum/replay binding remains; `FHUAC001` independently verifies the caller-grid optimum, lowest-index price tie, exact volume, inactive-zero fills, and deterministic largest-remainder/index fills, with fhIR worker replay binding and Lean exact certificate laws |
 | Lean handler-cutover export | **GATED** | credential-preserving export accepted genuine/rejected forged; archive symbol present, zero unresolved non-toolchain initializers; 44.60s warm closure rebuild |
 | Aggregate Market metatheory | **GATED** | lake build Market green at 8747 jobs after the live-host/optimizer additions |
 
