@@ -137,6 +137,10 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "faithful-note-spend-v2::exact-note16-root8-hiding",
         FAITHFUL_NOTE_SPEND_V2_JSON,
     ),
+    (
+        "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state",
+        FAITHFUL_NOTE_SPEND_EXACT_V3_JSON,
+    ),
     ("dregg-bound-presentation::v1", BOUND_PRESENTATION_JSON),
     ("dregg-blinded-membership::v1", BLINDED_MEMBERSHIP_JSON),
     ("dregg-derivation-v1", DERIVATION_JSON),
@@ -227,6 +231,12 @@ const PRESENTATION_FRESHNESS_JSON: &str =
 /// in `Dregg2/Circuit/Emit/FaithfulNoteSpendDescriptorPlan.lean`.
 const FAITHFUL_NOTE_SPEND_V2_JSON: &str =
     include_str!("../descriptors/by-name/faithful-note-spend-v2.json");
+/// The additive exact-nullifier FNSP-v3 descriptor. This is production-parsed and addressable by
+/// its exact AIR name, but it is deliberately absent from every [`PredicateKind`] family and from
+/// the live rotated registry/epoch selector. Its bytes are authored by
+/// `ExactNullifierAafiRotatedStateWeld.lean` and re-derived by `EmitByName.lean`.
+const FAITHFUL_NOTE_SPEND_EXACT_V3_JSON: &str =
+    include_str!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
 /// The **bound-presentation** family (`dregg-bound-presentation::v1`), authored in
 /// `metatheory/Dregg2/Circuit/Emit/BoundPresentationEmit.lean` (`boundPresentationDesc`) and
 /// byte-pinned there by an `emitVmJson2` `#guard`. This is the Golden-Lift-stage-1 successor to the
@@ -442,6 +452,61 @@ mod tests {
                 .count(),
             50,
             "owner, commitment, nullifier, leaf, and node sponges must ride the state16 bus"
+        );
+    }
+
+    #[test]
+    fn faithful_note_spend_exact_v3_dispatches_rotated_weld_shape() {
+        use crate::descriptor_ir2::TID_P2_STATE16;
+
+        const NAME: &str = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
+        const STAGED_BYTES: &[u8] = include_bytes!(
+            "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
+        );
+
+        // Promotion must be byte-preserving: this is the exact Lean-emitted artifact whose staged
+        // SHA-256 is dac87d07f12ec01cc32e34ec131db0786244b2492d5bc153f90bbf062e577b6e.
+        assert_eq!(FAITHFUL_NOTE_SPEND_EXACT_V3_JSON.as_bytes(), STAGED_BYTES);
+        assert!(
+            ALL_KINDS
+                .iter()
+                .all(|kind| !descriptor_names_for_kind(*kind).contains(&NAME)),
+            "the additive by-name route must not silently join a live PredicateKind family"
+        );
+
+        let desc = descriptor_by_name(NAME).expect("exact FNSP-v3 must dispatch by exact name");
+        assert_eq!(desc.name, NAME);
+        assert_eq!(desc.trace_width, 3760);
+        assert_eq!(desc.public_input_count, 76);
+        assert_eq!(desc.constraints.len(), 1258);
+        assert_eq!(
+            desc.tables.iter().map(|table| table.id).collect::<Vec<_>>(),
+            vec![0, 9, 1, 84, 85]
+        );
+        check_descriptor2_wellformed(&desc).expect("exact FNSP-v3 descriptor must check");
+
+        let lookup_counts = |table| {
+            desc.constraints
+                .iter()
+                .filter(|constraint| {
+                    matches!(constraint, VmConstraint2::Lookup(lookup) if lookup.table == table)
+                })
+                .count()
+        };
+        assert_eq!(lookup_counts(TID_P2_STATE16), 128);
+        assert_eq!(lookup_counts(TID_P2), 120);
+        assert_eq!(lookup_counts(84), 48, "15-bit range-table lookups");
+        assert_eq!(lookup_counts(85), 132, "16-bit range-table lookups");
+        assert_eq!(
+            desc.constraints
+                .iter()
+                .filter(|constraint| matches!(
+                    constraint,
+                    VmConstraint2::Base(VmConstraint::PiBinding { .. })
+                ))
+                .count(),
+            76,
+            "every public input must have one emitted boundary pin"
         );
     }
 

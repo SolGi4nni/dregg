@@ -42,6 +42,7 @@ import Dregg2.Circuit.Emit.DerivationEmit
 import Dregg2.Circuit.Emit.DfaRoutingEmit
 import Dregg2.Circuit.Emit.DyckStackEmit
 import Dregg2.Circuit.Emit.EffectVmEmitTurnChainBinding
+import Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld
 import Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
 import Dregg2.Circuit.Emit.FieldDeltaRangeEmit
 import Dregg2.Circuit.Emit.MerkleMembership4aryEmit
@@ -123,6 +124,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.FieldDeltaRangeEmit.fieldDeltaRangeDescriptor)
   , ("faithful-note-spend-v2.json",
       Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan.faithfulNoteSpendDescriptor)
+  , ("faithful-note-spend-exact-v3.json",
+      Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld.exactNullifierAafiRotatedStateDescriptor)
   , ("merkle-membership-4ary-general.json",
       Dregg2.Circuit.Emit.MerkleMembership4aryEmit.membership4aryDesc)
   , ("merkle-membership-depth2.json",
@@ -175,11 +178,11 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Games.PrivateQuestGraphDescriptor.privateQuestGraphDescriptor)
   ]
 
-/- The routing table covers the checked-in directory exactly (40 artifacts). A bare count is a
+/- The routing table covers the checked-in directory exactly (41 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 40
+#guard byNameDescriptors.length == 41
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
