@@ -1,8 +1,9 @@
 /-
-# ShieldedExactApexV4Descriptor — emitted one-opening shielded exact swap
+# ShieldedWholeNoteSwapSubstrateDescriptor — emitted one-opening shielded whole-note swap
 
-This is the concrete, bounded DescriptorIR2 realization of the semantic relation in
-`Dregg2.Circuit.ShieldedExactApexV4`.
+This is a concrete, bounded DescriptorIR2 whole-note barter substrate.  It is **not** a realization
+of `Dregg2.Circuit.ShieldedExactApexV4`: the semantic apex additionally binds nineteen Dark-AMM
+lanes, twenty-seven ring lanes, and their fixed market/ring rule.  Those lanes are absent here.
 
 The fixed market rule is an atomic whole-note swap.  There are exactly two hidden inputs and two
 hidden outputs.  Output zero gives the counterparty input's complete value/asset to the selected
@@ -20,17 +21,24 @@ One selected opening supplies all of:
 The exact transition is a linked-leaf AAFI over a fixed depth-32 binary tree.  It authenticates and
 rewrites the predecessor leaf, authenticates an empty leaf at the exact pre-count cursor, appends
 the new leaf, and derives the public successor root and `count + 1`.  FNI4, FNE4, FNN4, and FNS4 are
-separate domains.  Public historical/outer roots are absorbed into FXC4 but their membership and
+separate domains.  Public historical/outer roots are absorbed into the substrate-only FWS1
+consequence but their membership and
 whole-cell transition semantics belong to the surrounding consensus/frame relation.
+
+This descriptor is proof substrate, not standalone settlement authority: v1 does not authenticate
+either input against the historical-note root, relate `selected_secret` to `selected.owner`, or
+authenticate the counterparty opening as a market reserve.  A live composition must prove those
+three input/authority welds as well as the outer transition; accepting this proof alone as a
+complete private swap would be unsound.  No conversion from this relation into semantic-v4
+authority exists without a future explicit refinement/weld.
 
 Every semantic polynomial is a FIRST-row boundary, so height-one/last-row vacuity is impossible.
 Hash lookups remain unguarded and therefore execute on every row, as required by DescriptorIR2.
 -/
 
-import Dregg2.Circuit.ShieldedExactApexV4
 import Dregg2.Circuit.Emit.ExactNullifierAafiDescriptorPlan
 
-namespace Dregg2.Circuit.Emit.ShieldedExactApexV4Descriptor
+namespace Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor
 
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2
@@ -53,13 +61,14 @@ def FNE4 : Int := 0x464e4534
 def FNN4 : Int := 0x464e4e34
 def FNS4 : Int := 0x464e5334
 def FXO4 : Int := 0x46584f34
-def FXC4 : Int := 0x46584334
+def FWS1 : Int := 0x46575331
 def NULLIFIER_FORK0 : Int := 0x4e463430
 def NULLIFIER_FORK1 : Int := 0x4e463431
 def NOTE_FORK0 : Int := 0x4e543430
 def NOTE_FORK1 : Int := 0x4e543431
 
 def U16 : Nat := 65536
+def FIELD_HI_CANON_MAX : Nat := 0x7800
 
 /-! ## Main-row columns -/
 
@@ -70,7 +79,10 @@ def OUTPUT1_BASE : Nat := OUTPUT0_BASE + OPENING_LANES
 def SECRET_BASE : Nat := OUTPUT1_BASE + OPENING_LANES
 def NULLIFIER_BASE : Nat := SECRET_BASE + KEY_LANES
 def NULLIFIER_HIGH_BASE : Nat := NULLIFIER_BASE + KEY_LANES
-def BINDING_BASE : Nat := NULLIFIER_HIGH_BASE + KEY_LANES
+def NULLIFIER_SLACK_BASE : Nat := NULLIFIER_HIGH_BASE + KEY_LANES
+def NULLIFIER_ZERO_BASE : Nat := NULLIFIER_SLACK_BASE + KEY_LANES
+def NULLIFIER_INV_BASE : Nat := NULLIFIER_ZERO_BASE + KEY_LANES
+def BINDING_BASE : Nat := NULLIFIER_INV_BASE + KEY_LANES
 def PRIOR_ROOT_BASE : Nat := BINDING_BASE + WIDE_LANES
 def SUCCESSOR_ROOT_BASE : Nat := PRIOR_ROOT_BASE + ROOT_LANES
 def PRE_COUNT_BASE : Nat := SUCCESSOR_ROOT_BASE + ROOT_LANES
@@ -137,7 +149,7 @@ def outputRootPreimage : List EmittedExpr :=
   [.const FXO4] ++ vars OUTPUT0_COMMIT_BASE WIDE_LANES ++ vars OUTPUT1_COMMIT_BASE WIDE_LANES
 
 def consequencePreimage (preStateBase postStateBase : Nat) : List EmittedExpr :=
-  [.const FXC4, .const 1, .const 0, .const 2] ++
+  [.const FWS1, .const 1, .const 0, .const 2] ++
     vars NULLIFIER_BASE KEY_LANES ++ vars BINDING_BASE WIDE_LANES ++
     vars preStateBase ROOT_LANES ++ vars postStateBase ROOT_LANES ++
     vars OUTPUT_ROOT_BASE ROOT_LANES ++ vars HISTORICAL_HEIGHT_BASE U64_LANES ++
@@ -181,7 +193,7 @@ def PRE_STATE_DIGEST : List Nat := digestCols PRE_STATE_COMMIT_STATE (statePreim
 def POST_STATE_DIGEST : List Nat := digestCols POST_STATE_COMMIT_STATE (statePreimage SUCCESSOR_ROOT_BASE POST_COUNT_BASE)
 
 /- The consequence sponge needs contiguous copies of the two state digests. -/
-def PRE_STATE_COPY : Nat := CONSEQUENCE_STATE + spongeCols (consequencePreimage 0 0)
+def PRE_STATE_COPY : Nat := CONSEQUENCE_STATE
 def POST_STATE_COPY : Nat := PRE_STATE_COPY + ROOT_LANES
 def CONSEQUENCE_REAL_STATE : Nat := POST_STATE_COPY + ROOT_LANES
 
@@ -251,7 +263,8 @@ def u16Cols : List Nat :=
     cols HISTORICAL_HEIGHT_BASE U64_LANES ++ cols LOW_ADDR_BASE KEY_LANES ++
     cols LOW_NEXT_BASE KEY_LANES ++ [LEX_LOW_AUX_BASE + 16, LEX_NEXT_AUX_BASE + 16]
 
-def u15Cols : List Nat := cols NULLIFIER_HIGH_BASE KEY_LANES
+def u15Cols : List Nat :=
+  cols NULLIFIER_HIGH_BASE KEY_LANES ++ cols NULLIFIER_SLACK_BASE KEY_LANES
 
 def rangeConstraints : List VmConstraint2 :=
   (u16Cols.map fun col => rangeLookup ⟨col, 16⟩) ++
@@ -260,7 +273,8 @@ def rangeConstraints : List VmConstraint2 :=
 def bitBody' (col : Nat) : EmittedExpr :=
   emul (.var col) (esub (.var col) (.const 1))
 
-def bitCols : List Nat := cols LOW_POS_BITS DEPTH ++ cols APP_POS_BITS DEPTH ++
+def bitCols : List Nat := cols NULLIFIER_ZERO_BASE KEY_LANES ++
+  cols LOW_POS_BITS DEPTH ++ cols APP_POS_BITS DEPTH ++
   cols LEX_LOW_AUX_BASE 16 ++ cols LEX_NEXT_AUX_BASE 16 ++ cols COUNT_CARRY_BASE 3
 
 def bitConstraints : List VmConstraint2 := bitCols.map fun col => firstZero (bitBody' col)
@@ -286,12 +300,19 @@ def marketSwapConstraints : List VmConstraint2 :=
       (.var (openingOwnerBase COUNTER_BASE + lane)))
 
 def nullifierBindingConstraints : List VmConstraint2 :=
-  (List.range KEY_LANES).map fun lane =>
+  (List.range KEY_LANES).flatMap fun lane =>
     let source := if lane < ROOT_LANES then NULLIFIER0_DIGEST.getD lane 0
       else NULLIFIER1_DIGEST.getD (lane - ROOT_LANES) 0
-    firstZero (esub (.var source)
-      (eadd (.var (NULLIFIER_BASE + lane))
-        (emul (.const U16) (.var (NULLIFIER_HIGH_BASE + lane)))))
+    let low := .var (NULLIFIER_BASE + lane)
+    let high := .var (NULLIFIER_HIGH_BASE + lane)
+    let slack := .var (NULLIFIER_SLACK_BASE + lane)
+    let zero := .var (NULLIFIER_ZERO_BASE + lane)
+    let inverse := .var (NULLIFIER_INV_BASE + lane)
+    [ firstZero (esub (.var source) (eadd low (emul (.const U16) high)))
+    , firstZero (esub (eadd high slack) (.const FIELD_HI_CANON_MAX))
+    , firstZero (esub (emul slack inverse) (oneMinus zero))
+    , firstZero (emul zero slack)
+    , firstZero (emul zero low) ]
 
 def wideBindingConstraints : List VmConstraint2 :=
   (List.range WIDE_LANES).map fun lane =>
@@ -431,8 +452,8 @@ def semanticConstraints : List VmConstraint2 :=
     outputCommitConstraints ++ digestCopyConstraints ++ bitConstraints ++ tagConstraints ++
     bracketConstraints ++ appendPositionConstraints ++ countIncrementConstraints ++ rootConstraints
 
-def shieldedExactApexV4Descriptor : EffectVmDescriptor2 :=
-  { name := "shielded-exact-apex-v4::one-opening-whole-note-swap-aafi32-v1"
+def shieldedWholeNoteSwapSubstrateDescriptor : EffectVmDescriptor2 :=
+  { name := "shielded-whole-note-swap-substrate-v1::one-opening-aafi32-v1"
   , traceWidth := TRACE_WIDTH
   , piCount := 100
   , tables := [mainTableDef TRACE_WIDTH, poseidon2State16ChipTableDef,
@@ -441,23 +462,23 @@ def shieldedExactApexV4Descriptor : EffectVmDescriptor2 :=
   , hashSites := []
   , ranges := [] }
 
-def descriptorJson : String := emitVmJson2 shieldedExactApexV4Descriptor
+def descriptorJson : String := emitVmJson2 shieldedWholeNoteSwapSubstrateDescriptor
 
 #guard publicPins.length == 100
-#guard shieldedExactApexV4Descriptor.piCount == 100
-#guard shieldedExactApexV4Descriptor.traceWidth == TRACE_WIDTH
+#guard shieldedWholeNoteSwapSubstrateDescriptor.piCount == 100
+#guard shieldedWholeNoteSwapSubstrateDescriptor.traceWidth == TRACE_WIDTH
 #guard descriptorJson.startsWith
-  "{\"name\":\"shielded-exact-apex-v4::one-opening-whole-note-swap-aafi32-v1\",\"ir\":2"
+  "{\"name\":\"shielded-whole-note-swap-substrate-v1::one-opening-aafi32-v1\",\"ir\":2"
 #guard !(descriptorJson.contains "legacy_value_binding")
 
 /-! ## Structural emitted-relation facts -/
 
 theorem public_pin_mem {pin : VmConstraint2} (h : pin ∈ publicPins) :
-    pin ∈ shieldedExactApexV4Descriptor.constraints := by
-  simp [shieldedExactApexV4Descriptor, h]
+    pin ∈ shieldedWholeNoteSwapSubstrateDescriptor.constraints := by
+  simp [shieldedWholeNoteSwapSubstrateDescriptor, h]
 
 theorem semantic_mem {constraint : VmConstraint2} (h : constraint ∈ semanticConstraints) :
-    constraint ∈ shieldedExactApexV4Descriptor.constraints := by
-  simp [shieldedExactApexV4Descriptor, h]
+    constraint ∈ shieldedWholeNoteSwapSubstrateDescriptor.constraints := by
+  simp [shieldedWholeNoteSwapSubstrateDescriptor, h]
 
-end Dregg2.Circuit.Emit.ShieldedExactApexV4Descriptor
+end Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor

@@ -75,6 +75,7 @@ pub mod shielded_exact_apex_v4;
 pub mod shielded_ring_clearing_air;
 pub mod shielded_ring_clearing_nleg_air;
 pub mod shielded_spend_leaf_adapter;
+pub mod shielded_whole_note_swap_substrate;
 pub mod solvency_leaf_adapter;
 pub mod sovereign_leaf_adapter;
 pub mod zkoracle_leaf_adapter;

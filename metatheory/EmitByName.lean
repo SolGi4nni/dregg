@@ -64,6 +64,7 @@ import Dregg2.Crypto.PrivateGraphRewriteCellDescriptor
 import Dregg2.Games.PrivatePreferenceDescriptor
 import Dregg2.Games.PrivatePreferenceCellDescriptor
 import Dregg2.Games.DescentCensusDescriptor
+import Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor
 import Dregg2.Games.PrivateRaidAssignmentDescriptor
 import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
@@ -160,6 +161,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Market.DarkBazaarPrivateDescriptor.darkBazaarPrivateN4K4Descriptor)
   , ("private-book-bfv-slice-o0-c0-q0-k0.json",
       Market.PrivateBookBfvSliceDescriptor.privateBookBfvSliceDescriptor)
+  , ("private-book-bfv-odd-ntt-butterfly-q0-n8.json",
+      Market.PrivateBookBfvButterflyAir.butterflyDescriptor)
   , ("private-book-bfv-threshold-terminal-q0-b80.json",
       Market.PrivateBookBfvButterflyAir.thresholdTerminalQ0Descriptor)
   , ("dark-amm-private-v1.json",
@@ -182,13 +185,15 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Games.PrivateQuestGraphDescriptor.privateQuestGraphDescriptor)
   , ("descent-custody-census-fixed8-v1.json",
       Dregg2.Games.DescentCensusDescriptor.descentCensusDescriptor)
+  , ("shielded-whole-note-swap-substrate-v1.json",
+      Dregg2.Circuit.Emit.ShieldedWholeNoteSwapSubstrateDescriptor.shieldedWholeNoteSwapSubstrateDescriptor)
   ]
 
 /- The routing table covers the checked-in directory exactly (41 artifacts). A bare count is a
 weak guard, but it is the one this file can state without IO: the STRONG guard is
 `emit_descriptors.py`'s recursive coverage check, which fails on any by-name file this table does
 not reproduce. -/
-#guard byNameDescriptors.length == 43
+#guard byNameDescriptors.length == 45
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
