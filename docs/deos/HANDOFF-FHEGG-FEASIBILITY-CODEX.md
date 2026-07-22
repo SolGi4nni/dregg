@@ -58,10 +58,11 @@ verification sees plaintext orders and encryption randomness; PartyMPC arithmeti
 now refuses uncertified or malformed Beaver rows but still trusts the certifying
 preprocessing authority; and the distributed-custody
 surface now proves committed-share custody, the first three share-native linear
-zero constraints, and owner-local kind/quantity ranges linked to the exact
-distributed commitments without reconstructing the witness. Selector/message-
-table linkage, BFV, Poseidon/root, and clearing constraints still run inside the
-monolithic Bulletproof/R1CS backend.
+zero constraints, and owner-local kind/quantity ranges, 128-way one-hot
+selection, and nine-slot semantic message derivation linked to the exact
+distributed commitments without reconstructing the witness. The exact fhe.rs
+polynomial message-table/BFV equations, Poseidon/root, and clearing constraints
+still run inside the monolithic Bulletproof/R1CS backend.
 
 This is also **not an end-to-end post-quantum apex**. Native clearing quorum and
 PartyMPC transport now have separately green ML-DSA and ML-KEM-backed profiles,
@@ -89,7 +90,7 @@ classical seams into a post-quantum composition.
 | Cell-owned PQ turn identity | **GATED CLASSICAL RUNTIME; LEAN ROW GATED; COMPOSED PROOF PATH FAILS CLOSED** | runtime gates above plus Lean-authored 127-column rotation descriptor, exact 108-PI/120-constraint/111-range shape and Rust parse canary; outer ML-DSA composition remains unwired |
 | Restartable live private-clearing apex | **GATED, NOT END-TO-END PQ** | strict v5 authority run 1/1 in 167.054s nextest / 167.008s internal; its proof was 85.923s, while the subsequently accelerated identical fixed relation is 23.445s in its hostile gate; sealed crossing 7.956s, audited Lean PQ cores required; exact relation still classical Bulletproof |
 | Distributed input custody | **GATED** | custody-hardened private_book_distributed_inputs: 4/4 green |
-| Distributed private-order proof | **GATED THROUGH RANGES** | four share-opening PoKs + three root-zero proofs per worker; each owner additionally proves 0≤kind≤7 and 0≤quantity≤15 linked to exact vector coords; combined 12/12 in 1.930s; selector/Poseidon/BFV/clearing remain monolithic |
+| Distributed private-order proof | **GATED THROUGH SEMANTIC SELECTORS** | four share-opening PoKs + three root-zero proofs per worker; each owner additionally proves 0≤kind≤7, 0≤quantity≤15, the exact 128-way one-hot selector, eight unary demand/supply slots, and `kind+8*quantity`, all linked to exact distributed-vector coordinates; combined 12/12 release in 7.370s; exact fhe.rs polynomial opening, Poseidon, and clearing remain monolithic |
 | Distributed real same-opening prover | **OPEN** | no backend consumes shares to produce the apex Bulletproof/R1CS proof |
 | Bazaar crown consequence | **GATED** | one both-polarity heavy-release test, 1/1 green |
 | fhIR exact raid allocation | **GATED** | Rust integration 6/6 release green; FhIRRaidAllocationBinding: 7 clean |
@@ -417,9 +418,10 @@ codec, and implementation refinement remain.
 ### What the custody surface does
 
 **fhegg-fhe/src/private_book_distributed_inputs.rs** lets four owners expand only
-their own local witness vector: order kind, quantity, BFV u/e1/e2, and the
-owner-0 root blinding. Owners distribute n-of-n additive Ristretto shares to
-workers, commit with vector Pedersen commitments, receive local packet
+their own local witness vector: order kind, quantity, 128 option-selector
+coordinates, nine semantic message coordinates, BFV u/e1/e2, and the owner-0
+root blinding. Owners distribute n-of-n additive Ristretto shares to workers,
+commit with vector Pedersen commitments, receive local packet
 acknowledgements, and produce a canonical public certificate. Under the stated
 confidential-channel and distinct-principal assumptions, any strict subset of
 workers has uniformly hidden shares.
@@ -436,8 +438,9 @@ longer the strongest backend.
 
 **fhegg-fhe/src/private_book_canonical_backend.rs** uses the owned Bulletproof
 fork's logarithmic `LinearProof` to prove four exact committed-share openings
-per worker. At degree 4096 each owner proof is 992 bytes rather than 12,299
-scalar responses. The same artifacts prove the first share-native constraint
+per worker. At degree 4096 each owner proof is 992 bytes rather than 12,436
+opening scalars (12,435 vector coordinates plus the blinding). The same
+artifacts prove the first share-native constraint
 layer: for each owner 1..3, request-derived random coefficients compress the
 eight root-blinding coordinates and the verifier checks that the workers'
 committed linear images reconstruct to zero. The challenge is derived only
@@ -445,15 +448,27 @@ after the complete request, certificate, ordered commitment vector, roster,
 worker/owner order, widths, and generator namespace are bound; prover nonces are
 fresh CSPRNG output committed before that challenge.
 
-Each owner certificate now also carries one four-value Bulletproof range proof
-over `[kind, 7-kind, quantity, 15-quantity]` and two logarithmic
-representation proofs. Those link the hidden scalar commitments for kind and
-quantity to coordinates 0 and 1 of the same owner vector commitment whose
-worker commitments sum to it. Thus the public bounds are exactly 0≤kind≤7 and
-0≤quantity≤15 without disclosing either value or asking a worker/coordinator to
-reconstruct the order. The proof digest is covered by the owner signature and
-the v2 session/deal/certificate domains; the strict artifact is 2,754 bytes at
-production width.
+Each owner certificate now also carries:
+
+1. one four-value Bulletproof range proof over
+   `[kind, 7-kind, quantity, 15-quantity]`;
+2. one 128-gate Bulletproof R1CS proof that the option coordinates are boolean,
+   sum to one, select exactly `16*kind + quantity`, and derive the private
+   relation's eight unary demand/supply slots plus its injective
+   `kind + 8*quantity` root-code slot; and
+3. one transcript-derived random-linear `LinearProof` linking all 139 scalar
+   commitments used by those proofs to the exact first 139 coordinates of the
+   same owner vector commitment whose worker commitments sum to it.
+
+Thus the exact finite semantic order row is proved without disclosing it or
+asking a worker/coordinator to reconstruct it. The batch link has
+`1 / |Scalar|` random-linear-compression soundness error in the random-oracle
+model. The proof digest is covered by the owner
+signature and the v3 session/deal/certificate domains. The strict per-owner
+artifact is 7,013 bytes at production width (6,629 bytes in the degree-16
+fixture); the complete four-owner/three-worker certificate is 30,286 bytes.
+The commitments, proofs, and owner/worker signatures remain classical, not
+post-quantum.
 
 ### Exact test inventory
 
@@ -491,17 +506,19 @@ openings, rejection of arbitrary digests and cross-certificate reuse,
 roster-signed corrupt-share proofs, and cross-worker/request/owner-order replay.
 The canonical target passed **5/5 release in 0.359s**; the generic distributed
 target passed **3/3 release in 0.236s** after the request-wire tooth was added.
-With the nonlinear owner proofs, the three distributed targets passed **12/12
-release in 1.930s**. A hostile target changes a canonical range response,
-recomputes the artifact checksum, and re-signs it with the legitimate owner;
-verification still rejects `OrderRangeProofRejected`.
+With the selector/message layer, the three distributed targets passed **12/12
+release in 7.370s**. Hostile cases change canonical range and selector proof
+responses, recompute the artifact checksum, and re-sign with the legitimate
+owner; verification still rejects `OrderRangeProofRejected`. Valid selector
+proof bytes transplanted across owners or ceremony requests also reject after
+checksum refresh and legitimate re-signing.
 
 ### Exact residual before any no-single-viewer claim
 
 A production distributed nonlinear backend must extend these same committed
-shares from custody, linear constraints, and owner ranges through exact
-selector/message-table linkage, BFV, Poseidon/root, and clearing relations. It
-must then be used by the actual
+shares from custody, linear constraints, owner ranges, and finite semantic
+selection through the exact fhe.rs polynomial message-table/BFV equations,
+Poseidon/root, and clearing relations. It must then be used by the actual
 apex instead of prove_private_book_bfv_zk, whose API receives the complete
 witness and openings.
 The system also still needs malicious share-formation and MPC-gate proofs,
@@ -991,9 +1008,9 @@ from first principles.
 - private_book_distributed_prover — generic request/envelope **3/3 release
   green**; canonical committed-share backend **5/5 release green** with four
   opening PoKs and three share-native linear constraints per worker; owner
-  range/link layer brings the combined distributed targets to **12/12 release
-  green**. Selector/Poseidon/BFV/clearing and live apex proof generation remain
-  monolithic.
+  range/selector/message/link layer brings the combined distributed targets to
+  **12/12 release green in 7.370s**. Exact fhe.rs polynomial opening,
+  Poseidon, clearing, and live apex proof generation remain monolithic.
 - fhegg_private_verifier_registry — **2/2 green**.
 - party_mpc_crossing_transport — **2/2 release green**, **1.099s**.
 - native PartyMPC PQ transport — **5/5 integration + 5/5 units green**;
@@ -1090,8 +1107,8 @@ These are the next truth-producing gates:
 1. Capture the still-pending Discord Chutes→Dungeon target in section 9; do
    not inherit a green from its Dungeon/narrator organs.
 2. Extend the committed-share backend beyond its opening PoKs, first linear
-   constraints, and owner ranges through selector/message linkage, BFV,
-   Poseidon/root, and clearing, then make the
+   constraints, owner ranges, and finite semantic selectors through exact
+   fhe.rs polynomial opening/BFV, Poseidon/root, and clearing, then make the
    apex consume it before revisiting any no-single-viewer language.
 3. Replace trusted-authority Beaver certification with malicious preprocessing
    and add private-input share-formation evidence; signed, encrypted routing

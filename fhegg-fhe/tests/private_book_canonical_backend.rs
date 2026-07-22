@@ -408,7 +408,12 @@ fn proof_artifacts_are_not_replayable_across_worker_request_or_owner_order() {
     // authentication succeeds, but the worker-bound proof transcript fails.
     let (same_certificate, replay_shares) =
         prepare_inputs(&session, &owner_keys, &worker_keys, 0xa0);
-    assert_eq!(certificate.to_bytes(), same_certificate.to_bytes());
+    // The dealer/share commitments are reproduced by the fixture RNG, while
+    // the owner-local R1CS proof correctly uses fresh prover entropy. Requiring
+    // byte-identical certificates here would accidentally require deterministic
+    // zero-knowledge proofs; the regenerated private shares still name the
+    // exact original dealing digests checked below by WorkerProofProcess.
+    assert_ne!(certificate.to_bytes(), same_certificate.to_bytes());
     let request = ShareBoundProverRequest::new(
         &session,
         &certificate,

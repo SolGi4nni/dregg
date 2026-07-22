@@ -3,17 +3,20 @@
 //! The source module is path-included so this hostile gate can use its
 //! deliberately test-only reduced-degree fixtures.  Production exposes input
 //! preparation behind `amm-input-binding`. Each owner now proves the first
-//! nonlinear subrelation locally: its hidden kind and quantity are in range and
-//! linked to the exact vector commitment held additively by the workers. The
-//! remaining Poseidon/BFV/clearing circuit is not yet a distributed R1CS proof.
+//! nonlinear subrelation locally: its hidden kind and quantity are in range,
+//! its one-hot selector and nine semantic message slots are exact, and all are
+//! linked to the vector commitment held additively by the workers. The
+//! remaining Poseidon/BFV-polynomial/clearing circuit is not yet a distributed
+//! R1CS proof.
 
 #[path = "../src/private_book_distributed_inputs.rs"]
 mod distributed;
 
 use distributed::{
+    owner_proof_verification_count_for_test, reset_owner_proof_verification_count_for_test,
     DistributedInputCertificate, DistributedInputCoordinator, DistributedInputError,
     DistributedWitnessSession, LocalOrderWitness, PrivateSide, WitnessPartyMachine, BFV_DEGREE,
-    BFV_SHORT_ABS_BOUND, LOCAL_WITNESS_WIDTH, ORDER_COUNT,
+    BFV_SHORT_ABS_BOUND, LOCAL_WITNESS_WIDTH, MESSAGE_SLOT_WIDTH, OPTION_COUNT, ORDER_COUNT,
 };
 use ed25519_dalek::SigningKey;
 use rand::rngs::StdRng;
@@ -146,6 +149,32 @@ fn all_local_openings_bind_one_public_certificate_without_reconstruction() {
         )
         .expect("local exact witness");
         assert_eq!(witness.owner(), owner);
+        let kind = if owner < 2 { owner } else { 4 + owner };
+        let quantity = owner + 1;
+        let selected = kind * 16 + quantity;
+        for option in 0..OPTION_COUNT {
+            assert_eq!(
+                witness.value_for_test(2 + option),
+                curve25519_dalek::scalar::Scalar::from(u64::from(option == selected))
+            );
+        }
+        assert_eq!(MESSAGE_SLOT_WIDTH, 9);
+        for slot in 0..8 {
+            let expected_slot = if kind < 4 {
+                u64::from(slot <= kind) * quantity as u64
+            } else {
+                u64::from(slot >= kind) * quantity as u64
+            };
+            assert_eq!(
+                witness.value_for_test(2 + OPTION_COUNT + slot),
+                curve25519_dalek::scalar::Scalar::from(expected_slot),
+                "owner {owner} semantic message slot {slot}"
+            );
+        }
+        assert_eq!(
+            witness.value_for_test(2 + OPTION_COUNT + 8),
+            curve25519_dalek::scalar::Scalar::from((kind + 8 * quantity) as u64)
+        );
         expected.push(
             (0..witness.width())
                 .map(|coordinate| witness.value_for_test(coordinate))
@@ -159,7 +188,7 @@ fn all_local_openings_bind_one_public_certificate_without_reconstruction() {
         assert_eq!(contribution.owner(), owner);
         assert_ne!(contribution.digest(), [0; 32]);
         assert_ne!(contribution.owner_commitment(), [0; 32]);
-        assert_eq!(contribution.order_range_proof_len_for_test(), 1_730);
+        assert_eq!(contribution.order_range_proof_len_for_test(), 6_629);
         coordinator
             .accept_dealer(output.contribution)
             .expect("public dealing");
@@ -263,6 +292,30 @@ fn private_packet_equivocation_and_public_signature_forgery_fail_closed() {
             | Err(DistributedInputError::CertificateDigestMismatch)
     ));
 
+    // An unauthenticated contribution must be rejected before any range,
+    // selector-R1CS, or 16k-vector link proof verification. This is a CPU-DoS
+    // boundary, not merely a final validity check.
+    let witness = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Bid,
+        3,
+        8,
+        [0x5d; 32],
+        Some([899; 8]),
+    )
+    .unwrap();
+    let mut rng = StdRng::from_seed([0x5e; 32]);
+    let mut output = witness.deal(&session, &owner_keys[0], &mut rng).unwrap();
+    reset_owner_proof_verification_count_for_test();
+    output.contribution.corrupt_owner_signature_for_test();
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(output.contribution),
+        Err(DistributedInputError::InvalidSignature)
+    );
+    assert_eq!(owner_proof_verification_count_for_test(), 0);
+
     // Re-sign a checksum-valid artifact after changing a canonical response
     // scalar inside its range proof. Neither the owner signature nor framing
     // checksum can substitute for the nonlinear proof equation.
@@ -284,6 +337,122 @@ fn private_packet_equivocation_and_public_signature_forgery_fail_closed() {
     let mut coordinator = DistributedInputCoordinator::new(session.clone());
     assert_eq!(
         coordinator.accept_dealer(output.contribution),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    );
+
+    let witness = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Ask,
+        1,
+        9,
+        [0x66; 32],
+        Some([902; 8]),
+    )
+    .unwrap();
+    let mut rng = StdRng::from_seed([0x67; 32]);
+    let mut output = witness.deal(&session, &owner_keys[0], &mut rng).unwrap();
+    output
+        .contribution
+        .corrupt_selector_proof_and_resign_for_test(&owner_keys[0]);
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(output.contribution),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    );
+
+    // The batch link is the load-bearing bridge from the valid scalar R1CS
+    // commitments to the exact share-held vector. A checksum-valid,
+    // legitimately re-signed mutation of its response must still reject.
+    let witness = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Ask,
+        0,
+        10,
+        [0x6e; 32],
+        Some([904; 8]),
+    )
+    .unwrap();
+    let mut rng = StdRng::from_seed([0x6f; 32]);
+    let mut output = witness.deal(&session, &owner_keys[0], &mut rng).unwrap();
+    output
+        .contribution
+        .corrupt_derived_link_and_resign_for_test(&owner_keys[0]);
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(output.contribution),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    );
+
+    // A valid proof from another owner cannot be transplanted even after the
+    // receiving owner recomputes both framing checksum and signature.
+    let target = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Bid,
+        1,
+        4,
+        [0x68; 32],
+        Some([903; 8]),
+    )
+    .unwrap();
+    let source =
+        LocalOrderWitness::from_seed(&session, 1, PrivateSide::Ask, 2, 12, [0x69; 32], None)
+            .unwrap();
+    let mut target_rng = StdRng::from_seed([0x6a; 32]);
+    let mut source_rng = StdRng::from_seed([0x6b; 32]);
+    let mut target = target
+        .deal(&session, &owner_keys[0], &mut target_rng)
+        .unwrap();
+    let source = source
+        .deal(&session, &owner_keys[1], &mut source_rng)
+        .unwrap();
+    target
+        .contribution
+        .substitute_selector_proof_and_resign_for_test(&source.contribution, &owner_keys[0]);
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(target.contribution),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    );
+
+    // The same transplant is non-replayable across a fresh ceremony request.
+    let other_session = session_with_nonce(&owner_keys, &worker_keys, [0x44; 32]);
+    let source = LocalOrderWitness::from_seed(
+        &other_session,
+        0,
+        PrivateSide::Bid,
+        1,
+        4,
+        [0x68; 32],
+        Some([903; 8]),
+    )
+    .unwrap();
+    let mut source_rng = StdRng::from_seed([0x6c; 32]);
+    let source = source
+        .deal(&other_session, &owner_keys[0], &mut source_rng)
+        .unwrap();
+    let target = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Bid,
+        1,
+        4,
+        [0x68; 32],
+        Some([903; 8]),
+    )
+    .unwrap();
+    let mut target_rng = StdRng::from_seed([0x6d; 32]);
+    let mut target = target
+        .deal(&session, &owner_keys[0], &mut target_rng)
+        .unwrap();
+    target
+        .contribution
+        .substitute_selector_proof_and_resign_for_test(&source.contribution, &owner_keys[0]);
+    let mut coordinator = DistributedInputCoordinator::new(session.clone());
+    assert_eq!(
+        coordinator.accept_dealer(target.contribution),
         Err(DistributedInputError::OrderRangeProofRejected)
     );
 
@@ -330,8 +499,8 @@ fn private_packet_equivocation_and_public_signature_forgery_fail_closed() {
 
 #[test]
 fn exact_production_layout_and_session_separation_are_pinned() {
-    assert_eq!(LOCAL_WITNESS_WIDTH, 2 + 3 * BFV_DEGREE + 8);
-    assert_eq!(LOCAL_WITNESS_WIDTH, 12_298);
+    assert_eq!(LOCAL_WITNESS_WIDTH, 2 + 128 + 9 + 3 * BFV_DEGREE + 8);
+    assert_eq!(LOCAL_WITNESS_WIDTH, 12_435);
     assert_eq!(BFV_SHORT_ABS_BOUND, 20);
 
     let owner_keys = keys::<ORDER_COUNT>(0x13);
@@ -372,7 +541,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
         production_deal
             .contribution
             .order_range_proof_len_for_test(),
-        2_754
+        7_013
     );
 
     assert_eq!(

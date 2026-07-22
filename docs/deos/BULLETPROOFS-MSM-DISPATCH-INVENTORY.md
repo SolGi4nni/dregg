@@ -19,7 +19,7 @@ The short answer is:
   prover begins with MSMs as large as **870,319 points** before its 19-round
   inner-product argument;
 * production distributed-input commitments are not range proofs, but they are
-  repeated **12,299-point MSMs** and can use the same generic Ristretto engine;
+  repeated **12,436-point MSMs** and can use the same generic Ristretto engine;
 * both Bulletproofs packages and all direct callers resolve to the same
   `curve25519-dalek 4.1.3`, so one Ristretto MSM implementation can serve them.
   The current upstream APIs call Dalek's static MSM methods directly, however,
@@ -176,11 +176,12 @@ R1CS proof:
 
 * `fhegg-fhe/src/private_book_distributed_inputs.rs` computes direct
   `RistrettoPoint::multiscalar_mul` vector commitments.  Production width is
-  `2 + 3*4096 + 8 = 12,298`, so each commitment is a **12,299-point MSM** after
+  `2 + 128 + 9 + 3*4096 + 8 = 12,435`, so each commitment is a
+  **12,436-point MSM** after
   the blinding base is appended.  For `W` workers, one four-owner dealing and
   recipient opening pass performs `4(2W+1)` such MSMs (28 at `W=3`).
 * `fhegg-fhe/src/private_book_canonical_backend.rs` recomputes four commitments
-  per worker, again 12,299 points in production.  Its current tests use degree
+  per worker, again 12,436 points in production.  Its current tests use degree
   8 (35-point MSMs), and no production full-degree gate is captured.
 
 These are excellent users of a generic Ristretto MSM provider, but they must
@@ -268,12 +269,12 @@ Recommended dispatch classes:
 |---|---|---|
 | 147-point ordinary verifier; 129-point ordinary prover MSM | CPU | GPU launch/upload likely dominates; cache `BulletproofGens(64,1)` first |
 | many independent ordinary proofs | CPU by default; benchmark a batched independent-proof queue | they are not one `verify_multiple` statement because they were produced independently |
-| 12,299-point distributed commitments | benchmark CPU vs batched GPU | medium, repeated, fixed generators; plausible crossover target |
+| 12,436-point distributed commitments | benchmark CPU vs batched GPU | medium, repeated, fixed generators; plausible crossover target |
 | 0.5M–4.2M-point threshold verifier MSMs | GPU-preferred with hard CPU parity | unmistakably large and fixed-shape |
 | private-book R1CS prover/verifier | GPU-preferred with hard CPU parity | measured 62.8 s prove-call and 6.8–7.5 s verify-call budgets |
 
 Do not set a universal point-count threshold from these source sizes alone.
-Benchmark at least 147, 12,299, 262,144, 435,160, 524,288, 870,319,
+Benchmark at least 147, 12,436, 262,144, 435,160, 524,288, 870,319,
 1,048,627, and 4,227,120 points, with cold upload, warm resident generators,
 and batches of repeated small MSMs reported separately.
 

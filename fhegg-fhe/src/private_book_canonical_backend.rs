@@ -11,7 +11,8 @@
 //! Vectors are zero-padded to a power of two; the commitment is unchanged
 //! because only newly introduced coordinates are zero.  At the deployed
 //! degree-4096 shape each owner proof is 992 bytes instead of publishing
-//! 12,299 scalar responses.  The artifact binds the complete share-bound
+//! 12,436 opening scalars (12,435 vector coordinates plus the blinding).  The
+//! artifact binds the complete share-bound
 //! request context, input certificate, worker, owner, exact unpadded width,
 //! padding width, commitment, and generator namespace.  The public coordinator
 //! sees proof bytes and commitments only, never a scalar share or blinding.
@@ -59,7 +60,8 @@ use merlin::Transcript;
 use rand::thread_rng;
 
 use crate::private_book_distributed_inputs::{
-    DistributedInputCertificate, PreparedWitnessShare, ORDER_COUNT, ROOT_BLINDING_WIDTH,
+    DistributedInputCertificate, PreparedWitnessShare, DERIVED_ORDER_WIDTH, ORDER_COUNT,
+    ROOT_BLINDING_WIDTH,
 };
 use crate::private_book_distributed_prover::{
     PublicDistributedProofVerifier, WorkerLocalProofBackend, WorkerProofArtifact,
@@ -75,10 +77,10 @@ const ROOT_CONSTRAINT_CHALLENGE_DOMAIN: &str =
     "fhegg/private-book-share-opening-pok/root-constraint-challenge/v1";
 const ROOT_CONSTRAINT_TRANSCRIPT_LABEL: &[u8] =
     b"fhegg/private-book-share-opening-pok/root-constraint/v1";
-const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI002";
+const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI003";
 const MIN_WORKERS: usize = 2;
 const MAX_WORKERS: usize = 8;
-const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 4 * 1024;
+const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 16 * 1024;
 const ACK_WIRE_LEN: usize = 2 + 2 + 32 + 64;
 const ZERO_CLAIM_COUNT: usize = ORDER_COUNT - 1;
 const ARTIFACT_FIXED_BYTES: usize = 8 + 2 + 2 + 4 + 4 + 32 + 32 + 2 + 2 + 32;
@@ -426,7 +428,7 @@ impl PublicDistributedProofVerifier for CanonicalShareOpeningVerifier {
 }
 
 fn witness_width(degree: usize) -> Result<usize, CanonicalBackendError> {
-    2usize
+    DERIVED_ORDER_WIDTH
         .checked_add(
             3usize
                 .checked_mul(degree)

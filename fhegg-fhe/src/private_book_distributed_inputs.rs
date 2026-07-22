@@ -8,19 +8,24 @@
 //! Each of the four order owners expands only its own seed into the exact
 //! phase-one base inputs used by the current relation:
 //!
-//! `kind || quantity || u[degree] || e1[degree] || e2[degree] || root_blind[8]`.
+//! `kind || quantity || option[128] || message_slots[9] ||`
+//! `u[degree] || e1[degree] || e2[degree] || root_blind[8]`.
 //!
 //! Owner zero supplies the book's eight canonical root-blinding felts; the
 //! other owners' root-blinding lanes are fixed to zero.  Every owner n-of-n
 //! additively shares that vector over the Ristretto scalar field among the
 //! configured proof workers. Before releasing those shares, each owner also
 //! makes a four-value Bulletproof range proof for `kind`, `7-kind`, `quantity`,
-//! and `15-quantity`, then links the hidden kind and quantity commitments to
-//! the first two coordinates of the exact vector commitment with logarithmic
-//! proofs of representation. Thus the nonlinear order-domain claim is proved
-//! by the one principal who legitimately knows that order; neither a worker nor
-//! the public coordinator reconstructs it. A vector Pedersen commitment is made
-//! in the owner's own Bulletproof generator namespace.  The public equality
+//! and `15-quantity`.  An owner-local Bulletproof R1CS proof then constrains a
+//! 128-entry boolean one-hot selector to exactly `16*kind + quantity` and derives
+//! the private relation's eight unary demand/supply slots plus its injective
+//! `kind + 8*quantity` root-code slot from that selector.  A transcript-derived
+//! random-linear proof links all 139 scalar commitments used by these two proofs
+//! to the exact first 139 coordinates of the vector commitment.  Thus this
+//! nonlinear order-domain and semantic-message layer is proved by the one
+//! principal who legitimately knows that order; neither a worker nor the public
+//! coordinator reconstructs it.  A vector Pedersen commitment is made in the
+//! owner's own Bulletproof generator namespace.  The public equality
 //!
 //! `owner_commitment = sum(worker_share_commitments)`
 //!
@@ -35,7 +40,7 @@
 //! # Exact achieved privacy
 //!
 //! A coordinator or certificate verifier sees only perfectly hiding vector and
-//! scalar Pedersen commitments, zero-knowledge range/link proofs, public
+//! scalar Pedersen commitments, zero-knowledge range/R1CS/link proofs, public
 //! identities, and signatures. Complement commitments use the negated hidden
 //! blinding, so the verifier checks `V_k + V_(7-k) = 7B` and
 //! `V_q + V_(15-q) = 15B` without receiving any opening. Any strict subset
@@ -51,12 +56,14 @@
 //!
 //! # What this deliberately does not claim
 //!
-//! The certificate proves only that every hidden order kind is in `0..8` and
-//! every hidden quantity is in `0..16`, linked to the exact committed/share-held
-//! coordinates. It does not yet prove the kind-to-one-hot/message-table lookup,
-//! Poseidon root, BFV equations, or clearing result. These Bulletproofs use the
-//! classical Ristretto discrete-log assumption; they are not post-quantum.
-//! Worker
+//! The certificate proves every hidden order kind is in `0..8`, every hidden
+//! quantity is in `0..16`, and the one-hot selector and nine semantic message
+//! slots are the exact finite-table image of those values, all linked to the
+//! committed/share-held coordinates.  It does not yet prove that the deployed
+//! `fhe.rs` polynomial message-table coefficients and short randomness satisfy
+//! the public BFV ciphertext equations, nor the Poseidon root or clearing
+//! result.  These Bulletproofs and commitments use the classical Ristretto
+//! discrete-log assumption; they are not post-quantum. Worker
 //! acknowledgements authenticate the local commitment-opening check; they are
 //! not proofs of correct MPC execution.  A production completion must make a
 //! distributed R1CS prover consume the returned `PreparedWitnessShare`s and
@@ -76,8 +83,14 @@ use std::fmt;
 use std::iter;
 use std::sync::LazyLock;
 
+#[cfg(test)]
+use std::cell::Cell;
+
 use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
-use bulletproofs_r1cs::LinearProof;
+use bulletproofs_r1cs::r1cs::{ConstraintSystem, LinearCombination, R1CSProof, Variable};
+use bulletproofs_r1cs::{
+    BulletproofGens as R1csBulletproofGens, LinearProof, PedersenGens as R1csPedersenGens,
+};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::MultiscalarMul;
@@ -104,34 +117,66 @@ pub const BFV_SHORT_ABS_BOUND: usize = 2 * BFV_VARIANCE;
 pub const BABYBEAR_MODULUS: u32 = 2_013_265_921;
 /// Maximum supported distributed proof-worker roster.
 pub const MAX_WORKERS: usize = 8;
+/// Eight side-and-limit order kinds in the fixed N4K4 book.
+pub const KIND_COUNT: usize = 2 * PRICE_COUNT;
+/// Sixteen private quantity choices, including canonical zero padding.
+pub const QUANTITY_COUNT: usize = 16;
+/// Exact finite selector table shared with the monolithic BFV relation.
+pub const OPTION_COUNT: usize = KIND_COUNT * QUANTITY_COUNT;
+/// Four demand, four supply, and one private root-code slot.
+pub const MESSAGE_SLOT_WIDTH: usize = 2 * PRICE_COUNT + 1;
+/// Exact prefix carried before the three BFV short-polynomial rows.
+pub const DERIVED_ORDER_WIDTH: usize = 2 + OPTION_COUNT + MESSAGE_SLOT_WIDTH;
 /// Exact production width of one owner's base input vector.
-pub const LOCAL_WITNESS_WIDTH: usize = 2 + 3 * BFV_DEGREE + ROOT_BLINDING_WIDTH;
+pub const LOCAL_WITNESS_WIDTH: usize = DERIVED_ORDER_WIDTH + 3 * BFV_DEGREE + ROOT_BLINDING_WIDTH;
 
-const SESSION_DOMAIN: &str = "fhegg/private-book-distributed-input/session/v2";
-const DEAL_DOMAIN: &str = "fhegg/private-book-distributed-input/deal/v2";
-const SHARE_MASK_DOMAIN: &str = "fhegg/private-book-distributed-input/share-mask/v2";
-const DEAL_SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-input/deal-signature/v2";
-const ACK_SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-input/ack-signature/v2";
-const CERTIFICATE_DOMAIN: &str = "fhegg/private-book-distributed-input/certificate/v2";
-const CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-input/checksum/v2";
-const LAYOUT_ID: &[u8] = b"FHEGG-PB-BFV-DISTRIBUTED-BASE-INPUT-N4K4-V2-RANGE";
-const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI002";
+const SESSION_DOMAIN: &str = "fhegg/private-book-distributed-input/session/v3";
+const DEAL_DOMAIN: &str = "fhegg/private-book-distributed-input/deal/v3";
+const SHARE_MASK_DOMAIN: &str = "fhegg/private-book-distributed-input/share-mask/v3";
+const DEAL_SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-input/deal-signature/v3";
+const ACK_SIGNATURE_DOMAIN: &[u8] = b"fhegg/private-book-distributed-input/ack-signature/v3";
+const CERTIFICATE_DOMAIN: &str = "fhegg/private-book-distributed-input/certificate/v3";
+const CHECKSUM_DOMAIN: &str = "fhegg/private-book-distributed-input/checksum/v3";
+const LAYOUT_ID: &[u8] = b"FHEGG-PB-BFV-DISTRIBUTED-BASE-INPUT-N4K4-V3-SELECTORS";
+const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI003";
 const OWNER_RANGE_TRANSCRIPT: &[u8] = b"fhegg/private-book-owner-range/v1";
-const OWNER_LINK_TRANSCRIPT: &[u8] = b"fhegg/private-book-owner-range-link/v1";
+const OWNER_SELECTOR_TRANSCRIPT: &[u8] = b"fhegg/private-book-owner-selector-r1cs/v1";
+const OWNER_LINK_TRANSCRIPT: &[u8] = b"fhegg/private-book-owner-derived-link/v1";
 const OWNER_RANGE_COMPONENT_DOMAIN: &str = "fhegg/private-book-owner-range/component/v1";
-const OWNER_RANGE_ARTIFACT_DOMAIN: &str = "fhegg/private-book-owner-range/artifact/v1";
-const OWNER_RANGE_CHECKSUM_DOMAIN: &str = "fhegg/private-book-owner-range/checksum/v1";
-const OWNER_RANGE_ARTIFACT_MAGIC: &[u8; 8] = b"FHPOR001";
-const OWNER_RANGE_ARTIFACT_VERSION: u16 = 1;
+const OWNER_RANGE_ARTIFACT_DOMAIN: &str = "fhegg/private-book-owner-range/artifact/v2";
+const OWNER_RANGE_CHECKSUM_DOMAIN: &str = "fhegg/private-book-owner-range/checksum/v2";
+const OWNER_LINK_CHALLENGE_DOMAIN: &str = "fhegg/private-book-owner-derived-link/challenge/v1";
+const OWNER_RANGE_ARTIFACT_MAGIC: &[u8; 8] = b"FHPOR002";
+const OWNER_RANGE_ARTIFACT_VERSION: u16 = 2;
 const OWNER_RANGE_BITS: usize = 8;
 const OWNER_RANGE_VALUES: usize = 4;
-const OWNER_LINK_PROOFS: usize = 2;
+const OWNER_LINK_PROOFS: usize = 1;
 const OWNER_RANGE_PROOF_BYTES: usize = 608;
 const OWNER_RANGE_ARTIFACT_HEADER_BYTES: usize = 8 + 2 + 2 + 4 + 4 + 32 + 2 * 32 + 4;
-const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 4 * 1024;
+const DERIVED_SCALAR_COMMITMENTS: usize = DERIVED_ORDER_WIDTH;
+const EXTRA_DERIVED_COMMITMENTS: usize = DERIVED_SCALAR_COMMITMENTS - 2;
+const OWNER_SELECTOR_R1CS_PROOF_BYTES: usize = 865;
+const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 16 * 1024;
 
 static PRODUCTION_GENS: LazyLock<BulletproofGens> =
     LazyLock::new(|| BulletproofGens::new(LOCAL_WITNESS_WIDTH.next_power_of_two(), ORDER_COUNT));
+static OWNER_SELECTOR_GENS: LazyLock<R1csBulletproofGens> =
+    LazyLock::new(|| R1csBulletproofGens::new(OPTION_COUNT, 1));
+
+#[cfg(test)]
+thread_local! {
+    static OWNER_PROOF_VERIFICATION_CALLS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_owner_proof_verification_count_for_test() {
+    OWNER_PROOF_VERIFICATION_CALLS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn owner_proof_verification_count_for_test() -> usize {
+    OWNER_PROOF_VERIFICATION_CALLS.with(Cell::get)
+}
 
 /// Fail-closed protocol errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -327,7 +372,7 @@ impl DistributedWitnessSession {
 
     /// Width of one owner's exact base witness vector.
     pub const fn local_witness_width(&self) -> usize {
-        2 + 3 * self.degree + ROOT_BLINDING_WIDTH
+        DERIVED_ORDER_WIDTH + 3 * self.degree + ROOT_BLINDING_WIDTH
     }
 
     fn owner_key(&self, owner: usize) -> Option<[u8; 32]> {
@@ -399,6 +444,15 @@ impl LocalOrderWitness {
         let mut values = Vec::with_capacity(session.local_witness_width());
         values.push(Scalar::from(kind));
         values.push(Scalar::from(u64::from(quantity)));
+        let option_index = kind as usize * QUANTITY_COUNT + quantity as usize;
+        values.extend(
+            (0..OPTION_COUNT).map(|option| Scalar::from(u64::from(option == option_index))),
+        );
+        values.extend(
+            option_message_slots(kind as usize, quantity as usize)
+                .into_iter()
+                .map(Scalar::from),
+        );
         values.extend(u.into_iter().map(signed_scalar));
         values.extend(e1.into_iter().map(signed_scalar));
         values.extend(e2.into_iter().map(signed_scalar));
@@ -433,9 +487,9 @@ impl LocalOrderWitness {
 
     #[cfg(test)]
     pub(crate) fn has_short_coefficient_outside_for_test(&self, bound: i64) -> bool {
-        let degree = (self.values.len() - 2 - ROOT_BLINDING_WIDTH) / 3;
+        let degree = (self.values.len() - DERIVED_ORDER_WIDTH - ROOT_BLINDING_WIDTH) / 3;
         let allowed = (-bound..=bound).map(signed_scalar).collect::<Vec<_>>();
-        self.values[2..2 + 3 * degree]
+        self.values[DERIVED_ORDER_WIDTH..DERIVED_ORDER_WIDTH + 3 * degree]
             .iter()
             .any(|value| !allowed.contains(value))
     }
@@ -567,8 +621,10 @@ impl LocalOrderWitness {
     }
 }
 
-/// Canonical public proof that one owner's exact committed kind and quantity
-/// coordinates lie in the deployed N4K4 domains.
+/// Canonical public proof of one owner's committed order semantics.
+///
+/// Besides the kind/quantity range proof, this contains the selector/message
+/// R1CS proof and a random-linear batch link to the exact distributed vector.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OwnerOrderRangeProof {
     bytes: Vec<u8>,
@@ -673,54 +729,119 @@ impl OwnerOrderRangeProof {
         let owner_point = decode_point(&owner_commitment)?;
         let mut secret = values.to_vec();
         secret.resize(padded_width, Scalar::ZERO);
-        let mut link_proofs = Vec::with_capacity(OWNER_LINK_PROOFS);
-        for (coordinate, (value_commitment, value_blinding)) in [
-            (value_commitments[0], kind_blinding),
-            (value_commitments[1], quantity_blinding),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let value_point = value_commitment
-                .decompress()
-                .ok_or(DistributedInputError::InvalidOrderRangeProof)?;
-            let statement = (owner_point + value_point).compress();
-            let mut public_coefficients = vec![Scalar::ZERO; padded_width];
-            public_coefficients[coordinate] = Scalar::ONE;
-            let mut transcript = owner_link_transcript(
-                session,
-                owner,
-                coordinate,
-                width,
-                padded_width,
-                &owner_commitment,
-                &value_commitment,
-                &deal_digest,
-                &range_component_digest,
-            );
-            let proof = LinearProof::create(
-                &mut transcript,
+
+        let mut derived_blindings = Vec::with_capacity(DERIVED_SCALAR_COMMITMENTS);
+        derived_blindings.push(kind_blinding);
+        derived_blindings.push(quantity_blinding);
+        for coordinate in 2..DERIVED_SCALAR_COMMITMENTS {
+            derived_blindings.push(random_deal_scalar(
                 rng,
-                &statement,
-                owner_blinding + value_blinding,
-                secret.clone(),
-                public_coefficients,
-                owner_generators.clone(),
-                &pc_gens.B,
-                &pc_gens.B_blinding,
-            )
-            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
-            link_proofs.push(proof.to_bytes());
+                session.digest,
+                owner,
+                session.n_workers() + 2,
+                coordinate,
+                b"owner-derived-blinding",
+            ));
         }
+        let selector_transcript = owner_selector_transcript(
+            session,
+            owner,
+            width,
+            padded_width,
+            &owner_commitment,
+            share_commitments,
+            &deal_digest,
+            &range_component_digest,
+        );
+        let selector_pc_gens = R1csPedersenGens::default();
+        let mut selector_prover =
+            bulletproofs_r1cs::r1cs::Prover::new(&selector_pc_gens, selector_transcript);
+        let mut derived_commitments = Vec::with_capacity(DERIVED_SCALAR_COMMITMENTS);
+        let mut derived_variables = Vec::with_capacity(DERIVED_SCALAR_COMMITMENTS);
+        for coordinate in 0..DERIVED_SCALAR_COMMITMENTS {
+            let (commitment, variable) =
+                selector_prover.commit(values[coordinate], derived_blindings[coordinate]);
+            derived_commitments.push(commitment);
+            derived_variables.push(variable);
+        }
+        if derived_commitments[..2] != value_commitments {
+            return Err(DistributedInputError::OrderRangeProofRejected);
+        }
+        constrain_selector_message_relation(&mut selector_prover, &derived_variables)
+            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
+        let selector_proof = selector_prover
+            .prove(&OWNER_SELECTOR_GENS)
+            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
+        let selector_proof_bytes = selector_proof.to_bytes();
+        if selector_proof_bytes.len() != OWNER_SELECTOR_R1CS_PROOF_BYTES {
+            return Err(DistributedInputError::InvalidOrderRangeProof);
+        }
+
+        let link_coefficients = owner_derived_link_coefficients(
+            session,
+            owner,
+            &owner_commitment,
+            &deal_digest,
+            &range_component_digest,
+            &derived_commitments,
+            &selector_proof_bytes,
+        );
+        let derived_points = derived_commitments
+            .iter()
+            .map(|commitment| {
+                commitment
+                    .decompress()
+                    .ok_or(DistributedInputError::InvalidOrderRangeProof)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let batch_point = RistrettoPoint::multiscalar_mul(
+            link_coefficients.iter().copied(),
+            derived_points.iter(),
+        );
+        let statement = (owner_point + batch_point).compress();
+        let mut public_coefficients = vec![Scalar::ZERO; padded_width];
+        public_coefficients[..DERIVED_SCALAR_COMMITMENTS].copy_from_slice(&link_coefficients);
+        let aggregate_blinding = owner_blinding
+            + link_coefficients
+                .iter()
+                .zip(&derived_blindings)
+                .fold(Scalar::ZERO, |sum, (coefficient, blinding)| {
+                    sum + coefficient * blinding
+                });
+        let mut link_transcript = owner_link_transcript(
+            session,
+            owner,
+            width,
+            padded_width,
+            &owner_commitment,
+            &deal_digest,
+            &range_component_digest,
+            &derived_commitments,
+            &selector_proof_bytes,
+        );
+        let link_proof = LinearProof::create(
+            &mut link_transcript,
+            rng,
+            &statement,
+            aggregate_blinding,
+            secret,
+            public_coefficients,
+            owner_generators,
+            &pc_gens.B,
+            &pc_gens.B_blinding,
+        )
+        .map_err(|_| DistributedInputError::OrderRangeProofRejected)?
+        .to_bytes();
 
         let bytes = encode_owner_range_artifact(
             owner,
             width,
             padded_width,
             deal_digest,
-            &value_commitments,
+            &derived_commitments,
             &range_proof_bytes,
-            &link_proofs,
+            &selector_proof_bytes,
+            &link_proof,
         )?;
         let proof = Self { bytes };
         proof.verify(
@@ -741,6 +862,9 @@ impl OwnerOrderRangeProof {
         share_commitments: &[[u8; 32]],
         deal_digest: [u8; 32],
     ) -> Result<()> {
+        #[cfg(test)]
+        OWNER_PROOF_VERIFICATION_CALLS.with(|count| count.set(count.get() + 1));
+
         let width = session.local_witness_width();
         let padded_width = width
             .checked_next_power_of_two()
@@ -748,16 +872,16 @@ impl OwnerOrderRangeProof {
         let decoded =
             decode_owner_range_artifact(&self.bytes, owner, width, padded_width, deal_digest)?;
         let pc_gens = PedersenGens::default();
-        let kind = decoded.value_commitments[0]
+        let kind = decoded.derived_commitments[0]
             .decompress()
             .ok_or(DistributedInputError::InvalidOrderRangeProof)?;
-        let quantity = decoded.value_commitments[1]
+        let quantity = decoded.derived_commitments[1]
             .decompress()
             .ok_or(DistributedInputError::InvalidOrderRangeProof)?;
         let range_commitments = [
-            decoded.value_commitments[0],
+            decoded.derived_commitments[0],
             (Scalar::from(7u64) * pc_gens.B - kind).compress(),
-            decoded.value_commitments[1],
+            decoded.derived_commitments[1],
             (Scalar::from(15u64) * pc_gens.B - quantity).compress(),
         ];
         let mut range_transcript = owner_range_transcript(
@@ -781,44 +905,87 @@ impl OwnerOrderRangeProof {
         let owner_generators = owner_linear_generators(session, owner, padded_width)?;
         let owner_point = decode_point(&owner_commitment)?;
         let range_component_digest = owner_range_component_digest(
-            &decoded.value_commitments,
+            &[
+                decoded.derived_commitments[0],
+                decoded.derived_commitments[1],
+            ],
             &decoded.range_proof_bytes,
             &deal_digest,
         );
-        for (coordinate, (value_commitment, link_proof)) in decoded
-            .value_commitments
+
+        let selector_transcript = owner_selector_transcript(
+            session,
+            owner,
+            width,
+            padded_width,
+            &owner_commitment,
+            share_commitments,
+            &deal_digest,
+            &range_component_digest,
+        );
+        let mut selector_verifier = bulletproofs_r1cs::r1cs::Verifier::new(selector_transcript);
+        let derived_variables = decoded
+            .derived_commitments
             .iter()
-            .zip(decoded.link_proofs.iter())
-            .enumerate()
-        {
-            let value_point = value_commitment
-                .decompress()
-                .ok_or(DistributedInputError::InvalidOrderRangeProof)?;
-            let statement = (owner_point + value_point).compress();
-            let mut public_coefficients = vec![Scalar::ZERO; padded_width];
-            public_coefficients[coordinate] = Scalar::ONE;
-            let mut transcript = owner_link_transcript(
-                session,
-                owner,
-                coordinate,
-                width,
-                padded_width,
-                &owner_commitment,
-                value_commitment,
-                &deal_digest,
-                &range_component_digest,
-            );
-            link_proof
-                .verify(
-                    &mut transcript,
-                    &statement,
-                    &owner_generators,
-                    &pc_gens.B,
-                    &pc_gens.B_blinding,
-                    public_coefficients,
-                )
-                .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
-        }
+            .map(|commitment| selector_verifier.commit(*commitment))
+            .collect::<Vec<_>>();
+        constrain_selector_message_relation(&mut selector_verifier, &derived_variables)
+            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
+        selector_verifier
+            .verify(
+                &decoded.selector_proof,
+                &R1csPedersenGens::default(),
+                &OWNER_SELECTOR_GENS,
+            )
+            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
+
+        let link_coefficients = owner_derived_link_coefficients(
+            session,
+            owner,
+            &owner_commitment,
+            &deal_digest,
+            &range_component_digest,
+            &decoded.derived_commitments,
+            &decoded.selector_proof_bytes,
+        );
+        let derived_points = decoded
+            .derived_commitments
+            .iter()
+            .map(|commitment| {
+                commitment
+                    .decompress()
+                    .ok_or(DistributedInputError::InvalidOrderRangeProof)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let batch_point = RistrettoPoint::multiscalar_mul(
+            link_coefficients.iter().copied(),
+            derived_points.iter(),
+        );
+        let statement = (owner_point + batch_point).compress();
+        let mut public_coefficients = vec![Scalar::ZERO; padded_width];
+        public_coefficients[..DERIVED_SCALAR_COMMITMENTS].copy_from_slice(&link_coefficients);
+        let mut link_transcript = owner_link_transcript(
+            session,
+            owner,
+            width,
+            padded_width,
+            &owner_commitment,
+            &deal_digest,
+            &range_component_digest,
+            &decoded.derived_commitments,
+            &decoded.selector_proof_bytes,
+        );
+        decoded
+            .link_proof
+            .verify(
+                &mut link_transcript,
+                &statement,
+                &owner_generators,
+                &pc_gens.B,
+                &pc_gens.B_blinding,
+                public_coefficients,
+            )
+            .map_err(|_| DistributedInputError::OrderRangeProofRejected)?;
         Ok(())
     }
 
@@ -843,13 +1010,96 @@ impl OwnerOrderRangeProof {
         let checksum = owner_range_artifact_checksum(&self.bytes[..checksum_start]);
         self.bytes[checksum_start..].copy_from_slice(&checksum);
     }
+
+    #[cfg(test)]
+    fn corrupt_selector_response_for_test(&mut self) {
+        let proof_start = OWNER_RANGE_ARTIFACT_HEADER_BYTES
+            + OWNER_RANGE_PROOF_BYTES
+            + 2
+            + EXTRA_DERIVED_COMMITMENTS * 32
+            + 4;
+        // One-phase R1CS encoding: version byte, eight compressed points, then
+        // the first canonical response scalar.
+        let response_start = proof_start + 1 + 8 * 32;
+        let original = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+            self.bytes[response_start..response_start + 32]
+                .try_into()
+                .expect("fixed selector response width"),
+        ))
+        .expect("honest selector response is canonical");
+        self.bytes[response_start..response_start + 32]
+            .copy_from_slice(&(original + Scalar::ONE).to_bytes());
+        self.refresh_checksum_for_test();
+    }
+
+    #[cfg(test)]
+    fn substitute_selector_proof_for_test(&mut self, other: &Self) {
+        let proof_start = OWNER_RANGE_ARTIFACT_HEADER_BYTES
+            + OWNER_RANGE_PROOF_BYTES
+            + 2
+            + EXTRA_DERIVED_COMMITMENTS * 32
+            + 4;
+        let proof_end = proof_start + OWNER_SELECTOR_R1CS_PROOF_BYTES;
+        self.bytes[proof_start..proof_end].copy_from_slice(&other.bytes[proof_start..proof_end]);
+        self.refresh_checksum_for_test();
+    }
+
+    #[cfg(test)]
+    fn corrupt_derived_link_response_for_test(&mut self) {
+        let link_proof_start = OWNER_RANGE_ARTIFACT_HEADER_BYTES
+            + OWNER_RANGE_PROOF_BYTES
+            + 2
+            + EXTRA_DERIVED_COMMITMENTS * 32
+            + 4
+            + OWNER_SELECTOR_R1CS_PROOF_BYTES
+            + 2
+            + 4;
+        let link_proof_end = self.bytes.len() - 32;
+        // LinearProof ends in canonical response scalars `a` and `r`.
+        let response_start = link_proof_end - 2 * 32;
+        debug_assert!(response_start >= link_proof_start);
+        let original = Option::<Scalar>::from(Scalar::from_canonical_bytes(
+            self.bytes[response_start..response_start + 32]
+                .try_into()
+                .expect("fixed link response width"),
+        ))
+        .expect("honest link response is canonical");
+        self.bytes[response_start..response_start + 32]
+            .copy_from_slice(&(original + Scalar::ONE).to_bytes());
+        self.refresh_checksum_for_test();
+    }
+
+    #[cfg(test)]
+    fn refresh_checksum_for_test(&mut self) {
+        let checksum_start = self.bytes.len() - 32;
+        let checksum = owner_range_artifact_checksum(&self.bytes[..checksum_start]);
+        self.bytes[checksum_start..].copy_from_slice(&checksum);
+    }
 }
 
 struct DecodedOwnerRangeArtifact {
-    value_commitments: [CompressedRistretto; 2],
+    derived_commitments: Vec<CompressedRistretto>,
     range_proof: RangeProof,
     range_proof_bytes: Vec<u8>,
-    link_proofs: Vec<LinearProof>,
+    selector_proof: R1CSProof,
+    selector_proof_bytes: Vec<u8>,
+    link_proof: LinearProof,
+}
+
+fn option_message_slots(kind: usize, quantity: usize) -> [u64; MESSAGE_SLOT_WIDTH] {
+    debug_assert!(kind < KIND_COUNT && quantity < QUANTITY_COUNT);
+    let mut slots = [0u64; MESSAGE_SLOT_WIDTH];
+    if kind < PRICE_COUNT {
+        for slot in slots.iter_mut().take(kind + 1) {
+            *slot = quantity as u64;
+        }
+    } else {
+        for slot in slots.iter_mut().take(2 * PRICE_COUNT).skip(kind) {
+            *slot = quantity as u64;
+        }
+    }
+    slots[2 * PRICE_COUNT] = kind as u64 + 8 * quantity as u64;
+    slots
 }
 
 fn small_scalar(value: Scalar) -> Option<u64> {
@@ -929,29 +1179,152 @@ fn owner_range_component_digest(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn owner_link_transcript(
+fn owner_selector_transcript(
     session: &DistributedWitnessSession,
     owner: usize,
-    coordinate: usize,
     width: usize,
     padded_width: usize,
     owner_commitment: &[u8; 32],
-    value_commitment: &CompressedRistretto,
+    share_commitments: &[[u8; 32]],
     deal_digest: &[u8; 32],
     range_component_digest: &[u8; 32],
+) -> Transcript {
+    let mut transcript = Transcript::new(OWNER_SELECTOR_TRANSCRIPT);
+    transcript.append_message(b"layout", LAYOUT_ID);
+    transcript.append_message(b"session", &session.digest());
+    transcript.append_message(b"relation", &session.relation_digest());
+    transcript.append_u64(b"owner", owner as u64);
+    transcript.append_u64(b"width", width as u64);
+    transcript.append_u64(b"padded-width", padded_width as u64);
+    transcript.append_u64(b"option-count", OPTION_COUNT as u64);
+    transcript.append_u64(b"message-slot-width", MESSAGE_SLOT_WIDTH as u64);
+    transcript.append_message(b"deal", deal_digest);
+    transcript.append_message(b"owner-commitment", owner_commitment);
+    transcript.append_u64(b"share-count", share_commitments.len() as u64);
+    for commitment in share_commitments {
+        transcript.append_message(b"share-commitment", commitment);
+    }
+    transcript.append_message(b"range-component", range_component_digest);
+    transcript
+}
+
+fn constrain_selector_message_relation<CS: ConstraintSystem>(
+    cs: &mut CS,
+    variables: &[Variable],
+) -> std::result::Result<(), bulletproofs_r1cs::r1cs::R1CSError> {
+    if variables.len() != DERIVED_SCALAR_COMMITMENTS {
+        return Err(bulletproofs_r1cs::r1cs::R1CSError::GadgetError {
+            description: "private-book derived witness has the wrong width".to_owned(),
+        });
+    }
+    let kind = variables[0];
+    let quantity = variables[1];
+    let selectors = &variables[2..2 + OPTION_COUNT];
+    let message_slots = &variables[2 + OPTION_COUNT..DERIVED_ORDER_WIDTH];
+    let mut selector_sum = LinearCombination::from(-Scalar::ONE);
+    let mut kind_sum = LinearCombination::from(Scalar::ZERO);
+    let mut quantity_sum = LinearCombination::from(Scalar::ZERO);
+    let mut table_index_sum = LinearCombination::from(Scalar::ZERO);
+    let mut slot_sums = (0..MESSAGE_SLOT_WIDTH)
+        .map(|_| LinearCombination::from(Scalar::ZERO))
+        .collect::<Vec<_>>();
+    for (option, selector) in selectors.iter().copied().enumerate() {
+        let (_, _, boolean_product) = cs.multiply(selector.into(), selector - Scalar::ONE);
+        cs.constrain(boolean_product.into());
+        let option_kind = option / QUANTITY_COUNT;
+        let option_quantity = option % QUANTITY_COUNT;
+        selector_sum = selector_sum + selector;
+        kind_sum = kind_sum + selector * Scalar::from(option_kind as u64);
+        quantity_sum = quantity_sum + selector * Scalar::from(option_quantity as u64);
+        table_index_sum = table_index_sum + selector * Scalar::from(option as u64);
+        for (slot, value) in option_message_slots(option_kind, option_quantity)
+            .into_iter()
+            .enumerate()
+        {
+            slot_sums[slot] = slot_sums[slot].clone() + selector * Scalar::from(value);
+        }
+    }
+    cs.constrain(selector_sum);
+    cs.constrain(kind - kind_sum);
+    cs.constrain(quantity - quantity_sum);
+    cs.constrain(table_index_sum - kind * Scalar::from(QUANTITY_COUNT as u64) - quantity);
+    for (slot, expected) in message_slots.iter().zip(slot_sums) {
+        cs.constrain(*slot - expected);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn owner_derived_link_coefficients(
+    session: &DistributedWitnessSession,
+    owner: usize,
+    owner_commitment: &[u8; 32],
+    deal_digest: &[u8; 32],
+    range_component_digest: &[u8; 32],
+    derived_commitments: &[CompressedRistretto],
+    selector_proof_bytes: &[u8],
+) -> Vec<Scalar> {
+    let mut hasher = blake3::Hasher::new_derive_key(OWNER_LINK_CHALLENGE_DOMAIN);
+    hasher.update(LAYOUT_ID);
+    hasher.update(&session.digest());
+    hasher.update(&session.relation_digest());
+    hasher.update(&(owner as u64).to_be_bytes());
+    hasher.update(owner_commitment);
+    hasher.update(deal_digest);
+    hasher.update(range_component_digest);
+    hasher.update(&(derived_commitments.len() as u64).to_be_bytes());
+    for commitment in derived_commitments {
+        hasher.update(commitment.as_bytes());
+    }
+    hasher.update(&(selector_proof_bytes.len() as u64).to_be_bytes());
+    hasher.update(selector_proof_bytes);
+    let mut reader = hasher.finalize_xof();
+    (0..derived_commitments.len())
+        .map(|_| {
+            loop {
+                let mut candidate = [0u8; 32];
+                reader.fill(&mut candidate);
+                if let Some(coefficient) =
+                    Option::<Scalar>::from(Scalar::from_canonical_bytes(candidate))
+                {
+                    // Canonical rejection sampling is exactly uniform over the
+                    // field, including zero. Mapping zero to one would double
+                    // the mass at one and invalidate the exact 1/|Scalar|
+                    // random-linear-compression soundness account.
+                    break coefficient;
+                }
+            }
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn owner_link_transcript(
+    session: &DistributedWitnessSession,
+    owner: usize,
+    width: usize,
+    padded_width: usize,
+    owner_commitment: &[u8; 32],
+    deal_digest: &[u8; 32],
+    range_component_digest: &[u8; 32],
+    derived_commitments: &[CompressedRistretto],
+    selector_proof_bytes: &[u8],
 ) -> Transcript {
     let mut transcript = Transcript::new(OWNER_LINK_TRANSCRIPT);
     transcript.append_message(b"layout", LAYOUT_ID);
     transcript.append_message(b"session", &session.digest());
     transcript.append_message(b"relation", &session.relation_digest());
     transcript.append_u64(b"owner", owner as u64);
-    transcript.append_u64(b"coordinate", coordinate as u64);
     transcript.append_u64(b"width", width as u64);
     transcript.append_u64(b"padded-width", padded_width as u64);
     transcript.append_message(b"deal", deal_digest);
     transcript.append_message(b"owner-commitment", owner_commitment);
-    transcript.append_message(b"value-commitment", value_commitment.as_bytes());
     transcript.append_message(b"range-component", range_component_digest);
+    transcript.append_u64(b"derived-count", derived_commitments.len() as u64);
+    for commitment in derived_commitments {
+        transcript.append_message(b"derived-commitment", commitment.as_bytes());
+    }
+    transcript.append_message(b"selector-proof", selector_proof_bytes);
     transcript
 }
 
@@ -968,10 +1341,13 @@ fn expected_owner_link_proof_len(padded_width: usize) -> Result<usize> {
 
 fn owner_range_artifact_wire_len(padded_width: usize) -> Result<usize> {
     let link_len = expected_owner_link_proof_len(padded_width)?;
-    // Header and context, range proof, link count and two framed link proofs,
-    // then the artifact checksum.
+    // Header (including kind/quantity commitments), range proof, the remaining
+    // derived scalar commitments, selector R1CS proof, one framed batch-link
+    // proof, then the artifact checksum.
     OWNER_RANGE_ARTIFACT_HEADER_BYTES
         .checked_add(OWNER_RANGE_PROOF_BYTES)
+        .and_then(|value| value.checked_add(2 + EXTRA_DERIVED_COMMITMENTS * 32))
+        .and_then(|value| value.checked_add(4 + OWNER_SELECTOR_R1CS_PROOF_BYTES))
         .and_then(|value| value.checked_add(2))
         .and_then(|value| value.checked_add(OWNER_LINK_PROOFS * (4 + link_len)))
         .and_then(|value| value.checked_add(32))
@@ -991,9 +1367,10 @@ fn encode_owner_range_artifact(
     width: usize,
     padded_width: usize,
     deal_digest: [u8; 32],
-    value_commitments: &[CompressedRistretto; 2],
+    derived_commitments: &[CompressedRistretto],
     range_proof_bytes: &[u8],
-    link_proofs: &[Vec<u8>],
+    selector_proof_bytes: &[u8],
+    link_proof: &[u8],
 ) -> Result<Vec<u8>> {
     let expected_len = owner_range_artifact_wire_len(padded_width)?;
     let expected_link_len = expected_owner_link_proof_len(padded_width)?;
@@ -1003,12 +1380,11 @@ fn encode_owner_range_artifact(
         || padded_width > u32::MAX as usize
         || width == 0
         || padded_width < width
+        || derived_commitments.len() != DERIVED_SCALAR_COMMITMENTS
         || range_proof_bytes.len() != OWNER_RANGE_PROOF_BYTES
-        || link_proofs.len() != OWNER_LINK_PROOFS
-        || link_proofs
-            .iter()
-            .any(|proof| proof.len() != expected_link_len)
-        || value_commitments.iter().any(|commitment| {
+        || selector_proof_bytes.len() != OWNER_SELECTOR_R1CS_PROOF_BYTES
+        || link_proof.len() != expected_link_len
+        || derived_commitments.iter().any(|commitment| {
             commitment
                 .decompress()
                 .is_none_or(|point| point.compress() != *commitment)
@@ -1023,16 +1399,20 @@ fn encode_owner_range_artifact(
     out.extend_from_slice(&(width as u32).to_be_bytes());
     out.extend_from_slice(&(padded_width as u32).to_be_bytes());
     out.extend_from_slice(&deal_digest);
-    for commitment in value_commitments {
+    for commitment in &derived_commitments[..2] {
         out.extend_from_slice(commitment.as_bytes());
     }
     out.extend_from_slice(&(range_proof_bytes.len() as u32).to_be_bytes());
     out.extend_from_slice(range_proof_bytes);
-    out.extend_from_slice(&(link_proofs.len() as u16).to_be_bytes());
-    for proof in link_proofs {
-        out.extend_from_slice(&(proof.len() as u32).to_be_bytes());
-        out.extend_from_slice(proof);
+    out.extend_from_slice(&(EXTRA_DERIVED_COMMITMENTS as u16).to_be_bytes());
+    for commitment in &derived_commitments[2..] {
+        out.extend_from_slice(commitment.as_bytes());
     }
+    out.extend_from_slice(&(selector_proof_bytes.len() as u32).to_be_bytes());
+    out.extend_from_slice(selector_proof_bytes);
+    out.extend_from_slice(&(OWNER_LINK_PROOFS as u16).to_be_bytes());
+    out.extend_from_slice(&(link_proof.len() as u32).to_be_bytes());
+    out.extend_from_slice(link_proof);
     let checksum = owner_range_artifact_checksum(&out);
     out.extend_from_slice(&checksum);
     if out.len() != expected_len {
@@ -1068,10 +1448,11 @@ fn decode_owner_range_artifact(
     {
         return Err(DistributedInputError::InvalidOrderRangeProof);
     }
-    let value_commitments = [
+    let mut derived_commitments = Vec::with_capacity(DERIVED_SCALAR_COMMITMENTS);
+    derived_commitments.extend([
         canonical_owner_range_point(reader.take::<32>()?)?,
         canonical_owner_range_point(reader.take::<32>()?)?,
-    ];
+    ]);
     let range_len = u32::from_be_bytes(reader.take::<4>()?) as usize;
     if range_len != OWNER_RANGE_PROOF_BYTES {
         return Err(DistributedInputError::InvalidOrderRangeProof);
@@ -1079,27 +1460,40 @@ fn decode_owner_range_artifact(
     let range_proof_bytes = reader.take_slice(range_len)?.to_vec();
     let range_proof = RangeProof::from_bytes(&range_proof_bytes)
         .map_err(|_| DistributedInputError::InvalidOrderRangeProof)?;
+    if u16::from_be_bytes(reader.take::<2>()?) as usize != EXTRA_DERIVED_COMMITMENTS {
+        return Err(DistributedInputError::InvalidOrderRangeProof);
+    }
+    for _ in 0..EXTRA_DERIVED_COMMITMENTS {
+        derived_commitments.push(canonical_owner_range_point(reader.take::<32>()?)?);
+    }
+    let selector_proof_len = u32::from_be_bytes(reader.take::<4>()?) as usize;
+    if selector_proof_len != OWNER_SELECTOR_R1CS_PROOF_BYTES {
+        return Err(DistributedInputError::InvalidOrderRangeProof);
+    }
+    let selector_proof_bytes = reader.take_slice(selector_proof_len)?.to_vec();
+    let selector_proof = R1CSProof::from_bytes(&selector_proof_bytes)
+        .map_err(|_| DistributedInputError::InvalidOrderRangeProof)?;
+    if selector_proof.to_bytes() != selector_proof_bytes {
+        return Err(DistributedInputError::InvalidOrderRangeProof);
+    }
     if u16::from_be_bytes(reader.take::<2>()?) as usize != OWNER_LINK_PROOFS {
         return Err(DistributedInputError::InvalidOrderRangeProof);
     }
     let expected_link_len = expected_owner_link_proof_len(padded_width)?;
-    let mut link_proofs = Vec::with_capacity(OWNER_LINK_PROOFS);
-    for _ in 0..OWNER_LINK_PROOFS {
-        let link_len = u32::from_be_bytes(reader.take::<4>()?) as usize;
-        if link_len != expected_link_len {
-            return Err(DistributedInputError::InvalidOrderRangeProof);
-        }
-        link_proofs.push(
-            LinearProof::from_bytes(reader.take_slice(link_len)?)
-                .map_err(|_| DistributedInputError::InvalidOrderRangeProof)?,
-        );
+    let link_len = u32::from_be_bytes(reader.take::<4>()?) as usize;
+    if link_len != expected_link_len {
+        return Err(DistributedInputError::InvalidOrderRangeProof);
     }
+    let link_proof = LinearProof::from_bytes(reader.take_slice(link_len)?)
+        .map_err(|_| DistributedInputError::InvalidOrderRangeProof)?;
     reader.finish()?;
     Ok(DecodedOwnerRangeArtifact {
-        value_commitments,
+        derived_commitments,
         range_proof,
         range_proof_bytes,
-        link_proofs,
+        selector_proof,
+        selector_proof_bytes,
+        link_proof,
     })
 }
 
@@ -1204,13 +1598,6 @@ impl DealerContribution {
         if self.digest != expected_digest {
             return Err(DistributedInputError::CertificateDigestMismatch);
         }
-        self.order_range_proof.verify(
-            session,
-            self.owner,
-            self.owner_commitment,
-            &self.share_commitments,
-            self.digest,
-        )?;
         let range_proof_digest = self.order_range_proof.digest();
         let key = VerifyingKey::from_bytes(
             &session
@@ -1222,7 +1609,17 @@ impl DealerContribution {
             &deal_signing_message(&self.digest, &range_proof_digest),
             &Signature::from_bytes(&self.signature),
         )
-        .map_err(|_| DistributedInputError::InvalidSignature)
+        .map_err(|_| DistributedInputError::InvalidSignature)?;
+        // Proof parsing and verification are deliberately after cheap roster,
+        // commitment, digest, and signature checks. Unauthenticated network
+        // input must not reach the range/R1CS/16k-vector proof work.
+        self.order_range_proof.verify(
+            session,
+            self.owner,
+            self.owner_commitment,
+            &self.share_commitments,
+            self.digest,
+        )
     }
 
     #[cfg(test)]
@@ -1231,8 +1628,42 @@ impl DealerContribution {
     }
 
     #[cfg(test)]
+    pub(crate) fn corrupt_owner_signature_for_test(&mut self) {
+        self.signature[0] ^= 1;
+    }
+
+    #[cfg(test)]
     pub(crate) fn corrupt_range_proof_and_resign_for_test(&mut self, signing_key: &SigningKey) {
         self.order_range_proof.corrupt_range_response_for_test();
+        self.resign_for_test(signing_key);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_selector_proof_and_resign_for_test(&mut self, signing_key: &SigningKey) {
+        self.order_range_proof.corrupt_selector_response_for_test();
+        self.resign_for_test(signing_key);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn corrupt_derived_link_and_resign_for_test(&mut self, signing_key: &SigningKey) {
+        self.order_range_proof
+            .corrupt_derived_link_response_for_test();
+        self.resign_for_test(signing_key);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn substitute_selector_proof_and_resign_for_test(
+        &mut self,
+        other: &Self,
+        signing_key: &SigningKey,
+    ) {
+        self.order_range_proof
+            .substitute_selector_proof_for_test(&other.order_range_proof);
+        self.resign_for_test(signing_key);
+    }
+
+    #[cfg(test)]
+    fn resign_for_test(&mut self, signing_key: &SigningKey) {
         self.signature = signing_key
             .sign(&deal_signing_message(
                 &self.digest,
@@ -1588,8 +2019,10 @@ impl DistributedInputCoordinator {
 /// Canonical public proof-input preparation certificate.
 ///
 /// This is evidence of roster-authenticated, commitment-consistent input
-/// distribution and of the linked hidden order-domain subrelation. It is not
-/// evidence that the remaining Poseidon, BFV, or clearing relation is satisfied.
+/// distribution and of the linked hidden order-domain, one-hot selector, and
+/// nine-slot semantic message subrelation. It is not evidence that the
+/// remaining Poseidon, BFV polynomial-opening, or clearing relation is
+/// satisfied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DistributedInputCertificate {
     session_digest: [u8; 32],
@@ -1801,6 +2234,8 @@ fn session_digest(
     hasher.update(LAYOUT_ID);
     hasher.update(&(ORDER_COUNT as u64).to_be_bytes());
     hasher.update(&(PRICE_COUNT as u64).to_be_bytes());
+    hasher.update(&(OPTION_COUNT as u64).to_be_bytes());
+    hasher.update(&(MESSAGE_SLOT_WIDTH as u64).to_be_bytes());
     hasher.update(&(degree as u64).to_be_bytes());
     hasher.update(&(BFV_VARIANCE as u64).to_be_bytes());
     hasher.update(&(BFV_SHORT_ABS_BOUND as u64).to_be_bytes());
@@ -1860,7 +2295,10 @@ fn ack_signing_message(
 }
 
 fn vector_commitment(degree: usize, owner: usize, values: &[Scalar], blinding: Scalar) -> [u8; 32] {
-    debug_assert_eq!(values.len(), 2 + 3 * degree + ROOT_BLINDING_WIDTH);
+    debug_assert_eq!(
+        values.len(),
+        DERIVED_ORDER_WIDTH + 3 * degree + ROOT_BLINDING_WIDTH
+    );
     let blind_base = PedersenGens::default().B_blinding;
     let point = if degree == BFV_DEGREE {
         let generators = PRODUCTION_GENS.share(owner);
@@ -1982,7 +2420,7 @@ fn certificate_wire_len(degree: usize, workers: usize) -> Result<usize> {
     }
     let width = degree
         .checked_mul(3)
-        .and_then(|value| value.checked_add(2 + ROOT_BLINDING_WIDTH))
+        .and_then(|value| value.checked_add(DERIVED_ORDER_WIDTH + ROOT_BLINDING_WIDTH))
         .ok_or(DistributedInputError::MalformedCertificate)?;
     let padded_width = width
         .checked_next_power_of_two()

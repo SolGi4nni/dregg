@@ -105,15 +105,17 @@ pub mod private_book_bfv_zk;
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_canonical_backend;
 /// Owner-local expansion and n-of-n additive sharing of the private BFV/root
-/// witness, with zero-knowledge kind/quantity range proofs linked to the exact
-/// distributed vector commitments. This removes centralized input collection
-/// while explicitly stopping short of claiming a full distributed prover.
+/// witness, with zero-knowledge range, one-hot selector, and semantic-message
+/// proofs linked to the exact distributed vector commitments. This removes
+/// centralized input collection while explicitly stopping short of claiming a
+/// full distributed prover.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_distributed_inputs;
 /// One-share-per-process backend boundary and public-only coordinator. The
 /// current prover establishes committed-share custody and three linear root
-/// constraints; the input certificate adds nonlinear kind/quantity ranges.
-/// BFV/Poseidon/selector-table/clearing authority remains named.
+/// constraints; the input certificate adds nonlinear order ranges and the
+/// exact finite selector/semantic-message relation. Exact BFV polynomial
+/// opening, Poseidon, and clearing authority remain named.
 #[cfg(feature = "amm-input-binding")]
 pub mod private_book_distributed_prover;
 /// Exact N4K4 NP relation joining four BFV ciphertext openings to the same
