@@ -239,7 +239,9 @@ impl FoldEngine {
         execution
     }
 
-    /// Fold two independent groups with one final GPU readback and one device wait.
+    /// Fold two independent groups with one batched compute submission, one final GPU readback, and one
+    /// device wait when both sides fit one adapter binding. Oversized sides retain the bounded streaming
+    /// reducer and still share the final direct-gather readback.
     ///
     /// Demand and supply are the production consumer, but the primitive is deliberately stated in terms
     /// of two same-shaped folds. Each group keeps its own bound and variable-time bookkeeping. When no
@@ -280,14 +282,49 @@ impl FoldEngine {
         }
 
         let executions = (|| {
-            let (first_resident, first_plan) =
-                gpu.fold_streaming_preflighted(first, &first_shape)?;
-            let (second_resident, second_plan) =
-                gpu.fold_streaming_preflighted(second, &second_shape)?;
-            // Two independent one-ciphertext outputs are copied together on-device. `download` then
-            // issues one COPY to one MAP_READ buffer and performs the pair's sole device wait.
-            let pair = gpu.concat_resident(&[first_resident, second_resident]);
-            let mut downloaded = gpu.download(&pair).into_iter();
+            let capacity = gpu.capacity_for_shape(&first_shape)?;
+            let ((first_resident, first_plan), (second_resident, second_plan)) = if first.len()
+                <= capacity.ciphertexts_per_chunk
+                && second.len() <= capacity.ciphertexts_per_chunk
+            {
+                // The overwhelmingly common market shape fits each side in one storage binding. Upload
+                // both, then encode both independent dispatches into ONE compute pass/submission. The
+                // generic streaming reducer remains the exact path for larger-than-adapter books.
+                let first_uploaded = gpu.upload(first);
+                let second_uploaded = gpu.upload(second);
+                let mut folded = gpu
+                    .fold_resident_many(&[&first_uploaded, &second_uploaded])
+                    .into_iter();
+                let first_resident = folded
+                    .next()
+                    .expect("paired resident fold returns first dispatch output");
+                let second_resident = folded
+                    .next()
+                    .expect("paired resident fold returns second dispatch output");
+                debug_assert!(folded.next().is_none());
+                let plan = |input_ciphertexts| ResidentFoldPlan {
+                    input_ciphertexts,
+                    ciphertexts_per_chunk: capacity.ciphertexts_per_chunk,
+                    upload_chunks: 1,
+                    reduction_rounds: 0,
+                };
+                (
+                    (first_resident, plan(first.len())),
+                    (second_resident, plan(second.len())),
+                )
+            } else {
+                (
+                    gpu.fold_streaming_preflighted(first, &first_shape)?,
+                    gpu.fold_streaming_preflighted(second, &second_shape)?,
+                )
+            };
+            // Copy both independent outputs straight into one MAP_READ buffer. The old path first
+            // allocated a two-ciphertext STORAGE buffer, submitted a device-to-device concatenate, and
+            // then submitted the staging copy. Direct gathering preserves the same one map/wait while
+            // removing that intermediate allocation and queue submission from every demand/supply fold.
+            let mut downloaded = gpu
+                .download_many(&[&first_resident, &second_resident])
+                .into_iter();
             let first_ciphertext = downloaded
                 .next()
                 .expect("paired resident fold returns its first ciphertext");
@@ -779,103 +816,179 @@ impl Arena {
     /// itself STORAGE, so the result can be folded again (fold-of-folds) or downloaded later; nothing is
     /// read back here and the submit is not waited on (the single `download` at the end synchronizes).
     pub fn fold_resident(&self, h: &ResidentHandle) -> ResidentHandle {
-        let n_lanes = h.shape.n_lanes();
-        assert!(
-            h.n_cts <= u32::MAX as usize && n_lanes <= u32::MAX as usize,
-            "gpu_arena fold: shader u32 metadata capacity exceeded"
-        );
-        let out_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("arena-fold-out"),
-            size: h.shape.ct_bytes(),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let meta = build_meta(
-            h.n_cts as u32,
-            n_lanes as u32,
-            h.shape.degree as u32,
-            &h.shape.moduli,
-        );
-        let meta_buf = {
-            use wgpu::util::DeviceExt;
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("arena-fold-meta"),
-                    contents: bytemuck::cast_slice(&meta),
-                    usage: wgpu::BufferUsages::UNIFORM,
+        self.fold_resident_many(&[h])
+            .pop()
+            .expect("one resident input produces one fold output")
+    }
+
+    /// Encode several independent resident folds in one compute pass and one queue submission.
+    ///
+    /// Inputs and outputs remain disjoint; this changes only scheduling, not the shader or arithmetic.
+    /// It is the two-sided call-auction fast path: demand and supply share launch overhead without ever
+    /// sharing ciphertext lanes or host-side bound/variable-time bookkeeping.
+    fn fold_resident_many(&self, handles: &[&ResidentHandle]) -> Vec<ResidentHandle> {
+        use wgpu::util::DeviceExt;
+
+        assert!(!handles.is_empty(), "gpu_arena fold: empty handle set");
+        let n_lanes = handles
+            .iter()
+            .map(|handle| {
+                let lanes = handle.shape.n_lanes();
+                assert!(
+                    handle.n_cts <= u32::MAX as usize && lanes <= u32::MAX as usize,
+                    "gpu_arena fold: shader u32 metadata capacity exceeded"
+                );
+                lanes
+            })
+            .collect::<Vec<_>>();
+        let output_buffers = handles
+            .iter()
+            .map(|handle| {
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("arena-fold-out"),
+                    size: handle.shape.ct_bytes(),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
                 })
-        };
+            })
+            .collect::<Vec<_>>();
+        let metadata_buffers = handles
+            .iter()
+            .zip(&n_lanes)
+            .map(|(handle, &lanes)| {
+                let meta = build_meta(
+                    handle.n_cts as u32,
+                    lanes as u32,
+                    handle.shape.degree as u32,
+                    &handle.shape.moduli,
+                );
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("arena-fold-meta"),
+                        contents: bytemuck::cast_slice(&meta),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    })
+            })
+            .collect::<Vec<_>>();
         {
             let pool = self.pool.lock().unwrap();
-            let entry = &pool[h.id];
-            assert_eq!(
-                entry.n_cts, h.n_cts,
-                "gpu_arena: handle/pool n_cts mismatch"
-            );
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: meta_buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: entry.buf.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: out_buf.as_entire_binding(),
-                    },
-                ],
-            });
+            let bind_groups = handles
+                .iter()
+                .zip(&metadata_buffers)
+                .zip(&output_buffers)
+                .map(|((&handle, meta), output)| {
+                    let entry = &pool[handle.id];
+                    assert_eq!(
+                        entry.n_cts, handle.n_cts,
+                        "gpu_arena: handle/pool n_cts mismatch"
+                    );
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &self.bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: meta.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: entry.buf.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: output.as_entire_binding(),
+                            },
+                        ],
+                    })
+                })
+                .collect::<Vec<_>>();
             let mut enc = self.device.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups((n_lanes as u32).div_ceil(256), 1, 1);
+                for (bind, &lanes) in bind_groups.iter().zip(&n_lanes) {
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.dispatch_workgroups((lanes as u32).div_ceil(256), 1, 1);
+                }
             }
             self.queue.submit([enc.finish()]);
         }
 
-        // The fold's plaintext-bound bookkeeping: the exact sum, u128 so it cannot wrap silently. The
-        // frozen signature carries no plaintext modulus, so the wrap REFUSAL itself lives downstream
-        // (fold_add / decrypt margin) on the downloaded plain_bound — which this sum preserves exactly.
-        let bound_sum = h.bounds.iter().copied().fold(0u128, |acc, bound| {
-            acc.checked_add(bound)
-                .expect("gpu_arena fold: plaintext-bound sum exceeds u128 (fail closed)")
-        });
-        let id = {
-            let mut pool = self.pool.lock().unwrap();
-            pool.push(PoolEntry {
-                buf: out_buf,
-                n_cts: 1,
-            });
-            pool.len() - 1
-        };
-        ResidentHandle {
-            id,
-            n_cts: 1,
-            shape: h.shape.clone(),
-            variable_times: vec![h.variable_times.iter().any(|&flag| flag)],
-            bounds: vec![bound_sum],
-        }
+        let mut pool = self.pool.lock().unwrap();
+        handles
+            .iter()
+            .zip(output_buffers)
+            .map(|(&handle, output)| {
+                // The fold's plaintext-bound bookkeeping: the exact sum, u128 so it cannot wrap silently.
+                let bound_sum = handle.bounds.iter().copied().fold(0u128, |acc, bound| {
+                    acc.checked_add(bound)
+                        .expect("gpu_arena fold: plaintext-bound sum exceeds u128 (fail closed)")
+                });
+                pool.push(PoolEntry {
+                    buf: output,
+                    n_cts: 1,
+                });
+                ResidentHandle {
+                    id: pool.len() - 1,
+                    n_cts: 1,
+                    shape: handle.shape.clone(),
+                    variable_times: vec![handle.variable_times.iter().any(|&flag| flag)],
+                    bounds: vec![bound_sum],
+                }
+            })
+            .collect()
     }
 
     /// The ONE readback: copy the resident buffer to a MAP_READ staging buffer, wait, rebuild
     /// `LeanCiphertext`s (with the carried plain_bound / variable_time bookkeeping intact).
     pub fn download(&self, h: &ResidentHandle) -> Vec<LeanCiphertext> {
-        let size = h.shape.ct_bytes() * h.n_cts as u64;
+        self.download_many(&[h])
+    }
+
+    /// Gather several compatible resident outputs directly into one staging buffer.
+    ///
+    /// This is not a compute concatenation: there is no intermediate STORAGE buffer and no preliminary
+    /// queue submission. All source-to-staging copies share the command buffer whose completion is already
+    /// required for mapping. The fold pair uses this to return demand and supply with one allocation,
+    /// submission, map, and wait while preserving each output's independent bound/variable-time metadata.
+    fn download_many(&self, handles: &[&ResidentHandle]) -> Vec<LeanCiphertext> {
+        let first = handles
+            .first()
+            .expect("gpu_arena download: empty resident handle set");
+        let shape = &first.shape;
+        assert!(
+            handles.iter().all(|handle| handle.shape == *shape),
+            "gpu_arena download: resident shapes disagree"
+        );
+        let total_cts = handles
+            .iter()
+            .try_fold(0usize, |total, handle| total.checked_add(handle.n_cts))
+            .expect("gpu_arena download: ciphertext-count overflow");
+        let size = shape
+            .ct_bytes()
+            .checked_mul(total_cts as u64)
+            .expect("gpu_arena download: staging-buffer size overflow");
         let read_buf = self.acquire_readback(size);
         {
             let pool = self.pool.lock().unwrap();
-            let entry = &pool[h.id];
-            // Only fold outputs carry COPY_SRC; downloading a raw uploaded set would need COPY_SRC on the
-            // resident buffer. Supported download target is the folded result (the §3 pipeline shape).
             let mut enc = self.device.create_command_encoder(&Default::default());
-            enc.copy_buffer_to_buffer(&entry.buf, 0, &read_buf, 0, size);
+            let mut offset = 0u64;
+            for handle in handles {
+                let entry = &pool[handle.id];
+                assert_eq!(
+                    entry.n_cts, handle.n_cts,
+                    "gpu_arena: handle/pool n_cts mismatch"
+                );
+                let bytes = shape
+                    .ct_bytes()
+                    .checked_mul(handle.n_cts as u64)
+                    .expect("gpu_arena download: resident byte-size overflow");
+                // Only fold outputs carry COPY_SRC; downloading a raw uploaded set would need COPY_SRC on
+                // the resident buffer. Supported targets are folded results (the §3 pipeline shape).
+                enc.copy_buffer_to_buffer(&entry.buf, 0, &read_buf, offset, bytes);
+                offset += bytes;
+            }
+            debug_assert_eq!(offset, size);
             self.queue.submit([enc.finish()]);
         }
         let slice = read_buf.slice(..);
@@ -890,34 +1003,37 @@ impl Arena {
         drop(data);
         read_buf.unmap();
 
-        let (deg, r, p) = (h.shape.degree, h.shape.moduli.len(), h.shape.n_polys);
-        let mut out = Vec::with_capacity(h.n_cts);
+        let (deg, r, p) = (shape.degree, shape.moduli.len(), shape.n_polys);
+        let mut out = Vec::with_capacity(total_cts);
         let mut idx = 0usize;
-        for ct_i in 0..h.n_cts {
-            let mut polys = Vec::with_capacity(p);
-            for _ in 0..p {
-                let mut rows = Vec::with_capacity(r);
-                for _ in 0..r {
-                    rows.push(words[idx..idx + deg].to_vec());
-                    idx += deg;
+        for handle in handles {
+            for ct_i in 0..handle.n_cts {
+                let mut polys = Vec::with_capacity(p);
+                for _ in 0..p {
+                    let mut rows = Vec::with_capacity(r);
+                    for _ in 0..r {
+                        rows.push(words[idx..idx + deg].to_vec());
+                        idx += deg;
+                    }
+                    polys.push(RnsPoly { rows });
                 }
-                polys.push(RnsPoly { rows });
+                let bound = handle.bounds[ct_i];
+                out.push(LeanCiphertext {
+                    moduli: shape.moduli.clone(),
+                    degree: deg,
+                    level: shape.level,
+                    variable_time: handle.variable_times[ct_i],
+                    polys,
+                    plain_bound: u64::try_from(bound).unwrap_or_else(|_| {
+                        panic!(
+                            "gpu_arena download: folded plain_bound {bound} exceeds u64 — refusing to truncate \
+                             the wrap-gate bookkeeping (fail closed)"
+                        )
+                    }),
+                });
             }
-            let bound = h.bounds[ct_i];
-            out.push(LeanCiphertext {
-                moduli: h.shape.moduli.clone(),
-                degree: deg,
-                level: h.shape.level,
-                variable_time: h.variable_times[ct_i],
-                polys,
-                plain_bound: u64::try_from(bound).unwrap_or_else(|_| {
-                    panic!(
-                        "gpu_arena download: folded plain_bound {bound} exceeds u64 — refusing to truncate \
-                         the wrap-gate bookkeeping (fail closed)"
-                    )
-                }),
-            });
         }
+        debug_assert_eq!(idx, words.len());
         self.release_readback(read_buf);
         out
     }
@@ -1088,10 +1204,53 @@ mod tests {
         assert_eq!(got_first.ciphertext.plain_bound, 10);
         assert_eq!(got_second.ciphertext.plain_bound, 21);
         match (got_first.backend, got_second.backend) {
-            (FoldBackend::GpuResident(_), FoldBackend::GpuResident(_))
-            | (FoldBackend::CpuNoArena, FoldBackend::CpuNoArena) => {}
+            (FoldBackend::GpuResident(_), FoldBackend::GpuResident(_)) => {
+                eprintln!("paired retained fold: resident wgpu dispatch exercised")
+            }
+            (FoldBackend::CpuNoArena, FoldBackend::CpuNoArena) => {
+                eprintln!("paired retained fold: no arena, CPU fallback exercised")
+            }
             other => panic!("paired exact fold selected inconsistent backends: {other:?}"),
         }
+    }
+
+    /// The direct staging gather must respect handle boundaries, not merely work for the production
+    /// one-ciphertext/one-ciphertext pair. The second handle deliberately contains TWO ciphertexts with
+    /// distinct bounds and variable-time flags, so a wrong destination offset or flattened metadata index
+    /// changes a full polynomial or visibly attaches the wrong scalar bookkeeping.
+    #[test]
+    fn gathered_readback_preserves_heterogeneous_handle_boundaries() {
+        let Some(a) = arena() else {
+            eprintln!("no wgpu adapter — heterogeneous gather parity SKIPPED (headless runner)");
+            return;
+        };
+        let t = 1u64 << 20;
+        let first_inputs = vec![synth_ct(1, 2), synth_ct(2, 3)];
+        let mut second_inputs = vec![synth_ct(101, 7), synth_ct(102, 11)];
+        second_inputs[0].variable_time = true;
+        let third_inputs = vec![synth_ct(201, 13), synth_ct(202, 17), synth_ct(203, 19)];
+        let expected = vec![
+            fold(&first_inputs, t).expect("first CPU fold"),
+            fold(&second_inputs, t).expect("second CPU fold"),
+            fold(&third_inputs, t).expect("third CPU fold"),
+        ];
+
+        let first = a.fold_resident(&a.upload(&first_inputs));
+        let second = a.fold_resident(&a.upload(&second_inputs));
+        let third = a.fold_resident(&a.upload(&third_inputs));
+        let two_outputs = a.concat_resident(&[second, third]);
+        assert_eq!(first.n_cts, 1);
+        assert_eq!(two_outputs.n_cts, 2);
+        assert_eq!(first.bounds, vec![5]);
+        assert_eq!(two_outputs.bounds, vec![18, 49]);
+        assert_eq!(first.variable_times, vec![false]);
+        assert_eq!(two_outputs.variable_times, vec![true, false]);
+
+        assert_eq!(
+            a.download_many(&[&first, &two_outputs]),
+            expected,
+            "direct gather crossed a resident-handle data or metadata boundary"
+        );
     }
 
     /// Production-shaped crossover probe: two independent book sides, comparing two CPU folds, two
