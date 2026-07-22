@@ -481,6 +481,12 @@ impl PqShareOpening {
 /// randomizers.  The resulting linear opening has 12,288 value coordinates:
 /// three little-endian radix-2^15 limbs for each of 4,096 coefficients.  It
 /// intentionally has no wire codec or `Debug` implementation.
+///
+/// The radix codec is injective but **not additive across carries**.  These
+/// openings/commitments are consequently ordered party-slot transcript
+/// entries.  They must not be summed as a shortcut for committing the
+/// coefficient-wise mod-q sum of BFV shares; that needs explicit carry/mod-q
+/// constraints or a different commitment message representation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExperimentalBfvQ0ShareOpening {
     inner: PqShareOpening,
@@ -520,7 +526,9 @@ impl ExperimentalBfvQ0ShareOpening {
 /// This prevents a valid opening from being replayed across setup/key/party
 /// domains.  It does *not* by itself prove that the opened row is the same row
 /// admitted by today's Ristretto VSS commitments.  That cross-commitment
-/// same-opening proof is the explicit remaining bridge.
+/// same-opening proof is the explicit remaining bridge.  Unlike the generic
+/// linear key, this wrapper intentionally exposes no public-link/sum method:
+/// radix-encoded q0 rows are not additive across coefficient carries.
 #[derive(Clone)]
 pub struct ExperimentalBfvQ0ShareCommitmentKey {
     inner: PqShareCommitmentKey,
@@ -1008,5 +1016,27 @@ mod tests {
             ExperimentalBfvQ0ShareOpening::randomized(&residues, &mut rng),
             Err(PqShareCommitmentError::NonCanonicalOpening)
         ));
+    }
+
+    #[test]
+    fn bfv_q0_radix_codec_is_injective_but_not_additive_at_first_carry() {
+        let mut below = vec![0u64; BFV_Q0_DEGREE];
+        below[0] = BFV_Q0_LIMB_RADIX - 1;
+        let mut one = vec![0u64; BFV_Q0_DEGREE];
+        one[0] = 1;
+        let mut carried = vec![0u64; BFV_Q0_DEGREE];
+        carried[0] = BFV_Q0_LIMB_RADIX;
+
+        let below = encode_bfv_q0_residues(&below).unwrap();
+        let one = encode_bfv_q0_residues(&one).unwrap();
+        let carried = encode_bfv_q0_residues(&carried).unwrap();
+        assert_eq!(&below[..3], &[32_767, 0, 0]);
+        assert_eq!(&one[..3], &[1, 0, 0]);
+        assert_eq!(&carried[..3], &[0, 1, 0]);
+        assert_ne!(
+            [below[0] + one[0], below[1] + one[1], below[2] + one[2]],
+            [carried[0], carried[1], carried[2]],
+            "coordinate addition cannot substitute for radix carry constraints"
+        );
     }
 }
