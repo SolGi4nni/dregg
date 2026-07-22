@@ -29,7 +29,7 @@ use dregg_circuit::exact_nullifier_aafi::{
     ExactNullifierAafi, ExactPath4, ExactTaggedKey, KEY_LIMBS, LinkedLeafWire, ROOT_LANES,
     TREE_ARITY, TREE_CAPACITY, TREE_DEPTH, TaggedKeyWire, VALUE_LIMBS,
     ValidatedExactAafiTransition, exact_empty_leaf_digest, exact_leaf_digest, exact_node_digest,
-    exact_state_commit, raw_to_u16_le, u64_to_u16_le, validate_exact_aafi_witness,
+    exact_state_commit, u64_to_u16_le, validate_exact_aafi_witness,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use redb::{ReadTransaction, ReadableTable, TableDefinition, WriteTransaction};
@@ -467,6 +467,17 @@ struct ValidatedSnapshot {
     accumulator: ExactNullifierAafi,
 }
 
+#[derive(Debug)]
+struct OnlinePreparedTransition {
+    prepared: PreparedExactFnspV3StateTransitionV1,
+    inserted_storage_key: [u8; TAGGED_KEY_WIRE_LEN],
+    predecessor_position: u64,
+    predecessor_after: [u8; LINKED_LEAF_WIRE_LEN],
+    appended_position: u64,
+    appended: [u8; LINKED_LEAF_WIRE_LEN],
+    sparse_overlay: BTreeMap<u64, Digest8>,
+}
+
 impl PersistentStore {
     /// Read and fully replay the durable exact authority.
     ///
@@ -514,9 +525,10 @@ impl PersistentStore {
         value: u64,
     ) -> StoreResult<ExactFnspV3StateCasV1> {
         let read = self.db.begin_read()?;
-        let snapshot = load_snapshot_from_read(&read)?
+        let head = load_online_head_from_read(&read)?
             .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-        prepare_from_snapshot(snapshot, raw, value).map_err(integrity)
+        prepare_online_transition_from_read(&read, head, raw, value)
+            .map(|online| online.prepared.cas)
     }
 
     /// Prepare either the next fresh append or the immutable coordinates of a durable replay.
@@ -533,11 +545,12 @@ impl PersistentStore {
         value: u64,
     ) -> StoreResult<ExactFnspV3StateCasV1> {
         let read = self.db.begin_read()?;
-        let snapshot = load_snapshot_from_read(&read)?
+        let head = load_online_head_from_read(&read)?
             .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-        match snapshot.records.iter().position(|record| record.raw == raw) {
-            Some(index) => reconstruct_replay_from_snapshot(snapshot, index, raw, value),
-            None => prepare_from_snapshot(snapshot, raw, value).map_err(integrity),
+        match online_record_position_from_read(&read, raw)? {
+            Some(position) => reconstruct_replay_candidate_from_read(&read, position, raw, value),
+            None => prepare_online_transition_from_read(&read, head, raw, value)
+                .map(|online| online.prepared.cas),
         }
     }
 
@@ -552,11 +565,20 @@ impl PersistentStore {
         value: u64,
     ) -> StoreResult<PreparedExactFnspV3StateTransitionV1> {
         let read = self.db.begin_read()?;
-        let snapshot = load_snapshot_from_read(&read)?
+        let head = load_online_head_from_read(&read)?
             .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-        match snapshot.records.iter().position(|record| record.raw == raw) {
-            Some(index) => reconstruct_prepared_replay_from_snapshot(snapshot, index, raw, value),
-            None => prepare_transition_from_snapshot(snapshot, raw, value).map_err(integrity),
+        match online_record_position_from_read(&read, raw)? {
+            Some(position) => {
+                let snapshot = load_snapshot_from_read(&read)?
+                    .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
+                let index = usize::try_from(position.checked_sub(1).ok_or_else(|| {
+                    integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch)
+                })?)
+                .map_err(|_| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
+                reconstruct_prepared_replay_from_snapshot(snapshot, index, raw, value)
+            }
+            None => prepare_online_transition_from_read(&read, head, raw, value)
+                .map(|online| online.prepared),
         }
     }
 
@@ -573,14 +595,11 @@ impl PersistentStore {
         value: u64,
     ) -> StoreResult<ExactFnspV3StateCasV1> {
         let read = self.db.begin_read()?;
-        let snapshot = load_snapshot_from_read(&read)?
+        load_online_head_from_read(&read)?
             .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-        let index = snapshot
-            .records
-            .iter()
-            .position(|record| record.raw == raw)
+        let position = online_record_position_from_read(&read, raw)?
             .ok_or_else(|| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
-        reconstruct_replay_from_snapshot(snapshot, index, raw, value)
+        reconstruct_replay_candidate_from_read(&read, position, raw, value)
     }
 
     /// Atomically compare the durable head, replay the append, and commit record plus successor.
@@ -628,7 +647,10 @@ pub(crate) fn initialize_exact_fnsp_v3_state_in(
     let head =
         ExactFnspV3StateHeadV1::from_accumulator(generation, &accumulator).map_err(integrity)?;
 
-    // Open both tables before the first mutation. More importantly, this helper owns `write` and
+    rebuild_online_index_in(&write, &records, head)?;
+
+    // Open both authority tables before their first mutation. More importantly, this helper owns
+    // `write` and
     // returns it only on complete success. Any error path drops/aborts the transaction, so a caller
     // cannot catch a late table/storage error and commit a record-only or head-only seed.
     {
@@ -653,20 +675,20 @@ pub(crate) fn compare_and_commit_exact_fnsp_v3_append_in(
     candidate: ExactFnspV3StateCasV1,
 ) -> StoreResult<(WriteTransaction, ExactFnspV3StateHeadV1)> {
     candidate.validate_shape().map_err(integrity)?;
-    let snapshot = load_snapshot_from_write(&write)?
+    let head = load_online_head_from_write(&write)?
         .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-    if snapshot.head != candidate.expected {
+    if head != candidate.expected {
         return Err(integrity(ExactFnspV3StateStoreError::CompareMismatch));
     }
 
-    let independently_prepared = prepare_from_snapshot(
-        snapshot,
+    let independently_prepared = prepare_online_transition_from_write(
+        &write,
+        head,
         candidate.append_record.raw,
         candidate.append_record.value,
-    )
-    .map_err(integrity)?;
-    if independently_prepared.append_record != candidate.append_record
-        || independently_prepared.successor != candidate.successor
+    )?;
+    if independently_prepared.prepared.cas.append_record != candidate.append_record
+        || independently_prepared.prepared.cas.successor != candidate.successor
     {
         return Err(integrity(
             ExactFnspV3StateStoreError::CandidateSuccessorMismatch,
@@ -693,6 +715,7 @@ pub(crate) fn compare_and_commit_exact_fnsp_v3_append_in(
         let encoded = candidate.successor.encode();
         heads.insert(HEAD_KEY, encoded.as_slice())?;
     }
+    apply_online_transition_in(&write, &independently_prepared)?;
     Ok((write, candidate.successor))
 }
 
@@ -708,34 +731,27 @@ pub(crate) fn verify_replayed_exact_fnsp_v3_append_in(
     candidate: ExactFnspV3StateCasV1,
 ) -> StoreResult<()> {
     candidate.validate_shape().map_err(integrity)?;
-    let snapshot = load_snapshot_from_write(write)?
+    load_online_head_from_write(write)?
         .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))?;
-    let index = usize::try_from(candidate.append_record.seq)
-        .map_err(|_| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
-    if snapshot.records.get(index).copied() != Some(candidate.append_record) {
+    let records = write.open_table(EXACT_FNSP_V3_APPEND_RECORDS)?;
+    let durable = records
+        .get(candidate.append_record.seq)?
+        .map(|bytes| StoredExactFnspV3AppendRecordV1::decode(bytes.value()))
+        .transpose()
+        .map_err(integrity)?;
+    if durable.map(|record| record.0) != Some(candidate.append_record) {
         return Err(integrity(
             ExactFnspV3StateStoreError::CandidateReplayMismatch,
         ));
     }
-
-    let prior = ExactNullifierAafi::from_append_records(snapshot.records[..index].iter().copied())
-        .map_err(ExactFnspV3StateStoreError::from)
-        .map_err(integrity)?;
-    let expected = ExactFnspV3StateHeadV1::from_accumulator(candidate.append_record.seq, &prior)
-        .map_err(integrity)?;
-
     let successor_generation = candidate
         .append_record
         .seq
         .checked_add(1)
         .ok_or_else(|| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
-    let successor =
-        ExactNullifierAafi::from_append_records(snapshot.records[..=index].iter().copied())
-            .map_err(ExactFnspV3StateStoreError::from)
-            .and_then(|accumulator| {
-                ExactFnspV3StateHeadV1::from_accumulator(successor_generation, &accumulator)
-            })
-            .map_err(integrity)?;
+    let history = write.open_table(EXACT_FNSP_V3_HEAD_HISTORY)?;
+    let expected = decode_historical_head(&history, candidate.append_record.seq)?;
+    let successor = decode_historical_head(&history, successor_generation)?;
 
     if expected != candidate.expected || successor != candidate.successor {
         return Err(integrity(
@@ -764,8 +780,7 @@ pub(crate) fn exact_fnsp_v3_append_records_in(
 pub(crate) fn exact_fnsp_v3_state_head_in(
     write: &WriteTransaction,
 ) -> StoreResult<ExactFnspV3StateHeadV1> {
-    load_snapshot_from_write(write)?
-        .map(|snapshot| snapshot.head)
+    load_online_head_from_write(write)?
         .ok_or_else(|| integrity(ExactFnspV3StateStoreError::Uninitialized))
 }
 
@@ -880,6 +895,556 @@ fn load_snapshot_from_write(write: &WriteTransaction) -> StoreResult<Option<Vali
         (collect_heads(&heads)?, collect_records(&records)?)
     };
     validate_snapshot(head_rows, record_rows).map_err(integrity)
+}
+
+fn load_online_head_from_read(
+    read: &ReadTransaction,
+) -> StoreResult<Option<ExactFnspV3StateHeadV1>> {
+    let heads = read.open_table(EXACT_FNSP_V3_STATE_HEAD)?;
+    let records = read.open_table(EXACT_FNSP_V3_APPEND_RECORDS)?;
+    let ordered = read.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+    let leaves = read.open_table(EXACT_FNSP_V3_LINKED_LEAVES)?;
+    let nodes = read.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+    let history = read.open_table(EXACT_FNSP_V3_HEAD_HISTORY)?;
+    validate_online_boundary(&heads, &records, &ordered, &leaves, &nodes, &history)
+}
+
+fn load_online_head_from_write(
+    write: &WriteTransaction,
+) -> StoreResult<Option<ExactFnspV3StateHeadV1>> {
+    let heads = write.open_table(EXACT_FNSP_V3_STATE_HEAD)?;
+    let records = write.open_table(EXACT_FNSP_V3_APPEND_RECORDS)?;
+    let ordered = write.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+    let leaves = write.open_table(EXACT_FNSP_V3_LINKED_LEAVES)?;
+    let nodes = write.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+    let history = write.open_table(EXACT_FNSP_V3_HEAD_HISTORY)?;
+    validate_online_boundary(&heads, &records, &ordered, &leaves, &nodes, &history)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_online_boundary(
+    heads: &impl ReadableTable<u8, &'static [u8]>,
+    records: &impl ReadableTable<u64, &'static [u8]>,
+    ordered: &impl ReadableTable<&'static [u8], u64>,
+    leaves: &impl ReadableTable<u64, &'static [u8]>,
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    history: &impl ReadableTable<u64, &'static [u8]>,
+) -> StoreResult<Option<ExactFnspV3StateHeadV1>> {
+    let head_rows = heads.len()?;
+    if head_rows == 0 {
+        if records.len()? != 0
+            || ordered.len()? != 0
+            || leaves.len()? != 0
+            || nodes.len()? != 0
+            || history.len()? != 0
+        {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "uninitialized tables",
+            )));
+        }
+        return Ok(None);
+    }
+    if head_rows != 1 {
+        return Err(integrity(ExactFnspV3StateStoreError::HeadTableCardinality(
+            head_rows,
+        )));
+    }
+    let head = heads
+        .get(HEAD_KEY)?
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "head singleton key",
+            ))
+        })
+        .and_then(|bytes| ExactFnspV3StateHeadV1::decode(bytes.value()).map_err(integrity))?;
+
+    if records.len()? != head.generation {
+        return Err(integrity(ExactFnspV3StateStoreError::RecordCountMismatch {
+            generation: head.generation,
+            records: records.len()?,
+        }));
+    }
+    match (head.generation, records.first()?, records.last()?) {
+        (0, None, None) => {}
+        (generation, Some((first, _)), Some((last, bytes)))
+            if first.value() == 0 && last.value() == generation - 1 =>
+        {
+            let record =
+                StoredExactFnspV3AppendRecordV1::decode(bytes.value()).map_err(integrity)?;
+            if record.0.seq != generation - 1 {
+                return Err(integrity(ExactFnspV3StateStoreError::RecordKeyMismatch {
+                    key: generation - 1,
+                    encoded: record.0.seq,
+                }));
+            }
+        }
+        _ => {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "dense append boundary",
+            )));
+        }
+    }
+
+    if ordered.len()? != head.count || leaves.len()? != head.count {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "ordered/leaf cardinality",
+        )));
+    }
+    let bot_key = tagged_key_storage_key(ExactTaggedKey::Bot);
+    if ordered.get(bot_key.as_slice())?.map(|value| value.value()) != Some(0) {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "BOT position",
+        )));
+    }
+    match (leaves.first()?, leaves.last()?) {
+        (Some((first, bot)), Some((last, _)))
+            if first.value() == 0 && last.value() == head.count - 1 =>
+        {
+            let bot = decode_linked_leaf(bot.value())?;
+            if bot.addr() != ExactTaggedKey::Bot || bot.value() != 0 {
+                return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                    "BOT leaf",
+                )));
+            }
+        }
+        _ => {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "dense leaf boundary",
+            )));
+        }
+    }
+
+    let root = nodes
+        .get(node_key(TREE_DEPTH, 0))?
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "sparse root presence",
+            ))
+        })
+        .and_then(|bytes| decode_digest_bytes(bytes.value(), "sparse root"))?;
+    if root != head.root() {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "sparse root",
+        )));
+    }
+
+    if history.len()? != head.generation + 1
+        || decode_historical_head(history, head.generation)? != head
+    {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "head history boundary",
+        )));
+    }
+    let genesis = ExactFnspV3StateHeadV1::from_accumulator(0, &ExactNullifierAafi::new())
+        .map_err(integrity)?;
+    if decode_historical_head(history, 0)? != genesis {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "head history genesis",
+        )));
+    }
+    Ok(Some(head))
+}
+
+fn decode_historical_head(
+    history: &impl ReadableTable<u64, &'static [u8]>,
+    generation: u64,
+) -> StoreResult<ExactFnspV3StateHeadV1> {
+    history
+        .get(generation)?
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "historical head row",
+            ))
+        })
+        .and_then(|bytes| ExactFnspV3StateHeadV1::decode(bytes.value()).map_err(integrity))
+}
+
+fn online_record_position_from_read(
+    read: &ReadTransaction,
+    raw: [u8; 32],
+) -> StoreResult<Option<u64>> {
+    let ordered = read.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+    let key = tagged_key_storage_key(ExactTaggedKey::from_raw(raw));
+    ordered
+        .get(key.as_slice())
+        .map(|value| value.map(|value| value.value()))
+        .map_err(Into::into)
+}
+
+fn reconstruct_replay_candidate_from_read(
+    read: &ReadTransaction,
+    position: u64,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<ExactFnspV3StateCasV1> {
+    let seq = position
+        .checked_sub(1)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))?;
+    let records = read.open_table(EXACT_FNSP_V3_APPEND_RECORDS)?;
+    let record = records
+        .get(seq)?
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::CandidateReplayMismatch))
+        .and_then(|bytes| {
+            StoredExactFnspV3AppendRecordV1::decode(bytes.value()).map_err(integrity)
+        })?
+        .0;
+    if record != (ExactAppendRecord { seq, raw, value }) {
+        return Err(integrity(
+            ExactFnspV3StateStoreError::CandidateReplayMismatch,
+        ));
+    }
+    let history = read.open_table(EXACT_FNSP_V3_HEAD_HISTORY)?;
+    let successor_generation = seq
+        .checked_add(1)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
+    let candidate = ExactFnspV3StateCasV1 {
+        expected: decode_historical_head(&history, seq)?,
+        successor: decode_historical_head(&history, successor_generation)?,
+        append_record: record,
+    };
+    candidate.validate_shape().map_err(integrity)?;
+    Ok(candidate)
+}
+
+fn prepare_online_transition_from_read(
+    read: &ReadTransaction,
+    head: ExactFnspV3StateHeadV1,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<OnlinePreparedTransition> {
+    let ordered = read.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+    let leaves = read.open_table(EXACT_FNSP_V3_LINKED_LEAVES)?;
+    let nodes = read.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+    prepare_online_transition_from_tables(head, &ordered, &leaves, &nodes, raw, value)
+}
+
+fn prepare_online_transition_from_write(
+    write: &WriteTransaction,
+    head: ExactFnspV3StateHeadV1,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<OnlinePreparedTransition> {
+    let ordered = write.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+    let leaves = write.open_table(EXACT_FNSP_V3_LINKED_LEAVES)?;
+    let nodes = write.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+    prepare_online_transition_from_tables(head, &ordered, &leaves, &nodes, raw, value)
+}
+
+fn prepare_online_transition_from_tables(
+    head: ExactFnspV3StateHeadV1,
+    ordered: &impl ReadableTable<&'static [u8], u64>,
+    leaves: &impl ReadableTable<u64, &'static [u8]>,
+    nodes: &impl ReadableTable<u64, &'static [u8]>,
+    raw: [u8; 32],
+    value: u64,
+) -> StoreResult<OnlinePreparedTransition> {
+    let inserted_key = ExactTaggedKey::from_raw(raw);
+    let inserted_storage_key = tagged_key_storage_key(inserted_key);
+    if ordered.get(inserted_storage_key.as_slice())?.is_some() {
+        return Err(integrity(ExactFnspV3StateStoreError::from(
+            ExactAafiError::Duplicate,
+        )));
+    }
+    let (predecessor_storage, predecessor_position) = ordered
+        .range::<&[u8]>(..inserted_storage_key.as_slice())?
+        .next_back()
+        .transpose()?
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "ordered predecessor",
+            ))
+        })
+        .map(|(key, position)| (key.value().to_vec(), position.value()))?;
+    let predecessor_key = decode_tagged_key_storage(&predecessor_storage)?;
+    let predecessor = leaves
+        .get(predecessor_position)?
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "predecessor leaf",
+            ))
+        })
+        .and_then(|bytes| decode_linked_leaf(bytes.value()))?;
+    if predecessor.addr() != predecessor_key
+        || !(predecessor.addr() < inserted_key && inserted_key < predecessor.next_addr())
+    {
+        return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "predecessor bracket",
+        )));
+    }
+    let predecessor_position_u32 = u32::try_from(predecessor_position).map_err(|_| {
+        integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+            "predecessor position",
+        ))
+    })?;
+    let cursor_u32 = u32::try_from(head.count)
+        .map_err(|_| integrity(ExactFnspV3StateStoreError::CountExceedsCapacity(head.count)))?;
+    let empty = empty_digests();
+    let no_overlay = BTreeMap::new();
+    let predecessor_path = sparse_path(nodes, predecessor_position_u32, &empty, &no_overlay)?;
+    let mut predecessor_after_wire = predecessor.wire();
+    predecessor_after_wire.next_addr = inserted_key.wire();
+    let predecessor_after = ExactLinkedLeaf::decode(predecessor_after_wire)
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let predecessor_overlay = sparse_replacement_overlay(
+        nodes,
+        predecessor_position_u32,
+        exact_leaf_digest(predecessor_after),
+        &empty,
+        &no_overlay,
+    )?;
+    let middle_root = *predecessor_overlay
+        .get(&node_key(TREE_DEPTH, 0))
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "middle root",
+            ))
+        })?;
+    let append_path = sparse_path(nodes, cursor_u32, &empty, &predecessor_overlay)?;
+    let appended_wire = LinkedLeafWire {
+        addr: inserted_key.wire(),
+        value_u16_le: u64_to_u16_le(value),
+        next_addr: predecessor.next_addr().wire(),
+    };
+    let appended = ExactLinkedLeaf::decode(appended_wire)
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let sparse_overlay = sparse_replacement_overlay(
+        nodes,
+        cursor_u32,
+        exact_leaf_digest(appended),
+        &empty,
+        &predecessor_overlay,
+    )?;
+    let successor_root = *sparse_overlay
+        .get(&node_key(TREE_DEPTH, 0))
+        .ok_or_else(|| {
+            integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "successor root",
+            ))
+        })?;
+    let successor_count = head
+        .count
+        .checked_add(1)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
+    let successor_generation = head
+        .generation
+        .checked_add(1)
+        .ok_or_else(|| integrity(ExactFnspV3StateStoreError::GenerationOverflow))?;
+    let witness = ExactAafiWitness {
+        inserted_key: inserted_key.wire(),
+        inserted_value_u16_le: u64_to_u16_le(value),
+        predecessor: predecessor.wire(),
+        predecessor_position,
+        cursor: head.count,
+        prior_count: head.count,
+        successor_count,
+        predecessor_path,
+        append_path,
+        prior_root: head.root(),
+        middle_root,
+        successor_root,
+        prior_state_commit: head.fns3(),
+        successor_state_commit: exact_state_commit(successor_root, successor_count),
+    };
+    let validated = validate_exact_aafi_witness(&witness)
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let successor = ExactFnspV3StateHeadV1::try_from_runtime(
+        successor_generation,
+        successor_root,
+        successor_count,
+        witness.successor_state_commit,
+    )
+    .map_err(integrity)?;
+    let cas = ExactFnspV3StateCasV1 {
+        expected: head,
+        successor,
+        append_record: ExactAppendRecord {
+            seq: head.generation,
+            raw,
+            value,
+        },
+    };
+    cas.validate_shape().map_err(integrity)?;
+    Ok(OnlinePreparedTransition {
+        prepared: PreparedExactFnspV3StateTransitionV1 { cas, validated },
+        inserted_storage_key,
+        predecessor_position,
+        predecessor_after: encode_linked_leaf(predecessor_after_wire),
+        appended_position: head.count,
+        appended: encode_linked_leaf(appended_wire),
+        sparse_overlay,
+    })
+}
+
+fn apply_online_transition_in(
+    write: &WriteTransaction,
+    transition: &OnlinePreparedTransition,
+) -> StoreResult<()> {
+    {
+        let mut ordered = write.open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?;
+        if ordered
+            .insert(
+                transition.inserted_storage_key.as_slice(),
+                transition.appended_position,
+            )?
+            .is_some()
+        {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "duplicate ordered insert",
+            )));
+        }
+    }
+    {
+        let mut leaves = write.open_table(EXACT_FNSP_V3_LINKED_LEAVES)?;
+        if leaves
+            .insert(
+                transition.predecessor_position,
+                transition.predecessor_after.as_slice(),
+            )?
+            .is_none()
+            || leaves
+                .insert(transition.appended_position, transition.appended.as_slice())?
+                .is_some()
+        {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "leaf update",
+            )));
+        }
+    }
+    {
+        let empty = empty_digests();
+        let mut nodes = write.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+        for (key, digest) in &transition.sparse_overlay {
+            let level = usize::try_from(key >> 32).expect("encoded tree level fits usize");
+            if *digest == empty[level] {
+                nodes.remove(*key)?;
+            } else {
+                let encoded = digest_bytes(*digest);
+                nodes.insert(*key, encoded.as_slice())?;
+            }
+        }
+    }
+    {
+        let successor = transition.prepared.cas.successor;
+        let mut history = write.open_table(EXACT_FNSP_V3_HEAD_HISTORY)?;
+        let encoded = successor.encode();
+        if history
+            .insert(successor.generation, encoded.as_slice())?
+            .is_some()
+        {
+            return Err(integrity(ExactFnspV3StateStoreError::OnlineIndexMismatch(
+                "historical head overwrite",
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn clear_online_index_in(write: &WriteTransaction) -> StoreResult<()> {
+    write
+        .open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?
+        .retain(|_, _| false)?;
+    write
+        .open_table(EXACT_FNSP_V3_LINKED_LEAVES)?
+        .retain(|_, _| false)?;
+    write
+        .open_table(EXACT_FNSP_V3_SPARSE_NODES)?
+        .retain(|_, _| false)?;
+    write
+        .open_table(EXACT_FNSP_V3_HEAD_HISTORY)?
+        .retain(|_, _| false)?;
+    Ok(())
+}
+
+fn seed_online_genesis_in(write: &WriteTransaction) -> StoreResult<ExactFnspV3StateHeadV1> {
+    let accumulator = ExactNullifierAafi::new();
+    let head = ExactFnspV3StateHeadV1::from_accumulator(0, &accumulator).map_err(integrity)?;
+    let genesis_wire = LinkedLeafWire {
+        addr: ExactTaggedKey::Bot.wire(),
+        value_u16_le: [0; VALUE_LIMBS],
+        next_addr: ExactTaggedKey::Top.wire(),
+    };
+    let genesis_leaf = ExactLinkedLeaf::decode(genesis_wire)
+        .map_err(ExactFnspV3StateStoreError::from)
+        .map_err(integrity)?;
+    let bot_key = tagged_key_storage_key(ExactTaggedKey::Bot);
+    write
+        .open_table(EXACT_FNSP_V3_ORDERED_POSITIONS)?
+        .insert(bot_key.as_slice(), 0)?;
+    let encoded_leaf = encode_linked_leaf(genesis_wire);
+    write
+        .open_table(EXACT_FNSP_V3_LINKED_LEAVES)?
+        .insert(0, encoded_leaf.as_slice())?;
+    {
+        let empty = empty_digests();
+        let no_overlay = BTreeMap::new();
+        let mut nodes = write.open_table(EXACT_FNSP_V3_SPARSE_NODES)?;
+        let overlay = sparse_replacement_overlay(
+            &nodes,
+            0,
+            exact_leaf_digest(genesis_leaf),
+            &empty,
+            &no_overlay,
+        )?;
+        for (key, digest) in overlay {
+            let level = usize::try_from(key >> 32).expect("encoded tree level fits usize");
+            if digest != empty[level] {
+                let encoded = digest_bytes(digest);
+                nodes.insert(key, encoded.as_slice())?;
+            }
+        }
+    }
+    let encoded_head = head.encode();
+    write
+        .open_table(EXACT_FNSP_V3_HEAD_HISTORY)?
+        .insert(0, encoded_head.as_slice())?;
+    Ok(head)
+}
+
+fn rebuild_online_index_in(
+    write: &WriteTransaction,
+    records: &[ExactAppendRecord],
+    expected_head: ExactFnspV3StateHeadV1,
+) -> StoreResult<()> {
+    clear_online_index_in(write)?;
+    let mut current = seed_online_genesis_in(write)?;
+    for record in records {
+        if record.seq != current.generation {
+            return Err(integrity(ExactFnspV3StateStoreError::RecordGap {
+                expected: current.generation,
+                found: record.seq,
+            }));
+        }
+        let transition =
+            prepare_online_transition_from_write(write, current, record.raw, record.value)?;
+        apply_online_transition_in(write, &transition)?;
+        current = transition.prepared.cas.successor;
+    }
+    if current != expected_head {
+        return Err(integrity(ExactFnspV3StateStoreError::HeadReplayMismatch));
+    }
+    Ok(())
+}
+
+impl PersistentStore {
+    /// Full boot/offline audit of canonical records followed by deterministic derived-index rebuild.
+    pub(crate) fn rebuild_exact_fnsp_v3_online_index_on_open(&self) -> StoreResult<()> {
+        let snapshot = {
+            let read = self.db.begin_read()?;
+            load_snapshot_from_read(&read)?
+        };
+        let write = self.db.begin_write()?;
+        match snapshot {
+            Some(snapshot) => {
+                rebuild_online_index_in(&write, &snapshot.records, snapshot.head)?;
+            }
+            None => clear_online_index_in(&write)?,
+        }
+        write.commit()?;
+        Ok(())
+    }
 }
 
 fn collect_heads(table: &impl ReadableTable<u8, &'static [u8]>) -> StoreResult<Vec<(u8, Vec<u8>)>> {

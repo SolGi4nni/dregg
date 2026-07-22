@@ -238,6 +238,7 @@ impl PersistentStore {
         // One-time index-shape migration for stores written before the
         // (height, creator, ordinal) key (no-op on fresh/migrated stores).
         store.migrate_height_creator_index()?;
+        store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
@@ -253,6 +254,7 @@ impl PersistentStore {
         let store = Self { db };
         store.initialize_tables()?;
         store.migrate_per_cell_receipt_head_index_v1()?;
+        store.rebuild_exact_fnsp_v3_online_index_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
