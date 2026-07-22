@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use fhegg_fhe::tfhe_high_level_wgpu::prepare_fhe_uint32_ks_pbs_transform_wgpu_plan;
+use fhegg_fhe::tfhe_high_level_wgpu::{
+    prepare_fhe_uint32_ks_pbs_transform_wgpu_plan, FheUint32WgpuPbsError,
+};
 use fhegg_fhe::tfhe_wgpu::{TorusMacBackend, TorusWgpuAlgorithm};
 use tfhe::integer::IntegerCiphertext;
 use tfhe::prelude::*;
@@ -64,4 +66,119 @@ fn deployed_fhe_uint32_block_lut_matches_tfhe_and_remains_high_level_usable() {
     let advanced = &gpu + &one;
     let advanced_clear: u32 = advanced.decrypt(&client);
     assert_eq!(advanced_clear, oracle_clear + 1);
+}
+
+#[test]
+fn deployed_fhe_uint32_scalar_gt_is_all_block_wgpu_and_drives_control_flow() {
+    if std::env::var_os("DREGG_REQUIRE_WGPU").is_none() {
+        eprintln!("set DREGG_REQUIRE_WGPU=1 to run the deployed scalar comparison GPU gate");
+        return;
+    }
+
+    let client = ClientKey::generate(ConfigBuilder::default());
+    let compressed = CompressedServerKey::new(&client);
+    let server = compressed.decompress();
+    let prepare_started = Instant::now();
+    let plan = prepare_fhe_uint32_ks_pbs_transform_wgpu_plan(&compressed).unwrap();
+    let prepare_time = prepare_started.elapsed();
+    set_server_key(server);
+
+    // Equal-through-the-last-block, greater-only-at-the-last-block, and an
+    // early more-significant less-than decision exercise all three states of
+    // the encrypted lexicographic machine. tfhe-rs's independent high-level
+    // comparison is the semantic oracle; the WGPU output is decrypted only
+    // after both encrypted computations have completed.
+    let clear = 0x9234_5678u32;
+    let cases = [clear, clear - 1, 0xa234_5678];
+    let mut gpu_times = Vec::with_capacity(cases.len());
+    let mut true_predicate = None;
+    for scalar in cases {
+        let input = FheUint32::encrypt(clear, &client);
+        let oracle = input.gt(scalar);
+        let gpu_started = Instant::now();
+        let (gpu, backends) = plan.greater_than_scalar(&input, scalar).unwrap();
+        let gpu_time = gpu_started.elapsed();
+        gpu_times.push(gpu_time);
+        assert_eq!(
+            backends.len(),
+            16,
+            "one WGPU PBS is required per radix block"
+        );
+        assert!(backends.iter().all(|backend| matches!(
+            backend,
+            TorusMacBackend::Wgpu {
+                algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+                ..
+            }
+        )));
+        let oracle_clear: bool = oracle.decrypt(&client);
+        let gpu_clear: u32 = gpu.decrypt(&client);
+        assert_eq!(gpu_clear, u32::from(oracle_clear));
+        if gpu_clear == 1 {
+            true_predicate = Some(gpu);
+        }
+        eprintln!(
+            "high-level scalar-gt: clear={clear:#010x} scalar={scalar:#010x} result={gpu_clear} 16-block-WGPU={:.3}ms",
+            gpu_time.as_secs_f64() * 1_000.0,
+        );
+    }
+
+    // Dark-Bazaar-shaped producer: aggregate legal encrypted quantities first,
+    // then compare the settled multi-block sum without exposing the aggregate.
+    // This also crosses the old u16 boundary (32768 + 32768 = 65536).
+    let encrypted_quantities = [
+        FheUint32::encrypt(32_768u32, &client),
+        FheUint32::encrypt(32_768u32, &client),
+    ];
+    let quantity_refs = encrypted_quantities.iter().collect::<Vec<_>>();
+    let aggregate = FheUint32::sum(&quantity_refs);
+    let aggregate_oracle = aggregate.gt(65_535u32);
+    let aggregate_started = Instant::now();
+    let (aggregate_gpu, aggregate_backends) = plan.greater_than_scalar(&aggregate, 65_535).unwrap();
+    let aggregate_time = aggregate_started.elapsed();
+    assert_eq!(aggregate_backends.len(), 16);
+    assert!(aggregate_backends.iter().all(|backend| matches!(
+        backend,
+        TorusMacBackend::Wgpu {
+            algorithm: TorusWgpuAlgorithm::ExactTransformResidentPbs,
+            ..
+        }
+    )));
+    let aggregate_oracle_clear: bool = aggregate_oracle.decrypt(&client);
+    let aggregate_gpu_clear: u32 = aggregate_gpu.decrypt(&client);
+    assert_eq!(aggregate_gpu_clear, u32::from(aggregate_oracle_clear));
+    assert_eq!(aggregate_gpu_clear, 1);
+    eprintln!(
+        "high-level scalar-gt: encrypted aggregate 32768+32768 > 65535 result=1 16-block-WGPU={:.3}ms",
+        aggregate_time.as_secs_f64() * 1_000.0,
+    );
+
+    // The result is an ordinary high-level ciphertext, not a private adapter
+    // object: it can immediately govern a normal encrypted branch.
+    let predicate = true_predicate.expect("the clear > clear-1 case must be true");
+    let encrypted_condition = predicate.gt(0u32);
+    let chosen = encrypted_condition.if_then_else(
+        &FheUint32::encrypt(0xcafe_babeu32, &client),
+        &FheUint32::encrypt(0xdead_beefu32, &client),
+    );
+    let chosen_clear: u32 = chosen.decrypt(&client);
+    assert_eq!(chosen_clear, 0xcafe_babe);
+
+    // Carry state is semantic input to a radix comparison. The narrow WGPU
+    // machine intentionally refuses dirty blocks instead of silently treating
+    // their unpropagated carry as an independent base-4 digit.
+    let dirty = FheUint32::encrypt(7u32, &client);
+    let (mut dirty_radix, dirty_id, dirty_tag, dirty_rerandomization) = dirty.into_raw_parts();
+    dirty_radix.blocks_mut()[0].degree = tfhe::shortint::ciphertext::Degree::new(4);
+    let dirty = FheUint32::from_raw_parts(dirty_radix, dirty_id, dirty_tag, dirty_rerandomization);
+    assert!(matches!(
+        plan.greater_than_scalar(&dirty, 6),
+        Err(FheUint32WgpuPbsError::NonEmptyCarries)
+    ));
+
+    eprintln!(
+        "high-level scalar-gt: prepare={:.3}ms total-three-comparisons={:.3}ms",
+        prepare_time.as_secs_f64() * 1_000.0,
+        gpu_times.iter().sum::<std::time::Duration>().as_secs_f64() * 1_000.0,
+    );
 }
