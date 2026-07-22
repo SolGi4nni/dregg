@@ -464,9 +464,10 @@ pub enum ExtractError {
     /// verified post-state to install.
     Ineligible,
     /// The turn IS marshallable (the producer could run) but touches a characterized root-GAP
-    /// effect whose Lean-reconstituted root provably DIVERGES from Rust (the wire model is lossier
-    /// than the cell commitment). Outside the default-on COVERED set; falls back to Rust. `kind` is
-    /// the first offending effect kind, so the fallback names exactly which gap blocked it.
+    /// effect whose Lean post-image is not complete enough to derive the Rust consensus commitment.
+    /// This includes executor-owned accumulators absent from the current wire result, not only
+    /// lossy cell fields. Outside the default-on COVERED set; falls back to Rust. `kind` is the first
+    /// offending effect kind, so the fallback names exactly which gap blocked it.
     RootGap { kind: &'static str },
     /// A ROOT targets a cell other than `turn.agent` without a bearer proof (issue #56). The wire
     /// model binds the acting principal as the TARGET, so the Lean authority gate would authorize
@@ -505,9 +506,9 @@ impl std::fmt::Display for ExtractError {
             ExtractError::RootGap { kind } => {
                 write!(
                     f,
-                    "turn touches the characterized root-gap effect `{kind}` (Lean-reconstituted \
-                     root provably diverges from Rust) — outside the swap-safe covered set, fell \
-                     back to the Rust producer"
+                    "turn touches the characterized root-gap effect `{kind}` (the current Lean \
+                     post-image cannot derive the complete Rust consensus commitment) — outside \
+                     the swap-safe covered set, fell back to the Rust producer"
                 )
             }
             ExtractError::AgentReach => {
@@ -1710,7 +1711,8 @@ impl ProducerOutcome {
 /// "Covered" = [`lean_shadow::forest_is_root_agreeing`]: marshallable AND every effect is in the
 /// swap-safe `producer_root_agreeing_effects` set, where the Lean-reconstituted `.root()` provably
 /// equals Rust's (pinned by the `lean_state_producer_*` differentials). For ANY uncovered shape — a
-/// characterized root-GAP effect (Refusal / ReceiptArchive / …) or an unmappable effect — we do NOT
+/// characterized root-GAP effect (including an unproduced executor accumulator) or an unmappable
+/// effect — we do NOT
 /// silently let Rust be authoritative-everywhere: we take the legacy Rust path but FENCE it with an
 /// explicit, surfaced [`ProducerOutcome::Fallback`] naming the precise reason. That uncovered set is
 /// the named, burning-down partition (Stage 2), not a hidden Rust default.
@@ -1719,6 +1721,23 @@ pub fn produce_via_lean(
     turn: &Turn,
     ledger: &mut Ledger,
 ) -> (TurnResult, ProducerOutcome) {
+    // CONSENSUS-SIDE-STATE FENCE: decide this before invoking either producer.  The verified
+    // producer currently returns a Ledger post-image only; it does not return the executor-owned
+    // nullifier, commitment, or revocation accumulators which are now part of
+    // `TurnExecutor::consensus_state_commitment`.  Running the authoritative branch for one of
+    // these effects would compute `lean_root` from the old accumulator, let the Rust reference grow
+    // it, then re-stamp the signed receipt with that stale root.  Capability wrappers are inspected
+    // recursively by the helper, so a future wrapper-marshalling widening cannot bypass this gate.
+    if let Some(kind) = lean_shadow::first_unproduced_consensus_side_state_effect(turn) {
+        let result = executor.execute(turn, ledger);
+        return (
+            result,
+            ProducerOutcome::Fallback {
+                reason: ExtractError::RootGap { kind },
+            },
+        );
+    }
+
     // COVERAGE GATE: the verified producer is AUTHORITATIVE only for the root-agreeing (swap-safe)
     // set. A turn that is unmappable OR touches a characterized root-gap effect is FENCED on the
     // legacy Rust path — surfaced as a `Fallback` with a precise reason, never a silent commit of a

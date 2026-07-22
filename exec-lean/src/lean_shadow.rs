@@ -436,14 +436,15 @@ pub fn effect_kind(eff: &Effect) -> &'static str {
 
 /// THE SWAP — the MAPPABLE producer surface: the effect kinds the marshaller PROJECTS to a wire
 /// action (`effect_is_mappable`'s supported set, mirroring the FFI's `effect_to_wire`). A turn whose
-/// every effect is in this set is ELIGIBLE for the VERIFIED Lean producer on the commit path; the
-/// Lean executor produces the committed state and the Rust executor is demoted to a differential
-/// cross-check. A turn with ANY effect outside this set falls back to the Rust producer.
+/// every effect is in this set has a wire projection.  Wire-mappability is necessary but not
+/// sufficient for the VERIFIED Lean producer to become authoritative on the commit path: the
+/// root-agreement and consensus-side-state fences below decide that.  A turn with ANY effect
+/// outside this set falls back to the Rust producer.
 ///
-/// "Mappable" (the producer RUNS) is NOT the same as "root-agreeing" (the Lean-produced `.root()`
-/// EQUALS Rust's). Some mappable effects touch a commitment field the wire model drops or are
-/// structurally re-shaped by Rust, so their reconstituted root DIVERGES — those are the SWAP-GAPS in
-/// [`producer_root_gap_effects`]. The genuinely swap-safe subset (producer runs AND root agrees) is
+/// "Mappable" (the marshaller has a wire arm) is NOT the same as "root-agreeing" (the complete
+/// Lean-produced consensus commitment EQUALS Rust's). Some mappable effects touch state the verified
+/// post-image does not yet return, so they are fenced before either producer runs — those are the
+/// SWAP-GAPS in [`producer_root_gap_effects`]. The genuinely swap-safe subset is
 /// [`producer_root_agreeing_effects`]. This honest partition (mappable = root-agreeing ∪ root-gap)
 /// is asserted by the `lean_state_producer_coverage` differential — neither list can drift vacuous.
 ///
@@ -485,20 +486,18 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
 /// producer with ZERO post-state divergence — the true cutover-ready set.
 ///
 /// Every entry is pinned by a round-trip differential test; an entry whose test stops agreeing FAILS
-/// the suite, forcing it into [`producer_root_gap_effects`]. NoteSpend/NoteCreate edit the note SET
-/// (a side-table OFF the cell merkle root) and leave cell commitment fields untouched, so they
-/// agree on the cell-ledger `.root()`.
+/// the suite, forcing it into [`producer_root_gap_effects`].  "Root" here means the receipt's live
+/// [`TurnExecutor::consensus_state_commitment`](dregg_turn::TurnExecutor::consensus_state_commitment),
+/// not merely `Ledger::root()`: accumulator mutations which are invisible to the cell ledger are
+/// still consensus-state mutations and are not swap-safe until Lean produces those side tables too.
 pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
     &[
         "SetField",
         "Transfer",
         "EmitEvent",
-        "NoteSpend",
-        "NoteCreate",
         "IncrementNonce",
         "RefreshDelegation",
         "Burn",
-        "RevokeCapability",
         // (F2b: QueueAllocate left this set with the FACTORY-DISSOLVED queue family — the verified
         // kernel no longer parses queue wire actions; queue behavior is the factory story.)
         // CAP-FIDELITY ROOT-GAP CLOSE (the cap-reshape lever). GrantCapability / Introduce /
@@ -601,10 +600,10 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
     ]
 }
 
-/// The CHARACTERIZED SWAP-GAPS: mappable effects (the producer RUNS) whose Lean-reconstituted
-/// `.root()` (or commit bit) DIVERGES from Rust. Each is pinned by a NEGATIVE-tooth differential
-/// (`lean_state_producer_widen` + `lean_state_producer_coverage`) that asserts the SPECIFIC
-/// divergence, so the gap is named, never a silent pass.
+/// The CHARACTERIZED SWAP-GAPS: effects with wire projections but without a complete Lean-produced
+/// consensus-state post-image.  They are fenced onto the Rust producer before the verified/reference
+/// execution window.  Each residual is pinned by a hostile tooth, so the gap is named, never a
+/// stale-root commit or a silent pass.
 ///
 /// NO LONGER GAPS (each closed by the commit-gated turn/host-replay lever, the values the wire
 /// drops being turn/host data rather than kernel state — see `producer_root_agreeing_effects`):
@@ -616,30 +615,67 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
 /// (the nonce-bump + `dregg-refusal-audit-v1` EXT write / the `Cell::archive` Archived-payload
 /// replay — both pure turn data, see `apply_state_ops`' `StateOp::Refusal`/`StateOp::ReceiptArchive`).
 ///
-/// The root-gap residual is now EMPTY: every mappable effect that runs the producer reconstitutes a
-/// byte-exact `.root()`. (The escrow/obligation settle effects are FACTORY-DISSOLVED — out of the
-/// producer surface entirely; see `producer_mappable_effects`. Their condition/timeout gates are
-/// enforced by the factory cell programs now.)
+/// The remaining gaps are the three effects that mutate executor-owned consensus accumulators:
+/// `NoteSpend` grows the nullifier set, `NoteCreate` grows the commitment set, and
+/// `RevokeCapability` grows the revocation set.  The Lean producer currently reconstitutes only the
+/// cell ledger.  Treating these as swap-safe used to compute `lean_root` from the OLD accumulator,
+/// run Rust (which grew the accumulator), and then stamp the signed receipt back to the stale root.
+/// They therefore fall back to the Rust producer before the Lean/reference execution window until
+/// the verified producer returns a typed post-image for all three accumulators.
 pub fn producer_root_gap_effects() -> &'static [&'static str] {
-    &[]
+    &["NoteSpend", "NoteCreate", "RevokeCapability"]
 }
 
-/// Back-compat alias for [`producer_mappable_effects`] — the set of effect kinds for which the
-/// verified Lean producer RUNS on the commit path. Prefer [`producer_root_agreeing_effects`] when
+/// The first executor-owned consensus accumulator mutation inside an effect.
+///
+/// `ExerciseViaCapability` is deliberately recursive.  It is not mappable today, but spelling the
+/// recursion here prevents a future wrapper-marshalling change from tunnelling a side-state write
+/// past the producer fence.
+fn consensus_side_state_mutation_kind(effect: &Effect) -> Option<&'static str> {
+    match effect {
+        Effect::NoteSpend { .. } => Some("NoteSpend"),
+        Effect::NoteCreate { .. } => Some("NoteCreate"),
+        Effect::RevokeCapability { .. } => Some("RevokeCapability"),
+        Effect::ExerciseViaCapability { inner_effects, .. } => inner_effects
+            .iter()
+            .find_map(consensus_side_state_mutation_kind),
+        _ => None,
+    }
+}
+
+/// Return the first accumulator-mutating leaf in forest order.
+///
+/// This is a fail-closed pre-execution predicate, independent of today's mappability table.  The
+/// default Lean producer must decide this before invoking either producer, because its post-image
+/// currently contains a `Ledger` but no nullifier/commitment/revocation accumulator state.
+pub fn first_unproduced_consensus_side_state_effect(turn: &Turn) -> Option<&'static str> {
+    fn walk(tree: &CallTree) -> Option<&'static str> {
+        tree.action
+            .effects
+            .iter()
+            .find_map(consensus_side_state_mutation_kind)
+            .or_else(|| tree.children.iter().find_map(walk))
+    }
+
+    turn.call_forest.roots.iter().find_map(walk)
+}
+
+/// Back-compat alias for [`producer_mappable_effects`] — the set of effect kinds with a Lean wire
+/// projection. Prefer [`producer_root_agreeing_effects`] when
 /// you mean "the swap-safe, zero-divergence set" and [`producer_root_gap_effects`] for the residual.
 pub fn producer_covered_effects() -> &'static [&'static str] {
     producer_mappable_effects()
 }
 
-/// Whether the producer RUNS (defaults to Lean) for a given effect-kind name.
+/// Whether the effect kind has a wire projection for the Lean producer.
 /// `name` should be an [`effect_kind`] / [`producer_mappable_effects`] string.
 pub fn producer_covers_kind(name: &str) -> bool {
     producer_mappable_effects().contains(&name)
 }
 
 /// Whether the verified producer's reconstituted `.root()` provably AGREES with Rust for the given
-/// effect kind (the swap-safe set). A `false` for a mappable effect means the producer runs but the
-/// post-state root is a characterized gap (see [`producer_root_gap_effects`]).
+/// effect kind (the swap-safe set). A `false` for a mappable effect means it is fenced because its
+/// complete post-state commitment is a characterized gap (see [`producer_root_gap_effects`]).
 pub fn producer_root_agrees_kind(name: &str) -> bool {
     producer_root_agreeing_effects().contains(&name)
 }
@@ -801,17 +837,18 @@ pub(crate) fn forest_is_marshallable(turn: &Turn) -> bool {
 /// `lean_state_producer_widen` + `lean_state_producer_coverage`).
 ///
 /// This is the STRICTER gate the producer-mode commit path uses to decide whether to INSTALL the
-/// verified post-state. `forest_is_marshallable` (the producer merely RUNS) is a SUPERSET: it admits
-/// the characterized root-GAP effects (Refusal / ReceiptArchive / the escrow-settle pair) whose
-/// Lean-reconstituted root (or commit bit) provably DIVERGES from Rust because the wire
-/// model is lossier than the cell commitment. Installing a Lean-produced root for one of those on
-/// the live commit path would commit state that DISAGREES with every other node's Rust root (and the
-/// proving machinery) — a silent divergence. So the default-on producer covers ONLY the root-agreeing
-/// set; a turn touching ANY root-gap (or unmappable) effect falls back to the Rust producer with a
-/// logged warning, NEVER a silent commit of divergent state.
+/// verified post-state. `forest_is_marshallable` (a wire projection exists) is a SUPERSET: it admits
+/// the characterized root-GAP effects whose executor-owned accumulator post-images are not yet
+/// returned by Lean. Installing a Lean-produced cell ledger for one of those on the live commit path
+/// would leave the complete consensus root stale. So the default-on producer covers ONLY the
+/// root-agreeing set; a turn touching ANY root-gap (or unmappable) effect falls back to the Rust
+/// producer with a logged warning, NEVER a silent commit of incomplete state.
 ///
 /// Decided identically in both builds; empty forests are uncovered (same as `forest_is_marshallable`).
 pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
+    if first_unproduced_consensus_side_state_effect(turn).is_some() {
+        return false;
+    }
     if !forest_is_marshallable(turn) {
         return false;
     }
@@ -860,9 +897,11 @@ pub(crate) fn forest_agent_reaches_roots(turn: &Turn) -> bool {
 /// is root-agreeing (or the turn is unmappable for some other reason). Used by `produce_via_lean` to
 /// name the precise gap in its Rust-fallback reason, so the fallback is never a silent skip.
 pub fn first_root_gap_kind(turn: &Turn) -> Option<&'static str> {
-    turn_effect_kinds(turn)
-        .into_iter()
-        .find(|k| producer_covers_kind(k) && !producer_root_agrees_kind(k))
+    first_unproduced_consensus_side_state_effect(turn).or_else(|| {
+        turn_effect_kinds(turn)
+            .into_iter()
+            .find(|k| producer_covers_kind(k) && !producer_root_agrees_kind(k))
+    })
 }
 
 fn tree_is_marshallable(tree: &CallTree, id_map: &HashMap<CellId, u64>, any: &mut bool) -> bool {

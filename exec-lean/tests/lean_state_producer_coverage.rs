@@ -2,20 +2,21 @@
 //!
 //! `lean_shadow::producer_mappable_effects()` enumerates the effect kinds whose forest crosses the
 //! wire so the VERIFIED Lean executor RUNS as the state producer (`produce_via_lean`). But "the
-//! producer runs" is NOT the same as "the Lean-produced `.root()` EQUALS the Rust `.root()`": a
-//! mappable effect may touch a commitment field the wire model drops. For the SURVIVOR effects
+//! producer has a wire projection" is NOT the same as "the Lean-produced complete consensus root
+//! EQUALS the Rust root": a mappable effect may touch state the returned post-image omits. For the
+//! SURVIVOR effects
 //! whose dropped value is TURN or HOST data (the lifecycle payloads, the full `Permissions`/`VK`
 //! structs, the cap leaves, the sovereign removal, the revoke epoch bump) the commit-gated replay
 //! (`lean_apply::{CapOp,StateOp}`) CLOSES the gap — pinned here by *_closed round-trips plus a
-//! rejection tooth each. What remains (audit-field/archive commitments; the escrow settle
-//! commit-bit legs) are real SWAP-GAPS, asserted to diverge, never silent passes.
+//! rejection tooth each. What remains is the executor-owned accumulator trio, fenced before the
+//! producer window and pinned with hostile receipt-root teeth.
 //!
 //! This file is the EMPIRICAL yardstick that keeps the two coverage lists HONEST:
 //!   * [`producer_root_agreeing_effects`] — the producer runs AND the reconstituted ledger agrees
 //!     with Rust on full cell state + `cap_root` + `.root()`. THE swap-safe set.
-//!   * [`producer_root_gap_effects`] — the producer runs but the root DIVERGES (a characterized
-//!     wire-model gap). Each is asserted to diverge (a negative tooth), so the gap is pinned and a
-//!     future wire-model widening that closes it will FAIL this test (forcing a re-classification).
+//!   * [`producer_root_gap_effects`] — the effect has a wire arm but its complete consensus-state
+//!     post-image is missing. Each is fenced before execution and pinned by a hostile tooth; a
+//!     future widening that closes it must force an explicit re-classification.
 //!
 //! Every entry in BOTH lists is exercised here by a representative single-effect turn run through
 //! both producers — so neither list can drift into a vacuous claim. Mirrors the discipline of
@@ -28,7 +29,7 @@ use std::collections::HashMap;
 
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::state::FieldElement;
-use dregg_cell::{Cell, CellId, Ledger, NoteCommitment, Permissions, VerificationKey};
+use dregg_cell::{Cell, CellId, Ledger, NoteCommitment, Nullifier, Permissions, VerificationKey};
 use dregg_exec_lean::lean_apply::{self, execute_via_lean};
 use dregg_exec_lean::lean_shadow::{
     self, ShadowHostCtx, producer_mappable_effects, producer_root_agreeing_effects,
@@ -280,7 +281,7 @@ fn emit_event_root_agrees() {
     // EmitEvent journals an event but mutates NO cell commitment field (apply.rs:703 records the
     // event in the receipt journal only). The wire `emit` arm likewise leaves cell state untouched.
     // So both producers commit and the reconstituted ledger agrees on state + cap_root + root.
-    let (pre, a_id) = one_open_cell();
+    let (_, a_id) = one_open_cell();
     let turn = single_effect_turn(
         a_id,
         a_id,
@@ -487,13 +488,14 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
 }
 
 #[test]
-fn note_create_root_agrees() {
+fn note_create_cell_ledger_agrees_but_consensus_accumulator_is_fenced() {
     if skip_no_lean() {
         return;
     }
-    // NoteCreate inserts a commitment into the note SET (a side-table OUTSIDE the cell merkle root)
-    // and mutates no cell commitment field. Both producers commit; the cell-ledger root agrees (the
-    // note set does not feed `cell::Ledger::root()`).
+    // NoteCreate mutates no cell commitment field, so this narrower cell-ledger differential still
+    // agrees.  It DOES grow `TurnExecutor::note_commitments`, which now feeds the signed receipt's
+    // consensus-state root.  Lean does not return that accumulator post-image yet, so the default
+    // producer must classify it as a root gap rather than stamping the old accumulator root.
     let (pre, a_id) = one_open_cell();
     let turn = single_effect_turn(
         a_id,
@@ -508,16 +510,15 @@ fn note_create_root_agrees() {
             range_proof: None,
         },
     );
-    diff(pre, turn, &[a_id]).expect("NoteCreate must round-trip (note set is off the cell root)");
-    assert!(lean_shadow::producer_root_agreeing_effects().contains(&"NoteCreate"));
+    diff(pre, turn, &[a_id]).expect("NoteCreate still agrees on the narrower cell-ledger image");
+    assert!(!lean_shadow::producer_root_agreeing_effects().contains(&"NoteCreate"));
+    assert!(lean_shadow::producer_root_gap_effects().contains(&"NoteCreate"));
 }
 
 // =====================================================================================
-// ROOT-GAP FAMILIES — the producer RUNS but the reconstituted `.root()` DIVERGES. Each
-// asserts the SPECIFIC divergence (a negative tooth) so the gap is characterized, not a
-// silent pass. (CellSeal/CellDestroy are pinned in the widen file too; the cap-fidelity
-// effects GrantCapability/AttenuateCapability/Introduce are now root-AGREEING, see the
-// `*_round_trips_cap_fidelity_closed` tests.)
+// FORMER CELL-LEDGER ROOT-GAPS — closed with commit-gated deterministic replay and pinned
+// by non-vacuous round trips.  The remaining root gaps are the executor accumulator trio
+// above/below; those are fenced before the producer window rather than allowed to diverge.
 // =====================================================================================
 
 #[test]
@@ -911,8 +912,8 @@ fn attenuate_capability_round_trips_cap_fidelity_closed() {
 
 /// The covered-set predicate is purely a Rust decision (no Lean link needed): a Transfer turn is
 /// covered (root-agreeing), and so now is a Refusal turn — the audit-field/nonce-bump ROOT-GAP is
-/// CLOSED (`StateOp::Refusal` replay), so the root-gap residual is EMPTY and `first_root_gap_kind`
-/// finds no offending kind on ANY mappable turn.
+/// CLOSED (`StateOp::Refusal` replay).  The remaining gaps are exactly the executor-owned
+/// accumulator mutations Lean does not produce yet.
 #[test]
 fn forest_is_root_agreeing_covers_transfer_and_refusal() {
     let a = make_open_cell(1, 100);
@@ -948,10 +949,114 @@ fn forest_is_root_agreeing_covers_transfer_and_refusal() {
         "the Refusal root-gap is closed — no offending kind"
     );
 
-    // The root-gap residual is now EMPTY: no mappable effect is a characterized root-gap.
-    assert!(
-        lean_shadow::producer_root_gap_effects().is_empty(),
-        "the root-gap residual is empty — every mappable effect reconstitutes a byte-exact root"
+    assert_eq!(
+        lean_shadow::producer_root_gap_effects(),
+        &["NoteSpend", "NoteCreate", "RevokeCapability"],
+        "only unproduced executor accumulator mutations remain fenced"
+    );
+}
+
+#[test]
+fn accumulator_mutations_are_fenced_recursively_before_producer_execution() {
+    let (pre, a_id) = one_open_cell();
+    let note_spend = Effect::NoteSpend {
+        nullifier: Nullifier([0x11; 32]),
+        note_tree_root: [0x12; 32],
+        spending_proof: Vec::new(),
+        value: 0,
+        asset_type: 0,
+        value_commitment: None,
+    };
+    let note_create = Effect::NoteCreate {
+        commitment: NoteCommitment([0x21; 32]),
+        value: 0,
+        asset_type: 0,
+        encrypted_note: Vec::new(),
+        value_commitment: None,
+        range_proof: None,
+    };
+    let revoke = Effect::RevokeCapability {
+        cell: a_id,
+        slot: 0,
+    };
+
+    for (kind, effect) in [
+        ("NoteSpend", note_spend),
+        ("NoteCreate", note_create.clone()),
+        ("RevokeCapability", revoke),
+    ] {
+        let turn = single_effect_turn(a_id, a_id, 0, effect);
+        assert_eq!(
+            lean_shadow::first_unproduced_consensus_side_state_effect(&turn),
+            Some(kind)
+        );
+        assert!(!lean_shadow::forest_is_root_agreeing(&turn));
+        assert_eq!(lean_shadow::first_root_gap_kind(&turn), Some(kind));
+    }
+
+    // The wrapper is unmappable today, but the side-state fence must see through it independently:
+    // future wrapper mappability cannot turn an inner accumulator write into a covered turn.
+    let wrapped = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::ExerciseViaCapability {
+            cap_slot: 0,
+            inner_effects: vec![note_create],
+        },
+    );
+    assert_eq!(
+        lean_shadow::first_unproduced_consensus_side_state_effect(&wrapped),
+        Some("NoteCreate")
+    );
+    assert!(!lean_shadow::forest_is_root_agreeing(&wrapped));
+    assert_eq!(
+        lean_shadow::first_root_gap_kind(&wrapped),
+        Some("NoteCreate")
+    );
+}
+
+#[test]
+fn note_create_fallback_receipt_binds_the_actual_post_accumulator_root() {
+    use dregg_exec_lean::lean_apply::{ProducerOutcome, produce_via_lean};
+
+    let (mut ledger, a_id) = one_open_cell();
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let pre_root = executor.consensus_state_commitment(&ledger, &a_id);
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::NoteCreate {
+            commitment: NoteCommitment([0xA5; 32]),
+            value: 0,
+            asset_type: 0,
+            encrypted_note: Vec::new(),
+            value_commitment: None,
+            range_proof: None,
+        },
+    );
+
+    let (result, outcome) = produce_via_lean(&executor, &turn, &mut ledger);
+    assert!(matches!(
+        outcome,
+        ProducerOutcome::Fallback {
+            reason: lean_apply::ExtractError::RootGap { kind: "NoteCreate" }
+        }
+    ));
+    let receipt = match result {
+        dregg_turn::TurnResult::Committed { receipt, .. } => receipt,
+        other => panic!("Rust fallback must commit the valid NoteCreate, got {other:?}"),
+    };
+    assert_eq!(executor.note_commitments.lock().unwrap().len(), 1);
+    let actual_post_root = executor.consensus_state_commitment(&ledger, &a_id);
+    assert_ne!(
+        actual_post_root, pre_root,
+        "the hostile tooth must genuinely grow consensus state"
+    );
+    assert_eq!(
+        receipt.post_state_hash, actual_post_root,
+        "fallback receipt must bind the post-mutation accumulator, never the stale Lean pre-root"
     );
 }
 

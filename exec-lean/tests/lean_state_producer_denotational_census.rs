@@ -687,7 +687,6 @@ const CENSUS_COVERED: &[&str] = &[
     "EmitEvent",
     "SetPermissions",
     "SetVerificationKey",
-    "NoteCreate",
     "CellSeal",
     "CellUnseal",
     "CellDestroy",
@@ -697,7 +696,6 @@ const CENSUS_COVERED: &[&str] = &[
     "Introduce",
     "RevokeDelegation",
     "RefreshDelegation",
-    "RevokeCapability",
     "Refusal",
     "ReceiptArchive",
 ];
@@ -706,10 +704,13 @@ const CENSUS_COVERED: &[&str] = &[
 /// PRECISE reason it cannot be a scalar-denotational agreement today. This list now ranges over the
 /// FULL `VmEffect` universe (the 29 variants of `dregg_circuit::effect_vm::Effect`), NOT just the
 /// mappable/root-agreeing subset — so EVERY on-chain effect is either COVERED above or NAMED here.
-/// Two residual classes remain (the former ROOT-GAP class is now EMPTY — Refusal / ReceiptArchive
-/// were the last members, closed by the commit-gated `StateOp::Refusal` / `StateOp::ReceiptArchive`
-/// audit/lifecycle replays, so `lean_shadow::producer_root_gap_effects` is `&[]`):
+/// Three residual classes remain. Refusal / ReceiptArchive's cell-ledger gaps are closed, while
+/// NoteSpend / NoteCreate / RevokeCapability remain fenced because Lean does not yet return their
+/// executor-owned accumulator post-images:
 ///
+///   * UNPRODUCED-CONSENSUS-ACCUMULATOR — the effect has a wire projection, but the current Lean
+///     result returns only the cell-ledger post-image.  It is fenced before producer execution until
+///     the nullifier / commitment / revocation post-image is typed and verified.
 ///   * NOT-MAPPABLE — `lean_shadow::effect_is_mappable` returns `false` (no wire projection), so the
 ///     verified producer is INELIGIBLE; a census turn would be Lean-ineligible (the producer can't be
 ///     driven at all). Closing one needs a NEW wire leg + verified gate, not an in-test fixture.
@@ -722,9 +723,18 @@ const CENSUS_COVERED: &[&str] = &[
 const CENSUS_NAMED_RESIDUALS: &[(&str, &str)] = &[
     (
         "NoteSpend",
-        "a COMMITTING NoteSpend needs a real STARK spending proof + a note in the tree; the in-test \
-         fixtures only exercise the PROOFLESS spend, which both producers REJECT (commit-bit agreement \
-         on rejection, pinned in rust_lean_divergence_finder). No committed full-state fixture yet.",
+        "Lean does not yet produce the nullifier-accumulator post-image committed by the receipt; \
+         additionally, a committing fixture needs a real STARK spending proof + note tree.",
+    ),
+    (
+        "NoteCreate",
+        "the cell-ledger denotation agrees, but Lean does not yet produce the commitment-accumulator \
+         post-image now included in TurnExecutor::consensus_state_commitment.",
+    ),
+    (
+        "RevokeCapability",
+        "the cell-ledger denotation agrees, but Lean does not yet produce the revocation-accumulator \
+         post-image now included in TurnExecutor::consensus_state_commitment.",
     ),
     (
         "Burn",
@@ -1011,9 +1021,9 @@ fn vm_effect_universe_is_complete() {
     assert_eq!(VM_EFFECT_UNIVERSE.len(), 30);
 }
 
-/// LEGACY continuity view: every kind the swap classifies as root-AGREEING is ACCOUNTED FOR by this
-/// census — either COVERED by a denotational fixture or NAMED as a residual (Burn / NoteSpend are
-/// root-agreeing yet residual: a committed fixture needs a value-well / a real STARK spend proof). And
+/// Continuity view: every kind the swap classifies as root-AGREEING is ACCOUNTED FOR by this
+/// census — either COVERED by a denotational fixture or NAMED as a residual (Burn remains a
+/// root-agreeing residual because a committed fixture needs a value-well). And
 /// every census-covered kind is genuinely root-agreeing (no over-claim). This pins that the
 /// FULL-universe completeness above did not regress the original swap-safe coverage guarantee:
 /// root-agreeing ⊆ covered ∪ residual.
