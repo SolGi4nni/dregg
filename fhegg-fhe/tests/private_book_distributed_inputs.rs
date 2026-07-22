@@ -5,9 +5,10 @@
 //! preparation behind `amm-input-binding`. Each owner now proves the first
 //! nonlinear subrelation locally: its hidden kind and quantity are in range,
 //! its one-hot selector and nine semantic message slots are exact, and all are
-//! linked to the vector commitment held additively by the workers. The
-//! remaining Poseidon/BFV-polynomial/clearing circuit is not yet a distributed
-//! R1CS proof.
+//! linked to the vector commitment held additively by the workers. Every BFV
+//! u/e1/e2 coefficient is also proved in `[-32,31]` on that same vector. The
+//! remaining Poseidon/BFV-polynomial-equation/clearing circuit is not yet a
+//! distributed R1CS proof.
 
 #[path = "../src/private_book_distributed_inputs.rs"]
 mod distributed;
@@ -116,6 +117,108 @@ fn reused_rng_stream_is_session_separated_before_any_worker_sees_a_share() {
 }
 
 #[test]
+fn every_semantic_option_row_is_exact_and_constraint_omissions_fail_closed() {
+    use curve25519_dalek::scalar::Scalar;
+
+    let owner_keys = keys::<ORDER_COUNT>(0x0a);
+    let worker_keys = keys::<3>(0x2a);
+    let session = session(&owner_keys, &worker_keys);
+
+    // Exhaust the complete 8 × 16 semantic table rather than relying only on
+    // representative bid/ask rows.
+    for kind in 0..8usize {
+        for quantity in 0..16usize {
+            let witness = LocalOrderWitness::from_seed(
+                &session,
+                0,
+                if kind < 4 {
+                    PrivateSide::Bid
+                } else {
+                    PrivateSide::Ask
+                },
+                (kind % 4) as u8,
+                quantity as u8,
+                [kind as u8 * 16 + quantity as u8; 32],
+                Some([700; 8]),
+            )
+            .unwrap();
+            let selected = kind * 16 + quantity;
+            for option in 0..OPTION_COUNT {
+                assert_eq!(
+                    witness.value_for_test(2 + option),
+                    Scalar::from(u64::from(option == selected))
+                );
+            }
+            for slot in 0..8 {
+                let expected = if kind < 4 {
+                    u64::from(slot <= kind) * quantity as u64
+                } else {
+                    u64::from(slot >= kind) * quantity as u64
+                };
+                assert_eq!(
+                    witness.value_for_test(2 + OPTION_COUNT + slot),
+                    Scalar::from(expected)
+                );
+            }
+            assert_eq!(
+                witness.value_for_test(2 + OPTION_COUNT + 8),
+                Scalar::from((kind + 8 * quantity) as u64)
+            );
+        }
+    }
+
+    // Each mutation preserves a well-shaped private vector but violates one
+    // load-bearing semantic/shortness constraint. Proof-byte corruption tests
+    // alone would not catch an accidentally omitted constraint.
+    let mutations = [
+        (2, Scalar::ONE),                            // second selected option
+        (2 + 20, Scalar::ZERO),                      // erase true option
+        (2 + OPTION_COUNT, Scalar::from(5u64)),      // wrong unary slot
+        (2 + OPTION_COUNT + 8, Scalar::ONE),         // wrong metadata/root code
+        (2 + OPTION_COUNT + 9, Scalar::from(32u64)), // out-of-range BFV short
+    ];
+    for (case, (coordinate, value)) in mutations.into_iter().enumerate() {
+        let mut witness = LocalOrderWitness::from_seed(
+            &session,
+            0,
+            PrivateSide::Bid,
+            1,
+            4,
+            [0xd0 + case as u8; 32],
+            Some([800; 8]),
+        )
+        .unwrap();
+        witness.set_value_for_test(coordinate, value);
+        let mut rng = StdRng::from_seed([0xe0 + case as u8; 32]);
+        assert!(matches!(
+            witness.deal(&session, &owner_keys[0], &mut rng),
+            Err(DistributedInputError::OrderRangeProofRejected)
+        ));
+    }
+
+    // Preserve booleanity and sum=1 while moving the selected bit from
+    // (kind=1, qty=4) to (kind=1, qty=5). The explicit kind/quantity/index
+    // equations, rather than only the one-hot gadget, must reject it.
+    let mut witness = LocalOrderWitness::from_seed(
+        &session,
+        0,
+        PrivateSide::Bid,
+        1,
+        4,
+        [0xd8; 32],
+        Some([800; 8]),
+    )
+    .unwrap();
+    witness.set_value_for_test(2 + 20, Scalar::ZERO);
+    witness.set_value_for_test(2 + 21, Scalar::ONE);
+    let mut rng = StdRng::from_seed([0xe8; 32]);
+    assert!(matches!(
+        witness.deal(&session, &owner_keys[0], &mut rng),
+        Err(DistributedInputError::OrderRangeProofRejected)
+    ));
+}
+
+#[test]
 fn all_local_openings_bind_one_public_certificate_without_reconstruction() {
     let owner_keys = keys::<ORDER_COUNT>(0x11);
     let worker_keys = keys::<3>(0x31);
@@ -188,7 +291,7 @@ fn all_local_openings_bind_one_public_certificate_without_reconstruction() {
         assert_eq!(contribution.owner(), owner);
         assert_ne!(contribution.digest(), [0; 32]);
         assert_ne!(contribution.owner_commitment(), [0; 32]);
-        assert_eq!(contribution.order_range_proof_len_for_test(), 6_629);
+        assert_eq!(contribution.order_range_proof_len_for_test(), 8_293);
         coordinator
             .accept_dealer(output.contribution)
             .expect("public dealing");
@@ -541,7 +644,7 @@ fn exact_production_layout_and_session_separation_are_pinned() {
         production_deal
             .contribution
             .order_range_proof_len_for_test(),
-        7_013
+        400_869
     );
 
     assert_eq!(

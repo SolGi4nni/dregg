@@ -35,8 +35,9 @@
 //! proves committed-share custody plus its named linear constraints. The input
 //! certificate separately proves owner-local kind/quantity ranges plus the
 //! exact one-hot selector and semantic-message relation, linked to those same
-//! distributed commitments. It does not yet prove the exact BFV polynomial
-//! opening, Poseidon, or clearing relation. The monolithic
+//! distributed commitments, and bounds every BFV short coefficient to
+//! `[-32,31]`. It does not yet prove the exact BFV polynomial opening,
+//! Poseidon, or clearing relation. The monolithic
 //! `private_book_bfv_zk::prove_private_book_bfv_zk` therefore remains the
 //! explicit Tier-1 full-relation path: its one prover process sees all four
 //! orders and BFV seeds. Public artifact bytes are size-bounded, but a

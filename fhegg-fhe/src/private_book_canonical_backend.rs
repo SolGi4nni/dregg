@@ -77,10 +77,10 @@ const ROOT_CONSTRAINT_CHALLENGE_DOMAIN: &str =
     "fhegg/private-book-share-opening-pok/root-constraint-challenge/v1";
 const ROOT_CONSTRAINT_TRANSCRIPT_LABEL: &[u8] =
     b"fhegg/private-book-share-opening-pok/root-constraint/v1";
-const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI003";
+const CERTIFICATE_MAGIC: &[u8; 8] = b"FHPDI004";
 const MIN_WORKERS: usize = 2;
 const MAX_WORKERS: usize = 8;
-const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 16 * 1024;
+const MAX_OWNER_RANGE_ARTIFACT_BYTES: usize = 512 * 1024;
 const ACK_WIRE_LEN: usize = 2 + 2 + 32 + 64;
 const ZERO_CLAIM_COUNT: usize = ORDER_COUNT - 1;
 const ARTIFACT_FIXED_BYTES: usize = 8 + 2 + 2 + 4 + 4 + 32 + 32 + 2 + 2 + 32;
