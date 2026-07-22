@@ -159,7 +159,7 @@ def deployedPerm16 (xs : List ℤ) : List ℤ :=
 
 @[simp] theorem deployedPerm16_length (xs : List ℤ) :
     (deployedPerm16 xs).length = CHIP_STATE_LANES := by
-  simp only [deployedPerm16, List.length_ofFn, CHIP_STATE_LANES]
+  simp only [deployedPerm16, List.length_ofFn, CHIP_STATE_LANES, CHIP_RATE]
 
 /-- Write a complete output-state block into an assignment. -/
 def writeState (a : Assignment) (cols : List Nat) (vals : List ℤ) : Assignment :=
@@ -178,7 +178,7 @@ def solveState16Plan (perm16 : List ℤ → List ℤ) (a : Assignment)
 /-- A concrete, canonical prior accumulator opening: the exact empty-leaf digest as root and
 cursor/count one.  The five FNS3 states themselves are then produced, not supplied. -/
 def concretePreFns3Seed : Assignment := fun col =>
-  if h : col ∈ exactNodeDigestCols 0 then
+  if _h : col ∈ exactNodeDigestCols 0 then
     Int.ofNat (exactEmptyDigestNat.getD ((exactNodeDigestCols 0).idxOf col) 0)
   else if col = PRE_COUNT_BASE then 1
   else 0
@@ -189,23 +189,25 @@ def concretePreFns3Row : Assignment :=
 /-- Boolean form of a complete finite plan execution, convenient for driven concrete witnesses. -/
 def state16PlanChecks (perm16 : List ℤ → List ℤ) (a : Assignment)
     (steps : List State16Step) : Bool :=
-  steps.all fun step => decide (State16StepHolds perm16 a step)
+  steps.all fun step =>
+    decide (step.outputCols.map a = perm16 (step.input.map (·.eval a)))
 
 theorem state16PlanChecks_sound (perm16 : List ℤ → List ℤ) (a : Assignment)
     (steps : List State16Step) (h : state16PlanChecks perm16 a steps = true) :
     ∀ step ∈ steps, State16StepHolds perm16 a step := by
   intro step hstep
+  change step.outputCols.map a = perm16 (step.input.map (·.eval a))
   exact of_decide_eq_true (List.all_eq_true.mp h step hstep)
 
 /-- The concrete row really executes all five FNS3 sites under the deployed permutation.  This is
 a kernel-decided theorem over 80 output lanes; corrupting any generated lane makes it fail. -/
-set_option maxRecDepth 32768 in
-set_option maxHeartbeats 0 in
 theorem concretePreFns3Row_executes :
     Fns3PlanExecution deployedPerm16 concretePreFns3Row
       0 PRE_COUNT_BASE PRE_STATE_COMMIT_BASE := by
   apply state16PlanChecks_sound deployedPerm16 concretePreFns3Row preStateCommitPlan
-  decide
+  set_option maxRecDepth 32768 in
+    set_option maxHeartbeats 0 in
+      decide
 
 /-- The five-lookup descriptor used only for the independent non-vacuity witness. -/
 def preFns3OnlyDescriptor : EffectVmDescriptor2 :=
@@ -276,13 +278,22 @@ theorem satisfied2_preFns3_concrete (scalarHash : List ℤ → ℤ)
     intro op hop
     simp at hop
   memDisciplined := by
-    simp
+    rw [preFns3Only_memLog_empty]
+    trivial
   memBalanced := by
     simpa using memCheck_nil minit mfin
   memTableFaithful := by
-    simp [concretePreFns3Trace]
+    rw [preFns3Only_memLog_empty, List.map_nil]
+    show (if TableId.memory = poseidon2state16 then
+      state16TableOf deployedPerm16 concretePreFns3Row else []) = []
+    rw [if_neg]
+    simp [poseidon2state16]
   mapTableFaithful := by
-    simp [concretePreFns3Trace]
+    rw [preFns3Only_mapLog_empty]
+    show (if TableId.mapOps = poseidon2state16 then
+      state16TableOf deployedPerm16 concretePreFns3Row else []) = []
+    rw [if_neg]
+    simp [poseidon2state16]
 
 /-- The isolated genuine FNS3 circuit is jointly satisfiable by a NON-EMPTY trace. -/
 theorem preFns3_genuinely_nonvacuous (scalarHash : List ℤ → ℤ) :
