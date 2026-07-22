@@ -11088,3 +11088,66 @@ was exact at **1.226s serial / 0.396s parallel** on 16 threads. This is a
 classical performance improvement, not a PQ upgrade, and a new strict full-apex
 timing has not yet replaced the authoritative 167.008s run. The measured WGPU
 public Pippenger remains disabled because it is much slower than dalek.
+
+## fhEgg hard-tech expansion: typed TFHE, NTT-family scaling, authenticated bits, and shielded crown (2026-07-21)
+
+The default high-level TFHE key order is no longer an unimplemented format
+boundary (`21ef9cb03`). A retained `CompressedServerKey` yields the exact
+coefficient BSK and 2048→918 KSK; one selected ordinary big-key `FheUint32`
+block now performs KS, centered-mean transform-resident PBS, and 2,049-
+coefficient big-key reconstruction, then survives a subsequent normal high-
+level addition. The strict hbox gate is **1/1**. Exact plan expansion/upload was
+**317.965ms** and the first typed call against the already prepared plan was
+**143.891ms**; this is one-call qualification, not a repeated warm median.
+Multi-block comparison/control-flow dispatch remains. The reverse-order dense
+transform gate is still useful arithmetic qualification, but it is no longer
+presented as the high-level operation order.
+
+The literal native BFV family now has a Lean-first scaling design
+(`04a86e7fa`). `Market.PrivateBookBfvNttFamily` replaces 98,304 separately
+padded 4,096-row slices (402,653,184 rows) with shared odd-NTT structure:
+294,912 forward-transform rows, 98,304 pointwise rows, 589,824 inverse rows,
+and 49,152 dual terminal rows. That is **1,032,192 live rows**, padded once to
+**2^20 × 48**, plus a reusable **2^18** public-key certificate—a 384× padded-row
+reduction. Odd NTT/INTT semantics, key-certificate functionality, spectral
+composition, the coefficient-opening bridge, production-root checks, and an
+executable q0/q1 coefficient family with mutation refusal are green. Butterfly
+AIR, witness/permutation bus, terminal quotient/canonicality, recursive key-cert
+join, production Fourier-refinement proof, and WGPU scheduled-transform parity
+remain production obligations.
+
+The binary sacrifice's concrete lying-response seam has advanced
+(`a06ccacd3`). Two independent GF(2^128) authentication lanes now protect bit-
+share openings and reject the formerly accepted forged `tau`; Rust release is
+**7/7 on hbox** and Lean is green. This is not yet a malicious-MPC theorem or
+live `FHTRI003`: the dealer sees bits and global MAC keys, honest share
+provenance and an unpredictable beacon are premises, SHA-512 remains, typestate
+is local, and the joint reduction/network/replay cut is open.
+
+An additive lattice/hash share-commitment prototype is banked
+(`dd9e163ed`) with exact Rust/Lean KATs. Context/slot-bound BabyBear coordinates,
+randomized hiding coordinates, exact additive links, and extraction of a short
+nonzero SIS kernel vector from a false link are executable. It deliberately
+refuses production PQ status: concrete dimensions have not been estimator-
+checked, faithful lanes dominate the current beta, and live Ristretto shares are
+wide/uniform rather than the bounded coordinates this construction requires.
+It is migration algebra, not a type-only replacement.
+
+The portable public Ristretto MSM improved but remains a falsifier rather than a
+shipping accelerator (`4764a766f`). Adaptive geometry uses radix 16 below 2,048
+terms and radix 128 above. Fixed radix-128 at 4,096 terms was **4.722s GPU vs
+9.563ms dalek**; the final standalone adaptive run was **4.643s vs 9.827ms**.
+Dalek remains the independent acceptance oracle, WGPU remains disabled, and
+secret prover MSM stays CPU because verifier-window access is not secret-safe.
+
+The first private/proven game consequence now consumes the live custody types
+rather than reconstructing authority from raw proofs (`16e0814cc`). A private-
+field persist-minted `FinalizedFaithfulSpend` joins the exact private-BFV apex's
+winner and price to one signed epoch/head-bound Dungeon Red-or-Blue `WriteOnce`
+crown. Federation, submitter, nullifier, tender asset/value, market asset,
+winner route, signer, and action are bound; replay, rival crown, wrong signer,
+missing/wrong tender, and receipt mutation refuse. The linked verified archive
+gate is **1/1 in 19.464s**. Remaining: a live caller and durable
+`authorization_id` recovery, roster-aware finality classification, recipient-
+output semantics beyond one-shot redemption, and distributed atomicity across
+the spend/Bazaar/game commits.
