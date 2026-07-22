@@ -20,6 +20,11 @@ pub const MAX_PROMISE_RESOLUTIONS_PER_BATCH: usize = 4_096;
 pub const MAX_PROMISE_RESOLUTION_QUERY: usize = 1_000;
 /// Bounds persisted operator text originating in a rejected/broken dependency.
 pub const MAX_PROMISE_BROKEN_REASON_BYTES: usize = 16 * 1024;
+/// Bounds one serialized observer row before allocation-heavy deserialization.
+pub const MAX_PROMISE_RESOLUTION_ROW_BYTES: usize = 64 * 1024;
+/// Bounds the complete canonical candidate batch accepted from one turn.
+pub const MAX_PROMISE_RESOLUTION_BATCH_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROMISE_RESOLUTION_MANIFEST_BYTES: usize = 256;
 
 /// Stable public shape of a broken promise.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +65,7 @@ impl PromiseResolutionCandidateV1 {
     }
 
     fn validate(&self) -> Result<()> {
-        fn validate_broken(reason: &PromiseBrokenReasonV1, depth: usize) -> Result<()> {
+        fn validate_broken(reason: &PromiseBrokenReasonV1, depth: usize) -> Result<usize> {
             if depth > 64 {
                 return Err(StoreError::Integrity(
                     "promise broken-reason nesting exceeds 64".to_string(),
@@ -73,17 +78,24 @@ impl PromiseResolutionCandidateV1 {
                             "promise broken-reason text exceeds durable bound".to_string(),
                         ));
                     }
+                    Ok(reason.len())
                 }
                 PromiseBrokenReasonV1::DependencyBroken { cause } => {
-                    validate_broken(cause, depth + 1)?;
+                    validate_broken(cause, depth + 1)
                 }
-                PromiseBrokenReasonV1::Timeout | PromiseBrokenReasonV1::FederationUnreachable => {}
+                PromiseBrokenReasonV1::Timeout | PromiseBrokenReasonV1::FederationUnreachable => {
+                    Ok(0)
+                }
             }
-            Ok(())
         }
 
         if let PromiseResolutionKindV1::Broken { reason } = &self.outcome {
-            validate_broken(reason, 0)?;
+            let total_reason_bytes = validate_broken(reason, 0)?;
+            if total_reason_bytes > MAX_PROMISE_BROKEN_REASON_BYTES {
+                return Err(StoreError::Integrity(
+                    "promise broken-reason chain exceeds cumulative durable bound".to_string(),
+                ));
+            }
         }
         Ok(())
     }
@@ -157,10 +169,16 @@ fn canonical_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     postcard::to_stdvec(value).map_err(|error| StoreError::Serialization(error.to_string()))
 }
 
-fn decode_canonical<T>(bytes: &[u8], what: &str) -> Result<T>
+fn decode_canonical_bounded<T>(bytes: &[u8], what: &str, max_bytes: usize) -> Result<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
+    if bytes.len() > max_bytes {
+        return Err(StoreError::Integrity(format!(
+            "{what} is {} bytes (maximum {max_bytes})",
+            bytes.len()
+        )));
+    }
     let decoded: T = postcard::from_bytes(bytes)
         .map_err(|error| StoreError::Integrity(format!("{what} decode failed: {error}")))?;
     let encoded = canonical_bytes(&decoded)?;
@@ -172,6 +190,13 @@ where
 
 fn batch_digest(candidates: &[PromiseResolutionCandidateV1]) -> Result<[u8; 32]> {
     let bytes = canonical_bytes(&candidates)?;
+    if bytes.len() > MAX_PROMISE_RESOLUTION_BATCH_BYTES {
+        return Err(StoreError::Integrity(format!(
+            "promise-resolution batch is {} bytes (maximum {})",
+            bytes.len(),
+            MAX_PROMISE_RESOLUTION_BATCH_BYTES
+        )));
+    }
     Ok(*blake3::Hasher::new_derive_key(BATCH_DIGEST_DOMAIN_V1)
         .update(&bytes)
         .finalize()
@@ -235,7 +260,13 @@ fn load_manifest_from_table(
         guard.map(|value| value.value().to_vec())
     };
     bytes
-        .map(|bytes| decode_canonical(&bytes, "promise-resolution batch manifest"))
+        .map(|bytes| {
+            decode_canonical_bounded(
+                &bytes,
+                "promise-resolution batch manifest",
+                MAX_PROMISE_RESOLUTION_MANIFEST_BYTES,
+            )
+        })
         .transpose()
 }
 
@@ -243,6 +274,12 @@ fn load_manifest_records(
     records: &impl ReadableTable<u64, &'static [u8]>,
     manifest: &PromiseResolutionBatchManifestV1,
 ) -> Result<Vec<DurablePromiseResolutionV1>> {
+    if manifest.event_count as usize > MAX_PROMISE_RESOLUTIONS_PER_BATCH {
+        return Err(StoreError::Integrity(format!(
+            "promise-resolution manifest has {} events (maximum {})",
+            manifest.event_count, MAX_PROMISE_RESOLUTIONS_PER_BATCH
+        )));
+    }
     let mut out = Vec::with_capacity(manifest.event_count as usize);
     for offset in 0..u64::from(manifest.event_count) {
         let key = manifest.first_sequence.checked_add(offset).ok_or_else(|| {
@@ -255,8 +292,11 @@ fn load_manifest_records(
         })?;
         let bytes = guard.value().to_vec();
         drop(guard);
-        let record: DurablePromiseResolutionV1 =
-            decode_canonical(&bytes, "promise-resolution row")?;
+        let record: DurablePromiseResolutionV1 = decode_canonical_bounded(
+            &bytes,
+            "promise-resolution row",
+            MAX_PROMISE_RESOLUTION_ROW_BYTES,
+        )?;
         record.validate(key)?;
         out.push(record);
     }
@@ -374,8 +414,11 @@ impl PersistentStore {
             let (key, value) = entry?;
             let key = key.value();
             let bytes = value.value();
-            let record: DurablePromiseResolutionV1 =
-                decode_canonical(bytes, "promise-resolution row")?;
+            let record: DurablePromiseResolutionV1 = decode_canonical_bounded(
+                bytes,
+                "promise-resolution row",
+                MAX_PROMISE_RESOLUTION_ROW_BYTES,
+            )?;
             record.validate(key)?;
             out.push(record);
             if out.len() == limit {
@@ -539,6 +582,47 @@ mod tests {
         }
         write.commit().unwrap();
         assert!(store.promise_resolutions_after_v1(None, 10).is_err());
+    }
+
+    #[test]
+    fn oversized_row_is_rejected_before_deserialization() {
+        let (_dir, store) = store();
+        store
+            .commit_finalized_turn_with_executor_state(0, &record(0), &[], &state(0))
+            .unwrap();
+        let oversized = vec![0u8; MAX_PROMISE_RESOLUTION_ROW_BYTES + 1];
+        let write = store.db.begin_write().unwrap();
+        {
+            let mut table = write
+                .open_table(tables::PROMISE_RESOLUTION_RECORDS_V1)
+                .unwrap();
+            table.insert(0, oversized.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        let error = store.promise_resolutions_after_v1(None, 10).unwrap_err();
+        assert!(error.to_string().contains("maximum 65536"));
+    }
+
+    #[test]
+    fn oversized_canonical_batch_is_refused() {
+        let source = record(0);
+        let reason = "x".repeat(MAX_PROMISE_BROKEN_REASON_BYTES);
+        let events: Vec<_> = (0..513u32)
+            .map(|event_index| PromiseResolutionCandidateV1 {
+                source_commit_ordinal: source.ordinal,
+                source_receipt_hash: source.receipt_hash,
+                event_index,
+                pending_id: [event_index as u8; 32],
+                outcome: PromiseResolutionKindV1::Broken {
+                    reason: PromiseBrokenReasonV1::TurnRejected {
+                        reason: reason.clone(),
+                    },
+                },
+            })
+            .collect();
+        let error = validate_candidates(&source, &events).unwrap_err();
+        assert!(error.to_string().contains("batch is"));
+        assert!(error.to_string().contains("maximum 8388608"));
     }
 
     #[test]
