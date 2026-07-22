@@ -32,9 +32,19 @@ the key from its local `AgentCipherclerk`.  Two honest validators with distinct 
 derive distinct activation hashes and frame chains, even when their exact accumulator transitions
 are identical.
 
-The receipt hash is already the useful consensus coordinate: executor signature bytes are not part
-of `TurnReceipt::receipt_hash`.  Persisting the full locally signed receipt is also useful, but its
-byte encoding is node-local evidence and cannot be the identity of a federation-global frame.
+The current receipt hash is **not yet** a safe consensus coordinate.  Executor signature bytes are
+correctly absent from `TurnReceipt::receipt_hash`, but the hash includes `TurnReceipt::timestamp`,
+and the finalized executor currently obtains that value from each validator's local wall clock.
+The same finalized block can therefore produce different receipt hashes on two honest validators.
+Worse, the same local clock also decides expiry, capability, and rate-limit branches, so removing
+the timestamp from the hash alone would hide a possible state-transition disagreement rather than
+repair it.
+
+V4 must use the finalized receipt identity defined by
+[`CONSENSUS-TIME-AND-RECEIPT-IDENTITY.md`](CONSENSUS-TIME-AND-RECEIPT-IDENTITY.md), or remain gated
+until `TurnReceipt::receipt_hash` has been version-bumped onto that deterministic finalized core.
+Persisting the full locally signed receipt remains useful, but its byte encoding is node-local
+evidence and cannot be the identity of a federation-global frame.
 
 ## V4 split: common core and local envelope
 
@@ -43,14 +53,14 @@ V4 is a new domain and wire version.  It does not reinterpret a stored v3 row.
 `ExactActivationCoreV4` contains only deterministic consensus coordinates:
 
 - protocol/federation and committee epoch identifiers;
-- dense receipt cutover index and the signature-independent cutover receipt hash;
+- dense receipt cutover index and the deterministic finalized-receipt id at the cutover;
 - exact accumulator initial root, count, and domain-separated state commitment; and
 - the pinned verifier/program identities governing the exact transition.
 
 `ExactFrameCoreV4` contains only deterministic consensus coordinates:
 
 - activation id, sequence, and prior consensus frame id;
-- receipt index, signature-independent receipt hash, and the actor's receipt predecessor
+- receipt index, deterministic finalized-receipt id, and the actor's receipt predecessor
   index/hash;
 - block id, turn hash, forest hash, actor, and federation id;
 - complete deterministic pre/post state commitments;
@@ -111,8 +121,9 @@ The v4 implementation is not complete until hostile tests establish all of the f
 2. Their local envelopes differ and both verify against that one frame id.
 3. Mutating any consensus field changes the frame id and invalidates every old envelope.
 4. Mutating only signature/envelope bytes cannot change the frame id.
-5. A local receipt whose signature is valid but whose signature-independent receipt hash differs is
-   rejected.
+5. A local receipt whose signature is valid but whose deterministic finalized-receipt id differs is
+   rejected.  Two validators executing the same finalized core at different wall-clock instants
+   derive the same id and successor state.
 6. A frame/core from a different federation or committee epoch is rejected.
 7. Restart replay reconstructs the same head and rejects gaps, forks, signer substitution, and
    partial core/envelope transactions.
@@ -132,7 +143,6 @@ The v4 implementation is not complete until hostile tests establish all of the f
 - `node/src/exact_fnsp_v3_finalization.rs`: atomically commit the core and envelope with the exact
   CAS and full executor consequence, including output notes.
 - `node/src/blocklace_sync.rs`: keep v3 explicitly solo and route committee deployments only after
-  v4 core/envelope authority is installed.
+  v4 core/envelope authority and deterministic finalized execution time are installed.
 - `metatheory/Dregg2/`: state and prove signer erasure/noninterference for the v4 core hash, plus
   envelope soundness as a statement about a fixed core id.
-
