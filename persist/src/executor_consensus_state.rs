@@ -1163,6 +1163,11 @@ mod tests {
     use dregg_cell::commitment_set::CommitmentSet;
     use dregg_cell::note::NoteCommitment;
     use dregg_cell::revoked_set::RevokedSet;
+    use dregg_cell::{CellId, Preconditions};
+    use dregg_turn::{
+        Action, Authorization, CallForest, CommitmentMode, DelegationMode, PendingTurnRegistry,
+        ResolutionCondition, Turn,
+    };
 
     fn record(tag: u8, ledger_root: [u8; 32]) -> CommitRecord {
         CommitRecord {
@@ -1186,6 +1191,55 @@ mod tests {
         }
         .to_canonical_bytes()
         .unwrap()
+    }
+
+    fn registry_bytes(entries: u8) -> Vec<u8> {
+        let mut registry = PendingTurnRegistry::new();
+        for tag in 0..entries {
+            let agent = CellId::from_bytes([tag.wrapping_add(1); 32]);
+            let action = Action {
+                target: agent,
+                method: [0; 32],
+                args: Vec::new(),
+                authorization: Authorization::Unchecked,
+                preconditions: Preconditions::default(),
+                effects: Vec::new(),
+                may_delegate: DelegationMode::None,
+                commitment_mode: CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: Vec::new(),
+            };
+            let mut call_forest = CallForest::new();
+            call_forest.add_root(action);
+            let turn = Turn {
+                agent,
+                nonce: u64::from(tag),
+                call_forest,
+                fee: 0,
+                memo: None,
+                valid_until: None,
+                depends_on: Vec::new(),
+                conservation_proof: None,
+                sovereign_witnesses: std::collections::HashMap::new(),
+                previous_receipt_hash: None,
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
+            };
+            registry.submit_pending(
+                turn,
+                ResolutionCondition::AwaitReceipt {
+                    turn_hash: [tag.wrapping_add(0xa0); 32],
+                    federation_id: None,
+                },
+                100 + u64::from(tag),
+            );
+        }
+        registry.to_canonical_bytes().unwrap()
     }
 
     fn state_one(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
@@ -1235,6 +1289,10 @@ mod tests {
 
     fn reactive_state_one(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
         let mut state = state_one(rate);
+        state.reactive_registry = ReactiveRegistryCasV1::new(
+            reactive_registry_commitment(EMPTY_REACTIVE_REGISTRY_V1),
+            registry_bytes(1),
+        );
         state.reactive_nullifiers =
             ReactiveNullifierCasV1::new(reactive_nullifier_commitment(&[]), vec![[0x71; 32]]);
         state
@@ -1242,6 +1300,11 @@ mod tests {
 
     fn reactive_state_two(rate: Option<&[u8]>) -> FinalizedExecutorConsensusState {
         let mut state = state_two(rate);
+        let predecessor = registry_bytes(1);
+        state.reactive_registry = ReactiveRegistryCasV1::new(
+            reactive_registry_commitment(&predecessor),
+            registry_bytes(2),
+        );
         state.reactive_nullifiers = ReactiveNullifierCasV1::new(
             reactive_nullifier_commitment(&[[0x71; 32]]),
             vec![[0x71; 32], [0x72; 32]],
@@ -1364,7 +1427,7 @@ mod tests {
             store
                 .load_latest_reactive_registry_snapshot_bytes()
                 .unwrap(),
-            EMPTY_REACTIVE_REGISTRY_V1
+            state.reactive_registry.successor_bytes
         );
     }
 
@@ -1414,6 +1477,18 @@ mod tests {
                 )
                 .is_err()
         );
+        let mut wrong_registry_successor = state.clone();
+        wrong_registry_successor.reactive_registry.successor_bytes = registry_bytes(2);
+        assert!(
+            store
+                .commit_finalized_turn_with_executor_state(
+                    0,
+                    &first_record,
+                    &[[1; 32]],
+                    &wrong_registry_successor,
+                )
+                .is_err()
+        );
         let mut wrong_reactive_predecessor = state.clone();
         wrong_reactive_predecessor
             .reactive_nullifiers
@@ -1443,7 +1518,7 @@ mod tests {
                 .is_err()
         );
 
-        let mut cross_domain = state_two(None);
+        let mut cross_domain = reactive_state_two(None);
         cross_domain.reactive_nullifiers = ReactiveNullifierCasV1::new(
             reactive_registry_commitment(EMPTY_REACTIVE_REGISTRY_V1),
             vec![[0x71; 32], [0x72; 32]],
