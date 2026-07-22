@@ -50,8 +50,9 @@ pub const PQ_SHARE_COMMITMENT_MODULUS: u64 = 2_013_265_921;
 pub const PQ_SHARE_COMMITMENT_PROTOTYPE_DIGEST_WIDTH: usize = 13;
 /// Binary randomizer width. 704 - 13*31 = 301 bits of entropy surplus.
 pub const PQ_SHARE_COMMITMENT_PROTOTYPE_BLINDING_WIDTH: usize = 704;
-/// Resource ceiling, not a supported security parameter.
-pub const MAX_PQ_SHARE_VALUE_WIDTH: usize = 4_096;
+/// Resource ceiling, not a supported security parameter.  The q0 BFV profile
+/// below needs three radix-2^15 coordinates for each of 4,096 coefficients.
+pub const MAX_PQ_SHARE_VALUE_WIDTH: usize = 16_384;
 /// Resource ceiling, not a supported security parameter.
 pub const MAX_PQ_SHARE_DIGEST_WIDTH: usize = 64;
 /// Resource ceiling, not a supported security parameter.
@@ -64,6 +65,16 @@ const KEY_ID_DOMAIN: &[u8] = b"fhegg/pq-share-commitment/key-id/v1";
 #[cfg(test)]
 const EXPLICIT_KEY_ID_DOMAIN: &[u8] = b"fhegg/pq-share-commitment/explicit-key-id/v1";
 const COMMITMENT_WIRE_MAGIC: &[u8; 8] = b"FHPQSC01";
+const BFV_Q0_CONTEXT_DOMAIN: &[u8] = b"fhegg/pq-share-commitment/bfv-q0-context/v1";
+
+/// First production BFV RNS modulus, matching the Lean/FhEgg q0 family.
+pub const BFV_Q0_MODULUS: u64 = 68_719_403_009;
+/// Production ring degree.
+pub const BFV_Q0_DEGREE: usize = 4_096;
+/// A q0 residue is faithfully represented by three radix-2^15 limbs.
+pub const BFV_Q0_LIMBS_PER_COEFFICIENT: usize = 3;
+pub const BFV_Q0_VALUE_WIDTH: usize = BFV_Q0_DEGREE * BFV_Q0_LIMBS_PER_COEFFICIENT;
+const BFV_Q0_LIMB_RADIX: u64 = 1 << 15;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PqShareCommitmentError {
@@ -138,6 +149,13 @@ impl PqShareCommitmentParams {
             PQ_SHARE_COMMITMENT_PROTOTYPE_DIGEST_WIDTH,
             PQ_SHARE_COMMITMENT_PROTOTYPE_BLINDING_WIDTH,
         )
+    }
+
+    /// Exact-width experimental profile for one production q0 secret-share
+    /// row.  This is an algebra/integration profile only; it deliberately
+    /// inherits the fail-closed production-PQ policy below.
+    pub fn experimental_bfv_q0_v1() -> Result<Self> {
+        Self::experimental_v1(BFV_Q0_VALUE_WIDTH)
     }
 
     pub const fn value_width(self) -> usize {
@@ -457,6 +475,160 @@ impl PqShareOpening {
     }
 }
 
+/// Secret opening for one exact q0 BFV party-share row.
+///
+/// Construction is restricted to canonical q0 residues and binary
+/// randomizers.  The resulting linear opening has 12,288 value coordinates:
+/// three little-endian radix-2^15 limbs for each of 4,096 coefficients.  It
+/// intentionally has no wire codec or `Debug` implementation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ExperimentalBfvQ0ShareOpening {
+    inner: PqShareOpening,
+}
+
+impl ExperimentalBfvQ0ShareOpening {
+    pub fn randomized<R: CryptoRng + RngCore>(residues: &[u64], rng: &mut R) -> Result<Self> {
+        let values = encode_bfv_q0_residues(residues)?;
+        Ok(Self {
+            inner: PqShareOpening::randomized(
+                values,
+                PQ_SHARE_COMMITMENT_PROTOTYPE_BLINDING_WIDTH,
+                rng,
+            )?,
+        })
+    }
+
+    /// Private witness coordinates consumed by a future HidingFRI opening
+    /// proof.  Exposing this borrowed view does not serialize or publish the
+    /// opening; callers remain responsible for secret-memory hygiene.
+    pub fn linear_opening(&self) -> &PqShareOpening {
+        &self.inner
+    }
+
+    /// Exact party-local typestate tooth: the limb opening must encode the
+    /// same canonical residue row retained by that party.  This is not a
+    /// publicly verifiable equality proof against the VSS/Ristretto anchor.
+    pub fn matches_residues(&self, residues: &[u64]) -> Result<bool> {
+        Ok(self.inner.values() == encode_bfv_q0_residues(residues)?)
+    }
+}
+
+/// Experimental, session-bound commitment key for one q0 BFV party-share row.
+///
+/// The key context faithfully includes both the verified DKG digest and the
+/// exact collective public-key digest; the logical slot is the custody party.
+/// This prevents a valid opening from being replayed across setup/key/party
+/// domains.  It does *not* by itself prove that the opened row is the same row
+/// admitted by today's Ristretto VSS commitments.  That cross-commitment
+/// same-opening proof is the explicit remaining bridge.
+#[derive(Clone)]
+pub struct ExperimentalBfvQ0ShareCommitmentKey {
+    inner: PqShareCommitmentKey,
+    dkg_digest: [u8; 32],
+    collective_key_digest: [u8; 32],
+    party: usize,
+}
+
+impl fmt::Debug for ExperimentalBfvQ0ShareCommitmentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExperimentalBfvQ0ShareCommitmentKey")
+            .field("key_id", &self.inner.key_id())
+            .field("dkg_digest", &self.dkg_digest)
+            .field("collective_key_digest", &self.collective_key_digest)
+            .field("party", &self.party)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExperimentalBfvQ0ShareCommitmentKey {
+    pub fn derive(
+        dkg_digest: [u8; 32],
+        collective_key_digest: [u8; 32],
+        party: usize,
+        seed: [u8; 32],
+    ) -> Result<Self> {
+        let slot = u64::try_from(party)
+            .map_err(|_| PqShareCommitmentError::InvalidParameters("party does not fit u64"))?;
+        let context = bfv_q0_commitment_context(dkg_digest, collective_key_digest);
+        let inner = PqShareCommitmentKey::derive(
+            PqShareCommitmentParams::experimental_bfv_q0_v1()?,
+            context,
+            slot,
+            seed,
+        )?;
+        Ok(Self {
+            inner,
+            dkg_digest,
+            collective_key_digest,
+            party,
+        })
+    }
+
+    pub fn key_id(&self) -> [u8; 32] {
+        self.inner.key_id()
+    }
+
+    pub const fn dkg_digest(&self) -> [u8; 32] {
+        self.dkg_digest
+    }
+
+    pub const fn collective_key_digest(&self) -> [u8; 32] {
+        self.collective_key_digest
+    }
+
+    pub const fn party(&self) -> usize {
+        self.party
+    }
+
+    pub fn commit(&self, opening: &ExperimentalBfvQ0ShareOpening) -> Result<PqShareCommitment> {
+        self.inner.commit(&opening.inner)
+    }
+
+    pub fn verify_opening(
+        &self,
+        commitment: &PqShareCommitment,
+        opening: &ExperimentalBfvQ0ShareOpening,
+    ) -> Result<bool> {
+        self.inner.verify_opening(commitment, &opening.inner)
+    }
+
+    /// No current q0 tuple is estimator-approved for a production-PQ claim.
+    pub const fn require_production_post_quantum(&self) -> Result<()> {
+        self.inner.params().require_production_post_quantum()
+    }
+}
+
+fn encode_bfv_q0_residues(residues: &[u64]) -> Result<Vec<i64>> {
+    if residues.len() != BFV_Q0_DEGREE {
+        return Err(PqShareCommitmentError::ShapeMismatch);
+    }
+    let mut values = Vec::with_capacity(BFV_Q0_VALUE_WIDTH);
+    for &residue in residues {
+        if residue >= BFV_Q0_MODULUS {
+            return Err(PqShareCommitmentError::NonCanonicalOpening);
+        }
+        let mut value = residue;
+        for _ in 0..BFV_Q0_LIMBS_PER_COEFFICIENT {
+            values.push((value % BFV_Q0_LIMB_RADIX) as i64);
+            value /= BFV_Q0_LIMB_RADIX;
+        }
+        debug_assert_eq!(value, 0);
+    }
+    Ok(values)
+}
+
+fn bfv_q0_commitment_context(dkg_digest: [u8; 32], collective_key_digest: [u8; 32]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update((BFV_Q0_CONTEXT_DOMAIN.len() as u64).to_be_bytes());
+    hash.update(BFV_Q0_CONTEXT_DOMAIN);
+    hash.update(BFV_Q0_MODULUS.to_be_bytes());
+    hash.update((BFV_Q0_DEGREE as u64).to_be_bytes());
+    hash.update((BFV_Q0_LIMBS_PER_COEFFICIENT as u64).to_be_bytes());
+    hash.update(dkg_digest);
+    hash.update(collective_key_digest);
+    hash.finalize().into()
+}
+
 /// Public additive commitment. Coordinates are canonical BabyBear elements.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PqShareCommitment {
@@ -765,5 +937,76 @@ mod tests {
         ));
         assert!(PqShareCommitment::from_wire_bytes(&key, &wire[..wire.len() - 1]).is_err());
         assert!(PqShareOpening::new(vec![MAX_CENTERED_COEFFICIENT + 1], vec![1]).is_err());
+    }
+
+    #[test]
+    fn bfv_q0_profile_is_faithful_context_bound_and_zero_row_hostile() {
+        let mut rng = StdRng::seed_from_u64(0xb0f0_4096);
+        let dkg_digest = [0x91; 32];
+        let collective_key_digest = [0xa2; 32];
+        let key = ExperimentalBfvQ0ShareCommitmentKey::derive(
+            dkg_digest,
+            collective_key_digest,
+            3,
+            [0xb3; 32],
+        )
+        .unwrap();
+        let mut residues = vec![0u64; BFV_Q0_DEGREE];
+        residues[0] = BFV_Q0_MODULUS - 1;
+        residues[1] = 32_768;
+        residues[BFV_Q0_DEGREE - 1] = 0x1_2345_6789;
+        let opening = ExperimentalBfvQ0ShareOpening::randomized(&residues, &mut rng).unwrap();
+        assert_eq!(opening.linear_opening().values().len(), BFV_Q0_VALUE_WIDTH);
+        assert_eq!(
+            &opening.linear_opening().values()[..3],
+            &[24_576, 32_765, 63]
+        );
+        let commitment = key.commit(&opening).unwrap();
+        assert!(key.verify_opening(&commitment, &opening).unwrap());
+
+        // Substitute an all-zero row while retaining this exact q0
+        // commitment.  It cannot open the commitment.  This test does not
+        // establish linkage to the separate VSS/Ristretto commitment.
+        let zero_opening =
+            ExperimentalBfvQ0ShareOpening::randomized(&vec![0u64; BFV_Q0_DEGREE], &mut rng)
+                .unwrap();
+        assert!(!key.verify_opening(&commitment, &zero_opening).unwrap());
+
+        for (other_dkg, other_collective, other_party) in [
+            ([0x92; 32], collective_key_digest, 3),
+            (dkg_digest, [0xa3; 32], 3),
+            (dkg_digest, collective_key_digest, 4),
+        ] {
+            let other = ExperimentalBfvQ0ShareCommitmentKey::derive(
+                other_dkg,
+                other_collective,
+                other_party,
+                [0xb3; 32],
+            )
+            .unwrap();
+            assert!(matches!(
+                other.verify_opening(&commitment, &opening),
+                Err(PqShareCommitmentError::KeyMismatch)
+            ));
+        }
+        assert_eq!(
+            key.require_production_post_quantum(),
+            Err(PqShareCommitmentError::ProductionParametersUnvalidated)
+        );
+    }
+
+    #[test]
+    fn bfv_q0_profile_refuses_shape_and_noncanonical_residues() {
+        let mut rng = StdRng::seed_from_u64(0xbad0_4096);
+        assert!(matches!(
+            ExperimentalBfvQ0ShareOpening::randomized(&vec![0u64; BFV_Q0_DEGREE - 1], &mut rng,),
+            Err(PqShareCommitmentError::ShapeMismatch)
+        ));
+        let mut residues = vec![0u64; BFV_Q0_DEGREE];
+        residues[17] = BFV_Q0_MODULUS;
+        assert!(matches!(
+            ExperimentalBfvQ0ShareOpening::randomized(&residues, &mut rng),
+            Err(PqShareCommitmentError::NonCanonicalOpening)
+        ));
     }
 }

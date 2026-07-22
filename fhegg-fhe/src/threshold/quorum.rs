@@ -61,6 +61,14 @@
 //! and at least one honest dealer, fewer than `t` custody parties do not
 //! reconstruct the BFV secret; the public result is revealed only after an
 //! exact `t`-party opening.
+//!
+//! The optional q0 BabyBear commitment round below is explicitly
+//! experimental.  It gives each party local custody of a field-native opening
+//! and binds ordered public contributions into a follow-up digest, but it is
+//! neither a public same-opening proof against the Ristretto VSS commitment nor
+//! an authenticated broadcast ceremony.  `finish_verified_keygen` also still
+//! receives all private dealer bundles.  Classical quorum proof verification
+//! remains the live authority; the q0 round is preparatory HidingFRI substrate.
 
 use bulletproofs_r1cs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::{
@@ -82,13 +90,17 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use merlin::Transcript;
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, CryptoRng, RngCore};
 
 use super::{
     add_mod, aggregate_public_contributions, sk_from_coeffs, BfvParams, CollectivePublicKey,
     KeygenSession, PublicKeyContribution, RnsPoly, MAX_SMUDGE_BITS_TOTAL, MIN_SMUDGE_BITS,
 };
 use crate::bfv_lean::LeanCiphertext;
+use crate::pq_share_commitment::{
+    ExperimentalBfvQ0ShareCommitmentKey, ExperimentalBfvQ0ShareOpening, PqShareCommitment,
+    BFV_Q0_DEGREE, BFV_Q0_MODULUS,
+};
 
 pub type Result<T> = std::result::Result<T, QuorumError>;
 
@@ -97,11 +109,13 @@ const AUTHENTICATED_ROSTER_DOMAIN: &[u8] = b"fhegg/quorum-authenticated-roster/v
 const AUTHENTICATED_SHARE_DOMAIN: &[u8] = b"fhegg/quorum-authenticated-decrypt-share/v1";
 const AUTHENTICATED_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-opening-transcript/v1";
 const AUTHENTICATED_AUDIT_DOMAIN: &[u8] = b"fhegg/quorum-opening-audit/v1";
+const DKG_Q0_SHARE_SEED_DOMAIN: &[u8] = b"fhegg/dkg-q0-share-commitment-seed/v1";
 const OPENING_SESSION_DOMAIN: &[u8] = b"fhegg/quorum-opening-session/v1";
 const VSS_COMMITMENT_MAGIC: &[u8; 8] = b"FHQVv001";
 const VSS_ROW_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-row/v1";
 const VSS_DEALER_COMMITMENT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-dealer/v1";
 const VSS_SETUP_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-setup/v2";
+const VSS_Q0_ANCHORED_TRANSCRIPT_DOMAIN: &[u8] = b"fhegg/quorum-bivariate-vss-q0-anchor/v1";
 const VERIFIED_DKG_COLLECTIVE_KEY_DOMAIN: &[u8] = b"fhegg/quorum-verified-dkg-collective-key/v1";
 const DECRYPT_SHARE_PROOF_DOMAIN: &[u8] = b"fhegg/quorum-decrypt-share-proof/v1";
 const DECRYPT_SHARE_PROOF_MAGIC: &[u8; 8] = b"FHQPv001";
@@ -186,6 +200,9 @@ pub enum QuorumError {
         party: usize,
     },
     UnsupportedDecryptProofParameters,
+    /// The experimental q0 contribution round has no identity-signed,
+    /// broadcast-consistent cross-commitment ceremony yet.
+    ExperimentalQ0CeremonyUnauthenticated,
 }
 
 impl fmt::Display for QuorumError {
@@ -460,6 +477,13 @@ pub struct VerifiedDkgTranscript {
     /// aggregate rows admitted by the bivariate VSS checker and are therefore
     /// the public key-share anchor used by decrypt-share proofs.
     party_secret_commitments: Vec<Vec<[u8; 32]>>,
+    /// Experimental BabyBear-native commitments contributed by the custody
+    /// parties after local assembly.  When present they are ordered by party
+    /// and included in `digest`.  Each party retains its own opening.
+    q0_share_commitments: Option<Vec<PqShareCommitment>>,
+    /// Pre-anchor transcript digest used to domain-separate the q0 commitment
+    /// keys without introducing a circular digest dependency.
+    q0_share_commitment_context: Option<[u8; 32]>,
     /// Domain-separated digest of the exact serialized collective BFV public
     /// key produced by this verified DKG transition.  Downstream transforms
     /// consume this transcript-owned value rather than accepting a caller's
@@ -479,6 +503,106 @@ impl VerifiedDkgTranscript {
 
     pub fn collective_key_digest(&self) -> [u8; 32] {
         self.collective_key_digest
+    }
+
+    pub fn q0_share_commitment(&self, party: usize) -> Option<&PqShareCommitment> {
+        self.q0_share_commitments.as_ref()?.get(party)
+    }
+
+    pub fn q0_share_commitment_context(&self) -> Option<[u8; 32]> {
+        self.q0_share_commitment_context
+    }
+
+    /// Executable fail-closed tooth for the missing public ceremony.  Local
+    /// opening/inclusion checks cannot establish that a malicious custodian's
+    /// q0 row equals its VSS/Ristretto row, nor that all observers received
+    /// one consistent contribution set.
+    pub const fn require_experimental_q0_public_ceremony_authority(&self) -> Result<()> {
+        Err(QuorumError::ExperimentalQ0CeremonyUnauthenticated)
+    }
+
+    /// Bind one ordered q0 contribution from every custody party into a new
+    /// transcript.  Contributions are public but not yet identity-signed;
+    /// deployments must authenticate this exchange before treating it as a
+    /// ceremony.  The returned transcript remains an experimental HidingFRI
+    /// bridge rung and never satisfies production-PQ policy.
+    pub fn finalize_experimental_q0_share_commitments(
+        mut self,
+        contributions: &[ExperimentalQ0ShareCommitmentContribution],
+        params: &BfvParams,
+    ) -> Result<Self> {
+        if params.degree() != BFV_Q0_DEGREE
+            || params.moduli().first().copied() != Some(BFV_Q0_MODULUS)
+            || self.q0_share_commitments.is_some()
+            || self.q0_share_commitment_context.is_some()
+            || contributions.len() != self.session.n_parties()
+            || self.digest
+                != vss_setup_transcript_digest(
+                    &self.session,
+                    &self.dealer_commitment_digests,
+                    &self.party_secret_commitments,
+                    self.collective_key_digest,
+                    params,
+                    None,
+                )
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        let context = self.digest;
+        let seed = q0_share_commitment_seed(context);
+        let mut commitments = Vec::with_capacity(contributions.len());
+        for (party, contribution) in contributions.iter().enumerate() {
+            let expected_key = ExperimentalBfvQ0ShareCommitmentKey::derive(
+                context,
+                self.collective_key_digest,
+                party,
+                seed,
+            )
+            .map_err(|_| QuorumError::VssTranscriptMismatch)?;
+            if contribution.party != party
+                || contribution.context != context
+                || contribution.collective_key_digest != self.collective_key_digest
+                || contribution.commitment.key_id() != expected_key.key_id()
+            {
+                return Err(QuorumError::VssTranscriptMismatch);
+            }
+            commitments.push(contribution.commitment.clone());
+        }
+        self.digest = vss_setup_transcript_digest(
+            &self.session,
+            &self.dealer_commitment_digests,
+            &self.party_secret_commitments,
+            self.collective_key_digest,
+            params,
+            Some(&commitments),
+        );
+        self.q0_share_commitment_context = Some(context);
+        self.q0_share_commitments = Some(commitments);
+        Ok(self)
+    }
+}
+
+/// Party-local public contribution to the experimental q0 dual-anchor round.
+/// The secret opening never enters this object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExperimentalQ0ShareCommitmentContribution {
+    party: usize,
+    context: [u8; 32],
+    collective_key_digest: [u8; 32],
+    commitment: PqShareCommitment,
+}
+
+impl ExperimentalQ0ShareCommitmentContribution {
+    pub const fn party(&self) -> usize {
+        self.party
+    }
+
+    pub const fn context(&self) -> [u8; 32] {
+        self.context
+    }
+
+    pub fn commitment(&self) -> &PqShareCommitment {
+        &self.commitment
     }
 }
 
@@ -916,11 +1040,14 @@ pub fn finish_verified_keygen(
         &party_secret_commitments,
         collective_key_digest,
         params,
+        None,
     );
     let transcript = VerifiedDkgTranscript {
         session: session.clone(),
         dealer_commitment_digests,
         party_secret_commitments,
+        q0_share_commitments: None,
+        q0_share_commitment_context: None,
         collective_key_digest,
         digest,
     };
@@ -952,6 +1079,8 @@ pub struct QuorumParty {
     vss_setup_digest: Option<[u8; 32]>,
     secret_commitments: Option<Vec<[u8; 32]>>,
     secret_commitment_blindings: Option<Vec<[u8; 32]>>,
+    q0_share_opening: Option<ExperimentalBfvQ0ShareOpening>,
+    q0_share_commitment: Option<PqShareCommitment>,
     opened_sessions: BTreeSet<[u8; 32]>,
     opened_targets: BTreeSet<[u8; 32]>,
 }
@@ -1033,6 +1162,8 @@ impl QuorumParty {
             vss_setup_digest: None,
             secret_commitments: None,
             secret_commitment_blindings: None,
+            q0_share_opening: None,
+            q0_share_commitment: None,
             opened_sessions: BTreeSet::new(),
             opened_targets: BTreeSet::new(),
         })
@@ -1096,6 +1227,23 @@ impl QuorumParty {
                 return Err(QuorumError::VssTranscriptMismatch);
             }
         }
+        // Assembly consumes the public pre-anchor transcript.  The optional
+        // q0 round is performed afterward by each party locally; accepting a
+        // coordinator-populated opening here would recreate a trusted viewer.
+        if transcript.q0_share_commitments.is_some()
+            || transcript.q0_share_commitment_context.is_some()
+            || transcript.digest
+                != vss_setup_transcript_digest(
+                    session,
+                    &transcript.dealer_commitment_digests,
+                    &transcript.party_secret_commitments,
+                    transcript.collective_key_digest,
+                    params,
+                    None,
+                )
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
         assembled.vss_setup_digest = Some(transcript.digest);
         assembled.secret_commitments = Some(commitments.to_vec());
         assembled.secret_commitment_blindings = Some(assembly.secret_commitment_blindings);
@@ -1108,6 +1256,132 @@ impl QuorumParty {
 
     pub fn vss_setup_digest(&self) -> Option<[u8; 32]> {
         self.vss_setup_digest
+    }
+
+    /// Locally create this custody party's experimental q0 commitment
+    /// contribution.  The opening and its randomizer remain in `self`; only
+    /// the public commitment leaves the party boundary.  This localizes the
+    /// *new* q0 blinding, but does not repair the older setup architecture:
+    /// `finish_verified_keygen` still receives every private dealer bundle and
+    /// can reconstruct all aggregate party rows.
+    pub fn prepare_experimental_q0_share_commitment<R: CryptoRng + RngCore>(
+        &mut self,
+        pre_anchor: &VerifiedDkgTranscript,
+        params: &BfvParams,
+        rng: &mut R,
+    ) -> Result<ExperimentalQ0ShareCommitmentContribution> {
+        if params.degree() != BFV_Q0_DEGREE
+            || params.moduli().first().copied() != Some(BFV_Q0_MODULUS)
+            || pre_anchor.q0_share_commitments.is_some()
+            || pre_anchor.q0_share_commitment_context.is_some()
+            || self.vss_setup_digest != Some(pre_anchor.digest)
+            || self.q0_share_opening.is_some()
+            || self.q0_share_commitment.is_some()
+            || pre_anchor.digest
+                != vss_setup_transcript_digest(
+                    &pre_anchor.session,
+                    &pre_anchor.dealer_commitment_digests,
+                    &pre_anchor.party_secret_commitments,
+                    pre_anchor.collective_key_digest,
+                    params,
+                    None,
+                )
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        let context = pre_anchor.digest;
+        let key = ExperimentalBfvQ0ShareCommitmentKey::derive(
+            context,
+            pre_anchor.collective_key_digest,
+            self.party,
+            q0_share_commitment_seed(context),
+        )
+        .map_err(|_| QuorumError::VssTranscriptMismatch)?;
+        let opening = ExperimentalBfvQ0ShareOpening::randomized(&self.rows[0], rng)
+            .map_err(|_| QuorumError::VssTranscriptMismatch)?;
+        let commitment = key
+            .commit(&opening)
+            .map_err(|_| QuorumError::VssTranscriptMismatch)?;
+        if !opening
+            .matches_residues(&self.rows[0])
+            .map_err(|_| QuorumError::VssTranscriptMismatch)?
+            || !key
+                .verify_opening(&commitment, &opening)
+                .map_err(|_| QuorumError::VssTranscriptMismatch)?
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        self.q0_share_opening = Some(opening);
+        self.q0_share_commitment = Some(commitment.clone());
+        Ok(ExperimentalQ0ShareCommitmentContribution {
+            party: self.party,
+            context,
+            collective_key_digest: pre_anchor.collective_key_digest,
+            commitment,
+        })
+    }
+
+    /// Verify inclusion of this party's locally retained q0 opening in the
+    /// finalized ordered transcript and adopt its digest for later openings.
+    /// This is a local same-row typestate bridge, not a public ZK
+    /// cross-commitment proof.
+    pub fn bind_experimental_q0_share_commitment(
+        &mut self,
+        transcript: &VerifiedDkgTranscript,
+        params: &BfvParams,
+    ) -> Result<()> {
+        let context = transcript
+            .q0_share_commitment_context
+            .ok_or(QuorumError::VssTranscriptMismatch)?;
+        let opening = self
+            .q0_share_opening
+            .as_ref()
+            .ok_or(QuorumError::VssTranscriptMismatch)?;
+        let local_commitment = self
+            .q0_share_commitment
+            .as_ref()
+            .ok_or(QuorumError::VssTranscriptMismatch)?;
+        let commitments = transcript
+            .q0_share_commitments
+            .as_deref()
+            .ok_or(QuorumError::VssTranscriptMismatch)?;
+        if params.degree() != BFV_Q0_DEGREE
+            || params.moduli().first().copied() != Some(BFV_Q0_MODULUS)
+            || self.vss_setup_digest != Some(context)
+            || !self.opened_sessions.is_empty()
+            || !self.opened_targets.is_empty()
+            || commitments.len() != transcript.session.n_parties()
+            || transcript.q0_share_commitment(self.party) != Some(local_commitment)
+            || transcript.digest
+                != vss_setup_transcript_digest(
+                    &transcript.session,
+                    &transcript.dealer_commitment_digests,
+                    &transcript.party_secret_commitments,
+                    transcript.collective_key_digest,
+                    params,
+                    Some(commitments),
+                )
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        let key = ExperimentalBfvQ0ShareCommitmentKey::derive(
+            context,
+            transcript.collective_key_digest,
+            self.party,
+            q0_share_commitment_seed(context),
+        )
+        .map_err(|_| QuorumError::VssTranscriptMismatch)?;
+        if !opening
+            .matches_residues(&self.rows[0])
+            .map_err(|_| QuorumError::VssTranscriptMismatch)?
+            || !key
+                .verify_opening(local_commitment, opening)
+                .map_err(|_| QuorumError::VssTranscriptMismatch)?
+        {
+            return Err(QuorumError::VssTranscriptMismatch);
+        }
+        self.vss_setup_digest = Some(transcript.digest);
+        Ok(())
     }
 
     /// Produce one Lagrange-weighted, smudged share for this exact opening.
@@ -2278,6 +2552,7 @@ fn vss_setup_transcript_digest(
     party_secret_commitments: &[Vec<[u8; 32]>],
     collective_key_digest: [u8; 32],
     params: &BfvParams,
+    q0_share_commitments: Option<&[PqShareCommitment]>,
 ) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(VSS_SETUP_TRANSCRIPT_DOMAIN);
@@ -2302,6 +2577,27 @@ fn vss_setup_transcript_digest(
             hash.update(commitment);
         }
     }
+    let classical_digest: [u8; 32] = hash.finalize().into();
+    let Some(commitments) = q0_share_commitments else {
+        return classical_digest;
+    };
+    let mut anchored = Sha256::new();
+    anchored.update(VSS_Q0_ANCHORED_TRANSCRIPT_DOMAIN);
+    anchored.update(classical_digest);
+    anchored.update((commitments.len() as u64).to_le_bytes());
+    for commitment in commitments {
+        let wire = commitment.to_wire_bytes();
+        anchored.update((wire.len() as u64).to_le_bytes());
+        anchored.update(wire);
+    }
+    anchored.finalize().into()
+}
+
+fn q0_share_commitment_seed(context: [u8; 32]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update((DKG_Q0_SHARE_SEED_DOMAIN.len() as u64).to_le_bytes());
+    hash.update(DKG_Q0_SHARE_SEED_DOMAIN);
+    hash.update(context);
     hash.finalize().into()
 }
 
@@ -3627,27 +3923,106 @@ mod vss_tests {
                 &transcript.party_secret_commitments,
                 substituted_key_digest,
                 &params,
+                None,
             )
         );
-        let party =
-            QuorumParty::assemble_verified(&session, 0, assemblies.remove(0), &transcript, &params)
+        assert!(transcript.q0_share_commitment_context().is_none());
+
+        let mut parties = assemblies
+            .drain(..)
+            .enumerate()
+            .map(|(party, assembly)| {
+                QuorumParty::assemble_verified(&session, party, assembly, &transcript, &params)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let contributions = parties
+            .iter_mut()
+            .map(|party| {
+                party
+                    .prepare_experimental_q0_share_commitment(&transcript, &params, &mut OsRng)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let anchored_transcript = transcript
+            .clone()
+            .finalize_experimental_q0_share_commitments(&contributions, &params)
+            .unwrap();
+        assert_eq!(
+            anchored_transcript.q0_share_commitment_context(),
+            Some(transcript.digest())
+        );
+
+        // Split-view tooth: replace another party's contribution with a
+        // well-shaped commitment under the correct session/slot key.  Local
+        // party-0 inclusion is identical in both finalized transcripts, so
+        // neither transcript can claim public ceremony authority until the
+        // contribution round is identity-signed and broadcast-consistent.
+        let mut split_contributions = contributions.clone();
+        let split_key = ExperimentalBfvQ0ShareCommitmentKey::derive(
+            transcript.digest(),
+            transcript.collective_key_digest(),
+            1,
+            q0_share_commitment_seed(transcript.digest()),
+        )
+        .unwrap();
+        let split_opening =
+            ExperimentalBfvQ0ShareOpening::randomized(&vec![0u64; BFV_Q0_DEGREE], &mut OsRng)
                 .unwrap();
-        assert_eq!(party.vss_setup_digest(), Some(transcript.digest()));
+        split_contributions[1].commitment = split_key.commit(&split_opening).unwrap();
+        let split_transcript = transcript
+            .clone()
+            .finalize_experimental_q0_share_commitments(&split_contributions, &params)
+            .unwrap();
+        assert_ne!(split_transcript.digest(), anchored_transcript.digest());
+        assert_eq!(
+            split_transcript.q0_share_commitment(0),
+            anchored_transcript.q0_share_commitment(0)
+        );
+        assert_eq!(
+            split_transcript.require_experimental_q0_public_ceremony_authority(),
+            Err(QuorumError::ExperimentalQ0CeremonyUnauthenticated)
+        );
+        assert_eq!(
+            anchored_transcript.require_experimental_q0_public_ceremony_authority(),
+            Err(QuorumError::ExperimentalQ0CeremonyUnauthenticated)
+        );
+
+        // Local typestate canary only: an honest party retaining its exact
+        // VSS-assembled row refuses an all-zero opening under the unchanged
+        // finalized contribution.  Public/malicious-party equality still
+        // requires the planned HidingFRI cross-commitment proof.
+        parties[2].q0_share_opening = Some(
+            ExperimentalBfvQ0ShareOpening::randomized(&vec![0u64; BFV_Q0_DEGREE], &mut OsRng)
+                .unwrap(),
+        );
+        assert!(matches!(
+            parties[2].bind_experimental_q0_share_commitment(&anchored_transcript, &params),
+            Err(QuorumError::VssTranscriptMismatch)
+        ));
+        parties[0]
+            .bind_experimental_q0_share_commitment(&anchored_transcript, &params)
+            .unwrap();
+        let party = parties.remove(0);
+        assert_eq!(party.vss_setup_digest(), Some(anchored_transcript.digest()));
         let opening = QuorumOpeningSession::new_verified(
             session.clone(),
-            &transcript,
+            &anchored_transcript,
             [0x94; 32],
             vec![0, 1],
         )
         .unwrap();
-        assert_eq!(opening.vss_setup_digest(), Some(transcript.digest()));
+        assert_eq!(
+            opening.vss_setup_digest(),
+            Some(anchored_transcript.digest())
+        );
 
         let keys = (0..3)
             .map(|i| SigningKey::from_bytes(&[0xa0 + i as u8; 32]))
             .collect::<Vec<_>>();
         let verified_roster = AuthenticatedQuorumRoster::new_verified(
             session.clone(),
-            &transcript,
+            &anchored_transcript,
             keys.iter()
                 .map(|key| key.verifying_key().to_bytes())
                 .collect(),
@@ -3667,7 +4042,9 @@ mod vss_tests {
     fn authenticated_encrypted_orders_gate_real_game_asset_settlement_crypto_tooth() {
         use fhe::bfv::Plaintext;
         use fhe_traits::{FheEncoder, FheEncrypter};
+        use std::time::Instant;
 
+        let total_started = Instant::now();
         let params = BfvParams::fold_set();
         let session = QuorumKeygenSession::from_seed(3, 2, [0xb3; 32]).unwrap();
         let verified_dealers = (0..3)
@@ -3690,6 +4067,10 @@ mod vss_tests {
                     .unwrap()
             })
             .collect::<Vec<_>>();
+        eprintln!(
+            "fhegg verified-share profile: dkg={:?}",
+            total_started.elapsed()
+        );
 
         let mut slots = vec![0u64; params.degree()];
         slots[..4].copy_from_slice(&[7, 19, 31, 43]);
@@ -3706,6 +4087,7 @@ mod vss_tests {
         let opening =
             QuorumOpeningSession::new_verified(session, &transcript, [0xb4; 32], vec![0, 1])
                 .unwrap();
+        let prove_started = Instant::now();
         let shares = partial_decrypt_quorum_parallel(
             &mut parties,
             &opening,
@@ -3714,10 +4096,19 @@ mod vss_tests {
             &params,
         )
         .unwrap();
+        eprintln!(
+            "fhegg verified-share profile: prove-two={:?}",
+            prove_started.elapsed()
+        );
         assert!(shares.iter().all(|share| share.proof.is_some()));
+        let verify_started = Instant::now();
         for share in &shares {
             verify_decrypt_share_relation(share, &transcript, &params).unwrap();
         }
+        eprintln!(
+            "fhegg verified-share profile: verify-two={:?}",
+            verify_started.elapsed()
+        );
         assert_eq!(
             &combine_quorum(&shares, &opening, &params).unwrap()[..4],
             &[7, 19, 31, 43]
@@ -3729,5 +4120,9 @@ mod vss_tests {
             verify_decrypt_share_relation(&forged, &transcript, &params),
             Err(QuorumError::InvalidDecryptShareProof { .. })
         ));
+        eprintln!(
+            "fhegg verified-share profile: total={:?}",
+            total_started.elapsed()
+        );
     }
 }
