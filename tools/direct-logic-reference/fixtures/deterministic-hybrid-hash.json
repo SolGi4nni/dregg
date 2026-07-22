@@ -1,0 +1,5 @@
+{
+  "schema": "dregg.direct-logic.hybrid-hash-fixture.v1",
+  "source": "hybrid-source.json",
+  "artifact_sha256": "540ad40d3c282b1294db7b62ab9ad80cf287486014aba9b054369b3a79fcdef3"
+}

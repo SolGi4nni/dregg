@@ -1,0 +1,44 @@
+{
+  "formula": {
+    "args": [
+      {
+        "binder": "i",
+        "body": {
+          "lhs": {
+            "args": [
+              {"name": "x", "op": "var"},
+              {"name": "i", "op": "var"}
+            ],
+            "op": "add"
+          },
+          "op": "eq",
+          "rhs": {
+            "args": [
+              {"name": "i", "op": "var"},
+              {"name": "x", "op": "var"}
+            ],
+            "op": "add"
+          }
+        },
+        "domain": [0, 1, 2, 3],
+        "op": "forall"
+      },
+      {
+        "binder": "j",
+        "body": {
+          "lhs": {"name": "j", "op": "var"},
+          "op": "eq",
+          "rhs": {"op": "lit", "value": 2}
+        },
+        "domain": [0, 1, 2, 3],
+        "op": "exists"
+      }
+    ],
+    "op": "and"
+  },
+  "model": [
+    {"bound": 15, "name": "x", "value": 7}
+  ],
+  "modulus": 2013265921,
+  "schema": "dregg.direct-logic.source.v1"
+}

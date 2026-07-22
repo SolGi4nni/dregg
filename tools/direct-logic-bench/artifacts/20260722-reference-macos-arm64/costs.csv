@@ -1,0 +1,306 @@
+workload_id,lane,equations,multiplications,witnesses,max_degree,representation,evidence
+constant.top,M-SPEC,1,0,0,0,single_polynomial_expression,E1 transcription
+constant.top,G-FIELD-NAIVE,1,0,0,0,single_polynomial_expression,E1 transcription
+constant.top,D-NOWRAP,1,0,0,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+constant.top,D-BOOLGRAPH,1,0,0,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+constant.top,C-AIR,1,0,0,2,materialized_boolean_graph,E1 conventional baseline model
+constant.bottom,M-SPEC,1,0,0,0,single_polynomial_expression,E1 transcription
+constant.bottom,G-FIELD-NAIVE,1,0,0,0,single_polynomial_expression,E1 transcription
+constant.bottom,D-NOWRAP,1,0,0,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+constant.bottom,D-BOOLGRAPH,1,0,0,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+constant.bottom,C-AIR,1,0,0,2,materialized_boolean_graph,E1 conventional baseline model
+not.true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+not.true,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+not.true,D-NOWRAP,2,1,1,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+not.true,D-BOOLGRAPH,6,4,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+not.true,C-AIR,6,4,3,2,materialized_boolean_graph,E1 conventional baseline model
+not.false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+not.false,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+not.false,D-NOWRAP,2,1,1,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+not.false,D-BOOLGRAPH,6,4,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+not.false,C-AIR,6,4,3,2,materialized_boolean_graph,E1 conventional baseline model
+gabbay.babybear-cancellation,M-SPEC,1,1,0,2,single_polynomial_expression,E1 transcription
+gabbay.babybear-cancellation,G-FIELD-NAIVE,1,2,0,2,single_polynomial_expression,E1 transcription
+gabbay.babybear-cancellation,D-NOWRAP,4,2,3,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+gabbay.babybear-cancellation,D-BOOLGRAPH,9,8,5,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+gabbay.babybear-cancellation,C-AIR,2,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+bitlogic.swap.honest,M-SPEC,1,2,0,3,single_polynomial_expression,E1 transcription
+bitlogic.swap.honest,G-FIELD-NAIVE,1,3,0,2,single_polynomial_expression,E1 transcription
+bitlogic.swap.honest,D-NOWRAP,7,3,6,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.honest,D-BOOLGRAPH,16,15,9,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.honest,C-AIR,3,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+bitlogic.swap.output-mutation,M-SPEC,1,2,0,3,single_polynomial_expression,E1 transcription
+bitlogic.swap.output-mutation,G-FIELD-NAIVE,1,3,0,2,single_polynomial_expression,E1 transcription
+bitlogic.swap.output-mutation,D-NOWRAP,7,3,6,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.output-mutation,D-BOOLGRAPH,16,15,9,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.output-mutation,C-AIR,3,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+bitlogic.swap.invariant-mutation,M-SPEC,1,2,0,3,single_polynomial_expression,E1 transcription
+bitlogic.swap.invariant-mutation,G-FIELD-NAIVE,1,3,0,2,single_polynomial_expression,E1 transcription
+bitlogic.swap.invariant-mutation,D-NOWRAP,7,3,6,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.invariant-mutation,D-BOOLGRAPH,16,15,9,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.invariant-mutation,C-AIR,3,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+bitlogic.swap.published-invalid-witness,M-SPEC,1,2,0,3,single_polynomial_expression,E1 transcription
+bitlogic.swap.published-invalid-witness,G-FIELD-NAIVE,1,3,0,2,single_polynomial_expression,E1 transcription
+bitlogic.swap.published-invalid-witness,D-NOWRAP,7,3,6,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.published-invalid-witness,D-BOOLGRAPH,16,15,9,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+bitlogic.swap.published-invalid-witness,C-AIR,3,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n1.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+forall.n1.all-true,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n1.all-true,D-NOWRAP,3,1,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1.all-true,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1.all-true,C-AIR,1,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n1.one-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+forall.n1.one-false,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n1.one-false,D-NOWRAP,3,1,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1.one-false,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1.one-false,C-AIR,1,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n1.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+forall.n1.all-false,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n1.all-false,D-NOWRAP,3,1,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1.all-false,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1.all-false,C-AIR,1,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n1.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1.one-true,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+exists.n1.one-true,D-NOWRAP,3,2,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1.one-true,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1.one-true,C-AIR,6,5,3,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n1.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1.all-false,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+exists.n1.all-false,D-NOWRAP,3,2,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1.all-false,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1.all-false,C-AIR,6,5,3,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n1.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1.all-true,G-FIELD-NAIVE,1,1,0,2,single_polynomial_expression,E1 transcription
+exists.n1.all-true,D-NOWRAP,3,2,2,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1.all-true,D-BOOLGRAPH,6,5,3,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1.all-true,C-AIR,6,5,3,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n2.all-true,M-SPEC,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n2.all-true,G-FIELD-NAIVE,1,2,0,2,single_polynomial_expression,E1 transcription
+forall.n2.all-true,D-NOWRAP,5,2,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n2.all-true,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n2.all-true,C-AIR,2,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n2.one-false,M-SPEC,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n2.one-false,G-FIELD-NAIVE,1,2,0,2,single_polynomial_expression,E1 transcription
+forall.n2.one-false,D-NOWRAP,5,2,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n2.one-false,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n2.one-false,C-AIR,2,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n2.all-false,M-SPEC,1,1,0,2,single_polynomial_expression,E1 transcription
+forall.n2.all-false,G-FIELD-NAIVE,1,2,0,2,single_polynomial_expression,E1 transcription
+forall.n2.all-false,D-NOWRAP,5,2,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n2.all-false,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n2.all-false,C-AIR,2,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n2.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n2.one-true,G-FIELD-NAIVE,1,3,0,4,single_polynomial_expression,E1 transcription
+exists.n2.one-true,D-NOWRAP,5,4,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n2.one-true,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n2.one-true,C-AIR,11,10,6,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n2.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n2.all-false,G-FIELD-NAIVE,1,3,0,4,single_polynomial_expression,E1 transcription
+exists.n2.all-false,D-NOWRAP,5,4,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n2.all-false,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n2.all-false,C-AIR,11,10,6,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n2.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n2.all-true,G-FIELD-NAIVE,1,3,0,4,single_polynomial_expression,E1 transcription
+exists.n2.all-true,D-NOWRAP,5,4,4,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n2.all-true,D-BOOLGRAPH,11,10,6,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n2.all-true,C-AIR,11,10,6,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n4.all-true,M-SPEC,1,3,0,4,single_polynomial_expression,E1 transcription
+forall.n4.all-true,G-FIELD-NAIVE,1,4,0,2,single_polynomial_expression,E1 transcription
+forall.n4.all-true,D-NOWRAP,9,4,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n4.all-true,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n4.all-true,C-AIR,4,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n4.one-false,M-SPEC,1,3,0,4,single_polynomial_expression,E1 transcription
+forall.n4.one-false,G-FIELD-NAIVE,1,4,0,2,single_polynomial_expression,E1 transcription
+forall.n4.one-false,D-NOWRAP,9,4,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n4.one-false,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n4.one-false,C-AIR,4,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n4.all-false,M-SPEC,1,3,0,4,single_polynomial_expression,E1 transcription
+forall.n4.all-false,G-FIELD-NAIVE,1,4,0,2,single_polynomial_expression,E1 transcription
+forall.n4.all-false,D-NOWRAP,9,4,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n4.all-false,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n4.all-false,C-AIR,4,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n4.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n4.one-true,G-FIELD-NAIVE,1,7,0,8,single_polynomial_expression,E1 transcription
+exists.n4.one-true,D-NOWRAP,9,8,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n4.one-true,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n4.one-true,C-AIR,21,20,12,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n4.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n4.all-false,G-FIELD-NAIVE,1,7,0,8,single_polynomial_expression,E1 transcription
+exists.n4.all-false,D-NOWRAP,9,8,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n4.all-false,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n4.all-false,C-AIR,21,20,12,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n4.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n4.all-true,G-FIELD-NAIVE,1,7,0,8,single_polynomial_expression,E1 transcription
+exists.n4.all-true,D-NOWRAP,9,8,8,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n4.all-true,D-BOOLGRAPH,21,20,12,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n4.all-true,C-AIR,21,20,12,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n16.all-true,M-SPEC,1,15,0,16,single_polynomial_expression,E1 transcription
+forall.n16.all-true,G-FIELD-NAIVE,1,16,0,2,single_polynomial_expression,E1 transcription
+forall.n16.all-true,D-NOWRAP,33,16,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n16.all-true,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n16.all-true,C-AIR,16,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n16.one-false,M-SPEC,1,15,0,16,single_polynomial_expression,E1 transcription
+forall.n16.one-false,G-FIELD-NAIVE,1,16,0,2,single_polynomial_expression,E1 transcription
+forall.n16.one-false,D-NOWRAP,33,16,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n16.one-false,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n16.one-false,C-AIR,16,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n16.all-false,M-SPEC,1,15,0,16,single_polynomial_expression,E1 transcription
+forall.n16.all-false,G-FIELD-NAIVE,1,16,0,2,single_polynomial_expression,E1 transcription
+forall.n16.all-false,D-NOWRAP,33,16,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n16.all-false,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n16.all-false,C-AIR,16,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n16.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n16.one-true,G-FIELD-NAIVE,1,31,0,32,single_polynomial_expression,E1 transcription
+exists.n16.one-true,D-NOWRAP,33,32,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n16.one-true,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n16.one-true,C-AIR,81,80,48,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n16.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n16.all-false,G-FIELD-NAIVE,1,31,0,32,single_polynomial_expression,E1 transcription
+exists.n16.all-false,D-NOWRAP,33,32,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n16.all-false,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n16.all-false,C-AIR,81,80,48,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n16.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n16.all-true,G-FIELD-NAIVE,1,31,0,32,single_polynomial_expression,E1 transcription
+exists.n16.all-true,D-NOWRAP,33,32,32,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n16.all-true,D-BOOLGRAPH,81,80,48,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n16.all-true,C-AIR,81,80,48,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n64.all-true,M-SPEC,1,63,0,64,single_polynomial_expression,E1 transcription
+forall.n64.all-true,G-FIELD-NAIVE,1,64,0,2,single_polynomial_expression,E1 transcription
+forall.n64.all-true,D-NOWRAP,129,64,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n64.all-true,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n64.all-true,C-AIR,64,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n64.one-false,M-SPEC,1,63,0,64,single_polynomial_expression,E1 transcription
+forall.n64.one-false,G-FIELD-NAIVE,1,64,0,2,single_polynomial_expression,E1 transcription
+forall.n64.one-false,D-NOWRAP,129,64,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n64.one-false,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n64.one-false,C-AIR,64,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n64.all-false,M-SPEC,1,63,0,64,single_polynomial_expression,E1 transcription
+forall.n64.all-false,G-FIELD-NAIVE,1,64,0,2,single_polynomial_expression,E1 transcription
+forall.n64.all-false,D-NOWRAP,129,64,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n64.all-false,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n64.all-false,C-AIR,64,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n64.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n64.one-true,G-FIELD-NAIVE,1,127,0,128,single_polynomial_expression,E1 transcription
+exists.n64.one-true,D-NOWRAP,129,128,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n64.one-true,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n64.one-true,C-AIR,321,320,192,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n64.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n64.all-false,G-FIELD-NAIVE,1,127,0,128,single_polynomial_expression,E1 transcription
+exists.n64.all-false,D-NOWRAP,129,128,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n64.all-false,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n64.all-false,C-AIR,321,320,192,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n64.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n64.all-true,G-FIELD-NAIVE,1,127,0,128,single_polynomial_expression,E1 transcription
+exists.n64.all-true,D-NOWRAP,129,128,128,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n64.all-true,D-BOOLGRAPH,321,320,192,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n64.all-true,C-AIR,321,320,192,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n256.all-true,M-SPEC,1,255,0,256,single_polynomial_expression,E1 transcription
+forall.n256.all-true,G-FIELD-NAIVE,1,256,0,2,single_polynomial_expression,E1 transcription
+forall.n256.all-true,D-NOWRAP,513,256,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n256.all-true,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n256.all-true,C-AIR,256,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n256.one-false,M-SPEC,1,255,0,256,single_polynomial_expression,E1 transcription
+forall.n256.one-false,G-FIELD-NAIVE,1,256,0,2,single_polynomial_expression,E1 transcription
+forall.n256.one-false,D-NOWRAP,513,256,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n256.one-false,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n256.one-false,C-AIR,256,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n256.all-false,M-SPEC,1,255,0,256,single_polynomial_expression,E1 transcription
+forall.n256.all-false,G-FIELD-NAIVE,1,256,0,2,single_polynomial_expression,E1 transcription
+forall.n256.all-false,D-NOWRAP,513,256,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n256.all-false,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n256.all-false,C-AIR,256,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n256.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n256.one-true,G-FIELD-NAIVE,1,511,0,512,single_polynomial_expression,E1 transcription
+exists.n256.one-true,D-NOWRAP,513,512,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n256.one-true,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n256.one-true,C-AIR,1281,1280,768,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n256.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n256.all-false,G-FIELD-NAIVE,1,511,0,512,single_polynomial_expression,E1 transcription
+exists.n256.all-false,D-NOWRAP,513,512,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n256.all-false,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n256.all-false,C-AIR,1281,1280,768,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n256.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n256.all-true,G-FIELD-NAIVE,1,511,0,512,single_polynomial_expression,E1 transcription
+exists.n256.all-true,D-NOWRAP,513,512,512,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n256.all-true,D-BOOLGRAPH,1281,1280,768,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n256.all-true,C-AIR,1281,1280,768,2,materialized_boolean_graph,E1 conventional baseline model
+forall.n1024.all-true,M-SPEC,1,1023,0,1024,single_polynomial_expression,E1 transcription
+forall.n1024.all-true,G-FIELD-NAIVE,1,1024,0,2,single_polynomial_expression,E1 transcription
+forall.n1024.all-true,D-NOWRAP,2049,1024,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.all-true,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.all-true,C-AIR,1024,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n1024.one-false,M-SPEC,1,1023,0,1024,single_polynomial_expression,E1 transcription
+forall.n1024.one-false,G-FIELD-NAIVE,1,1024,0,2,single_polynomial_expression,E1 transcription
+forall.n1024.one-false,D-NOWRAP,2049,1024,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.one-false,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.one-false,C-AIR,1024,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+forall.n1024.all-false,M-SPEC,1,1023,0,1024,single_polynomial_expression,E1 transcription
+forall.n1024.all-false,G-FIELD-NAIVE,1,1024,0,2,single_polynomial_expression,E1 transcription
+forall.n1024.all-false,D-NOWRAP,2049,1024,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.all-false,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+forall.n1024.all-false,C-AIR,1024,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+exists.n1024.one-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1024.one-true,G-FIELD-NAIVE,1,2047,0,2048,single_polynomial_expression,E1 transcription
+exists.n1024.one-true,D-NOWRAP,2049,2048,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.one-true,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.one-true,C-AIR,5121,5120,3072,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n1024.all-false,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1024.all-false,G-FIELD-NAIVE,1,2047,0,2048,single_polynomial_expression,E1 transcription
+exists.n1024.all-false,D-NOWRAP,2049,2048,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.all-false,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.all-false,C-AIR,5121,5120,3072,2,materialized_boolean_graph,E1 conventional baseline model
+exists.n1024.all-true,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+exists.n1024.all-true,G-FIELD-NAIVE,1,2047,0,2048,single_polynomial_expression,E1 transcription
+exists.n1024.all-true,D-NOWRAP,2049,2048,2048,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.all-true,D-BOOLGRAPH,5121,5120,3072,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+exists.n1024.all-true,C-AIR,5121,5120,3072,2,materialized_boolean_graph,E1 conventional baseline model
+and.n2.mixed,M-SPEC,1,1,0,2,single_polynomial_expression,E1 transcription
+and.n2.mixed,G-FIELD-NAIVE,1,2,0,2,single_polynomial_expression,E1 transcription
+and.n2.mixed,D-NOWRAP,4,2,3,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+and.n2.mixed,D-BOOLGRAPH,9,8,5,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+and.n2.mixed,C-AIR,2,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+or.n2.mixed,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+or.n2.mixed,G-FIELD-NAIVE,1,3,0,4,single_polynomial_expression,E1 transcription
+or.n2.mixed,D-NOWRAP,4,3,3,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+or.n2.mixed,D-BOOLGRAPH,9,8,5,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+or.n2.mixed,C-AIR,9,8,5,2,materialized_boolean_graph,E1 conventional baseline model
+and.n4.mixed,M-SPEC,1,3,0,4,single_polynomial_expression,E1 transcription
+and.n4.mixed,G-FIELD-NAIVE,1,4,0,2,single_polynomial_expression,E1 transcription
+and.n4.mixed,D-NOWRAP,8,4,7,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+and.n4.mixed,D-BOOLGRAPH,19,18,11,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+and.n4.mixed,C-AIR,4,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+or.n4.mixed,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+or.n4.mixed,G-FIELD-NAIVE,1,7,0,8,single_polynomial_expression,E1 transcription
+or.n4.mixed,D-NOWRAP,8,7,7,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+or.n4.mixed,D-BOOLGRAPH,19,18,11,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+or.n4.mixed,C-AIR,19,18,11,2,materialized_boolean_graph,E1 conventional baseline model
+and.n16.mixed,M-SPEC,1,15,0,16,single_polynomial_expression,E1 transcription
+and.n16.mixed,G-FIELD-NAIVE,1,16,0,2,single_polynomial_expression,E1 transcription
+and.n16.mixed,D-NOWRAP,32,16,31,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+and.n16.mixed,D-BOOLGRAPH,79,78,47,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+and.n16.mixed,C-AIR,16,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+or.n16.mixed,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+or.n16.mixed,G-FIELD-NAIVE,1,31,0,32,single_polynomial_expression,E1 transcription
+or.n16.mixed,D-NOWRAP,32,31,31,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+or.n16.mixed,D-BOOLGRAPH,79,78,47,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+or.n16.mixed,C-AIR,79,78,47,2,materialized_boolean_graph,E1 conventional baseline model
+and.n64.mixed,M-SPEC,1,63,0,64,single_polynomial_expression,E1 transcription
+and.n64.mixed,G-FIELD-NAIVE,1,64,0,2,single_polynomial_expression,E1 transcription
+and.n64.mixed,D-NOWRAP,128,64,127,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+and.n64.mixed,D-BOOLGRAPH,319,318,191,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+and.n64.mixed,C-AIR,64,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+or.n64.mixed,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+or.n64.mixed,G-FIELD-NAIVE,1,127,0,128,single_polynomial_expression,E1 transcription
+or.n64.mixed,D-NOWRAP,128,127,127,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+or.n64.mixed,D-BOOLGRAPH,319,318,191,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+or.n64.mixed,C-AIR,319,318,191,2,materialized_boolean_graph,E1 conventional baseline model
+and.n256.mixed,M-SPEC,1,255,0,256,single_polynomial_expression,E1 transcription
+and.n256.mixed,G-FIELD-NAIVE,1,256,0,2,single_polynomial_expression,E1 transcription
+and.n256.mixed,D-NOWRAP,512,256,511,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+and.n256.mixed,D-BOOLGRAPH,1279,1278,767,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+and.n256.mixed,C-AIR,256,0,0,1,optimized_conjunction_constraints,E1 conventional baseline model
+or.n256.mixed,M-SPEC,1,0,0,1,single_polynomial_expression,E1 transcription
+or.n256.mixed,G-FIELD-NAIVE,1,511,0,512,single_polynomial_expression,E1 transcription
+or.n256.mixed,D-NOWRAP,512,511,511,2,materialized_positive_graph,E4 Lean recurrence + E2 mirror
+or.n256.mixed,D-BOOLGRAPH,1279,1278,767,2,materialized_boolean_graph,E4 Lean recurrence + E2 mirror
+or.n256.mixed,C-AIR,1279,1278,767,2,materialized_boolean_graph,E1 conventional baseline model

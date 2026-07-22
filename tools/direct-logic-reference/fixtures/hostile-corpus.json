@@ -1,0 +1,130 @@
+{
+  "schema": "dregg.direct-logic.hostile-corpus.v1",
+  "cases": [
+    {
+      "id": "true-small-conjunction",
+      "expected": true,
+      "nowrap_status": "admitted",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [{"name": "x", "value": 3, "bound": 7}],
+        "formula": {
+          "op": "and",
+          "args": [
+            {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 3}},
+            {"op": "eq", "lhs": {"op": "add", "args": [{"op": "var", "name": "x"}, {"op": "lit", "value": 1}]}, "rhs": {"op": "lit", "value": 4}}
+          ]
+        }
+      }
+    },
+    {
+      "id": "false-conjunct-must-reject",
+      "expected": false,
+      "nowrap_status": "admitted",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [{"name": "x", "value": 3, "bound": 7}],
+        "formula": {
+          "op": "and",
+          "args": [
+            {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 3}},
+            {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 4}}
+          ]
+        }
+      }
+    },
+    {
+      "id": "negation-is-boolean-only",
+      "expected": true,
+      "nowrap_status": "unsupported",
+      "nowrap_reason": "negation_outside_positive_fragment",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [{"name": "x", "value": 3, "bound": 7}],
+        "formula": {"op": "not", "arg": {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 4}}}
+      }
+    },
+    {
+      "id": "empty-universal-is-true",
+      "expected": true,
+      "nowrap_status": "admitted",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [],
+        "formula": {"op": "forall", "binder": "i", "domain": [], "body": {"op": "bottom"}}
+      }
+    },
+    {
+      "id": "empty-existential-is-false",
+      "expected": false,
+      "nowrap_status": "admitted",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [],
+        "formula": {"op": "exists", "binder": "i", "domain": [], "body": {"op": "top"}}
+      }
+    },
+    {
+      "id": "declared-bound-blocks-lucky-model",
+      "expected": true,
+      "boolean_status": "unsupported",
+      "boolean_reason": "term_difference_bound_not_below_modulus",
+      "nowrap_status": "unsupported",
+      "nowrap_reason": "static_residual_bound_not_below_modulus",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [{"name": "x", "value": 0, "bound": 2013265921}],
+        "formula": {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 0}}
+      }
+    },
+    {
+      "id": "field-wrap-equality-collision-is-not-admitted",
+      "expected": false,
+      "boolean_status": "unsupported",
+      "boolean_reason": "term_difference_bound_not_below_modulus",
+      "nowrap_status": "unsupported",
+      "nowrap_reason": "static_residual_bound_not_below_modulus",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [{"name": "x", "value": 2013265921, "bound": 2013265921}],
+        "formula": {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 0}}
+      }
+    },
+    {
+      "id": "babybear-cancellation-vector-is-not-admitted",
+      "expected": false,
+      "nowrap_status": "unsupported",
+      "nowrap_reason": "static_residual_bound_not_below_modulus",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [
+          {"name": "x", "value": 1, "bound": 1},
+          {"name": "y", "value": 1728404513, "bound": 1728404513}
+        ],
+        "formula": {
+          "op": "and",
+          "args": [
+            {"op": "eq", "lhs": {"op": "var", "name": "x"}, "rhs": {"op": "lit", "value": 0}},
+            {"op": "eq", "lhs": {"op": "var", "name": "y"}, "rhs": {"op": "lit", "value": 0}}
+          ]
+        }
+      }
+    },
+    {
+      "id": "bounded-quantifiers-both-polarities",
+      "expected": true,
+      "nowrap_status": "admitted",
+      "source": {
+        "schema": "dregg.direct-logic.source.v1",
+        "model": [],
+        "formula": {
+          "op": "and",
+          "args": [
+            {"op": "forall", "binder": "i", "domain": [0, 1, 2], "body": {"op": "eq", "lhs": {"op": "add", "args": [{"op": "var", "name": "i"}, {"op": "lit", "value": 0}]}, "rhs": {"op": "var", "name": "i"}}},
+            {"op": "exists", "binder": "j", "domain": [0, 1, 2], "body": {"op": "eq", "lhs": {"op": "var", "name": "j"}, "rhs": {"op": "lit", "value": 2}}}
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,3052 @@
+[
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 0,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "constant.top"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 0,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "constant.top"
+  },
+  {
+    "equations": 1,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_positive_graph",
+    "witnesses": 0,
+    "workload_id": "constant.top"
+  },
+  {
+    "equations": 1,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 0,
+    "workload_id": "constant.top"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 0,
+    "workload_id": "constant.top"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 0,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "constant.bottom"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 0,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "constant.bottom"
+  },
+  {
+    "equations": 1,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_positive_graph",
+    "witnesses": 0,
+    "workload_id": "constant.bottom"
+  },
+  {
+    "equations": 1,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 0,
+    "workload_id": "constant.bottom"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 0,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 0,
+    "workload_id": "constant.bottom"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "not.true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "not.true"
+  },
+  {
+    "equations": 2,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "materialized_positive_graph",
+    "witnesses": 1,
+    "workload_id": "not.true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "not.true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "not.true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "not.false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "not.false"
+  },
+  {
+    "equations": 2,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "materialized_positive_graph",
+    "witnesses": 1,
+    "workload_id": "not.false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "not.false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "not.false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "gabbay.babybear-cancellation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "gabbay.babybear-cancellation"
+  },
+  {
+    "equations": 4,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 3,
+    "workload_id": "gabbay.babybear-cancellation"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 5,
+    "workload_id": "gabbay.babybear-cancellation"
+  },
+  {
+    "equations": 2,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "gabbay.babybear-cancellation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 3,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.honest"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.honest"
+  },
+  {
+    "equations": 7,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "materialized_positive_graph",
+    "witnesses": 6,
+    "workload_id": "bitlogic.swap.honest"
+  },
+  {
+    "equations": 16,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 15,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 9,
+    "workload_id": "bitlogic.swap.honest"
+  },
+  {
+    "equations": 3,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.honest"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 3,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.output-mutation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.output-mutation"
+  },
+  {
+    "equations": 7,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "materialized_positive_graph",
+    "witnesses": 6,
+    "workload_id": "bitlogic.swap.output-mutation"
+  },
+  {
+    "equations": 16,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 15,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 9,
+    "workload_id": "bitlogic.swap.output-mutation"
+  },
+  {
+    "equations": 3,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.output-mutation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 3,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.invariant-mutation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.invariant-mutation"
+  },
+  {
+    "equations": 7,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "materialized_positive_graph",
+    "witnesses": 6,
+    "workload_id": "bitlogic.swap.invariant-mutation"
+  },
+  {
+    "equations": 16,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 15,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 9,
+    "workload_id": "bitlogic.swap.invariant-mutation"
+  },
+  {
+    "equations": 3,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.invariant-mutation"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 3,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.published-invalid-witness"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.published-invalid-witness"
+  },
+  {
+    "equations": 7,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "materialized_positive_graph",
+    "witnesses": 6,
+    "workload_id": "bitlogic.swap.published-invalid-witness"
+  },
+  {
+    "equations": 16,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 15,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 9,
+    "workload_id": "bitlogic.swap.published-invalid-witness"
+  },
+  {
+    "equations": 3,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "bitlogic.swap.published-invalid-witness"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-true"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "forall.n1.all-true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "forall.n1.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.one-false"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "forall.n1.one-false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "forall.n1.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-false"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "forall.n1.all-false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "forall.n1.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.one-true"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "exists.n1.one-true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.one-true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.all-false"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "exists.n1.all-false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.all-false"
+  },
+  {
+    "equations": 6,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1.all-true"
+  },
+  {
+    "equations": 3,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2,
+    "workload_id": "exists.n1.all-true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.all-true"
+  },
+  {
+    "equations": 6,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3,
+    "workload_id": "exists.n1.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-true"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "forall.n2.all-true"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "forall.n2.all-true"
+  },
+  {
+    "equations": 2,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.one-false"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "forall.n2.one-false"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "forall.n2.one-false"
+  },
+  {
+    "equations": 2,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n2.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-false"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "forall.n2.all-false"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "forall.n2.all-false"
+  },
+  {
+    "equations": 2,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n2.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.one-true"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "exists.n2.one-true"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.one-true"
+  },
+  {
+    "equations": 11,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.all-false"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "exists.n2.all-false"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.all-false"
+  },
+  {
+    "equations": 11,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n2.all-true"
+  },
+  {
+    "equations": 5,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 4,
+    "workload_id": "exists.n2.all-true"
+  },
+  {
+    "equations": 11,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.all-true"
+  },
+  {
+    "equations": 11,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 10,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 6,
+    "workload_id": "exists.n2.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-true"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "forall.n4.all-true"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "forall.n4.all-true"
+  },
+  {
+    "equations": 4,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.one-false"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "forall.n4.one-false"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "forall.n4.one-false"
+  },
+  {
+    "equations": 4,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n4.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-false"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "forall.n4.all-false"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "forall.n4.all-false"
+  },
+  {
+    "equations": 4,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n4.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 8,
+    "multiplications": 7,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.one-true"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "exists.n4.one-true"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.one-true"
+  },
+  {
+    "equations": 21,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 8,
+    "multiplications": 7,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.all-false"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "exists.n4.all-false"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.all-false"
+  },
+  {
+    "equations": 21,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 8,
+    "multiplications": 7,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n4.all-true"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_positive_graph",
+    "witnesses": 8,
+    "workload_id": "exists.n4.all-true"
+  },
+  {
+    "equations": 21,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.all-true"
+  },
+  {
+    "equations": 21,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 20,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 12,
+    "workload_id": "exists.n4.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 16,
+    "multiplications": 15,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-true"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "forall.n16.all-true"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "forall.n16.all-true"
+  },
+  {
+    "equations": 16,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 16,
+    "multiplications": 15,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.one-false"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "forall.n16.one-false"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "forall.n16.one-false"
+  },
+  {
+    "equations": 16,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n16.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 16,
+    "multiplications": 15,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-false"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "forall.n16.all-false"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "forall.n16.all-false"
+  },
+  {
+    "equations": 16,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n16.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 32,
+    "multiplications": 31,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.one-true"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 32,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "exists.n16.one-true"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.one-true"
+  },
+  {
+    "equations": 81,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 32,
+    "multiplications": 31,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.all-false"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 32,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "exists.n16.all-false"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.all-false"
+  },
+  {
+    "equations": 81,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 32,
+    "multiplications": 31,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n16.all-true"
+  },
+  {
+    "equations": 33,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 32,
+    "representation": "materialized_positive_graph",
+    "witnesses": 32,
+    "workload_id": "exists.n16.all-true"
+  },
+  {
+    "equations": 81,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.all-true"
+  },
+  {
+    "equations": 81,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 80,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 48,
+    "workload_id": "exists.n16.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 64,
+    "multiplications": 63,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-true"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "forall.n64.all-true"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "forall.n64.all-true"
+  },
+  {
+    "equations": 64,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 64,
+    "multiplications": 63,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.one-false"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "forall.n64.one-false"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "forall.n64.one-false"
+  },
+  {
+    "equations": 64,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n64.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 64,
+    "multiplications": 63,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-false"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "forall.n64.all-false"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "forall.n64.all-false"
+  },
+  {
+    "equations": 64,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n64.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 128,
+    "multiplications": 127,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.one-true"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 128,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "exists.n64.one-true"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.one-true"
+  },
+  {
+    "equations": 321,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 128,
+    "multiplications": 127,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.all-false"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 128,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "exists.n64.all-false"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.all-false"
+  },
+  {
+    "equations": 321,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 128,
+    "multiplications": 127,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n64.all-true"
+  },
+  {
+    "equations": 129,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 128,
+    "representation": "materialized_positive_graph",
+    "witnesses": 128,
+    "workload_id": "exists.n64.all-true"
+  },
+  {
+    "equations": 321,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.all-true"
+  },
+  {
+    "equations": 321,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 320,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 192,
+    "workload_id": "exists.n64.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 256,
+    "multiplications": 255,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-true"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "forall.n256.all-true"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "forall.n256.all-true"
+  },
+  {
+    "equations": 256,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 256,
+    "multiplications": 255,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.one-false"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "forall.n256.one-false"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "forall.n256.one-false"
+  },
+  {
+    "equations": 256,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n256.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 256,
+    "multiplications": 255,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-false"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "forall.n256.all-false"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "forall.n256.all-false"
+  },
+  {
+    "equations": 256,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n256.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 512,
+    "multiplications": 511,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.one-true"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 512,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "exists.n256.one-true"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.one-true"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 512,
+    "multiplications": 511,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.all-false"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 512,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "exists.n256.all-false"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.all-false"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 512,
+    "multiplications": 511,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n256.all-true"
+  },
+  {
+    "equations": 513,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 512,
+    "representation": "materialized_positive_graph",
+    "witnesses": 512,
+    "workload_id": "exists.n256.all-true"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.all-true"
+  },
+  {
+    "equations": 1281,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 1280,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 768,
+    "workload_id": "exists.n256.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1024,
+    "multiplications": 1023,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-true"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "forall.n1024.all-true"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "forall.n1024.all-true"
+  },
+  {
+    "equations": 1024,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1024,
+    "multiplications": 1023,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.one-false"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "forall.n1024.one-false"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "forall.n1024.one-false"
+  },
+  {
+    "equations": 1024,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.one-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1024,
+    "multiplications": 1023,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-false"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 1024,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "forall.n1024.all-false"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "forall.n1024.all-false"
+  },
+  {
+    "equations": 1024,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "forall.n1024.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2048,
+    "multiplications": 2047,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.one-true"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2048,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "exists.n1024.one-true"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.one-true"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.one-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2048,
+    "multiplications": 2047,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.all-false"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2048,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "exists.n1024.all-false"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.all-false"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.all-false"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2048,
+    "multiplications": 2047,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "exists.n1024.all-true"
+  },
+  {
+    "equations": 2049,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2048,
+    "representation": "materialized_positive_graph",
+    "witnesses": 2048,
+    "workload_id": "exists.n1024.all-true"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.all-true"
+  },
+  {
+    "equations": 5121,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 5120,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 3072,
+    "workload_id": "exists.n1024.all-true"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 2,
+    "multiplications": 1,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n2.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n2.mixed"
+  },
+  {
+    "equations": 4,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 2,
+    "representation": "materialized_positive_graph",
+    "witnesses": 3,
+    "workload_id": "and.n2.mixed"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 5,
+    "workload_id": "and.n2.mixed"
+  },
+  {
+    "equations": 2,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "and.n2.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n2.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n2.mixed"
+  },
+  {
+    "equations": 4,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 3,
+    "representation": "materialized_positive_graph",
+    "witnesses": 3,
+    "workload_id": "or.n2.mixed"
+  },
+  {
+    "equations": 9,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 5,
+    "workload_id": "or.n2.mixed"
+  },
+  {
+    "equations": 9,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 8,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 5,
+    "workload_id": "or.n2.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 4,
+    "multiplications": 3,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n4.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n4.mixed"
+  },
+  {
+    "equations": 8,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 4,
+    "representation": "materialized_positive_graph",
+    "witnesses": 7,
+    "workload_id": "and.n4.mixed"
+  },
+  {
+    "equations": 19,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 18,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 11,
+    "workload_id": "and.n4.mixed"
+  },
+  {
+    "equations": 4,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "and.n4.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n4.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 8,
+    "multiplications": 7,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n4.mixed"
+  },
+  {
+    "equations": 8,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 7,
+    "representation": "materialized_positive_graph",
+    "witnesses": 7,
+    "workload_id": "or.n4.mixed"
+  },
+  {
+    "equations": 19,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 18,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 11,
+    "workload_id": "or.n4.mixed"
+  },
+  {
+    "equations": 19,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 18,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 11,
+    "workload_id": "or.n4.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 16,
+    "multiplications": 15,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n16.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n16.mixed"
+  },
+  {
+    "equations": 32,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 16,
+    "representation": "materialized_positive_graph",
+    "witnesses": 31,
+    "workload_id": "and.n16.mixed"
+  },
+  {
+    "equations": 79,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 78,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 47,
+    "workload_id": "and.n16.mixed"
+  },
+  {
+    "equations": 16,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "and.n16.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n16.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 32,
+    "multiplications": 31,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n16.mixed"
+  },
+  {
+    "equations": 32,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 31,
+    "representation": "materialized_positive_graph",
+    "witnesses": 31,
+    "workload_id": "or.n16.mixed"
+  },
+  {
+    "equations": 79,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 78,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 47,
+    "workload_id": "or.n16.mixed"
+  },
+  {
+    "equations": 79,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 78,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 47,
+    "workload_id": "or.n16.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 64,
+    "multiplications": 63,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n64.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n64.mixed"
+  },
+  {
+    "equations": 128,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 64,
+    "representation": "materialized_positive_graph",
+    "witnesses": 127,
+    "workload_id": "and.n64.mixed"
+  },
+  {
+    "equations": 319,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 318,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 191,
+    "workload_id": "and.n64.mixed"
+  },
+  {
+    "equations": 64,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "and.n64.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n64.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 128,
+    "multiplications": 127,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n64.mixed"
+  },
+  {
+    "equations": 128,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 127,
+    "representation": "materialized_positive_graph",
+    "witnesses": 127,
+    "workload_id": "or.n64.mixed"
+  },
+  {
+    "equations": 319,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 318,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 191,
+    "workload_id": "or.n64.mixed"
+  },
+  {
+    "equations": 319,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 318,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 191,
+    "workload_id": "or.n64.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 256,
+    "multiplications": 255,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n256.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "and.n256.mixed"
+  },
+  {
+    "equations": 512,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 256,
+    "representation": "materialized_positive_graph",
+    "witnesses": 511,
+    "workload_id": "and.n256.mixed"
+  },
+  {
+    "equations": 1279,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1278,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 767,
+    "workload_id": "and.n256.mixed"
+  },
+  {
+    "equations": 256,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "optimized_conjunction_constraints",
+    "witnesses": 0,
+    "workload_id": "and.n256.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "M-SPEC",
+    "max_degree": 1,
+    "multiplications": 0,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n256.mixed"
+  },
+  {
+    "equations": 1,
+    "evidence": "E1 transcription",
+    "lane": "G-FIELD-NAIVE",
+    "max_degree": 512,
+    "multiplications": 511,
+    "representation": "single_polynomial_expression",
+    "witnesses": 0,
+    "workload_id": "or.n256.mixed"
+  },
+  {
+    "equations": 512,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-NOWRAP",
+    "max_degree": 2,
+    "multiplications": 511,
+    "representation": "materialized_positive_graph",
+    "witnesses": 511,
+    "workload_id": "or.n256.mixed"
+  },
+  {
+    "equations": 1279,
+    "evidence": "E4 Lean recurrence + E2 mirror",
+    "lane": "D-BOOLGRAPH",
+    "max_degree": 2,
+    "multiplications": 1278,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 767,
+    "workload_id": "or.n256.mixed"
+  },
+  {
+    "equations": 1279,
+    "evidence": "E1 conventional baseline model",
+    "lane": "C-AIR",
+    "max_degree": 2,
+    "multiplications": 1278,
+    "representation": "materialized_boolean_graph",
+    "witnesses": 767,
+    "workload_id": "or.n256.mixed"
+  }
+]

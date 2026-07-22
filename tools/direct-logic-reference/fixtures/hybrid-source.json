@@ -1,0 +1,26 @@
+{
+  "formula": {
+    "args": [
+      {
+        "lhs": {"name": "x", "op": "var"},
+        "op": "eq",
+        "rhs": {"op": "lit", "value": 3}
+      },
+      {
+        "arg": {
+          "lhs": {"name": "y", "op": "var"},
+          "op": "eq",
+          "rhs": {"op": "lit", "value": 4}
+        },
+        "op": "not"
+      }
+    ],
+    "op": "and"
+  },
+  "model": [
+    {"bound": 7, "name": "x", "value": 3},
+    {"bound": 7, "name": "y", "value": 5}
+  ],
+  "modulus": 2013265921,
+  "schema": "dregg.direct-logic.source.v1"
+}
