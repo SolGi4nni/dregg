@@ -370,6 +370,12 @@ pub mod plonky3_recursion;
 /// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
 
+/// Canonical fixed-record wire for the closed, typed DescriptorIR-v2 algebra.
+/// This is the semantic relation encoding; Lean-emitted JSON remains an
+/// internal parser/build-provenance artifact and is never hashed as protocol
+/// identity.
+pub mod descriptor_ir2_canonical;
+
 /// Backend-neutral semantic statement and compile-time proof-system seam for
 /// DescriptorIR-v2.  Plonky3 HidingFRI remains the real reference backend;
 /// alternative PCS/distributed provers consume the same parsed relation and
