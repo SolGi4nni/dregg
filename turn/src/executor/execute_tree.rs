@@ -4,63 +4,172 @@
 
 use super::*;
 
+/// Per-turn rate-limit debits. These are visible to later actions in the same
+/// call forest, but do not enter the executor's durable frontier until every
+/// action and every post-forest invariant has accepted.
+///
+/// Keeping the debits turn-local gives rejection the correct transactional
+/// semantics without teaching the ledger undo journal about executor-side
+/// consensus state: dropping this value is the rollback.
+#[derive(Default)]
+pub(super) struct StagedRateLimitState {
+    counts: HashMap<RateLimitCounterKey, u32>,
+    sums: HashMap<RateLimitSumKey, u64>,
+}
+
+enum RateLimitDebit {
+    Count(RateLimitCounterKey),
+    Sum(RateLimitSumKey, u64),
+}
+
+impl StagedRateLimitState {
+    fn staged_count(&self, key: &RateLimitCounterKey) -> u32 {
+        self.counts.get(key).copied().unwrap_or(0)
+    }
+
+    fn staged_sum(&self, key: &RateLimitSumKey) -> u64 {
+        self.sums.get(key).copied().unwrap_or(0)
+    }
+
+    fn stage(&mut self, debit: RateLimitDebit) {
+        match debit {
+            RateLimitDebit::Count(key) => {
+                let entry = self.counts.entry(key).or_insert(0);
+                *entry = entry.saturating_add(1);
+            }
+            RateLimitDebit::Sum(key, delta) => {
+                let entry = self.sums.entry(key).or_insert(0);
+                *entry = entry.saturating_add(delta);
+            }
+        }
+    }
+
+    /// Publish a successfully completed turn's staged debits. Both maps stay
+    /// locked for the complete merge so a state exporter that takes the locks
+    /// in the same order cannot observe a half-installed turn.
+    pub(super) fn commit(self, executor: &TurnExecutor) {
+        let mut counts = executor.rate_limit_counters.lock().unwrap();
+        let mut sums = executor.rate_limit_sum_counters.lock().unwrap();
+        for (key, delta) in self.counts {
+            let entry = counts.entry(key).or_insert(0);
+            *entry = entry.saturating_add(delta);
+        }
+        for (key, delta) in self.sums {
+            let entry = sums.entry(key).or_insert(0);
+            *entry = entry.saturating_add(delta);
+        }
+    }
+}
+
 impl TurnExecutor {
     pub(crate) fn epoch_for_height(block_height: u64, epoch_duration: u64) -> u64 {
         block_height / epoch_duration.max(1)
     }
 
-    fn state_constraint_context_count(
+    fn rate_limit_field_to_u64(field: &dregg_cell::FieldElement) -> u64 {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&field[24..32]);
+        u64::from_be_bytes(bytes)
+    }
+
+    fn active_rate_constraints<'a>(
+        program: &'a dregg_cell::CellProgram,
+        old_state: Option<&dregg_cell::CellState>,
+        new_state: &dregg_cell::CellState,
+        meta: &dregg_cell::program::TransitionMeta,
+    ) -> Vec<&'a dregg_cell::StateConstraint> {
+        let is_rate = |constraint: &&dregg_cell::StateConstraint| {
+            matches!(
+                constraint,
+                dregg_cell::StateConstraint::RateLimit { .. }
+                    | dregg_cell::StateConstraint::RateLimitBySum { .. }
+            )
+        };
+        match program {
+            dregg_cell::CellProgram::Predicate(constraints) => {
+                constraints.iter().filter(is_rate).collect()
+            }
+            dregg_cell::CellProgram::Cases(cases) => cases
+                .iter()
+                .filter(|case| case.guard.matches(meta, old_state, new_state))
+                .flat_map(|case| case.constraints.iter())
+                .filter(is_rate)
+                .collect(),
+            dregg_cell::CellProgram::None | dregg_cell::CellProgram::Circuit { .. } => Vec::new(),
+        }
+    }
+
+    fn state_constraint_context_and_debit(
         &self,
         cell_id: &CellId,
         program: &dregg_cell::CellProgram,
         sender: Option<[u8; 32]>,
-    ) -> u32 {
-        let constraints = match program {
-            dregg_cell::CellProgram::Predicate(constraints) => constraints,
-            _ => return 0,
+        old_state: Option<&dregg_cell::CellState>,
+        new_state: &dregg_cell::CellState,
+        meta: &dregg_cell::program::TransitionMeta,
+        staged: &StagedRateLimitState,
+    ) -> Result<(u64, Option<RateLimitDebit>), String> {
+        let active = Self::active_rate_constraints(program, old_state, new_state, meta);
+        let [constraint] = active.as_slice() else {
+            return if active.is_empty() {
+                Ok((0, None))
+            } else {
+                // EvalContext has one authoritative rate-debit lane. Silently
+                // feeding the first of several active windows to all of them
+                // undercounts at least one constraint, so reject this ambiguous
+                // program shape until the context becomes a keyed map.
+                Err(format!(
+                    "multiple active rate constraints ({}) require keyed evaluator context",
+                    active.len()
+                ))
+            };
         };
 
-        if let Some((max_per_epoch, epoch_duration)) = constraints.iter().find_map(|c| match c {
-            dregg_cell::StateConstraint::RateLimit {
-                max_per_epoch,
-                epoch_duration,
-            } => Some((*max_per_epoch, *epoch_duration)),
-            _ => None,
-        }) {
-            let Some(sender) = sender else {
-                return 0;
-            };
-            let epoch = Self::epoch_for_height(self.block_height, epoch_duration);
-            return self
-                .rate_limit_counters
-                .lock()
-                .unwrap()
-                .get(&(*cell_id, sender, epoch))
-                .copied()
-                .unwrap_or(0)
-                .min(max_per_epoch);
-        }
-
-        if let Some((slot_index, epoch_duration)) = constraints.iter().find_map(|c| match c {
+        match constraint {
+            dregg_cell::StateConstraint::RateLimit { epoch_duration, .. } => {
+                let sender = sender.ok_or_else(|| {
+                    "RateLimit requires an executor-authenticated sender identity".to_string()
+                })?;
+                let epoch = Self::epoch_for_height(self.block_height, *epoch_duration);
+                let key = (*cell_id, sender, epoch);
+                let committed = self
+                    .rate_limit_counters
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(0);
+                let prior = committed.saturating_add(staged.staged_count(&key));
+                Ok((u64::from(prior), Some(RateLimitDebit::Count(key))))
+            }
             dregg_cell::StateConstraint::RateLimitBySum {
                 slot_index,
                 epoch_duration,
                 ..
-            } => Some((*slot_index, *epoch_duration)),
-            _ => None,
-        }) {
-            let epoch = Self::epoch_for_height(self.block_height, epoch_duration);
-            return self
-                .rate_limit_sum_counters
-                .lock()
-                .unwrap()
-                .get(&(*cell_id, slot_index, epoch))
-                .copied()
-                .unwrap_or(0)
-                .min(u32::MAX as u64) as u32;
+            } => {
+                let idx = usize::from(*slot_index);
+                if idx >= dregg_cell::state::STATE_SLOTS {
+                    return Err(format!("RateLimitBySum slot {slot_index} is out of bounds"));
+                }
+                let epoch = Self::epoch_for_height(self.block_height, *epoch_duration);
+                let key = (*cell_id, *slot_index, epoch);
+                let committed = self
+                    .rate_limit_sum_counters
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(0);
+                let prior = committed.saturating_add(staged.staged_sum(&key));
+                let old = old_state
+                    .map(|state| Self::rate_limit_field_to_u64(&state.fields[idx]))
+                    .unwrap_or(0);
+                let new = Self::rate_limit_field_to_u64(&new_state.fields[idx]);
+                let delta = new.saturating_sub(old);
+                Ok((prior, Some(RateLimitDebit::Sum(key, delta))))
+            }
+            _ => unreachable!("active_rate_constraints returns only rate constraints"),
         }
-
-        0
     }
 
     fn evaluate_cell_program_for_executor(
@@ -404,6 +513,7 @@ impl TurnExecutor {
         // threaded to `apply_effect` so any capability an effect INSTALLS folds the
         // creating turn into its provenance (collision-free across slot reuse).
         created_by_turn: [u8; 32],
+        staged_rate_limits: &mut StagedRateLimitState,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let action = &tree.action;
 
@@ -1005,21 +1115,6 @@ impl TurnExecutor {
                 continue;
             }
             let old_state = old_cell_states.get(cell_id);
-            // For RateLimit + SenderAuthorized variants, populate
-            // ctx.sender_epoch_count from the executor's per-(cell,
-            // sender) counter slot. Until a real counter slot lands
-            // (deferred), leave at 0 and let the witness blob (a
-            // RateLimitCount blob) supply the count.
-            let sender_epoch_count =
-                self.state_constraint_context_count(cell_id, &touched_cell.program, parent_pk_opt);
-            let ctx = dregg_cell::EvalContext {
-                block_height: self.block_height,
-                timestamp: self.current_timestamp,
-                current_epoch: self.block_height.saturating_div(1024),
-                sender: parent_pk_opt,
-                sender_epoch_count,
-                revealed_preimage: None,
-            };
             // Stamp the TOUCHED cell's own post-turn delegation_epoch onto the
             // per-cell meta — the program-readable R7 freshness counter
             // (`StateConstraint::DelegationEpochEquals`; the channels closure
@@ -1028,6 +1123,36 @@ impl TurnExecutor {
             let cell_meta = meta
                 .clone()
                 .with_delegation_epoch(touched_cell.state.delegation_epoch());
+            // Rate-limit context comes exclusively from committed executor
+            // state plus this turn's earlier staged debits. A carried
+            // RateLimitCount witness is informational and never authoritative.
+            let (sender_epoch_count, rate_debit) = self
+                .state_constraint_context_and_debit(
+                    cell_id,
+                    &touched_cell.program,
+                    parent_pk_opt,
+                    old_state,
+                    &touched_cell.state,
+                    &cell_meta,
+                    staged_rate_limits,
+                )
+                .map_err(|reason| {
+                    (
+                        TurnError::ProgramViolation {
+                            cell: *cell_id,
+                            reason,
+                        },
+                        path.clone(),
+                    )
+                })?;
+            let ctx = dregg_cell::EvalContext {
+                block_height: self.block_height,
+                timestamp: self.current_timestamp,
+                current_epoch: self.block_height.saturating_div(1024),
+                sender: parent_pk_opt,
+                sender_epoch_count,
+                revealed_preimage: None,
+            };
             let result = Self::evaluate_cell_program_for_executor(
                 &touched_cell.program,
                 &touched_cell.state,
@@ -1053,6 +1178,9 @@ impl TurnExecutor {
                 &path,
             )?;
             self.validate_capability_uniqueness(cell_id, &touched_cell.program, ledger, &path)?;
+            if let Some(debit) = rate_debit {
+                staged_rate_limits.stage(debit);
+            }
         }
 
         if _pf {
@@ -1187,6 +1315,7 @@ impl TurnExecutor {
                 turn_nonce,
                 turn_agent,
                 created_by_turn,
+                staged_rate_limits,
             )?;
         }
 

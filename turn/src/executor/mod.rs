@@ -878,12 +878,11 @@ pub struct TurnExecutor {
     /// `Effect::Promise`/`Effect::Notify` deposits a kernel-backed pending entry
     /// (the standing commitment / wake) here; an `Effect::React` discharges it.
     ///
-    /// The ONE-SHOT spend of a hole is NOT enforced here — it is enforced by the
-    /// production `note_nullifiers` set: the hole's id IS the nullifier React
-    /// spends, so react-twice (or a replayed hole-id) is rejected by the same
-    /// double-spend gate `NoteSpend` rides. This registry holds the wake turn so
-    /// the resolution produces a GENUINE receipt over the resolved turn (the
-    /// registry's own removal is a second, redundant tooth).
+    /// This is consensus-side state, not executor-local scratch. A node must seed
+    /// every fresh executor from the canonical durable snapshot and atomically
+    /// commit its successor with the finalized turn. React requires the live entry
+    /// and binds its wake agent + exact stored condition before consuming both the
+    /// entry and its durable nullifier.
     pub reactive_registry: Mutex<crate::pending::PendingTurnRegistry>,
     /// Trusted Ed25519 public keys for destination federation receipt verification.
     /// Used during BridgeFinalize to validate that the receipt was signed by a
@@ -1220,6 +1219,18 @@ impl TurnExecutor {
             exact_fnsp_v3_admission: Mutex::new(ExactFnspV3AdmissionSlot::default()),
             exact_fnsp_v3_state: Mutex::new(ExactFnspV3ExecutorState::new()),
         }
+    }
+
+    /// Seed the complete durable promise registry before executing a turn.
+    /// Host code must obtain this value from its authenticated persistence owner;
+    /// never from the submitted turn.
+    pub fn set_reactive_registry(&self, registry: crate::pending::PendingTurnRegistry) {
+        *self.reactive_registry.lock().unwrap() = registry;
+    }
+
+    /// Capture the exact post-execution registry for durable compare-and-swap.
+    pub fn reactive_registry_snapshot(&self) -> crate::pending::PendingTurnRegistry {
+        self.reactive_registry.lock().unwrap().clone()
     }
 
     /// Inject the verified-Lean shadow/gate observer (dependency inversion — `crate::shadow`).
@@ -2386,6 +2397,11 @@ mod execute;
 mod execute_tree;
 mod finalize;
 mod proof_verify;
+mod rate_limit_state;
+pub use rate_limit_state::{
+    MAX_RATE_LIMIT_STATE_BYTES, MAX_RATE_LIMIT_STATE_ENTRIES, RateLimitCountEntry,
+    RateLimitStateCodecError, RateLimitStateSnapshot, RateLimitSumEntry,
+};
 
 // Concurrency-safe committed bridge mirror-ledger (`bridge_ledger.rs`):
 // `lock_id`-as-nullifier + a committed supply cell, gated inside one atomic

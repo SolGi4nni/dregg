@@ -248,7 +248,11 @@ impl TurnExecutor {
             None
         };
 
-        let result = self.execute_without_shadow(turn, ledger);
+        // Rate-limit debits are a candidate side-state transition until BOTH
+        // the Rust execution and the optional verified Lean veto have accepted.
+        // A rejected/vetoed turn drops this value without ever publishing it.
+        let mut staged_rate_limits = super::execute_tree::StagedRateLimitState::default();
+        let result = self.execute_without_shadow(turn, ledger, &mut staged_rate_limits);
         let lean_verdict = obs.observe(turn, ledger, &result, self.block_height);
 
         // When the verified Lean executor REJECTED a turn the Rust executor COMMITTED, the Lean
@@ -286,6 +290,9 @@ impl TurnExecutor {
         #[cfg(feature = "prover")]
         if !result.is_committed() {
             let _ = self.restore_exact_fnsp_v3_admission_after_rejection();
+        }
+        if result.is_committed() {
+            staged_rate_limits.commit(self);
         }
         result
     }
@@ -370,7 +377,12 @@ impl TurnExecutor {
         }
     }
 
-    fn execute_without_shadow(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
+    fn execute_without_shadow(
+        &self,
+        turn: &Turn,
+        ledger: &mut Ledger,
+        staged_rate_limits: &mut super::execute_tree::StagedRateLimitState,
+    ) -> TurnResult {
         // MEASUREMENT-ONLY (`DREGG_TURN_PROFILE=1`): per-turn phase fences. When off,
         // `prof` is false and every `accum` below is skipped (no atomic writes).
         let prof = super::turn_profile::enabled();
@@ -1098,6 +1110,7 @@ impl TurnExecutor {
                 // post-execution receipt hash (which depends on the effects this
                 // turn applies — circular). Folded into installed-cap provenance.
                 turn.hash(),
+                staged_rate_limits,
             );
 
             if let Err((error, path)) = result {
@@ -1110,6 +1123,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 // Remove temporarily-injected sovereign cells on rollback.
                 for cell_id in &sovereign_cell_ids {
@@ -1141,6 +1155,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.reactive_registry,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1169,6 +1184,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.reactive_registry,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1196,6 +1212,7 @@ impl TurnExecutor {
                 &self.note_nullifiers,
                 &self.note_commitments,
                 &self.note_revoked,
+                &self.reactive_registry,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -1224,6 +1241,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
@@ -1255,6 +1273,7 @@ impl TurnExecutor {
                     &self.note_nullifiers,
                     &self.note_commitments,
                     &self.note_revoked,
+                    &self.reactive_registry,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
@@ -1364,8 +1383,6 @@ impl TurnExecutor {
             self.fee_well_cell.as_ref(),
             turn.fee,
         );
-
-        self.record_state_constraint_counters(turn, ledger, &journal);
 
         // Phase 4: Compute receipt.
         //
@@ -1581,98 +1598,5 @@ impl TurnExecutor {
         }
 
         Ok(())
-    }
-
-    fn record_state_constraint_counters(
-        &self,
-        turn: &Turn,
-        ledger: &Ledger,
-        journal: &LedgerJournal,
-    ) {
-        let Some(sender) = ledger.get(&turn.agent).map(|cell| *cell.public_key()) else {
-            return;
-        };
-
-        let mut mutated_cells = std::collections::HashSet::<CellId>::new();
-        let mut first_field_old =
-            std::collections::HashMap::<(CellId, u64), Option<dregg_cell::FieldElement>>::new();
-        for entry in journal.entries() {
-            match entry {
-                crate::journal::JournalEntry::SetField {
-                    cell,
-                    index,
-                    old_value,
-                } => {
-                    mutated_cells.insert(*cell);
-                    first_field_old.entry((*cell, *index)).or_insert(*old_value);
-                }
-                crate::journal::JournalEntry::SetBalance { cell, .. }
-                | crate::journal::JournalEntry::SetNonce { cell, .. }
-                | crate::journal::JournalEntry::SetPermissions { cell, .. }
-                | crate::journal::JournalEntry::SetVerificationKey { cell, .. }
-                | crate::journal::JournalEntry::SetDelegation { cell, .. }
-                | crate::journal::JournalEntry::SetDelegationEpoch { cell, .. }
-                | crate::journal::JournalEntry::SetProvedState { cell, .. }
-                | crate::journal::JournalEntry::GrantCapability { cell, .. }
-                | crate::journal::JournalEntry::RevokeCapability { cell, .. }
-                | crate::journal::JournalEntry::CreateCell { cell }
-                | crate::journal::JournalEntry::SetLifecycle { cell, .. }
-                | crate::journal::JournalEntry::AttenuateCapability { cell, .. } => {
-                    mutated_cells.insert(*cell);
-                }
-                _ => {}
-            }
-        }
-
-        for cell_id in mutated_cells {
-            let Some(cell) = ledger.get(&cell_id) else {
-                continue;
-            };
-            let dregg_cell::CellProgram::Predicate(constraints) = &cell.program else {
-                continue;
-            };
-            for constraint in constraints {
-                match constraint {
-                    dregg_cell::StateConstraint::RateLimit { epoch_duration, .. } => {
-                        let epoch = Self::epoch_for_height(self.block_height, *epoch_duration);
-                        let mut counters = self.rate_limit_counters.lock().unwrap();
-                        let counter = counters.entry((cell_id, sender, epoch)).or_insert(0);
-                        *counter = counter.saturating_add(1);
-                    }
-                    dregg_cell::StateConstraint::RateLimitBySum {
-                        slot_index,
-                        epoch_duration,
-                        ..
-                    } => {
-                        let idx = *slot_index as usize;
-                        if idx >= dregg_cell::state::STATE_SLOTS {
-                            continue;
-                        }
-                        let Some(Some(old_value)) = first_field_old.get(&(cell_id, idx as u64))
-                        else {
-                            continue;
-                        };
-                        let new_value = cell.state.fields[idx];
-                        let old = Self::field_to_u64(old_value);
-                        let new = Self::field_to_u64(&new_value);
-                        let delta = new.saturating_sub(old);
-                        if delta == 0 {
-                            continue;
-                        }
-                        let epoch = Self::epoch_for_height(self.block_height, *epoch_duration);
-                        let mut counters = self.rate_limit_sum_counters.lock().unwrap();
-                        let counter = counters.entry((cell_id, *slot_index, epoch)).or_insert(0);
-                        *counter = counter.saturating_add(delta);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    fn field_to_u64(field: &dregg_cell::FieldElement) -> u64 {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&field[24..32]);
-        u64::from_be_bytes(bytes)
     }
 }

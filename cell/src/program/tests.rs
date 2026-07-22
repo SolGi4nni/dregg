@@ -11,7 +11,7 @@ fn ctx_at(height: u64) -> EvalContext {
 fn ctx_sender(sender: [u8; 32], epoch_count: u32) -> EvalContext {
     EvalContext {
         sender: Some(sender),
-        sender_epoch_count: epoch_count,
+        sender_epoch_count: u64::from(epoch_count),
         ..Default::default()
     }
 }

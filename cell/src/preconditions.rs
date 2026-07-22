@@ -124,9 +124,15 @@ pub struct EvalContext {
     /// (genesis, scheduled effects). Used by `SenderAuthorized` /
     /// `RateLimit` slot caveats.
     pub sender: Option<[u8; 32]>,
-    /// Sender's mutation count this epoch (for `RateLimit`). Defaults
-    /// to `0`.
-    pub sender_epoch_count: u32,
+    /// Authoritative running debit for the active rate constraint. For
+    /// `RateLimit` this is the sender's mutation count; for
+    /// `RateLimitBySum` it is the full-width positive-delta sum. Defaults to
+    /// `0`.
+    ///
+    /// This is `u64`, rather than `u32`, because `RateLimitBySum` has a `u64`
+    /// ceiling. Truncating its prior sum to `u32::MAX` lets a window above 2³²
+    /// stop advancing in the evaluator's view.
+    pub sender_epoch_count: u64,
     /// Preimage revealed by the action (for `PreimageGate`). `None`
     /// when the action carries no preimage.
     pub revealed_preimage: Option<[u8; 32]>,

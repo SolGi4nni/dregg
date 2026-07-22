@@ -829,7 +829,7 @@ fn evaluate_constraint_full(
             // blob (if present) is informational only and is NOT trusted
             // here.
             let count = ctx.sender_epoch_count;
-            if count >= *max_per_epoch {
+            if count >= u64::from(*max_per_epoch) {
                 return violated(
                     constraint,
                     format!(
@@ -856,7 +856,7 @@ fn evaluate_constraint_full(
             let new_val = field_to_u64(&new_state.fields[idx]);
             let old_val = old_state.map(|o| field_to_u64(&o.fields[idx])).unwrap_or(0);
             let delta = new_val.saturating_sub(old_val);
-            let prior_window_sum = ctx.map(|c| c.sender_epoch_count as u64).unwrap_or(0);
+            let prior_window_sum = ctx.map(|c| c.sender_epoch_count).unwrap_or(0);
             let window_sum = prior_window_sum.saturating_add(delta);
             if window_sum > *max_sum_per_epoch {
                 return violated(
