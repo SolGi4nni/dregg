@@ -272,6 +272,19 @@ pub fn configure_turn_executor(
             });
     *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
 
+    // The remaining grow-only executor accumulators are equally consensus
+    // state. Restore the complete typed records (including value/height and
+    // append sequence) plus the inbound bridge replay gate before any request
+    // executes. The helper constructs every successor first and publishes all
+    // three together, so corruption cannot partially seed the fresh executor.
+    crate::executor_side_state_persistence::restore_executor_accumulators(executor, &s.store)
+        .unwrap_or_else(|error| {
+            panic!(
+                "STORE INTEGRITY EVENT: could not restore executor commitment/revocation/bridge \
+                 state; refusing to construct a turn executor: {error}"
+            )
+        });
+
     // Receipt-chain continuity is consensus state too. Node executors are
     // short-lived, so restoring only the one agent an ingress happens to name
     // leaves every other author at a false genesis head. Rebuild all per-agent

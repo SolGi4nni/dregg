@@ -53,6 +53,7 @@ mod exact_fnsp_v3_execution_authority;
 mod exact_fnsp_v3_finalization;
 pub mod execution_cursor;
 pub mod executor_setup;
+mod executor_side_state_persistence;
 mod executor_state_admission;
 pub mod finalization_votes;
 pub mod genesis;
