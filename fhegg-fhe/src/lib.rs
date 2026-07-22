@@ -151,6 +151,10 @@ pub mod mpc_party;
 /// Trader-local encryption plus authenticated, replay-resistant ciphertext
 /// ingress for the no-viewer clearing pipeline.
 pub mod order_ingress;
+/// Experimental BabyBear/SIS additive vector-commitment rung for distributed
+/// prover shares. Its algebra and hostile wire/opening checks are executable;
+/// concrete SIS/hiding parameters remain deliberately unclaimed.
+pub mod pq_share_commitment;
 
 pub type Qty = u16;
 
