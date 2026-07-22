@@ -61,6 +61,7 @@ import Market.RevealNothing
 import Market.MpcClearingSecurity
 import Market.FhEggRustDenotation
 import Market.FhEggAllocation
+import Market.UniformAllocationCertificate
 import Market.ProtocolAssurance
 import Market.CertQp
 import Market.SddPsd

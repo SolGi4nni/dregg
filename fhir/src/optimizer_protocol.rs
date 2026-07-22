@@ -13,10 +13,20 @@
 //! recomputes the exact `(P,q,A,l,u)` digest from the independently compiled
 //! program and delegates the opaque `FHQPB001` bytes to
 //! [`crate::verify_certified_qp`].
+//! [`verify_uniform_allocation_optimizer_worker_result`] is the aggregation
+//! adapter: it binds the typed order book and runs the exact volume-max plus
+//! largest-remainder checker over `FHUAC001`.
 
 use crate::{
     canonical_qp_program_digest, verify_certified_qp, Compiled, ExactQpCertificateBundleError,
     VerifiedExactQpCertificate,
+};
+use fhegg_solver::{
+    clearing::Side,
+    uniform_allocation_cert::{
+        verify_uniform_allocation, UniformAllocationCertificate, UniformAllocationCertificateError,
+        VerifiedUniformAllocation, UNIFORM_ALLOCATION_CERTIFICATE_VERSION,
+    },
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -27,11 +37,13 @@ const REQUEST_DIGEST_DOMAIN: &[u8] = b"fhir/optimizer-request/v1";
 const RESULT_CHECKSUM_DOMAIN: &[u8] = b"fhir/optimizer-result/v1";
 const SOLVER_IDENTITY_DOMAIN: &[u8] = b"fhir/optimizer-solver-identity/v1";
 const GENERIC_PROBLEM_DOMAIN: &[u8] = b"fhir/optimizer-canonical-problem/v1";
+const UNIFORM_ALLOCATION_PROBLEM_DOMAIN: &[u8] = b"fhir/uniform-allocation-problem/v1";
 const CERTIFICATE_DIGEST_DOMAIN: &[u8] = b"fhir/optimizer-certificate/v1";
 const REPLAY_ID_DOMAIN: &[u8] = b"fhir/optimizer-replay-id/v1";
 
 pub const OPTIMIZER_PROTOCOL_VERSION: u16 = 1;
 pub const FHQPB001_CERTIFICATE_VERSION: u16 = 1;
+pub const FHUAC001_CERTIFICATE_VERSION: u16 = UNIFORM_ALLOCATION_CERTIFICATE_VERSION;
 pub const MAX_SOLVER_MANIFEST_BYTES: usize = 1024 * 1024;
 pub const MAX_CANONICAL_PROBLEM_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OPTIMIZER_CERTIFICATE_BYTES: usize = 64 * 1024 * 1024;
@@ -48,6 +60,7 @@ pub const MAX_OPTIMIZER_RESULT_BYTES: usize =
 pub enum OptimizerCertificateKind {
     CertF = 1,
     CertQp = 2,
+    UniformAllocation = 3,
 }
 
 impl OptimizerCertificateKind {
@@ -55,6 +68,7 @@ impl OptimizerCertificateKind {
         match value {
             1 => Ok(Self::CertF),
             2 => Ok(Self::CertQp),
+            3 => Ok(Self::UniformAllocation),
             found => Err(OptimizerProtocolError::UnknownCertificateKind { found }),
         }
     }
@@ -183,6 +197,28 @@ impl OptimizerJobRequest {
         Self::from_canonical_problem_digest(
             OptimizerCertificateKind::CertQp,
             FHQPB001_CERTIFICATE_VERSION,
+            problem_digest,
+            solver_identity,
+            session_id,
+            nonce,
+        )
+    }
+
+    /// Construct an `FHUAC001` job from the complete typed aggregation
+    /// problem.  This digest is request identity, not a hiding commitment: the
+    /// Stage-1 worker and relying party both hold the plaintext orders.  A
+    /// shielded caller must keep this boundary confidential and separately
+    /// bind the proof witness to its private order root.
+    pub fn for_uniform_allocation(
+        compiled: &Compiled,
+        solver_identity: SolverIdentity,
+        session_id: [u8; 32],
+        nonce: [u8; 32],
+    ) -> Result<Self, OptimizerProtocolError> {
+        let problem_digest = canonical_uniform_allocation_problem_digest(compiled)?;
+        Self::from_canonical_problem_digest(
+            OptimizerCertificateKind::UniformAllocation,
+            FHUAC001_CERTIFICATE_VERSION,
             problem_digest,
             solver_identity,
             session_id,
@@ -328,6 +364,8 @@ pub enum OptimizerProtocolError {
     CertificateRejected {
         reason: String,
     },
+    NotUniformAllocationProgram,
+    UniformAllocation(UniformAllocationCertificateError),
     Qp(ExactQpCertificateBundleError),
 }
 
@@ -342,6 +380,12 @@ impl std::error::Error for OptimizerProtocolError {}
 impl From<ExactQpCertificateBundleError> for OptimizerProtocolError {
     fn from(value: ExactQpCertificateBundleError) -> Self {
         Self::Qp(value)
+    }
+}
+
+impl From<UniformAllocationCertificateError> for OptimizerProtocolError {
+    fn from(value: UniformAllocationCertificateError) -> Self {
+        Self::UniformAllocation(value)
     }
 }
 
@@ -578,6 +622,67 @@ pub fn verify_qp_optimizer_worker_result<R: OptimizerReplayGuard>(
     })
 }
 
+/// Typed `FHUAC001` relying-party boundary.  It independently re-hashes the
+/// typed source problem, decodes the strict allocation certificate, and runs
+/// the exact price/volume/largest-remainder checker before consuming replay
+/// state.  Neither a worker identity nor a conserving allocation is authority.
+pub fn verify_uniform_allocation_optimizer_worker_result<R: OptimizerReplayGuard>(
+    compiled: &Compiled,
+    expected: &OptimizerJobRequest,
+    wire: &[u8],
+    replay_guard: &mut R,
+) -> Result<VerifiedOptimizerResult<VerifiedUniformAllocation>, OptimizerProtocolError> {
+    if expected.certificate_kind != OptimizerCertificateKind::UniformAllocation {
+        return Err(OptimizerProtocolError::WrongCertificateKind {
+            expected: OptimizerCertificateKind::UniformAllocation,
+            found: expected.certificate_kind,
+        });
+    }
+    if expected.certificate_version != FHUAC001_CERTIFICATE_VERSION {
+        return Err(OptimizerProtocolError::WrongCertificateVersion {
+            expected: FHUAC001_CERTIFICATE_VERSION,
+            found: expected.certificate_version,
+        });
+    }
+    if canonical_uniform_allocation_problem_digest(compiled)? != expected.problem_digest {
+        return Err(OptimizerProtocolError::WrongProblem);
+    }
+    let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+        return Err(OptimizerProtocolError::NotUniformAllocationProgram);
+    };
+    verify_optimizer_worker_result(expected, wire, replay_guard, |certificate_bytes| {
+        let certificate = UniformAllocationCertificate::from_wire_bytes(certificate_bytes)?;
+        verify_uniform_allocation(orders, *k, &certificate)
+    })
+}
+
+/// Typed identity of the complete uniform-price source problem.  It is built
+/// from typed fields rather than a serialization spelling; changes to order,
+/// side, quantity, limit, or price-grid size produce a different job.
+pub fn canonical_uniform_allocation_problem_digest(
+    compiled: &Compiled,
+) -> Result<[u8; 32], OptimizerProtocolError> {
+    let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+        return Err(OptimizerProtocolError::NotUniformAllocationProgram);
+    };
+    let k = u64::try_from(*k).map_err(|_| OptimizerProtocolError::ArithmeticOverflow)?;
+    let order_count =
+        u64::try_from(orders.len()).map_err(|_| OptimizerProtocolError::ArithmeticOverflow)?;
+    let mut hasher = Sha256::new();
+    hasher.update(UNIFORM_ALLOCATION_PROBLEM_DOMAIN);
+    hasher.update(k.to_be_bytes());
+    hasher.update(order_count.to_be_bytes());
+    for order in orders {
+        hasher.update([match order.side {
+            Side::Bid => 0,
+            Side::Ask => 1,
+        }]);
+        hasher.update(order.qty.to_be_bytes());
+        hasher.update(order.limit.to_be_bytes());
+    }
+    Ok(hasher.finalize().into())
+}
+
 #[derive(Clone, Debug)]
 struct DecodedOptimizerResult {
     request: OptimizerJobRequest,
@@ -739,6 +844,7 @@ impl<'a> Cursor<'a> {
 mod tests {
     use super::*;
     use crate::{compile, products, run_certified_qp};
+    use fhegg_solver::clearing::{allocate, clear};
     use std::cell::Cell;
 
     fn solver(label: &[u8]) -> SolverIdentity {
@@ -1009,6 +1115,172 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, OptimizerProtocolError::WrongProblem);
+    }
+
+    #[test]
+    fn uniform_adapter_binds_source_and_mints_exact_allocation_once() {
+        let compiled = compile(&products::uniform_price_clearing()).unwrap();
+        let request = OptimizerJobRequest::for_uniform_allocation(
+            &compiled,
+            solver(b"uniform-worker/v1;largest-remainder=index-ascending"),
+            [0x81; 32],
+            [0x82; 32],
+        )
+        .unwrap();
+        let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+            unreachable!("uniform product changed backend")
+        };
+        let clearing = clear(orders, *k);
+        let allocation = allocate(orders, &clearing);
+        let certificate =
+            UniformAllocationCertificate::from_solver_output(orders, &clearing, &allocation)
+                .unwrap()
+                .to_wire_bytes()
+                .unwrap();
+        let response = encode_optimizer_worker_result(&request, &certificate).unwrap();
+        let mut replay = InMemoryOptimizerReplayGuard::default();
+        let verified = verify_uniform_allocation_optimizer_worker_result(
+            &compiled,
+            &request,
+            &response,
+            &mut replay,
+        )
+        .unwrap();
+        assert_eq!(verified.problem_digest(), request.problem_digest());
+        assert_eq!(
+            verified.checked().clearing_price() as usize,
+            clearing.clearing_price
+        );
+        assert_eq!(verified.checked().cleared_volume(), clearing.cleared_volume);
+        assert_eq!(verified.checked().fills(), allocation.fills);
+        assert_eq!(replay.len(), 1);
+
+        let error = verify_uniform_allocation_optimizer_worker_result(
+            &compiled,
+            &request,
+            &response,
+            &mut replay,
+        )
+        .unwrap_err();
+        assert_eq!(error, OptimizerProtocolError::Replay);
+    }
+
+    #[test]
+    fn conserving_but_noncanonical_worker_allocation_refuses_without_burning_job() {
+        let compiled = compile(&products::uniform_price_clearing()).unwrap();
+        let request = OptimizerJobRequest::for_uniform_allocation(
+            &compiled,
+            solver(b"uniform-worker/v1;largest-remainder=index-ascending"),
+            [0x83; 32],
+            [0x84; 32],
+        )
+        .unwrap();
+        let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+            unreachable!()
+        };
+        let clearing = clear(orders, *k);
+        let mut allocation = allocate(orders, &clearing);
+        allocation.fills[0] += 1;
+        allocation.fills[1] -= 1;
+        assert!(
+            allocation.validate(orders, &clearing),
+            "the old conservation/IR predicate deliberately accepts this move"
+        );
+        let certificate =
+            UniformAllocationCertificate::from_solver_output(orders, &clearing, &allocation)
+                .unwrap()
+                .to_wire_bytes()
+                .unwrap();
+        let response = encode_optimizer_worker_result(&request, &certificate).unwrap();
+        let mut replay = InMemoryOptimizerReplayGuard::default();
+        assert!(matches!(
+            verify_uniform_allocation_optimizer_worker_result(
+                &compiled,
+                &request,
+                &response,
+                &mut replay,
+            ),
+            Err(OptimizerProtocolError::CertificateRejected { .. })
+        ));
+        assert!(replay.is_empty());
+    }
+
+    #[test]
+    fn uniform_source_reordering_refuses_before_certificate_check() {
+        let compiled = compile(&products::uniform_price_clearing()).unwrap();
+        let request = OptimizerJobRequest::for_uniform_allocation(
+            &compiled,
+            solver(b"uniform-worker/v1;largest-remainder=index-ascending"),
+            [0x85; 32],
+            [0x86; 32],
+        )
+        .unwrap();
+        let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+            unreachable!()
+        };
+        let clearing = clear(orders, *k);
+        let allocation = allocate(orders, &clearing);
+        let certificate =
+            UniformAllocationCertificate::from_solver_output(orders, &clearing, &allocation)
+                .unwrap()
+                .to_wire_bytes()
+                .unwrap();
+        let response = encode_optimizer_worker_result(&request, &certificate).unwrap();
+
+        let mut reordered = compiled.clone();
+        let crate::compile::ConvexProgram::Aggregation { orders, .. } = &mut reordered.program
+        else {
+            unreachable!()
+        };
+        orders.swap(0, 1);
+        let mut replay = InMemoryOptimizerReplayGuard::default();
+        assert_eq!(
+            verify_uniform_allocation_optimizer_worker_result(
+                &reordered,
+                &request,
+                &response,
+                &mut replay,
+            )
+            .unwrap_err(),
+            OptimizerProtocolError::WrongProblem
+        );
+        assert!(replay.is_empty());
+    }
+
+    #[test]
+    fn uniform_worker_cannot_select_a_different_price_grid() {
+        let compiled = compile(&products::uniform_price_clearing()).unwrap();
+        let request = OptimizerJobRequest::for_uniform_allocation(
+            &compiled,
+            solver(b"uniform-worker/v1;largest-remainder=index-ascending"),
+            [0x87; 32],
+            [0x88; 32],
+        )
+        .unwrap();
+        let crate::compile::ConvexProgram::Aggregation { orders, k } = &compiled.program else {
+            unreachable!()
+        };
+        assert!(*k > 1);
+        let worker_selected_k = *k - 1;
+        let clearing = clear(orders, worker_selected_k);
+        let allocation = allocate(orders, &clearing);
+        let certificate =
+            UniformAllocationCertificate::from_solver_output(orders, &clearing, &allocation)
+                .unwrap()
+                .to_wire_bytes()
+                .unwrap();
+        let response = encode_optimizer_worker_result(&request, &certificate).unwrap();
+        let mut replay = InMemoryOptimizerReplayGuard::default();
+        assert!(matches!(
+            verify_uniform_allocation_optimizer_worker_result(
+                &compiled,
+                &request,
+                &response,
+                &mut replay,
+            ),
+            Err(OptimizerProtocolError::CertificateRejected { .. })
+        ));
+        assert!(replay.is_empty());
     }
 
     fn repair_result_checksum(wire: &mut [u8]) {

@@ -64,6 +64,13 @@
 //! the application-facing one-hot decision, recomputes its exact objective,
 //! binds the chosen coordinate to an ordered roster, and returns the canonical
 //! commitment over that complete claim.
+//!
+//! Uniform-price clearing now has the parallel `FHUAC001` path:
+//! [`optimizer_protocol::verify_uniform_allocation_optimizer_worker_result`]
+//! binds the exact typed order book to a replay-safe worker request and admits
+//! only the independently recomputed volume-maximising, lowest-tie,
+//! largest-remainder allocation.  This is a Stage-1 plaintext worker boundary,
+//! not a hiding commitment or a substitute for the private-root proof.
 
 pub mod ast;
 pub mod compile;
@@ -79,12 +86,13 @@ pub use compile::{
     ExactSddPsdCertificateError,
 };
 pub use optimizer_protocol::{
-    encode_optimizer_worker_result, verify_optimizer_worker_result,
-    verify_qp_optimizer_worker_result, InMemoryOptimizerReplayGuard, OptimizerCertificateKind,
-    OptimizerJobRequest, OptimizerProtocolError, OptimizerReplayGuard, SolverIdentity,
-    VerifiedOptimizerResult, FHQPB001_CERTIFICATE_VERSION, MAX_CANONICAL_PROBLEM_BYTES,
-    MAX_OPTIMIZER_CERTIFICATE_BYTES, MAX_OPTIMIZER_RESULT_BYTES, MAX_SOLVER_MANIFEST_BYTES,
-    OPTIMIZER_PROTOCOL_VERSION,
+    canonical_uniform_allocation_problem_digest, encode_optimizer_worker_result,
+    verify_optimizer_worker_result, verify_qp_optimizer_worker_result,
+    verify_uniform_allocation_optimizer_worker_result, InMemoryOptimizerReplayGuard,
+    OptimizerCertificateKind, OptimizerJobRequest, OptimizerProtocolError, OptimizerReplayGuard,
+    SolverIdentity, VerifiedOptimizerResult, FHQPB001_CERTIFICATE_VERSION,
+    FHUAC001_CERTIFICATE_VERSION, MAX_CANONICAL_PROBLEM_BYTES, MAX_OPTIMIZER_CERTIFICATE_BYTES,
+    MAX_OPTIMIZER_RESULT_BYTES, MAX_SOLVER_MANIFEST_BYTES, OPTIMIZER_PROTOCOL_VERSION,
 };
 pub use qp_certificate::{
     build_exact_qp_certificate_bundle, canonical_qp_program_digest,

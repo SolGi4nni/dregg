@@ -78,4 +78,5 @@ pub mod qp;
 pub mod qp_exact;
 pub mod qp_strict;
 pub mod smooth;
+pub mod uniform_allocation_cert;
 pub mod wire;
