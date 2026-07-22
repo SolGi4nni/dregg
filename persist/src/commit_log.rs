@@ -5348,6 +5348,43 @@ mod tests {
             0,
             "typed semantic identity resolves to the same receipt coordinate after restart"
         );
+
+        let write = reopened.db.begin_write().unwrap();
+        {
+            let mut by_id = write
+                .open_table(crate::finalized_receipt_core_v1::FINALIZED_RECEIPT_INDEX_BY_CORE_V1)
+                .unwrap();
+            by_id.insert(&fresh_core_id.bytes(), 1).unwrap();
+        }
+        write.commit().unwrap();
+        assert!(
+            reopened
+                .finalized_receipt_core_v1_by_id(fresh_core_id)
+                .is_err(),
+            "a mismatched reverse coordinate must fail at query time"
+        );
+
+        let write = reopened.db.begin_write().unwrap();
+        {
+            let mut by_id = write
+                .open_table(crate::finalized_receipt_core_v1::FINALIZED_RECEIPT_INDEX_BY_CORE_V1)
+                .unwrap();
+            by_id.insert(&fresh_core_id.bytes(), 0).unwrap();
+        }
+        {
+            let mut by_index = write
+                .open_table(
+                    crate::finalized_receipt_core_v1::FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1,
+                )
+                .unwrap();
+            by_index.insert(1, &fresh_core_id.bytes()).unwrap();
+        }
+        write.commit().unwrap();
+        drop(reopened);
+        assert!(
+            PersistentStore::open(&path).is_err(),
+            "restart audit must refuse one semantic id indexed at two receipt coordinates"
+        );
     }
 
     #[test]

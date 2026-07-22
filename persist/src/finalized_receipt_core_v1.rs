@@ -24,6 +24,8 @@ pub(crate) const FINALIZED_RECEIPT_CORES_V1: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("finalized_receipt_cores_v1");
 pub(crate) const FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1: TableDefinition<u64, &[u8; 32]> =
     TableDefinition::new("finalized_receipt_core_by_receipt_index_v1");
+pub(crate) const FINALIZED_RECEIPT_INDEX_BY_CORE_V1: TableDefinition<&[u8; 32], u64> =
+    TableDefinition::new("finalized_receipt_index_by_core_v1");
 pub(crate) const FINALIZED_RECEIPT_CORE_HEADS_V1: TableDefinition<&[u8; 32], &[u8; 72]> =
     TableDefinition::new("finalized_receipt_core_heads_v1");
 
@@ -252,6 +254,15 @@ pub(crate) fn stage_fresh_finalized_receipt_core_in(
         by_index.insert(receipt_index, &core_id.bytes())?;
     }
     {
+        let mut by_id = write.open_table(FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
+        if by_id.get(&core_id.bytes())?.is_some() {
+            return Err(integrity(
+                "fresh semantic core id already has a receipt index",
+            ));
+        }
+        by_id.insert(&core_id.bytes(), receipt_index)?;
+    }
+    {
         let mut heads = write.open_table(FINALIZED_RECEIPT_CORE_HEADS_V1)?;
         let head = encode_head(DurableFinalizedReceiptCoreHeadV1 {
             receipt_index,
@@ -291,6 +302,15 @@ pub(crate) fn verify_replayed_finalized_receipt_core_in(
     };
     if core.id() != core_id {
         return Err(integrity("replay core bytes hash to a different id"));
+    }
+    {
+        let by_id = write.open_table(FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
+        let indexed_receipt = by_id
+            .get(&core_id.bytes())?
+            .ok_or_else(|| integrity("replay is missing semantic core reverse index"))?;
+        if indexed_receipt.value() != receipt_index {
+            return Err(integrity("replay semantic core reverse index disagrees"));
+        }
     }
     let legacy = match core.predecessor() {
         FinalizedReceiptPredecessorV1::Genesis => (None, None),
@@ -401,49 +421,54 @@ impl PersistentStore {
         if core.id() != id {
             return Err(integrity("indexed core bytes hash to a different id"));
         }
+        let by_id = read.open_table(FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
+        let reverse = by_id
+            .get(&id.bytes())?
+            .ok_or_else(|| integrity("receipt-indexed core is missing its reverse index"))?;
+        if reverse.value() != receipt_index {
+            return Err(integrity("receipt/core reverse indexes disagree"));
+        }
         Ok(Some((id, core)))
     }
 
     /// Load one signer-independent semantic core by its typed id and return the unique receipt
     /// index that names it.
     ///
-    /// The id table and receipt-index table are checked in both directions on every read.  An
-    /// orphan core, duplicate index reference, missing core bytes, or id/hash mismatch is an
-    /// integrity error rather than an absent result or a silently selected row.
+    /// The core and both index rows are checked in both directions on every read.  A missing row,
+    /// mismatched coordinate, or id/hash mismatch is an integrity error rather than an absent
+    /// result or a silently selected row.  The reverse index keeps this lookup logarithmic; the
+    /// full restart audit additionally proves global cardinality and uniqueness.
     pub fn finalized_receipt_core_v1_by_id(
         &self,
         id: FinalizedReceiptIdV1,
     ) -> Result<Option<(u64, FinalizedReceiptCoreV1)>> {
         let read = self.db.begin_read()?;
+        let by_id = read.open_table(FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
         let cores = read.open_table(FINALIZED_RECEIPT_CORES_V1)?;
-        let Some(bytes) = cores.get(&id.bytes())? else {
-            let by_index = read.open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)?;
-            for row in by_index.iter()? {
-                let (_, indexed_id) =
-                    row.map_err(|error| StoreError::Database(error.to_string()))?;
-                if indexed_id.value() == &id.bytes() {
-                    return Err(integrity("receipt index names missing semantic core bytes"));
-                }
+        let reverse = by_id.get(&id.bytes())?;
+        let bytes = cores.get(&id.bytes())?;
+        let (reverse, bytes) = match (reverse, bytes) {
+            (None, None) => return Ok(None),
+            (Some(_), None) => {
+                return Err(integrity("core reverse index names missing core bytes"));
             }
-            return Ok(None);
+            (None, Some(_)) => {
+                return Err(integrity("semantic core bytes are not reverse-indexed"));
+            }
+            (Some(reverse), Some(bytes)) => (reverse, bytes),
         };
         let core = decode_core(bytes.value())?;
         if core.id() != id {
             return Err(integrity("requested core bytes hash to a different id"));
         }
+        let index = reverse.value();
         let by_index = read.open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)?;
-        let mut found = None;
-        for row in by_index.iter()? {
-            let (index, indexed_id) =
-                row.map_err(|error| StoreError::Database(error.to_string()))?;
-            if indexed_id.value() == &id.bytes() {
-                if found.replace(index.value()).is_some() {
-                    return Err(integrity("semantic core id is indexed more than once"));
-                }
-            }
+        let forward = by_index
+            .get(index)?
+            .ok_or_else(|| integrity("core reverse index names a missing receipt index"))?;
+        if forward.value() != &id.bytes() {
+            return Err(integrity("core/receipt reverse indexes disagree"));
         }
-        let index =
-            found.ok_or_else(|| integrity("semantic core bytes are not receipt-indexed"))?;
         Ok(Some((index, core)))
     }
 
@@ -473,9 +498,13 @@ impl PersistentStore {
             .map(|frame| (frame.receipt_index, frame))
             .collect();
         let by_index = read.open_table(FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1)?;
+        let by_id = read.open_table(FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
         let cores = read.open_table(FINALIZED_RECEIPT_CORES_V1)?;
         let heads = read.open_table(FINALIZED_RECEIPT_CORE_HEADS_V1)?;
-        if by_index.len()? != cores.len()? || by_index.len()? != frame_by_receipt.len() as u64 {
+        if by_index.len()? != by_id.len()?
+            || by_index.len()? != cores.len()?
+            || by_index.len()? != frame_by_receipt.len() as u64
+        {
             return Err(integrity("frame/core/index cardinalities disagree"));
         }
 
@@ -508,6 +537,12 @@ impl PersistentStore {
                 .map_err(|error| integrity(format!("invalid indexed core id: {error}")))?;
             if !referenced_ids.insert(core_id.bytes()) {
                 return Err(integrity("one semantic core id is indexed more than once"));
+            }
+            let reverse = by_id
+                .get(&core_id.bytes())?
+                .ok_or_else(|| integrity("semantic core reverse index is missing"))?;
+            if reverse.value() != receipt_index {
+                return Err(integrity("semantic core reverse index disagrees"));
             }
             let frame = frame_by_receipt
                 .get(&receipt_index)
@@ -627,6 +662,7 @@ impl PersistentStore {
             );
         }
         if referenced_ids.len() as u64 != cores.len()?
+            || referenced_ids.len() as u64 != by_id.len()?
             || rebuilt_heads.len() as u64 != heads.len()?
         {
             return Err(integrity("semantic core/head coverage is incomplete"));
@@ -990,8 +1026,8 @@ mod tests {
         }
         write.commit().unwrap();
         assert!(
-            store.finalized_receipt_core_v1_by_id(first_id).is_err(),
-            "a duplicated reverse coordinate must not be silently selected"
+            store.finalized_receipt_core_v1(2).is_err(),
+            "a duplicated forward coordinate must disagree with the canonical reverse index"
         );
 
         let write = store.db.begin_write().unwrap();

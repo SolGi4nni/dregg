@@ -324,6 +324,8 @@ impl PersistentStore {
             let _ = write_txn.open_table(
                 finalized_receipt_core_v1::FINALIZED_RECEIPT_CORE_BY_RECEIPT_INDEX_V1,
             )?;
+            let _ = write_txn
+                .open_table(finalized_receipt_core_v1::FINALIZED_RECEIPT_INDEX_BY_CORE_V1)?;
             let _ =
                 write_txn.open_table(finalized_receipt_core_v1::FINALIZED_RECEIPT_CORE_HEADS_V1)?;
             // Checkpoint tables.
