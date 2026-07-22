@@ -190,10 +190,13 @@ def CONSEQUENCE_REAL_DIGEST : List Nat := digestCols CONSEQUENCE_REAL_STATE cons
 
 /-! ## Binary exact tree columns and lookups -/
 
-def NODE_OUT_BASE : Nat := CONSEQUENCE_REAL_STATE + spongeCols consequenceRealPreimage
-def nodeOutBase (chain level : Nat) : Nat :=
-  NODE_OUT_BASE + (chain * DEPTH + level) * ROOT_LANES
-def TRACE_WIDTH : Nat := NODE_OUT_BASE + 4 * DEPTH * ROOT_LANES
+def NODE_STATE_BASE : Nat := CONSEQUENCE_REAL_STATE + spongeCols consequenceRealPreimage
+def NODE_STATE_STRIDE : Nat := spongeCols (List.replicate 17 (.const 0))
+def nodeStateBase (chain level : Nat) : Nat :=
+  NODE_STATE_BASE + (chain * DEPTH + level) * NODE_STATE_STRIDE
+def nodeDigestCols (chain level : Nat) : List Nat :=
+  digestColsAt (nodeStateBase chain level) 5
+def TRACE_WIDTH : Nat := NODE_STATE_BASE + 4 * DEPTH * NODE_STATE_STRIDE
 
 def pathBit (chain level : Nat) : EmittedExpr :=
   .var ((if chain < 2 then LOW_POS_BITS else APP_POS_BITS) + level)
@@ -211,7 +214,8 @@ def chainLeaf (chain lane : Nat) : EmittedExpr :=
   | _ => .var (APPENDED_LEAF_DIGEST.getD lane 0)
 
 def chainCur (chain level lane : Nat) : EmittedExpr :=
-  if level = 0 then chainLeaf chain lane else .var (nodeOutBase chain (level - 1) + lane)
+  if level = 0 then chainLeaf chain lane
+  else .var ((nodeDigestCols chain (level - 1)).getD lane 0)
 
 def nodeLeft (chain level lane : Nat) : EmittedExpr :=
   eadd (chainCur chain level lane)
@@ -224,15 +228,12 @@ def nodeRight (chain level lane : Nat) : EmittedExpr :=
       (esub (chainCur chain level lane) (pathSibling chain level lane)))
 
 def nodeInputs (chain level : Nat) : List EmittedExpr :=
-  (List.range ROOT_LANES).map (nodeLeft chain level) ++
+  [.const FNN4] ++ (List.range ROOT_LANES).map (nodeLeft chain level) ++
     (List.range ROOT_LANES).map (nodeRight chain level)
 
-def nodeLookup (chain level : Nat) : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTupleN (nodeInputs chain level) (cols (nodeOutBase chain level) ROOT_LANES)⟩
-
-def nodeLookups : List VmConstraint2 :=
-  (List.range 4).flatMap fun chain => (List.range DEPTH).map (nodeLookup chain)
+def nodePlans : List State16Step :=
+  (List.range 4).flatMap fun chain => (List.range DEPTH).flatMap fun level =>
+    spongePlan (nodeStateBase chain level) (nodeInputs chain level)
 
 /-! ## Algebraic teeth -/
 
@@ -383,10 +384,12 @@ def countIncrementConstraints : List VmConstraint2 :=
 
 def rootConstraints : List VmConstraint2 :=
   ((List.range ROOT_LANES).flatMap fun lane =>
-    [ firstEq (.var (nodeOutBase 0 (DEPTH - 1) + lane)) (.var (PRIOR_ROOT_BASE + lane))
-    , firstEq (.var (nodeOutBase 1 (DEPTH - 1) + lane))
-        (.var (nodeOutBase 2 (DEPTH - 1) + lane))
-    , firstEq (.var (nodeOutBase 3 (DEPTH - 1) + lane)) (.var (SUCCESSOR_ROOT_BASE + lane)) ])
+    [ firstEq (.var ((nodeDigestCols 0 (DEPTH - 1)).getD lane 0))
+        (.var (PRIOR_ROOT_BASE + lane))
+    , firstEq (.var ((nodeDigestCols 1 (DEPTH - 1)).getD lane 0))
+        (.var ((nodeDigestCols 2 (DEPTH - 1)).getD lane 0))
+    , firstEq (.var ((nodeDigestCols 3 (DEPTH - 1)).getD lane 0))
+        (.var (SUCCESSOR_ROOT_BASE + lane)) ])
 
 /-! ## Fixed 100-lane ABI -/
 
@@ -418,7 +421,7 @@ def spongePlans : List State16Step :=
   spongePlan OUTPUT_ROOT_STATE outputRootPreimage ++
   spongePlan PRE_STATE_COMMIT_STATE (statePreimage PRIOR_ROOT_BASE PRE_COUNT_BASE) ++
   spongePlan POST_STATE_COMMIT_STATE (statePreimage SUCCESSOR_ROOT_BASE POST_COUNT_BASE) ++
-  spongePlan CONSEQUENCE_REAL_STATE consequenceRealPreimage
+  spongePlan CONSEQUENCE_REAL_STATE consequenceRealPreimage ++ nodePlans
 
 def state16Lookups : List VmConstraint2 := spongePlans.map fun step =>
   .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols⟩
@@ -432,8 +435,9 @@ def shieldedExactApexV4Descriptor : EffectVmDescriptor2 :=
   { name := "shielded-exact-apex-v4::one-opening-whole-note-swap-aafi32-v1"
   , traceWidth := TRACE_WIDTH
   , piCount := 100
-  , tables := [poseidon2State16ChipTableDef, rangeTable 15, rangeTable 16]
-  , constraints := state16Lookups ++ nodeLookups ++ rangeConstraints ++ semanticConstraints ++ publicPins
+  , tables := [mainTableDef TRACE_WIDTH, poseidon2State16ChipTableDef,
+      rangeTable 15, rangeTable 16]
+  , constraints := state16Lookups ++ rangeConstraints ++ semanticConstraints ++ publicPins
   , hashSites := []
   , ranges := [] }
 
