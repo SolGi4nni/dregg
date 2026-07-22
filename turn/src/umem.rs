@@ -1139,14 +1139,14 @@ const UMEM_BALANCE_COLL: u32 = 0xBA1A;
 const UMEM_NONCE_COLL: u32 = 0x0CE0;
 
 /// Fold a low `u64` into a key felt limb (the in-domain `key` argument of `heap_addr`).
-fn umem_key_limb(x: u64) -> BabyBear {
+fn umem_key_limb_v1(x: u64) -> BabyBear {
     BabyBear::new((x % (BABYBEAR_P as u64)) as u32)
 }
 
 /// Horner fold of canonical bytes into a felt (the Rank-1 value-codec shape: a field image of
 /// the value; `Bytes32` rides the deployed `fold_bytes32`). Nonzero seed so the empty value is
 /// distinct from absence.
-fn umem_fold_bytes(bytes: &[u8]) -> BabyBear {
+fn umem_fold_bytes_v1(bytes: &[u8]) -> BabyBear {
     let mut acc = BabyBear::ONE;
     let mul = BabyBear::new(0x1000_0193); // FNV-ish field multiplier
     for &b in bytes {
@@ -1158,7 +1158,7 @@ fn umem_fold_bytes(bytes: &[u8]) -> BabyBear {
 /// The owning cell folded into a felt (the universal-map address is per-CELL: unlike a single
 /// cell's own heap, the unified address space holds every cell, so the cell identity is part of
 /// the address — two cells' balances are distinct `(domain, key)` cells).
-fn umem_cell_felt(c: &CellId) -> BabyBear {
+fn umem_cell_felt_v1(c: &CellId) -> BabyBear {
     fold_bytes32(c.as_bytes())
 }
 
@@ -1166,7 +1166,7 @@ fn umem_cell_felt(c: &CellId) -> BabyBear {
 /// Rank-1's `uaddrEnc` shape with the domain split out as its own column. Cell-plane keys fold
 /// the owning cell into the address (via the deployed `heap_addr` hash) so the universal map's
 /// per-cell cells never alias across cells.
-pub fn umem_key_addr(k: &UKey) -> (u32, BabyBear) {
+pub fn umem_key_addr_v1(k: &UKey) -> (u32, BabyBear) {
     let domain = k.domain().code();
     let key = match k {
         UKey::Heap {
@@ -1174,41 +1174,41 @@ pub fn umem_key_addr(k: &UKey) -> (u32, BabyBear) {
             collection,
             key,
         } => heap_addr(
-            umem_cell_felt(cell),
+            umem_cell_felt_v1(cell),
             heap_addr(BabyBear::new(*collection), BabyBear::new(*key)),
         ),
         UKey::Field { cell, slot } => heap_addr(
-            umem_cell_felt(cell),
-            heap_addr(BabyBear::new(UMEM_FIELD_COLL), umem_key_limb(*slot)),
+            umem_cell_felt_v1(cell),
+            heap_addr(BabyBear::new(UMEM_FIELD_COLL), umem_key_limb_v1(*slot)),
         ),
         UKey::Balance(cell) => heap_addr(
-            umem_cell_felt(cell),
+            umem_cell_felt_v1(cell),
             heap_addr(BabyBear::new(UMEM_BALANCE_COLL), BabyBear::ZERO),
         ),
         UKey::Nonce(cell) => heap_addr(
-            umem_cell_felt(cell),
+            umem_cell_felt_v1(cell),
             heap_addr(BabyBear::new(UMEM_NONCE_COLL), BabyBear::ZERO),
         ),
-        UKey::CapSlot { cell, slot } => heap_addr(umem_cell_felt(cell), slot_hash(*slot)),
+        UKey::CapSlot { cell, slot } => heap_addr(umem_cell_felt_v1(cell), slot_hash(*slot)),
         UKey::NoteNullifier(b) | UKey::BridgedNullifier(b) => fold_bytes32(b),
         // Any other projected address: a deterministic injective felt over its canonical
         // serialization (which carries the owning cell). The planes above are the ones the
         // cohort effects touch on the hot path; the fallback keeps the producer total over the
         // whole `UKey` space.
-        other => umem_fold_bytes(&serde_json::to_vec(other).expect("ukey serializes")),
+        other => umem_fold_bytes_v1(&serde_json::to_vec(other).expect("ukey serializes")),
     };
     (domain, key)
 }
 
 /// The `(present, value)` felt pair of an optional cell — `none ↦ (0, 0)`, the canonical absent
 /// encoding the umem grammar pins.
-pub fn umem_val_felt(v: Option<&UVal>) -> (BabyBear, BabyBear) {
+pub fn umem_val_felt_v1(v: Option<&UVal>) -> (BabyBear, BabyBear) {
     match v {
         None => (BabyBear::ZERO, BabyBear::ZERO),
         Some(UVal::Bytes32(b)) | Some(UVal::UmemRef(b)) => (BabyBear::ONE, fold_bytes32(b)),
         Some(other) => (
             BabyBear::ONE,
-            umem_fold_bytes(&serde_json::to_vec(other).expect("uval serializes")),
+            umem_fold_bytes_v1(&serde_json::to_vec(other).expect("uval serializes")),
         ),
     }
 }
@@ -1219,7 +1219,7 @@ pub fn umem_val_felt(v: Option<&UVal>) -> (BabyBear, BabyBear) {
 /// `prove_vm_descriptor2_umem` consumes the triple (`&descriptor, &rows, &[]/* PIs */,
 /// &MemBoundaryWitness::default(), &[]/* map heaps */, &boundary`).
 #[derive(Clone, Debug)]
-pub struct UmemProvingInputs {
+pub struct UmemProvingInputsV1 {
     /// The umem-form descriptor: one `UMemOp` constraint per touched domain, guarded by its
     /// own indicator column.
     pub descriptor: EffectVmDescriptor2,
@@ -1240,17 +1240,17 @@ pub struct UmemProvingInputs {
 /// `Err` if the address codec collides (two distinct `UKey`s lowering to the same
 /// `(domain, key)` felt — caught so the strict-increasing boundary stays sound) or the trace is
 /// empty.
-pub fn umem_proving_inputs(witness: &UmemTurnWitness) -> Result<UmemProvingInputs, String> {
-    umem_proving_inputs_from(&witness.pre, &witness.ops)
+pub fn umem_proving_inputs_v1(witness: &UmemTurnWitness) -> Result<UmemProvingInputsV1, String> {
+    umem_proving_inputs_from_v1(&witness.pre, &witness.ops)
 }
 
 /// [`umem_proving_inputs`] over an explicit `(pre projection, op trace)` — the form callers use
 /// to append the caller-owned index-domain receipt write ([`receipt_op`]) to the witness ops
 /// before lowering.
-pub fn umem_proving_inputs_from(
+pub fn umem_proving_inputs_from_v1(
     pre: &UProjection,
     ops: &[UmemOp],
-) -> Result<UmemProvingInputs, String> {
+) -> Result<UmemProvingInputsV1, String> {
     if ops.is_empty() {
         return Err("umem producer: empty op trace (no boundary to derive)".into());
     }
@@ -1261,7 +1261,7 @@ pub fn umem_proving_inputs_from(
     let mut by_addr: BTreeMap<(u32, u32), UKey> = BTreeMap::new();
     let mut touched: BTreeMap<UKey, (u32, BabyBear)> = BTreeMap::new();
     for op in ops {
-        let (d, key) = umem_key_addr(&op.key);
+        let (d, key) = umem_key_addr_v1(&op.key);
         match by_addr.get(&(d, key.as_u32())) {
             Some(prev) if prev != &op.key => {
                 return Err(format!(
@@ -1321,9 +1321,9 @@ pub fn umem_proving_inputs_from(
     // One main row per Blum op (in execution order), padded to a power of two with guards off.
     let mut rows: Vec<Vec<BabyBear>> = Vec::with_capacity(ops.len());
     for op in ops {
-        let (d, key) = umem_key_addr(&op.key);
-        let (present, value) = umem_val_felt(op.val.as_ref());
-        let (prev_present, prev_value) = umem_val_felt(op.prev_val.as_ref());
+        let (d, key) = umem_key_addr_v1(&op.key);
+        let (present, value) = umem_val_felt_v1(op.val.as_ref());
+        let (prev_present, prev_value) = umem_val_felt_v1(op.prev_val.as_ref());
         let mut row = vec![BabyBear::ZERO; width];
         row[0] = key;
         row[1] = present;
@@ -1344,7 +1344,7 @@ pub fn umem_proving_inputs_from(
     let mut addrs: Vec<(u32, BabyBear, Option<BabyBear>)> = touched
         .iter()
         .map(|(k, (d, key))| {
-            let (present, value) = umem_val_felt(pre.get(k));
+            let (present, value) = umem_val_felt_v1(pre.get(k));
             let init = if present == BabyBear::ONE {
                 Some(value)
             } else {
@@ -1359,12 +1359,703 @@ pub fn umem_proving_inputs_from(
         init_vals: addrs.iter().map(|(_, _, v)| *v).collect(),
     };
 
-    Ok(UmemProvingInputs {
+    Ok(UmemProvingInputsV1 {
         descriptor,
         rows,
         boundary,
     })
 }
+
+/// Compatibility name for the deployed scalar UMEM proving inputs. New code
+/// which deliberately targets that wire epoch should prefer
+/// [`UmemProvingInputsV1`].
+pub type UmemProvingInputs = UmemProvingInputsV1;
+
+/// Compatibility wrapper for the deployed scalar address codec. The explicit
+/// [`umem_key_addr_v1`] name is preferred in new call sites so a one-felt
+/// address can never be mistaken for the faithful V2 source encoding.
+pub fn umem_key_addr(k: &UKey) -> (u32, BabyBear) {
+    umem_key_addr_v1(k)
+}
+
+/// Compatibility wrapper for the deployed scalar value codec. The explicit
+/// [`umem_val_felt_v1`] name is preferred in new call sites.
+pub fn umem_val_felt(v: Option<&UVal>) -> (BabyBear, BabyBear) {
+    umem_val_felt_v1(v)
+}
+
+/// Compatibility wrapper for the deployed scalar boundary producer. The
+/// explicit [`umem_proving_inputs_v1`] name is preferred in new call sites.
+pub fn umem_proving_inputs(witness: &UmemTurnWitness) -> Result<UmemProvingInputsV1, String> {
+    umem_proving_inputs_v1(witness)
+}
+
+/// Compatibility wrapper for the deployed scalar boundary producer. The
+/// explicit [`umem_proving_inputs_from_v1`] name is preferred in new call sites.
+pub fn umem_proving_inputs_from(
+    pre: &UProjection,
+    ops: &[UmemOp],
+) -> Result<UmemProvingInputsV1, String> {
+    umem_proving_inputs_from_v1(pre, ops)
+}
+
+// ============================================================================
+// UMEM-V2 FAITHFUL SOURCE MODEL
+//
+// V1 lowers an address and a value to one BabyBear each. It detects collisions
+// inside one witness, but the wire representation itself cannot distinguish
+// sources which reduce to the same field element. V2 is deliberately a new
+// schema rather than a reinterpretation of V1: every source component remains
+// visible as canonical 16-bit limbs. The later descriptor/VK epoch can permute
+// these exact limbs and authenticate complete init/final boundary images.
+// These types deliberately do NOT derive `Deserialize`: private fields are the
+// canonical-construction wall, and serde derive would bypass presence/tag/
+// length/padding validation. Phase B must introduce an explicitly validated
+// protocol decoder together with its versioned wire schema.
+
+/// UMEM-V2 fixed address width: domain tag + variant tag + one exact 32-byte
+/// source + one exact 64-bit argument block.
+pub const UMEM_V2_ADDR_LIMBS: usize = 22;
+
+/// Maximum canonical structured value accepted by the V2 host model. Blob
+/// values are carried exactly, not Horner-folded; the explicit 64-KiB ceiling
+/// bounds allocation and gives the circuit epoch a stable chunking limit.
+pub const UMEM_V2_MAX_BLOB_BYTES: usize = 64 * 1024;
+
+/// Host-side operation ceiling for one V2 turn witness. The future wire epoch
+/// may choose a lower circuit geometry, but no untrusted caller can make this
+/// correctness oracle replay an unbounded vector.
+pub const UMEM_V2_MAX_OPS: usize = 65_536;
+
+/// Host-side complete-image ceiling. This is deliberately much larger than one
+/// practical proof cohort; scalable Phase-B paths will use authenticated
+/// membership/non-membership rather than materializing a million-cell image.
+pub const UMEM_V2_MAX_BOUNDARY_ENTRIES: usize = 1_048_576;
+
+/// The four-limb header of a V2 value: presence, variant, byte-length high 16,
+/// byte-length low 16.
+pub const UMEM_V2_VALUE_HEADER_LIMBS: usize = 4;
+
+/// Stable, source-level constructor tags for [`UKey`]. These are protocol
+/// numbers for UMEM-V2, independent of Rust/serde enum discriminants.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(u16)]
+pub enum UKeyVariantV2 {
+    Exist = 1,
+    Field = 2,
+    Balance = 3,
+    Nonce = 4,
+    ProvedState = 5,
+    Lifecycle = 6,
+    Mode = 7,
+    Identity = 8,
+    FieldVisibility = 9,
+    FieldCommitment = 10,
+    SwissTableRoot = 11,
+    RefcountTableRoot = 12,
+    SystemRoot = 13,
+    HeapRoot = 14,
+    Heap = 15,
+    SovereignCommitment = 16,
+    CapSlot = 17,
+    Delegate = 18,
+    DelegationSnapshot = 19,
+    DelegationEpoch = 20,
+    CommittedHeight = 21,
+    Permissions = 22,
+    VerificationKey = 23,
+    Program = 24,
+    Factory = 25,
+    NoteNullifier = 26,
+    BridgedNullifier = 27,
+    Receipt = 28,
+    Working = 29,
+    CapTombstone = 30,
+}
+
+/// Stable UMEM-V2 value tags. Presence is an independent header limb, so
+/// absence cannot alias any present value (including a zero-length blob).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(u16)]
+pub enum UValVariantV2 {
+    Absent = 0,
+    Present = 1,
+    Int = 2,
+    U64 = 3,
+    Bool = 4,
+    Bytes32 = 5,
+    Blob = 6,
+    UmemRef = 7,
+}
+
+/// Stable access-kind tags for the V2 permutation row.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(u16)]
+pub enum UmemKindV2 {
+    Read = 0,
+    Write = 1,
+}
+
+fn bytes32_to_u16_be(source: &[u8; 32]) -> [u16; 16] {
+    let mut out = [0u16; 16];
+    for (dst, pair) in out.iter_mut().zip(source.chunks_exact(2)) {
+        *dst = u16::from_be_bytes([pair[0], pair[1]]);
+    }
+    out
+}
+
+fn u64_to_u16_be(source: u64) -> [u16; 4] {
+    let bytes = source.to_be_bytes();
+    [
+        u16::from_be_bytes([bytes[0], bytes[1]]),
+        u16::from_be_bytes([bytes[2], bytes[3]]),
+        u16::from_be_bytes([bytes[4], bytes[5]]),
+        u16::from_be_bytes([bytes[6], bytes[7]]),
+    ]
+}
+
+fn u32_pair_to_u16_be(first: u32, second: u32) -> [u16; 4] {
+    let a = first.to_be_bytes();
+    let b = second.to_be_bytes();
+    [
+        u16::from_be_bytes([a[0], a[1]]),
+        u16::from_be_bytes([a[2], a[3]]),
+        u16::from_be_bytes([b[0], b[1]]),
+        u16::from_be_bytes([b[2], b[3]]),
+    ]
+}
+
+/// A faithful UMEM-V2 address. Derived ordering is the canonical raw-source
+/// lexicographic order over `(domain, variant, source32 limbs, argument limbs)`;
+/// no hash image or field reduction participates.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct UAddrV2 {
+    domain: u16,
+    variant: u16,
+    source32: [u16; 16],
+    arguments: [u16; 4],
+}
+
+impl UAddrV2 {
+    /// Exact source encoding of one structured key.
+    pub fn from_key(key: &UKey) -> Self {
+        let domain = key.domain().code() as u16;
+        let mut source32 = [0u16; 16];
+        let mut arguments = [0u16; 4];
+
+        let (variant, cell_or_source) = match key {
+            UKey::Exist(cell) => (UKeyVariantV2::Exist, Some(cell.as_bytes())),
+            UKey::Field { cell, slot } => {
+                arguments = u64_to_u16_be(*slot);
+                (UKeyVariantV2::Field, Some(cell.as_bytes()))
+            }
+            UKey::Balance(cell) => (UKeyVariantV2::Balance, Some(cell.as_bytes())),
+            UKey::Nonce(cell) => (UKeyVariantV2::Nonce, Some(cell.as_bytes())),
+            UKey::ProvedState(cell) => (UKeyVariantV2::ProvedState, Some(cell.as_bytes())),
+            UKey::Lifecycle(cell) => (UKeyVariantV2::Lifecycle, Some(cell.as_bytes())),
+            UKey::Mode(cell) => (UKeyVariantV2::Mode, Some(cell.as_bytes())),
+            UKey::Identity(cell) => (UKeyVariantV2::Identity, Some(cell.as_bytes())),
+            UKey::FieldVisibility { cell, slot } => {
+                arguments = u64_to_u16_be(*slot);
+                (UKeyVariantV2::FieldVisibility, Some(cell.as_bytes()))
+            }
+            UKey::FieldCommitment { cell, slot } => {
+                arguments = u64_to_u16_be(*slot);
+                (UKeyVariantV2::FieldCommitment, Some(cell.as_bytes()))
+            }
+            UKey::SwissTableRoot(cell) => (UKeyVariantV2::SwissTableRoot, Some(cell.as_bytes())),
+            UKey::RefcountTableRoot(cell) => {
+                (UKeyVariantV2::RefcountTableRoot, Some(cell.as_bytes()))
+            }
+            UKey::SystemRoot { cell, index } => {
+                arguments = u64_to_u16_be(*index);
+                (UKeyVariantV2::SystemRoot, Some(cell.as_bytes()))
+            }
+            UKey::HeapRoot(cell) => (UKeyVariantV2::HeapRoot, Some(cell.as_bytes())),
+            UKey::Heap {
+                cell,
+                collection,
+                key,
+            } => {
+                arguments = u32_pair_to_u16_be(*collection, *key);
+                (UKeyVariantV2::Heap, Some(cell.as_bytes()))
+            }
+            UKey::SovereignCommitment(cell) => {
+                (UKeyVariantV2::SovereignCommitment, Some(cell.as_bytes()))
+            }
+            UKey::CapSlot { cell, slot } => {
+                arguments = u32_pair_to_u16_be(*slot, 0);
+                (UKeyVariantV2::CapSlot, Some(cell.as_bytes()))
+            }
+            UKey::Delegate(cell) => (UKeyVariantV2::Delegate, Some(cell.as_bytes())),
+            UKey::DelegationSnapshot(cell) => {
+                (UKeyVariantV2::DelegationSnapshot, Some(cell.as_bytes()))
+            }
+            UKey::DelegationEpoch(cell) => (UKeyVariantV2::DelegationEpoch, Some(cell.as_bytes())),
+            UKey::CommittedHeight(cell) => (UKeyVariantV2::CommittedHeight, Some(cell.as_bytes())),
+            UKey::Permissions(cell) => (UKeyVariantV2::Permissions, Some(cell.as_bytes())),
+            UKey::VerificationKey(cell) => (UKeyVariantV2::VerificationKey, Some(cell.as_bytes())),
+            UKey::Program(cell) => (UKeyVariantV2::Program, Some(cell.as_bytes())),
+            UKey::Factory(source) => (UKeyVariantV2::Factory, Some(source)),
+            UKey::NoteNullifier(source) => (UKeyVariantV2::NoteNullifier, Some(source)),
+            UKey::BridgedNullifier(source) => (UKeyVariantV2::BridgedNullifier, Some(source)),
+            UKey::Receipt(position) => {
+                arguments = u64_to_u16_be(*position);
+                (UKeyVariantV2::Receipt, None)
+            }
+            UKey::Working {
+                service,
+                collection,
+                key,
+            } => {
+                arguments = u32_pair_to_u16_be(*collection, *key);
+                (UKeyVariantV2::Working, Some(service.as_bytes()))
+            }
+            UKey::CapTombstone { cell, slot } => {
+                arguments = u32_pair_to_u16_be(*slot, 0);
+                (UKeyVariantV2::CapTombstone, Some(cell.as_bytes()))
+            }
+        };
+        if let Some(source) = cell_or_source {
+            source32 = bytes32_to_u16_be(source);
+        }
+        Self {
+            domain,
+            variant: variant as u16,
+            source32,
+            arguments,
+        }
+    }
+
+    /// Canonical fixed-width limb image, suitable for a wide permutation/sort.
+    pub fn limbs(self) -> [u16; UMEM_V2_ADDR_LIMBS] {
+        let mut out = [0u16; UMEM_V2_ADDR_LIMBS];
+        out[0] = self.domain;
+        out[1] = self.variant;
+        out[2..18].copy_from_slice(&self.source32);
+        out[18..22].copy_from_slice(&self.arguments);
+        out
+    }
+
+    pub const fn domain(self) -> u16 {
+        self.domain
+    }
+
+    pub const fn variant(self) -> u16 {
+        self.variant
+    }
+}
+
+fn pack_bytes_u16_be(source: &[u8]) -> Box<[u16]> {
+    let mut out = Vec::with_capacity(source.len().div_ceil(2));
+    for pair in source.chunks(2) {
+        out.push(u16::from_be_bytes([
+            pair[0],
+            pair.get(1).copied().unwrap_or(0),
+        ]));
+    }
+    out.into_boxed_slice()
+}
+
+fn validate_v2_value_bound(value: Option<&UVal>) -> Result<(), UmemV2Error> {
+    if let Some(UVal::Blob(blob)) = value
+        && blob.len() > UMEM_V2_MAX_BLOB_BYTES
+    {
+        return Err(UmemV2Error::BlobTooLarge {
+            len: blob.len(),
+            max: UMEM_V2_MAX_BLOB_BYTES,
+        });
+    }
+    Ok(())
+}
+
+/// A faithful, bounded optional UMEM-V2 value. All fields are private so only
+/// canonical encodings can be constructed: an odd final source byte always
+/// occupies the high half of its last limb and the unused low half is zero.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct UValV2 {
+    presence: u16,
+    variant: u16,
+    source_byte_len: u32,
+    payload: Box<[u16]>,
+}
+
+impl UValV2 {
+    /// Encode an optional source value without reduction or type erasure.
+    pub fn try_from_value(value: Option<&UVal>) -> Result<Self, UmemV2Error> {
+        validate_v2_value_bound(value)?;
+        let (presence, variant, source): (u16, UValVariantV2, Vec<u8>) = match value {
+            None => (0, UValVariantV2::Absent, Vec::new()),
+            Some(UVal::Present) => (1, UValVariantV2::Present, Vec::new()),
+            Some(UVal::Int(v)) => (1, UValVariantV2::Int, v.to_be_bytes().to_vec()),
+            Some(UVal::U64(v)) => (1, UValVariantV2::U64, v.to_be_bytes().to_vec()),
+            Some(UVal::Bool(v)) => (1, UValVariantV2::Bool, vec![u8::from(*v)]),
+            Some(UVal::Bytes32(v)) => (1, UValVariantV2::Bytes32, v.to_vec()),
+            Some(UVal::Blob(v)) => (1, UValVariantV2::Blob, v.clone()),
+            Some(UVal::UmemRef(v)) => (1, UValVariantV2::UmemRef, v.to_vec()),
+        };
+        let source_byte_len = u32::try_from(source.len()).expect("V2 value bound fits u32");
+        Ok(Self {
+            presence,
+            variant: variant as u16,
+            source_byte_len,
+            payload: pack_bytes_u16_be(&source),
+        })
+    }
+
+    pub const fn presence(&self) -> u16 {
+        self.presence
+    }
+
+    pub const fn variant(&self) -> u16 {
+        self.variant
+    }
+
+    pub const fn source_byte_len(&self) -> u32 {
+        self.source_byte_len
+    }
+
+    pub fn payload(&self) -> &[u16] {
+        &self.payload
+    }
+
+    /// Header followed by the exact source payload limbs. This is the canonical
+    /// sequence the V2 permutation and boundary-root leaf will authenticate.
+    pub fn canonical_limbs(&self) -> Vec<u16> {
+        let mut out = Vec::with_capacity(UMEM_V2_VALUE_HEADER_LIMBS + self.payload.len());
+        out.push(self.presence);
+        out.push(self.variant);
+        out.push((self.source_byte_len >> 16) as u16);
+        out.push(self.source_byte_len as u16);
+        out.extend_from_slice(&self.payload);
+        out
+    }
+
+    /// Recover the exact source bytes (the inverse of the canonical packing).
+    pub fn source_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.payload.len() * 2);
+        for limb in &self.payload {
+            out.extend_from_slice(&limb.to_be_bytes());
+        }
+        out.truncate(self.source_byte_len as usize);
+        out
+    }
+}
+
+/// One exact UMEM-V2 permutation row. Both serials retain all 64 source bits;
+/// V1's `prev_serial as u32` truncation is intentionally not reproduced.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UmemOpV2 {
+    pub kind: UmemKindV2,
+    pub addr: UAddrV2,
+    pub value: UValV2,
+    pub prev_value: UValV2,
+    serial: [u16; 4],
+    prev_serial: [u16; 4],
+}
+
+impl UmemOpV2 {
+    fn try_from_op(index: usize, op: &UmemOp) -> Result<Self, UmemV2Error> {
+        Ok(Self {
+            kind: match op.kind {
+                UmemKind::Read => UmemKindV2::Read,
+                UmemKind::Write => UmemKindV2::Write,
+            },
+            addr: UAddrV2::from_key(&op.key),
+            value: UValV2::try_from_value(op.val.as_ref())?,
+            prev_value: UValV2::try_from_value(op.prev_val.as_ref())?,
+            serial: u64_to_u16_be(index as u64 + 1),
+            prev_serial: u64_to_u16_be(op.prev_serial),
+        })
+    }
+
+    pub const fn serial_limbs(&self) -> [u16; 4] {
+        self.serial
+    }
+
+    pub const fn prev_serial_limbs(&self) -> [u16; 4] {
+        self.prev_serial
+    }
+}
+
+/// One address in the complete V2 boundary image, carrying both endpoint
+/// values. The final value is not witness-declared independently: the producer
+/// obtains it by exact replay of the structured operations.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UmemBoundaryEntryV2 {
+    pub addr: UAddrV2,
+    pub init: UValV2,
+    pub final_value: UValV2,
+}
+
+/// The complete UMEM-V2 init/final image, canonically sorted by faithful raw
+/// address. Unlike V1's touched-address witness, this model includes the union
+/// of every address in the pre and replayed-final projections. Phase B will
+/// authenticate these endpoints (or replace the materialized image with exact
+/// membership/non-membership paths) and bind them to rotated public roots.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UmemBoundaryV2 {
+    entries: Vec<UmemBoundaryEntryV2>,
+}
+
+/// Exact V2 permutation rows plus the complete init/final correctness-oracle
+/// image. This is additive host substrate, not yet proof authority: Phase B
+/// must authenticate the endpoint roots and weld every row to host semantics.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UmemTraceV2 {
+    ops: Vec<UmemOpV2>,
+    boundary: UmemBoundaryV2,
+}
+
+impl UmemTraceV2 {
+    pub fn from_witness(witness: &UmemTurnWitness) -> Result<Self, UmemV2Error> {
+        let boundary = UmemBoundaryV2::from_witness(witness)?;
+        let ops = witness
+            .ops
+            .iter()
+            .enumerate()
+            .map(|(index, op)| UmemOpV2::try_from_op(index, op))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { ops, boundary })
+    }
+
+    pub fn ops(&self) -> &[UmemOpV2] {
+        &self.ops
+    }
+
+    pub const fn boundary(&self) -> &UmemBoundaryV2 {
+        &self.boundary
+    }
+}
+
+impl UmemBoundaryV2 {
+    /// Canonicalize a complete image and refuse repeated raw addresses. This is
+    /// public primarily for descriptor/proof assembly and hostile duplicate
+    /// tests; normal turn code should use [`UmemBoundaryV2::from_witness`].
+    pub fn try_from_entries(mut entries: Vec<UmemBoundaryEntryV2>) -> Result<Self, UmemV2Error> {
+        if entries.len() > UMEM_V2_MAX_BOUNDARY_ENTRIES {
+            return Err(UmemV2Error::BoundaryTooLarge {
+                len: entries.len(),
+                max: UMEM_V2_MAX_BOUNDARY_ENTRIES,
+            });
+        }
+        entries.sort_by_key(|entry| entry.addr);
+        for pair in entries.windows(2) {
+            if pair[0].addr == pair[1].addr {
+                return Err(UmemV2Error::DuplicateAddress(pair[0].addr));
+            }
+        }
+        Ok(Self { entries })
+    }
+
+    /// Build the full endpoint image after checking exact prior-value and
+    /// prior-serial claims and replaying every operation.
+    pub fn from_full_image(pre: &UProjection, ops: &[UmemOp]) -> Result<Self, UmemV2Error> {
+        if ops.is_empty() {
+            return Err(UmemV2Error::EmptyTrace);
+        }
+        if ops.len() > UMEM_V2_MAX_OPS {
+            return Err(UmemV2Error::TooManyOperations {
+                len: ops.len(),
+                max: UMEM_V2_MAX_OPS,
+            });
+        }
+        if pre.len() > UMEM_V2_MAX_BOUNDARY_ENTRIES {
+            return Err(UmemV2Error::BoundaryTooLarge {
+                len: pre.len(),
+                max: UMEM_V2_MAX_BOUNDARY_ENTRIES,
+            });
+        }
+        for value in pre.values() {
+            validate_v2_value_bound(Some(value))?;
+        }
+        for op in ops {
+            validate_v2_value_bound(op.val.as_ref())?;
+            validate_v2_value_bound(op.prev_val.as_ref())?;
+        }
+
+        let mut current: BTreeMap<UKey, Option<UVal>> = BTreeMap::new();
+        let mut last_serial: BTreeMap<UKey, u64> = BTreeMap::new();
+        for (index, op) in ops.iter().enumerate() {
+            let expected_value = current
+                .get(&op.key)
+                .cloned()
+                .unwrap_or_else(|| pre.get(&op.key).cloned());
+            if op.prev_val != expected_value {
+                return Err(UmemV2Error::PreviousValueMismatch {
+                    index,
+                    key: op.key.clone(),
+                });
+            }
+            let expected_serial = last_serial.get(&op.key).copied().unwrap_or(0);
+            if op.prev_serial != expected_serial {
+                return Err(UmemV2Error::PreviousSerialMismatch {
+                    index,
+                    key: op.key.clone(),
+                    expected: expected_serial,
+                    actual: op.prev_serial,
+                });
+            }
+            if op.kind == UmemKind::Read && op.val != expected_value {
+                return Err(UmemV2Error::ReadValueMismatch {
+                    index,
+                    key: op.key.clone(),
+                });
+            }
+            if op.kind == UmemKind::Write {
+                current.insert(op.key.clone(), op.val.clone());
+            }
+            last_serial.insert(op.key.clone(), index as u64 + 1);
+        }
+
+        let final_image = fold(pre, ops);
+        let mut all_keys: Vec<UKey> = pre
+            .keys()
+            .chain(final_image.keys())
+            .chain(ops.iter().map(|op| &op.key))
+            .cloned()
+            .collect();
+        all_keys.sort();
+        all_keys.dedup();
+        if all_keys.len() > UMEM_V2_MAX_BOUNDARY_ENTRIES {
+            return Err(UmemV2Error::BoundaryTooLarge {
+                len: all_keys.len(),
+                max: UMEM_V2_MAX_BOUNDARY_ENTRIES,
+            });
+        }
+
+        // This map is an executable injectivity gate. It should be unreachable
+        // for the exact source layout, but keeps future schema extensions from
+        // silently reusing a tag/field position.
+        let mut encoded_keys: BTreeMap<UAddrV2, UKey> = BTreeMap::new();
+        let mut entries = Vec::with_capacity(all_keys.len());
+        for key in all_keys {
+            let addr = UAddrV2::from_key(&key);
+            if let Some(previous) = encoded_keys.insert(addr, key.clone())
+                && previous != key
+            {
+                return Err(UmemV2Error::AddressCollision {
+                    addr,
+                    first: previous,
+                    second: key,
+                });
+            }
+            entries.push(UmemBoundaryEntryV2 {
+                addr,
+                init: UValV2::try_from_value(pre.get(&key))?,
+                final_value: UValV2::try_from_value(final_image.get(&key))?,
+            });
+        }
+        Self::try_from_entries(entries)
+    }
+
+    /// Build from an executor witness and require its declared post projection
+    /// to equal the exact replay, rather than trusting the co-located post image.
+    pub fn from_witness(witness: &UmemTurnWitness) -> Result<Self, UmemV2Error> {
+        // Validate the operation/image/value bounds before replaying the
+        // caller-supplied trace.  `from_full_image` performs that fail-closed
+        // admission and its own replay; only after admission do we independently
+        // compare the co-located post image.
+        let boundary = Self::from_full_image(&witness.pre, &witness.ops)?;
+        if fold(&witness.pre, &witness.ops) != witness.post {
+            return Err(UmemV2Error::PostReplayMismatch);
+        }
+        Ok(boundary)
+    }
+
+    pub fn entries(&self) -> &[UmemBoundaryEntryV2] {
+        &self.entries
+    }
+}
+
+/// Fail-closed UMEM-V2 construction errors.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum UmemV2Error {
+    EmptyTrace,
+    BlobTooLarge {
+        len: usize,
+        max: usize,
+    },
+    TooManyOperations {
+        len: usize,
+        max: usize,
+    },
+    BoundaryTooLarge {
+        len: usize,
+        max: usize,
+    },
+    DuplicateAddress(UAddrV2),
+    AddressCollision {
+        addr: UAddrV2,
+        first: UKey,
+        second: UKey,
+    },
+    PreviousValueMismatch {
+        index: usize,
+        key: UKey,
+    },
+    PreviousSerialMismatch {
+        index: usize,
+        key: UKey,
+        expected: u64,
+        actual: u64,
+    },
+    ReadValueMismatch {
+        index: usize,
+        key: UKey,
+    },
+    PostReplayMismatch,
+}
+
+impl std::fmt::Display for UmemV2Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyTrace => write!(f, "umem-v2: empty operation trace"),
+            Self::BlobTooLarge { len, max } => {
+                write!(f, "umem-v2: blob length {len} exceeds bound {max}")
+            }
+            Self::TooManyOperations { len, max } => {
+                write!(f, "umem-v2: operation count {len} exceeds bound {max}")
+            }
+            Self::BoundaryTooLarge { len, max } => {
+                write!(f, "umem-v2: boundary size {len} exceeds bound {max}")
+            }
+            Self::DuplicateAddress(addr) => {
+                write!(f, "umem-v2: duplicate boundary address {addr:?}")
+            }
+            Self::AddressCollision {
+                addr,
+                first,
+                second,
+            } => write!(
+                f,
+                "umem-v2: schema collision at {addr:?}: {first:?} aliases {second:?}"
+            ),
+            Self::PreviousValueMismatch { index, key } => write!(
+                f,
+                "umem-v2: op {index} prior value does not match replay at {key:?}"
+            ),
+            Self::PreviousSerialMismatch {
+                index,
+                key,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "umem-v2: op {index} prior serial {actual} != replay {expected} at {key:?}"
+            ),
+            Self::ReadValueMismatch { index, key } => write!(
+                f,
+                "umem-v2: read op {index} does not return replay value at {key:?}"
+            ),
+            Self::PostReplayMismatch => {
+                write!(f, "umem-v2: declared post image differs from exact replay")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UmemV2Error {}
 
 /// The FIXED per-effect COHORT proving inputs: the single-domain width-7 rows + the real
 /// [`UMemBoundaryWitness`] the deployed-form FIXED cohort descriptor
@@ -1407,7 +2098,7 @@ pub fn umem_cohort_proving_inputs_from(
     pre: &UProjection,
     ops: &[UmemOp],
 ) -> Result<UmemCohortProvingInputs, String> {
-    let inputs = umem_proving_inputs_from(pre, ops)?;
+    let inputs = umem_proving_inputs_from_v1(pre, ops)?;
     // SINGLE-DOMAIN gate: the producer's width is `6 + #domains`; the fixed cohort is width 7
     // (one domain). A wider leg cannot reconcile to ONE fixed cohort descriptor — fail closed.
     if inputs.descriptor.trace_width != 7 {
@@ -1469,7 +2160,7 @@ pub fn umem_cohort_multidomain_proving_inputs_from(
     pre: &UProjection,
     ops: &[UmemOp],
 ) -> Result<UmemCohortMultiProvingInputs, String> {
-    let inputs = umem_proving_inputs_from(pre, ops)?;
+    let inputs = umem_proving_inputs_from_v1(pre, ops)?;
     // The producer emits one UMemOp constraint per touched domain, in sorted-code order, each
     // guarded at column 6 + i — exactly the multi-domain cohort descriptor's shape.
     let domains: Vec<u32> = inputs
