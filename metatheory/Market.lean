@@ -52,6 +52,7 @@ import Market.PartyMpcTransportBoundary
 import Market.DarkBazaarPrivateIngressCutover
 import Market.DarkBazaarLiveApexHost
 import Market.PrivateClearingGameConsequence
+import Market.DarkBazaarConsequenceOutbox
 import Market.DistributedPrivateProverBoundary
 import Market.FhEggLedgerBinding
 import Market.CertF
