@@ -4600,6 +4600,590 @@ fn persist_finalized_payload_rejection(
     }
 }
 
+/// Complete locked snapshot for the disjoint exact-v3 finalized-turn path.
+///
+/// Every field is owned so proof verification and the real producer can run on a blocking worker
+/// with no Tokio worker or node-state lock held.  The actor authority retains the complete durable
+/// ledger image and its opaque revalidation key through the later CAS.
+struct LiveExactFnspV3Preparation {
+    signed_turn: dregg_sdk::SignedTurn,
+    validated_signed_turn: crate::signed_turn_validation::ValidatedSignedTurn,
+    actor_authority: crate::exact_fnsp_v3_actor_authority::DurableExactFnspV3ActorAuthority,
+    prepared_transition: dregg_persist::PreparedExactFnspV3StateTransitionV1,
+    signer: crate::exact_fnsp_v3_activation::ExactFnspV3ExecutorSignerAuthority,
+    epoch: dregg_turn::ExactFnspV3ReceiptEpochV1,
+    executor: dregg_turn::TurnExecutor,
+    coordinates: crate::exact_fnsp_v3_execution_authority::FinalizedRecordCoordinates,
+    block_id: BlockId,
+    block_executed_up_to: u64,
+    captured_executed_up_to: u64,
+    timestamp: i64,
+    lean_producer_enabled: bool,
+    artifacts: Option<TurnArtifactBundle>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_live_exact_fnsp_v3(
+    locked: &mut crate::state::NodeStateInner,
+    executor: dregg_turn::TurnExecutor,
+    signed_turn: dregg_sdk::SignedTurn,
+    validated_signed_turn: crate::signed_turn_validation::ValidatedSignedTurn,
+    route: crate::exact_fnsp_v3_execution_authority::ExactFnspV3RouteCoordinates,
+    block_id: BlockId,
+    block_executed_up_to: u64,
+    artifacts: Option<TurnArtifactBundle>,
+) -> Result<LiveExactFnspV3Preparation, String> {
+    if !locked
+        .solo_consensus
+        .as_ref()
+        .is_some_and(|consensus| consensus.is_solo)
+    {
+        return Err(
+            "exact FNSP-v3 live epoch currently requires one devnet executor signer; shared/threshold frame signing is not installed"
+                .into(),
+        );
+    }
+    // Current admission paths do not append exact-v3 receipts: the executor refuses the carrier
+    // without the proof-acceptance token minted only below.  Detect a row left by an older/foreign
+    // ingress anyway.  Such a row cannot be reclassified as the epoch cutover tail and reused as
+    // its own exact frame; doing so would shift the exact log coordinate by one.
+    if locked
+        .cclerk
+        .receipt_log()
+        .iter()
+        .any(|receipt| receipt.turn_hash == validated_signed_turn.turn_hash())
+    {
+        return Err("same exact-v3 turn receipt was already staged before finalization".into());
+    }
+
+    let live_authority = locked
+        .store
+        .exact_fnsp_v3_live_authority()
+        .map_err(|error| error.to_string())?;
+    let exact_head = if let Some((activation, committed_head)) = live_authority.as_ref() {
+        committed_head
+            .as_ref()
+            .map(|head| head.exact_after())
+            .unwrap_or_else(|| activation.exact_initial())
+    } else {
+        match locked
+            .store
+            .exact_fnsp_v3_state_head()
+            .map_err(|error| error.to_string())?
+        {
+            Some(head) => head,
+            None => locked
+                .store
+                .initialize_exact_fnsp_v3_state_from_faithful_nullifiers()
+                .map_err(|error| error.to_string())?,
+        }
+    };
+
+    // This is deliberately before lazy activation.  A payload cannot install the federation flag
+    // day unless a complete checkpoint⊕overlay actor/ledger image is already authenticated and
+    // welded to the live ledger.
+    let actor_authority =
+        crate::exact_fnsp_v3_actor_authority::capture_durable_exact_fnsp_v3_actor(
+            locked,
+            signed_turn.turn.agent,
+        )
+        .map_err(|error| error.to_string())?;
+    let actor_coordinates = actor_authority.coordinates();
+    if actor_coordinates.exact_state_head() != exact_head {
+        return Err("exact state moved while capturing durable actor authority".into());
+    }
+    let prepared_transition = locked
+        .store
+        .prepare_exact_fnsp_v3_transition_or_replay(route.nullifier(), route.value())
+        .map_err(|error| error.to_string())?;
+    if prepared_transition.cas().expected() != actor_coordinates.exact_state_head() {
+        return Err("prepared exact transition does not start at the actor snapshot head".into());
+    }
+
+    let signer = crate::exact_fnsp_v3_activation::ExactFnspV3ExecutorSignerAuthority::capture(
+        &locked.cclerk,
+    );
+    let (receipt_next_index, encoded_tail) = locked
+        .store
+        .receipt_chain_head()
+        .map_err(|error| error.to_string())?;
+    if receipt_next_index != actor_coordinates.receipt_log_next_index() {
+        return Err("durable receipt cursor moved while capturing exact transition".into());
+    }
+    let receipt_tail_hash = encoded_tail
+        .as_deref()
+        .map(|bytes| {
+            postcard::from_bytes::<dregg_turn::TurnReceipt>(bytes)
+                .map(|receipt| receipt.receipt_hash())
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?;
+    if receipt_tail_hash != actor_coordinates.receipt_log_tail_hash() {
+        return Err("durable receipt tail moved while capturing exact transition".into());
+    }
+
+    let (epoch_number, federation_id, cutover_index, cutover_tail, exact_initial) =
+        if let Some((stored_activation, _)) = live_authority {
+            (
+                stored_activation.epoch(),
+                stored_activation.federation_id(),
+                stored_activation.receipt_cutover_next_index(),
+                stored_activation.receipt_cutover_tail_hash(),
+                stored_activation.exact_initial(),
+            )
+        } else {
+            (
+                1,
+                crate::executor_setup::federation_id_for_executor(locked),
+                receipt_next_index,
+                receipt_tail_hash,
+                exact_head,
+            )
+        };
+    let epoch = dregg_turn::ExactFnspV3ReceiptEpochV1::prepare(
+        dregg_turn::ExactFnspV3ReceiptEpoch::new(epoch_number)
+            .map_err(|error| error.to_string())?,
+        federation_id,
+        signer.public_key().0,
+        cutover_index,
+        cutover_tail,
+        dregg_turn::ExactFnspV3StatePoint::new(exact_initial.root(), exact_initial.count())
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let captured_executed_up_to = locked
+        .store
+        .load_executed_up_to()
+        .map_err(|error| error.to_string())?;
+    let coordinates = crate::exact_fnsp_v3_execution_authority::FinalizedRecordCoordinates::new(
+        actor_coordinates.commit_cursor(),
+        executor.block_height,
+        block_id.0,
+        block_executed_up_to,
+    );
+    let timestamp = executor.current_timestamp;
+    Ok(LiveExactFnspV3Preparation {
+        signed_turn,
+        validated_signed_turn,
+        actor_authority,
+        prepared_transition,
+        signer,
+        epoch,
+        executor,
+        coordinates,
+        block_id,
+        block_executed_up_to,
+        captured_executed_up_to,
+        timestamp,
+        lean_producer_enabled: locked.lean_producer_enabled,
+        artifacts,
+    })
+}
+
+async fn execute_live_exact_fnsp_v3(
+    state: &NodeState,
+    handle: &BlocklaceHandle,
+    preparation: LiveExactFnspV3Preparation,
+    finality_round: Option<u64>,
+) -> Result<(), String> {
+    let LiveExactFnspV3Preparation {
+        signed_turn,
+        validated_signed_turn,
+        actor_authority,
+        prepared_transition,
+        signer,
+        epoch,
+        executor,
+        coordinates,
+        block_id,
+        block_executed_up_to,
+        captured_executed_up_to,
+        timestamp,
+        lean_producer_enabled,
+        artifacts,
+    } = preparation;
+
+    // HidingFRI verification and the real Rust/Lean producer both run on the blocking pool against
+    // owned state.  Rejected execution never reaches the node's RAM, cipherclerk, store, events,
+    // or generic fee/nonce rejection path.
+    let joined = tokio::task::spawn_blocking(move || {
+        let accepted =
+            crate::exact_fnsp_v3_execution_authority::verify_exact_fnsp_v3_turn_acceptance(
+                &signed_turn,
+                &prepared_transition,
+                &actor_authority,
+                &executor,
+            )?;
+        let executed =
+            crate::exact_fnsp_v3_execution_authority::execute_and_authenticate_finalized_turn(
+                executor,
+                accepted,
+                &signed_turn,
+                validated_signed_turn,
+                actor_authority,
+                &signer,
+                lean_producer_enabled,
+                coordinates,
+            )?;
+        Ok::<_, crate::exact_fnsp_v3_execution_authority::ExecutorProducedFinalizationError>((
+            executed,
+            signer,
+            epoch,
+            prepared_transition,
+            signed_turn,
+        ))
+    })
+    .await
+    .map_err(|error| format!("exact proof/executor worker failed: {error}"))?
+    .map_err(|error| error.to_string())?;
+
+    let (executed, signer, epoch, prepared_transition, signed_turn) = joined;
+    let mut locked = state.write().await;
+
+    // The blocklace resume cursor is independent of the commit cursor and exact CAS.  It may move
+    // while proof work is off-lock; do not attach this turn to a different finalized-block view.
+    let current_executed_up_to = locked
+        .store
+        .load_executed_up_to()
+        .map_err(|error| error.to_string())?;
+    if current_executed_up_to != captured_executed_up_to {
+        return Err("exact FNSP-v3 block finalization cursor moved during proof work".into());
+    }
+    executed
+        .revalidate_actor_locked(&locked)
+        .map_err(|error| format!("exact FNSP-v3 snapshot became stale: {error}"))?;
+
+    // Historical-root membership is part of the accepted spend, but it is intentionally outside
+    // the HidingFRI statement verifier.  Authenticate it before lazy activation so a valid proof
+    // naming an absent history row cannot choose the federation flag day and then fail later.
+    let local_pk = locked.cclerk.public_key();
+    let signing_key_bytes = locked.cclerk.gossip_signing_key().to_bytes();
+    if signer.public_key() != local_pk {
+        return Err("exact FNSP-v3 executor signer changed before finalization".into());
+    }
+    let (local_ml_dsa_pk, local_ml_dsa_signing_key) =
+        dregg_federation::frost::MlDsaSigningKey::from_seed(&signing_key_bytes);
+    let accepted_binding = executed.accepted_binding();
+    let historical_root =
+        dregg_persist::CanonicalFaithfulRoot::from_bytes(accepted_binding.historical_note_root())
+            .map_err(|error| error.to_string())?;
+    let history_expectation = locked
+        .store
+        .faithful_note_root_expectation()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "faithful note-root history is uninitialized".to_string())?;
+    let authenticated_history = locked
+        .store
+        .load_faithful_note_root_history_hybrid(
+            std::slice::from_ref(&local_pk),
+            std::slice::from_ref(&local_ml_dsa_pk),
+            1,
+            history_expectation,
+        )
+        .map_err(|error| error.to_string())?;
+    if !faithful_history_contains_pair(
+        &authenticated_history,
+        accepted_binding.historical_root_height(),
+        historical_root,
+    ) {
+        return Err("exact FNSP-v3 historical note root is not authenticated".into());
+    }
+
+    // This is the first point allowed to install a lazy epoch: the authenticated actor/checkpoint,
+    // exact proof, real producer, and every captured cursor have all succeeded.  The predecessor
+    // helper also rechecks the global cclerk receipt length/tail against the durable log, making the
+    // post-durable in-memory append a structurally infallible projection install.
+    let predecessor = crate::exact_fnsp_v3_activation::exact_fnsp_v3_current_predecessor(
+        &locked.store,
+        &locked.cclerk,
+        epoch,
+        signed_turn.turn.agent,
+    )
+    .map_err(|error| error.to_string())?;
+    let executed = executed
+        .bind_exact_frame(&signer, predecessor)
+        .map_err(|error| error.to_string())?;
+    executed
+        .revalidate_actor_locked(&locked)
+        .map_err(|error| format!("exact FNSP-v3 snapshot moved before durable prepare: {error}"))?;
+
+    let binding = executed.frame().accepted_binding();
+    let spent_nullifiers = [dregg_persist::commit_log::FinalizedNullifierRecord {
+        nullifier: binding.nullifier(),
+        value: binding.value(),
+    }];
+    // The exact AAFI root and FNS3 are intentionally distinct from the deployed legacy
+    // sorted-dense nullifier root carried by faithful-spend authority and AttestedRoot.  Rebuild
+    // that legacy successor independently from its durable records; never substitute either exact
+    // coordinate into this seam.
+    let durable_legacy_nullifiers = dregg_cell::nullifier_set::NullifierSet::from_records(
+        locked
+            .store
+            .load_faithful_nullifier_records()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let (_, ordered_legacy_successors) =
+        planned_ordered_nullifier_successors(&durable_legacy_nullifiers, &spent_nullifiers)
+            .map_err(|nullifier| {
+                format!(
+                    "exact FNSP-v3 nullifier is already present in the legacy accumulator: {}",
+                    dregg_types::hex_encode(&nullifier)
+                )
+            })?;
+    let successor_nullifier_root =
+        dregg_persist::CanonicalFaithfulRoot::from_bytes(ordered_legacy_successors[0])
+            .map_err(|error| error.to_string())?;
+    let finalized_spends = [dregg_persist::FinalizedFaithfulSpendInput {
+        root_height: binding.historical_root_height(),
+        historical_note_root: dregg_persist::CanonicalFaithfulRoot::from_bytes(
+            binding.historical_note_root(),
+        )
+        .map_err(|error| error.to_string())?,
+        nullifier: binding.nullifier(),
+        value: binding.value(),
+        asset_type: binding.asset_type(),
+        successor_nullifier_root,
+    }];
+    let receipt = executed.receipt().clone();
+    let record = executed.record().clone();
+    let receipt_hash = receipt.receipt_hash();
+    let new_height = record.height;
+
+    let prepared_finalization =
+        crate::exact_fnsp_v3_finalization::prepare_exact_fnsp_v3_finalization(
+            &locked.store,
+            executed,
+            prepared_transition,
+            crate::exact_fnsp_v3_finalization::ExactFnspV3HistoryAuthority {
+                ed25519_committee: std::slice::from_ref(&local_pk),
+                ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
+                threshold: 1,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+
+    // A spend-only exact turn advances the note-root history by one finalized height with the
+    // exact same note count/root.  There are deliberately no note leaves to append or publish.
+    let faithful_federation_id = faithful_history_federation_id(locked.federation_id, &local_pk);
+    let existing_faithful_head = locked
+        .store
+        .faithful_note_root_head()
+        .map_err(|error| error.to_string())?;
+    if existing_faithful_head.as_ref().is_some_and(|head| {
+        head.federation_id != faithful_federation_id
+            || head.committee_epoch != locked.committee_epoch
+    }) {
+        return Err("faithful note-root segment belongs to another committee context".into());
+    }
+    let initial_faithful_anchor = if existing_faithful_head.is_none() {
+        let previous_height = new_height
+            .checked_sub(1)
+            .ok_or_else(|| "exact finalized height zero has no faithful predecessor".to_string())?;
+        let note_count = u64::try_from(locked.note_tree.size())
+            .map_err(|_| "faithful note count does not fit u64".to_string())?;
+        Some(
+            dregg_persist::FaithfulNoteRootAnchorV1::new(
+                faithful_history_session_id(faithful_federation_id, locked.committee_epoch),
+                faithful_federation_id,
+                locked.committee_epoch,
+                previous_height,
+                note_count,
+                dregg_persist::CanonicalFaithfulRoot::from_faithful(
+                    locked.note_tree.faithful_root_immutable(),
+                ),
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    let faithful_predecessor = existing_faithful_head
+        .as_ref()
+        .or(initial_faithful_anchor.as_ref())
+        .expect("existing or initial faithful head");
+    let faithful_record = dregg_persist::plan_faithful_note_root_transition_v1(
+        &locked.note_tree,
+        faithful_predecessor,
+        block_id.0,
+        &[],
+    )
+    .map_err(|error| error.to_string())?;
+    let faithful_message = faithful_record.signing_message();
+    let signing_key = dregg_types::SigningKey::from_bytes(&signing_key_bytes);
+    let faithful_classical_signature = dregg_types::sign(&signing_key, &faithful_message);
+    let faithful_pq_signature = local_ml_dsa_signing_key
+        .sign(&faithful_message)
+        .ok_or_else(|| "ML-DSA faithful-root signing failed".to_string())?;
+    let faithful_envelope = dregg_persist::FaithfulNoteRootEnvelopeV1 {
+        record: faithful_record.clone(),
+        hybrid_quorum: vec![dregg_types::HybridQuorumSig {
+            pubkey: local_pk,
+            signature: faithful_classical_signature,
+            ml_dsa_pubkey: local_ml_dsa_pk.0.to_vec(),
+            pq_signature: faithful_pq_signature,
+        }],
+    };
+
+    let mut attested = dregg_types::AttestedRoot {
+        merkle_root: record.ledger_root,
+        note_tree_root: Some(faithful_record.successor.to_bytes()),
+        nullifier_set_root: Some(successor_nullifier_root.to_bytes()),
+        height: new_height,
+        timestamp,
+        blocklace_block_id: Some(block_id.0),
+        finality_round,
+        quorum_signatures: Vec::new(),
+        threshold_qc: None,
+        threshold: 1,
+        federation_id: dregg_types::FederationId(faithful_federation_id),
+        receipt_stream_root: Some(dregg_types::merkle_root_of_receipt_hashes(&[receipt_hash])),
+        hybrid_quorum: Vec::new(),
+    };
+    let attested_signature = dregg_types::sign(&signing_key, &attested.signing_message());
+    attested
+        .quorum_signatures
+        .push((local_pk, attested_signature));
+    let finalization_quorum = handle
+        .votes
+        .read()
+        .await
+        .assembled_quorum(&block_id)
+        .filter(|(root, _)| *root == attested.merkle_root)
+        .map(|(_, signatures)| signatures)
+        .unwrap_or_default();
+    attested.hybrid_quorum = finalization_quorum
+        .iter()
+        .map(|signature| dregg_types::HybridQuorumSig {
+            pubkey: signature.voter,
+            signature: signature.signature,
+            ml_dsa_pubkey: signature.ml_dsa_pubkey.clone(),
+            pq_signature: signature.pq_signature.clone(),
+        })
+        .collect();
+    let stored = dregg_persist::StoredAttestedRoot {
+        merkle_root: attested.merkle_root,
+        note_tree_root: attested.note_tree_root,
+        nullifier_set_root: attested.nullifier_set_root,
+        height: attested.height,
+        timestamp: attested.timestamp,
+        blocklace_block_id: attested.blocklace_block_id,
+        finality_round: attested.finality_round,
+        quorum_signatures: attested.quorum_signatures.clone(),
+        threshold_qc: attested.threshold_qc.clone(),
+        threshold: attested.threshold,
+        federation_id: attested.federation_id,
+        receipt_stream_root: attested.receipt_stream_root,
+        finalization_quorum,
+    };
+
+    // The async vote lookup above deliberately happened before the last fence.  Nothing may sit
+    // between this revalidation and the one atomic writer transaction.
+    if locked
+        .store
+        .load_executed_up_to()
+        .map_err(|error| error.to_string())?
+        != captured_executed_up_to
+    {
+        return Err("exact FNSP-v3 block cursor moved before durable commit".into());
+    }
+    let faithful_weld = dregg_persist::commit_log::FinalizedFaithfulRootWeld {
+        initial_anchor: initial_faithful_anchor.as_ref(),
+        envelope: &faithful_envelope,
+        author_committee: std::slice::from_ref(&local_pk),
+        author_ml_dsa_committee: std::slice::from_ref(&local_ml_dsa_pk),
+        attested_root: &stored,
+        spent_nullifiers: &spent_nullifiers,
+        finalized_spends: &finalized_spends,
+    };
+    let durable = prepared_finalization
+        .commit_appending_receipt(&locked.store, faithful_weld)
+        .map_err(|error| error.to_string())?;
+    let outcome = durable.outcome();
+    if !outcome.freshly_committed {
+        debug!(
+            turn_hash = %dregg_types::hex_encode(&validated_signed_turn.turn_hash()),
+            ordinal = outcome.ordinal,
+            "exact FNSP-v3 commit was already durable; suppressing RAM/event replay"
+        );
+        return Ok(());
+    }
+    let locked_inner = &mut *locked;
+    durable
+        .install_fresh_post_execution(&mut locked_inner.ledger, &mut locked_inner.cclerk)
+        .expect("fresh exact receipt projection was fenced against durable receipt coordinates");
+    crate::metrics::inc_turns_executed("committed");
+    crate::metrics::set_ledger_cell_count(locked.ledger.len() as f64);
+    crate::metrics::set_receipt_chain_length(locked.cclerk.receipt_log_length() as f64);
+    state.emit(NodeEvent::Root {
+        height: new_height,
+        merkle_root: dregg_types::hex_encode(&stored.merkle_root),
+        timestamp: stored.timestamp,
+    });
+    let mirrored = dregg_persist::CommitRecord {
+        ordinal: outcome.ordinal,
+        ..record.clone()
+    };
+    locked.mirror_committed_record(&mirrored);
+    let activity_kinds: Vec<String> = signed_turn
+        .turn
+        .call_forest
+        .iter_dfs()
+        .flat_map(|tree| tree.action.effects.iter().map(crate::api::effect_kind))
+        .collect();
+    crate::api::push_committed_event_enriched(
+        &mut locked,
+        dregg_types::hex_encode(&receipt_hash),
+        dregg_types::hex_encode(signed_turn.turn.agent.as_bytes()),
+        if activity_kinds.is_empty() {
+            vec!["turn_committed".to_string()]
+        } else {
+            activity_kinds
+        },
+        Vec::new(),
+        crate::state::ActivityProofStatus::Proved,
+    );
+    let invalid_bundle_evidence = artifacts
+        .as_ref()
+        .map(|bundle| materialize_blocklace_artifacts(&mut locked, block_id, &receipt, bundle))
+        .unwrap_or_default();
+    let federation_receipt =
+        build_federation_receipt(&locked, &signed_turn.turn, &receipt, new_height, block_id);
+    drop(locked);
+
+    for evidence in invalid_bundle_evidence {
+        warn!(
+            block_id = %evidence.block_id,
+            reason = %evidence.reason,
+            "invalid exact FNSP-v3 blocklace turn bundle artifacts"
+        );
+        state.emit(NodeEvent::InvalidBlocklaceBundle {
+            block_id: evidence.block_id.to_string(),
+            reason: evidence.reason,
+        });
+    }
+    state.emit(NodeEvent::Receipt {
+        hash: dregg_types::hex_encode(&receipt_hash),
+    });
+    if let Some(federation_receipt) = federation_receipt {
+        debug!(
+            federation_id = %dregg_types::hex_encode(&federation_receipt.federation_id),
+            height = federation_receipt.body.block_height,
+            "exact FNSP-v3 federation receipt produced"
+        );
+    }
+    info!(
+        turn_hash = %dregg_types::hex_encode(&validated_signed_turn.turn_hash()),
+        block_id = %block_id,
+        height = new_height,
+        round = ?finality_round,
+        block_executed_up_to,
+        "exact FNSP-v3 finalized turn durably committed and published"
+    );
+    Ok(())
+}
+
 async fn execute_finalized_turn(
     state: &NodeState,
     handle: &BlocklaceHandle,
@@ -4656,26 +5240,144 @@ async fn execute_finalized_turn(
     // the host-enrolled signer identity; a substituted self-carried key is not
     // an authority.  A bad finalized payload remains a consensus fact, so store
     // a deterministic rejection record instead of silently skipping it.
-    if let Err(validation_error) = crate::signed_turn_validation::validate_signed_turn(
+    let validated_signed_turn = match crate::signed_turn_validation::validate_signed_turn(
         &signed_turn,
         &executor,
         s.ledger.get(&signed_turn.turn.agent),
     ) {
-        persist_finalized_payload_rejection(
-            &s,
-            block_id,
-            turn_data,
-            Some(computed_hash),
-            validation_error.code(),
-        );
-        warn!(
-            block_id = %block_id,
-            turn_hash = %turn_hash_hex,
-            reason_code = validation_error.code(),
-            reason = %validation_error,
-            "finalized SignedTurn failed application authorization before mutation (deterministic rejection recorded)"
-        );
-        return;
+        Ok(validated) => validated,
+        Err(validation_error) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                validation_error.code(),
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                reason_code = validation_error.code(),
+                reason = %validation_error,
+                "finalized SignedTurn failed application authorization before mutation (deterministic rejection recorded)"
+            );
+            return;
+        }
+    };
+
+    // EXACT FNSP-v3 is a disjoint finalized-turn route.  Classification happens after the full
+    // SignedTurn perimeter but before the legacy FNSP decoder and every generic charge/mutation.
+    // Once an `FNSP || version=3` carrier selects this branch, every refusal returns from here: it
+    // can never fall through into v2 execution or be charged as an ordinary rejected turn.
+    match crate::exact_fnsp_v3_execution_authority::exact_fnsp_v3_route_coordinates(&signed_turn) {
+        Ok(Some(route)) => {
+            let preparation = match prepare_live_exact_fnsp_v3(
+                &mut s,
+                executor,
+                signed_turn,
+                validated_signed_turn,
+                route,
+                block_id,
+                block_executed_up_to,
+                artifacts.cloned(),
+            ) {
+                Ok(preparation) => preparation,
+                Err(error) => {
+                    persist_finalized_payload_rejection(
+                        &s,
+                        block_id,
+                        turn_data,
+                        Some(computed_hash),
+                        "exact-fnsp-v3-preparation-refused",
+                    );
+                    warn!(
+                        block_id = %block_id,
+                        turn_hash = %turn_hash_hex,
+                        error = %error,
+                        "exact FNSP-v3 finalized turn refused during locked snapshot preparation"
+                    );
+                    return;
+                }
+            };
+            drop(s);
+            if let Err(error) =
+                execute_live_exact_fnsp_v3(state, handle, preparation, finality_round).await
+            {
+                let locked = state.read().await;
+                persist_finalized_payload_rejection(
+                    &locked,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "exact-fnsp-v3-finalization-refused",
+                );
+                drop(locked);
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %error,
+                    "exact FNSP-v3 finalized turn did not publish"
+                );
+            }
+            return;
+        }
+        Ok(None) => {
+            // Exact activation is a one-way flag day for NoteSpend state.  A v2 spend after it
+            // would advance the faithful accumulator without the exact prefix and make the next
+            // exact frame detect the divergence only after it was durable.
+            if !finalized_note_spends(&signed_turn.turn.call_forest).is_empty() {
+                match s.store.exact_fnsp_v3_live_authority() {
+                    Ok(Some(_)) => {
+                        persist_finalized_payload_rejection(
+                            &s,
+                            block_id,
+                            turn_data,
+                            Some(computed_hash),
+                            "legacy-spend-after-exact-cutover",
+                        );
+                        warn!(
+                            block_id = %block_id,
+                            turn_hash = %turn_hash_hex,
+                            "legacy/v2 NoteSpend refused after exact FNSP-v3 activation"
+                        );
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        persist_finalized_payload_rejection(
+                            &s,
+                            block_id,
+                            turn_data,
+                            Some(computed_hash),
+                            "exact-cutover-authority-malformed",
+                        );
+                        error!(
+                            block_id = %block_id,
+                            turn_hash = %turn_hash_hex,
+                            error = %error,
+                            "could not authenticate exact cutover before legacy NoteSpend dispatch"
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "exact-fnsp-v3-carrier-refused",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "malformed exact FNSP-v3 finalized carrier refused before legacy dispatch"
+            );
+            return;
+        }
     }
 
     // HISTORICAL NOTE-ROOT ADMISSION: the signed effect carries a strict FNSP

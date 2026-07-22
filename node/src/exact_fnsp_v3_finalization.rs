@@ -82,6 +82,7 @@ struct FreshExactFnspV3PostExecution {
     receipt: TurnReceipt,
     receipt_index: u64,
     install_receipt_head: bool,
+    resolution_events: Vec<dregg_turn::ResolutionEvent>,
 }
 
 impl DurablyCommittedExactFnspV3Turn {
@@ -111,6 +112,9 @@ impl DurablyCommittedExactFnspV3Turn {
                     })?;
             }
             *live_ledger = fresh.ledger;
+            crate::executor_side_state_persistence::trace_durable_resolution_events(
+                &fresh.resolution_events,
+            );
         }
         Ok(self.outcome)
     }
@@ -208,6 +212,23 @@ impl PreparedExactFnspV3Finalization {
         )
         .map_err(ExactFnspV3FinalizationError::Store)?;
 
+        // Resolve the finalized turn on the retained executor candidate before capturing its
+        // successor.  This registry is the consensus owner: resolving only NodeState's legacy RAM
+        // mirror after commit would make dependent promises disappear again after restart.
+        // Events remain candidate-local until the redb transaction below returns Fresh.
+        let resolution_events = post_executor
+            .reactive_registry
+            .lock()
+            .map_err(|_| {
+                ExactFnspV3FinalizationError::ExecutorState(
+                    "executor pending registry mutex is poisoned".into(),
+                )
+            })?
+            .resolve(
+                receipt.turn_hash,
+                dregg_turn::ResolutionOutcome::Resolved(receipt.clone()),
+            );
+
         // The short-lived executor owns consensus/admission state beyond the ledger.  Snapshot its
         // complete successor and weld both React CAS predecessors into this exact-frame writer;
         // otherwise a committed exact receipt could resolve a promise whose replay/nullifier gate
@@ -271,6 +292,7 @@ impl PreparedExactFnspV3Finalization {
                     receipt,
                     receipt_index,
                     install_receipt_head: !require_existing_receipt,
+                    resolution_events,
                 });
         Ok(DurablyCommittedExactFnspV3Turn {
             outcome: durable.outcome,
