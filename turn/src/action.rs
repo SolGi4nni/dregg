@@ -1413,12 +1413,10 @@ pub enum Effect {
     //     [`crate::reactive`]; these are the turn-level Effect faces the
     //     executor dispatches. (`docs/deos/REACTIVE-EFFECTS.md`.)
     //
-    // The keystone (the soundness gift): a promise-hole IS a nullifier. To
-    // `React` is to SPEND the hole. One-shot linearity — react exactly once —
-    // is the SAME double-spend non-membership the circuit already enforces on
-    // `NoteSpend`. The executor spends `pending_id` into the very same
-    // `note_nullifiers` set, so a second react (or a replayed `pending_id`) is
-    // rejected by the identical nullifier gate.
+    // A promise-hole is a one-shot capability. To `React` is to spend the hole
+    // id in the dedicated, domain-separated `ReactiveNullifierSet`. This is
+    // semantically analogous to note double-spend prevention, but it MUST NOT
+    // mutate faithful `note_nullifiers`: React carries no NoteSpend statement.
     /// A STANDING COMMITMENT: `cell` commits to run a turn once
     /// `resolution_condition` holds — the promise-hole. The executor records
     /// the commitment in the cell's reactive registry; the hole is later
@@ -1451,13 +1449,13 @@ pub enum Effect {
     },
     /// REACT to a deposited hole: discharge `pending_id` by presenting a proof
     /// of `condition`. THE ONE-SHOT SPEND — `pending_id` is consumed into the
-    /// production nullifier set exactly as a [`Effect::NoteSpend`] nullifier is,
-    /// so a second react (or a replay of the same `pending_id`) is rejected by
-    /// the double-spend gate. (Terminal: one-way consume of the hole, no inverse.)
+    /// dedicated React replay set, so a second react (or replay of the same id)
+    /// is rejected without polluting the faithful NoteSpend sequence. (Terminal:
+    /// one-way consume of the hole, no inverse.)
     React {
-        /// The hole being discharged, AS A NULLIFIER. The 32-byte hole id
-        /// (the deposited `wake` turn hash) IS the nullifier spent into the
-        /// production `note_nullifiers` set — the promise-hole-as-nullifier.
+        /// The hole being discharged, as a React-domain nullifier. The 32-byte
+        /// id is the deposited `wake` turn hash; it is never a faithful note
+        /// nullifier merely because the raw bytes happen to be equal.
         pending_id: Nullifier,
         /// The condition the proof must satisfy (the spend is gated on it).
         condition: crate::conditional::ProofCondition,

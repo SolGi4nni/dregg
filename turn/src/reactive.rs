@@ -30,10 +30,11 @@
 //!
 //! # The soundness gift (the keystone)
 //!
-//! A promise-hole IS a nullifier. To **react** is to **spend** the hole. One-shot
-//! linearity — react exactly once — is the SAME double-spend non-membership the
-//! circuit already enforces on `noteSpend`. So "react twice" = "double spend" =
-//! ALREADY rejected, by construction. We do not re-implement the gate; we ride it.
+//! A promise-hole is a one-shot capability. To **react** is to **spend** its id in
+//! a dedicated React domain. This is deliberately disjoint from faithful note
+//! nullifiers: a React carries no NoteSpend statement, and equal raw bytes grant
+//! no authority across the two domains. The deployed executor persists the
+//! domain-separated `ReactiveNullifierSet` beside the canonical pending registry.
 //!
 //! The [`ReactiveCoordinator`] enforces the one-shot property at TWO independent
 //! teeth, so neither alone is load-bearing:
@@ -45,11 +46,10 @@
 //!     `resolve_condition` with "proof already used". (The spend is one-shot even
 //!     if the same hole-id were somehow re-presented.)
 //!
-//! Lean obligation named (NOT yet discharged for this exact ADT): the circuit
-//! witness for a `React` effect — that a light client verifying a batch bearing a
-//! `React` sees the promise-hole nullifier grow exactly as a `noteSpend` does.
-//! That is the next slice (`docs/deos/REACTIVE-EFFECTS.md` §6). The Rust gate here
-//! is the executor-side enforcement; the in-circuit witness is the lift.
+//! Lean obligation named: the proof surface for a `React` effect must bind the
+//! dedicated executor-side replay frontier and pending-registry transition. It
+//! must not reuse the NoteSpend statement or advance the faithful FNSP sequence.
+//! (`docs/deos/REACTIVE-EFFECTS.md` §6.)
 
 use std::collections::HashSet;
 

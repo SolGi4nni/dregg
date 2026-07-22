@@ -420,8 +420,9 @@ impl Effect {
             Effect::Promise { .. } | Effect::Notify { .. } => {
                 Inversion::Committed(CommittedReason::GenerativeOrProofCarrying)
             }
-            // React SPENDS the promise-hole nullifier — exactly NoteSpend's
-            // one-shot consume: un-reacting would re-admit the spent hole-id.
+            // React spends the promise-hole id in its own one-shot domain.
+            // Un-reacting would re-admit the spent id; it is semantically like
+            // NoteSpend linearity but does not mutate faithful note nullifiers.
             Effect::React { .. } => Inversion::Committed(CommittedReason::NullifierConsumed),
             // A shielded transfer consumes its inputs' nullifiers one-shot (the
             // same double-spend gate `NoteSpend` rides) — committed, no inverse.
