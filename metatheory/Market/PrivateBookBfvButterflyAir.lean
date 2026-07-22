@@ -424,6 +424,40 @@ def productionQ0N4096Descriptor : EffectVmDescriptor2 :=
 #guard 13 * 4096 < 2 ^ 16
 #guard (emitVmJson2 productionQ0N4096Descriptor).contains "bfv_ntt_q0_n4096_schedule"
 
+/-! The inverse companion uses the same exact integer butterfly equations and
+range envelope, but pins `DIRECTION = 1` and a distinct canonical schedule
+table.  The strict native carrier additionally checks the real inverse ingress
+and the coefficient-wise `psi^-i / N` normalized egress; those transform
+boundaries are not silently attributed to this row descriptor alone. -/
+
+def productionInverseRowBodies : List EmittedExpr :=
+  [ esub (ev DIRECTION) (ec 1), ev MODULUS_ROW, ev TRANSFORM,
+    boolBody ADD_REDUCE, boolBody SUB_REDUCE ] ++
+  (List.range 5).map productBody ++
+  (List.range 3).map addBody ++
+  (List.range 3).map subBody ++
+  [carryValue PRODUCT_CARRY 4, carryValue ADD_CARRY 2, carryValue SUB_CARRY 2]
+
+def productionInverseArithmeticConstraints : List VmConstraint2 :=
+  productionInverseRowBodies.flatMap allRowGate
+
+def productionQ0N4096InverseDescriptor : EffectVmDescriptor2 :=
+  { name := "private-book-bfv-odd-intt-butterfly-q0-n4096::public-carrier-48-v1"
+  , traceWidth := TRACE_WIDTH
+  , piCount := 0
+  , tables :=
+      [ ⟨.custom SCHEDULE_TID, "bfv_intt_q0_n4096_schedule", 17, .mainRow⟩
+      , ⟨.custom BUS_TID, "bfv_intt_q0_n4096_stage_bus", 4, .mainRow⟩ ]
+  , constraints := productionInverseArithmeticConstraints ++ [scheduleLookup] ++ busLookups
+  , hashSites := []
+  , ranges := limbRanges ++ productionScheduleRanges ++ carryRanges }
+
+#guard productionInverseRowBodies.length == 19
+#guard productionInverseArithmeticConstraints.length == 38
+#guard productionQ0N4096InverseDescriptor.constraints.length == 43
+#guard productionQ0N4096InverseDescriptor.ranges.length == 48
+#guard (emitVmJson2 productionQ0N4096InverseDescriptor).contains "bfv_intt_q0_n4096_schedule"
+
 /-! ## 4. Executable witness and exact permutation check -/
 
 def bitReverse3 : Nat → Nat
