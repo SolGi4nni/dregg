@@ -41,6 +41,7 @@ pub mod forever_digests;
 pub mod image_builder;
 pub mod ledger_store;
 pub mod note_tree;
+pub mod per_cell_receipt_heads;
 pub mod poseidon2_note_tree;
 pub mod snapshot;
 pub mod tables;
@@ -86,6 +87,10 @@ pub use image_builder::{
 };
 pub use ledger_store::LedgerCheckpoint;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
+pub use per_cell_receipt_heads::{
+    DurablePerCellReceiptHead, MAX_PER_CELL_RECEIPT_HEADS_V1, MAX_PER_CELL_RECEIPT_LIVE_RECORDS_V1,
+    PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
+};
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use snapshot::{Snapshot, SnapshotHead};
 
@@ -225,6 +230,11 @@ impl PersistentStore {
         let db = Database::create(path).map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        // This migration must precede any generic index rebuild: once a legacy
+        // store has compacted records, their write sets are unavailable and an
+        // absent provenance baseline is unreconstructable (fail before mutating
+        // any secondary index).
+        store.migrate_per_cell_receipt_head_index_v1()?;
         // One-time index-shape migration for stores written before the
         // (height, creator, ordinal) key (no-op on fresh/migrated stores).
         store.migrate_height_creator_index()?;
@@ -242,6 +252,7 @@ impl PersistentStore {
             .map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
+        store.migrate_per_cell_receipt_head_index_v1()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         Ok(store)
     }
@@ -301,6 +312,8 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::IDX_TURN_BY_HASH)?;
             let _ = write_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
             let _ = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
+            let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_BASELINE_V1)?;
+            let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_CURRENT_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for
             // commit-log compaction: ids of applied turns whose records were
             // compacted under a covering checkpoint — `compact_below`).

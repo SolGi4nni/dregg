@@ -325,6 +325,17 @@ pub fn configure_turn_executor(
         )
     });
 
+    // Generic touched-cell provenance is not derivable from the receipt log:
+    // the write set lives in commit records, and compaction removes old records.
+    // Restore the validated compacted-baseline + live-suffix projection before
+    // any atomic/mixed path asks for a cell's predecessor receipt.
+    crate::executor_state_admission::restore_executor_per_cell_receipt_heads(executor, &s.store)
+        .unwrap_or_else(|error| {
+            panic!(
+                "STORE INTEGRITY EVENT: durable per-cell receipt heads cannot seed a turn executor; refusing construction: {error}"
+            )
+        });
+
     // Custom cell-program verification resolves the program VK committed by a
     // cell against the node's durable deployed-program registry. Executors are
     // short-lived, so leaving the constructor default (empty) would make every

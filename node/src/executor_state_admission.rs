@@ -32,7 +32,7 @@ use dregg_turn::faithful_note_spend_exact_v3::{
 };
 use dregg_turn::{Effect, Turn, TurnExecutor, TurnReceipt};
 
-use dregg_persist::CommitRecord;
+use dregg_persist::{CommitRecord, PersistentStore};
 
 /// A durable receipt log failed its per-agent causal-chain invariant.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -369,6 +369,51 @@ pub(crate) fn install_executor_per_cell_receipt_heads(
         .map_err(|_| PerCellReceiptHeadInstallError::ExecutorLockPoisoned)?;
     *guard = installed;
     Ok(count)
+}
+
+/// Load the store-authenticated two-map image and seed a fresh executor.
+pub(crate) fn restore_executor_per_cell_receipt_heads(
+    executor: &TurnExecutor,
+    store: &PersistentStore,
+) -> Result<usize, String> {
+    let recovery = store
+        .load_per_cell_receipt_head_recovery_v1()
+        .map_err(|error| format!("could not load durable per-cell receipt heads: {error}"))?;
+    let baseline = recovery
+        .baseline
+        .into_iter()
+        .map(|head| {
+            (
+                head.cell,
+                PerCellReceiptHead {
+                    writer_ordinal: head.writer_ordinal,
+                    receipt_hash: head.receipt_hash,
+                },
+            )
+        })
+        .collect();
+    let current = recovery
+        .current
+        .into_iter()
+        .map(|head| {
+            (
+                head.cell,
+                PerCellReceiptHead {
+                    writer_ordinal: head.writer_ordinal,
+                    receipt_hash: head.receipt_hash,
+                },
+            )
+        })
+        .collect();
+    install_executor_per_cell_receipt_heads(
+        executor,
+        recovery.compacted_floor,
+        recovery.cursor,
+        &baseline,
+        &current,
+        &recovery.live_records,
+    )
+    .map_err(|error| format!("could not seed durable per-cell receipt heads: {error}"))
 }
 
 /// Why an exact FNSP-v3 route was refused before execution.
@@ -730,6 +775,79 @@ mod tests {
                 cell,
             }) if cell == a_id
         ));
+    }
+
+    #[test]
+    fn per_cell_head_install_validates_current_before_one_shot_publish() {
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let a = provenance_cell(0xA4);
+        let b = provenance_cell(0xB4);
+        let a_id = a.id();
+        let b_id = b.id();
+        let baseline = HashMap::from([(
+            a_id,
+            PerCellReceiptHead {
+                writer_ordinal: 0,
+                receipt_hash: [0x10; 32],
+            },
+        )]);
+        let live = vec![commit_record(1, 0x20, vec![b], vec![a_id])];
+        let durable_current = reconstruct_per_cell_receipt_heads(1, 2, &baseline, &live).unwrap();
+
+        assert_eq!(
+            install_executor_per_cell_receipt_heads(
+                &executor,
+                1,
+                2,
+                &baseline,
+                &durable_current,
+                &live,
+            )
+            .unwrap(),
+            2
+        );
+        let installed = executor.per_cell_receipt_head.lock().unwrap().clone();
+        assert_eq!(installed[&a_id], [0x20; 32]);
+        assert_eq!(installed[&b_id], [0x20; 32]);
+    }
+
+    #[test]
+    fn per_cell_head_install_mismatch_leaves_existing_executor_map_untouched() {
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let sentinel = CellId([0xE1; 32]);
+        executor
+            .per_cell_receipt_head
+            .lock()
+            .unwrap()
+            .insert(sentinel, [0xE2; 32]);
+
+        let a = provenance_cell(0xA5);
+        let a_id = a.id();
+        let live = vec![commit_record(0, 0x30, vec![a], vec![])];
+        let forged_current = HashMap::from([(
+            a_id,
+            PerCellReceiptHead {
+                writer_ordinal: 0,
+                receipt_hash: [0xFF; 32],
+            },
+        )]);
+        assert!(matches!(
+            install_executor_per_cell_receipt_heads(
+                &executor,
+                0,
+                1,
+                &HashMap::new(),
+                &forged_current,
+                &live,
+            ),
+            Err(PerCellReceiptHeadInstallError::DurableCurrentMismatch { cell, .. })
+                if cell == a_id
+        ));
+        assert_eq!(
+            *executor.per_cell_receipt_head.lock().unwrap(),
+            HashMap::from([(sentinel, [0xE2; 32])]),
+            "validation failure must publish none of the durable candidate"
+        );
     }
 
     fn action(effects: Vec<Effect>) -> Action {

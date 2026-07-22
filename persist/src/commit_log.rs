@@ -262,7 +262,7 @@ impl From<CommitRecordV0> for CommitRecord {
 /// — so we fall back to [`CommitRecordV0`] and lift it with an empty `removed`. A
 /// legacy record can NEVER spuriously decode as current: the missing trailing
 /// `Vec` length varint forces the shortfall, so the ordering is unambiguous.
-fn decode_commit_record(bytes: &[u8]) -> Result<CommitRecord> {
+pub(crate) fn decode_commit_record(bytes: &[u8]) -> Result<CommitRecord> {
     match postcard::from_bytes::<CommitRecord>(bytes) {
         Ok(rec) => Ok(rec),
         Err(_) => {
@@ -1457,6 +1457,10 @@ impl PersistentStore {
                                         ));
                                     }
                                 }
+                                crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
+                                    &write_txn,
+                                    &existing,
+                                )?;
                                 if let Some(receipt_entry) = receipt_entry.as_ref() {
                                     let (receipt_index, encoded_receipt) = receipt_entry.entry();
                                     // The original atomic commit must already
@@ -1610,6 +1614,14 @@ impl PersistentStore {
                     idx_cell.remove(id)?;
                 }
             }
+
+            // The generic per-cell provenance projection is part of the same
+            // finalized-turn durability event. Removals advance the head too:
+            // a later recreation of the id must extend the removing receipt.
+            crate::per_cell_receipt_heads::stage_fresh_per_cell_receipt_heads_in(
+                &write_txn,
+                &stored_record,
+            )?;
 
             // 3. Burn the turn's forever digests in the SAME transaction (the
             //    same-transaction burn weld): the record and its anti-replay
@@ -2127,6 +2139,9 @@ impl PersistentStore {
                     })
                     .or_insert((ordinal, cell.clone()));
             }
+            for removed in &record.removed {
+                latest_cell_writer.remove(removed);
+            }
         }
 
         // Reverse direction: no orphan hash-index entries.
@@ -2182,6 +2197,12 @@ impl PersistentStore {
             }
         }
 
+        // Unlike the checkpoint-relative cell snapshot index above, generic
+        // receipt provenance spans the complete applied history. Its compacted
+        // baseline plus live suffix must reproduce the durable current map
+        // exactly; structural/cursor/codec disagreement is an integrity error.
+        crate::per_cell_receipt_heads::verify_per_cell_receipt_head_index_in(&read_txn)?;
+
         Ok(report)
     }
 
@@ -2199,6 +2220,17 @@ impl PersistentStore {
         let write_txn = self.db.begin_write()?;
         let mut replayed = 0u64;
         {
+            let (compacted_floor, cursor) = {
+                let meta = write_txn.open_table(tables::METADATA)?;
+                (
+                    meta.get(tables::META_COMMIT_COMPACTED)?
+                        .map(|guard| guard.value())
+                        .unwrap_or(0),
+                    meta.get(tables::META_COMMIT_CURSOR)?
+                        .map(|guard| guard.value())
+                        .unwrap_or(0),
+                )
+            };
             // Collect the log first (immutable view), then rewrite indexes.
             let records: Vec<CommitRecord> = {
                 let log = write_txn.open_table(tables::COMMIT_LOG)?;
@@ -2253,8 +2285,18 @@ impl PersistentStore {
                         .map_err(|e| StoreError::Serialization(e.to_string()))?;
                     idx_cell.insert(&cell.id().0, cell_bytes.as_slice())?;
                 }
+                for removed in &record.removed {
+                    idx_cell.remove(removed)?;
+                }
                 replayed += 1;
             }
+
+            crate::per_cell_receipt_heads::rebuild_current_per_cell_receipt_heads_in(
+                &write_txn,
+                compacted_floor,
+                cursor,
+                &records,
+            )?;
         }
         write_txn.commit()?;
         Ok(replayed)
@@ -2341,6 +2383,12 @@ impl PersistentStore {
         let write_txn = self.db.begin_write()?;
         let compacted;
         {
+            let old_floor = {
+                let meta = write_txn.open_table(tables::METADATA)?;
+                meta.get(tables::META_COMMIT_COMPACTED)?
+                    .map(|guard| guard.value())
+                    .unwrap_or(0)
+            };
             // 1. Identify the contiguous ordinal prefix of records strictly
             //    below `height`, collecting what we need to clean up their
             //    index entries, and the SURVIVORS' cells for the cell-index
@@ -2354,6 +2402,7 @@ impl PersistentStore {
                 block_id: [u8; 32],
             }
             let mut doomed: Vec<Doomed> = Vec::new();
+            let mut doomed_records: Vec<CommitRecord> = Vec::new();
             let mut survivors: Vec<CommitRecord> = Vec::new();
             {
                 let log = write_txn.open_table(tables::COMMIT_LOG)?;
@@ -2376,6 +2425,7 @@ impl PersistentStore {
                             hc_key,
                             block_id: record.block_id,
                         });
+                        doomed_records.push(record);
                     } else {
                         // First record at/above `height` closes the prefix; it
                         // and everything after it survive.
@@ -2385,12 +2435,24 @@ impl PersistentStore {
                 }
             }
 
-            compacted = doomed.len() as u64;
+            compacted = u64::try_from(doomed.len()).map_err(|_| {
+                StoreError::Integrity("compacted record count does not fit u64".to_string())
+            })?;
             if compacted == 0 {
                 // Nothing to do — leave the store (and its cursor) untouched.
                 drop(write_txn);
                 return Ok(0);
             }
+
+            // Preserve the last writer for every compacted touched/tombstoned
+            // id BEFORE deleting the only remaining copy of those write sets.
+            // The current map stays unchanged; only its reconstruction layer
+            // moves from live suffix to compacted baseline.
+            crate::per_cell_receipt_heads::fold_compacted_per_cell_receipt_heads_in(
+                &write_txn,
+                old_floor,
+                &doomed_records,
+            )?;
 
             // 2. Remove the doomed records from the commit log + their receipt /
             //    turn / (height, creator) index entries.
@@ -2446,11 +2508,10 @@ impl PersistentStore {
             //    high-water mark, not the physical record count.
             {
                 let mut meta = write_txn.open_table(tables::METADATA)?;
-                let floor = meta
-                    .get(tables::META_COMMIT_COMPACTED)?
-                    .map(|g| g.value())
-                    .unwrap_or(0);
-                meta.insert(tables::META_COMMIT_COMPACTED, floor + compacted)?;
+                let new_floor = old_floor.checked_add(compacted).ok_or_else(|| {
+                    StoreError::Integrity("commit-log compaction floor overflow".to_string())
+                })?;
+                meta.insert(tables::META_COMMIT_COMPACTED, new_floor)?;
             }
         }
         write_txn.commit()?;
@@ -2671,20 +2732,21 @@ impl PersistentStore {
                 }
             }
 
+            let survivors: Vec<CommitRecord> = {
+                let log = write_txn.open_table(tables::COMMIT_LOG)?;
+                let mut v = Vec::new();
+                for entry in log.range(floor..)? {
+                    let entry = entry
+                        .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+                    v.push(decode_commit_record(entry.1.value())?);
+                }
+                v
+            };
+
             // Re-derive the cell-by-id index from the SURVIVING records alone
             // (last-writer-wins) — a cell whose only/latest writer was truncated
             // drops to its checkpoint value (handled on the next recover overlay).
             {
-                let survivors: Vec<CommitRecord> = {
-                    let log = write_txn.open_table(tables::COMMIT_LOG)?;
-                    let mut v = Vec::new();
-                    for entry in log.range(floor..)? {
-                        let entry = entry
-                            .map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
-                        v.push(decode_commit_record(entry.1.value())?);
-                    }
-                    v
-                };
                 let mut idx_cell = write_txn.open_table(tables::IDX_CELL_BY_ID)?;
                 let keys: Vec<[u8; 32]> = idx_cell
                     .iter()?
@@ -2699,8 +2761,18 @@ impl PersistentStore {
                             .map_err(|e| StoreError::Serialization(e.to_string()))?;
                         idx_cell.insert(&cell.id().0, cell_bytes.as_slice())?;
                     }
+                    for removed in &record.removed {
+                        idx_cell.remove(removed)?;
+                    }
                 }
             }
+
+            // Roll generic per-cell provenance back over the same survivor
+            // image. The compacted baseline is indispensable here: a doomed
+            // live writer may have a predecessor whose record no longer exists.
+            crate::per_cell_receipt_heads::rebuild_current_per_cell_receipt_heads_in(
+                &write_txn, floor, new_cursor, &survivors,
+            )?;
 
             // Regress every tracked executor-owned admission/root table to the
             // same last-good ordinal before publishing the lower cursor. This
@@ -3947,6 +4019,119 @@ mod tests {
             "the applied-turn id set must be INVARIANT under compaction \
              (else a compacted turn re-executes on top of the checkpoint)"
         );
+    }
+
+    /// Per-cell receipt provenance spans compaction and removals. The removing
+    /// turn becomes the durable head even though the cell has no hosted
+    /// post-state, and that head survives after both carrying records are gone.
+    #[test]
+    fn per_cell_receipt_head_compaction_preserves_removal_provenance() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let a = cell(0x75, 100);
+        let a_id = a.id();
+
+        let mut create = record(0, 0, vec![a]);
+        create.receipt_hash = [0xA1; 32];
+        create.turn_hash = [0xB1; 32];
+        store.commit_finalized_turn(0, &create).unwrap();
+
+        let mut remove = record(1, 0, vec![]);
+        remove.receipt_hash = [0xA2; 32];
+        remove.turn_hash = [0xB2; 32];
+        remove.removed = vec![a_id.0];
+        store.commit_finalized_turn(1, &remove).unwrap();
+
+        let before = store.load_per_cell_receipt_head_recovery_v1().unwrap();
+        let head = before
+            .current
+            .iter()
+            .find(|head| head.cell == a_id)
+            .unwrap();
+        assert_eq!(head.writer_ordinal, 1);
+        assert_eq!(head.receipt_hash, [0xA2; 32]);
+
+        store
+            .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                height: 3,
+                cells: Vec::new(),
+                sovereign_commitments: Vec::new(),
+                sovereign_registrations: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(store.compact_below(3).unwrap(), 2);
+
+        let after = store.load_per_cell_receipt_head_recovery_v1().unwrap();
+        assert!(after.live_records.is_empty());
+        let baseline = after
+            .baseline
+            .iter()
+            .find(|head| head.cell == a_id)
+            .unwrap();
+        let current = after.current.iter().find(|head| head.cell == a_id).unwrap();
+        assert_eq!(baseline, current);
+        assert_eq!(current.writer_ordinal, 1);
+        assert_eq!(current.receipt_hash, [0xA2; 32]);
+    }
+
+    /// A single current map cannot pass this test. The doomed live writer of X
+    /// must roll back to X's compacted predecessor, while an unrelated surviving
+    /// live record gives root recovery its last-good convergence point.
+    #[test]
+    fn divergent_tail_recovery_restores_compacted_per_cell_predecessor() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let x = cell(0x76, 100);
+        let y = cell(0x77, 200);
+        let x_id = x.id();
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(x.clone()).unwrap();
+        let mut x_create = record(0, 0, vec![x.clone()]);
+        x_create.receipt_hash = [0xC1; 32];
+        x_create.turn_hash = [0xD1; 32];
+        x_create.ledger_root = crate::canonical_ledger_root(&ledger);
+        store.commit_finalized_turn(0, &x_create).unwrap();
+
+        ledger.insert_cell(y.clone()).unwrap();
+        let mut y_create = record(1, 0, vec![y.clone()]);
+        y_create.receipt_hash = [0xC2; 32];
+        y_create.turn_hash = [0xD2; 32];
+        y_create.ledger_root = crate::canonical_ledger_root(&ledger);
+        store.commit_finalized_turn(1, &y_create).unwrap();
+
+        store
+            .store_ledger_checkpoint_snapshot(&crate::LedgerCheckpoint {
+                height: 2,
+                cells: vec![x.clone(), y],
+                sovereign_commitments: Vec::new(),
+                sovereign_registrations: Vec::new(),
+            })
+            .unwrap();
+        assert_eq!(store.compact_below(2).unwrap(), 1);
+
+        let mut poisoned_x = x;
+        assert!(poisoned_x.state.credit_balance(1));
+        let mut bad = record(2, 0, vec![poisoned_x]);
+        bad.receipt_hash = [0xC3; 32];
+        bad.turn_hash = [0xD3; 32];
+        bad.ledger_root = [0xDE; 32];
+        store.commit_finalized_turn(2, &bad).unwrap();
+        let before = store.load_per_cell_receipt_head_recovery_v1().unwrap();
+        assert_eq!(
+            before
+                .current
+                .iter()
+                .find(|head| head.cell == x_id)
+                .unwrap()
+                .receipt_hash,
+            [0xC3; 32]
+        );
+
+        assert_eq!(store.recover_to_last_consistent().unwrap(), 1);
+        let after = store.load_per_cell_receipt_head_recovery_v1().unwrap();
+        let restored = after.current.iter().find(|head| head.cell == x_id).unwrap();
+        assert_eq!(restored.writer_ordinal, 0);
+        assert_eq!(restored.receipt_hash, [0xC1; 32]);
+        assert!(store.verify_index_agrees_with_log().unwrap().ok());
     }
 
     /// THE CHECKPOINT CO-DRIVE: `checkpoint_ledger` at height H drives

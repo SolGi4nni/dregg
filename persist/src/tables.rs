@@ -307,6 +307,24 @@ pub const IDX_TURN_BY_HEIGHT_CREATOR: TableDefinition<&[u8], u64> =
 pub const IDX_CELL_BY_ID: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("idx_cell_by_id");
 
+/// Last per-cell generic receipt writer in the compacted commit-log prefix.
+///
+/// Key: cell id. Value: `writer_ordinal_le_u64 || receipt_hash_32`. A removed
+/// cell deliberately retains a row: re-creating an id must extend, not erase,
+/// its finalized provenance. This baseline is folded before the corresponding
+/// commit records are deleted by compaction.
+pub const PER_CELL_RECEIPT_HEAD_BASELINE_V1: TableDefinition<&[u8; 32], &[u8; 40]> =
+    TableDefinition::new("per_cell_receipt_head_baseline_v1");
+
+/// Last per-cell generic receipt writer over the complete applied history.
+///
+/// This is the bounded constructor index: `baseline` replayed with the dense
+/// live suffix `[commit_compacted_floor, commit_cursor)`. It is updated in the
+/// finalized-turn transaction and rebuilt from baseline + survivors on tail
+/// recovery.
+pub const PER_CELL_RECEIPT_HEAD_CURRENT_V1: TableDefinition<&[u8; 32], &[u8; 40]> =
+    TableDefinition::new("per_cell_receipt_head_current_v1");
+
 /// Key (in METADATA) for the durable commit cursor: the number of turns this
 /// node has committed and indexed = the next free commit ordinal. This is the
 /// crash-consistent replacement for the separately-written
@@ -326,6 +344,14 @@ pub const META_COMMIT_CURSOR: &str = "commit_cursor";
 /// `commit_cursor() == commit_log.len() + compacted_floor` (the pre-compaction
 /// `cursor == len` is the `compacted_floor == 0` special case).
 pub const META_COMMIT_COMPACTED: &str = "commit_compacted_floor";
+
+/// Installed schema marker for the two-map per-cell receipt-head index.
+///
+/// Absence can be migrated only while the compaction floor is zero. Once any
+/// commit records have been compacted, their write sets no longer exist and an
+/// absent baseline is unreconstructable, so open fails closed.
+pub const META_PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1: &str =
+    "per_cell_receipt_head_index_version_v1";
 
 /// Compacted turn block-ids: the blocklace `block_id` of every turn whose commit
 /// record was compacted away (presence = a turn this node DURABLY APPLIED whose
